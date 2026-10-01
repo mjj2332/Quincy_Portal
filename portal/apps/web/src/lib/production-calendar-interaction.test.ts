@@ -30,7 +30,7 @@ describe("Production Calendar interaction model", () => {
       permissions: { canDrag: true, canResize: false as const },
       deadlineLocalCivil: "2026-08-10T09:30", deadlineVersion: 2, reminderOffsetsMinutes: [1440],
     };
-    const filters = { layers: ["project", "checklist"] as ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false };
+    const filters = { layers: ["project", "checklist"] as ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, shootRange: null, deadlineRange: null, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false };
     const snapshot = beginCalendarInteraction({ event, filters, principalId: "principal", authorizationEpoch: 4, focus: { eventId, control: "event" }, capturedNow: 123 });
     event.project.checklist.completed = 9;
     filters.layers.pop();
@@ -55,7 +55,7 @@ describe("Production Calendar interaction model", () => {
       },
       permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true },
     };
-    const filters = { layers: ["checklist"] as ["checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false };
+    const filters = { layers: ["checklist"] as ["checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, shootRange: null, deadlineRange: null, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false };
     const snapshot = beginCalendarInteraction({ event: range, filters, principalId: "principal", authorizationEpoch: 1, focus: { eventId: range.id, control: "event" }, capturedNow: 1 });
 
     range.schedule.start!.localCivil = "2000-01-01";

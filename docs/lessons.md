@@ -4765,6 +4765,36 @@ remove the legacy readers) still applies.
   statement, so `migration-0052.test.ts` applies the file inside one `BEGIN`/`COMMIT` (as D1 does) to prove a
   failing ALTER undoes the UPDATE.
 
+## #429 People, dates, Overdue and My tasks in the shared Filter
+
+- **`mine=1` changed meaning.** It is "People = me" in every view: Table/Board = I am an Editor or assigned an OPEN
+  Subtask; Calendar/Timeline Deadline items = I am an Editor, Subtask items = assigned to me. It used to mean Subtasks
+  only on the Calendar, so a pre-#429 `mine=1` link now also keeps Deadlines of Projects the viewer edits. The session
+  user is always the server's, never a client-supplied id.
+- **Unassigned alone used to narrow nothing on the Calendar.** The old `selected.requested = 0 OR selected.valid = 0`
+  gate read "no valid person" as "no filter", so `unassigned=1` with no editors returned everything. The gate is now
+  "a person filter is active when a valid person is picked OR Unassigned is on". Do not reintroduce a
+  "no valid ids -> pass through" shortcut.
+- **One People source.** `dashboardPeopleCte` (`lib/production-scope-sql.ts`) feeds `GET /api/dashboard/people` and the
+  id validation of every endpoint, so a chosen person can never drop out of the options. It includes inactive users
+  (labelled) and, for an External Editor, team-member assignees only. An unknown id is dropped; all-unknown with no
+  Unassigned means People is not applied.
+- **A Project row can be on the Timeline only as context.** Under People / My tasks a Project is listed when its
+  Deadline matches OR it has a visible matching child; the second case sets the request-gated `dm=1` mark so the
+  adapter does not draw an unmatched Deadline bar. The child-page cursor carries a fingerprint of the People / My
+  tasks filter, so a continuation that repeats a different one is a 400.
+- **The vendored `Filters` cannot preselect an operator.** `defaultOperator` is only a fallback, so a valueless field
+  (My tasks, Deadline "is overdue") is field -> operator -> committed, two clicks, not one.
+- **An always-mounted live region.** The Filter chips' status ("0 filters applied") is always mounted, so a test
+  that asserts "no announcement" with `querySelector('[aria-live]')` now sees it; exclude
+  `[data-testid="dashboard-filter-chips"]`.
+- **Fetch harnesses that hand the first reply to the first request.** The People options request is issued after the
+  Projects one on purpose (`useDashboardPeople` follows `useDashboardProjects`/`useDashboardProjectSearch` in
+  `Dashboard.tsx`); a `mockResolvedValueOnce` list reply must still reach `/api/projects`. People options refetch only
+  on a team or assignee commit (`invalidateProjectSurfaces({ people: true })`), not on every priority or stage edit.
+- **The URL is the source of truth for People on the Calendar.** `Dashboard` spreads the route's shared filter over the
+  Calendar state, so a test that passes `calendar={...editorIds}` with a bare location silently loses the Editor.
+
 ## #431 Dashboard Table on the ReUI data-grid
 
 - **`manualPagination: true` is mandatory.** The vendored grid's default page size is ten; without it the Table

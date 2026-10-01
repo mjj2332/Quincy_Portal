@@ -36,12 +36,13 @@ const surface = "event-calendar-body";
 const editorId = "22222222-2222-4222-8222-222222222222";
 const routeCalendar: DashboardCalendarState = {
   view: "calendar", date: "2026-08-12", subview: "month", layers: ["project", "checklist"], editorIds: [editorId], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const,
+  shootRange: null, deadlineRange: null,
   showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false,
 };
 
 function calendarResponse() {
   return adminProductionCalendarRangeResponseSchema.parse({
-    range: { start: "2026-07-27", end: "2026-09-07", date: routeCalendar.date, subview: "month", zone: PRODUCTION_CALENDAR_ZONE, appliedFilters: { layers: ["project", "checklist"], editorIds: routeCalendar.editorIds, includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false } },
+    range: { start: "2026-07-27", end: "2026-09-07", date: routeCalendar.date, subview: "month", zone: PRODUCTION_CALENDAR_ZONE, appliedFilters: { layers: ["project", "checklist"], editorIds: routeCalendar.editorIds, includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, shootRange: null, deadlineRange: null, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false } },
     events: [], filterFacets: { projects: [], people: [], myTasksUserId: "00000000-0000-4000-8000-000000000000" },
   });
 }

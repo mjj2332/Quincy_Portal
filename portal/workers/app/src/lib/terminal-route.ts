@@ -203,6 +203,7 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "GET", path: "/api/projects/:projectId/subtask-assignee-options", class: "scoped" },
   { method: "POST", path: "/api/projects/:projectId/subtasks", class: "scoped" },
   { method: "GET", path: "/api/projects", class: "scoped" },
+  { method: "GET", path: "/api/dashboard/people", class: "scoped" },
   { method: "GET", path: "/api/production-calendar", class: "scoped", externalSurface: "calendar" },
   { method: "GET", path: "/api/production-calendar/", class: "scoped", externalSurface: "calendar" },
   { method: "GET", path: "/api/production-gantt", class: "scoped", externalSurface: "gantt" },
@@ -252,7 +253,7 @@ function securityClassForSeed(route: LegacySecurityRouteRegistrationSeed): Secur
   if (route.path === "/api/auth/*" || route.path === "/api/auth/sign-in/social") return "auth-protocol";
   if (CONSTANT_CAPABILITY_DENIAL_KEYS.has(key)) return "constant-capability-denial";
   if (route.class === "scoped") {
-    return route.path === "/api/projects" || route.path === "/api/production-calendar" || route.path === "/api/production-calendar/" || route.path === "/api/production-gantt" || route.path === "/api/production-gantt/" || route.path === "/api/projects/:id" && (route.method === "GET" || route.method === "PATCH")
+    return route.path === "/api/projects" || route.path === "/api/dashboard/people" || route.path === "/api/production-calendar" || route.path === "/api/production-calendar/" || route.path === "/api/production-gantt" || route.path === "/api/production-gantt/" || route.path === "/api/projects/:id" && (route.method === "GET" || route.method === "PATCH")
       ? "scoped-project"
       : "scoped-child-resource";
   }

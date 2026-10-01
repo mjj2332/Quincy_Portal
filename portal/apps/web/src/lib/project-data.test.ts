@@ -240,6 +240,18 @@ describe("project data key and request seam", () => {
     stopBare(); stopSearched(); runtime.dispose(); queryClient.clear();
   });
 
+  it("#429: the cross-tab dashboard message carries the people flag only when the op can change People", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const runtime = new ProjectQueryRuntime(queryClient, "people-flag");
+    const publish = vi.spyOn(runtime, "publish");
+    await invalidateProjectSurfaces(queryClient, { projectId: "p", resources: [], dashboard: true, calendar: false, gantt: false, people: true });
+    expect(publish.mock.calls.find(([message]) => message.type === "dashboard-board-invalidated")?.[0]).toMatchObject({ people: true });
+    publish.mockClear();
+    await invalidateProjectSurfaces(queryClient, { projectId: "p", resources: [], dashboard: true, calendar: false, gantt: false });
+    expect(publish.mock.calls.find(([message]) => message.type === "dashboard-board-invalidated")?.[0]).not.toHaveProperty("people");
+    runtime.dispose(); queryClient.clear();
+  });
+
   it("suppresses only the producer surface's in-tab invalidation while still broadcasting it", async () => {
     const queryClient = client();
     const runtime = new ProjectQueryRuntime(queryClient, "producer-coordinator");

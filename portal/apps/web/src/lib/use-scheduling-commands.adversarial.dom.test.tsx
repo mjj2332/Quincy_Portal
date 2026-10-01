@@ -14,7 +14,7 @@ vi.mock("./confirm", () => ({ confirm: vi.fn(() => Promise.resolve(true)), confi
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const identity: DashboardIdentity = { principalId: projectId, role: "admin", authorizationEpoch: 0 };
-const calendar: DashboardCalendarState = { view: "calendar", date: "2026-08-12", subview: "month", layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false };
+const calendar: DashboardCalendarState = { view: "calendar", date: "2026-08-12", subview: "month", layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, shootRange: null, deadlineRange: null, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false };
 const project = { id: projectId, street: "1 Example Street", stageKey: "editing" as const, checklist: { completed: 0, total: 1 }, delivered: false, archived: false };
 
 function deadlineEvent(): ProjectDeadlineCalendarEventDto {

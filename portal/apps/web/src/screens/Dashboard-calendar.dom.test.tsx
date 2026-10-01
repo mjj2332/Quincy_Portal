@@ -37,12 +37,13 @@ const projectId = "11111111-1111-4111-8111-111111111111";
 const editorId = "22222222-2222-4222-8222-222222222222";
 const routeCalendar: DashboardCalendarState = {
   view: "calendar", date: "2026-08-12", subview: "month", layers: ["project", "checklist"], editorIds: [editorId], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const,
+  shootRange: null, deadlineRange: null,
   showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false,
 };
 
 function calendarResponse(appliedEditors = routeCalendar.editorIds, appliedSearch = "", overrides: Partial<ProductionCalendarFilters> = {}, date = routeCalendar.date) {
   return adminProductionCalendarRangeResponseSchema.parse({
-    range: { start: "2026-07-27", end: "2026-09-07", date, subview: "month", zone: PRODUCTION_CALENDAR_ZONE, appliedFilters: { layers: ["project", "checklist"], editorIds: appliedEditors, includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: appliedSearch, myTasks: false, ...overrides } },
+    range: { start: "2026-07-27", end: "2026-09-07", date, subview: "month", zone: PRODUCTION_CALENDAR_ZONE, appliedFilters: { layers: ["project", "checklist"], editorIds: appliedEditors, includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, shootRange: null, deadlineRange: null, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: appliedSearch, myTasks: false, ...overrides } },
     events: [{ id: "project-deadline:one", kind: "project_deadline", title: "Deadline", project: { id: projectId, street: "1 Calendar Street", stageKey: "editing_autohdr", checklist: { completed: 0, total: 0 }, delivered: false, archived: false }, timing: { allDay: true, start: "2026-08-12", end: null }, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, permissions: { canDrag: true, canResize: false }, deadlineLocalCivil: "2026-08-12T09:00", deadlineVersion: 1, reminderOffsetsMinutes: [] }], filterFacets: { projects: [], people: [], myTasksUserId: projectId },
   });
 }
@@ -134,24 +135,24 @@ describe("Dashboard Calendar routing", () => {
   }
 
   /**
-   * Adds the Unassigned chip through the People combobox, as a user would. This harness has no
-   * `matchMedia`, so the Calendar draws its narrow layout: the rail (and its combobox) opens in a
-   * sheet from the Filters toggle once the lazy Calendar and its first range have settled.
+   * Adds the Unassigned value through the Dashboard's shared Filter (#429: People moved out of the Calendar
+   * rail): the trigger in the view bar, the People field, "is any of", then the Unassigned option.
    */
   async function pickUnassigned() {
-    for (let tick = 0; tick < 20 && !host.querySelector('[data-testid="event-calendar-rail-toggle"]'); tick += 1) {
-      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
-    }
-    const toggle = host.querySelector<HTMLButtonElement>('[data-testid="event-calendar-rail-toggle"]');
-    expect(toggle, "no Filters toggle rendered").not.toBeNull();
-    await act(async () => { toggle!.click(); await new Promise((resolve) => setTimeout(resolve, 20)); });
-    const input = document.querySelector<HTMLInputElement>('[aria-label="Filter people"]');
-    expect(input, "no People combobox rendered").not.toBeNull();
-    await act(async () => { input!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); input!.focus(); await Promise.resolve(); });
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
-    const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((candidate) => candidate.textContent?.includes("Unassigned"));
-    expect(option, "no Unassigned option in the People combobox").toBeDefined();
-    await act(async () => { option!.click(); await Promise.resolve(); });
+    const click = (element: Element) => act(async () => { (element as HTMLElement).click(); await new Promise((resolve) => setTimeout(resolve, 20)); });
+    const options = () => [...document.querySelectorAll<HTMLElement>('[role="option"]')];
+    const option = (name: string) => {
+      const match = options().find((candidate) => candidate.textContent?.trim() === name);
+      if (!match) throw new Error(`no option "${name}"`);
+      return match;
+    };
+    const filterTrigger = host.querySelector<HTMLButtonElement>('[data-testid="dashboard-filter-trigger"]');
+    expect(filterTrigger, "no Filter trigger rendered").not.toBeNull();
+    await click(filterTrigger!);
+    await click(option("People"));
+    await click(option("is any of"));
+    await click(option("Unassigned"));
+    await act(async () => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await new Promise((resolve) => setTimeout(resolve, 60)); });
   }
 
   async function typeSearch(value: string) {
@@ -497,10 +498,14 @@ describe("Dashboard Calendar routing", () => {
 
   it("silently replaces a URL after the server drops an inaccessible Editor", async () => {
     apiGetMock.mockImplementation((path) => path.startsWith("/api/production-calendar") ? Promise.resolve(calendarResponse([])) : Promise.resolve(projectResponse()));
+    // The URL names the Editor (#429: the shared Filter reads People from the URL, so the location is the source of truth).
+    window.history.replaceState(null, "", `/?view=calendar&date=2026-08-12&sub=month&layers=project%2Cchecklist&editors=${editorId}`);
     await render({ calendar: routeCalendar });
     expect(window.location.search).not.toContain(editorId);
     expect(window.location.search).toContain("view=calendar");
-    expect(host.querySelector('[aria-live]')?.textContent ?? "").toBe("");
+    // No announcement: the only live region with text is the Filter chips' own count (always mounted, #428).
+    const announcements = [...host.querySelectorAll('[aria-live]')].filter((region) => !region.closest('[data-testid="dashboard-filter-chips"]')).map((region) => region.textContent ?? "");
+    expect(announcements.join("")).toBe("");
   });
 
   const tabByName = (name: string) => [...host.querySelectorAll<HTMLElement>('[role="tab"]')].find((tab) => tab.textContent === name)!;

@@ -16,7 +16,6 @@
  */
 import {
   canonicalDashboardPriorities,
-  CANONICAL_LOWERCASE_UUID_REGEX,
   isDefaultGanttFacet,
   STAGE_PRESENTATION_KEYS,
   type DashboardGanttFacet,
@@ -37,12 +36,14 @@ export type StageFilterOption = { key: StagePresentationKey; label: string };
 /** `pattern` (#257): the stage's secondary cue beside its colour — `"hatch"` for Edited review, else `null`. */
 export type GanttLegendEntry = StageFilterOption & { color: string; pattern: StagePattern | null };
 
-export const DEFAULT_GANTT_FACET_FILTERS: ProductionGanttFacetFilters = { editorIds: [], stageKeys: [], priorities: [], archived: "hide", delivered: false, completed: false };
+export const DEFAULT_GANTT_FACET_FILTERS: ProductionGanttFacetFilters = { editorIds: [], stageKeys: [], priorities: [], archived: "hide", delivered: false, completed: false, includeUnassigned: false, myTasks: false, overdueOnly: false, shootRange: null, deadlineRange: null };
 
-/** #428: the three facets of the shared Dashboard Filter (Stage, Project priority, Archived). The
- * Gantt bar does not own them — the Dashboard's Filter does — but a write from the bar carries them
- * through, so an Editor or Show edit never drops them from the URL. */
-export type GanttCarriedFilters = Pick<ProductionGanttFacetFilters, "stageKeys" | "priorities" | "archived">;
+/** #428/#429: every facet of the shared Dashboard Filter (Stage, Priority, Archived, People, Unassigned,
+ * Shoot date, Deadline, Overdue, My tasks). The Gantt bar owns none of them — the Dashboard's Filter does —
+ * but a write from the bar (Show) carries them through, so it never drops them from the URL. */
+export type GanttCarriedFilters = Pick<ProductionGanttFacetFilters, "stageKeys" | "priorities" | "archived" | "editorIds" | "includeUnassigned" | "myTasks" | "overdueOnly" | "shootRange" | "deadlineRange">;
+
+const NO_CARRIED: GanttCarriedFilters = { stageKeys: [], priorities: [], archived: "hide", editorIds: [], includeUnassigned: false, myTasks: false, overdueOnly: false, shootRange: null, deadlineRange: null };
 
 /** URL -> the Gantt facets. A route with no `gantt` facet (the bare `/?view=timeline`, or no Gantt
  * route at all) reads as the defaults. The route's `search` is not read here: the Dashboard's
@@ -51,6 +52,11 @@ export function ganttFiltersFromRoute(route: Pick<DashboardTimelineRoute, "gantt
   const facet = route?.gantt;
   return {
     editorIds: facet ? [...facet.editorIds] : [],
+    includeUnassigned: facet?.includeUnassigned ?? false,
+    myTasks: facet?.myTasks ?? false,
+    overdueOnly: facet?.overdueOnly ?? false,
+    shootRange: facet?.shootRange ? { ...facet.shootRange } : null,
+    deadlineRange: facet?.deadlineRange ? { ...facet.deadlineRange } : null,
     stageKeys: facet ? [...facet.stageKeys] : [],
     priorities: facet ? [...facet.priorities] : [],
     archived: facet?.archived ?? "hide",
@@ -70,6 +76,11 @@ export function ganttFacetFor(filters: ProductionGanttFacetFilters): DashboardGa
     delivered: filters.delivered,
     completed: filters.completed,
     editorIds: [...new Set(filters.editorIds)].sort(),
+    includeUnassigned: filters.includeUnassigned,
+    shootRange: filters.shootRange,
+    deadlineRange: filters.deadlineRange,
+    overdueOnly: filters.deadlineRange ? false : filters.overdueOnly,
+    myTasks: filters.myTasks,
   };
   return isDefaultGanttFacet(facet) ? undefined : facet;
 }
@@ -84,23 +95,19 @@ export function ganttRouteFor(filters: ProductionGanttFacetFilters, search?: str
 // #255: the Gantt filters bar (`ProductionGanttFiltersBar`, ReUI `Filters`) <-> the facet
 // ---------------------------------------------------------------------------
 
-/** The two bar fields (Stage moved to the Dashboard's shared Filter in #428). Their ids are the rule `path` segments the mapping reads. */
-export const GANTT_FILTER_FIELD = { show: "show", editor: "editor" } as const;
+/** The bar's one field (Stage moved to the Dashboard's shared Filter in #428, Editor in #429). Its id is the rule `path` segment the mapping reads. */
+export const GANTT_FILTER_FIELD = { show: "show" } as const;
 
 /** Stable rule ids, so a URL re-seed hands the bar the same chip identities it already had. */
-export const GANTT_FILTER_RULE_ID = { show: "gantt-show", editor: "gantt-editor" } as const;
+export const GANTT_FILTER_RULE_ID = { show: "gantt-show" } as const;
 
 /** The query root's id, stable for the same reason. */
 export const GANTT_FILTER_ROOT_ID = "gantt-filters";
 
 const SHOW_OPERATOR = "includes";
-const EDITOR_OPERATOR = "is_any_of";
 
 /** Show: one operator, no negation. One chip replaces the old panel's two checkboxes. */
 export const GANTT_SHOW_OPERATORS: FilterOperator[] = [{ value: SHOW_OPERATOR, label: "includes", arity: "many" }];
-
-/** Editor (#274): one operator, no negation, the Calendar's own. */
-export const GANTT_EDITOR_OPERATORS: FilterOperator[] = [{ value: EDITOR_OPERATOR, label: "is any of", arity: "many" }];
 
 /** Show's options, in display order. */
 export const GANTT_SHOW_OPTIONS = [
@@ -125,9 +132,6 @@ export function ganttFacetToQuery(facet: ProductionGanttFacetFilters): GanttFilt
   if (show.length > 0) {
     rules.push({ id: GANTT_FILTER_RULE_ID.show, type: "rule", path: [GANTT_FILTER_FIELD.show], operator: SHOW_OPERATOR, value: show });
   }
-  if (canonical.editorIds.length > 0) {
-    rules.push({ id: GANTT_FILTER_RULE_ID.editor, type: "rule", path: [GANTT_FILTER_FIELD.editor], operator: EDITOR_OPERATOR, value: [...canonical.editorIds] });
-  }
   return { id: GANTT_FILTER_ROOT_ID, type: "group", combinator: "and", rules };
 }
 
@@ -141,37 +145,30 @@ export function ganttFacetToQuery(facet: ProductionGanttFacetFilters): GanttFilt
  * lowercase UUID), never against the known people: a stale id must stay readable, or the bar would
  * veto every later edit. Canonicalised through `ganttFacetFor` / `ganttFiltersFromRoute`.
  */
-export function queryToGanttFacet(query: FilterQuery<unknown>, carried: GanttCarriedFilters = { stageKeys: [], priorities: [], archived: "hide" }): ProductionGanttFacetFilters | null {
+export function queryToGanttFacet(query: FilterQuery<unknown>, carried: GanttCarriedFilters = NO_CARRIED): ProductionGanttFacetFilters | null {
   if (query.type !== "group" || query.combinator !== "and") return null;
   const seen = new Set<string>();
-  let editorIds: string[] = [];
   const show = new Set<string>();
   for (const node of query.rules) {
     if (node.type !== "rule") return null;
     if (node.negated) return null;
     const [field, ...rest] = node.path;
     if (field === undefined || rest.length > 0) return null;
-    if (field !== GANTT_FILTER_FIELD.show && field !== GANTT_FILTER_FIELD.editor) return null;
+    if (field !== GANTT_FILTER_FIELD.show) return null;
     if (seen.has(field)) return null;
     seen.add(field);
     const unfinished = node.operator === "";
-    const expectedOperator = field === GANTT_FILTER_FIELD.editor ? EDITOR_OPERATOR : SHOW_OPERATOR;
-    if (!unfinished && node.operator !== expectedOperator) return null;
+    if (!unfinished && node.operator !== SHOW_OPERATOR) return null;
     if (node.value === undefined) continue;
     // A value is checked even on an unfinished rule: one it retained must still be readable.
     if (!Array.isArray(node.value)) return null;
-    const allowed = (value: unknown) => typeof value === "string" && (field === GANTT_FILTER_FIELD.editor ? CANONICAL_LOWERCASE_UUID_REGEX.test(value) : SHOW_VALUES.has(value));
-    for (const value of node.value) if (!allowed(value)) return null;
+    for (const value of node.value) if (typeof value !== "string" || !SHOW_VALUES.has(value)) return null;
     if (unfinished) continue;
-    if (field === GANTT_FILTER_FIELD.editor) editorIds = node.value as string[];
-    else for (const value of node.value as string[]) show.add(value);
+    for (const value of node.value as string[]) show.add(value);
   }
   const facet = ganttFacetFor({
-    editorIds,
-    // Stage, Priority and Archived belong to the shared Filter: carried, never edited here.
-    stageKeys: carried.stageKeys,
-    priorities: carried.priorities,
-    archived: carried.archived,
+    // Everything but Show belongs to the shared Filter: carried, never edited here.
+    ...carried,
     delivered: show.has("delivered"),
     completed: show.has("completed"),
   });
