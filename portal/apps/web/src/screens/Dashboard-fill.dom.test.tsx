@@ -112,8 +112,8 @@ describe("Dashboard fills the viewport (#363)", () => {
     await render();
     expect(region().contains(host.querySelector('[data-testid="dashboard-board"]'))).toBe(true);
     await clickView("Table");
-    expect(host.querySelector('[aria-label="Projects list"]')).not.toBeNull();
-    expect(region().contains(host.querySelector('[aria-label="Projects list"]'))).toBe(true);
+    expect(host.querySelector('[aria-label="Projects table"]')).not.toBeNull();
+    expect(region().contains(host.querySelector('[aria-label="Projects table"]'))).toBe(true);
     await clickView("Timeline");
     expect(region().contains(host.querySelector('[data-testid="gantt-stub"]'))).toBe(true);
     await clickView("Calendar");
@@ -129,18 +129,20 @@ describe("Dashboard fills the viewport (#363)", () => {
     for (const token of ["flex-1", "min-h-0"]) expect(classesOf(skeleton)).toContain(token);
   });
 
-  it("List keeps its header outside a scrolling body", async () => {
+  it("the Table fills the region, with its header and rows inside one scroll viewport (#431)", async () => {
     await render();
     await clickView("Table");
-    const list = host.querySelector<HTMLElement>('[aria-label="Projects list"]')!;
-    for (const token of ["flex", "flex-col", "flex-1", "min-h-0"]) expect(classesOf(list)).toContain(token);
-    const header = list.querySelector('[data-testid="project-list-header"]');
-    const viewport = list.querySelector('[data-slot="scroll-area-viewport"]');
-    expect(header).not.toBeNull();
+    const table = host.querySelector<HTMLElement>('[aria-label="Projects table"]')!;
+    for (const token of ["flex", "flex-col", "flex-1", "min-h-0"]) expect(classesOf(table)).toContain(token);
+    const viewport = table.querySelector('[data-slot="scroll-area-viewport"]');
     expect(viewport).not.toBeNull();
-    const rows = [...list.querySelectorAll('[data-testid="project-list-row"]')];
+    const rows = [...table.querySelectorAll('[data-testid="project-table-row-link"]')];
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) expect(viewport!.contains(row)).toBe(true);
-    expect(viewport!.contains(header)).toBe(false);
+    // The header is sticky INSIDE the viewport, so it scrolls horizontally with the columns.
+    const header = table.querySelector("thead");
+    expect(header).not.toBeNull();
+    expect(viewport!.contains(header)).toBe(true);
+    expect(region().contains(table)).toBe(true);
   });
 });

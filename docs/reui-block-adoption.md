@@ -218,3 +218,22 @@ What was new:
   only styling for pieces the new Calendar and the Gantt also rendered.
 - **Replace a surface-named guard with one pinned to what the new surface relies on** before
   deleting it, never in a later slice.
+
+## Addendum: the Dashboard Table (`@reui/data-grid`, #431)
+
+- **Vendored:** five files under `components/reui/data-grid/` (`data-grid`, `data-grid-table`,
+  `data-grid-column-header`, `data-grid-scroll-area`, `data-grid-i18n`), installed through the ReUI sandbox and
+  copied in, plus the `@tanstack/react-table` dependency. The install added about 4.8k lines, most of it
+  `data-grid-table.tsx` (2.6k); the Table uses a fraction of it, which is why the cost shows in the bundle below.
+- **Composition stayed Quincy-owned:** `components/DashboardTable.tsx` and `lib/dashboard-table-model.ts` (column
+  ids, comparators, grouping, prefs normaliser). Surface is `reui/frame` (ADR 0014), grouping follows the registry's
+  grouping-6 shape with `reui/collapsible` headers, and Display carries Group by and Columns as dropdown-menu radio
+  and checkbox items.
+- **Traps:** `manualPagination` (ten rows otherwise); cell components must not close over volatile props (see
+  `lessons.md`, #431); the registry skin needed Quincy-token strips and a few type fixes after install, caught by
+  `reui-skin` and `design-system-guards`.
+- **Bundle:** main `index` chunk 914.06 kB -> 1,064.19 kB (gzip 269.00 -> 309.65 kB), +150 kB raw / +41 kB gzip,
+  measured with `npm run build -w @quincy/web` against the parent of this branch's first commit. A follow-up should
+  consider lazy-loading the Table chunk.
+- **Estimating:** a vendored data-grid is cheap to install and expensive to ship; budget the chunk size, not the
+  file count.

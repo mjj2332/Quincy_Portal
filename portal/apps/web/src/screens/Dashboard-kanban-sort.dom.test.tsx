@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard } from "./Dashboard";
-import { checkedSortLabel, chooseSort, closeDisplay, displayMenu, displayTrigger, openDisplay, sortRadioLabels, sortRadios } from "./dashboard-display-test-helpers";
+import { checkedSortLabel, chooseSort, closeDisplay, displayMenu, displayTrigger, groupByRadios, openDisplay, sortRadioLabels, sortRadios } from "./dashboard-display-test-helpers";
 
 // happy-dom lacks `Element.getAnimations()`, which Base UI's ScrollArea (the Board's horizontal
 // scroll, `kanban2/board.tsx`) calls on a timer after mount. The no-op stub means "no active
@@ -143,8 +143,10 @@ describe("Dashboard Kanban sort control", () => {
     expect(card.getAttribute("target")).toBeNull();
 
     await act(async () => { (document.querySelector('[aria-label="Dashboard view"] [role="tab"]') as HTMLButtonElement).click(); await Promise.resolve(); });
-    expect(document.querySelector('[data-testid="project-list-row"]')?.getAttribute("href")).toBe("/projects/project-1");
-    expect(document.querySelector('[data-testid="project-list-row-raw"]')?.textContent).toBe("12");
+    expect(document.querySelector('[data-testid="project-table-row-link"]')?.getAttribute("href")).toBe("/projects/project-1");
+    // The Table shows received/expected (#431), where the List it replaced showed received alone.
+    expect(document.querySelector('[data-testid="project-table-raw"]')?.textContent).toBe("12/40");
+    expect(document.querySelector('[data-testid="project-table-raw"] + span')?.textContent).toBe("12 of 40 RAW files received");
   });
 
   it("renders the current overdue label on the Board card", async () => {
@@ -251,16 +253,22 @@ describe("Dashboard Kanban sort control", () => {
       // Full popup-within-viewport geometry needs a real layout engine: the Agy real-browser pass.
     });
 
-    it("11. Display stays rendered on every view (the search never moves) but only the Board enables it", async () => {
+    it("11. Display stays rendered on every view (the search never moves); Board and Table enable it, each with its own content", async () => {
       await renderBoard();
       expect(displayTrigger()).not.toBeNull();
       expect(displayTrigger()!.disabled).toBe(false);
+      await openDisplay();
+      expect(sortRadioLabels().length).toBeGreaterThan(0);
+      await closeDisplay();
       const tabs = [...document.querySelectorAll<HTMLElement>('[aria-label="Dashboard view"] [role="tab"]')];
       await act(async () => { tabs.find((tab) => tab.textContent === "Table")!.click(); await Promise.resolve(); await Promise.resolve(); });
       expect(displayTrigger()).not.toBeNull();
-      expect(displayTrigger()!.disabled).toBe(true);
-      const reason = document.getElementById(displayTrigger()!.getAttribute("aria-describedby") ?? "");
-      expect(reason?.textContent).toContain("arrive with #431");
+      expect(displayTrigger()!.disabled).toBe(false);
+      await openDisplay();
+      expect(sortRadios()).toHaveLength(0);
+      expect(groupByRadios().map((radio) => radio.textContent)).toEqual(["None", "Stage", "Client"]);
+      await closeDisplay();
+      // The disabled-with-a-reason state (Calendar, Timeline) is pinned in DashboardDisplay.dom.test.tsx.
     });
 
     it("12. the radio items are exactly the sort modes the Board understands", async () => {

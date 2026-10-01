@@ -386,7 +386,7 @@ describe("Dashboard never accepts placeholder rows as the new committed query's 
     window.history.replaceState(null, "", "/?view=table");
     await act(async () => { root.render(<ShellRouteHarness userId="user-1" role="admin" />); await Promise.resolve(); });
     await settle();
-    expect([...host.querySelectorAll('[data-testid="project-list-row"]')]).toHaveLength(2);
+    expect([...host.querySelectorAll('[data-testid="project-table-row-link"]')]).toHaveLength(2);
 
     let rejectSmith!: (reason: unknown) => void;
     apiGetMock.mockReset().mockImplementation((path: string) => {
@@ -403,7 +403,7 @@ describe("Dashboard never accepts placeholder rows as the new committed query's 
     // Still pending: no error/empty state, and the PREVIOUS rows are still what's rendered -- the
     // fallback to `queryProjects` (placeholder data), not an accepted stamp.
     expect(host.querySelector('[role="alert"]')).toBeNull();
-    expect([...host.querySelectorAll('[data-testid="project-list-row"]')]).toHaveLength(2);
+    expect([...host.querySelectorAll('[data-testid="project-table-row-link"]')]).toHaveLength(2);
 
     // A 400 `ApiError`, not a bare `Error` -- `projectQueryRetry` (`lib/project-data.ts`) retries any
     // non-`ApiError`/non-4xx failure (including a bare `Error`, and 5xx/408/429) up to twice with a
@@ -427,7 +427,7 @@ describe("Dashboard never accepts placeholder rows as the new committed query's 
     // Rejected: the error state shows -- the previous (Alpha/Beta) rows must NOT still be presented
     // as though they were smith's own result.
     expect(host.querySelector('[role="alert"]')).not.toBeNull();
-    expect(host.querySelectorAll('[data-testid="project-list-row"]')).toHaveLength(0);
+    expect(host.querySelectorAll('[data-testid="project-table-row-link"]')).toHaveLength(0);
   });
 
   it("(j) a committed search whose fetch is DEFERRED then RESOLVED replaces the previous rows with the new ones and accepts them", async () => {
@@ -445,7 +445,7 @@ describe("Dashboard never accepts placeholder rows as the new committed query's 
       await Promise.resolve();
     });
     await settle();
-    expect([...host.querySelectorAll('[data-testid="project-list-row"]')]).toHaveLength(2);
+    expect([...host.querySelectorAll('[data-testid="project-table-row-link"]')]).toHaveLength(2);
 
     let resolveSmith!: (value: unknown) => void;
     let smithCalls = 0;
@@ -465,12 +465,12 @@ describe("Dashboard never accepts placeholder rows as the new committed query's 
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
     await settle();
-    expect([...host.querySelectorAll('[data-testid="project-list-row"]')]).toHaveLength(2);
+    expect([...host.querySelectorAll('[data-testid="project-table-row-link"]')]).toHaveLength(2);
 
     await act(async () => { resolveSmith(smithBoard); await settle(); });
 
     expect(host.querySelector('[role="alert"]')).toBeNull();
-    const rows = [...host.querySelectorAll('[data-testid="project-list-row"]')];
+    const rows = [...host.querySelectorAll('[data-testid="project-table-row-link"]')];
     expect(rows).toHaveLength(1);
     expect(rows[0]?.textContent).toContain("Beta Street");
 
@@ -501,11 +501,11 @@ describe("Dashboard never accepts placeholder rows as the new committed query's 
     // (buggy: B's accepted snapshot did not survive) or a row actually rendering (fixed) -- before
     // asserting on which one it is.
     await vi.waitFor(() => {
-      expect(host.querySelector('[role="alert"]') ?? host.querySelector('[data-testid="project-list-row"]')).not.toBeNull();
+      expect(host.querySelector('[role="alert"]') ?? host.querySelector('[data-testid="project-table-row-link"]')).not.toBeNull();
     });
 
     expect(host.querySelector('[role="alert"]')).toBeNull();
-    const rowsAfterEviction = [...host.querySelectorAll('[data-testid="project-list-row"]')];
+    const rowsAfterEviction = [...host.querySelectorAll('[data-testid="project-table-row-link"]')];
     expect(rowsAfterEviction).toHaveLength(1);
     expect(rowsAfterEviction[0]?.textContent).toContain("Beta Street");
   });

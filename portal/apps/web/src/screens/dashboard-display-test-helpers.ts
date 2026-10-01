@@ -15,9 +15,37 @@ export function displayMenu(): HTMLElement | null {
   return document.querySelector<HTMLElement>('[role="menu"]');
 }
 
+/** The open menu's group labelled `label` ("Sort", "Group by", "Columns"), or null. Menus hold several groups since #431. */
+export function displayGroup(label: string): HTMLElement | null {
+  const groups = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="group"]')];
+  return groups.find((group) => {
+    const labelledBy = group.getAttribute("aria-labelledby");
+    const heading = labelledBy ? document.getElementById(labelledBy) : null;
+    return heading?.textContent?.trim() === label;
+  }) ?? null;
+}
+
+/** The radio items of one group. */
+export function groupRadios(label: string): HTMLElement[] {
+  return [...(displayGroup(label)?.querySelectorAll<HTMLElement>('[role="menuitemradio"]') ?? [])];
+}
+
 /** The sort radio items currently rendered in the open menu. */
 export function sortRadios(): HTMLElement[] {
-  return [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menuitemradio"]')];
+  return groupRadios("Sort");
+}
+
+export function groupByRadios(): HTMLElement[] {
+  return groupRadios("Group by");
+}
+
+/** The Table menu's column checkbox items, in menu order. */
+export function columnCheckboxes(): HTMLElement[] {
+  return [...(displayGroup("Columns")?.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]') ?? [])];
+}
+
+export function columnCheckboxLabels(): (string | null)[] {
+  return columnCheckboxes().map((item) => item.textContent);
 }
 
 export function sortRadioLabels(): (string | null)[] {
@@ -44,6 +72,22 @@ export async function chooseSort(label: string, scope: ParentNode = document): P
   if (!radio) throw new Error(`Missing Display sort option ${label}`);
   await act(async () => { radio.click(); await Promise.resolve(); await Promise.resolve(); });
   await closeDisplay();
+}
+
+/** Opens the menu if needed and picks a Group by value. The menu stays open afterwards (a radio item does not close it). */
+export async function chooseGroupBy(label: string, scope: ParentNode = document): Promise<void> {
+  await openDisplay(scope);
+  const radio = groupByRadios().find((item) => item.textContent === label);
+  if (!radio) throw new Error(`Missing Display Group by option ${label}`);
+  await act(async () => { radio.click(); await Promise.resolve(); await Promise.resolve(); });
+}
+
+/** Toggles one column's checkbox item; the menu stays open, which is the point of a checkbox item. */
+export async function toggleColumn(label: string, scope: ParentNode = document): Promise<void> {
+  await openDisplay(scope);
+  const item = columnCheckboxes().find((candidate) => candidate.textContent === label);
+  if (!item) throw new Error(`Missing Display column option ${label}`);
+  await act(async () => { item.click(); await Promise.resolve(); await Promise.resolve(); });
 }
 
 export async function closeDisplay(): Promise<void> {

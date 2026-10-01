@@ -258,7 +258,7 @@ async function click(element: Element, init: MouseEventInit = {}) {
 
 /** The Dashboard's project opener for `view`, ready to activate. */
 async function openerFor(host: HTMLElement, view: string): Promise<Element> {
-  if (view === "table") return host.querySelector('[data-testid="project-list-row"]')!;
+  if (view === "table") return host.querySelector('[data-testid="project-table-row-link"]')!;
   if (view === "board") return host.querySelector('[data-testid="kanban2-card"]')!;
   if (view === "timeline") return host.querySelector('[data-testid="gantt-project-link"]')!;
   await act(async () => { eventCalendarFake.click("project-deadline:one"); await Promise.resolve(); });
@@ -307,7 +307,7 @@ async function typeDraft(text: string) {
   expect(postEnabled()).toBe(true);
 }
 async function openProject(host: HTMLElement, index: number) {
-  await click(host.querySelectorAll('[data-testid="project-list-row"]')[index]!);
+  await click(host.querySelectorAll('[data-testid="project-table-row-link"]')[index]!);
   await waitForComposer();
 }
 async function waitForComposer() {

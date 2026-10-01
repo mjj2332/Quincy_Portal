@@ -23,20 +23,23 @@ import type { ProjectSummary } from "../../lib/kanban-interaction";
  * leaving `InternalLink`'s click-to-navigate alone.
  */
 
-function CoverMedia({
+export function CoverMedia({
   project,
   retryToken,
   onFailedChange,
+  placeholderClassName,
 }: {
   project: ProjectSummary;
   retryToken?: number;
   onFailedChange?: (failed: boolean) => void;
+  /** Extra classes for the letter placeholder (the Table sizes it for a 48px box). */
+  placeholderClassName?: string;
 }) {
   if (project.coverAssetId) {
     return <LazyImage className="size-full object-cover" src={`/media/asset/${encodeURIComponent(project.coverAssetId)}/thumb`} alt={`Preview of ${project.street}`} retryToken={retryToken} onFailedChange={onFailedChange} />;
   }
   const content = project.street.trim().charAt(0).toUpperCase() || "Q";
-  return <div className="project-cover-placeholder size-full" aria-hidden="true">{content}</div>;
+  return <div className={`project-cover-placeholder size-full${placeholderClassName ? ` ${placeholderClassName}` : ""}`} aria-hidden="true">{content}</div>;
 }
 
 /**
