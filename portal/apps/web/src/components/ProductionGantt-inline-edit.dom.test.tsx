@@ -11,6 +11,7 @@
  * No `[data-slot="…"]` selectors (`test-seam.guard.test.ts` guard F): everything is located by
  * `data-testid`, role or accessible name.
  */
+import { pickPopupDay, popupButton, popupDraft } from "@/testing/date-time-popup";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -424,15 +425,13 @@ describe("ProductionGantt — People and Due columns (#365)", () => {
     await render();
     expect(deadlineTrigger()!.getAttribute("aria-label")).toBe(`Deadline for ${STREET}: Sun 20 Sep · 15:00`);
     await click(deadlineTrigger()!);
-    await waitFor(() => expect(dialog("Deadline")?.querySelector('input[aria-label="Deadline date"]')).not.toBeNull());
+    await waitFor(() => expect(dialog("Deadline") && popupButton(dialog("Deadline")!, "Apply")).toBeTruthy());
     expect(apiGetMock).toHaveBeenCalledWith(`/api/projects/${PROJECT_ID}`);
-    const dateInput = dialog("Deadline")!.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!;
-    expect(dateInput.value).toBe(isoDate(5));
-    await waitFor(() => expect(document.activeElement).toBe(dateInput)); // design review: focus lands on the Date input
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-    await act(async () => { setter.call(dateInput, isoDate(7)); dateInput.dispatchEvent(new Event("input", { bubbles: true })); await Promise.resolve(); });
-    const save = [...dialog("Deadline")!.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!;
-    await act(async () => { save.click(); await Promise.resolve(); });
+    expect(popupDraft(dialog("Deadline")!).day).toBe(isoDate(5));
+    // design review: focus lands inside the popup, on the selected day, the moment the detail has loaded
+    await waitFor(() => expect(document.activeElement?.closest('[aria-selected="true"]')).not.toBeNull());
+    await pickPopupDay(dialog("Deadline")!, isoDate(7));
+    await act(async () => { popupButton(dialog("Deadline")!, "Apply")!.click(); await Promise.resolve(); });
     await flush(3);
     expect(apiPutMock.mock.calls[0]![1]).toMatchObject({ expectedVersion: 1, deadline: { localCivil: `${isoDate(7)}T15:00` } });
     await waitFor(() => expect(dialog("Deadline")).toBeNull());

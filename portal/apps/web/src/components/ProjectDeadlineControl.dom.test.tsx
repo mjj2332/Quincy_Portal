@@ -6,6 +6,8 @@ import { ApiError } from "../lib/api";
 import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project-query-sync";
 import { projectDataKeys } from "../lib/project-data";
 import type { ProjectDeadlineSchedule } from "@quincy/shared";
+import { RING_IN } from "./AnchoredPopover";
+import { applyPopup, pickPopupDateTime, pickPopupDay, popupButton, popupDraft, pressInPopup, typePopupTime } from "@/testing/date-time-popup";
 
 const apiPutMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
 const confirmMock = vi.hoisted(() => vi.fn<(options: unknown) => Promise<boolean>>());
@@ -93,7 +95,7 @@ function mountedRuntime(): ProjectQueryRuntime { if (!runtime) throw new Error("
 
 async function flush() { await act(async () => { await Promise.resolve(); await Promise.resolve(); }); }
 
-const onSaved = vi.fn();
+const onClose = vi.fn();
 
 /** The advance-reminder toggle chip with this visible label (#213 follow-up: chips, not checkboxes). */
 function toggle(host: HTMLElement, label: string) {
@@ -108,13 +110,18 @@ async function mount(schedule: ProjectDeadlineSchedule, canEdit = true) {
   runtime = projectRuntime;
   root = createRoot(host);
   const { ProjectDeadlineControl } = await import("./ProjectDeadlineControl");
-  await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={projectRuntime}><QueryClientProvider client={client}><ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} onSaved={onSaved} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
+  await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={projectRuntime}><QueryClientProvider client={client}><ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} onClose={onClose} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
   return host;
 }
 
 async function rerenderSchedule(schedule: ProjectDeadlineSchedule, canEdit = true) {
   const { ProjectDeadlineControl } = await import("./ProjectDeadlineControl");
-  await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime!}><QueryClientProvider client={queryClient!}><ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} onSaved={onSaved} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
+  await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime!}><QueryClientProvider client={queryClient!}><ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} onClose={onClose} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
+}
+
+/** The input a visible label names (a custom-minutes field is labelled, not aria-labelled). */
+function labelled(host: HTMLElement, text: string) {
+  return [...host.querySelectorAll<HTMLInputElement>("input")].find((input) => input.labels?.[0]?.textContent === text)!;
 }
 
 async function setInput(input: HTMLInputElement, value: string) {
@@ -125,7 +132,7 @@ async function setInput(input: HTMLInputElement, value: string) {
 beforeEach(() => {
   apiPutMock.mockReset().mockResolvedValue({ changed: true, current: activeSchedule, eventIntent: null, publicationIds: [] });
   confirmMock.mockReset().mockResolvedValue(true);
-  onSaved.mockReset();
+  onClose.mockReset();
 });
 
 afterEach(async () => {
@@ -171,10 +178,29 @@ describe("ProjectDeadlineControl", () => {
     const host = await mount(emptySchedule);
     const controls = [...host.querySelectorAll<HTMLElement>("input, button")];
     expect(controls.length).toBeGreaterThan(0);
+    let shortcutRows = 0;
     for (const control of controls) {
-      expect(suppressesOutline(control.className)).toBe(false);
+      // #422: the popup's shortcut rows (reui `Item`) drop their own focus ring (`focus-visible:ring-0`)
+      // so it does not double the global outline. Dropping it is only legitimate when the precise
+      // replacement is there: RING_IN's inward outline (width, colour, offset) made drawable by
+      // `!outline-solid` (Item's `outline-none` would otherwise leave its style at none, and
+      // twMerge drops RING_IN's bare `!outline`). Neither is an exemption from the outline check.
+      if (/(?:^|\s)focus-visible:ring-0(?:\s|$)/.test(control.className)) {
+        shortcutRows += 1;
+        const tokens = new Set(control.className.split(/\s+/));
+        const replacement = [...RING_IN.split(/\s+/).filter((token) => token !== "focus-visible:!outline"), "focus-visible:!outline-solid"];
+        expect(replacement).toHaveLength(4);
+        for (const token of replacement) expect(tokens, `shortcut row lacks ${token}: ${control.className}`).toContain(token);
+        // Item's resting `outline-none` is what the replacement above overrides on focus-visible;
+        // nothing may suppress the outline ON focus-visible.
+        expect(suppressesOutline(control.className.split(/\s+/).filter((token) => token.startsWith("focus-visible:")).join(" "))).toBe(false);
+      } else {
+        expect(suppressesOutline(control.className)).toBe(false);
+      }
       expect((control.getAttribute("style") ?? "")).not.toMatch(/outline\s*:\s*(?:none|0)\b/i);
     }
+    // The date shortcuts (Later this week drops out late in the week; no "No date": nothing is stored).
+    expect(shortcutRows).toBeGreaterThanOrEqual(3);
   });
 
   it("the outline-suppression detector catches every entry in its bounded vocabulary — Tailwind's named outline-suppressing utilities plus a hand-picked, verified set of arbitrary-value/property spellings — never flags legitimate outline-* classes, and — by explicit, documented design — misses real suppressors outside that vocabulary", () => {
@@ -267,16 +293,15 @@ describe("ProjectDeadlineControl", () => {
     for (const className of realButOutOfScope) expect(suppressesOutline(className)).toBe(false);
   });
 
-  it("keeps the combined editor draft and sends the dedicated versioned route", async () => {
+  it("sends the dedicated versioned route with the whole draft, then closes", async () => {
     const host = await mount(emptySchedule);
     mountedQueryClient().setQueryData(projectDataKeys.detail(projectId), { id: projectId });
     const invalidate = vi.spyOn(mountedQueryClient(), "invalidateQueries");
     const publish = vi.spyOn(mountedRuntime(), "publish");
-    await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2027-01-15");
-    await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')!, "09:00");
+    await pickPopupDateTime(host, "2027-01-15T09:00");
     await act(async () => { toggle(host, "1 day").click(); await Promise.resolve(); });
-    const onSavedCalls = onSaved.mock.calls.length;
-    await act(async () => { host.querySelector<HTMLButtonElement>('button[type="submit"]')!.click(); await Promise.resolve(); });
+    expect(onClose).not.toHaveBeenCalled();
+    await applyPopup(host);
     await flush();
     expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${projectId}/deadline`, { expectedVersion: 0, deadline: { localCivil: "2027-01-15T09:00" }, reminderOffsetsMinutes: [1440] });
     expect(invalidate.mock.calls.filter(([options]) => JSON.stringify(options?.queryKey) === JSON.stringify(projectDataKeys.detail(projectId)))).toHaveLength(1);
@@ -284,69 +309,166 @@ describe("ProjectDeadlineControl", () => {
     expect(invalidate.mock.calls.some(([options]) => options?.queryKey?.[0] === "production-calendar")).toBe(false);
     expect(publish.mock.calls.map(([message]) => message.type)).toEqual(expect.arrayContaining(["project-data-invalidated", "dashboard-board-invalidated", "production-calendar-invalidated"]));
     expect(publish.mock.calls.find(([message]) => message.type === "project-data-invalidated")?.[0]).toMatchObject({ projectId, resources: [{ kind: "detail" }, { kind: "activity" }] });
-    // The draft is reseeded from the authoritative response and the popover is told to close.
-    expect(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')?.value).toBe("2027-01-15");
-    expect(host.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')?.value).toBe("09:00");
-    expect(onSaved.mock.calls.length).toBe(onSavedCalls + 1);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the exact draft and exposes reapply controls on a version conflict", async () => {
+  it("saves a reminder-only change against the stored time", async () => {
+    const host = await mount(activeSchedule);
+    await act(async () => { toggle(host, "4 hours").click(); await Promise.resolve(); });
+    await applyPopup(host);
+    await flush();
+    expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${projectId}/deadline`, { expectedVersion: 1, deadline: { localCivil: "2027-01-15T09:00" }, reminderOffsetsMinutes: [1440, 240] });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes without a request when Apply is pressed on an untouched draft, and on Cancel", async () => {
+    const host = await mount(activeSchedule);
+    await applyPopup(host);
+    expect(apiPutMock).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    await pressInPopup(host, "Cancel");
+    expect(onClose).toHaveBeenCalledTimes(2);
+    expect(apiPutMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps the exact draft and exposes reapply controls on a version conflict, without closing", async () => {
     apiPutMock.mockRejectedValueOnce(new ApiError("Project deadline changed; reload before saving.", 409, { current: { ...activeSchedule, version: 2 } }));
     const host = await mount(emptySchedule);
-    await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2027-01-15");
-    await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')!, "09:00");
-    await act(async () => { host.querySelector<HTMLButtonElement>('button[type="submit"]')!.click(); await Promise.resolve(); });
+    await pickPopupDateTime(host, "2027-01-15T09:00");
+    await applyPopup(host);
     await flush();
     expect(host.textContent).toContain("Deadline changed elsewhere.");
-    expect(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')?.value).toBe("2027-01-15");
+    expect(popupDraft(host)).toEqual({ day: "2027-01-15", time: "09:00" });
     expect(host.textContent).toContain("Reload latest");
     expect(host.textContent).toContain("Review and reapply my draft");
+    expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("retains an exact draft through Reload latest and resubmits it against the new version", async () => {
+  it("retains an exact draft through Reload latest and resubmits it, fold and reminders included, against the new version", async () => {
     apiPutMock
-      .mockRejectedValueOnce(new ApiError("That Sydney time occurs twice. Choose Earlier or Later.", 400, {
-        code: "deadline_repeated_local_time",
-        choices: [{ disambiguation: "earlier", utcOffsetMinutes: 660 }, { disambiguation: "later", utcOffsetMinutes: 600 }],
-      }))
       .mockRejectedValueOnce(new ApiError("Project deadline changed; reload before saving.", 409, { current: authorityAfterConflict }))
       .mockResolvedValueOnce({ changed: true, current: savedDraftSchedule, eventIntent: null, publicationIds: [] });
     const host = await mount(emptySchedule);
-    await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2026-04-05");
-    await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')!, "02:30");
+    await pickPopupDateTime(host, "2026-04-05T02:30");
     await act(async () => { toggle(host, "1 day").click(); await Promise.resolve(); });
-    await act(async () => { host.querySelector<HTMLButtonElement>('button[type="submit"]')!.click(); await Promise.resolve(); });
+    await pressInPopup(host, "Later (UTC+10:00)");
+    await applyPopup(host);
     await flush();
-    await act(async () => { host.querySelectorAll<HTMLInputElement>('input[type="radio"]')[1]!.click(); await Promise.resolve(); });
-    await act(async () => { host.querySelector<HTMLButtonElement>('button[type="submit"]')!.click(); await Promise.resolve(); });
-    await flush();
+    expect(apiPutMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/deadline`, { expectedVersion: 0, deadline: { localCivil: "2026-04-05T02:30", disambiguation: "later" }, reminderOffsetsMinutes: [1440] });
     expect(host.textContent).toContain("Deadline changed elsewhere.");
-    await act(async () => { [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Reload latest")!.click(); await Promise.resolve(); });
-    expect(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')?.value).toBe("2027-02-20");
-    expect(host.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')?.value).toBe("10:00");
+    await pressInPopup(host, "Reload latest");
+    expect(popupDraft(host)).toEqual({ day: "2027-02-20", time: "10:00" });
+    expect(toggle(host, "4 hours").getAttribute("aria-pressed")).toBe("true");
     expect(host.textContent).toContain("Review and reapply my draft");
     expect(host.textContent).toContain("Authoritative: 2027-02-20 10:00 · 4 hours");
     expect(host.textContent).toContain("Saved draft: 2026-04-05 02:30 (later) · 1 day");
-    await act(async () => { [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Review and reapply my draft")!.click(); await Promise.resolve(); });
-    expect(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')?.value).toBe("2026-04-05");
-    expect(host.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')?.value).toBe("02:30");
+    await pressInPopup(host, "Review and reapply my draft");
+    expect(popupDraft(host)).toEqual({ day: "2026-04-05", time: "02:30" });
     expect(toggle(host, "1 day").getAttribute("aria-pressed")).toBe("true");
-    await act(async () => { host.querySelector<HTMLButtonElement>('button[type="submit"]')!.click(); await Promise.resolve(); });
+    // Reapplying only puts the draft back: nothing is sent until the explicit Apply.
+    expect(apiPutMock).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+    await applyPopup(host);
     await flush();
     expect(apiPutMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/deadline`, { expectedVersion: 2, deadline: { localCivil: "2026-04-05T02:30", disambiguation: "later" }, reminderOffsetsMinutes: [1440] });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a rejected clear through a conflict, and reapplies it only on an explicit Apply", async () => {
+    apiPutMock
+      .mockRejectedValueOnce(new ApiError("Project deadline changed; reload before saving.", 409, { current: authorityAfterConflict }))
+      .mockResolvedValueOnce({ changed: true, current: emptySchedule, eventIntent: null, publicationIds: [] });
+    const host = await mount(activeSchedule);
+    await pressInPopup(host, "No date");
+    await applyPopup(host);
+    await flush();
+    expect(apiPutMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/deadline`, { expectedVersion: 1, deadline: null });
+    expect(host.textContent).toContain("Saved draft: Cleared");
+    await pressInPopup(host, "Review and reapply my draft");
+    expect(apiPutMock).toHaveBeenCalledTimes(1);
+    await applyPopup(host);
+    await flush();
+    expect(apiPutMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/deadline`, { expectedVersion: 2, deadline: null });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears behind a confirm: declining keeps the popup open and sends nothing, accepting sends only the version", async () => {
+    confirmMock.mockResolvedValueOnce(false);
+    const host = await mount(activeSchedule);
+    await pressInPopup(host, "No date");
+    await applyPopup(host);
+    await flush();
+    expect(confirmMock).toHaveBeenCalledTimes(1);
+    expect(apiPutMock).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    await applyPopup(host);
+    await flush();
+    expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${projectId}/deadline`, { expectedVersion: 1, deadline: null });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers No date only when there is a Deadline to clear", async () => {
+    const host = await mount(emptySchedule);
+    expect(popupButton(host, "No date")).toBeUndefined();
+  });
+
+  it("shows a save failure inline and stays open on the same draft", async () => {
+    apiPutMock.mockRejectedValueOnce(new ApiError("Deadline could not be saved.", 500, {}));
+    const host = await mount(emptySchedule);
+    await pickPopupDateTime(host, "2027-01-15T09:00");
+    await applyPopup(host);
+    await flush();
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Deadline could not be saved.");
+    expect(popupDraft(host)).toEqual({ day: "2027-01-15", time: "09:00" });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("resumes reminders against the visible version and closes", async () => {
+    const host = await mount({ ...activeSchedule, canResume: true, state: "scheduled" });
+    await pressInPopup(host, "Resume reminders");
+    await flush();
+    expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${projectId}/deadline`, { expectedVersion: 1, deadline: { localCivil: "2027-01-15T09:00", disambiguation: "earlier" }, reminderOffsetsMinutes: [1440], resume: true });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds Apply while Resume is in flight, so a second PUT never races it on the same version", async () => {
+    const host = await mount({ ...activeSchedule, canResume: true, state: "scheduled" });
+    await pickPopupDateTime(host, "2027-03-01T10:00");
+    let finish: (value: unknown) => void = () => undefined;
+    apiPutMock.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    await pressInPopup(host, "Resume reminders");
+    expect(apiPutMock).toHaveBeenCalledTimes(1);
+    expect(popupButton(host, "Apply")?.disabled).toBe(true);
+    await applyPopup(host);
+    expect(apiPutMock).toHaveBeenCalledTimes(1);
+    await act(async () => { finish({ changed: true, current: activeSchedule, eventIntent: null, publicationIds: [] }); await Promise.resolve(); await Promise.resolve(); });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds Resume while an Apply is in flight, and a conflict from that Apply is kept", async () => {
+    const host = await mount({ ...activeSchedule, canResume: true, state: "scheduled" });
+    await pickPopupDateTime(host, "2027-03-01T10:00");
+    let fail: (reason: unknown) => void = () => undefined;
+    apiPutMock.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject; }));
+    await applyPopup(host);
+    expect(apiPutMock).toHaveBeenCalledTimes(1);
+    expect(popupButton(host, "Resume reminders")?.disabled).toBe(true);
+    await act(async () => { fail(new ApiError("Project deadline changed; reload before saving.", 409, { current: authorityAfterConflict })); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.textContent).toContain("Deadline changed elsewhere.");
+    expect(onClose).not.toHaveBeenCalled();
+    expect(popupButton(host, "Resume reminders")?.disabled).toBe(false);
   });
 
   it("keeps a dirty, unsaved draft through a background schedule refresh unrelated to any save attempt", async () => {
     const host = await mount(emptySchedule);
-    await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2027-01-15");
-    await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')!, "09:00");
+    await pickPopupDateTime(host, "2027-01-15T09:00");
 
     // Simulate the parent re-rendering with a fresh server-authoritative schedule from an
     // ordinary background invalidation/refetch — not a save conflict, not a user action.
     await rerenderSchedule(activeSchedule);
 
-    expect(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')?.value).toBe("2027-01-15");
-    expect(host.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')?.value).toBe("09:00");
+    expect(popupDraft(host)).toEqual({ day: "2027-01-15", time: "09:00" });
     expect(apiPutMock).not.toHaveBeenCalled();
   });
 
@@ -357,8 +479,14 @@ describe("ProjectDeadlineControl", () => {
     ["archived", { ...summarySchedule, state: "inactive_archived" as const }, false],
   ])("shows every configured and skipped reminder offset for the %s rail state", async (_name, schedule, canWrite) => {
     const host = await mount(schedule, canWrite);
-    expect(host.textContent).toContain("Configured advance reminders: 1 day, 4 hours, 1 hour");
-    expect(host.textContent).toContain("Skipped elapsed advances: 1 day, 4 hours");
+    // The editable popup drops the summary (it describes the saved schedule while a draft is edited); read-only keeps it.
+    if (canWrite) {
+      expect(host.textContent).not.toContain("Configured advance reminders");
+      expect(host.textContent).not.toContain("Skipped elapsed advances");
+    } else {
+      expect(host.textContent).toContain("Configured advance reminders: 1 day, 4 hours, 1 hour");
+      expect(host.textContent).toContain("Skipped elapsed advances: 1 day, 4 hours");
+    }
     if (_name === "overdue") expect(host.textContent).toContain("Overdue");
   });
 
@@ -367,15 +495,16 @@ describe("ProjectDeadlineControl", () => {
     expect(host.textContent).toContain("Configured advance reminders: 1 day, 4 hours, 1 hour");
     expect(host.textContent).toContain("Skipped elapsed advances: 1 day, 4 hours");
     expect(host.querySelectorAll("button")).toHaveLength(0);
+    expect(host.querySelector('[role="group"][aria-label="Deadline reminder summary"]')).not.toBeNull();
   });
 
   it("is a live editor from mount, seeded from the schedule, and holds the project-detail query owner only for a writer (#213)", async () => {
     const host = await mount(activeSchedule);
-    expect(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')?.value).toBe("2027-01-15");
-    expect(host.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')?.value).toBe("09:00");
+    expect(popupDraft(host)).toEqual({ day: "2027-01-15", time: "09:00" });
     expect(toggle(host, "1 day").getAttribute("aria-pressed")).toBe("true");
     expect(toggle(host, "4 hours").getAttribute("aria-pressed")).toBe("false");
-    expect([...host.querySelectorAll("button")].map((button) => button.textContent)).toEqual(expect.arrayContaining(["Clear", "Save"]));
+    expect([...host.querySelectorAll("button")].map((button) => button.textContent)).toEqual(expect.arrayContaining(["Cancel", "Apply"]));
+    expect(host.textContent).toContain("Currently saved: next reminder");
     expect(host.textContent).not.toContain("Edit Deadline");
     expect(mountedRuntime().isOwned(projectDataKeys.detail(projectId))).toBe(true);
     await act(async () => { root!.unmount(); await Promise.resolve(); });
@@ -383,21 +512,46 @@ describe("ProjectDeadlineControl", () => {
     root = null;
 
     const viewer = await mount(activeSchedule, false);
-    expect(viewer.querySelector('input[aria-label="Deadline date"]')).toBeNull();
+    expect(viewer.querySelector('[role="group"][aria-label="Time slots"]')).toBeNull();
     expect(viewer.querySelectorAll("button")).toHaveLength(0);
     expect(mountedRuntime().isOwned(projectDataKeys.detail(projectId))).toBe(false);
   });
 
+  it("labels the next reminder as the saved schedule, in 24h Sydney time, and quietens it once the draft differs (#422)", async () => {
+    const host = await mount(activeSchedule);
+    const line = () => host.querySelector("time")!;
+    expect(host.textContent).toContain("Currently saved: next reminder");
+    expect(line().textContent).toBe("1 day · Thu 14 Jan · 09:00");
+    expect(line().parentElement!.className).not.toContain("text-foreground-secondary");
+    await act(async () => { toggle(host, "4 hours").click(); await Promise.resolve(); });
+    expect(host.textContent).toContain("Currently saved: next reminder");
+    expect(line().parentElement!.className).toContain("text-foreground-secondary");
+    expect(line().textContent).toBe("1 day · Thu 14 Jan · 09:00");
+  });
+
+  it("locks the Due now chip: pressed and disabled, with a lock icon (#422)", async () => {
+    const host = await mount(activeSchedule);
+    const chip = toggle(host, "Due now");
+    expect(chip.getAttribute("aria-pressed")).toBe("true");
+    expect(chip.disabled).toBe(true);
+    expect(chip.querySelector("svg")).not.toBeNull();
+  });
+
+  it("renders no native date or time input", async () => {
+    const host = await mount(activeSchedule);
+    expect(host.querySelector('input[type="date"], input[type="time"], input[type="datetime-local"]')).toBeNull();
+  });
+
   it("adds a custom reminder as a pressed chip through + custom, and pressing that chip off removes it (#213)", async () => {
     const host = await mount(emptySchedule);
-    expect(host.querySelector('input[aria-label="Custom reminder minutes"]')).toBeNull();
+    expect(host.querySelector('input[type="number"]')).toBeNull();
     const custom = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "+ custom")!;
     expect(custom.getAttribute("aria-expanded")).toBe("false");
     await act(async () => { custom.click(); await Promise.resolve(); });
     expect(custom.getAttribute("aria-expanded")).toBe("true");
-    await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Custom reminder minutes"]')!, "45");
+    await setInput(labelled(host, "Custom reminder minutes"), "45");
     await act(async () => { [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Add")!.click(); await Promise.resolve(); });
-    expect(host.querySelector('input[aria-label="Custom reminder minutes"]')).toBeNull();
+    expect(host.querySelector('input[type="number"]')).toBeNull();
     expect(toggle(host, "45 minutes").getAttribute("aria-pressed")).toBe("true");
     expect(host.textContent).toContain("(1/8)");
     // The field and Add button just unmounted — focus lands on "+ custom", not on <body>.
@@ -408,48 +562,54 @@ describe("ProjectDeadlineControl", () => {
     expect(document.activeElement).toBe(custom);
   });
 
-  it("ignores a save that resolves after the editor unmounted: no reseed, no onSaved (Sol, #213)", async () => {
+  it("ignores a save that resolves after the editor unmounted: no close, no reseed (Sol, #213)", async () => {
     let resolveSave!: (value: unknown) => void;
     apiPutMock.mockReturnValueOnce(new Promise((resolve) => { resolveSave = resolve; }));
     const host = await mount(emptySchedule);
-    await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2027-01-15");
-    await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')!, "09:00");
-    await act(async () => { host.querySelector<HTMLButtonElement>('button[type="submit"]')!.click(); await Promise.resolve(); });
+    await pickPopupDateTime(host, "2027-01-15T09:00");
+    await act(async () => { popupButton(host, "Apply")!.click(); await Promise.resolve(); });
     // Escape / outside press: the popover unmounts the editor while the request is in flight.
     await act(async () => { root!.unmount(); await Promise.resolve(); });
     root = null;
     await act(async () => { resolveSave({ changed: true, current: activeSchedule, eventIntent: null, publicationIds: [] }); await Promise.resolve(); await Promise.resolve(); });
     await flush();
     expect(apiPutMock).toHaveBeenCalledTimes(1);
-    expect(onSaved).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("keeps a repeated Sydney time draft until an explicit fold is chosen", async () => {
-    apiPutMock.mockRejectedValueOnce(new ApiError("That Sydney time occurs twice. Choose Earlier or Later.", 400, {
-      code: "deadline_repeated_local_time",
-      choices: [{ disambiguation: "earlier", utcOffsetMinutes: 660 }, { disambiguation: "later", utcOffsetMinutes: 600 }],
-    }));
+  it("asks Earlier or Later for a repeated Sydney time before anything is sent", async () => {
     const host = await mount(emptySchedule);
-    await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2026-04-05");
-    await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')!, "02:30");
-    await act(async () => { host.querySelector<HTMLButtonElement>('button[type="submit"]')!.click(); await Promise.resolve(); });
-    await flush();
-    expect(host.textContent).toContain("Earlier (+660 minutes)");
-    expect(host.textContent).toContain("Later (+600 minutes)");
-    expect(host.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true);
-    await act(async () => { host.querySelectorAll<HTMLInputElement>('input[type="radio"]')[1]!.click(); await Promise.resolve(); });
-    expect(host.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(false);
+    await pickPopupDateTime(host, "2026-04-05T02:30");
+    expect(host.textContent).toContain("Earlier (UTC+11:00)");
+    expect(host.textContent).toContain("Later (UTC+10:00)");
+    expect(popupButton(host, "Apply")!.disabled).toBe(true);
+    await pressInPopup(host, "Later (UTC+10:00)");
+    expect(popupButton(host, "Apply")!.disabled).toBe(false);
+    expect(apiPutMock).not.toHaveBeenCalled();
   });
 
-  it("keeps the date and time draft attached when Sydney rejects a DST gap", async () => {
-    apiPutMock.mockRejectedValueOnce(new ApiError("That Sydney time does not exist because the clocks move forward.", 400, { code: "deadline_nonexistent_local_time" }));
+  it("keeps the date and time draft attached and unsent when Sydney has no such time", async () => {
     const host = await mount(emptySchedule);
-    await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2026-10-04");
-    await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')!, "02:30");
-    await act(async () => { host.querySelector<HTMLButtonElement>('button[type="submit"]')!.click(); await Promise.resolve(); });
-    await flush();
+    await pickPopupDateTime(host, "2026-10-04T02:30");
     expect(host.textContent).toContain("That Sydney time does not exist");
-    expect(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')?.value).toBe("2026-10-04");
-    expect(host.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')?.value).toBe("02:30");
+    expect(popupDraft(host)).toEqual({ day: "2026-10-04", time: "02:30" });
+    expect(popupButton(host, "Apply")!.disabled).toBe(true);
+    expect(apiPutMock).not.toHaveBeenCalled();
+  });
+
+  it("types an exact off-grid time and saves it as typed", async () => {
+    const host = await mount(activeSchedule);
+    await typePopupTime(host, "17:07");
+    await applyPopup(host);
+    await flush();
+    expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${projectId}/deadline`, { expectedVersion: 1, deadline: { localCivil: "2027-01-15T17:07" }, reminderOffsetsMinutes: [1440] });
+  });
+
+  it("a calendar pick keeps the stored time", async () => {
+    const host = await mount(activeSchedule);
+    await pickPopupDay(host, "2027-01-22");
+    await applyPopup(host);
+    await flush();
+    expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${projectId}/deadline`, { expectedVersion: 1, deadline: { localCivil: "2027-01-22T09:00" }, reminderOffsetsMinutes: [1440] });
   });
 });

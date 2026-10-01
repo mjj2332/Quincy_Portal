@@ -8,6 +8,7 @@ import {
   type SaveChecklistScheduleRequest,
 } from "./checklist-schedule";
 import {
+  DEADLINE_PRESET_TIME,
   type ProjectDeadlineDisambiguation,
   type SaveProjectDeadlineRequest,
 } from "./project-deadline";
@@ -697,7 +698,7 @@ export function mapUnscheduledProjectDropToCommand<TStage extends StageTransport
   let localCivil: string;
   if (target.subview === "month") {
     if (!parseCalendarDate(target.targetDate)) return calendarError("invalid_local_time", "Expected a valid target calendar date.");
-    localCivil = `${target.targetDate}T17:00`;
+    localCivil = `${target.targetDate}T${DEADLINE_PRESET_TIME}`;
   } else {
     const time = targetTime(target);
     if (!time.ok) return time;

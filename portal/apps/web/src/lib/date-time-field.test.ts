@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addCivilDays, buildShortcuts, cellToCivil, civilToCell, civilWeekday, sydneyToday, yearBounds } from "./date-time-field";
+import { addCivilDays, buildShortcuts, cellToCivil, civilToCell, civilWeekday, joinCivilMinute, parseTypedTime, splitCivilMinute, sydneyToday, timeSlots, yearBounds } from "./date-time-field";
 import { formatCivilDay } from "./date-format";
 
 const resolved = (today: string, clearable = false) =>
@@ -122,5 +122,44 @@ describe("formatCivilDay", () => {
     expect(formatCivilDay("2026-09-17")).toBe("Thu 17 Sep 2026");
     expect(formatCivilDay("2026-10-04")).toBe("Sun 4 Oct 2026");
     expect(formatCivilDay("2028-02-29")).toBe("Tue 29 Feb 2028");
+  });
+});
+
+describe("parseTypedTime (#422)", () => {
+  it.each([
+    ["17:07", "17:07"],
+    ["9:05", "09:05"],
+    ["09:05", "09:05"],
+    ["0905", "09:05"],
+    ["1730", "17:30"],
+    ["00:00", "00:00"],
+    ["23:59", "23:59"],
+    ["  17:07  ", "17:07"],
+  ])("accepts %s as %s, off-grid minutes included and never rounded", (text, expected) => {
+    expect(parseTypedTime(text)).toEqual({ ok: true, time: expected });
+  });
+
+  it.each(["", "   ", "24:00", "7", "905", "17:7", "17:07:30", "17.07", "ab:cd", "25:00", "12:60", "-1:00", "5pm"])("rejects %j", (text) => {
+    expect(parseTypedTime(text)).toEqual({ ok: false });
+  });
+});
+
+describe("timeSlots (#422)", () => {
+  it("is the full day in 15-minute steps, 00:00 to 23:45", () => {
+    const slots = timeSlots();
+    expect(slots).toHaveLength(96);
+    expect(slots[0]).toBe("00:00");
+    expect(slots[1]).toBe("00:15");
+    expect(slots[95]).toBe("23:45");
+  });
+});
+
+describe("civil date-time pieces (#422)", () => {
+  it("splits and joins a Sydney civil minute", () => {
+    expect(splitCivilMinute("2026-04-05T02:30")).toEqual({ day: "2026-04-05", time: "02:30" });
+    expect(splitCivilMinute("not a civil")).toEqual({ day: null, time: null });
+    expect(joinCivilMinute("2026-04-05", "02:30")).toBe("2026-04-05T02:30");
+    expect(joinCivilMinute(null, "02:30")).toBeNull();
+    expect(joinCivilMinute("2026-04-05", null)).toBeNull();
   });
 });
