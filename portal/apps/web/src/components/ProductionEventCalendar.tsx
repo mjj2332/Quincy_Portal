@@ -468,11 +468,18 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
                 )}
                 <EventCalendarNav showViewSwitcher className="min-w-0 flex-1" />
                 <Eyebrow className="shrink-0 whitespace-nowrap last:me-[var(--space-2)] text-muted-foreground" data-testid="event-calendar-zone">{zoneLabel}</Eyebrow>
-                {empty && (
+                {empty && !showDeliveredButton && (
                   // Quiet, in the toolbar row: an empty range never pushes the grid down.
                   <p className="m-0 me-[var(--space-2)] min-w-0 shrink truncate text-[length:var(--text-xs)] text-muted-foreground" role="status" data-testid="event-calendar-empty">No scheduled work in this range.</p>
                 )}
-                {showDeliveredButton}
+                {showDeliveredButton && (
+                  // #430: with the recovery action the message takes its own line under the toolbar; in the
+                  // row, the button squeezed the nav until Today / view / arrows / title stacked.
+                  <div className="flex min-w-0 basis-full flex-wrap items-center gap-x-[var(--space-2)] px-[var(--space-2)]" data-testid="event-calendar-empty-recovery">
+                    <p className="m-0 min-w-0 text-[length:var(--text-xs)] text-muted-foreground" role="status" data-testid="event-calendar-empty">No scheduled work in this range.</p>
+                    {showDeliveredButton}
+                  </div>
+                )}
               </div>
               )}
               {selected && (
