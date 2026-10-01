@@ -6,7 +6,7 @@ import type { VariantProps } from "class-variance-authority"
 import { PanelLeftIcon } from "lucide-react"
 
 import { useMediaQuery } from "@/lib/use-media-query"
-import { SHELL_NARROW_QUERY, isRailShortcut, type RailShortcutTarget } from "@/lib/shell-rail"
+import { SHELL_NARROW_QUERY } from "@/lib/shell-rail"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/reui/button"
 import { Input } from "@/components/reui/input"
@@ -45,9 +45,8 @@ import {
  *
  * 1. **No cookie.** The vendor's `SidebarProvider` persists its collapse state to a
  *    `document.cookie` write, for a server-rendered app restoring state before first paint. This
- *    app renders only in the browser, and `RailedShell` already persists the same preference to
- *    `localStorage` under the `quincy:` namespace (`lib/shell-rail.ts`) — a cookie would import a
- *    server-rendering constraint this app does not have (`config/no-document-cookie.guard.test.ts`
+ *    app renders only in the browser and keeps no collapse preference at all (the rail is always
+ *    icon-only, ADR 0015) — a cookie would import a server-rendering constraint this app does not have (`config/no-document-cookie.guard.test.ts`
  *    makes this a build failure, not a bug report — hence naming `document.cookie` here, in prose,
  *    rather than in code).
  * 2. **One breakpoint.** The vendor's `useIsMobile` hook (`@/hooks/use-mobile`) owns its own
@@ -58,10 +57,12 @@ import {
  *    branches apart is rewritten to the plain unconditional class the branch that already renders
  *    it needs (a `md:block` on a branch only reachable when `!isMobile` is just `block`), because a
  *    Tailwind responsive variant is itself a second, CSS-owned breakpoint the same guard forbids.
- * 3. **⌘B through `isRailShortcut`.** The vendor's own `SIDEBAR_KEYBOARD_SHORTCUT` handler is
- *    replaced by `lib/shell-rail.ts`'s `isRailShortcut`, which this app's ⌘B contract already
- *    defines: Ctrl or Cmd, no Alt/Shift, no repeat/IME/already-handled, and never inside an
- *    editable target (Tiptap binds Mod-B to bold). The effect is a no-op while `isMobile`.
+ * 3. **No ⌘B shortcut (RETIRED by ADR 0015, #426).** Patch 3 used to replace the vendor's own
+ *    `SIDEBAR_KEYBOARD_SHORTCUT` handler with the shell's own predicate. The rail is
+ *    now always the icon column and has no collapse, so there is nothing for ⌘B to toggle: the
+ *    handler is DELETED, not ported, and must not be restored from the vendor file.
+ *    `config/retired-rail-collapse.guard.test.ts` and `sidebar.dom.test.tsx` pin it. (`toggleSidebar`
+ *    and `SidebarTrigger` stay as vendored API; the shell no longer renders a trigger.)
  *
  * ## Conformance edits (not patches — no behaviour change, each pinned to the guard it satisfies)
  *
@@ -178,34 +179,6 @@ function SidebarProvider({
   const toggleSidebar = React.useCallback(() => {
     return isMobile ? setOpenMobile((open) => !open) : setOpen((open) => !open)
   }, [isMobile, setOpen, setOpenMobile])
-
-  // Adds a keyboard shortcut to toggle the sidebar — patch 3: `isRailShortcut`, not the vendor's
-  // own `SIDEBAR_KEYBOARD_SHORTCUT` handler. Inert while `isMobile` — there is no rail to toggle.
-  React.useEffect(() => {
-    if (isMobile) return undefined
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (
-        !isRailShortcut({
-          key: event.key,
-          metaKey: event.metaKey,
-          ctrlKey: event.ctrlKey,
-          altKey: event.altKey,
-          shiftKey: event.shiftKey,
-          repeat: event.repeat,
-          isComposing: event.isComposing,
-          defaultPrevented: event.defaultPrevented,
-          target: event.target as RailShortcutTarget | null,
-        })
-      ) {
-        return
-      }
-      event.preventDefault()
-      toggleSidebar()
-    }
-
-    window.addEventListener("keydown", handleKeyDown)
-    return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [isMobile, toggleSidebar])
 
   // We add a state so that we can do data-state="expanded" or "collapsed".
   // This makes it easier to style the sidebar with Tailwind classes.

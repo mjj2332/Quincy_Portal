@@ -68,11 +68,13 @@ import { dismissFocusTarget, type NotificationFilter, type NotificationListItem 
  * `placement` picks between two fixed shapes, each anchored to `anchorRef` — not the trigger — via
  * `reui/popover.tsx`'s widened `anchor`/`positionMethod` forwarding:
  *
- * - `"rail"`: `side="right" align="start"`, offset out from the rail's own right edge
- *   (`sideOffset={8}`), with `alignOffset` computed from `alignOffsetFor` (below) so the panel's
- *   TOP lines up with the trigger's top rather than the rail's — the rail is much taller than the
- *   trigger, and anchoring the align axis to the rail alone would float the panel up at the rail's
- *   own top edge instead of beside the bell that opened it.
+ * - `"rail"`: `side="right" align="end"`, offset out from the rail's own right edge
+ *   (`sideOffset={8}`). Since #426 (ADR 0015) the bell sits at the FOOT of the icon rail, so the
+ *   panel grows UPWARD from it: its BOTTOM lines up with the bell's bottom, with `alignOffset`
+ *   computed from `alignEndOffsetFor` (below). The rail is much taller than the trigger, and
+ *   anchoring the align axis to the rail alone would pin the panel's bottom to the rail's own
+ *   bottom edge instead of beside the bell that opened it. For `align="end"` Floating UI inverts
+ *   the sign of `alignOffset`, so a POSITIVE value moves the panel UP along a right-hand side.
  * - `"header"`: `side="bottom" align="start"`, flush against the header (`sideOffset={0}
  *   alignOffset={0}`), `w-[var(--anchor-width)]` so the panel's own width tracks the header's
  *   rather than a fixed pixel value — the narrow header spans the full viewport width, which a
@@ -104,6 +106,11 @@ const TITLE_WEIGHT = "!font-medium";
 // icon's size (no second `size-*` set on `<Bell>` itself).
 const TRIGGER = "relative inline-grid place-items-center size-[34px] shrink-0 text-foreground hover:bg-secondary [&_svg]:size-[19px]";
 
+// Rail placement matches the rail's own items (`NavigationRail`'s `ROW_PAINT`): 32px (`size-8`),
+// 16px glyph, `rounded-md`, secondary text lifting to primary on hover. The `!` text utilities are
+// for the same reason as there — base.css's unlayered `button { color }` beats a layered utility.
+const RAIL_TRIGGER = "relative inline-grid place-items-center size-8 shrink-0 rounded-md border border-transparent !text-[color:var(--text-secondary)] hover:!text-[color:var(--text-primary)] hover:bg-sidebar-accent [&_svg]:size-4 [&_svg]:opacity-60 hover:[&_svg]:opacity-100";
+
 // 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token. Applied only when the
 // caller (`ShellHeader`, below 772px) asks for it via `touchTarget` — the desktop rail keeps the
 // trigger's own 34px box. Both axes: `size-`, so tailwind-merge replaces TRIGGER's `size-[34px]`
@@ -129,8 +136,8 @@ const PANEL = "max-h-[min(520px,var(--available-height))] gap-0 p-0 flex-col";
 // and its tabs would stay 38px. The header placement therefore asks for 44px tabs outright, from
 // the tablist down, rather than trusting a second media query.
 const PLACEMENT = {
-  rail: { side: "right", sideOffset: 8, collisionPadding: 8, width: "w-[420px]", thumbnails: true, tabs: "" },
-  header: { side: "bottom", sideOffset: 0, collisionPadding: { top: 0, left: 0, right: 0, bottom: 8 }, width: "w-[var(--anchor-width)]", thumbnails: false, tabs: "[&_[role=tab]]:min-h-[44px]" },
+  rail: { side: "right", align: "end", sideOffset: 8, collisionPadding: 8, width: "w-[420px]", thumbnails: true, tabs: "" },
+  header: { side: "bottom", align: "start", sideOffset: 0, collisionPadding: { top: 0, left: 0, right: 0, bottom: 8 }, width: "w-[var(--anchor-width)]", thumbnails: false, tabs: "[&_[role=tab]]:min-h-[44px]" },
 } as const;
 // `min-h-0 flex-1` lets the scrolling body shrink inside the popup's own `flex-col`; the tabpanel
 // IS the scrolling container (TabStrip's own convention — see Admin.tsx around its tabpanel ids).
@@ -143,14 +150,13 @@ const FOOTER = "shrink-0 px-[var(--space-4)] py-[var(--space-3)] " +
 const FOOTER_LINK = "text-[length:var(--text-sm)] text-foreground-secondary hover:text-foreground no-underline";
 
 /**
- * `trigger.top - anchor.top`, floored at 0 — the distance to shift the panel's start-aligned
- * position down so it lines up with the bell that opened it rather than the top of a much taller
- * anchor (the rail). Exported pure so it can be unit-tested without mounting a Positioner; a
- * missing ref (either side) falls back to 0 at the call site, not here — this function only ever
- * sees two numbers.
+ * `anchor.bottom - trigger.bottom`, floored at 0 — the distance to shift an END-aligned panel UP so
+ * its bottom edge lines up with the bell that opened it rather than the bottom of a much taller
+ * anchor (the icon rail, whose foot the bell now sits at — #426). Exported pure for the same reason
+ * as `alignOffsetFor`; the pixel result is checked in the browser pass.
  */
-export function alignOffsetFor(triggerTop: number, anchorTop: number): number {
-  return Math.max(0, triggerTop - anchorTop);
+export function alignEndOffsetFor(triggerBottom: number, anchorBottom: number): number {
+  return Math.max(0, anchorBottom - triggerBottom);
 }
 
 export type NotificationBellProps = {
@@ -244,7 +250,7 @@ export function NotificationBell({ poll = NOTIFICATION_POLL_MS, touchTarget = fa
     const trigger = triggerRef.current;
     const anchor = anchorRef.current;
     if (!trigger || !anchor) return 0;
-    return alignOffsetFor(trigger.getBoundingClientRect().top, anchor.getBoundingClientRect().top);
+    return alignEndOffsetFor(trigger.getBoundingClientRect().bottom, anchor.getBoundingClientRect().bottom);
   }
 
   return (
@@ -252,7 +258,7 @@ export function NotificationBell({ poll = NOTIFICATION_POLL_MS, touchTarget = fa
       <Popover open={notificationsOpen} onOpenChange={handleOpenChange} modal={false}>
         <PopoverTrigger
           ref={triggerRef}
-          className={cn(TRIGGER, touchTarget && TOUCH_TARGET)}
+          className={cn(placement === "rail" ? RAIL_TRIGGER : TRIGGER, touchTarget && TOUCH_TARGET)}
           aria-label={unreadCount ? `${unreadCount} unread notifications` : "Notifications"}
           data-testid="rail-notification-trigger"
         >
@@ -283,12 +289,14 @@ export function NotificationBell({ poll = NOTIFICATION_POLL_MS, touchTarget = fa
           anchor={anchorRef}
           positionMethod="fixed"
           side={PLACEMENT[placement].side}
-          align="start"
+          align={PLACEMENT[placement].align}
           sideOffset={PLACEMENT[placement].sideOffset}
           alignOffset={placement === "rail" ? railAlignOffset : 0}
           collisionPadding={PLACEMENT[placement].collisionPadding}
           collisionAvoidance={{ side: "none", align: "shift", fallbackAxisSide: "none" }}
-          className={cn(PANEL, PLACEMENT[placement].width)}
+          // `focus-visible:!outline-none`: initialFocus lands on this container, and base.css's unlayered
+          // `:focus-visible` outline would ring the whole panel; controls inside keep their own ring.
+          className={cn(PANEL, PLACEMENT[placement].width, "focus-visible:!outline-none")}
         >
           <div className={HEAD}>
             <PopoverTitle className={TITLE_WEIGHT}>Notifications</PopoverTitle>

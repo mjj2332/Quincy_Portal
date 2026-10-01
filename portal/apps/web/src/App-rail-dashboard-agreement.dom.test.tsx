@@ -339,26 +339,61 @@ async function clickButtonLabelled(host: ParentNode, text: string) {
   await click(button);
 }
 
+/** #426: the rail is icon-only and no longer lists Dashboard views — it must render none. */
 function railChildLinks(host: ParentNode) {
   return [...host.querySelectorAll<HTMLElement>('[data-testid="navigation-rail-child-link"]')];
 }
 
-async function clickRailChild(host: ParentNode, text: string) {
-  const link = findByText(railChildLinks(host), text);
-  if (!link) throw new Error(`No rail child link labelled "${text}"`);
-  await click(link);
+const DASHBOARD_VIEW_HREF: Record<string, string> = {
+  List: "/?view=list",
+  Kanban: "/?view=kanban",
+  Gantt: "/?view=gantt",
+  Calendar: "/?view=calendar",
+};
+
+/**
+ * Chooses a Dashboard view the way the rail's child links used to: a real location change through
+ * `locationStore()` (the same transport `InternalLink` uses), NOT a click on the Dashboard's own
+ * segmented control — that control is `disabled` mid-drag/in-flight write and absent while
+ * archived, and several cases below exist precisely to prove a view choice still lands then.
+ */
+async function clickRailChild(_host: ParentNode, text: string) {
+  const href = DASHBOARD_VIEW_HREF[text];
+  if (!href) throw new Error(`No Dashboard view labelled "${text}"`);
+  await act(async () => {
+    locationStore().push(href);
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  await settle();
 }
 
-/** The rail's own claim about which Dashboard view is current — `aria-current="page"` on exactly
- * one child link, or none while the Dashboard group is not showing children at all. */
+/** The rail's own claim, post-#426: the Dashboard ICON is the current destination
+ * (`aria-current="page"` on the top-level link), and the view it stands for is the breadcrumb's
+ * last segment. Null while the Dashboard icon is not current (another screen is showing). */
 function activeRailChild(host: ParentNode): string | null {
-  return host.querySelector<HTMLElement>('[data-testid="navigation-rail-child-link"][aria-current="page"]')?.textContent?.trim() ?? null;
+  const dashboard = [...host.querySelectorAll<HTMLElement>('[data-testid="navigation-rail-link"]')]
+    .find((link) => link.getAttribute("href")?.startsWith("/?") || link.getAttribute("href") === "/");
+  if (dashboard?.getAttribute("aria-current") !== "page") return null;
+  return lastBreadcrumbSegment(host);
 }
 
 /** The breadcrumb's own claim — the last crumb, which `ShellHeader`/`reui/breadcrumb.tsx` render
  * with `aria-current="page"` and no link. */
 function lastBreadcrumbSegment(host: ParentNode): string | null {
   return host.querySelector('[data-testid="shell-breadcrumb"] [aria-current="page"]')?.textContent?.trim() ?? null;
+}
+
+async function openShellSearch(host: ParentNode) {
+  await click(host.querySelector<HTMLElement>('[data-testid="shell-search-trigger"]')!);
+  await settle();
+}
+
+/** The popover closes when the rail link click lands; the draft lives in the store, so reopening
+ * it must show the same text. */
+async function reopenedSearchValue(host: ParentNode): Promise<string | undefined> {
+  await openShellSearch(host);
+  return document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')?.value;
 }
 
 function currentUrl() {
@@ -398,7 +433,9 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
     // between), but the rail's model does not know archive scope and keeps offering all four
     // (#220 added Gantt between Kanban and Calendar) — so every destination stays reachable, and
     // choosing one leaves archived scope.
-    expect(railChildLinks(host).map((link) => link.textContent?.trim())).toEqual(["List", "Kanban", "Gantt", "Calendar"]);
+    // #426: the rail lists no Dashboard views at all; every destination stays reachable through
+    // the location (the Dashboard's own control is hidden while archived).
+    expect(railChildLinks(host)).toEqual([]);
     expect(activeRailChild(host)).toBe("List");
 
     await clickRailChild(host, "Kanban");
@@ -572,7 +609,8 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
       // Photographer has neither `adminBackend` nor `viewProductionCalendar`: Calendar is absent
       // from the rail's own children, not merely disabled — "calendar" must never even transit
       // through the store, since nothing downstream can show it.
-      expect(railChildLinks(host).map((link) => link.textContent?.trim())).toEqual(["List", "Kanban"]);
+      expect(railChildLinks(host)).toEqual([]);
+      expect(viewButton(host, "Calendar")).toBeUndefined();
       expect(published.map((entry) => entry.value)).not.toContain("calendar");
       for (const entry of published) {
         if (entry.value === "list" || entry.value === "kanban") {
@@ -814,7 +852,8 @@ function railParentDashboardLink(host: ParentNode): HTMLAnchorElement | undefine
 
 describe("the rail's top-level Dashboard link carries the live off-Dashboard draft (#217 fix round 8, item 1)", () => {
   async function typeIntoShellSearch(host: ParentNode, value: string) {
-    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    await openShellSearch(host);
+    const input = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
       input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -831,7 +870,7 @@ describe("the rail's top-level Dashboard link carries the live off-Dashboard dra
     await click(railParentDashboardLink(host)!);
 
     expect(currentUrl()).toBe("/?q=smith");
-    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("smith");
+    expect(document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')?.value ?? await reopenedSearchValue(host)).toBe("smith");
     expect(apiGetMock.mock.calls.map(([path]) => path).some((path) => path.startsWith("/api/projects") && path.includes("q=smith"))).toBe(true);
   });
 
@@ -848,7 +887,7 @@ describe("the rail's top-level Dashboard link carries the live off-Dashboard dra
     await click(railParentDashboardLink(host)!);
 
     expect(currentUrl()).toBe("/?q=smith");
-    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("smith");
+    expect(document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')?.value ?? await reopenedSearchValue(host)).toBe("smith");
     expect(apiGetMock.mock.calls.map(([path]) => path).some((path) => path.startsWith("/api/projects") && path.includes("q=smith"))).toBe(true);
   });
 
@@ -876,11 +915,26 @@ describe("off-Dashboard, the draft reaches the URL exactly once through the rail
   afterEach(() => { vi.useRealTimers(); });
 
   async function typeIntoShellSearchFakeTimers(host: ParentNode, value: string) {
-    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    await act(async () => {
+      host.querySelector<HTMLElement>('[data-testid="shell-search-trigger"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+    const input = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
+  }
+
+  /** The popover may have closed on arrival; the draft lives in the store, so reopen and read it. */
+  async function searchValueFakeTimers(host: ParentNode) {
+    if (!document.querySelector('[data-testid="shell-search"]')) {
+      await act(async () => {
+        host.querySelector<HTMLElement>('[data-testid="shell-search-trigger"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
+      });
+      await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+    }
+    return document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')?.value;
   }
 
   async function renderAppUnderStrictModeFakeTimers(path: string) {
@@ -909,7 +963,7 @@ describe("off-Dashboard, the draft reaches the URL exactly once through the rail
     await act(async () => { await vi.advanceTimersByTimeAsync(50); });
 
     expect(currentUrl()).toBe("/?q=smith");
-    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("smith");
+    expect(await searchValueFakeTimers(host)).toBe("smith");
 
     const writesAtArrival = pushSpy.mock.calls.length + replaceSpy.mock.calls.length;
     // A full second past the original 300ms debounce — no LATER write occurs: the arrival itself
@@ -930,14 +984,14 @@ describe("off-Dashboard, the draft reaches the URL exactly once through the rail
     const pushSpy = vi.spyOn(locationStore(), "push");
     const replaceSpy = vi.spyOn(locationStore(), "replace");
 
-    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    const input = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     await act(async () => {
       input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }));
     });
     await act(async () => { await vi.advanceTimersByTimeAsync(50); });
 
     expect(currentUrl()).toBe("/?q=smith");
-    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("smith");
+    expect(await searchValueFakeTimers(host)).toBe("smith");
 
     const writesAtArrival = pushSpy.mock.calls.length + replaceSpy.mock.calls.length;
     await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });

@@ -56,7 +56,11 @@ vi.mock("./lib/query-client", () => ({
 import App from "./App";
 import { apiGet } from "./lib/api";
 import { signOut } from "./lib/auth";
-import { RAIL_PREFERENCE_KEY } from "./lib/shell-rail";
+
+/** The retired rail-collapse preference's old storage key (ADR 0015) — named here only so these tests
+ * can prove the shell neither reads nor writes it any more. Test files are exempt from
+ * `config/retired-rail-collapse.guard.test.ts`. */
+const LEGACY_RAIL_KEY = "quincy:shell:rail";
 import { __resetDashboardSearchStoreForTest, __getDashboardSearchSnapshotForTest, setDashboardSearchUrlWriter } from "./lib/dashboard-search-store";
 
 let root: Root | null = null;
@@ -251,9 +255,16 @@ function rail(host: ParentNode) {
   return host.querySelector<HTMLElement>('[data-testid="navigation-rail"]');
 }
 function railToggle(host: ParentNode) {
-  // #122: the toggle moved from `ShellHeader` into `NavigationRail`'s own header as a
-  // `SidebarTrigger` (`reui/sidebar.tsx`) — `rail-toggle`, not `shell-header-rail-toggle`.
+  // Retired by #426 (ADR 0015): the rail has no collapse control. Kept as a finder so the tests
+  // below can assert it is absent rather than merely not looked for.
   return host.querySelector<HTMLButtonElement>('[data-testid="rail-toggle"]');
+}
+/** The wide rail's search lives behind an icon trigger; open it as a user would, then read its input from `document` (the popover portals). */
+async function openRailSearch(host: ParentNode) {
+  const trigger = host.querySelector<HTMLButtonElement>('[data-testid="shell-search-trigger"]')!;
+  await click(trigger);
+  await waitFor(() => expect(document.querySelector('[data-testid="shell-search"]')).not.toBeNull());
+  return document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
 }
 function sheetTrigger(host: ParentNode) {
   return host.querySelector<HTMLButtonElement>('[data-testid="shell-header-sheet-trigger"]');
@@ -270,36 +281,50 @@ describe("the wide rail on /notices (#334)", () => {
   });
 });
 
-describe("the railed shell's collapse, header, breadcrumb and Sheet (#112)", () => {
-  it("flips data-state via the header toggle, writes storage, and a remount with a pre-set collapsed starts collapsed", async () => {
+describe("the railed shell's rail, header, breadcrumb and Sheet (#112, #426)", () => {
+  /** Counts every Web Storage read/write of the retired key, however it is reached. */
+  function spyOnRailKey() {
+    const touched: string[] = [];
+    const getItem = window.localStorage.getItem.bind(window.localStorage);
+    const setItem = window.localStorage.setItem.bind(window.localStorage);
+    window.localStorage.getItem = (key: string) => { if (key === LEGACY_RAIL_KEY) touched.push(`get:${key}`); return getItem(key); };
+    window.localStorage.setItem = (key: string, value: string) => { if (key === LEGACY_RAIL_KEY) touched.push(`set:${key}`); return setItem(key, value); };
+    return touched;
+  }
+
+  it("is always the icon rail: data-state is rail and there is no collapse control", async () => {
     const host = await renderAt("/");
-    expect(rail(host)?.getAttribute("data-state")).toBe("expanded");
-    expect(railToggle(host)?.getAttribute("aria-expanded")).toBe("true");
-
-    await click(railToggle(host)!);
-    expect(rail(host)?.getAttribute("data-state")).toBe("collapsed");
-    expect(railToggle(host)?.getAttribute("aria-expanded")).toBe("false");
-    expect(window.localStorage.getItem(RAIL_PREFERENCE_KEY)).toBe("collapsed");
-
-    if (root) await act(async () => root!.unmount());
-    root = null;
-    document.body.replaceChildren();
-
-    const rehost = await renderAt("/");
-    expect(rail(rehost)?.getAttribute("data-state")).toBe("collapsed");
+    expect(rail(host)?.getAttribute("data-state")).toBe("rail");
+    expect(railToggle(host)).toBeNull();
+    expect(host.querySelector('[aria-label="Collapse navigation"], [aria-label="Expand navigation"]')).toBeNull();
   });
 
-  it("flips data-state via ⌘B and writes storage", async () => {
+  it("⌘B and Ctrl+B do nothing wide — no state change, and the retired storage key is never read or written", async () => {
+    const touched = spyOnRailKey();
     const host = await renderAt("/");
-    expect(rail(host)?.getAttribute("data-state")).toBe("expanded");
+    const before = host.innerHTML;
 
     await keydown(window, { key: "b", metaKey: true });
-    expect(rail(host)?.getAttribute("data-state")).toBe("collapsed");
-    expect(window.localStorage.getItem(RAIL_PREFERENCE_KEY)).toBe("collapsed");
+    await keydown(window, { key: "b", ctrlKey: true });
 
-    await keydown(window, { key: "b", metaKey: true });
-    expect(rail(host)?.getAttribute("data-state")).toBe("expanded");
-    expect(window.localStorage.getItem(RAIL_PREFERENCE_KEY)).toBe("expanded");
+    expect(rail(host)?.getAttribute("data-state")).toBe("rail");
+    expect(window.localStorage.getItem(LEGACY_RAIL_KEY)).toBeNull();
+    expect(host.innerHTML).toBe(before);
+    expect(touched.filter((entry) => entry.startsWith("set:"))).toEqual([]);
+  });
+
+  it("does not read the retired storage key at all while mounting, and ignores a legacy stored value", async () => {
+    for (const legacy of ["collapsed", "expanded"]) {
+      window.localStorage.setItem(LEGACY_RAIL_KEY, legacy);
+      const touched = spyOnRailKey();
+      const host = await renderAt("/");
+      expect(rail(host)?.getAttribute("data-state"), `legacy ${legacy}`).toBe("rail");
+      expect(touched, `legacy ${legacy}`).toEqual([]);
+      expect(window.localStorage.getItem(LEGACY_RAIL_KEY)).toBe(legacy);
+      if (root) await act(async () => root!.unmount());
+      root = null;
+      document.body.replaceChildren();
+    }
   });
 
   it("does nothing for ⌘B inside a focused input", async () => {
@@ -311,8 +336,8 @@ describe("the railed shell's collapse, header, breadcrumb and Sheet (#112)", () 
     input.focus();
 
     await keydown(input, { key: "b", metaKey: true });
-    expect(rail(host)?.getAttribute("data-state")).toBe("expanded");
-    expect(window.localStorage.getItem(RAIL_PREFERENCE_KEY)).toBeNull();
+    expect(rail(host)?.getAttribute("data-state")).toBe("rail");
+    expect(window.localStorage.getItem(LEGACY_RAIL_KEY)).toBeNull();
     input.remove();
   });
 
@@ -320,8 +345,7 @@ describe("the railed shell's collapse, header, breadcrumb and Sheet (#112)", () 
     const host = await renderAt("/");
     const header = host.querySelector('[data-testid="shell-header"]')!;
     expect(header).not.toBeNull();
-    // #122: the toggle moved into NavigationRail's own header — ShellHeader carries no button
-    // at all while wide.
+    // ShellHeader carries no button at all while wide (the collapse toggle is retired, #426).
     expect(header.querySelectorAll("button")).toHaveLength(0);
     expect(header.querySelector('[data-testid="shell-breadcrumb"]')).not.toBeNull();
     expect(header.querySelector('[data-testid="shell-header-sheet-trigger"]')).toBeNull();
@@ -360,8 +384,7 @@ describe("the railed shell's collapse, header, breadcrumb and Sheet (#112)", () 
   it("wide header contains no button and exactly one nav, and every a sits inside the nav (#122)", async () => {
     const host = await renderAt("/?view=kanban");
     const header = host.querySelector('[data-testid="shell-header"]')!;
-    // #122: the toggle moved into NavigationRail's own header — the breadcrumb nav is the only
-    // interactive landmark left in ShellHeader while wide.
+    // The breadcrumb nav is the only interactive landmark in ShellHeader while wide.
     expect(header.querySelectorAll("button")).toHaveLength(0);
     expect(header.querySelectorAll("nav")).toHaveLength(1);
     const nav = header.querySelector("nav")!;
@@ -593,21 +616,23 @@ describe("the railed shell's collapse, header, breadcrumb and Sheet (#112)", () 
       expect(vi.mocked(signOut)).toHaveBeenCalledTimes(1);
     });
 
-    it("clicking the already-current Kanban link inside the Sheet closes it too", async () => {
+    it("clicking the already-current Dashboard link inside the Sheet closes it too", async () => {
       // The current route's link publishes the same location, so the close-on-location effect alone
-      // would leave the Sheet open.
+      // would leave the Sheet open. (The Dashboard view child links this once clicked are gone, #426;
+      // the Dashboard link itself is the current page on every Dashboard view.)
       const host = await renderAt("/?view=kanban");
       await resizeTo(771);
       await tick();
 
       await click(sheetTrigger(host)!);
       const sheet = document.querySelector('[data-testid="rail-sheet"]')!;
-      const kanbanLink = sheet.querySelector<HTMLAnchorElement>('[aria-current="page"]')!;
-      expect(kanbanLink.textContent?.trim()).toBe("Kanban");
+      const currentLink = sheet.querySelector<HTMLAnchorElement>('[aria-current="page"]')!;
+      expect(currentLink.textContent?.trim()).toBe("Dashboard");
 
-      await click(kanbanLink);
+      await click(currentLink);
       await waitFor(() => expect(document.querySelector('[data-testid="rail-sheet"]')).toBeNull());
-      expect(window.location.search).toBe("?view=kanban");
+      // The Dashboard link is the bare `/` (the Dashboard re-resolves its remembered view itself).
+      expect(window.location.pathname).toBe("/");
     });
 
     it("⌘B changes neither storage nor the DOM", async () => {
@@ -616,7 +641,7 @@ describe("the railed shell's collapse, header, breadcrumb and Sheet (#112)", () 
       await tick();
 
       await keydown(window, { key: "b", metaKey: true });
-      expect(window.localStorage.getItem(RAIL_PREFERENCE_KEY)).toBeNull();
+      expect(window.localStorage.getItem(LEGACY_RAIL_KEY)).toBeNull();
       expect(document.querySelector('[data-testid="rail-sheet"]')).toBeNull();
       expect(sheetTrigger(host)).not.toBeNull();
     });
@@ -648,19 +673,20 @@ describe("the railed shell's collapse, header, breadcrumb and Sheet (#112)", () 
       await resizeTo(1008);
       await tick();
       expect(sheetTrigger(host)).toBeNull();
-      expect(railToggle(host)).not.toBeNull();
+      expect(railToggle(host)).toBeNull();
       expect(rail(host)).not.toBeNull();
 
       await resizeTo(1007);
       await tick();
       expect(sheetTrigger(host)).toBeNull();
-      expect(railToggle(host)).not.toBeNull();
+      expect(railToggle(host)).toBeNull();
       expect(rail(host)).not.toBeNull();
 
       await resizeTo(772);
       await tick();
       expect(sheetTrigger(host)).toBeNull();
-      expect(railToggle(host)).not.toBeNull();
+      expect(rail(host)).not.toBeNull();
+      expect(railToggle(host)).toBeNull();
 
       await resizeTo(771);
       await tick();
@@ -687,8 +713,8 @@ describe("the railed shell's collapse, header, breadcrumb and Sheet (#112)", () 
     });
   });
 
-  it("widening reapplies a stored collapsed", async () => {
-    window.localStorage.setItem(RAIL_PREFERENCE_KEY, "collapsed");
+  it("widening shows the icon rail, whatever legacy rail value is stored", async () => {
+    window.localStorage.setItem(LEGACY_RAIL_KEY, "collapsed");
     setViewportWidth(600);
     const host = await renderAt("/");
     expect(rail(host)).toBeNull();
@@ -696,8 +722,8 @@ describe("the railed shell's collapse, header, breadcrumb and Sheet (#112)", () 
 
     await resizeTo(1024);
     await tick();
-    expect(rail(host)?.getAttribute("data-state")).toBe("collapsed");
-    expect(railToggle(host)?.getAttribute("aria-expanded")).toBe("false");
+    expect(rail(host)?.getAttribute("data-state")).toBe("rail");
+    expect(railToggle(host)).toBeNull();
   });
 
   it("widening then re-narrowing closes the Sheet and keeps the rail mode rules consistent", async () => {
@@ -710,7 +736,7 @@ describe("the railed shell's collapse, header, breadcrumb and Sheet (#112)", () 
     await resizeTo(1024);
     await tick();
     expect(document.querySelector('[data-testid="rail-sheet"]')).toBeNull();
-    expect(rail(host)?.getAttribute("data-state")).toBe("expanded");
+    expect(rail(host)?.getAttribute("data-state")).toBe("rail");
     expect(sheetTrigger(host)).toBeNull();
 
     await resizeTo(600);
@@ -722,23 +748,55 @@ describe("the railed shell's collapse, header, breadcrumb and Sheet (#112)", () 
 });
 
 describe("⌘K project search (#217, replacing #122 P3's navigate-then-latch)", () => {
-  it("wide, from Admin: focuses the rail's search input without navigating", async () => {
-    const host = await renderAt("/admin");
+  // #426: the wide rail's search is an icon opening a popover (until the Dashboard toolbar takes it
+  // over, #427), so ⌘K opens that popover and focuses its field — on every page.
+  it("wide, from Admin: opens the rail's search popover and focuses its input without navigating", async () => {
+    await renderAt("/admin");
     expect(window.location.pathname).toBe("/admin");
+    expect(document.querySelector('[data-testid="shell-search"]')).toBeNull();
 
     await keydown(window, { key: "k", metaKey: true });
+    await waitFor(() => expect(document.querySelector('[data-testid="shell-search"]')).not.toBeNull());
 
     expect(window.location.pathname).toBe("/admin");
-    expect(document.activeElement).toBe(host.querySelector('[data-testid="shell-search"]'));
+    expect(document.activeElement).toBe(document.querySelector('[data-testid="shell-search"]'));
   });
 
-  it("wide, already on a Dashboard view: focuses the input without touching the URL", async () => {
-    const host = await renderAt("/?view=kanban");
+  it("wide, already on a Dashboard view: opens the popover and focuses the input without touching the URL", async () => {
+    await renderAt("/?view=kanban");
 
     await keydown(window, { key: "k", metaKey: true });
+    await waitFor(() => expect(document.querySelector('[data-testid="shell-search"]')).not.toBeNull());
 
     expect(window.location.search).toBe("?view=kanban");
-    expect(document.activeElement).toBe(host.querySelector('[data-testid="shell-search"]'));
+    expect(document.activeElement).toBe(document.querySelector('[data-testid="shell-search"]'));
+  });
+
+  it("wide, from the Notice board and a Project route: ⌘K reaches search there too", async () => {
+    for (const path of ["/notices", "/settings/notifications/preferences"]) {
+      await renderAt(path);
+      await keydown(window, { key: "k", metaKey: true });
+      await waitFor(() => expect(document.activeElement).toBe(document.querySelector('[data-testid="shell-search"]')));
+      expect(window.location.pathname, path).toBe(path);
+      if (root) await act(async () => root!.unmount());
+      root = null;
+      document.body.replaceChildren();
+    }
+  });
+
+  it("wide: the search icon opens the same popover by click, and the draft survives closing it", async () => {
+    const host = await renderAt("/admin");
+    const input = await openRailSearch(host);
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "smith");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await keydown(input, { key: "Escape" });
+    await waitFor(() => expect(document.querySelector('[data-testid="shell-search"]')).toBeNull());
+    // Escape on a non-empty rail draft clears it and closes (one keystroke) — reopening starts empty.
+    const reopened = await openRailSearch(host);
+    expect(reopened.value).toBe("");
   });
 
   // #217 fix round 1, item 6: Sol's diff review found the narrow/Sheet case's "inert" assertion
@@ -835,108 +893,80 @@ describe("⌘K project search (#217, replacing #122 P3's navigate-then-latch)", 
   it("leaves ⌘B untouched", async () => {
     const host = await renderAt("/");
     await keydown(window, { key: "b", metaKey: true });
-    expect(rail(host)?.getAttribute("data-state")).toBe("collapsed");
+    expect(rail(host)?.getAttribute("data-state")).toBe("rail");
+    expect(document.querySelector('[data-testid="shell-search"]')).toBeNull();
   });
 });
 
 /**
- * #217 fix round 3, item 1 (Sol's whole-branch review), extended by round 4, item 1 (Sol
- * re-review, BLOCKER). `staff-navigation.ts`'s own model stays pure (`NavigationRail.dom.test.tsx`
- * covers it unchanged) — this exercises the REAL shell (`app-router.tsx`'s `ShellRoute`), which
- * grafts the live search store's value back onto the rail's Dashboard child hrefs. `Dashboard` is
- * mocked in this file, so every assertion here is on the URL and the rail's own input directly.
- * The Calendar child link now carries `q` itself, on the bare intent (`staff-routes.ts`'s
- * `DashboardCalendarIntentRoute` gained one in round 4 specifically because a native navigation —
- * keyboard Enter, cmd/middle-click, a reload — loads `href` as a fresh document with no in-memory
- * store left to fall back on); `Dashboard.tsx`'s own canonicaliser reading that same `q` back off
- * the route into the concrete facet URL is covered separately in `Dashboard-calendar.dom.test.tsx`.
+ * #217 fix round 3, item 1 (Sol's whole-branch review), narrowed by #426 (ADR 0015). The REAL
+ * shell (`app-router.tsx`'s `ShellRoute`) grafts the live search store's value back onto the rail's
+ * Dashboard link; the Dashboard VIEW child links (and their href rewrite) are gone — the rail draws
+ * none, and the Dashboard's own view buttons carry the search themselves. `Dashboard` is mocked in
+ * this file, so every assertion here is on the URL and the rail's own link/input directly.
  */
-describe("rail Dashboard child links carry the live search (#217 fix round 3, item 1; round 4, item 1)", () => {
-  function childLink(host: ParentNode, label: string) {
-    return [...host.querySelectorAll('[data-testid="navigation-rail-child-link"]')].find((element) => element.textContent?.trim() === label) as HTMLAnchorElement | undefined;
+describe("the rail's Dashboard link carries the live search; the view links are gone (#217 fix round 3, item 1; #426)", () => {
+  function dashboardLink(host: ParentNode) {
+    return [...host.querySelectorAll('[data-testid="navigation-rail-link"]')].find((element) => element.textContent?.trim() === "Dashboard") as HTMLAnchorElement;
   }
 
-  async function typeAndCommit(host: ParentNode, value: string) {
-    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+  async function typeIn(input: HTMLInputElement, value: string) {
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
       input.dispatchEvent(new Event("input", { bubbles: true }));
       await Promise.resolve();
     });
-    await keydown(input, { key: "Enter" });
   }
 
-  it("click List → Kanban → Calendar → List with a committed q keeps it in the URL and the input at every step", async () => {
+  it("renders no Dashboard view child links on any Dashboard route, wide or narrow", async () => {
     const host = await renderAt("/?view=list");
-    await typeAndCommit(host, "smith");
-    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("smith");
-
-    await click(childLink(host, "Kanban")!);
-    expect(window.location.search).toContain("view=kanban");
-    expect(window.location.search).toContain("q=smith");
-    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("smith");
-
-    await click(childLink(host, "Calendar")!);
-    // The Calendar child link is the bare intent, carrying its OWN `q` now (#217 fix round 4,
-    // item 1) — reading it back off the route into a concrete facet URL is `Dashboard.tsx`'s own
-    // canonicaliser's job, exercised in `Dashboard-calendar.dom.test.tsx` instead (`Dashboard` is
-    // mocked in this file).
-    expect(window.location.search).toBe("?view=calendar&q=smith");
-    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("smith");
-
-    await click(childLink(host, "List")!);
-    expect(window.location.search).toContain("view=list");
-    expect(window.location.search).toContain("q=smith");
-    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("smith");
+    expect(host.querySelectorAll('[data-testid="navigation-rail-child-link"]')).toHaveLength(0);
+    await resizeTo(600);
+    await tick();
+    await click(sheetTrigger(host)!);
+    expect(document.querySelectorAll('[data-testid="navigation-rail-child-link"]')).toHaveLength(0);
   });
 
-  it("carries the search into a List/Kanban rail click even mid-debounce, before the 300ms commit", async () => {
-    const host = await renderAt("/?view=list");
-    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "smith");
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      await Promise.resolve();
-    });
-    // No Enter, no wait: still inside the 300ms debounce when the rail link is clicked.
-    await click(childLink(host, "Kanban")!);
+  it("an empty search leaves the Dashboard link bare", async () => {
+    const host = await renderAt("/admin");
+    expect(dashboardLink(host).getAttribute("href")).toBe("/");
+  });
+
+  it("a committed q rides on the Dashboard link, and clicking it from another page keeps the search in the URL and the input", async () => {
+    const host = await renderAt("/admin");
+    const input = await openRailSearch(host);
+    await typeIn(input, "smith");
+    await keydown(input, { key: "Enter" });
+    // Off-Dashboard Enter navigates to the Dashboard carrying the search.
+    expect(window.location.search).toBe("?q=smith");
+
+    await click(host.querySelector('[data-testid="navigation-rail-link"][href="/admin"]')!);
+    expect(window.location.pathname).toBe("/admin");
+    expect(dashboardLink(host).getAttribute("href")).toBe("/?q=smith");
+    await click(dashboardLink(host));
+    expect(window.location.pathname).toBe("/");
+    expect(window.location.search).toBe("?q=smith");
+  });
+
+  it("carries the search on the Dashboard link even mid-debounce, before the 300ms commit", async () => {
+    const host = await renderAt("/admin");
+    const input = await openRailSearch(host);
+    await typeIn(input, "smith");
+    // No Enter, no wait: still inside the 300ms debounce when the rail link is read.
+    expect(dashboardLink(host).getAttribute("href")).toBe("/?q=smith");
+    await click(dashboardLink(host));
     expect(window.location.search).toContain("q=smith");
-  });
-
-  it("an empty search omits `q` from every Dashboard child href", async () => {
-    const host = await renderAt("/?view=list");
-    expect(childLink(host, "Kanban")!.getAttribute("href")).toBe("/?view=kanban");
-    expect(childLink(host, "List")!.getAttribute("href")).toBe("/?view=list");
-    expect(childLink(host, "Calendar")!.getAttribute("href")).toBe("/?view=calendar");
-  });
-
-  // #217 fix round 4, item 1 (Sol re-review, BLOCKER). The `href` attribute itself, not just the
-  // URL a click ends up at -- this is what a keyboard Enter, cmd/middle-click or "open in new tab"
-  // actually reads, none of which go through React's click handler at all.
-  it("the Calendar child link's href attribute carries q, like List and Kanban", async () => {
-    const host = await renderAt("/?view=list");
-    await typeAndCommit(host, "smith");
-    expect(childLink(host, "List")!.getAttribute("href")).toBe("/?view=list&q=smith");
-    expect(childLink(host, "Kanban")!.getAttribute("href")).toBe("/?view=kanban&q=smith");
-    expect(childLink(host, "Calendar")!.getAttribute("href")).toBe("/?view=calendar&q=smith");
   });
 
   // #217 fix round 4, item 2 (Sol re-review, do-with-1). A raw, not-yet-committed draft carries
   // stray whitespace no caller pre-processes any more -- `staffPathFor` normalises it itself
-  // (strip, collapse, trim, cap), so every rail href reflects exactly what the store's own
-  // debounced URL write would, never a differently-shaped value.
-  it("every Dashboard child href normalises whitespace in the live draft the same way the store's own commit does", async () => {
-    const host = await renderAt("/?view=list");
-    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "  smith   street  ");
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      await Promise.resolve();
-    });
-    // Still mid-debounce: the href reflects the raw draft directly, normalised at build time.
-    expect(childLink(host, "List")!.getAttribute("href")).toBe("/?view=list&q=smith+street");
-    expect(childLink(host, "Kanban")!.getAttribute("href")).toBe("/?view=kanban&q=smith+street");
-    expect(childLink(host, "Calendar")!.getAttribute("href")).toBe("/?view=calendar&q=smith+street");
+  // (strip, collapse, trim, cap), so the rail href reflects exactly what the store's own debounced
+  // URL write would, never a differently-shaped value.
+  it("normalises whitespace in the live draft the same way the store's own commit does", async () => {
+    const host = await renderAt("/admin");
+    const input = await openRailSearch(host);
+    await typeIn(input, "  smith   street  ");
+    expect(dashboardLink(host).getAttribute("href")).toBe("/?q=smith+street");
   });
 });
 
@@ -948,7 +978,7 @@ describe("rail Dashboard child links carry the live search (#217 fix round 3, it
 describe("ShellRoute's draft-from-URL sync (#217 build, step 3)", () => {
   it("a non-Dashboard location leaves an in-progress draft alone -- its lack of q is not authoritative", async () => {
     const host = await renderAt("/admin");
-    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    const input = await openRailSearch(host);
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "smith");
       input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -963,19 +993,19 @@ describe("ShellRoute's draft-from-URL sync (#217 build, step 3)", () => {
       await Promise.resolve();
     });
     expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
-    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("smith");
+    expect(document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("smith");
   });
 
   it("landing on the Dashboard with a different q (Back/Forward) replaces the draft and cancels a pending debounce", async () => {
     const host = await renderAt("/?q=abc");
-    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("abc");
+    expect((await openRailSearch(host)).value).toBe("abc");
 
     // `Dashboard` is mocked away in this file, so nothing else registers a writer -- register one
     // directly to prove the pending debounce armed below never fires through it.
     const writer = vi.fn();
     const unregister = setDashboardSearchUrlWriter(writer);
     // A keystroke arms the 300ms debounce -- Back must win the race, not this pending commit.
-    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    const input = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "abc-typed");
       input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -988,7 +1018,7 @@ describe("ShellRoute's draft-from-URL sync (#217 build, step 3)", () => {
       await Promise.resolve();
     });
 
-    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("xyz");
+    expect(document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("xyz");
     // Real-timer wait past the 300ms debounce -- proves the pending commit armed by the keystroke
     // above was actually CANCELLED by the popstate's sync, not merely not-yet-fired.
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
@@ -998,7 +1028,7 @@ describe("ShellRoute's draft-from-URL sync (#217 build, step 3)", () => {
 
   it("a Dashboard route with no q resets a leftover draft to empty on arrival", async () => {
     const host = await renderAt("/?view=list&q=smith");
-    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("smith");
+    expect((await openRailSearch(host)).value).toBe("smith");
 
     await act(async () => {
       window.history.pushState(null, "", "/?view=list");
@@ -1006,6 +1036,6 @@ describe("ShellRoute's draft-from-URL sync (#217 build, step 3)", () => {
       await Promise.resolve();
     });
 
-    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("");
+    expect(document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("");
   });
 });

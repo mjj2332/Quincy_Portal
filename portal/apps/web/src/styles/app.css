@@ -92,8 +92,8 @@ button { font-family: var(--font-sans); }
    descendant override, so redeclaring the composite here — on the element that overrides the
    ingredient — is what lets `ToastViewport` inherit a moved value.
 
-   260px/collapsed-calc (#122) replace 250/48: the provider's rail width moved to
-   `--quincy-rail-width: 260px` (`RailedShell.tsx`). `--app-rail-inline-size` is meant to be where
+   #426 (ADR 0015): the rail is always the icon column, so there is one wide rule (`rail`) and the
+   Sheet's — the 260px expanded rule is retired with the expanded state. `--app-rail-inline-size` is meant to be where
    the CONTENT COLUMN starts, not the rail's own rendered width — Luna's Chrome pass measured the
    toast 24px off the content edge expanded (a coincidence: 260 + `--space-2` happened to read
    close) and 18px off collapsed, which is where the original `calc(3rem + var(--space-4) + 2px)`
@@ -103,8 +103,7 @@ button { font-family: var(--font-sans); }
    (`--quincy-rail-width-icon` + the `inset` variant's own `--space-4` padding) plus the content
    column's OWN `ml-[var(--space-2)]` (`RailedShell.tsx`'s inset classes) — so `--space-2`, not
    `2px`, is the third term. */
-[data-rail-mode="expanded"] { --app-rail-inline-size: 260px; }
-[data-rail-mode="collapsed"] { --app-rail-inline-size: calc(3rem + var(--space-4) + var(--space-2)); }
+[data-rail-mode="rail"] { --app-rail-inline-size: calc(3rem + var(--space-4) + var(--space-2)); }
 [data-rail-mode="sheet"] { --app-rail-inline-size: 0px; }
 [data-rail-mode] { --toast-inset-inline-start: calc(var(--app-rail-inline-size) + max(var(--space-5), env(safe-area-inset-left))); }
 .app--impersonating .worktools { top: calc(var(--shell-header-height) + 42px); }
@@ -179,7 +178,7 @@ button { font-family: var(--font-sans); }
    --------------------------------------------------------------------- */
 .legacy-grid { display: grid; gap: var(--gap, 14px); grid-template-columns: repeat(var(--cols, 4), 1fr); }
 .work .workspace-photo-grid {
-  /* 205px minimum: 260px shell rail + 5×205 + 4×14 gap + 64px workgrid padding = 1405px. */
+  /* 205px minimum: 72px icon rail + 5×205 + 4×14 gap + 64px workgrid padding = 1217px. */
   grid-template-columns: repeat(auto-fill, minmax(205px, 1fr));
 }
 .tile {
@@ -279,11 +278,11 @@ button { font-family: var(--font-sans); }
 .project-header__tabs { min-width: 0; overflow-x: auto; }
 .project-header__tabs [role="tablist"] { height: auto; }
 .project-header__tabs [role="tab"] { min-height: 44px; /* WCAG 2.5.5 Enhanced target, not a spacing token */ flex: none; }
-/* #206/#213: the control row wraps by the HEADER's width, not the viewport's — the rail (260px)
-   may or may not be open, so the same viewport can offer very different room. A container query
+/* #206/#213: the control row wraps by the HEADER's width, not the viewport's — the shell rail (a 72px
+   icon column, or none below 772px) changes the room a viewport offers. A container query
    measures the content box (header width minus its side padding). Measured on the real header:
    Stage 153 + Team's smallest useful width 180 + a scheduled Deadline with its Due/Overdue pill
-   ~300 + Dropbox 186 ≈ 820px, so four cells from 860px (a 1280px railed viewport gives 948);
+   ~300 + Dropbox 186 ≈ 820px, so four cells from 860px (a 1280px railed viewport gave 948 under the old 260px rail);
    two per line below that (1024 railed gives 693, each cell 347); one per line below 640px, where
    a 320px cell no longer fits a scheduled Deadline (800 railed gives 468). */
 @container project-header (max-width: 859px) {
@@ -506,9 +505,9 @@ button { font-family: var(--font-sans); }
    --------------------------------------------------------------------- */
 /* Cap auto-fill at five tiles once the layout can still give each tile 205px. The Project rail no
    longer subtracts 288px (#202), but this query is viewport-based, so the SHELL navigation rail
-   (260px, ADR 0006, --quincy-rail-width) has to be in the sum instead: 260 shell rail + 5×205 +
-   4×14 gap + 64 workgrid padding = 1405px. */
-@media (min-width: 1405px) {
+   (72px icon column, ADR 0015: 3rem + --space-4 + --space-2) has to be in the sum instead: 72 shell
+   rail + 5×205 + 4×14 gap + 64 workgrid padding = 1217px. */
+@media (min-width: 1217px) {
   .work .workspace-photo-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 }
 @media (max-width: 720px) {

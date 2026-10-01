@@ -4603,3 +4603,26 @@ remove the legacy readers) still applies.
 - **Test seam.** happy-dom lays nothing out: stub `clientHeight` and a scroll-following
   `getBoundingClientRect` (a static rect makes "refetch leaves scrollTop alone" vacuous), and identify the
   vendor viewport by a `dataset.slot` read rather than a `[data-slot]` selector (test-seam guard F).
+
+## Icon-only rail (#426): what retiring the expanded rail left behind
+
+- **Retiring a state retires its guards' targets, not the guards.** The expanded/collapsed split took
+  the `quincy:shell:rail` preference, `isRailShortcut`, the vendor-patched ⌘B handler and the 260px rule
+  with it. `config/retired-rail-collapse.guard.test.ts` fails the build if any non-test source names them
+  again; the ⌘B rejection cases (Alt, Shift, repeat, IME, handled, editable targets) moved onto
+  `isShellShortcut`/`isSearchShortcut` rather than being dropped, and `sidebar.dom.test.tsx` now asserts
+  ⌘B does nothing and `sidebar.tsx` registers no keydown listener.
+- **A pinned-closed `SidebarProvider` needs no `onOpenChange`.** The rail never toggles, so the provider is
+  `open={false}` with no handler; the narrow Sheet is a separate variant, not a state of the same rail.
+- **The rail no longer renders Dashboard views.** Tests that clicked a rail child now navigate through
+  `locationStore().push(...)` (the transport `InternalLink` uses) because the Dashboard's segmented control
+  is disabled mid-drag and absent while archived, which is exactly when those cases need a view choice.
+  "The rail agrees" became "the Dashboard icon is current and the breadcrumb names the view".
+- **A popover search needs its trigger opened first.** Wide `ShellSearch` is a popover; tests open
+  `shell-search-trigger` before typing and, after an arrival that closes it, reopen it to read the draft,
+  which lives in `dashboard-search-store`, not the DOM. With fake timers, reopen with
+  `advanceTimersByTimeAsync`; a real-timer helper in a fake-timer test hangs until the 30s timeout.
+- **A bell at the bottom grows upward.** The panel's top-aligned offset put it off-screen once the bell
+  moved to the rail's bottom; `alignEndOffsetFor(triggerBottom, anchorBottom)` aligns its bottom edge.
+- **The photo-grid breakpoint follows the rail width.** 72px rail + 5×205 + 4×14 + 64 = 1217px, not the old
+  1405px; update the comment and the media query together.
