@@ -27,7 +27,7 @@ describe("legacy Dashboard view spellings (#427)", () => {
   it("carries the Timeline facets through a legacy gantt location", () => {
     const location = `/?view=gantt&editors=${editorId}&stages=raw_review&delivered=1&completed=1&q=smith`;
     const route = parseStaffLocation(location);
-    expect(route).toMatchObject({ kind: "dashboard", dashboardView: "timeline", search: "smith", gantt: { stageKeys: ["raw_review"], priorities: [], archived: "hide", delivered: true, completed: true, editorIds: [editorId] } });
+    expect(route).toMatchObject({ kind: "dashboard", dashboardView: "timeline", search: "smith", gantt: { stageKeys: ["raw_review"], priorities: [], archived: "hide", delivered: true, completed: true, editorIds: [editorId], includeUnassigned: false, shootRange: null, deadlineRange: null, overdueOnly: false, myTasks: false } });
     expect(canonicalLegacyDashboardLocation(location)).toBe(`/?view=timeline&editors=${editorId}&stages=raw_review&completed=1&delivered=1&q=smith`);
   });
 
@@ -59,7 +59,7 @@ describe("legacy Dashboard view spellings (#427)", () => {
 describe("legacy Dashboard scope spelling (#428)", () => {
   it("reads /?scope=archived as the Board with Archived = Only, and canonicalises it", () => {
     const location = "/?scope=archived";
-    expect(parseStaffLocation(location)).toEqual({ kind: "dashboard", dashboardView: "board", filter: { stageKeys: [], priorities: [], archived: "only" } });
+    expect(parseStaffLocation(location)).toEqual({ kind: "dashboard", dashboardView: "board", filter: { stageKeys: [], priorities: [], archived: "only", editorIds: [], includeUnassigned: false, shootRange: null, deadlineRange: null, overdueOnly: false, myTasks: false } });
     expect(canonicalLegacyDashboardLocation(location)).toBe("/?view=board&archived=only");
     expect(safeStaffDestination(location)).toBe("/?view=board&archived=only");
   });

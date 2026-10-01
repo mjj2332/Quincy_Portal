@@ -7,6 +7,7 @@ import {
   encodeGanttChildCursor,
   encodeGanttProjectCursor,
   ganttChildCursorSchema,
+  ganttPeopleFingerprint,
   ganttProjectCursorSchema,
   ganttTeamMemberSchema,
   externalParticipantSchema,
@@ -85,6 +86,22 @@ describe("Gantt child cursor", () => {
     expect(incomplete).not.toBe(complete);
     expect(decodeGanttChildCursor(incomplete)).toEqual({ projectId: id, position: 3, id, completed: false });
     expect(decodeGanttChildCursor(complete)).toEqual({ projectId: id, position: 3, id, completed: true });
+  });
+
+  it("carries the People fingerprint only when a People filter narrows (#429)", () => {
+    const filter = { editorIds: [id], includeUnassigned: true, myTasks: false };
+    const fingerprint = ganttPeopleFingerprint(filter);
+    expect(fingerprint).toMatch(/^[0-9a-f]{8}$/u);
+    expect(ganttPeopleFingerprint({ editorIds: [], includeUnassigned: false, myTasks: false })).toBe("");
+    // Order and repeats of the ids do not change it; Unassigned and My tasks do.
+    expect(ganttPeopleFingerprint({ ...filter, editorIds: [id, id] })).toBe(fingerprint);
+    expect(ganttPeopleFingerprint({ ...filter, myTasks: true })).not.toBe(fingerprint);
+    expect(ganttPeopleFingerprint({ ...filter, includeUnassigned: false })).not.toBe(fingerprint);
+    const cursor: GanttChildCursor = { projectId: id, position: 3, id, completed: false, people: fingerprint };
+    expect(decodeGanttChildCursor(encodeGanttChildCursor(cursor))).toEqual(cursor);
+    expect(encodeGanttChildCursor({ projectId: id, position: 3, id, completed: false, people: undefined })).toBe(encodeGanttChildCursor({ projectId: id, position: 3, id, completed: false }));
+    expect(decodeGanttChildCursor(encodedJson(`{"projectId":"${id}","position":3,"id":"${id}","completed":false,"people":"nothex"}`))).toBeNull();
+    expect(decodeGanttChildCursor(encodedJson(`{"projectId":"${id}","position":3,"id":"${id}","completed":false,"people":"${fingerprint}","extra":1}`))).toBeNull();
   });
 
   it("rejects wrong key order", () => {

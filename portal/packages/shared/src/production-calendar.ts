@@ -32,6 +32,7 @@ import {
   DASHBOARD_ARCHIVED_MODES,
   DASHBOARD_PRIORITY_FILTER_VALUES,
   type DashboardArchivedMode,
+  type DashboardDateRange,
   type DashboardPriorityFilterValue,
 } from "./dashboard-filter";
 
@@ -60,6 +61,9 @@ export type ProductionCalendarFilters = {
   /** #428: the shared Filter's Project priority (any-of; `none` = unset) and Archived mode. */
   priorities: DashboardPriorityFilterValue[];
   archived: DashboardArchivedMode;
+  /** #429: inclusive Sydney civil-day ranges over the Project's shoot date and Deadline. Both layers obey them. */
+  shootRange: DashboardDateRange | null;
+  deadlineRange: DashboardDateRange | null;
   showCompletedChecklist: boolean;
   showDeliveredProjects: boolean;
   overdueOnly: boolean;
@@ -74,6 +78,8 @@ export type ProductionCalendarFiltersInput = {
   stageKeys?: StagePresentationKey[];
   priorities?: DashboardPriorityFilterValue[];
   archived?: DashboardArchivedMode;
+  shootRange?: DashboardDateRange | null;
+  deadlineRange?: DashboardDateRange | null;
   showCompletedChecklist?: boolean;
   showDeliveredProjects?: boolean;
   overdueOnly?: boolean;
@@ -108,6 +114,8 @@ const searchSchema = z.string();
 const layersInputSchema = z.array(z.enum(PRODUCTION_CALENDAR_LAYERS));
 const stageKeysInputSchema = z.array(z.enum(STAGE_PRESENTATION_KEYS));
 
+const dateRangeSchema = z.object({ from: calendarDateSchema, to: calendarDateSchema }).strict().refine((range) => range.from <= range.to, "A range must not end before it starts.");
+
 const productionCalendarFiltersInputSchema = z.object({
   layers: layersInputSchema.optional(),
   editorIds: z.array(lowercaseUuidSchema).optional(),
@@ -115,6 +123,8 @@ const productionCalendarFiltersInputSchema = z.object({
   stageKeys: stageKeysInputSchema.optional(),
   priorities: z.array(z.enum(DASHBOARD_PRIORITY_FILTER_VALUES)).optional(),
   archived: z.enum(DASHBOARD_ARCHIVED_MODES).optional(),
+  shootRange: dateRangeSchema.nullable().optional(),
+  deadlineRange: dateRangeSchema.nullable().optional(),
   showCompletedChecklist: z.boolean().optional(),
   showDeliveredProjects: z.boolean().optional(),
   overdueOnly: z.boolean().optional(),
@@ -145,6 +155,8 @@ function normalizeFilters(input: ProductionCalendarFiltersInput): ProductionCale
     stageKeys: canonicalize(input.stageKeys, STAGE_PRESENTATION_KEYS),
     priorities: canonicalDashboardPriorities(input.priorities ?? []),
     archived: input.archived ?? "hide",
+    shootRange: input.shootRange ?? null,
+    deadlineRange: input.deadlineRange ?? null,
     showCompletedChecklist: input.showCompletedChecklist ?? false,
     showDeliveredProjects: input.showDeliveredProjects ?? false,
     overdueOnly: input.overdueOnly ?? false,
@@ -157,6 +169,7 @@ function validateNormalizedFilters(filters: ProductionCalendarFilters, context: 
   if (filters.layers.length === 0) context.addIssue({ code: z.ZodIssueCode.custom, path: ["layers"], message: "At least one Calendar layer is required." });
   if (filters.editorIds.length > PRODUCTION_CALENDAR_MAX_EDITOR_IDS) context.addIssue({ code: z.ZodIssueCode.too_big, type: "array", maximum: PRODUCTION_CALENDAR_MAX_EDITOR_IDS, inclusive: true, path: ["editorIds"], message: "Too many Editor filters." });
   if (filters.stageKeys.length > PRODUCTION_CALENDAR_MAX_STAGE_KEYS) context.addIssue({ code: z.ZodIssueCode.too_big, type: "array", maximum: PRODUCTION_CALENDAR_MAX_STAGE_KEYS, inclusive: true, path: ["stageKeys"], message: "Too many Stage filters." });
+  if (filters.deadlineRange !== null && filters.overdueOnly) context.addIssue({ code: z.ZodIssueCode.custom, path: ["deadlineRange"], message: "A Deadline range and Overdue are exclusive." });
   if ([...filters.search].length > 200) context.addIssue({ code: z.ZodIssueCode.too_big, type: "string", maximum: 200, inclusive: true, path: ["search"], message: "Search is too long." });
 }
 
@@ -523,6 +536,7 @@ export function calendarEventSchemaFor<TStage extends StageTransportKey>(stageSc
 const dtoFiltersSchema: z.ZodType<ProductionCalendarFilters> = z.object({
   layers: z.array(z.enum(PRODUCTION_CALENDAR_LAYERS)).min(1), editorIds: z.array(z.string().uuid()), includeUnassigned: z.boolean(),
   stageKeys: z.array(z.enum(STAGE_PRESENTATION_KEYS)), priorities: z.array(z.enum(DASHBOARD_PRIORITY_FILTER_VALUES)), archived: z.enum(DASHBOARD_ARCHIVED_MODES),
+  shootRange: dateRangeSchema.nullable(), deadlineRange: dateRangeSchema.nullable(),
   showCompletedChecklist: z.boolean(), showDeliveredProjects: z.boolean(),
   overdueOnly: z.boolean(), search: z.string().max(200), myTasks: z.boolean(),
 }).strict();
