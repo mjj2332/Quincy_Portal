@@ -13,7 +13,9 @@ import { act, useLayoutEffect, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { adminProductionGanttResponseSchema, dashboardSearchOf, PRODUCTION_GANTT_ZONE } from "@quincy/shared";
+import { ApiError } from "../lib/api";
 import { Dashboard } from "./Dashboard";
+import { closeDisplay, displayGroup, displayMenu, groupCheckboxes, openDisplay, toggleGroupCheckbox } from "./dashboard-display-test-helpers";
 import { locationStore, parseStaffLocation } from "../lib/router";
 import { confirmStore } from "../lib/confirm";
 import { __resetDashboardSearchStoreForTest, commitDashboardSearchNow, DASHBOARD_SEARCH_DEBOUNCE_MS, setDashboardSearchDraft, syncDashboardSearchDraftFromLocation } from "../lib/dashboard-search-store";
@@ -38,7 +40,7 @@ vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { id: "user-1
 vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ role: authRole.value, capabilities: [], can: (capability: string) => authRole.value === "admin" && ["adminBackend", "createProject", "viewNoticeBoard"].includes(capability) }) }));
 vi.mock("../lib/stages", () => ({ presentationStages: (stages: unknown[]) => stages, useStages: () => ({ stages: [], presentationStageKey: (key: string) => key }) }));
 vi.mock("../components/NoticeBoard", () => ({ NoticeBoard: () => <div data-testid="notice-board" /> }));
-vi.mock("../components/kanban2/board", () => ({ ProjectKanbanBoard2: () => <div data-testid="dashboard-board" /> }));
+vi.mock("../components/board/board", () => ({ ProjectKanbanBoard2: () => <div data-testid="dashboard-board" /> }));
 // #220: the same "mock at the boundary" idea `Dashboard-calendar.dom.test.tsx` applies to the
 // event-calendar vendor tree (`testing/event-calendar-fake.tsx`) — this suite owns Dashboard's routing/URL/rail contract, not the
 // Gantt surface's own rendering (`ProductionGantt-readonly.dom.test.tsx` owns that).
@@ -317,31 +319,8 @@ describe("Dashboard Gantt routing", () => {
           await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
         }
       };
-      // The real `ProductionGanttFiltersBar`, driven by role / name / Quincy test id.
-      const chipNames = () => {
-        const toolbar = host.querySelector<HTMLElement>('[data-testid="production-gantt-filters"] [role="toolbar"][aria-label="Gantt filters"]');
-        if (!toolbar) throw new Error("no Gantt filters toolbar");
-        return [...toolbar.querySelectorAll('[role="group"]')].map((chip) => chip.getAttribute("aria-label"));
-      };
-      const waitForOption = async (name: string) => {
-        const start = Date.now();
-        for (;;) {
-          const match = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((candidate) => candidate.textContent?.trim() === name);
-          if (match) return match;
-          if (Date.now() - start > 1500) throw new Error(`no option "${name}"`);
-          // eslint-disable-next-line no-await-in-loop
-          await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
-        }
-      };
-      const clickOption = async (name: string) => {
-        const match = await waitForOption(name);
-        await act(async () => { match.click(); });
-        await settle();
-      };
-      const closeMenu = async () => {
-        await act(async () => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
-        await settle();
-      };
+      // The real Timeline Display (#430): Show checkboxes, read by role and accessible name.
+      const showChecked = () => groupCheckboxes("Show").map((item) => [item.textContent, item.getAttribute("aria-checked")]);
       const listQueriesSince = (callIndex: number) => apiGetMock.mock.calls.slice(callIndex)
         .map(([called]) => called)
         .filter((called) => called.startsWith("/api/production-gantt?") && !called.includes("childrenOf="))
@@ -369,9 +348,8 @@ describe("Dashboard Gantt routing", () => {
       let callsBeforeTraversal = 0;
       const expectApplied = (expected: { delivered: boolean; completed: boolean }) => {
         expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: [], priorities: [], archived: "hide", includeUnassigned: false, myTasks: false, overdueOnly: false, shootRange: null, deadlineRange: null, ...expected });
-        // The bar's chips follow the URL (re-seeded on Back/Forward).
-        const shown = [expected.delivered && "Delivered projects", expected.completed && "Completed checklist items"].filter(Boolean);
-        expect(chipNames()).toEqual(shown.length === 0 ? [] : [`Show includes ${shown.length === 1 ? shown[0] : `${shown.length} selected`}`]);
+        // The Display checkboxes follow the URL (Back/Forward included), with the menu still open.
+        if (displayMenu()) expect(showChecked()).toEqual([["Delivered Projects", String(expected.delivered)], ["Completed Subtasks", String(expected.completed)]]);
       };
       // A filter push fetches its new key, so the latest project-list request is the new filters'.
       const expectRequested = (expected: { delivered: boolean; completed: boolean }) => {
@@ -393,19 +371,20 @@ describe("Dashboard Gantt routing", () => {
       expectApplied({ delivered: false, completed: false });
       expectRequested({ delivered: false, completed: false });
 
-      const trigger = host.querySelector<HTMLButtonElement>('[data-testid="production-gantt-filters-add"]');
-      if (!trigger) throw new Error("no add-filter trigger");
-      await act(async () => { trigger.click(); });
-      await clickOption("Show");
-      await clickOption("includes");
-      await clickOption("Delivered projects");
+      // Open Display once: a checkbox item leaves the menu open across each URL push and traversal.
+      await openDisplay(host);
+      expect(showChecked()).toEqual([["Delivered Projects", "false"], ["Completed Subtasks", "false"]]);
+      await toggleGroupCheckbox("Show", "Delivered Projects", host);
+      await settle();
+      expect(displayMenu()).not.toBeNull();
       expect(url()).toBe("/?view=timeline&delivered=1");
       expectApplied({ delivered: true, completed: false });
       expectRequested({ delivered: true, completed: false });
 
-      await clickOption("Completed checklist items");
+      await toggleGroupCheckbox("Show", "Completed Subtasks", host);
+      await settle();
+      expect(displayMenu()).not.toBeNull();
       expect(url()).toBe("/?view=timeline&completed=1&delivered=1");
-      await closeMenu();
       expectApplied({ delivered: true, completed: true });
       expectRequested({ delivered: true, completed: true });
 
@@ -419,6 +398,140 @@ describe("Dashboard Gantt routing", () => {
       expectApplied({ delivered: true, completed: true });
       expectRequestedSinceTraversal({ delivered: true, completed: true });
       expect(switcherButton("Timeline")?.getAttribute("aria-selected")).toBe("true");
+    });
+
+    describe("Display (#430)", () => {
+      const COLD = "/?view=timeline&stages=delivered&completed=1&delivered=1";
+
+      it("resolves an old URL with Show parameters byte-identically, and the Display checkboxes reflect it", async () => {
+        await renderAt(COLD);
+        expect(url()).toBe(COLD);
+        expect(ganttFilters()).toMatchObject({ stageKeys: ["delivered"], delivered: true, completed: true });
+        await openDisplay(host);
+        expect(groupCheckboxes("Show").map((item) => [item.textContent, item.getAttribute("aria-checked")])).toEqual([["Delivered Projects", "true"], ["Completed Subtasks", "true"]]);
+        // Opening and closing Display never rewrites the URL.
+        await closeDisplay();
+        expect(url()).toBe(COLD);
+      });
+
+      it("resolves the old URL's whole filter set byte-identically", async () => {
+        const full = "/?view=timeline&stages=raw_review&priority=5&archived=include&overdue=1&mine=1&completed=1&delivered=1";
+        await renderAt(full);
+        expect(url()).toBe(full);
+        expect(ganttFilters()).toMatchObject({ stageKeys: ["raw_review"], priorities: ["5"], archived: "include", overdueOnly: true, myTasks: true, completed: true, delivered: true });
+      });
+
+      it("offers only the Show group on the Timeline, and nothing for Layers", async () => {
+        await renderAt("/?view=timeline");
+        await openDisplay(host);
+        expect(displayGroup("Show")).not.toBeNull();
+        expect(displayGroup("Layers")).toBeNull();
+        expect(displayGroup("Sort")).toBeNull();
+        expect(displayGroup("Columns")).toBeNull();
+      });
+
+      it("a Show toggle pushes the URL and keeps the other filters", async () => {
+        await renderAt("/?view=timeline&stages=raw_review");
+        const lengthBefore = window.history.length;
+        await toggleGroupCheckbox("Show", "Completed Subtasks", host);
+        expect(url()).toBe("/?view=timeline&stages=raw_review&completed=1");
+        expect(window.history.length).toBe(lengthBefore + 1);
+        // The menu stays open across the URL push.
+        expect(displayMenu()).not.toBeNull();
+      });
+
+      it("unchecking delivered while Stage = Delivered drops it from Stage and announces why", async () => {
+        await renderAt(COLD);
+        await toggleGroupCheckbox("Show", "Delivered Projects", host);
+        expect(url()).toBe("/?view=timeline&completed=1");
+        expect(document.body.textContent).toContain("Removed Delivered from Stage.");
+      });
+
+      it("announces a repeated Delivered-pair removal again after Back", async () => {
+        const live = () => host.querySelector('[data-testid="dashboard-live-region"]')?.textContent ?? "";
+        await renderAt("/?view=timeline&stages=delivered&delivered=1");
+        await toggleGroupCheckbox("Show", "Delivered Projects", host);
+        expect(live()).toBe("Removed Delivered from Stage.");
+        // Back is an outside navigation: the pair notice clears, as the old bar's did.
+        await act(async () => {
+          const popped = new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error("no popstate after history traversal")), 1000);
+            window.addEventListener("popstate", () => { clearTimeout(timer); resolve(); }, { once: true });
+          });
+          window.history.back();
+          await popped;
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        });
+        expect(url()).toBe("/?view=timeline&stages=delivered&delivered=1");
+        expect(live()).toBe("");
+        await toggleGroupCheckbox("Show", "Delivered Projects", host);
+        expect(live()).toBe("Removed Delivered from Stage.");
+      });
+
+      // The real Display menu (#430): the checkbox item in use keeps focus, and is the same node,
+      // while the changed filter's first page is pending or fails.
+      const checkboxItem = () => groupCheckboxes("Show").find((item) => item.textContent === "Delivered Projects")!;
+      const toggleFocusedItem = async () => {
+        await openDisplay(host);
+        const item = checkboxItem();
+        act(() => { item.focus(); });
+        expect(document.activeElement).toBe(item);
+        await act(async () => { item.click(); await new Promise((resolve) => setTimeout(resolve, 10)); });
+        return item;
+      };
+
+      it("keeps focus on the Display checkbox item while the new filter's first page is pending, and after it lands", async () => {
+        realGantt.value = true;
+        await renderAt("/?view=timeline");
+        let resolvePending: ((value: unknown) => void) | undefined;
+        apiGetMock.mockImplementation((path: string) => {
+          if (!path.startsWith("/api/production-gantt")) return Promise.resolve(projectResponse());
+          if (path.includes("delivered=1")) return new Promise((resolve) => { resolvePending = resolve; });
+          return Promise.resolve(ganttResponse());
+        });
+        const item = await toggleFocusedItem();
+        expect(url()).toBe("/?view=timeline&delivered=1");
+        expect(host.querySelector('[data-testid="production-gantt-loading"]')).not.toBeNull();
+        expect(checkboxItem()).toBe(item);
+        expect(item.isConnected).toBe(true);
+        expect(document.activeElement).toBe(item);
+
+        await act(async () => { resolvePending?.(ganttResponse()); await Promise.resolve(); });
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+        expect(checkboxItem()).toBe(item);
+        expect(document.activeElement).toBe(item);
+      });
+
+      it("keeps focus on the Display checkbox item when the new filter's request fails", async () => {
+        realGantt.value = true;
+        await renderAt("/?view=timeline");
+        apiGetMock.mockImplementation((path: string) => {
+          if (!path.startsWith("/api/production-gantt")) return Promise.resolve(projectResponse());
+          return path.includes("delivered=1") ? Promise.reject(new ApiError("boom", 400)) : Promise.resolve(ganttResponse());
+        });
+        const item = await toggleFocusedItem();
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+        expect(host.querySelector('[role="alert"]')?.textContent).toContain("The production schedule is unavailable.");
+        expect(checkboxItem()).toBe(item);
+        expect(item.isConnected).toBe(true);
+        expect(document.activeElement).toBe(item);
+      });
+
+      it("both view-bar triggers clear the sticky shell header when scrolled to", async () => {
+        await renderAt("/?view=timeline");
+        const classes = (element: Element | null) => (element?.getAttribute("class") ?? "").split(/\s+/);
+        expect(classes(host.querySelector('[data-testid="dashboard-filter-trigger"]'))).toContain("scroll-mt-[calc(var(--shell-header-height)+var(--space-4))]");
+        expect(classes(host.querySelector('[data-testid="dashboard-display-trigger"]'))).toContain("scroll-mt-[calc(var(--shell-header-height)+var(--space-4))]");
+      });
+
+      it("hands the Gantt focus callbacks that reach the Filter and Display triggers", async () => {
+        await renderAt("/?view=timeline");
+        const props = ganttPropsState.value as unknown as ProductionGanttProps;
+        await act(async () => { props.focusFilterTrigger!(); });
+        expect(document.activeElement).toBe(host.querySelector('[data-testid="dashboard-filter-trigger"]'));
+        await act(async () => { props.focusDisplayTrigger!(); });
+        expect(document.activeElement).toBe(host.querySelector('[data-testid="dashboard-display-trigger"]'));
+      });
     });
 
     it("carries the shared Filter across views and starts the Gantt's own Show facets (delivered, completed) at their defaults (#428)", async () => {

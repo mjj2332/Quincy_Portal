@@ -154,9 +154,10 @@ describe("ProductionGantt -- fills the height (#363)", () => {
       for (const token of FILL) expect(classes).toContain(token);
     }
     expect(classesOf(gantt)).not.toContain("h-[36rem]");
-    const filters = host.querySelector('[data-testid="production-gantt-filters"]')!;
-    expect(filters).not.toBeNull();
-    expect(host.querySelector('[data-testid="production-gantt"]')!.contains(filters)).toBe(false);
+    // The legend sits above the chart body, outside it (the filters moved to the Dashboard's view bar in #430).
+    const legend = host.querySelector('[data-testid="production-gantt-legend"]')!;
+    expect(legend).not.toBeNull();
+    expect(host.querySelector('[data-testid="production-gantt"]')!.contains(legend)).toBe(false);
   });
 
   it("fills the region while pending", async () => {

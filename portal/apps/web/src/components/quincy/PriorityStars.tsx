@@ -89,7 +89,7 @@ export function PriorityStars({ priority, street, canPrioritize, pending = false
   // it is a live defect on the Asset-rating surface, and must not be copied here.)
   if (!canPrioritize) {
     return (
-      <div className="flex items-center px-[var(--space-3)] pb-[var(--space-3)]" data-testid="kanban2-card-priority">
+      <div className="flex items-center px-[var(--space-3)]" data-testid="board-card-priority">
         <span role="img" aria-label={`Priority ${priority} of 5 stars`} className="inline-flex items-center gap-[2px] text-base leading-none">
           {STARS.map((star) => (
             <span key={star} aria-hidden="true" className={star <= (priority ?? 0) ? "text-star-on" : "text-star-off"}>★</span>
@@ -165,7 +165,7 @@ export function PriorityStars({ priority, street, canPrioritize, pending = false
     // five 44px coarse targets fit. Separation between stars comes from padding *inside* each
     // cell, never from `gap` — WCAG 2.5.5 permits abutting targets provided each is 44x44, and any
     // inter-star gap is width the column does not have.
-    <div className="w-full" data-testid="kanban2-card-priority">
+    <div className="w-full" data-testid="board-card-priority">
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-to-interactive-role */}
       <div
         role="radiogroup"
@@ -188,7 +188,7 @@ export function PriorityStars({ priority, street, canPrioritize, pending = false
               tabIndex={index === tabIndexOwner ? 0 : -1}
               onClick={() => commit(star)}
               // 44px is the *hit box*, not the star — the glyph stays ~18px. Matches the drag
-              // handle's existing `size-9 / pointer-coarse:size-11` idiom in `kanban2/card.tsx`.
+              // handle's existing `size-9 / pointer-coarse:size-11` idiom in `board/card.tsx`.
               // While a write is in flight the stars ignore clicks, and the value on screen is
               // already the new one (#232). A `progress` cursor (the `aria-disabled:cursor-*`
               // idiom in `quincy/icon-button.tsx`) tells a mouse the save is running; the lit
@@ -204,7 +204,7 @@ export function PriorityStars({ priority, street, canPrioritize, pending = false
       </div>
       {/* Owned by this control, not the Board: routing the same message through the Dashboard's
           `onAnnounce` as well would land it in two live regions and read it twice. */}
-      <span aria-live="polite" className="sr-only" data-testid="kanban2-card-priority-status">{announcement}</span>
+      <span aria-live="polite" className="sr-only" data-testid="board-card-priority-status">{announcement}</span>
     </div>
   );
 }

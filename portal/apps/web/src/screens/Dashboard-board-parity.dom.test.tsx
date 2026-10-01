@@ -3,12 +3,13 @@
 // focus timing, or active-drag DragOverlay rendering; those are QA-phase real-browser acceptance
 // items.
 //
-// This file is the Board-at-the-Dashboard seam for #98 (the filename keeps its `kanban2` spelling
-// post-cutover per #83, as an internal name only): every gap in #98 that is a Dashboard-level
-// behaviour (not a standalone-Board behaviour covered by `kanban2/board.dom.test.tsx`) was unpinned
+// This file is the Board-at-the-Dashboard seam for #98 (renamed from `Dashboard-kanban2-parity` in #432; the
+// `kanban2` spelling was an internal name only): every gap in #98 that is a Dashboard-level
+// behaviour (not a standalone-Board behaviour covered by `board/board.dom.test.tsx`) was unpinned
 // until this file existed. Routing is read-only history (`lib/staff-history.ts`) —
 // `useNavigate`/`<Link>` do nothing — so, like every other Dashboard DOM test, this sets the URL
 // directly with `window.history.replaceState` before render and restores it afterward.
+import { openMoveTo, pressMenuItem } from "../components/board/board-menu-test-helpers";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,7 +20,7 @@ import { ConfirmModalHost } from "../components/ConfirmDialog";
 import { ApiError } from "../lib/api";
 
 // happy-dom lacks `Element.getAnimations()`, which Base UI's ScrollArea (the Board's horizontal
-// scroll, `kanban2/board.tsx`) calls on a timer after mount. The no-op stub means "no active
+// scroll, `board/board.tsx`) calls on a timer after mount. The no-op stub means "no active
 // animations"; see `reui/gantt/gantt-adjust-ghost-marker.dom.test.tsx` for the same polyfill.
 if (!Element.prototype.getAnimations) {
   Element.prototype.getAnimations = () => [];
@@ -27,7 +28,7 @@ if (!Element.prototype.getAnimations) {
 
 // Captures the `DndContext` props the vendored ReUI Kanban renders, so a drop can be driven without
 // a real pointer. Same technique as `Dashboard-stage-interactions.dom.test.tsx` and
-// `components/kanban2/board.dom.test.tsx`; ReUI's Kanban resolves the move from its own internal
+// `components/board/board.dom.test.tsx`; ReUI's Kanban resolves the move from its own internal
 // state given only the active and over ids.
 const dnd = vi.hoisted(() => ({ handlers: [] as Array<{ onDragEnd?: (event: unknown) => void; props?: Record<string, unknown> }> }));
 vi.mock("@dnd-kit/core", async (importOriginal) => {
@@ -106,10 +107,10 @@ describe("Dashboard Board seam (#98)", () => {
 
   it("renders the Board at the default view", async () => {
     await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
-    await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-column"]')).not.toBeNull());
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="board-column"]')).not.toBeNull());
     // Anti-vacuity anchor for the whole file: content, not merely a test id existing — a Board
-    // that silently rendered no cards would still satisfy a bare "kanban2-column exists" check.
-    expect(document.querySelector('[data-testid="kanban2-card-address"]')?.textContent).toBe("kb2-source Street");
+    // that silently rendered no cards would still satisfy a bare "board-column exists" check.
+    expect(document.querySelector('[data-testid="board-card-address"]')?.textContent).toBe("kb2-source Street");
   });
 
   // AC 7. The equivalent regression in `Dashboard-kanban-sort.dom.test.tsx` only ever proved a
@@ -127,7 +128,7 @@ describe("Dashboard Board seam (#98)", () => {
     it("keeps Priority editable, and a commit reaches the Priority endpoint", async () => {
       flagOffProjects();
       await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
-      await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-column"]')).not.toBeNull());
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="board-column"]')).not.toBeNull());
 
       const group = document.querySelector('[role="radiogroup"]');
       expect(group, "Priority is not editable with the Board mutation flag off — every assertion below would be vacuous").not.toBeNull();
@@ -145,7 +146,7 @@ describe("Dashboard Board seam (#98)", () => {
     // `authorizedBoardOrder` from the payload's `orderedProjectIdsByStage`, and without that key
     // the Board does not render at all. So any Dashboard state in which this Board is on screen
     // already carries map evidence. The Board-level predicate is covered in
-    // `components/kanban2/board.dom.test.tsx`, where props are passed directly.
+    // `components/board/board.dom.test.tsx`, where props are passed directly.
   });
 
   // The confirmation round trip. Every cross-Stage move on real data answers `409`
@@ -180,7 +181,7 @@ describe("Dashboard Board seam (#98)", () => {
           board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["kb2-target", "kb2-source"] },
         });
       await act(async () => { root!.render(<><Dashboard currentUserId="admin-1" /><ConfirmModalHost /></>); await Promise.resolve(); await Promise.resolve(); });
-      await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-column"]')).not.toBeNull());
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="board-column"]')).not.toBeNull());
 
       const handler = dnd.handlers.at(-1)?.onDragEnd;
       expect(handler, "no drag-end handler captured — the Board did not mount a DndContext").not.toBeUndefined();
@@ -224,7 +225,7 @@ describe("Dashboard Board seam (#98)", () => {
       }) : Promise.resolve({ stages: [] }));
       apiPostMock.mockReset().mockReturnValue(new Promise(() => undefined));
       await act(async () => { root!.render(<><Dashboard currentUserId="admin-1" /><ConfirmModalHost /></>); await Promise.resolve(); await Promise.resolve(); });
-      await vi.waitFor(() => expect(document.querySelectorAll('[data-testid="kanban2-card-address"]')).toHaveLength(4));
+      await vi.waitFor(() => expect(document.querySelectorAll('[data-testid="board-card-address"]')).toHaveLength(4));
 
       const handler = dnd.handlers.at(-1)?.onDragEnd;
       expect(handler, "no drag-end handler captured — the Board did not mount a DndContext").not.toBeUndefined();
@@ -253,7 +254,7 @@ describe("Dashboard Board seam (#98)", () => {
       }) : Promise.resolve({ stages: [] }));
       apiPostMock.mockReset().mockReturnValue(new Promise(() => undefined));
       await act(async () => { root!.render(<><Dashboard currentUserId="admin-1" /><ConfirmModalHost /></>); await Promise.resolve(); await Promise.resolve(); });
-      await vi.waitFor(() => expect(document.querySelectorAll('[data-testid="kanban2-card-address"]')).toHaveLength(3));
+      await vi.waitFor(() => expect(document.querySelectorAll('[data-testid="board-card-address"]')).toHaveLength(3));
 
       const handler = dnd.handlers.at(-1)?.onDragEnd;
       expect(handler, "no drag-end handler captured — the Board did not mount a DndContext").not.toBeUndefined();
@@ -266,9 +267,9 @@ describe("Dashboard Board seam (#98)", () => {
       expect(body).not.toHaveProperty("confirmation");
     });
 
-    // The arrows reach the same `/board-position` orchestrator as a drag, one slot at a time, and the
-    // focus comes back to the arrow that was pressed.
-    it("sends an up-arrow press to /board-position one slot up, and refocuses that arrow", async () => {
+    // The menu's Move up / Move down reach the same `/board-position` orchestrator as a drag, one slot at a time, and the
+    // focus comes back to the ⋯ trigger that opened the menu.
+    it("sends a Move up pick to /board-position one slot up, and refocuses the ⋯ trigger", async () => {
       apiGetMock.mockReset();
       apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
         projects: [
@@ -284,16 +285,16 @@ describe("Dashboard Board seam (#98)", () => {
         board: { sourceStageKey: "awaiting_raw", targetStageKey: "awaiting_raw", orderedVisibleProjectIds: ["kb2-a", "kb2-c", "kb2-b"] },
       });
       await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
-      await vi.waitFor(() => expect(document.querySelector('[data-focus-key="arrow-up:kb2-c"]'), "no up arrow rendered — nothing below is proved").not.toBeNull());
+      await vi.waitFor(() => expect(document.querySelector('[data-focus-key="card-menu:kb2-c"]'), "no ⋯ menu rendered — nothing below is proved").not.toBeNull());
 
-      await act(async () => { document.querySelector<HTMLButtonElement>('[data-focus-key="arrow-up:kb2-c"]')!.click(); await Promise.resolve(); });
+      await pressMenuItem(document, "kb2-c", "Move up");
       await vi.waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1));
 
       const [path, body] = apiPostMock.mock.calls[0]!;
       expect(path).toBe("/api/projects/kb2-c/board-position");
       expect(body).toHaveProperty("placement", { kind: "between", before: { projectId: "kb2-a", boardRevision: 2 }, after: { projectId: "kb2-b", boardRevision: 4 } });
       expect(body).not.toHaveProperty("confirmation");
-      await vi.waitFor(() => expect(document.activeElement?.getAttribute("data-focus-key")).toBe("arrow-up:kb2-c"));
+      await vi.waitFor(() => expect(document.activeElement?.getAttribute("data-focus-key")).toBe("card-menu:kb2-c"));
     });
   });
 
@@ -317,7 +318,7 @@ describe("Dashboard Board seam (#98)", () => {
     const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent?.startsWith(text));
     const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
     async function chooseBeforeTarget() {
-      await click(document.querySelector<HTMLButtonElement>('[data-focus-key="move-to:kb2-source"]'), "Move-to trigger");
+      await openMoveTo(document, "kb2-source");
       await click(radio("RAW review"), "RAW review Stage");
       await click(option("Before kb2-target Street"), "Before kb2-target position");
     }
@@ -333,10 +334,10 @@ describe("Dashboard Board seam (#98)", () => {
           board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["kb2-source", "kb2-target"] },
         });
       await act(async () => { root!.render(<><Dashboard currentUserId="admin-1" /><ConfirmModalHost /></>); await Promise.resolve(); await Promise.resolve(); });
-      await vi.waitFor(() => expect(document.querySelector('[data-focus-key="move-to:kb2-source"]')).not.toBeNull());
+      await vi.waitFor(() => expect(document.querySelector('[data-focus-key="card-menu:kb2-source"]')).not.toBeNull());
 
       await chooseBeforeTarget();
-      await click(document.querySelector('[data-testid="kanban2-move-to-submit"]'), "submit");
+      await click(document.querySelector('[data-testid="board-move-to-submit"]'), "submit");
       await vi.waitFor(() => expect(apiPostMock, "the Move-to submit never reached the server").toHaveBeenCalledTimes(1));
 
       const exact = { kind: "between", before: null, after: { projectId: "kb2-target", boardRevision: 5 } };
@@ -349,7 +350,7 @@ describe("Dashboard Board seam (#98)", () => {
       expect(apiPostMock.mock.calls[1]![1]).toEqual(expect.objectContaining({ placement: exact, confirmation: { reasons: ["backward"] } }));
 
       await flush(); await flush();
-      await vi.waitFor(() => expect(document.activeElement?.getAttribute("data-focus-key")).toBe("move-to:kb2-source"));
+      await vi.waitFor(() => expect(document.activeElement?.getAttribute("data-focus-key")).toBe("card-menu:kb2-source"));
     });
 
     // Ported from the default-view scenario in `Dashboard-stage-interactions.dom.test.tsx`: the chosen
@@ -364,23 +365,23 @@ describe("Dashboard Board seam (#98)", () => {
         : Promise.resolve({ stages: [] }));
       apiPostMock.mockReset();
       const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-      const runtime = new ProjectQueryRuntime(queryClient, "kanban2-move-to-stale-test");
+      const runtime = new ProjectQueryRuntime(queryClient, "board-move-to-stale-test");
       await act(async () => {
         root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><Dashboard currentUserId="admin-1" /></QueryClientProvider></ProjectQueryRuntimeProvider>);
         await Promise.resolve();
       });
-      await vi.waitFor(() => expect(document.querySelector('[data-focus-key="move-to:kb2-source"]')).not.toBeNull());
+      await vi.waitFor(() => expect(document.querySelector('[data-focus-key="card-menu:kb2-source"]')).not.toBeNull());
 
       await chooseBeforeTarget();
       runtime.markProjectRemoved("kb2-target");
       await flush();
-      await click(document.querySelector('[data-testid="kanban2-move-to-submit"]'), "submit");
+      await click(document.querySelector('[data-testid="board-move-to-submit"]'), "submit");
       await flush(); await flush();
 
       expect(apiPostMock).not.toHaveBeenCalled();
       expect(document.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toContain("That position changed");
       expect(projectFetches).toBe(2);
-      expect(document.activeElement?.getAttribute("data-focus-key")).toBe("move-to:kb2-source");
+      expect(document.activeElement?.getAttribute("data-focus-key")).toBe("card-menu:kb2-source");
       runtime.dispose();
       queryClient.clear();
     });
@@ -399,7 +400,7 @@ describe("Dashboard Board seam (#98)", () => {
   describe("focus identifiers", () => {
     it("publishes the three restore tiers the Dashboard looks for", async () => {
       await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
-      await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-column"]')).not.toBeNull());
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="board-column"]')).not.toBeNull());
 
       const boardRoot = document.querySelector<HTMLElement>('[data-focus-key="board"]');
       expect(boardRoot, "tier 3 target missing — every focus restore on this Board is a silent no-op").not.toBeNull();
@@ -411,12 +412,12 @@ describe("Dashboard Board seam (#98)", () => {
       expect(heading, "tier 2 target missing for the semantic Stage key").not.toBeNull();
       expect(heading!.getAttribute("tabindex")).toBe("-1");
 
-      expect(document.querySelector('[data-focus-key="move-handle:kb2-source"]'), "tier 1 target missing on the card handle").not.toBeNull();
+      expect(document.querySelector('[data-focus-key="card:kb2-source"]'), "tier 1 target missing on the card handle").not.toBeNull();
     });
 
     it("leaves focus on the Priority control after its own write refreshes the Board", async () => {
       await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
-      await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-column"]')).not.toBeNull());
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="board-column"]')).not.toBeNull());
       // Anchor: tier 3 must be reachable, or this test would pass because there was nothing to
       // steal focus to.
       expect(document.querySelector('[data-focus-key="board"]'), "no tier-3 target — the steal could not be observed").not.toBeNull();
@@ -468,9 +469,9 @@ describe("Dashboard Board seam (#98)", () => {
         board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["kb2-target", "kb2-source"] },
       });
       await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
-      await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-column"]')).not.toBeNull());
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="board-column"]')).not.toBeNull());
 
-      const handle = document.querySelector<HTMLElement>('[data-focus-key="move-handle:kb2-source"]');
+      const handle = document.querySelector<HTMLElement>('[data-focus-key="card:kb2-source"]');
       expect(handle, "no handle to restore to — the assertion below would be vacuous").not.toBeNull();
       handle!.focus();
       calls.length = 0;
@@ -501,7 +502,7 @@ describe("Dashboard Board seam (#98)", () => {
   // LOGIC lives in the Dashboard and is shared by both Boards; the old Board already pins it
   // ("defers a cross-tab Board invalidation during drag…" in
   // `Dashboard-stage-interactions.dom.test.tsx`). What is new for this Board is that it publishes the
-  // lifecycle at all, which `components/kanban2/board.dom.test.tsx` pins directly. So what this adds
+  // lifecycle at all, which `components/board/board.dom.test.tsx` pins directly. So what this adds
   // is the end-to-end consequence: a cross-tab invalidation mid-drag still FETCHES (the barrier
   // blocks acceptance, not fetching), and once the drag ends the queued refresh runs and the Board
   // converges instead of latching forever.
@@ -532,9 +533,9 @@ describe("Dashboard Board seam (#98)", () => {
       });
     });
     const dragClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const dragRuntime = new ProjectQueryRuntime(dragClient, "kanban2-drag-tab");
+    const dragRuntime = new ProjectQueryRuntime(dragClient, "board-drag-tab");
     const otherClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const otherRuntime = new ProjectQueryRuntime(otherClient, "kanban2-other-tab");
+    const otherRuntime = new ProjectQueryRuntime(otherClient, "board-other-tab");
     dragRuntime.start(); otherRuntime.start();
     try {
       await act(async () => {
@@ -545,7 +546,7 @@ describe("Dashboard Board seam (#98)", () => {
         );
         await Promise.resolve();
       });
-      await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-column"]')).not.toBeNull());
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="board-column"]')).not.toBeNull());
       expect(reads).toBe(1);
 
       const onDragStart = dnd.handlers.at(-1)?.props?.onDragStart as ((event: unknown) => void) | undefined;
@@ -559,7 +560,7 @@ describe("Dashboard Board seam (#98)", () => {
       const onDragCancel = dnd.handlers.at(-1)?.props?.onDragCancel as ((event: unknown) => void) | undefined;
       await act(async () => { onDragCancel!({ active: { id: "kb2-source" } }); await Promise.resolve(); await Promise.resolve(); });
       // And it must not latch.
-      await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-card-address"]')?.textContent).toBe("Fresh Street"));
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="board-card-address"]')?.textContent).toBe("Fresh Street"));
     } finally {
       dragRuntime.dispose(); otherRuntime.dispose(); dragClient.clear(); otherClient.clear();
       vi.unstubAllGlobals();
@@ -596,7 +597,7 @@ describe("Dashboard Board seam (#98)", () => {
         board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["kb2-target", "kb2-source"] },
       });
       await act(async () => { root!.render(<><Dashboard currentUserId="admin-1" /><ConfirmModalHost /></>); await Promise.resolve(); await Promise.resolve(); });
-      await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-column"]')).not.toBeNull());
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="board-column"]')).not.toBeNull());
 
       const handler = dnd.handlers.at(-1)?.onDragEnd;
       expect(handler, "no drag-end handler captured — the Board did not mount a DndContext").not.toBeUndefined();
@@ -655,8 +656,50 @@ describe("Dashboard Board seam (#98)", () => {
     // an observed behaviour, and says so.
     it("leaves the toast viewport live for toasts that are not announced elsewhere", async () => {
       await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
-      await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-column"]')).not.toBeNull());
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="board-column"]')).not.toBeNull());
       expect(document.querySelector('[data-testid="dashboard-toast-viewport"]')?.getAttribute("aria-live")).toBe("polite");
+    });
+  });
+
+  // #432: collapsing a Stage to a rail is a per-viewer preference that outlives the mount.
+  describe("Stage collapse (#432)", () => {
+    const render = async (userId: string) => {
+      await act(async () => { root!.render(<Dashboard currentUserId={userId} />); await Promise.resolve(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="board-column"]')).not.toBeNull());
+    };
+    const rails = () => document.querySelectorAll('[data-testid="board-column"][data-collapsed="true"]');
+    const collapse = () => document.querySelector<HTMLButtonElement>('[aria-label="Collapse Awaiting RAW"]');
+    const key = (userId: string) => `quincy:dashboard:board:collapsed:${userId}`;
+
+    it("persists per user id, survives a remount, and leaves another viewer expanded", async () => {
+      await render("admin-1");
+      expect(rails(), "anchor: expanded to begin with").toHaveLength(0);
+      await act(async () => { collapse()!.click(); await Promise.resolve(); });
+      expect(rails()).toHaveLength(1);
+      expect(window.localStorage.getItem(key("admin-1"))).toBe(JSON.stringify(["awaiting_raw"]));
+      expect(document.querySelector('[data-focus-key="stage-heading:awaiting_raw"]'), "the rail keeps its heading focus key").not.toBeNull();
+      expect(document.querySelector('[aria-label="Expand Awaiting RAW"]')?.getAttribute("aria-expanded")).toBe("false");
+
+      await act(async () => { root!.unmount(); await Promise.resolve(); });
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      root = createRoot(host);
+      await render("admin-1");
+      expect(rails(), "the collapse did not survive a remount").toHaveLength(1);
+
+      await render("admin-2");
+      expect(rails(), "another viewer inherited the collapse").toHaveLength(0);
+    });
+
+    it("reads corrupt storage as all expanded, and expands again from the rail", async () => {
+      window.localStorage.setItem(key("admin-1"), "{not json");
+      await render("admin-1");
+      expect(rails()).toHaveLength(0);
+      await act(async () => { collapse()!.click(); await Promise.resolve(); });
+      expect(rails()).toHaveLength(1);
+      await act(async () => { document.querySelector<HTMLButtonElement>('[aria-label="Expand Awaiting RAW"]')!.click(); await Promise.resolve(); });
+      expect(rails()).toHaveLength(0);
+      expect(window.localStorage.getItem(key("admin-1"))).toBe("[]");
     });
   });
 });

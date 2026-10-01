@@ -122,6 +122,12 @@ export type ProjectKanbanBoardProps = {
   role?: Role;
   boardMutationEnabled: boolean;
   movementDisabled?: boolean;
+  /**
+   * The principal holds a movement capability (Stage moves or Priority), whether or not movement is
+   * switched on right now. Keeps the card's ⋯ menu visible but disabled through a search, a settling
+   * refresh or a 503, instead of letting it vanish (#432).
+   */
+  menuCapable?: boolean;
   sameStageReorderEnabled?: boolean;
   effectiveKanbanSort: KanbanSortMode;
   pendingMoves: ReadonlySet<string>;
@@ -135,6 +141,11 @@ export type ProjectKanbanBoardProps = {
   onInteractionStateChange?: (state: BoardInteractionState) => void;
   onAnnounce?: (message: string | undefined) => void;
   projectHrefFor?: (project: ProjectSummary) => string | undefined;
+  /** The clock "overdue" is judged against (the Dashboard's `useNow`); the Board falls back to the wall clock. */
+  now?: number;
+  /** Canonical keys of the Stage columns collapsed to a rail (#432); per viewer, owned by the Dashboard. */
+  collapsedStageKeys?: readonly StageKey[];
+  onToggleStageCollapsed?: (stageKey: StageKey) => void;
 };
 
 type CanonicalStageKey = StageKey;

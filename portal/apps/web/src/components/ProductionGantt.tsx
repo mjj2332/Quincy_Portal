@@ -77,7 +77,7 @@
  * Project (`ProjectCalendarAnchor` -> the Dashboard's `openCalendarProject`).
  * Reuse ledger: tree columns — vendored `reui/gantt` `columns`/`GanttColumn`; row link —
  * `ProjectCalendarAnchor` (+`testId`/`className`); avatar stack — `quincy/AvatarStack` (moved from
- * `kanban2/card.tsx`) on `reui/avatar`; trigger + popover — `reui/popover` + `reui/button` ghost
+ * `board/card.tsx`) on `reui/avatar`; trigger + popover — `reui/popover` + `reui/button` ghost
  * `xs` skinned with `project-header-popover`'s `POPOVER_CONTENT`; Team picker + remove confirm +
  * conflict — `ProjectTeamCombobox` whole, `lib/confirm`; Deadline editor — `ProjectDeadlineControl`
  * whole; loading/error — `reui/skeleton`, `quincy/Notice`, `reui/button`; read-only Due — plain
@@ -213,7 +213,6 @@ import {
 import { deadlineFoldOf, projectDefaultFromFacts } from "../lib/date-time-range";
 import { useStages } from "../lib/stages";
 import { useMediaQuery } from "../lib/use-media-query";
-import { ProductionGanttFiltersBar } from "./ProductionGanttFiltersBar";
 import { ProductionEventCalendarDialogs } from "./ProductionEventCalendarDialogs";
 import { GanttDeadlineCell, GanttTeamCell } from "./ProductionGanttProjectCells";
 import { GanttSubtaskDueCell, scheduleErrorFromEditor, stopRowGesture } from "./ProductionGanttSubtaskCells";
@@ -239,6 +238,13 @@ export type ProductionGanttProps = {
   filters: ProductionGanttFacetFilters;
   /** Writes a filter change back to the URL; the new filters arrive back through `filters`. */
   onFiltersChange: (next: ProductionGanttFacetFilters) => void;
+  /**
+   * #430: the Filter and Display triggers live in the Dashboard's view bar, outside this lazy view.
+   * The empty state's buttons unmount with it, so each hands focus to the control the user would
+   * reach for next: Clear filters -> the Filter trigger, Show delivered Projects -> Display.
+   */
+  focusFilterTrigger?: () => void;
+  focusDisplayTrigger?: () => void;
   /** #221: the Dashboard's scheduling gate — same contract as `ProductionCalendar`'s. */
   onAcceptGateChange?: (blocked: boolean) => void;
   onSettleStateChange?: (state: CalendarSettleState) => void;
@@ -624,8 +630,7 @@ function GanttLegend({ entries }: { entries: readonly GanttLegendEntry[] }) {
       role="group"
       aria-label="Stage legend"
       data-testid="production-gantt-legend"
-      // #257: the secondary text role — `text-muted-foreground` read too faint at 11px (same
-      // reasoning as the filters bar's chip operator, `ProductionGanttFiltersBar.dom.test.tsx`).
+      // #257: the secondary text role — `text-muted-foreground` read too faint at 11px (11px reads too faint in `text-muted-foreground`).
       className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-foreground-secondary"
     >
       {entries.map((entry) => (
@@ -809,7 +814,7 @@ function GestureAwareCell({ live, children }: { live: boolean; children: (disabl
   return <>{children(!live || gestureActive)}</>;
 }
 
-export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersChange, onAcceptGateChange, onSettleStateChange, onAccessLoss, onShownProjectsChange, projectHrefFor, onOpenProject }: ProductionGanttProps) {
+export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersChange, focusFilterTrigger, focusDisplayTrigger, onAcceptGateChange, onSettleStateChange, onAccessLoss, onShownProjectsChange, projectHrefFor, onOpenProject }: ProductionGanttProps) {
   const { stages } = useStages();
   // Role-derived (the same `identity` the request is authorised as), not a second session read.
   const canAdminBackend = roleHasCapability(identity.role, "adminBackend");
@@ -837,8 +842,8 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   );
   const legendEntries = useMemo(() => ganttLegendEntries({ stageOptions, filters }), [stageOptions, filters]);
   // #255: the empty state's Clear filters button unmounts with the empty state, which would drop
-  // focus to <body>. Focus moves to the always-mounted filters bar's add-filter trigger instead —
-  // the filters the empty state pointed the user to. The browser's own focus scroll only brings the
+  // focus to <body>. Focus moves to the Dashboard's always-mounted Filter trigger instead (#430; the
+  // Display trigger for Show delivered Projects) — the controls the empty state pointed the user to. The browser's own focus scroll only brings the
   // target to the nearest edge, which at 390×844 left it clipped at the viewport's bottom; so focus
   // without scrolling, then scroll it to the top — the trigger's scroll-margin-top clears the sticky
   // shell header. Default (instant) scroll behaviour: no animation for reduced-motion users.
@@ -848,23 +853,24 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // still ended 7px below the viewport with scrollY 0. The handler arms a flag; the layout effect
   // below, keyed on the request filters, spends it after the render that carries the cleared filters
   // (the loading slot in place of the empty state) has reached the DOM, and before it paints. No
-  // other filter change arms it, so the bar's own edits never scroll the page.
-  const filtersTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const scrollToFiltersPendingRef = useRef(false);
-  // #270: the empty state's Show delivered projects takes the same path — its button unmounts too.
-  const writeFiltersFromEmptyState = useCallback((next: ProductionGanttFacetFilters) => {
-    scrollToFiltersPendingRef.current = true;
+  // other filter change arms it, so the Filter's and Display's own edits never scroll the page.
+  const scrollToTriggerPendingRef = useRef<"filter" | "display" | null>(null);
+  // #270: the empty state's Show delivered Projects takes the same path — its button unmounts too.
+  const writeFiltersFromEmptyState = useCallback((next: ProductionGanttFacetFilters, target: "filter" | "display") => {
+    scrollToTriggerPendingRef.current = target;
     onFiltersChange(next);
-    filtersTriggerRef.current?.focus({ preventScroll: true });
-  }, [onFiltersChange]);
-  const clearFiltersFromEmptyState = useCallback(() => writeFiltersFromEmptyState(DEFAULT_GANTT_FACET_FILTERS), [writeFiltersFromEmptyState]);
+    (target === "filter" ? focusFilterTrigger : focusDisplayTrigger)?.();
+  }, [onFiltersChange, focusFilterTrigger, focusDisplayTrigger]);
+  const clearFiltersFromEmptyState = useCallback(() => writeFiltersFromEmptyState(DEFAULT_GANTT_FACET_FILTERS, "filter"), [writeFiltersFromEmptyState]);
   const query = useProductionGanttProjects(identity, filters);
   const projects = query.data?.projects ?? [];
 
   useLayoutEffect(() => {
-    if (!scrollToFiltersPendingRef.current) return;
-    scrollToFiltersPendingRef.current = false;
-    filtersTriggerRef.current?.scrollIntoView({ block: "start" });
+    const target = scrollToTriggerPendingRef.current;
+    if (!target) return;
+    scrollToTriggerPendingRef.current = null;
+    // The trigger's scroll-margin-top (set where it is drawn, `DashboardViewBar` / `DashboardFilter`) clears the sticky shell header.
+    document.querySelector<HTMLElement>(target === "filter" ? '[data-testid="dashboard-filter-trigger"]' : '[data-testid="dashboard-display-trigger"]')?.scrollIntoView({ block: "start" });
   }, [filters]);
 
   /**
@@ -1877,8 +1883,8 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
                 {/* #270: Stage = Delivered with delivered projects hidden draws nothing for a known
                     reason (a cold link is never rewritten on load), so offer that specific fix. */}
                 {showDeliveredRecovery && (
-                  <QuincyButton variant="text" type="button" onClick={() => writeFiltersFromEmptyState(showDeliveredRecovery)}>
-                    Show delivered projects
+                  <QuincyButton variant="text" type="button" onClick={() => writeFiltersFromEmptyState(showDeliveredRecovery, "display")}>
+                    Show delivered Projects
                   </QuincyButton>
                 )}
                 <button type="button" className={buttonClasses("text")} onClick={clearFiltersFromEmptyState}>
@@ -1930,7 +1936,6 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
 
   return (
     <div ref={containerRef} className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)]" data-testid="production-gantt-root">
-      <ProductionGanttFiltersBar filters={facetFilters} onFiltersChange={onFiltersChange} triggerRef={filtersTriggerRef} />
       <GanttLegend entries={legendEntries} />
       {commands.settle.recoveryReason && (
         <Notice role="alert" data-testid="production-gantt-recovery-notice" className="flex items-center justify-between gap-[var(--space-4)]">

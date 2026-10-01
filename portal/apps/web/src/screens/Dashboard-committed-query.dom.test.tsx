@@ -51,10 +51,10 @@ vi.mock("../lib/stages", () => ({
   }),
 }));
 vi.mock("../components/NoticeBoard", () => ({ NoticeBoard: () => null }));
-vi.mock("../components/kanban2/board", () => ({
+vi.mock("../components/board/board", () => ({
   ProjectKanbanBoard2: (props: { projects: ProjectSummary[] }) => (
     <div data-testid="dashboard-board">
-      {props.projects.map((project) => <button key={project.id} type="button" data-testid="kanban2-move-to" disabled={true}>{project.street}</button>)}
+      {props.projects.map((project) => <button key={project.id} type="button" data-testid="board-move-to" disabled={true}>{project.street}</button>)}
     </div>
   ),
 }));
@@ -165,7 +165,7 @@ describe("Dashboard's committed query is derived from the route, not adopted int
     await settle();
     expect(window.location.search).toContain("view=board");
     expect(window.location.search).toContain("q=smith");
-    const triggers = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="kanban2-move-to"]')];
+    const triggers = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="board-move-to"]')];
     expect(triggers.length).toBeGreaterThan(0);
     for (const trigger of triggers) expect(trigger.disabled).toBe(true);
   });

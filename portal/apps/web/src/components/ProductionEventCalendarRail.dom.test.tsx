@@ -1,6 +1,6 @@
 /**
  * #222 step 6 — the event-calendar rail: mini month (busy dots, day select → civil date), Up next
- * (a read-only agenda list), and the facets slot. Guard F: Quincy `data-testid`s.
+ * (a read-only agenda list). Guard F: Quincy `data-testid`s.
  */
 if (!Element.prototype.getAnimations) {
   Element.prototype.getAnimations = () => [];
@@ -34,7 +34,6 @@ async function render(overrides: Partial<Props> = {}) {
   const props: Props = {
     date: "2026-08-12", onDateChange: vi.fn(), events: [], nowCivil: "2026-08-12T08:00",
     upNext: { status: "ready", events: [] }, onOpenUpNext: vi.fn(),
-    facets: <div data-testid="facets-slot" />,
     ...overrides,
   };
   await act(async () => { root.render(<ProductionEventCalendarRail {...props} />); await Promise.resolve(); });
@@ -111,13 +110,5 @@ describe("ProductionEventCalendarRail — Up next", () => {
     const many = Array.from({ length: 8 }, (_, index) => deadline(`n${index}`, `2026-08-${String(13 + index).padStart(2, "0")}T00:00:00.000Z`, `2026-08-${String(13 + index).padStart(2, "0")}T10:00`));
     const result = upNextEvents([ended, allDay, ...many], "2026-08-12T08:00", 5);
     expect(result.map((event) => event.id)).toEqual(["checklist:today", "project-deadline:n0", "project-deadline:n1", "project-deadline:n2", "project-deadline:n3"]);
-  });
-});
-
-describe("ProductionEventCalendarRail — slots", () => {
-  it("renders the facets slot in the rail", async () => {
-    await render();
-    const rail = host.querySelector('[data-testid="event-calendar-rail"]')!;
-    expect(rail.querySelector('[data-testid="facets-slot"]')).not.toBeNull();
   });
 });

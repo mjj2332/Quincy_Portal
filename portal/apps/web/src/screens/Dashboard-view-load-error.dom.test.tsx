@@ -30,7 +30,7 @@ vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { id: "user-1
 vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ role: authRole.value, capabilities: [], can: (capability: string) => authRole.value === "admin" && ["adminBackend", "createProject", "viewNoticeBoard"].includes(capability) }) }));
 vi.mock("../lib/stages", () => ({ presentationStages: (stages: unknown[]) => stages, useStages: () => ({ stages: [], presentationStageKey: (key: string) => key }) }));
 vi.mock("../components/NoticeBoard", () => ({ NoticeBoard: () => null }));
-vi.mock("../components/kanban2/board", () => ({ ProjectKanbanBoard2: () => <div data-testid="dashboard-board" /> }));
+vi.mock("../components/board/board", () => ({ ProjectKanbanBoard2: () => <div data-testid="dashboard-board" /> }));
 vi.mock("../components/ProductionGantt", () => ({
   get ProductionGantt(): never {
     throw new TypeError("Failed to fetch dynamically imported module: https://quincy.test/assets/ProductionGantt-OLD.js");

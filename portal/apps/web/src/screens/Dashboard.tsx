@@ -13,9 +13,10 @@ import { ToastViewport } from "../components/quincy/ToastViewport";
 import { Button, buttonClasses } from "../components/quincy/Button";
 import { DashboardHeader } from "./DashboardHeader";
 import { DashboardViewBar, VIEW_PANEL_ID, VIEW_TAB_ID } from "./DashboardViewBar";
-import { BoardDisplayContent, TableDisplayContent } from "./DashboardDisplay";
+import { BoardDisplayContent, CalendarDisplayContent, TableDisplayContent, TimelineDisplayContent } from "./DashboardDisplay";
 import { DashboardTable } from "../components/DashboardTable";
 import { hideableColumnsFor } from "../lib/dashboard-table-model";
+import { useBoardCollapse } from "../lib/use-board-collapse";
 import { useDashboardTablePrefs } from "../lib/use-dashboard-table-prefs";
 import { DashboardFilterChips, DashboardFilterProvider, DashboardFilterTrigger } from "./DashboardFilter";
 import { dashboardSummary } from "../lib/dashboard-summary";
@@ -50,7 +51,7 @@ import {
   type ProjectSummary,
   type SemanticGap,
 } from "../lib/kanban-interaction";
-import { ProjectKanbanBoard2 } from "../components/kanban2/board";
+import { ProjectKanbanBoard2 } from "../components/board/board";
 // #220: code-split — the vendored ReUI Gantt tree loads only when a
 // capable principal opens the Gantt view. `ProductionGantt.tsx` is the ONLY app file allowed to
 // import `components/reui/gantt/` (`harness-reachability.guard.test.ts`'s
@@ -128,8 +129,9 @@ const noRuntimeSubscribe = () => () => undefined;
 const zeroRuntimeSnapshot = () => 0;
 
 function focusKeyForControl(control: FocusDescriptor["control"], projectId: string): string {
-  if (control === "handle") return `move-handle:${projectId}`;
-  if (control === "move-to") return `move-to:${projectId}`;
+  if (control === "handle") return `card:${projectId}`;
+  // The arrows and Move to… are items in the card's ⋯ menu now (#432); focus goes back to its trigger.
+  if (control === "move-to" || control === "arrow-up" || control === "arrow-down") return `card-menu:${projectId}`;
   if (control === "rail-stage") return `rail-stage:${projectId}`;
   return `${control}:${projectId}`;
 }
@@ -202,6 +204,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const canViewArchived = can("adminBackend");
   // #431: the Table's Group by and hidden columns, per viewer.
   const { prefs: tablePrefs, update: updateTablePrefs } = useDashboardTablePrefs(currentUserId);
+  const { collapsedStageKeys, toggleStageCollapsed } = useBoardCollapse(currentUserId);
   const canViewProductionCalendar = roleHasCapability(role, "viewProductionCalendar");
   // #366: through the location lens — the live store by default, the remembered Dashboard location
   // while the Project sheet floats over this Dashboard (`lib/dashboard-location.ts`).
@@ -323,6 +326,10 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const [calendarSettle, setCalendarSettle] = useState<CalendarSettleState>({ pending: false, recoveryReason: null });
   const [recoveryReason, setRecoveryReason] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
+  // #430: the Delivered pair's notice is one-shot. `pairWriteInFlightRef` marks the notice's own write
+  // (set until its URL lands); a Timeline URL change from anywhere else clears it.
+  const pairNoticeLiveRef = useRef(false);
+  const pairWriteInFlightRef = useRef(false);
   const [boardUnavailableReason, setBoardUnavailableReason] = useState<string | null>(null);
   const [, setDocumentActivityVersion] = useState(0);
   useEffect(() => {
@@ -1069,20 +1076,79 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   function writeFilter(next: DashboardFilter) {
     if (movementInteractionActive || calendarInteractionBlocked) return;
     if (isCalendarView && calendarState) {
-      navigateCalendar({ ...calendarState, ...next, view: "calendar" });
+      writeCalendarState(next);
       return;
     }
     if (isGanttView) {
-      // The Delivered pair: Stage = Delivered draws nothing while delivered projects are hidden.
-      const written = ganttFacetForWrite(ganttFilters, { ...ganttFilters, ...next });
-      const notice = ganttPairingNotice({ ...ganttFilters, ...next }, written);
-      if (notice) setAnnouncement(notice);
-      navigateGantt(written);
+      writeGanttFacet(next);
       return;
     }
     const currentSearch = takeDashboardSearchForNavigation(currentUserId);
     history.push(staffPathFor(withDashboardFilter({ kind: "dashboard", dashboardView: view === "board" ? "board" : "table", ...(currentSearch ? { search: currentSearch } : {}) }, next)));
   }
+
+  // The Timeline's writes, shared by the Filter (`writeFilter`) and Display (`writeTimelineDisplay`).
+  // The Delivered pair: Stage = Delivered draws nothing while delivered projects are hidden.
+  function writeGanttFacet(changes: Partial<ProductionGanttFacetFilters>) {
+    const written = ganttFacetForWrite(ganttFilters, { ...ganttFilters, ...changes });
+    announcePairing(ganttPairingNotice({ ...ganttFilters, ...changes }, written));
+    navigateGantt(written);
+  }
+
+  // The Delivered pair's one-shot notice, shared by both views' writers.
+  function announcePairing(notice: string | null) {
+    if (notice) {
+      setAnnouncement(notice);
+      pairNoticeLiveRef.current = true;
+      pairWriteInFlightRef.current = true;
+    } else if (pairNoticeLiveRef.current) {
+      pairNoticeLiveRef.current = false;
+      setAnnouncement("");
+    }
+  }
+
+  // #430: the Calendar's counterpart to `writeGanttFacet`. The pair is Stage and `showDeliveredProjects`
+  // (the Timeline's `delivered`), through the same rule; the write is still one `navigateCalendar`.
+  function writeCalendarState(changes: Partial<DashboardCalendarState>) {
+    if (!calendarState) return;
+    const edit = { ...calendarState, ...changes };
+    const pairEdit = { stageKeys: edit.stageKeys, delivered: edit.showDeliveredProjects };
+    const paired = ganttFacetForWrite({ stageKeys: calendarState.stageKeys, delivered: calendarState.showDeliveredProjects }, pairEdit);
+    announcePairing(ganttPairingNotice(pairEdit, paired));
+    navigateCalendar({ ...edit, stageKeys: paired.stageKeys, showDeliveredProjects: paired.delivered, view: "calendar" });
+  }
+
+  // #430: the old filters bar cleared its pair notice on any navigation it did not write (Back/Forward,
+  // another control), so a repeated removal is announced again rather than matching the stale string.
+  // Keyed on the Timeline's filters and the Calendar's route value together: both views' URL writes land
+  // in one render, so a single effect spends the in-flight flag once.
+  const calendarStateKey = effectiveRouteCalendar ? JSON.stringify(effectiveRouteCalendar) : "";
+  useEffect(() => {
+    if (pairWriteInFlightRef.current) {
+      pairWriteInFlightRef.current = false;
+      return;
+    }
+    if (!pairNoticeLiveRef.current) return;
+    pairNoticeLiveRef.current = false;
+    setAnnouncement("");
+  }, [ganttFilters, calendarStateKey]);
+
+  // #430: a Show toggle in the Timeline's Display (delivered Projects, completed Subtasks).
+  function writeTimelineDisplay(changes: { delivered?: boolean; completed?: boolean }) {
+    if (movementInteractionActive || calendarInteractionBlocked) return;
+    writeGanttFacet(changes);
+  }
+
+  // #430: a Layers or Show toggle in the Calendar's Display; pushed like every Calendar write.
+  function writeCalendarDisplay(changes: Partial<Pick<DashboardCalendarState, "layers" | "showDeliveredProjects" | "showCompletedChecklist">>) {
+    if (movementInteractionActive || calendarInteractionBlocked || !calendarState) return;
+    writeCalendarState(changes);
+  }
+
+  // The Gantt is lazy and mounts outside the Filter provider, so its empty state reaches the
+  // Filter and Display triggers by test id, as `clearFiltersFromEmptyState` below does.
+  const focusFilterTrigger = useCallback(() => document.querySelector<HTMLElement>('[data-testid="dashboard-filter-trigger"]')?.focus({ preventScroll: true }), []);
+  const focusDisplayTrigger = useCallback(() => document.querySelector<HTMLElement>('[data-testid="dashboard-display-trigger"]')?.focus({ preventScroll: true }), []);
 
   // The empty state's Clear filters unmounts with it, which would drop focus to the body: it goes to the
   // Filter trigger, the control the user would reach for next (as the Timeline's does).
@@ -1497,7 +1563,17 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
                   hideableColumns={hideableColumnsFor(role)}
                   onColumnVisibilityChange={(column, visible) => updateTablePrefs({ hiddenColumns: visible ? tablePrefs.hiddenColumns.filter((id) => id !== column) : [...tablePrefs.hiddenColumns, column] })}
                 />
-              : undefined}
+              : renderedView === "calendar" && calendarState
+                ? <CalendarDisplayContent
+                    layers={calendarState.layers}
+                    onLayersChange={(layers) => writeCalendarDisplay({ layers })}
+                    showDeliveredProjects={calendarState.showDeliveredProjects}
+                    showCompletedChecklist={calendarState.showCompletedChecklist}
+                    onShowChange={writeCalendarDisplay}
+                  />
+                : renderedView === "timeline"
+                  ? <TimelineDisplayContent delivered={ganttFilters.delivered} completed={ganttFilters.completed} onChange={writeTimelineDisplay} />
+                  : undefined}
           filterTrigger={<DashboardFilterTrigger />}
         />
         <DashboardFilterChips />
@@ -1522,6 +1598,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
                 onSettleStateChange={setCalendarSettle}
                 onAccessLoss={handleCalendarAccessLoss}
                 onShownProjectsChange={setViewShownProjects}
+                onShowDeliveredProjects={() => writeCalendarDisplay({ showDeliveredProjects: true })}
                 projectHrefFor={projectHrefFor}
                 onOpenProject={openCalendarProject}
               />
@@ -1541,6 +1618,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
                 q={committedQuery}
                 filters={ganttFilters}
                 onFiltersChange={navigateGantt}
+                focusFilterTrigger={focusFilterTrigger}
+                focusDisplayTrigger={focusDisplayTrigger}
                 onAcceptGateChange={setCalendarInteractionBlocked}
                 onSettleStateChange={setCalendarSettle}
                 onAccessLoss={handleCalendarAccessLoss}
@@ -1609,6 +1688,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
             role={role}
             boardMutationEnabled={boardMutationEnabled}
             movementDisabled={movementSettlePending || !boardMutationEnabled || boardNarrowed}
+            menuCapable={canMoveStagesCapability || canPrioritize}
+            collapsedStageKeys={collapsedStageKeys}
+            onToggleStageCollapsed={toggleStageCollapsed}
             sameStageReorderEnabled={boardMutationEnabled && canPrioritize && hasAuthorizedBoardMap && effectiveBoardSort === "board" && !boardNarrowed}
             effectiveKanbanSort={effectiveBoardSort}
             pendingMoves={pendingMoves}
@@ -1622,6 +1704,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
             onInteractionStateChange={setBoardInteraction}
             onAnnounce={(message) => { if (message !== undefined) setAnnouncement(message); }}
             projectHrefFor={(project) => projectHrefFor(project.id)}
+            now={now}
           />
         )}
       </div>

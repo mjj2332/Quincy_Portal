@@ -6,6 +6,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
 } from "../components/reui/dropdown-menu";
+import { PRODUCTION_CALENDAR_LAYERS, type ProductionCalendarLayer } from "@quincy/shared";
 import {
   TABLE_COLUMN_LABELS,
   TABLE_GROUP_BY_LABELS,
@@ -21,6 +22,10 @@ import type { KanbanSortMode } from "./dashboard-helpers";
  * What each view puts in the Dashboard's Display menu (#431). `DashboardViewBar` owns the trigger
  * and the popup; a view supplies its own content through the `display` slot, and a view with none
  * leaves the trigger disabled with a reason.
+ *
+ * Calendar and Timeline (#430): the Calendar's Layers and the "Show" toggles for delivered Projects and
+ * completed Subtasks, which are real server filters on both views and must not be active without a
+ * visible control. Layers keep at least one layer on.
  *
  * Radio and checkbox items leave the menu open (Base UI's default for both), so a viewer can change
  * Group by and several columns in one visit.
@@ -80,4 +85,55 @@ export function TableDisplayContent({ groupBy, onGroupByChange, hiddenColumns, h
       </DropdownMenuGroup>
     </>
   );
+}
+
+const LAYER_LABELS: Record<ProductionCalendarLayer, string> = { project: "Project deadlines", checklist: "Subtasks" };
+
+/** The "Show" group both Calendar and Timeline carry: delivered Projects and completed Subtasks. */
+function ShowGroup({ delivered, completed, onDeliveredChange, onCompletedChange }: { delivered: boolean; completed: boolean; onDeliveredChange: (next: boolean) => void; onCompletedChange: (next: boolean) => void }) {
+  return (
+    <DropdownMenuGroup>
+      <DropdownMenuLabel>Show</DropdownMenuLabel>
+      <DropdownMenuCheckboxItem checked={delivered} onCheckedChange={onDeliveredChange}>Delivered Projects</DropdownMenuCheckboxItem>
+      <DropdownMenuCheckboxItem checked={completed} onCheckedChange={onCompletedChange}>Completed Subtasks</DropdownMenuCheckboxItem>
+    </DropdownMenuGroup>
+  );
+}
+
+/** The Calendar's Layers (the last checked layer is disabled; written in canonical order) and Show. */
+export function CalendarDisplayContent({ layers, onLayersChange, showDeliveredProjects, showCompletedChecklist, onShowChange }: {
+  layers: readonly ProductionCalendarLayer[];
+  onLayersChange: (next: ProductionCalendarLayer[]) => void;
+  showDeliveredProjects: boolean;
+  showCompletedChecklist: boolean;
+  onShowChange: (changes: { showDeliveredProjects?: boolean; showCompletedChecklist?: boolean }) => void;
+}) {
+  const toggleLayer = (layer: ProductionCalendarLayer, on: boolean) => {
+    const selected = new Set(layers);
+    if (on) selected.add(layer); else selected.delete(layer);
+    if (selected.size === 0) return;
+    onLayersChange(PRODUCTION_CALENDAR_LAYERS.filter((candidate) => selected.has(candidate)));
+  };
+  return (
+    <>
+      <DropdownMenuGroup>
+        <DropdownMenuLabel>Layers</DropdownMenuLabel>
+        {PRODUCTION_CALENDAR_LAYERS.map((layer) => {
+          const on = layers.includes(layer);
+          return (
+            <DropdownMenuCheckboxItem key={layer} checked={on} disabled={on && layers.length === 1} onCheckedChange={(next) => toggleLayer(layer, next)}>
+              {LAYER_LABELS[layer]}
+            </DropdownMenuCheckboxItem>
+          );
+        })}
+      </DropdownMenuGroup>
+      <DropdownMenuSeparator />
+      <ShowGroup delivered={showDeliveredProjects} completed={showCompletedChecklist} onDeliveredChange={(next) => onShowChange({ showDeliveredProjects: next })} onCompletedChange={(next) => onShowChange({ showCompletedChecklist: next })} />
+    </>
+  );
+}
+
+/** The Timeline's Show group only. */
+export function TimelineDisplayContent({ delivered, completed, onChange }: { delivered: boolean; completed: boolean; onChange: (changes: { delivered?: boolean; completed?: boolean }) => void }) {
+  return <ShowGroup delivered={delivered} completed={completed} onDeliveredChange={(next) => onChange({ delivered: next })} onCompletedChange={(next) => onChange({ completed: next })} />;
 }

@@ -305,19 +305,11 @@ describe("ProductionEventCalendar container", () => {
     expect(host.querySelector('[data-testid="event-calendar-rail"]')).toBeNull();
     const toggle = host.querySelector<HTMLButtonElement>('[data-testid="event-calendar-rail-toggle"]')!;
     expect(toggle).not.toBeNull();
+    // #430: the sheet holds the mini month and Up next only, so the button is named for the sheet, not for filters.
+    expect(toggle.textContent).toBe("Calendar");
     await act(async () => { toggle.click(); await Promise.resolve(); });
     expect(document.querySelector('[data-testid="event-calendar-rail-sheet"] [data-testid="event-calendar-rail"]')).not.toBeNull();
-  });
-
-  it("filter changes navigate with the canonical filters, keeping the calendar view", async () => {
-    const onNavigate = vi.fn();
-    await renderCalendar(calendar(), adminProductionCalendarRangeResponseSchema.parse(rawResponse("editing_autohdr")), 200, { onNavigate });
-    const value = { ...calendar(), showCompletedChecklist: true };
-    await act(async () => { root.render(<QueryClientProvider client={client}><ProductionEventCalendar identity={{ principalId: principal, role: "admin", authorizationEpoch: 0 }} calendar={value as DashboardCalendarState} onNavigate={onNavigate} /></QueryClientProvider>); });
-    // A new filter set is a new query key: let its fetch settle before the rail is back.
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); await Promise.resolve(); });
-    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="event-calendar-hidden-filters-clear"]')!.click(); });
-    expect(onNavigate).toHaveBeenLastCalledWith(expect.objectContaining({ view: "calendar", showCompletedChecklist: false, layers: ["project", "checklist"] }));
+    expect(document.querySelector('[data-testid="event-calendar-rail-sheet"]')!.textContent).not.toMatch(/filters/i);
   });
 
   it("Up next runs a second read-only agenda query from today, with the same filters", async () => {

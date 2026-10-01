@@ -36,7 +36,7 @@ vi.mock("../lib/stages", () => ({
   }),
 }));
 vi.mock("../components/NoticeBoard", () => ({ NoticeBoard: () => null }));
-vi.mock("../components/kanban2/board", () => ({ ProjectKanbanBoard2: () => <div data-testid="dashboard-board" /> }));
+vi.mock("../components/board/board", () => ({ ProjectKanbanBoard2: () => <div data-testid="dashboard-board" /> }));
 
 function project(id: string, street: string): ProjectSummary {
   return {
