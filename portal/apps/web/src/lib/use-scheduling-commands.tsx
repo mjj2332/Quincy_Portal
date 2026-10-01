@@ -343,7 +343,8 @@ export type SchedulingController<TBaseline> = {
   /** `reminderOffsetsMinutes` is the dialog's edited Deadline reminders; absent, the event's own are kept (#422). */
   submitMoveDialog: (localCivil: string, disambiguation?: ProjectDeadlineDisambiguation, reminderOffsetsMinutes?: number[]) => void;
   cancelMoveDialog: () => void;
-  submitScheduleEditor: (schedule: RangeChecklistScheduleInput) => void;
+  /** `reminderOffsetsMinutes` is sent only when the editor changed the Subtask's reminder set (#425); absent keeps the stored set. */
+  submitScheduleEditor: (schedule: RangeChecklistScheduleInput, reminderOffsetsMinutes?: number[]) => void;
   cancelScheduleEditor: () => void;
   submitChecklistFold: (choice: "earlier" | "later") => void;
   cancelChecklistFold: () => void;
@@ -1302,7 +1303,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     setScheduleEditor({ source, snapshot, ...(initialSchedule ? { initialSchedule } : {}), ...(options?.inline ? { inline: true } : {}) });
   }, [acceptForInteraction, announceChecklistLifecycle, calendarInteractionBlocked]);
 
-  const handleScheduleEditorSubmit = useCallback((schedule: RangeChecklistScheduleInput) => {
+  const handleScheduleEditorSubmit = useCallback((schedule: RangeChecklistScheduleInput, reminderOffsetsMinutes?: number[]) => {
     const state = scheduleEditor;
     if (!state || accessLostRef.current) return;
     const normalized = normalizeChecklistSchedule(schedule, state.source.schedule.version);
@@ -1313,7 +1314,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     const proposal: ChecklistProposal = {
       snapshot: state.snapshot,
       source: state.source,
-      request: { expectedVersion: state.source.schedule.version, schedule },
+      request: { expectedVersion: state.source.schedule.version, schedule, ...(reminderOffsetsMinutes ? { reminderOffsetsMinutes } : {}) },
       schedule,
       timing: timingFromChecklistSchedule(checklistScheduleToDto(normalized.value)),
       operation: { editor: true, ...(state.inline ? { inline: true } : {}) },

@@ -1,5 +1,6 @@
 import { resolveSydneyCivilMinute, subtaskIdFromCalendarEntityId, type ProjectDeadlineCalendarEventDto, type SaveChecklistScheduleRequest, type SaveProjectDeadlineRequest } from "@quincy/shared";
 import { ApiError, apiPatch, apiPut } from "./api";
+import { sameReminderOffsets } from "./date-time-field";
 import type { ChecklistMutationResult } from "./scheduling-types";
 import { checklistInputFromSchedule, PROJECT_DEADLINE_PLACEHOLDER_INSTANT, type ChecklistSource } from "./scheduling-policy";
 
@@ -36,12 +37,15 @@ export function buildChecklistUndoTicket(before: ChecklistSource, result: Checkl
   const subtaskId = subtaskIdFromCalendarEntityId(before.id);
   if (subtaskId === null) return null;
   const schedule = checklistInputFromSchedule(before.schedule);
+  // A forward edit that changed the reminder set undoes it too (#425); one that did not leaves the offsets out, so the undo never
+  // clobbers a set changed elsewhere in between.
+  const restoreOffsets = result.reminders !== undefined && !sameReminderOffsets(result.reminders.offsetsMinutes, before.reminders.offsetsMinutes);
   return {
     kind: "checklist",
     projectId: before.project.id,
     subtaskId,
     expectedVersion: result.scheduleVersion,
-    request: { expectedVersion: result.scheduleVersion, schedule },
+    request: { expectedVersion: result.scheduleVersion, schedule, ...(restoreOffsets ? { reminderOffsetsMinutes: [...before.reminders.offsetsMinutes] } : {}) },
   };
 }
 

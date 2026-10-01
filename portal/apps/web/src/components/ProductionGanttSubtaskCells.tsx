@@ -9,6 +9,8 @@
  * `openChecklistScheduleEditor(source, undefined, { inline: true })` / `submitScheduleEditor` / `cancelScheduleEditor`;
  * `open` is derived from the controller's editor session, never held here.
  *
+ * Reminders (#425): the picker's strip is `RemindersStrip` inside `DateTimeRangePopup`, fed from `row.reminders`; no new element here.
+ *
  * Reuse ledger: trigger — `reui/button` `size="xs" variant="ghost"` with the Project Due cell's `CELL_TRIGGER`; picker —
  * `quincy/SubtaskScheduleControl` (the Checklist's `ScheduleControl`, moved whole); read-only value — plain `<time>`;
  * the wrapper that keeps a press or key off the row — a plain `<span>` carrying `stopPropagation` (the People cell's pattern).
@@ -38,7 +40,9 @@ export function scheduleErrorFromEditor(editor: Pick<ScheduleEditorState, "sourc
     const item = editor.latestItem;
     return {
       current: editor.source.schedule,
-      ...(item ? { currentSubtask: { title: item.title, done: item.done, assignees: item.assignees ?? editor.source.assignees, otherAssigneeCount: item.otherAssigneeCount ?? editor.source.otherAssigneeCount, schedule: item.schedule } } : {}),
+      ...(item?.reminders ? { currentReminders: item.reminders } : {}),
+      // The latest-item notice is for an item conflict only; a schedule conflict keeps the schedule notice, now naming the reminders (#425).
+      ...(item && failure.code === "subtask_item_conflict" ? { currentSubtask: { title: item.title, done: item.done, assignees: item.assignees ?? editor.source.assignees, otherAssigneeCount: item.otherAssigneeCount ?? editor.source.otherAssigneeCount, schedule: item.schedule, ...(item.reminders ? { reminders: item.reminders } : {}) } } : {}),
     };
   }
   return { message: failure.message };
@@ -57,7 +61,8 @@ export type GanttSubtaskDueCellProps = {
   /** The draft a failed save keeps; the caller holds it above the vendor tree's rows, which remount. */
   retained: RetainedSchedule;
   onOpen: () => void;
-  onSubmit: (schedule: RangeChecklistScheduleInput) => void;
+  /** The offsets ride along only when the draft set differs from the saved one (#425); absent keeps the stored set. */
+  onSubmit: (schedule: RangeChecklistScheduleInput, reminderOffsetsMinutes?: number[]) => void;
   onCancel: () => void;
   /** The Project's default range, for the picker's "Project default" shortcut (#423). */
   projectDefault?: ProjectDefaultRangeDto | null;
@@ -97,11 +102,12 @@ export function GanttSubtaskDueCell({ row, editorOpen, disabled, error, retained
         busy={disabled}
         error={error}
         retained={retained}
-        onSave={(request) => { closeHandledRef.current = true; onSubmit(request.schedule); }}
+        onSave={(request) => { closeHandledRef.current = true; onSubmit(request.schedule, request.reminderOffsetsMinutes); }}
         onUseLatest={() => { closeHandledRef.current = true; onCancel(); }}
         onUseLatestItem={() => { closeHandledRef.current = true; onCancel(); }}
         initialFocus="end"
         projectDefault={projectDefault}
+        reminders={{ offsets: row.reminders.offsetsMinutes, next: row.reminders.nextOccurrence }}
         trigger={({ disabled: triggerDisabled, onClick, ...props }) => (
           <Button
             {...props}
