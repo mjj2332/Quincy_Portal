@@ -1,26 +1,29 @@
 import { useState, type ReactNode } from "react";
-import { isDeadlineOverdue } from "@quincy/shared";
 import { Badge } from "../reui/badge";
-import { Card, CardContent } from "../reui/card";
+import { Button } from "../reui/button";
+import { Frame, FramePanel } from "../reui/frame";
 import { AvatarStack } from "../quincy/AvatarStack";
 import { InternalLink } from "../InternalLink";
 import { LazyImage } from "../LazyImage";
-import { buttonClasses } from "../quincy/Button";
 import { KanbanItemHandle } from "../reui/kanban";
 import { PriorityStars } from "../quincy/PriorityStars";
 import { deadlineLabel } from "../../lib/deadline-label";
+import { isOverdueProject } from "../../lib/dashboard-summary";
+import { formatDashboardDate } from "../../screens/dashboard-helpers";
 import type { ProjectSummary } from "../../lib/kanban-interaction";
 
 /**
- * Card slot mapping (issue #76): "company logo" -> the Project's cover photo, "company name" ->
- * street, "deal value" -> Deadline, "owner avatar" -> the Editor stack, "counts" -> received/
- * expected RAW (#82). Star rating (#81) and the block's "next step" slot remain deliberately
- * unfilled — the latter is dropped rather than invented, per #76/#82.
+ * The Board card (#432), composed on ReUI `frame` the way `solution-crm-7/board-card.tsx` is: a
+ * ghost `Frame` holding one `FramePanel`. Contents, exactly: cover photo, street (no suburb), Shoot
+ * date, Deadline (red when overdue), Priority stars and Editor avatars. The RAW count is gone.
  *
- * The drag handle is a small sibling button, not the whole card. The Board this one replaced (the
- * original `ProjectKanbanBoard`, deleted in #83) carried the same split deliberately, "so ordinary
- * anchor behavior remains browser-native" — dnd-kit's pointer sensor sits on the handle only,
- * leaving `InternalLink`'s click-to-navigate alone.
+ * The whole card is the drag handle, but NOT by wrapping it in `KanbanItemHandle` the way the block
+ * does. dnd-kit's handle attributes default to `role="button"`, and a `role="button"` ancestor
+ * prunes the stars' nested `role="radiogroup"` from the accessibility tree (#81, `docs/lessons.md`).
+ * Instead the card's single `InternalLink` IS the handle, stretched over the whole panel with an
+ * `after:` overlay, so a press anywhere on the card lands on it. The stars and the card's controls
+ * are siblings of the link, raised above the overlay with `z-[1]` — outside the handle, so pressing
+ * them can never start a drag (structural, no `stopPropagation`).
  */
 
 export function CoverMedia({
@@ -42,21 +45,6 @@ export function CoverMedia({
   return <div className={`project-cover-placeholder size-full${placeholderClassName ? ` ${placeholderClassName}` : ""}`} aria-hidden="true">{content}</div>;
 }
 
-/**
- * RAW counts (#82). Branches on `expectedCount === null`, not truthiness — `expectedCount: 0` is
- * meaningful and must still render `0/0`. The visible string and the spoken one are split because
- * "12/40" is read aloud as "twelve slash forty" (NVDA) or "twelve forty" (VoiceOver); the idiom
- * matches `SubtaskChecklist.tsx`'s assignee-initials pattern (`aria-hidden` glyph + `sr-only` text
- * as siblings).
- */
-function rawCounts(project: ProjectSummary): { visible: string; spoken: string } {
-  const { receivedCount, expectedCount } = project;
-  if (expectedCount === null) {
-    return { visible: `${receivedCount}`, spoken: `${receivedCount} RAW files received, expected count unknown` };
-  }
-  return { visible: `${receivedCount}/${expectedCount}`, spoken: `${receivedCount} of ${expectedCount} RAW files received` };
-}
-
 export type KanbanCard2Props = {
   project: ProjectSummary;
   projectHref?: string;
@@ -67,84 +55,115 @@ export type KanbanCard2Props = {
   /** True while a priority write for this Project is in flight. */
   priorityPending?: boolean;
   onPriorityChange?: (project: ProjectSummary, priority: number | null) => void;
+  /** The clock "overdue" is judged against (the Dashboard's `useNow`); defaults to the wall clock. */
+  now?: number;
   /**
-   * Registers this card's drag handle with the Board, which refocuses it on the paths dnd-kit no
-   * longer covers (see `board.tsx`'s `restoreFocus: false`). A ref rather than a
+   * Registers this card's link (its drag handle) with the Board, which refocuses it on the paths
+   * dnd-kit no longer covers (see `board.tsx`'s `restoreFocus: false`). A ref rather than a
    * `querySelector('[data-focus-key=…]')` so the Board's focus path carries no DOM-query coupling.
    */
-  handleRef?: (projectId: string, element: HTMLButtonElement | null) => void;
+  handleRef?: (projectId: string, element: HTMLAnchorElement | null) => void;
   /**
-   * The Board's non-drag controls (#99): the up/down arrows and Move to…. A slot rather than
-   * controls the card builds, so the card stays presentation-only. Never rendered in the drag
-   * overlay, which must carry no interactive element (#98).
+   * The Board's non-drag controls. A slot rather than controls the card builds, so the card stays
+   * presentation-only. Never rendered in the drag overlay, which must carry no interactive element (#98).
    */
   controls?: ReactNode;
 };
 
 /**
- * Composed on the `card` surface (#76 "Block and surface"). Quincy's `--radius-card` is 0, so
- * the corners render square — that is correct, not a porting defect.
+ * dnd-kit's `attributes` go onto the link through `KanbanItemHandle`. All but `aria-describedby`
+ * (the screen-reader instructions) are wrong for a link: `role="button"` would replace its link
+ * semantics, `tabIndex` is redundant, and `aria-disabled` / `aria-pressed` describe a button. A
+ * present-but-`undefined` prop overrides the merged default (Base UI `mergeProps`); pinned by a test.
  */
-export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisabled = false, canPrioritize = false, priorityPending = false, onPriorityChange, handleRef, controls }: KanbanCard2Props) {
+const LINK_ATTRIBUTE_OVERRIDES = {
+  role: undefined,
+  tabIndex: undefined,
+  "aria-pressed": undefined,
+  "aria-roledescription": undefined,
+  "aria-disabled": undefined,
+} as const;
+
+export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisabled = false, canPrioritize = false, priorityPending = false, onPriorityChange, now, handleRef, controls }: KanbanCard2Props) {
   const [coverFailed, setCoverFailed] = useState(false);
   const [coverRetry, setCoverRetry] = useState(0);
-  const overdue = isDeadlineOverdue(project.deadlineAt);
+  // Delivered and archived Projects are never overdue (the Portal's rule, `isOverdueProject`), so a
+  // column's overdue count and the header's agree.
+  const overdue = isOverdueProject(project, now ?? Date.now());
   const projectDeadlineLabel = deadlineLabel(project);
-  const raw = rawCounts(project);
   const archived = Boolean(project.archivedAt);
+  const href = projectHref ?? `/projects/${encodeURIComponent(project.id)}`;
 
-  const cardBody = (
-    <>
-      <div className="aspect-video overflow-hidden bg-[var(--ink-800)]">
-        <CoverMedia project={project} retryToken={coverRetry} onFailedChange={setCoverFailed} />
-      </div>
-      <CardContent className="p-[var(--space-3)]">
-        {/* #428: the Archived filter's Include mode draws archived Projects beside active ones. The card is
-            immovable (the Board gates it, `board.tsx`); #432 restyles the mark. */}
-        {archived && <Badge variant="secondary" size="sm" className="mb-[var(--space-1)]" data-testid="board-card-archived">Archived</Badge>}
-        <div className="serif text-base tracking-tight leading-snug [text-wrap:pretty]" data-testid="board-card-address">{project.street}</div>
-        {projectDeadlineLabel && (
-          // Prominence is bought with contrast and position, not size (#82) — the street stays
-          // the card's title; this is the only line below it at full `foreground`.
-          <time
-            className={`block mt-[var(--space-1)] text-sm tabular-nums ${overdue ? "text-[var(--signal-critical)]" : "text-foreground"}`}
-            data-testid="board-card-deadline"
-            dateTime={new Date(project.deadlineAt!).toISOString()}
-          >
-            {overdue ? "Overdue" : "Due"} {projectDeadlineLabel} Sydney
-          </time>
-        )}
-        <div className="flex items-center justify-between gap-[var(--space-2)] mt-[var(--space-3)] text-xs text-foreground-secondary" data-testid="board-card-meta">
-          <span className="text-xs tabular-nums text-foreground-secondary" data-testid="board-card-raw">
-            <span aria-hidden="true">{raw.visible}</span>
-            <span className="sr-only">{raw.spoken}</span>
-          </span>
-          {/* #82: `editors` is already Editor-only, active-only and server-ordered (#79) — no client-side filter or sort. */}
-          <AvatarStack people={project.editors ?? []} personNoun="Editor" emptyLabel="No Editor assigned" />
-        </div>
-      </CardContent>
-    </>
+  const deadline = projectDeadlineLabel && (
+    <time
+      className={`block text-sm tabular-nums ${overdue ? "text-signal-critical" : "text-foreground"}`}
+      data-testid="board-card-deadline"
+      dateTime={new Date(project.deadlineAt!).toISOString()}
+    >
+      {overdue ? "Overdue" : "Due"} {projectDeadlineLabel} Sydney
+    </time>
+  );
+  const shoot = project.shootDate !== null && (
+    <div className="text-sm tabular-nums text-foreground-secondary" data-testid="board-card-shoot">Shoot {formatDashboardDate(project.shootDate)}</div>
+  );
+  const cover = (
+    <div className="aspect-video overflow-hidden bg-[var(--ink-800)]" data-testid="board-card-cover">
+      <CoverMedia project={project} retryToken={coverRetry} onFailedChange={setCoverFailed} />
+    </div>
   );
 
+  if (isOverlay) {
+    // The floating overlay follows the pointer/keyboard focus but is not itself a real card: it must
+    // carry no interactive element at all (#98), so it renders the same visual content in a plain,
+    // non-hit-testing, assistive-tech-hidden wrapper instead of the link.
+    return (
+      <Frame variant="ghost" className="relative p-0" data-testid="board-card-wrap">
+        <FramePanel className="flex flex-col p-0 shadow-xs">
+          <div className="pointer-events-none" data-testid="board-card-overlay" aria-hidden="true">
+            {cover}
+            <div className="flex flex-col gap-[var(--space-1)] p-[var(--space-3)]">
+              {archived && <Badge variant="secondary" size="sm" className="self-start">Archived</Badge>}
+              <div className="serif text-base tracking-tight leading-snug [text-wrap:pretty]" data-testid="board-card-address">{project.street}</div>
+              {shoot}
+              {deadline}
+              <div className="mt-[var(--space-2)] flex items-center justify-end" data-testid="board-card-meta">
+                <AvatarStack people={project.editors ?? []} personNoun="Editor" emptyLabel="No Editor assigned" />
+              </div>
+            </div>
+          </div>
+        </FramePanel>
+      </Frame>
+    );
+  }
+
   return (
-    <Card size="sm" className="relative gap-0 p-0 shadow-xs transition-[border-color,box-shadow] hover:shadow-sm" data-testid="board-card-wrap">
-      {isOverlay ? (
-        // The floating overlay follows the pointer/keyboard focus but is not itself a real card:
-        // it must carry no interactive element at all (#98), so it renders the same visual content
-        // in a plain, non-hit-testing, assistive-tech-hidden wrapper instead of `InternalLink`.
-        <div className="block pointer-events-none no-underline text-inherit" data-testid="board-card-overlay" aria-hidden="true">
-          {cardBody}
+    <Frame variant="ghost" className="relative select-none p-0" data-testid="board-card-wrap">
+      <FramePanel className="flex flex-col p-0 shadow-xs transition-[border-color,box-shadow] hover:shadow-sm">
+        {cover}
+        <div className="flex flex-col gap-[var(--space-1)] p-[var(--space-3)]">
+          {/* #428: the Archived filter's Include mode draws archived Projects beside active ones. The card is
+              immovable (the Board gates it, `board.tsx`); the link still opens it. */}
+          {archived && <Badge variant="secondary" size="sm" className="self-start" data-testid="board-card-archived">Archived</Badge>}
+          <KanbanItemHandle
+            // The street is the card's accessible name and the stretched hit area (`after:`), whose own
+            // focus ring is drawn on the pseudo-element so it frames the whole card, not just the text.
+            className="serif text-base tracking-tight leading-snug [text-wrap:pretty] no-underline text-inherit [touch-action:manipulation] after:absolute after:inset-0 focus-visible:!outline-none focus-visible:after:outline-2 focus-visible:after:outline-[var(--ink-900)] focus-visible:after:-outline-offset-2"
+            cursor={!dragDisabled}
+            {...LINK_ATTRIBUTE_OVERRIDES}
+            render={<InternalLink ref={(element: HTMLAnchorElement | null) => handleRef?.(project.id, element)} to={href} data-testid="board-card" data-focus-key={`card:${project.id}`} />}
+          >
+            <span data-testid="board-card-address">{project.street}</span>
+          </KanbanItemHandle>
+          {shoot}
+          {deadline}
+          <div className="mt-[var(--space-2)] flex items-center justify-end" data-testid="board-card-meta">
+            {/* #82: `editors` is already Editor-only, active-only and server-ordered (#79) — no client-side filter or sort. */}
+            <AvatarStack people={project.editors ?? []} personNoun="Editor" emptyLabel="No Editor assigned" />
+          </div>
         </div>
-      ) : (
-        <InternalLink className="block no-underline text-inherit" data-testid="board-card" to={projectHref ?? `/projects/${encodeURIComponent(project.id)}`}>
-          {cardBody}
-        </InternalLink>
-      )}
-      {/* The star row is a sibling *outside* the anchor (#81): interactive controls cannot be <a>
-          descendants — invalid HTML, and a click would navigate. In the drag overlay it is
-          presentation-only, so it is dropped entirely rather than rendered non-focusable. */}
-      <div data-testid="board-card-footer-slot">
-        {!isOverlay && (
+        {/* The star row is a sibling *outside* the link (#81): interactive controls cannot be <a>
+            descendants — invalid HTML, and a click would navigate. Raised above the link's overlay. */}
+        <div className="relative z-[1]" data-testid="board-card-footer-slot">
           <PriorityStars
             priority={project.priority}
             street={project.street}
@@ -152,33 +171,19 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
             pending={priorityPending}
             onPriorityChange={(next) => onPriorityChange?.(project, next)}
           />
+        </div>
+        {controls && <div className="relative z-[1]">{controls}</div>}
+        {coverFailed && (
+          <Button
+            type="button"
+            variant="secondary"
+            className="relative z-[1] mx-[var(--space-3)] mb-[var(--space-3)]"
+            onClick={(event) => { event.preventDefault(); event.stopPropagation(); setCoverFailed(false); setCoverRetry((current) => current + 1); }}
+          >
+            Retry cover image
+          </Button>
         )}
-      </div>
-      {!isOverlay && controls}
-      {!isOverlay && (
-        // 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token — carried over from
-        // the handle on the Board this replaced (deleted in #83).
-        <KanbanItemHandle
-          // Disabled state paints `bg-surface-sunken`, the SAME technique `quincy/icon-button.tsx`
-          // documents for a disabled affordance on an already-quiet colour (#217 design-review,
-          // item 5) -- an opacity multiplier there is what took a disabled drag handle to 1.72:1
-          // (TB8-06) and this exact grip to 2.51:1 (TB8-07 §2.1). `cursor-not-allowed` pairs it.
-          className="absolute top-[var(--space-2)] right-[var(--space-2)] z-[2] size-9 max-[641px]:size-11 pointer-coarse:size-11 inline-grid place-items-center border border-[color-mix(in_srgb,var(--ink-900)_18%,transparent)] rounded-[var(--radius-sm)] bg-[color-mix(in_srgb,var(--paper-000)_88%,transparent)] text-foreground-secondary text-[20px] leading-none [touch-action:none] disabled:bg-surface-sunken disabled:cursor-not-allowed focus-visible:!outline-2 focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-2"
-          cursor={!dragDisabled}
-          render={<button ref={(element) => handleRef?.(project.id, element)} type="button" data-testid="board-card-handle" data-focus-key={`move-handle:${project.id}`} aria-label={`Move ${project.street}`} disabled={dragDisabled} />}
-        >
-          <span aria-hidden="true">⠿</span>
-        </KanbanItemHandle>
-      )}
-      {coverFailed && !isOverlay && (
-        <button
-          type="button"
-          className={buttonClasses("secondary", { className: "mx-[var(--space-3)] mb-[var(--space-3)]" })}
-          onClick={(event) => { event.preventDefault(); event.stopPropagation(); setCoverFailed(false); setCoverRetry((current) => current + 1); }}
-        >
-          Retry cover image
-        </button>
-      )}
-    </Card>
+      </FramePanel>
+    </Frame>
   );
 }

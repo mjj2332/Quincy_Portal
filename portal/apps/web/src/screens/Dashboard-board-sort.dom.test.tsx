@@ -130,17 +130,19 @@ describe("Dashboard Kanban sort control", () => {
     expect(await tabRefocusedByRestore(true)).toBe(true);
   });
 
-  it("renders the Sydney deadline and exposes RAW on the Kanban card", async () => {
+  it("renders the Sydney deadline on the Board card, with no RAW count (#432)", async () => {
     await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(1); });
     await vi.waitFor(() => expect(document.querySelector('[data-testid="board-card"]')).not.toBeNull());
-    const card = document.querySelector('[data-testid="board-card"]')!;
+    const link = document.querySelector('[data-testid="board-card"]')!;
+    // #432: the link carries the street only; the card's other content sits beside it in the frame.
+    const card = link.closest('[data-testid="board-card-wrap"]')!;
     expect(card.querySelector('[data-testid="board-card-deadline"]')?.textContent).toContain("Due 2027-01-15 09:00 Sydney");
-    const raw = card.querySelector('[data-testid="board-card-raw"]')!;
-    expect(raw.querySelector('[aria-hidden="true"]')?.textContent).toBe("12/40");
-    expect(raw.querySelector('[aria-hidden="true"] + span')?.textContent).toBe("12 of 40 RAW files received");
+    // The RAW count is removed from the card (#432); the Table still shows it, below.
+    expect(card.querySelector('[data-testid="board-card-raw"]')).toBeNull();
+    expect(card.textContent).not.toContain("RAW files received");
     expect(card.querySelector('[data-testid="board-card-deadline"]')?.getAttribute("dateTime")).toBe("2027-01-14T22:00:00.000Z");
-    expect(card.getAttribute("href")).toBe("/projects/project-1");
-    expect(card.getAttribute("target")).toBeNull();
+    expect(link.getAttribute("href")).toBe("/projects/project-1");
+    expect(link.getAttribute("target")).toBeNull();
 
     await act(async () => { (document.querySelector('[aria-label="Dashboard view"] [role="tab"]') as HTMLButtonElement).click(); await Promise.resolve(); });
     expect(document.querySelector('[data-testid="project-table-row-link"]')?.getAttribute("href")).toBe("/projects/project-1");
@@ -157,7 +159,7 @@ describe("Dashboard Kanban sort control", () => {
     }], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["archived-project"] } } }) : Promise.resolve({ stages: [] }));
     await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
     await vi.waitFor(() => expect(document.querySelector('[data-testid="board-card"]')).not.toBeNull());
-    expect(document.querySelector('[data-testid="board-card"] [data-testid="board-card-deadline"]')?.textContent).toContain("Overdue 2020-01-01 11:00 Sydney");
+    expect(document.querySelector('[data-testid="board-card-wrap"] [data-testid="board-card-deadline"]')?.textContent).toContain("Overdue 2020-01-01 11:00 Sydney");
   });
 
   // The Display menu replaced the Kanban sort `Select` (#427). The old `Select`'s ten release-blocking

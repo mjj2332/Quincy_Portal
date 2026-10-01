@@ -411,7 +411,7 @@ describe("Dashboard Board seam (#98)", () => {
       expect(heading, "tier 2 target missing for the semantic Stage key").not.toBeNull();
       expect(heading!.getAttribute("tabindex")).toBe("-1");
 
-      expect(document.querySelector('[data-focus-key="move-handle:kb2-source"]'), "tier 1 target missing on the card handle").not.toBeNull();
+      expect(document.querySelector('[data-focus-key="card:kb2-source"]'), "tier 1 target missing on the card handle").not.toBeNull();
     });
 
     it("leaves focus on the Priority control after its own write refreshes the Board", async () => {
@@ -470,7 +470,7 @@ describe("Dashboard Board seam (#98)", () => {
       await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
       await vi.waitFor(() => expect(document.querySelector('[data-testid="board-column"]')).not.toBeNull());
 
-      const handle = document.querySelector<HTMLElement>('[data-focus-key="move-handle:kb2-source"]');
+      const handle = document.querySelector<HTMLElement>('[data-focus-key="card:kb2-source"]');
       expect(handle, "no handle to restore to — the assertion below would be vacuous").not.toBeNull();
       handle!.focus();
       calls.length = 0;

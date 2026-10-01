@@ -177,6 +177,7 @@ export function ProjectKanbanBoard2({
   onMoveToProposalChange,
   role,
   projectHrefFor,
+  now,
 }: ProjectKanbanBoardProps) {
   const columns = useMemo(() => {
     const record: Record<string, ProjectSummary[]> = {};
@@ -281,8 +282,8 @@ export function ProjectKanbanBoard2({
   // `restoreFocus: false` (below) hands focus back to us, so the Board keeps a handle registry and
   // refocuses the card the user was carrying. dnd-kit's own `RestoreFocus` only ever fired for
   // KEYBOARD drags and called a bare `.focus()`, which is why turning it off is also a scroll fix.
-  const handleRefs = useRef(new Map<string, HTMLButtonElement | null>());
-  const registerHandle = useCallback((projectId: string, element: HTMLButtonElement | null) => {
+  const handleRefs = useRef(new Map<string, HTMLAnchorElement | null>());
+  const registerHandle = useCallback((projectId: string, element: HTMLAnchorElement | null) => {
     if (element) handleRefs.current.set(projectId, element);
     else handleRefs.current.delete(projectId);
   }, []);
@@ -298,16 +299,52 @@ export function ProjectKanbanBoard2({
   // end/cancel never fire, so release it here, and fence every dnd-kit handler against firing
   // after unmount.
   const unmountedRef = useRef(false);
+  // The click that follows a drag (#432). The card's link is its drag handle, so releasing a drag
+  // over it dispatches a `click` on that anchor. dnd-kit's own post-drag suppression only
+  // `stopPropagation`s it, which leaves the anchor's DEFAULT action — a full page load to the
+  // Project — running. A window capture listener swallows it outright (`preventDefault` +
+  // `stopPropagation`, so `InternalLink`'s own handler never sees it either). Armed for the drag,
+  // released ~100ms after it ends, because the click lands after pointer-up.
+  const boardRef = useRef<HTMLDivElement | null>(null);
+  const clickGuardRef = useRef<{ swallow: (event: MouseEvent) => void; timer: number | undefined } | null>(null);
+  const disarmClickGuard = useCallback(() => {
+    const guard = clickGuardRef.current;
+    if (!guard) return;
+    if (guard.timer !== undefined) window.clearTimeout(guard.timer);
+    window.removeEventListener("click", guard.swallow, true);
+    clickGuardRef.current = null;
+  }, []);
+  const armClickGuard = useCallback(() => {
+    disarmClickGuard();
+    // Only a click that lands on a link inside the Board — the one thing that can navigate. The Board's
+    // other controls, the 409 confirmation modal (portalled) and the rest of the page stay clickable
+    // in the ~100ms the guard is up. (A drag that ends over another card clicks their common
+    // ancestor, never an anchor, so only a release back over the card's own link gets here.)
+    const swallow = (event: MouseEvent) => {
+      if (!(event.target instanceof Element) || !boardRef.current?.contains(event.target) || !event.target.closest("a")) return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    window.addEventListener("click", swallow, true);
+    clickGuardRef.current = { swallow, timer: undefined };
+  }, [disarmClickGuard]);
+  const releaseClickGuard = useCallback(() => {
+    const guard = clickGuardRef.current;
+    if (!guard) return;
+    if (guard.timer !== undefined) window.clearTimeout(guard.timer);
+    guard.timer = window.setTimeout(disarmClickGuard, 100);
+  }, [disarmClickGuard]);
   useEffect(() => {
     unmountedRef.current = false;
     return () => {
       unmountedRef.current = true;
+      disarmClickGuard();
       if (activeProjectRef.current !== undefined) {
         activeProjectRef.current = undefined;
         onInteractionStateChangeRef.current?.({ activeId: undefined, proposal: null });
       }
     };
-  }, []);
+  }, [disarmClickGuard]);
   const [dropProposal, setDropProposal] = useState<SemanticGap | null>(null);
   // True while any drag is live. The non-drag controls are disabled for its duration: otherwise a
   // keyboard user can pick up card A, Tab to card B's arrow or Move to…, and reorder the column out
@@ -315,7 +352,6 @@ export function ProjectKanbanBoard2({
   // as active while the drop's own `onMove` runs, so a guard there would refuse every real drop.
   const [dragActive, setDragActive] = useState(false);
 
-  const boardRef = useRef<HTMLDivElement | null>(null);
   // The misclick guard (#304): wraps `onPriorityChange`, armed by the FLIP below.
   const starClickGuard = useStarClickGuard(onPriorityChange);
   // The Move-to chooser's chosen position (#99), drawn with the same indicator as a drag. Forwarded
@@ -369,7 +405,8 @@ export function ProjectKanbanBoard2({
     };
     if (dragDisabled) return reject("dnd-cancel");
     const project = projects.find((item) => item.id === projectId);
-    if (!project || pendingMoves.has(projectId) || orderingPending(projectId)) return reject("dnd-cancel");
+    // An archived Project is read-only (#428): its card is not draggable, and a drop that arrives anyway is refused.
+    if (!project || project.archivedAt || pendingMoves.has(projectId) || orderingPending(projectId)) return reject("dnd-cancel");
     const sameStage = semanticStageKey(activeContainer as ProjectStageKey) === semanticStageKey(overContainer as ProjectStageKey);
     const { gap } = gapFor(projectId, overContainer, overIndex);
     const verdict = dropVerdict(project, gap, sameStage);
@@ -383,13 +420,14 @@ export function ProjectKanbanBoard2({
   const handleDragStart = useCallback((event: DragStartEvent) => {
     if (unmountedRef.current) return;
     activeProjectRef.current = String(event.active.id);
+    armClickGuard();
     setDragActive(true);
     // Opens the Dashboard's refresh barrier: it blocks ACCEPTANCE of replacement data while a drag
     // is live (a fetch may still run), and disables the view control so the Board cannot be swapped
     // mid-drag. No drag-start eligibility guard is needed, unlike the old Board: `dragDisabled`
     // already disables every item and every handle, so a drag cannot start while movement is locked.
     onInteractionStateChange?.({ activeId: String(event.active.id), proposal: null });
-  }, [onInteractionStateChange]);
+  }, [armClickGuard, onInteractionStateChange]);
 
   /**
    * Clearing the barrier in drag-end is SAFE here, and this is the documented trap worth being
@@ -405,12 +443,13 @@ export function ProjectKanbanBoard2({
    * session. Clear in drag-end AND cancel; never only in `onMove`.
    */
   const clearInteraction = useCallback(() => {
+    releaseClickGuard();
     activeProjectRef.current = undefined;
     lastAnnouncedGapRef.current = undefined;
     setDropProposal(null);
     setDragActive(false);
     onInteractionStateChange?.({ activeId: undefined, proposal: null });
-  }, [onInteractionStateChange]);
+  }, [onInteractionStateChange, releaseClickGuard]);
 
   /**
    * The gap a hover over `overId` would commit, or `undefined` where a drop there would be refused —
@@ -617,6 +656,7 @@ export function ProjectKanbanBoard2({
                                   canPrioritize={priorityEditable && !project.archivedAt}
                                   priorityPending={orderingPending(project.id)}
                                   onPriorityChange={starClickGuard.handlePriorityChange}
+                                  now={now}
                                   handleRef={registerHandle}
                                   controls={<div className="flex items-stretch border-t border-t-border">
                                     {canReorder && <>

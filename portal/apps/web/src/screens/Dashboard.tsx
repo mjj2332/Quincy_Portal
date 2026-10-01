@@ -127,7 +127,7 @@ const noRuntimeSubscribe = () => () => undefined;
 const zeroRuntimeSnapshot = () => 0;
 
 function focusKeyForControl(control: FocusDescriptor["control"], projectId: string): string {
-  if (control === "handle") return `move-handle:${projectId}`;
+  if (control === "handle") return `card:${projectId}`;
   if (control === "move-to") return `move-to:${projectId}`;
   if (control === "rail-stage") return `rail-stage:${projectId}`;
   return `${control}:${projectId}`;
@@ -1617,6 +1617,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
             onInteractionStateChange={setBoardInteraction}
             onAnnounce={(message) => { if (message !== undefined) setAnnouncement(message); }}
             projectHrefFor={(project) => projectHrefFor(project.id)}
+            now={now}
           />
         )}
       </div>

@@ -168,6 +168,11 @@ function baseProps(overrides: Partial<ProjectKanbanBoardProps> = {}): ProjectKan
 let host: HTMLElement;
 let root: Root;
 
+/** The card's link is its drag handle (#432): a locked drag shows as `data-disabled`, never `disabled`. */
+function isLocked(element: Element): boolean {
+  return element.hasAttribute("disabled") || element.getAttribute("data-disabled") === "true";
+}
+
 async function renderBoard(overrides: Partial<ProjectKanbanBoardProps> = {}) {
   const props = baseProps(overrides);
   const { act } = await import("react");
@@ -378,57 +383,77 @@ describe("ProjectKanbanBoard2 (#80)", () => {
   // spread those attributes on the card WRAPPER, and under ARIA 1.2 children-presentational a
   // role="button" ancestor prunes a nested radiogroup out of the accessibility tree entirely —
   // so every star control on the Board was invisible to screen readers. #81 moved `attributes`
-  // onto `KanbanItemHandle`.
+  // onto `KanbanItemHandle`; #432 makes that handle the card's own link rather than a wrapper around
+  // the whole card, so the attributes land on the link and the stars are never beneath them.
   //
-  // The previous version of this test reached for `.closest('[data-slot="kanban-item"]')` — the
-  // vendor's own hook, which `test-seam.guard` guard F now rejects — and then fell back to
-  // `parentElement` and optional-chained the result, so a lookup that found nothing asserted
-  // `expect(undefined).not.toBe("button")` and passed. It could not fail for the defect it names.
-  // Every query below is anchored non-null first, so this one can.
-  it("puts the dnd-kit drag attributes on the handle, never on the card wrapper (#81)", async () => {
+  // Every query below is anchored non-null first, so this one can fail for the defect it names.
+  it("puts the dnd-kit drag attributes on the link, never on the card wrapper; the link stays a link (#81, #432)", async () => {
     await renderBoard({ canPrioritize: true });
 
-    const handle = host.querySelector('[data-testid="board-card-handle"]');
-    expect(handle, "no drag handle rendered — every assertion below would be vacuous").not.toBeNull();
-    expect(handle!.getAttribute("aria-roledescription")).toBe("sortable");
+    const link = host.querySelector('[data-testid="board-card"]');
+    expect(link, "no card link rendered — every assertion below would be vacuous").not.toBeNull();
+    expect(link!.tagName).toBe("A");
+    // dnd-kit's `role="button"`, `tabindex`, `aria-roledescription`, `aria-pressed` and
+    // `aria-disabled` are all overridden off; `aria-describedby` (the keyboard instructions) stays.
+    expect(link!.getAttribute("role")).toBeNull();
+    expect(link!.getAttribute("tabindex")).toBeNull();
+    expect(link!.getAttribute("aria-roledescription")).toBeNull();
+    expect(link!.getAttribute("aria-pressed")).toBeNull();
+    expect(link!.getAttribute("aria-disabled")).toBeNull();
+    const describedBy = link!.getAttribute("aria-describedby");
+    expect(describedBy, "the keyboard drag instructions are no longer attached to the card").not.toBeNull();
+    expect(document.getElementById(describedBy!), "aria-describedby points at nothing").not.toBeNull();
+    // And it still carries dnd-kit's listeners: a pointer-down on it must reach the sensors.
+    expect(link!.getAttribute("href")).toBe("/projects/source");
 
     const wrap = host.querySelector('[data-testid="board-card-wrap"]');
     expect(wrap, "no card wrapper rendered — the assertions below would be vacuous").not.toBeNull();
     expect(wrap!.getAttribute("role")).not.toBe("button");
     expect(wrap!.getAttribute("aria-roledescription")).toBeNull();
 
-    // The point of the whole exercise: no role="button" ancestor anywhere above the radiogroup.
-    expect(host.querySelector('[role="radiogroup"]'), "no radiogroup rendered").not.toBeNull();
+    // The point of the whole exercise: no role="button" ancestor anywhere above the radiogroup, and
+    // the stars are not inside the link either.
+    const group = host.querySelector('[role="radiogroup"]');
+    expect(group, "no radiogroup rendered").not.toBeNull();
     expect(host.querySelector('[role="button"] [role="radiogroup"]')).toBeNull();
+    expect(link!.contains(group)).toBe(false);
+    expect(group!.closest("a")).toBeNull();
   });
 
-  // `[touch-action:none]` (card.tsx) is a real design contract, not styling trivia — test-seam
-  // guard C's own comment carves out "a Tailwind utility that encodes a real design contract": a
-  // touch drag on anything else on the card (the cover, the street, the footer) must still let the
-  // browser scroll the column underneath it; only the handle suppresses that.
-  it("confines touch-action:none to the drag handle, never the card wrapper (#83)", async () => {
+  // The link is the handle, so a press on a star or the card's controls can never start a drag:
+  // they are outside it, structurally rather than by `stopPropagation`.
+  it("keeps the stars and the card's controls outside the drag handle (#432)", async () => {
+    await renderBoard({ canPrioritize: true, sameStageReorderEnabled: true });
+    const link = host.querySelector('[data-testid="board-card"]')!;
+    expect(link, "no card link rendered — the assertions below would be vacuous").not.toBeNull();
+    const radios = [...host.querySelectorAll('[role="radio"][aria-label$="star"], [role="radio"][aria-label$="stars"]')];
+    expect(radios.length, "no star radios rendered").toBeGreaterThan(0);
+    for (const radio of radios) expect(link.contains(radio)).toBe(false);
+    for (const button of host.querySelectorAll("button")) expect(link.contains(button)).toBe(false);
+  });
+
+  // The old handle suppressed browser scroll with `touch-action: none`. The whole card is the handle
+  // now, so that would stop a column scrolling under a thumb anywhere on a card: the link takes
+  // `manipulation`, and the 250ms touch delay (not the style) is what separates scroll from drag.
+  it("lets the browser scroll under a touch: the link is touch-action: manipulation, nothing is none (#432)", async () => {
     await renderBoard();
-    const handle = host.querySelector('[data-testid="board-card-handle"]');
-    expect(handle, "no drag handle rendered — the assertion below would be vacuous").not.toBeNull();
-    expect(handle!.className).toContain("[touch-action:none]");
-
-    const wrap = host.querySelector('[data-testid="board-card-wrap"]');
-    expect(wrap, "no card wrapper rendered — the assertion below would be vacuous").not.toBeNull();
-    expect(wrap!.className).not.toContain("[touch-action:none]");
+    const link = host.querySelector('[data-testid="board-card"]');
+    expect(link, "no card link rendered — the assertions below would be vacuous").not.toBeNull();
+    expect(link!.className).toContain("[touch-action:manipulation]");
+    expect(host.innerHTML).not.toContain("touch-action:none");
   });
 
-  // #217 design-review, item 5: a disabled grip painted nothing (only `disabled` was set, no
-  // class), so a searched/locked Board's grip looked identical whether draggable or not. The
-  // handle's class string now carries the SAME quiet-colour technique `quincy/icon-button.tsx`
-  // documents for a disabled affordance -- `bg-surface-sunken`, never an opacity multiplier
-  // (TB8-06/TB8-07 §2.1) -- plus `cursor-not-allowed`.
-  it("paints the drag handle as disabled, not silently (#217 design-review, item 5)", async () => {
+  it("shows a grab cursor on the link only while a drag is possible (#432)", async () => {
+    await renderBoard({ canMoveStages: true });
+    const live = host.querySelector('[data-testid="board-card"]');
+    expect(live, "no card link rendered — the assertions below would be vacuous").not.toBeNull();
+    expect(live!.className).toContain("cursor-grab");
+    expect(isLocked(live!)).toBe(false);
     await renderBoard({ canPrioritize: true, sameStageReorderEnabled: false, canMoveStages: false });
-    const handle = host.querySelector<HTMLButtonElement>('[data-testid="board-card-handle"]');
-    expect(handle, "no drag handle rendered — the assertions below would be vacuous").not.toBeNull();
-    expect(handle!.disabled).toBe(true);
-    expect(handle!.className).toContain("disabled:bg-surface-sunken");
-    expect(handle!.className).toContain("disabled:cursor-not-allowed");
+    const locked = host.querySelector('[data-testid="board-card"]');
+    expect(locked, "no card link rendered after the re-render").not.toBeNull();
+    expect(isLocked(locked!)).toBe(true);
+    expect(locked!.className).not.toContain("cursor-grab");
   });
 
   // #83: the last assertion of `screens/dashboard-routing.test.ts`'s retired card-markup suite
@@ -597,9 +622,9 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     // Board did before #99 — silently locks a prioritize-only principal out of reordering.
     it("lets a principal who can reorder but not change Stage reorder, and only reorder", async () => {
       const props = await reorder({ canMoveStages: false });
-      const handle = host.querySelector<HTMLButtonElement>('[data-focus-key="move-handle:s3"]');
+      const handle = host.querySelector<HTMLAnchorElement>('[data-focus-key="card:s3"]');
       expect(handle, "no handle rendered").not.toBeNull();
-      expect(handle!.disabled).toBe(false);
+      expect(isLocked(handle!)).toBe(false);
       await endDrag("s1", "raw_review");
       expect(props.onBoardMove, "a Stage change went through without the capability").not.toHaveBeenCalled();
       await endDrag("s3", "s1");
@@ -608,7 +633,7 @@ describe("ProjectKanbanBoard2 (#80)", () => {
 
     it("treats a drop back into the card's own slot as no move, and says so", async () => {
       const props = await reorder();
-      const handle = host.querySelector<HTMLButtonElement>('[data-focus-key="move-handle:s1"]');
+      const handle = host.querySelector<HTMLAnchorElement>('[data-focus-key="card:s1"]');
       // Released on itself: the gap is "before s2", which is exactly where s1 already is.
       await endDrag("s1", "s1");
       expect(props.onBoardMove).not.toHaveBeenCalled();
@@ -927,18 +952,18 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     // #98 locked every card on any pending ordering write; #306 narrows that to the saving card,
     // so another card's handle and drag-end stay live. `pendingMoves` is still board-wide.
     const props = await renderBoard({ pendingOrdering: new Set(["other"]) });
-    const handle = host.querySelector<HTMLButtonElement>('[data-testid="board-card-handle"]');
+    const handle = host.querySelector<HTMLElement>('[data-testid="board-card"]');
     expect(handle, "no drag handle rendered — the assertion below would be vacuous").not.toBeNull();
-    expect(handle!.disabled).toBe(false);
+    expect(isLocked(handle!)).toBe(false);
     await endDrag("source", "raw_review");
     expect(props.onBoardMove).toHaveBeenCalledTimes(1);
   });
 
   it("refuses a drag-end and disables the handle for the card whose own priority write is in flight (#306)", async () => {
     const props = await renderBoard({ pendingOrdering: new Set(["source"]) });
-    const handle = host.querySelector<HTMLButtonElement>('[data-testid="board-card-handle"]');
+    const handle = host.querySelector<HTMLElement>('[data-testid="board-card"]');
     expect(handle, "no drag handle rendered — the assertion below would be vacuous").not.toBeNull();
-    expect(handle!.disabled).toBe(true);
+    expect(isLocked(handle!)).toBe(true);
     await endDrag("source", "raw_review");
     expect(props.onBoardMove).not.toHaveBeenCalled();
   });
@@ -1036,7 +1061,7 @@ describe("ProjectKanbanBoard2 (#80)", () => {
       const realLink = host.querySelector('[data-testid="board-card"]');
       expect(realLink, "no real card link rendered — the anti-vacuity anchor for the real card").not.toBeNull();
       expect(realLink!.tagName).toBe("A");
-      expect(host.querySelector('[data-testid="board-card-handle"]')).not.toBeNull();
+      expect(host.querySelector('[data-testid="board-card"]')).not.toBeNull();
     } finally {
       vi.useRealTimers();
     }
@@ -1125,7 +1150,7 @@ describe("KanbanCard2 — Editor avatars, Deadline and RAW counts (#82)", () => 
     expect(host.querySelector('[data-testid="board-card-address"]')).not.toBeNull();
     const time = host.querySelector('[data-testid="board-card-deadline"]')!;
     expect(time.textContent).toContain("Overdue");
-    expect(time.className).toContain("text-[var(--signal-critical)]");
+    expect(time.className).toContain("text-signal-critical");
   });
 
   it("renders 'Due', not 'Overdue', for a future deadline", async () => {
@@ -1134,7 +1159,7 @@ describe("KanbanCard2 — Editor avatars, Deadline and RAW counts (#82)", () => 
     const time = host.querySelector('[data-testid="board-card-deadline"]')!;
     expect(time.textContent).toContain("Due");
     expect(time.textContent).not.toContain("Overdue");
-    expect(time.className).not.toContain("text-[var(--signal-critical)]");
+    expect(time.className).not.toContain("text-signal-critical");
   });
 
   it("renders no Deadline element at all when the Project has none", async () => {
@@ -1143,28 +1168,11 @@ describe("KanbanCard2 — Editor avatars, Deadline and RAW counts (#82)", () => 
     expect(host.querySelector('[data-testid="board-card-deadline"]')).toBeNull();
   });
 
-  it("renders '12/40' with a spoken 'of' form when both counts are known", async () => {
+  it("renders no RAW count on the card at all (#432)", async () => {
     await renderCard({ receivedCount: 12, expectedCount: 40 });
     expect(host.querySelector('[data-testid="board-card-address"]')).not.toBeNull();
-    const raw = host.querySelector('[data-testid="board-card-raw"]')!;
-    expect(raw.querySelector('[aria-hidden="true"]')?.textContent).toBe("12/40");
-    // The spoken counterpart is the visible span's next sibling — structural access, not a class
-    // selector (guard: `components/testing/test-seam.guard.test.ts` bans `.sr-only` as a query).
-    expect(raw.lastElementChild?.textContent).toBe("12 of 40 RAW files received");
-  });
-
-  it("renders the received count alone with an 'unknown' spoken form when expected is null", async () => {
-    await renderCard({ receivedCount: 12, expectedCount: null });
-    const raw = host.querySelector('[data-testid="board-card-raw"]')!;
-    expect(raw.querySelector('[aria-hidden="true"]')?.textContent).toBe("12");
-    expect(raw.lastElementChild?.textContent).toBe("12 RAW files received, expected count unknown");
-  });
-
-  it("renders '0/0' when both received and expected are zero — expectedCount: 0 is meaningful, not falsy", async () => {
-    await renderCard({ receivedCount: 0, expectedCount: 0 });
-    const raw = host.querySelector('[data-testid="board-card-raw"]')!;
-    expect(raw.querySelector('[aria-hidden="true"]')?.textContent).toBe("0/0");
-    expect(raw.lastElementChild?.textContent).toBe("0 of 0 RAW files received");
+    expect(host.querySelector('[data-testid="board-card-raw"]')).toBeNull();
+    expect(host.querySelector('[data-testid="board-card-wrap"]')!.textContent).not.toMatch(/12\/40|RAW files/);
   });
 
   it("renders three Editor avatars and no overflow indicator for exactly three Editors", async () => {
@@ -1223,13 +1231,16 @@ describe("KanbanCard2 — Editor avatars, Deadline and RAW counts (#82)", () => 
     expect(meta.querySelectorAll('[role="img"]')).toHaveLength(1);
   });
 
-  it("leaves the #81 footer-slot boundary present and empty, immediately after the card's link", async () => {
+  // #432: the link is now the street alone and sits in the card's content block, so the slot is no
+  // longer its next sibling; what #81 needed is unchanged — the star slot exists and is OUTSIDE the link.
+  it("leaves the #81 footer-slot boundary present, empty and outside the card's link", async () => {
     await renderCard();
     const link = host.querySelector('[data-testid="board-card"]')!;
     const slot = host.querySelector('[data-testid="board-card-footer-slot"]')!;
     expect(slot).not.toBeNull();
     expect(slot.textContent).toBe("");
-    expect(link.nextElementSibling).toBe(slot);
+    expect(link.contains(slot)).toBe(false);
+    expect(slot.closest("a")).toBeNull();
   });
 
   // AC 2 / AC 3 / AC 10. These assert the contract the Board hands dnd-kit and the copy it sends to
@@ -1282,7 +1293,7 @@ describe("KanbanCard2 — Editor avatars, Deadline and RAW counts (#82)", () => 
 
     it("tells the user a same-Stage drop did not move, and gives the handle back", async () => {
       const props = await renderBoard();
-      const handle = host.querySelector<HTMLButtonElement>('[data-focus-key="move-handle:source"]');
+      const handle = host.querySelector<HTMLAnchorElement>('[data-focus-key="card:source"]');
       expect(handle, "no handle to restore focus to").not.toBeNull();
       await fireDnd("onDragStart", { active: { id: "source" } });
       await endDrag("source", "source");
@@ -1305,7 +1316,7 @@ describe("KanbanCard2 — Editor avatars, Deadline and RAW counts (#82)", () => 
 
     it("treats a drop outside any column as a rejection, not a silent no-op", async () => {
       const props = await renderBoard();
-      const handle = host.querySelector<HTMLButtonElement>('[data-focus-key="move-handle:source"]');
+      const handle = host.querySelector<HTMLAnchorElement>('[data-focus-key="card:source"]');
       await fireDnd("onDragStart", { active: { id: "source" } });
       // An outside drop never reaches `onMove`, so the Board must handle it in drag-end.
       await fireDnd("onDragEnd", { active: { id: "source" }, over: null });
@@ -1317,7 +1328,7 @@ describe("KanbanCard2 — Editor avatars, Deadline and RAW counts (#82)", () => 
 
     it("restores the handle on an Escape cancel, which the library no longer does", async () => {
       const props = await renderBoard();
-      const handle = host.querySelector<HTMLButtonElement>('[data-focus-key="move-handle:source"]');
+      const handle = host.querySelector<HTMLAnchorElement>('[data-focus-key="card:source"]');
       await fireDnd("onDragStart", { active: { id: "source" } });
       await fireDnd("onDragCancel", { active: { id: "source" } });
 
@@ -1642,5 +1653,168 @@ describe("ProjectKanbanBoard2 — reorder animation and the star-click guard (#3
     });
     await clickStar("b Street", 4, { x: 200, y: 230 });
     expect(props.onPriorityChange).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("Board card on ReUI frame (#432)", () => {
+  beforeEach(() => {
+    dnd.handlers.length = 0;
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    const { act } = await import("react");
+    await act(async () => root.unmount());
+    host.remove();
+    vi.restoreAllMocks();
+  });
+
+  const cardOf = (id = "source") => host.querySelector<HTMLElement>(`[data-focus-key="card:${id}"]`)!.closest<HTMLElement>('[data-testid="board-card-wrap"]')!;
+
+  it("shows exactly: cover, street (no suburb), Shoot date, Deadline, stars and avatars — no RAW", async () => {
+    const future = Date.now() + 3 * 24 * 60 * 60 * 1000;
+    await renderBoard({
+      canPrioritize: true,
+      projects: [project("source", "awaiting_raw", {
+        street: "12 Example St",
+        suburb: "Bondi",
+        shootDate: "2027-03-12",
+        deadlineAt: future,
+        deadlineLocalCivil: "2999-01-01T09:15",
+        deadlineZone: "Australia/Sydney",
+        receivedCount: 12,
+        expectedCount: 40,
+        priority: 3,
+        editors: [{ id: "e1", name: "Jane Doe" }],
+      })],
+    });
+    const card = cardOf();
+    expect(card.querySelector('[data-testid="board-card-address"]')?.textContent).toBe("12 Example St");
+    expect(card.querySelector('[data-testid="board-card"]')?.textContent).toBe("12 Example St");
+    expect(card.querySelector('[data-testid="board-card-shoot"]')?.textContent).toBe("Shoot 12 Mar 2027");
+    expect(card.querySelector('[data-testid="board-card-deadline"]')?.textContent).toBe("Due 2999-01-01 09:15 Sydney");
+    expect(card.querySelector('[role="radiogroup"][aria-label="Priority for 12 Example St"]')).not.toBeNull();
+    expect(card.querySelector('[data-testid="board-card-meta"] [role="img"][aria-label="Jane Doe"]')).not.toBeNull();
+    expect(card.querySelector('[data-testid="board-card-cover"]')?.textContent, "no cover rendered").toBe("1");
+    expect(card.textContent).not.toContain("Bondi");
+    expect(card.textContent).not.toMatch(/RAW|12\/40|⠿|↑|↓/);
+    expect(card.querySelector('[data-testid="board-card-raw"]')).toBeNull();
+  });
+
+  it("omits the Shoot line when there is no Shoot date", async () => {
+    await renderBoard({ projects: [project("source", "awaiting_raw", { shootDate: null })] });
+    expect(cardOf().querySelector('[data-testid="board-card-address"]')).not.toBeNull();
+    expect(cardOf().querySelector('[data-testid="board-card-shoot"]')).toBeNull();
+    expect(cardOf().textContent).not.toContain("Shoot");
+  });
+
+  it("is red and says Overdue only for an active Project past its Deadline, judged against the `now` it is given", async () => {
+    const deadlineAt = Date.parse("2026-09-01T00:00:00.000Z");
+    const common = { deadlineAt, deadlineLocalCivil: "2026-09-01T10:00", deadlineZone: "Australia/Sydney" as const };
+    const deadlineOf = (id: string) => cardOf(id).querySelector('[data-testid="board-card-deadline"]')!;
+    await renderBoard({
+      now: deadlineAt + 1000,
+      projects: [
+        project("active", "awaiting_raw", common),
+        project("delivered", "delivered", common),
+        project("archived", "awaiting_raw", { ...common, archivedAt: "2026-09-02T00:00:00.000Z" }),
+      ],
+      activeStages: [...stages, { key: "delivered", label: "Delivered", displayOrder: 3, active: true }],
+    });
+    expect(deadlineOf("active").textContent).toContain("Overdue");
+    expect(deadlineOf("active").className).toContain("text-signal-critical");
+    for (const id of ["delivered", "archived"]) {
+      expect(deadlineOf(id).textContent, `${id} must not read Overdue`).toContain("Due");
+      expect(deadlineOf(id).className, `${id} must not be red`).not.toContain("text-signal-critical");
+    }
+    // The same Project is not overdue against an earlier clock.
+    await renderBoard({ now: deadlineAt - 1000, projects: [project("active", "awaiting_raw", common)] });
+    expect(deadlineOf("active").textContent).toContain("Due");
+  });
+
+  it("marks an Archived card, keeps its link, and never lets it be dragged or prioritised (#428, #432)", async () => {
+    const props = await renderBoard({
+      canPrioritize: true,
+      projects: [project("source", "awaiting_raw", { archivedAt: "2026-09-02T00:00:00.000Z", priority: 2 }), project("other", "raw_review")],
+    });
+    const card = cardOf();
+    expect(card.querySelector('[data-testid="board-card-archived"]')?.textContent).toBe("Archived");
+    const link = card.querySelector('[data-testid="board-card"]')!;
+    expect(link.getAttribute("href")).toBe("/projects/source");
+    expect(isLocked(link)).toBe(true);
+    expect(link.className).not.toContain("cursor-grab");
+    // Priority is read-only on an archived card: no radiogroup, an image instead.
+    expect(card.querySelector('[role="radiogroup"]')).toBeNull();
+    expect(card.querySelector('[role="img"][aria-label="Priority 2 of 5 stars"]')).not.toBeNull();
+    await endDrag("source", "raw_review");
+    expect(props.onBoardMove).not.toHaveBeenCalled();
+  });
+
+  describe("click after a drag (#432)", () => {
+    // `InternalLink` only intercepts a destination the staff route grammar accepts, which needs a UUID.
+    const guardId = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d";
+    it("is swallowed outright — default prevented, never reaching the anchor's own handler — then released", async () => {
+      const { locationStore } = await import("../../lib/router");
+      const push = vi.spyOn(locationStore(), "push").mockImplementation(() => undefined);
+      await renderBoard({ projects: [project(guardId, "awaiting_raw"), project("other", "raw_review")] });
+      const link = host.querySelector<HTMLAnchorElement>('[data-testid="board-card"]')!;
+      const click = () => {
+        const event = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+        link.dispatchEvent(event);
+        return event;
+      };
+      // Before any drag: an ordinary click is the SPA navigation.
+      expect(click().defaultPrevented).toBe(true);
+      expect(push).toHaveBeenCalledTimes(1);
+      push.mockClear();
+
+      await fireDnd("onDragStart", { active: { id: guardId } });
+      await fireDnd("onDragEnd", { active: { id: guardId }, over: { id: "raw_review" } });
+      // The click that follows the drop: swallowed, no navigation of any kind.
+      const swallowed = click();
+      expect(swallowed.defaultPrevented).toBe(true);
+      expect(push).not.toHaveBeenCalled();
+
+      await new Promise((resolve) => setTimeout(resolve, 160));
+      push.mockClear();
+      click();
+      expect(push, "the guard never released — every later click is dead").toHaveBeenCalledTimes(1);
+    });
+
+    it("swallows only a click on a link — the Board's other controls stay clickable while it is up", async () => {
+      await renderBoard({ canPrioritize: true, projects: [project(guardId, "awaiting_raw"), project("other", "raw_review")] });
+      await fireDnd("onDragStart", { active: { id: guardId } });
+      await fireDnd("onDragEnd", { active: { id: guardId }, over: null });
+      const star = host.querySelector<HTMLElement>('[role="radio"][aria-label="1 star"]')!;
+      expect(star, "no star rendered — the assertion below would be vacuous").not.toBeNull();
+      const event = new MouseEvent("click", { bubbles: true, cancelable: true });
+      star.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+      await new Promise((resolve) => setTimeout(resolve, 160));
+    });
+
+    it("is swallowed after a cancelled drag as well, and removed when the Board unmounts mid-drag", async () => {
+      const { locationStore } = await import("../../lib/router");
+      const push = vi.spyOn(locationStore(), "push").mockImplementation(() => undefined);
+      await renderBoard({ projects: [project(guardId, "awaiting_raw"), project("other", "raw_review")] });
+      const link = host.querySelector<HTMLAnchorElement>('[data-testid="board-card"]')!;
+      await fireDnd("onDragStart", { active: { id: guardId } });
+      await fireDnd("onDragCancel", { active: { id: guardId } });
+      const event = new MouseEvent("click", { bubbles: true, cancelable: true });
+      link.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+      expect(push).not.toHaveBeenCalled();
+
+      await new Promise((resolve) => setTimeout(resolve, 160));
+      await fireDnd("onDragStart", { active: { id: guardId } });
+      const { act } = await import("react");
+      await act(async () => root.unmount());
+      root = createRoot(host);
+      const afterUnmount = new MouseEvent("click", { bubbles: true, cancelable: true });
+      document.body.dispatchEvent(afterUnmount);
+      expect(afterUnmount.defaultPrevented, "the unmounted Board's guard is still on the window").toBe(false);
+    });
   });
 });

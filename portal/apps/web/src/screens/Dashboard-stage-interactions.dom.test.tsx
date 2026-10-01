@@ -179,9 +179,14 @@ function card(host: HTMLElement, street: string) {
   return address.closest<HTMLElement>('[data-testid="board-card-wrap"]')!;
 }
 
-function movementControls(host: ParentNode): HTMLButtonElement[] {
+/** The card's link is its drag handle (#432): a disabled drag shows as `data-disabled`, not `disabled`. */
+function isLocked(element: Element): boolean {
+  return element.hasAttribute("disabled") || element.getAttribute("data-disabled") === "true";
+}
+
+function movementControls(host: ParentNode): HTMLElement[] {
   return [
-    ...host.querySelectorAll<HTMLButtonElement>('[data-testid="board-card-handle"]'),
+    ...host.querySelectorAll<HTMLElement>('[data-testid="board-card"]'),
     ...host.querySelectorAll<HTMLButtonElement>('[data-testid="board-move-to"]'),
     ...host.querySelectorAll<HTMLButtonElement>('[data-focus-key^="arrow-up:"]'),
     ...host.querySelectorAll<HTMLButtonElement>('[data-focus-key^="arrow-down:"]'),
@@ -418,7 +423,7 @@ describe("Dashboard Stage interactions", () => {
     const movedCard = card(host, "target Street");
     const controls = movementControls(movedCard);
     expect(controls).toHaveLength(4);
-    expect(controls.every((element) => !element.disabled)).toBe(true);
+    expect(controls.every((element) => !isLocked(element))).toBe(true);
     movedCard.querySelector<HTMLButtonElement>('[data-focus-key="arrow-down:target"]')!.click();
     await flush();
     expect(apiPostMock).toHaveBeenCalledTimes(2);
@@ -431,14 +436,14 @@ describe("Dashboard Stage interactions", () => {
   it("routes an eligible keyboard cross-Stage drop through the exact Stage request and restores the handle", async () => {
     apiPostMock.mockResolvedValueOnce({ changed: true, project: { projectId: "source", stageKey: "raw_review", boardRevision: 4 }, board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["before", "target", "source"] } });
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); }); await flush();
-    const handle = card(host, "Source Street").querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')!;
+    const handle = card(host, "Source Street").querySelector<HTMLElement>('[data-testid="board-card"]')!;
     handle.focus();
     await dndStart("source", true);
     await dndOver("source", "target");
     await dndEnd("source", "target");
     await flush();
     expect(apiPostMock).toHaveBeenCalledWith("/api/projects/source/stage", expect.objectContaining({ targetStageKey: "raw_review", placement: { kind: "between", before: { projectId: "before", boardRevision: 8 }, after: { projectId: "target", boardRevision: 9 } } }));
-    expect(document.activeElement?.getAttribute("data-focus-key")).toBe("move-handle:source");
+    expect(document.activeElement?.getAttribute("data-focus-key")).toBe("card:source");
   });
 
   it("routes Board-order arrows through the same board-position orchestrator", async () => {
@@ -533,7 +538,7 @@ describe("Dashboard Stage interactions", () => {
     expect(markPrincipalTerminal).not.toHaveBeenCalled();
     expect(projectFetches).toBe(2);
     expect(card(host, "Source Street").closest<HTMLElement>('[data-testid="board-column"]')?.querySelector('[data-focus-key^="stage-heading:"]')?.textContent).toContain("Awaiting RAW");
-    expect(card(host, "Source Street").querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')?.disabled).toBe(false);
+    expect(isLocked(card(host, "Source Street").querySelector<HTMLElement>('[data-testid="board-card"]')!)).toBe(false);
     expect(host.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toContain("Forbidden");
     runtime.dispose();
     queryClient.clear();
@@ -556,7 +561,7 @@ describe("Dashboard Stage interactions", () => {
     await flush();
     expect(host.textContent).toContain(copy);
     expect(host.querySelector('[aria-label="Priority for target Street"]')).not.toBeNull();
-    expect(host.querySelector('[aria-label="Move target Street"]')?.getAttribute("disabled")).toBe("");
+    expect(isLocked(card(host, "target Street").querySelector<HTMLElement>('[data-testid="board-card"]')!)).toBe(true);
     expect(host.querySelector('[data-focus-key^="arrow-up:"]')).toBeNull();
     const moveTo = host.querySelector<HTMLButtonElement>('[data-testid="board-move-to"]');
     expect(moveTo).not.toBeNull();
@@ -741,7 +746,7 @@ describe("Dashboard Stage interactions", () => {
     const controls = movementControls(host);
     // Count varies by parameterised case (6 or 12); a bare .every() would pass on an empty list.
     expect(controls).not.toHaveLength(0);
-    expect(controls.every((element) => !element.hasAttribute("disabled"))).toBe(true);
+    expect(controls.every((element) => !isLocked(element))).toBe(true);
     expect(projectFetches).toBeGreaterThanOrEqual(1);
   });
 
@@ -786,7 +791,7 @@ describe("Dashboard Stage interactions", () => {
     expect(invalidate.mock.calls.some(([options]) => options?.queryKey?.[0] === "dashboard-projects")).toBe(false);
     expect(projectFetches).toBe(2);
     const movedCard = card(host, "Source Street");
-    expect(movedCard.querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')?.disabled).toBe(true);
+    expect(isLocked(movedCard.querySelector<HTMLElement>('[data-testid="board-card"]')!)).toBe(true);
     expect(movedCard.querySelector<HTMLButtonElement>('[aria-label="Move Source Street to…"]')?.disabled).toBe(true);
     expect(movedCard.querySelector<HTMLButtonElement>('[data-focus-key="arrow-up:source"]')?.disabled).toBe(true);
     movedCard.querySelector<HTMLButtonElement>('[data-focus-key="arrow-up:source"]')?.click();
@@ -805,8 +810,8 @@ describe("Dashboard Stage interactions", () => {
     expect([...settledSourceColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["source-sibling-b Street", "source-sibling-a Street"]);
     const controls = movementControls(host);
     expect(controls).toHaveLength(20);
-    expect(controls.every((element) => !element.hasAttribute("disabled"))).toBe(true);
-    expect(card(host, "Source Street").querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')?.disabled).toBe(false);
+    expect(controls.every((element) => !isLocked(element))).toBe(true);
+    expect(isLocked(card(host, "Source Street").querySelector<HTMLElement>('[data-testid="board-card"]')!)).toBe(false);
     runtime.dispose();
     queryClient.clear();
   });
@@ -845,7 +850,7 @@ describe("Dashboard Stage interactions", () => {
     // Scope to the notice: the live region carries this exact copy as its announcement too, so host.textContent cannot tell them apart.
     expect(host.querySelector('[data-testid="board-unavailable-notice"]')?.textContent).toBe("The move was saved, but the latest Board could not be loaded. Refresh to continue.");
     expect([...card(host, "source-sibling-a Street").closest<HTMLElement>('[data-testid="board-column"]')!.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["source-sibling-a Street", "source-sibling-b Street"]);
-    expect(card(host, "Source Street").querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')?.disabled).toBe(true);
+    expect(isLocked(card(host, "Source Street").querySelector<HTMLElement>('[data-testid="board-card"]')!)).toBe(true);
     await act(async () => {
       void queryClient.invalidateQueries({ queryKey: dashboardProjectsKey("admin-1", "photographer", 0, { archived: "hide" }), exact: true, refetchType: "active" });
       await Promise.resolve();
@@ -853,11 +858,11 @@ describe("Dashboard Stage interactions", () => {
     await flush();
     expect(projectFetches).toBe(3);
     expect(host.querySelector('[data-testid="board-unavailable-notice"]')).toBeNull();
-    expect(card(host, "Source Street").querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')?.disabled).toBe(false);
+    expect(isLocked(card(host, "Source Street").querySelector<HTMLElement>('[data-testid="board-card"]')!)).toBe(false);
     expect([...card(host, "source-sibling-b Street").closest<HTMLElement>('[data-testid="board-column"]')!.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["source-sibling-b Street", "source-sibling-a Street"]);
     const controls = movementControls(host);
     expect(controls).toHaveLength(20);
-    expect(controls.every((element) => !element.hasAttribute("disabled"))).toBe(true);
+    expect(controls.every((element) => !isLocked(element))).toBe(true);
     runtime.dispose();
     queryClient.clear();
   });

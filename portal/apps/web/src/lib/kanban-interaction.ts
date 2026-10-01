@@ -135,6 +135,8 @@ export type ProjectKanbanBoardProps = {
   onInteractionStateChange?: (state: BoardInteractionState) => void;
   onAnnounce?: (message: string | undefined) => void;
   projectHrefFor?: (project: ProjectSummary) => string | undefined;
+  /** The clock "overdue" is judged against (the Dashboard's `useNow`); the Board falls back to the wall clock. */
+  now?: number;
 };
 
 type CanonicalStageKey = StageKey;
