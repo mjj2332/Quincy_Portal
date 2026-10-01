@@ -868,7 +868,32 @@ describe("ProjectKanbanBoard2 (#80)", () => {
       expect(sensors.map((descriptor) => descriptor.sensor)).toEqual([MouseSensor, TouchSensor, KeyboardSensor]);
       expect(sensors[0]?.options).toEqual({ activationConstraint: { distance: 10 } });
       expect(sensors[1]?.options).toEqual({ activationConstraint: { delay: 250, tolerance: 5 } });
-      expect(sensors[2]?.options).toEqual({ coordinateGetter: expect.any(Function) });
+      // #432: the Board narrows the keyboard pick-up to Space (Enter opens the card).
+      expect(sensors[2]?.options).toEqual({
+        coordinateGetter: expect.any(Function),
+        keyboardCodes: { start: ["Space"], cancel: ["Escape"], end: ["Space", "Enter", "Tab"] },
+      });
+    });
+
+    it("starts a keyboard drag on Space only, never Enter (#432)", async () => {
+      await renderBoard();
+      const props = dnd.handlers.at(-1)?.props;
+      const keyboard = (props!.sensors as Array<{ sensor: { activators: Array<{ eventName: string; handler: (event: unknown, options: unknown, context: unknown) => boolean }> }; options: unknown }>)[2]!;
+      const activator = keyboard.sensor.activators[0]!;
+      expect(activator.eventName).toBe("onKeyDown");
+      const target = document.createElement("a");
+      const attempt = (code: string) => {
+        const onActivation = vi.fn();
+        const nativeEvent = { code };
+        const handled = activator.handler(
+          { nativeEvent, target, preventDefault: vi.fn() },
+          { ...(keyboard.options as object), onActivation },
+          { active: { activatorNode: { current: target } } },
+        );
+        return { handled, activated: onActivation.mock.calls.length };
+      };
+      expect(attempt("Space")).toEqual({ handled: true, activated: 1 });
+      expect(attempt("Enter")).toEqual({ handled: false, activated: 0 });
     });
 
     it("passes no collisionDetection or autoScroll override — both stay the vendor's own defaults", async () => {

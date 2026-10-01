@@ -23,6 +23,13 @@ import { ScrollArea, ScrollBar } from "../reui/scroll-area";
 import { KanbanCard2 } from "./card";
 import { MoveToControl } from "./move-to-control";
 
+/**
+ * Keyboard drag keys (#432): Space picks a card up, so Enter is free to open it (the card's link is
+ * the drag handle). Module-level and lowercase on purpose: the Kanban root memoises its sensor
+ * options on this object's identity, and `design-system-guards.test.ts` scans SCREAMING_CASE consts.
+ */
+const boardKeyboardCodes = { start: ["Space"], cancel: ["Escape"], end: ["Space", "Enter", "Tab"] };
+
 /** `editing` is the role-safe presentation of `editing_autohdr`. */
 function semanticStageKey(value: ProjectStageKey): StageKey {
   return value === "editing" ? "editing_autohdr" : value;
@@ -528,6 +535,7 @@ export function ProjectKanbanBoard2({
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
       accessibility={accessibility}
+      keyboardCodes={boardKeyboardCodes}
       className="flex min-h-0 min-w-0 w-full flex-1 flex-col"
     >
       {/* Horizontal scroll, composed as ReUI `tempo-tasks`' `BoardScrollArea`: Base UI's ScrollArea
