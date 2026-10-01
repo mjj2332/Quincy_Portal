@@ -221,7 +221,48 @@ describe("NotificationPreferences", () => {
     expect(source.match(/if \(active\)/g)).toHaveLength(4);
     expect(source).toContain("if (active) setEnabled(value.projectDeadlineReminderEmails)");
     expect(source).toContain("if (active) setSubtaskEnabled(value.subtaskReminderEmails)");
-    expect(source).toContain("if (active) setError(");
+    expect(source).toContain("if (active) setLoadError(");
     expect(source).toContain("if (active) setLoading(false)");
+  });
+
+  it("reports a failed load once at page level and shows neither card as On", async () => {
+    apiGetMock.mockReset().mockRejectedValue(new Error("Load failed"));
+    const host = document.body.firstElementChild as HTMLElement;
+    await act(async () => { root!.render(<NotificationPreferences />); await Promise.resolve(); });
+    await flush();
+    const notices = [...host.querySelectorAll('[data-slot="notice"]')];
+    expect(notices).toHaveLength(1);
+    expect(notices[0]!.textContent).toContain("Load failed");
+    expect(notices[0]!.closest("section")).toBeNull();
+    expect(host.textContent).not.toMatch(/\bOn\b/);
+    const boxes = host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+    expect(boxes).toHaveLength(2);
+    for (const box of boxes) { expect(box.checked).toBe(false); expect(box.disabled).toBe(true); }
+  });
+
+  it("keeps the Deadline switch enabled while the Checklist save is pending", async () => {
+    const gate = deferred<{ projectDeadlineReminderEmails: boolean; subtaskReminderEmails: boolean }>();
+    apiPatchMock.mockReset().mockReturnValue(gate.promise);
+    const host = document.body.firstElementChild as HTMLElement;
+    await act(async () => { root!.render(<NotificationPreferences />); await Promise.resolve(); });
+    await flush();
+    const [first, second] = host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]') as unknown as HTMLInputElement[];
+    await act(async () => { second!.click(); await Promise.resolve(); });
+    expect(second!.disabled).toBe(true);
+    expect(first!.disabled).toBe(false);
+    await act(async () => { gate.resolve({ projectDeadlineReminderEmails: true, subtaskReminderEmails: false }); await Promise.resolve(); await Promise.resolve(); });
+    expect(second!.disabled).toBe(false);
+  });
+
+  it("states the in-app note once at page level and a parallel when-footnote per card", async () => {
+    const host = document.body.firstElementChild as HTMLElement;
+    await act(async () => { root!.render(<NotificationPreferences />); await Promise.resolve(); });
+    await flush();
+    const note = "In-app reminders always arrive in your notification bell.";
+    expect(host.textContent!.split(note)).toHaveLength(2);
+    expect(host.querySelector("section")!.textContent).not.toContain(note);
+    const [deadline, checklist] = [...host.querySelectorAll("section")];
+    expect(deadline!.textContent).toContain("Sent before and when a Project's deadline is due.");
+    expect(checklist!.textContent).toContain("Sent for checklist items assigned to you, before and when they're due.");
   });
 });

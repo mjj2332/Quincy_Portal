@@ -102,6 +102,7 @@ One unit of work inside a Project's collaboration, with any number of Subtask as
 Subtask range. Completion is shared: whoever ticks it off completes it for everyone. The
 screen's "Add task" label is kept; the concept is Subtask.
 _Avoid_: Checklist item, task, to-do
+The UI deliberately labels a Subtask "checklist item" on preference and notification surfaces (ADR 0016); that is intended, not drift.
 
 **Subtask assignee**:
 A person responsible for a Subtask. A Subtask may have none, one or several; each is reminded
