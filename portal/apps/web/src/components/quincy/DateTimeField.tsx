@@ -142,6 +142,8 @@ export function DateTimePopoverContent({ label, className, children, ...props }:
     <PopoverContent
       align="start"
       collisionPadding={16}
+      // ~530-680px tall: if it fits neither side, stay above/below and scroll the body rather than opening sideways.
+      collisionAvoidance={{ fallbackAxisSide: "none" }}
       {...props}
       aria-label={label}
       aria-describedby={zoneId}

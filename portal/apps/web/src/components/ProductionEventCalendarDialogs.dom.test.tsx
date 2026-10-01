@@ -146,10 +146,10 @@ describe("ProductionEventCalendarMoveDialog (alert-dialog shell)", () => {
     await render(<QueryClientProvider client={client}><ProductionEventCalendarMoveDialog open event={deadline} onSubmit={vi.fn()} onCancel={vi.fn()} /></QueryClientProvider>);
     const popup = await openMoveDialogField();
     expect(apiGetMock).toHaveBeenCalledWith(`/api/projects/${deadline.project.id}`);
-    expect(popup.textContent).not.toContain("Next reminder");
+    expect(popup.textContent).not.toContain("next reminder");
     await pressInPopup(popup, "4 hours");
     await act(async () => { release({ deadlineSchedule: { nextOccurrence: { kind: "advance", offsetMinutes: 1440, firesAt: "2026-08-10T09:30:00.000Z" } } }); await Promise.resolve(); await Promise.resolve(); });
-    expect(popup.textContent).toContain("Next reminder");
+    expect(popup.textContent).toContain("Currently saved: next reminder");
     expect(popup.textContent).toContain("1 day");
     // The draft the user was editing is untouched by the arrival.
     expect(popupButton(popup, "4 hours")?.getAttribute("aria-pressed")).toBe("true");

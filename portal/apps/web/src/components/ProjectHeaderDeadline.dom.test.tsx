@@ -136,8 +136,9 @@ describe("ProjectHeaderDeadline", () => {
       .filter((el) => el.getAttribute("aria-label") && !el.hasAttribute("role")
         && !["BUTTON", "INPUT", "A", "SELECT", "TEXTAREA", "NAV", "TH"].includes(el.tagName));
     expect(unnamed).toEqual([]);
-    // The scan above is a net; this is the specific catch it was cast for.
-    expect(dialog.querySelector('[role="group"][aria-label="Deadline reminder summary"]')).not.toBeNull();
+    // The editable popup no longer draws the summary (#422); the read-only branch keeps its `role="group"`
+    // (ProjectDeadlineControl.dom.test.tsx).
+    expect(dialog.querySelector('[role="group"][aria-label="Deadline reminder summary"]')).toBeNull();
 
     const interactive = [...dialog.querySelectorAll<HTMLElement>("button, a, input, select, textarea")];
     for (const element of interactive) expect(element.querySelector("button, a, input, select, textarea")).toBeNull();

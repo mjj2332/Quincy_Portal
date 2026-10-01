@@ -214,8 +214,10 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onClose, 
 
   // #206: a plain `<div>` cannot carry an accessible name (html-aria naming rules) — `role="group"`
   // makes the summary a legal target for its `aria-label`.
-  const summary = <>
-    {deadline && <div className={DEADLINE_SUMMARY_TEXT} role="group" aria-label="Deadline reminder summary"><span>Configured advance reminders: {visibleSchedule.reminderOffsetsMinutes.length ? visibleSchedule.reminderOffsetsMinutes.slice(0, 8).map(deadlineOffsetLabel).join(", ") : "None"}</span><span>Due-now reminder: Mandatory</span><span>{skippedOffsets.length ? `Skipped elapsed advances: ${skippedOffsets.map(deadlineOffsetLabel).join(", ")}` : "Skipped elapsed advances: None"}</span></div>}
+  const summaryLines = deadline && <div className={DEADLINE_SUMMARY_TEXT} role="group" aria-label="Deadline reminder summary"><span>Configured advance reminders: {visibleSchedule.reminderOffsetsMinutes.length ? visibleSchedule.reminderOffsetsMinutes.slice(0, 8).map(deadlineOffsetLabel).join(", ") : "None"}</span><span>Due-now reminder: Mandatory</span><span>{skippedOffsets.length ? `Skipped elapsed advances: ${skippedOffsets.map(deadlineOffsetLabel).join(", ")}` : "Skipped elapsed advances: None"}</span></div>;
+  // The editable popup drops the three-line summary: it describes the SAVED schedule while the user
+  // edits a draft, and the chip row already shows the draft's reminders. Read-only keeps it.
+  const notes = <>
     {inactive && <p className={DEADLINE_SUMMARY_TEXT} role="status">{visibleSchedule.state === "inactive_delivered" ? "Reminders inactive while Delivered. Move the project out of Delivered before changing or resuming them." : "Reminders inactive while archived. Restore the project before changing or resuming them."}</p>}
     {visibleSchedule.canResume && <p className={DEADLINE_SUMMARY_TEXT} role="status">Reminders inactive. Resume to create a new reminder schedule.</p>}
   </>;
@@ -236,13 +238,14 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onClose, 
         </> : "Not set"}</span>
       </div>
       <NextReminder next={visibleSchedule.nextOccurrence} hasReminders={visibleSchedule.reminderOffsetsMinutes.length > 0} />
-      {summary}
+      {summaryLines}
+      {notes}
     </div>;
   }
 
   const facts = <>
     {overdue && <div><StatusPill tone="critical">Overdue</StatusPill></div>}
-    {summary}
+    {notes}
     {visibleSchedule.canResume && <div><Button type="button" variant="secondary" onClick={() => void resume()} disabled={saving}>Resume reminders</Button></div>}
   </>;
 

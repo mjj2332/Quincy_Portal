@@ -4647,3 +4647,9 @@ remove the legacy readers) still applies.
 - **Reminder offsets travel with the dialog draft.** `submitMoveDialog(localCivil, disambiguation,
   reminderOffsetsMinutes)` carries them through the drop/place retry paths and the no-op check (a
   reminders-only edit is a change); a rejected attempt reopens the dialog on the whole draft.
+- **A tall popup must not fall back to the side axis.** The date-time popup (~530-680px) fits neither below nor above
+  a field in a dialog, so Base UI opened it to the right, half off the dialog. `DateTimePopoverContent` passes
+  `collisionAvoidance={{ fallbackAxisSide: "none" }}` so it stays above/below and its body scrolls.
+- **The saved-schedule line is not the draft.** In the editable popup the next-reminder line is labelled "Currently saved:
+  next reminder", drawn locally as "Wed 7 Oct · 16:00" (not `formatSydneyInstant`, shared with notifications) and
+  quietened once the draft differs; the three-line reminder summary is read-only only.

@@ -479,8 +479,14 @@ describe("ProjectDeadlineControl", () => {
     ["archived", { ...summarySchedule, state: "inactive_archived" as const }, false],
   ])("shows every configured and skipped reminder offset for the %s rail state", async (_name, schedule, canWrite) => {
     const host = await mount(schedule, canWrite);
-    expect(host.textContent).toContain("Configured advance reminders: 1 day, 4 hours, 1 hour");
-    expect(host.textContent).toContain("Skipped elapsed advances: 1 day, 4 hours");
+    // The editable popup drops the summary (it describes the saved schedule while a draft is edited); read-only keeps it.
+    if (canWrite) {
+      expect(host.textContent).not.toContain("Configured advance reminders");
+      expect(host.textContent).not.toContain("Skipped elapsed advances");
+    } else {
+      expect(host.textContent).toContain("Configured advance reminders: 1 day, 4 hours, 1 hour");
+      expect(host.textContent).toContain("Skipped elapsed advances: 1 day, 4 hours");
+    }
     if (_name === "overdue") expect(host.textContent).toContain("Overdue");
   });
 
@@ -489,6 +495,7 @@ describe("ProjectDeadlineControl", () => {
     expect(host.textContent).toContain("Configured advance reminders: 1 day, 4 hours, 1 hour");
     expect(host.textContent).toContain("Skipped elapsed advances: 1 day, 4 hours");
     expect(host.querySelectorAll("button")).toHaveLength(0);
+    expect(host.querySelector('[role="group"][aria-label="Deadline reminder summary"]')).not.toBeNull();
   });
 
   it("is a live editor from mount, seeded from the schedule, and holds the project-detail query owner only for a writer (#213)", async () => {
@@ -497,7 +504,7 @@ describe("ProjectDeadlineControl", () => {
     expect(toggle(host, "1 day").getAttribute("aria-pressed")).toBe("true");
     expect(toggle(host, "4 hours").getAttribute("aria-pressed")).toBe("false");
     expect([...host.querySelectorAll("button")].map((button) => button.textContent)).toEqual(expect.arrayContaining(["Cancel", "Apply"]));
-    expect(host.textContent).toContain("Next reminder");
+    expect(host.textContent).toContain("Currently saved: next reminder");
     expect(host.textContent).not.toContain("Edit Deadline");
     expect(mountedRuntime().isOwned(projectDataKeys.detail(projectId))).toBe(true);
     await act(async () => { root!.unmount(); await Promise.resolve(); });
@@ -508,6 +515,26 @@ describe("ProjectDeadlineControl", () => {
     expect(viewer.querySelector('[role="group"][aria-label="Time slots"]')).toBeNull();
     expect(viewer.querySelectorAll("button")).toHaveLength(0);
     expect(mountedRuntime().isOwned(projectDataKeys.detail(projectId))).toBe(false);
+  });
+
+  it("labels the next reminder as the saved schedule, in 24h Sydney time, and quietens it once the draft differs (#422)", async () => {
+    const host = await mount(activeSchedule);
+    const line = () => host.querySelector("time")!;
+    expect(host.textContent).toContain("Currently saved: next reminder");
+    expect(line().textContent).toBe("1 day · Thu 14 Jan · 09:00");
+    expect(line().parentElement!.className).not.toContain("text-foreground-secondary");
+    await act(async () => { toggle(host, "4 hours").click(); await Promise.resolve(); });
+    expect(host.textContent).toContain("Currently saved: next reminder");
+    expect(line().parentElement!.className).toContain("text-foreground-secondary");
+    expect(line().textContent).toBe("1 day · Thu 14 Jan · 09:00");
+  });
+
+  it("locks the Due now chip: pressed and disabled, with a lock icon (#422)", async () => {
+    const host = await mount(activeSchedule);
+    const chip = toggle(host, "Due now");
+    expect(chip.getAttribute("aria-pressed")).toBe("true");
+    expect(chip.disabled).toBe(true);
+    expect(chip.querySelector("svg")).not.toBeNull();
   });
 
   it("renders no native date or time input", async () => {

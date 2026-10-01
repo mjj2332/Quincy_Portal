@@ -193,6 +193,15 @@ function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedba
     }
   };
 
+  // The next-reminder line states the SAVED schedule; it goes quiet once the draft departs from it.
+  const savedOffsets = reminders?.offsets ?? [];
+  const savedLineStale = draft.touched && (
+    draft.clear
+    || civil !== (value?.localCivil ?? null)
+    || draft.offsets.length !== savedOffsets.length
+    || draft.offsets.some((offset) => !savedOffsets.includes(offset))
+  );
+
   const hint = draft.touched && !draft.clear && civil === null && !timeInvalid ? "Pick a date and a time." : null;
 
   return (
@@ -223,7 +232,7 @@ function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedba
         </Field>
         {choices && <FoldChoice choices={choices} selected={activeChoice} onSelect={(choice) => civil && change({ fold: { minute: civil, choice } })} />}
         {reminders && <RemindersStrip offsets={draft.offsets} onChange={(offsets) => change({ offsets })} />}
-        {reminders && reminders.next !== undefined && <NextReminder next={reminders.next} hasReminders={reminders.offsets.length > 0} />}
+        {reminders && reminders.next !== undefined && <NextReminder saved stale={savedLineStale} next={reminders.next} hasReminders={reminders.offsets.length > 0} />}
         {facts}
         {feedback}
       </div>
