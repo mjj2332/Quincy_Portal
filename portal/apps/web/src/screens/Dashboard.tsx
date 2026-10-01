@@ -16,6 +16,7 @@ import { Button, buttonClasses } from "../components/quincy/Button";
 import { Eyebrow } from "../components/quincy/Eyebrow";
 import { DashboardHeader } from "./DashboardHeader";
 import { DashboardViewBar, VIEW_PANEL_ID, VIEW_TAB_ID } from "./DashboardViewBar";
+import { BoardDisplayContent } from "./DashboardDisplay";
 import { DashboardFilterChips, DashboardFilterProvider, DashboardFilterTrigger } from "./DashboardFilter";
 import { dashboardSummary } from "../lib/dashboard-summary";
 import { useNow } from "../lib/use-now";
@@ -1518,10 +1519,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           principalId={currentUserId}
           searchFocusRequest={searchFocusRequest}
           onSearchFocusHandled={handleSearchFocusHandled}
-          showDisplay={renderedView === "board"}
-          sort={effectiveBoardSort}
-          canSortByPriority={canSortByPriority}
-          onSortChange={selectBoardSort}
+          display={renderedView === "board" ? <BoardDisplayContent sort={effectiveBoardSort} canSortByPriority={canSortByPriority} onSortChange={selectBoardSort} /> : undefined}
           filterTrigger={<DashboardFilterTrigger />}
         />
         <DashboardFilterChips />

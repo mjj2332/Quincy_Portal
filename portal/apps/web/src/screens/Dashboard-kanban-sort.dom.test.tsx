@@ -260,7 +260,7 @@ describe("Dashboard Kanban sort control", () => {
       expect(displayTrigger()).not.toBeNull();
       expect(displayTrigger()!.disabled).toBe(true);
       const reason = document.getElementById(displayTrigger()!.getAttribute("aria-describedby") ?? "");
-      expect(reason?.textContent).toContain("arrive with #431");
+      expect(reason?.textContent).toContain("arrive with #430");
     });
 
     it("12. the radio items are exactly the sort modes the Board understands", async () => {

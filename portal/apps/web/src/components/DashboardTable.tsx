@@ -20,6 +20,7 @@ import { formatDashboardDate } from "../screens/dashboard-helpers";
 import { useCapabilities } from "../lib/capabilities";
 import {
   TABLE_COLUMN_IDS,
+  TABLE_NARROW_QUERY,
   TABLE_COLUMN_LABELS,
   columnVisibleToRole,
   groupTableRows,
@@ -68,7 +69,6 @@ import { cn } from "../lib/utils";
  * Editor), and, at <=721px, everything except Address and Deadline.
  */
 
-const NARROW_QUERY = "(max-width: 721px)";
 const NARROW_COLUMNS: readonly TableColumnId[] = ["address", "deadline"];
 
 type Column = ColumnDef<DataGridFeatures, ProjectSummary>;
@@ -299,7 +299,7 @@ export function DashboardTable({ projects, role, groupBy, hiddenColumns, canPrio
   const { stages } = useStages();
   const { can } = useCapabilities();
   const canEditDeadline = can("editProject");
-  const narrow = useMediaQuery(NARROW_QUERY);
+  const narrow = useMediaQuery(TABLE_NARROW_QUERY);
   const [sorting, setSorting] = useState<SortingState>([]);
   // Collapsed groups belong to the Group by they were collapsed under; a change starts fresh.
   const [collapsed, setCollapsed] = useState<{ groupBy: TableGroupBy; keys: ReadonlySet<string> }>({ groupBy, keys: new Set() });

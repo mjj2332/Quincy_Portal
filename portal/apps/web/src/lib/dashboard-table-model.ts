@@ -30,6 +30,9 @@ export const TABLE_COLUMN_LABELS: Record<TableColumnId, string> = {
   raw: "RAW received",
 };
 
+/** At or below this width the Table shows only Address and Deadline (`DashboardTable.tsx`). */
+export const TABLE_NARROW_QUERY = "(max-width: 721px)";
+
 export type TableGroupBy = "none" | "stage" | "client";
 export const TABLE_GROUP_BY_VALUES: readonly TableGroupBy[] = ["none", "stage", "client"];
 export const TABLE_GROUP_BY_LABELS: Record<TableGroupBy, string> = { none: "None", stage: "Stage", client: "Client" };
