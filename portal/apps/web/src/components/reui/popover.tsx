@@ -41,6 +41,14 @@ import { OverlayContainerContext } from "@/components/OverlayContainerContext"
  *    `"absolute"` default, which would resolve against the nearest positioned ancestor instead of
  *    the viewport and drift out of alignment as the page scrolls.
  *
+ * 8. **A `positionerClassName` prop (#422).** The Positioner's `z-[var(--z-popover)]` (90) sits
+ *    BELOW `--z-dialog` (95), so a popover opened from inside an alert dialog (the Calendar's
+ *    Move / Reschedule Deadline dialog opens the date/time popup) painted under the dialog and its
+ *    scrim. The prop is merged after the default, so a caller can raise the layer; unset, nothing
+ *    changes for any other call site. (`OverlayContainerContext`, which `Modal` uses, is not an
+ *    option: `AlertDialogContent` is transformed and scrolls, so a container inside it would clip
+ *    and mis-anchor a 600px popup.)
+ *
  * `bg-popover`, `text-popover-foreground` and `ring-foreground/10` are kept: the panel portals to
  * `document.body`, outside any `[data-surface]` subtree, and all three roles are bridged
  * (`tokens/tailwind.css:24,27-28`) — `styles/sidebar-token-bridge.guard.test.ts`'s rail-surface
@@ -69,8 +77,9 @@ function PopoverContent({
   collisionPadding,
   anchor,
   positionMethod,
+  positionerClassName,
   ...props
-}: PopoverPrimitive.Popup.Props &
+}: PopoverPrimitive.Popup.Props & { positionerClassName?: string } &
   Pick<
     PopoverPrimitive.Positioner.Props,
     | "align"
@@ -94,7 +103,7 @@ function PopoverContent({
         collisionPadding={collisionPadding}
         anchor={anchor}
         positionMethod={positionMethod}
-        className="isolate z-[var(--z-popover)]"
+        className={cn("isolate z-[var(--z-popover)]", positionerClassName)}
       >
         <PopoverPrimitive.Popup
           data-slot="popover-content"

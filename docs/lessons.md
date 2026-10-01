@@ -4658,3 +4658,30 @@ remove the legacy readers) still applies.
   722px the controls go above the tabs (`flex-col-reverse`) so the tabs stay on the rule. Display renders
   on every view, disabled off Board, so the search never moves. A pointer-focused tab is not re-focused by
   the focus-restore path (only a `:focus-visible` one is), or the global ring paints on a mouse click.
+
+## #422 Deadline uses the date-time popup
+
+- **The Deadline editor is the popup, not a form beside it.** `ProjectDeadlineControl` is now a mutation
+  adapter (version, 409, Clear confirm, Resume, query owner) around `DateTimePopup`; the header and the
+  Timeline cell render it inside `DateTimePopoverContent`, and the Calendar Reschedule / Timeline Set-Fix
+  dialog embeds `DateTimeField variant="date-time"`. Tests drive it through `testing/date-time-popup.ts`
+  (roles and names only), never `Deadline date` / `Deadline time` inputs.
+- **A seeded draft is already dirty, including a seeded clear.** A 409's Review-and-reapply seeds the popup
+  with the attempted draft; `seed.localCivil === null` must start as `clear`, or Apply on an untouched
+  draft just closes and the clear is silently dropped.
+- **A popover inside an alert dialog needs a higher layer.** `--z-popover` (90) is below `--z-dialog` (95),
+  so `reui/popover` takes a `positionerClassName`; the Move dialog passes `z-[calc(var(--z-dialog)+1)]`.
+  Escape on a control inside the popup closes the popup only (dispatch it on the focused element, as a real
+  key press would, not on `document`).
+- **Do not install a `getAnimations` stub suite-wide.** It makes a closing Base UI popup unmount one tick
+  later, which NotificationBell's synchronous assertions caught. `testing/dom-polyfills.ts` is imported by
+  `testing/date-time-popup.ts` only, so just the files that render the popup get it.
+- **Reminder offsets travel with the dialog draft.** `submitMoveDialog(localCivil, disambiguation,
+  reminderOffsetsMinutes)` carries them through the drop/place retry paths and the no-op check (a
+  reminders-only edit is a change); a rejected attempt reopens the dialog on the whole draft.
+- **A tall popup must not fall back to the side axis.** The date-time popup (~530-680px) fits neither below nor above
+  a field in a dialog, so Base UI opened it to the right, half off the dialog. `DateTimePopoverContent` passes
+  `collisionAvoidance={{ fallbackAxisSide: "none" }}` so it stays above/below and its body scrolls.
+- **The saved-schedule line is not the draft.** In the editable popup the next-reminder line is labelled "Currently saved:
+  next reminder", drawn locally as "Wed 7 Oct · 16:00" (not `formatSydneyInstant`, shared with notifications) and
+  quietened once the draft differs; the three-line reminder summary is read-only only.

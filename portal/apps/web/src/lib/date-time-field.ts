@@ -94,3 +94,37 @@ export function yearBounds(today: string, value: string | null): { startYear: nu
   }
   return { startYear, endYear };
 }
+
+/**
+ * #422 — the date-time form's pure rules.
+ *
+ * `splitCivilMinute` / `joinCivilMinute` move between a Sydney civil minute (`YYYY-MM-DDTHH:mm`) and
+ * its day and time halves; a time is always zero-padded `HH:mm`.
+ */
+export function splitCivilMinute(localCivil: string): { day: string | null; time: string | null } {
+  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/.exec(localCivil);
+  return match ? { day: match[1]!, time: match[2]! } : { day: null, time: null };
+}
+
+export function joinCivilMinute(day: string | null, time: string | null): string | null {
+  return day && time ? `${day}T${time}` : null;
+}
+
+/** The time column: the whole day in 15-minute steps, `00:00` to `23:45`. */
+export function timeSlots(): string[] {
+  return Array.from({ length: 96 }, (_, index) => `${pad2(Math.floor(index / 4))}:${pad2((index % 4) * 15)}`);
+}
+
+/**
+ * The typed-time input: `H:MM`, `HH:MM` or `HHMM` on a 24-hour clock, `00:00` to `23:59`. An
+ * off-grid minute (`17:07`) is accepted as typed and never rounded to a slot. Seconds, `24:00`,
+ * a bare hour and anything else is rejected.
+ */
+export function parseTypedTime(text: string): { ok: true; time: string } | { ok: false } {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(text.trim()) ?? /^(\d{2})(\d{2})$/.exec(text.trim());
+  if (!match) return { ok: false };
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour > 23 || minute > 59) return { ok: false };
+  return { ok: true, time: `${pad2(hour)}:${pad2(minute)}` };
+}

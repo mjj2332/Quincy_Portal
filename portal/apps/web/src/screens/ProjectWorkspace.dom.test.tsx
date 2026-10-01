@@ -1,4 +1,5 @@
 import { act } from "react";
+import { pickPopupDay, popupDraft } from "@/testing/date-time-popup";
 import { createRoot, type Root } from "react-dom/client";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -413,11 +414,8 @@ afterEach(async () => {
     authState.role = "admin";
     await render(<ProjectWorkspace key="p1" projectId="p1" />); await flush(20);
     const p1Dialog = await openDeadlineDialog(host);
-    const dateInput = p1Dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!;
-    expect(dateInput).not.toBeNull();
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
-    await act(async () => { setter.call(dateInput, "2027-01-15"); dateInput.dispatchEvent(new Event("input", { bubbles: true })); await Promise.resolve(); });
-    expect(p1Dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')?.value).toBe("2027-01-15");
+    await pickPopupDay(p1Dialog, "2027-01-15");
+    expect(popupDraft(p1Dialog).day).toBe("2027-01-15");
 
     apiGetMock.mockImplementation((path: string) => {
       if (path === "/api/projects/p2") return Promise.resolve({
@@ -447,12 +445,11 @@ afterEach(async () => {
 
     // The whole p1 fiber tree — including its Deadline popover's portal — was unmounted by the
     // key swap, so nothing from it survives in `document` at all.
-    expect(document.querySelector('input[aria-label="Deadline date"]')).toBeNull();
+    expect(document.querySelector('[role="dialog"][aria-label="Deadline"]')).toBeNull();
     expect(document.body.textContent).not.toContain("2027-01-15");
     const p2Dialog = await openDeadlineDialog(host);
     // p2's live editor is seeded from p2's own schedule, not p1's draft.
-    expect(p2Dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')?.value).toBe("2028-06-01");
-    expect(p2Dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')?.value).toBe("10:00");
+    expect(popupDraft(p2Dialog)).toEqual({ day: "2028-06-01", time: "10:00" });
   });
 
   it("hides passive-RAW private data in the same render as a membership 403", async () => {
