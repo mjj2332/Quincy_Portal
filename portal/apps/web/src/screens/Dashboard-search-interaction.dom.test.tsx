@@ -19,7 +19,7 @@ import {
 } from "../lib/dashboard-search-store";
 
 // happy-dom lacks `Element.getAnimations()`, which Base UI's ScrollArea (the Board's horizontal
-// scroll, `kanban2/board.tsx`) calls on a timer after mount. The no-op stub means "no active
+// scroll, `board/board.tsx`) calls on a timer after mount. The no-op stub means "no active
 // animations"; see `reui/gantt/gantt-adjust-ghost-marker.dom.test.tsx` for the same polyfill.
 if (!Element.prototype.getAnimations) {
   Element.prototype.getAnimations = () => [];
@@ -124,7 +124,7 @@ async function dndEnd(activeId: string, overId: string | null) {
 }
 
 function addresses(host: HTMLElement): string[] {
-  return [...host.querySelectorAll<HTMLElement>('[data-testid="kanban2-card-address"], [data-testid="project-table-row-link"]')].map((element) => element.textContent ?? "");
+  return [...host.querySelectorAll<HTMLElement>('[data-testid="board-card-address"], [data-testid="project-table-row-link"]')].map((element) => element.textContent ?? "");
 }
 
 async function flush() {
@@ -228,19 +228,23 @@ describe("Dashboard search results and Kanban movement gating (#217 fix round 1,
     expect(apiPostMock).not.toHaveBeenCalled();
   });
 
-  it("item 2: the keyboard reorder arrows do not render while searching", async () => {
+  it("item 2: no Move up / Move down item can be reached while searching", async () => {
     window.history.replaceState(null, "", "/?view=board&q=smith");
     apiGetMock.mockImplementation((path) => (path.startsWith("/api/projects") ? Promise.resolve(fullBoard) : Promise.resolve({})));
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" role="admin" />); await Promise.resolve(); }); await flush();
-    expect(host.querySelector('[data-focus-key^="arrow-up:"]')).toBeNull();
-    expect(host.querySelector('[data-focus-key^="arrow-down:"]')).toBeNull();
+    // The nudges are items of the card's ⋯ menu (#432); a search disables the trigger itself.
+    const triggers = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="board-card-menu"]')];
+    expect(triggers.length, "anchor: the cards' menus rendered").toBeGreaterThan(0);
+    for (const trigger of triggers) expect(trigger.disabled).toBe(true);
+    await act(async () => { triggers[0]!.click(); await Promise.resolve(); });
+    expect(document.querySelector('[role="menuitem"]')).toBeNull();
   });
 
-  it("item 2: the Move-to trigger is disabled while searching", async () => {
+  it("item 2: the ⋯ menu that carries Move to… is disabled while searching", async () => {
     window.history.replaceState(null, "", "/?view=board&q=smith");
     apiGetMock.mockImplementation((path) => (path.startsWith("/api/projects") ? Promise.resolve(fullBoard) : Promise.resolve({})));
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" role="admin" />); await Promise.resolve(); }); await flush();
-    const triggers = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="kanban2-move-to"]')];
+    const triggers = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="board-card-menu"]')];
     expect(triggers.length).toBeGreaterThan(0);
     for (const trigger of triggers) expect(trigger.disabled).toBe(true);
     await act(async () => { triggers[0]!.click(); await Promise.resolve(); });

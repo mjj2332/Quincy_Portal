@@ -41,7 +41,7 @@ vi.mock("./lib/api", async (importOriginal) => ({
 
 const calendarEventFixture = vi.hoisted(() => ({ enabled: false }));
 
-// The real Kanban board (so `kanban2-card` is the real opener). Its DnD is not under test here.
+// The real Kanban board (so `board-card` is the real opener). Its DnD is not under test here.
 vi.mock("./components/reui/event-calendar/event-calendar", async () => (await import("./testing/event-calendar-fake")).eventCalendarModule);
 vi.mock("./components/reui/event-calendar/event-calendar-nav", async () => (await import("./testing/event-calendar-fake")).eventCalendarNavModule);
 vi.mock("./components/reui/event-calendar/event-calendar-content", async () => (await import("./testing/event-calendar-fake")).eventCalendarContentModule);
@@ -259,7 +259,7 @@ async function click(element: Element, init: MouseEventInit = {}) {
 /** The Dashboard's project opener for `view`, ready to activate. */
 async function openerFor(host: HTMLElement, view: string): Promise<Element> {
   if (view === "table") return host.querySelector('[data-testid="project-table-row-link"]')!;
-  if (view === "board") return host.querySelector('[data-testid="kanban2-card"]')!;
+  if (view === "board") return host.querySelector('[data-testid="board-card"]')!;
   if (view === "timeline") return host.querySelector('[data-testid="gantt-project-link"]')!;
   await act(async () => { eventCalendarFake.click("project-deadline:one"); await Promise.resolve(); });
   return host.querySelector('[data-testid="calendar-project-link"]')!;

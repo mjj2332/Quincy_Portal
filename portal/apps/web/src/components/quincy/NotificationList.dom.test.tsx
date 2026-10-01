@@ -15,7 +15,7 @@ const lazyImage = vi.hoisted(() => ({
   calls: [] as Array<{ assetId: string; alt: string }>,
 }));
 
-// #83's precedent (`kanban2/board.dom.test.tsx`): a double that records what it was asked to
+// #83's precedent (`board/board.dom.test.tsx`): a double that records what it was asked to
 // render rather than exercising the real scheduler/observer machinery, which this file has no
 // need to drive.
 vi.mock("../LazyImage", () => ({
