@@ -124,6 +124,14 @@ range. When none is given, it is copied once from the Project (shoot date at 09:
 Deadline) and is the Subtask's own thereafter.
 _Avoid_: Schedule mode, all-day, date-only, unscheduled, due-only, milestone
 
+**Project default range**:
+The Subtask range a new Subtask takes when none is chosen, and the popup's "Project default"
+shortcut: the Project's shoot date at 09:00 through its Deadline at its own time. It falls back to
+the Project's Sydney creation date without a shoot date, to 09:00-17:00 that day without a
+Deadline, and to a start on the Deadline's own day (or the day before) when the Deadline is not
+after the start. A one-time copy: the Subtask's range is its own thereafter.
+_Avoid_: Default schedule, inherited range
+
 **Subtask reminder**:
 A moment, counted back from a Subtask's due, when every Subtask assignee is reminded. "Due now"
 is always one; up to 8 offsets in all. A new Subtask starts with "1 day before" and "Due now".

@@ -4,6 +4,9 @@ status: accepted
 
 # Every Subtask has a range: unscheduled and due-only are gone
 
+Amended by [ADR 0016](0016-every-subtask-end-is-a-moment.md): every end of the range is a moment, so the
+date-only kind and the Date/Timed mode this record describes are retired.
+
 A Subtask used to be in one of three scheduling states — unscheduled, due-only (a milestone), or
 range — derived from which date columns were filled. We collapse that to one: every Subtask has
 a Subtask range, one day at the shortest. Three states cost a mode picker in two editors, a
