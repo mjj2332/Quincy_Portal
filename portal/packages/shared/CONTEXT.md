@@ -136,7 +136,8 @@ _Avoid_: Default schedule, inherited range
 A moment, counted back from a Subtask's due, when every Subtask assignee is reminded. "Due now"
 is always one; up to 8 offsets in all. A new Subtask starts with "1 day before" and "Due now".
 One set per Subtask, shared by its assignees. Completing the Subtask or archiving its Project
-cancels the ones not yet sent.
+cancels the ones not yet sent. Reminders go to the assignees at the moment they fire, in-app
+always and by email unless the person turned Checklist item reminder emails off.
 _Avoid_: Alert, due-today notice
 
 ### The two star scales

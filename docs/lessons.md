@@ -4790,3 +4790,23 @@ remove the legacy readers) still applies.
 - **Per-viewer prefs live in `localStorage` under `quincy:dashboard:table:<principal>`**, normalised on read, every
   access in try/catch. Role-invisible columns (Priority for an External Editor) and the narrow-screen set are computed
   at render and never stored, so a saved choice survives a role or width change.
+
+## #424 Subtask reminders fire
+
+- **Decide the recipients when the reminder fires, not when it is scheduled.** The occurrence row is keyed by the Subtask
+  and its `schedule_version`, never by an assignee, and the fire batch joins the assignee relation. Storing recipients at
+  schedule time would miss a late assignee and remind a removed one.
+- **Every write path uses one SQL builder.** `buildSubtaskReminderMaterialization` is used by create, reschedule, offset
+  change and the hourly reconcile, and migration 0053's backfill is a literal copy pinned to it by a parity test. Two
+  hand-written copies of "which occurrences should exist" drift.
+- **Retiring a producer is a cutover, not a delete.** The 08:00 scan stays safe only because 0053 suppresses undelivered
+  legacy due-today rows, delivery refuses a late one, and a Subtask whose legacy alert was already sent gets no
+  occurrences. `subtask-due-today-retired.guard.test.ts` fails if a due-today producer returns.
+- **Apply-then-deploy leaves a window.** An old Worker saving a Subtask between the 0053 apply and the deploy writes no
+  occurrences; the hourly reconcile heals it. Log the inserted count: non-zero is a warning, not normal.
+- **A new audit `target_type` must be planted in the QA seed.** `qa-seed-app-rows.ts` enumerates every `audit(...)`
+  target type the workers write; the reminder fire adds `project_subtask_reminder_occurrence`, and the planted audit row
+  needs a real occurrence row to target or teardown (which follows captured ids) leaves it orphaned.
+- **A partial PATCH must not reset the other switch.** The preference upsert uses `COALESCE(?, existing)` per column and
+  `COALESCE(?, 1)` on insert, and the screen sends one switch per request.
+

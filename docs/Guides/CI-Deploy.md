@@ -157,6 +157,35 @@ migration `ALTER TABLE project_subtasks DROP COLUMN schedule_timed_required` (a 
 a schedule kind column must drop it first). Restoring the date-only rows means Time Travel, which loses
 every write since the bookmark.
 
+### Subtask reminders (0053)
+
+0053 adds `project_subtasks.reminder_offsets_json` (default `[1440]`), the `project_subtask_reminder_occurrences` table,
+and `notification_preferences.subtask_reminder_emails`. It backfills a pending occurrence for every live Subtask's
+offsets that are still ahead, and suppresses undelivered legacy `project.subtask.due_today` outbox and ledger rows (the 08:00
+alert is retired). CI never applies it (see "A PR that adds a D1 migration"): the merge leaves the deploy job red at the
+migration guard until the owner applies it. Precondition: 0052 applied and #423 live.
+
+**The window to keep short.** Between the apply and the re-run, the old Worker is live: it still runs the 08:00 pass
+(its due-today rows are suppressed or guarded by `due_reminder_sent_at`) and writes no occurrences for a Subtask saved in
+that gap, which the hourly reconcile heals afterwards. Apply and re-run within minutes, and do not cross 08:00 Sydney.
+
+From `portal/workers/app`, `--remote`:
+
+1. Read-only preflight, noting each count:
+   - `SELECT COUNT(*) FROM project_subtasks s JOIN projects p ON p.id = s.project_id WHERE s.done = 0 AND p.archived_at IS NULL AND s.due_reminder_sent_at IS NULL` (the Subtasks that get occurrences).
+   - `SELECT COUNT(*) FROM notification_outbox WHERE event_type = 'project.subtask.due_today' AND status IN ('pending', 'queued')` (the legacy rows it suppresses).
+2. Take a D1 Time Travel bookmark.
+3. `npx wrangler d1 migrations apply DB --remote`. The pending list must show only 0053.
+4. `gh run rerun --failed` on the deploy run, so the new Worker goes live.
+5. Post-check: `SELECT COUNT(*) FROM project_subtask_reminder_occurrences WHERE status = 'pending'` is positive and is about twice the first preflight count minus offsets already past;
+   no `project.subtask.due_today` outbox row is `pending` or `queued`; the next scheduled run logs the Subtask reminder scan and
+   the hourly run logs a reconcile that inserted 0 (a non-zero count means the old Worker saved Subtasks in the window, and it is the heal). Finally, create a test Subtask two minutes out with
+   you as assignee and confirm the bell notice and email arrive.
+
+**Rollback.** The schema is additive. Rolling the Worker back resumes the 08:00 pass; the `due_reminder_sent_at` filter,
+the suppressed legacy rows and `due_elapsed` stop a Subtask being alerted twice. Removing the schema is a forward drop
+migration, never an edit of 0053.
+
 ### Calendar (since #224)
 
 The ReUI event calendar is the Dashboard's only Calendar renderer. FullCalendar and its per-browser
