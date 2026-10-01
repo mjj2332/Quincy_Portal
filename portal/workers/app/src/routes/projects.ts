@@ -3,7 +3,7 @@ import { editorFolderAvailability, editorFolderProjection } from "../lib/editor-
 import { readEditorFolderAttention } from "../lib/attention";
 import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
-import { boardContractEnabled, boardSchemaVariant, buildDeadlineSuppressionBundle, buildProjectActivityStatements, createDb, selectEffectiveDefaultEditorIds, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
+import { boardContractEnabled, boardSchemaVariant, buildDeadlineSuppressionBundle, buildProjectActivityStatements, buildSubtaskReminderMaterialization, buildSubtaskReminderSuppression, createDb, selectEffectiveDefaultEditorIds, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
 import { and, asc, desc, eq, exists, gt, inArray, isNotNull, isNull, lte, notExists, sql } from "drizzle-orm";
 import { capDashboardSearchText, COLLECTION_KINDS, dashboardPriorityFilterValueOf, dashboardProjectsFilterQuerySchema, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchemaForProject, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, roleHasCapability, stripUnsafeText, type CollectionKind, type DashboardFilter, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
 import { z } from "zod";
@@ -1152,6 +1152,9 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
       c.env.DB.prepare("UPDATE autohdr_handoffs SET state = 'retired', updated_at = ? WHERE project_id = ? AND state in ('starting', 'started', 'blocked') AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at = ?)")
         .bind(archivedAt, id, id, archivedAt),
       ...archiveActivityStatements.statements,
+      // After the activity statements, so archiveStatementStart and the positional reads stay valid. Pending Subtask reminders are
+      // superseded and any written but unsent one is suppressed (#424). Restore recomputes the future ones.
+      ...buildSubtaskReminderSuppression({ db: c.env.DB, scope: { kind: "project", projectId: id }, reason: "project_archived", now: archivedAt, gateAuditId: archiveAuditId }).statements,
     ]);
     if ((result[0]?.meta.changes ?? 0) !== 1) {
       return classifyLoser(source);
@@ -1174,6 +1177,8 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
       c.env.DB.prepare("UPDATE projects SET archived_at = NULL, archived_by = NULL, board_position = (SELECT COALESCE(MAX(board_position) + 1024, 0) FROM projects WHERE stage_key = ? AND archived_at IS NULL AND id != ?), board_revision = board_revision + 1, updated_at = ? WHERE id = ? AND archived_at IS NOT NULL AND stage_key = ? AND board_revision = ? RETURNING id").bind(source.stageKey, id, now.getTime(), id, source.stageKey, source.boardRevision),
       c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project.restore', 'project', ?, ?, ? WHERE changes() = 1 RETURNING id").bind(restoreAuditId, c.get("user").id, id, auditMeta(c.get("user")), now.getTime()),
       ...restoreActivityStatements.statements,
+      // Recompute the future Subtask reminders of the restored Project (#424). Only fire times still ahead are written.
+      ...buildSubtaskReminderMaterialization({ db: c.env.DB, scope: { kind: "project", projectId: id }, now: now.getTime(), createdBy: c.get("user").id, gateAuditId: restoreAuditId }).statements,
     ]);
     const restored = rowsFromD1<{ id: string }>(result[0]).length > 0;
     if (!restored) {

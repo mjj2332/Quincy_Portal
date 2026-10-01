@@ -100,10 +100,12 @@ export function subtaskReminderSuppressionSql(input: { scope: SubtaskReminderSup
   const message = `Subtask reminder suppressed: ${input.reason}.`;
   const occurrenceScope = input.scope.kind === "subtask" ? "x.subtask_id = ?" : "x.project_id = ?";
   const scopeId = input.scope.kind === "subtask" ? input.scope.subtaskId : input.scope.projectId;
+  // Not LIKE: D1 refuses a LIKE pattern over 50 bytes, and `subtask-reminder:<uuid>:%` is 55. The prefix is compared exactly instead.
+  const sourceKeyPrefix = input.scope.kind === "subtask" ? `subtask-reminder:${input.scope.subtaskId}:` : "";
   const outboxScope = input.scope.kind === "subtask"
-    ? "o.project_id = ? AND o.source_key LIKE ?"
+    ? `o.project_id = ? AND substr(o.source_key, 1, ${sourceKeyPrefix.length}) = ?`
     : "o.project_id = ?";
-  const outboxScopeValues = input.scope.kind === "subtask" ? [input.scope.projectId, `subtask-reminder:${input.scope.subtaskId}:%`] : [input.scope.projectId];
+  const outboxScopeValues = input.scope.kind === "subtask" ? [input.scope.projectId, sourceKeyPrefix] : [input.scope.projectId];
   const stale = outboxStaleSql(input.reason);
   return {
     occurrences: input.reason === "subtask_deleted" ? null : {

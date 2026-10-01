@@ -1,4 +1,4 @@
-import { buildProjectActivityStatements, createDb, schema } from "@quincy/db";
+import { buildProjectActivityStatements, buildSubtaskReminderMaterialization, buildSubtaskReminderSuppression, createDb, schema } from "@quincy/db";
 import { and, eq } from "drizzle-orm";
 import {
   CHECKLIST_SCHEDULE_ZONE,
@@ -299,6 +299,8 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
       ...bundle.statements,
       // Last, so the positional reads above stay valid (#364).
       ...(assigneeIds.length ? [relationInsertMany(env.DB, id, JSON.stringify(assigneeIds), 1, now, auditId)] : []),
+      // The default reminders (#424). Reads the Subtask the first statement inserted, and writes nothing if that insert lost.
+      ...buildSubtaskReminderMaterialization({ db: env.DB, scope: { kind: "subtask", subtaskId: id }, now, createdBy: principal.id, gateAuditId: auditId }).statements,
     ]);
     const item = await subtaskQuery(db, projectId, id).get();
     if (!item) throw new Error("Subtask could not be created");
@@ -405,6 +407,15 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
     if (delta.remove.length) statements.push(relationDeleteMany(env.DB, operation.subtaskId, JSON.stringify(delta.remove), auditId));
     if (delta.add.length) statements.push(relationInsertMany(env.DB, operation.subtaskId, JSON.stringify(delta.add), existing.subtask.assignmentVersion + 1, now, auditId));
   }
+  // Reminder occurrences follow the Subtask (#424), appended last for the same reason. Completion comes first, so a combined
+  // completion and reschedule leaves nothing pending. Assignee-only changes touch no occurrence: recipients are resolved when one fires.
+  const nextDone = doneChanged ? patch.done === true : existing.subtask.done;
+  const gate = { db: env.DB, now, gateAuditId: auditId } as const;
+  const subtaskScope = { kind: "subtask", projectId, subtaskId: operation.subtaskId } as const;
+  if (doneChanged && nextDone) statements.push(...buildSubtaskReminderSuppression({ ...gate, scope: subtaskScope, reason: "subtask_completed" }).statements);
+  if (scheduleChanged) statements.push(...buildSubtaskReminderSuppression({ ...gate, scope: subtaskScope, reason: "schedule_replaced" }).statements);
+  // Un-completing recomputes the future ones, and a new schedule version needs its own set. Fired rows of the same version block repeats.
+  if ((doneChanged && !nextDone) || scheduleChanged) statements.push(...buildSubtaskReminderMaterialization({ ...gate, scope: { kind: "subtask", subtaskId: operation.subtaskId }, createdBy: principal.id }).statements);
   const results = await env.DB.batch(statements);
   const winner = rowsFromD1<{ id: string; assignmentVersion: number }>(results[0])[0];
   if (!winner) {

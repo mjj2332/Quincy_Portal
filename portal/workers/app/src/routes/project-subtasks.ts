@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
-import { buildProjectActivityStatements, computeInsertPosition, createDb, schema } from "@quincy/db";
+import { buildProjectActivityStatements, buildSubtaskReminderSuppression, computeInsertPosition, createDb, schema } from "@quincy/db";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { z } from "zod";
@@ -284,6 +284,8 @@ projectSubtasksRoutes.delete("/projects/:projectId/subtasks/:subtaskId", termina
     c.env.DB.prepare("DELETE FROM project_subtasks WHERE id = ? AND project_id = ? AND title IS ? RETURNING id").bind(subtaskId, projectId, existing.subtask.title),
     c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project_subtask.delete', 'project_subtask', ?, ?, ? WHERE changes() = 1").bind(auditId, c.get("user").id, subtaskId, auditMeta(c.get("user")), Date.now()),
     ...activityStatements.statements,
+    // A reminder already written for this Subtask must not be delivered once it is gone (#424). Its occurrences cascade with the row.
+    ...buildSubtaskReminderSuppression({ db: c.env.DB, scope: { kind: "subtask", projectId, subtaskId }, reason: "subtask_deleted", now: Date.now(), gateAuditId: auditId }).statements,
   ]);
   if (!rowsFromD1<{ id: string }>(results[0])[0]) {
     const current = await subtaskQuery(db, projectId, subtaskId).get();
