@@ -131,6 +131,28 @@ export function externalVisibleNotificationWhere(principalId: string, alias = "n
               )
             )
             OR (
+              o.event_type = 'project.subtask.reminder'
+              AND ${alias}.type = 'subtask_reminder'
+              AND json_valid(o.payload_json) = 1
+              AND json_extract(o.payload_json, '$.schemaVersion') = 1
+              AND json_extract(o.payload_json, '$.event.type') = 'project.subtask.reminder'
+              AND json_extract(o.payload_json, '$.event.sourceKey') = o.source_key
+              AND json_extract(o.payload_json, '$.event.recipientId') = o.recipient_id
+              AND json_extract(o.payload_json, '$.authorizationAtOccurrence.kind') = 'subtask_assignment'
+              AND o.recipient_membership_cycle_id = pm.id
+              AND json_extract(o.payload_json, '$.authorizationAtOccurrence.membershipCycle') = pm.id
+              AND json_extract(o.payload_json, '$.authorizationAtOccurrence.startedAt') = pm.created_at
+              AND json_extract(o.payload_json, '$.reminder.projectId') = o.project_id
+              AND o.recipient_id = ${alias}.user_id
+              AND o.source_key = 'subtask-reminder:' || json_extract(o.payload_json, '$.reminder.subtaskId') || ':' || json_extract(o.payload_json, '$.reminder.occurrenceId')
+              AND EXISTS (
+                SELECT 1 FROM project_subtask_reminder_occurrences occurrence
+                WHERE occurrence.id = json_extract(o.payload_json, '$.reminder.occurrenceId')
+                  AND occurrence.subtask_id = json_extract(o.payload_json, '$.reminder.subtaskId')
+                  AND occurrence.project_id = o.project_id
+              )
+            )
+            OR (
               ((o.event_type = 'project.subtask.assigned' AND ${alias}.type = 'subtask_assigned')
                 OR (o.event_type = 'project.subtask.due_today' AND ${alias}.type = 'subtask_due_today'))
               AND json_valid(o.payload_json) = 1

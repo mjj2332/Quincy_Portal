@@ -112,13 +112,24 @@ describe("TB4B Deadline and personal preference APIs", () => {
   it("is strict, self-only, default-on, and idempotent for personal preferences", async () => {
     const initial = await request("/api/notification-preferences", token);
     expect(initial.status).toBe(200);
-    expect(await initial.json()).toEqual({ projectDeadlineReminderEmails: true });
+    expect(await initial.json()).toEqual({ projectDeadlineReminderEmails: true, subtaskReminderEmails: true });
 
     const disabled = await request("/api/notification-preferences", token, "PATCH", { projectDeadlineReminderEmails: false });
     expect(disabled.status).toBe(200);
-    expect(await disabled.json()).toEqual({ projectDeadlineReminderEmails: false });
+    expect(await disabled.json()).toEqual({ projectDeadlineReminderEmails: false, subtaskReminderEmails: true });
     const repeated = await request("/api/notification-preferences", token, "PATCH", { projectDeadlineReminderEmails: false });
-    expect(await repeated.json()).toEqual({ projectDeadlineReminderEmails: false });
+    expect(await repeated.json()).toEqual({ projectDeadlineReminderEmails: false, subtaskReminderEmails: true });
+
+    // The Subtask reminder switch is its own field: it changes alone and leaves the Deadline switch as stored.
+    const subtaskOff = await request("/api/notification-preferences", token, "PATCH", { subtaskReminderEmails: false });
+    expect(await subtaskOff.json()).toEqual({ projectDeadlineReminderEmails: false, subtaskReminderEmails: false });
+    const deadlineOn = await request("/api/notification-preferences", token, "PATCH", { projectDeadlineReminderEmails: true });
+    expect(await deadlineOn.json()).toEqual({ projectDeadlineReminderEmails: true, subtaskReminderEmails: false });
+    const both = await request("/api/notification-preferences", token, "PATCH", { projectDeadlineReminderEmails: false, subtaskReminderEmails: true });
+    expect(await both.json()).toEqual({ projectDeadlineReminderEmails: false, subtaskReminderEmails: true });
+    // At least one field is required.
+    expect((await request("/api/notification-preferences", token, "PATCH", {})).status).toBe(400);
+    expect((await request("/api/notification-preferences", token, "PATCH", { subtaskReminderEmails: "no" })).status).toBe(400);
 
     const extra = await request("/api/notification-preferences", token, "PATCH", { projectDeadlineReminderEmails: true, anotherUserId: crypto.randomUUID() });
     expect(extra.status).toBe(400);
