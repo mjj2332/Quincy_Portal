@@ -633,10 +633,9 @@ describe("staff app API", () => {
     expect(photographerUnicodeIds).toEqual([unicodeActivePlain, unicodeActiveAccentedUpper, unicodeActiveAccentedLower]);
 
     const unauthorizedArchived = await SELF.fetch("https://portal.test/api/projects?archived=1", { headers: { cookie: photographerCookie } });
-    expect(unauthorizedArchived.status).toBe(200);
-    const unauthorizedIds = (await unauthorizedArchived.json() as { projects: Array<{ id: string }> }).projects.map((project) => project.id);
-    expect(unauthorizedIds).not.toContain(archivedRecent);
-    expect(unauthorizedIds).not.toContain(archivedOlder);
+    // #428: the Archived filter is Admin-only and enforced as such -- a refusal, not a silent fallback to Hide.
+    expect(unauthorizedArchived.status).toBe(403);
+    expect(JSON.stringify(await unauthorizedArchived.json())).not.toContain(archivedRecent);
   });
 
   it("lists a multiply-assigned photographer project once while retaining dashboard order and counts", async () => {

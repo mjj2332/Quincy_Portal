@@ -5,7 +5,7 @@ import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
 import { boardContractEnabled, boardSchemaVariant, buildDeadlineSuppressionBundle, buildProjectActivityStatements, createDb, selectEffectiveDefaultEditorIds, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
 import { and, asc, desc, eq, exists, gt, inArray, isNotNull, isNull, lte, notExists, sql } from "drizzle-orm";
-import { capDashboardSearchText, COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchemaForProject, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, roleHasCapability, stripUnsafeText, type CollectionKind, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
+import { capDashboardSearchText, COLLECTION_KINDS, dashboardPriorityFilterValueOf, dashboardProjectsFilterQuerySchema, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchemaForProject, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, roleHasCapability, stripUnsafeText, type CollectionKind, type DashboardFilter, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, hasProjectAccessForUser, requireCapability } from "../middleware/capability";
@@ -394,26 +394,62 @@ function rowsFromD1<T>(result: unknown): T[] {
 
 function firstD1<T>(result: unknown): T | undefined { return rowsFromD1<T>(result)[0]; }
 export const projectsRoutes = new Hono<AppEnv>();
+/**
+ * #428: the shared Dashboard Filter on the Projects-list request — `stages`, `priority` and
+ * `archived` — validated by the ONE shared schema and authorised before ANY role branch, so an
+ * External Editor reaches neither the archived rows nor a priority filter through the early return.
+ * `archived` other than Hide needs the Admin back-end capability (`viewAllProjects` is not enough),
+ * `priority` is unavailable to an External Editor (their DTO withholds it, so a filter would leak it
+ * through which rows match), and a malformed or duplicated parameter is a 400.
+ */
+function projectsListFilter(c: Context<AppEnv>, role: Role): { filter: DashboardFilter } | { response: Response } {
+  const queries = c.req.queries();
+  const raw: Record<string, string> = {};
+  for (const name of ["stages", "priority", "archived"] as const) {
+    const values = queries[name];
+    if (values === undefined) continue;
+    if (values.length !== 1) return { response: c.json({ error: "Invalid project filter", code: "project_filter_invalid" }, 400) };
+    raw[name] = values[0]!;
+  }
+  const parsed = dashboardProjectsFilterQuerySchema.safeParse(raw);
+  if (!parsed.success) return { response: c.json({ error: "Invalid project filter", code: "project_filter_invalid" }, 400) };
+  const filter = parsed.data;
+  if (filter.archived !== "hide" && !roleHasCapability(role, "adminBackend")) return { response: c.json({ error: "Forbidden", capability: "adminBackend" }, 403) };
+  if (filter.priorities.length > 0 && role === "external_editor") return { response: c.json({ error: "Project priority is not available to this role", code: "project_filter_priority_unavailable" }, 400) };
+  return { filter };
+}
+
 projectsRoutes.get("/projects", terminalRoute("/projects", async (c) => {
   const variant = await boardSchemaVariant(c.env.DB);
   const db = createDb(c.env.DB); const user = c.get("user");
   // #217: normalised once, shared by both roles below -- empty means current behaviour, byte for
   // byte (no `search` key in the response, no id-set query, no filtering).
   const search = normalizeProjectListSearch(c.req.query("q") ?? "");
-  if (user.role === "external_editor") return c.json(await listExternalProjects(c.env, user.id, user.role, search));
-  const archived = c.req.query("archived") === "1" && roleHasCapability(user.role, "adminBackend");
-  const archivedFilter = archived ? isNotNull(schema.projects.archivedAt) : isNull(schema.projects.archivedAt);
+  const authorised = projectsListFilter(c, user.role);
+  if ("response" in authorised) return authorised.response;
+  const { filter } = authorised;
+  if (user.role === "external_editor") return c.json(await listExternalProjects(c.env, user.id, user.role, search, filter));
+  // Archived mode is the ONLY change to the query's WHERE: Hide (the default) and Only select on
+  // `archived_at`, Include selects both. Stage and Priority narrow in memory below, over the same
+  // set `q` narrows, so the Board-order envelope and `total` never move with them.
+  const archivedFilter = filter.archived === "hide" ? isNull(schema.projects.archivedAt) : filter.archived === "only" ? isNotNull(schema.projects.archivedAt) : undefined;
   const projectColumns = projectColumnsForVariant(variant);
   const base = db.select({ project: projectColumns, receivedCount: schema.collections.receivedCount, expectedCount: schema.collections.expectedCount }).from(schema.projects).leftJoin(schema.collections, and(eq(schema.collections.projectId, schema.projects.id), eq(schema.collections.kind, "raw")));
   const rows = user.role === "photographer"
     ? await base.where(and(archivedFilter, exists(db.select({ id: schema.projectMembers.id }).from(schema.projectMembers).where(and(eq(schema.projectMembers.projectId, schema.projects.id), eq(schema.projectMembers.userId, user.id)))), inArray(schema.projects.stageKey, PHOTOGRAPHER_VISIBLE_STAGES))).orderBy(...dashboardProjectOrder).all()
     : await base.where(archivedFilter).orderBy(...dashboardProjectOrder).all();
   // `orderedRows` stays UNFILTERED: it feeds `authorizedInternalBoardOrder` below and `total`,
-  // both of which describe the full authorised set regardless of `q`. Filtering it here would
-  // make `boardRank` a rank-within-the-filtered-set and corrupt drag positions.
+  // both of which describe the full authorised set regardless of `q`, Stage or Priority. Filtering
+  // it here would make `boardRank` a rank-within-the-filtered-set and corrupt drag positions.
   const orderedRows = orderDashboardStreetTies(rows);
   const matchingIds = search === "" ? null : await matchingInternalProjectIds(c.env.DB, orderedRows.map(({ project }) => project.id), search);
-  const matchedRows = matchingIds === null ? orderedRows : orderedRows.filter(({ project }) => matchingIds.has(project.id));
+  const stageSet = new Set<string>(filter.stageKeys.map((stage) => (stage === "editing" ? "editing_autohdr" : stage)));
+  const prioritySet = new Set<string>(filter.priorities);
+  const facetNarrows = stageSet.size > 0 || prioritySet.size > 0;
+  const matchedRows = orderedRows.filter(({ project }) =>
+    (matchingIds === null || matchingIds.has(project.id))
+    && (stageSet.size === 0 || stageSet.has(project.stageKey))
+    && (prioritySet.size === 0 || prioritySet.has(dashboardPriorityFilterValueOf(project.priority))));
   // Enrichment (covers, editors) runs only over matches, not the full authorised set.
   const projectIds = matchedRows.map(({ project }) => project.id);
   const { storedByProject, automaticByProject } = await coverMaps(db, projectIds, user.role === "photographer");
@@ -434,10 +470,11 @@ projectsRoutes.get("/projects", terminalRoute("/projects", async (c) => {
     board: {
       contractEnabled: enabled,
       // Built from the UNFILTERED `orderedRows` -- the authorised Board-order envelope, not a
-      // rank-within-the-filtered-set.
-      orderedProjectIdsByStage: variant === "tb5a_0037" && !archived ? authorizedInternalBoardOrder(orderedRows, user.role) : {},
+      // rank-within-the-filtered-set -- and from ACTIVE rows only: an archived Project never has a
+      // Board position (Include), and Only has no mutation envelope at all.
+      orderedProjectIdsByStage: variant === "tb5a_0037" && filter.archived !== "only" ? authorizedInternalBoardOrder(orderedRows.filter(({ project }) => project.archivedAt === null), user.role) : {},
     },
-    ...(matchingIds === null ? {} : { search: { query: search, matching: matchedRows.length, total: orderedRows.length } }),
+    ...(matchingIds === null && !facetNarrows ? {} : { search: { query: search, matching: matchedRows.length, total: orderedRows.length } }),
   });
 }));
 projectsRoutes.get("/project-assignment-candidates", terminalRoute("/project-assignment-candidates", async (c) => {
