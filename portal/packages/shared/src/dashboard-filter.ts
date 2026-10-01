@@ -213,3 +213,7 @@ export function dashboardProjectsFilterQueryParams(filter: DashboardFilter): Arr
   if (filter.myTasks) params.push(["mine", "1"]);
   return params;
 }
+
+/** #429: one person in the Dashboard's People options (`GET /api/dashboard/people`). */
+export type DashboardPerson = { id: string; name: string; roleLabel: string; isExternal: boolean; active: boolean };
+export type DashboardPeopleResponse = { people: DashboardPerson[] };
