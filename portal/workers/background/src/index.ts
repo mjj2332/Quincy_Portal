@@ -42,9 +42,10 @@ import { AutoHdrClaimError } from "./autohdr/errors";
 import { claimAutoHdrApiSend } from "./autohdr/api-send";
 import type { AutoHdrApiSendResult } from "./autohdr/api-send";
 import type { AutoHdrErrorCode, AutoHdrFetchResult, AutoHdrResult } from "./autohdr/errors";
-import { notifyProject, pruneNotifications, scanDueSubtasks, scanStalledAutoHdr } from "./notifications";
+import { notifyProject, pruneNotifications, scanStalledAutoHdr } from "./notifications";
 import { processNotificationDlqMessage, processNotificationMessage, recoverNotificationOutbox } from "./notification-delivery";
 import { scanProjectDeadlineOccurrences } from "./project-deadline";
+import { reconcileSubtaskReminderOccurrences, scanSubtaskReminderOccurrences } from "./subtask-reminders";
 import { sweepExternalEditedUploads } from "./external-upload-sweep";
 import { processExternalRoleCachePurges } from "./external-role-cache-purge";
 import { sweepStuckManualPublishes } from "./manual-publish-recovery";
@@ -133,6 +134,12 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
         console.error("Project Deadline occurrence scan failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
       }
       try {
+        const result = await scanSubtaskReminderOccurrences(this.env, controller.scheduledTime);
+        console.log("Subtask reminder occurrence scan", result);
+      } catch (error) {
+        console.error("Subtask reminder occurrence scan failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+      }
+      try {
         const recovered = await recoverNotificationOutbox(this.env, controller.scheduledTime);
         console.log("Notification outbox recovery scan", { recovered });
       } catch (error) {
@@ -189,10 +196,9 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       console.error("AutoHDR stalled notification scan failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
     }
     try {
-      const emitted = await scanDueSubtasks(this.env, controller.scheduledTime);
-      console.log("Due subtask notification scan", { emitted });
+      await reconcileSubtaskReminderOccurrences(this.env, controller.scheduledTime);
     } catch (error) {
-      console.error("Due subtask notification scan failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+      console.error("Subtask reminder reconcile failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
     }
     try {
       await pruneNotifications(this.env, controller.scheduledTime);

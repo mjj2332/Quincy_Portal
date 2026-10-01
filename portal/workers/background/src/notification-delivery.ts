@@ -30,6 +30,7 @@ import {
   type Role,
   type ProjectAssignmentCreatedPayload,
   type ProjectDeadlineReminderOutboxPayload,
+  type SubtaskReminderOutboxPayload,
   type ExternalNotificationOutboxPayload,
   type NotificationType,
 } from "@quincy/shared";
@@ -241,7 +242,7 @@ type LegacyResolvedRecipient = {
   ok: true;
   kind: "legacy";
   row: ResolverRow | ReminderResolverRow;
-  payload: ProjectCommentMentionPayload | ProjectAssignmentCreatedPayload | ProjectDeadlineReminderOutboxPayload | ExternalNotificationOutboxPayload | StaffSubtaskAssignedPayload;
+  payload: ProjectCommentMentionPayload | ProjectAssignmentCreatedPayload | ProjectDeadlineReminderOutboxPayload | ExternalNotificationOutboxPayload | StaffSubtaskAssignedPayload | SubtaskReminderOutboxPayload;
   commentPath: string;
   delivery: ResolvedDelivery;
 };
@@ -316,6 +317,33 @@ export function safeReminderPayload(value: string, outbox: OutboxRow): ProjectDe
     if (!Number.isFinite(deadline.valueOf()) || deadline.toISOString() !== deadlineAt) return null;
     if (event.sourceKey !== outbox.source_key || event.recipientId !== outbox.recipient_id || occurrenceId !== outbox.source_key || projectId !== outbox.project_id) return null;
     return parsed as ProjectDeadlineReminderOutboxPayload;
+  } catch {
+    return null;
+  }
+}
+
+/** #424: the strict parser for the payload `fireSubtaskReminderOccurrence` writes, both for staff (no cycle) and an External Editor (a cycle). */
+export function safeSubtaskReminderPayload(value: string, outbox: OutboxRow): SubtaskReminderOutboxPayload | null {
+  if (outbox.schema_version !== 1 || outbox.event_type !== NOTIFICATION_OUTBOX_EVENT_TYPES.subtaskReminder) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!isObject(parsed) || !hasExactKeys(parsed, ["schemaVersion", "event", "authorizationAtOccurrence", "reminder"]) || parsed.schemaVersion !== 1) return null;
+    const { event, authorizationAtOccurrence: authorization, reminder } = parsed;
+    if (!isObject(event) || !hasExactKeys(event, ["type", "sourceKey", "recipientId"]) || event.type !== NOTIFICATION_OUTBOX_EVENT_TYPES.subtaskReminder || typeof event.sourceKey !== "string" || typeof event.recipientId !== "string") return null;
+    if (!isObject(authorization) || !hasExactKeys(authorization, ["kind", "assignmentVersion", "membershipCycle", "startedAt"]) || authorization.kind !== "subtask_assignment") return null;
+    if (typeof authorization.assignmentVersion !== "number" || !Number.isSafeInteger(authorization.assignmentVersion)) return null;
+    const staffShape = authorization.membershipCycle === null && authorization.startedAt === null;
+    const externalShape = typeof authorization.membershipCycle === "string" && typeof authorization.startedAt === "number" && Number.isSafeInteger(authorization.startedAt);
+    if (!staffShape && !externalShape) return null;
+    if (!isObject(reminder) || !hasExactKeys(reminder, ["occurrenceId", "projectId", "subtaskId", "scheduleVersion", "kind", "offsetMinutes", "dueAt", "dueLocalCivil", "zone", "utcOffsetMinutes", "fold"])) return null;
+    const { occurrenceId, projectId, subtaskId, scheduleVersion, kind, offsetMinutes, dueAt, dueLocalCivil, zone, utcOffsetMinutes, fold } = reminder;
+    if (typeof occurrenceId !== "string" || typeof projectId !== "string" || typeof subtaskId !== "string" || typeof scheduleVersion !== "number" || !Number.isSafeInteger(scheduleVersion) || scheduleVersion < 1) return null;
+    if ((kind !== "advance" && kind !== "due_now") || typeof offsetMinutes !== "number" || !Number.isSafeInteger(offsetMinutes) || (kind === "due_now" ? offsetMinutes !== 0 : offsetMinutes < 1 || offsetMinutes > 43200)) return null;
+    if (typeof dueAt !== "string" || typeof dueLocalCivil !== "string" || zone !== "Australia/Sydney" || typeof utcOffsetMinutes !== "number" || !Number.isSafeInteger(utcOffsetMinutes) || utcOffsetMinutes < -840 || utcOffsetMinutes > 840 || (fold !== 0 && fold !== 1)) return null;
+    const due = new Date(dueAt);
+    if (!Number.isFinite(due.valueOf()) || due.toISOString() !== dueAt) return null;
+    if (event.sourceKey !== outbox.source_key || event.recipientId !== outbox.recipient_id || projectId !== outbox.project_id || outbox.source_key !== `subtask-reminder:${subtaskId}:${occurrenceId}`) return null;
+    return parsed as SubtaskReminderOutboxPayload;
   } catch {
     return null;
   }
@@ -627,6 +655,143 @@ async function resolveDeadlineReminderRecipient(env: Env, outbox: OutboxRow): Pr
   };
 }
 
+type SubtaskReminderResolverRow = {
+  outboxId: string;
+  schemaVersion: number;
+  eventType: string;
+  sourceKey: string;
+  projectId: string;
+  actorId: string;
+  recipientId: string;
+  payloadJson: string;
+  recipientAuthorizationEpoch: number | null;
+  recipientMembershipCycleId: string | null;
+  currentAuthorizationEpoch: number | null;
+  recipientActive: number;
+  recipientRole: string;
+  recipientName: string;
+  recipientEmail: string;
+  projectStreet: string | null;
+  projectArchivedAt: number | null;
+  subtaskId: string | null;
+  subtaskTitle: string | null;
+  subtaskDone: number | null;
+  subtaskScheduleVersion: number | null;
+  subtaskScheduleEndAt: number | null;
+  relationAssignmentVersion: number | null;
+  occurrenceId: string | null;
+  occurrenceStatus: string | null;
+  occurrenceFiredAt: number | null;
+  occurrenceSubtaskId: string | null;
+  occurrenceScheduleVersion: number | null;
+  occurrenceKind: string | null;
+  occurrenceOffsetMinutes: number | null;
+  occurrenceDueAt: number | null;
+  occurrenceDueLocalCivil: string | null;
+  occurrenceDueZone: string | null;
+  occurrenceUtcOffsetMinutes: number | null;
+  occurrenceFold: number | null;
+  membershipId: string | null;
+  membershipCreatedAt: number | null;
+  membershipExists: number;
+};
+
+async function resolveSubtaskReminderRecipient(env: Env, outbox: OutboxRow): Promise<LegacyResolvedRecipient | Extract<ResolvedRecipient, { ok: false }>> {
+  const payload = safeSubtaskReminderPayload(outbox.payload_json, outbox);
+  if (!payload) return suppressed("payload_invalid");
+  const row = await env.DB.prepare(`
+    SELECT o.id AS outboxId, o.schema_version AS schemaVersion, o.event_type AS eventType,
+      o.source_key AS sourceKey, o.project_id AS projectId, o.actor_id AS actorId,
+      o.recipient_id AS recipientId, o.payload_json AS payloadJson,
+      o.recipient_authorization_epoch AS recipientAuthorizationEpoch,
+      o.recipient_membership_cycle_id AS recipientMembershipCycleId,
+      recipient.authorization_epoch AS currentAuthorizationEpoch,
+      recipient.active AS recipientActive, recipient.role AS recipientRole,
+      recipient.name AS recipientName, recipient.email AS recipientEmail,
+      p.street AS projectStreet, p.archived_at AS projectArchivedAt,
+      subtask.id AS subtaskId, subtask.title AS subtaskTitle, subtask.done AS subtaskDone,
+      subtask.schedule_version AS subtaskScheduleVersion, subtask.schedule_end_at AS subtaskScheduleEndAt,
+      assignee.assignment_version AS relationAssignmentVersion,
+      occurrence.id AS occurrenceId, occurrence.status AS occurrenceStatus, occurrence.fired_at AS occurrenceFiredAt,
+      occurrence.subtask_id AS occurrenceSubtaskId, occurrence.schedule_version AS occurrenceScheduleVersion,
+      occurrence.kind AS occurrenceKind, occurrence.reminder_offset_minutes AS occurrenceOffsetMinutes,
+      occurrence.due_at AS occurrenceDueAt, occurrence.due_local_civil AS occurrenceDueLocalCivil,
+      occurrence.due_zone AS occurrenceDueZone, occurrence.due_utc_offset_minutes AS occurrenceUtcOffsetMinutes,
+      occurrence.due_fold AS occurrenceFold,
+      member.id AS membershipId, member.created_at AS membershipCreatedAt,
+      EXISTS (SELECT 1 FROM project_members any_member WHERE any_member.project_id = o.project_id AND any_member.user_id = o.recipient_id) AS membershipExists
+    FROM notification_outbox o
+    LEFT JOIN user recipient ON recipient.id = o.recipient_id
+    LEFT JOIN projects p ON p.id = o.project_id
+    LEFT JOIN project_subtask_reminder_occurrences occurrence ON occurrence.id = json_extract(o.payload_json, '$.reminder.occurrenceId') AND occurrence.project_id = o.project_id
+    LEFT JOIN project_subtasks subtask ON subtask.id = occurrence.subtask_id AND subtask.project_id = o.project_id
+    LEFT JOIN project_subtask_assignees assignee ON assignee.subtask_id = subtask.id AND assignee.user_id = o.recipient_id
+    LEFT JOIN project_members member ON member.id = o.recipient_membership_cycle_id
+      AND member.project_id = o.project_id AND member.user_id = o.recipient_id AND member.role_on_project = 'editor'
+    WHERE o.id = ?
+  `).bind(outbox.id).first<SubtaskReminderResolverRow>();
+  if (!row) return suppressed("outbox_missing");
+  if (row.schemaVersion !== 1 || row.eventType !== outbox.event_type || row.sourceKey !== payload.event.sourceKey || row.recipientId !== payload.event.recipientId || row.projectId !== payload.reminder.projectId) return suppressed("payload_invalid");
+  if (row.projectStreet === null || row.projectArchivedAt !== null) return suppressed("project_no_longer_visible");
+  if (row.recipientActive !== 1) return suppressed("recipient_ineligible");
+  const dueAt = Date.parse(payload.reminder.dueAt);
+  if (row.occurrenceId !== payload.reminder.occurrenceId || row.occurrenceStatus !== "fired" || row.occurrenceFiredAt === null || row.occurrenceSubtaskId !== payload.reminder.subtaskId || row.occurrenceScheduleVersion !== payload.reminder.scheduleVersion || row.occurrenceKind !== payload.reminder.kind || row.occurrenceOffsetMinutes !== payload.reminder.offsetMinutes || row.occurrenceDueAt !== dueAt || row.occurrenceDueLocalCivil !== payload.reminder.dueLocalCivil || row.occurrenceDueZone !== payload.reminder.zone || row.occurrenceUtcOffsetMinutes !== payload.reminder.utcOffsetMinutes || row.occurrenceFold !== payload.reminder.fold) return suppressed("occurrence_changed");
+  if (row.subtaskId === null || row.subtaskDone !== 0 || row.subtaskScheduleVersion !== payload.reminder.scheduleVersion || row.subtaskScheduleEndAt !== dueAt) return suppressed("subtask_changed");
+  if (row.relationAssignmentVersion === null || row.relationAssignmentVersion !== payload.authorizationAtOccurrence.assignmentVersion) return suppressed("subtask_changed");
+  const external = row.recipientRole === "external_editor";
+  if (external) {
+    if (payload.authorizationAtOccurrence.membershipCycle === null || row.recipientMembershipCycleId !== payload.authorizationAtOccurrence.membershipCycle) return suppressed("membership_cycle_changed");
+    if (row.membershipId !== payload.authorizationAtOccurrence.membershipCycle || row.membershipCreatedAt !== payload.authorizationAtOccurrence.startedAt || row.membershipCreatedAt === null || row.membershipCreatedAt > row.occurrenceFiredAt) return suppressed("membership_cycle_changed");
+    if (row.recipientAuthorizationEpoch === null) return suppressed("authorization_epoch_missing");
+  } else {
+    if (payload.authorizationAtOccurrence.membershipCycle !== null || row.recipientMembershipCycleId !== null) return suppressed("payload_invalid");
+    if (row.recipientRole !== "admin" && row.membershipExists !== 1) return suppressed("recipient_ineligible");
+  }
+  if (authorizationEpochMismatch(row)) return suppressed("authorization_epoch_changed");
+  const projectPath = projectNotificationUrl(env, row.projectId, "subtask_reminder");
+  if (external) {
+    if (!externalNotificationChannels("subtask_reminder").length) return suppressed("external_policy_suppressed");
+    const copy = externalNotificationCopy({ type: "subtask_reminder" });
+    if (!copy) return suppressed("external_policy_suppressed");
+    return {
+      ok: true,
+      kind: "legacy",
+      row: row as unknown as ResolverRow,
+      payload,
+      commentPath: projectPath,
+      delivery: {
+        notificationType: "subtask_reminder",
+        title: copy.title,
+        body: copy.body,
+        emailSubject: copy.title,
+        emailText: `${copy.body}\n\n${projectPath}`,
+        emailHtml: `<p>${htmlEscape(copy.body)}</p><p><a href="${htmlEscape(projectPath)}">View project</a></p>`,
+      },
+    };
+  }
+  const street = row.projectStreet || "Project";
+  const title = payload.reminder.kind === "due_now" ? "Subtask due now" : "Subtask due in 1 day";
+  const dueText = formatSydneyCivil(dueAt);
+  const body = `A subtask assigned to you in ${street} is due ${dueText} Sydney time.`;
+  const subtaskTitle = truncateForEmail(row.subtaskTitle ?? "");
+  const emailText = `${body}${subtaskTitle ? `\n\nSubtask: ${subtaskTitle}` : ""}\n\n${projectPath}`;
+  return {
+    ok: true,
+    kind: "legacy",
+    row: row as unknown as ResolverRow,
+    payload,
+    commentPath: projectPath,
+    delivery: {
+      notificationType: "subtask_reminder",
+      title,
+      body,
+      emailSubject: title,
+      emailText,
+      emailHtml: `<p>${htmlEscape(body)}</p>${subtaskTitle ? `<p><strong>${htmlEscape(subtaskTitle)}</strong></p>` : ""}<p><small>${htmlEscape(formatSydneyInstant(dueAt))}</small></p><p><a href="${htmlEscape(projectPath)}">View project</a></p>`,
+    },
+  };
+}
+
 export type EmailClassification =
   | { kind: "quota_transient"; code: "E_RATE_LIMIT_EXCEEDED" | "E_DAILY_LIMIT_EXCEEDED"; message: string }
   | { kind: "permanent"; code: string; message: string }
@@ -804,6 +969,9 @@ async function resolveBroadRecipient(env: Env, outbox: OutboxRow): Promise<Resol
 async function resolveRecipient(env: Env, outbox: OutboxRow): Promise<ResolvedRecipient> {
   if (outbox.event_type === NOTIFICATION_OUTBOX_EVENT_TYPES.projectActivityBroad) return resolveBroadRecipient(env, outbox);
   if (outbox.event_type === NOTIFICATION_OUTBOX_EVENT_TYPES.projectDeadlineReminder) return resolveDeadlineReminderRecipient(env, outbox);
+  if (outbox.event_type === NOTIFICATION_OUTBOX_EVENT_TYPES.subtaskReminder) return resolveSubtaskReminderRecipient(env, outbox);
+  // #424: the 08:00 due-today pass is retired. A job already queued when 0053 applied is refused rather than sent beside the new reminder.
+  if (outbox.event_type === "project.subtask.due_today") return suppressed("legacy_due_today_retired");
   if (outbox.event_type === "project.external_safe.direct") return resolveExternalSafeDirectRecipient(env, outbox);
   if (outbox.event_type === "project.subtask.assigned" && outbox.recipient_membership_cycle_id === null) return resolveStaffSubtaskAssignedRecipient(env, outbox);
   if (outbox.event_type === "project.subtask.assigned" || outbox.event_type === "project.subtask.due_today") return resolveExternalSubtaskRecipient(env, outbox);
@@ -1142,12 +1310,104 @@ function reminderAuthorization(
   };
 }
 
+/** #424: the Subtask counterpart of `reminderAuthorization`. Same shape: a bare `SELECT 1 ...` whose last value is the channel. */
+function subtaskReminderAuthorization(
+  outbox: OutboxRow,
+  payload: SubtaskReminderOutboxPayload,
+  token: string,
+  channel?: "in_app" | "email",
+  outboxIdRef: "correlated" | "explicit" = "correlated",
+): ReminderAdmission {
+  const reminder = payload.reminder;
+  const dueAt = Date.parse(reminder.dueAt);
+  const cycle = payload.authorizationAtOccurrence.membershipCycle;
+  const outboxIdClause = outboxIdRef === "correlated"
+    ? "o.id = notification_delivery_ledger.outbox_id AND o.id = ?"
+    : "o.id = ?";
+  const roleArm = cycle === null
+    ? {
+      sql: `o.recipient_membership_cycle_id IS NULL AND recipient.role <> 'external_editor'
+        AND (recipient.role = 'admin' OR EXISTS (SELECT 1 FROM project_members staff_member WHERE staff_member.project_id = o.project_id AND staff_member.user_id = o.recipient_id))`,
+      values: [] as unknown[],
+    }
+    : {
+      sql: `o.recipient_membership_cycle_id = ? AND recipient.role = 'external_editor'
+        AND EXISTS (SELECT 1 FROM project_members cycle_member WHERE cycle_member.id = ? AND cycle_member.project_id = o.project_id
+          AND cycle_member.user_id = o.recipient_id AND cycle_member.role_on_project = 'editor'
+          AND cycle_member.created_at = ? AND cycle_member.created_at <= occurrence.fired_at)`,
+      values: [cycle, cycle, payload.authorizationAtOccurrence.startedAt] as unknown[],
+    };
+  return {
+    sql: `
+      SELECT 1
+      FROM notification_outbox o
+      JOIN projects p ON p.id = o.project_id
+      JOIN project_subtask_reminder_occurrences occurrence ON occurrence.id = ? AND occurrence.project_id = o.project_id
+      JOIN project_subtasks subtask ON subtask.id = occurrence.subtask_id AND subtask.project_id = o.project_id
+      JOIN project_subtask_assignees assignee ON assignee.subtask_id = subtask.id AND assignee.user_id = o.recipient_id
+        AND assignee.assignment_version = ?
+      JOIN user recipient ON recipient.id = o.recipient_id
+      LEFT JOIN notification_preferences preference ON preference.user_id = o.recipient_id
+      WHERE ${outboxIdClause}
+        AND o.status = 'processing' AND o.lease_token = ?
+        AND o.schema_version = 1 AND o.event_type = 'project.subtask.reminder'
+        AND o.source_key = ? AND o.project_id = ? AND o.recipient_id = ?
+        AND p.archived_at IS NULL
+        AND subtask.done = 0 AND subtask.schedule_version = ? AND subtask.schedule_end_at = ?
+        AND occurrence.status = 'fired' AND occurrence.fired_at IS NOT NULL AND occurrence.subtask_id = ?
+        AND occurrence.schedule_version = ? AND occurrence.kind = ?
+        AND occurrence.reminder_offset_minutes = ? AND occurrence.due_at = ?
+        AND occurrence.due_local_civil = ? AND occurrence.due_zone = 'Australia/Sydney'
+        AND occurrence.due_utc_offset_minutes = ? AND occurrence.due_fold = ?
+        AND recipient.active = 1
+        AND ${AUTHORIZATION_EPOCH_MATCH}
+        AND ${roleArm.sql}
+        ${channel ? "AND (? <> 'email' OR COALESCE(preference.subtask_reminder_emails, 1) = 1)" : ""}
+    `,
+    values: [
+      reminder.occurrenceId, payload.authorizationAtOccurrence.assignmentVersion,
+      outbox.id, token,
+      outbox.source_key, outbox.project_id, outbox.recipient_id,
+      reminder.scheduleVersion, dueAt,
+      reminder.subtaskId, reminder.scheduleVersion, reminder.kind, reminder.offsetMinutes, dueAt,
+      reminder.dueLocalCivil, reminder.utcOffsetMinutes, reminder.fold,
+      ...roleArm.values,
+      ...(channel ? [channel] : []),
+    ],
+  };
+}
+
+/** What differs between the Project Deadline and the Subtask reminder channel begin: the authorization SQL and the email preference. */
+type ReminderChannelSpec = {
+  authorization: (channel?: "in_app" | "email") => ReminderAdmission;
+  preferenceColumn: "project_deadline_reminder_emails" | "subtask_reminder_emails";
+  disabledMessage: string;
+};
+
 async function beginReminderChannel(env: Env, outbox: OutboxRow, token: string, channel: "in_app" | "email", now: number): Promise<boolean> {
   const payload = safeReminderPayload(outbox.payload_json, outbox);
   if (!payload) return false;
-  const authorization = reminderAuthorization(outbox, payload, token);
-  const admission = reminderAuthorization(outbox, payload, token, channel);
-  const preferenceForCode = `COALESCE((SELECT project_deadline_reminder_emails FROM notification_preferences WHERE user_id = ?), 1) = 0`;
+  return beginReminderChannelWith(env, outbox, token, channel, now, {
+    authorization: (forChannel) => reminderAuthorization(outbox, payload, token, forChannel),
+    preferenceColumn: "project_deadline_reminder_emails",
+    disabledMessage: "Recipient disabled project deadline reminder email.",
+  });
+}
+
+async function beginSubtaskReminderChannel(env: Env, outbox: OutboxRow, token: string, channel: "in_app" | "email", now: number): Promise<boolean> {
+  const payload = safeSubtaskReminderPayload(outbox.payload_json, outbox);
+  if (!payload) return false;
+  return beginReminderChannelWith(env, outbox, token, channel, now, {
+    authorization: (forChannel) => subtaskReminderAuthorization(outbox, payload, token, forChannel),
+    preferenceColumn: "subtask_reminder_emails",
+    disabledMessage: "Recipient disabled Subtask reminder email.",
+  });
+}
+
+async function beginReminderChannelWith(env: Env, outbox: OutboxRow, token: string, channel: "in_app" | "email", now: number, spec: ReminderChannelSpec): Promise<boolean> {
+  const authorization = spec.authorization();
+  const admission = spec.authorization(channel);
+  const preferenceForCode = `COALESCE((SELECT ${spec.preferenceColumn} FROM notification_preferences WHERE user_id = ?), 1) = 0`;
   const results = await env.DB.batch([
     env.DB.prepare(`
       UPDATE notification_delivery_ledger
@@ -1167,7 +1427,7 @@ async function beginReminderChannel(env: Env, outbox: OutboxRow, token: string, 
           END,
           last_error = CASE
             WHEN channel = 'email' AND EXISTS (${authorization.sql}) AND ${preferenceForCode}
-              THEN 'Recipient disabled project deadline reminder email.'
+              THEN '${spec.disabledMessage}'
             ELSE 'Current reminder authorization no longer matches.'
           END,
           updated_at = ?
@@ -1325,11 +1585,18 @@ function channelAdmission(outbox: OutboxRow, resolved: LegacyResolvedRecipient, 
     const admission = reminderAuthorization(outbox, payload, token, channel, "explicit");
     return { sql: `EXISTS (${admission.sql})`, values: admission.values };
   }
+  if (outbox.event_type === NOTIFICATION_OUTBOX_EVENT_TYPES.subtaskReminder) {
+    const payload = safeSubtaskReminderPayload(outbox.payload_json, outbox);
+    if (!payload) return { sql: "0", values: [] };
+    const admission = subtaskReminderAuthorization(outbox, payload, token, channel, "explicit");
+    return { sql: `EXISTS (${admission.sql})`, values: admission.values };
+  }
   return legacyAdmission(outbox, resolved, token);
 }
 
 async function beginChannel(env: Env, outbox: OutboxRow, token: string, channel: "in_app" | "email", now: number, resolved: LegacyResolvedRecipient): Promise<boolean> {
   if (outbox.event_type === NOTIFICATION_OUTBOX_EVENT_TYPES.projectDeadlineReminder) return beginReminderChannel(env, outbox, token, channel, now);
+  if (outbox.event_type === NOTIFICATION_OUTBOX_EVENT_TYPES.subtaskReminder) return beginSubtaskReminderChannel(env, outbox, token, channel, now);
   const admission = legacyAdmission(outbox, resolved, token);
   const result = await env.DB.prepare(`
     UPDATE notification_delivery_ledger

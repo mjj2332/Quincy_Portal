@@ -3,13 +3,12 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { presetSubtaskInsertValues, type NotificationOutboxMessage } from "@quincy/shared";
 import { emitExternalSubtaskNotification, emitStaffSubtaskAssignedNotification } from "@quincy/db";
 import type { Env } from "../src/env";
-import { scanDueSubtasks } from "../src/notifications";
 import { processNotificationMessage } from "../src/notification-delivery";
 
 /**
  * #373 part 1: the background worker reads and writes no `project_subtasks.assignee_id`. Migration 0050 drops the column
  * and its index (applied by the migration loader), Subtasks are seeded through
- * the relation only, and the delivery path (resolver + channel admission) and the due scan must still work.
+ * the relation only, and the delivery path (resolver + channel admission) must still work. The reminder scan reads the relation only: see subtask-reminders.integration.test.ts.
  */
 const database = env as unknown as { DB: D1Database };
 declare const __PORTAL_MIGRATION_SQL__: string;
@@ -85,22 +84,5 @@ describe("with project_subtasks.assignee_id dropped", () => {
     await processNotificationMessage(deliveryEnv(send), message(outboxId!));
     expect(await outboxStatus(sourceKey, fixture.externalId)).toEqual({ status: "completed", lastError: null });
     expect(await notices(sourceKey, fixture.externalId)).toEqual([{ type: "subtask_assigned" }]);
-  });
-
-  it("scans due Subtasks over the relation and delivers an external subtask_due_today notice", async () => {
-    const fixture = await seed("2026-08-18");
-    const now = Date.UTC(2026, 7, 17, 22); // 2026-08-18 08:00 in Sydney
-    const queue = { send: vi.fn().mockResolvedValue(undefined) };
-    const scanEnv = { ...deliveryEnv(vi.fn().mockResolvedValue({ messageId: "dropped-due" })), NOTIFICATION_QUEUE: queue } as unknown as Env;
-    await scanDueSubtasks(scanEnv, now);
-    expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(fixture.subtaskId).first()).toEqual({ due_reminder_sent_at: now });
-    const sourceKey = `subtask-due:${fixture.subtaskId}:2026-08-18T17:00`;
-    // The staff assignee is reminded synchronously; the external editor gets an outbox row carrying their own version.
-    expect(await notices(sourceKey, fixture.staffId)).toEqual([{ type: "subtask_due_today" }]);
-    const outbox = await database.DB.prepare("SELECT id FROM notification_outbox WHERE source_key = ? AND recipient_id = ? AND event_type = 'project.subtask.due_today'").bind(sourceKey, fixture.externalId).first<{ id: string }>();
-    expect(outbox).not.toBeNull();
-    await processNotificationMessage(deliveryEnv(vi.fn().mockResolvedValue({ messageId: "dropped-due-external" })), message(outbox!.id));
-    expect(await outboxStatus(sourceKey, fixture.externalId)).toEqual({ status: "completed", lastError: null });
-    expect(await notices(sourceKey, fixture.externalId)).toEqual([{ type: "subtask_due_today" }]);
   });
 });
