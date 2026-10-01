@@ -29,8 +29,8 @@ function deferred<T>() {
 }
 
 beforeEach(() => {
-  apiGetMock.mockReset().mockResolvedValue({ projectDeadlineReminderEmails: true });
-  apiPatchMock.mockReset().mockResolvedValue({ projectDeadlineReminderEmails: false });
+  apiGetMock.mockReset().mockResolvedValue({ projectDeadlineReminderEmails: true, subtaskReminderEmails: true });
+  apiPatchMock.mockReset().mockResolvedValue({ projectDeadlineReminderEmails: false, subtaskReminderEmails: true });
   const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
 });
 
@@ -53,6 +53,36 @@ describe("NotificationPreferences", () => {
     expect(host.querySelector<HTMLInputElement>('input[type="checkbox"]')?.checked).toBe(true);
   });
 
+  it("renders a second Checklist item reminders card whose switch saves only its own preference", async () => {
+    const host = document.body.firstElementChild as HTMLElement;
+    await act(async () => { root!.render(<NotificationPreferences />); await Promise.resolve(); });
+    await flush();
+    const headings = [...host.querySelectorAll("h2")].map((h) => h.textContent);
+    expect(headings).toEqual(["Project deadlines", "Checklist item reminders"]);
+    const second = host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')[1]!;
+    expect(second.checked).toBe(true);
+    // The name sits on whichever element is the control (see the accessible-name test below), so match both forms in document order.
+    const control = host.querySelector('[aria-label="Checklist item reminder emails"]')!;
+    expect(control).not.toBeNull();
+    expect(control.getAttribute("aria-labelledby") ?? "").toBe("");
+    await act(async () => { second.click(); await Promise.resolve(); });
+    expect(apiPatchMock).toHaveBeenCalledWith("/api/notification-preferences", { subtaskReminderEmails: false });
+    expect(apiPatchMock).not.toHaveBeenCalledWith("/api/notification-preferences", expect.objectContaining({ projectDeadlineReminderEmails: expect.anything() }));
+  });
+
+  it("shows a failed Checklist item save inside its own card and rolls the switch back", async () => {
+    apiPatchMock.mockRejectedValueOnce(new ApiError("Subtask save failed", 500));
+    const host = document.body.firstElementChild as HTMLElement;
+    await act(async () => { root!.render(<NotificationPreferences />); await Promise.resolve(); });
+    await flush();
+    const second = host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')[1]!;
+    await act(async () => { second.click(); await Promise.resolve(); });
+    await flush();
+    expect(second.checked).toBe(true);
+    const notice = host.querySelector('[data-slot="notice"]')!;
+    expect(notice.closest("section")!.querySelector("h2")!.textContent).toBe("Checklist item reminders");
+  });
+
   it("rolls an optimistic toggle back to the authoritative value when saving fails", async () => {
     apiPatchMock.mockRejectedValueOnce(new ApiError("Preference save failed", 500));
     const host = document.body.firstElementChild as HTMLElement;
@@ -67,7 +97,7 @@ describe("NotificationPreferences", () => {
   });
 
   it("keeps the checkbox's accessible name in the loading state and after it", async () => {
-    const gate = deferred<{ projectDeadlineReminderEmails: boolean }>();
+    const gate = deferred<{ projectDeadlineReminderEmails: boolean; subtaskReminderEmails: boolean }>();
     apiGetMock.mockReset().mockReturnValue(gate.promise);
     const host = document.body.firstElementChild as HTMLElement;
     await act(async () => { root!.render(<NotificationPreferences />); await Promise.resolve(); });
@@ -94,14 +124,14 @@ describe("NotificationPreferences", () => {
     expect(control().getAttribute("aria-label")).toBe("Project deadline reminder emails");
     expect(labelledBy()).toBe("");
     expect(input().disabled).toBe(true);
-    await act(async () => { gate.resolve({ projectDeadlineReminderEmails: true }); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { gate.resolve({ projectDeadlineReminderEmails: true, subtaskReminderEmails: true }); await Promise.resolve(); await Promise.resolve(); });
     expect(control().getAttribute("aria-label")).toBe("Project deadline reminder emails");
     expect(labelledBy()).toBe("");
     expect(input().disabled).toBe(false);
   });
 
   it("shows the optimistic value and disables the control while a save is in flight", async () => {
-    const gate = deferred<{ projectDeadlineReminderEmails: boolean }>();
+    const gate = deferred<{ projectDeadlineReminderEmails: boolean; subtaskReminderEmails: boolean }>();
     apiPatchMock.mockReset().mockReturnValue(gate.promise);
     const host = document.body.firstElementChild as HTMLElement;
     await act(async () => { root!.render(<NotificationPreferences />); await Promise.resolve(); });
@@ -114,7 +144,7 @@ describe("NotificationPreferences", () => {
     expect(checkbox.checked).toBe(false);
     expect(checkbox.disabled).toBe(true);
     expect(checkbox.closest("span")!.textContent).toContain("Saving…");
-    await act(async () => { gate.resolve({ projectDeadlineReminderEmails: false }); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { gate.resolve({ projectDeadlineReminderEmails: false, subtaskReminderEmails: true }); await Promise.resolve(); await Promise.resolve(); });
     expect(checkbox.disabled).toBe(false);
     expect(checkbox.closest("span")!.textContent).toContain("Off");
   });
@@ -147,7 +177,7 @@ describe("NotificationPreferences", () => {
   });
 
   it("marks the live region polite and states exactly one thing while saving", async () => {
-    const gate = deferred<{ projectDeadlineReminderEmails: boolean }>();
+    const gate = deferred<{ projectDeadlineReminderEmails: boolean; subtaskReminderEmails: boolean }>();
     apiPatchMock.mockReset().mockReturnValue(gate.promise);
     const host = document.body.firstElementChild as HTMLElement;
     await act(async () => { root!.render(<NotificationPreferences />); await Promise.resolve(); });
@@ -158,7 +188,7 @@ describe("NotificationPreferences", () => {
     const checkbox = host.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
     await act(async () => { checkbox.click(); await Promise.resolve(); });
     expect(region.textContent).toBe("Saving notification preferences");
-    await act(async () => { gate.resolve({ projectDeadlineReminderEmails: false }); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { gate.resolve({ projectDeadlineReminderEmails: false, subtaskReminderEmails: true }); await Promise.resolve(); await Promise.resolve(); });
     expect(region.textContent).toBe("");
   });
 
@@ -166,13 +196,13 @@ describe("NotificationPreferences", () => {
     // Runtime half: a smoke test, not a guard. React 19.2.8 silently ignores a post-unmount
     // state update rather than warning (unlike React 17/18), so this alone would still pass if
     // every `if (active)` guard were deleted.
-    const gate = deferred<{ projectDeadlineReminderEmails: boolean }>();
+    const gate = deferred<{ projectDeadlineReminderEmails: boolean; subtaskReminderEmails: boolean }>();
     apiGetMock.mockReset().mockReturnValue(gate.promise);
     await act(async () => { root!.render(<NotificationPreferences />); await Promise.resolve(); });
     await act(async () => { root!.unmount(); await Promise.resolve(); });
     root = null;
     await expect(
-      act(async () => { gate.resolve({ projectDeadlineReminderEmails: true }); await Promise.resolve(); await Promise.resolve(); }),
+      act(async () => { gate.resolve({ projectDeadlineReminderEmails: true, subtaskReminderEmails: true }); await Promise.resolve(); await Promise.resolve(); }),
     ).resolves.not.toThrow();
 
     // The actual guard: a source-level assertion (same form as §9.3 test 4) that the effect
@@ -188,8 +218,9 @@ describe("NotificationPreferences", () => {
     // The flag and its cleanup are not the guard — the three `if (active)` checks are. Asserting
     // only the first two passes even with every guard deleted (Sol, diff review): assert each
     // guarded continuation by name, and that there are exactly three of them.
-    expect(source.match(/if \(active\)/g)).toHaveLength(3);
+    expect(source.match(/if \(active\)/g)).toHaveLength(4);
     expect(source).toContain("if (active) setEnabled(value.projectDeadlineReminderEmails)");
+    expect(source).toContain("if (active) setSubtaskEnabled(value.subtaskReminderEmails)");
     expect(source).toContain("if (active) setError(");
     expect(source).toContain("if (active) setLoading(false)");
   });
