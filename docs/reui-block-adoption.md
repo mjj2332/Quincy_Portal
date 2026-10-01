@@ -237,3 +237,25 @@ What was new:
   consider lazy-loading the Table chunk.
 - **Estimating:** a vendored data-grid is cheap to install and expensive to ship; budget the chunk size, not the
   file count.
+
+## Addendum: Board cards on `frame` (`solution-crm-7`, #432)
+
+- **Vendored:** nothing new. `frame`, `context-menu`, `dropdown-menu`, `badge` and `button` were already installed;
+  the block was read, not copied (`npx shadcn view @reui/solution-crm-7`, read-only), and its card and lane are
+  composed in `components/board/card.tsx` and `board.tsx` on Quincy tokens.
+- **The one vendor edit: an additive `keyboardCodes` prop on `Kanban`** (`components/reui/kanban.tsx`, recorded in
+  that file's header). The block's whole card is the drag handle, and dnd-kit's default pick-up keys are Space and
+  Enter, so Enter would grab the card instead of opening it. The Board passes `{ start: ["Space"], cancel:
+  ["Escape"], end: ["Space", "Enter", "Tab"] }`. The options are built with `useMemo` inside the component, not a
+  module-level SCREAMING_CASE const (the guard scans for those).
+- **Deliberate divergence from the block: the link is the handle, not the Frame.** The block wraps the whole Frame
+  in `KanbanItemHandle` (`role="button"`), which hides the stars' nested `radiogroup`: the #81 defect. Here the
+  card's single `InternalLink` is `KanbanItemHandle render={<InternalLink/>}`, stretched over the card with
+  `after:absolute after:inset-0`; the stars and the ⋯ trigger are siblings raised with `relative z-[1]`, so
+  pressing them cannot start a drag by construction.
+- **Traps, in the order they bit:** `ContextMenuTrigger` must be an ANCESTOR of the handle (Base UI stops
+  `touchstart` on its trigger); its 500ms touch long-press must be suppressed or it opens over a live drag; a
+  Base UI `mergeProps` override needs a present `undefined` (`role={undefined}`), not an omitted prop; a menu that
+  hands off to a dialog must withhold its own focus return (`finalFocus`) or it lands on top of the dialog.
+- **Estimating:** the install was free and the interaction work was the cost. Budget for focus handoff between a
+  menu and a dialog, and for every test that reached a control by `data-focus-key` that moved into a menu.
