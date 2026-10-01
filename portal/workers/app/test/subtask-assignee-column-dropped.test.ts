@@ -24,7 +24,7 @@ declare const __PORTAL_MIGRATION_SQL__: string; declare const __PORTAL_SEED_SQL_
 async function executeSql(sql: string) { for (const chunk of sql.split("--> statement-breakpoint")) for (const statement of chunk.split("\n").filter((line) => !line.trim().startsWith("--")).join("\n").split(";")) { const flat = statement.replace(/\s+/g, " ").trim(); if (flat) await database.DB.exec(`${flat};`); } }
 async function cookie(token: string) { const context = await createAuth(baseEnv).$context; return `${context.authCookies.sessionToken.name}=${token}.${await makeSignature(token, authSecret)}`; }
 async function request(path: string, token: string, method: "GET" | "POST" | "PATCH" | "DELETE" = "GET", body?: unknown) { const headers = new Headers({ cookie: await cookie(token) }); if (body !== undefined) headers.set("content-type", "application/json"); if (method !== "GET") headers.set("origin", baseEnv.APP_ORIGIN); return workerSelf.fetch(`https://portal.test${path}`, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }); }
-const range = (from: string, to: string) => ({ state: "range", start: { kind: "date", localCivil: from }, end: { kind: "date", localCivil: to } });
+const range = (from: string, to: string) => ({ state: "range", start: { localCivil: `${from}T09:00` }, end: { localCivil: `${to}T17:00` } });
 const calendar = "start=2026-08-24&end=2026-09-05&date=2026-08-27&sub=month&scope=active&layers=project,checklist";
 
 type Person = { id: string };

@@ -522,7 +522,7 @@ async function resolveExternalSubtaskRecipient(env: Env, outbox: OutboxRow): Pro
   if (authorizationEpochMismatch(row)) return suppressed("authorization_epoch_changed");
   if (row.schemaVersion !== 1 || row.eventType !== outbox.event_type || row.sourceKey !== payload.event.sourceKey || row.recipientId !== payload.event.recipientId || row.projectId !== payload.assignment.projectId || row.subtaskId !== payload.assignment.subtaskId || row.subtaskProjectId !== row.projectId || row.relationUserId !== payload.assignment.assigneeId || row.relationUserId !== row.recipientId || row.relationAssignmentVersion !== payload.assignment.assignmentVersion) return suppressed("payload_invalid");
   if (payload.event.type !== (expectedType === "subtask_assigned" ? "project.subtask.assigned" : "project.subtask.due_today")) return suppressed("payload_invalid");
-  if (expectedType === "subtask_due_today" && (!("dueDate" in payload.assignment) || payload.assignment.dueDate !== row.subtaskDueDate || payload.assignment.claimAt !== row.subtaskDueReminderSentAt)) return suppressed("subtask_changed");
+  if (expectedType === "subtask_due_today" && (!("dueDate" in payload.assignment) || payload.assignment.dueDate.slice(0, 10) !== row.subtaskDueDate?.slice(0, 10) || payload.assignment.claimAt !== row.subtaskDueReminderSentAt)) return suppressed("subtask_changed");
   const copy = externalNotificationCopy({ type: expectedType });
   if (!copy) return suppressed("external_policy_suppressed");
   const projectPath = projectNotificationUrl(env, row.projectId, expectedType);
@@ -1246,7 +1246,7 @@ function legacyAdmission(outbox: OutboxRow, resolved: LegacyResolvedRecipient, t
   }
   if (outbox.event_type === "project.subtask.assigned" || outbox.event_type === "project.subtask.due_today") {
     const due = outbox.event_type === "project.subtask.due_today"
-      ? "AND subtask.due_date = json_extract(o.payload_json, '$.assignment.dueDate') AND subtask.due_reminder_sent_at = json_extract(o.payload_json, '$.assignment.claimAt')"
+      ? "AND substr(subtask.due_date, 1, 10) = substr(json_extract(o.payload_json, '$.assignment.dueDate'), 1, 10) AND subtask.due_reminder_sent_at = json_extract(o.payload_json, '$.assignment.claimAt')"
       : "";
     return {
       sql: `EXISTS (

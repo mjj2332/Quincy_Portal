@@ -48,15 +48,23 @@ function storageRow(schedule: NormalizedChecklistSchedule): Row {
   return { due_date: schedule.dueDate, schedule_start_kind: schedule.scheduleStartKind, schedule_start_civil: schedule.scheduleStartCivil, schedule_start_at: schedule.scheduleStartAt, schedule_start_utc_offset_minutes: schedule.scheduleStartUtcOffsetMinutes, schedule_start_fold: schedule.scheduleStartFold, schedule_end_kind: schedule.scheduleEndKind, schedule_end_at: schedule.scheduleEndAt, schedule_end_utc_offset_minutes: schedule.scheduleEndUtcOffsetMinutes, schedule_end_fold: schedule.scheduleEndFold, schedule_zone: schedule.scheduleZone, schedule_version: schedule.scheduleVersion };
 }
 
-function normalized(input: Parameters<typeof normalizeChecklistSchedule>[0]): NormalizedChecklistSchedule {
-  const result = normalizeChecklistSchedule(input, 1);
+function normalized(input: { start: string; end: string }): NormalizedChecklistSchedule {
+  const result = normalizeChecklistSchedule({ state: "range", start: { localCivil: input.start }, end: { localCivil: input.end } }, 1);
   if (!result.ok) throw new Error("fixture schedule invalid");
   return result.value;
 }
 
-const DATE_RANGE = normalized({ state: "range", start: { kind: "date", localCivil: "2026-08-27" }, end: { kind: "date", localCivil: "2026-08-28" } });
-const ONE_DAY = normalized({ state: "range", start: { kind: "date", localCivil: "2026-08-29" }, end: { kind: "date", localCivil: "2026-08-29" } });
-const TIMED_RANGE = normalized({ state: "range", start: { kind: "timed", localCivil: "2026-08-30T08:00" }, end: { kind: "timed", localCivil: "2026-08-30T09:15" } });
+/** A legacy date-only range exactly as the pre-0052 writer stored it. Historical migration tests keep this explicit shape: the shared normalizer is timed-only now (ADR 0016). */
+function legacyDate(start: string, end: string): NormalizedChecklistSchedule {
+  return {
+    state: "range", startChanged: true, endChanged: true, dueDate: end, scheduleStartKind: "date", scheduleStartCivil: start, scheduleStartAt: null, scheduleStartUtcOffsetMinutes: null, scheduleStartFold: null,
+    scheduleEndKind: "date", scheduleEndAt: null, scheduleEndUtcOffsetMinutes: null, scheduleEndFold: null, scheduleZone: "Australia/Sydney", scheduleVersion: 1,
+  };
+}
+
+const DATE_RANGE = legacyDate("2026-08-27", "2026-08-28");
+const ONE_DAY = legacyDate("2026-08-29", "2026-08-29");
+const TIMED_RANGE = normalized({ start: "2026-08-30T08:00", end: "2026-08-30T09:15" });
 
 const validDate = (): Row => storageRow(DATE_RANGE);
 const validTimed = (): Row => storageRow(TIMED_RANGE);

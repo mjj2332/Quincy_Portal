@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { notifyProject, processDueSubtaskCandidate, processStalledAutoHdrCandidate, scanDueSubtasks, scanStalledAutoHdr } from "../src/notifications";
 import { emitNotifications } from "@quincy/db";
+import { presetSubtaskInsertValues } from "@quincy/shared";
 import { dbFor } from "../src/lib/db";
 
 const database = env as unknown as { DB: D1Database };
@@ -67,7 +68,7 @@ async function seedDueSubtask(now: number, dueDate: string, options: { assigned?
     database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Due recipient', ?, 1, 'editor', 1, ?, ?)").bind(userId, `${userId}@example.test`, now, now),
     database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, userId, now),
     // Every Subtask is a range (#343): the due date is the range END, so the fixture is a one-day date range, or a timed range when the end carries a time.
-    database.DB.prepare(`INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Due task', ?, 1024, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Australia/Sydney', 1, ?, ?, ?)`).bind(subtaskId, projectId, options.done ? 1 : 0, dueDate, ...(dueDate.includes("T") ? ["timed", `${dueDate.slice(0, 10)}T00:00`, 1, 600, 0, "timed", 2, 600, 0] : ["date", dueDate, null, null, null, "date", null, null, null]), userId, now, now),
+    database.DB.prepare(`INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Due task', ?, 1024, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Australia/Sydney', 1, ?, ?, ?)`).bind(subtaskId, projectId, options.done ? 1 : 0, ...(dueDate.includes("T") ? [dueDate, "timed", `${dueDate.slice(0, 10)}T00:00`, 1, 600, 0, "timed", 2, 600, 0] : presetSubtaskInsertValues(dueDate).slice(0, 10)), userId, now, now),
     // The relation is the only place assignees live (#368, #373).
     ...(options.assigned === false ? [] : [database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 1, ?)").bind(subtaskId, userId, now)]),
     // Extra relation-backed assignees (#369): each is an active user with an editor membership on the Project.
@@ -77,7 +78,8 @@ async function seedDueSubtask(now: number, dueDate: string, options: { assigned?
       database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, ?, ?)").bind(subtaskId, assignee.id, assignee.version ?? 1, now),
     ]),
   ]);
-  return { projectId, userId, subtaskId, dueDate };
+  // The stored end is a moment (0052): a date-only fixture lands on the 17:00 preset, and that is the due value the scan reports.
+  return { projectId, userId, subtaskId, dueDate: dueDate.includes("T") ? dueDate : `${dueDate}T17:00` };
 }
 
 const sydneyEightAm = (year: number, month: number, day: number) => Date.UTC(year, month - 1, day - 1, 22);
@@ -323,7 +325,7 @@ describe("notification fanout and stalled scan", () => {
       const now = sydneyEightAm(2026, 8, 18);
       const fixture = await seedDueSubtask(now, "2026-08-18");
       const send = vi.fn().mockResolvedValue({ messageId: "due-retry" });
-      await database.DB.exec(`CREATE TRIGGER fail_due_notification BEFORE INSERT ON notifications WHEN NEW.source_key = 'subtask-due:${fixture.subtaskId}:2026-08-18' BEGIN SELECT RAISE(ABORT, 'forced due notification insert failure'); END`);
+      await database.DB.exec(`CREATE TRIGGER fail_due_notification BEFORE INSERT ON notifications WHEN NEW.source_key = 'subtask-due:${fixture.subtaskId}:2026-08-18T17:00' BEGIN SELECT RAISE(ABORT, 'forced due notification insert failure'); END`);
       expect(await scanDueSubtasks(notificationEnv(send), now)).toBe(0);
       await database.DB.exec("DROP TRIGGER fail_due_notification");
       expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(fixture.subtaskId).first()).toEqual({ due_reminder_sent_at: null });

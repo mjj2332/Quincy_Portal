@@ -1,52 +1,64 @@
 import { describe, expect, it } from "vitest";
-import { defaultSubtaskRange } from "../src/default-subtask-range";
-import { normalizeChecklistSchedule } from "../src/checklist-schedule";
+import { defaultSubtaskRange, defaultSubtaskRangeDto, projectDefaultRangeSchema, type DefaultSubtaskRangeInput } from "../src/default-subtask-range";
+import { normalizeChecklistSchedule, SUBTASK_END_PRESET_TIME, SUBTASK_START_PRESET_TIME } from "../src/checklist-schedule";
 
 // 2026-06-30T15:00Z is 2026-07-01 01:00 in Sydney: the UTC and Sydney dates differ.
 const CREATED_SPLIT = Date.UTC(2026, 5, 30, 15);
 // 2026-07-01T02:00Z is 2026-07-01 12:00 in Sydney: the UTC and Sydney dates agree.
 const CREATED_PLAIN = Date.UTC(2026, 6, 1, 2);
 
-const date = (localCivil: string) => ({ kind: "date" as const, localCivil });
-const timed = (localCivil: string) => ({ kind: "timed" as const, localCivil });
+type Row = { name: string; input: DefaultSubtaskRangeInput; start: string; end: string; endDisambiguation?: "earlier" | "later" };
 
-type Row = {
-  name: string;
-  input: Parameters<typeof defaultSubtaskRange>[0];
-  start: ReturnType<typeof date> | ReturnType<typeof timed>;
-  end: ReturnType<typeof date> | ReturnType<typeof timed>;
-};
+const deadline = (localCivil: string, fold: 0 | 1 = 0) => ({ localCivil, fold });
 
 const rows: Row[] = [
-  { name: "shoot date and timed Deadline give date ends", input: { shootDate: "2026-11-02", deadlineLocalCivil: "2026-11-06T17:00", projectCreatedAt: CREATED_PLAIN }, start: date("2026-11-02"), end: date("2026-11-06") },
-  { name: "missing shoot date falls back to the Sydney creation date, not the UTC date", input: { shootDate: null, deadlineLocalCivil: null, projectCreatedAt: CREATED_SPLIT }, start: date("2026-07-01"), end: date("2026-07-01") },
-  { name: "undefined shoot date falls back to the creation date", input: { shootDate: undefined, deadlineLocalCivil: "2026-07-09T10:00", projectCreatedAt: CREATED_SPLIT }, start: date("2026-07-01"), end: date("2026-07-09") },
-  { name: "non-canonical shoot text falls back", input: { shootDate: "Thursday, 17 Sep, 2026", deadlineLocalCivil: "2026-07-09T10:00", projectCreatedAt: CREATED_SPLIT }, start: date("2026-07-01"), end: date("2026-07-09") },
-  { name: "impossible shoot date falls back", input: { shootDate: "2026-02-30", deadlineLocalCivil: null, projectCreatedAt: CREATED_SPLIT }, start: date("2026-07-01"), end: date("2026-07-01") },
-  { name: "empty shoot date falls back", input: { shootDate: "", deadlineLocalCivil: null, projectCreatedAt: CREATED_SPLIT }, start: date("2026-07-01"), end: date("2026-07-01") },
-  { name: "missing Deadline makes a one-day range on the shoot date", input: { shootDate: "2026-11-02", deadlineLocalCivil: null, projectCreatedAt: CREATED_PLAIN }, start: date("2026-11-02"), end: date("2026-11-02") },
-  { name: "malformed Deadline counts as missing", input: { shootDate: "2026-11-02", deadlineLocalCivil: "soon", projectCreatedAt: CREATED_PLAIN }, start: date("2026-11-02"), end: date("2026-11-02") },
-  { name: "date-only Deadline is accepted", input: { shootDate: "2026-11-02", deadlineLocalCivil: "2026-11-05", projectCreatedAt: CREATED_PLAIN }, start: date("2026-11-02"), end: date("2026-11-05") },
-  { name: "Deadline before the shoot date collapses to one day on the Deadline", input: { shootDate: "2026-11-10", deadlineLocalCivil: "2026-11-06T09:00", projectCreatedAt: CREATED_PLAIN }, start: date("2026-11-06"), end: date("2026-11-06") },
-  { name: "Deadline before the fallback creation date collapses to the Deadline", input: { shootDate: null, deadlineLocalCivil: "2026-06-20T09:00", projectCreatedAt: CREATED_SPLIT }, start: date("2026-06-20"), end: date("2026-06-20") },
-  { name: "Deadline equal to the shoot date is one day", input: { shootDate: "2026-11-06", deadlineLocalCivil: "2026-11-06T23:00", projectCreatedAt: CREATED_PLAIN }, start: date("2026-11-06"), end: date("2026-11-06") },
+  { name: "shoot date 09:00 through the Deadline at its own time", input: { shootDate: "2026-11-02", deadline: deadline("2026-11-06T15:30"), projectCreatedAt: CREATED_PLAIN }, start: "2026-11-02T09:00", end: "2026-11-06T15:30", endDisambiguation: "earlier" },
+  { name: "missing shoot date falls back to the Sydney creation date, not the UTC date", input: { shootDate: null, deadline: null, projectCreatedAt: CREATED_SPLIT }, start: "2026-07-01T09:00", end: "2026-07-01T17:00" },
+  { name: "undefined shoot date falls back to the creation date", input: { shootDate: undefined, deadline: deadline("2026-07-09T10:00"), projectCreatedAt: CREATED_SPLIT }, start: "2026-07-01T09:00", end: "2026-07-09T10:00", endDisambiguation: "earlier" },
+  { name: "non-canonical shoot text falls back", input: { shootDate: "Thursday, 17 Sep, 2026", deadline: deadline("2026-07-09T10:00"), projectCreatedAt: CREATED_SPLIT }, start: "2026-07-01T09:00", end: "2026-07-09T10:00", endDisambiguation: "earlier" },
+  { name: "impossible shoot date falls back", input: { shootDate: "2026-02-30", deadline: null, projectCreatedAt: CREATED_SPLIT }, start: "2026-07-01T09:00", end: "2026-07-01T17:00" },
+  { name: "empty shoot date falls back", input: { shootDate: "", deadline: null, projectCreatedAt: CREATED_SPLIT }, start: "2026-07-01T09:00", end: "2026-07-01T17:00" },
+  { name: "missing Deadline makes 09:00 to 17:00 on the shoot date", input: { shootDate: "2026-11-02", deadline: null, projectCreatedAt: CREATED_PLAIN }, start: "2026-11-02T09:00", end: "2026-11-02T17:00" },
+  { name: "malformed Deadline counts as missing", input: { shootDate: "2026-11-02", deadline: deadline("soon"), projectCreatedAt: CREATED_PLAIN }, start: "2026-11-02T09:00", end: "2026-11-02T17:00" },
+  { name: "a legacy date-only Deadline takes the end preset", input: { shootDate: "2026-11-02", deadline: deadline("2026-11-05"), projectCreatedAt: CREATED_PLAIN }, start: "2026-11-02T09:00", end: "2026-11-05T17:00", endDisambiguation: "earlier" },
+  { name: "a Deadline on the shoot day after 09:00 is a same-day range", input: { shootDate: "2026-11-06", deadline: deadline("2026-11-06T12:30"), projectCreatedAt: CREATED_PLAIN }, start: "2026-11-06T09:00", end: "2026-11-06T12:30", endDisambiguation: "earlier" },
+  { name: "a Deadline before the shoot date starts at 09:00 on the Deadline's day", input: { shootDate: "2026-11-10", deadline: deadline("2026-11-06T15:00"), projectCreatedAt: CREATED_PLAIN }, start: "2026-11-06T09:00", end: "2026-11-06T15:00", endDisambiguation: "earlier" },
+  { name: "a Deadline at 09:00 on a day before the shoot date starts the day before", input: { shootDate: "2026-11-10", deadline: deadline("2026-11-06T09:00"), projectCreatedAt: CREATED_PLAIN }, start: "2026-11-05T09:00", end: "2026-11-06T09:00", endDisambiguation: "earlier" },
+  { name: "a Deadline before 09:00 on the shoot day starts the day before", input: { shootDate: "2026-11-06", deadline: deadline("2026-11-06T07:15"), projectCreatedAt: CREATED_PLAIN }, start: "2026-11-05T09:00", end: "2026-11-06T07:15", endDisambiguation: "earlier" },
+  { name: "the day before crosses a month and a leap day", input: { shootDate: "2028-03-05", deadline: deadline("2028-03-01T08:00"), projectCreatedAt: CREATED_PLAIN }, start: "2028-02-29T09:00", end: "2028-03-01T08:00", endDisambiguation: "earlier" },
+  { name: "a Deadline before the fallback creation date starts at 09:00 on the Deadline's day", input: { shootDate: null, deadline: deadline("2026-06-20T16:00"), projectCreatedAt: CREATED_SPLIT }, start: "2026-06-20T09:00", end: "2026-06-20T16:00", endDisambiguation: "earlier" },
+  { name: "the stored fold of the Deadline travels as the end disambiguation", input: { shootDate: "2026-04-03", deadline: deadline("2026-04-05T02:30", 1), projectCreatedAt: CREATED_PLAIN }, start: "2026-04-03T09:00", end: "2026-04-05T02:30", endDisambiguation: "later" },
 ];
 
 describe("defaultSubtaskRange matrix", () => {
-  it.each(rows)("$name", ({ input, start, end }) => {
+  it("presets are the issue's 09:00 start and 17:00 end", () => {
+    expect([SUBTASK_START_PRESET_TIME, SUBTASK_END_PRESET_TIME]).toEqual(["09:00", "17:00"]);
+  });
+
+  it.each(rows)("$name", ({ input, start, end, endDisambiguation }) => {
     const range = defaultSubtaskRange(input);
-    expect(range).toEqual({ state: "range", start, end });
+    expect(range).toEqual({ state: "range", start: { localCivil: start }, end: { localCivil: end, ...(endDisambiguation ? { disambiguation: endDisambiguation } : {}) } });
     const normalized = normalizeChecklistSchedule(range, 1);
-    expect(normalized.ok).toBe(true);
-    if (normalized.ok) {
-      expect(normalized.value.state).toBe("range");
-      expect(normalized.value.scheduleStartKind).toBe(normalized.value.scheduleEndKind);
-    }
+    expect(normalized.ok, JSON.stringify(normalized)).toBe(true);
+    if (normalized.ok) expect(normalized.value.scheduleStartKind).toBe("timed");
   });
 });
 
 describe("defaultSubtaskRange input guard", () => {
   it("throws on a non-finite creation time", () => {
-    expect(() => defaultSubtaskRange({ shootDate: null, deadlineLocalCivil: null, projectCreatedAt: Number.NaN })).toThrow(RangeError);
+    expect(() => defaultSubtaskRange({ shootDate: null, deadline: null, projectCreatedAt: Number.NaN })).toThrow(RangeError);
+  });
+});
+
+describe("defaultSubtaskRangeDto", () => {
+  it("carries the Deadline's fold on the end only", () => {
+    expect(defaultSubtaskRangeDto({ shootDate: "2026-04-03", deadline: deadline("2026-04-05T02:30", 1), projectCreatedAt: CREATED_PLAIN })).toEqual({ start: { localCivil: "2026-04-03T09:00", fold: 0 }, end: { localCivil: "2026-04-05T02:30", fold: 1 } });
+    expect(defaultSubtaskRangeDto({ shootDate: "2026-11-02", deadline: null, projectCreatedAt: CREATED_PLAIN })).toEqual({ start: { localCivil: "2026-11-02T09:00", fold: 0 }, end: { localCivil: "2026-11-02T17:00", fold: 0 } });
+  });
+  it("the schema accepts exactly that shape", () => {
+    const dto = defaultSubtaskRangeDto({ shootDate: "2026-11-02", deadline: null, projectCreatedAt: CREATED_PLAIN });
+    expect(projectDefaultRangeSchema.safeParse(dto).success).toBe(true);
+    expect(projectDefaultRangeSchema.safeParse({ ...dto, extra: 1 }).success).toBe(false);
+    expect(projectDefaultRangeSchema.safeParse({ ...dto, end: { localCivil: "2026-11-02", fold: 0 } }).success).toBe(false);
   });
 });

@@ -176,7 +176,7 @@ describe("response schema", () => {
   // #372: a Subtask row carries its assignee list, a hidden count, the version and the edit permission.
   describe("Subtask assignees (#372)", () => {
     const person = { id: "11111111-1111-4111-8111-111111111111", name: "Alice Editor", roleLabel: "Editor", isExternal: false, active: true };
-    const schedule = { state: "range" as const, version: 1, zone: PRODUCTION_GANTT_ZONE, start: { kind: "date" as const, localCivil: "2026-08-27", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, end: { kind: "date" as const, localCivil: "2026-08-27", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, due: "2026-08-27" };
+    const schedule = { state: "range" as const, version: 1, zone: PRODUCTION_GANTT_ZONE, start: { localCivil: "2026-08-27T09:00", instant: "2026-08-26T23:00:00.000Z", utcOffsetMinutes: 600, fold: 0 as const, resolution: "stored" as const }, end: { localCivil: "2026-08-27T17:00", instant: "2026-08-27T07:00:00.000Z", utcOffsetMinutes: 600, fold: 0 as const, resolution: "stored" as const }, due: "2026-08-27T17:00" };
     const row = () => ({ id, projectId: id, title: "Task", done: false, position: 0, assignees: [person], otherAssigneeCount: 2, assignmentVersion: 3, schedule, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true } });
     const withRow = (value: unknown) => ({ ...baseResponse(), projects: [{ ...baseRow(), children: { rows: [value], total: 1, returned: 1, truncated: false, nextCursor: null } }] });
 

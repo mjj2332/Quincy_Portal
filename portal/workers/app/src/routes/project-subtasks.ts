@@ -21,6 +21,7 @@ import { jsonInput } from "./helpers";
 import { publishOutboxDetached } from "../lib/server-timing";
 import {
   finalizeProjectSubtaskCommandResult,
+  projectDefaultRangeDtoFor,
   saveProjectSubtask,
   serializeProjectSubtask,
   type ItemPatch,
@@ -31,12 +32,20 @@ const TITLE_MAX_LENGTH = 500;
 const POSITION_STEP = 1024;
 
 const titleInput = z.string().trim().min(1).max(TITLE_MAX_LENGTH);
-const endpointInput = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("date"), localCivil: z.string() }).strict(),
-  z.object({ kind: z.literal("timed"), localCivil: z.string(), disambiguation: z.enum(["earlier", "later"]).optional() }).strict(),
-]);
+// Every end is a moment (ADR 0016). A stale tab may still send the retired `kind`: it is dropped (zod strips unknown keys),
+// so an old date-only end meets the field-named `subtask_schedule_time_required` and an old timed save succeeds.
+const endpointInput = z.object({ localCivil: z.string(), disambiguation: z.enum(["earlier", "later"]).optional() });
 // A Subtask is always a range (ADR 0011): unscheduled and due-only payloads are rejected here, before any read.
 const scheduleInput = z.object({ state: z.literal("range"), start: endpointInput, end: endpointInput }).strict();
+
+/** `jsonInput` plus the nested path of every issue: `flatten()` folds `schedule.end.localCivil` into the top-level `schedule`. */
+async function subtaskJsonInput<T extends z.ZodTypeAny>(c: Context<AppEnv>, validator: T): Promise<z.infer<T> | Response> {
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON" }, 400); }
+  const result = validator.safeParse(body);
+  if (result.success) return result.data;
+  return c.json({ error: "Invalid input", details: { ...result.error.flatten(), issues: result.error.issues.map((issue) => ({ path: issue.path.join("."), code: issue.code, message: issue.message })) } }, 400);
+}
 const scheduleRequestInput = z.object({ expectedVersion: z.number().int().nonnegative().refine(Number.isSafeInteger), schedule: scheduleInput }).strict();
 const uniqueIds = (ids: string[]) => new Set(ids).size === ids.length;
 const createInput = z.object({
@@ -148,12 +157,12 @@ projectSubtasksRoutes.get("/projects/:projectId/subtasks", terminalRoute("/proje
     if (!await resolveVisibleProject(c.env, c.get("user"), projectId)) return c.json({ error: "Project not found" }, 404);
     const rows = await externalSubtaskQuery(createDb(c.env.DB), projectId, c.get("user").id).orderBy(asc(schema.projectSubtasks.position), asc(schema.projectSubtasks.id)).all();
     const assignees = await hydrateProjectAssignees(c.env.DB, projectId);
-    return c.json(externalChecklistListResponseSchema.parse({ subtasks: rows.map((row) => externalSubtaskDto(row, assignees.get(row.id) ?? [])) }));
+    return c.json(externalChecklistListResponseSchema.parse({ subtasks: rows.map((row) => externalSubtaskDto(row, assignees.get(row.id) ?? [])), projectDefaultRange: await projectDefaultRangeDtoFor(c.env, projectId) }));
   }
   const project = await ensureProjectAccessAndExists(c, projectId); if (project === "forbidden") return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); if (!project) return c.json({ error: "Project not found" }, 404);
   const rows = await subtaskQuery(createDb(c.env.DB), projectId).orderBy(asc(schema.projectSubtasks.position), asc(schema.projectSubtasks.id)).all();
   const assignees = await hydrateProjectAssignees(c.env.DB, projectId);
-  return c.json({ subtasks: rows.map((row) => serializeSubtask(row, assignees.get(row.subtask.id) ?? [])) });
+  return c.json({ subtasks: rows.map((row) => serializeSubtask(row, assignees.get(row.subtask.id) ?? [])), projectDefaultRange: await projectDefaultRangeDtoFor(c.env, projectId) });
 }));
 
 projectSubtasksRoutes.get("/projects/:projectId/subtask-assignee-options", terminalRoute("/projects/:projectId/subtask-assignee-options", async (c) => {
@@ -176,7 +185,7 @@ projectSubtasksRoutes.get("/projects/:projectId/subtask-assignee-options", termi
 projectSubtasksRoutes.post("/projects/:projectId/subtasks", terminalRoute("/projects/:projectId/subtasks", async (c) => {
   const projectId = c.req.param("projectId"); if (!idParam.safeParse(projectId).success) return c.json({ error: "Invalid project id" }, 400);
   if (c.get("user").role === "external_editor" && !await resolveVisibleProject(c.env, c.get("user"), projectId)) return c.json({ error: "Project not found" }, 404);
-  const data = await jsonInput(c, createInput); if (data instanceof Response) return data;
+  const data = await subtaskJsonInput(c, createInput); if (data instanceof Response) return data;
   const result = await saveProjectSubtask({
     env: c.env,
     projectId,
@@ -191,7 +200,7 @@ projectSubtasksRoutes.patch("/projects/:projectId/subtasks/:subtaskId", terminal
   const projectId = c.req.param("projectId"); const subtaskId = c.req.param("subtaskId");
   if (!idParam.safeParse(projectId).success || !idParam.safeParse(subtaskId).success) return c.json({ error: "Invalid project or subtask id" }, 400);
   if (c.get("user").role === "external_editor" && !await resolveVisibleProject(c.env, c.get("user"), projectId)) return c.json({ error: "Project not found" }, 404);
-  const data = await jsonInput(c, updateInput); if (data instanceof Response) return data;
+  const data = await subtaskJsonInput(c, updateInput); if (data instanceof Response) return data;
   const hasSchedule = hasField(data, "schedule");
   const itemPatch: ItemPatch = {};
   if (hasField(data, "title")) itemPatch.title = data.title;

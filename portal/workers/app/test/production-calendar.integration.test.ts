@@ -107,15 +107,17 @@ async function insertSubtask(projectId: string, title: string, assigneeId: strin
   endKind?: "date" | "timed";
 } = {}): Promise<string> {
   const id = crypto.randomUUID();
-  const endKind = schedule.endKind ?? "date";
-  const endCivil = schedule.end ?? "2027-03-01";
-  const startKind = schedule.startKind ?? endKind;
-  const start = startKind === "timed" ? instant(schedule.start ?? oneHourBefore(endCivil)) : null;
-  const end = endKind === "timed" ? instant(endCivil) : null;
+  // Every end is a moment (0052, ADR 0016): a "date" kind is the fixture shorthand for the 09:00 / 17:00 presets of that day.
+  const endCivil = (schedule.endKind ?? "date") === "date" || !(schedule.end ?? "2027-03-01").includes("T") ? `${(schedule.end ?? "2027-03-01").slice(0, 10)}T17:00` : schedule.end!;
+  const startCivil = schedule.start === undefined
+    ? (schedule.startKind ?? schedule.endKind ?? "date") === "date" ? `${endCivil.slice(0, 10)}T09:00` : oneHourBefore(endCivil)
+    : schedule.start.includes("T") ? schedule.start : `${schedule.start}T09:00`;
+  const start = instant(startCivil);
+  const end = instant(endCivil);
   const now = Date.now();
   await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
     // The end's civil string is stored in `due_date` (there is no `schedule_end_civil` column).
-    .bind(id, projectId, title, Math.floor(Math.random() * 1_000_000), assigneeId ? 1 : 0, endCivil, startKind, schedule.start ?? (startKind === "timed" ? oneHourBefore(endCivil) : endCivil), start?.epochMs ?? null, start?.utcOffsetMinutes ?? null, start?.fold ?? null, endKind, end?.epochMs ?? null, end?.utcOffsetMinutes ?? null, end?.fold ?? null, "Australia/Sydney", 1, adminId, now, now).run();
+    .bind(id, projectId, title, Math.floor(Math.random() * 1_000_000), assigneeId ? 1 : 0, endCivil, "timed", startCivil, start.epochMs, start.utcOffsetMinutes, start.fold, "timed", end.epochMs, end.utcOffsetMinutes, end.fold, "Australia/Sydney", 1, adminId, now, now).run();
   // The relation is the only place assignees live (#368, #373).
   if (assigneeId) await database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 1, ?)").bind(id, assigneeId, now).run();
   return id;
@@ -203,7 +205,7 @@ beforeAll(async () => {
   const touching = await insertSubtask(overlapProjectId, "Overlap touching", editorId, { start: "2026-08-27T12:00", end: "2026-08-27T13:00", startKind: "timed", endKind: "timed" });
   const completed = await insertSubtask(overlapProjectId, "Overlap completed", editorId, { start: "2026-08-27T10:30", end: "2026-08-27T11:30", startKind: "timed", endKind: "timed" });
   await database.DB.prepare("UPDATE project_subtasks SET done = 1 WHERE id = ?").bind(completed).run();
-  await insertSubtask(overlapProjectId, "Overlap date only", editorId, { start: "2026-08-27", end: "2026-08-28", startKind: "date", endKind: "date" });
+  await insertSubtask(overlapProjectId, "Overlap date only", editorId, { start: "2026-08-31", end: "2026-09-01", startKind: "date", endKind: "date" });
   await insertSubtask(overlapProjectId, "Overlap unassigned", null, { start: "2026-08-27T10:00", end: "2026-08-27T12:00", startKind: "timed", endKind: "timed" });
 
   await insertProject(externalRemovedProjectId, "11 External Removed Street", "editing_autohdr");
@@ -229,19 +231,19 @@ beforeAll(async () => {
   await insertProject(multiProjectId, "17 Multi Street", "editing_autohdr");
   for (const userId of [multiA, multiB, multiC, multiD]) await insertMember(multiProjectId, userId, "editor");
   await insertMember(multiProjectId, externalId, "editor");
-  await insertSharedSubtask(multiProjectId, "Multi shared", [multiA, multiB, multiC], { end: "2026-08-27", endKind: "date" });
+  await insertSharedSubtask(multiProjectId, "Multi shared", [multiA, multiB, multiC], { end: "2026-08-28", endKind: "date" });
   await insertSharedSubtask(multiProjectId, "Multi nobody", [], { end: "2026-08-27", endKind: "date" });
   await insertSharedSubtask(multiProjectId, "Multi hidden pair", [externalId, adminId], { end: "2026-08-27", endKind: "date" });
   await insertSharedSubtask(multiProjectId, "Multi overlap one", [multiB], { start: "2026-08-27T10:00", end: "2026-08-27T12:00", startKind: "timed", endKind: "timed" });
   await insertSharedSubtask(multiProjectId, "Multi overlap two", [multiA, multiB], { start: "2026-08-27T11:00", end: "2026-08-27T13:00", startKind: "timed", endKind: "timed" });
   await insertSharedSubtask(multiProjectId, "Multi overlap three", [multiA], { start: "2026-08-27T15:00", end: "2026-08-27T16:00", startKind: "timed", endKind: "timed" });
-  await insertSharedSubtask(multiProjectId, "Multi allday one", [multiC, multiD], { end: "2026-08-27", endKind: "date" });
-  await insertSharedSubtask(multiProjectId, "Multi allday two", [multiC, multiD], { end: "2026-08-27", endKind: "date" });
+  await insertSharedSubtask(multiProjectId, "Multi allday one", [multiC, multiD], { end: "2026-08-28", endKind: "date" });
+  await insertSharedSubtask(multiProjectId, "Multi allday two", [multiC, multiD], { end: "2026-08-28", endKind: "date" });
 
   await insertProject(denseProjectId, "15 Density Street", "editing_autohdr");
   // Every dense row is done=1 so it is excluded from the default (completed=0) candidate set —
   // only the density test, which passes completed=1, pulls these 10,001 rows into scope.
-  await database.DB.exec(`WITH digits(n) AS (VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)), numbers(n) AS (SELECT a.n * 1000 + b.n * 100 + c.n * 10 + d.n + 1 FROM digits a CROSS JOIN digits b CROSS JOIN digits c CROSS JOIN digits d WHERE a.n * 1000 + b.n * 100 + c.n * 10 + d.n < 10000 UNION ALL SELECT 10001) INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) SELECT printf('90000000-0000-4000-8000-%012d', n), '${denseProjectId}', printf('Dense checklist %05d', n), 1, n, 0, '2030-01-01', 'date', '2030-01-01', 'date', 'Australia/Sydney', 1, '${adminId}', 0, 0 FROM numbers`);
+  await database.DB.exec(`WITH digits(n) AS (VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)), numbers(n) AS (SELECT a.n * 1000 + b.n * 100 + c.n * 10 + d.n + 1 FROM digits a CROSS JOIN digits b CROSS JOIN digits c CROSS JOIN digits d WHERE a.n * 1000 + b.n * 100 + c.n * 10 + d.n < 10000 UNION ALL SELECT 10001) INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) SELECT printf('90000000-0000-4000-8000-%012d', n), '${denseProjectId}', printf('Dense checklist %05d', n), 1, n, 0, '2030-01-01T17:00', 'timed', '2030-01-01T09:00', 1893448800000, 660, 0, 'timed', 1893477600000, 660, 0, 'Australia/Sydney', 1, '${adminId}', 0, 0 FROM numbers`);
 });
 
 describe("TB5C production Calendar range endpoint", () => {
@@ -401,7 +403,7 @@ describe("TB5C production Calendar range endpoint", () => {
     ]));
     const dateRange = body.events.find((event) => event.title === "Boundary date range start");
     expect(dateRange?.kind).toBe("checklist");
-    if (dateRange?.kind === "checklist") expect(dateRange.timing).toMatchObject({ allDay: true, start: "2026-08-26", end: "2026-08-28" });
+    if (dateRange?.kind === "checklist") expect(dateRange.timing).toMatchObject({ allDay: false, start: "2026-08-25T23:00:00.000Z", end: "2026-08-27T07:00:00.000Z" });
   });
 
   it("#222: serves the day and days subviews over the same bounded window and echoes them back", async () => {
@@ -437,9 +439,9 @@ describe("TB5C production Calendar range endpoint", () => {
     const adminIds = referenced(admin);
     expect(admin.projectBounds!.every((bound) => adminIds.has(bound.projectId))).toBe(true);
     expect(new Set(admin.projectBounds!.map((bound) => bound.projectId))).toEqual(adminIds);
-    expect(admin.projectBounds!.find((bound) => bound.projectId === memberProjectId)).toEqual({ projectId: memberProjectId, shootDate: "2026-08-20", createdAt: "2026-07-01T02:03:04.567Z", deadlineLocalCivil: "2026-08-27T09:00" });
+    expect(admin.projectBounds!.find((bound) => bound.projectId === memberProjectId)).toEqual({ projectId: memberProjectId, shootDate: "2026-08-20", createdAt: "2026-07-01T02:03:04.567Z", deadlineLocalCivil: "2026-08-27T09:00", deadlineFold: 0 });
     // a non-canonical free-text shoot date is not a bound; a project with no deadline has none
-    expect(admin.projectBounds!.find((bound) => bound.projectId === editorOnlyProjectId)).toEqual({ projectId: editorOnlyProjectId, shootDate: null, createdAt: "2026-08-11T14:00:00.000Z", deadlineLocalCivil: null });
+    expect(admin.projectBounds!.find((bound) => bound.projectId === editorOnlyProjectId)).toEqual({ projectId: editorOnlyProjectId, shootDate: null, createdAt: "2026-08-11T14:00:00.000Z", deadlineLocalCivil: null, deadlineFold: null });
     // the rest of the response is unchanged by the param
     expect({ ...admin, projectBounds: undefined }).toEqual({ ...adminProductionCalendarRangeResponseSchema.parse(plain), projectBounds: undefined });
 
@@ -522,6 +524,7 @@ describe("TB5C production Calendar range endpoint", () => {
     expect(byTitle.get("Overlap second")?.status.sameAssigneeOverlap).toBe(true);
     expect(byTitle.get("Overlap touching")?.status.sameAssigneeOverlap).toBe(false);
     expect(byTitle.get("Overlap completed")?.status.sameAssigneeOverlap).toBe(false);
+    // A date-only pick is the 09:00 to 17:00 preset (ADR 0016): a timed range like any other, here on days of its own.
     expect(byTitle.get("Overlap date only")?.status.sameAssigneeOverlap).toBe(false);
     expect(byTitle.get("Overlap unassigned")?.status.sameAssigneeOverlap).toBe(false);
   });
@@ -612,7 +615,7 @@ describe("TB5C production Calendar range endpoint", () => {
     expect(scheduledEvent.id.startsWith("checklist:")).toBe(true);
 
     const rawPatch = await patchRequest(`/api/projects/${idContractProjectId}/subtasks/${scheduledEvent.id}`, tokens.admin, {
-      schedule: { expectedVersion: 1, schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-29" }, end: { kind: "date", localCivil: "2026-08-29" } } },
+      schedule: { expectedVersion: 1, schedule: { state: "range", start: { localCivil: "2026-08-29T09:00" }, end: { localCivil: "2026-08-29T17:00" } } },
     });
     expect(rawPatch.status).toBe(400);
     await expect(rawPatch.json()).resolves.toMatchObject({ error: "Invalid project or subtask id" });
@@ -620,10 +623,10 @@ describe("TB5C production Calendar range endpoint", () => {
     const unwrappedId = subtaskIdFromCalendarEntityId(scheduledEvent.id);
     expect(unwrappedId).not.toBeNull();
     const unwrappedPatch = await patchRequest(`/api/projects/${idContractProjectId}/subtasks/${unwrappedId}`, tokens.admin, {
-      schedule: { expectedVersion: 1, schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-29" }, end: { kind: "date", localCivil: "2026-08-29" } } },
+      schedule: { expectedVersion: 1, schedule: { state: "range", start: { localCivil: "2026-08-29T09:00" }, end: { localCivil: "2026-08-29T17:00" } } },
     });
     expect(unwrappedPatch.status).toBe(200);
-    await expect(unwrappedPatch.json()).resolves.toMatchObject({ schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-29" }, end: { kind: "date", localCivil: "2026-08-29" } } });
+    await expect(unwrappedPatch.json()).resolves.toMatchObject({ schedule: { state: "range", start: { localCivil: "2026-08-29T09:00" }, end: { localCivil: "2026-08-29T17:00" } } });
   });
 });
 
@@ -674,14 +677,15 @@ describe("#370 Calendar reads the assignee relation", () => {
     expect(shared(await multi("&mine=1", tokens.multiD))).toHaveLength(0);
   });
 
-  it("flags overlap per person, never across people and never for all-day items", async () => {
+  it("flags overlap per person, never across people (every item is a timed range, ADR 0016)", async () => {
     const body = await multi("&completed=1");
     const flag = (title: string) => body.events.find((event) => event.kind === "checklist" && event.title === title)?.status.sameAssigneeOverlap;
     expect(flag("Multi overlap one")).toBe(true);
     expect(flag("Multi overlap two")).toBe(true);
     expect(flag("Multi overlap three")).toBe(false);
-    expect(flag("Multi allday one")).toBe(false);
-    expect(flag("Multi allday two")).toBe(false);
+    // The two preset-day items share multiC and multiD, so they overlap each other (and no one else) for both.
+    expect(flag("Multi allday one")).toBe(true);
+    expect(flag("Multi allday two")).toBe(true);
   });
 
   it("lists every assignee once in the people facet", async () => {

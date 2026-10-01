@@ -25,6 +25,7 @@ import {
   type ChecklistCalendarEventDto,
 } from "../src/production-calendar";
 import { STAGE_KEYS, STAGE_PRESENTATION_KEYS } from "../src/stage-move";
+import { resolveSydneyCivilMinute } from "../src/sydney-civil-time";
 
 const ADMIN_STAGE = "editing_autohdr" as const;
 const EDITOR_STAGE = "editing" as const;
@@ -39,9 +40,16 @@ const project = (stageKey: typeof ADMIN_STAGE | typeof EDITOR_STAGE) => ({
   checklist: { completed: 1, total: 3 },
   delivered: false,
 });
-const dateEndpoint = (localCivil: string) => ({ kind: "date" as const, localCivil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const });
-const timedEndpoint = (localCivil: string, instant: string, fold: 0 | 1 = 0) => ({ kind: "timed" as const, localCivil, instant, utcOffsetMinutes: fold === 1 ? 600 : 660, fold, resolution: "stored" as const });
-const rangeSchedule = (start: ReturnType<typeof dateEndpoint> | ReturnType<typeof timedEndpoint>, end: ReturnType<typeof dateEndpoint> | ReturnType<typeof timedEndpoint>, version = 4) => ({ state: "range" as const, version, zone: PRODUCTION_CALENDAR_ZONE, start, end, due: end.localCivil });
+const momentEndpoint = (localCivil: string, fold: 0 | 1 = 0) => {
+  const resolved = resolveSydneyCivilMinute(localCivil, fold === 1 ? "later" : "earlier");
+  if (!resolved.ok) throw new Error(`fixture endpoint ${localCivil} does not resolve`);
+  return { localCivil, instant: resolved.value.instant, utcOffsetMinutes: resolved.value.utcOffsetMinutes, fold: resolved.value.fold, resolution: "stored" as const };
+};
+/** A date picked without a time takes the presets (ADR 0016): 09:00 for a start, 17:00 for an end. */
+const presetStart = (date: string) => momentEndpoint(`${date}T09:00`);
+const presetEnd = (date: string) => momentEndpoint(`${date}T17:00`);
+const timedEndpoint = (localCivil: string, _instant?: string, fold: 0 | 1 = 0) => momentEndpoint(localCivil, fold);
+const rangeSchedule = (start: ReturnType<typeof momentEndpoint>, end: ReturnType<typeof momentEndpoint>, version = 4) => ({ state: "range" as const, version, zone: PRODUCTION_CALENDAR_ZONE, start, end, due: end.localCivil });
 
 function projectEvent(stageKey: typeof ADMIN_STAGE | typeof EDITOR_STAGE, deadlineLocalCivil = "2026-08-27T09:00"): CalendarEventDto<typeof stageKey> {
   return {
@@ -59,9 +67,7 @@ function projectEvent(stageKey: typeof ADMIN_STAGE | typeof EDITOR_STAGE, deadli
 }
 
 function checklistEvent(stageKey: typeof ADMIN_STAGE | typeof EDITOR_STAGE, schedule: ReturnType<typeof rangeSchedule>): ChecklistCalendarEventDto<typeof stageKey> {
-  const timing = schedule.start.kind === "date"
-    ? { allDay: true as const, start: schedule.start.localCivil, end: "2026-08-29" }
-    : { allDay: false as const, start: schedule.start.instant!, end: schedule.end.instant };
+  const timing = { allDay: false as const, start: schedule.start.instant, end: schedule.end.instant };
   return { id: `checklist:${PERSON_ID}`, kind: "checklist", title: "Select hero images", project: project(stageKey), assignees: [person], otherAssigneeCount: 0, timing, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true } };
 }
 
@@ -71,7 +77,7 @@ function response(stageKey: typeof ADMIN_STAGE | typeof EDITOR_STAGE) {
       start: "2026-08-24", end: "2026-09-05", date: "2026-08-27", subview: "month" as const, zone: PRODUCTION_CALENDAR_ZONE,
       appliedFilters: { layers: ["project", "checklist"] as ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false },
     },
-    events: [projectEvent(stageKey), checklistEvent(stageKey, rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-27")))],
+    events: [projectEvent(stageKey), checklistEvent(stageKey, rangeSchedule(presetStart("2026-08-27"), presetEnd("2026-08-27")))],
     filterFacets: { projects: [{ id: PROJECT_ID, street: "1 Example Street" }], people: [person], myTasksUserId: PERSON_ID },
   };
 }
@@ -186,8 +192,8 @@ describe("TB5C strict role-safe DTOs", () => {
   it("#222: accepts OPTIONAL strict projectBounds on every role's response", () => {
     const projectId = "123e4567-e89b-42d3-a456-426614174000";
     const bounds = [
-      { projectId, shootDate: "2026-08-20", createdAt: "2026-07-01T00:00:00.000Z", deadlineLocalCivil: "2026-08-27T09:00" },
-      { projectId: "223e4567-e89b-42d3-a456-426614174000", shootDate: null, createdAt: "2026-07-02T03:04:05.678Z", deadlineLocalCivil: null },
+      { projectId, shootDate: "2026-08-20", createdAt: "2026-07-01T00:00:00.000Z", deadlineLocalCivil: "2026-08-27T09:00", deadlineFold: 0 },
+      { projectId: "223e4567-e89b-42d3-a456-426614174000", shootDate: null, createdAt: "2026-07-02T03:04:05.678Z", deadlineLocalCivil: null, deadlineFold: null },
     ];
     for (const [schema, stage] of [[adminProductionCalendarRangeResponseSchema, ADMIN_STAGE], [editorProductionCalendarRangeResponseSchema, EDITOR_STAGE], [externalCalendarRangeSchema, EDITOR_STAGE]] as const) {
       // absent (what every request without bounds=1 receives) and present both parse
@@ -214,8 +220,8 @@ describe("TB5C strict role-safe DTOs", () => {
   it("accepts only range checklist schedules in the event schema (ADR 0011)", () => {
     const stage = z.enum(STAGE_PRESENTATION_KEYS);
     const eventSchema = calendarEventSchemaFor(stage);
-    const oneDay = checklistEvent(EDITOR_STAGE, rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-27")));
-    const range = checklistEvent(EDITOR_STAGE, rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-28")));
+    const oneDay = checklistEvent(EDITOR_STAGE, rangeSchedule(presetStart("2026-08-27"), presetEnd("2026-08-27")));
+    const range = checklistEvent(EDITOR_STAGE, rangeSchedule(presetStart("2026-08-27"), presetEnd("2026-08-28")));
     expect(eventSchema.safeParse(oneDay).success).toBe(true);
     expect(eventSchema.safeParse(range).success).toBe(true);
     expect(eventSchema.safeParse({ ...range, schedule: { ...range.schedule, state: "due_only", start: null } }).success).toBe(false);
@@ -258,7 +264,7 @@ describe("TB5C Sydney mapping contract", () => {
     expect(snapped).toEqual({ ok: true, value: { expectedVersion: 3, deadline: { localCivil: "2026-08-29T10:00" }, reminderOffsetsMinutes: [] } });
   });
 
-  it("moves checklist ranges by civil components, resolves endpoints independently, and subtracts exclusive all-day ends", () => {
+  it("moves checklist ranges by civil components, resolves endpoints independently, and resizes an end to a civil minute", () => {
     const timed = checklistEvent(EDITOR_STAGE, rangeSchedule(timedEndpoint("2026-10-03T01:30", "2026-10-02T15:30:00.000Z"), timedEndpoint("2026-10-03T03:30", "2026-10-02T17:30:00.000Z")));
     const moved = mapChecklistMoveToCommand({ event: timed, target: { subview: "month", targetDate: "2026-10-04" } });
     expect(moved).toMatchObject({ ok: true, value: { expectedVersion: 4, schedule: { state: "range", start: { localCivil: "2026-10-04T01:30" }, end: { localCivil: "2026-10-04T03:30" } } } });
@@ -267,9 +273,11 @@ describe("TB5C Sydney mapping contract", () => {
     const fold = mapChecklistMoveToCommand({ event: independentFold, target: { subview: "month", targetDate: "2026-04-05" }, disambiguation: { start: "earlier", end: "later" } });
     expect(fold).toMatchObject({ ok: true, value: { schedule: { start: { disambiguation: "earlier" }, end: { disambiguation: "later" } } } });
 
-    const allDay = checklistEvent(EDITOR_STAGE, rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-27")));
-    const resized = mapChecklistEndResizeToCommand({ event: allDay, target: { subview: "month", targetDate: "2026-08-29" } });
-    expect(resized).toMatchObject({ ok: true, value: { schedule: { start: { localCivil: "2026-08-27" }, end: { localCivil: "2026-08-28" } } } });
+    const allDay = checklistEvent(EDITOR_STAGE, rangeSchedule(presetStart("2026-08-27"), presetEnd("2026-08-27")));
+    const resized = mapChecklistEndResizeToCommand({ event: allDay, target: { subview: "week", targetDate: "2026-08-29", targetCivilMinute: "2026-08-29T18:30" } });
+    expect(resized).toMatchObject({ ok: true, value: { schedule: { start: { localCivil: "2026-08-27T09:00" }, end: { localCivil: "2026-08-29T18:30" } } } });
+    // A timed end needs a civil minute: a bare date target is not enough.
+    expect(mapChecklistEndResizeToCommand({ event: allDay, target: { subview: "month", targetDate: "2026-08-29" } })).toMatchObject({ ok: false, error: { code: "invalid_local_time" } });
     expect(mapChecklistEndResizeToCommand({ event: allDay, target: { subview: "month", targetDate: "2026-08-29", edge: "start" } })).toMatchObject({ ok: false, error: { code: "start_resize_unsupported" } });
   });
 });

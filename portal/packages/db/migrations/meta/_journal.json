@@ -365,6 +365,13 @@
       "when": 1789500000000,
       "tag": "0051_tonomo_order_tombstones",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "6",
+      "when": 1789510000000,
+      "tag": "0052_subtask_ends_are_moments",
+      "breakpoints": true
     }
   ]
 }

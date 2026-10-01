@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
 import { scanDueSubtasks } from "../../background/src/notifications";
-import { externalSubtaskAssigneeOptionsResponseSchema, subtaskAssigneeOptionsResponseSchema } from "@quincy/shared";
+import { presetSubtaskInsertValues, SUBTASK_SCHEDULE_INSERT_COLUMNS, externalSubtaskAssigneeOptionsResponseSchema, subtaskAssigneeOptionsResponseSchema } from "@quincy/shared";
 
 const database = env as unknown as { DB: D1Database };
 const baseEnv = env as unknown as Env;
@@ -33,22 +33,22 @@ describe("project subtasks API", () => {
   it("creates and cycles every writable schedule shape (date range, one day, timed range), preserving exact civil metadata", async () => {
     const rangeResponse = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", {
       title: "TB4D date range",
-      schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-27" }, end: { kind: "date", localCivil: "2026-08-28" } },
+      schedule: { state: "range", start: { localCivil: "2026-08-27T09:00" }, end: { localCivil: "2026-08-28T17:00" } },
     });
     expect(rangeResponse.status).toBe(201);
-    const range = await rangeResponse.json() as { id: string; schedule: { state: string; version: number; start: { kind: string; localCivil: string }; end: { kind: string; localCivil: string }; zone: string }; dueDate: string };
-    expect(range).toMatchObject({ schedule: { state: "range", version: 1, zone: "Australia/Sydney", start: { kind: "date", localCivil: "2026-08-27" }, end: { kind: "date", localCivil: "2026-08-28" } }, dueDate: "2026-08-28" });
+    const range = await rangeResponse.json() as { id: string; schedule: { state: string; version: number; start: { localCivil: string }; end: { localCivil: string }; zone: string }; dueDate: string };
+    expect(range).toMatchObject({ schedule: { state: "range", version: 1, zone: "Australia/Sydney", start: { localCivil: "2026-08-27T09:00" }, end: { localCivil: "2026-08-28T17:00" } }, dueDate: "2026-08-28T17:00" });
 
-    const oneDay = await request(`/api/projects/${projectId}/subtasks/${range.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 1, schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-29" }, end: { kind: "date", localCivil: "2026-08-29" } } } });
-    expect(oneDay.status).toBe(200); expect(await oneDay.json()).toMatchObject({ schedule: { state: "range", version: 2, start: { kind: "date", localCivil: "2026-08-29" }, end: { kind: "date", localCivil: "2026-08-29" } }, dueDate: "2026-08-29" });
-    const timed = await request(`/api/projects/${projectId}/subtasks/${range.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 2, schedule: { state: "range", start: { kind: "timed", localCivil: "2026-08-30T08:00" }, end: { kind: "timed", localCivil: "2026-08-30T09:15" } } } });
-    expect(timed.status).toBe(200); expect(await timed.json()).toMatchObject({ schedule: { state: "range", version: 3, start: { kind: "timed", localCivil: "2026-08-30T08:00", utcOffsetMinutes: 600, fold: 0 }, end: { kind: "timed", localCivil: "2026-08-30T09:15", utcOffsetMinutes: 600, fold: 0 } }, dueDate: "2026-08-30T09:15" });
-    const backToDates = await request(`/api/projects/${projectId}/subtasks/${range.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 3, schedule: { state: "range", start: { kind: "date", localCivil: "2026-09-01" }, end: { kind: "date", localCivil: "2026-09-04" } } } });
-    expect(backToDates.status).toBe(200); expect(await backToDates.json()).toMatchObject({ schedule: { state: "range", version: 4, start: { kind: "date", localCivil: "2026-09-01" }, end: { kind: "date", localCivil: "2026-09-04" } }, dueDate: "2026-09-04" });
+    const oneDay = await request(`/api/projects/${projectId}/subtasks/${range.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 1, schedule: { state: "range", start: { localCivil: "2026-08-29T09:00" }, end: { localCivil: "2026-08-29T17:00" } } } });
+    expect(oneDay.status).toBe(200); expect(await oneDay.json()).toMatchObject({ schedule: { state: "range", version: 2, start: { localCivil: "2026-08-29T09:00" }, end: { localCivil: "2026-08-29T17:00" } }, dueDate: "2026-08-29T17:00" });
+    const timed = await request(`/api/projects/${projectId}/subtasks/${range.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 2, schedule: { state: "range", start: { localCivil: "2026-08-30T08:00" }, end: { localCivil: "2026-08-30T09:15" } } } });
+    expect(timed.status).toBe(200); expect(await timed.json()).toMatchObject({ schedule: { state: "range", version: 3, start: { localCivil: "2026-08-30T08:00", utcOffsetMinutes: 600, fold: 0 }, end: { localCivil: "2026-08-30T09:15", utcOffsetMinutes: 600, fold: 0 } }, dueDate: "2026-08-30T09:15" });
+    const backToDates = await request(`/api/projects/${projectId}/subtasks/${range.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 3, schedule: { state: "range", start: { localCivil: "2026-09-01T09:00" }, end: { localCivil: "2026-09-04T17:00" } } } });
+    expect(backToDates.status).toBe(200); expect(await backToDates.json()).toMatchObject({ schedule: { state: "range", version: 4, start: { localCivil: "2026-09-01T09:00" }, end: { localCivil: "2026-09-04T17:00" } }, dueDate: "2026-09-04T17:00" });
 
-    const timedRange = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "TB4D timed range", schedule: { state: "range", start: { kind: "timed", localCivil: "2026-10-04T01:30" }, end: { kind: "timed", localCivil: "2026-10-04T03:30" } } });
+    const timedRange = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "TB4D timed range", schedule: { state: "range", start: { localCivil: "2026-10-04T01:30" }, end: { localCivil: "2026-10-04T03:30" } } });
     expect(timedRange.status).toBe(201); const timedRangeBody = await timedRange.json() as { id: string; schedule: { start: { instant: string }; end: { instant: string } } }; expect(Date.parse(timedRangeBody.schedule.start.instant)).toBeLessThan(Date.parse(timedRangeBody.schedule.end.instant));
-    const stale = await request(`/api/projects/${projectId}/subtasks/${timedRangeBody.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 0, schedule: { state: "range", start: { kind: "date", localCivil: "2026-10-05" }, end: { kind: "date", localCivil: "2026-10-06" } } } });
+    const stale = await request(`/api/projects/${projectId}/subtasks/${timedRangeBody.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 0, schedule: { state: "range", start: { localCivil: "2026-10-05T09:00" }, end: { localCivil: "2026-10-06T17:00" } } } });
     expect(stale.status).toBe(409); expect(await stale.json()).toMatchObject({ code: "subtask_schedule_version_conflict", current: { state: "range", version: 1 } });
   });
 
@@ -58,11 +58,13 @@ describe("project subtasks API", () => {
     const before = await count();
     // Unscheduled, and due-only: both are refused at the storage layer.
     await expect(insert(crypto.randomUUID(), "schedule_version", 0)).rejects.toThrow(/CHECK constraint failed/);
-    await expect(insert(crypto.randomUUID(), "due_date, schedule_version", "2026-08-18", 1)).rejects.toThrow(/CHECK constraint failed/);
+    await expect(insert(crypto.randomUUID(), "due_date, schedule_version", "2026-08-18T17:00", 1)).rejects.toThrow(/CHECK constraint failed/);
+    // A date-only endpoint is no longer a valid row (0052): both kinds must be timed with a resolved instant.
+    await expect(insert(crypto.randomUUID(), "due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version", "2026-08-19", "date", "2026-08-18", "date", "Australia/Sydney", 1)).rejects.toThrow(/CHECK constraint failed/);
     expect(await count()).toBe(before);
 
     const id = crypto.randomUUID();
-    await insert(id, "due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version", "2026-08-19", "date", "2026-08-18", "date", "Australia/Sydney", 1);
+    await insert(id, `${SUBTASK_SCHEDULE_INSERT_COLUMNS}`, ...presetSubtaskInsertValues("2026-08-18", "2026-08-19"));
     expect(await count()).toBe(before + 1);
     const listed = await (await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token")).json() as { subtasks: Array<{ id: string; schedule: { state: string } }> };
     expect(listed.subtasks.find((item) => item.id === id)?.schedule.state).toBe("range");
@@ -78,19 +80,19 @@ describe("project subtasks API", () => {
     expect(created.status).toBe(201);
     const body = await created.json() as { id: string; schedule: { state: string; version: number } };
     expect(body.schedule).toMatchObject({ state: "range", version: 1 });
-    expect(await database.DB.prepare("SELECT schedule_start_kind, schedule_end_kind, schedule_zone, due_date IS NOT NULL AS has_due FROM project_subtasks WHERE id = ?").bind(body.id).first()).toEqual({ schedule_start_kind: "date", schedule_end_kind: "date", schedule_zone: "Australia/Sydney", has_due: 1 });
+    expect(await database.DB.prepare("SELECT schedule_start_kind, schedule_end_kind, schedule_zone, due_date IS NOT NULL AS has_due FROM project_subtasks WHERE id = ?").bind(body.id).first()).toEqual({ schedule_start_kind: "timed", schedule_end_kind: "timed", schedule_zone: "Australia/Sydney", has_due: 1 });
     await database.DB.prepare("DELETE FROM project_subtasks WHERE id IN (?, ?)").bind(id, body.id).run();
   });
 
   it("fails loud on storage that passes the range CHECK but is not a valid range: list and every write 500 with no schedule DTO, and the row is left untouched (ADR 0011)", async () => {
     const id = crypto.randomUUID(); const now = Date.now();
     // Structurally complete (so migration 0047's CHECK accepts it) but semantically invalid: 2026-02-30 is not a calendar day.
-    await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'TB4D corrupt', 0, 999998, 0, '2026-03-01', 'date', '2026-02-30', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(id, projectId, editorId, now, now).run();
+    await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'TB4D corrupt', 0, 999998, 0, '2026-03-01T17:00', 'timed', '2026-02-30T09:00', 1772316000000, 660, 0, 'timed', 1772344800000, 660, 0, 'Australia/Sydney', 1, ?, ?, ?)").bind(id, projectId, editorId, now, now).run();
     const before = await database.DB.prepare("SELECT * FROM project_subtasks WHERE id = ?").bind(id).first();
     const responses = [
       await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token"),
       await request(`/api/projects/${projectId}/subtasks/${id}`, "subtasks-editor-token", "PATCH", { title: "TB4D renamed" }),
-      await request(`/api/projects/${projectId}/subtasks/${id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 1, schedule: { state: "range", start: { kind: "date", localCivil: "2026-09-01" }, end: { kind: "date", localCivil: "2026-09-02" } } } }),
+      await request(`/api/projects/${projectId}/subtasks/${id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 1, schedule: { state: "range", start: { localCivil: "2026-09-01T09:00" }, end: { localCivil: "2026-09-02T17:00" } } } }),
     ];
     for (const response of responses) {
       expect(response.status).toBe(500);
@@ -109,12 +111,12 @@ describe("project subtasks API", () => {
     expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-admin-token")).status).toBe(200);
     expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-photographer-token")).status).toBe(200);
     expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-outsider-token")).status).toBe(403);
-    expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: " ", schedule: { state: "range", start: { kind: "date", localCivil: "2026-09-01" }, end: { kind: "date", localCivil: "2026-09-02" } } })).status).toBe(400);
-    expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "Bad date", schedule: { state: "range", start: { kind: "date", localCivil: "2027-02-29" }, end: { kind: "date", localCivil: "2027-03-01" } } })).status).toBe(400);
+    expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: " ", schedule: { state: "range", start: { localCivil: "2026-09-01T09:00" }, end: { localCivil: "2026-09-02T17:00" } } })).status).toBe(400);
+    expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "Bad date", schedule: { state: "range", start: { localCivil: "2027-02-29T09:00" }, end: { localCivil: "2027-03-01T17:00" } } })).status).toBe(400);
     expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "Bad assignee", assigneeIds: [outsiderId] })).status).toBe(400);
-    const firstResponse = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "First", assigneeIds: [photographerId], schedule: { state: "range", start: { kind: "date", localCivil: "2028-02-28" }, end: { kind: "date", localCivil: "2028-02-29" } } });
+    const firstResponse = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "First", assigneeIds: [photographerId], schedule: { state: "range", start: { localCivil: "2028-02-28T09:00" }, end: { localCivil: "2028-02-29T17:00" } } });
     expect(firstResponse.status).toBe(201); const first = await firstResponse.json() as { id: string; position: number; assignmentVersion: number; dueDate: string | null };
-    expect(first).toMatchObject({ position: 1024, assignmentVersion: 1, dueDate: "2028-02-29" });
+    expect(first).toMatchObject({ position: 1024, assignmentVersion: 1, dueDate: "2028-02-29T17:00" });
     const second = await (await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "Second" })).json() as { id: string; position: number };
     expect(second.position).toBe(2048);
     // #141: an assignment is a durable occurrence (outbox row) the consumer delivers, not a direct row.
@@ -128,7 +130,7 @@ describe("project subtasks API", () => {
     // Retrying the same delta is stale (the version moved): a conflict, not another assignment event.
     expect((await assignees(1, [adminId], [photographerId])).status).toBe(409); expect(await notificationCount()).toBe(2);
     const cleared = await assignees(2, [], [adminId]);
-    expect(await cleared.json()).toMatchObject({ dueDate: "2028-02-29", assignees: [], assignmentVersion: 3 });
+    expect(await cleared.json()).toMatchObject({ dueDate: "2028-02-29T17:00", assignees: [], assignmentVersion: 3 });
     const reassignedAgain = await assignees(3, [adminId], []);
     expect(await reassignedAgain.json()).toMatchObject({ assignmentVersion: 4 }); expect(await notificationCount()).toBe(3);
     expect((await database.DB.prepare("SELECT source_key FROM notification_outbox WHERE event_type = 'project.subtask.assigned' AND project_id = ? ORDER BY source_key").bind(projectId).all()).results.map((row) => (row as { source_key: string }).source_key)).toEqual(expect.arrayContaining([`subtask-assignment:${first.id}:2`, `subtask-assignment:${first.id}:4`]));
@@ -142,9 +144,9 @@ describe("project subtasks API", () => {
   });
 
   it("keeps absent optional fields unchanged, does access-before-existence checks, and never audits missing mutations", async () => {
-    const task = await (await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "Null semantics", schedule: { state: "range", start: { kind: "date", localCivil: "2026-11-28" }, end: { kind: "date", localCivil: "2026-12-01" } } })).json() as { id: string; dueDate: string };
+    const task = await (await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "Null semantics", schedule: { state: "range", start: { localCivil: "2026-11-28T09:00" }, end: { localCivil: "2026-12-01T17:00" } } })).json() as { id: string; dueDate: string };
     const unchanged = await (await request(`/api/projects/${projectId}/subtasks/${task.id}`, "subtasks-editor-token", "PATCH", { done: true })).json() as { dueDate: string | null };
-    expect(unchanged.dueDate).toBe("2026-12-01");
+    expect(unchanged.dueDate).toBe("2026-12-01T17:00");
     const missingProject = crypto.randomUUID(); const missingTask = crypto.randomUUID();
     const before = (await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ?").bind(missingTask).first<{ count: number }>())!.count;
     for (const [method, suffix, body] of [["POST", "", { title: "No" }], ["PATCH", `/${missingTask}`, { done: true }], ["POST", `/${missingTask}/reorder`, { beforeId: null, afterId: null }], ["DELETE", `/${missingTask}`, undefined]] as const) {
@@ -157,8 +159,8 @@ describe("project subtasks API", () => {
   it("rejects invalid or stale reorder neighbors and rebases tied snapshots, including a 24-item checklist", async () => {
     const now = Date.now(); const guardedProject = crypto.randomUUID(); const targetId = crypto.randomUUID(); const beforeId = crypto.randomUUID(); const afterId = crypto.randomUUID(); const betweenId = crypto.randomUUID(); const otherProject = crypto.randomUUID(); const foreignId = crypto.randomUUID();
     for (const id of [guardedProject, otherProject]) await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, ?, 'editing_autohdr', 0, ?, ?)").bind(id, `Reorder ${id}`, now, now).run();
-    for (const [id, position] of [[beforeId, 1024], [afterId, 2048], [targetId, 3072], [betweenId, 4096]] as const) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(id, guardedProject, id, position, editorId, now, now).run();
-    await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'foreign', 0, 1024, 0, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(foreignId, otherProject, editorId, now, now).run();
+    for (const [id, position] of [[beforeId, 1024], [afterId, 2048], [targetId, 3072], [betweenId, 4096]] as const) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, '2099-12-31T17:00', 'timed', '2099-12-31T09:00', 4102351200000, 660, 0, 'timed', 4102380000000, 660, 0, 'Australia/Sydney', 1, ?, ?, ?)").bind(id, guardedProject, id, position, editorId, now, now).run();
+    await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'foreign', 0, 1024, 0, '2099-12-31T17:00', 'timed', '2099-12-31T09:00', 4102351200000, 660, 0, 'timed', 4102380000000, 660, 0, 'Australia/Sydney', 1, ?, ?, ?)").bind(foreignId, otherProject, editorId, now, now).run();
     for (const body of [{ beforeId: "not-a-uuid", afterId: null }, { beforeId: 42, afterId: null }, { beforeId: null }, { beforeId: null, afterId: null, position: 1 }]) expect((await request(`/api/projects/${guardedProject}/subtasks/${targetId}/reorder`, "subtasks-admin-token", "POST", body)).status).toBe(400);
     expect((await request(`/api/projects/${guardedProject}/subtasks/${targetId}/reorder`, "subtasks-admin-token", "POST", { beforeId: targetId, afterId })).status).toBe(400);
     expect((await request(`/api/projects/${guardedProject}/subtasks/${targetId}/reorder`, "subtasks-admin-token", "POST", { beforeId, afterId: beforeId })).status).toBe(400);
@@ -170,13 +172,13 @@ describe("project subtasks API", () => {
 
     const tiedProject = crypto.randomUUID(); const tiedBefore = "81000000-0000-4000-8000-000000000001"; const tiedAfter = "81000000-0000-4000-8000-000000000002"; const tiedTarget = "81000000-0000-4000-8000-000000000003";
     await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Tied rebase', 'editing_autohdr', 0, ?, ?)").bind(tiedProject, now, now).run();
-    for (const [id, position] of [[tiedBefore, 1024], [tiedAfter, 1024], [tiedTarget, 4096]] as const) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(id, tiedProject, id, position, editorId, now, now).run();
+    for (const [id, position] of [[tiedBefore, 1024], [tiedAfter, 1024], [tiedTarget, 4096]] as const) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, '2099-12-31T17:00', 'timed', '2099-12-31T09:00', 4102351200000, 660, 0, 'timed', 4102380000000, 660, 0, 'Australia/Sydney', 1, ?, ?, ?)").bind(id, tiedProject, id, position, editorId, now, now).run();
     expect(await (await request(`/api/projects/${tiedProject}/subtasks/${tiedTarget}/reorder`, "subtasks-admin-token", "POST", { beforeId: tiedBefore, afterId: tiedAfter })).json()).toEqual({ position: 2048 });
     expect((await database.DB.prepare("SELECT id, position FROM project_subtasks WHERE project_id = ? ORDER BY position, id").bind(tiedProject).all()).results).toEqual([{ id: tiedBefore, position: 1024 }, { id: tiedTarget, position: 2048 }, { id: tiedAfter, position: 3072 }]);
 
     const longProject = crypto.randomUUID(); await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Long tied rebase', 'editing_autohdr', 0, ?, ?)").bind(longProject, now, now).run();
     const ids = Array.from({ length: 24 }, (_, index) => `82000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`);
-    for (const [index, id] of ids.entries()) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(id, longProject, id, index === 10 ? 10 * 1024 : (index + 1) * 1024, editorId, now, now).run();
+    for (const [index, id] of ids.entries()) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, '2099-12-31T17:00', 'timed', '2099-12-31T09:00', 4102351200000, 660, 0, 'timed', 4102380000000, 660, 0, 'Australia/Sydney', 1, ?, ?, ?)").bind(id, longProject, id, index === 10 ? 10 * 1024 : (index + 1) * 1024, editorId, now, now).run();
     const longTarget = ids[23]!; const longBefore = ids[9]!; const longAfter = ids[10]!;
     expect((await request(`/api/projects/${longProject}/subtasks/${longTarget}/reorder`, "subtasks-admin-token", "POST", { beforeId: longBefore, afterId: longAfter })).status).toBe(200);
     const longRows = (await database.DB.prepare("SELECT id, position FROM project_subtasks WHERE project_id = ? ORDER BY position, id").bind(longProject).all()).results as Array<{ id: string; position: number }>;
@@ -186,7 +188,7 @@ describe("project subtasks API", () => {
   it("reorders at beginning, middle, and end without restamping neighbors, auditing twice, or notifying", async () => {
     const now = 1; const ordinaryProject = crypto.randomUUID(); const a = crypto.randomUUID(); const b = crypto.randomUUID(); const c = crypto.randomUUID();
     await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Ordinary reorders', 'editing_autohdr', 0, ?, ?)").bind(ordinaryProject, now, now).run();
-    for (const [id, position] of [[a, 1024], [b, 2048], [c, 3072]] as const) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(id, ordinaryProject, id, position, editorId, now, now).run();
+    for (const [id, position] of [[a, 1024], [b, 2048], [c, 3072]] as const) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, '2099-12-31T17:00', 'timed', '2099-12-31T09:00', 4102351200000, 660, 0, 'timed', 4102380000000, 660, 0, 'Australia/Sydney', 1, ?, ?, ?)").bind(id, ordinaryProject, id, position, editorId, now, now).run();
     const assignments = async () => (await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ? AND event_type = 'project.subtask.assigned'").bind(ordinaryProject).first<{ count: number }>())!.count;
     const reorder = async (target: string, beforeId: string | null, afterId: string | null, expectedPosition: number, expectedOrder: string[]) => {
       const previous = (await database.DB.prepare("SELECT id, updated_at FROM project_subtasks WHERE project_id = ?").bind(ordinaryProject).all()).results as Array<{ id: string; updated_at: number }>;
@@ -202,7 +204,7 @@ describe("project subtasks API", () => {
   it("keeps a non-integral ordinary midpoint without rebasing its neighbors", async () => {
     const now = 1; const midpointProject = crypto.randomUUID(); const before = crypto.randomUUID(); const after = crypto.randomUUID(); const target = crypto.randomUUID();
     await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Fractional midpoint', 'editing_autohdr', 0, ?, ?)").bind(midpointProject, now, now).run();
-    for (const [id, position] of [[before, 1024], [after, 1025], [target, 4096]] as const) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(id, midpointProject, id, position, editorId, now, now).run();
+    for (const [id, position] of [[before, 1024], [after, 1025], [target, 4096]] as const) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, '2099-12-31T17:00', 'timed', '2099-12-31T09:00', 4102351200000, 660, 0, 'timed', 4102380000000, 660, 0, 'Australia/Sydney', 1, ?, ?, ?)").bind(id, midpointProject, id, position, editorId, now, now).run();
     const response = await request(`/api/projects/${midpointProject}/subtasks/${target}/reorder`, "subtasks-admin-token", "POST", { beforeId: before, afterId: after }); expect(response.status).toBe(200); expect(await response.json()).toEqual({ position: 1024.5 });
     expect(await database.DB.prepare("SELECT position FROM project_subtasks WHERE id = ?").bind(target).first()).toEqual({ position: 1024.5 });
     expect((await database.DB.prepare("SELECT id, position, updated_at FROM project_subtasks WHERE project_id = ? ORDER BY position, id").bind(midpointProject).all()).results).toEqual([{ id: before, position: 1024, updated_at: now }, { id: target, position: 1024.5, updated_at: expect.any(Number) }, { id: after, position: 1025, updated_at: now }]);
@@ -215,16 +217,16 @@ describe("project subtasks API", () => {
     const scheduleOutboxCount = async () => (await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox o JOIN project_activity_events a ON a.id = o.source_key WHERE o.event_type = 'project.activity.broad' AND a.event_type = 'project.checklist.schedule_changed' AND o.project_id = ?").bind(projectId).first<{ count: number }>())!.count;
     const beforeScheduleActivityCount = await scheduleActivityCount();
     const beforeScheduleOutboxCount = await scheduleOutboxCount();
-    const dueResponse = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "Reschedule reminder", assigneeIds: [photographerId], schedule: { state: "range", start: { kind: "timed", localCivil: "2026-08-18T09:00" }, end: { kind: "timed", localCivil: "2026-08-18T14:30" } } });
+    const dueResponse = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "Reschedule reminder", assigneeIds: [photographerId], schedule: { state: "range", start: { localCivil: "2026-08-18T09:00" }, end: { localCivil: "2026-08-18T14:30" } } });
     expect(dueResponse.status).toBe(201);
     const due = await dueResponse.json() as { id: string; dueDate: string; schedule: { state: string; version: number; end: { kind: string; localCivil: string; resolution: string } } };
-    expect(due).toMatchObject({ dueDate: "2026-08-18T14:30", schedule: { state: "range", version: 1, end: { kind: "timed", localCivil: "2026-08-18T14:30" } } });
+    expect(due).toMatchObject({ dueDate: "2026-08-18T14:30", schedule: { state: "range", version: 1, end: { localCivil: "2026-08-18T14:30" } } });
     expect(await scheduleActivityCount()).toBe(beforeScheduleActivityCount);
     expect(await scheduleOutboxCount()).toBe(beforeScheduleOutboxCount);
     const reminderEnv = { ...baseEnv, DB: database.DB, EMAIL: { send: vi.fn().mockResolvedValue({ messageId: "reschedule" }) }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test" } as unknown as Env;
     expect(await scanDueSubtasks(reminderEnv, firstMorning)).toBe(1);
     expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(due.id).first()).toEqual({ due_reminder_sent_at: firstMorning });
-    expect((await request(`/api/projects/${projectId}/subtasks/${due.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: due.schedule.version, schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-18" }, end: { kind: "date", localCivil: "2026-08-19" } } } })).status).toBe(200);
+    expect((await request(`/api/projects/${projectId}/subtasks/${due.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: due.schedule.version, schedule: { state: "range", start: { localCivil: "2026-08-18T09:00" }, end: { localCivil: "2026-08-19T17:00" } } } })).status).toBe(200);
     expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(due.id).first()).toEqual({ due_reminder_sent_at: null });
     expect(await scanDueSubtasks(reminderEnv, nextMorning)).toBe(1);
     expect((await database.DB.prepare("SELECT count(*) AS count FROM notifications WHERE type = 'subtask_due_today' AND project_id = ? AND user_id = ?").bind(projectId, photographerId).first<{ count: number }>())!.count).toBe(2);
@@ -232,12 +234,12 @@ describe("project subtasks API", () => {
   });
 
   it("emits one broad schedule notification when a schedule change moves the end", async () => {
-    const created = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "End change broadcast", schedule: { state: "range", start: { kind: "date", localCivil: "2026-12-30" }, end: { kind: "date", localCivil: "2026-12-31" } } });
+    const created = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "End change broadcast", schedule: { state: "range", start: { localCivil: "2026-12-30T09:00" }, end: { localCivil: "2026-12-31T17:00" } } });
     expect(created.status).toBe(201);
     const item = await created.json() as { id: string; schedule: { version: number } };
     const broadCount = async () => (await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox o JOIN project_activity_events a ON a.id = o.source_key WHERE o.event_type = 'project.activity.broad' AND a.event_type = 'project.checklist.schedule_changed' AND o.project_id = ?").bind(projectId).first<{ count: number }>())!.count;
     const before = await broadCount();
-    const dueOnly = await request(`/api/projects/${projectId}/subtasks/${item.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: item.schedule.version, schedule: { state: "range", start: { kind: "date", localCivil: "2026-12-30" }, end: { kind: "date", localCivil: "2027-01-01" } } } });
+    const dueOnly = await request(`/api/projects/${projectId}/subtasks/${item.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: item.schedule.version, schedule: { state: "range", start: { localCivil: "2026-12-30T09:00" }, end: { localCivil: "2027-01-01T17:00" } } } });
     expect(dueOnly.status).toBe(200);
     expect(await broadCount()).toBe(before + 1);
   });
@@ -247,14 +249,14 @@ describe("project subtasks API", () => {
     const created = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", {
       title: "Fold-only reminder",
       assigneeIds: [photographerId],
-      schedule: { state: "range", start: { kind: "timed", localCivil: "2026-04-05T00:00" }, end: { kind: "timed", localCivil: "2026-04-05T02:30", disambiguation: "earlier" } },
+      schedule: { state: "range", start: { localCivil: "2026-04-05T00:00" }, end: { localCivil: "2026-04-05T02:30", disambiguation: "earlier" } },
     });
     expect(created.status).toBe(201);
     const item = await created.json() as { id: string; dueDate: string; schedule: { version: number; end: { fold: number } } };
     const reminderEnv = { ...baseEnv, DB: database.DB, EMAIL: { send: vi.fn().mockResolvedValue({ messageId: "fold" }) }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test" } as unknown as Env;
     expect(await scanDueSubtasks(reminderEnv, firstMorning)).toBe(1);
     const changed = await request(`/api/projects/${projectId}/subtasks/${item.id}`, "subtasks-editor-token", "PATCH", {
-      schedule: { expectedVersion: item.schedule.version, schedule: { state: "range", start: { kind: "timed", localCivil: "2026-04-05T00:00" }, end: { kind: "timed", localCivil: "2026-04-05T02:30", disambiguation: "later" } } },
+      schedule: { expectedVersion: item.schedule.version, schedule: { state: "range", start: { localCivil: "2026-04-05T00:00" }, end: { localCivil: "2026-04-05T02:30", disambiguation: "later" } } },
     });
     expect(changed.status).toBe(200);
     const changedItem = await changed.json() as { dueDate: string; schedule: { end: { fold: number } } };
@@ -335,8 +337,8 @@ describe("project subtasks API", () => {
     await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Assignment count race', 'editing_autohdr', ?, ?)").bind(isolatedProject, now, now).run();
     await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'photographer', ?)").bind(cycle, isolatedProject, photographerId, now).run();
     await database.DB.batch([
-      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'One', 0, 1024, 1, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(taskOne, isolatedProject, editorId, now, now),
-      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Two', 0, 2048, 1, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(taskTwo, isolatedProject, editorId, now, now),
+      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'One', 0, 1024, 1, '2099-12-31T17:00', 'timed', '2099-12-31T09:00', 4102351200000, 660, 0, 'timed', 4102380000000, 660, 0, 'Australia/Sydney', 1, ?, ?, ?)").bind(taskOne, isolatedProject, editorId, now, now),
+      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Two', 0, 2048, 1, '2099-12-31T17:00', 'timed', '2099-12-31T09:00', 4102351200000, 660, 0, 'timed', 4102380000000, 660, 0, 'Australia/Sydney', 1, ?, ?, ?)").bind(taskTwo, isolatedProject, editorId, now, now),
       database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 1, ?)").bind(taskOne, photographerId, now),
       database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 1, ?)").bind(taskTwo, photographerId, now),
     ]);
@@ -360,7 +362,7 @@ describe("project subtasks API", () => {
     await database.DB.batch([
       database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'photographer', ?)").bind(photographerCycle, isolatedProject, editorId, now),
       database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(editorCycle, isolatedProject, editorId, now),
-      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Drifted assignment', 0, 1024, 1, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(taskId, isolatedProject, editorId, now, now),
+      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Drifted assignment', 0, 1024, 1, '2099-12-31T17:00', 'timed', '2099-12-31T09:00', 4102351200000, 660, 0, 'timed', 4102380000000, 660, 0, 'Australia/Sydney', 1, ?, ?, ?)").bind(taskId, isolatedProject, editorId, now, now),
       database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 1, ?)").bind(taskId, editorId, now),
     ]);
     try {
@@ -393,7 +395,7 @@ describe("default Subtask range (#339)", () => {
     const response = await request(`/api/projects/${id}/deadline`, "subtasks-admin-token", "PUT", { expectedVersion: before!.version, deadline: { localCivil }, reminderOffsetsMinutes: [] });
     expect(response.status).toBe(200);
   }
-  type Dto = { id: string; dueDate: string | null; schedule: { state: string; version: number; zone: string; start: { kind: string; localCivil: string } | null; end: { kind: string; localCivil: string } | null } };
+  type Dto = { id: string; dueDate: string | null; schedule: { state: string; version: number; zone: string; start: { localCivil: string } | null; end: { localCivil: string } | null } };
   async function create(id: string, body: Record<string, unknown> = { title: "Defaulted" }) {
     const response = await request(`/api/projects/${id}/subtasks`, "subtasks-admin-token", "POST", body);
     expect(response.status).toBe(201);
@@ -405,25 +407,26 @@ describe("default Subtask range (#339)", () => {
   it("creates without a schedule as the Project's shoot date to Deadline range", async () => {
     const id = await seedProject({ shootDate: "2026-11-02", deadlineLocalCivil: "2026-11-06T17:00" });
     const item = await create(id);
-    expect(item).toMatchObject({ dueDate: "2026-11-06", schedule: { state: "range", version: 1, zone: "Australia/Sydney", start: { kind: "date", localCivil: "2026-11-02" }, end: { kind: "date", localCivil: "2026-11-06" } } });
-    expect(await row(item.id)).toEqual({ due_date: "2026-11-06", schedule_start_kind: "date", schedule_start_civil: "2026-11-02", schedule_start_at: null, schedule_end_kind: "date", schedule_end_at: null, schedule_zone: "Australia/Sydney", schedule_version: 1 });
+    expect(item).toMatchObject({ dueDate: "2026-11-06T17:00", schedule: { state: "range", version: 1, zone: "Australia/Sydney", start: { localCivil: "2026-11-02T09:00" }, end: { localCivil: "2026-11-06T17:00" } } });
+    expect(await row(item.id)).toEqual({ due_date: "2026-11-06T17:00", schedule_start_kind: "timed", schedule_start_civil: "2026-11-02T09:00", schedule_start_at: 1793570400000, schedule_end_kind: "timed", schedule_end_at: 1793944800000, schedule_zone: "Australia/Sydney", schedule_version: 1 });
   });
 
   it.each([
-    ["no shoot date and no Deadline: the Sydney creation date, not the UTC date", { shootDate: null }, "2026-07-01", "2026-07-01"],
-    ["non-canonical shoot text falls back to the creation date", { shootDate: "Thursday arvo", deadlineLocalCivil: "2026-07-09T10:00" }, "2026-07-01", "2026-07-09"],
-    ["a Deadline before the shoot date collapses to one day on the Deadline", { shootDate: "2026-11-10", deadlineLocalCivil: "2026-11-06T09:00" }, "2026-11-06", "2026-11-06"],
-    ["a shoot date with no Deadline is one day", { shootDate: "2026-11-02" }, "2026-11-02", "2026-11-02"],
+    ["no shoot date and no Deadline: the Sydney creation date, not the UTC date", { shootDate: null }, "2026-07-01T09:00", "2026-07-01T17:00"],
+    ["non-canonical shoot text falls back to the creation date", { shootDate: "Thursday arvo", deadlineLocalCivil: "2026-07-09T10:00" }, "2026-07-01T09:00", "2026-07-09T10:00"],
+    ["a Deadline at or before the shoot day's 09:00 starts at 09:00 the day before it, and keeps the Deadline", { shootDate: "2026-11-10", deadlineLocalCivil: "2026-11-06T09:00" }, "2026-11-05T09:00", "2026-11-06T09:00"],
+    ["a Deadline before the shoot date but after its own day's 09:00 starts at 09:00 on the Deadline's day", { shootDate: "2026-11-10", deadlineLocalCivil: "2026-11-06T15:00" }, "2026-11-06T09:00", "2026-11-06T15:00"],
+    ["a shoot date with no Deadline is 09:00 to 17:00 that day", { shootDate: "2026-11-02" }, "2026-11-02T09:00", "2026-11-02T17:00"],
   ] as Array<[string, Seed, string, string]>)("%s", async (_name, seed, start, end) => {
     const item = await create(await seedProject(seed));
-    expect(item.schedule).toMatchObject({ state: "range", version: 1, start: { kind: "date", localCivil: start }, end: { kind: "date", localCivil: end } });
+    expect(item.schedule).toMatchObject({ state: "range", version: 1, start: { localCivil: start }, end: { localCivil: end } });
     expect(item.dueDate).toBe(end);
   });
 
   it("keeps an explicit range unchanged and rejects an explicit unscheduled create (#340)", async () => {
     const id = await seedProject({ shootDate: "2026-11-02", deadlineLocalCivil: "2026-11-06T17:00" });
-    const explicit = await create(id, { title: "Explicit", schedule: { state: "range", start: { kind: "date", localCivil: "2026-12-01" }, end: { kind: "date", localCivil: "2026-12-03" } } });
-    expect(explicit.schedule).toMatchObject({ state: "range", start: { localCivil: "2026-12-01" }, end: { localCivil: "2026-12-03" } });
+    const explicit = await create(id, { title: "Explicit", schedule: { state: "range", start: { localCivil: "2026-12-01T09:00" }, end: { localCivil: "2026-12-03T17:00" } } });
+    expect(explicit.schedule).toMatchObject({ state: "range", start: { localCivil: "2026-12-01T09:00" }, end: { localCivil: "2026-12-03T17:00" } });
     const unscheduled = await request(`/api/projects/${id}/subtasks`, "subtasks-admin-token", "POST", { title: "Explicit unscheduled", schedule: { state: "unscheduled" } });
     expect(unscheduled.status).toBe(400);
   });
@@ -436,8 +439,8 @@ describe("default Subtask range (#339)", () => {
     await database.DB.prepare("UPDATE projects SET shoot_date = '2026-12-01' WHERE id = ?").bind(id).run();
     await setDeadline(id, "2026-12-20T09:00");
     const listed = await (await request(`/api/projects/${id}/subtasks`, "subtasks-admin-token")).json() as { subtasks: Dto[] };
-    expect(listed.subtasks.find((entry) => entry.id === item.id)).toMatchObject({ dueDate: "2026-11-06", schedule: { state: "range", version: 1, start: { localCivil: "2026-11-02" }, end: { localCivil: "2026-11-06" } } });
-    expect(await row(item.id)).toMatchObject({ due_date: "2026-11-06", schedule_start_civil: "2026-11-02", schedule_version: 1 });
+    expect(listed.subtasks.find((entry) => entry.id === item.id)).toMatchObject({ dueDate: "2026-11-06T17:00", schedule: { state: "range", version: 1, start: { localCivil: "2026-11-02T09:00" }, end: { localCivil: "2026-11-06T17:00" } } });
+    expect(await row(item.id)).toMatchObject({ due_date: "2026-11-06T17:00", schedule_start_civil: "2026-11-02T09:00", schedule_version: 1 });
     expect((await database.DB.prepare("SELECT updated_at FROM project_subtasks WHERE id = ?").bind(item.id).first<{ updated_at: number }>())!.updated_at).toBe(updatedBefore);
     expect((await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ?").bind(item.id).first<{ count: number }>())!.count).toBe(auditBefore);
   });
@@ -445,7 +448,7 @@ describe("default Subtask range (#339)", () => {
   it("writes the same audit and activity shape as an explicit range create, apart from the schedule", async () => {
     const id = await seedProject({ shootDate: "2026-11-02", deadlineLocalCivil: "2026-11-06T17:00" });
     const defaulted = await create(id, { title: "Audit default", assigneeIds: [photographerId] });
-    const explicit = await create(id, { title: "Audit explicit", assigneeIds: [photographerId], schedule: { state: "range", start: { kind: "date", localCivil: "2026-11-02" }, end: { kind: "date", localCivil: "2026-11-06" } } });
+    const explicit = await create(id, { title: "Audit explicit", assigneeIds: [photographerId], schedule: { state: "range", start: { localCivil: "2026-11-02T09:00" }, end: { localCivil: "2026-11-06T17:00" } } });
     const audit = async (itemId: string) => (await database.DB.prepare("SELECT action, target_type, meta_json FROM audit_log WHERE target_id = ?").bind(itemId).all()).results;
     expect(await audit(defaulted.id)).toEqual(await audit(explicit.id));
     expect(await audit(defaulted.id)).toHaveLength(1);
@@ -470,8 +473,9 @@ describe("default Subtask range (#339)", () => {
 
 describe("ranges only (#340)", () => {
   const base = () => `/api/projects/${projectId}/subtasks`;
-  const day = (localCivil: string) => ({ kind: "date", localCivil }) as const;
-  const range = (start: string, end: string) => ({ state: "range", start: day(start), end: day(end) }) as const;
+  const day = (localCivil: string) => ({ localCivil: `${localCivil}T09:00` }) as const;
+  const endDay = (localCivil: string) => ({ localCivil: `${localCivil}T17:00` }) as const;
+  const range = (start: string, end: string) => ({ state: "range", start: day(start), end: endDay(end) }) as const;
   const auditCount = async () => (await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action LIKE 'project_subtask.%'").first<{ count: number }>())!.count;
   const rowCount = async () => (await database.DB.prepare("SELECT count(*) AS count FROM project_subtasks WHERE project_id = ?").bind(projectId).first<{ count: number }>())!.count;
   async function createRange(title: string, extra: Record<string, unknown> = {}, schedule: unknown = range("2026-09-01", "2026-09-03")) {
@@ -490,7 +494,7 @@ describe("ranges only (#340)", () => {
 
   it("removes the legacy single dueDate create input", async () => {
     const audits = await auditCount(); const rows = await rowCount();
-    const response = await request(base(), "subtasks-editor-token", "POST", { title: "Legacy", dueDate: "2026-08-18" });
+    const response = await request(base(), "subtasks-editor-token", "POST", { title: "Legacy", dueDate: "2026-08-18T17:00" });
     expect(response.status).toBe(400); expect(await response.json()).toMatchObject({ error: "Invalid input" });
     expect(await auditCount()).toBe(audits); expect(await rowCount()).toBe(rows);
   });
@@ -501,23 +505,23 @@ describe("ranges only (#340)", () => {
     for (const body of [
       { schedule: { expectedVersion: item.schedule.version, schedule: { state: "due_only", end: day("2026-09-04") } } },
       { schedule: { expectedVersion: item.schedule.version, schedule: { state: "unscheduled" } } },
-      { dueDate: "2026-09-02" },
+      { dueDate: "2026-09-02T17:00" },
       { dueDate: null },
     ]) {
       const response = await request(`${base()}/${item.id}`, "subtasks-editor-token", "PATCH", body);
       expect(response.status).toBe(400); expect(await response.json()).toMatchObject({ error: "Invalid input" });
     }
     expect(await auditCount()).toBe(audits);
-    expect(await database.DB.prepare("SELECT due_date, schedule_version FROM project_subtasks WHERE id = ?").bind(item.id).first()).toEqual({ due_date: "2026-09-03", schedule_version: 1 });
+    expect(await database.DB.prepare("SELECT due_date, schedule_version FROM project_subtasks WHERE id = ?").bind(item.id).first()).toEqual({ due_date: "2026-09-03T17:00", schedule_version: 1 });
   });
 
   it("stores a date range with start = end as a one-day range", async () => {
     const item = await createRange("One day", {}, range("2026-09-10", "2026-09-10"));
-    expect(item).toMatchObject({ dueDate: "2026-09-10", schedule: { state: "range", start: { localCivil: "2026-09-10" }, end: { localCivil: "2026-09-10" } } });
+    expect(item).toMatchObject({ dueDate: "2026-09-10T17:00", schedule: { state: "range", start: { localCivil: "2026-09-10T09:00" }, end: { localCivil: "2026-09-10T17:00" } } });
   });
 
   it("rejects timed start = end (an instant is not a day)", async () => {
-    const at = { kind: "timed", localCivil: "2026-09-10T09:00" } as const;
+    const at = { localCivil: "2026-09-10T09:00" } as const;
     const response = await request(base(), "subtasks-editor-token", "POST", { title: "Instant", schedule: { state: "range", start: at, end: at } });
     expect(response.status).toBe(400); expect(await response.json()).toMatchObject({ code: "subtask_schedule_invalid_order" });
   });
@@ -532,12 +536,12 @@ describe("ranges only (#340)", () => {
 
   it("fires the due-day reminder on the range END day, and again after the end moves", async () => {
     const reminderEnv = { ...baseEnv, DB: database.DB, EMAIL: { send: vi.fn().mockResolvedValue({ messageId: "range-end" }) }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test" } as unknown as Env;
-    const item = await createRange("Reminder on end", { assigneeIds: [photographerId] }, { state: "range", start: { kind: "timed", localCivil: "2026-11-02T00:00" }, end: { kind: "timed", localCivil: "2026-11-06T15:00" } });
+    const item = await createRange("Reminder on end", { assigneeIds: [photographerId] }, { state: "range", start: { localCivil: "2026-11-02T00:00" }, end: { localCivil: "2026-11-06T15:00" } });
     const startMorning = Date.UTC(2026, 10, 1, 21); // 2026-11-02 08:00 Sydney
     const endMorning = Date.UTC(2026, 10, 5, 21); // 2026-11-06 08:00 Sydney
     expect(await scanDueSubtasks(reminderEnv, startMorning)).toBe(0);
     expect(await scanDueSubtasks(reminderEnv, endMorning)).toBe(1);
-    const moved = await request(`${base()}/${item.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 1, schedule: { state: "range", start: { kind: "timed", localCivil: "2026-11-02T00:00" }, end: { kind: "timed", localCivil: "2026-11-09T15:00" } } } });
+    const moved = await request(`${base()}/${item.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 1, schedule: { state: "range", start: { localCivil: "2026-11-02T00:00" }, end: { localCivil: "2026-11-09T15:00" } } } });
     expect(moved.status).toBe(200);
     expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(item.id).first()).toEqual({ due_reminder_sent_at: null });
     expect(await scanDueSubtasks(reminderEnv, Date.UTC(2026, 10, 8, 21))).toBe(1); // 2026-11-09 08:00
@@ -815,7 +819,7 @@ describe("multi-assignee writes (#368)", () => {
       expect(body.code).toBe("subtask_assignment_version_conflict");
       expect(body.currentSubtask).toMatchObject({ id: item.id, assignmentVersion: 1 });
       expect(body.currentSubtask).toMatchObject({ assignees: [{ id: photographerId }], otherAssigneeCount: 0 });
-      const schedule = await externalPatch(item.id, { title: "Renamed", schedule: { expectedVersion: 9, schedule: { state: "range", start: { kind: "date", localCivil: "2026-09-01" }, end: { kind: "date", localCivil: "2026-09-02" } } } });
+      const schedule = await externalPatch(item.id, { title: "Renamed", schedule: { expectedVersion: 9, schedule: { state: "range", start: { localCivil: "2026-09-01T09:00" }, end: { localCivil: "2026-09-02T17:00" } } } });
       expect(schedule.status).toBe(409);
       expect((await schedule.json() as { currentSubtask: Record<string, unknown> }).currentSubtask).toMatchObject({ assignees: [{ id: photographerId }], otherAssigneeCount: 0 });
     });
@@ -1006,5 +1010,44 @@ describe("team removal and counts with several assignees (#371)", () => {
     expect(await pending(bId)).toEqual(notice);
     // The delivery guard's predicate: the recipient's relation row still carries the noticed version.
     expect(await relation(s.id)).toEqual([{ user_id: bId, assignment_version: notice!.version }]);
+  });
+});
+
+describe("every Subtask end is a moment (#423, ADR 0016)", () => {
+  const base = () => `/api/projects/${projectId}/subtasks`;
+  const post = (schedule: unknown) => request(base(), "subtasks-editor-token", "POST", { title: "Moment", schedule });
+  const issues = async (response: Response) => ((await response.json()) as { details: { issues: Array<{ path: string; code?: string; message: string }> } }).details.issues;
+
+  it("names the field when an end is a bare date, and writes nothing", async () => {
+    const before = (await database.DB.prepare("SELECT COUNT(*) AS n FROM project_subtasks WHERE project_id = ?").bind(projectId).first<{ n: number }>())!.n;
+    const response = await post({ state: "range", start: { localCivil: "2026-09-01T09:00" }, end: { localCivil: "2026-09-02" } });
+    expect(response.status).toBe(400);
+    const body = await response.clone().json() as { code?: string; field?: string; endpoint?: string };
+    expect(JSON.stringify(body)).toContain("subtask_schedule_time_required");
+    expect(JSON.stringify(body)).toContain("end");
+    expect((await database.DB.prepare("SELECT COUNT(*) AS n FROM project_subtasks WHERE project_id = ?").bind(projectId).first<{ n: number }>())!.n).toBe(before);
+  });
+
+  it("accepts a range under a day, rejects start at or after end by instant", async () => {
+    expect((await post({ state: "range", start: { localCivil: "2026-09-01T10:00" }, end: { localCivil: "2026-09-01T10:15" } })).status).toBe(201);
+    for (const [start, end] of [["2026-09-01T10:00", "2026-09-01T10:00"], ["2026-09-01T11:00", "2026-09-01T10:00"]]) {
+      const response = await post({ state: "range", start: { localCivil: start }, end: { localCivil: end } });
+      expect(response.status).toBe(400);
+      expect(JSON.stringify(await response.json())).toContain("subtask_schedule_invalid_order");
+    }
+  });
+
+  it("ignores the retired `kind` member from a stale tab", async () => {
+    const response = await post({ state: "range", start: { kind: "timed", localCivil: "2026-09-01T09:00" }, end: { kind: "timed", localCivil: "2026-09-01T17:00" } });
+    expect(response.status).toBe(201);
+    const stale = await post({ state: "range", start: { kind: "date", localCivil: "2026-09-01" }, end: { kind: "date", localCivil: "2026-09-02" } });
+    expect(stale.status).toBe(400);
+    expect(JSON.stringify(await stale.json())).toContain("subtask_schedule_time_required");
+  });
+
+  it("carries the Project's default range in the list response", async () => {
+    const response = await request(base(), "subtasks-editor-token");
+    const body = await response.json() as { projectDefaultRange: { start: { localCivil: string; fold: number }; end: { localCivil: string; fold: number } } | null };
+    expect(body.projectDefaultRange).toMatchObject({ start: { localCivil: expect.stringMatching(/T09:00$/), fold: 0 }, end: { localCivil: expect.stringMatching(/^\d{4}-\d\d-\d\dT\d\d:\d\d$/) } });
   });
 });

@@ -64,7 +64,8 @@ const UUID_PART = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[
 const UUID_RE = new RegExp(`^${UUID_PART}$`);
 const ANNOTATION_RE = new RegExp(`^annotation:(${UUID_PART})$`);
 const SUBTASK_ASSIGNMENT_RE = new RegExp(`^subtask-assignment:(${UUID_PART}):(\\d+)$`);
-const SUBTASK_DUE_RE = new RegExp(`^subtask-due:(${UUID_PART}):(\\d{4}-\\d{2}-\\d{2})$`);
+// The due is a date on rows written before migration 0052 and a civil minute ("YYYY-MM-DDTHH:MM") after it (ADR 0016).
+const SUBTASK_DUE_RE = new RegExp(`^subtask-due:(${UUID_PART}):(\\d{4}-\\d{2}-\\d{2}(?:T\\d{2}:\\d{2})?)$`);
 
 /**
  * Pure and total: never throws, and an unknown or malformed sourceKey (or one belonging to a

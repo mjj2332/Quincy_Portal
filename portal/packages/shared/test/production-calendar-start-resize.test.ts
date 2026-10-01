@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { resolveSydneyCivilMinute } from "../src/sydney-civil-time";
 import {
   mapChecklistStartResizeToCommand,
   PRODUCTION_CALENDAR_ZONE,
@@ -17,22 +18,26 @@ const project = () => ({
   checklist: { completed: 1, total: 3 },
   delivered: false,
 });
-const dateEndpoint = (localCivil: string) => ({ kind: "date" as const, localCivil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const });
-const timedEndpoint = (localCivil: string, instant: string, fold: 0 | 1 = 0) => ({ kind: "timed" as const, localCivil, instant, utcOffsetMinutes: fold === 1 ? 600 : 660, fold, resolution: "stored" as const });
-const rangeSchedule = (start: ReturnType<typeof dateEndpoint> | ReturnType<typeof timedEndpoint>, end: ReturnType<typeof dateEndpoint> | ReturnType<typeof timedEndpoint>, version = 4) => ({ state: "range" as const, version, zone: PRODUCTION_CALENDAR_ZONE, start, end, due: end.localCivil });
+const momentEndpoint = (localCivil: string, fold: 0 | 1 = 0) => {
+  const resolved = resolveSydneyCivilMinute(localCivil, fold === 1 ? "later" : "earlier");
+  if (!resolved.ok) throw new Error(`fixture endpoint ${localCivil} does not resolve`);
+  return { localCivil, instant: resolved.value.instant, utcOffsetMinutes: resolved.value.utcOffsetMinutes, fold: resolved.value.fold, resolution: "stored" as const };
+};
+const presetStart = (date: string) => momentEndpoint(`${date}T09:00`);
+const presetEnd = (date: string) => momentEndpoint(`${date}T17:00`);
+const timedEndpoint = (localCivil: string, _instant?: string, fold: 0 | 1 = 0) => momentEndpoint(localCivil, fold);
+const rangeSchedule = (start: ReturnType<typeof momentEndpoint>, end: ReturnType<typeof momentEndpoint>, version = 4) => ({ state: "range" as const, version, zone: PRODUCTION_CALENDAR_ZONE, start, end, due: end.localCivil });
 
 function checklistEvent(schedule: ReturnType<typeof rangeSchedule>): ChecklistCalendarEventDto<typeof EDITOR_STAGE> {
-  const timing = schedule.start.kind === "date"
-    ? { allDay: true as const, start: schedule.start.localCivil, end: "2026-08-29" }
-    : { allDay: false as const, start: schedule.start.instant!, end: schedule.end.instant };
+  const timing = { allDay: false as const, start: schedule.start.instant, end: schedule.end.instant };
   return { id: `checklist:${PERSON_ID}`, kind: "checklist", title: "Select hero images", project: project(), assignees: [person], otherAssigneeCount: 0, timing, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true } };
 }
 
 describe("TB5C mapChecklistStartResizeToCommand", () => {
-  it("maps an all-day start resize to the inclusive target date", () => {
-    const allDay = checklistEvent(rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-29")));
-    const resized = mapChecklistStartResizeToCommand({ event: allDay, target: { subview: "month", targetDate: "2026-08-26" } });
-    expect(resized).toMatchObject({ ok: true, value: { schedule: { start: { localCivil: "2026-08-26" }, end: { localCivil: "2026-08-29" } } } });
+  it("maps a day-granularity start resize to the target day at the start's own wall time", () => {
+    const allDay = checklistEvent(rangeSchedule(presetStart("2026-08-27"), presetEnd("2026-08-29")));
+    const resized = mapChecklistStartResizeToCommand({ event: allDay, target: { subview: "month", targetDate: "2026-08-26", targetCivilMinute: "2026-08-26T09:00" } });
+    expect(resized).toMatchObject({ ok: true, value: { schedule: { start: { localCivil: "2026-08-26T09:00" }, end: { localCivil: "2026-08-29T17:00" } } } });
   });
 
   it("keeps the end endpoint verbatim", () => {
@@ -40,13 +45,13 @@ describe("TB5C mapChecklistStartResizeToCommand", () => {
     const resized = mapChecklistStartResizeToCommand({ event: timed, target: { subview: "week", targetDate: "2026-08-27", targetCivilMinute: "2026-08-27T08:00" } });
     // Full endpoint, not just localCivil — endpointToInput (:660-663) carries fold through as a
     // disambiguation on the *preserved* end, which a partial match would let silently drop.
-    expect(resized).toMatchObject({ ok: true, value: { schedule: { end: { kind: "timed", localCivil: "2026-08-27T11:00", disambiguation: "earlier" } } } });
+    expect(resized).toMatchObject({ ok: true, value: { schedule: { end: { localCivil: "2026-08-27T11:00", disambiguation: "earlier" } } } });
   });
 
   it("keeps the end endpoint's later-fold disambiguation verbatim too", () => {
-    const timed = checklistEvent(rangeSchedule(timedEndpoint("2026-08-27T09:00", "2026-08-26T23:00:00.000Z"), timedEndpoint("2026-08-27T11:00", "2026-08-27T01:00:00.000Z", 1)));
-    const resized = mapChecklistStartResizeToCommand({ event: timed, target: { subview: "week", targetDate: "2026-08-27", targetCivilMinute: "2026-08-27T08:00" } });
-    expect(resized).toMatchObject({ ok: true, value: { schedule: { end: { kind: "timed", localCivil: "2026-08-27T11:00", disambiguation: "later" } } } });
+    const timed = checklistEvent(rangeSchedule(timedEndpoint("2026-04-05T01:00"), timedEndpoint("2026-04-05T02:30", undefined, 1)));
+    const resized = mapChecklistStartResizeToCommand({ event: timed, target: { subview: "week", targetDate: "2026-04-05", targetCivilMinute: "2026-04-05T01:30" } });
+    expect(resized).toMatchObject({ ok: true, value: { schedule: { end: { localCivil: "2026-04-05T02:30", disambiguation: "later" } } } });
   });
 
   it("floors a timed start to the 15-minute slot", () => {
@@ -56,26 +61,26 @@ describe("TB5C mapChecklistStartResizeToCommand", () => {
   });
 
   it("rejects agenda with unsupported_subview", () => {
-    const allDay = checklistEvent(rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-29")));
+    const allDay = checklistEvent(rangeSchedule(presetStart("2026-08-27"), presetEnd("2026-08-29")));
     const resized = mapChecklistStartResizeToCommand({ event: allDay, target: { subview: "agenda", targetDate: "2026-08-26" } });
     expect(resized).toMatchObject({ ok: false, error: { code: "unsupported_subview" } });
   });
 
   it("rejects the end edge via target.edge", () => {
-    const allDay = checklistEvent(rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-29")));
+    const allDay = checklistEvent(rangeSchedule(presetStart("2026-08-27"), presetEnd("2026-08-29")));
     const resized = mapChecklistStartResizeToCommand({ event: allDay, target: { subview: "month", targetDate: "2026-08-26", edge: "end" } });
     expect(resized).toMatchObject({ ok: false, error: { code: "end_resize_not_this_mapper" } });
   });
 
   it("rejects the end edge via input.edge, independent of target.edge", () => {
-    const allDay = checklistEvent(rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-29")));
+    const allDay = checklistEvent(rangeSchedule(presetStart("2026-08-27"), presetEnd("2026-08-29")));
     const resized = mapChecklistStartResizeToCommand({ event: allDay, edge: "end", target: { subview: "month", targetDate: "2026-08-26" } });
     expect(resized).toMatchObject({ ok: false, error: { code: "end_resize_not_this_mapper" } });
   });
 
   it("returns subtask_schedule_invalid_order when the new start is at or after the end", () => {
-    const allDay = checklistEvent(rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-29")));
-    const resized = mapChecklistStartResizeToCommand({ event: allDay, target: { subview: "month", targetDate: "2026-08-30" } });
+    const allDay = checklistEvent(rangeSchedule(presetStart("2026-08-27"), presetEnd("2026-08-29")));
+    const resized = mapChecklistStartResizeToCommand({ event: allDay, target: { subview: "month", targetDate: "2026-08-30", targetCivilMinute: "2026-08-30T09:00" } });
     expect(resized).toMatchObject({ ok: false, error: { code: "subtask_schedule_invalid_order" } });
   });
 

@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import type { NotificationOutboxMessage } from "@quincy/shared";
+import { presetSubtaskInsertValues, type NotificationOutboxMessage } from "@quincy/shared";
 import { emitExternalSubtaskNotification, emitStaffSubtaskAssignedNotification } from "@quincy/db";
 import type { Env } from "../src/env";
 import { scanDueSubtasks } from "../src/notifications";
@@ -50,7 +50,7 @@ async function seed(dueDate: string) {
     database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Actor', ?, 1, 'editor', 1, ?, ?), (?, 'Staff', ?, 1, 'editor', 1, ?, ?), (?, 'External', ?, 1, 'external_editor', 1, ?, ?)").bind(actorId, `${actorId}@example.test`, now, now, staffId, `${staffId}@example.test`, now, now, externalId, `${externalId}@example.test`, now, now),
     database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Dropped Column Street', 'editing', ?, ?)").bind(projectId, now, now),
     database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?), (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, staffId, now, crypto.randomUUID(), projectId, externalId, now),
-    database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Relation only', 0, 0, 2, ?, 'date', ?, 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(subtaskId, projectId, dueDate, dueDate, actorId, now, now),
+    database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Relation only', 0, 0, 2, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(subtaskId, projectId, ...presetSubtaskInsertValues(dueDate.slice(0, 10)), actorId, now, now),
     database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 1, ?), (?, ?, 2, ?)").bind(subtaskId, staffId, now, subtaskId, externalId, now + 1),
   ]);
   return { projectId, actorId, staffId, externalId, subtaskId };
@@ -94,7 +94,7 @@ describe("with project_subtasks.assignee_id dropped", () => {
     const scanEnv = { ...deliveryEnv(vi.fn().mockResolvedValue({ messageId: "dropped-due" })), NOTIFICATION_QUEUE: queue } as unknown as Env;
     await scanDueSubtasks(scanEnv, now);
     expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(fixture.subtaskId).first()).toEqual({ due_reminder_sent_at: now });
-    const sourceKey = `subtask-due:${fixture.subtaskId}:2026-08-18`;
+    const sourceKey = `subtask-due:${fixture.subtaskId}:2026-08-18T17:00`;
     // The staff assignee is reminded synchronously; the external editor gets an outbox row carrying their own version.
     expect(await notices(sourceKey, fixture.staffId)).toEqual([{ type: "subtask_due_today" }]);
     const outbox = await database.DB.prepare("SELECT id FROM notification_outbox WHERE source_key = ? AND recipient_id = ? AND event_type = 'project.subtask.due_today'").bind(sourceKey, fixture.externalId).first<{ id: string }>();

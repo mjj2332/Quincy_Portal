@@ -4,6 +4,8 @@ import {
   CHECKLIST_SCHEDULE_ZONE,
   checklistScheduleToDto,
   defaultSubtaskRange,
+  defaultSubtaskRangeDto,
+  type ProjectDefaultRangeDto,
   effectiveDeadlineLocalCivil,
   normalizeChecklistSchedule,
   type ChecklistScheduleDto,
@@ -77,7 +79,7 @@ type AssignmentNotice = {
 
 export type ProjectSubtaskCommandResult =
   | SuccessResult
-  | { outcome: "invalid_request"; status: 400; code: string; message: string; details?: { endpoint?: "start" | "end"; choices?: Array<{ disambiguation: "earlier" | "later"; utcOffsetMinutes: number }> } }
+  | { outcome: "invalid_request"; status: 400; code: string; message: string; details?: RequestDetails }
   | { outcome: "forbidden" }
   | { outcome: "not_found"; target: "project" | "subtask" }
   | { outcome: "schedule_conflict"; current: ChecklistScheduleDto; currentSubtask?: ProjectSubtaskDto }
@@ -140,10 +142,15 @@ export function serializeProjectSubtask(row: SubtaskRow, assignees: HydratedAssi
   };
 }
 
-type RequestDetails = { endpoint?: "start" | "end"; choices?: Array<{ disambiguation: "earlier" | "later"; utcOffsetMinutes: number }> };
+/** `field` is the request path of the offending value, so a client can mark the input: `schedule.end.localCivil` on create, `schedule.schedule.end.localCivil` on update. */
+type RequestDetails = { endpoint?: "start" | "end"; field?: string; choices?: Array<{ disambiguation: "earlier" | "later"; utcOffsetMinutes: number }> };
 
 function invalidRequest(code: string, message: string, details?: RequestDetails): ProjectSubtaskCommandResult {
   return { outcome: "invalid_request", status: 400, code, message, ...(details ? { details } : {}) };
+}
+
+function scheduleInvalidRequest(error: { code: string; message: string; endpoint?: "start" | "end"; choices?: RequestDetails["choices"] }, prefix: "schedule" | "schedule.schedule"): ProjectSubtaskCommandResult {
+  return invalidRequest(error.code, error.message, error.endpoint ? { endpoint: error.endpoint, field: `${prefix}.${error.endpoint}.localCivil`, ...(error.choices ? { choices: error.choices } : {}) } : undefined);
 }
 
 const SCHEDULE_KEYS: Array<keyof ChecklistScheduleStorage> = [
@@ -156,7 +163,7 @@ function rawScheduleEqual(a: ChecklistScheduleStorage, b: ChecklistScheduleStora
 }
 
 function scheduleEndpointEqual(left: ChecklistScheduleDto["start"], right: ChecklistScheduleDto["start"]): boolean {
-  return left.kind === right.kind && left.localCivil === right.localCivil && left.instant === right.instant && left.utcOffsetMinutes === right.utcOffsetMinutes && left.fold === right.fold;
+  return left.localCivil === right.localCivil && left.instant === right.instant && left.utcOffsetMinutes === right.utcOffsetMinutes && left.fold === right.fold;
 }
 
 function semanticScheduleEqual(a: ChecklistScheduleDto, b: ChecklistScheduleDto): boolean {
@@ -183,9 +190,29 @@ function validateTitle(title: unknown): ProjectSubtaskCommandResult | null {
   return null;
 }
 
+/** The Project's default Subtask range input: its shoot date, creation instant and effective Deadline with its stored fold. */
+export function projectDefaultRange(project: { shootDate: string | null; createdAt: Date; deadlineLocalCivil: string | null; deadlineAt: number | null; deadlineFold: number | null }): RangeChecklistScheduleInput {
+  return defaultSubtaskRange(projectDefaultRangeInput(project));
+}
+
+export function projectDefaultRangeInput(project: { shootDate: string | null; createdAt: Date; deadlineLocalCivil: string | null; deadlineAt: number | null; deadlineFold: number | null }) {
+  const localCivil = effectiveDeadlineLocalCivil(project);
+  return {
+    shootDate: project.shootDate,
+    deadline: localCivil ? { localCivil, fold: project.deadlineFold === 1 ? 1 as const : 0 as const } : null,
+    projectCreatedAt: project.createdAt.getTime(),
+  };
+}
+
+/** The same default, as the list responses carry it for the editors' "Project default" (ADR 0016). */
+export async function projectDefaultRangeDtoFor(env: AppEnv["Bindings"], projectId: string): Promise<ProjectDefaultRangeDto | null> {
+  const project = await createDb(env.DB).select({ shootDate: schema.projects.shootDate, createdAt: schema.projects.createdAt, deadlineLocalCivil: schema.projects.deadlineLocalCivil, deadlineAt: schema.projects.deadlineAt, deadlineFold: schema.projects.deadlineFold }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
+  return project ? defaultSubtaskRangeDto(projectDefaultRangeInput(project)) : null;
+}
+
 async function authorizedProject(env: AppEnv["Bindings"], principal: SessionUser, projectId: string) {
   if (!await hasProjectCollaborationAccessForUser(env, principal, projectId)) return null;
-  return createDb(env.DB).select({ id: schema.projects.id, shootDate: schema.projects.shootDate, createdAt: schema.projects.createdAt, deadlineLocalCivil: schema.projects.deadlineLocalCivil, deadlineAt: schema.projects.deadlineAt }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
+  return createDb(env.DB).select({ id: schema.projects.id, shootDate: schema.projects.shootDate, createdAt: schema.projects.createdAt, deadlineLocalCivil: schema.projects.deadlineLocalCivil, deadlineAt: schema.projects.deadlineAt, deadlineFold: schema.projects.deadlineFold }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
 }
 
 function activityFor(itemId: string, projectId: string, actorId: string, now: number, title: string, type: "created" | "updated", changes?: Array<"title" | "completion" | "assignee">, delta?: Pick<SubtaskAssigneeDelta, "add" | "remove">): ProjectActivityIntent {
@@ -248,12 +275,8 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
   const now = input.now ?? Date.now();
 
   if (operation.kind === "create") {
-    // No range given: copy the Project's shoot date to Deadline once (ADR 0011). The copy is the Subtask's own afterwards.
-    const requested = operation.schedule ?? defaultSubtaskRange({
-      shootDate: project.shootDate,
-      deadlineLocalCivil: effectiveDeadlineLocalCivil(project),
-      projectCreatedAt: project.createdAt.getTime(),
-    });
+    // No range given: copy the Project's shoot date at 09:00 to its Deadline once (ADR 0011, ADR 0016). The copy is the Subtask's own afterwards.
+    const requested = operation.schedule ?? projectDefaultRange(project);
     // Ranges only (ADR 0011). The route's schema enforces this too; this guard covers direct callers.
     if (requested.state !== "range") return invalidRequest("subtask_schedule_range_required", "A Subtask needs a start and an end.");
     const assigneeIds = [...new Set(operation.item.assigneeIds ?? [])];
@@ -262,7 +285,7 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
       if (!assigneeIds.every((id) => eligible.has(id))) return invalidRequest("subtask_assignee_ineligible", "Assignee is not an active project participant.");
     }
     const normalized = normalizeChecklistSchedule(requested, 1);
-    if (!normalized.ok) return invalidRequest(normalized.error.code, normalized.error.message, normalized.error.endpoint ? { endpoint: normalized.error.endpoint, ...(normalized.error.choices ? { choices: normalized.error.choices } : {}) } : undefined);
+    if (!normalized.ok) return scheduleInvalidRequest(normalized.error, "schedule");
     const last = await env.DB.prepare("SELECT position FROM project_subtasks WHERE project_id = ? ORDER BY position DESC, id DESC LIMIT 1").bind(projectId).first<{ position: number }>();
     const id = newId();
     const auditId = newId();
@@ -313,7 +336,7 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
     // The version is not part of semantic equality; it only keeps the candidate serializable.
     const candidateVersion = Math.max(1, existingStorage.scheduleVersion);
     const candidateResult = normalizeChecklistSchedule(requested, candidateVersion);
-    if (!candidateResult.ok) return invalidRequest(candidateResult.error.code, candidateResult.error.message, candidateResult.error.endpoint ? { endpoint: candidateResult.error.endpoint, ...(candidateResult.error.choices ? { choices: candidateResult.error.choices } : {}) } : undefined);
+    if (!candidateResult.ok) return scheduleInvalidRequest(candidateResult.error, "schedule.schedule");
     const candidateDto = checklistScheduleToDto(candidateResult.value);
     scheduleChanged = !semanticScheduleEqual(currentDto, candidateDto);
     if (scheduleChanged) {
