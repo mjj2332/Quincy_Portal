@@ -85,7 +85,7 @@ export async function notificationEnrichment(
   const annotationRows = rowsOfKind("annotation");
   const commentMentionRows = rowsOfKind("project_comment_mention");
   const noticeBoardMentionRows = rowsOfKind("notice_board_mention");
-  const subtaskRows = rowsOfKind("subtask_assignment", "subtask_due");
+  const subtaskRows = rowsOfKind("subtask_assignment", "subtask_due", "subtask_reminder");
   const ledgerRows = rows.filter((row) => LEDGER_TYPES.has(row.type) && sources.has(row.id));
   const collaborationProjectIds = unique([...commentMentionRows, ...subtaskRows].flatMap(({ row }) => (row.projectId ? [row.projectId] : [])));
 

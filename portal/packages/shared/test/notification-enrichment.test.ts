@@ -13,9 +13,9 @@ const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_ID = "22222222-2222-4222-8222-222222222222";
 
 describe("NOTIFICATION_ENRICHMENT enumeration", () => {
-  it("declares exactly the 13 notification types, sorted", () => {
+  it("declares exactly the 14 notification types, sorted", () => {
     expect(Object.keys(NOTIFICATION_ENRICHMENT).sort()).toEqual([...NOTIFICATION_TYPES].sort());
-    expect(Object.keys(NOTIFICATION_ENRICHMENT)).toHaveLength(13);
+    expect(Object.keys(NOTIFICATION_ENRICHMENT)).toHaveLength(14);
   });
 
   const exercised: Record<NotificationType, boolean> = Object.fromEntries(
@@ -56,6 +56,12 @@ describe("NOTIFICATION_ENRICHMENT enumeration", () => {
     exercised.subtask_due_today = true;
     expect(parseNotificationSource("subtask_due_today", PROJECT_ID, `subtask-due:${OTHER_ID}:2026-09-15`)).toEqual({ kind: "subtask_due", subtaskId: OTHER_ID, dueDate: "2026-09-15" });
     expect(parseNotificationSource("subtask_due_today", PROJECT_ID, `subtask-due:${OTHER_ID}:2026-09-15T17:00`)).toEqual({ kind: "subtask_due", subtaskId: OTHER_ID, dueDate: "2026-09-15T17:00" });
+  });
+  it("subtask_reminder: subtask-reminder:<subtask>:<occurrence> reads back the subtask only", () => {
+    exercised.subtask_reminder = true;
+    expect(parseNotificationSource("subtask_reminder", PROJECT_ID, `subtask-reminder:${OTHER_ID}:${PROJECT_ID}`)).toEqual({ kind: "subtask_reminder", subtaskId: OTHER_ID });
+    expect(parseNotificationSource("subtask_reminder", PROJECT_ID, `subtask-reminder:${OTHER_ID}`)).toEqual({ kind: "none" });
+    expect(parseNotificationSource("subtask_reminder", PROJECT_ID, null)).toEqual({ kind: "none" });
   });
   it("subtask_due_today: malformed and null source keys degrade to none", () => {
     expect(parseNotificationSource("subtask_due_today", PROJECT_ID, `subtask-due:${OTHER_ID}:15-09-2026`)).toEqual({ kind: "none" });

@@ -37,6 +37,7 @@ export function notificationCopy(
     case "mentioned": return { title: "You were mentioned", body: "You were mentioned." };
     case "subtask_assigned": return { title: "Subtask assigned", body: `You have been assigned a subtask in ${projectLabel}.` };
     case "subtask_due_today": return { title: "Subtask due today", body: `A subtask assigned to you in ${projectLabel} is due today.` };
+    case "subtask_reminder": return { title: "Subtask reminder", body: `A subtask assigned to you in ${projectLabel} is due.` };
     case "project_deadline_reminder": return { title: "Project deadline reminder", body: `${projectLabel} has a deadline reminder.` };
     case "project_activity": return { title: "Project activity", body: `${projectLabel} has a project update.` };
     case "project_collaboration_activity": return { title: "Project collaboration activity", body: `${projectLabel} has a collaboration update.` };
@@ -132,6 +133,8 @@ export async function emitNotifications(
   // `emitStaffSubtaskAssignedNotification` (the outbox carries the assigner as actor); a direct
   // row here would be a second producer, and a second email once the consumer delivers.
   if (input.type === "subtask_assigned") return 0;
+  // #424: a Subtask reminder is a durable occurrence event owned by the background scan and the outbox consumer, so the same rule applies.
+  if (input.type === "subtask_reminder") return 0;
   const copy = input.title && input.body ? { title: input.title, body: input.body } : notificationCopy(input.type);
   const recipients = [...new Map(input.recipients.map((recipient) => [recipient.userId, recipient])).values()];
   // This is the security choke point for all legacy direct emitters. Do not rely on each of the

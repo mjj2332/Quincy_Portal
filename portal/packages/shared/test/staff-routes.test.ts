@@ -153,6 +153,7 @@ describe("shared staff route contract", () => {
       mentioned: `/projects/${projectId}?collaboration=open`,
       subtask_assigned: `/projects/${projectId}?collaboration=open`,
       subtask_due_today: `/projects/${projectId}?collaboration=open`,
+      subtask_reminder: `/projects/${projectId}?collaboration=open`,
       project_deadline_reminder: `/projects/${projectId}?collaboration=open`,
       project_activity: `/projects/${projectId}?collaboration=open`,
       project_collaboration_activity: `/projects/${projectId}?collaboration=open`,
