@@ -4879,3 +4879,16 @@ remove the legacy readers) still applies.
   on it appends to that Stage's end, but it mounts no cards.
 - **Overdue means `isOverdueProject`, everywhere.** Delivered and archived Projects are never overdue, so the column
   figures sum to the Dashboard header's. The card used to colour them red on date alone.
+
+## #447 Date popup on a phone
+
+- **`collisionAvoidance` `side: "shift"` gives `--available-height` the whole viewport.** With the default `flip`, Base UI's
+  `size()` measures the sliver above or below the trigger (~165px at 375x812), so a tall popup's body had a tiny scroll
+  window. Below `sm`, `DateTimePopoverContent` shifts instead and may cover its trigger.
+- **A nested scroll-area body needs `min-h-0` at every flex level.** `Frame` (`max-h-[var(--available-height)]`) > `FramePanel`
+  > `ScrollArea` root each need `min-h-0` (and `flex flex-col` on the first two), or the viewport grows to its content and the
+  footer is pushed out instead of the body scrolling. The fade targets the viewport with `*:` (direct child), so the time
+  column's own scroll area gets none.
+- **A truncated title in a `w-auto` popover needs `contain: inline-size`.** The popover sizes to its widest content, so a long
+  label widens the popup rather than truncating. `[contain:inline-size]` on `FrameTitle` removes the title from that
+  calculation; `min-w-0` plus a `block truncate` eyebrow then clips it. The full text stays in the DOM and in the `aria-label`.

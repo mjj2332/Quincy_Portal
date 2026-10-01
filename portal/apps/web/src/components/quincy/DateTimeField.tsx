@@ -6,6 +6,7 @@ import { PopoverContent, Popover, PopoverTrigger } from "@/components/reui/popov
 import { isSydneyCalendarDate } from "@quincy/shared";
 import { formatCivilDay, formatCivilRange } from "@/lib/date-format";
 import { buildShortcuts, civilToCell, sydneyToday, yearBounds } from "@/lib/date-time-field";
+import { useMediaQuery } from "@/lib/use-media-query";
 import { cn } from "@/lib/utils";
 import { CalendarPane } from "./date-time-field/CalendarPane";
 import { DateTimePopup, PopupAnchorContext, type DateTimeApply, type DateTimePopupProps, type DateTimeStored } from "./date-time-field/DateTimePopup";
@@ -156,12 +157,16 @@ function usePopupAnchor(): { zoneId: string; bodyRef: Ref<HTMLDivElement> } {
 export function DateTimePopoverContent({ label, className, children, ...props }: Omit<ComponentProps<typeof PopoverContent>, "aria-label" | "aria-describedby" | "initialFocus"> & { label: string }) {
   const zoneId = useId();
   const bodyRef = useRef<HTMLDivElement>(null);
+  // Below sm the popup may cover its trigger: "shift" on y gives --available-height the whole
+  // viewport (minus padding) instead of the sliver above or below the field (#447).
+  const narrow = useMediaQuery("(width < 40rem)");
   return (
     <PopoverContent
       align="start"
       collisionPadding={16}
       // ~530-680px tall: if it fits neither side, stay above/below and scroll the body rather than opening sideways.
-      collisionAvoidance={{ fallbackAxisSide: "none" }}
+      // On a phone, shift over the trigger instead so the body gets the viewport's height.
+      collisionAvoidance={narrow ? { side: "shift", fallbackAxisSide: "none" } : { fallbackAxisSide: "none" }}
       {...props}
       aria-label={label}
       aria-describedby={zoneId}
