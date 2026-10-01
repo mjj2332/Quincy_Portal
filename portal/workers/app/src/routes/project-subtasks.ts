@@ -27,6 +27,7 @@ import {
   saveProjectSubtask,
   serializeProjectSubtask,
   ARCHIVED_SNAPSHOT_SQL,
+  projectIsArchived,
   archivedInSnapshot,
   type ItemPatch,
 } from "../lib/project-subtasks";
@@ -70,7 +71,11 @@ function rowsFromD1<T>(result: unknown): T[] {
 }
 
 async function ensureProjectAccessAndExists(c: Parameters<typeof hasProjectCollaborationAccess>[0], projectId: string) {
-  if (!await hasProjectCollaborationAccess(c, projectId)) return "forbidden" as const;
+  if (!await hasProjectCollaborationAccess(c, projectId)) {
+    // Archived under an External Editor between the visibility check and this one: they cannot see it, so 404 (#446).
+    if (c.get("user").role === "external_editor" && await projectIsArchived(c.env, projectId)) return undefined;
+    return "forbidden" as const;
+  }
   return createDb(c.env.DB).select({ id: schema.projects.id, archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
 }
 

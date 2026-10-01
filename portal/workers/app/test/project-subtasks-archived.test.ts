@@ -26,11 +26,34 @@ async function executeSql(sql: string) { for (const chunk of sql.split("--> stat
 async function cookie(token: string) { const context = await createAuth(baseEnv).$context; return `${context.authCookies.sessionToken.name}=${token}.${await makeSignature(token, authSecret)}`; }
 
 /** Runs the real app. `racingArchive` swaps in a D1 whose first multi-statement batch archives that Project, then runs the real batch. */
-async function call(who: Who, method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown, racingArchive?: string) {
+async function call(who: Who, method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown, racingArchive?: string, archiveAfterVisibility?: string) {
   const waits: Promise<unknown>[] = [];
   const executionContext = { waitUntil: (promise: Promise<unknown>) => { waits.push(promise); }, passThroughOnException: () => undefined, props: undefined } as unknown as ExecutionContext;
   const race = { flipped: 0 };
-  const db = racingArchive ? new Proxy(database.DB, {
+  let visibilityReads = 0;
+  const wrap = (stmt: D1PreparedStatement, before: () => Promise<void>): D1PreparedStatement => new Proxy(stmt, {
+    get(t, p) {
+      if (p === "bind") return (...a: unknown[]) => wrap(t.bind(...a), before);
+      if (p === "all" || p === "raw" || p === "first" || p === "run") return async (...a: unknown[]) => { await before(); return (t as never as Record<string, (...x: unknown[]) => unknown>)[p as string]!(...a); };
+      const v = Reflect.get(t, p, t); return typeof v === "function" ? v.bind(t) : v;
+    },
+  });
+  // The Project is archived at the second visibility read: after the route's own check, before the command's collaboration check.
+  const visibilityRace = archiveAfterVisibility ? new Proxy(database.DB, {
+    get(target, property) {
+      if (property === "prepare") {
+        return (sql: string) => {
+          const stmt = target.prepare(sql);
+          if (!/left join "project_members"/i.test(sql) || !/from "projects"/i.test(sql)) return stmt;
+          visibilityReads += 1;
+          return visibilityReads === 2 ? wrap(stmt, async () => { race.flipped += 1; await target.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), archiveAfterVisibility).run(); }) : stmt;
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as D1Database : null;
+  const db = visibilityRace ?? (racingArchive ? new Proxy(database.DB, {
     get(target, property) {
       if (property === "batch") {
         return async (statements: D1PreparedStatement[]) => {
@@ -44,7 +67,7 @@ async function call(who: Who, method: "GET" | "POST" | "PATCH" | "DELETE", path:
       const value = Reflect.get(target, property, target);
       return typeof value === "function" ? value.bind(target) : value;
     },
-  }) as D1Database : database.DB;
+  }) as D1Database : database.DB);
   const headers = new Headers({ cookie: await cookie(tokens[who]) });
   if (body !== undefined) headers.set("content-type", "application/json");
   if (method !== "GET") headers.set("origin", baseEnv.APP_ORIGIN);
@@ -93,6 +116,7 @@ async function footprint(projectId: string) {
     activity: await all("SELECT * FROM project_activity_events WHERE project_id = ? ORDER BY id", projectId),
     outbox: await all("SELECT id, event_type, source_key, status FROM notification_outbox WHERE project_id = ? ORDER BY id", projectId),
     notifications: await all("SELECT id, type, source_key FROM notifications WHERE project_id = ? ORDER BY id", projectId),
+    members: await all("SELECT * FROM project_members WHERE project_id = ? ORDER BY id", projectId),
     occurrences: await all("SELECT * FROM project_subtask_reminder_occurrences WHERE project_id = ? ORDER BY id", projectId),
   };
 }
@@ -186,5 +210,63 @@ describe("an archived Project's Checklist (#446)", () => {
     const occurrences = (await database.DB.prepare("SELECT count(*) AS n FROM project_subtask_reminder_occurrences WHERE subtask_id = ? AND status = 'pending'").bind(id).first<{ n: number }>())!.n;
     expect(occurrences).toBeGreaterThan(0);
     expect((await call("admin", "PATCH", sub(f, f.a), { title: "Edited after restore" })).response.status).toBe(200);
+  });
+});
+
+describe("an External Editor racing an archive past the visibility check (#446)", () => {
+  for (const write of WRITES.filter((w) => ["create", "patch title", "reorder", "delete"].includes(w.name))) {
+    it(`${write.name} is 404, not 403, and writes nothing`, async () => {
+      const f = await seedProject(false);
+      const before = await footprint(f.projectId);
+      const { response, flipped } = await call("external", write.name === "create" ? "POST" : write.name === "patch title" ? "PATCH" : write.name === "reorder" ? "POST" : "DELETE",
+        write.name === "create" ? `/api/projects/${f.projectId}/subtasks` : write.name === "reorder" ? `${sub(f, f.c)}/reorder` : sub(f, f.a),
+        write.name === "create" ? { title: "New", schedule: FAR } : write.name === "patch title" ? { title: "Renamed" } : write.name === "reorder" ? { beforeId: f.a, afterId: f.b } : undefined, undefined, f.projectId);
+      expect(flipped).toBe(1);
+      expect(response.status).toBe(404);
+      expect(await footprint(f.projectId)).toEqual(before);
+    });
+  }
+});
+
+describe("removing a member from an archived Project (#446)", () => {
+  const remove = (f: Fixture, userId: string, role: "photographer" | "editor", cycle: string, clear: boolean, count: number, race?: string) =>
+    call("admin", "DELETE", `/api/projects/${f.projectId}/${role}s/${userId}`, clear ? { membershipCycle: cycle, clearSubtaskAssignments: true, confirmedAssignmentCount: count } : { membershipCycle: cycle, clearSubtaskAssignments: false, confirmedAssignmentCount: 0 }, race);
+  const cycleOf = async (f: Fixture, userId: string) => (await database.DB.prepare("SELECT id FROM project_members WHERE project_id = ? AND user_id = ?").bind(f.projectId, userId).first<{ id: string }>())!.id;
+  const archivedBody = { error: "Archived projects are read-only; the checklist can't be changed.", code: "subtask_project_archived" };
+
+  it("refuses a removal that would clear Subtask assignments, and writes nothing", async () => {
+    const f = await seedProject(true);
+    const before = await footprint(f.projectId);
+    const { response } = await remove(f, photographerId, "photographer", await cycleOf(f, photographerId), true, 1);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual(archivedBody);
+    expect(await footprint(f.projectId)).toEqual(before);
+  });
+
+  it("refuses it even without the confirmation, rather than offering one that cannot succeed", async () => {
+    const f = await seedProject(true);
+    const before = await footprint(f.projectId);
+    const { response } = await remove(f, photographerId, "photographer", await cycleOf(f, photographerId), false, 0);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual(archivedBody);
+    expect(await footprint(f.projectId)).toEqual(before);
+  });
+
+  it("is fenced in the batch when the archive lands mid-request", async () => {
+    const f = await seedProject(false);
+    const before = await footprint(f.projectId);
+    const { response, flipped } = await remove(f, photographerId, "photographer", await cycleOf(f, photographerId), true, 1, f.projectId);
+    expect(flipped).toBe(1);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual(archivedBody);
+    expect(await footprint(f.projectId)).toEqual(before);
+  });
+
+  it("control: a removal that touches no Subtask assignment still works on an archived Project", async () => {
+    const f = await seedProject(true);
+    const { response } = await remove(f, editorId, "editor", await cycleOf(f, editorId), false, 0);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ outcome: "removed", subtaskAssignmentsCleared: 0 });
+    expect(await database.DB.prepare("SELECT 1 AS x FROM project_members WHERE project_id = ? AND user_id = ?").bind(f.projectId, editorId).first()).toBeNull();
   });
 });

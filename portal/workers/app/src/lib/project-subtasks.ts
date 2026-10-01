@@ -260,6 +260,11 @@ export async function projectDefaultRangeDtoFor(env: AppEnv["Bindings"], project
   return project ? defaultSubtaskRangeDto(projectDefaultRangeInput(project)) : null;
 }
 
+export async function projectIsArchived(env: AppEnv["Bindings"], projectId: string): Promise<boolean> {
+  const row = await createDb(env.DB).select({ archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
+  return row?.archivedAt != null;
+}
+
 async function authorizedProject(env: AppEnv["Bindings"], principal: SessionUser, projectId: string) {
   if (!await hasProjectCollaborationAccessForUser(env, principal, projectId)) return null;
   return createDb(env.DB).select({ id: schema.projects.id, archivedAt: schema.projects.archivedAt, shootDate: schema.projects.shootDate, createdAt: schema.projects.createdAt, deadlineLocalCivil: schema.projects.deadlineLocalCivil, deadlineAt: schema.projects.deadlineAt, deadlineFold: schema.projects.deadlineFold }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
@@ -320,7 +325,12 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
     : operation.itemPatch?.title === undefined ? null : validateTitle(operation.itemPatch.title);
   if (titleError) return titleError;
   const project = await authorizedProject(env, principal, projectId);
-  if (!project) return (await hasProjectCollaborationAccessForUser(env, principal, projectId)) ? { outcome: "not_found", target: "project" } : { outcome: "forbidden" };
+  if (!project) {
+    if (await hasProjectCollaborationAccessForUser(env, principal, projectId)) return { outcome: "not_found", target: "project" };
+    // An External Editor loses collaboration access when the Project is archived under them: that is a 404, not a 403 (#446).
+    if (principal.role === "external_editor" && await projectIsArchived(env, projectId)) return { outcome: "not_found", target: "project" };
+    return { outcome: "forbidden" };
+  }
   // Before the no-op check: even an identical-value patch is refused on an archived Project (#446).
   if (project.archivedAt !== null) return archivedOutcome(principal);
   const db = createDb(env.DB);
