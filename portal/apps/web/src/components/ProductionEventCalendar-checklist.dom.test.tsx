@@ -16,6 +16,7 @@ if (!Element.prototype.getAnimations) {
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PRODUCTION_CALENDAR_ZONE, type ChecklistCalendarEventDto, type ChecklistScheduleDto, type ProductionCalendarProjectBounds } from "@quincy/shared";
+import { applyPopup, openFieldPopup, pickPopupDay, pickRangeEnd, popupButton, pressInPopup, pressRangeFold, rangeToggles, typePopupTime } from "../testing/date-time-popup";
 import { ProjectQueryRuntime } from "../lib/project-query-sync";
 import { eventCalendarFake } from "../testing/event-calendar-fake";
 import {
@@ -96,7 +97,7 @@ describe("ProductionEventCalendar checklist writes", () => {
     expect(fetch.patches()).toHaveLength(0);
     expect(liveRegion()).toContain("That schedule change isn't valid.");
     // Cancel's revert cleared the pending hold: the chip is back on its own day.
-    expect(chipStart("checklist:")).toBe(day("2026-08-12").toISOString());
+    expect(chipStart("checklist:")).toBe(at("2026-08-12T09:00").toISOString());
   });
 
   it("routes the null-id editor path through the finish: flushes a queued refetch and closes the editor (#226 round 1)", async () => {
@@ -105,7 +106,7 @@ describe("ProductionEventCalendar checklist writes", () => {
     expect(fetch.rangeGets()).toHaveLength(1);
     await openReschedule("checklist:");
     expect(byLabel("Checklist schedule state")).toBeNull();
-    expect(byLabel("Checklist endpoint mode")).not.toBeNull();
+    expect(document.querySelector('[data-testid="event-calendar-schedule-editor"]')).not.toBeNull();
 
     h.client.setQueryData(mainRangeQuery(h.client).queryKey, rangeResponse({ events: [{ ...event, title: "Queued update" }] }));
     await flush(0);
@@ -147,7 +148,7 @@ describe("ProductionEventCalendar checklist writes", () => {
     await proposeUpdate(ID, { start: day("2026-08-15"), allDay: true });
     await flush(5);
     expect(fetch.patches()).toHaveLength(1);
-    expect(scheduleOf(fetch.patches()[0]!)).toEqual({ expectedVersion: 4, schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-15" }, end: { kind: "date", localCivil: "2026-08-15" } } });
+    expect(scheduleOf(fetch.patches()[0]!)).toEqual({ expectedVersion: 4, schedule: { state: "range", start: { localCivil: "2026-08-15T09:00" }, end: { localCivil: "2026-08-15T17:00" } } });
   });
 
   it("maps a timed range Week drag with a Sydney 15-minute civil snap", async () => {
@@ -155,7 +156,7 @@ describe("ProductionEventCalendar checklist writes", () => {
     const fetch = await mount([event], { subview: "week", patch: () => json(checklistMutationBody(event, oneDaySchedule(timed("2026-08-13T10:00"), 3))) });
     await proposeUpdate(ID, { start: at("2026-08-13T10:07"), allDay: false, granularity: "minute" });
     await flush(5);
-    expect(scheduleOf(fetch.patches()[0]!).schedule).toEqual({ state: "range", start: { kind: "timed", localCivil: "2026-08-13T10:00" }, end: { kind: "timed", localCivil: "2026-08-13T11:00" } });
+    expect(scheduleOf(fetch.patches()[0]!).schedule).toEqual({ state: "range", start: { localCivil: "2026-08-13T10:00" }, end: { localCivil: "2026-08-13T11:00" } });
   });
 
   it("shifts both range endpoints by the same civil-day delta from a day cell, keeping wall times", async () => {
@@ -163,7 +164,7 @@ describe("ProductionEventCalendar checklist writes", () => {
     const fetch = await mount([event], { patch: () => json(checklistMutationBody(event, rangeSchedule(timed("2026-08-15T10:00"), timed("2026-08-16T11:30"), 4))) });
     await proposeUpdate(ID, { start: at("2026-08-15T10:00"), allDay: false, granularity: "day" });
     await flush(5);
-    expect(scheduleOf(fetch.patches()[0]!).schedule).toEqual({ state: "range", start: { kind: "timed", localCivil: "2026-08-15T10:00" }, end: { kind: "timed", localCivil: "2026-08-16T11:30" } });
+    expect(scheduleOf(fetch.patches()[0]!).schedule).toEqual({ state: "range", start: { localCivil: "2026-08-15T10:00" }, end: { localCivil: "2026-08-16T11:30" } });
   });
 
   it("shifts both range endpoints by a civil-minute delta in Week", async () => {
@@ -171,15 +172,17 @@ describe("ProductionEventCalendar checklist writes", () => {
     const fetch = await mount([event], { subview: "week", patch: () => json(checklistMutationBody(event, rangeSchedule(timed("2026-08-12T11:00"), timed("2026-08-12T12:30"), 4))) });
     await proposeUpdate(ID, { start: at("2026-08-12T11:07"), allDay: false, granularity: "minute" });
     await flush(5);
-    expect(scheduleOf(fetch.patches()[0]!).schedule).toEqual({ state: "range", start: { kind: "timed", localCivil: "2026-08-12T11:00" }, end: { kind: "timed", localCivil: "2026-08-12T12:30" } });
+    expect(scheduleOf(fetch.patches()[0]!).schedule).toEqual({ state: "range", start: { localCivil: "2026-08-12T11:00" }, end: { localCivil: "2026-08-12T12:30" } });
   });
 
-  it("passes the all-day exclusive end so D+2 becomes inclusive D+1", async () => {
-    const event = rangeEvent(dated("2026-08-12"), dated("2026-08-12"));
-    const fetch = await mount([event], { patch: () => json(checklistMutationBody(event, rangeSchedule(dated("2026-08-12"), dated("2026-08-13"), 4))) });
-    await proposeUpdate(ID, { start: day("2026-08-12"), end: day("2026-08-14"), allDay: true, source: "resize-end", granularity: "day" });
+  it("resizes the end to another day from a day cell, keeping its wall time (every end is a moment)", async () => {
+    const event = rangeEvent(timed("2026-08-12T09:00"), timed("2026-08-12T17:00"));
+    const fetch = await mount([event], { patch: () => json(checklistMutationBody(event, rangeSchedule(timed("2026-08-12T09:00"), timed("2026-08-14T17:00"), 4))) });
+    await proposeUpdate(ID, { start: at("2026-08-12T09:00"), end: at("2026-08-14T17:00"), allDay: false, source: "resize-end", granularity: "day" });
     await flush(5);
-    expect(scheduleOf(fetch.patches()[0]!).schedule).toEqual({ state: "range", start: { kind: "date", localCivil: "2026-08-12" }, end: { kind: "date", localCivil: "2026-08-13" } });
+    const schedule = scheduleOf(fetch.patches()[0]!).schedule as { start: { localCivil: string }; end: { localCivil: string } };
+    expect(schedule.start.localCivil).toBe("2026-08-12T09:00");
+    expect(schedule.end.localCivil).toBe("2026-08-14T17:00");
   });
 
   it("maps a timed END resize at a 15-minute civil snap, leaving the start", async () => {
@@ -189,7 +192,7 @@ describe("ProductionEventCalendar checklist writes", () => {
     await flush(5);
     const schedule = scheduleOf(fetch.patches()[0]!).schedule as { start: { localCivil: string }; end: { localCivil: string } };
     expect(schedule.start.localCivil).toBe("2026-08-12T10:00");
-    expect(schedule.end).toEqual({ kind: "timed", localCivil: "2026-08-12T11:30" });
+    expect(schedule.end).toEqual({ localCivil: "2026-08-12T11:30" });
   });
 
   it("start-resize PATCHes the start only (the FullCalendar renderer refused it)", async () => {
@@ -219,7 +222,7 @@ describe("ProductionEventCalendar checklist writes", () => {
     let resolvePatch!: (response: Response) => void;
     await mount([event], { patch: () => new Promise<Response>((resolve) => { resolvePatch = resolve; }) });
     await proposeUpdate(ID, { start: day("2026-08-15"), allDay: true });
-    expect(chipStart(ID)).toBe(day("2026-08-15").toISOString());
+    expect(chipStart(ID)).toBe(at("2026-08-15T09:00").toISOString());
     resolvePatch(json(checklistMutationBody(event, oneDaySchedule(dated("2026-08-15"), 3))));
     await flush(10);
   });
@@ -227,7 +230,7 @@ describe("ProductionEventCalendar checklist writes", () => {
   it("warns (never blocks) when an out-of-range move is saved: the PATCH is sent and the saved announcement carries the warning", async () => {
     const event = oneDayEvent(dated("2026-08-12"));
     const fetch = await mount([event], {
-      projectBounds: [{ projectId: PROJECT_ID, shootDate: "2026-08-01", createdAt: "2026-07-01T00:00:00.000Z", deadlineLocalCivil: "2026-08-14T17:00" }],
+      projectBounds: [{ projectId: PROJECT_ID, shootDate: "2026-08-01", createdAt: "2026-07-01T00:00:00.000Z", deadlineLocalCivil: "2026-08-14T17:00", deadlineFold: 0 }],
       patch: () => json(checklistMutationBody(event, oneDaySchedule(dated("2026-08-20"), 3))),
     });
     expect(await proposeUpdate(ID, { start: day("2026-08-20"), allDay: true })).toBe("deferred");
@@ -236,10 +239,23 @@ describe("ProductionEventCalendar checklist writes", () => {
     expect(liveRegion()).toContain("Warning: Ends after the project deadline.");
   });
 
+  it("#423: the schedule sheet's popup offers the Project default from the bounds and resets the range to it", async () => {
+    const event = oneDayEvent(dated("2026-08-12"));
+    await mount([event], {
+      projectBounds: [{ projectId: PROJECT_ID, shootDate: "2026-08-01", createdAt: "2026-07-01T00:00:00.000Z", deadlineLocalCivil: "2026-08-14T17:00", deadlineFold: 0 }],
+    });
+    await openReschedule(ID);
+    const popup = await openFieldPopup("Schedule");
+    expect(popupButton(popup, "Project default")).toBeDefined();
+    expect(rangeToggles(popup)).not.toMatchObject({ start: "Sat 1 Aug · 09:00", end: "Fri 14 Aug · 17:00" });
+    await pressInPopup(popup, "Project default");
+    expect(rangeToggles(popup)).toMatchObject({ start: "Sat 1 Aug · 09:00", end: "Fri 14 Aug · 17:00" });
+  });
+
   it("#288: warns when a range is moved before the shoot date (the Gantt's rule), and still sends the PATCH", async () => {
     const event = oneDayEvent(dated("2026-08-12"));
     const fetch = await mount([event], {
-      projectBounds: [{ projectId: PROJECT_ID, shootDate: "2026-08-11", createdAt: "2026-07-01T00:00:00.000Z", deadlineLocalCivil: null }],
+      projectBounds: [{ projectId: PROJECT_ID, shootDate: "2026-08-11", createdAt: "2026-07-01T00:00:00.000Z", deadlineLocalCivil: null, deadlineFold: null }],
       patch: () => json(checklistMutationBody(event, oneDaySchedule(dated("2026-08-10"), 3))),
     });
     expect(await proposeUpdate(ID, { start: day("2026-08-10"), allDay: true })).toBe("deferred");
@@ -252,7 +268,7 @@ describe("ProductionEventCalendar checklist writes", () => {
     const event = oneDayEvent(dated("2026-08-12"));
     const fetch = await mount([event], {
       // 2026-08-11T14:00Z is 2026-08-12T00:00 in Sydney (AEST, +10): the lower bound is the 12th.
-      projectBounds: [{ projectId: PROJECT_ID, shootDate: null, createdAt: "2026-08-11T14:00:00.000Z", deadlineLocalCivil: null }],
+      projectBounds: [{ projectId: PROJECT_ID, shootDate: null, createdAt: "2026-08-11T14:00:00.000Z", deadlineLocalCivil: null, deadlineFold: null }],
       patch: () => json(checklistMutationBody(event, oneDaySchedule(dated("2026-08-11"), 3))),
     });
     expect(await proposeUpdate(ID, { start: day("2026-08-11"), allDay: true })).toBe("deferred");
@@ -296,7 +312,7 @@ describe("ProductionEventCalendar checklist writes", () => {
     expect(liveRegion()).toContain("Confirmation required");
     // The confirmation holds the gate: the chip is not draggable, the vendor snaps it back.
     expect(await proposeUpdate(ID, { start: day("2026-08-14"), allDay: true })).toBe(false);
-    expect(chipStart(ID)).toBe(day("2026-08-12").toISOString());
+    expect(chipStart(ID)).toBe(at("2026-08-12T09:00").toISOString());
     expect(fetch.patches()).toHaveLength(0);
     expect(fetch.puts()).toHaveLength(0);
     expect(fetch.rangeGets()).toHaveLength(1);
@@ -391,40 +407,39 @@ describe("ProductionEventCalendar checklist writes", () => {
     const event = rangeEvent(timed("2026-08-12T10:00"), timed("2026-08-12T11:00"), { version: 7 });
     const fetch = await mount([event]);
     await openReschedule(ID);
-    await setValue(byLabel<HTMLSelectElement>("Checklist endpoint mode"), "timed");
-    await setValue(byLabel("Checklist start date"), "2026-04-05");
-    await setValue(byLabel("Checklist start time"), "02:30");
-    await setValue(byLabel("Checklist end date"), "2026-04-05");
-    await setValue(byLabel("Checklist end time"), "02:30");
-    const folds = [...document.querySelectorAll<HTMLInputElement>('[data-testid="event-calendar-schedule-editor"] input[type="radio"]')];
-    expect(folds).toHaveLength(4);
-    await act(async () => { folds[0]!.click(); folds[3]!.click(); await Promise.resolve(); });
+    const popup = await openFieldPopup("Schedule");
+    await pickPopupDay(popup, "2026-04-05"); await pickPopupDay(popup, "2026-04-05");
+    await pickRangeEnd(popup, "Start"); await typePopupTime(popup, "02:30");
+    await pickRangeEnd(popup, "End"); await typePopupTime(popup, "02:30");
+    await pressRangeFold(popup, "Start", "Earlier"); await pressRangeFold(popup, "End", "Later");
+    await applyPopup(popup);
     await clickTestId("event-calendar-schedule-submit");
     expect(fetch.patches()).toHaveLength(1);
-    expect(fetch.patches()[0]!.body).toEqual({ schedule: { expectedVersion: 7, schedule: { state: "range", start: { kind: "timed", localCivil: "2026-04-05T02:30", disambiguation: "earlier" }, end: { kind: "timed", localCivil: "2026-04-05T02:30", disambiguation: "later" } } } });
+    expect(fetch.patches()[0]!.body).toEqual({ schedule: { expectedVersion: 7, schedule: { state: "range", start: { localCivil: "2026-04-05T02:30", disambiguation: "earlier" }, end: { localCivil: "2026-04-05T02:30", disambiguation: "later" } } } });
     expect(JSON.stringify(fetch.patches()[0]!.body)).not.toContain("dueDate");
   });
 
-  it("opens a due-only entry as a one-day range and saves the extended range (#340)", async () => {
+  it("opens a one-day entry as a range of two moments and saves the extended range (#340, #423)", async () => {
     const event = oneDayEvent(dated("2026-08-12"), { version: 4 });
     const fetch = await mount([event], { patch: () => json(checklistMutationBody(event, rangeSchedule(dated("2026-08-12"), dated("2026-08-13"), 5))) });
     await openReschedule(ID);
-    expect(byLabel("Checklist start date")?.value).toBe("2026-08-12");
-    expect(byLabel("Checklist end date")?.value).toBe("2026-08-12");
-    await setValue(byLabel("Checklist end date"), "2026-08-13");
+    const popup = await openFieldPopup("Schedule");
+    expect(rangeToggles(popup)).toEqual({ active: "Start", start: "Wed 12 Aug · 09:00", end: "Wed 12 Aug · 17:00" });
+    await pickRangeEnd(popup, "End"); await pickPopupDay(popup, "2026-08-13"); await applyPopup(popup);
     await clickTestId("event-calendar-schedule-submit");
-    expect(scheduleOf(fetch.patches()[0]!)).toEqual({ expectedVersion: 4, schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-12" }, end: { kind: "date", localCivil: "2026-08-13" } } });
+    expect(scheduleOf(fetch.patches()[0]!)).toEqual({ expectedVersion: 4, schedule: { state: "range", start: { localCivil: "2026-08-12T09:00" }, end: { localCivil: "2026-08-13T17:00" } } });
   });
 
   it("retains the editor draft after a schedule-version conflict and never retries", async () => {
     const event = oneDayEvent(dated("2026-08-12"));
     const fetch = await mount([event], { patch: () => json({ code: "subtask_schedule_version_conflict", message: "conflict" }, 409) });
     await openReschedule(ID);
-    await setValue(byLabel("Checklist end date"), "2026-08-15");
+    const popup = await openFieldPopup("Schedule");
+    await pickRangeEnd(popup, "End"); await pickPopupDay(popup, "2026-08-15"); await applyPopup(popup);
     await clickTestId("event-calendar-schedule-submit");
     await flush(10);
     expect(fetch.patches()).toHaveLength(1);
-    expect(byLabel("Checklist end date")?.value).toBe("2026-08-15");
+    expect(rangeToggles(await openFieldPopup("Schedule")).end).toBe("Sat 15 Aug · 17:00");
     expect(liveRegion()).toContain("changed elsewhere");
   });
 
@@ -532,13 +547,14 @@ describe("ProductionEventCalendar checklist writes", () => {
 });
 
 describe("ProductionEventCalendar checklist editor Range option", () => {
-  it("offers no state picker in the editor (ranges only, ADR 0011)", async () => {
+  it("offers no state picker in the editor (ranges only, ADR 0011), and no native inputs (#423)", async () => {
     const event = rangeEvent(dated("2026-08-12"), dated("2026-08-13"));
     stubCalendarFetch({ range: rangeResponse({ events: [event] }) });
     await h.render(calendarState("month"));
     await openReschedule(ID);
     expect(byLabel("Checklist schedule state")).toBeNull();
-    expect(byLabel("Checklist start date")).not.toBeNull();
-    expect(byLabel("Checklist end date")).not.toBeNull();
+    expect(document.querySelectorAll('input[type="date"], input[type="time"], input[type="radio"], select')).toHaveLength(0);
+    expect(rangeToggles(await openFieldPopup("Schedule")).start).toBe("Wed 12 Aug · 09:00");
   });
+
 });

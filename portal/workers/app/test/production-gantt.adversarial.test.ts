@@ -89,7 +89,7 @@ async function insertMember(projectId: string, userId: string, roleOnProject: "e
 
 async function insertSubtask(projectId: string, id: string, title: string, position: number, done = false): Promise<void> {
   const now = Date.now();
-  await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, '2026-08-27', 'date', '2026-08-27', 'date', 'Australia/Sydney', 1, ?, ?, ?)")
+  await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, '2026-08-27T17:00', 'timed', '2026-08-27T09:00', 1787785200000, 600, 0, 'timed', 1787814000000, 600, 0, 'Australia/Sydney', 1, ?, ?, ?)")
     .bind(id, projectId, title, done ? 1 : 0, position, adminId, now, now).run();
 }
 

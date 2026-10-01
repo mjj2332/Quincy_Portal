@@ -30,6 +30,7 @@ import {
   previewDeadlineEffects,
   type GanttEdit,
 } from "./production-gantt-scheduling";
+import { endMoment, startMoment } from "@/testing/subtask-schedule";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -45,17 +46,13 @@ function makeDeadline(overrides: Partial<NonNullable<GanttProjectDeadlineDto>> =
   return { at: "2026-06-01T05:00:00.000Z", localCivil: "2026-06-01T15:00", version: 3, reminderOffsetsMinutes: [60, 1440], overdue: false, ...overrides };
 }
 
-function dateEndpoint(localCivil: string): ChecklistScheduleEndpointDto {
-  return { kind: "date", localCivil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" };
-}
-
 function timedEndpoint(localCivil: string, instant: string, utcOffsetMinutes: number, fold: 0 | 1 = 0): ChecklistScheduleEndpointDto {
-  return { kind: "timed", localCivil, instant, utcOffsetMinutes, fold, resolution: "stored" };
+  return { localCivil, instant, utcOffsetMinutes, fold, resolution: "stored" };
 }
 
 /** A one-day date range: the shape every former due-only Subtask takes (ADR 0011). */
 function oneDayRange(civil: string): ChecklistScheduleDto {
-  return rangeSchedule(dateEndpoint(civil), dateEndpoint(civil));
+  return rangeSchedule(startMoment(civil), endMoment(civil));
 }
 
 function rangeSchedule(start: ChecklistScheduleEndpointDto, end: ChecklistScheduleEndpointDto): ChecklistScheduleDto {
@@ -119,7 +116,7 @@ const JUNE_TIMED_RANGE = rangeSchedule(
   timedEndpoint("2026-06-10T09:00", "2026-06-09T23:00:00.000Z", 600),
   timedEndpoint("2026-06-10T11:00", "2026-06-10T01:00:00.000Z", 600),
 );
-const JUNE_DATE_RANGE = rangeSchedule(dateEndpoint("2026-06-10"), dateEndpoint("2026-06-12"));
+const JUNE_DATE_RANGE = rangeSchedule(startMoment("2026-06-10"), endMoment("2026-06-12"));
 
 // ---------------------------------------------------------------------------
 // ganttChecklistSource
@@ -156,14 +153,14 @@ describe("ganttChecklistSource", () => {
     expect(nobody.assignees).toEqual([]);
   });
 
-  it("maps a one-day range to a one-day exclusive-end timing and keeps canResize", () => {
+  it("maps a one-day range to a timed span (09:00 to 17:00) and keeps canResize", () => {
     const source = eventSource(makeTask({ schedule: oneDayRange("2026-06-10") }));
-    expect(source.timing).toEqual({ allDay: true, start: "2026-06-10", end: "2026-06-11" });
+    expect(source.timing).toEqual({ allDay: false, start: "2026-06-09T23:00:00.000Z", end: "2026-06-10T07:00:00.000Z" });
     expect(source.permissions).toEqual({ canDrag: true, canResize: true, canOpenScheduleEditor: true });
   });
 
-  it("maps an all-day range to an exclusive-end timing", () => {
-    expect(eventSource(makeTask({ schedule: JUNE_DATE_RANGE })).timing).toEqual({ allDay: true, start: "2026-06-10", end: "2026-06-13" });
+  it("maps a multi-day range to its two stored instants", () => {
+    expect(eventSource(makeTask({ schedule: JUNE_DATE_RANGE })).timing).toEqual({ allDay: false, start: "2026-06-09T23:00:00.000Z", end: "2026-06-12T07:00:00.000Z" });
   });
 });
 
@@ -223,7 +220,7 @@ describe("ganttEditToProposal — day scale, timed endpoints", () => {
     const proposal = ganttEditToProposal(source, edit({ kind: "move", eventStart, eventEnd, proposedStart: new Date(eventStart.getTime() + 90 * 60_000), proposedEnd: new Date(eventEnd.getTime() + 90 * 60_000), scale: "day" }));
     expect(proposal).toEqual({ kind: "move", entity: "checklist", source, target: { subview: "week", targetDate: "2026-06-10", targetCivilMinute: "2026-06-10T10:30" } });
     const plan = planSchedulingProposal(proposal!);
-    expect(plan.ok && plan.value.kind === "checklist" && plan.value.schedule).toEqual({ state: "range", start: { kind: "timed", localCivil: "2026-06-10T10:30" }, end: { kind: "timed", localCivil: "2026-06-10T12:30" } });
+    expect(plan.ok && plan.value.kind === "checklist" && plan.value.schedule).toEqual({ state: "range", start: { localCivil: "2026-06-10T10:30" }, end: { localCivil: "2026-06-10T12:30" } });
   });
 
   it("resize-start → week target with edge start", () => {
@@ -295,52 +292,27 @@ describe("ganttEditToProposal — coarse scale / date endpoints", () => {
     expect(plan.ok && plan.value.kind === "checklist" && plan.value.schedule.state === "range" && plan.value.schedule.end.localCivil).toBe("2026-06-13T11:00");
   });
 
-  it("all-day range move at day scale still uses the date path", () => {
-    const source = eventSource(makeTask({ schedule: JUNE_DATE_RANGE }));
-    const model = buildProductionGanttModel([makeProject({ children: { rows: [makeTask({ schedule: JUNE_DATE_RANGE })], total: 1, returned: 1, truncated: false, nextCursor: null } })], { now: NOW });
-    const bar = model.events.find((event) => event.id === `task:${TASK_ID}`)!;
-    const proposal = ganttEditToProposal(source, edit({ kind: "move", eventStart: bar.start, eventEnd: bar.end, proposedStart: new Date(bar.start.getTime() + 2 * DAY), proposedEnd: new Date(bar.end.getTime() + 2 * DAY), scale: "day" }));
-    expect(proposal!.target).toEqual({ subview: "month", targetDate: "2026-06-12" });
-  });
-
-  it("all-day resize-start shifts the start date", () => {
-    const source = eventSource(makeTask({ schedule: JUNE_DATE_RANGE }));
-    const start = new Date("2026-06-09T14:00:00.000Z"); // 2026-06-10 00:00 AEST
-    const proposal = ganttEditToProposal(source, edit({ kind: "resize-start", eventStart: start, eventEnd: new Date("2026-06-12T14:00:00.000Z"), proposedStart: new Date(start.getTime() - DAY), scale: "week" }));
-    expect(proposal).toEqual({ kind: "resize", entity: "checklist", source, edge: "start", target: { subview: "month", targetDate: "2026-06-09", edge: "start" } });
-  });
-
-  it("all-day resize-end: target.end is the EXCLUSIVE end, and the plan's inclusive end moves by delta", () => {
-    const source = eventSource(makeTask({ schedule: JUNE_DATE_RANGE }));
-    const exclusiveEnd = new Date("2026-06-12T14:00:00.000Z"); // 2026-06-13 00:00 AEST — exclusive end of 06-12
-    const proposal = ganttEditToProposal(source, edit({ kind: "resize-end", eventStart: new Date("2026-06-09T14:00:00.000Z"), eventEnd: exclusiveEnd, proposedEnd: new Date(exclusiveEnd.getTime() + 2 * DAY), scale: "week" }));
-    expect(proposal).toEqual({ kind: "resize", entity: "checklist", source, edge: "end", target: { subview: "month", targetDate: "2026-06-15", end: "2026-06-15", edge: "end" } });
-    const plan = planSchedulingProposal(proposal!);
-    expect(plan.ok && plan.value.kind === "checklist" && plan.value.schedule).toEqual({ state: "range", start: { kind: "date", localCivil: "2026-06-10" }, end: { kind: "date", localCivil: "2026-06-14" } });
-    expect(plan.ok && plan.value.timing).toEqual({ allDay: true, start: "2026-06-10", end: "2026-06-15" });
-  });
-
-  it("a one-day range moves by date like any range: month target of the shifted start", () => {
+  it("a one-day range moves by its start moment at day scale, keeping both wall times", () => {
     const source = eventSource(makeTask({ schedule: oneDayRange("2026-06-10") }));
-    const at = new Date("2026-06-09T14:00:00.000Z");
-    const proposal = ganttEditToProposal(source, edit({ kind: "move", eventStart: at, eventEnd: new Date(at.getTime() + DAY), proposedStart: new Date(at.getTime() + 5 * DAY), proposedEnd: new Date(at.getTime() + 6 * DAY), scale: "day" }));
-    expect(proposal).toEqual({ kind: "move", entity: "checklist", source, target: { subview: "month", targetDate: "2026-06-15" } });
+    const at = new Date("2026-06-09T23:00:00.000Z");
+    const proposal = ganttEditToProposal(source, edit({ kind: "move", eventStart: at, eventEnd: new Date(at.getTime() + 8 * HOUR), proposedStart: new Date(at.getTime() + 5 * DAY), proposedEnd: new Date(at.getTime() + 5 * DAY + 8 * HOUR), scale: "day" }));
+    expect(proposal).toEqual({ kind: "move", entity: "checklist", source, target: { subview: "week", targetDate: "2026-06-15", targetCivilMinute: "2026-06-15T09:00" } });
     const plan = planSchedulingProposal(proposal!);
-    expect(plan.ok && plan.value.kind === "checklist" && plan.value.schedule).toEqual({ state: "range", start: { kind: "date", localCivil: "2026-06-15" }, end: { kind: "date", localCivil: "2026-06-15" } });
+    expect(plan.ok && plan.value.kind === "checklist" && plan.value.schedule).toEqual({ state: "range", start: { localCivil: "2026-06-15T09:00" }, end: { localCivil: "2026-06-15T17:00" } });
   });
 
   it("a one-day range resizes: resize-end +1 day extends the end by one day, resize-start -1 day pulls the start back", () => {
     const source = eventSource(makeTask({ schedule: oneDayRange("2026-06-10") }));
-    const eventStart = new Date("2026-06-09T14:00:00.000Z");
-    const eventEnd = new Date(eventStart.getTime() + DAY);
+    const eventStart = new Date("2026-06-09T23:00:00.000Z");
+    const eventEnd = new Date(eventStart.getTime() + 8 * HOUR);
     const end = ganttEditToProposal(source, edit({ kind: "resize-end", eventStart, eventEnd, proposedEnd: new Date(eventEnd.getTime() + DAY), scale: "day" }));
     expect(end).toMatchObject({ kind: "resize", edge: "end" });
     const endPlan = planSchedulingProposal(end!);
-    expect(endPlan.ok && endPlan.value.kind === "checklist" && endPlan.value.schedule).toEqual({ state: "range", start: { kind: "date", localCivil: "2026-06-10" }, end: { kind: "date", localCivil: "2026-06-11" } });
+    expect(endPlan.ok && endPlan.value.kind === "checklist" && endPlan.value.schedule).toMatchObject({ state: "range", start: { localCivil: "2026-06-10T09:00" }, end: { localCivil: "2026-06-11T17:00" } });
     const start = ganttEditToProposal(source, edit({ kind: "resize-start", eventStart, eventEnd, proposedStart: new Date(eventStart.getTime() - DAY), scale: "day" }));
     expect(start).toMatchObject({ kind: "resize", edge: "start" });
     const startPlan = planSchedulingProposal(start!);
-    expect(startPlan.ok && startPlan.value.kind === "checklist" && startPlan.value.schedule).toEqual({ state: "range", start: { kind: "date", localCivil: "2026-06-09" }, end: { kind: "date", localCivil: "2026-06-10" } });
+    expect(startPlan.ok && startPlan.value.kind === "checklist" && startPlan.value.schedule).toMatchObject({ state: "range", start: { localCivil: "2026-06-09T09:00" }, end: { localCivil: "2026-06-10T17:00" } });
   });
 
   it("delta 0 at a coarse scale → null", () => {
@@ -454,10 +426,9 @@ describe("applyGanttOptimisticOverlay", () => {
 
 describe("previewDeadlineEffects", () => {
   const ROW = (id: string, title: string, schedule: ChecklistScheduleDto, position = 1) => makeTask({ id, title, schedule, position });
-  // Deadline 2026-06-01T15:00 (makeDeadline). Rows end on 2026-05-30 (on time), 2026-06-01 date
-  // (on time — same day, by date), 2026-06-03 (after).
+  // Deadline 2026-06-01T15:00 (makeDeadline). Rows end on 2026-05-30 (on time), 2026-06-01T15:00 (on time — exactly the deadline minute), 2026-06-03 (after).
   const onTime = ROW("r-on", "On time", oneDayRange("2026-05-30"));
-  const sameDay = ROW("r-same", "Same day", rangeSchedule(dateEndpoint("2026-05-20"), dateEndpoint("2026-06-01")));
+  const sameDay = ROW("r-same", "Same day", rangeSchedule(startMoment("2026-05-20"), endMoment("2026-06-01T15:00")));
   const late = ROW("r-late", "Late", oneDayRange("2026-06-03"));
   const timed = ROW("r-timed", "Timed", rangeSchedule(timedEndpoint("2026-05-31T11:00", "2026-05-31T01:00:00.000Z", 600), timedEndpoint("2026-05-31T12:00", "2026-05-31T02:00:00.000Z", 600)));
   const project = makeProject({ children: { rows: [onTime, sameDay, late, timed], total: 4, returned: 4, truncated: false, nextCursor: null } });

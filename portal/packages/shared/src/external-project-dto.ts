@@ -5,6 +5,7 @@ import { externalAssetSchema } from "./external-asset-dto";
 import { externalEditedCompleteResponseSchema, externalEditedUploadCreateResponseSchema } from "./external-upload";
 import { STAGE_PRESENTATION_KEYS } from "./stage-move";
 import { externalCalendarRangeSchema } from "./production-calendar";
+import { projectDefaultRangeSchema } from "./default-subtask-range";
 import { externalProductionGanttSchema } from "./production-gantt";
 import { externalProjectActivityFeedResponseSchema } from "./project-activity-feed";
 export { externalCalendarRangeSchema } from "./production-calendar";
@@ -53,11 +54,10 @@ export const externalDeadlineSchema = z.object({
 export type ExternalDeadlineDto = z.infer<typeof externalDeadlineSchema>;
 
 const externalScheduleEndpointSchema = z.object({
-  kind: z.enum(["date", "timed"]),
   localCivil: z.string(),
-  instant: iso.nullable(),
-  utcOffsetMinutes: z.number().int().nullable(),
-  fold: z.union([z.literal(0), z.literal(1)]).nullable(),
+  instant: iso,
+  utcOffsetMinutes: z.number().int(),
+  fold: z.union([z.literal(0), z.literal(1)]),
   resolution: z.literal("stored"),
 }).strict();
 
@@ -211,7 +211,7 @@ export const externalAnnotationListResponseSchema = z.object({ annotations: z.ar
 export const externalCommentListResponseSchema = z.object({
   project: z.object({ id: uuid, street: z.string() }).strict(), comments: z.array(externalCommentSchema), nextCursor: z.string().max(2048).optional(),
 }).strict();
-export const externalChecklistListResponseSchema = z.object({ subtasks: z.array(externalChecklistItemSchema) }).strict();
+export const externalChecklistListResponseSchema = z.object({ subtasks: z.array(externalChecklistItemSchema), projectDefaultRange: projectDefaultRangeSchema }).strict();
 export const externalCollectionLinkListResponseSchema = z.object({ links: z.array(externalCollectionLinkSchema) }).strict();
 export const externalMentionableListResponseSchema = z.object({ users: z.array(externalMentionableUserSchema).max(20) }).strict();
 export const externalNotificationListResponseSchema = z.object({ notifications: z.array(externalNotificationListItemSchema), unreadCount: z.number().int().nonnegative(), nextCursor: z.string().max(512).nullable() }).strict();

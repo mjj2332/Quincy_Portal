@@ -1,6 +1,5 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { normalizeChecklistSchedule } from "@quincy/shared";
 
 type SqliteStatement = { all: (...values: unknown[]) => unknown[]; get: (...values: unknown[]) => unknown; run: (...values: unknown[]) => unknown };
 type SqliteDatabase = { close: () => void; exec: (source: string) => void; prepare: (source: string) => SqliteStatement };
@@ -25,9 +24,11 @@ function applyThrough(db: SqliteDatabase, through: number): void {
 
 const VERIFY_SQL = readFileSync(new URL("./subtask-assignees-verify.fixture.sql", import.meta.url), "utf8").split("\n").filter((line) => !line.startsWith("--")).join("\n");
 
-const range = normalizeChecklistSchedule({ state: "range", start: { kind: "date", localCivil: "2026-08-27" }, end: { kind: "date", localCivil: "2026-08-28" } }, 1);
-if (!range.ok) throw new Error("fixture schedule invalid");
-const S = range.value;
+/** A legacy date-only range exactly as the pre-0052 writer stored it (civil dates, no instants). Historical migration tests keep this explicit shape: the shared normalizer is timed-only now (ADR 0016). */
+const S = {
+  dueDate: "2026-08-28", scheduleStartKind: "date", scheduleStartCivil: "2026-08-27", scheduleStartAt: null, scheduleStartUtcOffsetMinutes: null, scheduleStartFold: null,
+  scheduleEndKind: "date", scheduleEndAt: null, scheduleEndUtcOffsetMinutes: null, scheduleEndFold: null, scheduleZone: "Australia/Sydney", scheduleVersion: 1,
+} as const;
 
 function insertSubtask(db: SqliteDatabase, id: string, assigneeId: string | null, version: number, updatedAt: number): void {
   db.prepare(

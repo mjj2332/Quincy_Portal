@@ -151,7 +151,7 @@ export function externalVisibleNotificationWhere(principalId: string, alias = "n
                   AND EXISTS (SELECT 1 FROM project_subtask_assignees a WHERE a.subtask_id = subtask.id AND a.user_id = o.recipient_id AND a.assignment_version = json_extract(o.payload_json, '$.assignment.assignmentVersion'))
                   AND subtask.done = 0
                   AND (o.event_type <> 'project.subtask.due_today'
-                    OR (subtask.due_date = json_extract(o.payload_json, '$.assignment.dueDate')
+                    OR (substr(subtask.due_date, 1, 10) = substr(json_extract(o.payload_json, '$.assignment.dueDate'), 1, 10)
                       AND subtask.due_reminder_sent_at = json_extract(o.payload_json, '$.assignment.claimAt')))
               )
             )

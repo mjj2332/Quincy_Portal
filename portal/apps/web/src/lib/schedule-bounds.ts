@@ -11,8 +11,8 @@
  * toast.
  *
  * Time rule: every compared value is Sydney civil, compared lexicographically on
- * `YYYY-MM-DD[THH:mm]`. The lower bound is a civil DATE compare; the deadline compares by date when
- * either side is date-kind, else by minute.
+ * `YYYY-MM-DD[THH:mm]`. The lower bound is a civil DATE compare; the deadline compares by minute
+ * (by date only for a legacy date-only Deadline).
  *
  * Imports only `@quincy/shared`.
  */
@@ -77,10 +77,10 @@ export function beforeLowerBound(civil: string, lower: ScheduleBounds["lower"]):
   return lower !== null && civil.slice(0, 10) < lower.civilDate;
 }
 
-/** By date when EITHER side is date-kind (a date-only deadline has no `T`), else by minute. */
-export function endsAfterDeadline(end: { kind: string; localCivil: string }, deadlineLocalCivil: string | null): boolean {
+/** By minute; by date only when the Deadline is a legacy date-only value (it has no `T`). */
+export function endsAfterDeadline(end: { localCivil: string }, deadlineLocalCivil: string | null): boolean {
   if (!deadlineLocalCivil) return false;
-  const byDate = end.kind === "date" || !deadlineLocalCivil.includes("T");
+  const byDate = !deadlineLocalCivil.includes("T");
   const endCivil = byDate ? end.localCivil.slice(0, 10) : end.localCivil;
   const boundCivil = byDate ? deadlineLocalCivil.slice(0, 10) : deadlineLocalCivil;
   return endCivil > boundCivil;

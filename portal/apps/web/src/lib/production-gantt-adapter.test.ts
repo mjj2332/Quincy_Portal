@@ -20,6 +20,7 @@ import type {
 import { PRODUCTION_GANTT_DRAW_CAP } from "@quincy/shared";
 import { buildProductionGanttModel, ganttLandingProject, type ProductionGanttAttention, type ProductionGanttEvent, type ProductionGanttRowData } from "./production-gantt-adapter";
 import { STAGE_HATCH_CLASS } from "./stage-colors";
+import { endMoment, startMoment } from "@/testing/subtask-schedule";
 
 // ---------------------------------------------------------------------------
 // Fixture builders
@@ -82,17 +83,13 @@ function makeTask(overrides: Partial<GanttChecklistRowDto> = {}): GanttChecklist
   };
 }
 
-function dateEndpoint(localCivil: string): ChecklistScheduleEndpointDto {
-  return { kind: "date", localCivil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" };
-}
-
 function timedEndpoint(localCivil: string, instant: string, utcOffsetMinutes: number, fold: 0 | 1): ChecklistScheduleEndpointDto {
-  return { kind: "timed", localCivil, instant, utcOffsetMinutes, fold, resolution: "stored" };
+  return { localCivil, instant, utcOffsetMinutes, fold, resolution: "stored" };
 }
 
 /** A one-day date range: the shape every former due-only Subtask takes (ADR 0011). */
 function oneDayRange(civil: string): ChecklistScheduleDto {
-  return rangeSchedule(dateEndpoint(civil), dateEndpoint(civil));
+  return rangeSchedule(startMoment(civil), endMoment(civil));
 }
 
 function rangeSchedule(start: ChecklistScheduleEndpointDto, end: ChecklistScheduleEndpointDto): ChecklistScheduleDto {
@@ -136,15 +133,15 @@ describe("readOnly invariant", () => {
 // ---------------------------------------------------------------------------
 
 describe("schedule kind: one-day range", () => {
-  it("a one-day date range is a positive-width allDay bar: Sydney midnight to the next Sydney midnight", () => {
+  it("a one-day range is a timed bar from its 09:00 start to its 17:00 end", () => {
     const task = makeTask({ schedule: oneDayRange("2026-03-05") });
     const project = makeProject({ children: { rows: [task], total: 1, returned: 1, truncated: false, nextCursor: null } });
     const model = buildProductionGanttModel([project], { now: NOW });
     const [event] = eventsFor(model, `task:${task.id}`);
     expect(event).toBeDefined();
-    expect(event!.allDay).toBe(true);
-    expect(event!.start.toISOString()).toBe("2026-03-04T13:00:00.000Z");
-    expect(event!.end.toISOString()).toBe("2026-03-05T13:00:00.000Z");
+    expect(event!.allDay).toBe(false);
+    expect(event!.start.toISOString()).toBe("2026-03-04T22:00:00.000Z");
+    expect(event!.end.toISOString()).toBe("2026-03-05T06:00:00.000Z");
     expect(event!.end.getTime()).toBeGreaterThan(event!.start.getTime());
   });
 
@@ -161,16 +158,15 @@ describe("schedule kind: one-day range", () => {
 });
 
 describe("schedule kind: range", () => {
-  it("date endpoints produce an allDay event with an exclusive, civil-shifted end", () => {
-    const task = makeTask({ schedule: rangeSchedule(dateEndpoint("2026-03-01"), dateEndpoint("2026-03-03")) });
+  it("a multi-day range is a timed bar from its start moment to its end moment", () => {
+    const task = makeTask({ schedule: rangeSchedule(startMoment("2026-03-01"), endMoment("2026-03-03")) });
     const project = makeProject({ children: { rows: [task], total: 1, returned: 1, truncated: false, nextCursor: null } });
     const model = buildProductionGanttModel([project], { now: NOW });
     const [event] = eventsFor(model, `task:${task.id}`);
     expect(event).toBeDefined();
-    expect(event!.allDay).toBe(true);
-    // Inclusive last day 2026-03-03 -> exclusive end is civil midnight of 2026-03-04, not
-    // 2026-03-03 (pitfall 4: forgetting the advance) and not the sum of raw milliseconds.
-    expect(event!.end.getTime()).toBeGreaterThan(event!.start.getTime());
+    expect(event!.allDay).toBe(false);
+    expect(event!.start.toISOString()).toBe("2026-02-28T22:00:00.000Z");
+    expect(event!.end.toISOString()).toBe("2026-03-03T06:00:00.000Z");
   });
 
   it("timed endpoints produce a non-allDay event using each endpoint's own stored instant", () => {
@@ -242,35 +238,21 @@ describe("pitfall 2: a stored timed endpoint always uses its own instant, never 
 // Pitfalls 3 & 4 — civil-date advance, both DST directions
 // ---------------------------------------------------------------------------
 
-describe("pitfalls 3 & 4: inclusive->exclusive end is a civil-date shift, not a millisecond add", () => {
-  it("23h spring-forward day (2026-10-04): a single-day range's real duration is 23h, not 24h", () => {
-    const task = makeTask({ schedule: rangeSchedule(dateEndpoint("2026-10-04"), dateEndpoint("2026-10-04")) });
+describe("a range across a daylight-saving change is drawn at its real duration", () => {
+  const durationOf = (start: string, end: string) => {
+    const task = makeTask({ schedule: rangeSchedule(startMoment(start), endMoment(end)) });
     const project = makeProject({ children: { rows: [task], total: 1, returned: 1, truncated: false, nextCursor: null } });
-    const model = buildProductionGanttModel([project], { now: NOW });
-    const [event] = eventsFor(model, `task:${task.id}`);
+    const [event] = eventsFor(buildProductionGanttModel([project], { now: NOW }), `task:${task.id}`);
     expect(event).toBeDefined();
-    const durationMs = event!.end.getTime() - event!.start.getTime();
-    expect(durationMs).toBe(23 * 60 * 60 * 1000);
-    expect(durationMs).not.toBe(24 * 60 * 60 * 1000); // pitfall 3: naive +86_400_000ms overhangs
+    return event!.end.getTime() - event!.start.getTime();
+  };
+
+  it("spring-forward (2026-10-04): noon to noon across the change is 23h, not 24h", () => {
+    expect(durationOf("2026-10-03T12:00", "2026-10-04T12:00")).toBe(23 * 60 * 60 * 1000);
   });
 
-  it("25h fall-back day (2026-04-05): a single-day range's real duration is 25h, not 24h", () => {
-    const task = makeTask({ schedule: rangeSchedule(dateEndpoint("2026-04-05"), dateEndpoint("2026-04-05")) });
-    const project = makeProject({ children: { rows: [task], total: 1, returned: 1, truncated: false, nextCursor: null } });
-    const model = buildProductionGanttModel([project], { now: NOW });
-    const [event] = eventsFor(model, `task:${task.id}`);
-    expect(event).toBeDefined();
-    const durationMs = event!.end.getTime() - event!.start.getTime();
-    expect(durationMs).toBe(25 * 60 * 60 * 1000);
-    expect(durationMs).not.toBe(24 * 60 * 60 * 1000);
-  });
-
-  it("pitfall 4: the exclusive-end advance is never skipped — end is always strictly after start for a date range", () => {
-    const task = makeTask({ schedule: rangeSchedule(dateEndpoint("2026-03-01"), dateEndpoint("2026-03-01")) });
-    const project = makeProject({ children: { rows: [task], total: 1, returned: 1, truncated: false, nextCursor: null } });
-    const model = buildProductionGanttModel([project], { now: NOW });
-    const [event] = eventsFor(model, `task:${task.id}`);
-    expect(event!.end.getTime()).toBeGreaterThan(event!.start.getTime());
+  it("fall-back (2026-04-05): noon to noon across the change is 25h, not 24h", () => {
+    expect(durationOf("2026-04-04T12:00", "2026-04-05T12:00")).toBe(25 * 60 * 60 * 1000);
   });
 });
 
@@ -634,7 +616,7 @@ describe("interactive option (#221)", () => {
   });
 
   it("range task: draggable per canDrag, resizable per canResize, readOnly only when neither", () => {
-    const schedule = rangeSchedule(dateEndpoint("2026-06-10"), dateEndpoint("2026-06-12"));
+    const schedule = rangeSchedule(startMoment("2026-06-10"), endMoment("2026-06-12"));
     const perms = (canDrag: boolean, canResize: boolean) => ({ canDrag, canResize, canOpenScheduleEditor: true, canEditAssignees: true });
     const resizeOnly = taskEvent(makeTask({ schedule, permissions: perms(false, true) }), true);
     expect([resizeOnly.readOnly, resizeOnly.draggable, resizeOnly.resizable]).toEqual([false, false, true]);
@@ -681,7 +663,7 @@ describe("#257: stage pattern class", () => {
   function projectWithChildren(stageKey: GanttProjectRowDto["stageKey"]) {
     const projectId = `11111111-1111-4111-8111-${stageKey === "edited_review" ? "000000000257" : "000000000258"}`;
     const rows = [
-      makeTask({ projectId, schedule: rangeSchedule(dateEndpoint("2026-03-02"), dateEndpoint("2026-03-04")) }),
+      makeTask({ projectId, schedule: rangeSchedule(startMoment("2026-03-02"), endMoment("2026-03-04")) }),
       makeTask({ projectId, schedule: oneDayRange("2026-03-05") }),
     ];
     return makeProject({
@@ -736,8 +718,8 @@ describe("#414: Subtask child order", () => {
   });
 
   it("the same start orders by the earlier end", () => {
-    const long = makeTask({ position: 1, schedule: rangeSchedule(dateEndpoint("2026-03-02"), dateEndpoint("2026-03-06")) });
-    const short = makeTask({ position: 2, schedule: rangeSchedule(dateEndpoint("2026-03-02"), dateEndpoint("2026-03-03")) });
+    const long = makeTask({ position: 1, schedule: rangeSchedule(startMoment("2026-03-02"), endMoment("2026-03-06")) });
+    const short = makeTask({ position: 2, schedule: rangeSchedule(startMoment("2026-03-02"), endMoment("2026-03-03")) });
     expect(childIds([long, short])).toEqual([short.id, long.id]);
   });
 
@@ -748,34 +730,20 @@ describe("#414: Subtask child order", () => {
     expect(childIds([b, a, first])).toEqual(["z-task", "a-task", "b-task"]);
   });
 
-  it("compares resolved instants across endpoint kinds", () => {
+  it("compares resolved instants: the earlier start first, and the earlier end on a tie", () => {
     // Sydney AEDT (+11) on 2026-03-02: 09:00 local = 2026-03-01T22:00Z.
-    const dateDay = makeTask({ position: 2, schedule: oneDayRange("2026-03-02") });
-    const timed = makeTask({
-      position: 1,
-      schedule: rangeSchedule(
-        timedEndpoint("2026-03-02T09:00", "2026-03-01T22:00:00.000Z", 660, 0),
-        timedEndpoint("2026-03-02T15:00", "2026-03-02T04:00:00.000Z", 660, 0),
-      ),
-    });
-    // date start = midnight (before 09:00), so the date row comes first despite its later position.
-    expect(childIds([timed, dateDay])).toEqual([dateDay.id, timed.id]);
-    // same start instant: the timed 15:00 end is before the date row's exclusive next-day midnight.
-    const sameStartDate = makeTask({ position: 1, schedule: oneDayRange("2026-03-02") });
-    const sameStartTimed = makeTask({
-      position: 2,
-      schedule: rangeSchedule(
-        timedEndpoint("2026-03-02T00:00", "2026-03-01T13:00:00.000Z", 660, 0),
-        timedEndpoint("2026-03-02T15:00", "2026-03-02T04:00:00.000Z", 660, 0),
-      ),
-    });
-    expect(childIds([sameStartDate, sameStartTimed])).toEqual([sameStartTimed.id, sameStartDate.id]);
+    const nine = makeTask({ position: 2, schedule: oneDayRange("2026-03-02") });
+    const ten = makeTask({ position: 1, schedule: rangeSchedule(startMoment("2026-03-02T10:00"), endMoment("2026-03-02T15:00")) });
+    expect(childIds([ten, nine])).toEqual([nine.id, ten.id]);
+    const sameStartLong = makeTask({ position: 1, schedule: oneDayRange("2026-03-02") });
+    const sameStartShort = makeTask({ position: 2, schedule: rangeSchedule(startMoment("2026-03-02T09:00"), endMoment("2026-03-02T15:00")) });
+    expect(childIds([sameStartLong, sameStartShort])).toEqual([sameStartShort.id, sameStartLong.id]);
   });
 
   it("an unresolvable endpoint sorts after every resolved one", () => {
     const broken = makeTask({
       position: 1,
-      schedule: rangeSchedule(timedEndpoint("2026-03-01T09:00", null as unknown as string, 660, 0), dateEndpoint("2026-03-09")),
+      schedule: rangeSchedule(timedEndpoint("2026-03-01T09:00", null as unknown as string, 660, 0), endMoment("2026-03-09")),
     });
     const ok = makeTask({ position: 5, schedule: oneDayRange("2026-06-30") });
     expect(childIds([broken, ok])).toEqual([ok.id, broken.id]);

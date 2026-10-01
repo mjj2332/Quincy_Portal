@@ -4,6 +4,8 @@ import { StrictMode, useEffect, useRef, useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { focusManager, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { CHECKLIST_RAIL_QUERY, ProjectCollaborationPanel } from "./ProjectCollaborationPanel";
+// The Subtask composer mounts the range popup (ScrollArea time column, #423); see testing/dom-polyfills.ts.
+import "../testing/dom-polyfills";
 import { chooseCommentAction } from "../testing/comment-menu";
 import { formatAbsoluteTime, formatRelativeTime } from "../lib/date-format";
 import { EditProject } from "../screens/EditProject";

@@ -58,14 +58,14 @@ function deadlineEvent(localCivil: string): ProjectDeadlineCalendarEventDto {
 }
 
 describe("scheduling policy adversarial boundaries", () => {
-  it("warns only strictly past timed minutes and date-only dates at both DST edges", () => {
+  it("warns only strictly past minutes at both DST edges and for a preset 17:00 end", () => {
     const cases: Array<[RangeChecklistScheduleInput, string, boolean]> = [
-      [{ state: "range", start: { kind: "timed", localCivil: "2000-01-01T00:00" }, end: { kind: "timed", localCivil: "2026-04-05T02:30" } }, "2026-04-05T02:30", false],
-      [{ state: "range", start: { kind: "timed", localCivil: "2000-01-01T00:00" }, end: { kind: "timed", localCivil: "2026-04-05T02:31" } }, "2026-04-05T02:30", true],
-      [{ state: "range", start: { kind: "timed", localCivil: "2000-01-01T00:00" }, end: { kind: "timed", localCivil: "2026-10-04T03:00" } }, "2026-10-04T03:00", false],
-      [{ state: "range", start: { kind: "timed", localCivil: "2000-01-01T00:00" }, end: { kind: "timed", localCivil: "2026-10-04T03:01" } }, "2026-10-04T03:00", true],
-      [{ state: "range", start: { kind: "date", localCivil: "2000-01-01" }, end: { kind: "date", localCivil: "2026-04-05" } }, "2026-04-05T02:30", false],
-      [{ state: "range", start: { kind: "date", localCivil: "2000-01-01" }, end: { kind: "date", localCivil: "2026-04-06" } }, "2026-04-05T02:30", true],
+      [{ state: "range", start: { localCivil: "2000-01-01T00:00" }, end: { localCivil: "2026-04-05T02:30" } }, "2026-04-05T02:30", false],
+      [{ state: "range", start: { localCivil: "2000-01-01T00:00" }, end: { localCivil: "2026-04-05T02:31" } }, "2026-04-05T02:30", true],
+      [{ state: "range", start: { localCivil: "2000-01-01T00:00" }, end: { localCivil: "2026-10-04T03:00" } }, "2026-10-04T03:00", false],
+      [{ state: "range", start: { localCivil: "2000-01-01T00:00" }, end: { localCivil: "2026-10-04T03:01" } }, "2026-10-04T03:00", true],
+      [{ state: "range", start: { localCivil: "2000-01-01T09:00" }, end: { localCivil: "2026-04-05T17:00" } }, "2026-04-05T17:00", false],
+      [{ state: "range", start: { localCivil: "2000-01-01T09:00" }, end: { localCivil: "2026-04-05T17:00" } }, "2026-04-05T16:59", true],
     ];
     for (const [schedule, deadlineLocalCivil, shouldWarn] of cases) {
       const warnings = scheduleWindowWarnings(schedule, { lower: null, deadlineLocalCivil });
@@ -95,7 +95,7 @@ describe("scheduling policy adversarial boundaries", () => {
       disambiguation: "later",
     };
     const plan = planSchedulingProposal(proposal);
-    expect(plan).toMatchObject({ ok: true, value: { kind: "checklist", request: { schedule: { start: { kind: "timed", localCivil: "2026-04-05T02:30", disambiguation: "later" } } } } });
+    expect(plan).toMatchObject({ ok: true, value: { kind: "checklist", request: { schedule: { start: { localCivil: "2026-04-05T02:30", disambiguation: "later" } } } } });
     if (plan.ok && plan.value.kind === "checklist") expect(plan.value.timing).toEqual({ allDay: false, start: "2026-04-04T16:30:00.000Z", end: "2026-04-04T18:00:00.000Z" });
   });
 

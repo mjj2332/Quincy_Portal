@@ -184,7 +184,7 @@ describe("notifications API and recipient selection", () => {
       database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Staff assigner street', 'edited_review', ?, ?)").bind(projectId, now, now),
       database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, actorId, now),
       ...(member ? [database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, assigneeId, now)] : []),
-      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Retouch the hero shot', 0, 0, 1, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(subtaskId, projectId, actorId, now, now),
+      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Retouch the hero shot', 0, 0, 1, '2099-12-31T17:00', 'timed', '2099-12-31T09:00', 4102351200000, 660, 0, 'timed', 4102380000000, 660, 0, 'Australia/Sydney', 1, ?, ?, ?)").bind(subtaskId, projectId, actorId, now, now),
       database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 1, ?)").bind(subtaskId, assigneeId, now),
     ]);
     return { projectId, actorId, assigneeId, subtaskId };
@@ -419,7 +419,7 @@ describe("notification list per-row project street and cover", () => {
     await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(membershipId, projectId, externalEditor, now).run();
     const subtaskId = crypto.randomUUID();
     await database.DB.batch([
-      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Second assignee task', 0, 0, 2, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(subtaskId, projectId, admin, now, now),
+      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Second assignee task', 0, 0, 2, '2099-12-31T17:00', 'timed', '2099-12-31T09:00', 4102351200000, 660, 0, 'timed', 4102380000000, 660, 0, 'Australia/Sydney', 1, ?, ?, ?)").bind(subtaskId, projectId, admin, now, now),
       // userB was added first (version 1); the external editor joined later at version 2.
       database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 1, ?), (?, ?, 2, ?)").bind(subtaskId, userB, now, subtaskId, externalEditor, now + 1),
     ]);
@@ -520,7 +520,7 @@ describe("notification read-model enrichment", () => {
   async function makeSubtask(projectId: string, title: string, assigneeId: string | null, assignmentVersion = 1) {
     const subtaskId = crypto.randomUUID();
     const now = Date.now();
-    await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, 0, ?, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)")
+    await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, 0, ?, '2099-12-31T17:00', 'timed', '2099-12-31T09:00', 4102351200000, 660, 0, 'timed', 4102380000000, 660, 0, 'Australia/Sydney', 1, ?, ?, ?)")
       .bind(subtaskId, projectId, title, assignmentVersion, admin, now, now).run();
     if (assigneeId) await database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, ?, ?)").bind(subtaskId, assigneeId, assignmentVersion, now).run();
     return subtaskId;

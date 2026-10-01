@@ -29,6 +29,8 @@ import { DEFAULT_GANTT_FACET_FILTERS } from "../lib/production-gantt-filters";
 import { clearToasts } from "../lib/toast-store";
 import { ToastViewport } from "./quincy/ToastViewport";
 import { ProductionGantt } from "./ProductionGantt";
+import { endMoment, startMoment } from "@/testing/subtask-schedule";
+import { applyPopup, dateTimePopup, pickPopupDay, popupButton, pressInPopup, rangeToggles, typePopupTime, rangeMoment } from "@/testing/date-time-popup";
 
 vi.mock("../lib/stages", () => ({
   presentationStages: (stages: unknown[]) => stages,
@@ -53,16 +55,15 @@ function sydneyDay(offset: number): string {
   return shifted.value;
 }
 
-const dateEndpoint = (localCivil: string): ChecklistScheduleEndpointDto => ({ kind: "date", localCivil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" });
 function timedEndpoint(localCivil: string, disambiguation?: "earlier" | "later"): ChecklistScheduleEndpointDto {
   const resolved = resolveSydneyCivilMinute(localCivil, disambiguation);
   if (!resolved.ok) throw new Error(`fixture civil did not resolve: ${localCivil}`);
-  return { kind: "timed", localCivil, instant: resolved.value.instant, utcOffsetMinutes: resolved.value.utcOffsetMinutes, fold: resolved.value.fold, resolution: "stored" };
+  return { localCivil, instant: resolved.value.instant, utcOffsetMinutes: resolved.value.utcOffsetMinutes, fold: resolved.value.fold, resolution: "stored" };
 }
 const range = (version: number, start: ChecklistScheduleEndpointDto, end: ChecklistScheduleEndpointDto): ChecklistScheduleDto => ({ state: "range", version, zone: PRODUCTION_GANTT_ZONE, start, end, due: end.localCivil });
 
 type Row = { id: string; title: string; position: number; schedule: ChecklistScheduleDto; canOpenScheduleEditor: boolean };
-type ScheduleInput = { state: string; start?: { kind: string; localCivil: string; disambiguation?: "earlier" | "later" }; end?: { kind: string; localCivil: string; disambiguation?: "earlier" | "later" } };
+type ScheduleInput = { state: string; start?: { localCivil: string; disambiguation?: "earlier" | "later" }; end?: { localCivil: string; disambiguation?: "earlier" | "later" } };
 type PatchBody = { schedule: { expectedVersion: number; schedule: ScheduleInput } };
 
 /** The server's view: PATCH mutates it, GET reads it. */
@@ -72,7 +73,7 @@ let pageTwo: Row[];
 function resetFixture(options: { canOpenScheduleEditor?: boolean; timedStart?: string; timedEnd?: string } = {}) {
   const can = options.canOpenScheduleEditor ?? true;
   rows = [
-    { id: RANGE_ID, title: RANGE_TITLE, position: 0, canOpenScheduleEditor: can, schedule: range(1, dateEndpoint(sydneyDay(1)), dateEndpoint(sydneyDay(3))) },
+    { id: RANGE_ID, title: RANGE_TITLE, position: 0, canOpenScheduleEditor: can, schedule: range(1, startMoment(sydneyDay(1)), endMoment(sydneyDay(3))) },
     { id: TIMED_ID, title: TIMED_TITLE, position: 1, canOpenScheduleEditor: can, schedule: range(1, timedEndpoint(options.timedStart ?? `${sydneyDay(2)}T09:00`), timedEndpoint(options.timedEnd ?? `${sydneyDay(2)}T17:00`)) },
   ];
   pageTwo = [];
@@ -112,7 +113,7 @@ let getGate: Promise<void> | null;
 let getFails: boolean;
 
 function scheduleFromInput(input: ScheduleInput, version: number): ChecklistScheduleDto {
-  const endpoint = (value: ScheduleInput["end"]) => (value ? (value.kind === "timed" ? timedEndpoint(value.localCivil, value.disambiguation) : dateEndpoint(value.localCivil)) : null);
+  const endpoint = (value: ScheduleInput["end"]) => (value ? timedEndpoint(value.localCivil, value.disambiguation) : null);
   const start = endpoint(input.start);
   const end = endpoint(input.end);
   if (!start || !end) throw new Error("fixture: a range PATCH must carry both endpoints");
@@ -169,24 +170,16 @@ const barLabel = (title: string) => findBar(title)?.getAttribute("aria-label") ?
 const dueTrigger = (title: string) => host.querySelector<HTMLButtonElement>(`[data-testid="gantt-subtask-due-trigger"][aria-label^="Due for ${title}"]`);
 const dueCells = () => [...host.querySelectorAll<HTMLElement>('[data-testid="gantt-subtask-due"]')];
 const dueText = (title: string) => dueTrigger(title)?.textContent ?? "";
-const picker = (title: string) => document.querySelector<HTMLElement>(`[role="group"][aria-label="Schedule for ${title}"]`);
-const fieldset = (title: string, which: "Start" | "End") => [...(picker(title)?.querySelectorAll("fieldset") ?? [])].find((set) => set.querySelector("legend")?.textContent === which) ?? null;
-const dateInput = (title: string, which: "Start" | "End") => fieldset(title, which)?.querySelector<HTMLInputElement>('input[type="date"]') ?? null;
-const timeInput = (title: string, which: "Start" | "End") => fieldset(title, which)?.querySelector<HTMLInputElement>('input[type="time"]') ?? null;
-const pickerButton = (title: string, name: string) => [...(picker(title)?.querySelectorAll("button") ?? [])].find((el) => el.textContent === name) as HTMLButtonElement | undefined;
+const picker = (title: string) => dateTimePopup(`Schedule for ${title}`);
+const pickerButton = (title: string, name: string) => (picker(title) ? popupButton(picker(title)!, name) : undefined);
+/** The End toggle's text in the open popup ("Tue 15 Sep · 17:00"). */
+const endText = (title: string) => rangeToggles(picker(title)!).end;
+const startText = (title: string) => rangeToggles(picker(title)!).start;
 const undoButtons = () => [...document.body.querySelectorAll<HTMLButtonElement>('[data-testid="toast-action"]')];
 const toasts = () => [...document.body.querySelectorAll<HTMLElement>('[data-testid="toast"]')].map((el) => el.textContent ?? "");
 const liveRegionText = () => host.querySelector('[data-testid="production-gantt-live-region"]')?.textContent ?? "";
 
 async function click(el: HTMLElement) { await act(async () => { el.click(); await Promise.resolve(); }); }
-async function setInput(el: HTMLInputElement, value: string) {
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(el, value);
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-    el.dispatchEvent(new Event("change", { bubbles: true }));
-    await Promise.resolve();
-  });
-}
 async function keydown(el: EventTarget, key: string) { await act(async () => { el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key })); await Promise.resolve(); }); }
 async function pointerEvent(target: EventTarget, type: string, init: PointerEventInit) { await act(async () => { target.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, ...init })); await Promise.resolve(); }); }
 async function openDue(title: string) {
@@ -194,10 +187,10 @@ async function openDue(title: string) {
   await waitFor(() => expect(picker(title)).not.toBeNull());
   await flush(2);
 }
-/** Types a new End date into the open picker and presses Save. */
+/** Picks a new End day in the open popup (End is the active end) and presses Apply. */
 async function saveEnd(title: string, date: string) {
-  await setInput(dateInput(title, "End")!, date);
-  await click(pickerButton(title, "Save")!);
+  await pickPopupDay(picker(title)!, date);
+  await applyPopup(picker(title)!);
   await flush(6);
 }
 
@@ -247,10 +240,10 @@ afterEach(async () => {
 });
 
 describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
-  it("R1 shows the range END in the Due column, 'Fri 11 Sep' style for a date and with the Sydney wall time for a timed end", async () => {
+  it("R1 shows the range END in the Due column with its Sydney wall time, 'Sun 13 Sep · 17:00'", async () => {
     await render();
     // 2026-09-13 is a Sunday; the timed row ends Sat 12 Sep at 17:00.
-    expect(dueText(RANGE_TITLE)).toBe("Sun 13 Sep");
+    expect(dueText(RANGE_TITLE)).toBe("Sun 13 Sep · 17:00");
     expect(dueText(TIMED_TITLE)).toBe("Sat 12 Sep · 17:00");
     // In the Due column, never the name cell: the row label keeps the title alone.
     const nameCell = host.querySelector(`[data-gantt-resource="task:${RANGE_ID}"]`);
@@ -264,21 +257,21 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     const held = deferred<Reply>();
     patchReply = async (body, subtaskId) => { await held.promise; return echoPatch(body, subtaskId); };
     await openDue(RANGE_TITLE);
-    await setInput(dateInput(RANGE_TITLE, "End")!, sydneyDay(5));
-    await click(pickerButton(RANGE_TITLE, "Save")!);
+    await pickPopupDay(picker(RANGE_TITLE)!, sydneyDay(5));
+    await applyPopup(picker(RANGE_TITLE)!);
     await flush(2);
 
     expect(patches()).toHaveLength(1);
     expect(patches()[0]!.url).toBe(`/api/projects/${PROJECT_ID}/subtasks/${RANGE_ID}`);
     expect(patchBody().schedule.expectedVersion).toBe(1);
-    expect(patchBody().schedule.schedule).toEqual({ state: "range", start: { kind: "date", localCivil: sydneyDay(1) }, end: { kind: "date", localCivil: sydneyDay(5) } });
+    expect(patchBody().schedule.schedule).toEqual({ state: "range", start: { localCivil: `${sydneyDay(1)}T09:00` }, end: { localCivil: `${sydneyDay(5)}T17:00` } });
     // The bar previews the new end while the request is held.
     expect(barLabel(RANGE_TITLE)).not.toBe(before);
 
     held.resolve({ status: 200, body: null });
     await flush(6);
     expect(patches()).toHaveLength(1);
-    expect(dueText(RANGE_TITLE)).toBe("Tue 15 Sep");
+    expect(dueText(RANGE_TITLE)).toBe("Tue 15 Sep · 17:00");
     expect(barLabel(RANGE_TITLE)).not.toBe(before);
     expect(toasts().join(" ")).toContain("Schedule saved.");
     expect(undoButtons()).toHaveLength(1);
@@ -288,27 +281,38 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     await flush(6);
     expect(patches()).toHaveLength(2);
     expect(patchBody(1).schedule.expectedVersion).toBe(2);
-    expect(patchBody(1).schedule.schedule).toEqual({ state: "range", start: { kind: "date", localCivil: sydneyDay(1) }, end: { kind: "date", localCivil: sydneyDay(3) } });
-    await waitFor(() => expect(dueText(RANGE_TITLE)).toBe("Sun 13 Sep"));
+    expect(patchBody(1).schedule.schedule).toEqual({ state: "range", start: { localCivil: `${sydneyDay(1)}T09:00`, disambiguation: "earlier" }, end: { localCivil: `${sydneyDay(3)}T17:00`, disambiguation: "earlier" } });
+    await waitFor(() => expect(dueText(RANGE_TITLE)).toBe("Sun 13 Sep · 17:00"));
     expect(barLabel(RANGE_TITLE)).toBe(before);
+  });
+
+  it("#423 the Subtask picker offers the Project default from the project row and resets the range to it", async () => {
+    await render();
+    await openDue(RANGE_TITLE);
+    // The fixture: shoot day -1 (2026-09-09), Deadline day +6 at 15:00 (2026-09-16).
+    expect(pickerButton(RANGE_TITLE, "Project default")).toBeDefined();
+    await pressInPopup(picker(RANGE_TITLE)!, "Project default");
+    expect(startText(RANGE_TITLE)).toBe("Wed 9 Sep · 09:00");
+    expect(endText(RANGE_TITLE)).toBe("Wed 16 Sep · 15:00");
   });
 
   it("R3 a timed End keeps the unchanged timed Start and its Sydney wall time on the wire", async () => {
     await render();
     await openDue(TIMED_TITLE);
-    await setInput(timeInput(TIMED_TITLE, "End")!, "18:30");
-    await click(pickerButton(TIMED_TITLE, "Save")!);
+    await typePopupTime(picker(TIMED_TITLE)!, "18:30");
+    await applyPopup(picker(TIMED_TITLE)!);
     await flush(6);
     expect(patches()).toHaveLength(1);
-    expect(patchBody().schedule.schedule).toEqual({ state: "range", start: { kind: "timed", localCivil: `${sydneyDay(2)}T09:00`, disambiguation: "earlier" }, end: { kind: "timed", localCivil: `${sydneyDay(2)}T18:30`, disambiguation: "earlier" } });
+    expect(patchBody().schedule.schedule).toEqual({ state: "range", start: { localCivil: `${sydneyDay(2)}T09:00` }, end: { localCivil: `${sydneyDay(2)}T18:30` } });
     await waitFor(() => expect(dueText(TIMED_TITLE)).toBe("Sat 12 Sep · 18:30"));
   });
 
-  it("R4 the picker opens with focus on End; Cancel and Escape return focus to the Due trigger and send nothing", async () => {
+  it("R4 the popup opens on End, with focus on its toggle; Cancel and Escape return focus to the Due trigger and send nothing", async () => {
     await render();
     await openDue(RANGE_TITLE);
-    expect(document.activeElement).toBe(dateInput(RANGE_TITLE, "End"));
-    await click(pickerButton(RANGE_TITLE, "Cancel")!);
+    expect(rangeToggles(picker(RANGE_TITLE)!).active).toBe("End");
+    expect(document.activeElement?.textContent).toContain("End");
+    await pressInPopup(picker(RANGE_TITLE)!, "Cancel");
     await flush(3);
     await waitFor(() => expect(picker(RANGE_TITLE)).toBeNull());
     expect(document.activeElement).toBe(dueTrigger(RANGE_TITLE));
@@ -330,32 +334,31 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     expect(document.activeElement).toBe(dueTrigger(RANGE_TITLE));
   });
 
-  it("R6 an End before the Start is refused with the picker's message and sends no PATCH; the draft stays open", async () => {
+  it("R6 an End before the Start is refused in the popup and sends no PATCH; the draft stays open", async () => {
     await render();
     await openDue(RANGE_TITLE);
-    await setInput(dateInput(RANGE_TITLE, "End")!, sydneyDay(0));
-    await click(pickerButton(RANGE_TITLE, "Save")!);
-    await flush(4);
+    await pickPopupDay(picker(RANGE_TITLE)!, sydneyDay(1));
+    await typePopupTime(picker(RANGE_TITLE)!, "08:00");
+    expect(pickerButton(RANGE_TITLE, "Apply")!.disabled).toBe(true);
+    expect(picker(RANGE_TITLE)!.textContent).toContain("Start must be before end.");
     expect(patches()).toHaveLength(0);
     expect(picker(RANGE_TITLE)).not.toBeNull();
-    expect(picker(RANGE_TITLE)!.querySelector('[role="alert"]')?.textContent ?? "").toMatch(/end/i);
-    expect(dateInput(RANGE_TITLE, "End")!.value).toBe(sydneyDay(0));
-    expect(dateInput(RANGE_TITLE, "Start")!.value).toBe(sydneyDay(1));
+    expect(endText(RANGE_TITLE)).toBe(rangeMoment(sydneyDay(1), "08:00"));
+    expect(startText(RANGE_TITLE)).toBe(rangeMoment(sydneyDay(1), "09:00"));
 
-    // The same day is one inclusive day: accepted.
-    await setInput(dateInput(RANGE_TITLE, "End")!, sydneyDay(1));
-    await click(pickerButton(RANGE_TITLE, "Save")!);
+    // The same day, later than the start, is a range under a day: accepted.
+    await typePopupTime(picker(RANGE_TITLE)!, "16:00");
+    await applyPopup(picker(RANGE_TITLE)!);
     await flush(6);
     expect(patches()).toHaveLength(1);
-    expect(patchBody().schedule.schedule.end).toEqual({ kind: "date", localCivil: sydneyDay(1) });
+    expect(patchBody().schedule.schedule.end).toEqual({ localCivil: `${sydneyDay(1)}T16:00` });
   });
 
   it("R7 a timed End equal to its Start is refused before any PATCH", async () => {
     await render();
     await openDue(TIMED_TITLE);
-    await setInput(timeInput(TIMED_TITLE, "End")!, "09:00");
-    await click(pickerButton(TIMED_TITLE, "Save")!);
-    await flush(4);
+    await typePopupTime(picker(TIMED_TITLE)!, "09:00");
+    expect(pickerButton(TIMED_TITLE, "Apply")!.disabled).toBe(true);
     expect(patches()).toHaveLength(0);
     expect(picker(TIMED_TITLE)).not.toBeNull();
   });
@@ -364,48 +367,39 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     resetFixture({ canOpenScheduleEditor: false });
     await render();
     expect(dueTrigger(RANGE_TITLE)).toBeNull();
-    const plain = dueCells().find((cell) => cell.textContent === "Sun 13 Sep");
+    const plain = dueCells().find((cell) => cell.textContent === "Sun 13 Sep · 17:00");
     expect(plain?.tagName).toBe("TIME");
     expect(host.querySelectorAll('[data-testid="gantt-subtask-due"] button')).toHaveLength(0);
     expect(patches()).toHaveLength(0);
   });
 
-  it("R9 a repeated Sydney hour keeps the fold choice in the picker and sends it", async () => {
+  it("R9 a repeated Sydney hour asks Earlier or Later in the popup and sends the choice", async () => {
     // Sun 5 Apr 2026: clocks go back at 03:00, so 02:30 happens twice.
     resetFixture({ timedStart: "2026-04-04T09:00", timedEnd: "2026-04-04T10:00" });
     await render();
     await openDue(TIMED_TITLE);
-    await setInput(dateInput(TIMED_TITLE, "End")!, "2026-04-05");
-    await setInput(timeInput(TIMED_TITLE, "End")!, "02:30");
-    // The picker sends the default ("earlier"); the server answers that the hour occurs twice and the picker asks.
-    patchReply = () => ({ status: 400, body: { error: "repeated", code: "subtask_schedule_repeated_local_time", details: { endpoint: "end", choices: [{ disambiguation: "earlier", utcOffsetMinutes: 660 }, { disambiguation: "later", utcOffsetMinutes: 600 }] } } });
-    await click(pickerButton(TIMED_TITLE, "Save")!);
+    await pickPopupDay(picker(TIMED_TITLE)!, "2026-04-05");
+    await typePopupTime(picker(TIMED_TITLE)!, "02:30");
+    expect(pickerButton(TIMED_TITLE, "Apply")!.disabled).toBe(true);
+    await pressInPopup(picker(TIMED_TITLE)!, "Later (UTC+10:00)");
+    await applyPopup(picker(TIMED_TITLE)!);
     await flush(6);
     expect(patches()).toHaveLength(1);
-    expect(picker(TIMED_TITLE)).not.toBeNull();
-    const radios = [...picker(TIMED_TITLE)!.querySelectorAll<HTMLInputElement>('input[type="radio"]')];
-    expect(radios).toHaveLength(2);
-    expect(dateInput(TIMED_TITLE, "End")!.value).toBe("2026-04-05");
-    patchReply = null;
-    await click(radios[1]!);
-    await click(pickerButton(TIMED_TITLE, "Save")!);
-    await flush(6);
-    expect(patches()).toHaveLength(2);
-    expect(patchBody(1).schedule.schedule.end).toEqual({ kind: "timed", localCivil: "2026-04-05T02:30", disambiguation: "later" });
-    expect(patchBody(1).schedule.schedule.start).toEqual({ kind: "timed", localCivil: "2026-04-04T09:00", disambiguation: "earlier" });
+    expect(patchBody().schedule.schedule.end).toEqual({ localCivil: "2026-04-05T02:30", disambiguation: "later" });
+    expect(patchBody().schedule.schedule.start).toEqual({ localCivil: "2026-04-04T09:00" });
   });
 
   it("R10 the open version survives a late refresh: the first PATCH still carries the version the editor opened at", async () => {
     await render();
     await openDue(RANGE_TITLE);
     // The server moves on while the picker is open; the controller holds its accepted baseline.
-    rows[0]!.schedule = range(4, dateEndpoint(sydneyDay(1)), dateEndpoint(sydneyDay(6)));
+    rows[0]!.schedule = range(4, startMoment(sydneyDay(1)), endMoment(sydneyDay(6)));
     await act(async () => { await client.invalidateQueries({ queryKey: ["production-gantt"] }); });
     await flush(4);
     expect(patches()).toHaveLength(0);
-    await setInput(dateInput(RANGE_TITLE, "End")!, sydneyDay(5));
+    await pickPopupDay(picker(RANGE_TITLE)!, sydneyDay(5));
     patchReply = () => ({ status: 409, body: { error: "conflict", code: "subtask_schedule_version_conflict", current: rows[0]!.schedule } });
-    await click(pickerButton(RANGE_TITLE, "Save")!);
+    await applyPopup(picker(RANGE_TITLE)!);
     await flush(6);
     expect(patchBody().schedule.expectedVersion).toBe(1);
   });
@@ -413,83 +407,83 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
   it("R11 a version conflict keeps the draft, never retries, shows the latest, and an explicit Save resends at the latest version", async () => {
     await render();
     await openDue(RANGE_TITLE);
-    await setInput(dateInput(RANGE_TITLE, "End")!, sydneyDay(5));
-    const winner = range(3, dateEndpoint(sydneyDay(1)), dateEndpoint(sydneyDay(8)));
+    await pickPopupDay(picker(RANGE_TITLE)!, sydneyDay(5));
+    const winner = range(3, startMoment(sydneyDay(1)), endMoment(sydneyDay(8)));
     patchReply = () => { rows[0]!.schedule = winner; return { status: 409, body: { error: "conflict", code: "subtask_schedule_version_conflict", current: winner } }; };
-    await click(pickerButton(RANGE_TITLE, "Save")!);
+    await applyPopup(picker(RANGE_TITLE)!);
     await flush(6);
 
     expect(patches()).toHaveLength(1);
     expect(picker(RANGE_TITLE)).not.toBeNull();
     expect(picker(RANGE_TITLE)!.textContent).toContain("Latest schedule · v3");
-    expect(dateInput(RANGE_TITLE, "End")!.value).toBe(sydneyDay(5));
+    expect(endText(RANGE_TITLE)).toBe(rangeMoment(sydneyDay(5), "17:00"));
 
     patchReply = null;
-    await click(pickerButton(RANGE_TITLE, "Save")!);
+    await applyPopup(picker(RANGE_TITLE)!);
     await flush(6);
     expect(patches()).toHaveLength(2);
     expect(patchBody(1).schedule.expectedVersion).toBe(3);
-    expect(patchBody(1).schedule.schedule.end).toEqual({ kind: "date", localCivil: sydneyDay(5) });
-    await waitFor(() => expect(dueText(RANGE_TITLE)).toBe("Tue 15 Sep"));
+    expect(patchBody(1).schedule.schedule.end).toEqual({ localCivil: `${sydneyDay(5)}T17:00` });
+    await waitFor(() => expect(dueText(RANGE_TITLE)).toBe("Tue 15 Sep · 17:00"));
   });
 
   it("R12 Use latest discards the draft with no second write, shows the latest end, and releases the gate", async () => {
     await render();
     await openDue(RANGE_TITLE);
-    await setInput(dateInput(RANGE_TITLE, "End")!, sydneyDay(5));
-    const winner = range(3, dateEndpoint(sydneyDay(1)), dateEndpoint(sydneyDay(8)));
+    await pickPopupDay(picker(RANGE_TITLE)!, sydneyDay(5));
+    const winner = range(3, startMoment(sydneyDay(1)), endMoment(sydneyDay(8)));
     patchReply = () => { rows[0]!.schedule = winner; return { status: 409, body: { error: "conflict", code: "subtask_schedule_version_conflict", current: winner } }; };
-    await click(pickerButton(RANGE_TITLE, "Save")!);
+    await applyPopup(picker(RANGE_TITLE)!);
     await flush(6);
-    await click(pickerButton(RANGE_TITLE, "Use latest schedule (discard draft)")!);
+    await pressInPopup(picker(RANGE_TITLE)!, "Use latest schedule (discard draft)");
     await flush(6);
 
     expect(patches()).toHaveLength(1);
     await waitFor(() => expect(picker(RANGE_TITLE)).toBeNull());
-    await waitFor(() => expect(dueText(RANGE_TITLE)).toBe("Fri 18 Sep"));
+    await waitFor(() => expect(dueText(RANGE_TITLE)).toBe("Fri 18 Sep · 17:00"));
     expect(onAcceptGateChange).toHaveBeenLastCalledWith(false);
     expect(dueTrigger(RANGE_TITLE)!.getAttribute("aria-disabled")).not.toBe("true");
   });
 
   it("R13 a later-page row's conflict adopts the body's current schedule (the refetch never returns it): no stale retry, later-page cell converges", async () => {
-    pageTwo = [{ id: PAGE_TWO_ID, title: PAGE_TWO_TITLE, position: 2, canOpenScheduleEditor: true, schedule: range(1, dateEndpoint(sydneyDay(2)), dateEndpoint(sydneyDay(4))) }];
+    pageTwo = [{ id: PAGE_TWO_ID, title: PAGE_TWO_TITLE, position: 2, canOpenScheduleEditor: true, schedule: range(1, startMoment(sydneyDay(2)), endMoment(sydneyDay(4))) }];
     await render();
     await waitFor(() => expect(dueTrigger(PAGE_TWO_TITLE)).not.toBeNull());
     await openDue(PAGE_TWO_TITLE);
-    await setInput(dateInput(PAGE_TWO_TITLE, "End")!, sydneyDay(6));
-    const winner = range(3, dateEndpoint(sydneyDay(2)), dateEndpoint(sydneyDay(9)));
+    await pickPopupDay(picker(PAGE_TWO_TITLE)!, sydneyDay(6));
+    const winner = range(3, startMoment(sydneyDay(2)), endMoment(sydneyDay(9)));
     patchReply = () => { pageTwo[0]!.schedule = winner; return { status: 409, body: { error: "conflict", code: "subtask_schedule_version_conflict", current: winner } }; };
-    await click(pickerButton(PAGE_TWO_TITLE, "Save")!);
+    await applyPopup(picker(PAGE_TWO_TITLE)!);
     await flush(1);
     await flush(5);
 
     expect(patches()).toHaveLength(1);
     expect(picker(PAGE_TWO_TITLE)!.textContent).toContain("Latest schedule · v3");
     patchReply = null;
-    await click(pickerButton(PAGE_TWO_TITLE, "Save")!);
+    await applyPopup(picker(PAGE_TWO_TITLE)!);
     await flush(8);
     // The retry used the body's version, not the stale one the page-two source carried.
     expect(patches()).toHaveLength(2);
     expect(patchBody(1).schedule.expectedVersion).toBe(3);
-    await waitFor(() => expect(dueText(PAGE_TWO_TITLE)).toBe("Wed 16 Sep"));
+    await waitFor(() => expect(dueText(PAGE_TWO_TITLE)).toBe("Wed 16 Sep · 17:00"));
   });
 
   it("R14 a full-item conflict retains the draft and presents the latest item (names and count only)", async () => {
     await render();
     await openDue(RANGE_TITLE);
-    await setInput(dateInput(RANGE_TITLE, "End")!, sydneyDay(5));
-    const winner = range(3, dateEndpoint(sydneyDay(1)), dateEndpoint(sydneyDay(8)));
+    await pickPopupDay(picker(RANGE_TITLE)!, sydneyDay(5));
+    const winner = range(3, startMoment(sydneyDay(1)), endMoment(sydneyDay(8)));
     patchReply = () => {
       rows[0]!.schedule = winner;
       return { status: 409, body: { error: "conflict", code: "subtask_item_conflict", current: winner, currentSubtask: { id: RANGE_ID, title: RANGE_TITLE, done: true, position: 0, schedule: winner } } };
     };
-    await click(pickerButton(RANGE_TITLE, "Save")!);
+    await applyPopup(picker(RANGE_TITLE)!);
     await flush(6);
     expect(patches()).toHaveLength(1);
     expect(picker(RANGE_TITLE)).not.toBeNull();
     expect(picker(RANGE_TITLE)!.textContent).toContain("Latest checklist item · schedule v3");
-    expect(dateInput(RANGE_TITLE, "End")!.value).toBe(sydneyDay(5));
-    await click(pickerButton(RANGE_TITLE, "Use latest item (discard draft)")!);
+    expect(endText(RANGE_TITLE)).toBe(rangeMoment(sydneyDay(5), "17:00"));
+    await pressInPopup(picker(RANGE_TITLE)!, "Use latest item (discard draft)");
     await flush(6);
     expect(patches()).toHaveLength(1);
     await waitFor(() => expect(picker(RANGE_TITLE)).toBeNull());
@@ -502,8 +496,8 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     // Other Subtask rows and the chart are frozen (the trigger keeps focus but will not open a second editor)...
     expect(dueTrigger(TIMED_TITLE)!.getAttribute("aria-disabled")).toBe("true");
     // ...while this editor's own controls are live.
-    expect(dateInput(RANGE_TITLE, "End")!.disabled).toBe(false);
-    expect(pickerButton(RANGE_TITLE, "Save")!.disabled).toBe(false);
+    expect(pickerButton(RANGE_TITLE, "End")!.disabled).toBe(false);
+    expect(pickerButton(RANGE_TITLE, "Apply")!.disabled).toBe(false);
     expect(pickerButton(RANGE_TITLE, "Cancel")!.disabled).toBe(false);
     await click(dueTrigger(TIMED_TITLE)!);
     expect(picker(TIMED_TITLE)).toBeNull();
@@ -553,7 +547,8 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
   it("R19 the controller's schedule editor sheet is not opened by the Gantt (its inline picker is the only editor)", async () => {
     await render();
     await openDue(RANGE_TITLE);
-    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.body.querySelector('[data-testid="event-calendar-schedule-editor"]')).toBeNull();
+    expect(document.body.querySelectorAll('[role="dialog"]')).toHaveLength(1);
     expect(liveRegionText()).not.toBe("");
   });
 

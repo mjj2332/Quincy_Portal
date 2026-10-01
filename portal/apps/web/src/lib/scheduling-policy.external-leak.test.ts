@@ -3,12 +3,13 @@ import { adoptChecklistResult } from "./scheduling-policy";
 import { decodeChecklistMutationResponse } from "./production-calendar-query";
 import { oneDayEvent, oneDaySchedule } from "../testing/production-calendar-fixtures";
 import type { CalendarPerson, ChecklistCalendarEventDto, ProductionCalendarRangeResponse } from "@quincy/shared";
+import { startMoment } from "@/testing/subtask-schedule";
 
 const ADMIN_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const TEAM_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const admin: CalendarPerson = { id: ADMIN_ID, name: "Zelda Adminsson", roleLabel: "Admin", isExternal: false, active: true };
 const team: CalendarPerson = { id: TEAM_ID, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true };
-const dateAt = { kind: "date" as const, localCivil: "2026-08-19", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const };
+const dateAt = startMoment("2026-08-19");
 
 describe("an External Editor's schedule save never reveals a hidden assignee (#370)", () => {
   // Subtask [non-team Admin A, team member B]: the Calendar GET hides A, so the source shows B and "+1".

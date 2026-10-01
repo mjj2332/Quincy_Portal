@@ -55,6 +55,7 @@ describe("NOTIFICATION_ENRICHMENT enumeration", () => {
   it("subtask_due_today: subtask-due:<uuid>:<YYYY-MM-DD>", () => {
     exercised.subtask_due_today = true;
     expect(parseNotificationSource("subtask_due_today", PROJECT_ID, `subtask-due:${OTHER_ID}:2026-09-15`)).toEqual({ kind: "subtask_due", subtaskId: OTHER_ID, dueDate: "2026-09-15" });
+    expect(parseNotificationSource("subtask_due_today", PROJECT_ID, `subtask-due:${OTHER_ID}:2026-09-15T17:00`)).toEqual({ kind: "subtask_due", subtaskId: OTHER_ID, dueDate: "2026-09-15T17:00" });
   });
   it("subtask_due_today: malformed and null source keys degrade to none", () => {
     expect(parseNotificationSource("subtask_due_today", PROJECT_ID, `subtask-due:${OTHER_ID}:15-09-2026`)).toEqual({ kind: "none" });

@@ -16,7 +16,7 @@ vi.mock("./reui/event-calendar/event-calendar", async () => (await import("../te
 vi.mock("./reui/event-calendar/event-calendar-nav", async () => (await import("../testing/event-calendar-fake")).eventCalendarNavModule);
 vi.mock("./reui/event-calendar/event-calendar-content", async () => (await import("../testing/event-calendar-fake")).eventCalendarContentModule);
 
-const bound = { projectId: PROJECT_ID, shootDate: null, createdAt: "2026-07-01T00:00:00.000Z", deadlineLocalCivil: null };
+const bound = { projectId: PROJECT_ID, shootDate: null, createdAt: "2026-07-01T00:00:00.000Z", deadlineLocalCivil: null, deadlineFold: null };
 
 let h: Harness;
 beforeEach(() => { h = createHarness(); });

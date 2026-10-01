@@ -124,46 +124,63 @@ describe("TB4D checklist schedule resolver and discriminator", () => {
     }
   }, 20_000);
 
-  const dateRange = (start: string, end: string) => {
-    const result = normalizeChecklistSchedule({ state: "range", start: { kind: "date", localCivil: start }, end: { kind: "date", localCivil: end } }, 1);
-    if (!result.ok) throw new Error("fixture must normalize");
-    return result.value;
-  };
   const timedRange = (start: string, end: string) => {
-    const result = normalizeChecklistSchedule({ state: "range", start: { kind: "timed", localCivil: start }, end: { kind: "timed", localCivil: end } }, 1);
+    const result = normalizeChecklistSchedule({ state: "range", start: { localCivil: start }, end: { localCivil: end } }, 1);
     if (!result.ok) throw new Error("fixture must normalize");
     return result.value;
   };
 
-  it("serializes a stored date range and a one-day range", () => {
-    expect(serializeChecklistSchedule(dateRange("2026-08-27", "2026-08-28"))).toMatchObject({ state: "range", version: 1, zone: CHECKLIST_SCHEDULE_ZONE, start: { localCivil: "2026-08-27", resolution: "stored" }, end: { localCivil: "2026-08-28" }, due: "2026-08-28" });
-    expect(serializeChecklistSchedule(dateRange("2026-08-27", "2026-08-27"))).toMatchObject({ state: "range", start: { localCivil: "2026-08-27" }, end: { localCivil: "2026-08-27" } });
-  });
-
-  it("serializes a stored timed range with resolved offsets", () => {
+  it("serializes a stored range with resolved offsets and no endpoint kind", () => {
     const dto = serializeChecklistSchedule(timedRange("2026-08-27T09:00", "2026-08-27T10:30"));
-    expect(dto).toMatchObject({ state: "range", start: { kind: "timed", utcOffsetMinutes: 600, fold: 0 }, end: { kind: "timed", localCivil: "2026-08-27T10:30" } });
+    expect(dto).toEqual({
+      state: "range", version: 1, zone: CHECKLIST_SCHEDULE_ZONE, due: "2026-08-27T10:30",
+      start: { localCivil: "2026-08-27T09:00", instant: "2026-08-26T23:00:00.000Z", utcOffsetMinutes: 600, fold: 0, resolution: "stored" },
+      end: { localCivil: "2026-08-27T10:30", instant: "2026-08-27T00:30:00.000Z", utcOffsetMinutes: 600, fold: 0, resolution: "stored" },
+    });
   });
 
-  it("throws ChecklistScheduleStorageError for every storage that is not a valid range", () => {
+  it("accepts any start before end by instant, including under a day", () => {
+    expect(normalizeChecklistSchedule({ state: "range", start: { localCivil: "2026-08-27T09:00" }, end: { localCivil: "2026-08-27T09:01" } }, 1)).toMatchObject({ ok: true });
+    expect(normalizeChecklistSchedule({ state: "range", start: { localCivil: "2026-08-27T09:00" }, end: { localCivil: "2026-08-27T09:00" } }, 1)).toMatchObject({ ok: false, error: { code: "subtask_schedule_invalid_order" } });
+    expect(normalizeChecklistSchedule({ state: "range", start: { localCivil: "2026-08-27T10:00" }, end: { localCivil: "2026-08-27T09:00" } }, 1)).toMatchObject({ ok: false, error: { code: "subtask_schedule_invalid_order" } });
+  });
+
+  it("orders by instant across the autumn fold, not by civil text", () => {
+    // 2026-04-05 02:30 happens twice: the later 02:30 is after a 03:00-less civil comparison would say.
+    const result = normalizeChecklistSchedule({ state: "range", start: { localCivil: "2026-04-05T02:30", disambiguation: "later" }, end: { localCivil: "2026-04-05T03:00" } }, 1);
+    expect(result).toMatchObject({ ok: true, value: { scheduleStartFold: 1, scheduleStartUtcOffsetMinutes: 600 } });
+    const inverted = normalizeChecklistSchedule({ state: "range", start: { localCivil: "2026-04-05T02:30", disambiguation: "later" }, end: { localCivil: "2026-04-05T02:45", disambiguation: "earlier" } }, 1);
+    expect(inverted).toMatchObject({ ok: false, error: { code: "subtask_schedule_invalid_order" } });
+  });
+
+  it("names the endpoint of a date-only end and asks for a time", () => {
+    expect(normalizeChecklistSchedule({ state: "range", start: { localCivil: "2026-08-27T09:00" }, end: { localCivil: "2026-08-28" } }, 1)).toMatchObject({ ok: false, error: { code: "subtask_schedule_time_required", endpoint: "end" } });
+    expect(normalizeChecklistSchedule({ state: "range", start: { localCivil: "2026-08-27" }, end: { localCivil: "2026-08-28T17:00" } }, 1)).toMatchObject({ ok: false, error: { code: "subtask_schedule_time_required", endpoint: "start" } });
+    expect(normalizeChecklistSchedule({ state: "range", start: { localCivil: "2026-02-30" }, end: { localCivil: "2026-08-28T17:00" } }, 1)).toMatchObject({ ok: false, error: { code: "subtask_schedule_invalid_local_time", endpoint: "start" } });
+  });
+
+  it("reports gaps and repeated times against their endpoint", () => {
+    expect(normalizeChecklistSchedule({ state: "range", start: { localCivil: "2026-10-04T02:30" }, end: { localCivil: "2026-10-04T17:00" } }, 1)).toMatchObject({ ok: false, error: { code: "subtask_schedule_nonexistent_local_time", endpoint: "start" } });
+    expect(normalizeChecklistSchedule({ state: "range", start: { localCivil: "2026-04-05T09:00" }, end: { localCivil: "2026-04-05T02:30" } }, 1)).toMatchObject({ ok: false, error: { code: "subtask_schedule_repeated_local_time", endpoint: "end" } });
+  });
+
+  it("throws ChecklistScheduleStorageError for every storage that is not a valid moment range", () => {
     const reasonOf = (row: ChecklistScheduleStorage) => {
       try { serializeChecklistSchedule(row); } catch (error) { expect(error).toBeInstanceOf(ChecklistScheduleStorageError); return (error as ChecklistScheduleStorageError).reason; }
       throw new Error("expected the serializer to throw");
     };
-    // Legacy shapes: nothing scheduled, a bare date due, a bare timed due.
     expect(reasonOf(storage())).toBe("not_a_range");
     expect(reasonOf(storage({ dueDate: "2026-08-27" }))).toBe("not_a_range");
     expect(reasonOf(storage({ dueDate: "2026-08-27T09:15" }))).toBe("not_a_range");
-    // Versioned but not a range: empty, end-only, zone drift.
     expect(reasonOf(storage({ scheduleVersion: 1 }))).toBe("not_a_range");
-    expect(reasonOf(storage({ scheduleVersion: 1, scheduleZone: CHECKLIST_SCHEDULE_ZONE, dueDate: "2026-08-27", scheduleEndKind: "date" }))).toBe("not_a_range");
-    expect(reasonOf({ ...dateRange("2026-08-27", "2026-08-28"), scheduleZone: "UTC" })).toBe("not_a_range");
-    // Range-shaped but wrong.
-    expect(reasonOf({ ...dateRange("2026-08-27", "2026-08-28"), scheduleEndAt: 1 })).toBe("resolution_mismatch");
     const timed = timedRange("2026-04-05T09:00", "2026-04-05T10:00");
+    expect(reasonOf({ ...timed, scheduleZone: "UTC" })).toBe("not_a_range");
+    // A surviving date-only row is a defect after migration 0052.
+    expect(reasonOf({ ...timed, scheduleStartKind: "date", scheduleEndKind: "date" })).toBe("not_a_range");
     expect(reasonOf({ ...timed, scheduleEndFold: 1 })).toBe("resolution_mismatch");
     expect(reasonOf({ ...timed, scheduleEndUtcOffsetMinutes: 660 })).toBe("resolution_mismatch");
-    expect(reasonOf({ ...dateRange("2026-08-27", "2026-08-28"), scheduleStartCivil: "2026-08-29" })).toBe("ordering_invalid");
+    expect(reasonOf({ ...timed, scheduleEndAt: null })).toBe("resolution_mismatch");
+    expect(reasonOf({ ...timed, scheduleStartCivil: "2026-04-05" })).toBe("resolution_mismatch");
     const later = timedRange("2026-08-27T10:00", "2026-08-27T11:00");
     const earlier = timedRange("2026-08-27T09:00", "2026-08-27T09:30");
     expect(reasonOf({ ...later, dueDate: earlier.dueDate, scheduleEndAt: earlier.scheduleEndAt, scheduleEndUtcOffsetMinutes: earlier.scheduleEndUtcOffsetMinutes, scheduleEndFold: earlier.scheduleEndFold })).toBe("ordering_invalid");
@@ -174,7 +191,7 @@ describe("TB4D checklist schedule resolver and discriminator", () => {
   });
 
   it("rejects a non-range input at runtime as well as in the type", () => {
-    for (const input of [{ state: "unscheduled" }, { state: "due_only", end: { kind: "date", localCivil: "2026-08-27" } }]) {
+    for (const input of [{ state: "unscheduled" }, { state: "due_only", end: { localCivil: "2026-08-27T09:00" } }]) {
       const result = normalizeChecklistSchedule(input as never, 1);
       expect(result).toMatchObject({ ok: false, error: { code: "subtask_schedule_not_a_range" } });
     }

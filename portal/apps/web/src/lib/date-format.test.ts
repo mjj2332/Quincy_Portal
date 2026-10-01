@@ -120,14 +120,14 @@ describe("no output carries seconds", () => {
 });
 
 describe("formatCivilSchedule", () => {
-  const ep = (kind: "date" | "timed", localCivil: string) => ({ kind, localCivil }) as ChecklistScheduleDto["start"];
+  const ep = (localCivil: string) => ({ localCivil }) as ChecklistScheduleDto["start"];
   const dto = (start: ChecklistScheduleDto["start"], end: ChecklistScheduleDto["end"]) => ({ state: "range", version: 1, start, end }) as unknown as ChecklistScheduleDto;
 
-  it("keeps the four checklist schedule outputs unchanged", () => {
-    expect(formatCivilSchedule(dto(ep("date", "2026-10-08"), ep("date", "2026-10-08")))).toBe("8 Oct 2026");
-    expect(formatCivilSchedule(dto(ep("timed", "2026-10-08T13:00"), ep("timed", "2026-10-08T14:00")))).toBe("8 Oct 2026 · 13:00 → 14:00");
-    expect(formatCivilSchedule(dto(ep("date", "2026-10-08"), ep("date", "2026-10-10")))).toBe("8 Oct 2026 → 10 Oct 2026");
-    expect(formatCivilSchedule(dto(ep("timed", "2026-10-08T13:00"), ep("timed", "2026-10-09T09:00")))).toBe("8 Oct 2026 · 13:00 → 9 Oct 2026 · 09:00");
+  it("names both moments in 24-hour time, and a one-day range's day once", () => {
+    expect(formatCivilSchedule(dto(ep("2026-10-08T09:00"), ep("2026-10-08T17:00")))).toBe("Thu 8 Oct 09:00 → 17:00");
+    expect(formatCivilSchedule(dto(ep("2026-10-08T13:00"), ep("2026-10-08T14:00")))).toBe("Thu 8 Oct 13:00 → 14:00");
+    expect(formatCivilSchedule(dto(ep("2026-10-08T09:00"), ep("2026-10-10T17:00")))).toBe("Thu 8 Oct 09:00 → Sat 10 Oct 17:00");
+    expect(formatCivilSchedule(dto(ep("2026-10-08T13:00"), ep("2026-10-09T09:00")))).toBe("Thu 8 Oct 13:00 → Fri 9 Oct 09:00");
   });
 });
 

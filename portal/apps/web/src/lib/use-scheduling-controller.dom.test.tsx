@@ -41,7 +41,7 @@ const calendar: DashboardCalendarState = { view: "calendar", date: "2026-08-12",
 function timedEndpoint(localCivil: string) {
   const resolved = resolveSydneyCivilMinute(localCivil);
   if (!resolved.ok) throw new Error(`Fixture time did not resolve: ${localCivil}`);
-  return { kind: "timed" as const, localCivil, instant: resolved.value.instant, utcOffsetMinutes: resolved.value.utcOffsetMinutes, fold: resolved.value.fold, resolution: "stored" as const };
+  return { localCivil, instant: resolved.value.instant, utcOffsetMinutes: resolved.value.utcOffsetMinutes, fold: resolved.value.fold, resolution: "stored" as const };
 }
 
 function rangeEvent(start: string, end: string, version = 4): ChecklistCalendarEventDto {
@@ -256,7 +256,7 @@ describe("useSchedulingController (generic port)", () => {
 
   const checklistTicket: UndoTicket = {
     kind: "checklist", projectId, subtaskId, expectedVersion: 5,
-    request: { expectedVersion: 5, schedule: { state: "range", start: { kind: "timed", localCivil: "2026-08-27T09:00" }, end: { kind: "timed", localCivil: "2026-08-27T11:00" } } },
+    request: { expectedVersion: 5, schedule: { state: "range", start: { localCivil: "2026-08-27T09:00" }, end: { localCivil: "2026-08-27T11:00" } } },
   };
 
   it("runUndo sends the ticket's versioned request, refetches, releases the lock and announces", async () => {

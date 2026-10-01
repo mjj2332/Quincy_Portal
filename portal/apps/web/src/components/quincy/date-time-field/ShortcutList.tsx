@@ -1,8 +1,7 @@
 import type { ComponentType } from "react";
-import { Calendar, CalendarPlus, Clock, Sun, X } from "lucide-react";
+import { Calendar, CalendarDays, CalendarPlus, Clock, RotateCcw, Sun, X } from "lucide-react";
 import { RING_IN } from "@/components/AnchoredPopover";
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/reui/item";
-import type { DateShortcut } from "@/lib/date-time-field";
 import { cn } from "@/lib/utils";
 
 /**
@@ -10,24 +9,29 @@ import { cn } from "@/lib/utils";
  * signal colour, the label and the weekday it resolves to. A shortcut only produces a civil day;
  * the caller decides what that means (it sets the draft, it never commits).
  */
-const ICONS: Record<DateShortcut["id"], { icon: ComponentType<{ className?: string; "aria-hidden"?: boolean }>; tone: string }> = {
+const ICONS: Record<string, { icon: ComponentType<{ className?: string; "aria-hidden"?: boolean }>; tone: string }> = {
   today: { icon: Sun, tone: "text-signal-caution-text" },
   tomorrow: { icon: Clock, tone: "text-signal-info" },
   "later-this-week": { icon: Calendar, tone: "text-primary" },
   "next-week": { icon: CalendarPlus, tone: "text-signal-positive" },
   "no-date": { icon: X, tone: "text-foreground-secondary" },
+  // #423: the range form's rows. Today / Tomorrow / Next week reuse the single-day glyphs.
+  "this-week": { icon: CalendarDays, tone: "text-primary" },
+  "project-default": { icon: RotateCcw, tone: "text-foreground-secondary" },
 };
 
-export function ShortcutList({ shortcuts, activeId, onPick }: {
-  shortcuts: readonly DateShortcut[];
-  /** The shortcut whose resolved day equals the draft, if any. */
-  activeId: DateShortcut["id"] | null;
-  onPick: (shortcut: DateShortcut) => void;
+export type ShortcutRow = { id: string; label: string; sublabel: string };
+
+export function ShortcutList<TRow extends ShortcutRow>({ shortcuts, activeId, onPick }: {
+  shortcuts: readonly TRow[];
+  /** The shortcut whose resolved value equals the draft, if any. */
+  activeId: TRow["id"] | null;
+  onPick: (shortcut: TRow) => void;
 }) {
   return (
     <ItemGroup className="grid grid-cols-2 gap-[var(--space-1)] sm:flex sm:w-44 sm:shrink-0">
       {shortcuts.map((shortcut) => {
-        const { icon: Icon, tone } = ICONS[shortcut.id];
+        const { icon: Icon, tone } = ICONS[shortcut.id] ?? ICONS.today!;
         return (
           <Item
             key={shortcut.id}

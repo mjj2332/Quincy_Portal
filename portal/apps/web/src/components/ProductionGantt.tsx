@@ -153,7 +153,7 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CheckIcon } from "lucide-react";
-import { roleHasCapability, subtaskIdFromCalendarEntityId, type ChecklistScheduleDto, type GanttChecklistRowDto, type GanttProjectRowDto, type Role } from "@quincy/shared";
+import { roleHasCapability, subtaskIdFromCalendarEntityId, type ChecklistScheduleDto, type GanttChecklistRowDto, type GanttProjectRowDto, type ProjectDefaultRangeDto, type Role } from "@quincy/shared";
 import { Gantt, useGanttNavigation, useGanttSelector, type GanttColumn, type GanttRenderEventProps, type GanttTreePanelConfig } from "@/components/reui/gantt/gantt";
 import { mergeGanttI18n, type GanttI18nOverrides } from "@/components/reui/gantt/gantt-i18n";
 import { toZoned } from "@/components/reui/gantt/gantt-lib";
@@ -210,6 +210,7 @@ import {
   type GanttLegendEntry,
   type ProductionGanttFacetFilters,
 } from "../lib/production-gantt-filters";
+import { deadlineFoldOf, projectDefaultFromFacts } from "../lib/date-time-range";
 import { useStages } from "../lib/stages";
 import { useMediaQuery } from "../lib/use-media-query";
 import { ProductionEventCalendarDialogs } from "./ProductionEventCalendarDialogs";
@@ -1208,6 +1209,18 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     const adopted = adoptedAssignees[row.id];
     return adopted ? adoptGanttChecklistRow(row, adopted) : row;
   }, [adoptedAssignees]);
+  const projectDefaultById = useMemo(() => {
+    const map = new Map<string, ProjectDefaultRangeDto | null>();
+    for (const project of displayProjects) {
+      const deadline = project.deadline;
+      map.set(project.id, projectDefaultFromFacts({
+        shootDate: project.shootDate,
+        createdAt: project.createdAt,
+        deadline: deadline ? { localCivil: deadline.localCivil, fold: deadlineFoldOf(deadline.localCivil, deadline.at) } : null,
+      }));
+    }
+    return map;
+  }, [displayProjects]);
   const assigneeCellByChecklistResourceId = useMemo(() => {
     const map = new Map<string, GanttAssigneeCell>();
     for (const project of displayProjects) {
@@ -1536,6 +1549,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
                     onOpen={() => openDueEditor(subtaskCell)}
                     onSubmit={commands.submitScheduleEditor}
                     onCancel={commands.cancelScheduleEditor}
+                    projectDefault={projectDefaultById.get(subtaskCell.projectId) ?? null}
                   />
                 )}
               </GestureAwareCell>

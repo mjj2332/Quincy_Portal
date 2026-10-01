@@ -18,6 +18,7 @@ import { adminProductionGanttResponseSchema, productionGanttChildPageSchema, PRO
 import type { DashboardIdentity } from "../lib/dashboard-projects";
 import { ProductionGantt } from "./ProductionGantt";
 import { DEFAULT_GANTT_FACET_FILTERS, type ProductionGanttFacetFilters } from "../lib/production-gantt-filters";
+import { startMoment, endMoment } from "@/testing/subtask-schedule";
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 vi.mock("../lib/api", async (importOriginal) => ({
@@ -63,8 +64,8 @@ function task(id: string, title: string, position: number): GanttChecklistRowDto
       state: "range",
       version: 1,
       zone: PRODUCTION_GANTT_ZONE,
-      start: { kind: "date", localCivil: isoDate(2), instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" },
-      end: { kind: "date", localCivil: isoDate(2), instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" },
+      start: startMoment(isoDate(2)),
+      end: endMoment(isoDate(2)),
       due: isoDate(2),
     },
     permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true },

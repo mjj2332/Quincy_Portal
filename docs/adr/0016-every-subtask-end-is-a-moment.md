@@ -37,5 +37,35 @@ the range reschedules them.
   rule and the hourly 08:00 `scanDueSubtasks` "due today" pass are retired with them.
 - A range now only needs its start before its end; the old one-day minimum came from date-only
   ends.
-- The Calendar shows Subtasks as timed events, not in its all-day strip.
+- The Calendar shows every Subtask as a timed event, never as a date-only chip. A Subtask inside one
+  day sits in the Week and Day time grid between its start and end. A Subtask that spans days follows
+  the event calendar's own convention for a multi-day timed event, a bar across its days in the
+  all-day lane; the vendor tree is not forked to change that.
 - The presets are code constants, not admin configuration.
+
+## What shipped in #423
+
+- **One picker.** The range variant of the date-time popup (`DateTimeField variant="range"`) is the
+  only way to set a Subtask range, in all four editors: the Checklist row, the Checklist composer, the
+  Timeline Subtask cell and the Calendar's schedule editor. A Start | End toggle chooses which end the
+  calendar, the time column and the typed time edit. Today, Tomorrow, This week (today 09:00 to Sunday
+  17:00), Next week (Monday 09:00 to Sunday 17:00) and, when the Project has one, Project default set
+  both ends at once. A repeated daylight-saving time asks Earlier or Later per end, and Apply stays
+  disabled until the start is before the end by instant. The Date/Timed select, the native endpoint
+  inputs and the fold radios are gone.
+- **Presets are constants.** `SUBTASK_START_PRESET_TIME` (09:00) and `SUBTASK_END_PRESET_TIME`
+  (17:00) in `packages/shared`; a day picked without a time takes the preset for its end.
+- **Default range.** An untouched new Subtask takes the Project default: the shoot date at 09:00
+  through the Deadline at its own time (the Sydney creation date without a shoot date; that day 09:00
+  to 17:00 without a Deadline; and when the Deadline is not after the start, the start moves to 09:00
+  on the Deadline's day, or the day before). The list response carries it as `projectDefaultRange`
+  so the composer can show the concrete range; an untouched composer still sends no schedule and the
+  server fills it.
+- **Server.** A date-only end is refused with `subtask_schedule_time_required`, naming the endpoint
+  that lacks a time. A legacy `kind` in a request body is ignored, so an open tab from before the
+  change gets that field-named error for a date-only end and succeeds with a timed one. The start
+  must be before the end by instant, which allows a range under a day.
+- **Data.** Migration 0052 converts every date-only row to 09:00 / 17:00 and seals the table with a
+  CHECK that refuses anything else (`docs/Guides/CI-Deploy.md`, "Subtask presets (0052)").
+- **Not yet.** Subtask reminders (the `Subtask reminder` term) arrive separately; this change only
+  makes every end a moment they can count back from.

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PRODUCTION_CALENDAR_ZONE, type ChecklistCalendarEventDto, type ProjectCalendarUnscheduledEntryDto, type ProjectDeadlineCalendarEventDto } from "@quincy/shared";
 import { applyUndo, buildChecklistUndoTicket, buildDeadlineUndoTicket } from "./scheduling-undo";
 import { projectDeadlinePlaceholder } from "./scheduling-policy";
+import { startMoment, endMoment } from "@/testing/subtask-schedule";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -10,10 +11,8 @@ const PERSON_ID = "22222222-2222-4222-8222-222222222222";
 const person = { id: PERSON_ID, name: "Editor", roleLabel: "Editor", isExternal: false, active: true };
 const project = () => ({ id: PROJECT_ID, street: "1 Example Street", stageKey: "editing" as const, checklist: { completed: 1, total: 3 }, delivered: false, archived: false });
 
-const dateEndpoint = (localCivil: string) => ({ kind: "date" as const, localCivil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const });
-
 function checklistEvent(version: number, start: string, end: string): ChecklistCalendarEventDto<"editing"> {
-  const schedule = { state: "range" as const, version, zone: PRODUCTION_CALENDAR_ZONE, start: dateEndpoint(start), end: dateEndpoint(end), due: end };
+  const schedule = { state: "range" as const, version, zone: PRODUCTION_CALENDAR_ZONE, start: startMoment(start), end: endMoment(end), due: end };
   return {
     id: `checklist:${PERSON_ID}`,
     kind: "checklist",
@@ -46,13 +45,13 @@ function deadlineEvent(version: number, deadlineLocalCivil: string, reminderOffs
 describe("buildChecklistUndoTicket", () => {
   it("builds a checklist ticket at the returned version restoring the prior schedule, with the BARE subtask uuid (not the checklist: entity id)", () => {
     const before = checklistEvent(4, "2026-08-27", "2026-08-27");
-    const ticket = buildChecklistUndoTicket(before, { id: before.id, title: before.title, done: false, assignees: null, position: 0, schedule: { ...before.schedule, version: 5, start: dateEndpoint("2026-08-29"), end: dateEndpoint("2026-08-29"), due: "2026-08-29" }, scheduleVersion: 5 });
+    const ticket = buildChecklistUndoTicket(before, { id: before.id, title: before.title, done: false, assignees: null, position: 0, schedule: { ...before.schedule, version: 5, start: startMoment("2026-08-29"), end: endMoment("2026-08-29"), due: "2026-08-29" }, scheduleVersion: 5 });
     expect(ticket).toEqual({
       kind: "checklist",
       projectId: PROJECT_ID,
       subtaskId: PERSON_ID,
       expectedVersion: 5,
-      request: { expectedVersion: 5, schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-27" }, end: { kind: "date", localCivil: "2026-08-27" } } },
+      request: { expectedVersion: 5, schedule: { state: "range", start: { localCivil: "2026-08-27T09:00", disambiguation: "earlier" }, end: { localCivil: "2026-08-27T17:00", disambiguation: "earlier" } } },
     });
   });
 
@@ -114,7 +113,7 @@ describe("buildDeadlineUndoTicket", () => {
 describe("applyUndo", () => {
   // The BARE subtask uuid — the subtasks route's PATCH URL/response never carry the Calendar
   // entity id's `checklist:` prefix (#227).
-  const checklistTicket = { kind: "checklist" as const, projectId: PROJECT_ID, subtaskId: PERSON_ID, expectedVersion: 5, request: { expectedVersion: 5, schedule: { state: "range" as const, start: { kind: "date" as const, localCivil: "2026-08-27" }, end: { kind: "date" as const, localCivil: "2026-08-27" } } } };
+  const checklistTicket = { kind: "checklist" as const, projectId: PROJECT_ID, subtaskId: PERSON_ID, expectedVersion: 5, request: { expectedVersion: 5, schedule: { state: "range" as const, start: { localCivil: "2026-08-27T09:00" }, end: { localCivil: "2026-08-27T17:00" } } } };
   const deadlineTicket = { kind: "deadline" as const, projectId: PROJECT_ID, expectedVersion: 9, request: { expectedVersion: 9, deadline: { localCivil: "2026-08-27T09:00" }, reminderOffsetsMinutes: [1440, 60] } };
 
   it("sends the exact PATCH body (incl. expectedVersion) to the same subtask endpoint the forward edit used, and only reports conflict when that exact body was sent", async () => {

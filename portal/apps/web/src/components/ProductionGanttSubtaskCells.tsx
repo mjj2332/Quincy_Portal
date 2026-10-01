@@ -14,7 +14,7 @@
  * the wrapper that keeps a press or key off the row — a plain `<span>` carrying `stopPropagation` (the People cell's pattern).
  */
 import { useRef } from "react";
-import type { GanttChecklistRowDto, RangeChecklistScheduleInput } from "@quincy/shared";
+import type { GanttChecklistRowDto, ProjectDefaultRangeDto, RangeChecklistScheduleInput } from "@quincy/shared";
 import { formatDueCivil } from "../lib/date-format";
 import type { ScheduleEditorState } from "../lib/use-scheduling-commands";
 import { cn } from "../lib/utils";
@@ -59,12 +59,14 @@ export type GanttSubtaskDueCellProps = {
   onOpen: () => void;
   onSubmit: (schedule: RangeChecklistScheduleInput) => void;
   onCancel: () => void;
+  /** The Project's default range, for the picker's "Project default" shortcut (#423). */
+  projectDefault?: ProjectDefaultRangeDto | null;
 };
 
 // Tone: a Subtask date is always neutral. The Gantt never marks Subtask rows overdue (production-gantt-scheduling.ts sets
 // `overdue: false`; only the Project deadline carries a server-computed `overdue`), so this cell does not either.
 // Frozen state: `focusableWhenDisabled` renders `aria-disabled`, not `disabled`, so the dimming keys on aria-disabled.
-export function GanttSubtaskDueCell({ row, editorOpen, disabled, error, retained, onOpen, onSubmit, onCancel }: GanttSubtaskDueCellProps) {
+export function GanttSubtaskDueCell({ row, editorOpen, disabled, error, retained, onOpen, onSubmit, onCancel, projectDefault = null }: GanttSubtaskDueCellProps) {
   const end = row.schedule.end;
   const text = formatDueCivil(end.localCivil);
   // Save and Use latest already tell the controller what they mean; the popover then calls `setOpen(false)` as well, which must
@@ -99,7 +101,7 @@ export function GanttSubtaskDueCell({ row, editorOpen, disabled, error, retained
         onUseLatest={() => { closeHandledRef.current = true; onCancel(); }}
         onUseLatestItem={() => { closeHandledRef.current = true; onCancel(); }}
         initialFocus="end"
-        returnFocusOnClose
+        projectDefault={projectDefault}
         trigger={({ disabled: triggerDisabled, onClick, ...props }) => (
           <Button
             {...props}
@@ -113,7 +115,7 @@ export function GanttSubtaskDueCell({ row, editorOpen, disabled, error, retained
             // Stays focusable while frozen: the trigger holds focus across a Save (the popover hands focus back to it), and a
             // disabled button would drop it to the page.
             focusableWhenDisabled
-            onClick={() => { if (!triggerDisabled) onClick(); }}
+            onClick={(event) => { if (!triggerDisabled) onClick?.(event); }}
           >
             <time dateTime={end.instant ?? end.localCivil} className="truncate">{text}</time>
           </Button>

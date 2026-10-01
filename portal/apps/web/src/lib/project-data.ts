@@ -1,4 +1,4 @@
-import { isStageKey, subtaskAssigneeOptionsResponseSchema, type CalendarPerson, type ChecklistScheduleDto, type CollectionKind, type EditorFolderAttentionDto, type MonitoredRawFolder, type ProjectDeadlineSchedule, type ProjectMembershipDto, type ProjectMemberRole, type Role } from "@quincy/shared";
+import { isStageKey, subtaskAssigneeOptionsResponseSchema, type CalendarPerson, type ChecklistScheduleDto, type CollectionKind, type EditorFolderAttentionDto, type MonitoredRawFolder, type ProjectDeadlineSchedule, type ProjectDefaultRangeDto, type ProjectMembershipDto, type ProjectMemberRole, type Role } from "@quincy/shared";
 import { QueryClient, QueryClientContext, useQuery, useQueryClient, type QueryFunctionContext, type QueryKey, type UseQueryResult } from "@tanstack/react-query";
 import { useCallback, useContext, useEffect, useState, useSyncExternalStore } from "react";
 import { ApiError, apiGet } from "./api";
@@ -33,6 +33,8 @@ export const projectDataKeys = {
   assetsRoot: (projectId: string) => ["project-data", projectId, "assets"] as const,
   assets: (projectId: string, collectionKind: CollectionKind) => ["project-data", projectId, "assets", collectionKind] as const,
   subtasks: (projectId: string) => ["project-data", projectId, "subtasks"] as const,
+  /** The Project default range the Subtask list response carries (#423); written by the subtasks query, read by the editors. */
+  subtaskDefaultRange: (projectId: string) => ["project-data", projectId, "subtask-default-range"] as const,
   commentsRoot: (projectId: string) => ["project-data", projectId, "comments"] as const,
   comments: (projectId: string) => ["project-data", projectId, "comments", "pages", { limit: 50 }] as const,
   activity: (projectId: string) => ["project-data", projectId, "activity", "pages", { limit: 30 }] as const,
@@ -119,7 +121,11 @@ export function projectCollaborationSummaryQueryOptions(projectId: string) {
   } as const;
 }
 
-type ProjectSubtasksResponse = { subtasks?: ProjectSubtask[] };
+type ProjectSubtasksResponse = { subtasks?: ProjectSubtask[]; projectDefaultRange?: ProjectDefaultRangeDto | null };
+
+function rememberDefaultRange(client: QueryClient, projectId: string, response: ProjectSubtasksResponse) {
+  client.setQueryData(projectDataKeys.subtaskDefaultRange(projectId), response.projectDefaultRange ?? null);
+}
 
 export function projectSubtasksQueryOptions(projectId: string) {
   return {
@@ -130,6 +136,7 @@ export function projectSubtasksQueryOptions(projectId: string) {
       if (signal.aborted) throw new DOMException("The operation was aborted.", "AbortError");
       if (projectCollaborationDataGeneration(client, projectId) !== generation) throw new DOMException("The operation was aborted.", "AbortError");
       if (getProjectQueryRuntime(client)?.isProjectRemoved(projectId)) throw removedDataError();
+      rememberDefaultRange(client, projectId, response);
       return (response.subtasks ?? []).slice().sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
     },
   } as const;
@@ -223,10 +230,11 @@ export function useProjectSubtasksQuery(projectId: string, enabled: boolean, spe
     ...projectSubtasksQueryOptions(projectId), enabled: enabled && !runtime?.isProjectRemoved(projectId) && !runtime?.principalTerminal, staleTime: 15_000,
     queryFn: async ({ signal, client }: QueryFunctionContext) => {
       const response = role === "external_editor"
-        ? await externalApiGet("checklist", subtasksPath(projectId), signal) as { subtasks?: ProjectSubtask[] }
+        ? await externalApiGet("checklist", subtasksPath(projectId), signal) as ProjectSubtasksResponse
         : await apiGet<ProjectSubtasksResponse>(subtasksPath(projectId), { signal });
       if (signal.aborted) throw new DOMException("The operation was aborted.", "AbortError");
       if (getProjectQueryRuntime(client)?.isProjectRemoved(projectId)) throw removedDataError();
+      rememberDefaultRange(client, projectId, response);
       return (response.subtasks ?? []).slice().sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
     },
     refetchInterval: owned ? false : 30_000, refetchIntervalInBackground: false, refetchOnWindowFocus: owned ? false : true, refetchOnReconnect: owned ? false : true, retry: projectQueryRetry,
@@ -237,6 +245,18 @@ export function useProjectSubtasksQuery(projectId: string, enabled: boolean, spe
     if (terminal) queryClient.removeQueries({ queryKey: key, exact: true });
   }, [key, queryClient, terminal, query.status, query.fetchStatus, query.dataUpdatedAt]);
   return query;
+}
+
+/** The Project default range the last Subtask list response carried (#423), or null before one has loaded / when the Project has no default. */
+export function useProjectSubtaskDefaultRange(projectId: string): ProjectDefaultRangeDto | null {
+  const contextClient = useContext(QueryClientContext);
+  const [fallbackClient] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const queryClient = contextClient ?? fallbackClient;
+  const key = projectDataKeys.subtaskDefaultRange(projectId);
+  // Read the cache directly, with no observer: an observer would rebuild the entry after a principal clear or a Project removal.
+  const subscribe = useCallback((onChange: () => void) => queryClient.getQueryCache().subscribe(onChange), [queryClient]);
+  const getSnapshot = useCallback(() => queryClient.getQueryData<ProjectDefaultRangeDto | null>(key) ?? null, [queryClient, key]);
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
 export type SubtaskAssigneeOptions = { candidates: Array<{ id: string; name: string }> };

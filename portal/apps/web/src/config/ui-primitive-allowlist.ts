@@ -25,7 +25,6 @@ export const UI_PRIMITIVE_ALLOWLIST: Record<string, UiPrimitiveAllowance> = {
   "components/Modal.tsx": { count: 1, ledger: "baseline (#262)" },
   "components/NoticeBoard.tsx": { count: 5, ledger: "baseline (#262)" },
   "components/PhotoGrid.tsx": { count: 18, ledger: "baseline (#262)" },
-  "components/ProductionCalendarScheduleEditorFields.tsx": { count: 1, ledger: "baseline (#262)" },
   "components/ProductionEventCalendarDialogs.tsx": { count: 1, ledger: "baseline (#262)" },
   "components/ProductionEventCalendarRail.tsx": { count: 1, ledger: "baseline (#262)" },
   "components/ProductionGantt.tsx": { count: 4, ledger: "baseline (#262)" },

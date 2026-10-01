@@ -123,6 +123,40 @@ Migration 0050 drops the index and the column and deletes the `subtask_multi_ass
 5. Post-verify: column and index gone, both row counts unchanged, `PRAGMA foreign_key_check` empty, flag row gone.
 6. Re-run the deploy.
 
+### Subtask presets (0052)
+
+0052 converts every date-only Subtask range to a 09:00 start and a 17:00 end (the presets, ADR 0016)
+and adds `project_subtasks.schedule_timed_required`, whose CHECK refuses any row that is not timed at
+both ends. CI never applies it (see "A PR that adds a D1 migration"): the merge leaves the deploy job red
+at the migration guard and production on the old version until the owner applies it.
+
+**The window to keep short.** Between the apply and the re-run, the old Worker is live against the new
+CHECK, so an old-Worker Subtask create or date-only save fails with a 500. Apply and re-run within
+minutes, off hours. The converted rows themselves read fine under the old Worker.
+
+From `portal/workers/app`, `--remote`:
+
+1. Read-only preflight. The migration is pure SQL and only correct for dates 2008 to 2040 (the DST rule
+   it encodes), so confirm the rows fit:
+   - `SELECT COUNT(*) FROM project_subtasks WHERE schedule_start_kind = 'date'` (the rows it converts; note it).
+   - `SELECT MIN(schedule_start_civil), MAX(due_date) FROM project_subtasks WHERE schedule_start_kind = 'date'` must lie within `2008-01-01` and `2040-12-31`.
+   - `SELECT COUNT(*) FROM project_subtasks WHERE schedule_start_kind = 'date' AND (length(schedule_start_civil) <> 10 OR length(due_date) <> 10)` must be 0. A malformed date makes the apply fail whole, and a failed D1 migration is not recorded.
+2. Take a D1 Time Travel bookmark.
+3. `npx wrangler d1 migrations apply DB --remote`. The pending list must show only 0052.
+4. `gh run rerun --failed` on the deploy run, so the new Worker goes live.
+5. Post-check: `SELECT COUNT(*) FROM project_subtasks WHERE schedule_start_kind = 'date'` is 0, and a
+   migrated Project's Checklist loads (`GET /api/projects/<id>/subtasks` answers 200 with timed endpoints).
+
+Each converted row's `schedule_version` goes up by one (an open editor gets the normal 409). No audit
+row, activity or notification is written, and `due_reminder_sent_at` is untouched, so a reminder already
+sent stays sent.
+
+**Rollback.** A Worker rollback to a version older than this change cannot create Subtasks (it writes
+date-only ends the CHECK refuses). The data stays timed either way. To remove the seal, apply a forward
+migration `ALTER TABLE project_subtasks DROP COLUMN schedule_timed_required` (a later migration that drops
+a schedule kind column must drop it first). Restoring the date-only rows means Time Travel, which loses
+every write since the bookmark.
+
 ### Calendar (since #224)
 
 The ReUI event calendar is the Dashboard's only Calendar renderer. FullCalendar and its per-browser

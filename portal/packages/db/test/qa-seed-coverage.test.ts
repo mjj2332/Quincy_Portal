@@ -172,14 +172,19 @@ describe("coverage 6: schedule census — every Subtask is a range (ADR 0011)", 
     }
   });
 
-  it("covers both date and timed endpoint kinds", () => {
-    expect(new Set(dtos.map((d) => d.start.kind))).toEqual(new Set(["date", "timed"]));
+  it("carries no endpoint kind on the wire and no date-only storage (ADR 0016)", () => {
+    for (const dto of dtos) expect(Object.keys(dto.start).sort()).toEqual(["fold", "instant", "localCivil", "resolution", "utcOffsetMinutes"]);
+    for (const row of dataset.subtasks) expect([row.storage.scheduleStartKind, row.storage.scheduleEndKind]).toEqual(["timed", "timed"]);
   });
 
-  it("covers a one-day date range and a multi-day date range", () => {
-    const dates = dtos.filter((d) => d.start.kind === "date");
-    expect(dates.some((d) => d.start.localCivil === d.end.localCivil)).toBe(true);
-    expect(dates.some((d) => d.start.localCivil < d.end.localCivil)).toBe(true);
+  it("covers a preset one-day range and a preset multi-day range", () => {
+    const presets = dtos.filter((d) => d.start.localCivil.endsWith("T09:00") && d.end.localCivil.endsWith("T17:00"));
+    expect(presets.some((d) => d.start.localCivil.slice(0, 10) === d.end.localCivil.slice(0, 10))).toBe(true);
+    expect(presets.some((d) => d.start.localCivil.slice(0, 10) < d.end.localCivil.slice(0, 10))).toBe(true);
+  });
+
+  it("covers a range under a day", () => {
+    expect(dtos.some((d) => Date.parse(d.end.instant) - Date.parse(d.start.instant) < 86_400_000 / 2)).toBe(true);
   });
 });
 
@@ -195,7 +200,6 @@ describe("coverage 7: DST canary — recomputed via Intl, not trusted as literal
     expect(later).toBeDefined();
     const earlierDto = serializeChecklistSchedule(earlier!.storage);
     const laterDto = serializeChecklistSchedule(later!.storage);
-    expect(earlierDto.end.kind).toBe("timed");
     expect(earlierDto.end.localCivil).toBe(laterDto.end.localCivil);
     expect(earlierDto.start).toEqual(laterDto.start);
     expect(earlierDto.end.fold).toBe(0);

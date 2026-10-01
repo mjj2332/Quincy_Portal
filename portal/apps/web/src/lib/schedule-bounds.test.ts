@@ -57,7 +57,7 @@ function ganttProject(bounds: Bounds): GanttProjectRowDto {
 
 /** The Calendar's bounds DTO, round-tripped through the strict shared response schema. */
 function calendarBounds(bounds: Bounds): ProductionCalendarProjectBounds {
-  const raw: ProductionCalendarProjectBounds = { projectId: PROJECT_ID, shootDate: bounds.shoot, createdAt: bounds.createdAt, deadlineLocalCivil: bounds.deadline };
+  const raw: ProductionCalendarProjectBounds = { projectId: PROJECT_ID, shootDate: bounds.shoot, createdAt: bounds.createdAt, deadlineLocalCivil: bounds.deadline, deadlineFold: bounds.deadline ? 0 : null };
   const parsed = rangeResponse({ projectBounds: [raw] }).projectBounds?.[0];
   if (!parsed) throw new Error("expected parsed projectBounds");
   return parsed;
@@ -69,9 +69,15 @@ function bothPaths(bounds: Bounds, schedule: RangeChecklistScheduleInput) {
   return { ganttWarnings, calendarWarnings, ganttText: scheduleWarningText(ganttWarnings), calendarText: scheduleWarningText(calendarWarnings) };
 }
 
-const date = (localCivil: string) => ({ kind: "date" as const, localCivil });
-const timed = (localCivil: string) => ({ kind: "timed" as const, localCivil });
-const range = (start: { kind: "date" | "timed"; localCivil: string }, end: { kind: "date" | "timed"; localCivil: string }): RangeChecklistScheduleInput => ({ state: "range", start, end });
+// Every end is a moment (ADR 0016): a bare day stands for its preset moment, 09:00 as a start and 17:00 as an end.
+const date = (day: string) => ({ localCivil: day, bare: true as const });
+const timed = (localCivil: string) => ({ localCivil, bare: false as const });
+type Moment = ReturnType<typeof date> | ReturnType<typeof timed>;
+const range = (start: Moment, end: Moment): RangeChecklistScheduleInput => ({
+  state: "range",
+  start: { localCivil: start.bare ? `${start.localCivil}T09:00` : start.localCivil },
+  end: { localCivil: end.bare ? `${end.localCivil}T17:00` : end.localCivil },
+});
 
 const W = {
   startsBeforeShoot: { code: "subtask_before_project_shoot", message: "Starts before the shoot date.", endpoint: "start" },
@@ -94,7 +100,7 @@ const ROWS: Row[] = [
   { name: "timed end == the deadline minute", bounds: { deadline: DEADLINE }, schedule: range(timed("2026-05-10T09:00"), timed("2026-06-01T15:00")), expected: [], text: null },
   { name: "timed end 1 minute after the deadline", bounds: { deadline: DEADLINE }, schedule: range(timed("2026-05-10T09:00"), timed("2026-06-01T15:01")), expected: [W.endsAfterDeadline], text: "Ends after the project deadline." },
   { name: "timed end 1 minute after the deadline (starting the same day)", bounds: { deadline: DEADLINE }, schedule: range(timed("2026-06-01T09:00"), timed("2026-06-01T15:01")), expected: [W.endsAfterDeadline], text: "Ends after the project deadline." },
-  { name: "date end on the deadline day", bounds: { deadline: DEADLINE }, schedule: range(date("2026-05-31"), date("2026-06-01")), expected: [], text: null },
+  { name: "end on the deadline day, at the deadline minute", bounds: { deadline: DEADLINE }, schedule: range(date("2026-05-31"), timed("2026-06-01T15:00")), expected: [], text: null },
   { name: "date end the day after the deadline (one-day range)", bounds: { deadline: DEADLINE }, schedule: range(date("2026-06-01"), date("2026-06-02")), expected: [W.endsAfterDeadline], text: "Ends after the project deadline." },
   { name: "date end the day after the deadline (range)", bounds: { deadline: DEADLINE }, schedule: range(date("2026-05-10"), date("2026-06-02")), expected: [W.endsAfterDeadline], text: "Ends after the project deadline." },
   { name: "date-only deadline (no T) vs a timed end at 23:00 the same day", bounds: { deadline: "2026-06-01" }, schedule: range(timed("2026-06-01T09:00"), timed("2026-06-01T23:00")), expected: [], text: null },
@@ -162,12 +168,13 @@ describe("beforeLowerBound / endsAfterDeadline", () => {
     expect(beforeLowerBound("2000-01-01", null)).toBe(false);
   });
 
-  it("endsAfterDeadline goes by date when either side is date-kind, else by minute", () => {
+  it("endsAfterDeadline goes by minute, and by date only for a legacy date-only Deadline", () => {
     expect(endsAfterDeadline(timed("2026-06-01T15:01"), DEADLINE)).toBe(true);
     expect(endsAfterDeadline(timed("2026-06-01T15:00"), DEADLINE)).toBe(false);
-    expect(endsAfterDeadline(date("2026-06-01"), DEADLINE)).toBe(false);
+    expect(endsAfterDeadline(timed("2026-06-01T17:00"), DEADLINE)).toBe(true);
     expect(endsAfterDeadline(timed("2026-06-01T23:00"), "2026-06-01")).toBe(false);
-    expect(endsAfterDeadline(date("2099-01-01"), null)).toBe(false);
+    expect(endsAfterDeadline(timed("2026-06-02T00:00"), "2026-06-01")).toBe(true);
+    expect(endsAfterDeadline(timed("2099-01-01T17:00"), null)).toBe(false);
   });
 });
 

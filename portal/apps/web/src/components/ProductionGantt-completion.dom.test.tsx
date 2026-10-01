@@ -19,6 +19,7 @@ import { adminProductionGanttResponseSchema, PRODUCTION_GANTT_ZONE, type GanttCh
 import type { DashboardIdentity } from "../lib/dashboard-projects";
 import { ProductionGantt } from "./ProductionGantt";
 import { DEFAULT_GANTT_FACET_FILTERS } from "../lib/production-gantt-filters";
+import { startMoment, endMoment } from "@/testing/subtask-schedule";
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 vi.mock("../lib/api", async (importOriginal) => ({
@@ -103,8 +104,8 @@ function makeTask(overrides: Partial<GanttChecklistRowDto> & { id: string; proje
       state: "range",
       version: 1,
       zone: PRODUCTION_GANTT_ZONE,
-      start: { kind: "date", localCivil: isoDate(2), instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" },
-      end: { kind: "date", localCivil: isoDate(2), instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" },
+      start: startMoment(isoDate(2)),
+      end: endMoment(isoDate(2)),
       due: isoDate(2),
     },
     permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true },
@@ -190,8 +191,8 @@ describe("ProductionGantt — completion reaches the DOM (fix-220-sol1 #4)", () 
               state: "range",
               version: 1,
               zone: PRODUCTION_GANTT_ZONE,
-              start: { kind: "date", localCivil: isoDate(1), instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" },
-              end: { kind: "date", localCivil: isoDate(3), instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" },
+              start: startMoment(isoDate(1)),
+              end: endMoment(isoDate(3)),
               due: isoDate(3),
             },
           }),

@@ -9,6 +9,8 @@ import {
   editorProductionCalendarRangeResponseSchema,
   externalCalendarRangeSchema,
   PRODUCTION_CALENDAR_ZONE,
+  SUBTASK_END_PRESET_TIME,
+  SUBTASK_START_PRESET_TIME,
   resolveSydneyCivilMinute,
   subtaskIdFromCalendarEntityId,
   type CalendarEventDto,
@@ -40,22 +42,20 @@ export function instantOf(localCivil: string): string {
 export function timed(localCivil: string): ChecklistScheduleEndpointDto {
   const resolved = resolveSydneyCivilMinute(localCivil, "earlier");
   if (!resolved.ok) throw new Error(`fixture civil minute did not resolve: ${localCivil}`);
-  return { kind: "timed", localCivil, instant: resolved.value.instant, utcOffsetMinutes: resolved.value.utcOffsetMinutes, fold: resolved.value.fold, resolution: "stored" };
+  return { localCivil, instant: resolved.value.instant, utcOffsetMinutes: resolved.value.utcOffsetMinutes, fold: resolved.value.fold, resolution: "stored" };
 }
 
-export function dated(localCivil: string): ChecklistScheduleEndpointDto {
-  return { kind: "date", localCivil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" };
+/** A date picked without a time: the start preset, 09:00 (every Subtask end is a moment, ADR 0016). */
+export function dated(date: string): ChecklistScheduleEndpointDto {
+  return timed(`${date}T${SUBTASK_START_PRESET_TIME}`);
 }
 
-function exclusiveAfter(date: string): string {
-  const next = new Date(`${date}T00:00:00Z`);
-  next.setUTCDate(next.getUTCDate() + 1);
-  return next.toISOString().slice(0, 10);
-}
-
-/** `at` plus one hour, as a timed endpoint (a timed range needs start < end); a date endpoint is its own one-day range end. */
+/**
+ * The end of the ordinary one-day chip starting at `at`: a 09:00 preset start runs to the 17:00 preset
+ * end the same day, any other start runs one hour (a range needs start before end).
+ */
 function oneDayEnd(at: ChecklistScheduleEndpointDto): ChecklistScheduleEndpointDto {
-  if (at.kind === "date") return at;
+  if (at.localCivil.endsWith(`T${SUBTASK_START_PRESET_TIME}`)) return timed(`${at.localCivil.slice(0, 10)}T${SUBTASK_END_PRESET_TIME}`);
   const next = new Date(`${at.localCivil}:00Z`);
   next.setUTCHours(next.getUTCHours() + 1);
   return timed(next.toISOString().slice(0, 16));
@@ -72,9 +72,7 @@ export function oneDaySchedule(at: ChecklistScheduleEndpointDto, version: number
 }
 
 export function rangeEvent(start: ChecklistScheduleEndpointDto, end: ChecklistScheduleEndpointDto, over: { canDrag?: boolean; canResize?: boolean; canOpenScheduleEditor?: boolean; completed?: boolean; id?: string; assigneeNull?: boolean; assignees?: CalendarPerson[]; otherAssigneeCount?: number; version?: number } = {}): ChecklistCalendarEventDto {
-  const timing = start.kind === "date"
-    ? { allDay: true as const, start: start.localCivil, end: exclusiveAfter(end.localCivil) }
-    : { allDay: false as const, start: start.instant!, end: end.instant };
+  const timing = { allDay: false as const, start: start.instant, end: end.instant };
   return {
     id: over.id ?? `checklist:${SUBTASK_ID}`, kind: "checklist", title: "Select hero images", project, assignees: over.assignees ?? (over.assigneeNull ? [] : [assignee]), otherAssigneeCount: over.otherAssigneeCount ?? 0, timing,
     status: { ...status, completed: over.completed ?? false },

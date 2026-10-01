@@ -38,6 +38,7 @@ import { clearToasts } from "../lib/toast-store";
 import { ProjectQueryRuntime } from "../lib/project-query-sync";
 import { ToastViewport } from "./quincy/ToastViewport";
 import { ProductionGantt } from "./ProductionGantt";
+import { endMoment, startMoment } from "@/testing/subtask-schedule";
 
 vi.mock("../lib/stages", () => ({
   presentationStages: (stages: unknown[]) => stages,
@@ -86,10 +87,6 @@ function sydneyDay(offset: number): string {
   return shifted.value;
 }
 
-function dateEndpoint(localCivil: string): ChecklistScheduleEndpointDto {
-  return { kind: "date", localCivil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" };
-}
-
 type Row = {
   id: string;
   title: string;
@@ -98,7 +95,7 @@ type Row = {
   permissions: { canDrag: boolean; canResize: boolean; canOpenScheduleEditor: boolean; canEditAssignees: boolean };
 };
 
-type ScheduleInput = { state: string; start?: { kind: string; localCivil: string; disambiguation?: "earlier" | "later" }; end?: { kind: string; localCivil: string; disambiguation?: "earlier" | "later" } };
+type ScheduleInput = { state: string; start?: { localCivil: string; disambiguation?: "earlier" | "later" }; end?: { localCivil: string; disambiguation?: "earlier" | "later" } };
 
 /** The server's view of the checklist — PATCH mutates it, GET reads it. */
 let rows: Row[];
@@ -133,8 +130,8 @@ function resetFixture(options: { deadlineOffset?: number; noDeadline?: boolean; 
   omittedFromGet = new Set();
   const all = { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true };
   rows = [
-    { id: RANGE_ID, title: RANGE_TITLE, position: 0, permissions: all, schedule: { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: dateEndpoint(sydneyDay(1)), end: dateEndpoint(sydneyDay(3)), due: sydneyDay(3) } },
-    { id: DUE_ID, title: DUE_TITLE, position: 1, permissions: all, schedule: { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: dateEndpoint(sydneyDay(2)), end: dateEndpoint(sydneyDay(2)), due: sydneyDay(2) } },
+    { id: RANGE_ID, title: RANGE_TITLE, position: 0, permissions: all, schedule: { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: startMoment(sydneyDay(1)), end: endMoment(sydneyDay(3)), due: sydneyDay(3) } },
+    { id: DUE_ID, title: DUE_TITLE, position: 1, permissions: all, schedule: { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: startMoment(sydneyDay(2)), end: endMoment(sydneyDay(2)), due: sydneyDay(2) } },
   ];
 }
 
@@ -205,11 +202,11 @@ function ganttResponse() {
 function timedEndpoint(localCivil: string, disambiguation?: "earlier" | "later"): ChecklistScheduleEndpointDto {
   const resolved = resolveSydneyCivilMinute(localCivil, disambiguation);
   if (!resolved.ok) throw new Error(`fixture civil did not resolve: ${localCivil}`);
-  return { kind: "timed", localCivil, instant: resolved.value.instant, utcOffsetMinutes: resolved.value.utcOffsetMinutes, fold: resolved.value.fold, resolution: "stored" };
+  return { localCivil, instant: resolved.value.instant, utcOffsetMinutes: resolved.value.utcOffsetMinutes, fold: resolved.value.fold, resolution: "stored" };
 }
 
 function scheduleFromInput(input: ScheduleInput, version: number): ChecklistScheduleDto {
-  const endpoint = (value: ScheduleInput["end"]) => (value ? (value.kind === "timed" ? timedEndpoint(value.localCivil, value.disambiguation) : dateEndpoint(value.localCivil)) : null);
+  const endpoint = (value: ScheduleInput["end"]) => (value ? timedEndpoint(value.localCivil, value.disambiguation) : null);
   const start = endpoint(input.start);
   const end = endpoint(input.end);
   if (!start || !end) throw new Error("fixture: a range PATCH must carry both endpoints");
@@ -244,7 +241,7 @@ const CREATED_TITLE = "Cull selects";
 let createReply: ((body: { title: string }, projectId: string) => Promise<Reply> | Reply) | null;
 
 function echoCreate(body: { title: string }, projectId: string): Reply {
-  const schedule: ChecklistScheduleDto = { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: dateEndpoint(sydneyDay(4)), end: dateEndpoint(sydneyDay(6)), due: sydneyDay(6) };
+  const schedule: ChecklistScheduleDto = { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: startMoment(sydneyDay(4)), end: endMoment(sydneyDay(6)), due: sydneyDay(6) };
   if (projectId === PROJECT_ID) {
     rows.push({ id: CREATED_ID, title: body.title, position: 4, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true }, schedule });
   }
@@ -588,8 +585,7 @@ describe("ProductionGantt — checklist writes (#221 PR B2)", () => {
     const body = patchBody();
     expect(body.schedule.expectedVersion).toBe(1);
     expect(body.schedule.schedule.state).toBe("range");
-    expect(body.schedule.schedule.start).toEqual({ kind: "date", localCivil: sydneyDay(1) });
-    expect(body.schedule.schedule.end!.kind).toBe("date");
+    expect(body.schedule.schedule.start).toEqual({ localCivil: `${sydneyDay(1)}T09:00`, disambiguation: "earlier" });
     expect(body.schedule.schedule.end!.localCivil > sydneyDay(3)).toBe(true);
     const pendingLabel = barLabel(RANGE_TITLE);
     expect(pendingLabel).not.toBe(before);
@@ -613,9 +609,8 @@ describe("ProductionGantt — checklist writes (#221 PR B2)", () => {
     const body = patchBody();
     expect(body.schedule.expectedVersion).toBe(1);
     expect(body.schedule.schedule.state).toBe("range");
-    expect(body.schedule.schedule.start!.kind).toBe("date");
     expect(body.schedule.schedule.start!.localCivil < sydneyDay(1)).toBe(true);
-    expect(body.schedule.schedule.end).toEqual({ kind: "date", localCivil: sydneyDay(3) });
+    expect(body.schedule.schedule.end).toEqual({ localCivil: `${sydneyDay(3)}T17:00`, disambiguation: "earlier" });
     expect(liveRegionText()).not.toMatch(/rejected/i);
   });
 
@@ -656,8 +651,8 @@ describe("ProductionGantt — checklist writes (#221 PR B2)", () => {
     const body = patchBody();
     expect(body.schedule.expectedVersion).toBe(1);
     expect(body.schedule.schedule.state).toBe("range");
-    expect(body.schedule.schedule.start).toEqual({ kind: "date", localCivil: sydneyDay(2) });
-    expect(body.schedule.schedule.end).toEqual({ kind: "date", localCivil: sydneyDay(3) });
+    expect(body.schedule.schedule.start).toEqual({ localCivil: `${sydneyDay(2)}T09:00`, disambiguation: "earlier" });
+    expect(body.schedule.schedule.end).toEqual({ localCivil: `${sydneyDay(3)}T17:00` });
   });
 
   it("3. a 409 conflict rolls the bar back, announces the conflict and never retries", async () => {
@@ -691,7 +686,7 @@ describe("ProductionGantt — checklist writes (#221 PR B2)", () => {
     expect(patches()).toHaveLength(2);
     const undo = patchBody(1);
     expect(undo.schedule.expectedVersion).toBe(2);
-    expect(undo.schedule.schedule).toEqual({ state: "range", start: { kind: "date", localCivil: sydneyDay(1) }, end: { kind: "date", localCivil: sydneyDay(3) } });
+    expect(undo.schedule.schedule).toEqual({ state: "range", start: { localCivil: `${sydneyDay(1)}T09:00`, disambiguation: "earlier" }, end: { localCivil: `${sydneyDay(3)}T17:00`, disambiguation: "earlier" } });
     expect(gets().length).toBeGreaterThan(getsBefore);
     expect(barLabel(RANGE_TITLE)).toBe(before);
     expect(liveRegionText()).toBe("Change undone.");
@@ -752,7 +747,7 @@ describe("ProductionGantt — checklist writes (#221 PR B2)", () => {
     await render();
     await keyboardResizeRangeEnd();
     expect(patches()).toHaveLength(1);
-    expect(patchBody().schedule.schedule).toEqual({ state: "range", start: { kind: "date", localCivil: sydneyDay(1) }, end: { kind: "date", localCivil: sydneyDay(4) } });
+    expect(patchBody().schedule.schedule).toEqual({ state: "range", start: { localCivil: `${sydneyDay(1)}T09:00`, disambiguation: "earlier" }, end: { localCivil: `${sydneyDay(4)}T17:00` } });
     expect(allLiveText()).not.toMatch(/rejected/i);
     expect(document.activeElement).toBe(findBar(RANGE_TITLE));
     await flush(6);
@@ -1234,8 +1229,8 @@ describe("ProductionGantt — Sydney DST on a timed range (#221)", () => {
     const body = patchBody();
     expect(body.schedule.expectedVersion).toBe(1);
     // The unmoved start keeps its stored civil time (the request builder carries its stored side).
-    expect(body.schedule.schedule.start).toMatchObject({ kind: "timed", localCivil: "2026-04-02T09:00" });
-    expect(body.schedule.schedule.end).toEqual({ kind: "timed", localCivil: "2026-04-05T02:30", disambiguation: "later" });
+    expect(body.schedule.schedule.start).toMatchObject({ localCivil: "2026-04-02T09:00" });
+    expect(body.schedule.schedule.end).toEqual({ localCivil: "2026-04-05T02:30", disambiguation: "later" });
   });
 
   it("a keyboard Adjust into the October gap (2026-10-04 02:30 does not exist) announces the gap and sends nothing", async () => {
@@ -1500,7 +1495,7 @@ describe("ProductionGantt — Add task row (#344)", () => {
         body: {
           projectId: PROJECT_ID,
           children: {
-            rows: pageTwo.map((row) => ({ id: row.id, projectId: PROJECT_ID, title: row.title, done: false, position: row.position, assignees: [], otherAssigneeCount: 0, assignmentVersion: 0, schedule: { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: dateEndpoint(sydneyDay(4)), end: dateEndpoint(sydneyDay(6)), due: sydneyDay(6) }, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true } })),
+            rows: pageTwo.map((row) => ({ id: row.id, projectId: PROJECT_ID, title: row.title, done: false, position: row.position, assignees: [], otherAssigneeCount: 0, assignmentVersion: 0, schedule: { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: startMoment(sydneyDay(4)), end: endMoment(sydneyDay(6)), due: sydneyDay(6) }, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true } })),
             total: truncatedTotal!,
             returned: pageTwo.length,
             truncated: false,

@@ -4729,6 +4729,42 @@ remove the legacy readers) still applies.
   next reminder", drawn locally as "Wed 7 Oct · 16:00" (not `formatSydneyInstant`, shared with notifications) and
   quietened once the draft differs; the three-line reminder summary is read-only only.
 
+## #423 Every Subtask end is a moment
+
+- **A shared popup that serves two callers must keep Cancel and close apart.** The range popup's
+  `onClose` runs after a successful Apply and on Cancel; the Checklist keeps a failed save's draft for the
+  conflict review, so only Cancel (`onCancel`) discards it. Discarding on every `onOpenChange(false)` lost
+  the retained draft on Escape and on an outside press.
+- **Base UI closes a popover on an outside press.** Tests that used to write a draft, then click a
+  checkbox or a title with the popover still open, must reopen it: the retained draft survives, the open
+  popup does not. A popup's `aria-label` also trails a title change by a render, so find it by its
+  `subtask-popover-<id>-schedule` id when the title changes under it.
+- **An untouched Apply only closes.** A range popup whose draft was never edited calls no `onApply`, so a
+  test (or a user) that needs a PATCH has to change something first.
+- **Read a cached value with no observer.** `useProjectSubtaskDefaultRange` subscribes to the query cache
+  and calls `getQueryData`. An observer (`useQuery({ enabled: false })`) rebuilds its entry after a principal
+  clear or a Project removal, which `project-access-termination.dom.test.tsx` caught.
+- **The external list schema is strict and now requires `projectDefaultRange`.** A mocked external
+  checklist response without it fails decoding, and the screen sits on "Loading checklist…" with no error.
+- **A date-picker pick on a range popup does not set both ends.** Picking while Start is active sets the
+  start, pulls the end onto that day only when it was earlier, and hands the toggle to End; a second pick
+  sets the end. Tests that want a one-day range at a new date pick the day twice.
+- **A stored fold is only a choice while the minute repeats.** `foldChoiceFor` keeps `disambiguation` out of
+  an editor draft for a unique minute; otherwise every untouched save sent `earlier` for every end.
+- **Hand-built `{ kind, instant: null }` schedule DTOs cannot come back.** Fixtures go through
+  `testing/subtask-schedule.ts` (`presetScheduleDto`, `momentScheduleDto`), which runs
+  `normalizeChecklistSchedule`, so a fixture is what the API would return.
+- **The migration is pure SQL and bounded to 2008-2040.** The DST rule is hard-coded; the preflight in
+  `docs/Guides/CI-Deploy.md` ("Subtask presets (0052)") is what guards the floor, and
+  `migration-0052.test.ts` proves every day in that window against `normalizeChecklistSchedule`.
+
+- **A range `Calendar` with `selected` and no `onSelect` is uncontrolled.** react-day-picker kept its own
+  highlight after a shortcut or an endpoint edit changed the draft. `CalendarPane` passes a stable no-op
+  `onSelect` so the grid mirrors the draft; picks arrive through `onDayClick`.
+- **A migration's rollback needs the executor's transaction to be tested.** `db.exec(file)` autocommits each
+  statement, so `migration-0052.test.ts` applies the file inside one `BEGIN`/`COMMIT` (as D1 does) to prove a
+  failing ALTER undoes the UPDATE.
+
 ## #429 People, dates, Overdue and My tasks in the shared Filter
 
 - **`mine=1` changed meaning.** It is "People = me" in every view: Table/Board = I am an Editor or assigned an OPEN

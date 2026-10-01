@@ -39,7 +39,6 @@
 import {
   PRODUCTION_GANTT_DRAW_CAP,
   resolveSydneyCivilMinute,
-  shiftSydneyCalendarDate,
   type GanttChecklistRowDto,
   type GanttProjectRowDto,
 } from "@quincy/shared";
@@ -135,13 +134,6 @@ export function resolveCivilDayStart(localCivilDate: string): EndpointResolution
   return resolved.ok ? { ok: true, date: new Date(resolved.value.epochMs) } : { ok: false };
 }
 
-/** `resolve(shiftSydneyCalendarDate(localCivil, 1) + "T00:00")` — the exclusive end of a date range. */
-function resolveExclusiveEndOfDay(localCivilDate: string): EndpointResolution {
-  const shifted = shiftSydneyCalendarDate(localCivilDate, 1);
-  if (!shifted.ok) return { ok: false };
-  return resolveCivilDayStart(shifted.value);
-}
-
 /** A stored `timed` endpoint's `instant` — already carries the fold; never re-resolve `localCivil`. */
 function resolveStoredInstant(instant: string | null): EndpointResolution {
   if (instant === null) return { ok: false };
@@ -165,17 +157,15 @@ function taskInteraction(row: GanttChecklistRowDto): Pick<ProductionGanttEvent, 
 }
 
 /**
- * A Subtask's drawn span as resolved instants: a date endpoint is Sydney midnight (the end is the
- * exclusive next-day midnight), a timed endpoint is its stored instant. Shared by the bar builder
+ * A Subtask's drawn span as resolved instants: each end is its stored instant (every end is a
+ * moment, ADR 0016). Shared by the bar builder
  * and the #414 child-row order, so the order is exactly what is drawn.
  */
 function resolveTaskSpan(row: GanttChecklistRowDto): { ok: true; start: Date; end: Date } | { ok: false } {
   const { start, end } = row.schedule;
-  const startResolved =
-    start.kind === "date" ? resolveCivilDayStart(start.localCivil) : resolveStoredInstant(start.instant);
+  const startResolved = resolveStoredInstant(start.instant);
   if (!startResolved.ok) return { ok: false };
-  const endResolved =
-    end.kind === "date" ? resolveExclusiveEndOfDay(end.localCivil) : resolveStoredInstant(end.instant);
+  const endResolved = resolveStoredInstant(end.instant);
   if (!endResolved.ok) return { ok: false };
   return { ok: true, start: startResolved.date, end: endResolved.date };
 }
@@ -191,8 +181,7 @@ function buildTaskResult(row: GanttChecklistRowDto, color: string, className: st
     resourceId,
   });
 
-  // Every Subtask is a range (ADR 0011): start/end share a kind. A one-day date range resolves to
-  // [day 00:00, next day 00:00), a positive-width bar with both resize grips.
+  // Every Subtask is a timed range (ADR 0011, ADR 0016): the bar is [start, end) in stored instants.
   const span = resolveTaskSpan(row);
   if (!span.ok) return { event: null, attention: attentionFor("resolution_failed") };
   return {
@@ -201,7 +190,7 @@ function buildTaskResult(row: GanttChecklistRowDto, color: string, className: st
       title: row.title,
       start: span.start,
       end: span.end,
-      allDay: row.schedule.start.kind === "date",
+      allDay: false,
       color,
       ...(className ? { className } : {}),
       readOnly: true,

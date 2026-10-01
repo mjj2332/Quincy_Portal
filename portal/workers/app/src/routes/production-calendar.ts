@@ -96,6 +96,7 @@ type CalendarBoundsRow = {
   shoot_date: string | null;
   created_at: number;
   deadline_local_civil: string | null;
+  deadline_fold: number | null;
 };
 
 type ParsedCalendarRequest = {
@@ -487,7 +488,8 @@ bounds_projects AS (
   SELECT project_id FROM candidate_subtasks_unfiltered
 )
 SELECT bp.project_id, bounds_project.shoot_date, bounds_project.created_at,
-  CASE WHEN ap.deadline_at IS NOT NULL THEN ap.deadline_local_civil ELSE NULL END AS deadline_local_civil
+  CASE WHEN ap.deadline_at IS NOT NULL THEN ap.deadline_local_civil ELSE NULL END AS deadline_local_civil,
+  CASE WHEN ap.deadline_at IS NOT NULL THEN bounds_project.deadline_fold ELSE NULL END AS deadline_fold
 FROM bounds_projects bp
 INNER JOIN authorized_projects_base ap ON ap.project_id = bp.project_id
 INNER JOIN projects bounds_project ON bounds_project.id = bp.project_id`;
@@ -504,6 +506,7 @@ function projectBoundsFor(response: ProductionCalendarRangeResponse, rows: Calen
       shootDate: row.shoot_date !== null && isSydneyCalendarDate(row.shoot_date) ? row.shoot_date : null,
       createdAt: new Date(row.created_at).toISOString(),
       deadlineLocalCivil: row.deadline_local_civil,
+      deadlineFold: row.deadline_local_civil === null ? null : row.deadline_fold === 1 ? 1 : 0,
     });
   }
   return [...byId.values()].sort((a, b) => a.projectId.localeCompare(b.projectId));
@@ -595,29 +598,18 @@ function scheduleStorage(row: CalendarSqlRow) {
   } as const;
 }
 
-type RangeTiming = { allDay: true; start: string; end: string } | { allDay: false; start: string; end: string };
-
-function scheduleTiming(schedule: ChecklistScheduleDto): RangeTiming | null {
-  if (schedule.start.kind === "date" && schedule.end.kind === "date") {
-    const exclusiveEnd = shiftSydneyCalendarDate(schedule.end.localCivil, 1);
-    if (!exclusiveEnd.ok) return null;
-    return { allDay: true, start: schedule.start.localCivil, end: exclusiveEnd.value };
-  }
-  return schedule.start.instant && schedule.end.instant
-    ? { allDay: false, start: schedule.start.instant, end: schedule.end.instant }
-    : null;
+/** Every Subtask is a timed event (ADR 0016): the Calendar draws its real instants. */
+function scheduleTiming(schedule: ChecklistScheduleDto): { allDay: false; start: string; end: string } {
+  return { allDay: false, start: schedule.start.instant, end: schedule.end.instant };
 }
 
-function checklistOverdue(schedule: ChecklistScheduleDto, done: boolean, now: number, todayDate: string): boolean {
-  if (done) return false;
-  const endpoint = schedule.end;
-  return endpoint.kind === "date" ? endpoint.localCivil < todayDate : endpoint.instant !== null && Date.parse(endpoint.instant) < now;
+function checklistOverdue(schedule: ChecklistScheduleDto, done: boolean, now: number): boolean {
+  return !done && Date.parse(schedule.end.instant) < now;
 }
 
 function scheduleIntersects(schedule: ChecklistScheduleDto, parsed: ParsedCalendarRequest): boolean {
-  const { query, startInstant, endInstant } = parsed;
-  if (schedule.start.kind === "date" && schedule.end.kind === "date") return schedule.start.localCivil < query.end && schedule.end.localCivil >= query.start;
-  return schedule.start.instant !== null && schedule.end.instant !== null && Date.parse(schedule.start.instant) < endInstant && Date.parse(schedule.end.instant) > startInstant;
+  const { startInstant, endInstant } = parsed;
+  return Date.parse(schedule.start.instant) < endInstant && Date.parse(schedule.end.instant) > startInstant;
 }
 
 function projectDeadlineEvent(row: CalendarSqlRow, role: CalendarRole, parsed: ParsedCalendarRequest): CalendarEventDto {
@@ -644,7 +636,7 @@ function checklistEvent(row: CalendarSqlRow, role: CalendarRole, parsed: ParsedC
   // Throws (a 500) on storage that is not a valid range: see lib/subtask-schedule.ts.
   const schedule = serializeSubtaskSchedule(row.subtask_id, scheduleStorage(row));
   const timing = scheduleTiming(schedule);
-  if (!timing || !scheduleIntersects(schedule, parsed)) return null;
+  if (!scheduleIntersects(schedule, parsed)) return null;
   // An archived Project is read-only (#428): its checklist rows are shown, never moved or rescheduled.
   const collaboration = row.can_collaborate === 1 && !project.archived;
   const done = Boolean(row.done);
@@ -657,7 +649,7 @@ function checklistEvent(row: CalendarSqlRow, role: CalendarRole, parsed: ParsedC
     assignees,
     otherAssigneeCount,
     timing,
-    status: { overdue: checklistOverdue(schedule, done, parsed.now, parsed.todayDate), delivered: project.delivered, completed: done, sameAssigneeOverlap: false },
+    status: { overdue: checklistOverdue(schedule, done, parsed.now), delivered: project.delivered, completed: done, sameAssigneeOverlap: false },
     schedule,
     permissions: { canDrag: collaboration, canResize: collaboration, canOpenScheduleEditor: collaboration },
   };

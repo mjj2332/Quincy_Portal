@@ -23,6 +23,7 @@ import {
   deadlineFireAt,
   isSydneyCalendarDate,
   normalizeChecklistSchedule,
+  presetSubtaskRange,
   resolveSydneyCivilMinute,
   serializeChecklistSchedule,
   shiftSydneyCalendarDate,
@@ -304,7 +305,7 @@ function bulkSubtasks(projectId: string, projectKey: string, total: number, done
     rows.push({
       id: fixtureId(`subtask:${projectKey}:${index}`), projectId, projectKey,
       title: `QA fixture subtask ${String(index + 1).padStart(3, "0")}/${total}`,
-      done, index, storage: normalizedSchedule({ state: "range", start: { kind: "date", localCivil: day }, end: { kind: "date", localCivil: day } }, 1), createdAtMs, updatedAtMs: done ? createdAtMs + 61_000 : createdAtMs,
+      done, index, storage: normalizedSchedule(presetSubtaskRange(day), 1), createdAtMs, updatedAtMs: done ? createdAtMs + 61_000 : createdAtMs,
     });
   }
   return rows;
@@ -321,17 +322,17 @@ function buildScheduleEdgeRows(anchor: string, dst: { spring: string; fall: stri
   const plus = (n: number) => mustShift(anchor, n);
   const dayBefore = (date: string) => mustShift(date, -1);
   return [
-    { titleSuffix: "one-day date range", storage: normalizedSchedule({ state: "range", start: { kind: "date", localCivil: plus(10) }, end: { kind: "date", localCivil: plus(10) } }, 1), done: true },
-    { titleSuffix: "one-day timed range", storage: normalizedSchedule({ state: "range", start: { kind: "timed", localCivil: `${plus(10)}T13:00` }, end: { kind: "timed", localCivil: `${plus(10)}T14:00` } }, 1) },
-    { titleSuffix: "all-day range", storage: normalizedSchedule({ state: "range", start: { kind: "date", localCivil: plus(5) }, end: { kind: "date", localCivil: plus(8) } }, 1), done: true },
-    { titleSuffix: "timed range", storage: normalizedSchedule({ state: "range", start: { kind: "timed", localCivil: `${plus(5)}T09:00` }, end: { kind: "timed", localCivil: `${plus(5)}T17:00` } }, 1) },
-    { titleSuffix: "spring-forward day range (23h)", storage: normalizedSchedule({ state: "range", start: { kind: "date", localCivil: dst.spring }, end: { kind: "date", localCivil: dst.spring } }, 1) },
-    { titleSuffix: "fall-back day range (25h)", storage: normalizedSchedule({ state: "range", start: { kind: "date", localCivil: dst.fall }, end: { kind: "date", localCivil: dst.fall } }, 1), done: true },
-    { titleSuffix: "timed range across the gap (tight)", storage: normalizedSchedule({ state: "range", start: { kind: "timed", localCivil: `${dst.spring}T01:30` }, end: { kind: "timed", localCivil: `${dst.spring}T03:30` } }, 1) },
-    { titleSuffix: "timed range across the gap (overnight)", storage: normalizedSchedule({ state: "range", start: { kind: "timed", localCivil: `${dayBefore(dst.spring)}T22:00` }, end: { kind: "timed", localCivil: `${dst.spring}T06:00` } }, 1) },
-    { titleSuffix: "timed range across the fold", storage: normalizedSchedule({ state: "range", start: { kind: "timed", localCivil: `${dst.fall}T01:30` }, end: { kind: "timed", localCivil: `${dst.fall}T03:30` } }, 1) },
-    { titleSuffix: "Fold canary — earlier", storage: normalizedSchedule({ state: "range", start: { kind: "timed", localCivil: `${dst.fall}T01:30` }, end: { kind: "timed", localCivil: `${dst.fall}T02:30`, disambiguation: "earlier" } }, 1) },
-    { titleSuffix: "Fold canary — later", storage: normalizedSchedule({ state: "range", start: { kind: "timed", localCivil: `${dst.fall}T01:30` }, end: { kind: "timed", localCivil: `${dst.fall}T02:30`, disambiguation: "later" } }, 1) },
+    { titleSuffix: "one-day date range", storage: normalizedSchedule(presetSubtaskRange(plus(10)), 1), done: true },
+    { titleSuffix: "one-day timed range", storage: normalizedSchedule({ state: "range", start: { localCivil: `${plus(10)}T13:00` }, end: { localCivil: `${plus(10)}T14:00` } }, 1) },
+    { titleSuffix: "all-day range", storage: normalizedSchedule(presetSubtaskRange(plus(5), plus(8)), 1), done: true },
+    { titleSuffix: "timed range", storage: normalizedSchedule({ state: "range", start: { localCivil: `${plus(5)}T09:00` }, end: { localCivil: `${plus(5)}T17:00` } }, 1) },
+    { titleSuffix: "spring-forward day range (23h)", storage: normalizedSchedule(presetSubtaskRange(dst.spring), 1) },
+    { titleSuffix: "fall-back day range (25h)", storage: normalizedSchedule(presetSubtaskRange(dst.fall), 1), done: true },
+    { titleSuffix: "timed range across the gap (tight)", storage: normalizedSchedule({ state: "range", start: { localCivil: `${dst.spring}T01:30` }, end: { localCivil: `${dst.spring}T03:30` } }, 1) },
+    { titleSuffix: "timed range across the gap (overnight)", storage: normalizedSchedule({ state: "range", start: { localCivil: `${dayBefore(dst.spring)}T22:00` }, end: { localCivil: `${dst.spring}T06:00` } }, 1) },
+    { titleSuffix: "timed range across the fold", storage: normalizedSchedule({ state: "range", start: { localCivil: `${dst.fall}T01:30` }, end: { localCivil: `${dst.fall}T03:30` } }, 1) },
+    { titleSuffix: "Fold canary — earlier", storage: normalizedSchedule({ state: "range", start: { localCivil: `${dst.fall}T01:30` }, end: { localCivil: `${dst.fall}T02:30`, disambiguation: "earlier" } }, 1) },
+    { titleSuffix: "Fold canary — later", storage: normalizedSchedule({ state: "range", start: { localCivil: `${dst.fall}T01:30` }, end: { localCivil: `${dst.fall}T02:30`, disambiguation: "later" } }, 1) },
   ];
 }
 

@@ -46,7 +46,7 @@ const calendar: DashboardCalendarState = { view: "calendar", date: "2026-08-12",
 function timedEndpoint(localCivil: string) {
   const resolved = resolveSydneyCivilMinute(localCivil);
   if (!resolved.ok) throw new Error(`Fixture time did not resolve: ${localCivil}`);
-  return { kind: "timed" as const, localCivil, instant: resolved.value.instant, utcOffsetMinutes: resolved.value.utcOffsetMinutes, fold: resolved.value.fold, resolution: "stored" as const };
+  return { localCivil, instant: resolved.value.instant, utcOffsetMinutes: resolved.value.utcOffsetMinutes, fold: resolved.value.fold, resolution: "stored" as const };
 }
 
 function rangeEvent(start: string, end: string, version = 4): ChecklistCalendarEventDto {
@@ -152,7 +152,7 @@ describe("useSchedulingCommands submitProposal", () => {
     await render(response({ events: [source] }));
     const proposal: SchedulingProposal = { kind: "move", entity: "checklist", source, target: { subview: "month", targetDate: "2026-08-28" } };
     await submit(proposal, mutationBody(source, { ...source.schedule, version: 5, start: timedEndpoint("2026-08-28T09:00"), end: timedEndpoint("2026-08-28T11:00"), due: "2026-08-28T11:00" }));
-    expect(patchBodies).toEqual([{ schedule: { expectedVersion: 4, schedule: { state: "range", start: { kind: "timed", localCivil: "2026-08-28T09:00" }, end: { kind: "timed", localCivil: "2026-08-28T11:00" } } } }]);
+    expect(patchBodies).toEqual([{ schedule: { expectedVersion: 4, schedule: { state: "range", start: { localCivil: "2026-08-28T09:00" }, end: { localCivil: "2026-08-28T11:00" } } } }]);
   });
 
   it("submits an end-resize proposal through the checklist mutate path", async () => {
@@ -160,7 +160,7 @@ describe("useSchedulingCommands submitProposal", () => {
     await render(response({ events: [source] }));
     const proposal: SchedulingProposal = { kind: "resize", entity: "checklist", source, edge: "end", target: { subview: "week", targetDate: "2026-08-27", targetCivilMinute: "2026-08-27T12:00" } };
     await submit(proposal, mutationBody(source, { ...source.schedule, version: 5, end: timedEndpoint("2026-08-27T12:00"), due: "2026-08-27T12:00" }));
-    expect(patchBodies).toEqual([{ schedule: { expectedVersion: 4, schedule: { state: "range", start: { kind: "timed", localCivil: "2026-08-27T09:00", disambiguation: "earlier" }, end: { kind: "timed", localCivil: "2026-08-27T12:00" } } } }]);
+    expect(patchBodies).toEqual([{ schedule: { expectedVersion: 4, schedule: { state: "range", start: { localCivil: "2026-08-27T09:00", disambiguation: "earlier" }, end: { localCivil: "2026-08-27T12:00" } } } }]);
   });
 
   it("submits a start-resize proposal (mapChecklistStartResizeToCommand) through the checklist mutate path", async () => {
@@ -168,7 +168,7 @@ describe("useSchedulingCommands submitProposal", () => {
     await render(response({ events: [source] }));
     const proposal: SchedulingProposal = { kind: "resize", entity: "checklist", source, edge: "start", target: { subview: "week", targetDate: "2026-08-27", targetCivilMinute: "2026-08-27T08:00" } };
     await submit(proposal, mutationBody(source, { ...source.schedule, version: 5, start: timedEndpoint("2026-08-27T08:00"), due: "2026-08-27T11:00" }));
-    expect(patchBodies).toEqual([{ schedule: { expectedVersion: 4, schedule: { state: "range", start: { kind: "timed", localCivil: "2026-08-27T08:00" }, end: { kind: "timed", localCivil: "2026-08-27T11:00", disambiguation: "earlier" } } } }]);
+    expect(patchBodies).toEqual([{ schedule: { expectedVersion: 4, schedule: { state: "range", start: { localCivil: "2026-08-27T08:00" }, end: { localCivil: "2026-08-27T11:00", disambiguation: "earlier" } } } }]);
   });
 
   it("submits a deadline proposal through the confirm+mutate path", async () => {

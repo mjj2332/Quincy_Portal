@@ -444,6 +444,8 @@ export type ProductionCalendarProjectBounds = {
   shootDate: string | null;
   createdAt: string;
   deadlineLocalCivil: string | null;
+  /** #423: the Deadline's stored fold (null with no Deadline), so the editor can offer "Project default". */
+  deadlineFold: 0 | 1 | null;
 };
 
 export type ProductionCalendarRangeResponse<TStage extends StageTransportKey = StageTransportKey> = {
@@ -475,11 +477,10 @@ const calendarEventTimingSchema = z.union([
 ]);
 
 const checklistScheduleEndpointSchema = z.object({
-  kind: z.enum(["date", "timed"]),
   localCivil: z.string().min(1).max(32),
-  instant: isoStringSchema.nullable(),
-  utcOffsetMinutes: z.number().int().nullable(),
-  fold: z.union([z.literal(0), z.literal(1)]).nullable(),
+  instant: isoStringSchema,
+  utcOffsetMinutes: z.number().int(),
+  fold: z.union([z.literal(0), z.literal(1)]),
   resolution: z.literal("stored"),
 }).strict();
 
@@ -542,7 +543,7 @@ const dtoFiltersSchema: z.ZodType<ProductionCalendarFilters> = z.object({
 }).strict();
 
 const projectBoundsSchema: z.ZodType<ProductionCalendarProjectBounds> = z.object({
-  projectId: lowercaseUuidSchema, shootDate: calendarDateSchema.nullable(), createdAt: isoInstantSchema, deadlineLocalCivil: z.string().min(1).max(32).nullable(),
+  projectId: lowercaseUuidSchema, shootDate: calendarDateSchema.nullable(), createdAt: isoInstantSchema, deadlineLocalCivil: z.string().min(1).max(32).nullable(), deadlineFold: z.union([z.literal(0), z.literal(1)]).nullable(),
 }).strict();
 
 const responseSchemaFor = <TStage extends StageTransportKey>(stageSchema: z.ZodType<TStage>): z.ZodType<ProductionCalendarRangeResponse<TStage>> => z.object({
@@ -629,8 +630,7 @@ function endpointDisambiguation(value: ChecklistDisambiguation | undefined, endp
 }
 
 function endpointToInput(endpoint: ChecklistScheduleEndpointDto): ChecklistScheduleEndpointInput {
-  if (endpoint.kind === "date") return { kind: "date", localCivil: endpoint.localCivil };
-  return { kind: "timed", localCivil: endpoint.localCivil, ...(endpoint.fold === 1 ? { disambiguation: "later" as const } : { disambiguation: "earlier" as const }) };
+  return { localCivil: endpoint.localCivil, disambiguation: endpoint.fold === 1 ? "later" : "earlier" };
 }
 
 function normalizedRequest(schedule: RangeChecklistScheduleInput, version: number): CalendarMappingResult<SaveChecklistScheduleRequest> {
@@ -640,13 +640,9 @@ function normalizedRequest(schedule: RangeChecklistScheduleInput, version: numbe
 }
 
 function shiftedEndpoint(endpoint: ChecklistScheduleEndpointDto, dayShift: number, disambiguation: SydneyCivilDisambiguation | undefined, which: "start" | "end"): CalendarMappingResult<ChecklistScheduleEndpointInput> {
-  if (endpoint.kind === "date") {
-    const shifted = shiftDateValue(endpoint.localCivil, dayShift);
-    return shifted.ok ? { ok: true, value: { kind: "date", localCivil: shifted.value } } : shifted;
-  }
   const shifted = shiftSydneyCivilPreservingWallTime(endpoint.localCivil, dayShift, disambiguation);
   if (!shifted.ok) return { ok: false, error: { ...shifted.error, endpoint: which } };
-  return { ok: true, value: { kind: "timed", localCivil: shifted.value.localCivil, ...(disambiguation ? { disambiguation } : {}) } };
+  return { ok: true, value: { localCivil: shifted.value.localCivil, ...(disambiguation ? { disambiguation } : {}) } };
 }
 
 function checklistMoveSchedule<TStage extends StageTransportKey>(input: ChecklistMoveInput<TStage>): CalendarMappingResult<RangeChecklistScheduleInput> {
@@ -657,31 +653,23 @@ function checklistMoveSchedule<TStage extends StageTransportKey>(input: Checklis
   const sourceEnd = event.schedule.end;
   const mappedStart: CalendarMappingResult<ChecklistScheduleEndpointInput> = target.subview === "month"
     ? (() => { const delta = dayDelta(sourceStart.localCivil.slice(0, 10), target.targetDate); return delta === null ? calendarError("invalid_local_time", "Expected valid Calendar dates.") : shiftedEndpoint(sourceStart, delta, endpointDisambiguation(input.disambiguation, "start"), "start"); })()
-    : sourceStart.kind === "date"
-      ? (parseCalendarDate(target.targetDate) ? { ok: true, value: { kind: "date", localCivil: target.targetDate } } : calendarError("invalid_local_time", "Expected a valid target calendar date."))
-      : (() => { const time = targetTime(target); if (!time.ok) return time; return { ok: true, value: { kind: "timed", localCivil: `${time.value.date}T${time.value.time}`, ...(endpointDisambiguation(input.disambiguation, "start") ? { disambiguation: endpointDisambiguation(input.disambiguation, "start") } : {}) } }; })();
+    : (() => { const time = targetTime(target); if (!time.ok) return time; return { ok: true, value: { localCivil: `${time.value.date}T${time.value.time}`, ...(endpointDisambiguation(input.disambiguation, "start") ? { disambiguation: endpointDisambiguation(input.disambiguation, "start") } : {}) } }; })();
   if (!mappedStart.ok) return mappedStart;
 
   let mappedEnd: CalendarMappingResult<ChecklistScheduleEndpointInput>;
   if (target.subview === "month") {
     const delta = dayDelta(sourceStart.localCivil.slice(0, 10), target.targetDate);
     mappedEnd = delta === null ? calendarError("invalid_local_time", "Expected valid Calendar dates.") : shiftedEndpoint(sourceEnd, delta, endpointDisambiguation(input.disambiguation, "end"), "end");
-  } else if (sourceEnd.kind === "date") {
-    const delta = dayDelta(sourceStart.localCivil.slice(0, 10), target.targetDate);
-    mappedEnd = delta === null ? calendarError("invalid_local_time", "Expected valid Calendar dates.") : shiftedEndpoint(sourceEnd, delta, endpointDisambiguation(input.disambiguation, "end"), "end");
   } else {
-    const targetStart = mappedStart.value;
-    const targetCivil = targetStart.kind === "timed" ? targetStart.localCivil : null;
-    const sourceStartCivil = sourceStart.kind === "timed" ? sourceStart.localCivil : null;
-    if (!targetCivil || !sourceStartCivil) return calendarError("mixed_endpoint_kinds", "Range endpoints must retain their endpoint kind.");
-    const targetParts = parseCivilMinute(targetCivil);
-    const sourceParts = parseCivilMinute(sourceStartCivil);
+    // A timed move keeps the span: the end shifts by the minutes the start moved.
+    const targetParts = parseCivilMinute(mappedStart.value.localCivil);
+    const sourceParts = parseCivilMinute(sourceStart.localCivil);
     if (!targetParts || !sourceParts) return calendarError("invalid_local_time", "Expected valid timed range endpoints.");
     const deltaMinutes = civilMinuteIndex(targetParts) - civilMinuteIndex(sourceParts);
     const shifted = addCivilMinutes(sourceEnd.localCivil, deltaMinutes);
     if (!shifted.ok) return { ok: false, error: { ...shifted.error, endpoint: "end" } };
     const disambiguation = endpointDisambiguation(input.disambiguation, "end");
-    mappedEnd = { ok: true, value: { kind: "timed", localCivil: shifted.value, ...(disambiguation ? { disambiguation } : {}) } };
+    mappedEnd = { ok: true, value: { localCivil: shifted.value, ...(disambiguation ? { disambiguation } : {}) } };
   }
   if (!mappedEnd.ok) return mappedEnd;
   return { ok: true, value: { state: "range", start: mappedStart.value!, end: mappedEnd.value } };
@@ -734,22 +722,10 @@ export function mapChecklistEndResizeToCommand<TStage extends StageTransportKey>
   if (target.subview === "agenda") return calendarError("unsupported_subview", "Agenda uses the Move/Reschedule editor instead of direct resize mapping.");
   if (input.edge === "start" || target.edge === "start") return calendarError("start_resize_unsupported", "Checklist range start resize is not supported.");
   const currentStart = endpointToInput(event.schedule.start);
-  const oldEnd = event.schedule.end;
   const disambiguation = endpointDisambiguation(input.disambiguation, "end");
-  let nextEnd: ChecklistScheduleEndpointInput;
-  if (oldEnd.kind === "date") {
-    // `targetDate` doubles as the exclusive all-day end when the dedicated field is
-    // absent (see CalendarManipulationTarget). A non-advancing result (inclusive
-    // end <= start) is rejected downstream by normalizedRequest.
-    const exclusive = target.end ?? target.exclusiveEnd ?? target.targetEnd ?? target.targetDate;
-    const inclusive = shiftDateValue(exclusive, -1);
-    if (!inclusive.ok) return inclusive;
-    nextEnd = { kind: "date", localCivil: inclusive.value };
-  } else {
-    const time = targetTime(target);
-    if (!time.ok) return time;
-    nextEnd = { kind: "timed", localCivil: `${time.value.date}T${time.value.time}`, ...(disambiguation ? { disambiguation } : {}) };
-  }
+  const time = targetTime(target);
+  if (!time.ok) return time;
+  const nextEnd: ChecklistScheduleEndpointInput = { localCivil: `${time.value.date}T${time.value.time}`, ...(disambiguation ? { disambiguation } : {}) };
   const schedule: RangeChecklistScheduleInput = { state: "range", start: currentStart, end: nextEnd };
   return normalizedRequest(schedule, event.schedule.version);
 }
@@ -759,17 +735,10 @@ export function mapChecklistStartResizeToCommand<TStage extends StageTransportKe
   if (target.subview === "agenda") return calendarError("unsupported_subview", "Agenda uses the Move/Reschedule editor instead of direct resize mapping.");
   if (input.edge === "end" || target.edge === "end") return calendarError("end_resize_not_this_mapper", "Use mapChecklistEndResizeToCommand for the end edge.");
   const currentEnd = endpointToInput(event.schedule.end);
-  const oldStart = event.schedule.start;
   const disambiguation = endpointDisambiguation(input.disambiguation, "start");
-  let nextStart: ChecklistScheduleEndpointInput;
-  if (oldStart.kind === "date") {
-    if (!parseCalendarDate(target.targetDate)) return calendarError("invalid_local_time", "Expected a valid target calendar date.");
-    nextStart = { kind: "date", localCivil: target.targetDate };
-  } else {
-    const time = targetTime(target);
-    if (!time.ok) return time;
-    nextStart = { kind: "timed", localCivil: `${time.value.date}T${time.value.time}`, ...(disambiguation ? { disambiguation } : {}) };
-  }
+  const time = targetTime(target);
+  if (!time.ok) return time;
+  const nextStart: ChecklistScheduleEndpointInput = { localCivil: `${time.value.date}T${time.value.time}`, ...(disambiguation ? { disambiguation } : {}) };
   const schedule: RangeChecklistScheduleInput = { state: "range", start: nextStart, end: currentEnd };
   return normalizedRequest(schedule, event.schedule.version);
 }

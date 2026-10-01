@@ -370,6 +370,9 @@ export const projectSubtasks = sqliteTable(
     /** Constant marker (always 1, never read or written by the app) that carries the migration 0047 range CHECK below.
      * Any migration that drops a schedule column or `due_date` must drop this column first. */
     scheduleRangeRequired: integer("schedule_range_required").notNull().default(1),
+    /** Constant marker (always 1, never read or written by the app) that carries the migration 0052 timed-only CHECK below (ADR 0016).
+     * Any migration that drops a schedule kind column must drop this column first. */
+    scheduleTimedRequired: integer("schedule_timed_required").notNull().default(1),
     createdBy: text("created_by").notNull().references(() => user.id),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -406,6 +409,8 @@ export const projectSubtasks = sqliteTable(
           AND ${t.scheduleStartAt} < ${t.scheduleEndAt})
       )
     ), 0) = 1`),
+    // Mirrors migration 0052: every Subtask end is a moment, so both endpoint kinds are the constant 'timed' (ADR 0016).
+    check("project_subtasks_schedule_timed_required_check", sql`${t.scheduleTimedRequired} = 1 AND COALESCE((${t.scheduleStartKind} IS 'timed' AND ${t.scheduleEndKind} IS 'timed'), 0) = 1`),
   ],
 );
 

@@ -18,6 +18,14 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { normalizeChecklistSchedule, presetSubtaskRange } from "@quincy/shared";
+
+/** The control Subtask's range: the presets on one day, normalized so its instants are the app's own (ADR 0016). */
+const CONTROL_SCHEDULE = (() => {
+  const result = normalizeChecklistSchedule(presetSubtaskRange("2026-09-21"), 1);
+  if (!result.ok) throw new Error("control schedule fixture invalid");
+  return result.value;
+})();
 
 export type PlantRow = { table: string; values: Record<string, string | number | null> };
 
@@ -125,7 +133,7 @@ export function controlProjectRows(ctx: PlantContext): PlantRow[] {
   return [
     { table: "projects", values: { id: ctx.projectId, street: `Control ${ctx.tag}`, stage_key: "raw_review", board_position: 99_000, created_at: T0, updated_at: T0 } },
     { table: "collections", values: { id: ctx.collectionId, project_id: ctx.projectId, kind: "raw", status: "empty", received_count: 0, created_at: T0, updated_at: T0 } },
-    { table: "project_subtasks", values: { id: ctx.subtaskId, project_id: ctx.projectId, title: "Control subtask", done: 0, position: 1024, due_date: "2026-09-21", schedule_start_kind: "date", schedule_start_civil: "2026-09-21", schedule_end_kind: "date", schedule_zone: "Australia/Sydney", schedule_version: 1, created_by: ctx.userId, created_at: T0, updated_at: T0 } },
+    { table: "project_subtasks", values: { id: ctx.subtaskId, project_id: ctx.projectId, title: "Control subtask", done: 0, position: 1024, due_date: CONTROL_SCHEDULE.dueDate, schedule_start_kind: "timed", schedule_start_civil: CONTROL_SCHEDULE.scheduleStartCivil, schedule_start_at: CONTROL_SCHEDULE.scheduleStartAt, schedule_start_utc_offset_minutes: CONTROL_SCHEDULE.scheduleStartUtcOffsetMinutes, schedule_start_fold: CONTROL_SCHEDULE.scheduleStartFold, schedule_end_kind: "timed", schedule_end_at: CONTROL_SCHEDULE.scheduleEndAt, schedule_end_utc_offset_minutes: CONTROL_SCHEDULE.scheduleEndUtcOffsetMinutes, schedule_end_fold: CONTROL_SCHEDULE.scheduleEndFold, schedule_zone: "Australia/Sydney", schedule_version: 1, created_by: ctx.userId, created_at: T0, updated_at: T0 } },
     {
       table: "project_deadline_occurrences",
       values: {
