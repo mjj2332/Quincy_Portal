@@ -102,19 +102,44 @@ export function decodeGanttProjectCursor(value: unknown): GanttProjectCursor | n
  * client that changed its own `completed` query value between page one and page two would get a
  * silently inconsistent `total` and a possible duplicate/gap (fix-218-r1 #1).
  */
-export type GanttChildCursor = { projectId: string; position: number; id: string; completed: boolean };
+export type GanttChildCursor = { projectId: string; position: number; id: string; completed: boolean; people?: string };
 
+/**
+ * #429: `people` is the fingerprint of the People / My tasks filter the page was cut under
+ * (`ganttPeopleFingerprint`): the child list a continuation walks is the filtered one, so a request
+ * that names a different People filter than the cursor was minted under is refused (400) rather than
+ * silently walking a different list. Absent is no People filter: the key is written only when a filter
+ * narrows, so an unfiltered cursor is byte-identical to the one every earlier build minted.
+ */
 export const ganttChildCursorSchema = z.object({
   projectId: z.string().regex(CANONICAL_LOWERCASE_UUID_REGEX),
   position: z.number().int(),
   id: z.string().regex(CANONICAL_LOWERCASE_UUID_REGEX),
   completed: z.boolean(),
+  people: z.string().regex(/^[0-9a-f]{8}$/u).optional(),
 }).strict();
+
+/**
+ * The fingerprint of the People / My tasks filter a child list is narrowed by: `""` when neither
+ * narrows, otherwise 8 hex characters (FNV-1a over the canonical spelling: sorted ids, then `:u` for
+ * Unassigned and `:m` for My tasks). A consistency guard against a changed request, not a secret, so
+ * it stays small enough for the cursor's size limit however many people are selected.
+ */
+export function ganttPeopleFingerprint(filter: { editorIds: readonly string[]; includeUnassigned: boolean; myTasks: boolean }): string {
+  const canonical = `${[...new Set(filter.editorIds)].sort().join(",")}|${filter.includeUnassigned ? "u" : ""}|${filter.myTasks ? "m" : ""}`;
+  if (canonical === "||") return "";
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < canonical.length; index += 1) {
+    hash ^= canonical.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
 
 export function encodeGanttChildCursor(cursor: GanttChildCursor): string {
   const parsed = ganttChildCursorSchema.safeParse(cursor);
   if (!parsed.success) throw new TypeError("Invalid Gantt child cursor");
-  const json = JSON.stringify({ projectId: parsed.data.projectId, position: parsed.data.position, id: parsed.data.id, completed: parsed.data.completed });
+  const json = JSON.stringify({ projectId: parsed.data.projectId, position: parsed.data.position, id: parsed.data.id, completed: parsed.data.completed, ...(parsed.data.people ? { people: parsed.data.people } : {}) });
   const jsonBytes = new TextEncoder().encode(json);
   if (jsonBytes.byteLength > CURSOR_MAX_DECODED_BYTES) throw new RangeError("Gantt child cursor exceeds its size limit");
   const encoded = bytesToBase64(jsonBytes).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
@@ -132,7 +157,7 @@ export function decodeGanttChildCursor(value: unknown): GanttChildCursor | null 
   try { parsed = JSON.parse(json); } catch { return null; }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
   const keys = Object.keys(parsed);
-  if (keys.length !== 4 || keys[0] !== "projectId" || keys[1] !== "position" || keys[2] !== "id" || keys[3] !== "completed") return null;
+  if ((keys.length !== 4 && keys.length !== 5) || keys[0] !== "projectId" || keys[1] !== "position" || keys[2] !== "id" || keys[3] !== "completed" || (keys.length === 5 && keys[4] !== "people")) return null;
   const result = ganttChildCursorSchema.safeParse(parsed);
   if (!result.success) return null;
   try { return encodeGanttChildCursor(result.data) === value ? result.data : null; } catch { return null; }
@@ -207,6 +232,14 @@ export type GanttProjectRowDto<TStage extends StageTransportKey = StageTransport
     /** #365: present ONLY with `team` (same `team=1` gate). */
     canEditTeam?: boolean;
   };
+  /**
+   * #429: whether this Project's own Deadline matches the request's People / My tasks / Overdue / Deadline
+   * range filter. A row can be listed only as the parent of matching checklist rows, in which case this
+   * is `false` and the Deadline bar must not be drawn (the Deadline itself is untouched: it is simply not
+   * what the filter selected). Present ONLY when the page request sent `dm=1`, so an old bundle's strict
+   * decoder never meets the key (the #246 `rev=1` pattern). Absent means "draw as before".
+   */
+  deadlineInScope?: boolean;
   children: {
     rows: GanttChecklistRowDto[];
     /** ALL visible checklist rows for this project — the full count, independent of which page or
@@ -357,6 +390,7 @@ function ganttProjectRowSchemaFor<TStage extends StageTransportKey>(stageSchema:
     checklist: z.object({ completed: z.number().int().nonnegative(), total: z.number().int().nonnegative() }).strict(),
     team: z.array(ganttTeamMemberSchema).optional(),
     permissions: z.object({ canEditDeadline: z.boolean(), canEditChildren: z.boolean(), canEditTeam: z.boolean().optional() }).strict(),
+    deadlineInScope: z.boolean().optional(),
     children: ganttChildrenSchema(),
   }).strict().superRefine((row, ctx) => {
     if ((row.team === undefined) !== (row.permissions.canEditTeam === undefined)) {

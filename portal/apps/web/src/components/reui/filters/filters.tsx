@@ -19,6 +19,7 @@
  *
  * File-specific edits:
  * - QUINCY (#255 browser pass G): `useControllableQuery` also returns `writtenRef` (the root's own last write), and the root announces `countAnnouncement` when a controlled `query` changes to anything else. Upstream announced only edits made through the bar, so an outside re-seed left a stale count in the live status.
+ * - QUINCY ADDITION (#429): the chip toolbar carries `max-w-full min-w-0`, so it is bounded by the bar at 390px and a chip's own `max-w-full` resolves against the row.
  * - QUINCY ADDITION (#255), additive: a `ruleMenu?: { duplicate?: boolean; negate?: boolean }` option (`FilterRuleMenuOptions`, `filters-context.tsx`) threaded root prop -> actions context -> `FilterRuleMenuItems`, so a consumer can hide the rule menu's Duplicate and Negate rows. Upstream has no option for it. Omitted, both rows render exactly as upstream.
  */
 import * as React from "react"
@@ -1176,7 +1177,11 @@ export function FiltersRow({ trigger, showClear, className, builder = true }: Fi
         {...(actions.readOnly
           ? { "aria-description": actions.labels.readOnly }
           : null)}
-        className={cn(filtersBarVariants({ size: sizes.button }))}
+        className={cn(
+          filtersBarVariants({ size: sizes.button }),
+          // QUINCY ADDITION (#429): bounded by the bar and allowed to shrink, so a chip's `max-w-full` resolves against the row, not its own content, at 390px.
+          "max-w-full min-w-0"
+        )}
         onKeyDown={onKeyDown}
       >
         {rules.map((rule, index) => (

@@ -383,3 +383,42 @@ describe("project-data BroadcastChannel contract", () => {
     second.dispose(); queryClient.clear();
   });
 });
+
+describe("dashboard-board-invalidated carries the People flag across tabs (#429)", () => {
+  it("parses the optional people flag and rejects any other value", () => {
+    const base = { ...createDashboardBoardInvalidatedMessage(), sourceTabId: "sender" };
+    expect(Object.keys(base).sort()).toEqual(["committedAt", "sourceTabId", "type", "version"]);
+    const withPeople = { ...createDashboardBoardInvalidatedMessage({ people: true }), sourceTabId: "sender" };
+    expect(parseProjectDataSyncMessage(withPeople)).toEqual(withPeople);
+    expect(parseProjectDataSyncMessage({ ...base, people: false })).toBeNull();
+    expect(parseProjectDataSyncMessage({ ...base, people: "yes" })).toBeNull();
+  });
+
+  it("a receiving tab refetches dashboard-people only when the message carries people", async () => {
+    class FakeChannel {
+      static channels: FakeChannel[] = [];
+      readonly listeners = new Set<(event: MessageEvent<unknown>) => void>();
+      constructor(readonly name: string) { FakeChannel.channels.push(this); }
+      addEventListener(_type: string, listener: (event: MessageEvent<unknown>) => void) { this.listeners.add(listener); }
+      postMessage(data: unknown) { for (const channel of FakeChannel.channels.filter((item) => item.name === this.name)) for (const listener of channel.listeners) listener({ data } as MessageEvent<unknown>); }
+      close() { FakeChannel.channels = FakeChannel.channels.filter((item) => item !== this); this.listeners.clear(); }
+    }
+    vi.stubGlobal("BroadcastChannel", FakeChannel);
+    const senderClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const receiverClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const sender = new ProjectQueryRuntime(senderClient, "sender"); const receiver = new ProjectQueryRuntime(receiverClient, "receiver");
+    sender.start(); receiver.start();
+    const peopleKey = ["dashboard-people", "principal", "admin", 0, "hide"] as const;
+    const fetchPeople = vi.fn(async () => ({ people: [] }));
+    const observer = new QueryObserver(receiverClient, { queryKey: peopleKey, queryFn: fetchPeople, staleTime: Infinity });
+    const unsubscribe = observer.subscribe(() => undefined);
+    await vi.waitFor(() => expect(fetchPeople).toHaveBeenCalledTimes(1));
+    sender.publish(createDashboardBoardInvalidatedMessage());
+    await Promise.resolve();
+    expect(receiverClient.getQueryCache().find({ queryKey: peopleKey, exact: true })?.state.isInvalidated).toBe(false);
+    sender.publish(createDashboardBoardInvalidatedMessage({ people: true }));
+    await vi.waitFor(() => expect(fetchPeople).toHaveBeenCalledTimes(2));
+    unsubscribe(); sender.dispose(); receiver.dispose(); senderClient.clear(); receiverClient.clear();
+    vi.unstubAllGlobals();
+  });
+});

@@ -21,6 +21,8 @@ function calendar(search = ""): DashboardCalendarState {
     stageKeys: [],
     priorities: [],
     archived: "hide",
+    shootRange: null,
+    deadlineRange: null,
     showCompletedChecklist: false,
     showDeliveredProjects: false,
     overdueOnly: false,

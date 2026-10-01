@@ -409,22 +409,10 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
     for (const raw of ["awaiting_raw", "raw_review", "editing", "editing_autohdr", "edited_review", "delivered"]) expect(labels).not.toContain(raw);
   });
 
-  it("#274: offers the Editor field from page one's people, and sends the picked editor as editors=", async () => {
-    const editorId = "0b000000-0000-4000-8000-000000000002";
-    apiGetMock.mockImplementation(() => Promise.resolve({
-      ...ganttResponse(),
-      filterFacets: { people: [{ id: editorId, name: "Bea Editor", roleLabel: "Editor", isExternal: false, active: true }] },
-    }));
+  it("#429: sends the shared Filter's People and My tasks facets on the list request, and no longer asks for option facets", async () => {
     await render();
-    expect(lastListQuery().get("facets")).toBe("1");
-    await click(addTrigger(host));
-    await waitFor(() => expect(optionNames()).toEqual(["Editor", "Show"]));
-    await click(option("Editor"));
-    await waitFor(() => option("is any of"));
-    await click(option("is any of"));
-    await waitFor(() => option("Bea Editor"));
-    await click(option("Bea Editor"));
-    await waitFor(() => expect(lastListQuery().get("editors")).toBe(editorId));
+    expect(lastListQuery().has("facets")).toBe(false);
+    expect(lastListQuery().get("dm")).toBe("1");
   });
 
   it("carries the draw-cap banner copy that points at the filters above", async () => {
@@ -540,7 +528,7 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
         const trigger = addTrigger(host);
         expect(document.activeElement).toBe(trigger);
         // The bar is empty again, so the trigger is the labelled one, and a real tab stop.
-        expect(trigger.textContent).toBe("Editor / Show");
+        expect(trigger.textContent).toBe("Show");
         expect(trigger.tabIndex).toBe(0);
 
         const triggerFocus = focusSpy.mock.contexts.flatMap((context, index) => (context === trigger ? [focusSpy.mock.calls[index]] : []));

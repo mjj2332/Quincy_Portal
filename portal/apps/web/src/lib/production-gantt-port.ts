@@ -138,7 +138,7 @@ export function ganttInvalidation(_kind: "checklist" | "deadline", projectId: st
 /** The Gantt's own filters live in its query key; the controller only copies this into a snapshot
  * it never reads back for the Gantt, so a default Calendar filter object is enough. */
 function defaultCalendarFilters(): ProductionCalendarFilters {
-  return { layers: [], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide", showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false };
+  return { layers: [], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide", shootRange: null, deadlineRange: null, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false };
 }
 
 /**

@@ -15,6 +15,7 @@ import {
   externalProductionCalendarRangeQuerySchema,
   formatSydneyCivilMinute,
   isSydneyCalendarDate,
+  parseDashboardDateRange,
   productionCalendarRangeQuerySchema,
   resolveSydneyCivilMinute,
   roleHasCapability,
@@ -33,7 +34,7 @@ import {
 import { requireCapability } from "../middleware/capability";
 import { terminalRoute } from "../lib/terminal-route";
 import { projectSearchSql } from "../lib/project-search";
-import { authorizedProjectsBaseCte, parseReminderOffsets } from "../lib/production-scope-sql";
+import { authorizedProjectsBaseCte, dashboardPeopleCte, deadlineOverdueSql, deadlineRangeSql, parseReminderOffsets, shootRangeSql } from "../lib/production-scope-sql";
 import { serializeSubtaskSchedule } from "../lib/subtask-schedule";
 import { assigneesForViewer, parseAssigneesJson, subtaskAssigneesJsonSql } from "../lib/subtask-assignees";
 import type { AppEnv } from "../env";
@@ -118,6 +119,8 @@ const QUERY_NAMES = new Set([
   "completed", "delivered", "overdue", "mine", "q",
   // #428: the shared Dashboard Filter's Project priority and Archived mode, additive to `scope=active`.
   "priority", "archived",
+  // #429: the shared Filter's Shoot date and Deadline ranges, `YYYY-MM-DD..YYYY-MM-DD`.
+  "shoot", "deadline",
   // #222: request-gated project bounds — see `productionCalendarBoundsSql`.
   "bounds",
 ]);
@@ -189,6 +192,11 @@ function parseCalendarQuery(c: Context<AppEnv>): ParsedCalendarRequest | ParseFa
   const rawStages = splitList(valueFor("stages") ?? null);
   const rawPriorities = splitList(valueFor("priority") ?? null);
   const rawArchived = valueFor("archived");
+  const rawShoot = valueFor("shoot");
+  const rawDeadline = valueFor("deadline");
+  const shootRange = rawShoot === undefined ? null : parseDashboardDateRange(rawShoot);
+  const deadlineRange = rawDeadline === undefined ? null : parseDashboardDateRange(rawDeadline);
+  if ((rawShoot !== undefined && shootRange === null) || (rawDeadline !== undefined && deadlineRange === null)) return parseFailure("Calendar query is invalid.", "calendar_query_invalid");
   if (valueFor("priority") !== undefined && rawPriorities === null) return parseFailure("Calendar query is invalid.", "calendar_query_invalid");
   if (rawPriorities?.some((value) => !DASHBOARD_PRIORITY_FILTER_VALUES.includes(value as DashboardPriorityFilterValue))) return parseFailure("Calendar query is invalid.", "calendar_query_invalid");
   if (rawArchived !== undefined && rawArchived !== "include" && rawArchived !== "only") return parseFailure("Calendar query is invalid.", "calendar_query_invalid");
@@ -214,6 +222,8 @@ function parseCalendarQuery(c: Context<AppEnv>): ParsedCalendarRequest | ParseFa
       stageKeys: rawStages ?? [],
       priorities: rawPriorities ?? [],
       archived: rawArchived ?? "hide",
+      shootRange,
+      deadlineRange,
       showCompletedChecklist: flagValue(params, "completed") ?? false,
       showDeliveredProjects: flagValue(params, "delivered") ?? false,
       overdueOnly: flagValue(params, "overdue") ?? false,
@@ -248,6 +258,17 @@ function withChecklistLayerBypass(clause: string): string {
   return `${marker}r.checklist_layer = 1 OR ${clause.slice(marker.length)}`;
 }
 
+/**
+ * #429: "a Subtask's assignee" for SQL purposes. An External Editor only ever sees (and so only ever
+ * matches) an assignee who is on the Project's team, the rule `assigneesForViewer` applies elsewhere and the
+ * Timeline applies in `subtaskAssigneeExists`; for every other role every assignee counts. Without it,
+ * selecting a person visible on Project A would surface their hidden assignment on Project B's Subtask.
+ */
+function subtaskAssigneeExists(role: CalendarRole, projectRef: string, subtaskRef: string, extra = ""): string {
+  const team = role === "external_editor" ? ` AND EXISTS (SELECT 1 FROM project_members tm WHERE tm.project_id = ${projectRef} AND tm.user_id = sa.user_id)` : "";
+  return `EXISTS (SELECT 1 FROM project_subtask_assignees sa WHERE sa.subtask_id = ${subtaskRef}${team}${extra})`;
+}
+
 function calendarCtes(role: CalendarRole): string {
   const authorizedProjectsSearch = withChecklistLayerBypass(projectSearchSql("r.search", {
     street: "p.street",
@@ -274,12 +295,16 @@ request AS (
     ?5 AS end_date, ?6 AS now, ?7 AS today_date, ?10 AS search,
     ?11 AS include_unassigned, ?12 AS my_tasks, ?13 AS show_completed,
     ?14 AS show_delivered, ?15 AS overdue_only, ?16 AS project_layer,
-    ?17 AS checklist_layer, ?19 AS archived_mode
+    ?17 AS checklist_layer, ?19 AS archived_mode,
+    ?20 AS shoot_from, ?21 AS shoot_to, ?22 AS deadline_from, ?23 AS deadline_to
 ),
 request_editors AS (SELECT value AS person_id FROM json_each(?8)),
 request_stages AS (SELECT value AS stage_key FROM json_each(?9)),
 request_priorities AS (SELECT value AS priority FROM json_each(?18)),
-${authorizedProjectsBaseCte(role, { includeDeliveredColumn: "r.show_delivered", archivedModeColumn: "r.archived_mode", searchPredicate: authorizedProjectsSearch })},
+${authorizedProjectsBaseCte(role, { includeDeliveredColumn: "r.show_delivered", archivedModeColumn: "r.archived_mode", searchPredicate: authorizedProjectsSearch, extraPredicates: [
+  shootRangeSql("p.shoot_date", "r.shoot_from", "r.shoot_to"),
+  deadlineRangeSql("p.deadline_at", "p.deadline_local_civil", "r.deadline_from", "r.deadline_to"),
+] })},
 project_candidate_universe AS (
   SELECT ap.*
   FROM authorized_projects_base ap
@@ -287,7 +312,7 @@ project_candidate_universe AS (
   WHERE r.project_layer = 1
     AND ${projectCandidateSearch}
     AND (ap.deadline_at IS NULL OR (ap.deadline_at >= r.start_instant AND ap.deadline_at < r.end_instant
-      AND (r.overdue_only = 0 OR (ap.deadline_at < r.now AND ap.delivered = 0))))
+      AND (r.overdue_only = 0 OR (ap.deadline_at < r.now AND ap.delivered = 0 AND ap.archived = 0))))
 ),
 checklist_counts AS (
   SELECT subtasks.project_id, SUM(CASE WHEN subtasks.done = 1 THEN 1 ELSE 0 END) AS completed, COUNT(*) AS total
@@ -327,15 +352,9 @@ candidate_subtasks_raw AS (
   CROSS JOIN request r
   WHERE r.checklist_layer = 1
     AND (r.show_completed = 1 OR s.done = 0)
-    -- overdue_only constrains Subtask ranges by their end (a Project with no Deadline still passes
-    -- the project branch).
-    AND (r.overdue_only = 0
-      OR (s.done = 0 AND (
-        (s.schedule_end_kind = 'timed' AND s.schedule_end_at < r.now)
-        OR (s.schedule_end_kind = 'date' AND s.due_date < r.today_date)
-        OR (s.schedule_start_kind = 'date' AND s.due_date < r.today_date)
-        OR (s.schedule_start_kind = 'timed' AND s.schedule_end_at < r.now)
-      )))
+    -- #429: the shared Overdue facet is the PROJECT Deadline rule (deadline set and passed, project not
+    -- delivered, not archived), so it gates a checklist row by its Project, never by the row's own end.
+    AND (r.overdue_only = 0 OR ${deadlineOverdueSql({ deadlineAt: "vp.deadline_at", notDelivered: "vp.delivered = 0", notArchived: "vp.archived = 0" }, "r.now")})
     AND ${checklistCandidateSearch}
 ),
 candidate_subtasks_unfiltered AS (
@@ -358,22 +377,11 @@ authorized_candidate_projects AS (
   UNION
   SELECT project_id FROM range_candidate_subtasks
 ),
-authorized_people_base AS (
-  SELECT DISTINCT u.id AS person_id, u.name AS person_name, u.role AS person_role, u.active AS person_active
-  FROM authorized_candidate_projects acp
-  INNER JOIN project_members pm ON pm.project_id = acp.project_id AND pm.role_on_project = 'editor'
-  INNER JOIN user u ON u.id = pm.user_id
-  UNION
-  SELECT DISTINCT u.id AS person_id, u.name AS person_name, u.role AS person_role, u.active AS person_active
-  FROM range_candidate_subtasks c
-  INNER JOIN project_subtask_assignees sa ON sa.subtask_id = c.subtask_id
-  INNER JOIN user u ON u.id = sa.user_id
-  ${role === "external_editor" ? "WHERE EXISTS (SELECT 1 FROM project_members tm WHERE tm.project_id = c.project_id AND tm.user_id = sa.user_id)" : ""}
-),
+${dashboardPeopleCte(role, "r.archived_mode")},
 valid_selected_editors AS (
   SELECT re.person_id
   FROM request_editors re
-  WHERE EXISTS (SELECT 1 FROM authorized_people_base ap WHERE ap.person_id = re.person_id)
+  WHERE EXISTS (SELECT 1 FROM dashboard_people ap WHERE ap.person_id = re.person_id)
 ),
 selected_editor_state AS (
   SELECT (SELECT COUNT(*) FROM request_editors) AS requested,
@@ -384,22 +392,27 @@ project_filtered_candidates AS (
   FROM project_candidate_universe ap
   CROSS JOIN request r
   CROSS JOIN selected_editor_state selected
-  WHERE (selected.requested = 0 OR selected.valid = 0
+  -- #429: the People filter is active when a known person is named OR Unassigned is on (so
+  -- Unassigned alone narrows); named-but-all-unknown with no Unassigned is not applied.
+  WHERE (selected.valid = 0 AND r.include_unassigned = 0
     OR EXISTS (SELECT 1 FROM project_members editor_filter WHERE editor_filter.project_id = ap.project_id
       AND editor_filter.role_on_project = 'editor'
       AND EXISTS (SELECT 1 FROM valid_selected_editors v WHERE v.person_id = editor_filter.user_id))
     OR (r.include_unassigned = 1 AND NOT EXISTS (SELECT 1 FROM project_members no_editor
       WHERE no_editor.project_id = ap.project_id AND no_editor.role_on_project = 'editor')))
+    -- My tasks = People is me: on a Project's Deadline, I am an Editor of it.
+    AND (r.my_tasks = 0 OR EXISTS (SELECT 1 FROM project_members me_editor WHERE me_editor.project_id = ap.project_id
+      AND me_editor.role_on_project = 'editor' AND me_editor.user_id = r.me))
 ),
 checklist_filtered_candidates AS (
   SELECT c.*
   FROM candidate_subtasks_unfiltered c
   CROSS JOIN request r
   CROSS JOIN selected_editor_state selected
-  WHERE (selected.requested = 0 OR selected.valid = 0
-    OR EXISTS (SELECT 1 FROM project_subtask_assignees sa INNER JOIN valid_selected_editors v ON v.person_id = sa.user_id WHERE sa.subtask_id = c.subtask_id)
-    OR (r.include_unassigned = 1 AND NOT EXISTS (SELECT 1 FROM project_subtask_assignees sa WHERE sa.subtask_id = c.subtask_id)))
-    AND (r.my_tasks = 0 OR EXISTS (SELECT 1 FROM project_subtask_assignees sa WHERE sa.subtask_id = c.subtask_id AND sa.user_id = r.me))
+  WHERE (selected.valid = 0 AND r.include_unassigned = 0
+    OR ${subtaskAssigneeExists(role, "c.project_id", "c.subtask_id", " AND sa.user_id IN (SELECT person_id FROM valid_selected_editors)")}
+    OR (r.include_unassigned = 1 AND NOT ${subtaskAssigneeExists(role, "c.project_id", "c.subtask_id")}))
+    AND (r.my_tasks = 0 OR ${subtaskAssigneeExists(role, "c.project_id", "c.subtask_id", " AND sa.user_id = r.me")})
 ),
 project_event_candidates AS (
   SELECT * FROM project_filtered_candidates WHERE deadline_at IS NOT NULL
@@ -504,17 +517,10 @@ facet_projects AS (
   UNION
   SELECT project_id, street FROM range_candidate_subtasks
 ),
+-- #429: the People facet is the Dashboard's People universe (authorised Projects under the Archived mode),
+-- the same set that validates the editors param, so a chosen person can never drop out of the options.
 facet_people AS (
-  SELECT DISTINCT u.id AS person_id, u.name AS person_name, u.role AS person_role, u.active AS person_active
-  FROM authorized_candidate_projects acp
-  INNER JOIN project_members pm ON pm.project_id = acp.project_id AND pm.role_on_project = 'editor'
-  INNER JOIN user u ON u.id = pm.user_id
-  UNION
-  SELECT DISTINCT u.id, u.name, u.role, u.active
-  FROM range_candidate_subtasks c
-  INNER JOIN project_subtask_assignees sa ON sa.subtask_id = c.subtask_id
-  INNER JOIN user u ON u.id = sa.user_id
-  ${role === "external_editor" ? "WHERE EXISTS (SELECT 1 FROM project_members tm WHERE tm.project_id = c.project_id AND tm.user_id = sa.user_id)" : ""}
+  SELECT person_id, person_name, person_role, person_active FROM dashboard_people
 ),
 facet_rows AS (
   SELECT 'project' AS facet_kind, project_id, street, NULL AS person_id, NULL AS person_name,
@@ -553,6 +559,10 @@ function bindValues(parsed: ParsedCalendarRequest): unknown[] {
     filters.layers.includes("checklist") ? 1 : 0,
     JSON.stringify(filters.priorities),
     filters.archived,
+    filters.shootRange?.from ?? "",
+    filters.shootRange?.to ?? "",
+    filters.deadlineRange?.from ?? "",
+    filters.deadlineRange?.to ?? "",
   ];
 }
 

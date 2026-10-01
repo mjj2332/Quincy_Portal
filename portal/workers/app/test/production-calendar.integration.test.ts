@@ -480,16 +480,13 @@ describe("TB5C production Calendar range endpoint", () => {
     expect(allInaccessible.events).toEqual(noFilter.events);
     expect(allInaccessible.unscheduled).toEqual(noFilter.unscheduled);
 
-    // No ID oracle: a real editor whose only work is out of this q=Calendar scope
-    // (assigneeOnlyEditorId, assignee of a subtask on "6 Assignee Only Street") must be
-    // indistinguishable from a fabricated UUID — byte-identical response, and identical to
-    // the unfiltered result. A caller cannot learn whether an ID names a real person.
-    const realOutOfScope = await request(`/api/production-calendar?${range}&q=Calendar&editors=${assigneeOnlyEditorId}`, tokens.admin);
-    const fabricated = await request(`/api/production-calendar?${range}&q=Calendar&editors=${fakeId}`, tokens.admin);
-    expect(await realOutOfScope.text()).toEqual(await fabricated.text());
-    const realOutOfScopeBody = await adminCalendar(`/api/production-calendar?${range}&q=Calendar&editors=${assigneeOnlyEditorId}`);
-    expect(realOutOfScopeBody.events).toEqual(noFilter.events);
-    expect(realOutOfScopeBody.range.appliedFilters.editorIds).toEqual([]);
+    // #429: the People universe is the viewer's authorised Projects under the Archived mode and
+    // nothing else (never the search or date window), so a real person is a known id even when their
+    // work is outside this q=Calendar scope: the filter applies and, with none of their work in scope,
+    // narrows to nothing. A fabricated id (outside the universe) stays unknown and is silently dropped.
+    const realOutOfScope = await adminCalendar(`/api/production-calendar?${range}&q=Calendar&editors=${assigneeOnlyEditorId}`);
+    expect(realOutOfScope.range.appliedFilters.editorIds).toEqual([assigneeOnlyEditorId]);
+    expect(realOutOfScope.events).toEqual([]);
 
     const partial = await adminCalendar(`/api/production-calendar?${range}&q=Calendar&editors=${editorId},${fakeId}`);
     expect(partial.range.appliedFilters.editorIds).toEqual([editorId]);
@@ -505,14 +502,14 @@ describe("TB5C production Calendar range endpoint", () => {
     const body = editorProductionCalendarRangeResponseSchema.parse(await response.json());
     expect(body.events.map((event) => event.title)).toEqual(["Assignee without editor membership"]);
 
-    // mine=1 is a checklist-assignee filter only: it must not touch the project-deadline layer
-    // (a project has no single assignee). Same query with both layers, with and without mine=1 —
-    // the project_deadline event set is identical.
+    // #429: mine=1 is "People = me" in every view: on the project-deadline layer it keeps the Projects
+    // the session user Edits. assigneeOnly Edits none of them, so no Deadline survives (it used to be
+    // untouched by mine=1).
     const withMine = editorProductionCalendarRangeResponseSchema.parse(await (await request(`/api/production-calendar?${range}&q=Calendar&mine=1`, tokens.assigneeOnly)).json());
     const withoutMine = editorProductionCalendarRangeResponseSchema.parse(await (await request(`/api/production-calendar?${range}&q=Calendar`, tokens.assigneeOnly)).json());
     const deadlineEvents = (r: typeof withMine) => r.events.filter((event) => event.kind === "project_deadline").map((event) => event.id).sort();
-    expect(deadlineEvents(withMine)).toEqual(deadlineEvents(withoutMine));
-    expect(deadlineEvents(withMine).length).toBeGreaterThan(0);
+    expect(deadlineEvents(withoutMine).length).toBeGreaterThan(0);
+    expect(deadlineEvents(withMine)).toEqual([]);
   });
 
   it("marks only overlapping incomplete timed ranges for the same assignee", async () => {

@@ -33,6 +33,7 @@ const principal = "11111111-1111-4111-8111-111111111111";
 const assignee = "22222222-2222-4222-8222-222222222222";
 const calendar = (subview: DashboardCalendarState["subview"] = "month", date = "2026-08-12"): DashboardCalendarState => ({
   view: "calendar", date, subview, layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const,
+  shootRange: null, deadlineRange: null,
   showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false,
 });
 
@@ -40,7 +41,7 @@ function rawResponse(stageKey: "editing_autohdr" | "editing", events = true) {
   return {
     range: {
       start: "2026-08-10", end: "2026-08-17", date: "2026-08-12", subview: "month" as const, zone: PRODUCTION_CALENDAR_ZONE,
-      appliedFilters: { layers: ["project", "checklist"] as ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false },
+      appliedFilters: { layers: ["project", "checklist"] as ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, shootRange: null, deadlineRange: null, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false },
     },
     events: events ? [
       { id: "project-deadline:project", kind: "project_deadline" as const, title: "Project handoff", project: { id: principal, street: "12 Harbour Street", stageKey, checklist: { completed: 3, total: 5 }, delivered: false, archived: false }, timing: { allDay: false as const, start: "2026-08-12T00:00:00.000Z", end: null }, status: { overdue: true, delivered: false, completed: false as const, sameAssigneeOverlap: false as const }, permissions: { canDrag: true, canResize: false as const }, deadlineLocalCivil: "2026-08-12T10:00", deadlineVersion: 3, reminderOffsetsMinutes: [] },
@@ -310,12 +311,12 @@ describe("ProductionEventCalendar container", () => {
   it("filter changes navigate with the canonical filters, keeping the calendar view", async () => {
     const onNavigate = vi.fn();
     await renderCalendar(calendar(), adminProductionCalendarRangeResponseSchema.parse(rawResponse("editing_autohdr")), 200, { onNavigate });
-    const value = { ...calendar(), stageKeys: ["editing"] };
+    const value = { ...calendar(), showCompletedChecklist: true };
     await act(async () => { root.render(<QueryClientProvider client={client}><ProductionEventCalendar identity={{ principalId: principal, role: "admin", authorizationEpoch: 0 }} calendar={value as DashboardCalendarState} onNavigate={onNavigate} /></QueryClientProvider>); });
     // A new filter set is a new query key: let its fetch settle before the rail is back.
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); await Promise.resolve(); });
     await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="event-calendar-hidden-filters-clear"]')!.click(); });
-    expect(onNavigate).toHaveBeenLastCalledWith(expect.objectContaining({ view: "calendar", stageKeys: [], layers: ["project", "checklist"] }));
+    expect(onNavigate).toHaveBeenLastCalledWith(expect.objectContaining({ view: "calendar", showCompletedChecklist: false, layers: ["project", "checklist"] }));
   });
 
   it("Up next runs a second read-only agenda query from today, with the same filters", async () => {

@@ -270,23 +270,23 @@ describe("Dashboard Gantt routing", () => {
     it("applies a cold deep link's filters on the first render", async () => {
       await renderAt("/?view=timeline&stages=raw_review&completed=1");
       expect(switcherButton("Timeline")?.getAttribute("aria-selected")).toBe("true");
-      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: ["raw_review"], priorities: [], archived: "hide" as const, delivered: false, completed: true });
+      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: ["raw_review"], priorities: [], archived: "hide" as const, delivered: false, completed: true, includeUnassigned: false, myTasks: false, overdueOnly: false, shootRange: null, deadlineRange: null });
       expect(url()).toBe("/?view=timeline&stages=raw_review&completed=1");
     });
 
     it("hands the surface default filters for the bare Gantt URL", async () => {
       await renderAt("/?view=timeline");
-      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: [], priorities: [], archived: "hide" as const, delivered: false, completed: false });
+      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: [], priorities: [], archived: "hide" as const, delivered: false, completed: false, includeUnassigned: false, myTasks: false, overdueOnly: false, shootRange: null, deadlineRange: null });
     });
 
     it("pushes a filter change into the URL, carrying q", async () => {
       await renderAt("/?view=timeline&q=smith");
-      await changeFilters({ editorIds: [], stageKeys: ["delivered", "raw_review"], priorities: [], archived: "hide" as const, delivered: true, completed: false });
+      await changeFilters({ editorIds: [], stageKeys: ["delivered", "raw_review"], priorities: [], archived: "hide" as const, delivered: true, completed: false, includeUnassigned: false, myTasks: false, overdueOnly: false, shootRange: null, deadlineRange: null });
       expect(url()).toBe("/?view=timeline&stages=raw_review%2Cdelivered&delivered=1&q=smith");
-      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: ["raw_review", "delivered"], priorities: [], archived: "hide" as const, delivered: true, completed: false });
+      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: ["raw_review", "delivered"], priorities: [], archived: "hide" as const, delivered: true, completed: false, includeUnassigned: false, myTasks: false, overdueOnly: false, shootRange: null, deadlineRange: null });
       expect(ganttPropsState.value?.q).toBe("smith");
 
-      await changeFilters({ editorIds: [], stageKeys: [], priorities: [], archived: "hide" as const, delivered: false, completed: false });
+      await changeFilters({ editorIds: [], stageKeys: [], priorities: [], archived: "hide" as const, delivered: false, completed: false, includeUnassigned: false, myTasks: false, overdueOnly: false, shootRange: null, deadlineRange: null });
       expect(url()).toBe("/?view=timeline&q=smith");
     });
 
@@ -294,7 +294,7 @@ describe("Dashboard Gantt routing", () => {
       await renderAt("/?view=timeline&stages=raw_review&completed=1");
       await act(async () => { setDashboardSearchDraft("smith", "user-1"); commitDashboardSearchNow("user-1"); await Promise.resolve(); });
       expect(url()).toBe("/?view=timeline&stages=raw_review&completed=1&q=smith");
-      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: ["raw_review"], priorities: [], archived: "hide" as const, delivered: false, completed: true });
+      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: ["raw_review"], priorities: [], archived: "hide" as const, delivered: false, completed: true, includeUnassigned: false, myTasks: false, overdueOnly: false, shootRange: null, deadlineRange: null });
       expect(ganttPropsState.value?.q).toBe("smith");
     });
 
@@ -368,7 +368,7 @@ describe("Dashboard Gantt routing", () => {
       };
       let callsBeforeTraversal = 0;
       const expectApplied = (expected: { delivered: boolean; completed: boolean }) => {
-        expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: [], priorities: [], archived: "hide", ...expected });
+        expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: [], priorities: [], archived: "hide", includeUnassigned: false, myTasks: false, overdueOnly: false, shootRange: null, deadlineRange: null, ...expected });
         // The bar's chips follow the URL (re-seeded on Back/Forward).
         const shown = [expected.delivered && "Delivered projects", expected.completed && "Completed checklist items"].filter(Boolean);
         expect(chipNames()).toEqual(shown.length === 0 ? [] : [`Show includes ${shown.length === 1 ? shown[0] : `${shown.length} selected`}`]);
@@ -427,7 +427,7 @@ describe("Dashboard Gantt routing", () => {
       expect(url()).toBe("/?view=table&stages=raw_review");
       await act(async () => { switcherButton("Timeline")!.click(); await Promise.resolve(); });
       expect(url()).toBe("/?view=timeline&stages=raw_review");
-      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: ["raw_review"], priorities: [], archived: "hide" as const, delivered: false, completed: false });
+      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: ["raw_review"], priorities: [], archived: "hide" as const, delivered: false, completed: false, includeUnassigned: false, myTasks: false, overdueOnly: false, shootRange: null, deadlineRange: null });
     });
 
     it("carries the shared Filter into the Calendar, but not the Gantt's Show delivered", async () => {

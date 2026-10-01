@@ -4,7 +4,7 @@ import { MONTH_NAMES } from "@/lib/date-format";
 import { cellToCivil, civilToCell } from "@/lib/date-time-field";
 import { cn } from "@/lib/utils";
 
-const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+export const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
 /**
  * The popup's month/year dropdowns and day grid: `reui/calendar` (react-day-picker 10) in the
@@ -18,13 +18,13 @@ const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const
  */
 
 /** The weekday name to highlight in the header, or null (set only while Sydney's today is on screen). */
-const TodayWeekdayContext = createContext<string | null>(null);
+export const TodayWeekdayContext = createContext<string | null>(null);
 
 /**
  * Module-level on purpose: an inline component is a new type every render and react-day-picker
  * would remount the caption (dropping focus from the month/year select) on each month change.
  */
-const COMPONENTS = {
+export const COMPONENTS = {
   Weekday: function Weekday({ children, className, ...props }: React.ComponentPropsWithoutRef<"th">) {
     const todayName = useContext(TodayWeekdayContext);
     return (
@@ -38,14 +38,14 @@ const COMPONENTS = {
   },
 };
 
-const LABELS = {
+export const LABELS = {
   labelMonthDropdown: () => "Month",
   labelYearDropdown: () => "Year",
   labelPrevious: () => "Previous month",
   labelNext: () => "Next month",
 };
 
-const FORMATTERS = {
+export const FORMATTERS = {
   formatMonthDropdown: (date: Date) => MONTH_NAMES[date.getMonth()]!,
   formatWeekdayName: (date: Date) => WEEKDAY_SHORT[date.getDay()]!,
 };

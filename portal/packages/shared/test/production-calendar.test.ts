@@ -70,7 +70,7 @@ function response(stageKey: typeof ADMIN_STAGE | typeof EDITOR_STAGE) {
   return {
     range: {
       start: "2026-08-24", end: "2026-09-05", date: "2026-08-27", subview: "month" as const, zone: PRODUCTION_CALENDAR_ZONE,
-      appliedFilters: { layers: ["project", "checklist"] as ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide", showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false },
+      appliedFilters: { layers: ["project", "checklist"] as ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide", shootRange: null, deadlineRange: null, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false },
     },
     events: [projectEvent(stageKey), checklistEvent(stageKey, rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-27")))],
     filterFacets: { projects: [{ id: PROJECT_ID, street: "1 Example Street" }], people: [person], myTasksUserId: PERSON_ID },
@@ -85,9 +85,11 @@ describe("TB5C shared query/filter contract", () => {
       stageKeys: ["delivered", "editing", "awaiting_raw", "editing"],
       priorities: [],
       archived: "hide",
+      shootRange: null,
+      deadlineRange: null,
       search: "  smith\t  street  ",
     });
-    expect(parsed).toEqual({ layers: ["project", "checklist"], editorIds: [PERSON_ID, "33333333-3333-4333-8333-333333333333"], includeUnassigned: false, stageKeys: ["awaiting_raw", "editing", "delivered"], priorities: [], archived: "hide", showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "smith street", myTasks: false });
+    expect(parsed).toEqual({ layers: ["project", "checklist"], editorIds: [PERSON_ID, "33333333-3333-4333-8333-333333333333"], includeUnassigned: false, stageKeys: ["awaiting_raw", "editing", "delivered"], priorities: [], archived: "hide", shootRange: null, deadlineRange: null, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "smith street", myTasks: false });
     expect(productionCalendarFiltersSchema.safeParse({ layers: [], search: "ok" }).success).toBe(false);
     expect(productionCalendarFiltersSchema.safeParse({ layers: ["project"], stageKeys: ["editing_autohdr"] }).success).toBe(false);
     expect(productionCalendarFiltersSchema.safeParse({ layers: ["project"], editorIds: ["AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"] }).success).toBe(false);
@@ -100,8 +102,18 @@ describe("TB5C shared query/filter contract", () => {
     expect(productionCalendarFiltersSchema.safeParse({ archived: "1" }).success).toBe(false);
   });
 
+  it("#429: accepts inclusive Shoot and Deadline ranges and refuses a reversed, impossible or Overdue-paired one", () => {
+    const range = { from: "2026-08-01", to: "2026-08-31" };
+    expect(productionCalendarFiltersSchema.parse({ shootRange: range, deadlineRange: range })).toMatchObject({ shootRange: range, deadlineRange: range });
+    expect(productionCalendarFiltersSchema.parse({ shootRange: { from: "2026-08-01", to: "2026-08-01" } })).toMatchObject({ shootRange: { from: "2026-08-01", to: "2026-08-01" } });
+    expect(productionCalendarFiltersSchema.safeParse({ shootRange: { from: "2026-08-02", to: "2026-08-01" } }).success).toBe(false);
+    expect(productionCalendarFiltersSchema.safeParse({ deadlineRange: { from: "2026-02-30", to: "2026-03-01" } }).success).toBe(false);
+    expect(productionCalendarFiltersSchema.safeParse({ deadlineRange: range, overdueOnly: true }).success).toBe(false);
+    expect(productionCalendarFiltersSchema.safeParse({ shootRange: { from: "2026-08-01" } }).success).toBe(false);
+  });
+
   it("uses exact defaults and validates component ranges without date-only parsing", () => {
-    expect(productionCalendarFiltersSchema.parse({})).toEqual({ layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide", showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false });
+    expect(productionCalendarFiltersSchema.parse({})).toEqual({ layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide", shootRange: null, deadlineRange: null, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false });
     expect(productionCalendarRangeQuerySchema.parse({ start: "2026-02-28", end: "2026-03-02", date: "2026-02-28", subview: "week", scope: "active" }).filters).toMatchObject({ layers: ["project", "checklist"] });
     expect(productionCalendarRangeQuerySchema.safeParse({ start: "2026-02-29", end: "2026-03-01", date: "2026-02-29", subview: "month", scope: "active" }).success).toBe(false);
     expect(productionCalendarRangeQuerySchema.safeParse({ start: "2026-01-01", end: "2026-02-13", date: "2026-01-01", subview: "month", scope: "active" }).success).toBe(false);

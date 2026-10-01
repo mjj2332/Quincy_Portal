@@ -504,6 +504,9 @@ export function buildProductionGanttModel(
 
     resources.push({ id: projectResourceId, title: project.street, color, children: childResources });
 
+    // #429: a Project listed only as the parent of a matching checklist row (`deadlineInScope === false`)
+    // draws no shoot -> Deadline bar and raises no attention entry: the filter did not select its Deadline.
+    if (project.deadlineInScope === false) continue;
     const barResult = buildProjectBar(project, color, className, deadlineInteractive);
     if (barResult.event) events.push(barResult.event);
     if (barResult.attention) attention.push(barResult.attention);

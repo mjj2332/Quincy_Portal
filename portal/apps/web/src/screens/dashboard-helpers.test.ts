@@ -63,6 +63,7 @@ describe("Calendar initial state", () => {
       editorIds: [],
       includeUnassigned: false,
       stageKeys: [], priorities: [], archived: "hide" as const,
+      shootRange: null, deadlineRange: null,
       showCompletedChecklist: false,
       showDeliveredProjects: false,
       overdueOnly: false,
@@ -204,7 +205,7 @@ describe("Calendar day/days subviews are kept as-is (#224)", () => {
       const write = vi.fn();
       const calendar = {
         view: "calendar" as const, date: "2026-08-31", subview, layers: ["project" as const], editorIds: [],
-        includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, showCompletedChecklist: false, showDeliveredProjects: false,
+        includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, shootRange: null, deadlineRange: null, showCompletedChecklist: false, showDeliveredProjects: false,
         overdueOnly: false, search: "", myTasks: false,
       };
       expect(initializeDashboardCalendarState({ kind: "dashboard", calendar }, { read, write }, { now, isPhone: false })).toEqual(calendar);

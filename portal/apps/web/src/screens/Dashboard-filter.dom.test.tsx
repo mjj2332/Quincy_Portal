@@ -282,7 +282,7 @@ describe("Dashboard shared Filter (#428)", () => {
   it("offers Archived (Hidden / Included / Only archived) to an Admin, and writes the mode", async () => {
     await renderAt("/?view=table");
     await click(trigger()!);
-    await waitFor(() => expect(optionNames()).toEqual(["Stage", "Priority", "Archived"]));
+    await waitFor(() => expect(optionNames()).toEqual(["Stage", "Priority", "Archived", "People", "Shoot date", "Deadline", "My tasks"]));
     await click(option("Archived"));
     await waitFor(() => expect(optionNames()).toEqual(["is"]));
     await click(option("is"));
@@ -295,7 +295,7 @@ describe("Dashboard shared Filter (#428)", () => {
   it("never offers Archived to a non-Admin, and never sends it even from a pasted URL", async () => {
     await renderAt("/?view=table&archived=only&stages=raw_review", "editor");
     await click(trigger()!);
-    await waitFor(() => expect(optionNames()).toEqual(["Stage", "Priority"]));
+    await waitFor(() => expect(optionNames()).toEqual(["Stage", "Priority", "People", "Shoot date", "Deadline", "My tasks"]));
     await escape();
     expect(chipNames()).toEqual(["Stage is any of RAW review"]);
     expect(projectRequests().length).toBeGreaterThan(0);
@@ -305,7 +305,7 @@ describe("Dashboard shared Filter (#428)", () => {
   it("an External Editor is offered Stage only (no Priority, no Archived)", async () => {
     await renderAt("/?view=table", "external_editor");
     await click(trigger()!);
-    await waitFor(() => expect(optionNames()).toEqual(["Stage"]));
+    await waitFor(() => expect(optionNames()).toEqual(["Stage", "People", "Shoot date", "Deadline", "My tasks"]));
   });
 
   it("disables Board moves and reordering while the Priority or Archived filter narrows the Board", async () => {
@@ -328,6 +328,106 @@ describe("Dashboard shared Filter (#428)", () => {
     await renderAt("/?view=board&stages=raw_review");
     expect(boardProps.value?.movementDisabled).toBe(false);
     expect(boardProps.value?.canMoveStages).toBe(true);
+  });
+
+  describe("People, Shoot date, Deadline, Overdue and My tasks (#429)", () => {
+    const BEA = "0b000000-0000-4000-8000-000000000002";
+    const STALE = "0c000000-0000-4000-8000-000000000003";
+    const peopleResponse = { people: [{ id: BEA, name: "Bea Editor", roleLabel: "Editor", isExternal: false, active: true }] };
+
+    beforeEach(() => {
+      apiGetMock.mockImplementation((path) => Promise.resolve(
+        path.startsWith("/api/dashboard/people") ? peopleResponse : path.startsWith("/api/production-gantt") ? ganttResponse() : projectResponse(path),
+      ));
+    });
+
+    it("offers People with Unassigned first, then the listed people with their initials", async () => {
+      await renderAt("/?view=table");
+      await click(trigger()!);
+      await waitFor(() => expect(optionNames()).toContain("People"));
+      await click(option("People"));
+      await waitFor(() => option("is any of"));
+      await click(option("is any of"));
+      await waitFor(() => expect(optionNames()).toHaveLength(2));
+      expect(optionNames()[0]).toBe("Unassigned");
+      expect(optionNames()[1]).toContain("Bea Editor");
+      // The person's avatar carries their initials, the Unassigned row its empty glyph.
+      expect(options()[1]!.textContent).toContain("BE");
+    });
+
+    it("writes People as editors= and unassigned=1 (Unassigned beside a person is an OR) and requests them", async () => {
+      await renderAt("/?view=table");
+      await addFilter("People", "is any of", ["Unassigned"]);
+      await escape();
+      expect(url()).toBe("/?view=table&unassigned=1");
+      expect(lastProjectRequest()).toBe("/api/projects?unassigned=1");
+      expect(chipNames()).toEqual(["People is any of Unassigned"]);
+    });
+
+    it("seeds the chips from a cold URL and keeps a person the server does not list as an unknown chip", async () => {
+      await renderAt(`/?view=table&editors=${BEA}%2C${STALE}&unassigned=1&mine=1`);
+      expect(chipNames()).toEqual(["People is any of 3 selected", "My tasks only"]);
+      expect(lastProjectRequest()).toBe(`/api/projects?editors=${BEA}%2C${STALE}&unassigned=1&mine=1`);
+    });
+
+    it("commits My tasks with no value step and writes mine=1", async () => {
+      await renderAt("/?view=table");
+      await click(trigger()!);
+      await waitFor(() => expect(optionNames()).toContain("My tasks"));
+      await click(option("My tasks"));
+      await waitFor(() => expect(optionNames()).toEqual(["only"]));
+      await click(option("only"));
+      await waitFor(() => expect(url()).toBe("/?view=table&mine=1"));
+      await escape();
+      expect(lastProjectRequest()).toBe("/api/projects?mine=1");
+    });
+
+    it("commits Deadline 'is overdue' with no value, and Deadline cannot hold a range and Overdue at once", async () => {
+      await renderAt("/?view=table");
+      await click(trigger()!);
+      await waitFor(() => expect(optionNames()).toContain("Deadline"));
+      await click(option("Deadline"));
+      await waitFor(() => expect(optionNames()).toEqual(["is between", "is overdue"]));
+      await click(option("is overdue"));
+      await waitFor(() => expect(url()).toBe("/?view=table&overdue=1"));
+      await escape();
+      expect(chipNames()).toEqual(["Deadline is overdue"]);
+      // A pasted URL naming both is not one the Filter can express: neither facet is applied.
+      await renderAt("/?view=table&deadline=2026-08-01..2026-08-31&overdue=1");
+      expect(lastProjectRequest()).not.toContain("deadline=");
+    });
+
+    it("seeds the Shoot date and Deadline range chips from the URL and requests them", async () => {
+      await renderAt("/?view=table&shoot=2026-08-01..2026-08-31&deadline=2026-09-01..2026-09-30");
+      expect(chipNames()).toEqual(["Shoot date is between Sat 1 Aug 2026 – Mon 31 Aug 2026", "Deadline is between Tue 1 Sep 2026 – Wed 30 Sep 2026"]);
+      expect(lastProjectRequest()).toBe("/api/projects?shoot=2026-08-01..2026-08-31&deadline=2026-09-01..2026-09-30");
+    });
+
+    it("narrows the Board for every new facet: no moves or reordering", async () => {
+      await renderAt("/?view=board&unassigned=1");
+      expect(boardProps.value?.movementDisabled).toBe(true);
+      expect(boardProps.value?.canMoveStages).toBe(false);
+    });
+
+    it("an External Editor is offered People, Shoot date, Deadline and My tasks but a pasted priority is not sent", async () => {
+      await renderAt("/?view=table&priority=5&mine=1", "external_editor");
+      expect(lastProjectRequest()).toBe("/api/projects?mine=1");
+    });
+
+    it("carries every new facet across the four tabs", async () => {
+      await renderAt(`/?view=table&editors=${BEA}&unassigned=1&shoot=2026-08-01..2026-08-31&deadline=2026-09-01..2026-09-30&mine=1`);
+      for (const label of ["Board", "Timeline", "Calendar", "Table"]) {
+        // eslint-disable-next-line no-await-in-loop
+        await click(tab(label)!);
+        // eslint-disable-next-line no-await-in-loop
+        await tick(60);
+        expect(url()).toContain(`editors=${BEA}`);
+        expect(url()).toContain("unassigned=1");
+        expect(url()).toContain("shoot=2026-08-01..2026-08-31");
+        expect(url()).toContain("deadline=2026-09-01..2026-09-30");
+        expect(url()).toContain("mine=1");
+      }
+    });
   });
 
   it("locks the Filter while a Calendar or Board write holds the Dashboard", async () => {

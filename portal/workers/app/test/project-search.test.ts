@@ -28,17 +28,24 @@ function sha256(value: string): string {
 // Archived mode predicate (`archived_at` Hide/Include/Only over a bound request column), the Project
 // priority predicate (`request_priorities`) and an `archived` column on `authorized_projects_base` and
 // the project/checklist candidate rows. Every digest changed for that reason only.
+// RE-PINNED again in #429 (a characterization fixture, not a guard): the Calendar gained the Shoot date
+// and Deadline range predicates, the My-tasks Project gate, the People activity rule (Unassigned alone
+// narrows) and `dashboard_people` as the People universe (a photographer's differs from an editor's now,
+// since it is scoped to the stages the photographer sees). Every digest changed for those reasons only.
+// RE-PINNED again in the #429 review round (a characterization fixture, not a guard): an External Editor's
+// People / Unassigned / My tasks match on a Subtask now requires the assignee to be on that Project's team, and
+// the shared Overdue facet gates checklist rows by their Project's Deadline rule. Every digest changed for that.
 const PRE_REFACTOR_RANGE_SQL_SHA256: Record<(typeof ROLES)[number], string> = {
-  admin: "84d85a90e725d9887ac76969714cd6dc3a8e7bf515b1d59544e7b6b5327b895d",
-  editor: "f467ec6ba2fbf1fe8b38423d7ed2d8439c008ce01db56f073c0366ee1256c425",
-  photographer: "f467ec6ba2fbf1fe8b38423d7ed2d8439c008ce01db56f073c0366ee1256c425",
-  external_editor: "b696ffe591c1a7c27b2d878e7ded1002308b90e68e0542fb22d32f6d42ef4d68",
+  admin: "0eacb623a214aae56140bba7233450b6e012d6b9474e31db4c5219d1dc835392",
+  editor: "c8601900967303773c646a1e5a15457e4a13e4ba3ec2a8b502d9fbea321535f9",
+  photographer: "05bbbad478cff6ef4d6bc9267b752c9bb5d7d30dfd9f4874f5d2b445d4985b6b",
+  external_editor: "6bfe7d74dbd91bbea4dfa30697febedcf3ac29240a21af68a85778d217fa3a28",
 };
 const PRE_REFACTOR_FACETS_SQL_SHA256: Record<(typeof ROLES)[number], string> = {
-  admin: "91947fdd38f343f2f9b2a6fc09dd6336cac5dee3333c0b1dff7b2b10d1192c82",
-  editor: "46181f8f50e2b6dced520da5f9a5447ade98df26205a9d9972a51f84eca46d3c",
-  photographer: "46181f8f50e2b6dced520da5f9a5447ade98df26205a9d9972a51f84eca46d3c",
-  external_editor: "690f176e4c3d40e4aef74fe5d0f5d4de38e4d4103b4a4ad0636e513087e9fd55",
+  admin: "ebb5177c0a093e410349947762a36f1bebd59496a00fef18775e5437893ef94e",
+  editor: "e3c9779b5245e100f3b497ed2637c1c01cb1b66c0a0d52f25e23a0c359666763",
+  photographer: "4946d5efae17d1ea0c5170fcefc26e841de6078f69d705900700d7ed1678ceeb",
+  external_editor: "61097f23464a076b0c1246e358bb1ef8ad9cb13aa7bc950e0af7e2694eed5040",
 };
 
 describe("project-search", () => {
