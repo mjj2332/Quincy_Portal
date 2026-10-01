@@ -199,6 +199,8 @@ export async function removeProjectMemberCycle(
 ): Promise<
   | { outcome: "removed"; subtaskAssignmentsCleared: number; notificationOutboxIds: string[] }
   | { outcome: "stale"; currentMembership: ProjectMembershipDto | null }
+  /** The removal would clear Subtask assignments on an archived Project, whose Checklist is read-only (#446). */
+  | { outcome: "project_archived" }
   | { outcome: "confirmation_required"; assignmentCount: number; accessWillBeLost: boolean; currentMembership: ProjectMembershipDto }
 > {
   const now = input.now ?? Date.now();
@@ -231,11 +233,21 @@ export async function removeProjectMemberCycle(
           AND NOT EXISTS (SELECT 1 FROM project_members remaining JOIN user target ON target.id = remaining.user_id WHERE ${remaining.sql})
         )
       )
+      AND (
+        -- An archived Project's Checklist is read-only (#446): a removal that would clear assignments (this user holds some, keeps no
+        -- eligible role and is not an active Admin) loses here, so the audit, clear and activity statements, all fenced on it, write nothing.
+        EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)
+        OR EXISTS (SELECT 1 FROM user WHERE id = ? AND role = 'admin' AND active = 1)
+        OR EXISTS (SELECT 1 FROM project_members remaining JOIN user target ON target.id = remaining.user_id WHERE ${remaining.sql})
+        OR NOT EXISTS (SELECT 1 FROM project_subtask_assignees sa INNER JOIN project_subtasks st ON st.id = sa.subtask_id WHERE st.project_id = ? AND sa.user_id = ?)
+      )
     RETURNING id
   `).bind(input.membershipCycle, input.projectId, input.userId, input.roleOnProject, input.userId, ...remaining.bindings,
     input.clearSubtaskAssignments ? 1 : 0, input.projectId, input.userId,
     input.clearSubtaskAssignments ? 1 : 0, input.projectId, input.userId, input.confirmedAssignmentCount,
-    input.confirmAccessLoss ? 1 : 0, input.userId, ...remaining.bindings);
+    input.confirmAccessLoss ? 1 : 0, input.userId, ...remaining.bindings,
+    input.projectId, input.userId, ...remaining.bindings, input.projectId, input.userId);
+  const archivedSnapshot = db.prepare("SELECT archived_at FROM projects WHERE id = ?").bind(input.projectId);
   const audit = db.prepare(`
     INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
     SELECT ?, ?, 'project.member.remove', 'project_member', ?, ?, ? WHERE changes() = 1
@@ -257,7 +269,7 @@ export async function removeProjectMemberCycle(
     winnerAuditId: auditId,
     createdAt: now,
   });
-  const result = await db.batch([exact, current, compatible, activeAdmin, assignmentCount, deletion, audit, clear, timestamp, ...activityStatements.statements, relationDeleteForRemovedMember(db, { projectId: input.projectId, userId: input.userId, auditId, remainingAfterDelete })]);
+  const result = await db.batch([exact, current, compatible, activeAdmin, assignmentCount, deletion, audit, clear, timestamp, ...activityStatements.statements, relationDeleteForRemovedMember(db, { projectId: input.projectId, userId: input.userId, auditId, remainingAfterDelete }), archivedSnapshot]);
   const exactRow = first<{ id: string }>(result[0] as D1Rows<{ id: string }>);
   const currentRow = first<MemberDtoRow>(result[1] as D1Rows<MemberDtoRow>);
   const currentMembership = currentRow ? memberDto(currentRow) : null;
@@ -266,6 +278,9 @@ export async function removeProjectMemberCycle(
   const deleted = first<{ id: string }>(result[5] as D1Rows<{ id: string }>);
   if (!exactRow) return { outcome: "stale", currentMembership };
   if (!deleted) {
+    const archived = first<{ archived_at: number | null }>(result[result.length - 1] as D1Rows<{ archived_at: number | null }>)?.archived_at != null;
+    const wouldClear = count > 0 && !first(result[2] as D1Rows<{ 1: number }>) && !first(result[3] as D1Rows<{ 1: number }>);
+    if (archived && wouldClear) return { outcome: "project_archived" };
     if (!currentMembership) throw new Error("Project membership diagnostic disappeared during removal");
     return { outcome: "confirmation_required", assignmentCount: count, accessWillBeLost, currentMembership };
   }

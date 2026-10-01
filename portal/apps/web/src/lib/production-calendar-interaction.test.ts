@@ -205,6 +205,16 @@ describe("checklist calendar failure classification", () => {
     expect(result).toMatchObject({ code, retry: false, ...expected });
   });
 
+  it("classifies an archived Project's refusal as rollback and refetch, with no draft kept (#446)", () => {
+    for (const ctx of [{ eventId: checklistEventId }, { eventId: checklistEventId, fromEditor: true }, { eventId: checklistEventId, inline: true }]) {
+      const result = classifyChecklistFailure(new ApiError("archived", 409, { code: "subtask_project_archived" }), ctx);
+      expect(result).toEqual({
+        code: "subtask_project_archived", rollback: true, refetch: true, retry: false, retainDraft: false, askFold: false, mappingDefect: false,
+        accessLoss: false, focus: "event", announce: "This project was archived. Its checklist can no longer be changed here.",
+      });
+    }
+  });
+
   it("classifies endpoint-scoped fold choices and access loss without a fallback domain", () => {
     const conflict = classifyChecklistFailure(new ApiError("conflict", 409, { code: "subtask_schedule_version_conflict" }), { eventId: checklistEventId, fromEditor: true });
     expect(conflict).toMatchObject({ retainDraft: true, refetch: true, retry: false });

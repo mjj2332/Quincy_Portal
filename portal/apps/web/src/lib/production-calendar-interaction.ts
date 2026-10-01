@@ -200,6 +200,9 @@ export function classifyChecklistFailure(value: unknown, ctx: { eventId: string;
       // #372: an editor that is a surface's own inline picker (the Gantt's Due cell) retains its draft here too,
       // like a schedule conflict: the Calendar's sheet and every drag keep dropping it.
       return { code, rollback: true, refetch: true, retry: false, retainDraft: Boolean(ctx.inline), askFold: false, mappingDefect: false, accessLoss: false, focus: "event", announce: "The checklist item changed elsewhere. Reloaded the latest item; no retry was made." };
+    case "subtask_project_archived":
+      // #446: the Project was archived under the caller. Nothing to resubmit: roll back and reload so the row shows read-only.
+      return { code, rollback: true, refetch: true, retry: false, retainDraft: false, askFold: false, mappingDefect: false, accessLoss: false, focus: "event", announce: "This project was archived. Its checklist can no longer be changed here." };
     case "subtask_schedule_reload_required":
       return { code, rollback: true, refetch: true, retry: false, retainDraft: false, askFold: false, mappingDefect: true, accessLoss: false, focus: "event", announce: "The checklist schedule could not be applied. Reloaded the latest; try again." };
     case "subtask_schedule_nonexistent_local_time":

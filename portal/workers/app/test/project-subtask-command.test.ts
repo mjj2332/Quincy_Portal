@@ -87,6 +87,7 @@ describe("saveProjectSubtask finalizer boundary", () => {
       { outcome: "invalid_request", status: 400, code: "bad", message: "bad" },
       { outcome: "forbidden" },
       { outcome: "not_found", target: "project" },
+      { outcome: "project_archived" },
       { outcome: "schedule_conflict", current: {} as never },
       { outcome: "item_conflict", current: {} as never, currentSubtask: item },
       { outcome: "storage_invalid", current: { state: "invalid" } as never },
@@ -269,5 +270,69 @@ describe("native assignee delta racing a concurrent edit (#368)", () => {
     expect(assignResult.outcome).toBe("item_conflict");
     if (assignResult.outcome === "item_conflict") expect(assignResult.currentSubtask).toMatchObject({ id: subtaskId, title: "Renamed in the race", assignees: [] });
     expect(await readState()).toEqual({ relation: [], row: { title: "Renamed in the race", assignment_version: before.row!.assignment_version } });
+  });
+});
+
+describe("an archived Project at the command boundary (#446)", () => {
+  const archive = (projectId: string) => database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), projectId).run();
+  /** A D1 whose first multi-statement batch archives the Project, then runs the real batch: the archive wins the race. */
+  function archivingDb(projectId: string) {
+    let archived = false;
+    return new Proxy(baseEnv.DB, {
+      get(target, property, receiver) {
+        if (property === "batch") {
+          return async (statements: D1PreparedStatement[]) => {
+            if (!archived && statements.length >= 2) { archived = true; await archive(projectId); }
+            return target.batch(statements);
+          };
+        }
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as unknown as D1Database;
+  }
+  const rows = async (projectId: string) => ({
+    subtasks: (await database.DB.prepare("SELECT * FROM project_subtasks WHERE project_id = ? ORDER BY id").bind(projectId).all()).results,
+    audits: (await database.DB.prepare("SELECT count(*) AS n FROM audit_log WHERE action LIKE 'project_subtask.%'").first<{ n: number }>())!.n,
+    outbox: (await database.DB.prepare("SELECT count(*) AS n FROM notification_outbox WHERE project_id = ?").bind(projectId).first<{ n: number }>())!.n,
+  });
+
+  it("refuses a create and an update from the up-front check, even an identical-value patch", async () => {
+    const projectId = crypto.randomUUID(); await seedProject(projectId);
+    const created = await createDueItem(projectId, "Archived soon");
+    await archive(projectId);
+    const before = await rows(projectId);
+    expect(await saveProjectSubtask(commandInput(projectId, { kind: "create", item: { title: "Nope" } }))).toEqual({ outcome: "project_archived" });
+    expect(await saveProjectSubtask(commandInput(projectId, { kind: "update", subtaskId: created.item.id, itemPatch: { title: "Renamed" } }))).toEqual({ outcome: "project_archived" });
+    expect(await saveProjectSubtask(commandInput(projectId, { kind: "update", subtaskId: created.item.id, itemPatch: { title: "Archived soon" } }))).toEqual({ outcome: "project_archived" });
+    expect(await rows(projectId)).toEqual(before);
+  });
+
+  it("classifies a create and an update that lose the race to an archive as project_archived, not a conflict or a throw", async () => {
+    const projectId = crypto.randomUUID(); await seedProject(projectId);
+    const created = await createDueItem(projectId, "Racing");
+    const before = await rows(projectId);
+    const racing = archivingDb(projectId);
+    expect(await saveProjectSubtask(commandInput(projectId, { kind: "create", item: { title: "Lost create" } }, { env: { ...baseEnv, DB: racing } as Env }))).toEqual({ outcome: "project_archived" });
+    expect(await rows(projectId)).toEqual(before);
+
+    const other = crypto.randomUUID(); await seedProject(other);
+    const second = await createDueItem(other, "Racing update");
+    const beforeUpdate = await rows(other);
+    const result = await saveProjectSubtask(commandInput(other, { kind: "update", subtaskId: second.item.id, itemPatch: { title: "Lost update", assignees: { expectedVersion: 0, add: [commandAdminId], remove: [] } } }, { env: { ...baseEnv, DB: archivingDb(other) } as Env }));
+    expect(result).toEqual({ outcome: "project_archived" });
+    expect(await rows(other)).toEqual(beforeUpdate);
+    expect(created.item.id).toBeTruthy();
+  });
+
+  it("answers an External Editor not_found(project), never project_archived, when the archive wins the race", async () => {
+    const externalId = crypto.randomUUID(); const projectId = crypto.randomUUID(); await seedProject(projectId); const now = Date.now();
+    await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Command External', ?, 1, 'external_editor', 1, ?, ?)").bind(externalId, `${externalId}@example.test`, now, now).run();
+    await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, externalId, now).run();
+    const principal: SessionUser = { ...commandPrincipal, id: externalId, role: "external_editor", email: `${externalId}@example.test` };
+    const before = await rows(projectId);
+    const result = await saveProjectSubtask(commandInput(projectId, { kind: "create", item: { title: "External race" } }, { principal, env: { ...baseEnv, DB: archivingDb(projectId) } as Env }));
+    expect(result).toEqual({ outcome: "not_found", target: "project" });
+    expect(await rows(projectId)).toEqual(before);
   });
 });

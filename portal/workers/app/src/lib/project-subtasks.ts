@@ -90,6 +90,8 @@ export type ProjectSubtaskCommandResult =
   | { outcome: "invalid_request"; status: 400; code: string; message: string; details?: RequestDetails }
   | { outcome: "forbidden" }
   | { outcome: "not_found"; target: "project" | "subtask" }
+  /** The Project is archived: its Checklist is read-only (#446). An External Editor never sees this, they get `not_found`. */
+  | { outcome: "project_archived" }
   | { outcome: "schedule_conflict"; current: ChecklistScheduleDto; currentSubtask: ProjectSubtaskDto }
   | { outcome: "item_conflict"; current: ChecklistScheduleDto; currentSubtask: ProjectSubtaskDto }
   | { outcome: "assignment_conflict"; currentSubtask: ProjectSubtaskDto };
@@ -105,6 +107,18 @@ export type SaveProjectSubtaskInput = {
 };
 
 function rowsFromD1<T>(result: unknown): T[] { return ((result as { results?: T[] } | undefined)?.results ?? []); }
+
+/** The archived refusal: staff see it, an External Editor cannot see an archived Project at all (#446). */
+function archivedOutcome(principal: Pick<SessionUser, "role">): ProjectSubtaskCommandResult {
+  return principal.role === "external_editor" ? { outcome: "not_found", target: "project" } : { outcome: "project_archived" };
+}
+
+/** The mutation batches end with `SELECT archived_at FROM projects`: whether the Project was archived when the primary write ran. */
+export const ARCHIVED_SNAPSHOT_SQL = "SELECT archived_at FROM projects WHERE id = ?";
+export function archivedInSnapshot(result: unknown): boolean {
+  const row = rowsFromD1<{ archived_at: number | null }>(result)[0];
+  return row !== undefined && row.archived_at !== null;
+}
 
 function subtaskQuery(db: ReturnType<typeof createDb>, projectId: string, subtaskId?: string) {
   return db.select({ subtask: schema.projectSubtasks })
@@ -246,9 +260,14 @@ export async function projectDefaultRangeDtoFor(env: AppEnv["Bindings"], project
   return project ? defaultSubtaskRangeDto(projectDefaultRangeInput(project)) : null;
 }
 
+export async function projectIsArchived(env: AppEnv["Bindings"], projectId: string): Promise<boolean> {
+  const row = await createDb(env.DB).select({ archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
+  return row?.archivedAt != null;
+}
+
 async function authorizedProject(env: AppEnv["Bindings"], principal: SessionUser, projectId: string) {
   if (!await hasProjectCollaborationAccessForUser(env, principal, projectId)) return null;
-  return createDb(env.DB).select({ id: schema.projects.id, shootDate: schema.projects.shootDate, createdAt: schema.projects.createdAt, deadlineLocalCivil: schema.projects.deadlineLocalCivil, deadlineAt: schema.projects.deadlineAt, deadlineFold: schema.projects.deadlineFold }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
+  return createDb(env.DB).select({ id: schema.projects.id, archivedAt: schema.projects.archivedAt, shootDate: schema.projects.shootDate, createdAt: schema.projects.createdAt, deadlineLocalCivil: schema.projects.deadlineLocalCivil, deadlineAt: schema.projects.deadlineAt, deadlineFold: schema.projects.deadlineFold }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
 }
 
 function activityFor(itemId: string, projectId: string, actorId: string, now: number, title: string, type: "created" | "updated", changes?: Array<"title" | "completion" | "assignee">, delta?: Pick<SubtaskAssigneeDelta, "add" | "remove">): ProjectActivityIntent {
@@ -306,7 +325,14 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
     : operation.itemPatch?.title === undefined ? null : validateTitle(operation.itemPatch.title);
   if (titleError) return titleError;
   const project = await authorizedProject(env, principal, projectId);
-  if (!project) return (await hasProjectCollaborationAccessForUser(env, principal, projectId)) ? { outcome: "not_found", target: "project" } : { outcome: "forbidden" };
+  if (!project) {
+    if (await hasProjectCollaborationAccessForUser(env, principal, projectId)) return { outcome: "not_found", target: "project" };
+    // An External Editor loses collaboration access when the Project is archived under them: that is a 404, not a 403 (#446).
+    if (principal.role === "external_editor" && await projectIsArchived(env, projectId)) return { outcome: "not_found", target: "project" };
+    return { outcome: "forbidden" };
+  }
+  // Before the no-op check: even an identical-value patch is refused on an archived Project (#446).
+  if (project.archivedAt !== null) return archivedOutcome(principal);
   const db = createDb(env.DB);
   const now = input.now ?? Date.now();
 
@@ -330,7 +356,8 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
     const activity = activityFor(id, projectId, principal.id, now, operation.item.title, "created");
     const bundle = buildProjectActivityStatements({ db: env.DB, intent: activity, winnerAuditId: auditId, createdAt: now });
     const canonicalSchedule = normalized.value;
-    const insert = env.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, reminder_offsets_json, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(id, projectId, operation.item.title, (last?.position ?? 0) + POSITION_STEP, assigneeIds.length ? 1 : 0, canonicalSchedule.dueDate, canonicalSchedule.scheduleStartKind, canonicalSchedule.scheduleStartCivil, canonicalSchedule.scheduleStartAt, canonicalSchedule.scheduleStartUtcOffsetMinutes, canonicalSchedule.scheduleStartFold, canonicalSchedule.scheduleEndKind, canonicalSchedule.scheduleEndAt, canonicalSchedule.scheduleEndUtcOffsetMinutes, canonicalSchedule.scheduleEndFold, canonicalSchedule.scheduleZone, canonicalSchedule.scheduleVersion, JSON.stringify(offsets), principal.id, now, now);
+    // The only statement that needs the archive guard: every later one is fenced on `changes() = 1` or the audit id (#446).
+    const insert = env.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, reminder_offsets_json, created_by, created_at, updated_at) SELECT ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL) RETURNING id").bind(id, projectId, operation.item.title, (last?.position ?? 0) + POSITION_STEP, assigneeIds.length ? 1 : 0, canonicalSchedule.dueDate, canonicalSchedule.scheduleStartKind, canonicalSchedule.scheduleStartCivil, canonicalSchedule.scheduleStartAt, canonicalSchedule.scheduleStartUtcOffsetMinutes, canonicalSchedule.scheduleStartFold, canonicalSchedule.scheduleEndKind, canonicalSchedule.scheduleEndAt, canonicalSchedule.scheduleEndUtcOffsetMinutes, canonicalSchedule.scheduleEndFold, canonicalSchedule.scheduleZone, canonicalSchedule.scheduleVersion, JSON.stringify(offsets), principal.id, now, now, projectId);
     const results = await env.DB.batch([
       insert,
       env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project_subtask.create', 'project_subtask', ?, ?, ? WHERE changes() = 1").bind(auditId, principal.id, id, auditMeta(principal, { scheduleState: canonicalSchedule.state, scheduleVersion: canonicalSchedule.scheduleVersion, reminderOffsetsMinutes: offsets }), now),
@@ -339,7 +366,13 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
       ...(assigneeIds.length ? [relationInsertMany(env.DB, id, JSON.stringify(assigneeIds), 1, now, auditId)] : []),
       // The default reminders (#424). Reads the Subtask the first statement inserted, and writes nothing if that insert lost.
       ...buildSubtaskReminderMaterialization({ db: env.DB, scope: { kind: "subtask", subtaskId: id }, now, createdBy: principal.id, gateAuditId: auditId }).statements,
+      // Last, so the positional reads above stay valid. Classifies a lost insert (#446).
+      env.DB.prepare(ARCHIVED_SNAPSHOT_SQL).bind(projectId),
     ]);
+    if (!rowsFromD1<{ id: string }>(results[0])[0]) {
+      if (archivedInSnapshot(results[results.length - 1])) return archivedOutcome(principal);
+      throw new Error("Subtask could not be created");
+    }
     const item = await subtaskQuery(db, projectId, id).get();
     if (!item) throw new Error("Subtask could not be created");
     return {
@@ -445,7 +478,7 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
   const nextScheduleState = normalized?.state ?? currentDto.state;
   const nextScheduleVersion = normalized?.scheduleVersion ?? (remindersChanged ? existingStorage.scheduleVersion + 1 : existingStorage.scheduleVersion);
   const auditDetails = { fields: auditFields, scheduleState: nextScheduleState, scheduleVersion: nextScheduleVersion, ...(delta ? { assigneesAdded: delta.add, assigneesRemoved: delta.remove } : {}), ...(remindersChanged ? { reminders: { before: storedOffsets, after: requestedOffsets } } : {}) };
-  const statements: D1PreparedStatement[] = [env.DB.prepare(`UPDATE project_subtasks SET ${setParts.join(", ")} WHERE id = ? AND project_id = ? AND title IS ? AND done IS ? AND due_date IS ? AND assignment_version IS ? AND schedule_start_kind IS ? AND schedule_start_civil IS ? AND schedule_start_at IS ? AND schedule_start_utc_offset_minutes IS ? AND schedule_start_fold IS ? AND schedule_end_kind IS ? AND schedule_end_at IS ? AND schedule_end_utc_offset_minutes IS ? AND schedule_end_fold IS ? AND schedule_zone IS ? AND schedule_version IS ? RETURNING id, assignment_version AS assignmentVersion`).bind(...bindings, operation.subtaskId, projectId, existing.subtask.title, existing.subtask.done ? 1 : 0, existing.subtask.dueDate, existing.subtask.assignmentVersion, existing.subtask.scheduleStartKind, existing.subtask.scheduleStartCivil, existing.subtask.scheduleStartAt, existing.subtask.scheduleStartUtcOffsetMinutes, existing.subtask.scheduleStartFold, existing.subtask.scheduleEndKind, existing.subtask.scheduleEndAt, existing.subtask.scheduleEndUtcOffsetMinutes, existing.subtask.scheduleEndFold, existing.subtask.scheduleZone, existing.subtask.scheduleVersion)];
+  const statements: D1PreparedStatement[] = [env.DB.prepare(`UPDATE project_subtasks SET ${setParts.join(", ")} WHERE id = ? AND project_id = ? AND EXISTS (SELECT 1 FROM projects p WHERE p.id = project_subtasks.project_id AND p.archived_at IS NULL) AND title IS ? AND done IS ? AND due_date IS ? AND assignment_version IS ? AND schedule_start_kind IS ? AND schedule_start_civil IS ? AND schedule_start_at IS ? AND schedule_start_utc_offset_minutes IS ? AND schedule_start_fold IS ? AND schedule_end_kind IS ? AND schedule_end_at IS ? AND schedule_end_utc_offset_minutes IS ? AND schedule_end_fold IS ? AND schedule_zone IS ? AND schedule_version IS ? RETURNING id, assignment_version AS assignmentVersion`).bind(...bindings, operation.subtaskId, projectId, existing.subtask.title, existing.subtask.done ? 1 : 0, existing.subtask.dueDate, existing.subtask.assignmentVersion, existing.subtask.scheduleStartKind, existing.subtask.scheduleStartCivil, existing.subtask.scheduleStartAt, existing.subtask.scheduleStartUtcOffsetMinutes, existing.subtask.scheduleStartFold, existing.subtask.scheduleEndKind, existing.subtask.scheduleEndAt, existing.subtask.scheduleEndUtcOffsetMinutes, existing.subtask.scheduleEndFold, existing.subtask.scheduleZone, existing.subtask.scheduleVersion)];
   statements.push(env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project_subtask.update', 'project_subtask', ?, ?, ? WHERE changes() = 1").bind(auditId, principal.id, operation.subtaskId, auditMeta(principal, auditDetails), now));
   const bundles: Array<{ bundle: ReturnType<typeof buildProjectActivityStatements>; offset: number }> = [];
   if (mappedChanges.length) {
@@ -470,9 +503,12 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
   if (scheduleChanged || remindersChanged) statements.push(...buildSubtaskReminderSuppression({ ...gate, scope: subtaskScope, reason: scheduleChanged ? "schedule_replaced" : "reminders_changed" }).statements);
   // Un-completing recomputes the future ones, and a new schedule version needs its own set. Fired rows of the same version block repeats.
   if ((doneChanged && !nextDone) || scheduleChanged || remindersChanged) statements.push(...buildSubtaskReminderMaterialization({ ...gate, scope: { kind: "subtask", subtaskId: operation.subtaskId }, createdBy: principal.id }).statements);
+  // Last, so every positional read stays valid. Read before the conflict branches: a write that lost to an archive is not a conflict (#446).
+  statements.push(env.DB.prepare(ARCHIVED_SNAPSHOT_SQL).bind(projectId));
   const results = await env.DB.batch(statements);
   const winner = rowsFromD1<{ id: string; assignmentVersion: number }>(results[0])[0];
   if (!winner) {
+    if (archivedInSnapshot(results[results.length - 1])) return archivedOutcome(principal);
     const current = await subtaskQuery(db, projectId, operation.subtaskId).get();
     if (!current) return { outcome: "not_found", target: "subtask" };
     const authoritativeAssignees = await hydrateSubtaskAssignees(env.DB, operation.subtaskId);
