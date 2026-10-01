@@ -16,7 +16,7 @@ export type SubtaskReminderSuppressionScope =
   | { kind: "subtask"; projectId: string; subtaskId: string }
   | { kind: "project"; projectId: string };
 
-export type SubtaskReminderSuppressionReason = "schedule_replaced" | "subtask_completed" | "project_archived" | "subtask_deleted";
+export type SubtaskReminderSuppressionReason = "schedule_replaced" | "reminders_changed" | "subtask_completed" | "project_archived" | "subtask_deleted";
 
 export type SqlWithValues = { sql: string; values: unknown[] };
 
@@ -99,7 +99,8 @@ function occurrenceStaleSql(reason: SubtaskReminderSuppressionReason): string {
   switch (reason) {
     case "subtask_completed": return "EXISTS (SELECT 1 FROM project_subtasks s WHERE s.id = x.subtask_id AND s.done = 1)";
     case "project_archived": return "EXISTS (SELECT 1 FROM projects p WHERE p.id = x.project_id AND p.archived_at IS NOT NULL)";
-    case "schedule_replaced": return "EXISTS (SELECT 1 FROM project_subtasks s WHERE s.id = x.subtask_id AND s.schedule_version <> x.schedule_version)";
+    case "schedule_replaced":
+    case "reminders_changed": return "EXISTS (SELECT 1 FROM project_subtasks s WHERE s.id = x.subtask_id AND s.schedule_version <> x.schedule_version)";
     case "subtask_deleted": return "NOT EXISTS (SELECT 1 FROM project_subtasks s WHERE s.id = x.subtask_id)";
   }
 }
@@ -109,7 +110,8 @@ function outboxStaleSql(reason: SubtaskReminderSuppressionReason): string {
   switch (reason) {
     case "subtask_completed": return `EXISTS (SELECT 1 FROM project_subtasks s WHERE s.id = ${subtaskId} AND s.done = 1)`;
     case "project_archived": return "EXISTS (SELECT 1 FROM projects p WHERE p.id = o.project_id AND p.archived_at IS NOT NULL)";
-    case "schedule_replaced": return `EXISTS (SELECT 1 FROM project_subtasks s WHERE s.id = ${subtaskId} AND s.schedule_version <> json_extract(o.payload_json, '$.reminder.scheduleVersion'))`;
+    case "schedule_replaced":
+    case "reminders_changed": return `EXISTS (SELECT 1 FROM project_subtasks s WHERE s.id = ${subtaskId} AND s.schedule_version <> json_extract(o.payload_json, '$.reminder.scheduleVersion'))`;
     case "subtask_deleted": return `NOT EXISTS (SELECT 1 FROM project_subtasks s WHERE s.id = ${subtaskId})`;
   }
 }
@@ -180,37 +182,46 @@ export function buildSubtaskReminderSuppression(input: SubtaskReminderSuppressio
   return { statements, indexes: { occurrences, ledgers, outboxes } };
 }
 
-const READ_CHUNK = 40;
+/** D1 binds at most 100 values per statement: `now` plus the ids. */
+const READ_CHUNK = 90;
 
 /**
- * The reminders a Subtask has now, for #425's editor: the stored advance offsets and the next pending occurrence of the current schedule
- * version. Internal: no HTTP route or DTO reads it yet (#424).
+ * The reminders a Subtask has now, in the DTO shape the Subtask API returns (#425): the stored advance offsets and the next pending
+ * occurrence of the current schedule version.
  */
 export async function readSubtaskReminderState(db: D1Database, subtaskIds: readonly string[], now: number): Promise<Map<string, SubtaskReminderState>> {
   const result = new Map<string, SubtaskReminderState>();
+  // One round trip however many Subtasks: a Calendar or Timeline response reads every row it returns.
+  const statements: D1PreparedStatement[] = [];
   for (let start = 0; start < subtaskIds.length; start += READ_CHUNK) {
     const chunk = subtaskIds.slice(start, start + READ_CHUNK);
     const placeholders = chunk.map(() => "?").join(",");
-    const rows = (await db.prepare(`
+    statements.push(db.prepare(`
       SELECT s.id AS subtaskId, s.reminder_offsets_json AS offsetsJson,
         (SELECT x.fire_at || ':' || x.kind || ':' || x.reminder_offset_minutes
            FROM project_subtask_reminder_occurrences x
            WHERE x.subtask_id = s.id AND x.schedule_version = s.schedule_version AND x.status = 'pending' AND x.fire_at > ?
            ORDER BY x.fire_at, x.id LIMIT 1) AS next
       FROM project_subtasks s WHERE s.id IN (${placeholders})
-    `).bind(now, ...chunk).all<{ subtaskId: string; offsetsJson: string; next: string | null }>()).results;
-    for (const row of rows) {
+    `).bind(now, ...chunk));
+  }
+  if (statements.length === 0) return result;
+  type ReminderRow = { subtaskId: string; offsetsJson: string; next: string | null };
+  // A single chunk is a plain read; only a longer list pays for a batch.
+  const batches = statements.length === 1 ? [await statements[0]!.all<ReminderRow>()] : await db.batch<ReminderRow>(statements);
+  for (const batch of batches) {
+    for (const row of batch.results) {
       let offsets: number[] = [...SUBTASK_REMINDER_DEFAULT_OFFSETS];
       try {
         const parsed: unknown = JSON.parse(row.offsetsJson);
         if (Array.isArray(parsed) && parsed.every((value) => typeof value === "number" && Number.isSafeInteger(value))) offsets = (parsed as number[]).slice().sort((a, b) => b - a);
       } catch { /* the column CHECK guarantees a JSON array, so this is unreachable */ }
-      let nextReminder: SubtaskReminderState["nextReminder"] = null;
+      let nextOccurrence: SubtaskReminderState["nextOccurrence"] = null;
       if (row.next) {
         const [fireAt, kind, offsetMinutes] = row.next.split(":");
-        nextReminder = { fireAt: Number(fireAt), kind: kind as SubtaskReminderKind, offsetMinutes: Number(offsetMinutes) };
+        nextOccurrence = { kind: kind as SubtaskReminderKind, offsetMinutes: Number(offsetMinutes), firesAt: new Date(Number(fireAt)).toISOString() };
       }
-      result.set(row.subtaskId, { offsetsMinutes: offsets, nextReminder });
+      result.set(row.subtaskId, { offsetsMinutes: offsets, nextOccurrence });
     }
   }
   return result;

@@ -6,6 +6,7 @@ import { externalEditedCompleteResponseSchema, externalEditedUploadCreateRespons
 import { STAGE_PRESENTATION_KEYS } from "./stage-move";
 import { externalCalendarRangeSchema } from "./production-calendar";
 import { projectDefaultRangeSchema } from "./default-subtask-range";
+import { subtaskRemindersDtoSchema } from "./subtask-reminders";
 import { externalProductionGanttSchema } from "./production-gantt";
 import { externalProjectActivityFeedResponseSchema } from "./project-activity-feed";
 export { externalCalendarRangeSchema } from "./production-calendar";
@@ -160,6 +161,7 @@ export const externalChecklistItemSchema = z.object({
   assignmentVersion: z.number().int().nonnegative(),
   dueDate: z.string().nullable(),
   schedule: externalScheduleSchema,
+  reminders: subtaskRemindersDtoSchema,
   createdBy: externalPersonSchema,
   createdAt: iso,
   updatedAt: iso,

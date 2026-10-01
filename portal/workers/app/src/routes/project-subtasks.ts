@@ -11,7 +11,7 @@ import { newId } from "../lib/ids";
 import { serializeSubtaskSchedule } from "../lib/subtask-schedule";
 import {
   externalChecklistItemSchema, externalChecklistListResponseSchema, externalPersonSchema, externalSubtaskAssigneeOptionsResponseSchema, ROLE_LABELS, projectActivityDeepLink,
-  SUBTASK_ASSIGNEE_DELTA_MAX, subtaskAssigneeDeltaSchema, subtaskAssigneeOptionsResponseSchema, type ChecklistScheduleStorage, type ProjectActivityIntent,
+  SUBTASK_ASSIGNEE_DELTA_MAX, subtaskAssigneeDeltaSchema, subtaskAssigneeOptionsResponseSchema, type ChecklistScheduleStorage, type ProjectActivityIntent, type SubtaskRemindersDto, DEFAULT_SUBTASK_REMINDERS,
 } from "@quincy/shared";
 import { hasProjectCollaborationAccess } from "../middleware/capability";
 import { projectMentionableUsers } from "../lib/project-collaboration";
@@ -22,6 +22,8 @@ import { publishOutboxDetached } from "../lib/server-timing";
 import {
   finalizeProjectSubtaskCommandResult,
   projectDefaultRangeDtoFor,
+  readSubtaskReminders,
+  readSubtaskRemindersOf,
   saveProjectSubtask,
   serializeProjectSubtask,
   type ItemPatch,
@@ -46,10 +48,13 @@ async function subtaskJsonInput<T extends z.ZodTypeAny>(c: Context<AppEnv>, vali
   if (result.success) return result.data;
   return c.json({ error: "Invalid input", details: { ...result.error.flatten(), issues: result.error.issues.map((issue) => ({ path: issue.path.join("."), code: issue.code, message: issue.message })) } }, 400);
 }
-const scheduleRequestInput = z.object({ expectedVersion: z.number().int().nonnegative().refine(Number.isSafeInteger), schedule: scheduleInput }).strict();
+// The offsets are validated once, by the command (`subtask_reminders_invalid`, field-named), so a malformed set gets that code
+// rather than zod's generic one. Absent keeps the stored set.
+const reminderOffsetsInput = z.unknown();
+const scheduleRequestInput = z.object({ expectedVersion: z.number().int().nonnegative().refine(Number.isSafeInteger), schedule: scheduleInput, reminderOffsetsMinutes: reminderOffsetsInput.optional() }).strict();
 const uniqueIds = (ids: string[]) => new Set(ids).size === ids.length;
 const createInput = z.object({
-  title: titleInput, assigneeIds: z.array(idParam).max(SUBTASK_ASSIGNEE_DELTA_MAX).refine(uniqueIds, "Assignee ids must be unique").optional(), schedule: scheduleInput.optional(),
+  title: titleInput, assigneeIds: z.array(idParam).max(SUBTASK_ASSIGNEE_DELTA_MAX).refine(uniqueIds, "Assignee ids must be unique").optional(), schedule: scheduleInput.optional(), reminderOffsetsMinutes: reminderOffsetsInput.optional(),
 }).strict();
 const updateInput = z.object({
   title: titleInput.optional(), done: z.boolean().optional(), assignees: subtaskAssigneeDeltaSchema.optional(), schedule: scheduleRequestInput.optional(),
@@ -59,8 +64,6 @@ const reorderInput = z.object({ beforeId: idParam.nullable(), afterId: idParam.n
 function rowsFromD1<T>(result: unknown): T[] {
   return ((result as { results?: T[] } | undefined)?.results ?? []);
 }
-
-const serializeSubtask = serializeProjectSubtask;
 
 async function ensureProjectAccessAndExists(c: Parameters<typeof hasProjectCollaborationAccess>[0], projectId: string) {
   if (!await hasProjectCollaborationAccess(c, projectId)) return "forbidden" as const;
@@ -92,7 +95,7 @@ function externalSubtaskQuery(db: ReturnType<typeof createDb>, projectId: string
 }
 
 /** The external Checklist DTO: `assignees` are the team members only, `otherAssigneeCount` the rest. */
-function externalSubtaskDto(row: Awaited<ReturnType<typeof externalSubtaskQuery>>[number], assignees: HydratedAssignee[]) {
+function externalSubtaskDto(row: Awaited<ReturnType<typeof externalSubtaskQuery>>[number], assignees: HydratedAssignee[], reminders: SubtaskRemindersDto) {
   const { assignees: named, otherAssigneeCount } = externalAssigneeProjection(assignees);
   const storage: ChecklistScheduleStorage = {
     dueDate: row.dueDate, scheduleStartKind: row.scheduleStartKind, scheduleStartCivil: row.scheduleStartCivil, scheduleStartAt: row.scheduleStartAt,
@@ -103,7 +106,7 @@ function externalSubtaskDto(row: Awaited<ReturnType<typeof externalSubtaskQuery>
   return externalChecklistItemSchema.parse({
     id: row.id, title: row.title, done: Boolean(row.done), position: row.position,
     assignees: named, otherAssigneeCount,
-    assignmentVersion: row.assignmentVersion, dueDate: row.dueDate, schedule: serializeSubtaskSchedule(row.id, storage),
+    assignmentVersion: row.assignmentVersion, dueDate: row.dueDate, schedule: serializeSubtaskSchedule(row.id, storage), reminders,
     createdBy: row.creatorId && row.creatorName && row.creatorRole ? { id: row.creatorId, name: row.creatorName, roleLabel: ROLE_LABELS[row.creatorRole], isExternal: row.creatorRole === "external_editor", active: Boolean(row.creatorActive) } : { id: "00000000-0000-4000-8000-000000000000", name: "", roleLabel: "", isExternal: false, active: false },
     createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
   });
@@ -115,7 +118,7 @@ function hasField(value: object, key: string): boolean { return Object.prototype
 async function conflictSubtask(c: Context<AppEnv>, projectId: string, current: { id: string }) {
   if (c.get("user").role !== "external_editor") return current;
   const row = await externalSubtaskQuery(createDb(c.env.DB), projectId, c.get("user").id, current.id).get();
-  return row ? externalSubtaskDto(row, await hydrateSubtaskAssignees(c.env.DB, current.id)) : null;
+  return row ? externalSubtaskDto(row, await hydrateSubtaskAssignees(c.env.DB, current.id), await readSubtaskRemindersOf(c.env.DB, current.id)) : null;
 }
 
 async function commandResponse(c: Context<AppEnv>, projectId: string, result: Awaited<ReturnType<typeof saveProjectSubtask>>, status: 200 | 201 = 200) {
@@ -125,7 +128,7 @@ async function commandResponse(c: Context<AppEnv>, projectId: string, result: Aw
     case "noop": {
       if (c.get("user").role === "external_editor") {
         const row = await externalSubtaskQuery(createDb(c.env.DB), projectId, c.get("user").id, result.item.id).get();
-        return row ? c.json(externalSubtaskDto(row, await hydrateSubtaskAssignees(c.env.DB, result.item.id)), status) : c.json({ error: "Subtask not found" }, 404);
+        return row ? c.json(externalSubtaskDto(row, await hydrateSubtaskAssignees(c.env.DB, result.item.id), result.item.reminders), status) : c.json({ error: "Subtask not found" }, 404);
       }
       return c.json(result.item, status);
     }
@@ -157,12 +160,14 @@ projectSubtasksRoutes.get("/projects/:projectId/subtasks", terminalRoute("/proje
     if (!await resolveVisibleProject(c.env, c.get("user"), projectId)) return c.json({ error: "Project not found" }, 404);
     const rows = await externalSubtaskQuery(createDb(c.env.DB), projectId, c.get("user").id).orderBy(asc(schema.projectSubtasks.position), asc(schema.projectSubtasks.id)).all();
     const assignees = await hydrateProjectAssignees(c.env.DB, projectId);
-    return c.json(externalChecklistListResponseSchema.parse({ subtasks: rows.map((row) => externalSubtaskDto(row, assignees.get(row.id) ?? [])), projectDefaultRange: await projectDefaultRangeDtoFor(c.env, projectId) }));
+    const reminders = await readSubtaskReminders(c.env.DB, rows.map((row) => row.id));
+    return c.json(externalChecklistListResponseSchema.parse({ subtasks: rows.map((row) => externalSubtaskDto(row, assignees.get(row.id) ?? [], reminders.get(row.id) ?? DEFAULT_SUBTASK_REMINDERS)), projectDefaultRange: await projectDefaultRangeDtoFor(c.env, projectId) }));
   }
   const project = await ensureProjectAccessAndExists(c, projectId); if (project === "forbidden") return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); if (!project) return c.json({ error: "Project not found" }, 404);
   const rows = await subtaskQuery(createDb(c.env.DB), projectId).orderBy(asc(schema.projectSubtasks.position), asc(schema.projectSubtasks.id)).all();
   const assignees = await hydrateProjectAssignees(c.env.DB, projectId);
-  return c.json({ subtasks: rows.map((row) => serializeSubtask(row, assignees.get(row.subtask.id) ?? [])), projectDefaultRange: await projectDefaultRangeDtoFor(c.env, projectId) });
+  const reminders = await readSubtaskReminders(c.env.DB, rows.map((row) => row.subtask.id));
+  return c.json({ subtasks: rows.map((row) => serializeProjectSubtask(row, assignees.get(row.subtask.id) ?? [], reminders.get(row.subtask.id) ?? DEFAULT_SUBTASK_REMINDERS)), projectDefaultRange: await projectDefaultRangeDtoFor(c.env, projectId) });
 }));
 
 projectSubtasksRoutes.get("/projects/:projectId/subtask-assignee-options", terminalRoute("/projects/:projectId/subtask-assignee-options", async (c) => {
@@ -190,7 +195,7 @@ projectSubtasksRoutes.post("/projects/:projectId/subtasks", terminalRoute("/proj
     env: c.env,
     projectId,
     principal: c.get("user"),
-    operation: { kind: "create", item: { title: data.title, assigneeIds: data.assigneeIds ?? [] }, schedule: data.schedule },
+    operation: { kind: "create", item: { title: data.title, assigneeIds: data.assigneeIds ?? [], reminderOffsetsMinutes: data.reminderOffsetsMinutes as number[] | undefined }, schedule: data.schedule },
   });
   await finalizeProjectSubtaskCommandResult({ env: c.env, executionCtx: c.executionCtx, result });
   return await commandResponse(c, projectId, result, result.outcome === "created" ? 201 : 200);
@@ -214,7 +219,7 @@ projectSubtasksRoutes.patch("/projects/:projectId/subtasks/:subtaskId", terminal
       kind: "update",
       subtaskId,
       itemPatch: Object.keys(itemPatch).length ? itemPatch : undefined,
-      scheduleRequest: hasSchedule ? data.schedule : undefined,
+      scheduleRequest: hasSchedule ? { ...data.schedule!, reminderOffsetsMinutes: data.schedule!.reminderOffsetsMinutes as number[] | undefined } : undefined,
     },
   });
   await finalizeProjectSubtaskCommandResult({ env: c.env, executionCtx: c.executionCtx, result });
