@@ -59,13 +59,17 @@ function Probe({ onLayout }: { onLayout: () => void }) {
   return null;
 }
 
-function harness(id: string, onLayout?: () => void) {
+// `variant="sheet"` by default: its field is inline, so the isolation behaviour (render-time snapshot
+// for the CURRENT principal, layout-effect ownership claim) is observable without opening anything.
+// That logic sits in `ShellSearch`'s body and is variant-independent; the `rail` variant — the wide
+// shell's only one since #426 — gets its own cases below, with the popover opened.
+function harness(id: string, onLayout?: () => void, variant: "rail" | "sheet" = "sheet") {
   return (
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <PrincipalFreshnessBoundary principalId={id} role="editor" authorizationEpoch={0}>
-        <SidebarProvider open onOpenChange={() => {}}>
+        <SidebarProvider open={false}>
           <TooltipProvider delay={0}>
-            <ShellSearch variant="expanded" isDashboard={false} principalId={id} />
+            <ShellSearch variant={variant} isDashboard={false} principalId={id} />
           </TooltipProvider>
         </SidebarProvider>
         {onLayout ? <Probe onLayout={onLayout} /> : null}
@@ -112,7 +116,7 @@ describe("ShellSearch + PrincipalFreshnessBoundary — principal isolation (#217
       root.render(harness("user-a"));
       await Promise.resolve();
     });
-    const inputA = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    const inputA = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     await type(inputA, "smith");
     expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
 
@@ -120,7 +124,7 @@ describe("ShellSearch + PrincipalFreshnessBoundary — principal isolation (#217
     let capturedValue: string | null = null;
     act(() => {
       root.render(harness("user-b", () => {
-        capturedValue = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value;
+        capturedValue = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value;
       }));
     });
     expect(capturedValue).toBe("");
@@ -131,7 +135,7 @@ describe("ShellSearch + PrincipalFreshnessBoundary — principal isolation (#217
       root.render(harness("admin-1"));
       await Promise.resolve();
     });
-    const adminInput = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    const adminInput = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     await type(adminInput, "smith");
     expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
 
@@ -140,11 +144,11 @@ describe("ShellSearch + PrincipalFreshnessBoundary — principal isolation (#217
     let capturedAtStart: string | null = null;
     act(() => {
       root.render(harness("editor-2", () => {
-        capturedAtStart = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value;
+        capturedAtStart = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value;
       }));
     });
     expect(capturedAtStart).toBe("");
-    const impersonatedInput = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    const impersonatedInput = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     await type(impersonatedInput, "jones");
     expect(__getDashboardSearchSnapshotForTest().draft).toBe("jones");
 
@@ -154,7 +158,7 @@ describe("ShellSearch + PrincipalFreshnessBoundary — principal isolation (#217
     let capturedAtStop: string | null = null;
     act(() => {
       root.render(harness("admin-1", () => {
-        capturedAtStop = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value;
+        capturedAtStop = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value;
       }));
     });
     expect(capturedAtStop).toBe("");
@@ -170,7 +174,7 @@ describe("ShellSearch + PrincipalFreshnessBoundary — principal isolation (#217
         root.render(harness("user-a"));
         await Promise.resolve();
       });
-      const inputA = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+      const inputA = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
       await act(async () => {
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(inputA, "smith");
         inputA.dispatchEvent(new Event("input", { bubbles: true }));
@@ -201,7 +205,7 @@ describe("ShellSearch + PrincipalFreshnessBoundary — principal isolation (#217
       root.render(harness("user-a"));
       await Promise.resolve();
     });
-    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    const input = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     await type(input, "smith");
     expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
 
@@ -217,8 +221,64 @@ describe("ShellSearch + PrincipalFreshnessBoundary — principal isolation (#217
       root.render(harness("user-a"));
       await Promise.resolve();
     });
-    const inputAfterSignIn = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    const inputAfterSignIn = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     expect(inputAfterSignIn.value).toBe("");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("");
+  });
+});
+
+describe("ShellSearch rail variant + PrincipalFreshnessBoundary — principal isolation (#426)", () => {
+  async function openPopover() {
+    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="shell-search-trigger"]')!;
+    await act(async () => {
+      trigger.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
+      await Promise.resolve();
+    });
+    for (let tick = 0; tick < 50 && !document.querySelector('[data-testid="shell-search"]'); tick += 1) {
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+    }
+  }
+
+  it("B's first committed render of an already-open rail popover shows an empty input, captured before any effect has run", async () => {
+    await act(async () => {
+      root.render(harness("user-a", undefined, "rail"));
+      await Promise.resolve();
+    });
+    await openPopover();
+    const inputA = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    expect(inputA, "the rail popover must be open").not.toBeNull();
+    await type(inputA, "smith");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
+
+    mockAccessSnapshotFor("user-b");
+    let capturedValue: string | null = null;
+    act(() => {
+      root.render(harness("user-b", () => {
+        capturedValue = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')?.value ?? null;
+      }, "rail"));
+    });
+    // Either the popover stayed open and shows no leftover text, or it closed — never A's "smith".
+    expect(capturedValue === "" || capturedValue === null).toBe(true);
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("");
+  });
+
+  it("sign-out then signing back in as the SAME id starts empty, through the rail popover", async () => {
+    await act(async () => {
+      root.render(harness("user-a", undefined, "rail"));
+      await Promise.resolve();
+    });
+    await openPopover();
+    await type(document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!, "smith");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
+
+    await act(async () => { root.unmount(); });
+    root = createRoot(host);
+    await act(async () => {
+      root.render(harness("user-a", undefined, "rail"));
+      await Promise.resolve();
+    });
+    await openPopover();
+    expect(document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("");
     expect(__getDashboardSearchSnapshotForTest().draft).toBe("");
   });
 });

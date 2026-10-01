@@ -102,9 +102,12 @@ function ShellRouteHarness({ userId, role }: { userId: string; role: typeof auth
     syncDashboardSearchDraftFromLocation(dashboardSearchOf(route), userId);
   }, [location, route, userId]);
   return (
-    <SidebarProvider open onOpenChange={() => {}}>
+    <SidebarProvider open={false}>
       <TooltipProvider delay={0}>
-        <ShellSearch variant="expanded" isDashboard={route.kind === "dashboard"} principalId={userId} />
+        {/* `sheet`, the one variant whose field is inline (the wide rail's is behind a popover since
+            #426): these tests exercise the Dashboard's committed-query contract against a real,
+            always-present `ShellSearch` input, and that contract is variant-independent. */}
+        <ShellSearch variant="sheet" isDashboard={route.kind === "dashboard"} principalId={userId} />
       </TooltipProvider>
       <Dashboard currentUserId={userId} role={role} authorizationEpoch={0} />
     </SidebarProvider>

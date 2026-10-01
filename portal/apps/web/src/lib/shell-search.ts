@@ -9,7 +9,7 @@
  */
 import { isShellShortcut, type RailShortcutEvent } from "./shell-rail";
 
-/** ⌘K (Meta+K) or Ctrl+K, the search shortcut — `isRailShortcut`'s own predicate, keyed on K. */
+/** ⌘K (Meta+K) or Ctrl+K, the search shortcut — the shell's shared predicate, keyed on K. */
 export function isSearchShortcut(event: RailShortcutEvent): boolean {
   return isShellShortcut(event, "k");
 }

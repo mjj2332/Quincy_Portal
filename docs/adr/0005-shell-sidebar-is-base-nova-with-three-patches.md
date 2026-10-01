@@ -38,7 +38,7 @@ registry JSON fetched the same day, kept intact apart from exactly three BEHAVIO
    apart is rewritten to the unconditional class the branch that renders it needs — a Tailwind
    responsive variant is itself a second, CSS-owned breakpoint, which
    `styles/shell-breakpoint.guard.test.ts` forbids anywhere in the shell.
-3. **⌘B through `isRailShortcut`.** The vendor's own `SIDEBAR_KEYBOARD_SHORTCUT` handler is
+3. **⌘B through `isRailShortcut`.** *(Retired — amended by ADR 0015: the rail is icon-only, so there is no collapse, no ⌘B and no stored preference.)* The vendor's own `SIDEBAR_KEYBOARD_SHORTCUT` handler is
    replaced by `lib/shell-rail.ts`'s `isRailShortcut` — Ctrl/Cmd+B, no Alt/Shift, no repeat/IME/
    already-handled, never inside an editable target (Tiptap binds Mod-B to bold) — and the effect is
    a no-op while `isMobile`.

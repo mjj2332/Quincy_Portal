@@ -22,7 +22,7 @@ rail. This ADR records the reversal where the next reader of the token comment w
 1. **The shell is unconditional.** `lib/app-router.tsx` always mounts `RailedShell`; the `app--railed`
    class is applied without a condition; `lib/feature-flags.ts` is gone. There is no flag to turn the
    Topbar back on because there is no Topbar.
-2. **One notification bell, two anchors.** `quincy/NotificationBell.tsx` is the only bell. It anchors
+2. **One notification bell, two anchors.** *(Amended by ADR 0015: wide, the bell sits at the rail's bottom, so its panel aligns to the bell's bottom edge and grows upward.)* `quincy/NotificationBell.tsx` is the only bell. It anchors
    its panel to the chrome surface that hosts it, not to its own trigger: beside the rail
    (`side="right"`, 8px out, top aligned to the trigger, 420px wide) or flush under the narrow header
    (`side="bottom"`, spanning the header's width). `reui/popover.tsx` forwards `anchor` and

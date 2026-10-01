@@ -122,36 +122,22 @@ describe("the staff navigation model", () => {
     });
   });
 
-  describe("the Dashboard group opens on a Dashboard route and closes off it", () => {
+  describe("the model carries no expanded-group state (#426, ADR 0015)", () => {
+    // The rail is icon-only and renders no child links, so the `expandedItemId` field that only the
+    // expanded rail read is gone. `children` stays: the breadcrumb derives the active view from it.
     it.each([
       ["a bare dashboard", bareDashboard],
       ["an explicit view", { kind: "dashboard", dashboardView: "list" } as StaffRoute],
-    ])("opens on %s", (_label, route) => {
-      expect(buildStaffNavigation(route, "kanban", all).expandedItemId).toBe("dashboard");
-    });
-
-    it.each([
       ["admin", { kind: "admin" } as StaffRoute],
       ["a project", { kind: "project", projectId } as StaffRoute],
-      ["notifications", { kind: "notifications" } as StaffRoute],
-      ["notification-preferences", { kind: "notification-preferences" } as StaffRoute],
       ["not-found", { kind: "not-found" } as StaffRoute],
-    ])("closes on %s", (_label, route) => {
-      expect(buildStaffNavigation(route, "kanban", all).expandedItemId).toBeNull();
+    ])("has no expandedItemId on %s", (_label, route) => {
+      expect("expandedItemId" in buildStaffNavigation(route, "kanban", all)).toBe(false);
     });
 
-    it("never leaves the active child hidden inside a closed group", () => {
-      // The invariant that makes "no toggle, no persistence" safe: if any child is active, the group
-      // holding it is open.
-      const routes: StaffRoute[] = [bareDashboard, { kind: "dashboard", dashboardView: "list" }, { kind: "admin" }, { kind: "project", projectId }];
-      for (const route of routes) {
-        const navigation = buildStaffNavigation(route, "kanban", all);
-        for (const group of navigation.groups) {
-          for (const item of group.items) {
-            if (item.children?.some((child) => child.active)) expect(navigation.expandedItemId).toBe(item.id);
-          }
-        }
-      }
+    it("still models the Dashboard views as children for the breadcrumb", () => {
+      const dashboard = items(bareDashboard).find((item) => item.id === "dashboard");
+      expect(dashboard?.children?.length).toBeGreaterThan(0);
     });
   });
 
@@ -257,10 +243,6 @@ describe("the Notice board item (#334)", () => {
     expect(noticeItem(notices)?.children).toBeUndefined();
     expect(noticeItem(bareDashboard)?.active).toBe(false);
     expect(items(notices).find((item) => item.id === "dashboard")?.active).toBe(false);
-  });
-
-  it("leaves the Dashboard group collapsed on /notices", () => {
-    expect(buildStaffNavigation(notices, "kanban", all).expandedItemId).toBeNull();
   });
 
   it("reads Home › Notice board(null) as the breadcrumb", () => {

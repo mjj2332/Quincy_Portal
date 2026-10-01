@@ -72,11 +72,10 @@ async function render(value: ReactNode) {
 }
 
 /**
- * #122: `reui/sidebar.tsx`'s primitives throw outside a `SidebarProvider`. `open` is wired to
- * `variant` rather than left uncontrolled, because `SidebarMenuButton`'s own tooltip visibility
- * (`hidden={state !== "collapsed" || isMobile}`) reads the SAME context this provider owns — a
- * `variant="collapsed"` render needs `open={false}` (state "collapsed") for its tooltip test to
- * mean anything, the same way `RailedShell` derives the provider's `open` from its own `mode`.
+ * #122: `reui/sidebar.tsx`'s primitives throw outside a `SidebarProvider`. `open={false}` always,
+ * the same way `RailedShell` pins it (#426, ADR 0015): `SidebarMenuButton`'s own tooltip
+ * visibility (`hidden={state !== "collapsed" || isMobile}`) reads the SAME context this provider
+ * owns, and the rail has no expanded state to render.
  * `isMobile` is stubbed false in `beforeEach` (below) for every test in this file; the narrow
  * boundary itself is `reui/sidebar.dom.test.tsx`'s and `App-navigation-rail-shell.dom.test.tsx`'s.
  */
@@ -84,9 +83,9 @@ async function renderInProvider(
   navigation: StaffNavigation,
   options: { user?: { name?: string | null; email?: string | null }; variant?: NavigationRailVariant; showBell?: boolean } = {},
 ) {
-  const { user = USER, variant = "expanded", showBell } = options;
+  const { user = USER, variant = "rail", showBell } = options;
   await render(
-    <SidebarProvider open={variant !== "collapsed"} onOpenChange={() => {}}>
+    <SidebarProvider open={false}>
       <TooltipProvider delay={0}>
         <NavigationRail navigation={navigation} user={user} variant={variant} showBell={showBell} />
       </TooltipProvider>
@@ -104,7 +103,7 @@ async function renderInProvider(
 async function renderInSheet(navigation: StaffNavigation, options: { user?: { name?: string | null; email?: string | null } } = {}) {
   const { user = USER } = options;
   await render(
-    <SidebarProvider open={false} onOpenChange={() => {}}>
+    <SidebarProvider open={false}>
       <TooltipProvider delay={0}>
         <Sheet open onOpenChange={() => {}}>
           <RailSheet>
@@ -191,15 +190,22 @@ const linkTexts = (name: string) => testids(name).map((element) => element.textC
 const accessibleName = (element: Element) => element.getAttribute("aria-label") ?? element.textContent?.trim();
 
 describe("NavigationRail", () => {
-  it("renders the model's items and children in the model's order, as real anchors", async () => {
-    await renderInProvider(navigationFor("/"));
+  const CHILD_LINK = "navigation-rail-child-link";
+
+  it("renders the model's items in the model's order, as real anchors, and no Dashboard view children (#426, ADR 0015)", async () => {
+    const navigation = navigationFor("/");
+    // The model still carries the four Dashboard views (the breadcrumb reads them) — the rail just
+    // does not draw them.
+    expect(navigation.groups[0]!.items[0]!.children?.map((child) => child.label)).toEqual(["List", "Kanban", "Gantt", "Calendar"]);
+    await renderInProvider(navigation);
 
     expect(linkTexts("navigation-rail-link")).toEqual(["Dashboard", "Notice board", "Admin"]);
-    expect(linkTexts("navigation-rail-child-link")).toEqual(["List", "Kanban", "Gantt", "Calendar"]);
+    expect(testids(CHILD_LINK)).toEqual([]);
+    for (const view of ["List", "Kanban", "Gantt", "Calendar"]) expect(host.textContent).not.toContain(view);
 
     // Every destination is an anchor with a real href — the rail cannot navigate through
     // `useNavigate`, which the read-only history makes a no-op.
-    for (const link of [...testids("navigation-rail-link"), ...testids("navigation-rail-child-link")]) {
+    for (const link of testids("navigation-rail-link")) {
       expect(link.tagName).toBe("A");
       expect(link.getAttribute("href")).toBeTruthy();
     }
@@ -209,26 +215,10 @@ describe("NavigationRail", () => {
     const navigation = navigationFor("/");
     await renderInProvider(navigation);
 
-    // One query for both hooks, so the result is in DOCUMENT order — a child sits inside its
-    // parent's item, so concatenating the two hooks separately would compare the wrong sequence.
-    const rendered = [
-      ...host.querySelectorAll(
-        '[data-testid="navigation-rail-link"], [data-testid="navigation-rail-child-link"]',
-      ),
-    ].map((element) => element.getAttribute("href"));
-    const modelled = navigation.groups
-      .flatMap((group) => group.items)
-      .flatMap((item) => [item.href, ...(item.children ?? []).map((child) => child.href)]);
+    const rendered = testids("navigation-rail-link").map((element) => element.getAttribute("href"));
+    const modelled = navigation.groups.flatMap((group) => group.items).map((item) => item.href);
 
     expect(rendered).toEqual(modelled);
-  });
-
-  it("links Calendar at the bare intent URL", async () => {
-    await renderInProvider(navigationFor("/"));
-    const calendar = testids("navigation-rail-child-link").find(
-      (element) => element.textContent?.trim() === "Calendar",
-    );
-    expect(calendar?.getAttribute("href")).toBe("/?view=calendar");
   });
 
   it("marks the active item with a present data-active, the boolean-presence form the primitive's paint selects on", async () => {
@@ -236,27 +226,25 @@ describe("NavigationRail", () => {
     // which renders a boolean as a VALUELESS attribute (`data-active=""`) rather than the string
     // `"true"`/`"false"` #111's trimmed primitive used to write explicitly — and its paint
     // (`data-active:bg-sidebar-accent`, a Tailwind boolean-presence variant) is written to match.
-    await renderInProvider(navigationFor("/?view=list"));
+    await renderInProvider(navigationFor("/"));
 
-    const active = testids("navigation-rail-child-link").filter((element) => element.hasAttribute("data-active"));
-    expect(active.map((element) => element.textContent?.trim())).toEqual(["List"]);
+    const active = testids("navigation-rail-link").filter((element) => element.hasAttribute("data-active"));
+    expect(active.map((element) => element.textContent?.trim())).toEqual(["Dashboard"]);
 
-    const kanban = testids("navigation-rail-child-link").find(
-      (element) => element.textContent?.trim() === "Kanban",
-    );
-    expect(kanban?.hasAttribute("data-active")).toBe(false);
+    const notices = testids("navigation-rail-link").find((element) => element.textContent?.trim() === "Notice board");
+    expect(notices?.hasAttribute("data-active")).toBe(false);
   });
 
-  it("renders no children when the model closes the group", async () => {
-    const navigation = navigationFor("/admin");
-    expect(navigation.expandedItemId).toBeNull();
-    await renderInProvider(navigation);
-    expect(testids("navigation-rail-child-link")).toEqual([]);
+  it("renders no child links on any route, even one where the model marks a view active", async () => {
+    for (const location of ["/", "/?view=list", "/admin"]) {
+      await renderInProvider(navigationFor(location));
+      expect(testids(CHILD_LINK), location).toEqual([]);
+    }
   });
 
   it("gives every item an icon", async () => {
     await renderInProvider(navigationFor("/"));
-    for (const link of [...testids("navigation-rail-link"), ...testids("navigation-rail-child-link")]) {
+    for (const link of testids("navigation-rail-link")) {
       const icon = link.querySelector("svg");
       expect(icon).not.toBeNull();
       // The label is the accessible name; an announced icon would double it.
@@ -286,17 +274,14 @@ describe("NavigationRail", () => {
     const current = [
       ...host.querySelectorAll('[aria-current="page"]'),
     ].map((element) => element.textContent?.trim());
-    expect(current).toEqual(["Kanban"]);
+    // With no child links, the Dashboard item itself is the current page on every Dashboard view.
+    expect(current).toEqual(["Dashboard"]);
 
     // And it is not left on everything.
-    const all = [...testids("navigation-rail-link"), ...testids("navigation-rail-child-link")];
-    expect(all.filter((element) => element.hasAttribute("aria-current"))).toHaveLength(1);
+    expect(testids("navigation-rail-link").filter((element) => element.hasAttribute("aria-current"))).toHaveLength(1);
   });
 
-  it("gives a parent aria-current only when it is itself the destination", async () => {
-    // The parent Dashboard item is active on every Dashboard route, but while its children show,
-    // the active CHILD is the current page and the parent is only its ancestor. Two elements
-    // claiming `aria-current="page"` is a defect, and it is what the first implementation did.
+  it("gives only the destination aria-current, never its ancestor", async () => {
     await renderInProvider(navigationFor("/admin"));
     const current = [
       ...host.querySelectorAll('[aria-current="page"]'),
@@ -310,14 +295,16 @@ describe("NavigationRail", () => {
     expect(link.getAttribute("aria-current")).toBe("page");
     expect(link.hasAttribute("data-active")).toBe(true);
     expect(link.getAttribute("href")).toBe("/notices");
-    expect(testids("navigation-rail-child-link")).toHaveLength(0);
+    expect(testids(CHILD_LINK)).toHaveLength(0);
     expect([...host.querySelectorAll('[aria-current="page"]')]).toHaveLength(1);
   });
 
-  it("renders the wordmark and the identity", async () => {
+  it("renders the logo mark and the identity", async () => {
     await renderInProvider(navigationFor("/"));
     expect(testids("navigation-rail-brand")[0]?.getAttribute("href")).toBe("/");
-    expect(testids("navigation-rail-identity")[0]?.textContent).toContain("Terry Lee");
+    // The rail shows the avatar's initials; the full name is the trigger's accessible name.
+    expect(testids("navigation-rail-identity")[0]?.textContent).toContain(initials(USER.name));
+    expect(accountTrigger()?.getAttribute("aria-label")).toContain("Terry Lee");
   });
 
   it("keeps Sign out behind the account menu rather than on the rail", async () => {
@@ -364,17 +351,16 @@ describe("NavigationRail", () => {
   });
 
   // -------------------------------------------------------------------------
-  // AC4 — a fourth Dashboard child costs nothing here
+  // The rail draws no Dashboard children, however many the model holds
   // -------------------------------------------------------------------------
 
-  it("renders a fourth Dashboard child with no change to this component", async () => {
-    // The point of the model holding children as a LIST. This appends a synthetic "Timeline" to the
-    // REAL model's output — not to a fixture — and asserts the rail renders four children in order
-    // with its own source untouched. If the rail ever hard-codes List/Kanban/Calendar, this fails.
+  it("draws no child link even when the model gains a fourth Dashboard child", async () => {
+    // The model's `children` is a LIST the breadcrumb still reads; the rail ignores it. This
+    // appends a synthetic "Timeline" to the REAL model's output and asserts nothing about it
+    // reaches the rail. (Before #426 this proved the rail rendered a fifth child with no change.)
     const real = navigationFor("/");
     const group = real.groups[0]!;
     const dashboard = group.items[0]!;
-
     const widened: StaffNavigation = {
       ...real,
       groups: [
@@ -385,13 +371,7 @@ describe("NavigationRail", () => {
               ...dashboard,
               children: [
                 ...(dashboard.children ?? []),
-                {
-                  id: "dashboard-timeline",
-                  label: "Timeline",
-                  href: "/?view=timeline",
-                  icon: "calendar",
-                  active: false,
-                },
+                { id: "dashboard-timeline", label: "Timeline", href: "/?view=timeline", icon: "calendar", active: false },
               ],
             },
             ...group.items.slice(1),
@@ -402,27 +382,9 @@ describe("NavigationRail", () => {
 
     await renderInProvider(widened);
 
-    expect(linkTexts("navigation-rail-child-link")).toEqual([
-      "List",
-      "Kanban",
-      "Gantt",
-      "Calendar",
-      "Timeline",
-    ]);
-    expect(
-      testids("navigation-rail-child-link")[4]?.getAttribute("href"),
-    ).toBe("/?view=timeline");
-  });
-
-  it("omits Calendar entirely when the model omits it", async () => {
-    const navigation = buildStaffNavigation(parseStaffLocation("/"), "kanban", {
-      adminBackend: true,
-      viewProductionCalendar: false,
-      viewNoticeBoard: true,
-    });
-    await renderInProvider(navigation);
-    expect(linkTexts("navigation-rail-child-link")).toEqual(["List", "Kanban"]);
-    expect(host.textContent).not.toContain("Calendar");
+    expect(testids(CHILD_LINK)).toEqual([]);
+    expect(host.textContent).not.toContain("Timeline");
+    expect(linkTexts("navigation-rail-link")).toEqual(["Dashboard", "Notice board", "Admin"]);
   });
 });
 
@@ -430,226 +392,196 @@ describe("NavigationRail", () => {
 // #112/#122 — variants, the collapsed rail's menu and tooltips, and the sheet's touch targets
 // -----------------------------------------------------------------------------
 
-describe("NavigationRail variant — expanded (unchanged)", () => {
-  it("shows visible labels, by default", async () => {
+/** The rail's own landmark and controls, found by their Quincy test ids / accessible names. */
+function bellTrigger() { return host.querySelector<HTMLElement>('[data-testid="rail-notification-trigger"]'); }
+function settingsLink() { return host.querySelector<HTMLAnchorElement>('[data-testid="navigation-rail-settings"]'); }
+function accountTrigger() { return host.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]'); }
+function follows(a: Element, b: Element) { return Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING); }
+
+describe("NavigationRail variant — rail (the always-icon column, #426)", () => {
+  it("orders the column logo, search, nav, then bell, settings and the account avatar at the foot", async () => {
     await renderInProvider(navigationFor("/"));
-    const dashboard = testids("navigation-rail-link").find((el) => el.textContent?.trim() === "Dashboard")!;
-    expect(accessibleName(dashboard)).toBe("Dashboard");
+    const logo = testids("navigation-rail-brand")[0]!;
+    const search = host.querySelector('[data-testid="shell-search-trigger"]')!;
+    const nav = host.querySelector("nav")!;
+    const bell = bellTrigger()!;
+    const settings = settingsLink()!;
+    const account = accountTrigger()!;
+    for (const [label, element] of Object.entries({ logo, search, nav, bell, settings, account })) {
+      expect(element, label).not.toBeNull();
+    }
+
+    expect(follows(logo, search)).toBe(true);
+    expect(follows(search, nav)).toBe(true);
+    expect(follows(nav, bell)).toBe(true);
+    expect(follows(bell, settings)).toBe(true);
+    expect(follows(settings, account)).toBe(true);
+    // The three foot controls live outside the navigation landmark, not in it.
+    for (const foot of [bell, settings, account]) expect(nav.contains(foot)).toBe(false);
   });
 
-  it("does not expose a menu seam on its parent link — its children are always inline here", async () => {
+  it("keeps every nav icon's accessible name though its label is visually hidden", async () => {
     await renderInProvider(navigationFor("/"));
-    const dashboard = testids("navigation-rail-link").find((el) => el.textContent?.trim() === "Dashboard")!;
-    expect(dashboard.hasAttribute("aria-haspopup")).toBe(false);
-  });
-
-  it("carries a rail-toggle with aria-expanded=\"true\" in its own header (#122)", async () => {
-    await renderInProvider(navigationFor("/"));
-    const toggle = host.querySelector('[data-testid="rail-toggle"]');
-    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
-  });
-
-  it("carries the bell in its own header, not a separate shell header", async () => {
-    await renderInProvider(navigationFor("/"));
-    expect(host.querySelector('[data-testid="rail-notifications"]')).not.toBeNull();
-  });
-});
-
-describe("NavigationRail variant — collapsed", () => {
-  it("keeps every icon link's accessible name even though the label is visually hidden", async () => {
-    await renderInProvider(navigationFor("/"), { variant: "collapsed" });
-    // Visually hidden text is still the link's accessible name — it is in the DOM, only hidden by
-    // CSS a happy-dom assertion cannot see, so this asserts the name itself rather than the class
-    // that hides it.
+    // The label text is in the DOM (the accessible name) but carries the screen-reader-only utility.
     expect(linkTexts("navigation-rail-link")).toEqual(["Dashboard", "Notice board", "Admin"]);
+    for (const link of testids("navigation-rail-link")) {
+      expect(link.querySelector("span")?.classList.contains("sr-only"), accessibleName(link)).toBe(true);
+    }
     const dashboard = testids("navigation-rail-link").find((el) => el.textContent?.trim() === "Dashboard")!;
     expect(accessibleName(dashboard)).toBe("Dashboard");
   });
 
   it("shows the account trigger's initials only, dropping the name/email and the chevron", async () => {
-    await renderInProvider(navigationFor("/"), { variant: "collapsed" });
+    await renderInProvider(navigationFor("/"));
     const identity = host.querySelector('[data-testid="navigation-rail-identity"]') as HTMLElement;
     expect(identity.textContent?.trim()).toBe(initials(USER.name));
     expect(identity.querySelector("svg")).toBeNull();
   });
 
-  it("carries a rail-toggle with aria-expanded=\"false\"", async () => {
-    await renderInProvider(navigationFor("/"), { variant: "collapsed" });
-    const toggle = host.querySelector('[data-testid="rail-toggle"]');
-    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+  it("has no collapse control — no rail-toggle and no expand/collapse button", async () => {
+    await renderInProvider(navigationFor("/"));
+    expect(host.querySelector('[data-testid="rail-toggle"]')).toBeNull();
+    expect(host.querySelector('[aria-label="Collapse navigation"], [aria-label="Expand navigation"]')).toBeNull();
   });
 
-  it("leaves Admin — an item with no children — a plain link, never a menu trigger", async () => {
-    await renderInProvider(navigationFor("/admin"), { variant: "collapsed" });
-    const admin = testids("navigation-rail-link").find((el) => el.textContent?.trim() === "Admin")!;
-    expect(admin.tagName).toBe("A");
-    expect(admin.getAttribute("href")).toBeTruthy();
-    expect(admin.hasAttribute("aria-haspopup")).toBe(false);
+  it("exposes no menu seam on a nav link — every item is a plain link", async () => {
+    await renderInProvider(navigationFor("/"));
+    for (const link of testids("navigation-rail-link")) {
+      expect(link.tagName).toBe("A");
+      expect(link.hasAttribute("aria-haspopup")).toBe(false);
+    }
   });
 
-  describe("the Dashboard children, as a click-opened menu (#122)", () => {
-    it("is closed until the item is clicked", async () => {
-      await renderInProvider(navigationFor("/?view=kanban"), { variant: "collapsed" });
-      expect(document.querySelector('[role="menu"]')).toBeNull();
-      expect(testids("navigation-rail-child-link")).toEqual([]);
-    });
+  it("carries the bell at the foot of the rail, not a separate shell header", async () => {
+    await renderInProvider(navigationFor("/"));
+    expect(host.querySelector('[data-testid="rail-notifications"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="navigation-rail-footer"]')?.contains(bellTrigger())).toBe(true);
+  });
 
-    it("opens a role=menu with the children in model order, on click", async () => {
-      await renderInProvider(navigationFor("/?view=kanban"), { variant: "collapsed" });
-      const dashboard = testids("navigation-rail-link").find((el) => el.textContent?.trim() === "Dashboard")!;
+  it("gates Admin on the capability the model carries", async () => {
+    const withoutAdmin = buildStaffNavigation(parseStaffLocation("/"), "kanban", { ...FULL_CAPABILITIES, adminBackend: false });
+    await renderInProvider(withoutAdmin);
+    expect(linkTexts("navigation-rail-link")).toEqual(["Dashboard", "Notice board"]);
+    expect(host.textContent).not.toContain("Admin");
 
-      await click(dashboard);
+    const withoutNotices = buildStaffNavigation(parseStaffLocation("/"), "kanban", { ...FULL_CAPABILITIES, viewNoticeBoard: false });
+    await renderInProvider(withoutNotices);
+    expect(linkTexts("navigation-rail-link")).toEqual(["Dashboard", "Admin"]);
+  });
+});
 
-      expect(document.querySelector('[role="menu"]')).not.toBeNull();
-      expect(
-        [...document.querySelectorAll('[data-testid="navigation-rail-child-link"]')].map(
-          (el) => el.textContent?.trim(),
-        ),
-      ).toEqual(["List", "Kanban", "Gantt", "Calendar"]);
-    });
+describe("the settings icon (#426)", () => {
+  it("is a real link to Notification preferences, named for screen readers", async () => {
+    await renderInProvider(navigationFor("/"));
+    const settings = settingsLink()!;
+    expect(settings.tagName).toBe("A");
+    expect(settings.getAttribute("href")).toBe("/settings/notifications/preferences");
+    expect(settings.getAttribute("aria-label")).toBe("Notification preferences");
+    expect(settings.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+  });
 
-    it("gives the active child aria-current=\"page\" inside the open menu", async () => {
-      await renderInProvider(navigationFor("/?view=kanban"), { variant: "collapsed" });
-      const dashboard = testids("navigation-rail-link").find((el) => el.textContent?.trim() === "Dashboard")!;
-      await click(dashboard);
+  it("navigates to Notification preferences when clicked", async () => {
+    window.history.replaceState(null, "", "/");
+    await renderInProvider(navigationFor("/"));
+    await click(settingsLink()!);
+    expect(window.location.pathname).toBe("/settings/notifications/preferences");
+  });
 
-      const current = [...document.querySelectorAll('[aria-current="page"]')].map((el) => el.textContent?.trim());
-      expect(current).toEqual(["Kanban"]);
-    });
+  it("carries aria-current and data-active only on the preferences route", async () => {
+    await renderInProvider(navigationFor("/settings/notifications/preferences"));
+    expect(settingsLink()!.getAttribute("aria-current")).toBe("page");
+    expect(settingsLink()!.hasAttribute("data-active")).toBe(true);
+    // No nav icon claims the page: preferences is not a nav destination.
+    expect(testids("navigation-rail-link").some((link) => link.hasAttribute("aria-current"))).toBe(false);
 
-    it("gives the active child a present data-active, and no attribute at all on the inactive ones (#122 Sol review)", async () => {
-      // `MenuPrimitive.LinkItem` has no active concept of its own — `NavigationRail` writes
-      // `data-active` by hand, and must write it the same way base-nova's own primitive does:
-      // present (`""`) when active, ABSENT (not `"false"`) otherwise. Tailwind's `data-active:`
-      // variant matches on presence alone, so a literal `"false"` string would still match it.
-      await renderInProvider(navigationFor("/?view=kanban"), { variant: "collapsed" });
-      const dashboard = testids("navigation-rail-link").find((el) => el.textContent?.trim() === "Dashboard")!;
-      await click(dashboard);
+    for (const location of ["/", "/settings/notifications", "/admin"]) {
+      await renderInProvider(navigationFor(location));
+      expect(settingsLink()!.hasAttribute("aria-current"), location).toBe(false);
+      expect(settingsLink()!.hasAttribute("data-active"), location).toBe(false);
+    }
+  });
 
-      const kanban = [...document.querySelectorAll('[data-testid="navigation-rail-child-link"]')].find(
-        (el) => el.textContent?.trim() === "Kanban",
-      )!;
-      const list = [...document.querySelectorAll('[data-testid="navigation-rail-child-link"]')].find(
-        (el) => el.textContent?.trim() === "List",
-      )!;
-
-      expect(kanban.hasAttribute("data-active")).toBe(true);
-      expect(list.hasAttribute("data-active")).toBe(false);
-    });
-
-    it("Escape closes the menu and returns focus to the Dashboard trigger", async () => {
-      await renderInProvider(navigationFor("/?view=kanban"), { variant: "collapsed" });
-      const dashboard = testids("navigation-rail-link").find((el) => el.textContent?.trim() === "Dashboard")!;
-      await click(dashboard);
-      expect(document.querySelector('[role="menu"]')).not.toBeNull();
-
-      await act(async () => {
-        document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
-        await Promise.resolve();
-      });
-      await waitFor(() => expect(document.querySelector('[role="menu"]')).toBeNull());
-
-      expect(document.activeElement).toBe(dashboard);
-    });
-
-    it("activating a child changes the location and closes the menu", async () => {
-      window.history.replaceState(null, "", "/?view=kanban");
-      await renderInProvider(navigationFor("/?view=kanban"), { variant: "collapsed" });
-      const dashboard = testids("navigation-rail-link").find((el) => el.textContent?.trim() === "Dashboard")!;
-      await click(dashboard);
-
-      const listLink = [...document.querySelectorAll('[data-testid="navigation-rail-child-link"]')].find(
-        (el) => el.textContent?.trim() === "List",
-      )!;
-      await click(listLink);
-
-      expect(window.location.search).toBe("?view=list");
-      await waitFor(() => expect(document.querySelector('[role="menu"]')).toBeNull());
-    });
+  it("is absent from the Sheet, which keeps a labelled preferences row in its account menu instead", async () => {
+    await renderInProvider(navigationFor("/"), { variant: "sheet" });
+    expect(settingsLink()).toBeNull();
   });
 });
 
 describe("NavigationRail variant — sheet", () => {
   it("shows visible labels", async () => {
-    const navigation = navigationFor("/?view=kanban");
-    await renderInProvider(navigation, { variant: "sheet" });
+    await renderInProvider(navigationFor("/"), { variant: "sheet" });
     expect(linkTexts("navigation-rail-link")).toEqual(["Dashboard", "Notice board", "Admin"]);
     const dashboard = testids("navigation-rail-link").find((el) => el.textContent?.trim() === "Dashboard")!;
     expect(accessibleName(dashboard)).toBe("Dashboard");
+    expect(dashboard.querySelector("span")?.classList.contains("sr-only")).toBe(false);
   });
 
-  it("gives every link, sub-link, account trigger, bell trigger and the brand/home link the 44px touch-target seam", async () => {
+  it("gives every link, account trigger and the brand/home link the 44px touch-target seam", async () => {
     await renderInProvider(navigationFor("/?view=kanban"), { variant: "sheet" });
 
-    for (const link of [...testids("navigation-rail-link"), ...testids("navigation-rail-child-link")]) {
+    for (const link of testids("navigation-rail-link")) {
       expect(link.getAttribute("data-touch-target")).toBe("true");
     }
-    // #122 P3: the seam moved from the identity span onto the trigger it sits inside
-    // (`navigation-rail-account`, the real `SidebarMenuButton` now that `triggerRender` makes it
-    // the menu's own trigger) — the identity span is no longer the touch target's proxy.
+    // #122 P3: the seam sits on the trigger itself (`navigation-rail-account`, the real
+    // `SidebarMenuButton` now that `triggerRender` makes it the menu's own trigger).
     expect(host.querySelector('[data-testid="navigation-rail-account"]')?.getAttribute("data-touch-target")).toBe("true");
     expect(host.querySelector('[data-testid="navigation-rail-brand"]')?.getAttribute("data-touch-target")).toBe("true");
     expect(document.querySelector('[data-touch-target="true"] svg')).not.toBeNull();
   });
 
-  it("shows the flyout's parent-model behaviour inline, not as a menu", async () => {
+  it("draws no Dashboard view children here either", async () => {
     await renderInProvider(navigationFor("/?view=kanban"), { variant: "sheet" });
-    // Children are already showing — the model's `expandedItemId`, exactly like `expanded` — with
-    // no click or hover needed, unlike `collapsed`.
-    expect(linkTexts("navigation-rail-child-link")).toEqual(["List", "Kanban", "Gantt", "Calendar"]);
+    expect(testids("navigation-rail-child-link")).toEqual([]);
   });
 
-  it("does not expose a menu seam on its parent link — its children are always inline here", async () => {
+  it("does not expose a menu seam on its parent link", async () => {
     await renderInProvider(navigationFor("/?view=kanban"), { variant: "sheet" });
     const dashboard = testids("navigation-rail-link").find((el) => el.textContent?.trim() === "Dashboard")!;
     expect(dashboard.hasAttribute("aria-haspopup")).toBe(false);
   });
 
-  it("carries no rail-toggle — the Sheet's own trigger owns collapse while narrow", async () => {
-    await renderInProvider(navigationFor("/"), { variant: "sheet" });
+  it("carries no rail-toggle and no bell — the Sheet's own trigger and the header's bell own those while narrow", async () => {
+    await renderInProvider(navigationFor("/"), { variant: "sheet", showBell: false });
     expect(host.querySelector('[data-testid="rail-toggle"]')).toBeNull();
+    expect(host.querySelector('[data-testid="rail-notifications"]')).toBeNull();
+  });
+
+  it("keeps the labelled Notification preferences row inside its account menu", async () => {
+    await renderInProvider(navigationFor("/"), { variant: "sheet" });
+    await click(accountTrigger()!);
+    const preferences = document.querySelector('[data-testid="navigation-rail-preferences"]');
+    expect(preferences?.textContent?.trim()).toBe("Notification preferences");
+    expect(preferences?.getAttribute("href")).toBe("/settings/notifications/preferences");
   });
 });
 
-describe("collapsed rail tooltips (#122)", () => {
-  it("shows the item's label as a tooltip on hover while collapsed", async () => {
-    await renderInProvider(navigationFor("/"), { variant: "collapsed" });
-    const dashboard = testids("navigation-rail-link").find((el) => el.textContent?.trim() === "Dashboard")!;
-
-    expect(document.querySelector('[data-testid^="rail-tooltip-"]')).toBeNull();
-
+describe("rail tooltips (#122, #426)", () => {
+  async function hover(element: Element) {
     await act(async () => {
-      dashboard.dispatchEvent(new PointerEvent("pointerenter", { bubbles: true, pointerType: "mouse" }));
-      dashboard.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
-      dashboard.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerType: "mouse" }));
+      element.dispatchEvent(new PointerEvent("pointerenter", { bubbles: true, pointerType: "mouse" }));
+      element.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+      element.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerType: "mouse" }));
       await Promise.resolve();
     });
+  }
+
+  it.each([
+    ["Dashboard", () => testids("navigation-rail-link").find((el) => el.textContent?.trim() === "Dashboard")!],
+    ["Notice board", () => testids("navigation-rail-link").find((el) => el.textContent?.trim() === "Notice board")!],
+    ["Admin", () => testids("navigation-rail-link").find((el) => el.textContent?.trim() === "Admin")!],
+    ["Notification preferences", () => settingsLink()!],
+    ["Terry Lee", () => accountTrigger()!],
+  ])("shows %s as a tooltip on hover", async (label, find) => {
+    await renderInProvider(navigationFor("/"));
+    expect(document.querySelector('[data-testid^="rail-tooltip-"]')).toBeNull();
+
+    await hover(find());
 
     await waitFor(() => {
       const tooltip = document.querySelector('[data-testid^="rail-tooltip-"]');
       expect(tooltip).not.toBeNull();
-      expect(tooltip?.textContent).toBe("Dashboard");
+      expect(tooltip?.textContent).toBe(label);
     });
-  });
-
-  it("does not show a tooltip while expanded — the label is already visible", async () => {
-    // `SidebarMenuButton`'s own `tooltip` prop (`reui/sidebar.tsx`) renders the content with a
-    // `hidden` attribute rather than omitting it while `state !== "collapsed"` — so this asserts
-    // `hidden`, not absence from the document.
-    await renderInProvider(navigationFor("/"), { variant: "expanded" });
-    const dashboard = testids("navigation-rail-link").find((el) => el.textContent?.trim() === "Dashboard")!;
-
-    await act(async () => {
-      dashboard.dispatchEvent(new PointerEvent("pointerenter", { bubbles: true, pointerType: "mouse" }));
-      dashboard.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
-      dashboard.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerType: "mouse" }));
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    const tooltip = document.querySelector('[data-testid^="rail-tooltip-"]');
-    expect(tooltip, "the primitive renders the tooltip content hidden, not absent").not.toBeNull();
-    expect(tooltip?.hasAttribute("hidden")).toBe(true);
   });
 });
 
@@ -741,10 +673,9 @@ describe("the account menu inside a modal Sheet — focus after Escape (#122 P3)
     expect(document.activeElement).not.toBe(document.querySelector('[data-testid="rail-sheet"]'));
   });
 
-  it("leaves the plain expanded rail's own Escape-returns-focus behaviour unchanged", async () => {
-    // No `container` (page-level) — `renderInProvider`'s existing collapsed-menu Escape test
-    // above already covers this path directly; this just confirms the account menu's own trigger
-    // does the same outside any Sheet.
+  it("leaves the plain wide rail's own Escape-returns-focus behaviour unchanged", async () => {
+    // No `container` (page-level): confirms the account menu's own trigger returns focus the same
+    // way outside any Sheet.
     await renderInProvider(navigationFor("/"));
     const trigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]')!;
     await click(trigger);
@@ -769,8 +700,8 @@ describe("the account menu's side, by variant (#122 P3)", () => {
     expect(document.querySelector('[role="menu"]')?.getAttribute("data-side")).toBe("top");
   });
 
-  it("opens to the right of the trigger while expanded, unchanged", async () => {
-    await renderInProvider(navigationFor("/"), { variant: "expanded" });
+  it("opens to the right of the trigger on the wide rail, unchanged", async () => {
+    await renderInProvider(navigationFor("/"), { variant: "rail" });
     const trigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]')!;
     await click(trigger);
     expect(document.querySelector('[role="menu"]')?.getAttribute("data-side")).toBe("right");
@@ -908,67 +839,84 @@ describe("the account menu's sign out", () => {
 // #122 P3 — the account panel's nav-workspace shape: preferences, a separator, then sign out
 // -----------------------------------------------------------------------------
 
-describe("the account menu panel — order and the preferences item", () => {
-  it("orders the panel as Account label, then preferences, then a separator, then sign out", async () => {
-    await renderInProvider(navigationFor("/"));
-    const trigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]')!;
-    await click(trigger);
+describe("the account menu panel (#426)", () => {
+  async function openAccountMenu(variant: NavigationRailVariant = "rail", location = "/") {
+    await renderInProvider(navigationFor(location), { variant });
+    await click(accountTrigger()!);
+    return document.querySelector('[role="menu"]')!;
+  }
 
-    const menu = document.querySelector('[role="menu"]')!;
+  it("holds the account's name and email, then a separator, then Sign out — and no preferences row on the rail", async () => {
+    const menu = await openAccountMenu();
+
     // The ARIA association Base UI's `Group`/`GroupLabel` actually build, not a raw tag scan:
-    // `role="group"` wraps the labelled content, and `aria-labelledby` points at the label's own
-    // id. The labelled element's accessible text leads with "Account" but also carries the name and
-    // email lines GroupLabel wraps alongside the eyebrow (`toContain`, not an exact match).
+    // `role="group"` wraps the labelled content, and `aria-labelledby` points at the label's own id.
     const group = menu.querySelector('[role="group"]')!;
-    const labelId = group.getAttribute("aria-labelledby")!;
-    const eyebrow = document.getElementById(labelId)!;
+    const label = document.getElementById(group.getAttribute("aria-labelledby")!)!;
+    expect(label, "the group's aria-labelledby must resolve to a real element").not.toBeNull();
+    expect(label.textContent).toContain("Account");
+    expect(label.textContent).toContain(USER.name);
+    expect(label.textContent).toContain(USER.email);
+
+    const separator = menu.querySelector('[role="separator"]')!;
+    const signOut = menu.querySelector('[data-testid="navigation-rail-signout"]')!;
+    expect(signOut.textContent?.trim()).toBe("Sign out");
+    // `compareDocumentPosition`, not a flattened text scan — the separator carries no text of its own.
+    expect(follows(group, separator)).toBe(true);
+    expect(follows(separator, signOut)).toBe(true);
+
+    // Settings is its own rail icon; the menu no longer carries a preferences row (ADR 0015).
+    expect(menu.querySelector('[data-testid="navigation-rail-preferences"]')).toBeNull();
+    expect(menu.textContent).not.toContain("Notification preferences");
+    expect([...menu.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent?.trim())).toEqual(["Sign out"]);
+  });
+
+  it("keeps Sign out ONLY inside the avatar menu — nowhere else in the rail, open or closed", async () => {
+    await renderInProvider(navigationFor("/"));
+    const everyRailControl = () => [...host.querySelectorAll("a, button")].map((element) => accessibleName(element) ?? "");
+    expect(everyRailControl().some((name) => /sign\s?out/i.test(name))).toBe(false);
+    expect(host.textContent).not.toMatch(/sign\s?out/i);
+
+    await click(accountTrigger()!);
+    // The panel portals to `document.body`; the rail itself still holds no second Sign out.
+    expect(document.querySelectorAll('[data-testid="navigation-rail-signout"]')).toHaveLength(1);
+    expect(host.textContent).not.toMatch(/sign\s?out/i);
+  });
+
+  it("dims the page behind the avatar menu with the account scrim, which the bell panel does not have", async () => {
+    await openAccountMenu();
+    expect(document.querySelectorAll('[data-testid="menu-backdrop"]')).toHaveLength(1);
+  });
+
+  it("orders the Sheet's panel as Account label, then the labelled preferences row, then a separator, then sign out", async () => {
+    const menu = await openAccountMenu("sheet");
+    const group = menu.querySelector('[role="group"]')!;
     const preferences = menu.querySelector('[data-testid="navigation-rail-preferences"]')!;
     const separator = menu.querySelector('[role="separator"]')!;
     const signOut = menu.querySelector('[data-testid="navigation-rail-signout"]')!;
-
-    expect(eyebrow, "the group's aria-labelledby must resolve to a real element").not.toBeNull();
-    expect(eyebrow.textContent).toContain("Account");
     expect(preferences.getAttribute("href")).toBe("/settings/notifications/preferences");
-    // `compareDocumentPosition`, not a flattened text scan — the separator carries no text of its
-    // own, and a structural check is what actually pins the four in document order.
-    expect(group.compareDocumentPosition(preferences) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(preferences.compareDocumentPosition(separator) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(separator.compareDocumentPosition(signOut) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(follows(group, preferences)).toBe(true);
+    expect(follows(preferences, separator)).toBe(true);
+    expect(follows(separator, signOut)).toBe(true);
   });
 
-  it("marks preferences current only on the notifications route", async () => {
-    await renderInProvider(navigationFor("/settings/notifications/preferences"));
-    const trigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]')!;
-    await click(trigger);
-
-    const preferences = document.querySelector('[data-testid="navigation-rail-preferences"]')!;
+  it("marks the Sheet's preferences row current only on the notifications preferences route", async () => {
+    const menu = await openAccountMenu("sheet", "/settings/notifications/preferences");
+    const preferences = menu.querySelector('[data-testid="navigation-rail-preferences"]')!;
     expect(preferences.hasAttribute("data-active")).toBe(true);
     expect(preferences.getAttribute("aria-current")).toBe("page");
   });
 
-  it("does not mark preferences current on the notifications LIST route, which shares its coarse section (#115)", async () => {
-    await renderInProvider(navigationFor("/settings/notifications"));
-    const trigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]')!;
-    await click(trigger);
-
-    const preferences = document.querySelector('[data-testid="navigation-rail-preferences"]')!;
-    expect(preferences.hasAttribute("data-active")).toBe(false);
-    expect(preferences.hasAttribute("aria-current")).toBe(false);
-  });
-
-  it("leaves preferences with neither attribute off the notifications route", async () => {
-    await renderInProvider(navigationFor("/"));
-    const trigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]')!;
-    await click(trigger);
-
-    const preferences = document.querySelector('[data-testid="navigation-rail-preferences"]')!;
+  it.each(["/settings/notifications", "/"])("does not mark the Sheet's preferences row current on %s (#115)", async (location) => {
+    const menu = await openAccountMenu("sheet", location);
+    const preferences = menu.querySelector('[data-testid="navigation-rail-preferences"]')!;
     expect(preferences.hasAttribute("data-active")).toBe(false);
     expect(preferences.hasAttribute("aria-current")).toBe(false);
   });
 
   it("Escape closes the menu and returns focus to the account trigger", async () => {
     await renderInProvider(navigationFor("/"));
-    const trigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]')!;
+    const trigger = accountTrigger()!;
     await click(trigger);
     expect(document.querySelector('[role="menu"]')).not.toBeNull();
 

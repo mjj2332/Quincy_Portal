@@ -43,7 +43,7 @@ import { isDashboardLayerLocation, isSheetLocation, locationStore, parseStaffLoc
 import { createDashboardBackdropSource, DashboardLocationContext, type DashboardBackdropSource } from "./dashboard-location";
 import { createStaffRouterHistory, parseStaffSearch, stringifyStaffSearch } from "./staff-history";
 import { useCapabilities } from "./capabilities";
-import { buildStaffNavigation, type StaffNavigation, type StaffNavigationItem } from "./staff-navigation";
+import { buildStaffNavigation, type StaffNavigation } from "./staff-navigation";
 import { DASHBOARD_VIEW_KEY, readRememberedDashboardView } from "../screens/dashboard-helpers";
 import { readDashboardView, subscribeDashboardView } from "./dashboard-view-store";
 import { getDashboardSearchSnapshotForPrincipal, subscribeDashboardSearch, syncDashboardSearchDraftFromLocation } from "./dashboard-search-store";
@@ -122,72 +122,37 @@ function NotAvailable() {
   );
 }
 
-/** `staff-navigation.ts`'s own Dashboard child ids, mapped back onto the view they mean — kept
- * here rather than exported from that module, since ids are its own implementation detail. */
-const DASHBOARD_CHILD_VIEW: Record<string, "list" | "kanban" | "calendar"> = {
-  "dashboard-list": "list",
-  "dashboard-kanban": "kanban",
-  "dashboard-calendar": "calendar",
-};
-
 /**
- * #217 fix round 3, item 1 (Sol's whole-branch review). `staff-navigation.ts` stays pure — no
- * search-store or route-serializer knowledge — so this is where the rail's Dashboard child hrefs
- * get the LIVE search grafted back on, after the pure model has already built them. Reads
- * `draft`, not `query`: the input already renders the draft directly, and building the href from
- * the same value means a rail click mid-debounce (before the 300ms commit) still carries the
- * in-progress text, with no separate "flush before navigating" step needed here (unlike
- * `selectView`'s in-app switch, which must flush because it reads the draft, normalised, to build
- * its `history.push` synchronously — URL-authoritative committed query; the store holds
+ * #217 fix round 3, item 1 (Sol's whole-branch review), narrowed by #426 (ADR 0015).
+ * `staff-navigation.ts` stays pure — no search-store or route-serializer knowledge — so this is
+ * where the rail's Dashboard link gets the LIVE search grafted back on, after the pure model has
+ * already built it. Reads `draft`, not `query`: the input already renders the draft directly, and
+ * building the href from the same value means a rail click mid-debounce (before the 300ms commit)
+ * still carries the in-progress text, with no separate "flush before navigating" step needed here
+ * (unlike `selectView`'s in-app switch, which must flush because it reads the draft, normalised, to
+ * build its `history.push` synchronously — URL-authoritative committed query; the store holds
  * draft/timer/owner only).
  *
- * List/Kanban map the search onto `q` directly, through `staffPathFor`. Calendar does too now
- * (#217 fix round 4, item 1, BLOCKER): the bare intent became a legal spelling for `q`
- * (`staff-routes.ts`'s `DashboardCalendarIntentRoute`) specifically because a native navigation —
- * cmd/middle-click (`InternalLink`'s own `shouldInterceptInternalLink` only claims an unmodified
- * primary activation), "open in new tab", a reload — loads `href` as a fresh document
- * with a COLD, empty search store, and the old bare-intent href lost the search on every one of
- * those paths. When `dashboardCalendar` is non-null (the CURRENT route is already a calendar facet
- * with known date/subview/filters), the href stays the full facet URL, mapping the search onto its
- * `search` field the same way `selectView` does when switching INTO Calendar. Resolving those
- * date/subview preferences here for the general case (arriving at Calendar from List/Kanban/
- * elsewhere, no facet state to carry forward) was rejected for the same reason `staff-routes.ts`'s
- * own docblock gives: it would put that preference-resolution logic in two places — `Dashboard.tsx`'s
- * own canonicaliser is still what owns the one full-facet rewrite for THAT case, reading the search
- * this href now carries on the intent itself.
+ * The top-level "Dashboard" item (`staff-navigation.ts`'s `id: "dashboard"`) is a real, clickable
+ * rail link, so it carries the search (#217 fix round 8, Sol review, item 1, HIGH): left bare `/`,
+ * clicking it from off-Dashboard landed on a q-less URL that `ShellRoute`'s own sync then treated
+ * as authoritative and used to clear an in-progress draft that had never been committed anywhere
+ * else. Built with `staffPathFor`, so an empty draft still yields the bare `/` this link has always
+ * had.
  *
- * Neither branch pre-normalises `query` before handing it to `staffPathFor`/`calendarPathFor`
- * (#217 fix round 4, item 2, do-with-1): both now run every `search` through the one shared
- * `normalizeDashboardSearchText` themselves, so a raw, not-yet-committed draft (`"  smith   street
- * "`) reaches the URL exactly as normalised as a commit through the store would write it — no
- * caller-side pre-processing left to get out of sync with it. URL-authoritative committed query;
- * the store holds draft/timer/owner only.
+ * The Dashboard VIEW child links (List/Kanban/Calendar, with their calendar-facet branch) are no
+ * longer rewritten here: the rail renders no child links (ADR 0015) and the breadcrumb reads only
+ * their labels and `active` flags, so their hrefs have no consumer. Views are chosen by the
+ * Dashboard's own controls, which carry the search themselves (`selectView`).
  */
-function withLiveDashboardSearch(navigation: StaffNavigation, query: string, dashboardCalendar: DashboardCalendarState | null): StaffNavigation {
-  function hrefFor(child: StaffNavigationItem): string {
-    const view = DASHBOARD_CHILD_VIEW[child.id];
-    if (view === "list" || view === "kanban") return staffPathFor({ kind: "dashboard", dashboardView: view, ...(query ? { search: query } : {}) });
-    if (view === "calendar") {
-      if (dashboardCalendar) return staffPathFor({ kind: "dashboard", calendar: { ...dashboardCalendar, search: query } });
-      return staffPathFor({ kind: "dashboard", dashboardView: "calendar", ...(query ? { search: query } : {}) });
-    }
-    return child.href;
-  }
-  // #217 fix round 8, Sol review, item 1 (HIGH). The top-level "Dashboard" item
-  // (`staff-navigation.ts`'s `id: "dashboard"`) is itself a real, clickable rail link
-  // (`NavigationRail.tsx`), not just a container for the children `hrefFor` above already covers.
-  // Left bare `/`, clicking it from off-Dashboard landed on a q-less URL that `ShellRoute`'s own
-  // sync then treated as authoritative and used to clear an in-progress draft that had never been
-  // committed anywhere else. Built with the same `staffPathFor` the List/Kanban children use, so an
-  // empty draft still yields the bare `/` this link has always had.
+function withLiveDashboardSearch(navigation: StaffNavigation, query: string): StaffNavigation {
   return {
     ...navigation,
     groups: navigation.groups.map((group) => ({
       ...group,
-      items: group.items.map((item) => !item.children ? item : {
+      items: group.items.map((item) => item.id !== "dashboard" ? item : {
         ...item,
-        ...(item.id === "dashboard" ? { href: staffPathFor({ kind: "dashboard", ...(query ? { search: query } : {}) }) } : {}),
-        children: item.children.map((child) => ({ ...child, href: hrefFor(child) })),
+        href: staffPathFor({ kind: "dashboard", ...(query ? { search: query } : {}) }),
       }),
     })),
   };
@@ -369,7 +334,7 @@ function ShellRoute() {
     readRememberedDashboardView({ read: () => window.localStorage.getItem(DASHBOARD_VIEW_KEY) }),
     { adminBackend: canAccessAdmin, viewProductionCalendar: roleHasCapability(user.role, "viewProductionCalendar"), viewNoticeBoard: canViewNoticeBoard },
     publishedDashboardView,
-  ), dashboardSearchDraft, dashboardCalendar), [canAccessAdmin, canViewNoticeBoard, dashboardCalendar, dashboardSearchDraft, publishedDashboardView, layerRoute, user.role]);
+  ), dashboardSearchDraft), [canAccessAdmin, canViewNoticeBoard, dashboardSearchDraft, publishedDashboardView, layerRoute, user.role]);
   // #366: close = walk back over the entries the sheet's own pushes made, else replace with the
   // backdrop (a cold direct link has nothing provably ours beneath it). One-shot per location so a
   // double Esc before the popstate lands cannot walk back twice.

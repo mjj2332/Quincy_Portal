@@ -5,7 +5,7 @@ import { buildStaffNavigation } from "../../lib/staff-navigation";
 import { parseStaffLocation } from "../../lib/router";
 import { SidebarProvider } from "@/components/reui/sidebar";
 import { NavigationRail } from "./NavigationRail";
-import { NotificationBell, alignOffsetFor, type NotificationBellProps } from "./NotificationBell";
+import { NotificationBell, alignEndOffsetFor, type NotificationBellProps } from "./NotificationBell";
 
 /**
  * The rail's own bell — #112. Covers the trigger/badge (count, `99+` cap, absence at zero,
@@ -157,7 +157,7 @@ describe("NotificationBell", () => {
     // throw outside a `SidebarProvider` — see `NavigationRail.dom.test.tsx`'s own `renderInProvider`.
     await render(
       <SidebarProvider open={false} onOpenChange={() => {}}>
-        <NavigationRail navigation={navigation} user={USER} variant="collapsed" />
+        <NavigationRail navigation={navigation} user={USER} variant="rail" />
       </SidebarProvider>,
     );
     expect(host.querySelector('[data-testid="rail-notification-trigger"]')).not.toBeNull();
@@ -204,9 +204,10 @@ describe("NotificationBell panel (Popover)", () => {
     const labelledBy = dialog!.getAttribute("aria-labelledby");
     expect(labelledBy).toBeTruthy();
     expect(document.getElementById(labelledBy!)?.textContent).toBe("Notifications");
-    // Every placement is `align="start"` (see `NotificationBell.tsx`'s own "Anchoring" section) —
-    // `renderPanel` above defaults `AnchoredBell` to `placement="rail"`.
-    expect(dialog!.getAttribute("data-align")).toBe("start");
+    // `renderPanel` above defaults `AnchoredBell` to `placement="rail"`, which end-aligns since #426
+    // (the bell sits at the rail's foot and the panel grows upward — see `NotificationBell.tsx`'s
+    // own "Anchoring" section).
+    expect(dialog!.getAttribute("data-align")).toBe("end");
     expect(document.querySelector('[role="menu"]')).toBeNull();
     expect(document.querySelector('[role="menuitem"]')).toBeNull();
     // Real DOM focus lands on the dialog itself, not a stray control — every open type (mouse or
@@ -662,7 +663,7 @@ describe("NotificationBell panel (Popover)", () => {
   });
 
   describe("placement contracts (#113)", () => {
-    it("anchors the rail placement to the right of the rail, start-aligned, at a fixed 420px", async () => {
+    it("anchors the rail placement to the right of the rail, end-aligned (growing upward from the bell at the rail's foot), at a fixed 420px", async () => {
       apiGetMock.mockResolvedValue(notificationsResponse(1));
       const trigger = await renderPanel();
       await click(trigger);
@@ -670,7 +671,7 @@ describe("NotificationBell panel (Popover)", () => {
       // the resolved side/alignment directly (`PopoverPositionerDataAttributes`).
       const panel = document.querySelector('[data-testid="rail-notifications-panel"]')!;
       expect(panel.getAttribute("data-side")).toBe("right");
-      expect(panel.getAttribute("data-align")).toBe("start");
+      expect(panel.getAttribute("data-align")).toBe("end");
       expect(panel.className).toContain("w-[420px]");
       expect(panel.parentElement?.style.position).toBe("fixed");
     });
@@ -692,7 +693,7 @@ describe("NotificationBell panel (Popover)", () => {
       // reason to call `getBoundingClientRect` on the TRIGGER. So a call on the trigger element is
       // itself the proof that `railAlignOffset` ran and read a live rect rather than the callback
       // having been dropped in favour of a fixed `alignOffset={0}` (the pure arithmetic —
-      // `trigger.top − anchor.top`, floored at 0 — is `alignOffsetFor`'s own unit test, below).
+      // `anchor.bottom − trigger.bottom`, floored at 0 — is `alignEndOffsetFor`'s own unit test, below).
       // happy-dom does not lay anything out for real, and floating-ui's own `align: "shift"`
       // collision correction (`collisionAvoidance` in `NotificationBell.tsx`) can still move the
       // final pixel position independently of the manual offset once real content is involved — so
@@ -964,16 +965,16 @@ describe("NotificationBell panel (Popover)", () => {
   });
 });
 
-describe("alignOffsetFor (#113)", () => {
-  it("returns trigger.top − anchor.top when the trigger sits below the anchor's own top", () => {
-    expect(alignOffsetFor(150, 100)).toBe(50);
+describe("alignEndOffsetFor (#426)", () => {
+  it("returns anchor.bottom − trigger.bottom when the trigger sits above the anchor's own bottom", () => {
+    expect(alignEndOffsetFor(550, 600)).toBe(50);
   });
 
-  it("floors at 0 rather than going negative when the trigger sits above the anchor's top", () => {
-    expect(alignOffsetFor(50, 100)).toBe(0);
+  it("floors at 0 rather than going negative when the trigger sits below the anchor's bottom", () => {
+    expect(alignEndOffsetFor(650, 600)).toBe(0);
   });
 
-  it("returns 0 when the trigger and anchor share the same top", () => {
-    expect(alignOffsetFor(100, 100)).toBe(0);
+  it("returns 0 when the trigger and anchor share the same bottom", () => {
+    expect(alignEndOffsetFor(600, 600)).toBe(0);
   });
 });

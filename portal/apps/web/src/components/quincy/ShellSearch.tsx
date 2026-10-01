@@ -20,7 +20,6 @@ import {
 } from "@/components/reui/sidebar";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/reui/input-group";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/reui/popover";
-import { Kbd } from "@/components/reui/kbd";
 import { cn } from "../../lib/utils";
 import { locationStore, staffPathFor } from "../../lib/router";
 import {
@@ -37,20 +36,21 @@ import {
 import type { RailMode } from "../../lib/shell-rail";
 
 /**
- * The rail's project search — #217. A REAL input now, not the input-LOOKING latch button #122 P3
+ * The rail's project search — #217, reduced to two variants by #426 (ADR 0015). A REAL input now, not the input-LOOKING latch button #122 P3
  * shipped: the Dashboard no longer owns a second, duplicate search field. The URL is the ONLY
  * committed Dashboard search; `lib/dashboard-search-store.ts` holds the draft/timer/owner only
  * (never a committed copy) and is read and written here directly.
  *
- * Three modes off the existing `variant`, all composing the same `InputGroup` field:
- * - `expanded`: inline in the rail's own `SidebarGroup`, the shortcut hint trailing.
- * - `collapsed`: behind a `Popover` anchored to the icon-only trigger (keeps the collapsed
- *   tooltip); the field is focused on open via Base UI's own `initialFocus`.
+ * Two modes off the existing `variant`, both composing the same `InputGroup` field. The inline
+ * expanded mode and its ⌘K hint are gone with the expanded rail; the Dashboard toolbar takes search
+ * over from this popover in a later ticket (#427):
+ * - `rail`: behind a `Popover` anchored to the icon-only trigger (keeps the tooltip); the field is
+ *   focused on open via Base UI's own `initialFocus`.
  * - `sheet`: inline, `min-h-[44px]`/`data-touch-target` for the same 44px touch target every Sheet
  *   row in `NavigationRail.tsx` carries.
  *
  * `⌘K`/`Ctrl+K` is a window-level listener in `RailedShell.tsx`, same as before — this component
- * only exposes `focus()` via `ref` (the `collapsed` case opens the popover first; Base UI's
+ * only exposes `focus()` via `ref` (the `rail` case opens the popover first; Base UI's
  * `initialFocus` on `PopoverContent` then focuses the field once the popup actually mounts).
  * `RailedShell` never navigates on the shortcut, unlike #122 P3's `activateProjectSearch` — typing
  * and Enter are what navigate now (below), matching a real input's own affordance instead of a
@@ -61,7 +61,7 @@ import type { RailMode } from "../../lib/shell-rail";
  * behaviour (a `FloatingFocusManager`-style animation-completion wait, same shape as the one this
  * codebase's Sheet-close handling already documents elsewhere), which races an imperative
  * `focus()` call from an ancestor effect and wins. Base UI's `initialFocus` prop on the Sheet's
- * own Popup is the reliable mechanism instead — the SAME one `collapsed`'s `PopoverContent`
+ * own Popup is the reliable mechanism instead — the SAME one `rail`'s `PopoverContent`
  * already uses via a raw ref — so `RailedShell` needs the raw element, not just a method that
  * calls `.focus()` on it.
  */
@@ -102,13 +102,8 @@ export const ShellSearch = forwardRef<ShellSearchHandle, ShellSearchProps>(funct
   { variant, isDashboard, principalId = "" },
   ref,
 ) {
-  const isCollapsed = variant === "collapsed";
+  const isRail = variant === "rail";
   const isSheet = variant === "sheet";
-  // The ⌘K hint has nowhere useful to point inside the Sheet — there is no persistent trigger to
-  // land on, only the inline input itself (which ⌘K now focuses directly, opening the Sheet if
-  // closed; see `RailedShell`) — so it is dropped alongside the collapsed case, not just hidden by
-  // width.
-  const showShortcutHint = !isCollapsed && !isSheet;
   const search = useSyncExternalStore(
     subscribeDashboardSearch,
     () => getDashboardSearchSnapshotForPrincipal(principalId),
@@ -145,7 +140,7 @@ export const ShellSearch = forwardRef<ShellSearchHandle, ShellSearchProps>(funct
 
   useImperativeHandle(ref, () => ({
     focus() {
-      if (isCollapsed) {
+      if (isRail) {
         // `PopoverContent`'s `initialFocus={inputRef}` focuses the field once the popup mounts —
         // there is nothing to focus yet while the popover is closed.
         setPopoverOpen(true);
@@ -154,7 +149,7 @@ export const ShellSearch = forwardRef<ShellSearchHandle, ShellSearchProps>(funct
       inputRef.current?.focus();
     },
     getElement: () => inputRef.current,
-  }), [isCollapsed]);
+  }), [isRail]);
 
   function handleChange(event: ChangeEvent<HTMLInputElement>) {
     // #217 design-fix round 2, item 3: native `maxLength` counts UTF-16 code UNITS, but the
@@ -220,13 +215,13 @@ export const ShellSearch = forwardRef<ShellSearchHandle, ShellSearchProps>(funct
       return;
     }
     if (event.key === "Escape") {
-      // #217 design-review, item 8: `collapsed`'s field lives inside a real `Popover` -- clearing
+      // #217 design-review, item 8: `rail`'s field lives inside a real `Popover` -- clearing
       // AND closing on the SAME Escape (not two) is the expected one-keystroke behaviour, so this
       // branch deliberately does NOT stop propagation: clearing here is a plain synchronous store
       // write, and letting the keystroke keep bubbling is what reaches Base UI's own Escape
       // handling on `PopoverContent`, which closes the popover and returns focus to the trigger.
-      // Expanded and the Sheet are unchanged below -- neither has a popover of its own to close.
-      if (isCollapsed) {
+      // The Sheet is unchanged below -- it has no popover of its own to close.
+      if (isRail) {
         if (search.draft !== "") clearDashboardSearch(principalId);
         return;
       }
@@ -254,7 +249,7 @@ export const ShellSearch = forwardRef<ShellSearchHandle, ShellSearchProps>(funct
         // Per-mode, not a fixed literal (#217 design-review, item 6): `RailedShell` keeps the
         // Sheet's OWN `ShellSearch` mounted in every mode ("RailSheet stays mounted in every mode"
         // above `RailedShell.tsx`'s own `railSlot`), so when `mode !== "sheet"` the rail's
-        // expanded/collapsed instance and the Sheet's instance are BOTH in the DOM at once. A
+        // rail instance and the Sheet's instance are BOTH in the DOM at once. A
         // fixed `id="shell-search"` on both would be a duplicate id.
         id={`shell-search-${variant}`}
         name="q"
@@ -267,29 +262,15 @@ export const ShellSearch = forwardRef<ShellSearchHandle, ShellSearchProps>(funct
         // these two composition handlers plus `handleChange` above.
         onCompositionStart={handleCompositionStart}
         onCompositionEnd={handleCompositionEnd}
-        // #217 design-review, item 7: the expanded rail and the collapsed popover are both too
-        // narrow to show the long placeholder without clipping it mid-word -- only the Sheet has
-        // the width for it. `aria-label` is unchanged either way.
+        // #217 design-review, item 7: the rail popover is too narrow to show the long placeholder
+        // without clipping it mid-word -- only the Sheet has the width for it. `aria-label` is
+        // unchanged either way.
         placeholder={isSheet ? "Search address, suburb, client…" : "Search projects"}
       />
-      {showShortcutHint && (
-        // `reui/kbd.tsx`'s registry paint (`bg-muted text-muted-foreground`) reads roles
-        // `styles/tokens/inverse.css` re-scopes — overridden here with Quincy's own aliases
-        // (`--bg-sunken`, `--text-muted`), the same substitution `styles/sidebar-token-bridge.guard.test.ts`'s
-        // rail-surface check requires of `NavigationRail.tsx` itself, not the registry's role pair.
-        <InputGroupAddon align="inline-end">
-          <Kbd
-            data-testid="shell-search-shortcut"
-            className="bg-[color:var(--bg-sunken)] text-[color:var(--text-muted)]"
-          >
-            ⌘K
-          </Kbd>
-        </InputGroupAddon>
-      )}
     </InputGroup>
   );
 
-  if (isCollapsed) {
+  if (isRail) {
     return (
       <SidebarGroup>
         <SidebarGroupContent>

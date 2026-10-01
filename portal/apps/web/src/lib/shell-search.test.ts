@@ -46,7 +46,39 @@ describe("isSearchShortcut — ⌘K/Ctrl+K", () => {
     expect(isSearchShortcut({ ...BASE_EVENT, metaKey: true, isComposing: true })).toBe(false);
   });
 
-  it("rejects an editable target", () => {
+  it("rejects an input target", () => {
     expect(isSearchShortcut({ ...BASE_EVENT, metaKey: true, target: { tagName: "INPUT" } })).toBe(false);
+  });
+
+  it("is case-insensitive on the key", () => {
+    expect(isSearchShortcut({ ...BASE_EVENT, metaKey: true, key: "K" })).toBe(true);
+  });
+
+  it("rejects Alt+Meta+K", () => {
+    expect(isSearchShortcut({ ...BASE_EVENT, metaKey: true, altKey: true })).toBe(false);
+  });
+
+  it("rejects Shift+Meta+K", () => {
+    expect(isSearchShortcut({ ...BASE_EVENT, metaKey: true, shiftKey: true })).toBe(false);
+  });
+
+  it("rejects when the event was already handled", () => {
+    expect(isSearchShortcut({ ...BASE_EVENT, metaKey: true, defaultPrevented: true })).toBe(false);
+  });
+
+  it("rejects a textarea target", () => {
+    expect(isSearchShortcut({ ...BASE_EVENT, metaKey: true, target: { tagName: "TEXTAREA" } })).toBe(false);
+  });
+
+  it("rejects a select target", () => {
+    expect(isSearchShortcut({ ...BASE_EVENT, metaKey: true, target: { tagName: "SELECT" } })).toBe(false);
+  });
+
+  it("rejects a contenteditable target", () => {
+    expect(isSearchShortcut({ ...BASE_EVENT, metaKey: true, target: { tagName: "DIV", isContentEditable: true } })).toBe(false);
+  });
+
+  it("fires on a plain, non-editable target", () => {
+    expect(isSearchShortcut({ ...BASE_EVENT, metaKey: true, target: { tagName: "BODY" } })).toBe(true);
   });
 });

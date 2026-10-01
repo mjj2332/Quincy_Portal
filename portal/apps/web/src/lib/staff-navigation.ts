@@ -75,12 +75,6 @@ export type StaffNavigation = {
    * one coarse section, which is right for the shell and wrong for `aria-current` on the item.
    */
   preferencesActive: boolean;
-  /**
-   * The item whose children are showing, or `null`. Opens on a Dashboard route and closes
-   * elsewhere — no toggle and no persistence, which is what guarantees there is no state in which
-   * an active child hides inside a closed group.
-   */
-  expandedItemId: string | null;
 };
 
 export type StaffNavigationCapabilities = {
@@ -193,7 +187,6 @@ export function buildStaffNavigation(
     groups: [{ id: "primary", label: "Primary navigation", items }],
     activeSectionId,
     preferencesActive: route.kind === "notification-preferences",
-    expandedItemId: activeSectionId === "dashboard" ? "dashboard" : null,
   };
 }
 
