@@ -100,7 +100,7 @@ export function DashboardViewBar({
     <div
       data-testid="dashboard-view-bar"
       className={cn(
-        "flex shrink-0 flex-wrap items-stretch justify-between gap-x-[var(--space-6)] gap-y-[var(--space-3)] mb-[var(--space-4)]",
+        "flex shrink-0 flex-wrap-reverse items-stretch justify-between gap-x-[var(--space-6)] gap-y-[var(--space-3)] mb-[var(--space-4)]",
         "max-[721px]:flex-col-reverse max-[721px]:flex-nowrap",
         "[border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border",
       )}
