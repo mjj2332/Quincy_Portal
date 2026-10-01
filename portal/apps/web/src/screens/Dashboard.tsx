@@ -13,7 +13,7 @@ import { ToastViewport } from "../components/quincy/ToastViewport";
 import { Button, buttonClasses } from "../components/quincy/Button";
 import { DashboardHeader } from "./DashboardHeader";
 import { DashboardViewBar, VIEW_PANEL_ID, VIEW_TAB_ID } from "./DashboardViewBar";
-import { BoardDisplayContent, TableDisplayContent } from "./DashboardDisplay";
+import { BoardDisplayContent, CalendarDisplayContent, TableDisplayContent, TimelineDisplayContent } from "./DashboardDisplay";
 import { DashboardTable } from "../components/DashboardTable";
 import { hideableColumnsFor } from "../lib/dashboard-table-model";
 import { useDashboardTablePrefs } from "../lib/use-dashboard-table-prefs";
@@ -1073,16 +1073,38 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       return;
     }
     if (isGanttView) {
-      // The Delivered pair: Stage = Delivered draws nothing while delivered projects are hidden.
-      const written = ganttFacetForWrite(ganttFilters, { ...ganttFilters, ...next });
-      const notice = ganttPairingNotice({ ...ganttFilters, ...next }, written);
-      if (notice) setAnnouncement(notice);
-      navigateGantt(written);
+      writeGanttFacet(next);
       return;
     }
     const currentSearch = takeDashboardSearchForNavigation(currentUserId);
     history.push(staffPathFor(withDashboardFilter({ kind: "dashboard", dashboardView: view === "board" ? "board" : "table", ...(currentSearch ? { search: currentSearch } : {}) }, next)));
   }
+
+  // The Timeline's writes, shared by the Filter (`writeFilter`) and Display (`writeTimelineDisplay`).
+  // The Delivered pair: Stage = Delivered draws nothing while delivered projects are hidden.
+  function writeGanttFacet(changes: Partial<ProductionGanttFacetFilters>) {
+    const written = ganttFacetForWrite(ganttFilters, { ...ganttFilters, ...changes });
+    const notice = ganttPairingNotice({ ...ganttFilters, ...changes }, written);
+    if (notice) setAnnouncement(notice);
+    navigateGantt(written);
+  }
+
+  // #430: a Show toggle in the Timeline's Display (delivered Projects, completed Subtasks).
+  function writeTimelineDisplay(changes: { delivered?: boolean; completed?: boolean }) {
+    if (movementInteractionActive || calendarInteractionBlocked) return;
+    writeGanttFacet(changes);
+  }
+
+  // #430: a Layers or Show toggle in the Calendar's Display; pushed like every Calendar write.
+  function writeCalendarDisplay(changes: Partial<Pick<DashboardCalendarState, "layers" | "showDeliveredProjects" | "showCompletedChecklist">>) {
+    if (movementInteractionActive || calendarInteractionBlocked || !calendarState) return;
+    navigateCalendar({ ...calendarState, ...changes, view: "calendar" });
+  }
+
+  // The Gantt is lazy and mounts outside the Filter provider, so its empty state reaches the
+  // Filter and Display triggers by test id, as `clearFiltersFromEmptyState` below does.
+  const focusFilterTrigger = useCallback(() => document.querySelector<HTMLElement>('[data-testid="dashboard-filter-trigger"]')?.focus({ preventScroll: true }), []);
+  const focusDisplayTrigger = useCallback(() => document.querySelector<HTMLElement>('[data-testid="dashboard-display-trigger"]')?.focus({ preventScroll: true }), []);
 
   // The empty state's Clear filters unmounts with it, which would drop focus to the body: it goes to the
   // Filter trigger, the control the user would reach for next (as the Timeline's does).
@@ -1497,7 +1519,17 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
                   hideableColumns={hideableColumnsFor(role)}
                   onColumnVisibilityChange={(column, visible) => updateTablePrefs({ hiddenColumns: visible ? tablePrefs.hiddenColumns.filter((id) => id !== column) : [...tablePrefs.hiddenColumns, column] })}
                 />
-              : undefined}
+              : renderedView === "calendar" && calendarState
+                ? <CalendarDisplayContent
+                    layers={calendarState.layers}
+                    onLayersChange={(layers) => writeCalendarDisplay({ layers })}
+                    showDeliveredProjects={calendarState.showDeliveredProjects}
+                    showCompletedChecklist={calendarState.showCompletedChecklist}
+                    onShowChange={writeCalendarDisplay}
+                  />
+                : renderedView === "timeline"
+                  ? <TimelineDisplayContent delivered={ganttFilters.delivered} completed={ganttFilters.completed} onChange={writeTimelineDisplay} />
+                  : undefined}
           filterTrigger={<DashboardFilterTrigger />}
         />
         <DashboardFilterChips />
@@ -1541,6 +1573,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
                 q={committedQuery}
                 filters={ganttFilters}
                 onFiltersChange={navigateGantt}
+                focusFilterTrigger={focusFilterTrigger}
+                focusDisplayTrigger={focusDisplayTrigger}
                 onAcceptGateChange={setCalendarInteractionBlocked}
                 onSettleStateChange={setCalendarSettle}
                 onAccessLoss={handleCalendarAccessLoss}

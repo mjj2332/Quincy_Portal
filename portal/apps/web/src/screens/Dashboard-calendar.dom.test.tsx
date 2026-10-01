@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { adminProductionCalendarRangeResponseSchema, dashboardSearchOf, PRODUCTION_CALENDAR_ZONE, type DashboardCalendarState, type ProductionCalendarFilters } from "@quincy/shared";
 import { ApiError } from "../lib/api";
 import { Dashboard } from "./Dashboard";
+import { closeDisplay, displayGroup, displayMenu, groupCheckboxes, openDisplay, toggleGroupCheckbox } from "./dashboard-display-test-helpers";
 import { eventCalendarFake } from "../testing/event-calendar-fake";
 import { locationStore, parseStaffLocation, safeStaffDestination } from "../lib/router";
 import { confirmStore } from "../lib/confirm";
@@ -95,6 +96,7 @@ describe("Dashboard Calendar routing", () => {
         showDeliveredProjects: params.get("delivered") === "1",
         overdueOnly: params.get("overdue") === "1",
         myTasks: params.get("mine") === "1",
+        layers: (params.get("layers")?.split(",") ?? ["project", "checklist"]) as ProductionCalendarFilters["layers"],
       }, params.get("date") ?? routeCalendar.date));
     });
     eventCalendarFake.reset();
@@ -400,6 +402,82 @@ describe("Dashboard Calendar routing", () => {
     expect(window.location.search).toContain("unassigned=1");
     expect(window.location.search).toContain("q=a+b");
     expect(window.location.search.indexOf("unassigned=1")).toBeLessThan(window.location.search.indexOf("q="));
+  });
+
+  describe("Display (#430)", () => {
+    const BOTH = "/?view=calendar&date=2026-08-12&sub=month&layers=project%2Cchecklist";
+    const COLD = `${BOTH}&stages=delivered&completed=1&delivered=1&overdue=1&mine=1`;
+    const url = () => `${window.location.pathname}${window.location.search}`;
+    const mountAt = async (location: string) => {
+      window.history.replaceState(null, "", location);
+      await act(async () => { root.render(<DashboardRouteHarness />); await Promise.resolve(); await Promise.resolve(); });
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+    };
+    const state = (group: string) => groupCheckboxes(group).map((item) => [item.textContent, item.getAttribute("aria-checked"), item.getAttribute("aria-disabled")]);
+    const calendarRequests = () => apiGetMock.mock.calls.map(([path]) => path).filter((path) => path.startsWith("/api/production-calendar") && new URLSearchParams(path.split("?", 2)[1]).get("bounds") === "1");
+
+    it("removes the rail's facets (Layers chips, N filters active)", async () => {
+      await mountAt(COLD);
+      expect(host.querySelector('[data-testid="event-calendar-facets"]')).toBeNull();
+      expect(host.querySelector('[data-testid="event-calendar-hidden-filters"]')).toBeNull();
+    });
+
+    it("offers Layers then Show on the Calendar, and no Sort, Group by or Columns", async () => {
+      await mountAt(BOTH);
+      await openDisplay(host);
+      expect(state("Layers")).toEqual([["Project deadlines", "true", null], ["Subtasks", "true", null]]);
+      expect(state("Show")).toEqual([["Show delivered Projects", "false", null], ["Show completed Subtasks", "false", null]]);
+      expect(displayGroup("Sort")).toBeNull();
+      expect(displayGroup("Columns")).toBeNull();
+    });
+
+    it("pushes a canonical URL for a layer toggle, disables the last checked layer, and keeps the menu open", async () => {
+      await mountAt(BOTH);
+      const lengthBefore = window.history.length;
+      await toggleGroupCheckbox("Layers", "Subtasks", host);
+      expect(url()).toBe("/?view=calendar&date=2026-08-12&sub=month&layers=project");
+      expect(window.history.length).toBe(lengthBefore + 1);
+      expect(displayMenu()).not.toBeNull();
+      expect(state("Layers")).toEqual([["Project deadlines", "true", "true"], ["Subtasks", "false", null]]);
+      // Re-checking writes the canonical order.
+      await toggleGroupCheckbox("Layers", "Subtasks", host);
+      expect(url()).toBe(BOTH);
+      expect(state("Layers")).toEqual([["Project deadlines", "true", null], ["Subtasks", "true", null]]);
+    });
+
+    it("resolves an old URL's whole filter set byte-identically, with Show checked and the request unchanged", async () => {
+      await mountAt(COLD);
+      expect(url()).toBe(COLD);
+      const requests = calendarRequests();
+      expect(requests).toHaveLength(1);
+      const query = new URLSearchParams(requests[0]!.split("?", 2)[1]);
+      expect(query.get("completed")).toBe("1");
+      expect(query.get("delivered")).toBe("1");
+      expect(query.get("stages")).toBe("delivered");
+      expect(query.get("overdue")).toBe("1");
+      expect(query.get("mine")).toBe("1");
+      await openDisplay(host);
+      expect(state("Show")).toEqual([["Show delivered Projects", "true", null], ["Show completed Subtasks", "true", null]]);
+      await closeDisplay();
+      expect(url()).toBe(COLD);
+    });
+
+    it("unchecking a Show item from a cold URL pushes the URL without it", async () => {
+      await mountAt(COLD);
+      await toggleGroupCheckbox("Show", "Show completed Subtasks", host);
+      expect(url()).toBe(`${BOTH}&stages=delivered&delivered=1&overdue=1&mine=1`);
+      expect(state("Show")).toEqual([["Show delivered Projects", "true", null], ["Show completed Subtasks", "false", null]]);
+    });
+
+    it("keeps the Calendar's Stage, Overdue and My tasks reachable through the shared Filter", async () => {
+      await mountAt(COLD);
+      const chips = host.querySelector('[role="toolbar"]');
+      expect(chips, "no Filter chip row").not.toBeNull();
+      const text = chips!.textContent ?? "";
+      expect(text).toContain("Stage");
+      expect(text).toContain("is overdue");
+      expect(text).toContain("My tasks");
+    });
   });
 
   // #217 fix round 1, item 3 (Sol's diff review). Restores the coverage this suite had before:

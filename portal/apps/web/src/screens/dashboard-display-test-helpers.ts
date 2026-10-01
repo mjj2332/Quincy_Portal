@@ -49,7 +49,7 @@ export async function toggleGroupCheckbox(group: string, label: string, scope: P
   await openDisplay(scope);
   const item = groupCheckboxes(group).find((candidate) => candidate.textContent === label);
   if (!item) throw new Error(`Missing Display ${group} option ${label}`);
-  await act(async () => { item.click(); await Promise.resolve(); await Promise.resolve(); });
+  await act(async () => { item.click(); await new Promise((resolve) => setTimeout(resolve, 10)); });
 }
 
 /** The Table menu's column checkbox items, in menu order. */
@@ -73,7 +73,7 @@ export async function openDisplay(scope: ParentNode = document): Promise<void> {
   if (displayMenu()) return;
   const trigger = displayTrigger(scope);
   if (!trigger) throw new Error("Missing Display trigger");
-  await act(async () => { trigger.click(); await Promise.resolve(); await Promise.resolve(); });
+  await act(async () => { trigger.click(); await new Promise((resolve) => setTimeout(resolve, 60)); });
   if (!displayMenu()) throw new Error("The Display menu did not open");
 }
 
