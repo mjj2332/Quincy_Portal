@@ -820,15 +820,18 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // through the existing lifecycle exactly as a `q` change always has.
   // Keyed by value (`ganttFacetKey`: stages, delivered, completed; plus the editor ids, which that
   // key does not carry), so a fresh facet object with the same filters keeps the same request.
-  const { editorIds, stageKeys, priorities, archived, delivered, completed } = facetFilters;
+  const { editorIds, stageKeys, priorities, archived, delivered, completed, includeUnassigned, myTasks, overdueOnly, shootRange, deadlineRange } = facetFilters;
   // #428: a continuation page of an archived Project's checklist is readable only under the Archived mode
   // that listed the Project; read at fetch time (the chain restarts on any filter change anyway).
   const archivedModeRef = useRef(archived);
   archivedModeRef.current = archived;
+  // #429: and the People / My tasks filter, which a child-page continuation must repeat (its cursor carries a fingerprint of it).
+  const childPeopleRef = useRef({ editorIds, includeUnassigned, myTasks });
+  childPeopleRef.current = { editorIds, includeUnassigned, myTasks };
   const facetKey = ganttFacetKey(facetFilters);
   const editorIdsKey = editorIds.join(",");
   const filters = useMemo<ProductionGanttFilters>(
-    () => ({ q, editorIds, stageKeys, priorities, archived, delivered, completed }),
+    () => ({ q, editorIds, stageKeys, priorities, archived, delivered, completed, includeUnassigned, myTasks, overdueOnly, shootRange, deadlineRange }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the arrays are read from the facet; its value keys stand in for them
     [q, facetKey, editorIdsKey],
   );
@@ -985,7 +988,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
       let cursor: string | null = seedCursor;
       try {
         while (cursor) {
-          const page = await fetchGanttChildPage(projectId, cursor, undefined, controller.signal, archivedModeRef.current);
+          const page = await fetchGanttChildPage(projectId, cursor, undefined, controller.signal, archivedModeRef.current, childPeopleRef.current);
           // fix-220-sol1b: `controller.signal.aborted` is checked alongside the generation guard —
           // a same-generation re-seed (this file's own reconciliation effect below) aborts THIS
           // controller without bumping `generationRef`, and a mocked/real fetch whose response had
@@ -1232,7 +1235,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     const adoptFrom = (value: unknown) => {
       try { adoptAssignees(projectId, decodeChecklistMutationResponse(identity.role, value)); } catch { /* an undecodable body: the refetch below is the source of truth */ }
     };
-    const refresh = () => invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "subtasks" }, { kind: "activity" }], dashboard: false, calendar: true, gantt: true });
+    const refresh = () => invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "subtasks" }, { kind: "activity" }], dashboard: true, calendar: true, dashboardSearchOnly: true, gantt: true, people: true });
     try {
       const updated = await apiPatch<unknown, { assignees: { expectedVersion: number; add: string[]; remove: string[] } }>(
         `/api/projects/${encodeURIComponent(projectId)}/subtasks/${encodeURIComponent(row.id)}`,
@@ -1331,8 +1334,6 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // partway). Both are honoured: the server signal fires the notice immediately, the adapter's own
   // cap remains the backstop against whatever this client has actually built a model for.
   const firstPageDensity = query.data?.pages[0]?.density;
-  // #274: the Editor field's options ride on page one only.
-  const filterPeople = query.data?.pages[0]?.filterFacets?.people;
   const shownProjects = query.isPlaceholderData ? null : firstPageDensity?.matchedProjects ?? null;
   useEffect(() => { onShownProjectsChange?.(shownProjects); }, [onShownProjectsChange, shownProjects]);
   useEffect(() => () => onShownProjectsChange?.(null), [onShownProjectsChange]);
@@ -1768,7 +1769,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
         setPins((current) => [...current.filter((pin) => pin.row.id !== created.id), pinFromCreated(projectId, created, fetchLedger.currentStartSeq(), generation)]);
       }
       // No `producer`: this write is outside the scheduling controller, so the Gantt refetches itself.
-      await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "subtasks" }, { kind: "activity" }], dashboard: true, calendar: true, dashboardSearchOnly: true, gantt: true });
+      await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "subtasks" }, { kind: "activity" }], dashboard: true, calendar: true, dashboardSearchOnly: true, gantt: true, people: true });
       return { ok: true };
     } catch (error) {
       // The same unauthorized handling as the Project page's composer (`SubtaskChecklist`): a 401
@@ -1929,7 +1930,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
 
   return (
     <div ref={containerRef} className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)]" data-testid="production-gantt-root">
-      <ProductionGanttFiltersBar filters={facetFilters} people={filterPeople} onFiltersChange={onFiltersChange} triggerRef={filtersTriggerRef} />
+      <ProductionGanttFiltersBar filters={facetFilters} onFiltersChange={onFiltersChange} triggerRef={filtersTriggerRef} />
       <GanttLegend entries={legendEntries} />
       {commands.settle.recoveryReason && (
         <Notice role="alert" data-testid="production-gantt-recovery-notice" className="flex items-center justify-between gap-[var(--space-4)]">

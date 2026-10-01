@@ -101,7 +101,7 @@ describe("the staff navigation model", () => {
 
     it("marks Calendar active for both Calendar spellings", () => {
       expect(activeChildId({ kind: "dashboard", dashboardView: "calendar" }, "table")).toBe("dashboard-calendar");
-      expect(activeChildId({ kind: "dashboard", calendar: { view: "calendar", date: "2026-08-30", subview: "month", layers: ["project"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false } }, "table")).toBe("dashboard-calendar");
+      expect(activeChildId({ kind: "dashboard", calendar: { view: "calendar", date: "2026-08-30", subview: "month", layers: ["project"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, shootRange: null, deadlineRange: null, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false } }, "table")).toBe("dashboard-calendar");
     });
 
     it("coerces a remembered Calendar to Board when the capability is gone", () => {

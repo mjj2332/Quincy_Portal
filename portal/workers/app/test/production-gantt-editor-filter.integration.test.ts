@@ -112,10 +112,12 @@ beforeAll(async () => {
 const projectIds = (response: { projects: Array<{ id: string }> }) => response.projects.map((row) => row.id).sort();
 
 describe("production-gantt Editor filter (#274)", () => {
-  it("facets=1 lists every active editor on a visible project, sorted by name, whatever the other filters", async () => {
+  it("facets=1 lists the People universe (Editors and Subtask assignees on a visible project, inactive ones labelled), sorted by name, whatever the other filters", async () => {
     const expected = [
       { id: ids.alice, name: "Alice Editor", roleLabel: "Editor", isExternal: false, active: true },
       { id: ids.bob, name: "Bob Editor", roleLabel: "Editor", isExternal: false, active: true },
+      // #429: the People universe includes people since deactivated (the UI labels them).
+      { id: ids.carolInactive, name: "Carol Inactive", roleLabel: "Editor", isExternal: false, active: false },
       { id: ids.dave, name: "Dave Delivered", roleLabel: "Editor", isExternal: false, active: true },
       { id: ids.external, name: "Xavier External", roleLabel: expect.any(String), isExternal: true, active: true },
     ];

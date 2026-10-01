@@ -22,10 +22,10 @@ describe("Dashboard Gantt route arm (#255)", () => {
     for (const [location, route] of [
       ["/?view=timeline", { kind: "dashboard", dashboardView: "timeline" }],
       ["/?view=timeline&q=smith", { kind: "dashboard", dashboardView: "timeline", search: "smith" }],
-      ["/?view=timeline&stages=raw_review", { kind: "dashboard", dashboardView: "timeline", gantt: { stageKeys: ["raw_review"], priorities: [], archived: "hide", delivered: false, completed: false, editorIds: [] } }],
-      ["/?view=timeline&stages=raw_review&completed=1", { kind: "dashboard", dashboardView: "timeline", gantt: { stageKeys: ["raw_review"], priorities: [], archived: "hide", delivered: false, completed: true, editorIds: [] } }],
-      ["/?view=timeline&delivered=1", { kind: "dashboard", dashboardView: "timeline", gantt: { stageKeys: [], priorities: [], archived: "hide", delivered: true, completed: false, editorIds: [] } }],
-      ["/?view=timeline&stages=awaiting_raw%2Cediting%2Cdelivered&completed=1&delivered=1&q=smith", { kind: "dashboard", dashboardView: "timeline", search: "smith", gantt: { stageKeys: ["awaiting_raw", "editing", "delivered"], priorities: [], archived: "hide", delivered: true, completed: true, editorIds: [] } }],
+      ["/?view=timeline&stages=raw_review", { kind: "dashboard", dashboardView: "timeline", gantt: { stageKeys: ["raw_review"], priorities: [], archived: "hide", delivered: false, completed: false, editorIds: [], includeUnassigned: false, shootRange: null, deadlineRange: null, overdueOnly: false, myTasks: false } }],
+      ["/?view=timeline&stages=raw_review&completed=1", { kind: "dashboard", dashboardView: "timeline", gantt: { stageKeys: ["raw_review"], priorities: [], archived: "hide", delivered: false, completed: true, editorIds: [], includeUnassigned: false, shootRange: null, deadlineRange: null, overdueOnly: false, myTasks: false } }],
+      ["/?view=timeline&delivered=1", { kind: "dashboard", dashboardView: "timeline", gantt: { stageKeys: [], priorities: [], archived: "hide", delivered: true, completed: false, editorIds: [], includeUnassigned: false, shootRange: null, deadlineRange: null, overdueOnly: false, myTasks: false } }],
+      ["/?view=timeline&stages=awaiting_raw%2Cediting%2Cdelivered&completed=1&delivered=1&q=smith", { kind: "dashboard", dashboardView: "timeline", search: "smith", gantt: { stageKeys: ["awaiting_raw", "editing", "delivered"], priorities: [], archived: "hide", delivered: true, completed: true, editorIds: [], includeUnassigned: false, shootRange: null, deadlineRange: null, overdueOnly: false, myTasks: false } }],
     ] as const) {
       expect(parseStaffLocation(location), location).toEqual(route);
     }
@@ -46,9 +46,9 @@ describe("Dashboard Gantt route arm (#255)", () => {
       "/?view=timeline&stages=raw_review&stages=delivered",
       "/?view=timeline&delivered=1&delivered=1",
       "/?view=timeline&view=timeline",
-      "/?view=timeline&unassigned=1",
-      "/?view=timeline&overdue=1",
-      "/?view=timeline&mine=1",
+      "/?view=timeline&unassigned=0",
+      "/?view=timeline&overdue=0",
+      "/?view=timeline&mine=0",
       "/?view=timeline&layers=project",
       "/?view=timeline&date=2026-08-30",
       "/?view=timeline&sub=week",
@@ -62,11 +62,11 @@ describe("Dashboard Gantt route arm (#255)", () => {
 
   it("accepts an editors list, sorted, as the Editor facet (#274)", () => {
     expect(parseStaffLocation("/?view=timeline&editors=22222222-2222-4222-8222-222222222222%2C11111111-1111-4111-8111-111111111111")).toEqual({
-      kind: "dashboard", dashboardView: "timeline", gantt: { stageKeys: [], priorities: [], archived: "hide", delivered: false, completed: false, editorIds: ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"] },
+      kind: "dashboard", dashboardView: "timeline", gantt: { stageKeys: [], priorities: [], archived: "hide", delivered: false, completed: false, editorIds: ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"], includeUnassigned: false, shootRange: null, deadlineRange: null, overdueOnly: false, myTasks: false },
     });
-    expect(staffPathFor({ kind: "dashboard", dashboardView: "timeline", gantt: { stageKeys: ["raw_review"], priorities: [], archived: "hide", delivered: false, completed: false, editorIds: ["22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111"] } }))
+    expect(staffPathFor({ kind: "dashboard", dashboardView: "timeline", gantt: { stageKeys: ["raw_review"], priorities: [], archived: "hide", delivered: false, completed: false, editorIds: ["22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111"], includeUnassigned: false, shootRange: null, deadlineRange: null, overdueOnly: false, myTasks: false } }))
       .toBe("/?view=timeline&editors=11111111-1111-4111-8111-111111111111%2C22222222-2222-4222-8222-222222222222&stages=raw_review");
-    expect(isDefaultGanttFacet({ stageKeys: [], priorities: [], archived: "hide", delivered: false, completed: false, editorIds: ["11111111-1111-4111-8111-111111111111"] })).toBe(false);
+    expect(isDefaultGanttFacet({ stageKeys: [], priorities: [], archived: "hide", delivered: false, completed: false, editorIds: ["11111111-1111-4111-8111-111111111111"], includeUnassigned: false, shootRange: null, deadlineRange: null, overdueOnly: false, myTasks: false })).toBe(false);
   });
 
   it("rejects a malformed editors list exactly as the Calendar arm does (#274)", () => {
@@ -86,27 +86,27 @@ describe("Dashboard Gantt route arm (#255)", () => {
 
   it("canonicalises non-canonical stage order on parse and on serialize", () => {
     expect(parseStaffLocation("/?view=timeline&stages=delivered%2Cawaiting_raw%2Cediting")).toEqual({
-      kind: "dashboard", dashboardView: "timeline", gantt: { stageKeys: ["awaiting_raw", "editing", "delivered"], priorities: [], archived: "hide", delivered: false, completed: false, editorIds: [] },
+      kind: "dashboard", dashboardView: "timeline", gantt: { stageKeys: ["awaiting_raw", "editing", "delivered"], priorities: [], archived: "hide", delivered: false, completed: false, editorIds: [], includeUnassigned: false, shootRange: null, deadlineRange: null, overdueOnly: false, myTasks: false },
     });
     // Parameter order is a serializer concern; the parser accepts any order.
     expect(parseStaffLocation("/?completed=1&stages=raw_review&view=timeline")).toEqual({
-      kind: "dashboard", dashboardView: "timeline", gantt: { stageKeys: ["raw_review"], priorities: [], archived: "hide", delivered: false, completed: true, editorIds: [] },
+      kind: "dashboard", dashboardView: "timeline", gantt: { stageKeys: ["raw_review"], priorities: [], archived: "hide", delivered: false, completed: true, editorIds: [], includeUnassigned: false, shootRange: null, deadlineRange: null, overdueOnly: false, myTasks: false },
     });
     expect(safeStaffDestination("/?completed=1&stages=raw_review&view=timeline")).toBe("/?view=timeline&stages=raw_review&completed=1");
 
-    const unordered: DashboardTimelineRoute = { kind: "dashboard", dashboardView: "timeline", gantt: { stageKeys: ["delivered", "raw_review", "delivered", "awaiting_raw"], priorities: [], archived: "hide", delivered: true, completed: false, editorIds: [] } };
+    const unordered: DashboardTimelineRoute = { kind: "dashboard", dashboardView: "timeline", gantt: { stageKeys: ["delivered", "raw_review", "delivered", "awaiting_raw"], priorities: [], archived: "hide", delivered: true, completed: false, editorIds: [], includeUnassigned: false, shootRange: null, deadlineRange: null, overdueOnly: false, myTasks: false } };
     expect(staffPathFor(unordered)).toBe("/?view=timeline&stages=awaiting_raw%2Craw_review%2Cdelivered&delivered=1");
   });
 
   it("serialises an absent or all-default facet to the bare Gantt URL (plus q)", () => {
     expect(staffPathFor({ kind: "dashboard", dashboardView: "timeline" })).toBe("/?view=timeline");
-    expect(staffPathFor({ kind: "dashboard", dashboardView: "timeline", gantt: { stageKeys: [], priorities: [], archived: "hide", delivered: false, completed: false, editorIds: [] } })).toBe("/?view=timeline");
-    expect(staffPathFor({ kind: "dashboard", dashboardView: "timeline", search: "smith", gantt: { stageKeys: [], priorities: [], archived: "hide", delivered: false, completed: false, editorIds: [] } })).toBe("/?view=timeline&q=smith");
+    expect(staffPathFor({ kind: "dashboard", dashboardView: "timeline", gantt: { stageKeys: [], priorities: [], archived: "hide", delivered: false, completed: false, editorIds: [], includeUnassigned: false, shootRange: null, deadlineRange: null, overdueOnly: false, myTasks: false } })).toBe("/?view=timeline");
+    expect(staffPathFor({ kind: "dashboard", dashboardView: "timeline", search: "smith", gantt: { stageKeys: [], priorities: [], archived: "hide", delivered: false, completed: false, editorIds: [], includeUnassigned: false, shootRange: null, deadlineRange: null, overdueOnly: false, myTasks: false } })).toBe("/?view=timeline&q=smith");
     expect(isDefaultGanttFacet(undefined)).toBe(true);
-    expect(isDefaultGanttFacet({ stageKeys: [], priorities: [], archived: "hide", delivered: false, completed: false, editorIds: [] })).toBe(true);
-    expect(isDefaultGanttFacet({ stageKeys: ["raw_review"], priorities: [], archived: "hide", delivered: false, completed: false, editorIds: [] })).toBe(false);
-    expect(isDefaultGanttFacet({ stageKeys: [], priorities: [], archived: "hide", delivered: true, completed: false, editorIds: [] })).toBe(false);
-    expect(isDefaultGanttFacet({ stageKeys: [], priorities: [], archived: "hide", delivered: false, completed: true, editorIds: [] })).toBe(false);
+    expect(isDefaultGanttFacet({ stageKeys: [], priorities: [], archived: "hide", delivered: false, completed: false, editorIds: [], includeUnassigned: false, shootRange: null, deadlineRange: null, overdueOnly: false, myTasks: false })).toBe(true);
+    expect(isDefaultGanttFacet({ stageKeys: ["raw_review"], priorities: [], archived: "hide", delivered: false, completed: false, editorIds: [], includeUnassigned: false, shootRange: null, deadlineRange: null, overdueOnly: false, myTasks: false })).toBe(false);
+    expect(isDefaultGanttFacet({ stageKeys: [], priorities: [], archived: "hide", delivered: true, completed: false, editorIds: [], includeUnassigned: false, shootRange: null, deadlineRange: null, overdueOnly: false, myTasks: false })).toBe(false);
+    expect(isDefaultGanttFacet({ stageKeys: [], priorities: [], archived: "hide", delivered: false, completed: true, editorIds: [], includeUnassigned: false, shootRange: null, deadlineRange: null, overdueOnly: false, myTasks: false })).toBe(false);
   });
 
   it("is a serialize -> parse -> serialize fixed point over every facet combination", () => {
@@ -118,7 +118,7 @@ describe("Dashboard Gantt route arm (#255)", () => {
         for (const completed of [false, true]) {
           for (const search of [undefined, "smith street"]) {
             for (const editorIds of [[], ["11111111-1111-4111-8111-111111111111"], ["22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111"]]) {
-            const route: DashboardTimelineRoute = { kind: "dashboard", dashboardView: "timeline", ...(search ? { search } : {}), gantt: { stageKeys, priorities: [], archived: "hide", delivered, completed, editorIds } };
+            const route: DashboardTimelineRoute = { kind: "dashboard", dashboardView: "timeline", ...(search ? { search } : {}), gantt: { stageKeys, priorities: [], archived: "hide", delivered, completed, editorIds, includeUnassigned: false, shootRange: null, deadlineRange: null, overdueOnly: false, myTasks: false } };
             const location = staffPathFor(route);
             const parsed = parseStaffLocation(location);
             expect(parsed.kind, location).toBe("dashboard");
@@ -131,9 +131,9 @@ describe("Dashboard Gantt route arm (#255)", () => {
     }
   });
 
-  it("keeps Table and Board off the Gantt-only facets: Show (delivered/completed) and editors are not found there", () => {
+  it("keeps Table and Board off the Gantt-only facets: Show (delivered/completed) is not found there (#429: People and the date facets are shared, so they are)", () => {
     for (const view of ["table", "board"]) {
-      for (const parameter of ["delivered=1", "completed=1", "editors=11111111-1111-4111-8111-111111111111"]) {
+      for (const parameter of ["delivered=1", "completed=1"]) {
         expect(parseStaffLocation(`/?view=${view}&${parameter}`), `${view} ${parameter}`).toEqual({ kind: "not-found" });
       }
       expect(parseStaffLocation(`/?view=${view}&q=smith`)).toEqual({ kind: "dashboard", dashboardView: view, search: "smith" });

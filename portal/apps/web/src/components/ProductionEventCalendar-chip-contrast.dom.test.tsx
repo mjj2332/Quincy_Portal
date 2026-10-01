@@ -341,6 +341,7 @@ const assignee = "22222222-2222-4222-8222-222222222222";
 const project = { id: principal, street: "12 Harbour Street", stageKey: "editing_autohdr" as const, checklist: { completed: 3, total: 5 }, delivered: false, archived: false };
 const calendarFor = (subview: DashboardCalendarState["subview"]): DashboardCalendarState => ({
   view: "calendar", date: "2026-08-12", subview, layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const,
+  shootRange: null, deadlineRange: null,
   showCompletedChecklist: true, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false,
 });
 const checklistItem = (id: string, title: string, completed: boolean) => ({
@@ -352,7 +353,7 @@ const checklistItem = (id: string, title: string, completed: boolean) => ({
 const response = adminProductionCalendarRangeResponseSchema.parse({
   range: {
     start: "2026-07-27", end: "2026-09-07", date: "2026-08-12", subview: "month", zone: PRODUCTION_CALENDAR_ZONE,
-    appliedFilters: { layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, showCompletedChecklist: true, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false },
+    appliedFilters: { layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, shootRange: null, deadlineRange: null, showCompletedChecklist: true, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false },
   },
   events: [
     { id: "project-deadline:project", kind: "project_deadline", title: "Project handoff", project, timing: { allDay: false, start: "2026-08-12T00:00:00.000Z", end: null }, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, permissions: { canDrag: true, canResize: false }, deadlineLocalCivil: "2026-08-12T10:00", deadlineVersion: 3, reminderOffsetsMinutes: [] },

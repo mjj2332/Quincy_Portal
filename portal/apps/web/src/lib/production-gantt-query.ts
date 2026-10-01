@@ -1,7 +1,9 @@
 import {
   adminProductionGanttResponseSchema,
   canonicalDashboardPriorities,
+  formatDashboardDateRange,
   type DashboardArchivedMode,
+  type DashboardDateRange,
   type DashboardPriorityFilterValue,
   editorProductionGanttResponseSchema,
   externalProductionGanttSchema,
@@ -28,10 +30,16 @@ export type ProductionGanttFilters = {
   archived: DashboardArchivedMode;
   delivered: boolean;
   completed: boolean;
+  /** #429: the rest of the shared Filter's relation and date facets (People is `editorIds` + `includeUnassigned`). */
+  includeUnassigned: boolean;
+  myTasks: boolean;
+  overdueOnly: boolean;
+  shootRange: DashboardDateRange | null;
+  deadlineRange: DashboardDateRange | null;
   limit?: number;
 };
 
-const DEFAULT_FILTERS: ProductionGanttFilters = { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide", delivered: false, completed: false };
+const DEFAULT_FILTERS: ProductionGanttFilters = { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide", delivered: false, completed: false, includeUnassigned: false, myTasks: false, overdueOnly: false, shootRange: null, deadlineRange: null };
 
 export function buildGanttPageQuery(filters: ProductionGanttFilters, cursor: string | undefined): string {
   const params = new URLSearchParams();
@@ -42,16 +50,22 @@ export function buildGanttPageQuery(filters: ProductionGanttFilters, cursor: str
   // #365: each row's Project team and `permissions.canEditTeam`, for the People column.
   params.set("team", "1");
   if (filters.q) params.set("q", filters.q);
+  // #429: ask for `deadlineInScope`, so a Project listed only as the parent of a matching checklist row
+  // never draws a Deadline bar the filter did not select.
+  params.set("dm", "1");
   if (filters.editorIds.length > 0) params.set("editors", filters.editorIds.join(","));
+  if (filters.includeUnassigned) params.set("unassigned", "1");
   if (filters.stageKeys.length > 0) params.set("stages", filters.stageKeys.join(","));
   if (filters.priorities.length > 0) params.set("priority", canonicalDashboardPriorities(filters.priorities).join(","));
   if (filters.archived !== "hide") params.set("archived", filters.archived);
   if (filters.delivered) params.set("delivered", "1");
   if (filters.completed) params.set("completed", "1");
+  if (filters.shootRange) params.set("shoot", formatDashboardDateRange(filters.shootRange));
+  if (filters.deadlineRange) params.set("deadline", formatDashboardDateRange(filters.deadlineRange));
+  else if (filters.overdueOnly) params.set("overdue", "1");
+  if (filters.myTasks) params.set("mine", "1");
   if (filters.limit) params.set("limit", String(filters.limit));
   if (cursor) params.set("cursor", cursor);
-  // #274: the Editor field's options come with page one; the server refuses them on a continuation.
-  else params.set("facets", "1");
   return params.toString();
 }
 
@@ -303,10 +317,21 @@ export function useProductionGanttProjects(identity: DashboardIdentity, filters:
  * (fix-218-r1 #1), so passing both is a caller error the server rejects with
  * `gantt_query_invalid` — omit `completed` once you have a cursor.
  */
-export async function fetchGanttChildPage(projectId: string, childCursor?: string, completed?: boolean, signal?: AbortSignal, archived: DashboardArchivedMode = "hide"): Promise<ProductionGanttChildPageResponse> {
+export async function fetchGanttChildPage(
+  projectId: string,
+  childCursor?: string,
+  completed?: boolean,
+  signal?: AbortSignal,
+  archived: DashboardArchivedMode = "hide",
+  // #429: the People / My tasks filter the Project list was cut under; the cursor carries its fingerprint, so a continuation must repeat it.
+  people: Pick<ProductionGanttFilters, "editorIds" | "includeUnassigned" | "myTasks"> = { editorIds: [], includeUnassigned: false, myTasks: false },
+): Promise<ProductionGanttChildPageResponse> {
   const params = new URLSearchParams({ scope: "active", childrenOf: projectId });
   // #428: the Archived mode that listed the Project (Admin only); the default sends nothing.
   if (archived !== "hide") params.set("archived", archived);
+  if (people.editorIds.length > 0) params.set("editors", [...new Set(people.editorIds)].sort().join(","));
+  if (people.includeUnassigned) params.set("unassigned", "1");
+  if (people.myTasks) params.set("mine", "1");
   if (childCursor) params.set("childCursor", childCursor);
   else if (completed) params.set("completed", "1");
   const path = `/api/production-gantt?${params.toString()}`;

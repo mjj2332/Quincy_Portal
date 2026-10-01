@@ -27,6 +27,7 @@
  * - QUINCY (#255 browser pass G): the value segment carries `VALUE_SEGMENT_LINE_CLASS` (`min-w-0 max-w-60 whitespace-nowrap`) and wraps its label in a `min-w-0 truncate` span; `valueWithIcon` adds `min-w-0` to its flex row and a `truncate` span around the text. A long value ellipsizes on one line instead of wrapping the chip to two.
  * - QUINCY (#428 design review D6): the operator popover's handoff close (operator chosen, value editor next) is INSTANT, the same `instantExit` treatment `filters-builder.tsx`'s field picker already has, so the 160px operator card does not fade over the value editor that replaces it.
  * - QUINCY ADDITION (#255), additive: a `ruleMenu?: { duplicate?: boolean; negate?: boolean }` option (`FilterRuleMenuOptions`, `filters-context.tsx`) threaded root prop -> actions context -> `FilterRuleMenuItems`, so a consumer can hide the rule menu's Duplicate and Negate rows. Upstream has no option for it. Omitted, both rows render exactly as upstream.
+ * - QUINCY ADDITION (#429): the chip group carries `max-w-full min-w-0` and the field-name and operator segments `whitespace-nowrap`, so at 390px only the value ellipsizes and the menu button stays inside the row.
  */
 import * as React from "react"
 import {
@@ -1033,7 +1034,9 @@ function FilterChipImpl<V, O>({ rule, index }: FilterChipProps<V>) {
       className={cn(
         /* Sera is an underline style, so the boxed segments are normalised to
            its bottom-border-only look or the chip reads as a mix of both. */
-        CHIP_HEIGHT_CLASS
+        CHIP_HEIGHT_CLASS,
+        // QUINCY ADDITION (#429): the group is bounded by its row and may shrink, so only the value truncates.
+        "max-w-full min-w-0"
       )}
       onFocusCapture={() => {
         if (!focused)
@@ -1047,7 +1050,8 @@ function FilterChipImpl<V, O>({ rule, index }: FilterChipProps<V>) {
         /* Dropped while the path is collapsed: the ellipsis inside carries the
            same sentence as a tooltip, and the two would stack. */
         title={pathCollapsed ? undefined : pathText}
-        className="bg-background cursor-default gap-1.5"
+        // QUINCY ADDITION (#429): whitespace-nowrap, so the field name never wraps at 390px.
+        className="bg-background cursor-default gap-1.5 whitespace-nowrap"
       >
         {field.icon}
         {/* Zero gap INSIDE the path, so the separator's own margin is the only
@@ -1063,6 +1067,8 @@ function FilterChipImpl<V, O>({ rule, index }: FilterChipProps<V>) {
             render={<button type="button" />}
             className={cn(
               "hover:bg-muted bg-background cursor-default",
+              // QUINCY ADDITION (#429): whitespace-nowrap, so the operator never wraps at 390px.
+              "whitespace-nowrap",
               SEGMENT_FOCUS_RADIUS_CLASS,
               /* The operator is connective tissue between the field and the
                  value, so it reads quieter than either - unless it is still

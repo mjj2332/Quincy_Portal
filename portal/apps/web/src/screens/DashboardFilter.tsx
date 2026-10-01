@@ -1,15 +1,24 @@
 import { createContext, useCallback, useContext, useMemo, useRef, type ReactNode, type RefObject } from "react";
 import { Filter as FilterIcon, Star } from "lucide-react";
-import type { DashboardFilter as DashboardFilterValueOf } from "@quincy/shared";
+import type { DashboardFilter as DashboardFilterValueOf, DashboardPerson } from "@quincy/shared";
 import { Filters, FiltersRow, useFilterState, type FilterField, type FilterLabels } from "../components/reui/filters/filters";
 import { FiltersBuilder } from "../components/reui/filters/filters-builder";
 import { Button } from "../components/quincy/Button";
 import { StageSwatch } from "../components/quincy/StageSwatch";
+import { InitialsAvatar } from "../components/quincy/InitialsAvatar";
+import { EmptyAssigneeGlyph } from "../components/quincy/EmptyAssigneeGlyph";
+import { DateRangeFilterEditor } from "../components/quincy/date-time-field/DateRangeFilterEditor";
+import { formatCivilDay } from "../lib/date-format";
 import {
   DASHBOARD_ARCHIVED_OPERATORS,
   DASHBOARD_ARCHIVED_OPTIONS,
+  DASHBOARD_DEADLINE_OPERATORS,
   DASHBOARD_FILTER_FIELD,
+  DASHBOARD_MINE_OPERATORS,
+  DASHBOARD_PEOPLE_OPERATORS,
   DASHBOARD_PRIORITY_OPERATORS,
+  DASHBOARD_SHOOT_OPERATORS,
+  DASHBOARD_UNASSIGNED_OPTION,
   DASHBOARD_PRIORITY_OPTIONS,
   DASHBOARD_STAGE_OPERATORS,
   dashboardFilterKey,
@@ -54,6 +63,12 @@ const LABELS: Partial<FilterLabels> = { filtersLabel: "Dashboard filters" };
 const RULE_MENU = { duplicate: false, negate: false } as const;
 const VALUE_MENU_CLASS = "w-60";
 
+/** "Mon 1 Jun 2026 – Wed 3 Jun 2026" for a `[from, to]` value. */
+export function rangeText(values: unknown[]): string {
+  const [from, to] = values;
+  return typeof from === "string" && typeof to === "string" ? `${formatCivilDay(from)} – ${formatCivilDay(to)}` : "Select dates";
+}
+
 export type DashboardFilterProviderProps = {
   /** The URL's filter, from `dashboardFilterOf(route)`. */
   filter: DashboardFilterValueOf;
@@ -65,12 +80,14 @@ export type DashboardFilterProviderProps = {
   canFilterPriority: boolean;
   /** True for an Admin: the Archived field is offered. */
   canFilterArchived: boolean;
+  /** #429: the People field's options (`GET /api/dashboard/people`). */
+  people: readonly DashboardPerson[];
   /** A board move or a calendar write is in flight: every control locks. */
   disabled?: boolean;
   children: ReactNode;
 };
 
-export function DashboardFilterProvider({ filter, onFilterChange, stageOptions, canFilterPriority, canFilterArchived, disabled = false, children }: DashboardFilterProviderProps) {
+export function DashboardFilterProvider({ filter, onFilterChange, stageOptions, canFilterPriority, canFilterArchived, people, disabled = false, children }: DashboardFilterProviderProps) {
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const focusTrigger = useCallback(() => {
     // After the frame in which the control that had focus (the last chip, or Clear) unmounted.
@@ -78,7 +95,7 @@ export function DashboardFilterProvider({ filter, onFilterChange, stageOptions, 
   }, []);
   const chipsRef = useRef<HTMLDivElement | null>(null);
   const focusSurvivor = useCallback((ruleId: string) => focusFilterChip(chipsRef.current, ruleId), []);
-  const toFacet = useCallback((next: DashboardFilterQuery) => queryToDashboardFilter(next, { archivedAllowed: canFilterArchived }), [canFilterArchived]);
+  const toFacet = useCallback((next: DashboardFilterQuery) => queryToDashboardFilter(next, { archivedAllowed: canFilterArchived, priorityAllowed: canFilterPriority }), [canFilterArchived, canFilterPriority]);
   const { query, onQueryChange, onBeforeQueryChange } = useFilterQueryBinding<DashboardFilterValueOf, DashboardFilterValue>({
     facet: filter,
     facetKey: dashboardFilterKey,
@@ -93,6 +110,20 @@ export function DashboardFilterProvider({ filter, onFilterChange, stageOptions, 
   const stageUsed = rules.some((rule) => rule.type === "rule" && rule.path[0] === DASHBOARD_FILTER_FIELD.stage);
   const priorityUsed = rules.some((rule) => rule.type === "rule" && rule.path[0] === DASHBOARD_FILTER_FIELD.priority);
   const archivedUsed = rules.some((rule) => rule.type === "rule" && rule.path[0] === DASHBOARD_FILTER_FIELD.archived);
+  const peopleUsed = rules.some((rule) => rule.type === "rule" && rule.path[0] === DASHBOARD_FILTER_FIELD.people);
+  const shootUsed = rules.some((rule) => rule.type === "rule" && rule.path[0] === DASHBOARD_FILTER_FIELD.shoot);
+  const deadlineUsed = rules.some((rule) => rule.type === "rule" && rule.path[0] === DASHBOARD_FILTER_FIELD.deadline);
+  const mineUsed = rules.some((rule) => rule.type === "rule" && rule.path[0] === DASHBOARD_FILTER_FIELD.mine);
+  // A URL id the server does not list (a stale link, an out-of-scope person) is kept as a chip the server ignores.
+  const unknownIds = useMemo(() => {
+    const known = new Set(people.map((person) => person.id));
+    const ids: string[] = [];
+    for (const rule of rules) {
+      if (rule.type !== "rule" || rule.path[0] !== DASHBOARD_FILTER_FIELD.people || !Array.isArray(rule.value)) continue;
+      for (const value of rule.value) if (typeof value === "string" && value !== DASHBOARD_UNASSIGNED_OPTION && !known.has(value)) ids.push(value);
+    }
+    return ids;
+  }, [people, rules]);
   const fields = useMemo<FilterField<DashboardFilterValue>[]>(
     () => [
       {
@@ -142,8 +173,56 @@ export function DashboardFilterProvider({ filter, onFilterChange, stageOptions, 
             },
           ]
         : []),
+      {
+        id: DASHBOARD_FILTER_FIELD.people,
+        label: "People",
+        type: "multiselect",
+        operators: DASHBOARD_PEOPLE_OPERATORS,
+        disabled: peopleUsed,
+        className: VALUE_MENU_CLASS,
+        options: [
+          { value: DASHBOARD_UNASSIGNED_OPTION, label: "Unassigned", icon: <EmptyAssigneeGlyph /> },
+          ...people.map((person) => ({
+            value: person.id,
+            label: person.active ? person.name : `${person.name} (inactive)`,
+            description: person.roleLabel,
+            icon: <InitialsAvatar name={person.name} className="size-6" />,
+          })),
+          ...unknownIds.map((id) => ({ value: id, label: "Unknown person (not applied)" })),
+        ],
+      },
+      {
+        id: DASHBOARD_FILTER_FIELD.shoot,
+        label: "Shoot date",
+        type: "text",
+        operators: DASHBOARD_SHOOT_OPERATORS,
+        defaultOperator: "between",
+        disabled: shootUsed,
+        editor: DateRangeFilterEditor,
+        renderValue: ({ values }) => rangeText(values),
+        valueText: ({ values }) => rangeText(values),
+      },
+      {
+        id: DASHBOARD_FILTER_FIELD.deadline,
+        label: "Deadline",
+        type: "text",
+        operators: DASHBOARD_DEADLINE_OPERATORS,
+        defaultOperator: "between",
+        disabled: deadlineUsed,
+        editor: DateRangeFilterEditor,
+        renderValue: ({ values }) => rangeText(values),
+        valueText: ({ values }) => rangeText(values),
+      },
+      {
+        id: DASHBOARD_FILTER_FIELD.mine,
+        label: "My tasks",
+        type: "boolean",
+        operators: DASHBOARD_MINE_OPERATORS,
+        defaultOperator: "only",
+        disabled: mineUsed,
+      },
     ],
-    [archivedUsed, canFilterArchived, canFilterPriority, priorityUsed, stageOptions, stageUsed],
+    [archivedUsed, canFilterArchived, canFilterPriority, deadlineUsed, mineUsed, people, peopleUsed, priorityUsed, shootUsed, stageOptions, stageUsed, unknownIds],
   );
   const focus = useMemo(() => ({ triggerRef, chipsRef }), []);
 

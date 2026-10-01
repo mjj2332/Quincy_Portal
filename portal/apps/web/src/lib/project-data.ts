@@ -413,16 +413,23 @@ export async function invalidateProjectSurfaces(queryClient: QueryClient, input:
   producer?: "dashboard" | "calendar" | "gantt";
   /**
    * #217 fix round 1, item 4. When `dashboard` is true, scope the in-tab convergence scan to
-   * `dashboard-projects` queries carrying a non-empty `q` in their trailing key object -- a
-   * checklist title change can flip whether a project matches an ACTIVE search (titles now
-   * participate in matching, #217), but it never changes the unfiltered list content itself, so a
-   * q-less baseline query has nothing to gain from refetching. The cross-tab broadcast still
+   * `dashboard-projects` queries carrying a non-empty `q` -- or, #429, a People / Unassigned / My tasks /
+   * Overdue / Shoot date / Deadline facet -- in their trailing key object. A checklist title change can
+   * flip whether a project matches an ACTIVE search (titles participate in matching, #217) and a
+   * checklist assignment or completion can flip whether it matches a People facet (an open Subtask's
+   * assignee), but neither changes the unfiltered list content itself, so a baseline query has nothing
+   * to gain from refetching. The cross-tab broadcast still
    * publishes the same generic `dashboard-board-invalidated` message regardless -- a receiving
    * tab's own handler (`project-query-sync.ts`) invalidates broadly there, same as it already does
    * for every other producer of that message; narrowing that shared handler for this one caller
    * is out of scope here.
    */
   dashboardSearchOnly?: boolean;
+  /**
+   * #429: the committed op can change who the Dashboard's People field lists (a Project's team, a Subtask's
+   * assignees): the `dashboard-people` options refetch. A priority, stage or deadline edit leaves it alone.
+   */
+  people?: boolean;
 }): Promise<void> {
   const resources = [...new Map(input.resources.map((resource) => [JSON.stringify(resource), resource])).values()];
   await invalidateProjectResources(queryClient, { projectId: input.projectId, resources }, true);
@@ -435,8 +442,10 @@ export async function invalidateProjectSurfaces(queryClient: QueryClient, input:
       const active = queryClient.getQueryCache().getAll().filter((query) => {
         if (query.queryKey[0] !== prefix || query.getObserversCount() === 0) return false;
         if (surface === "dashboard" && input.dashboardSearchOnly) {
-          const trailing = query.queryKey[4] as { q?: string } | undefined;
-          return Boolean(trailing?.q);
+          // A search, or (#429) a People / Unassigned / My tasks / Overdue / date-range facet: a checklist row's
+          // title, assignee or completion can move a Project into or out of such an entry.
+          const trailing = query.queryKey[4] as { q?: string; editors?: string[]; unassigned?: true; shoot?: unknown; deadline?: unknown; overdue?: true; mine?: true } | undefined;
+          return Boolean(trailing?.q || trailing?.editors || trailing?.unassigned || trailing?.mine || trailing?.overdue || trailing?.shoot || trailing?.deadline);
         }
         return true;
       });
@@ -444,7 +453,10 @@ export async function invalidateProjectSurfaces(queryClient: QueryClient, input:
     }
     runtime.publish(message);
   };
-  if (input.dashboard) converge("dashboard", "dashboard-projects", createDashboardBoardInvalidatedMessage());
+  // #429: the cross-tab message carries `people` so a receiving tab refetches its `dashboard-people` options too.
+  if (input.dashboard) converge("dashboard", "dashboard-projects", createDashboardBoardInvalidatedMessage({ people: input.people }));
+  else if (input.people) runtime.publish(createDashboardBoardInvalidatedMessage({ people: true }));
+  if (input.people) pending.push(queryClient.invalidateQueries({ queryKey: ["dashboard-people"], refetchType: "active" }));
   if (input.calendar) converge("calendar", "production-calendar", createProductionCalendarInvalidatedMessage());
   if (input.gantt) converge("gantt", "production-gantt", createProductionGanttInvalidatedMessage());
   // Await the non-producing surface refetches so a caller that navigates immediately

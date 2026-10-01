@@ -5,7 +5,7 @@ import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
 import { boardContractEnabled, boardSchemaVariant, buildDeadlineSuppressionBundle, buildProjectActivityStatements, buildSubtaskReminderMaterialization, buildSubtaskReminderSuppression, createDb, selectEffectiveDefaultEditorIds, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
 import { and, asc, desc, eq, exists, gt, inArray, isNotNull, isNull, lte, notExists, sql } from "drizzle-orm";
-import { capDashboardSearchText, COLLECTION_KINDS, dashboardPriorityFilterValueOf, dashboardProjectsFilterQuerySchema, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchemaForProject, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, roleHasCapability, stripUnsafeText, type CollectionKind, type DashboardFilter, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
+import { capDashboardSearchText, COLLECTION_KINDS, DASHBOARD_PROJECTS_FILTER_QUERY_NAMES, dashboardPriorityFilterValueOf, dashboardProjectsFilterQuerySchema, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchemaForProject, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, roleHasCapability, stripUnsafeText, type CollectionKind, type DashboardFilter, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, hasProjectAccessForUser, requireCapability } from "../middleware/capability";
@@ -26,6 +26,7 @@ import { compareBoardOrder, moveProjectBoardOrder } from "../lib/project-board-o
 import { classifyProjectArchiveLoser, type ProjectArchiveSource } from "../lib/project-archive";
 import { chunked, coverMaps } from "../lib/project-covers";
 import { matchingProjectIds, normalizeProjectSearch } from "../lib/project-search";
+import { projectsMatchingRelationFilter } from "../lib/project-relation-filter";
 import { publishOutboxDetached } from "../lib/server-timing";
 import { queueProjectShootDateFollowUps } from "../lib/project-shoot-date";
 
@@ -395,8 +396,9 @@ function rowsFromD1<T>(result: unknown): T[] {
 function firstD1<T>(result: unknown): T | undefined { return rowsFromD1<T>(result)[0]; }
 export const projectsRoutes = new Hono<AppEnv>();
 /**
- * #428: the shared Dashboard Filter on the Projects-list request — `stages`, `priority` and
- * `archived` — validated by the ONE shared schema and authorised before ANY role branch, so an
+ * #428/#429: the shared Dashboard Filter on the Projects-list request — `stages`, `priority`,
+ * `archived`, and the relation and date facets `editors`, `unassigned`, `shoot`, `deadline`,
+ * `overdue`, `mine` — validated by the ONE shared schema and authorised before ANY role branch, so an
  * External Editor reaches neither the archived rows nor a priority filter through the early return.
  * `archived` other than Hide needs the Admin back-end capability (`viewAllProjects` is not enough),
  * `priority` is unavailable to an External Editor (their DTO withholds it, so a filter would leak it
@@ -405,7 +407,7 @@ export const projectsRoutes = new Hono<AppEnv>();
 function projectsListFilter(c: Context<AppEnv>, role: Role): { filter: DashboardFilter } | { response: Response } {
   const queries = c.req.queries();
   const raw: Record<string, string> = {};
-  for (const name of ["stages", "priority", "archived"] as const) {
+  for (const name of DASHBOARD_PROJECTS_FILTER_QUERY_NAMES) {
     const values = queries[name];
     if (values === undefined) continue;
     if (values.length !== 1) return { response: c.json({ error: "Invalid project filter", code: "project_filter_invalid" }, 400) };
@@ -445,9 +447,13 @@ projectsRoutes.get("/projects", terminalRoute("/projects", async (c) => {
   const matchingIds = search === "" ? null : await matchingInternalProjectIds(c.env.DB, orderedRows.map(({ project }) => project.id), search);
   const stageSet = new Set<string>(filter.stageKeys.map((stage) => (stage === "editing" ? "editing_autohdr" : stage)));
   const prioritySet = new Set<string>(filter.priorities);
-  const facetNarrows = stageSet.size > 0 || prioritySet.size > 0;
+  // #429: People / Unassigned / My tasks / Overdue / the date ranges, as one id-set question over the
+  // authorised ids. It narrows `matchedRows` only, like Stage and Priority.
+  const relationIds = await projectsMatchingRelationFilter(c.env.DB, { id: user.id, role: user.role }, orderedRows.map(({ project }) => project.id), filter, Date.now());
+  const facetNarrows = stageSet.size > 0 || prioritySet.size > 0 || relationIds !== null;
   const matchedRows = orderedRows.filter(({ project }) =>
     (matchingIds === null || matchingIds.has(project.id))
+    && (relationIds === null || relationIds.has(project.id))
     && (stageSet.size === 0 || stageSet.has(project.stageKey))
     && (prioritySet.size === 0 || prioritySet.has(dashboardPriorityFilterValueOf(project.priority))));
   // Enrichment (covers, editors) runs only over matches, not the full authorised set.
