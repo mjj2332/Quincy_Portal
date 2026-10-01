@@ -15,6 +15,7 @@ import type { ProjectDetail, ProjectMember } from "../lib/project-data";
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { role: "editor" } } }) }));
 vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ role: "editor", capabilities: [], can: () => false }) }));
 vi.mock("../lib/stages", () => ({
+  presentationStages: (stages: readonly unknown[]) => stages,
   useStages: () => ({
     stages: [{ key: "editing", label: "Editing", displayOrder: 1, active: true }],
     presentationStageKey: (key: string) => key,

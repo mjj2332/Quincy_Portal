@@ -56,7 +56,7 @@ function emptyGanttResponse() {
   return adminProductionGanttResponseSchema.parse({
     scope: "active",
     zone: PRODUCTION_GANTT_ZONE,
-    appliedFilters: { q: "", editorIds: [], stageKeys: [], includeDelivered: false, includeCompletedChecklist: false },
+    appliedFilters: { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide", includeDelivered: false, includeCompletedChecklist: false },
     projects: [],
     page: { limit: 100, returned: 0, nextCursor: null },
     density: { matchedProjects: 0, matchedRows: 0, drawCap: 2000, tooManyToDraw: false },
@@ -67,7 +67,7 @@ function ganttResponse() {
   return adminProductionGanttResponseSchema.parse({
     scope: "active",
     zone: PRODUCTION_GANTT_ZONE,
-    appliedFilters: { q: "", editorIds: [], stageKeys: [], includeDelivered: false, includeCompletedChecklist: false },
+    appliedFilters: { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide", includeDelivered: false, includeCompletedChecklist: false },
     projects: [
       {
         id: "11111111-1111-4111-8111-111111111111",
@@ -77,6 +77,7 @@ function ganttResponse() {
         agentName: null,
         stageKey: "raw_review",
         delivered: false,
+        archived: false,
         shootDate: isoDate(0),
         shootDateCivil: isoDate(0),
         createdAt: isoDate(0) + "T00:00:00.000Z",
@@ -96,8 +97,12 @@ function ganttResponse() {
 
 const identity: DashboardIdentity = { principalId: "user-1", role: "admin", authorizationEpoch: 0 };
 
+/** Sets the URL facet, as the Dashboard would after a navigation or a shared-Filter edit. */
+let setFacet: (next: ProductionGanttFacetFilters) => void = () => {};
+
 function ControlledGantt({ initial = DEFAULT_GANTT_FACET_FILTERS, q = "", onFiltersChange, onShownProjectsChange }: { initial?: ProductionGanttFacetFilters; q?: string; onFiltersChange?: (next: ProductionGanttFacetFilters) => void; onShownProjectsChange?: (count: number | null) => void }) {
   const [filters, setFilters] = useState(initial);
+  setFacet = setFilters;
   return (
     <ProductionGantt
       identity={identity}
@@ -272,36 +277,31 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
     root = createRoot(host);
   });
 
-  it("offers only the two Gantt fields: Stage (the five role-aware stages) and Show (delivered, completed)", async () => {
+  it("offers only Show here (delivered, completed): Stage moved to the Dashboard's shared Filter (#428)", async () => {
     await render();
     expect(chipNames(host)).toEqual([]);
     await click(addTrigger(host));
-    await waitFor(() => expect(optionNames()).toEqual(["Stage", "Show"]));
-    await click(option("Stage"));
-    await waitFor(() => expect(optionNames()).toEqual(["is any of"]));
-    await click(option("is any of"));
-    await waitFor(() => expect(optionNames()).toEqual(["Awaiting RAW", "RAW review", "Editing", "Edited review", "Delivered"]));
-    await escape();
-    await click(addTrigger(host));
-    await waitFor(() => option("Show"));
+    await waitFor(() => expect(optionNames()).toEqual(["Show"]));
     await click(option("Show"));
     await waitFor(() => expect(optionNames()).toEqual(["includes"]));
     await click(option("includes"));
     await waitFor(() => expect(optionNames()).toEqual(["Delivered projects", "Completed checklist items"]));
   });
 
-  it("changes the /api/production-gantt request when a stage, delivered or completed is toggled", async () => {
-    await render();
-    expect(lastListQuery().get("stages")).toBeNull();
+  it("sends the shared Filter's stages, priority and archived mode with every request (#428)", async () => {
+    await render({ ...DEFAULT_GANTT_FACET_FILTERS, stageKeys: ["raw_review"], priorities: ["5", "none"], archived: "include" });
+    expect(lastListQuery().get("stages")).toBe("raw_review");
+    expect(lastListQuery().get("priority")).toBe("5,none");
+    expect(lastListQuery().get("archived")).toBe("include");
+    // The bar draws no chip for them: the Dashboard's Filter owns them.
+    expect(chipNames(host)).toEqual([]);
+  });
+
+  it("changes the /api/production-gantt request when delivered or completed is toggled", async () => {
+    await render({ ...DEFAULT_GANTT_FACET_FILTERS, stageKeys: ["awaiting_raw", "raw_review"] });
+    expect(lastListQuery().get("stages")).toBe("awaiting_raw,raw_review");
     expect(lastListQuery().get("delivered")).toBeNull();
     expect(lastListQuery().get("completed")).toBeNull();
-
-    await addFilter(host, "Stage", ["RAW review"]);
-    expect(lastListQuery().get("stages")).toBe("raw_review");
-
-    await toggle("Awaiting RAW");
-    expect(lastListQuery().get("stages")).toBe("awaiting_raw,raw_review");
-    await escape();
 
     await addFilter(host, "Show", ["Delivered projects"]);
     expect(lastListQuery().get("delivered")).toBe("1");
@@ -317,7 +317,7 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
     expect(lastListQuery().get("completed")).toBe("1");
     expect(lastListQuery().get("editors")).toBeNull();
     await escape();
-    expect(chipNames(host)).toEqual(["Stage is any of 2 selected", "Show includes Completed checklist items"]);
+    expect(chipNames(host)).toEqual(["Show includes Completed checklist items"]);
   });
 
   it("keeps focus on the control in use while the new filter's first page is pending", async () => {
@@ -378,16 +378,13 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
   });
 
   it("restricts the legend to the selected stages", async () => {
-    await render();
-    await addFilter(host, "Stage", ["RAW review"]);
+    await render({ ...DEFAULT_GANTT_FACET_FILTERS, stageKeys: ["raw_review"] });
     expect(legendKeys(host)).toEqual(["raw_review"]);
 
-    // Selecting Delivered as a stage switches delivered projects on in the same write (#255), so
-    // its legend entry arrives with it.
-    await toggle("Delivered");
+    // The shared Filter's Stage = Delivered arrives with delivered projects on (#255), so its legend entry follows.
+    await act(async () => { setFacet({ ...DEFAULT_GANTT_FACET_FILTERS, stageKeys: ["raw_review", "delivered"], delivered: true }); });
     await waitFor(() => expect(legendKeys(host)).toEqual(["raw_review", "delivered"]));
-    await escape();
-    expect(chipNames(host)).toEqual(["Stage is any of 2 selected", "Show includes Delivered projects"]);
+    expect(chipNames(host)).toEqual(["Show includes Delivered projects"]);
   });
 
   it("#257: draws legend labels in the secondary text role, and hatches only the Edited review swatch", async () => {
@@ -421,7 +418,7 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
     await render();
     expect(lastListQuery().get("facets")).toBe("1");
     await click(addTrigger(host));
-    await waitFor(() => expect(optionNames()).toEqual(["Editor", "Stage", "Show"]));
+    await waitFor(() => expect(optionNames()).toEqual(["Editor", "Show"]));
     await click(option("Editor"));
     await waitFor(() => option("is any of"));
     await click(option("is any of"));
@@ -473,7 +470,7 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
       expect(chartSlot).not.toBeNull();
       expect([...chartSlot!.children]).toEqual([empty]);
       // The bar and legend stay mounted around it.
-      expect(chipNames(host)).toEqual(["Stage is any of Delivered"]);
+      expect(chipNames(host)).toEqual([]);
       expect(host.querySelector('[data-testid="production-gantt-legend"]')).not.toBeNull();
     });
 
@@ -587,8 +584,8 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
     });
 
     it("does not scroll for a filter change that did not come from the empty state's Clear filters", async () => {
-      apiGetMock.mockImplementation((path: string) => Promise.resolve(path.includes("stages=") ? emptyGanttResponse() : ganttResponse()));
-      await render(deliveredStageOnly);
+      apiGetMock.mockImplementation((path: string) => Promise.resolve(path.includes("completed=1") ? emptyGanttResponse() : ganttResponse()));
+      await render({ ...DEFAULT_GANTT_FACET_FILTERS, completed: true });
       expect(emptyState()).not.toBeNull();
       const scrollIntoView = vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
       try {
@@ -602,13 +599,13 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
         expect(scrollIntoView).not.toHaveBeenCalled();
 
         // And an empty-state Clear leaves nothing armed: one scroll, then none for a later bar edit.
-        await addFilter(host, "Stage", ["Editing"]);
+        await addFilter(host, "Show", ["Completed checklist items"]);
         await settle();
         const again = clearButton(emptyState()!)!;
         await act(async () => { again.click(); });
         await settle();
         expect(scrollIntoView).toHaveBeenCalledTimes(1);
-        await addFilter(host, "Stage", ["Editing"]);
+        await addFilter(host, "Show", ["Completed checklist items"]);
         await settle();
         expect(scrollIntoView).toHaveBeenCalledTimes(1);
       } finally {

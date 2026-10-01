@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Calendar, GanttChart, SlidersHorizontal, SquareKanban, Table2, type LucideIcon } from "lucide-react";
 import { DashboardSearch, type DashboardSearchFocusRequest } from "../components/quincy/DashboardSearch";
 import { buttonClasses } from "../components/quincy/Button";
@@ -36,6 +37,10 @@ import type { DashboardView, KanbanSortMode } from "./dashboard-helpers";
  * the rule, and the tab row scrolls sideways inside its own wrapper like `ProjectHeader`'s
  * (`styles/app.css`, `.project-header__tabs`) instead of spilling out.
  *
+ * ## Filter
+ * The shared Filter's trigger (#428) is a slot between the search and Display, drawn by
+ * `DashboardFilter.tsx`; the chips it adds sit in their own row under this bar's rule.
+ *
  * ## Display
  * Rendered on every view so the search never moves; enabled only on Board in #427 (the Board's sort
  * order), disabled with an accessible reason elsewhere. "Priority" is offered only when the caller says it
@@ -52,7 +57,7 @@ const TABS: { view: DashboardView; label: string; Icon: LucideIcon; gated: boole
   { view: "timeline", label: "Timeline", Icon: GanttChart, gated: true },
 ];
 
-/** Search and Display share one fixed height — Quincy's control contract (`BUTTON_HEIGHT_CLASS`):
+/** Search, Filter and Display share one fixed height — Quincy's control contract (`BUTTON_HEIGHT_CLASS`):
  * 38px, 44px at <=721px — so a content-sized input can never make one a pixel taller. */
 const CONTROL_HEIGHT = "h-[38px] max-[721px]:h-[44px]";
 const DISPLAY_UNAVAILABLE = "Display options for this view arrive with #431";
@@ -80,6 +85,8 @@ export type DashboardViewBarProps = {
   sort: KanbanSortMode;
   canSortByPriority: boolean;
   onSortChange: (next: KanbanSortMode) => void;
+  /** The shared Filter's trigger (#428), drawn between the search and Display; the chips sit under the rule. */
+  filterTrigger?: ReactNode;
 };
 
 export function DashboardViewBar({
@@ -94,6 +101,7 @@ export function DashboardViewBar({
   sort,
   canSortByPriority,
   onSortChange,
+  filterTrigger,
 }: DashboardViewBarProps) {
   const sortOptions = (Object.keys(SORT_LABELS) as KanbanSortMode[]).filter((mode) => mode !== "priority" || canSortByPriority);
   return (
@@ -138,6 +146,7 @@ export function DashboardViewBar({
           onFocusRequestHandled={onSearchFocusHandled}
           className={cn("w-[20rem] max-w-full max-[721px]:min-w-0 max-[721px]:flex-1 max-[721px]:w-auto", CONTROL_HEIGHT)}
         />
+        {filterTrigger}
         <DropdownMenu>
           <DropdownMenuTrigger
             disabled={disabled || !showDisplay}

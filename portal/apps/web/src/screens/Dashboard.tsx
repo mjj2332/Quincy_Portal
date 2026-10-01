@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { dashboardSearchOf, formatSydneyCivil, roleHasCapability, type DashboardCalendarState, type DashboardRoute, type DashboardTimelineRoute, type DashboardViewRoute as SharedDashboardViewRoute, type MoveProjectStageRequest, type MoveProjectStageResponse, type ProductionCalendarFilters, type StageKey } from "@quincy/shared";
+import { dashboardFilterOf, dashboardSearchOf, formatSydneyCivil, roleHasCapability, withDashboardFilter, type DashboardCalendarState, type DashboardFilter, type DashboardRoute, type DashboardTimelineRoute, type DashboardViewRoute as SharedDashboardViewRoute, type MoveProjectStageRequest, type MoveProjectStageResponse, type ProductionCalendarFilters, type StageKey } from "@quincy/shared";
 import { QueryClient, QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
 import { StatusBadge } from "../components/atoms";
 import { LazyImage } from "../components/LazyImage";
@@ -14,9 +14,9 @@ import { pushToast as toast } from "../lib/toast-store";
 import { ToastViewport } from "../components/quincy/ToastViewport";
 import { Button, buttonClasses } from "../components/quincy/Button";
 import { Eyebrow } from "../components/quincy/Eyebrow";
-import { SEGMENT_GROUP, SEGMENT_BUTTON } from "../components/quincy/segment";
 import { DashboardHeader } from "./DashboardHeader";
 import { DashboardViewBar, VIEW_PANEL_ID, VIEW_TAB_ID } from "./DashboardViewBar";
+import { DashboardFilterChips, DashboardFilterProvider, DashboardFilterTrigger } from "./DashboardFilter";
 import { dashboardSummary } from "../lib/dashboard-summary";
 import { useNow } from "../lib/use-now";
 import { Skeleton } from "../components/reui/skeleton";
@@ -28,7 +28,7 @@ import { cn } from "../lib/utils";
 import { invalidateProjectSurfaces, useOptionalProjectQueryClient } from "../lib/project-data";
 import { createDashboardBoardInvalidatedMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
 import { markDashboardData } from "../lib/boot-timing";
-import { dashboardProjectsKey, dashboardProjectsKeyPrefix, isDashboardProjectsQueryFor, useDashboardProjectSearch, useDashboardProjects } from "../lib/dashboard-projects";
+import { dashboardProjectsKey, dashboardProjectsKeyPrefix, isDashboardProjectsQueryFor, isFilteredDashboardProjectsQuery, useDashboardProjectSearch, useDashboardProjects } from "../lib/dashboard-projects";
 import { submitStageMoveWithConfirmation } from "../lib/stage-move";
 
 import {
@@ -77,7 +77,8 @@ import {
   takeDashboardSearchForNavigation,
 } from "../lib/dashboard-search-store";
 import type { CalendarSettleState } from "../lib/production-calendar-interaction";
-import { ganttFiltersFromRoute, ganttRouteFor, type ProductionGanttFacetFilters } from "../lib/production-gantt-filters";
+import { ganttFacetForWrite, ganttFiltersFromRoute, ganttPairingNotice, ganttRouteFor, productionStageFilterOptions, type ProductionGanttFacetFilters } from "../lib/production-gantt-filters";
+import { dashboardFilterNarrowCount } from "../lib/dashboard-filter-query";
 
 /** A lazy Dashboard view's loading box (#363): fills the view region instead of a fixed floor. */
 const VIEW_STATE_BOX = "min-h-0 flex-1 grid place-content-center gap-[4px]";
@@ -85,7 +86,6 @@ const VIEW_STATE_BOX = "min-h-0 flex-1 grid place-content-center gap-[4px]";
 export { adjacentBoardGap, adjacentBoardPlacement, cardDropPlacement, sortKanbanProjects } from "../lib/kanban-interaction";
 export type { ProjectSummary } from "../lib/kanban-interaction";
 
-type ProjectScope = "active" | "archived";
 type BoardOverlay = { key: string; baseline: ProjectSummary[]; model: ProjectSummary[]; movingProjectId: string };
 type FocusRestore = { key: string | null; x: number; y: number; fallbackStageKey?: StageKey };
 type MovementRecovery = { model: BoardModel; projectId: string; project: ProjectSummary; settledStageKey: StageKey };
@@ -259,12 +259,27 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // cold deep link and Back/Forward both apply on their first commit. Independent of the Calendar's
   // own filter state.
   const routeGantt = currentDashboardRoute && isDashboardTimelineRoute(currentDashboardRoute) ? currentDashboardRoute : null;
-  const ganttFilters = useMemo<ProductionGanttFacetFilters>(() => ganttFiltersFromRoute(routeGantt), [routeGantt]);
+  // #428: the shared Filter (Stage, Project priority, Archived) is the URL's too, read through the
+  // one accessor at render — never copied into state, no adoption effect — so a cold deep link and
+  // Back/Forward both apply on their first commit. A role that may not use a facet never sends it:
+  // Archived Include/Only is an Admin's (the server answers 403 otherwise) and Project priority is
+  // withheld from an External Editor (400), so a stale link naming either reads as the default here.
+  const canFilterArchived = canViewArchived;
+  const canFilterPriority = role !== "external_editor";
+  const urlFilter = dashboardFilterOf(parsedRoute);
+  const filterKey = JSON.stringify([urlFilter.stageKeys, urlFilter.priorities, urlFilter.archived]);
+  const filter = useMemo<DashboardFilter>(() => ({
+    stageKeys: urlFilter.stageKeys,
+    priorities: canFilterPriority ? urlFilter.priorities : [],
+    archived: canFilterArchived ? urlFilter.archived : "hide",
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- `filterKey` is the value key of `urlFilter`
+  }), [filterKey, canFilterArchived, canFilterPriority]);
+  const ganttFilters = useMemo<ProductionGanttFacetFilters>(() => ({ ...ganttFiltersFromRoute(routeGantt), ...filter }), [routeGantt, filter]);
+  const stageFilterOptions = useMemo(() => productionStageFilterOptions(stages, canViewArchived), [stages, canViewArchived]);
   const calendarStorage = {
     read: (key: string) => window.localStorage.getItem(key),
     write: (key: string, value: string) => window.localStorage.setItem(key, value),
   };
-  const [projectScope, setProjectScope] = useState<ProjectScope>("active");
   // #217: the single Dashboard search store — the rail's `ShellSearch` is the one search input
   // now, so there is no local field or focus latch here to own.
   // #217 fix round 5, item 1 (Sol re-review, BLOCKER): principal-scoped, not the unscoped reader --
@@ -367,13 +382,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       }
     } catch { /* Storage can be disabled. */ }
   }, [canViewProductionCalendar]);
-  const viewingArchived = projectScope === "archived";
   const identity = { principalId: currentUserId, role, authorizationEpoch } as const;
-  const projectsQuery = useDashboardProjects(viewingArchived, identity, committedQuery);
+  const projectsQuery = useDashboardProjects(filter, identity, committedQuery);
   // #361: first Dashboard data, for boot timing (a no-op after the first call and off a Dashboard landing).
   const firstDataReady = projectsQuery.isSuccess && !projectsQuery.isPlaceholderData;
   useEffect(() => { if (firstDataReady) markDashboardData(view); }, [firstDataReady, view]);
-  const searchCountsQuery = useDashboardProjectSearch(viewingArchived, identity, committedQuery);
+  const searchCountsQuery = useDashboardProjectSearch(filter, identity, committedQuery);
   // #260: the projects the Gantt / Calendar actually draws under its own filters (the chip's "shown").
   const [viewShownProjects, setViewShownProjects] = useState<number | null>(null);
   // #230: widened to carry `committedQuery` as the fifth argument -- ONE q-aware key, not a second
@@ -392,7 +406,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // comment) is what keeps that placeholder from ever being STAMPED into `acceptedProjects` under
   // the new key as though it were that key's own confirmed result; this fallback is simply what
   // renders it in the meantime.
-  const dashboardKey = dashboardProjectsKey(currentUserId, role, authorizationEpoch, viewingArchived, committedQuery);
+  const dashboardKey = dashboardProjectsKey(currentUserId, role, authorizationEpoch, filter, committedQuery);
   const dashboardKeyString = JSON.stringify(dashboardKey);
   // #230: `setProjectPriority`'s sibling predicate needs the key ACTIVE at CONFIRMATION time, not
   // the one its own closure captured at click time -- `setProjectPriority` is a plain function
@@ -456,6 +470,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // constant's own comment above. Everything gated on `searchActive` (the chip,
   // the Kanban movement gates below) inherits the fix through this one flag.
   const searchActive = committedQuery !== "";
+  // #428: a Board column shown under a search, a Priority filter or any Archived mode is a subset of
+  // the real column, so a position computed against it is wrong. Stage alone does not narrow within
+  // a column. The same gate the search had, on the three places it was read (`canMoveStages`,
+  // `movementDisabled`/`sameStageReorderEnabled`, `runBoardMovement`).
+  const boardNarrowed = searchActive || filter.priorities.length > 0 || filter.archived !== "hide";
+  const filterActive = dashboardFilterNarrowCount(filter) > 0;
   // #306: the UI lock is NOT the data barrier. `movementInteractionActive` locks the view switcher
   // and the sort; `interactionBlocked` is that plus a pending priority save, and is the barrier that
   // defers accepting refetched data (a refetch must not land mid-save). A priority save is per-card:
@@ -465,10 +485,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const interactionBlockedRef = useRef(interactionBlocked);
   interactionBlockedRef.current = interactionBlocked;
   const calendarFallbackLocationRef = useRef(!effectiveRouteCalendar && !routeDashboardView && view === "calendar" && canViewProductionCalendar);
-  // The location this reconciliation effect itself last processed — not merely "is the location
-  // currently non-List" — so an intermediate render mid-transition (entering archived pushes its
-  // own canonical URL in the same handler) is never mistaken for a fresh arrival at a stale one.
-  const lastReconciledLocationRef = useRef(currentLocation);
   const movementSettlePendingRef = useRef(false);
   movementSettlePendingRef.current = movementSettlePending;
   const movementBusyRef = useRef(false);
@@ -503,7 +519,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // cross-Stage moves, same-Stage reorder and the Move-to menu are all disabled the same way a
   // disabled Board contract already disables them -- see `movementDisabled`/
   // `sameStageReorderEnabled` below, and `runBoardMovement`'s own guard as the last line of defence.
-  const canMoveStages = boardMutationEnabled && canMoveStagesCapability && !searchActive;
+  const canMoveStages = boardMutationEnabled && canMoveStagesCapability && !boardNarrowed;
   const isLoading = projectsQuery.isPending && !projectsQuery.data;
   const hasAcceptedDashboard = acceptedProjects?.key === dashboardKeyString;
   const error = !hasAcceptedDashboard && !queryProjects
@@ -514,24 +530,24 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // (nothing resets it on a role change short of a remount), so without this a Staff member who
   // loses the capability mid-session would still be shown Calendar content for one commit before
   // the reconciliation effect below moves `view` off it.
-  const isCalendarView = view === "calendar" && !viewingArchived && calendarState !== null && canViewProductionCalendar;
+  const isCalendarView = view === "calendar" && calendarState !== null && canViewProductionCalendar;
   // #220: Gantt is gated the same way Calendar is above (`canViewProductionCalendar` — Gantt reads
   // the same production schedule, see `lib/staff-navigation.ts`'s `CAPABILITY_GATED_VIEWS`), minus
   // the extra `calendarState !== null` clause Calendar alone needs (Gantt owns no comparable piece
   // of Dashboard-level state — its `date`/`scale` are local to `ProductionGantt.tsx` itself).
-  const isGanttView = view === "timeline" && !viewingArchived && canViewProductionCalendar;
+  const isGanttView = view === "timeline" && canViewProductionCalendar;
   // Published for the rail (#119), mirroring the branch selection above and below (List ~1092,
-  // Kanban ~1106) instead of re-deriving `view`/`viewingArchived` a second time, so the two cannot
+  // Kanban ~1106) instead of re-deriving `view` a second time, so the two cannot
   // drift: Calendar only when `isCalendarView` itself is true (so a `view` of "calendar" with no
   // `calendarState` yet is never claimed), Gantt only when `isGanttView` is true likewise, List
-  // while archived or explicitly selected, Kanban only when neither of those apply, and "none" — no
+  // or Kanban when explicitly selected (#428: archived is a filter now, not a scope that forces List), and "none" — no
   // rail child should claim to be current — when `view` matches nothing that actually renders.
   // `useLayoutEffect`, not `useEffect`, so the rail updates in the same paint as the screen; see
   // `lib/dashboard-view-store.ts` for the owner rule.
   const renderedView: DashboardView | "none" = isCalendarView ? "calendar"
     : isGanttView ? "timeline"
-    : viewingArchived || view === "table" ? "table"
-    : !viewingArchived && view === "board" ? "board"
+    : view === "table" ? "table"
+    : view === "board" ? "board"
     : "none";
   const dashboardViewOwnerRef = useRef({});
   useLayoutEffect(() => {
@@ -556,8 +572,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // `removeProjectFromDashboardQueries` in `lib/dashboard-projects.ts` scans) only touches entries
   // that ALREADY EXIST in the cache -- it must never manufacture an empty entry for a scope nobody
   // has loaded yet.
-  const updateAllProjectScopes = useCallback((update: (current: ProjectSummary[]) => ProjectSummary[]) => {
-    queryClient?.setQueriesData<ProjectSummary[]>({ queryKey: dashboardProjectsKeyPrefix(currentUserId) }, (current) => current ? update(current) : current);
+  const updateUnfilteredProjectScopes = useCallback((update: (current: ProjectSummary[]) => ProjectSummary[]) => {
+    const isFiltered = isFilteredDashboardProjectsQuery(currentUserId);
+    queryClient?.setQueriesData<ProjectSummary[]>({ queryKey: dashboardProjectsKeyPrefix(currentUserId), predicate: (query) => !isFiltered(query) }, (current) => current ? update(current) : current);
   }, [currentUserId, queryClient]);
 
   const captureFocusForRefresh = useCallback((fallbackStageKey?: StageKey, descriptor?: FocusDescriptor) => {
@@ -608,29 +625,13 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   }, []);
 
   useEffect(() => {
-    // Reconciles the route's EXPLICIT intent against local view state, including archive scope:
-    // the rail keeps offering Kanban and Calendar while archived (see `lib/dashboard-view-store.ts`
-    // for how it learns what actually rendered), so landing on one of those addresses is read as
-    // LEAVING archived rather than an intent the archived screen silently drops.
-    // `arrivedAtNewLocation` compares against the location THIS effect itself last reconciled, not
-    // merely "is the location non-List" — `selectProjectScope("archived")` sets scope and pushes
-    // its own `/?view=list` in the same handler, and an intermediate render still holding the OLD
-    // explicit URL must not immediately bounce the Staff member back out of archived.
-    const arrivedAtNewLocation = currentLocation !== lastReconciledLocationRef.current;
-    lastReconciledLocationRef.current = currentLocation;
+    // Reconciles the route's EXPLICIT intent against local view state. (#428: Archived is a filter
+    // carried by every view now, not a scope that forced List, so there is no archived bounce here.)
     // `locationHasCalendar`, not `effectiveRouteCalendar !== null` — the latter falls back to the
     // `calendar` PROP whenever the URL itself carries no facet, and that prop can outlive the URL
     // that produced it (a direct-mount caller that never re-renders it away, `Dashboard-calendar.
     // dom.test.tsx`'s own harness among them). Only the location itself is a fact about what the
     // Staff member is currently pointed at.
-    // #220: "gantt" joins "kanban"/"calendar" here — the rail keeps offering Gantt while archived
-    // too (`lib/staff-navigation.ts`'s `DASHBOARD_CHILDREN` is not scope-gated), so an explicit
-    // `/?view=gantt` arrival must bounce out of archived exactly like the other two already do.
-    const explicitNonListLocation = routeDashboardView === "board" || routeDashboardView === "timeline" || routeDashboardView === "calendar" || locationHasCalendar;
-    if (viewingArchived && explicitNonListLocation) {
-      if (arrivedAtNewLocation) setProjectScope("active");
-      return;
-    }
     if (!canViewProductionCalendar) {
       calendarFallbackLocationRef.current = false;
       // #220: "gantt" is gated on this same capability (see `isGanttView` above) — a role that
@@ -688,10 +689,10 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     // two canonicalisers themselves only ever fire while genuinely arriving at their respective
     // locations, not on every draft change), so this does not turn typing into a per-keystroke
     // URL-rewrite storm.
-  }, [calendarState, canViewProductionCalendar, currentDashboardRoute, currentLocation, effectiveRouteCalendar, history, locationHasCalendar, routeDashboardSearch, routeDashboardView, search.draft, view, viewingArchived]);
+  }, [calendarState, canViewProductionCalendar, currentDashboardRoute, currentLocation, effectiveRouteCalendar, history, locationHasCalendar, routeDashboardSearch, routeDashboardView, search.draft, view]);
 
   const navigateCalendar = useCallback((next: DashboardCalendarState, replace = false) => {
-    if (!canViewProductionCalendar || viewingArchived || calendarInteractionBlocked) return;
+    if (!canViewProductionCalendar || calendarInteractionBlocked) return;
     // #217 fix round 1, item 3 / #217 build step 4: flush and override `next.search` with the
     // just-flushed value -- every direct Calendar-facet change (Unassigned, a date/subview
     // change, ...) goes through `ProductionCalendarFilters`'s own `onChange` -> `onNavigate` ->
@@ -710,16 +711,16 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       calendarStorage.write(DASHBOARD_CALENDAR_LAST_DATE_KEY, withCurrentSearch.date);
     } catch { /* Calendar fallback storage is best effort. */ }
     if (replace) history.replace(built); else history.push(built);
-  }, [calendarInteractionBlocked, canViewProductionCalendar, history, viewingArchived]);
+  }, [calendarInteractionBlocked, canViewProductionCalendar, history]);
 
   // #255: the Gantt's counterpart to `navigateCalendar` — a filter change is a URL write through
   // `locationStore()` (pushed, so Back/Forward walks filter states; `replace` for a rewrite), with
   // the same flush-and-carry of the live search. The new filters arrive back through the route.
   const navigateGantt = useCallback((next: ProductionGanttFacetFilters, replace = false) => {
-    if (!canViewProductionCalendar || viewingArchived) return;
+    if (!canViewProductionCalendar) return;
     const built = staffPathFor(ganttRouteFor(next, takeDashboardSearchForNavigation(currentUserId)));
     if (replace) history.replace(built); else history.push(built);
-  }, [canViewProductionCalendar, currentUserId, history, viewingArchived]);
+  }, [canViewProductionCalendar, currentUserId, history]);
 
   // #217: the single store's own debounce timer replaces this effect's bespoke one. Registers the
   // URL write the store calls once a debounced (or Enter-committed) query settles -- Calendar
@@ -730,7 +731,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // a ref, in an effect with an EMPTY dependency list, so `setDashboardSearchUrlWriter` runs
   // exactly once per Dashboard MOUNT -- never on every `view`/`calendarState`/`history`/
   // `navigateCalendar` identity change, which used to tear the writer down and re-register it on
-  // every one of those (view switches, Calendar facet changes, `viewingArchived` flipping...).
+  // every one of those (view switches, Calendar facet changes...).
   // That mattered because it conflated two different events the store needs to tell apart: a
   // RE-REGISTRATION (the writer's identity churns, but a Dashboard is still mounted and a pending
   // debounce must survive it -- f40b19d, kept exactly as it was, in `dashboard-search-store.ts`)
@@ -765,13 +766,17 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       else if (currentView === "timeline") {
         const liveFilters = ganttFiltersFromRoute(ganttRouteOfLocation(currentHistory.getLocation()));
         currentHistory.replace(staffPathFor(ganttRouteFor(liveFilters, q)));
-      } else currentHistory.replace(staffPathFor({ kind: "dashboard", dashboardView: currentView === "calendar" ? "table" : currentView, search: q }));
+      } else {
+        // #428: the table/board commit keeps the filter too, read from the LIVE location like the Timeline's.
+        const liveFilter = dashboardFilterOf(parseStaffLocation(currentHistory.getLocation()));
+        currentHistory.replace(staffPathFor(withDashboardFilter({ kind: "dashboard", dashboardView: currentView === "calendar" ? "table" : currentView, search: q }, liveFilter)));
+      }
     });
     return unregister;
   }, []);
 
   const reconcileAppliedCalendarFilters = useCallback((filters: ProductionCalendarFilters) => {
-    if (!calendarState || !canViewProductionCalendar || viewingArchived || calendarInteractionBlocked) return;
+    if (!calendarState || !canViewProductionCalendar || calendarInteractionBlocked) return;
     // #217 fix round 1, item 3 / #217 build step 4: flush BEFORE reading the search to carry, same
     // reasoning as `selectView` -- `calendarState.search` alone can be the last COMMITTED value,
     // stale against whatever is still mid-debounce right as this facet change fires.
@@ -781,7 +786,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     const built = staffPathFor({ kind: "dashboard", calendar: next });
     setCalendarState(next);
     history.replace(built);
-  }, [calendarInteractionBlocked, calendarState, canViewProductionCalendar, history, viewingArchived]);
+  }, [calendarInteractionBlocked, calendarState, canViewProductionCalendar, history]);
 
   const acceptDashboardProjects = useCallback((next: ProjectSummary[], dataUpdatedAt?: number) => {
     if (queryRuntime?.principalTerminal) return;
@@ -1025,26 +1030,25 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     // (`/?view=gantt&...`) is rewritten to the list the same way, committed q carried.
     if (view === "calendar" || routeCalendar !== null || locationHasCalendar || view === "timeline" || routeGantt !== null) {
       const currentSearch = takeDashboardSearchForNavigation(currentUserId);
-      history.push(staffPathFor({ kind: "dashboard", ...(currentSearch ? { search: currentSearch } : {}) }));
+      // #428: the shared Filter survives the redirect, so the list the Staff member lands on is the
+      // one they were filtering. A default filter has no spelling, so the bare `/` is unchanged.
+      history.push(staffPathFor(filterActive
+        ? withDashboardFilter({ kind: "dashboard", dashboardView: "table", ...(currentSearch ? { search: currentSearch } : {}) }, filter)
+        : { kind: "dashboard", ...(currentSearch ? { search: currentSearch } : {}) }));
     }
     window.setTimeout(() => document.querySelector<HTMLElement>('[data-focus-key="dashboard-view-table"]')?.focus(), 0);
-  }, [currentUserId, history, locationHasCalendar, routeCalendar, routeGantt, view]);
+  }, [currentUserId, filter, filterActive, history, locationHasCalendar, routeCalendar, routeGantt, view]);
 
   const projectHrefFor = useCallback((projectId: string) => `/projects/${encodeURIComponent(projectId)}`, []);
 
   // Shared by the Calendar and (#365) the Gantt row label: one place for the gate and the navigation.
   const openCalendarProject = useCallback((projectId: string) => {
-    if (calendarInteractionBlocked || calendarSettle.pending || !canViewProductionCalendar || viewingArchived) return;
+    if (calendarInteractionBlocked || calendarSettle.pending || !canViewProductionCalendar) return;
     history.push(projectHrefFor(projectId));
-  }, [calendarInteractionBlocked, calendarSettle.pending, canViewProductionCalendar, history, projectHrefFor, viewingArchived]);
+  }, [calendarInteractionBlocked, calendarSettle.pending, canViewProductionCalendar, history, projectHrefFor]);
 
   function selectView(next: DashboardView) {
     if (movementInteractionActive || calendarInteractionBlocked) return;
-    // The Calendar and Timeline tabs stay enabled in Archived scope: choosing one LEAVES archived
-    // (the reconcile effect reads the explicit location as that, too) rather than doing nothing.
-    const leavingArchived = viewingArchived && (next === "calendar" || next === "timeline");
-    if (leavingArchived && !canViewProductionCalendar) return;
-    if (leavingArchived) setProjectScope("active");
     if (next === "calendar") {
       if (!canViewProductionCalendar) return;
       const nextCalendar = calendarState ?? initializeDashboardCalendarState({ kind: "dashboard" }, calendarStorage, { now: Date.now(), isPhone: window.matchMedia?.("(max-width: 720px)").matches ?? false });
@@ -1060,15 +1064,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       // stale text instead of carrying the in-progress one. `navigateCalendar` already flushes and
       // reads the current draft itself; `search` here is inert (overwritten there unconditionally)
       // but keeps `nextCalendar`'s own shape.
-      if (leavingArchived) {
-        // `navigateCalendar` closes over the still-archived scope and would no-op: write the same
-        // flush-and-carry URL here instead.
-        const withCurrentSearch: DashboardCalendarState = { ...nextCalendar, view: "calendar", search: takeDashboardSearchForNavigation(currentUserId) };
-        setCalendarState(withCurrentSearch);
-        history.push(staffPathFor({ kind: "dashboard", calendar: withCurrentSearch }));
-        return;
-      }
-      navigateCalendar({ ...nextCalendar, view: "calendar" });
+      // #428: entering Calendar carries the live shared Filter. `nextCalendar` comes from the Calendar's
+      // own remembered state, which would otherwise bring back its stale facets over the URL's.
+      navigateCalendar({ ...nextCalendar, ...filter, view: "calendar" });
       return;
     }
     const alreadyAtView = routeDashboardView === next;
@@ -1087,25 +1085,29 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       // value directly, here, is what carries a committed OR still-debouncing search across a
       // view switch instead of silently dropping it.
       const currentSearch = takeDashboardSearchForNavigation(currentUserId);
-      history.push(staffPathFor({ kind: "dashboard", dashboardView: next, ...(currentSearch ? { search: currentSearch } : {}) }));
+      history.push(staffPathFor(withDashboardFilter({ kind: "dashboard", dashboardView: next, ...(currentSearch ? { search: currentSearch } : {}) }, filter)));
     }
   }
 
-  function selectProjectScope(next: ProjectScope) {
+  // #428: a chip edit in the shared Filter. The edit is a URL write — pushed, so Back walks filter
+  // states — through the arm of the view that is rendering, with the live search flushed and carried
+  // and every other field of that arm left as it was. The new filter arrives back through the route.
+  function writeFilter(next: DashboardFilter) {
     if (movementInteractionActive || calendarInteractionBlocked) return;
-    setProjectScope(next);
-    if (next === "archived" && view !== "table") {
-      const leavingCalendar = view === "calendar";
-      if (leavingCalendar) setCalendarSettle({ pending: false, recoveryReason: null });
-      setView("table");
-      writeDashboardViewPreference({ write: (value) => window.localStorage.setItem(DASHBOARD_VIEW_KEY, value) }, "table");
-      calendarFallbackLocationRef.current = false;
-      if (leavingCalendar || routeCalendar !== null || locationHasCalendar || routeDashboardView !== "table") {
-        // Same flush-then-read as `selectView` above.
-        const currentSearch = takeDashboardSearchForNavigation(currentUserId);
-        history.push(staffPathFor({ kind: "dashboard", dashboardView: "table", ...(currentSearch ? { search: currentSearch } : {}) }));
-      }
+    if (isCalendarView && calendarState) {
+      navigateCalendar({ ...calendarState, ...next, view: "calendar" });
+      return;
     }
+    if (isGanttView) {
+      // The Delivered pair: Stage = Delivered draws nothing while delivered projects are hidden.
+      const written = ganttFacetForWrite(ganttFilters, { ...ganttFilters, ...next });
+      const notice = ganttPairingNotice({ ...ganttFilters, ...next }, written);
+      if (notice) setAnnouncement(notice);
+      navigateGantt(written);
+      return;
+    }
+    const currentSearch = takeDashboardSearchForNavigation(currentUserId);
+    history.push(staffPathFor(withDashboardFilter({ kind: "dashboard", dashboardView: view === "board" ? "board" : "table", ...(currentSearch ? { search: currentSearch } : {}) }, next)));
   }
 
   const handleSearchFocusHandled = useCallback((signal: number) => onSearchFocusHandled?.(signal), [onSearchFocusHandled]);
@@ -1156,7 +1158,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     // Last line of defence (#217 fix round 1, item 2): `canMoveStages`/`sameStageReorderEnabled`
     // already withhold the UI affordances that would normally reach this, but a stale drag gesture
     // in flight when a search commits must not be allowed to slip a mutation through regardless.
-    if (movementBusyRef.current || movementSettlePendingRef.current || pendingMoves.size > 0 || activeConfirm || pendingOrdering.has(intent.projectId) || searchActive) return;
+    if (movementBusyRef.current || movementSettlePendingRef.current || pendingMoves.size > 0 || activeConfirm || pendingOrdering.has(intent.projectId) || boardNarrowed) return;
     // #306: the baseline carries confirmed priorities only (`confirmedPriorities`). `projects` also
     // carries another card's PENDING priority; stamping that into `acceptedProjects`/`boardOverlay`
     // would make it un-rollbackable if that save then fails. Pending values are re-applied at render.
@@ -1316,9 +1318,13 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         && (capability === "prioritizeProjects" || code === "project_board_reorder_forbidden");
       const isAccessLoss = reason instanceof ApiError && reason.status === 401;
       const isConflict = reason instanceof ApiError && reason.status === 409 && code === "project_stage_conflict";
+      // #428: an archived Project is read-only. The Board draws its card immovable, so a move that
+      // still reaches the server (an Archived mode picked in another tab, a stale gesture) is refused
+      // there; the card rolls back and the Board refreshes.
+      const isArchivedReadOnly = reason instanceof ApiError && reason.status === 409 && code === "project_archived_read_only";
       const isContractUnavailable = reason instanceof ApiError && reason.status === 503 && code === "board_contract_disabled";
       const isMaintenance = reason instanceof ApiError && reason.status === 503 && code === "board_schema_maintenance";
-      const focusOutcome = isConflict ? "conflict" : (isContractUnavailable || isMaintenance ? "503" : "conflict");
+      const focusOutcome = isConflict || isArchivedReadOnly ? "conflict" : (isContractUnavailable || isMaintenance ? "503" : "conflict");
       captureFocusTarget(focusOutcome, intent.focusDescriptor, baselineModel, sourceStageKey);
       if (isPriorityForbidden) {
         setAnnouncement("Manual Board reorder requires Priority access.");
@@ -1330,6 +1336,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           : "Board interactions are temporarily unavailable while the Board is being updated.";
         setBoardUnavailableReason(copy);
         movementAnnouncement(event, baselineModel, movingProject, sourceStageKey);
+      } else if (isArchivedReadOnly) {
+        setAnnouncement(`${movingProject.street} is archived and cannot be moved; the Board was refreshed.`);
+        toast("That project is archived and cannot be moved; the Board was refreshed.", "error", { announcedElsewhere: true });
       } else if (isConflict) {
         movementAnnouncement({ type: "conflict" }, baselineModel, movingProject, sourceStageKey);
         toast("The project changed elsewhere; the Board was refreshed.", "error", { announcedElsewhere: true });
@@ -1410,7 +1419,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       // The prefix fan-out below already covers the exact click-time entry (it matches on
       // `currentUserId` alone), so a separate exact-key write here would just be a redundant second
       // pass over the same entry.
-      updateAllProjectScopes(applyConfirmed);
+      // #428: a Stage- or Priority-filtered entry is not patched: this edit can move the Project out of
+      // (or into) such a list, and a patched row would sit in a list it no longer belongs to. Those
+      // entries are only marked stale below and refetch when next read; the active entry's own
+      // refresh is `queueDashboardRefresh`, and the exact click-time entry takes the patch directly.
+      updateProjects(applyConfirmed);
+      updateUnfilteredProjectScopes(applyConfirmed);
       // Mark the patched SIBLINGS stale without refetching them now (`refetchType: "none"`) -- a
       // same-`boardRevision` race then self-heals the next time that entry is actually observed
       // again, instead of firing a request for a scope nobody is looking at right now. Never the
@@ -1461,8 +1475,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const now = useNow();
   const summary = dashboardSummary({
     projects: isLoading || error ? null : projects,
-    archived: viewingArchived,
+    archived: filter.archived,
     searchActive,
+    filterActive,
     searchTotal: searchCountsQuery.data?.total ?? null,
     shown: isGanttView || isCalendarView ? viewShownProjects : null,
     now,
@@ -1473,35 +1488,33 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     <main className="page page--full page--fill [overflow-x:clip]">
       <DashboardHeader summary={summary} busy={projectsQuery.isPlaceholderData} canCreateProject={canCreateProject} />
 
-      {/* Active/Archived stays here until #428 moves it. */}
-      {(canViewArchived || viewingArchived) && (
-        <div data-testid="dashboard-toolbar" tabIndex={-1} className="flex shrink-0 flex-wrap items-center gap-x-[var(--space-3)] gap-y-[var(--space-2)] mb-[var(--space-4)]">
-          {canViewArchived && <>
-            <Eyebrow>Projects</Eyebrow>
-            <div className={SEGMENT_GROUP} aria-label="Project status">
-              <button className={cn(SEGMENT_BUTTON, !viewingArchived && "is-active")} type="button" onClick={() => selectProjectScope("active")}>Active</button>
-              <button className={cn(SEGMENT_BUTTON, viewingArchived && "is-active")} type="button" onClick={() => selectProjectScope("archived")}>Archived</button>
-            </div>
-          </>}
-          {viewingArchived && <Eyebrow role="status">Archived projects</Eyebrow>}
-        </div>
-      )}
-
-      <DashboardViewBar
-        renderedView={renderedView}
-        canViewProductionCalendar={canViewProductionCalendar}
+      {/* #428: one Filter root for the trigger (in the view bar) and the chips (under its rule). */}
+      <DashboardFilterProvider
+        filter={filter}
+        onFilterChange={writeFilter}
+        stageOptions={stageFilterOptions}
+        canFilterPriority={canFilterPriority}
+        canFilterArchived={canFilterArchived}
         disabled={movementInteractionActive || calendarInteractionBlocked}
-        onSelectView={selectView}
-        principalId={currentUserId}
-        searchFocusRequest={searchFocusRequest}
-        onSearchFocusHandled={handleSearchFocusHandled}
-        showDisplay={renderedView === "board"}
-        sort={effectiveBoardSort}
-        canSortByPriority={canSortByPriority}
-        onSortChange={selectBoardSort}
-      />
+      >
+        <DashboardViewBar
+          renderedView={renderedView}
+          canViewProductionCalendar={canViewProductionCalendar}
+          disabled={movementInteractionActive || calendarInteractionBlocked}
+          onSelectView={selectView}
+          principalId={currentUserId}
+          searchFocusRequest={searchFocusRequest}
+          onSearchFocusHandled={handleSearchFocusHandled}
+          showDisplay={renderedView === "board"}
+          sort={effectiveBoardSort}
+          canSortByPriority={canSortByPriority}
+          onSortChange={selectBoardSort}
+          filterTrigger={<DashboardFilterTrigger />}
+        />
+        <DashboardFilterChips />
+      </DashboardFilterProvider>
 
-      {boardUnavailableMessage && !viewingArchived && !isCalendarView && !isGanttView && (
+      {boardUnavailableMessage && !isCalendarView && !isGanttView && (
         <Notice tone="caution" role="status" data-testid="board-unavailable-notice" className="flex shrink-0 items-baseline gap-[var(--space-3)] mb-[var(--space-4)] px-[var(--space-4)] py-[var(--space-3)] before:content-['Board'] before:shrink-0 before:[font:var(--type-eyebrow)] before:uppercase before:tracking-[var(--tracking-widest)] before:text-signal-caution-text text-foreground">{boardUnavailableMessage}</Notice>
       )}
 
@@ -1513,7 +1526,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
             <Suspense fallback={<div className={cn("empty", VIEW_STATE_BOX)} role="status">Loading calendar…</div>}>
               <ProductionEventCalendar
                 identity={identity}
-                calendar={calendarState && { ...calendarState, search: committedQuery }}
+                calendar={calendarState && { ...calendarState, ...filter, search: committedQuery }}
                 onNavigate={(next) => navigateCalendar(next)}
                 onAppliedFilters={reconcileAppliedCalendarFilters}
                 onAcceptGateChange={setCalendarInteractionBlocked}
@@ -1552,7 +1565,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
 
         {!isCalendarView && !isGanttView && isLoading && (
           <div role="status" className="relative flex min-h-0 flex-1 flex-col border-solid border-[length:var(--border-width-hair)] border-border bg-card motion-safe:animate-[fade_var(--dur-slow)_var(--ease-entrance)]">
-            <span className="absolute size-px overflow-hidden [clip-path:inset(50%)] whitespace-nowrap">{`Loading ${viewingArchived ? "archived " : ""}projects. Preparing the production desk.`}</span>
+            <span className="absolute size-px overflow-hidden [clip-path:inset(50%)] whitespace-nowrap">{`Loading ${filter.archived === "only" ? "archived " : ""}projects. Preparing the production desk.`}</span>
             {[0, 1, 2, 3, 4].map((row) => (
               <div key={row} className="[display:grid] grid-cols-[72px_minmax(0,1fr)_96px] gap-[var(--space-4)] items-center px-[var(--space-5)] py-[var(--space-3)] [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border first:border-t-0" aria-hidden="true">
                 <Skeleton className="h-[var(--space-7)]" />
@@ -1564,20 +1577,20 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         )}
 
         {!isCalendarView && !isGanttView && !isLoading && error && (
-          <EmptyState tone="error" role="alert" title={`${viewingArchived ? "Archived projects" : "Projects"} are unavailable.`} className="border-solid border-[length:var(--border-width-hair)] border-border bg-card [border-left-style:solid] border-l-[length:var(--border-width-rule)] border-l-destructive">
+          <EmptyState tone="error" role="alert" title={`${filter.archived === "only" ? "Archived projects" : "Projects"} are unavailable.`} className="border-solid border-[length:var(--border-width-hair)] border-border bg-card [border-left-style:solid] border-l-[length:var(--border-width-rule)] border-l-destructive">
             {error}
             <div><Button type="button" variant="secondary" className="mt-[var(--space-4)]" onClick={() => void projectsQuery.refetch()}>Try again</Button></div>
           </EmptyState>
         )}
 
         {!isCalendarView && !isGanttView && !isLoading && !error && projects.length === 0 && (
-          <EmptyState title={searchActive ? "No matches." : viewingArchived ? "No archived projects." : "No shoots yet — create the first one."} className="max-[721px]:px-[var(--space-4)] max-[721px]:py-[var(--space-7)] [&>strong]:max-w-[34ch] [&>strong]:mx-auto">
-            {searchActive ? "No projects match this search." : viewingArchived ? "Archived projects remain here until they are restored or permanently deleted." : "Start the production desk with the property, client, and team details."}
-            {!searchActive && !viewingArchived && canCreateProject && <div><InternalLink className={buttonClasses("primary", { className: "mt-[var(--space-4)]" })} to="/projects/new">New shoot</InternalLink></div>}
+          <EmptyState title={searchActive || filterActive ? "No matches." : "No shoots yet — create the first one."} className="max-[721px]:px-[var(--space-4)] max-[721px]:py-[var(--space-7)] [&>strong]:max-w-[34ch] [&>strong]:mx-auto">
+            {searchActive && filterActive ? "No projects match this search and these filters." : searchActive ? "No projects match this search." : filterActive ? "No projects match these filters." : "Start the production desk with the property, client, and team details."}
+            {!searchActive && !filterActive && canCreateProject && <div><InternalLink className={buttonClasses("primary", { className: "mt-[var(--space-4)]" })} to="/projects/new">New shoot</InternalLink></div>}
           </EmptyState>
         )}
 
-        {!isCalendarView && !isGanttView && !isLoading && !error && projects.length > 0 && (viewingArchived || view === "table") && (
+        {!isCalendarView && !isGanttView && !isLoading && !error && projects.length > 0 && view === "table" && (
           <div className="flex min-h-0 flex-1 flex-col border-solid border-[length:var(--border-width-hair)] border-border bg-card" aria-label="Projects list">
             <div data-testid="project-list-header" className={cn(PROW_GRID, "shrink-0 bg-secondary cursor-default")}>
               <div />
@@ -1591,7 +1604,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           </div>
         )}
 
-        {!isCalendarView && !isGanttView && !isLoading && !error && !viewingArchived && projects.length > 0 && view === "board" && (
+        {!isCalendarView && !isGanttView && !isLoading && !error && projects.length > 0 && view === "board" && (
           <ProjectKanbanBoard2
             projects={projects}
             activeStages={activeStages}
@@ -1599,8 +1612,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
             canPrioritize={canPrioritize && hasAuthorizedBoardMap}
             role={role}
             boardMutationEnabled={boardMutationEnabled}
-            movementDisabled={movementSettlePending || !boardMutationEnabled || searchActive}
-            sameStageReorderEnabled={boardMutationEnabled && canPrioritize && hasAuthorizedBoardMap && effectiveBoardSort === "board" && !searchActive}
+            movementDisabled={movementSettlePending || !boardMutationEnabled || boardNarrowed}
+            sameStageReorderEnabled={boardMutationEnabled && canPrioritize && hasAuthorizedBoardMap && effectiveBoardSort === "board" && !boardNarrowed}
             effectiveKanbanSort={effectiveBoardSort}
             pendingMoves={pendingMoves}
             pendingOrdering={pendingOrdering}

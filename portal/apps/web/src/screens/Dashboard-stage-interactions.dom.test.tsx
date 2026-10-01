@@ -52,6 +52,7 @@ vi.mock("../lib/capabilities", () => ({
   useCapabilities: () => ({ role: authState.role, capabilities: authState.role === "admin" ? ["moveProjectStage", "prioritizeProjects"] : ["moveProjectStage"], can: (capability: string) => capability === "moveProjectStage" || (capability === "prioritizeProjects" && authState.role === "admin") }),
 }));
 vi.mock("../lib/stages", () => ({
+  presentationStages: (stages: readonly unknown[]) => stages,
   useStages: () => {
     const stages = [
       { key: "awaiting_raw" as const, label: "Awaiting RAW", displayOrder: 1, active: true },
@@ -469,7 +470,7 @@ describe("Dashboard Stage interactions", () => {
       await Promise.resolve();
     });
     await flush();
-    const key = dashboardProjectsKey("admin-1", "photographer", 0, false);
+    const key = dashboardProjectsKey("admin-1", "photographer", 0, { archived: "hide" });
     const serverSnapshot = queryClient.getQueryData<ProjectSummary[]>(key);
     const setQueryData = vi.spyOn(queryClient, "setQueryData");
     const publish = vi.spyOn(runtime, "publish");
@@ -668,7 +669,7 @@ describe("Dashboard Stage interactions", () => {
     const rawColumn = [...host.querySelectorAll<HTMLElement>('[data-testid="kanban2-column"]')].find((column) => column.querySelector('[href="/projects/board-first"]'))!;
     const order = () => [...rawColumn.querySelectorAll<HTMLElement>('[data-testid="kanban2-card-address"]')].map((element) => element.textContent);
     expect(order()).toEqual(["Board First", "Priority First", "Date First"]);
-    expect(dashboardProjectsKey("admin-1", "photographer", 0, false)).toHaveLength(5);
+    expect(dashboardProjectsKey("admin-1", "photographer", 0, { archived: "hide" })).toHaveLength(5);
 
     await chooseSort(host, "Priority");
     await flush();
@@ -846,7 +847,7 @@ describe("Dashboard Stage interactions", () => {
     expect([...card(host, "source-sibling-a Street").closest<HTMLElement>('[data-testid="kanban2-column"]')!.querySelectorAll<HTMLElement>('[data-testid="kanban2-card-address"]')].map((element) => element.textContent)).toEqual(["source-sibling-a Street", "source-sibling-b Street"]);
     expect(card(host, "Source Street").querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')?.disabled).toBe(true);
     await act(async () => {
-      void queryClient.invalidateQueries({ queryKey: dashboardProjectsKey("admin-1", "photographer", 0, false), exact: true, refetchType: "active" });
+      void queryClient.invalidateQueries({ queryKey: dashboardProjectsKey("admin-1", "photographer", 0, { archived: "hide" }), exact: true, refetchType: "active" });
       await Promise.resolve();
     });
     await flush();
@@ -953,7 +954,7 @@ describe("Dashboard Stage interactions", () => {
     await flush();
     expect(apiPostMock).toHaveBeenCalledWith("/api/projects/source/stage", expect.objectContaining({ expected: { stageKey: "awaiting_raw", boardRevision: 3 } }));
 
-    queryClient.setQueryData<ProjectSummary[]>(dashboardProjectsKey("admin-1", "photographer", 0, false), (current) => current?.map((project) => project.id === "source" ? { ...project, street: "Incoming Street" } : project));
+    queryClient.setQueryData<ProjectSummary[]>(dashboardProjectsKey("admin-1", "photographer", 0, { archived: "hide" }), (current) => current?.map((project) => project.id === "source" ? { ...project, street: "Incoming Street" } : project));
     await flush();
     expect(host.textContent).toContain("Source Street");
     expect(host.textContent).not.toContain("Incoming Street");
@@ -990,7 +991,7 @@ describe("Dashboard Stage interactions", () => {
     await flush();
     expect(document.querySelector('[data-testid="confirm-modal"]')).not.toBeNull();
 
-    queryClient.setQueryData<ProjectSummary[]>(dashboardProjectsKey("admin-1", "photographer", 0, false), (current) => current?.map((project) => project.id === "source" ? { ...project, street: "Incoming Street" } : project));
+    queryClient.setQueryData<ProjectSummary[]>(dashboardProjectsKey("admin-1", "photographer", 0, { archived: "hide" }), (current) => current?.map((project) => project.id === "source" ? { ...project, street: "Incoming Street" } : project));
     await flush();
     expect(host.textContent).toContain("Source Street");
     expect(host.textContent).not.toContain("Incoming Street");
@@ -1033,7 +1034,7 @@ describe("Dashboard Stage interactions", () => {
     const source = card(host, "Source Street");
     await dndStart("source");
     await act(async () => {
-      void queryClient.invalidateQueries({ queryKey: dashboardProjectsKey("admin-1", "photographer", 0, false), exact: true, refetchType: "active" });
+      void queryClient.invalidateQueries({ queryKey: dashboardProjectsKey("admin-1", "photographer", 0, { archived: "hide" }), exact: true, refetchType: "active" });
       await Promise.resolve();
     });
     expect(requestCount).toBe(2);
@@ -1050,7 +1051,7 @@ describe("Dashboard Stage interactions", () => {
     const fresh = card(host, "Fresh Street");
     await dndStart("source");
     await act(async () => {
-      void queryClient.invalidateQueries({ queryKey: dashboardProjectsKey("admin-1", "photographer", 0, false), exact: true, refetchType: "active" });
+      void queryClient.invalidateQueries({ queryKey: dashboardProjectsKey("admin-1", "photographer", 0, { archived: "hide" }), exact: true, refetchType: "active" });
       await Promise.resolve();
     });
     runtime.markPrincipalTerminal();
@@ -1079,7 +1080,7 @@ describe("Dashboard Stage interactions", () => {
     const source = card(host, "Source Street");
     await dndStart("source");
     await act(async () => {
-      void queryClient.invalidateQueries({ queryKey: dashboardProjectsKey("admin-1", "photographer", 0, false), exact: true, refetchType: "active" });
+      void queryClient.invalidateQueries({ queryKey: dashboardProjectsKey("admin-1", "photographer", 0, { archived: "hide" }), exact: true, refetchType: "active" });
       await Promise.resolve();
     });
     expect(requestCount).toBe(2);
@@ -1116,7 +1117,7 @@ describe("Dashboard Stage interactions", () => {
     await flush();
     expect(host.textContent).toContain("Source Street");
     await act(async () => {
-      void queryClient.invalidateQueries({ queryKey: dashboardProjectsKey("admin-1", "photographer", 0, false), exact: true, refetchType: "active" });
+      void queryClient.invalidateQueries({ queryKey: dashboardProjectsKey("admin-1", "photographer", 0, { archived: "hide" }), exact: true, refetchType: "active" });
       await Promise.resolve();
     });
     await flush();

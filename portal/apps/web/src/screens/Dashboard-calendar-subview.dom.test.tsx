@@ -24,7 +24,7 @@ const date = "2026-08-27";
 
 function calendarResponse(params: URLSearchParams) {
   return adminProductionCalendarRangeResponseSchema.parse({
-    range: { start: params.get("start"), end: params.get("end"), date: params.get("date"), subview: params.get("sub"), zone: PRODUCTION_CALENDAR_ZONE, appliedFilters: { layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false } },
+    range: { start: params.get("start"), end: params.get("end"), date: params.get("date"), subview: params.get("sub"), zone: PRODUCTION_CALENDAR_ZONE, appliedFilters: { layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false } },
     events: [], filterFacets: { projects: [], people: [], myTasksUserId: noOneId },
   });
 }

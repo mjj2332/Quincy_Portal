@@ -64,7 +64,7 @@ function ganttResponse() {
   return adminProductionGanttResponseSchema.parse({
     scope: "active",
     zone: PRODUCTION_GANTT_ZONE,
-    appliedFilters: { q: "", editorIds: [], stageKeys: [], includeDelivered: false, includeCompletedChecklist: false },
+    appliedFilters: { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide", includeDelivered: false, includeCompletedChecklist: false },
     projects: [],
     page: { limit: 100, returned: 0, nextCursor: null },
     density: { matchedProjects: 0, matchedRows: 0, drawCap: 2000, tooManyToDraw: false },
@@ -190,16 +190,6 @@ describe("Dashboard Gantt routing", () => {
     expect(host.querySelector('[data-testid="dashboard-gantt-surface"]')).toBeTruthy();
   });
 
-  it("bounces an explicit Gantt arrival while Archived back to active scope", async () => {
-    await render();
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Archived")?.click(); await Promise.resolve(); });
-    expect(host.textContent).toContain("Archived projects");
-    window.history.pushState(null, "", "/?view=timeline");
-    await act(async () => { window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
-    expect(host.textContent).not.toContain("Archived projects");
-    expect(switcherButton("Timeline")?.getAttribute("aria-selected")).toBe("true");
-  });
-
   it("coerces and repairs a stored Gantt preference for a role without the capability", async () => {
     window.localStorage.setItem("quincy:dashboard:view", "timeline");
     await render({ role: "photographer" });
@@ -280,23 +270,23 @@ describe("Dashboard Gantt routing", () => {
     it("applies a cold deep link's filters on the first render", async () => {
       await renderAt("/?view=timeline&stages=raw_review&completed=1");
       expect(switcherButton("Timeline")?.getAttribute("aria-selected")).toBe("true");
-      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: ["raw_review"], delivered: false, completed: true });
+      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: ["raw_review"], priorities: [], archived: "hide" as const, delivered: false, completed: true });
       expect(url()).toBe("/?view=timeline&stages=raw_review&completed=1");
     });
 
     it("hands the surface default filters for the bare Gantt URL", async () => {
       await renderAt("/?view=timeline");
-      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: [], delivered: false, completed: false });
+      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: [], priorities: [], archived: "hide" as const, delivered: false, completed: false });
     });
 
     it("pushes a filter change into the URL, carrying q", async () => {
       await renderAt("/?view=timeline&q=smith");
-      await changeFilters({ editorIds: [], stageKeys: ["delivered", "raw_review"], delivered: true, completed: false });
+      await changeFilters({ editorIds: [], stageKeys: ["delivered", "raw_review"], priorities: [], archived: "hide" as const, delivered: true, completed: false });
       expect(url()).toBe("/?view=timeline&stages=raw_review%2Cdelivered&delivered=1&q=smith");
-      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: ["raw_review", "delivered"], delivered: true, completed: false });
+      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: ["raw_review", "delivered"], priorities: [], archived: "hide" as const, delivered: true, completed: false });
       expect(ganttPropsState.value?.q).toBe("smith");
 
-      await changeFilters({ editorIds: [], stageKeys: [], delivered: false, completed: false });
+      await changeFilters({ editorIds: [], stageKeys: [], priorities: [], archived: "hide" as const, delivered: false, completed: false });
       expect(url()).toBe("/?view=timeline&q=smith");
     });
 
@@ -304,7 +294,7 @@ describe("Dashboard Gantt routing", () => {
       await renderAt("/?view=timeline&stages=raw_review&completed=1");
       await act(async () => { setDashboardSearchDraft("smith", "user-1"); commitDashboardSearchNow("user-1"); await Promise.resolve(); });
       expect(url()).toBe("/?view=timeline&stages=raw_review&completed=1&q=smith");
-      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: ["raw_review"], delivered: false, completed: true });
+      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: ["raw_review"], priorities: [], archived: "hide" as const, delivered: false, completed: true });
       expect(ganttPropsState.value?.q).toBe("smith");
     });
 
@@ -378,7 +368,7 @@ describe("Dashboard Gantt routing", () => {
       };
       let callsBeforeTraversal = 0;
       const expectApplied = (expected: { delivered: boolean; completed: boolean }) => {
-        expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: [], ...expected });
+        expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: [], priorities: [], archived: "hide", ...expected });
         // The bar's chips follow the URL (re-seeded on Back/Forward).
         const shown = [expected.delivered && "Delivered projects", expected.completed && "Completed checklist items"].filter(Boolean);
         expect(chipNames()).toEqual(shown.length === 0 ? [] : [`Show includes ${shown.length === 1 ? shown[0] : `${shown.length} selected`}`]);
@@ -431,20 +421,20 @@ describe("Dashboard Gantt routing", () => {
       expect(switcherButton("Timeline")?.getAttribute("aria-selected")).toBe("true");
     });
 
-    it("starts the Gantt with default filters when switching in from another view", async () => {
+    it("carries the shared Filter across views and starts the Gantt's own Show facets (delivered, completed) at their defaults (#428)", async () => {
       await renderAt("/?view=timeline&stages=raw_review&delivered=1");
       await act(async () => { switcherButton("Table")!.click(); await Promise.resolve(); });
-      expect(url()).toBe("/?view=table");
+      expect(url()).toBe("/?view=table&stages=raw_review");
       await act(async () => { switcherButton("Timeline")!.click(); await Promise.resolve(); });
-      expect(url()).toBe("/?view=timeline");
-      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: [], delivered: false, completed: false });
+      expect(url()).toBe("/?view=timeline&stages=raw_review");
+      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: ["raw_review"], priorities: [], archived: "hide" as const, delivered: false, completed: false });
     });
 
-    it("keeps Gantt and Calendar filter state independent", async () => {
+    it("carries the shared Filter into the Calendar, but not the Gantt's Show delivered", async () => {
       await renderAt("/?view=timeline&stages=raw_review&delivered=1");
       await act(async () => { switcherButton("Calendar")!.click(); await Promise.resolve(); });
       const calendarRoute = parseStaffLocation(url());
-      expect(calendarRoute.kind === "dashboard" && "calendar" in calendarRoute ? calendarRoute.calendar.stageKeys : null).toEqual([]);
+      expect(calendarRoute.kind === "dashboard" && "calendar" in calendarRoute ? calendarRoute.calendar.stageKeys : null).toEqual(["raw_review"]);
       expect(calendarRoute.kind === "dashboard" && "calendar" in calendarRoute ? calendarRoute.calendar.showDeliveredProjects : null).toBe(false);
     });
   });

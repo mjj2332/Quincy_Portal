@@ -3,10 +3,12 @@
  * variant). Quincy-owned composition: the vendored primitive draws the chips, the field picker, the
  * value menus and Clear; this file owns the schema, the URL mapping and focus.
  *
- * Three fields, one operator each, no negation — Editor (#274: "is any of", the people the server
- * lists in `filterFacets.people`, each with its initials avatar), Stage ("is any of", the role-aware
- * stage options with their legend swatches) and Show ("includes": Delivered projects, Completed
- * checklist items). The query <-> facet mapping is pure and lives in `lib/production-gantt-filters.ts`.
+ * Two fields, one operator each, no negation — Editor (#274: "is any of", the people the server
+ * lists in `filterFacets.people`, each with its initials avatar) and Show ("includes": Delivered
+ * projects, Completed checklist items). Stage moved to the Dashboard's shared Filter (#428): one
+ * control per URL parameter. The facet the bar writes still carries the shared Filter's Stage,
+ * Priority and Archived untouched. The query <-> facet mapping is pure and lives in
+ * `lib/production-gantt-filters.ts`.
  *
  * EDITOR. Offered only once the server has listed somebody (or the URL already holds an editor, so
  * its chip is never "unknown"). An id in the URL the server does not list — a deactivated editor, a
@@ -15,18 +17,13 @@
  * can remove it.
  *
  * THE DELIVERED PAIR. Stage = Delivered draws nothing while delivered projects are hidden, so a bar
- * edit that selects it also turns Show -> Delivered on, and one that turns Show -> Delivered off
- * also drops it from Stage — in the same write (`ganttFacetForWrite`, owner decision). A URL that
- * already holds the pair inconsistently is rendered as it is and never rewritten on load.
+ * edit that turns Show -> Delivered off also drops it from the (shared) Stage in the same write, and
+ * an edit beside an inconsistent pair a URL carried in turns delivered projects on
+ * (`ganttFacetForWrite`, owner decision). A URL that already holds the pair inconsistently is
+ * rendered as it is and never rewritten on load.
  *
- * STATE. The bar holds its own `FilterQuery`, because an unfinished chip (a field picked, no
- * condition or value yet) has no URL spelling and must survive the URL echo of an unrelated edit.
- * On every change the local query is set, and when it projects to a facet that differs from the
- * URL's — the URL as it will read once the bar's own pending writes land — `onFiltersChange` pushes
- * it. The local query is re-seeded from the URL only when the URL facet CHANGES to something that
- * is neither one of the bar's own pending writes nor the local projection — Back/Forward, a reload,
- * the empty state's Clear — so the bar's own write, echoing back (even late, behind a newer edit),
- * never resets chip ids, focus or an open menu, nor reverts that newer edit.
+ * STATE. `useFilterQueryBinding` (`lib/use-filter-query-binding.ts`, shared with the Dashboard's
+ * Filter) holds the local `FilterQuery`, the pending writes and the URL re-seed rules.
  *
  * UNSUPPORTED EDITS. `onBeforeQueryChange` vetoes any query `queryToGanttFacet` cannot read (an
  * `or`, a group, a negated rule, a second rule on one field). A field is disabled in the picker once
@@ -42,35 +39,30 @@
  */
 import type { CalendarPerson } from "@quincy/shared";
 import { ListFilterPlusIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { Filters, countFilterRules, flattenFilterRules, type FilterChangeDetails, type FilterField, type FilterLabels, type FilterQuery } from "@/components/reui/filters/filters";
+import { useCallback, useMemo, useRef, type RefObject } from "react";
+import { Filters, countFilterRules, flattenFilterRules, type FilterField, type FilterLabels } from "@/components/reui/filters/filters";
+import { useFilterQueryBinding } from "../lib/use-filter-query-binding";
 import {
   GANTT_EDITOR_OPERATORS,
   GANTT_FILTER_FIELD,
   GANTT_SHOW_OPERATORS,
   GANTT_SHOW_OPTIONS,
-  GANTT_STAGE_OPERATORS,
   ganttFacetForWrite,
   ganttFacetKey,
   ganttFacetToQuery,
   ganttPairingNotice,
   ganttQueryForFacet,
   queryToGanttFacet,
-  stageOptionsWithColor,
   type GanttFilterQuery,
   type ProductionGanttFacetFilters,
-  type StageFilterOption,
 } from "../lib/production-gantt-filters";
 import { FieldDescription } from "./reui/field";
 import { Button } from "./quincy/Button";
 import { InitialsAvatar } from "./quincy/InitialsAvatar";
-import { StageSwatch } from "./quincy/StageSwatch";
 
 export type ProductionGanttFiltersBarProps = {
   /** The URL's Gantt facet (the Dashboard reads it from the route). */
   filters: ProductionGanttFacetFilters;
-  /** Role-aware stage options (`productionStageFilterOptions`). */
-  stageOptions: readonly StageFilterOption[];
   /** #274: the people the viewer may filter by, from the Gantt's first page (`filterFacets.people`). */
   people?: readonly CalendarPerson[];
   /** Pushes a new facet to the URL; it arrives back through `filters`. */
@@ -116,43 +108,33 @@ function editorOptions(people: readonly CalendarPerson[], selected: readonly str
 
 const NO_PEOPLE: readonly CalendarPerson[] = [];
 
-export function ProductionGanttFiltersBar({ filters, stageOptions, people = NO_PEOPLE, onFiltersChange, triggerRef }: ProductionGanttFiltersBarProps) {
+export function ProductionGanttFiltersBar({ filters, people = NO_PEOPLE, onFiltersChange, triggerRef }: ProductionGanttFiltersBarProps) {
   const ownTriggerRef = useRef<HTMLButtonElement | null>(null);
   const trigger = triggerRef ?? ownTriggerRef;
 
-  const urlKey = ganttFacetKey(filters);
-  const [query, setQuery] = useState<GanttFilterQuery>(() => ganttFacetToQuery(filters));
-  // The keys of the bar's own writes whose URL has not landed yet, oldest first.
-  const [pending, setPending] = useState<readonly string[]>([]);
-  // Re-seed during render (not an effect, which would paint the stale chips for a frame), only on
-  // a URL change the local query does not already say. A URL that is one of the bar's own pending
-  // writes is its echo: a stale one (a newer write is still in flight) must not revert the newer
-  // edit, so the local query wins and only the landed writes are dropped. Anything else is an
-  // outside navigation, which re-seeds and forgets the pending writes. Trimmed only here, on a URL
-  // change, never by comparing with a stale `urlKey` on an unrelated render.
-  const [seenUrlKey, setSeenUrlKey] = useState(urlKey);
-  // #269: why the bar's last write changed more than the user's edit (the Delivered pair), or "".
-  const [pairingNotice, setPairingNotice] = useState("");
-  if (seenUrlKey !== urlKey) {
-    setSeenUrlKey(urlKey);
-    const landed = pending.indexOf(urlKey);
-    if (landed >= 0) {
-      setPending(pending.slice(landed + 1));
-    } else {
-      if (pending.length > 0) setPending([]);
-      if (pairingNotice) setPairingNotice("");
-      const local = queryToGanttFacet(query);
-      if (!local || ganttFacetKey(local) !== urlKey) setQuery(ganttFacetToQuery(filters));
-    }
-  }
+  const focusTrigger = useCallback(() => {
+    // After the frame in which the control that had focus (the last chip, or Clear) unmounted.
+    requestAnimationFrame(() => trigger.current?.focus({ preventScroll: true }));
+  }, [trigger]);
 
-  const latest = useRef({ urlKey, pending, onFiltersChange, query });
-  useEffect(() => {
-    latest.current = { urlKey, pending, onFiltersChange, query };
+  const { stageKeys, priorities, archived } = filters;
+  const toFacet = useCallback(
+    (next: GanttFilterQuery) => queryToGanttFacet(next, { stageKeys, priorities, archived }),
+    [stageKeys, priorities, archived],
+  );
+  const { query, notice, onQueryChange, onBeforeQueryChange } = useFilterQueryBinding<ProductionGanttFacetFilters, string[]>({
+    facet: filters,
+    facetKey: ganttFacetKey,
+    toQuery: ganttFacetToQuery,
+    toFacet,
+    forWrite: ganttFacetForWrite,
+    noticeFor: ganttPairingNotice,
+    reconcile: ganttQueryForFacet,
+    onFacetChange: onFiltersChange,
+    onEmptied: focusTrigger,
   });
 
   const usedFields = useMemo(() => new Set(flattenFilterRules(query).map((rule) => rule.path[0])), [query]);
-  const stageUsed = usedFields.has(GANTT_FILTER_FIELD.stage);
   const showUsed = usedFields.has(GANTT_FILTER_FIELD.show);
   const editorUsed = usedFields.has(GANTT_FILTER_FIELD.editor);
   const selectedEditorKey = filters.editorIds.join(",");
@@ -177,19 +159,6 @@ export function ProductionGanttFiltersBar({ filters, stageOptions, people = NO_P
           ]
         : []),
       {
-        id: GANTT_FILTER_FIELD.stage,
-        label: "Stage",
-        type: "multiselect",
-        operators: GANTT_STAGE_OPERATORS,
-        disabled: stageUsed,
-        className: VALUE_MENU_CLASS,
-        options: stageOptionsWithColor(stageOptions).map((option) => ({
-          value: option.key,
-          label: option.label,
-          icon: <StageSwatch color={option.color} pattern={option.pattern} />,
-        })),
-      },
-      {
         id: GANTT_FILTER_FIELD.show,
         label: "Show",
         type: "multiselect",
@@ -199,45 +168,8 @@ export function ProductionGanttFiltersBar({ filters, stageOptions, people = NO_P
         options: GANTT_SHOW_OPTIONS.map((option) => ({ value: option.value, label: option.label })),
       },
     ],
-    [editors, editorUsed, stageOptions, stageUsed, showUsed],
+    [editors, editorUsed, showUsed],
   );
-
-  const focusTrigger = useCallback(() => {
-    // After the frame in which the control that had focus (the last chip, or Clear) unmounted.
-    requestAnimationFrame(() => trigger.current?.focus({ preventScroll: true }));
-  }, [trigger]);
-
-  const handleQueryChange = useCallback(
-    (edited: FilterQuery<string[]>, details: FilterChangeDetails<string[]>) => {
-      const current = latest.current;
-      let next = edited;
-      const edit = queryToGanttFacet(edited);
-      const previous = queryToGanttFacet(current.query);
-      // The Delivered pair: an edit that selects Stage = Delivered also shows delivered projects,
-      // and one that hides them drops that stage, in this one write (`ganttFacetForWrite`). The
-      // chips follow, keeping their ids, so the write's own echo finds nothing to re-seed.
-      const facet = edit && previous ? ganttFacetForWrite(previous, edit) : edit;
-      if (edit && facet && ganttFacetKey(facet) !== ganttFacetKey(edit)) next = ganttQueryForFacet(edited, facet);
-      // #269: say so once, visibly and through the status line, when the pair changed the other chip.
-      setPairingNotice((edit && facet && ganttPairingNotice(edit, facet)) || "");
-      current.query = next;
-      setQuery(next);
-      if (facet) {
-        // Compare with what the URL will say once the bar's own writes land, not the last rendered
-        // URL: an edit that undoes a still-pending write must be written too.
-        const key = ganttFacetKey(facet);
-        if (key !== (current.pending.at(-1) ?? current.urlKey)) {
-          current.pending = [...current.pending, key];
-          setPending(current.pending);
-          current.onFiltersChange(facet);
-        }
-      }
-      if ((details.reason === "remove" || details.reason === "clear") && countFilterRules(next) === 0) focusTrigger();
-    },
-    [focusTrigger],
-  );
-
-  const vetoUnsupported = useCallback((next: FilterQuery<string[]>) => queryToGanttFacet(next) !== null, []);
 
   const compact = countFilterRules(query) > 0;
 
@@ -246,8 +178,8 @@ export function ProductionGanttFiltersBar({ filters, stageOptions, people = NO_P
       <Filters<string[]>
         fields={fields}
         query={query}
-        onQueryChange={handleQueryChange}
-        onBeforeQueryChange={vetoUnsupported}
+        onQueryChange={onQueryChange}
+        onBeforeQueryChange={onBeforeQueryChange}
         labels={LABELS}
         ruleMenu={RULE_MENU}
         showClear
@@ -267,7 +199,7 @@ export function ProductionGanttFiltersBar({ filters, stageOptions, people = NO_P
       />
       {/* #269: always mounted and never `display: none`, so a change of text is announced; empty (no height) until the pair fires. Padding, not margin: `FieldDescription` zeroes a last child's margin. */}
       <FieldDescription role="status" data-testid="production-gantt-filters-notice" className="pt-[var(--space-2)] text-foreground-secondary empty:pt-0">
-        {pairingNotice}
+        {notice}
       </FieldDescription>
     </div>
   );

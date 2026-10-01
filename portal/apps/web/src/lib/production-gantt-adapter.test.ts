@@ -48,6 +48,7 @@ function makeProject(overrides: Partial<GanttProjectRowDto> = {}): GanttProjectR
     agentName: null,
     stageKey: "awaiting_raw",
     delivered: false,
+    archived: false,
     shootDate: null,
     shootDateCivil: null,
     createdAt: "2026-01-01T00:00:00.000Z",

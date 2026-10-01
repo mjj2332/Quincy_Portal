@@ -5,12 +5,15 @@
  * push, and the test decides when the URL "echoes" back through `filters` — at once, or later, so a
  * pending round trip can be observed. Everything is selected by role, accessible name or a Quincy
  * `data-testid`, never by a vendor `data-slot`.
+ *
+ * #428: Stage moved to the Dashboard's shared Filter (`Dashboard-filter.dom.test.tsx`). The bar keeps
+ * Editor and Show, and carries the URL's Stage, Priority and Archived through every write untouched.
  */
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CalendarPerson } from "@quincy/shared";
-import { DEFAULT_GANTT_FACET_FILTERS, type ProductionGanttFacetFilters, type StageFilterOption } from "../lib/production-gantt-filters";
+import { DEFAULT_GANTT_FACET_FILTERS, type ProductionGanttFacetFilters } from "../lib/production-gantt-filters";
 import { ProductionGanttFiltersBar } from "./ProductionGanttFiltersBar";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -19,12 +22,6 @@ import { ProductionGanttFiltersBar } from "./ProductionGanttFiltersBar";
 if (!Element.prototype.getAnimations) {
   Element.prototype.getAnimations = () => [];
 }
-
-const stageOptions: StageFilterOption[] = [
-  { key: "awaiting_raw", label: "Awaiting RAW" },
-  { key: "editing", label: "Editing" },
-  { key: "delivered", label: "Delivered" },
-];
 
 const ALEX = "0a000000-0000-4000-8000-000000000001";
 const BEA = "0b000000-0000-4000-8000-000000000002";
@@ -48,7 +45,6 @@ function Harness({ initial, echo }: { initial: ProductionGanttFacetFilters; echo
   return (
     <ProductionGanttFiltersBar
       filters={filters}
-      stageOptions={stageOptions}
       people={barPeople}
       triggerRef={triggerRefValue}
       onFiltersChange={(next) => {
@@ -144,7 +140,7 @@ async function press(element: Element, key: string) {
 }
 
 /** Opens the picker, picks the field, its one condition, then the named values. */
-async function addFilter(field: "Stage" | "Show" | "Editor", condition: string, values: string[]) {
+async function addFilter(field: "Show" | "Editor", condition: string, values: string[]) {
   await click(addTrigger());
   await waitFor(() => expect(options().map((candidate) => candidate.textContent?.trim())).toContain(field));
   await click(option(field));
@@ -171,12 +167,15 @@ afterEach(async () => {
   host.remove();
 });
 
+const CARRIED = { stageKeys: ["editing"] as ProductionGanttFacetFilters["stageKeys"], priorities: ["5"] as ProductionGanttFacetFilters["priorities"], archived: "include" as const };
+const facet = (over: Partial<ProductionGanttFacetFilters> = {}): ProductionGanttFacetFilters => ({ ...DEFAULT_GANTT_FACET_FILTERS, ...over });
+
 describe("ProductionGanttFiltersBar: the Editor field (#274)", () => {
   it("offers Editor first, once the server has listed people, each with an initials avatar", async () => {
     barPeople = people;
     await render();
     await click(addTrigger());
-    await waitFor(() => expect(options().map((candidate) => candidate.textContent?.trim())).toEqual(["Editor", "Stage", "Show"]));
+    await waitFor(() => expect(options().map((candidate) => candidate.textContent?.trim())).toEqual(["Editor", "Show"]));
     await click(option("Editor"));
     await waitFor(() => expect(options().map((candidate) => candidate.textContent?.trim())).toEqual(["is any of"]));
     await click(option("is any of"));
@@ -190,18 +189,18 @@ describe("ProductionGanttFiltersBar: the Editor field (#274)", () => {
     expect(avatar.className).toContain("[[data-highlighted]_&]:ring-[var(--paper-050)]");
   });
 
-  it("writes the picked editors as sorted lowercase ids, independent of Stage and Show", async () => {
+  it("writes the picked editors as sorted lowercase ids, carrying the shared Filter's facets untouched", async () => {
     barPeople = people;
-    await render({ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false });
+    await render(facet(CARRIED));
     await addFilter("Editor", "is any of", ["Bea Editor"]);
-    expect(pushes.at(-1)).toEqual({ editorIds: [BEA], stageKeys: ["editing"], delivered: false, completed: false });
+    expect(pushes.at(-1)).toEqual(facet({ ...CARRIED, editorIds: [BEA] }));
     await click(option("Alex Admin"));
-    await waitFor(() => expect(pushes.at(-1)).toEqual({ editorIds: [ALEX, BEA], stageKeys: ["editing"], delivered: false, completed: false }));
+    await waitFor(() => expect(pushes.at(-1)).toEqual(facet({ ...CARRIED, editorIds: [ALEX, BEA] })));
   });
 
   it("renders an editor id the server no longer lists as 'Unknown editor (not applied)', which can still be removed", async () => {
     barPeople = people;
-    await render({ editorIds: [STALE], stageKeys: [], delivered: false, completed: false });
+    await render(facet({ editorIds: [STALE] }));
     expect(chipNames()).toEqual(["Editor is any of Unknown editor (not applied)"]);
     await click(button("Unknown editor (not applied)", chips()[0]!));
     await waitFor(() => expect(option("Unknown editor (not applied)").getAttribute("aria-selected")).toBe("true"));
@@ -212,7 +211,7 @@ describe("ProductionGanttFiltersBar: the Editor field (#274)", () => {
   it("does not offer Editor while there is nobody to pick", async () => {
     await render();
     await click(addTrigger());
-    await waitFor(() => expect(options().map((candidate) => candidate.textContent?.trim())).toEqual(["Stage", "Show"]));
+    await waitFor(() => expect(options().map((candidate) => candidate.textContent?.trim())).toEqual(["Show"]));
   });
 });
 
@@ -227,49 +226,49 @@ describe("ProductionGanttFiltersBar (#255)", () => {
 
     await act(async () => { root!.unmount(); });
     root = createRoot(host);
-    await render({ editorIds: [], stageKeys: ["delivered", "awaiting_raw"], delivered: true, completed: true });
-    expect(chipNames()).toEqual(["Stage is any of 2 selected", "Show includes 2 selected"]);
+    await render(facet({ delivered: true, completed: true }));
+    expect(chipNames()).toEqual(["Show includes 2 selected"]);
     // Icon-only once chips sit beside it, and still named.
     expect(addTrigger().textContent).toBe("");
     expect(addTrigger().getAttribute("aria-label")).toBe("Add filter");
   });
 
-  it("offers exactly Stage and Show, each with one condition, stages with their role-aware labels", async () => {
+  it("draws no chip for the shared Filter's Stage, Priority or Archived: the URL carries them, the Dashboard's Filter shows them (#428)", async () => {
+    await render(facet(CARRIED));
+    expect(chips()).toHaveLength(0);
+    expect(addTrigger().textContent).toBe("Add filter");
+    await click(addTrigger());
+    await waitFor(() => expect(options().map((candidate) => candidate.textContent?.trim())).toEqual(["Show"]));
+  });
+
+  it("offers Show with one condition", async () => {
     await render();
     await click(addTrigger());
-    await waitFor(() => expect(options().map((candidate) => candidate.textContent?.trim())).toEqual(["Stage", "Show"]));
-    await click(option("Stage"));
-    await waitFor(() => expect(options().map((candidate) => candidate.textContent?.trim())).toEqual(["is any of"]));
-    await click(option("is any of"));
-    await waitFor(() => expect(options().map((candidate) => candidate.textContent?.trim())).toEqual(["Awaiting RAW", "Editing", "Delivered"]));
+    await waitFor(() => expect(options().map((candidate) => candidate.textContent?.trim())).toEqual(["Show"]));
+    await click(option("Show"));
+    await waitFor(() => expect(options().map((candidate) => candidate.textContent?.trim())).toEqual(["includes"]));
+    await click(option("includes"));
+    await waitFor(() => expect(options().map((candidate) => candidate.textContent?.trim())).toEqual(["Delivered projects", "Completed checklist items"]));
   });
 
   it("add -> condition -> value writes the URL; every further toggle writes it again", async () => {
     await render();
-    await addFilter("Stage", "is any of", ["Editing"]);
-    expect(pushes).toEqual([{ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false }]);
-    await click(option("Awaiting RAW"));
+    await addFilter("Show", "includes", ["Completed checklist items"]);
+    expect(pushes).toEqual([facet({ completed: true })]);
+    await click(option("Delivered projects"));
     await waitFor(() => expect(pushes).toHaveLength(2));
-    expect(pushes[1]).toEqual({ editorIds: [], stageKeys: ["awaiting_raw", "editing"], delivered: false, completed: false });
-
-    await press(document.activeElement ?? document.body, "Escape");
-    await settle();
-    await addFilter("Show", "includes", ["Completed checklist items", "Delivered projects"]);
-    expect(pushes.at(-1)).toEqual({ editorIds: [], stageKeys: ["awaiting_raw", "editing"], delivered: true, completed: true });
-    await press(document.activeElement ?? document.body, "Escape");
-    await waitFor(() => expect(chipNames()).toEqual(["Stage is any of 2 selected", "Show includes 2 selected"]));
+    expect(pushes[1]).toEqual(facet({ delivered: true, completed: true }));
   });
 
   it("draws the selected option's tick in the row's own colour, so it survives the ink highlight (browser pass F)", async () => {
     await render();
-    await addFilter("Stage", "is any of", ["Editing"]);
-    await waitFor(() => expect(option("Editing").getAttribute("aria-selected")).toBe("true"));
-    // The stage swatch is a <span>, so the one <svg> in a row is its tick.
-    const ticks = option("Editing").querySelectorAll("svg");
+    await addFilter("Show", "includes", ["Completed checklist items"]);
+    await waitFor(() => expect(option("Completed checklist items").getAttribute("aria-selected")).toBe("true"));
+    const ticks = option("Completed checklist items").querySelectorAll("svg");
     expect(ticks).toHaveLength(1);
     const tick = ticks[0]!;
     // An unselected row draws no tick at all.
-    expect(option("Delivered").querySelectorAll("svg")).toHaveLength(0);
+    expect(option("Delivered projects").querySelectorAll("svg")).toHaveLength(0);
     // No forced foreground: the highlighted row is `bg-accent` (--ink-900) with `text-accent-foreground`
     // on its descendants, and a tick pinned to `text-foreground!` drew ink on ink. It inherits instead.
     const classes = (tick.getAttribute("class") ?? "").split(/\s+/);
@@ -278,7 +277,7 @@ describe("ProductionGanttFiltersBar (#255)", () => {
   });
 
   it("sizes a chip to the Add filter and Clear buttons: the Quincy Button's 38px / 44px (<=721px) height contract (browser pass F)", async () => {
-    await render({ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false });
+    await render(facet({ completed: true }));
     const tokens = (element: Element) => (element.getAttribute("class") ?? "").split(/\s+/);
     // Read off the real trigger, so the chip is tied to the Button's contract rather than to literals.
     const heightContract = tokens(addTrigger()).filter((name) => /(^|:)min-h-/.test(name));
@@ -288,12 +287,12 @@ describe("ProductionGanttFiltersBar (#255)", () => {
     const [chip] = chips();
     // The chip is an items-stretch group, so its height lifts the text segments; the kebab carries an
     // explicit `size-*` height, so it needs the contract itself or it stays 32px inside a taller pill.
-    for (const element of [chip!, button("Stage filter options", chip!)]) {
+    for (const element of [chip!, button("Show filter options", chip!)]) {
       for (const name of heightContract) expect(tokens(element)).toContain(name);
     }
   });
 
-  it("widens both value menus past the vendored 12rem, so 'Completed checklist items' and the longer stage labels are not truncated (browser pass F)", async () => {
+  it("widens the value menu past the vendored 12rem, so 'Completed checklist items' is not truncated (browser pass F)", async () => {
     /** The width utility on the nearest ancestor of a menu row that sets one: the value panel. */
     const panelWidth = (row: HTMLElement) => {
       for (let element = row.parentElement; element; element = element.parentElement) {
@@ -303,20 +302,16 @@ describe("ProductionGanttFiltersBar (#255)", () => {
       return null;
     };
     await render();
-    await addFilter("Stage", "is any of", ["Editing"]);
-    expect(panelWidth(option("Editing"))).toBe("w-60");
-    await press(document.activeElement ?? document.body, "Escape");
-    await settle();
     await addFilter("Show", "includes", ["Completed checklist items"]);
     expect(panelWidth(option("Completed checklist items"))).toBe("w-60");
   });
 
   it("rounds every focusable chip segment's focus ring to the chip's 14px radius, like the Add filter ring (browser pass F)", async () => {
-    await render({ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false });
+    await render(facet({ delivered: true }));
     const [chip] = chips();
     const segments = [...chip!.querySelectorAll<HTMLElement>("button")];
     // Operator, value, kebab: the three a keyboard lands on.
-    expect(segments.map((segment) => segment.getAttribute("aria-label") ?? segment.textContent?.trim())).toEqual(["is any of", "Editing", "Stage filter options"]);
+    expect(segments.map((segment) => segment.getAttribute("aria-label") ?? segment.textContent?.trim())).toEqual(["includes", "Delivered projects", "Show filter options"]);
     // The global `:focus-visible` outline follows `border-radius`, and ButtonGroup squares the inner
     // corners of every segment, so a focused segment drew a square ring on a rounded pill. On focus
     // the segment takes the chip's radius token (`--radius-lg`, what `rounded-lg` resolves to on the
@@ -325,94 +320,72 @@ describe("ProductionGanttFiltersBar (#255)", () => {
   });
 
   it("draws a finished chip's operator in the secondary text role, which clears 4.5:1 on the resting and hover fills (browser pass G)", async () => {
-    await render({ editorIds: [], stageKeys: ["editing"], delivered: true, completed: false });
+    await render(facet({ delivered: true }));
     const tokens = (element: Element) => (element.getAttribute("class") ?? "").split(/\s+/);
     // `text-muted-foreground` (--text-muted, greige-400) measured 3.13:1 on the `hover:bg-muted`
     // fill (--paper-100) and 3.36:1 at rest (--paper-050). `text-foreground-secondary`
     // (--text-secondary, greige-600) is 8.66:1 at rest and 8.09:1 on hover.
-    for (const operator of [button("is any of", toolbar()), button("includes", toolbar())]) {
-      expect(tokens(operator)).toContain("text-foreground-secondary");
-      expect(tokens(operator)).not.toContain("text-muted-foreground");
-      expect(tokens(operator)).toContain("hover:bg-muted");
-      expect(tokens(operator)).toContain("bg-background");
-    }
+    const operator = button("includes", toolbar());
+    expect(tokens(operator)).toContain("text-foreground-secondary");
+    expect(tokens(operator)).not.toContain("text-muted-foreground");
+    expect(tokens(operator)).toContain("hover:bg-muted");
+    expect(tokens(operator)).toContain("bg-background");
   });
 
   it("keeps a chip's value on one line, truncated under a max width, with the full value in its name (browser pass G)", async () => {
-    // Stage carries a single value with a swatch icon; Show a single long value with none.
-    await render({ editorIds: [], stageKeys: ["awaiting_raw"], delivered: false, completed: true });
+    await render(facet({ completed: true }));
     const tokens = (element: Element) => (element.getAttribute("class") ?? "").split(/\s+/);
-    for (const name of ["Awaiting RAW", "Completed checklist items"]) {
-      const segment = button(name, toolbar());
-      // At 390x844 "Completed checklist items" wrapped and made the chip 62px tall.
-      for (const utility of ["whitespace-nowrap", "min-w-0", "max-w-60"]) expect(tokens(segment)).toContain(utility);
-      // The text itself sits in a truncating box, so it ellipsizes instead of overflowing the segment.
-      const text = [...segment.querySelectorAll<HTMLElement>("span")].find((span) => span.textContent === name && tokens(span).includes("truncate"));
-      expect(text, `a truncating span holding "${name}"`).toBeDefined();
-    }
-    expect(chipNames()).toEqual(["Stage is any of Awaiting RAW", "Show includes Completed checklist items"]);
+    const name = "Completed checklist items";
+    const segment = button(name, toolbar());
+    // At 390x844 "Completed checklist items" wrapped and made the chip 62px tall.
+    for (const utility of ["whitespace-nowrap", "min-w-0", "max-w-60"]) expect(tokens(segment)).toContain(utility);
+    // The text itself sits in a truncating box, so it ellipsizes instead of overflowing the segment.
+    const text = [...segment.querySelectorAll<HTMLElement>("span")].find((span) => span.textContent === name && tokens(span).includes("truncate"));
+    expect(text, `a truncating span holding "${name}"`).toBeDefined();
+    expect(chipNames()).toEqual(["Show includes Completed checklist items"]);
   });
 
   it("an unfinished chip writes nothing and survives the URL echo of another chip's edit", async () => {
-    await render({ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false });
+    barPeople = people;
+    await render(facet({ editorIds: [BEA] }));
     await click(addTrigger());
     await waitFor(() => option("Show"));
     await click(option("Show"));
-    await waitFor(() => expect(chipNames()).toEqual(["Stage is any of Editing", "Show Select condition, incomplete filter"]));
+    await waitFor(() => expect(chipNames()).toEqual(["Editor is any of Bea Editor", "Show Select condition, incomplete filter"]));
     await press(document.activeElement ?? document.body, "Escape");
     await settle();
     expect(pushes).toEqual([]);
 
-    // Edit the finished Stage chip: its push echoes back through the URL.
-    await click(button("Editing", toolbar()));
-    await waitFor(() => option("Awaiting RAW"));
-    await click(option("Awaiting RAW"));
-    await waitFor(() => expect(pushes).toEqual([{ editorIds: [], stageKeys: ["awaiting_raw", "editing"], delivered: false, completed: false }]));
+    // Edit the finished Editor chip: its push echoes back through the URL.
+    await click(button("Bea Editor", toolbar()));
+    await waitFor(() => option("Alex Admin"));
+    await click(option("Alex Admin"));
+    await waitFor(() => expect(pushes).toEqual([facet({ editorIds: [ALEX, BEA] })]));
     await settle();
-    expect(chipNames()).toEqual(["Stage is any of 2 selected", "Show Select condition, incomplete filter"]);
+    expect(chipNames()).toEqual(["Editor is any of 2 selected", "Show Select condition, incomplete filter"]);
   });
 
-  describe("the Delivered pair: Stage = Delivered switches Show -> Delivered on (owner decision)", () => {
-    it("selecting Delivered on the Stage chip writes one facet with delivered projects on, and the Show chip shows it", async () => {
-      await render({ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false });
-      await click(button("Editing", toolbar()));
-      await waitFor(() => option("Delivered"));
-      await click(option("Delivered"));
-      await waitFor(() => expect(pushes).toHaveLength(1));
-      expect(pushes).toEqual([{ editorIds: [], stageKeys: ["editing", "delivered"], delivered: true, completed: false }]);
-      await press(document.activeElement ?? document.body, "Escape");
-      await settle();
-      expect(chipNames()).toEqual(["Stage is any of 2 selected", "Show includes Delivered projects"]);
-      expect(pushes).toHaveLength(1);
-    });
-
-    it("keeps Show -> Completed when selecting Delivered adds Delivered to the Show chip", async () => {
-      await render({ editorIds: [], stageKeys: ["editing"], delivered: false, completed: true });
-      await click(button("Editing", toolbar()));
-      await waitFor(() => option("Delivered"));
-      await click(option("Delivered"));
-      await waitFor(() => expect(pushes).toHaveLength(1));
-      expect(pushes).toEqual([{ editorIds: [], stageKeys: ["editing", "delivered"], delivered: true, completed: true }]);
-      await press(document.activeElement ?? document.body, "Escape");
-      await settle();
-      expect(chipNames()).toEqual(["Stage is any of 2 selected", "Show includes 2 selected"]);
-    });
-
-    it("turning Show -> Delivered off while Stage holds Delivered and another stage writes one facet with only the other stage", async () => {
-      await render({ editorIds: [], stageKeys: ["editing", "delivered"], delivered: true, completed: false });
+  describe("the Delivered pair: Stage = Delivered (the shared Filter's) pairs with Show -> Delivered (owner decision)", () => {
+    it("turning Show -> Delivered off while the carried Stage holds Delivered and another stage writes one facet with only the other stage", async () => {
+      await render(facet({ stageKeys: ["editing", "delivered"], delivered: true }));
       await click(button("Delivered projects", toolbar()));
       await waitFor(() => option("Delivered projects"));
       await click(option("Delivered projects"));
       await waitFor(() => expect(pushes).toHaveLength(1));
-      expect(pushes).toEqual([{ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false }]);
-      await settle();
-      expect(chipNames()[0]).toBe("Stage is any of Editing");
+      expect(pushes).toEqual([facet({ stageKeys: ["editing"], delivered: false })]);
       expect(pushes).toHaveLength(1);
     });
 
-    it("removing the Show chip when Delivered is the only stage drops the Stage chip too", async () => {
-      await render({ editorIds: [], stageKeys: ["delivered"], delivered: true, completed: false });
-      expect(chipNames()).toEqual(["Stage is any of Delivered", "Show includes Delivered projects"]);
+    it("an edit beside an inconsistent pair a URL carried in turns delivered projects on", async () => {
+      barPeople = people;
+      await render(facet({ stageKeys: ["delivered"] }));
+      await addFilter("Editor", "is any of", ["Bea Editor"]);
+      expect(pushes.at(-1)).toEqual(facet({ stageKeys: ["delivered"], delivered: true, editorIds: [BEA] }));
+    });
+
+    it("removing the Show chip when Delivered is the only stage drops the stage in the same write", async () => {
+      await render(facet({ stageKeys: ["delivered"], delivered: true }));
+      expect(chipNames()).toEqual(["Show includes Delivered projects"]);
       await click(button("Show filter options", toolbar()));
       await waitFor(() => expect([...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent?.trim())).toEqual(["Remove"]));
       await click([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')][0]!);
@@ -422,86 +395,79 @@ describe("ProductionGanttFiltersBar (#255)", () => {
     });
 
     it("never rewrites a cold URL holding Stage = Delivered with delivered projects hidden", async () => {
-      await render({ editorIds: [], stageKeys: ["delivered"], delivered: false, completed: false });
+      await render(facet({ stageKeys: ["delivered"] }));
       await settle();
-      expect(chipNames()).toEqual(["Stage is any of Delivered"]);
+      expect(chips()).toHaveLength(0);
       expect(pushes).toEqual([]);
       expect(notice()).toBe("");
     });
 
     describe("says why the pair fired (#269)", () => {
-      it("announces 'Also showing delivered projects.' when Stage = Delivered adds the Show chip", async () => {
-        await render({ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false });
-        expect(notice()).toBe("");
+      it("announces 'Removed Delivered from Stage.' when hiding delivered projects drops the stage", async () => {
+        await render(facet({ stageKeys: ["editing", "delivered"], delivered: true }));
         const status = document.querySelector('[data-testid="production-gantt-filters-notice"]');
         expect(status?.getAttribute("role")).toBe("status");
-        await click(button("Editing", toolbar()));
-        await waitFor(() => option("Delivered"));
-        await click(option("Delivered"));
-        await waitFor(() => expect(notice()).toBe("Also showing delivered projects."));
-        // The same always-mounted status node carries it, so a screen reader hears the change.
-        expect(document.querySelector('[data-testid="production-gantt-filters-notice"]')).toBe(status);
-      });
-
-      it("announces 'Removed Delivered from Stage.' when hiding delivered projects drops the stage", async () => {
-        await render({ editorIds: [], stageKeys: ["editing", "delivered"], delivered: true, completed: false });
+        expect(notice()).toBe("");
         await click(button("Delivered projects", toolbar()));
         await waitFor(() => option("Delivered projects"));
         await click(option("Delivered projects"));
         await waitFor(() => expect(notice()).toBe("Removed Delivered from Stage."));
+        // The same always-mounted status node carries it, so a screen reader hears the change.
+        expect(document.querySelector('[data-testid="production-gantt-filters-notice"]')).toBe(status);
       });
 
       it("clears the notice on the next edit that does not pair", async () => {
-        await render({ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false });
-        await click(button("Editing", toolbar()));
-        await waitFor(() => option("Delivered"));
-        await click(option("Delivered"));
-        await waitFor(() => expect(notice()).toBe("Also showing delivered projects."));
-        await click(option("Awaiting RAW"));
+        await render(facet({ stageKeys: ["editing", "delivered"], delivered: true }));
+        await click(button("Delivered projects", toolbar()));
+        await waitFor(() => option("Delivered projects"));
+        await click(option("Delivered projects"));
+        await waitFor(() => expect(notice()).toBe("Removed Delivered from Stage."));
+        await click(option("Completed checklist items"));
         await waitFor(() => expect(pushes).toHaveLength(2));
         expect(notice()).toBe("");
       });
 
       it("clears the notice on an outside navigation (Back/Forward re-seeds the chips)", async () => {
-        await render({ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false });
-        await click(button("Editing", toolbar()));
-        await waitFor(() => option("Delivered"));
-        await click(option("Delivered"));
-        await waitFor(() => expect(notice()).toBe("Also showing delivered projects."));
-        await act(async () => { setUrl({ editorIds: [], stageKeys: ["awaiting_raw"], delivered: false, completed: false }); });
+        await render(facet({ stageKeys: ["editing", "delivered"], delivered: true }));
+        await click(button("Delivered projects", toolbar()));
+        await waitFor(() => option("Delivered projects"));
+        await click(option("Delivered projects"));
+        await waitFor(() => expect(notice()).toBe("Removed Delivered from Stage."));
+        await act(async () => { setUrl(facet({ completed: true })); });
         expect(notice()).toBe("");
       });
     });
   });
 
   it("re-seeds from the URL when the URL changes to something the bar does not already say (Back/Forward, reload)", async () => {
-    await render({ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false });
-    const [stageChip] = chips();
-    expect(chipNames()).toEqual(["Stage is any of Editing"]);
+    await render(facet({ completed: true }));
+    const [showChip] = chips();
+    expect(chipNames()).toEqual(["Show includes Completed checklist items"]);
 
     // The bar's own echo (equal facet, fresh object): nothing is rebuilt.
-    await act(async () => { setUrl({ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false }); });
-    expect(chips()[0]).toBe(stageChip);
+    await act(async () => { setUrl(facet({ completed: true })); });
+    expect(chips()[0]).toBe(showChip);
 
     // A real navigation: the chips follow the URL.
-    await act(async () => { setUrl({ editorIds: [], stageKeys: ["awaiting_raw"], delivered: true, completed: false }); });
-    expect(chipNames()).toEqual(["Stage is any of Awaiting RAW", "Show includes Delivered projects"]);
+    await act(async () => { setUrl(facet({ delivered: true })); });
+    expect(chipNames()).toEqual(["Show includes Delivered projects"]);
     await act(async () => { setUrl(DEFAULT_GANTT_FACET_FILTERS); });
     expect(chips()).toHaveLength(0);
     expect(pushes).toEqual([]);
   });
 
   it("hides Duplicate and Negate: a chip's menu offers only Remove", async () => {
-    await render({ editorIds: [], stageKeys: ["editing"], delivered: true, completed: false });
-    await click(button("Stage filter options", toolbar()));
+    await render(facet({ delivered: true }));
+    await click(button("Show filter options", toolbar()));
     await waitFor(() => expect([...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent?.trim())).toEqual(["Remove"]));
   });
 
   it("disables a field in the picker once a chip for it exists, finished or not", async () => {
-    await render({ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false });
+    barPeople = people;
+    await render(facet({ editorIds: [BEA] }));
     await click(addTrigger());
-    await waitFor(() => option("Stage"));
-    expect(option("Stage").getAttribute("aria-disabled")).toBe("true");
+    await waitFor(() => option("Editor"));
+    expect(option("Editor").getAttribute("aria-disabled")).toBe("true");
     expect(option("Show").getAttribute("aria-disabled")).not.toBe("true");
     await click(option("Show"));
     await waitFor(() => expect(chips()).toHaveLength(2));
@@ -509,7 +475,7 @@ describe("ProductionGanttFiltersBar (#255)", () => {
     await settle();
     await click(addTrigger());
     await waitFor(() => option("Show"));
-    expect(option("Stage").getAttribute("aria-disabled")).toBe("true");
+    expect(option("Editor").getAttribute("aria-disabled")).toBe("true");
     expect(option("Show").getAttribute("aria-disabled")).toBe("true");
   });
 
@@ -520,28 +486,29 @@ describe("ProductionGanttFiltersBar (#255)", () => {
     // happy-dom does not synthesise a native button's Enter activation; a browser fires `click`.
     await press(trigger, "Enter");
     await click(trigger);
-    await waitFor(() => expect(options().map((candidate) => candidate.textContent?.trim())).toEqual(["Stage", "Show"]));
+    await waitFor(() => expect(options().map((candidate) => candidate.textContent?.trim())).toEqual(["Show"]));
     const fieldInput = document.activeElement as HTMLElement;
     expect(fieldInput.getAttribute("role")).toBe("combobox");
     await press(fieldInput, "ArrowDown");
     await press(fieldInput, "Enter");
-    await waitFor(() => expect(options().map((candidate) => candidate.textContent?.trim())).toEqual(["is any of"]));
+    await waitFor(() => expect(options().map((candidate) => candidate.textContent?.trim())).toEqual(["includes"]));
     const operatorInput = document.activeElement as HTMLElement;
     await press(operatorInput, "ArrowDown");
     await press(operatorInput, "Enter");
-    await waitFor(() => expect(options().map((candidate) => candidate.textContent?.trim())).toEqual(["Awaiting RAW", "Editing", "Delivered"]));
+    await waitFor(() => expect(options().map((candidate) => candidate.textContent?.trim())).toEqual(["Delivered projects", "Completed checklist items"]));
     const valueInput = document.activeElement as HTMLElement;
     await press(valueInput, "ArrowDown");
     await press(valueInput, "Enter");
-    await waitFor(() => expect(pushes).toEqual([{ editorIds: [], stageKeys: ["awaiting_raw"], delivered: false, completed: false }]));
+    await waitFor(() => expect(pushes).toEqual([facet({ delivered: true })]));
   });
 
   it("removes by keyboard: Delete on a chip moves focus to its neighbour; on the last chip, to the trigger", async () => {
-    await render({ editorIds: [], stageKeys: ["editing"], delivered: true, completed: false });
+    barPeople = people;
+    await render(facet({ editorIds: [BEA], delivered: true }));
     chips()[0]!.focus();
     await press(chips()[0]!, "Delete");
-    await waitFor(() => expect(chipNames()).toEqual(["Show includes Delivered projects"]));
-    expect(pushes.at(-1)).toEqual({ editorIds: [], stageKeys: [], delivered: true, completed: false });
+    await waitFor(() => expect(chipNames()).toEqual(["Editor is any of Bea Editor"]));
+    expect(pushes.at(-1)).toEqual(facet({ editorIds: [BEA] }));
     await waitFor(() => expect(document.activeElement).toBe(chips()[0]));
 
     await press(chips()[0]!, "Delete");
@@ -551,7 +518,7 @@ describe("ProductionGanttFiltersBar (#255)", () => {
   });
 
   it("removing the last chip from its menu hands focus to the trigger", async () => {
-    await render({ editorIds: [], stageKeys: [], delivered: false, completed: true });
+    await render(facet({ completed: true }));
     await click(button("Show filter options", toolbar()));
     await waitFor(() => expect([...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent?.trim())).toEqual(["Remove"]));
     await click([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')][0]!);
@@ -561,29 +528,29 @@ describe("ProductionGanttFiltersBar (#255)", () => {
     await waitFor(() => expect(document.activeElement).toBe(addTrigger()));
   });
 
-  it("the bar's own Clear writes the default facet and hands focus to the trigger", async () => {
-    await render({ editorIds: [], stageKeys: ["editing"], delivered: true, completed: true });
+  it("the bar's own Clear writes the default Editor and Show, keeps the shared Filter's facets, and hands focus to the trigger", async () => {
+    await render(facet({ ...CARRIED, delivered: true, completed: true }));
     const clear = button("Clear", bar());
     clear.focus();
     await click(clear);
     await waitFor(() => expect(chips()).toHaveLength(0));
-    expect(pushes).toEqual([DEFAULT_GANTT_FACET_FILTERS]);
+    expect(pushes).toEqual([facet(CARRIED)]);
     expect(bar().textContent).not.toContain("Clear");
     await waitFor(() => expect(document.activeElement).toBe(addTrigger()));
   });
 
   it("writes a second edit made before the first write's URL lands, and the stale URL does not revert it (Sol review)", async () => {
     await render(DEFAULT_GANTT_FACET_FILTERS, { echo: false });
-    await addFilter("Stage", "is any of", ["Editing"]);
-    expect(pushes).toEqual([{ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false }]);
+    await addFilter("Show", "includes", ["Completed checklist items"]);
+    expect(pushes).toEqual([facet({ completed: true })]);
 
     // Deselect it again while the first write is still in flight: the bar must write the default.
-    await click(option("Editing"));
+    await click(option("Completed checklist items"));
     await waitFor(() => expect(pushes).toHaveLength(2));
     expect(pushes[1]).toEqual(DEFAULT_GANTT_FACET_FILTERS);
     await settle();
     const chipsAfterSecondEdit = chipNames();
-    expect(chipsAfterSecondEdit.join(" ")).not.toContain("Editing");
+    expect(chipsAfterSecondEdit.join(" ")).not.toContain("Completed");
 
     // The first write's URL lands late: it is the bar's own stale echo, so nothing reverts.
     await act(async () => { setUrl(pushes[0]!); });
@@ -600,15 +567,15 @@ describe("ProductionGanttFiltersBar (#255)", () => {
 
   it("still re-seeds from an outside navigation that lands while its own write is in flight", async () => {
     await render(DEFAULT_GANTT_FACET_FILTERS, { echo: false });
-    await addFilter("Stage", "is any of", ["Editing"]);
+    await addFilter("Show", "includes", ["Completed checklist items"]);
     expect(pushes).toHaveLength(1);
     await press(document.activeElement ?? document.body, "Escape");
     await settle();
 
     // Back/Forward to a URL the bar never wrote, before its own write lands.
-    await act(async () => { setUrl({ editorIds: [], stageKeys: ["awaiting_raw"], delivered: true, completed: false }); });
+    await act(async () => { setUrl(facet({ delivered: true })); });
     await settle();
-    expect(chipNames()).toEqual(["Stage is any of Awaiting RAW", "Show includes Delivered projects"]);
+    expect(chipNames()).toEqual(["Show includes Delivered projects"]);
     expect(pushes).toHaveLength(1);
   });
 
@@ -618,8 +585,9 @@ describe("ProductionGanttFiltersBar (#255)", () => {
       if (!element) throw new Error("no live status region");
       return element.textContent?.trim();
     };
+    barPeople = people;
     await render();
-    await addFilter("Stage", "is any of", ["Editing"]);
+    await addFilter("Show", "includes", ["Completed checklist items"]);
     await press(document.activeElement ?? document.body, "Escape");
     await settle();
     expect(chips()).toHaveLength(1);
@@ -632,7 +600,7 @@ describe("ProductionGanttFiltersBar (#255)", () => {
     expect(chips()).toHaveLength(0);
     expect(status()).toBe("0 filters applied");
 
-    await act(async () => { setUrl({ editorIds: [], stageKeys: ["awaiting_raw"], delivered: true, completed: false }); });
+    await act(async () => { setUrl(facet({ editorIds: [BEA], delivered: true })); });
     await settle();
     expect(chips()).toHaveLength(2);
     expect(status()).toBe("2 filters applied");
@@ -642,12 +610,12 @@ describe("ProductionGanttFiltersBar (#255)", () => {
 
   it("keeps focus on the control in use while the URL round trip is pending, and after it lands", async () => {
     await render(DEFAULT_GANTT_FACET_FILTERS, { echo: false });
-    await addFilter("Stage", "is any of", ["Editing"]);
-    expect(pushes).toEqual([{ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false }]);
+    await addFilter("Show", "includes", ["Completed checklist items"]);
+    expect(pushes).toEqual([facet({ completed: true })]);
     await settle();
     const focused = document.activeElement;
     expect(focused).not.toBe(document.body);
-    expect(options().map((candidate) => candidate.textContent?.trim())).toEqual(["Awaiting RAW", "Editing", "Delivered"]);
+    expect(options().map((candidate) => candidate.textContent?.trim())).toEqual(["Delivered projects", "Completed checklist items"]);
     const [chip] = chips();
 
     // The URL lands later, equal to what the bar already says.
@@ -655,6 +623,6 @@ describe("ProductionGanttFiltersBar (#255)", () => {
     await settle();
     expect(document.activeElement).toBe(focused);
     expect(chips()[0]).toBe(chip);
-    expect(options().map((candidate) => candidate.textContent?.trim())).toEqual(["Awaiting RAW", "Editing", "Delivered"]);
+    expect(options().map((candidate) => candidate.textContent?.trim())).toEqual(["Delivered projects", "Completed checklist items"]);
   });
 });

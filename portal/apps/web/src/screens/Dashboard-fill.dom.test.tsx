@@ -104,7 +104,7 @@ describe("Dashboard fills the viewport (#363)", () => {
     await render();
     expect(region()).not.toBeNull();
     for (const token of ["flex-1", "flex-col", "min-w-0", "min-h-[20rem]"]) expect(classesOf(region())).toContain(token);
-    expect(region().contains(host.querySelector('[data-testid="dashboard-toolbar"]'))).toBe(false);
+    expect(region().contains(host.querySelector('[data-testid="dashboard-view-bar"]'))).toBe(false);
     expect(region().contains(host.querySelector('[data-testid="dashboard-live-region"]'))).toBe(false);
   });
 
@@ -123,8 +123,9 @@ describe("Dashboard fills the viewport (#363)", () => {
   it("fills the region while loading", async () => {
     apiGetMock.mockImplementation(() => new Promise(() => {}));
     await render();
-    const skeleton = host.querySelector<HTMLElement>('main [role="status"]')!;
-    expect(region().contains(skeleton)).toBe(true);
+    // The shared Filter's own sr-only live status (#428) precedes the region; the skeleton is the one inside it.
+    const skeleton = region().querySelector<HTMLElement>('[role="status"]')!;
+    expect(skeleton).not.toBeNull();
     for (const token of ["flex-1", "min-h-0"]) expect(classesOf(skeleton)).toContain(token);
   });
 

@@ -40,6 +40,7 @@ function ganttProject(bounds: Bounds): GanttProjectRowDto {
     agentName: null,
     stageKey: "awaiting_raw",
     delivered: false,
+    archived: false,
     shootDate: bounds.shoot,
     shootDateCivil: bounds.shoot,
     createdAt: bounds.createdAt,

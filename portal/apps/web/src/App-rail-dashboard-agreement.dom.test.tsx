@@ -141,7 +141,7 @@ function calendarDeadlineEvent() {
     id: "project-deadline:one",
     kind: "project_deadline" as const,
     title: "Deadline",
-    project: { id: ACTIVE_PROJECT_ID, street: "1 Active Street", stageKey: "awaiting_raw" as const, checklist: { completed: 0, total: 0 }, delivered: false },
+    project: { id: ACTIVE_PROJECT_ID, street: "1 Active Street", stageKey: "awaiting_raw" as const, checklist: { completed: 0, total: 0 }, delivered: false, archived: false },
     timing: { allDay: true, start: "2026-09-10", end: null },
     status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false },
     permissions: { canDrag: true, canResize: false },
@@ -160,7 +160,7 @@ function calendarRangeResponse(path: string) {
       date: params.get("date") ?? "2026-09-16",
       subview: (params.get("sub") ?? "month") as "month" | "week" | "agenda",
       zone: PRODUCTION_CALENDAR_ZONE,
-      appliedFilters: { layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false },
+      appliedFilters: { layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: (params.get("archived") ?? "hide") as "hide" | "include" | "only", showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false },
     },
     events: calendarEventFixture.enabled ? [calendarDeadlineEvent()] : [],
     filterFacets: { projects: [], people: [], myTasksUserId: "00000000-0000-4000-8000-000000000000" },
@@ -230,7 +230,7 @@ beforeEach(async () => {
     if (path.startsWith("/api/notifications")) return Promise.resolve({ notifications: [], unreadCount: 0 });
     if (path.startsWith("/api/stages")) return Promise.resolve({ stages: stagesFixture.value });
     if (path.startsWith("/api/production-calendar")) return Promise.resolve(calendarRangeResponse(path));
-    if (path.startsWith("/api/projects")) return Promise.resolve(path.includes("archived=1") ? projectsResponse("9 Archived Street", ARCHIVED_PROJECT_ID) : projectsResponse("1 Active Street", ACTIVE_PROJECT_ID));
+    if (path.startsWith("/api/projects")) return Promise.resolve(/archived=only/.test(path) ? projectsResponse("9 Archived Street", ARCHIVED_PROJECT_ID) : projectsResponse("1 Active Street", ACTIVE_PROJECT_ID));
     return Promise.reject(new Error(`unhandled apiGet path in App-rail-dashboard-agreement.dom.test.tsx: ${path}`));
   });
   // Dashboard code-splits ProductionEventCalendar behind React.lazy; warm the dynamic import so the
@@ -339,6 +339,17 @@ async function clickButtonLabelled(host: ParentNode, text: string) {
   await click(button);
 }
 
+/** #428: Archived is the shared Filter's field (a URL parameter on every view), not a scope switch:
+ * entering it is a location change, like any other filter edit. */
+async function enterArchived(view: "table" | "board" | "calendar" = "table") {
+  await act(async () => {
+    locationStore().push(`/?view=${view}&archived=only`);
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  await settle();
+}
+
 /** #426: the rail is icon-only and no longer lists Dashboard views — it must render none. */
 function railChildLinks(host: ParentNode) {
   return [...host.querySelectorAll<HTMLElement>('[data-testid="navigation-rail-child-link"]')];
@@ -422,18 +433,13 @@ async function dndStart(activeId: string) {
 }
 
 describe("the rail and the Dashboard agree about the current view (#119)", () => {
-  it("1a — clicking the rail's Kanban while archived exits archived and everything agrees", async () => {
+  it("1a — navigating the rail to Kanban from an Archived: Only List drops the filter with the location and everything agrees", async () => {
     const host = await renderApp("/?view=table");
-    await clickButtonLabelled(host, "Archived");
+    await enterArchived("table");
 
-    expect(host.textContent).toContain("Archived projects");
     expect(host.textContent).toContain("9 Archived Street");
-    // The Dashboard's own view control disappears while archived (it has nothing to switch
-    // between), but the rail's model does not know archive scope and keeps offering all four
-    // (#220 added Gantt between Kanban and Calendar) — so every destination stays reachable, and
-    // choosing one leaves archived scope.
     // #426: the rail lists no Dashboard views at all; every destination stays reachable through
-    // the location (the Dashboard's own control is hidden while archived).
+    // the location, and a bare view location carries no filter.
     expect(railChildLinks(host)).toEqual([]);
     expect(activeRailChild(host)).toBe("Table");
 
@@ -444,12 +450,12 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
     expect(lastBreadcrumbSegment(host)).toBe("Board");
     expect(host.querySelector('[data-testid="dashboard-board"]')).not.toBeNull();
     expect(host.textContent).toContain("1 Active Street");
-    expect(host.textContent).not.toContain("Archived projects");
+    expect(host.textContent).not.toContain("9 Archived Street");
   });
 
-  it("1b — clicking the rail's Calendar while archived exits archived and everything agrees", async () => {
+  it("1b — navigating the rail to Calendar from an Archived: Only List drops the filter with the location and everything agrees", async () => {
     const host = await renderApp("/?view=table");
-    await clickButtonLabelled(host, "Archived");
+    await enterArchived("table");
 
     await clickRailChild(host, "Calendar");
 
@@ -457,42 +463,42 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
     expect(activeRailChild(host)).toBe("Calendar");
     expect(lastBreadcrumbSegment(host)).toBe("Calendar");
     expect(host.querySelector('[data-testid="event-calendar-body"]')).not.toBeNull();
-    expect(host.textContent).not.toContain("Archived projects");
+    expect(host.textContent).not.toContain("9 Archived Street");
   });
 
-  it("1c — clicking the rail's List while archived stays archived", async () => {
+  it("1c — navigating the rail to List from an Archived: Only List shows the active projects again", async () => {
     const host = await renderApp("/?view=table");
-    await clickButtonLabelled(host, "Archived");
+    await enterArchived("table");
+    expect(host.textContent).toContain("9 Archived Street");
 
     await clickRailChild(host, "Table");
 
-    expect(host.textContent).toContain("Archived projects");
-    expect(host.textContent).toContain("9 Archived Street");
+    expect(host.textContent).toContain("1 Active Street");
+    expect(host.textContent).not.toContain("9 Archived Street");
     expect(activeRailChild(host)).toBe("Table");
     expect(lastBreadcrumbSegment(host)).toBe("Table");
   });
 
-  it("1d — a history arrival at an explicit Kanban URL while archived exits archived", async () => {
+  it("1d — a history arrival at an explicit Kanban URL carrying Archived: Only shows the archived Board and everything agrees", async () => {
     const host = await renderApp("/?view=table");
-    await clickButtonLabelled(host, "Archived");
-    expect(host.textContent).toContain("Archived projects");
+    expect(host.textContent).toContain("1 Active Street");
 
-    // Not a click through `InternalLink` — a genuine Back/Forward-shaped arrival, landing on an
-    // explicit non-List view while still archived, the way pasting a URL or pressing Back could
-    // already reach it before the rail made it a single click (#119's issue text).
+    // Not a click through `InternalLink` — a genuine Back/Forward-shaped arrival, the way pasting a
+    // URL or pressing Back could already reach it (#119's issue text).
     await act(async () => {
-      window.history.pushState(null, "", "/?view=board");
+      window.history.pushState(null, "", "/?view=board&archived=only");
       window.dispatchEvent(new PopStateEvent("popstate"));
       await Promise.resolve();
       await Promise.resolve();
     });
     await settle();
 
-    expect(currentUrl()).toBe("/?view=board");
+    expect(currentUrl()).toBe("/?view=board&archived=only");
     expect(activeRailChild(host)).toBe("Board");
     expect(lastBreadcrumbSegment(host)).toBe("Board");
     expect(host.querySelector('[data-testid="dashboard-board"]')).not.toBeNull();
-    expect(host.textContent).not.toContain("Archived projects");
+    expect(host.textContent).toContain("9 Archived Street");
+    expect(host.textContent).not.toContain("1 Active Street");
   });
 
   it("2 — Back past an explicit List switch restores Kanban everywhere, including the rail, though the remembered preference now says List", async () => {
@@ -631,28 +637,30 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
 });
 
 describe("archive entry, Back navigation, StrictMode and unmount keep the rail and the Dashboard agreeing (#119)", () => {
-  it("enters Archived from an explicit Kanban URL and stays archived", async () => {
+  it("enters Archived on an explicit Kanban URL and stays on the Kanban (the filter is on every view)", async () => {
     const host = await renderApp("/?view=board");
     expect(activeRailChild(host)).toBe("Board");
 
-    await clickButtonLabelled(host, "Archived");
+    await enterArchived("board");
 
-    expect(currentUrl()).toBe("/?view=table");
-    expect(activeRailChild(host)).toBe("Table");
-    expect(host.textContent).toContain("Archived projects");
+    expect(currentUrl()).toBe("/?view=board&archived=only");
+    expect(activeRailChild(host)).toBe("Board");
     expect(host.textContent).toContain("9 Archived Street");
   });
 
-  it("enters Archived from a canonical Calendar URL and stays archived", async () => {
+  it("enters Archived on a canonical Calendar URL and stays on the Calendar", async () => {
     const host = await renderApp("/?view=calendar");
     expect(activeRailChild(host)).toBe("Calendar");
+    // The Dashboard canonicalises the bare Calendar URL; the filter rides on that canonical form.
+    const canonical = currentUrl();
+    expect(canonical.startsWith("/?view=calendar&")).toBe(true);
 
-    await clickButtonLabelled(host, "Archived");
+    await act(async () => { locationStore().push(`${canonical}&archived=only`); await Promise.resolve(); await Promise.resolve(); });
+    await settle();
 
-    expect(currentUrl()).toBe("/?view=table");
-    expect(activeRailChild(host)).toBe("Table");
-    expect(host.textContent).toContain("Archived projects");
-    expect(host.textContent).toContain("9 Archived Street");
+    expect(currentUrl()).toContain("archived=only");
+    expect(activeRailChild(host)).toBe("Calendar");
+    expect(host.querySelector('[data-testid="event-calendar-body"]')).not.toBeNull();
   });
 
   it("a real Back past the Archived click lands on the popped URL, with the rail and breadcrumb agreeing with whatever the Dashboard renders there", async () => {
@@ -661,8 +669,8 @@ describe("archive entry, Back navigation, StrictMode and unmount keep the rail a
     window.history.pushState(null, "", "/?view=board");
     const host = await renderApp("/?view=board");
 
-    await clickButtonLabelled(host, "Archived");
-    expect(host.textContent).toContain("Archived projects");
+    await enterArchived("board");
+    expect(host.textContent).toContain("9 Archived Street");
 
     await act(async () => { window.history.back(); await new Promise((resolve) => setTimeout(resolve, 0)); });
     await settle();
@@ -682,7 +690,7 @@ describe("archive entry, Back navigation, StrictMode and unmount keep the rail a
   it("agrees inside StrictMode the same way production mounts (main.tsx)", async () => {
     const host = await renderAppFirstCommit("/?view=table", true);
     await settle();
-    await clickButtonLabelled(host, "Archived");
+    await enterArchived("table");
     expect(activeRailChild(host)).toBe("Table");
 
     await clickRailChild(host, "Board");
@@ -690,7 +698,7 @@ describe("archive entry, Back navigation, StrictMode and unmount keep the rail a
     expect(currentUrl()).toBe("/?view=board");
     expect(activeRailChild(host)).toBe("Board");
     expect(host.querySelector('[data-testid="dashboard-board"]')).not.toBeNull();
-    expect(host.textContent).not.toContain("Archived projects");
+    expect(host.textContent).not.toContain("9 Archived Street");
   });
 
   it("the Dashboard's main is the shell content column's direct child (#363 fill chain)", async () => {
@@ -743,8 +751,8 @@ describe("#152 — a route change mid-interaction releases the barriers the unmo
     expect(activeRailChild(host)).toBe("Board");
     expect(lastBreadcrumbSegment(host)).toBe("Board");
 
-    await clickButtonLabelled(host, "Archived");
-    expect(host.textContent).toContain("Archived projects");
+    await enterArchived("board");
+    expect(host.textContent).toContain("9 Archived Street");
   });
 
   it("2 — a rail List click while the Calendar's write is in flight re-enables controls immediately, and the deferred write settles without a second request", async () => {
@@ -996,11 +1004,11 @@ describe("off-Dashboard, the draft reaches the URL exactly once through the rail
   });
 });
 
-/** The header is the first child; the view bar follows it directly, or follows the Active/Archived scope row that stays until #428 (admin only). */
+/** The header is the first child; the view bar follows it directly. */
 function expectViewBarFollowsHeading(main: Element, label: string) {
   const children = [...main.children].map((child) => child.getAttribute("data-testid"));
   expect(children[0], label).toBe("dashboard-header");
-  expect(children[1] === "dashboard-view-bar" || (children[1] === "dashboard-toolbar" && children[2] === "dashboard-view-bar"), `${label}: ${children.join(",")}`).toBe(true);
+  expect(children[1], `${label}: ${children.join(",")}`).toBe("dashboard-view-bar");
 }
 
 describe("the Dashboard sheds the Notice board and summary strip; /notices hosts the board (#334)", () => {
@@ -1035,10 +1043,10 @@ describe("the Dashboard sheds the Notice board and summary strip; /notices hosts
     expectViewBarFollowsHeading(host.querySelector("main")!, view);
   });
 
-  it("admin: the Active/Archived toggle still works and the Archived scope has no strip or board either", async () => {
+  it("admin: the Archived filter works and its results have no strip or board either", async () => {
     const host = await renderApp("/?view=table");
-    await clickButtonLabelled(host, "Archived");
-    expect(host.textContent).toContain("Archived projects");
+    await enterArchived("table");
+    expect(host.textContent).toContain("9 Archived Street");
     expect(host.querySelector('[data-testid="notice-board-marker"]')).toBeNull();
     expect(host.querySelector('[aria-label="Project summary"]')).toBeNull();
   });

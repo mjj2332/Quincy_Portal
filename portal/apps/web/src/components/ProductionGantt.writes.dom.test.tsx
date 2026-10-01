@@ -142,7 +142,7 @@ function ganttResponse() {
   return adminProductionGanttResponseSchema.parse({
     scope: "active",
     zone: PRODUCTION_GANTT_ZONE,
-    appliedFilters: { q: "", editorIds: [], stageKeys: [], includeDelivered: false, includeCompletedChecklist: false },
+    appliedFilters: { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide", includeDelivered: false, includeCompletedChecklist: false },
     projects: [
       {
         id: PROJECT_ID,
@@ -152,6 +152,7 @@ function ganttResponse() {
         agentName: null,
         stageKey: "editing_autohdr",
         delivered: false,
+        archived: false,
         shootDate: shoot,
         shootDateCivil: shoot,
         createdAt: `${shoot}T00:00:00.000Z`,
@@ -180,6 +181,7 @@ function ganttResponse() {
             agentName: null,
             stageKey: "editing_autohdr",
             delivered: false,
+            archived: false,
             shootDate: shoot,
             shootDateCivil: shoot,
             createdAt: `${shoot}T00:00:00.000Z`,

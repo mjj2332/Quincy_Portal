@@ -36,14 +36,14 @@ vi.mock("../components/reui/event-calendar/event-calendar-content", async () => 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const editorId = "22222222-2222-4222-8222-222222222222";
 const routeCalendar: DashboardCalendarState = {
-  view: "calendar", date: "2026-08-12", subview: "month", layers: ["project", "checklist"], editorIds: [editorId], includeUnassigned: false, stageKeys: [],
+  view: "calendar", date: "2026-08-12", subview: "month", layers: ["project", "checklist"], editorIds: [editorId], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const,
   showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false,
 };
 
 function calendarResponse(appliedEditors = routeCalendar.editorIds, appliedSearch = "", overrides: Partial<ProductionCalendarFilters> = {}, date = routeCalendar.date) {
   return adminProductionCalendarRangeResponseSchema.parse({
-    range: { start: "2026-07-27", end: "2026-09-07", date, subview: "month", zone: PRODUCTION_CALENDAR_ZONE, appliedFilters: { layers: ["project", "checklist"], editorIds: appliedEditors, includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: appliedSearch, myTasks: false, ...overrides } },
-    events: [{ id: "project-deadline:one", kind: "project_deadline", title: "Deadline", project: { id: projectId, street: "1 Calendar Street", stageKey: "editing_autohdr", checklist: { completed: 0, total: 0 }, delivered: false }, timing: { allDay: true, start: "2026-08-12", end: null }, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, permissions: { canDrag: true, canResize: false }, deadlineLocalCivil: "2026-08-12T09:00", deadlineVersion: 1, reminderOffsetsMinutes: [] }], filterFacets: { projects: [], people: [], myTasksUserId: projectId },
+    range: { start: "2026-07-27", end: "2026-09-07", date, subview: "month", zone: PRODUCTION_CALENDAR_ZONE, appliedFilters: { layers: ["project", "checklist"], editorIds: appliedEditors, includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: appliedSearch, myTasks: false, ...overrides } },
+    events: [{ id: "project-deadline:one", kind: "project_deadline", title: "Deadline", project: { id: projectId, street: "1 Calendar Street", stageKey: "editing_autohdr", checklist: { completed: 0, total: 0 }, delivered: false, archived: false }, timing: { allDay: true, start: "2026-08-12", end: null }, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, permissions: { canDrag: true, canResize: false }, deadlineLocalCivil: "2026-08-12T09:00", deadlineVersion: 1, reminderOffsetsMinutes: [] }], filterFacets: { projects: [], people: [], myTasksUserId: projectId },
   });
 }
 
@@ -503,38 +503,20 @@ describe("Dashboard Calendar routing", () => {
     expect(host.querySelector('[aria-live]')?.textContent ?? "").toBe("");
   });
 
-  it("leaves Calendar when Archived is selected", async () => {
-    await render({ calendar: routeCalendar });
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Archived")?.click(); await Promise.resolve(); });
-    expect(`${window.location.pathname}${window.location.search}`).toBe("/?view=table");
-    expect(host.querySelector('[data-testid="event-calendar-body"]')).toBeNull();
-    expect(host.textContent).toContain("Archived projects");
-  });
-
   const tabByName = (name: string) => [...host.querySelectorAll<HTMLElement>('[role="tab"]')].find((tab) => tab.textContent === name)!;
-  const pressArchived = () => act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Archived")?.click(); await Promise.resolve(); });
 
-  it("the Calendar tab leaves Archived for the Calendar, carrying a committed search (S1)", async () => {
+  // #428: the Active/Archived segment is gone (Archived is the shared Filter's field, Admin only), so
+  // the "Calendar tab leaves Archived" cases are moot; the Filter's own survival of a tab switch is in
+  // `Dashboard-filter.dom.test.tsx`.
+  it("the Calendar tab carries a committed search (S1)", async () => {
     await render();
     await typeSearch("smith");
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 350)); });
-    await pressArchived();
-    expect(host.textContent).toContain("Archived projects");
     await act(async () => { tabByName("Calendar").click(); await Promise.resolve(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     expect(window.location.search).toContain("view=calendar");
     expect(window.location.search).toContain("q=smith");
-    expect(host.textContent).not.toContain("Archived projects");
     expect(host.querySelector('[data-testid="event-calendar-body"]')).not.toBeNull();
-  });
-
-  it("the Timeline tab leaves Archived for the Timeline (S1)", async () => {
-    await render();
-    await pressArchived();
-    await act(async () => { tabByName("Timeline").click(); await Promise.resolve(); });
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
-    expect(window.location.search).toContain("view=timeline");
-    expect(host.textContent).not.toContain("Archived projects");
   });
 
   it("every view tab points at the tabpanel with aria-controls (S3)", async () => {
@@ -543,41 +525,6 @@ describe("Dashboard Calendar routing", () => {
     const tabs = [...host.querySelectorAll<HTMLElement>('[role="tab"]')];
     expect(tabs.length).toBe(4);
     for (const tab of tabs) expect(tab.getAttribute("aria-controls")).toBe(panel.id);
-  });
-
-  it("enters Archived from Kanban by selecting and recording List", async () => {
-    await render();
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Board")?.click(); await Promise.resolve(); });
-    expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("board");
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Archived")?.click(); await Promise.resolve(); });
-    expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("table");
-    expect(host.textContent).toContain("Archived projects");
-  });
-
-  // #217 fix round 2, item 1 (Sol's diff review). `selectProjectScope` never pushes a URL when
-  // `next === "archived"` and `view` is ALREADY "table" (the common case) -- the class-level bug is
-  // that `viewingArchived` changing recreates `navigateCalendar` (its own dep list), which
-  // re-registers the search-store's URL writer, and a re-registration must not strand a search
-  // that is still mid-debounce (or, defensively, one already committed) regardless of which
-  // specific call site triggered it.
-  it("type then select Archived while already on List (inside the debounce) still carries q into the URL", async () => {
-    await render();
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Table")?.click(); await Promise.resolve(); });
-    await typeSearch("smith");
-    // Selected BEFORE the 300ms debounce elapses.
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Archived")?.click(); await Promise.resolve(); });
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 350)); });
-    expect(window.location.search).toContain("q=smith");
-  });
-
-  it("a committed q survives selecting Archived while already on List", async () => {
-    await render();
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Table")?.click(); await Promise.resolve(); });
-    await typeSearch("smith");
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 350)); });
-    expect(window.location.search).toContain("q=smith");
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Archived")?.click(); await Promise.resolve(); });
-    expect(window.location.search).toContain("q=smith");
   });
 
   it("disables Dashboard view navigation only while the Calendar accept gate is active", async () => {

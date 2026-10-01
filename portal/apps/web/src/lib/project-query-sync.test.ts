@@ -230,8 +230,8 @@ describe("project-data BroadcastChannel contract", () => {
     const receiverClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const sender = new ProjectQueryRuntime(senderClient, "principal-a");
     const receiver = new ProjectQueryRuntime(receiverClient, "principal-b");
-    const senderKey = dashboardProjectsKey("principal-a", "admin", 0, false);
-    const receiverKey = dashboardProjectsKey("principal-b", "editor", 0, false);
+    const senderKey = dashboardProjectsKey("principal-a", "admin", 0, { archived: "hide" });
+    const receiverKey = dashboardProjectsKey("principal-b", "editor", 0, { archived: "hide" });
     senderClient.setQueryData(senderKey, []);
     receiverClient.setQueryData(receiverKey, []);
     const senderObserver = new QueryObserver(senderClient, { queryKey: senderKey, queryFn: () => new Promise<unknown[]>(() => undefined), staleTime: Infinity });
@@ -263,9 +263,9 @@ describe("project-data BroadcastChannel contract", () => {
     const runtimeA = new ProjectQueryRuntime(principalA, "tab-a");
     const runtimeB = new ProjectQueryRuntime(principalB, "tab-b");
     const runtimeImpersonated = new ProjectQueryRuntime(impersonated, "tab-impersonated");
-    const keyA = dashboardProjectsKey("admin-a", "admin", 0, false);
-    const keyB = dashboardProjectsKey("editor-b", "editor", 0, false);
-    const keyImpersonated = dashboardProjectsKey("photographer-b", "photographer", 4, false);
+    const keyA = dashboardProjectsKey("admin-a", "admin", 0, { archived: "hide" });
+    const keyB = dashboardProjectsKey("editor-b", "editor", 0, { archived: "hide" });
+    const keyImpersonated = dashboardProjectsKey("photographer-b", "photographer", 4, { archived: "hide" });
     const observe = (client: QueryClient, key: readonly unknown[]) => {
       client.setQueryData(key, []);
       const observer = new QueryObserver(client, { queryKey: key, queryFn: () => new Promise<unknown[]>(() => undefined), staleTime: Infinity });
@@ -337,7 +337,7 @@ describe("project-data BroadcastChannel contract", () => {
   it("defers received Board and Calendar messages for owned keys and flushes each once", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const runtime = new ProjectQueryRuntime(client, "surface-receiver");
-    const boardKey = dashboardProjectsKey("principal", "admin", 0, false);
+    const boardKey = dashboardProjectsKey("principal", "admin", 0, { archived: "hide" });
     const calendarKey = ["production-calendar", "principal", "admin", 0, "active", "2026-08-01", "2026-09-01", "month", {}] as const;
     const activityKey = projectDataKeys.activity("p");
     client.setQueryData(boardKey, []); client.setQueryData(calendarKey, []); client.setQueryData(activityKey, { pages: [], pageParams: [] });
