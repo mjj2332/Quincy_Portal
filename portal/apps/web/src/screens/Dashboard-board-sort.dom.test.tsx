@@ -143,7 +143,7 @@ describe("Dashboard Kanban sort control", () => {
     const link = document.querySelector('[data-testid="board-card"]')!;
     // #432: the link carries the street only; the card's other content sits beside it in the frame.
     const card = link.closest('[data-testid="board-card-wrap"]')!;
-    expect(card.querySelector('[data-testid="board-card-deadline"]')?.textContent).toContain("Due 2027-01-15 09:00 Sydney");
+    expect(card.querySelector('[data-testid="board-card-deadline"]')?.textContent).toContain("Due Fri 15 Jan · 09:00");
     // The RAW count is removed from the card (#432); the Table still shows it, below.
     expect(card.querySelector('[data-testid="board-card-raw"]')).toBeNull();
     expect(card.textContent).not.toContain("RAW files received");
@@ -166,7 +166,7 @@ describe("Dashboard Kanban sort control", () => {
     }], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["archived-project"] } } }) : Promise.resolve({ stages: [] }));
     await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
     await vi.waitFor(() => expect(document.querySelector('[data-testid="board-card"]')).not.toBeNull());
-    expect(document.querySelector('[data-testid="board-card-wrap"] [data-testid="board-card-deadline"]')?.textContent).toContain("Overdue 2020-01-01 11:00 Sydney");
+    expect(document.querySelector('[data-testid="board-card-wrap"] [data-testid="board-card-deadline"]')?.textContent).toContain("Overdue Wed 1 Jan · 11:00");
   });
 
   // The Display menu replaced the Kanban sort `Select` (#427). The old `Select`'s ten release-blocking
