@@ -363,13 +363,13 @@ export function NavigationRail({ navigation, user, variant = "rail", showBell = 
       </SidebarContent>
 
       {/* The rail's foot: bell, settings, avatar — a hairline-bordered cluster, app-shell-22's
-          bordered group. `isRail` drops the horizontal padding only (16px each side would leave
-          no room for the 32px avatar inside the 48px icon column); vertical padding is untouched
-          in every variant. */}
+          bordered group. `isRail` swaps the sheet's 16px side padding for the nav groups' own
+          8px inset and centres every footer item, so the bell, settings and avatar share the logo's
+          and nav icons' vertical axis; vertical padding is untouched in every variant. */}
       <SidebarFooter
         className={cn(
           "gap-[var(--space-3)] py-[var(--space-4)]",
-          isRail ? "items-center border-t border-t-[var(--border-hairline)] px-0" : "px-[var(--space-4)]",
+          isRail ? "items-center border-t border-t-[var(--border-hairline)] px-[var(--space-2)]" : "px-[var(--space-4)]",
         )}
         data-testid="navigation-rail-footer"
       >
@@ -378,7 +378,7 @@ export function NavigationRail({ navigation, user, variant = "rail", showBell = 
             bell (`NotificationBell`'s `alignEndOffsetFor`, ADR 0006 as amended by 0015). */}
         {isRail && showBell && <NotificationBell placement="rail" anchorRef={railRef} />}
         {isRail && (
-          <SidebarMenu>
+          <SidebarMenu className="items-center" data-testid="navigation-rail-settings-menu">
             <SidebarMenuItem>
               <SidebarMenuButton
                 isActive={preferencesActive}
@@ -412,7 +412,7 @@ export function NavigationRail({ navigation, user, variant = "rail", showBell = 
             `side="top"` instead: the root Menu's own collision avoidance
             (`DROPDOWN_COLLISION_AVOIDANCE`, `fallbackAxisSide: "none"`) can only flip between left
             and right, and neither fits beside a full-width trigger in the 288px Sheet. */}
-        <SidebarMenu>
+        <SidebarMenu className={cn(isRail && "items-center")}>
           <SidebarMenuItem>
             <Menu
               triggerLabel={`Account menu for ${displayName}`}
@@ -420,6 +420,9 @@ export function NavigationRail({ navigation, user, variant = "rail", showBell = 
               side={isSheet ? "top" : "right"}
               align="end"
               sideOffset={8}
+              // In the rail the panel anchors to the rail itself (as the bell panel does), so it
+              // opens clear of the 65px column instead of over the avatar's own trigger.
+              anchor={isRail ? railRef : undefined}
               // Dims the page behind the account panel — a full navigation surface, not a small
               // dropdown list (`menu.tsx`'s own `backdrop` doc comment) — everywhere but the Sheet,
               // whose own scrim (`RailSheet.tsx`) already dims the page; a second one here would be
@@ -442,8 +445,8 @@ export function NavigationRail({ navigation, user, variant = "rail", showBell = 
                     data-testid="navigation-rail-identity"
                   >
                     <InitialsAvatar name={displayName} />
-                    {/* The rail shows the avatar only — there is no room at 48px for the
-                        name/email block or the chevron affordance below. */}
+                    {/* The rail shows the avatar only — the name/email block and the chevron
+                        affordance below belong to the Sheet. */}
                     {!isRail && (
                       <>
                         <span className="flex min-w-0 flex-col">

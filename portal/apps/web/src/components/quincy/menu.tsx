@@ -72,6 +72,11 @@ export type MenuProps = {
   side?: MenuSide;
   align?: MenuAlign;
   sideOffset?: number;
+  /**
+   * Anchor the panel to this element instead of the trigger (Base UI `Positioner.anchor`). The
+   * rail's account menu anchors to the rail so it opens clear of it, not over the trigger.
+   */
+  anchor?: React.RefObject<HTMLElement | null>;
   popupRef?: React.Ref<HTMLDivElement>;
   /**
    * Dim the page behind the open menu. Off by default: a dropdown list under an icon (the
@@ -108,6 +113,7 @@ export function Menu({
   side = "bottom",
   align = "end",
   sideOffset = 10,
+  anchor,
   popupRef,
   backdrop = false,
   finalFocus,
@@ -173,6 +179,7 @@ export function Menu({
           side={side}
           align={align}
           sideOffset={sideOffset}
+          anchor={anchor}
           collisionPadding={8}
           positionMethod={container ? "fixed" : "absolute"}
           className="z-[var(--z-popover)] outline-none"

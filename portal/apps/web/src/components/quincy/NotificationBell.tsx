@@ -106,6 +106,11 @@ const TITLE_WEIGHT = "!font-medium";
 // icon's size (no second `size-*` set on `<Bell>` itself).
 const TRIGGER = "relative inline-grid place-items-center size-[34px] shrink-0 text-foreground hover:bg-secondary [&_svg]:size-[19px]";
 
+// Rail placement matches the rail's own items (`NavigationRail`'s `ROW_PAINT`): 32px (`size-8`),
+// 16px glyph, `rounded-md`, secondary text lifting to primary on hover. The `!` text utilities are
+// for the same reason as there — base.css's unlayered `button { color }` beats a layered utility.
+const RAIL_TRIGGER = "relative inline-grid place-items-center size-8 shrink-0 rounded-md border border-transparent !text-[color:var(--text-secondary)] hover:!text-[color:var(--text-primary)] hover:bg-sidebar-accent [&_svg]:size-4 [&_svg]:opacity-60 hover:[&_svg]:opacity-100";
+
 // 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token. Applied only when the
 // caller (`ShellHeader`, below 772px) asks for it via `touchTarget` — the desktop rail keeps the
 // trigger's own 34px box. Both axes: `size-`, so tailwind-merge replaces TRIGGER's `size-[34px]`
@@ -253,7 +258,7 @@ export function NotificationBell({ poll = NOTIFICATION_POLL_MS, touchTarget = fa
       <Popover open={notificationsOpen} onOpenChange={handleOpenChange} modal={false}>
         <PopoverTrigger
           ref={triggerRef}
-          className={cn(TRIGGER, touchTarget && TOUCH_TARGET)}
+          className={cn(placement === "rail" ? RAIL_TRIGGER : TRIGGER, touchTarget && TOUCH_TARGET)}
           aria-label={unreadCount ? `${unreadCount} unread notifications` : "Notifications"}
           data-testid="rail-notification-trigger"
         >
@@ -289,7 +294,9 @@ export function NotificationBell({ poll = NOTIFICATION_POLL_MS, touchTarget = fa
           alignOffset={placement === "rail" ? railAlignOffset : 0}
           collisionPadding={PLACEMENT[placement].collisionPadding}
           collisionAvoidance={{ side: "none", align: "shift", fallbackAxisSide: "none" }}
-          className={cn(PANEL, PLACEMENT[placement].width)}
+          // `focus-visible:!outline-none`: initialFocus lands on this container, and base.css's unlayered
+          // `:focus-visible` outline would ring the whole panel; controls inside keep their own ring.
+          className={cn(PANEL, PLACEMENT[placement].width, "focus-visible:!outline-none")}
         >
           <div className={HEAD}>
             <PopoverTitle className={TITLE_WEIGHT}>Notifications</PopoverTitle>

@@ -748,7 +748,10 @@ describe("NotificationBell panel (Popover)", () => {
       apiGetMock.mockResolvedValue(notificationsResponse(1));
       const trigger = await renderPanel();
       expect(trigger.className).toContain("relative");
-      expect(trigger.className).toContain("[&_svg]:size-[19px]");
+      // Rail placement uses the rail's own item metrics (#426): 32px box, 16px glyph.
+      expect(trigger.className).toContain("size-8");
+      expect(trigger.className).toContain("[&_svg]:size-4");
+      expect(trigger.className).not.toContain("size-[34px]");
     });
 
     it("gives the badge the pill layout that positions it over the trigger's corner", async () => {
