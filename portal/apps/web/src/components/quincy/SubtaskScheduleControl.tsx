@@ -92,8 +92,12 @@ export function SubtaskScheduleControl<TItem extends LatestSubtaskSummary = Subt
   const latestReminders = error?.currentReminders ?? error?.currentSubtask?.reminders;
   const popupReminders: DateTimeReminders | undefined = reminders && (latestReminders ? { offsets: latestReminders.offsetsMinutes, next: latestReminders.nextOccurrence } : reminders);
   const apply = (next: DateTimeRangeApply) => {
-    retained.draft = next;
-    onSave({ expectedVersion: error?.current?.version ?? retained.baseVersion ?? value?.version ?? 0, schedule: { state: "range", start: next.start, end: next.end }, ...(next.reminderOffsetsMinutes && !(popupReminders && sameReminderOffsets(next.reminderOffsetsMinutes, popupReminders.offsets)) ? { reminderOffsetsMinutes: next.reminderOffsetsMinutes } : {}) });
+    // Retain the offsets only when this save intends to change them (they differ from the set the popup showed). Otherwise a reapply after
+    // someone else changed the set would resend our stale copy; stripping them lets the reopened popup show the latest set and the reapply leave it out.
+    const changesOffsets = !!next.reminderOffsetsMinutes && !(popupReminders && sameReminderOffsets(next.reminderOffsetsMinutes, popupReminders.offsets));
+    const { reminderOffsetsMinutes: _unused, ...rangeOnly } = next;
+    retained.draft = changesOffsets ? next : rangeOnly;
+    onSave({ expectedVersion: error?.current?.version ?? retained.baseVersion ?? value?.version ?? 0, schedule: { state: "range", start: next.start, end: next.end }, ...(changesOffsets ? { reminderOffsetsMinutes: next.reminderOffsetsMinutes } : {}) });
   };
   const discard = () => { retained.baseVersion = null; retained.draft = null; };
   const triggerClass = compact ? COMPOSER_TRIGGER_CLASSES : META_TRIGGER;

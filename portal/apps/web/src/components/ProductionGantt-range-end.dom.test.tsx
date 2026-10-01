@@ -664,4 +664,27 @@ describe("ProductionGantt — Subtask Due cell reminders (#425)", () => {
     expect(patchBody(1).schedule.expectedVersion).toBe(3);
     expect(patchBody(1).schedule.reminderOffsetsMinutes).toEqual([1440, 240]);
   });
+
+  it("G5 a range-only conflict then reapply sends no offsets and shows the latest set", async () => {
+    await render();
+    await openDue(RANGE_TITLE);
+    const winner = range(3, startMoment(sydneyDay(1)), endMoment(sydneyDay(3)));
+    patchReply = () => {
+      rows[0]!.schedule = winner; storedOffsets[RANGE_ID] = [60];
+      return { status: 409, body: { error: "conflict", code: "subtask_schedule_version_conflict", current: winner, currentSubtask: { id: RANGE_ID, title: RANGE_TITLE, done: false, position: 0, schedule: winner, reminders: subtaskReminders([60]) } } };
+    };
+    await saveEnd(RANGE_TITLE, sydneyDay(5));
+    expect(patches()).toHaveLength(1);
+    expect(patchBody().schedule).not.toHaveProperty("reminderOffsetsMinutes");
+    const conflict = picker(RANGE_TITLE)!;
+    expect(chip(RANGE_TITLE, "1 hour").getAttribute("aria-pressed")).toBe("true");
+    expect(chip(RANGE_TITLE, "1 day").getAttribute("aria-pressed")).toBe("false");
+    patchReply = null;
+    await applyPopup(conflict);
+    await flush(6);
+    expect(patches()).toHaveLength(2);
+    expect(patchBody(1).schedule.expectedVersion).toBe(3);
+    expect(patchBody(1).schedule).not.toHaveProperty("reminderOffsetsMinutes");
+    expect(storedOffsets[RANGE_ID]).toEqual([60]);
+  });
 });

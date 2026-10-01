@@ -91,6 +91,25 @@ describe("Checklist reminders editing (#425)", () => {
     expect(apiPatchMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { schedule: { expectedVersion: 2, schedule: { state: "range", start: { localCivil: `${year}-05-30T09:00` }, end: { localCivil: `${year}-05-30T17:00` } }, reminderOffsetsMinutes: [1440, 240] } });
   });
 
+  it("a range-only conflict then reapply sends no offsets and the reopened popup shows the latest set, so another user's reminders survive", async () => {
+    const host = mount(); await render();
+    const latest = { ...task, schedule: presetScheduleDto(`${year}-05-30`, `${year}-05-30`, 2), reminders: subtaskReminders([60]) };
+    apiPatchMock.mockRejectedValueOnce(new ApiError("Schedule changed", 409, { code: "subtask_schedule_version_conflict", current: latest.schedule, currentSubtask: latest }));
+    await click(scheduleTrigger(host, "Schedule for Call client"));
+    const first = popupOf("Schedule for Call client");
+    await pickPopupDay(first, `${year}-06-02`);
+    await applyPopup(first);
+    await click(scheduleTrigger(host, "Schedule for Call client"));
+    const conflict = popupOf("Schedule for Call client");
+    expect(chip(conflict, "1 hour").getAttribute("aria-pressed")).toBe("true");
+    expect(chip(conflict, "1 day").getAttribute("aria-pressed")).toBe("false");
+    await applyPopup(conflict);
+    expect(apiPatchMock).toHaveBeenCalledTimes(2);
+    const body = apiPatchMock.mock.calls[1]![1] as { schedule: Record<string, unknown> };
+    expect(body.schedule.expectedVersion).toBe(2);
+    expect(body.schedule).not.toHaveProperty("reminderOffsetsMinutes");
+  });
+
   it("the composer sets reminders locally and Add posts them with the title, hiding the next-reminder line", async () => {
     const host = mount(); await render();
     await click(document.getElementById(`subtask-add-${projectId}`)!);
