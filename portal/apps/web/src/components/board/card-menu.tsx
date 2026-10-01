@@ -36,6 +36,13 @@ export type CardMenuBinding = {
 };
 
 /**
+ * One surface for both menus. The ReUI dropdown's own defaults are already the Quincy surface
+ * (square, hairline border, `--shadow-md`); the context menu's defaults are the rounded ring one, so
+ * this string is what makes the two read as the same menu. Applied to both so neither drifts.
+ */
+const CARD_MENU_CONTENT_CLASS = "w-48 rounded-none border border-border shadow-[var(--shadow-md)] ring-0";
+
+/**
  * The ⋯ trigger and its menu. A SIBLING of the card's link (the drag handle), raised above its
  * overlay: a press on it can never start a drag. Always visible, never hover-revealed (TB8-07), 44px
  * at ≤641px and on a coarse pointer.
@@ -60,7 +67,7 @@ export function CardActionsMenu({ projectId, street, menu }: { projectId: string
       >
         <Ellipsis aria-hidden="true" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent side="bottom" align="end" className="w-48" finalFocus={menu.returnFocus}>
+      <DropdownMenuContent side="bottom" align="end" className={CARD_MENU_CONTENT_CLASS} finalFocus={menu.returnFocus}>
         {menu.actions.map((action) => (
           <DropdownMenuItem key={action.id} disabled={action.disabled} onClick={() => menu.onSelect(action.id)}>
             {action.label}
@@ -74,7 +81,7 @@ export function CardActionsMenu({ projectId, street, menu }: { projectId: string
 /** The right-click menu's content: the same descriptors as the ⋯ menu, through `ContextMenuItem`. */
 export function CardContextMenuContent({ menu, ...props }: { menu: CardMenuBinding } & Omit<ComponentProps<typeof ContextMenuContent>, "children">) {
   return (
-    <ContextMenuContent align="start" side="right" className="w-48 rounded-none border border-border shadow-[var(--shadow-md)] ring-0" finalFocus={menu.returnFocus} {...props}>
+    <ContextMenuContent align="start" side="right" className={CARD_MENU_CONTENT_CLASS} finalFocus={menu.returnFocus} {...props}>
       {menu.actions.map((action) => (
         <ContextMenuItem key={action.id} disabled={action.disabled} onClick={() => menu.onSelect(action.id)}>
           {action.label}

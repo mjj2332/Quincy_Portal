@@ -17,7 +17,7 @@ function moveToStageKey(value: ProjectStageKey): StageKey {
   return value === "editing" ? "editing_autohdr" : value;
 }
 
-const OPTION_CLASSES = "w-full min-h-11 px-[var(--space-3)] py-[var(--space-2)] border-0 border-l-[length:var(--border-width-bold)] border-l-transparent bg-transparent text-foreground [font:inherit] !text-xs text-left cursor-pointer active:bg-[var(--bg-sunken)] hover:bg-[var(--paper-100)] aria-selected:border-l-[var(--border-strong)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-[-2px]";
+const OPTION_CLASSES = "w-full min-h-11 px-[var(--space-3)] py-[var(--space-2)] border-0 border-l-[length:var(--border-width-bold)] border-l-transparent bg-transparent text-foreground [font:inherit] !text-sm text-left cursor-pointer active:bg-[var(--bg-sunken)] hover:bg-[var(--paper-100)] aria-selected:border-l-[var(--border-strong)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-[-2px]";
 const ACTION_CLASSES = "min-h-[38px] px-[14px] py-[9px] text-xs focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-[-2px]";
 
 export type MoveToDialogProps = {
@@ -133,6 +133,7 @@ export function MoveToDialog({ project, model, activeStages, role, sort, canMove
   const stageOptions = useMemo(() => moveToStageOptions(project, model, activeStages, role, { canMoveStages, canReorder, sort }), [activeStages, canMoveStages, canReorder, model, project, role, sort]);
   const positions = targetStageKey === null ? [] : moveToPositionOptions(model, project.id, targetStageKey, role, caps);
   const targetLabel = targetStageKey === null ? "" : stageLabels[targetStageKey] ?? targetStageKey;
+  const currentStageKey = moveToStageKey(project.stageKey as ProjectStageKey);
   const dialogId = `board-move-to-${project.id}`;
 
   const back = () => {
@@ -156,7 +157,8 @@ export function MoveToDialog({ project, model, activeStages, role, sort, canMove
           {stageOptions.map((stage) => {
             const key = moveToStageKey(stage.key);
             // 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token
-            return <button key={key} type="button" role="radio" aria-checked={false} className={OPTION_CLASSES} onClick={() => { setTargetStageKey(key); setSuccessor(null); }}>{stage.label}</button>;
+            const isCurrent = key === currentStageKey;
+            return <button key={key} type="button" role="radio" aria-checked={false} aria-current={isCurrent ? "true" : undefined} className={`${OPTION_CLASSES} ${isCurrent ? "flex items-center justify-between gap-[var(--space-3)]" : ""}`} onClick={() => { setTargetStageKey(key); setSuccessor(null); }}>{stage.label}{isCurrent && <span className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary">Current</span>}</button>;
           })}
         </div> : <>
           <div className="grid gap-[2px]" role="listbox" aria-label={`Position in ${targetLabel}`}>

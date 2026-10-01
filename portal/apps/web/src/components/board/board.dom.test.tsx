@@ -684,6 +684,20 @@ describe("ProjectKanbanBoard2 (#80)", () => {
       await click(option("Before t2 Street"), "Before t2 position");
     }
 
+    it("marks the card's current Stage in the Stage step, and no other", async () => {
+      await renderBoard({ projects: withMap([project("source", "awaiting_raw"), project("other", "awaiting_raw"), project("t1", "raw_review")]), role: "admin", canMoveStages: true, canPrioritize: true, sameStageReorderEnabled: true });
+      await openMoveTo(host, "source");
+      const current = radio("Awaiting RAW");
+      const target = radio("RAW review");
+      expect(current, "the current Stage is not offered").not.toBeUndefined();
+      expect(current!.getAttribute("aria-current")).toBe("true");
+      expect(current!.textContent).toContain("Current");
+      expect(target!.hasAttribute("aria-current")).toBe(false);
+      expect(target!.textContent).not.toContain("Current");
+      expect(current!.className.split(" ")).toContain("!text-sm");
+      expect(current!.className.split(" ")).toContain("min-h-11");
+    });
+
     it("offers every permitted position, previews the chosen one, and commits exactly that gap", async () => {
       const props = await renderBoard({ projects: threeTargets(), role: "admin" });
       await openMoveTo(host, "source");
@@ -1872,6 +1886,23 @@ describe("KanbanCard2 — ⋯ and right-click menus (#432)", () => {
     ["Editor (Stage moves only)", { canMoveStages: true }, ["Move to…"]],
     ["prioritize-only principal", { canMoveStages: false, canPrioritize: true, sameStageReorderEnabled: true }, ["Move to…", "Move up", "Move down"]],
   ];
+
+  it("gives the ⋯ menu and the right-click menu the same surface classes", async () => {
+    await renderBoard({ projects: column(), role: "admin", canMoveStages: true });
+    const popupClass = () => document.querySelector('[role="menu"]')!.className;
+    await openCardMenu(host, "mid");
+    const fromTrigger = popupClass();
+    await closeMenus();
+    await openContextMenu(wrap("mid")!);
+    const fromRightClick = popupClass();
+    await closeMenus();
+    for (const token of ["rounded-none", "border", "w-48"]) {
+      expect(fromTrigger.split(" "), `⋯ menu lacks ${token}`).toContain(token);
+      expect(fromRightClick.split(" "), `right-click menu lacks ${token}`).toContain(token);
+    }
+    expect(fromRightClick.split(" ")).not.toContain("rounded-lg");
+    expect(fromTrigger.split(" ")).not.toContain("rounded-lg");
+  });
 
   for (const [name, overrides, expected] of principals) {
     it(`offers the same items from the ⋯ trigger and from a right-click: ${name}`, async () => {
