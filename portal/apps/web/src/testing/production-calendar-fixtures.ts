@@ -23,6 +23,7 @@ import {
   type ChecklistScheduleEndpointDto,
   type ProjectDeadlineCalendarEventDto,
 } from "@quincy/shared";
+import { subtaskReminders } from "@/testing/subtask-schedule";
 
 export const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 export const ASSIGNEE_ID = "22222222-2222-4222-8222-222222222222";
@@ -77,7 +78,7 @@ export function rangeEvent(start: ChecklistScheduleEndpointDto, end: ChecklistSc
     id: over.id ?? `checklist:${SUBTASK_ID}`, kind: "checklist", title: "Select hero images", project, assignees: over.assignees ?? (over.assigneeNull ? [] : [assignee]), otherAssigneeCount: over.otherAssigneeCount ?? 0, timing,
     status: { ...status, completed: over.completed ?? false },
     schedule: { state: "range", version: over.version ?? 3, zone: "Australia/Sydney", start, end, due: end.localCivil },
-    permissions: { canDrag: over.canDrag ?? true, canResize: over.canResize ?? true, canOpenScheduleEditor: over.canOpenScheduleEditor ?? true },
+    reminders: subtaskReminders(), permissions: { canDrag: over.canDrag ?? true, canResize: over.canResize ?? true, canOpenScheduleEditor: over.canOpenScheduleEditor ?? true },
   } as ChecklistCalendarEventDto;
 }
 
@@ -133,7 +134,7 @@ export function rangeResponse(input: RangeResponseInput = {}): ProductionCalenda
 
 /** The worker's checklist PATCH response: the BARE subtask uuid, never the `checklist:` entity id (#226). */
 export function checklistMutationBody(event: ChecklistCalendarEventDto, schedule: ChecklistScheduleDto = event.schedule) {
-  return { id: subtaskIdFromCalendarEntityId(event.id) ?? event.id, title: event.title, done: event.status.completed, assignees: event.assignees, position: 1, schedule };
+  return { id: subtaskIdFromCalendarEntityId(event.id) ?? event.id, title: event.title, done: event.status.completed, assignees: event.assignees, position: 1, schedule, reminders: event.reminders };
 }
 
 /** A range schedule DTO at `version` (for mutation bodies). */

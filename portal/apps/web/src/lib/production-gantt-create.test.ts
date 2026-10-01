@@ -3,10 +3,10 @@ import { InfiniteQueryObserver, QueryClient, type InfiniteData } from "@tanstack
 import { describe, expect, it } from "vitest";
 import { PRODUCTION_GANTT_DRAW_CAP, type GanttProjectRowDto } from "@quincy/shared";
 import { buildPinnedGanttModel, GanttFullFetchLedger, pinFromCreated, reconcilePinnedCreatedRows, subscribeGanttFullFetchLedger, withPinnedCreatedRows } from "./production-gantt-create";
-import { startMoment, endMoment } from "@/testing/subtask-schedule";
+import { startMoment, endMoment, subtaskReminders } from "@/testing/subtask-schedule";
 // The server applies the Project default range on a title-only create (#339): every Subtask is a range (ADR 0011).
 const schedule = { state: "range", version: 1, zone: "Australia/Sydney", start: startMoment("2026-08-01"), end: endMoment("2026-08-02"), due: "2026-08-02" } as never;
-const created = { id: "t1", title: "New", done: false, position: 9, schedule };
+const created = { id: "t1", title: "New", done: false, position: 9, schedule, reminders: subtaskReminders() };
 
 function project(id: string, ids: string[], truncated = false): GanttProjectRowDto {
   return {

@@ -10,6 +10,7 @@ import { buttonClasses } from "./Button";
 import { META_TRIGGER } from "./icon-button";
 import { Popover, PopoverTrigger } from "../reui/popover";
 import { DateTimePopoverContent } from "./DateTimeField";
+import { sameReminderOffsets } from "@/lib/date-time-field";
 import { DateTimeRangePopup, type DateTimeRangeApply } from "./date-time-field/DateTimeRangePopup";
 import type { DateTimeReminders } from "./date-time-field/DateTimePopup";
 import type { ProjectSubtask } from "../../lib/project-data";
@@ -28,7 +29,7 @@ type Subtask = ProjectSubtask;
 const COMPOSER_TRIGGER_CLASSES = cn(META_TRIGGER, "border-solid border-[length:var(--border-width-hair)] border-border");
 
 // A Subtask is always a range, and every end is a moment (ADR 0016), so the editor saves only that shape.
-// `reminderOffsetsMinutes` rides along only when the caller gave the popup `reminders` (#425); absent keeps the stored set server-side.
+// `reminderOffsetsMinutes` rides along only when the draft set differs from the saved one the popup showed (#425); absent keeps the stored set server-side, so a range-only edit never clobbers a set changed elsewhere.
 export type RangeScheduleRequest = { expectedVersion: number; schedule: RangeChecklistScheduleInput; reminderOffsetsMinutes?: number[] };
 /** What the latest-item notice reads of a Subtask: the Checklist hands its whole item, the Gantt a summary of its own decoded conflict body. */
 export type LatestSubtaskSummary = { title: string; done: boolean; assignees: Array<{ name: string }>; otherAssigneeCount?: number; schedule: ChecklistScheduleDto; reminders?: SubtaskRemindersDto };
@@ -87,14 +88,14 @@ export function SubtaskScheduleControl<TItem extends LatestSubtaskSummary = Subt
   const id = subtaskPopoverId(owner, "schedule");
   const stored = storedRange(value) ?? projectDefault;
   const seed = error && retained.draft ? retained.draft : undefined;
-  const apply = (next: DateTimeRangeApply) => {
-    retained.draft = next;
-    onSave({ expectedVersion: error?.current?.version ?? retained.baseVersion ?? value?.version ?? 0, schedule: { state: "range", start: next.start, end: next.end }, ...(next.reminderOffsetsMinutes ? { reminderOffsetsMinutes: next.reminderOffsetsMinutes } : {}) });
-  };
-  const discard = () => { retained.baseVersion = null; retained.draft = null; };
   // After a conflict the saved set is the latest one the server reported, not the stale row's.
   const latestReminders = error?.currentReminders ?? error?.currentSubtask?.reminders;
   const popupReminders: DateTimeReminders | undefined = reminders && (latestReminders ? { offsets: latestReminders.offsetsMinutes, next: latestReminders.nextOccurrence } : reminders);
+  const apply = (next: DateTimeRangeApply) => {
+    retained.draft = next;
+    onSave({ expectedVersion: error?.current?.version ?? retained.baseVersion ?? value?.version ?? 0, schedule: { state: "range", start: next.start, end: next.end }, ...(next.reminderOffsetsMinutes && !(popupReminders && sameReminderOffsets(next.reminderOffsetsMinutes, popupReminders.offsets)) ? { reminderOffsetsMinutes: next.reminderOffsetsMinutes } : {}) });
+  };
+  const discard = () => { retained.baseVersion = null; retained.draft = null; };
   const triggerClass = compact ? COMPOSER_TRIGGER_CLASSES : META_TRIGGER;
   const valueText = value ? formatSchedule(value) : defaultLabel;
   const feedback = <>

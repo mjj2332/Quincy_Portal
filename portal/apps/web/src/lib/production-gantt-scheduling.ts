@@ -116,6 +116,7 @@ export function ganttChecklistSource(project: GanttProjectRowDto, row: GanttChec
     timing,
     status: { overdue: false, delivered: project.delivered, completed: row.done, sameAssigneeOverlap: false },
     schedule: row.schedule,
+    reminders: row.reminders,
     permissions: { canDrag, canResize, canOpenScheduleEditor },
   };
 }

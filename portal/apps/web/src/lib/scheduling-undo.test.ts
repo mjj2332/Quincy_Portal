@@ -3,6 +3,7 @@ import { PRODUCTION_CALENDAR_ZONE, type ChecklistCalendarEventDto, type ProjectC
 import { applyUndo, buildChecklistUndoTicket, buildDeadlineUndoTicket } from "./scheduling-undo";
 import { projectDeadlinePlaceholder } from "./scheduling-policy";
 import { startMoment, endMoment } from "@/testing/subtask-schedule";
+import { subtaskReminders } from "@/testing/subtask-schedule";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -23,7 +24,7 @@ function checklistEvent(version: number, start: string, end: string): ChecklistC
     timing: { allDay: true, start, end },
     status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false },
     schedule,
-    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true },
+    reminders: subtaskReminders(), permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true },
   };
 }
 

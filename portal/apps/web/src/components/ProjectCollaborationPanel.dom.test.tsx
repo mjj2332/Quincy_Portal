@@ -15,6 +15,7 @@ import { getProjectQueryRuntime } from "../lib/project-query-sync";
 import { projectDataKeys } from "../lib/project-data";
 import { RAIL_QUERY, stubRailMedia } from "../testing/rail-media";
 import { purgeProjectCollaborationData, useProjectCommentPresentation, useProjectCommentReadStateQuery, useProjectCommentsCacheQuery, useProjectCommentsQuery } from "../lib/project-comments";
+import { subtaskReminders } from "@/testing/subtask-schedule";
 
 const confirmMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)));
 vi.mock("../lib/confirm", () => ({ confirm: confirmMock }));
@@ -409,7 +410,7 @@ describe("ProjectCollaborationPanel", () => {
   });
 
   it("keeps the panel mounted when checklist title, all popovers, and composer Escape consume the event", async () => {
-    const subtask = { id: "task-1", title: "Call client", done: false, position: 1024, assignees: [], assignmentVersion: 0, dueDate: null, createdBy: "user", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-17T00:00:00.000Z" };
+    const subtask = { reminders: subtaskReminders(), id: "task-1", title: "Call client", done: false, position: 1024, assignees: [], assignmentVersion: 0, dueDate: null, createdBy: "user", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-17T00:00:00.000Z" };
     apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [subtask] }) : path.includes("subtask-assignee-options") ? Promise.resolve({ candidates: [] }) : Promise.resolve(comments()));
     const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
     const panel = host.querySelector('[data-testid="project-collaboration-panel"]')!;

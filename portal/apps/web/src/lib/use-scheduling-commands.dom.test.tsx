@@ -26,6 +26,7 @@ import { confirm, confirmStore } from "../lib/confirm";
 import { useProductionCalendarRange } from "../lib/production-calendar-query";
 import { useSchedulingCommands, type SchedulingCommands, type SubmitProposalOutcome } from "./use-scheduling-commands";
 import type { SchedulingProposal } from "./scheduling-policy";
+import { subtaskReminders } from "@/testing/subtask-schedule";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -57,7 +58,7 @@ function rangeEvent(start: string, end: string, version = 4): ChecklistCalendarE
     timing: { allDay: false, start: startEndpoint.instant, end: endEndpoint.instant },
     status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false },
     schedule: { state: "range", version, zone: PRODUCTION_CALENDAR_ZONE, start: startEndpoint, end: endEndpoint, due: end },
-    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true },
+    reminders: subtaskReminders(), permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true },
   };
 }
 

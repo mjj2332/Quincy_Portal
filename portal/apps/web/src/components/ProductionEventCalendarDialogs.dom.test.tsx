@@ -35,6 +35,7 @@ import {
 import { Sheet } from "./reui/sheet";
 import { applyPopup, dateTimePopup, openFieldPopup, openMoveDialogField, pickPopupDateTime, pickPopupDay, pickRangeEnd, popupButton, popupDraft, pressInPopup, pressRangeFold, rangeFoldPressed, rangeToggles, typePopupTime, rangeMoment } from "@/testing/date-time-popup";
 import { startMoment, endMoment } from "@/testing/subtask-schedule";
+import { subtaskReminders } from "@/testing/subtask-schedule";
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 vi.mock("../lib/api", async (importOriginal) => {
@@ -53,7 +54,7 @@ const deadline: ProjectDeadlineCalendarEventDto = {
   permissions: { canDrag: true, canResize: false }, deadlineLocalCivil: "2026-08-11T09:30", deadlineVersion: 7, reminderOffsetsMinutes: [1440, 60],
 };
 
-const dueEvent: ChecklistCalendarEventDto = { id: "checklist:33333333-3333-4333-8333-333333333333", kind: "checklist", title: "Select hero images", project, assignees: [person], otherAssigneeCount: 0, timing: { allDay: true, start: "2026-08-20", end: null }, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule: { state: "range", version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: startMoment("2026-08-20"), end: endMoment("2026-08-20"), due: "2026-08-20" }, permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true } };
+const dueEvent: ChecklistCalendarEventDto = { id: "checklist:33333333-3333-4333-8333-333333333333", kind: "checklist", title: "Select hero images", project, assignees: [person], otherAssigneeCount: 0, timing: { allDay: true, start: "2026-08-20", end: null }, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule: { state: "range", version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: startMoment("2026-08-20"), end: endMoment("2026-08-20"), due: "2026-08-20" }, reminders: subtaskReminders(), permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true } };
 
 let host: HTMLDivElement;
 let root: Root;

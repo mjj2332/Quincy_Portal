@@ -18,6 +18,7 @@ import { clearToasts } from "../lib/toast-store";
 import { ToastViewport } from "./quincy/ToastViewport";
 import { ProductionGantt } from "./ProductionGantt";
 import { startMoment, endMoment } from "@/testing/subtask-schedule";
+import { subtaskReminders } from "@/testing/subtask-schedule";
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 const apiPatchMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
@@ -59,7 +60,7 @@ function row(input: RowInput, position: number): GanttChecklistRowDto {
     id: input.id, projectId: PROJECT_ID, title: input.title, done: false, position,
     assignees: input.assignees, otherAssigneeCount: input.otherAssigneeCount ?? 0, assignmentVersion: input.assignmentVersion,
     schedule: schedule(),
-    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: input.canEditAssignees },
+    reminders: subtaskReminders(), permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: input.canEditAssignees },
   };
 }
 

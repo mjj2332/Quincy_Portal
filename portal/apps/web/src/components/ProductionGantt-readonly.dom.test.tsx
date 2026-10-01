@@ -23,7 +23,7 @@ import { adminProductionGanttResponseSchema, PRODUCTION_GANTT_ZONE } from "@quin
 import type { DashboardIdentity } from "../lib/dashboard-projects";
 import { ProductionGantt } from "./ProductionGantt";
 import { DEFAULT_GANTT_FACET_FILTERS } from "../lib/production-gantt-filters";
-import { startMoment, endMoment } from "@/testing/subtask-schedule";
+import { startMoment, endMoment, subtaskReminders } from "@/testing/subtask-schedule";
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 vi.mock("../lib/api", async (importOriginal) => ({
@@ -106,7 +106,7 @@ function ganttResponse(deadlineDate: string = DEADLINE_DATE) {
               },
               // The task itself is locked so the panel's only possible grip would be the Project's
               // (which `canEditDeadline: false` withholds).
-              permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: true, canEditAssignees: false },
+              reminders: subtaskReminders(), permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: true, canEditAssignees: false },
             },
           ],
           total: 1,

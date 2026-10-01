@@ -201,6 +201,7 @@ export function canonicalChecklistEvent(source: ChecklistSource, result: Checkli
     timing,
     status: { ...source.status, completed: result.done },
     schedule,
+    reminders: result.reminders ?? source.reminders,
     permissions: { ...source.permissions },
   };
 }

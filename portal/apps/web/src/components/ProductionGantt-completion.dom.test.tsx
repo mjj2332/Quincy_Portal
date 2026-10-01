@@ -20,6 +20,7 @@ import type { DashboardIdentity } from "../lib/dashboard-projects";
 import { ProductionGantt } from "./ProductionGantt";
 import { DEFAULT_GANTT_FACET_FILTERS } from "../lib/production-gantt-filters";
 import { startMoment, endMoment } from "@/testing/subtask-schedule";
+import { subtaskReminders } from "@/testing/subtask-schedule";
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 vi.mock("../lib/api", async (importOriginal) => ({
@@ -108,7 +109,7 @@ function makeTask(overrides: Partial<GanttChecklistRowDto> & { id: string; proje
       end: endMoment(isoDate(2)),
       due: isoDate(2),
     },
-    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true },
+    reminders: subtaskReminders(), permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true },
     ...overrides,
   };
 }

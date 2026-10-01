@@ -14,6 +14,7 @@ import {
 import { invalidateProjectSurfaces } from "./project-data";
 import { ProjectQueryRuntime } from "./project-query-sync";
 import { startMoment, endMoment } from "@/testing/subtask-schedule";
+import { subtaskReminders } from "@/testing/subtask-schedule";
 
 const principal = "11111111-1111-4111-8111-111111111111";
 const editorId = "22222222-2222-4222-8222-222222222222";
@@ -68,7 +69,7 @@ function checklistRow(id: string, overrides: Partial<GanttChecklistRowDto> = {})
     otherAssigneeCount: 0,
     assignmentVersion: 0,
     schedule: { state: "range", version: 1, zone: "Australia/Sydney", start: startMoment("2026-08-01"), end: endMoment("2026-08-01"), due: "2026-08-01" },
-    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true },
+    reminders: subtaskReminders(), permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true },
     ...overrides,
   };
 }

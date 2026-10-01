@@ -31,6 +31,7 @@ import {
   type GanttEdit,
 } from "./production-gantt-scheduling";
 import { endMoment, startMoment } from "@/testing/subtask-schedule";
+import { subtaskReminders } from "@/testing/subtask-schedule";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -72,7 +73,7 @@ function makeTask(overrides: Partial<GanttChecklistRowDto> = {}): GanttChecklist
     otherAssigneeCount: 0,
     assignmentVersion: 1,
     schedule: oneDayRange("2026-06-10"),
-    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true },
+    reminders: subtaskReminders(), permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true },
     ...overrides,
   };
 }

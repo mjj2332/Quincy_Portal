@@ -7,6 +7,7 @@ import {
   externalChecklistItemSchema,
   productionCalendarFiltersSchema,
   stripUnsafeText,
+  subtaskRemindersDtoSchema,
   type CalendarPerson,
   type ChecklistScheduleDto,
   type DashboardCalendarState,
@@ -123,6 +124,7 @@ const internalChecklistMutationSchema = z.object({
   assignmentVersion: z.number().int().nonnegative().optional(),
   position: z.number().int(),
   schedule: mutationScheduleSchema,
+  reminders: subtaskRemindersDtoSchema.optional(),
 }).passthrough();
 
 type InternalPerson = { id: string; name: string; roleLabel?: unknown; isExternal?: unknown; active?: unknown };
@@ -153,6 +155,7 @@ export function decodeChecklistMutationResponse(role: Role, value: unknown): Che
       position: parsed.position,
       schedule: parsed.schedule,
       scheduleVersion: parsed.schedule.version,
+      reminders: parsed.reminders,
     };
   }
   if (role === "admin" || role === "editor") {
@@ -166,6 +169,7 @@ export function decodeChecklistMutationResponse(role: Role, value: unknown): Che
       position: parsed.position,
       schedule: parsed.schedule,
       scheduleVersion: parsed.schedule.version,
+      ...(parsed.reminders ? { reminders: parsed.reminders } : {}),
     };
   }
   throw new RangeError("Photographers do not have a checklist mutation response domain.");

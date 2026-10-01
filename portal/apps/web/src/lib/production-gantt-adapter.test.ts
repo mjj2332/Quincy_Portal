@@ -21,6 +21,7 @@ import { PRODUCTION_GANTT_DRAW_CAP } from "@quincy/shared";
 import { buildProductionGanttModel, ganttLandingProject, type ProductionGanttAttention, type ProductionGanttEvent, type ProductionGanttRowData } from "./production-gantt-adapter";
 import { STAGE_HATCH_CLASS } from "./stage-colors";
 import { endMoment, startMoment } from "@/testing/subtask-schedule";
+import { subtaskReminders } from "@/testing/subtask-schedule";
 
 // ---------------------------------------------------------------------------
 // Fixture builders
@@ -78,7 +79,7 @@ function makeTask(overrides: Partial<GanttChecklistRowDto> = {}): GanttChecklist
     otherAssigneeCount: 0,
     assignmentVersion: 0,
     schedule: oneDayRange("2026-03-05"),
-    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true },
+    reminders: subtaskReminders(), permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true },
     ...overrides,
   };
 }

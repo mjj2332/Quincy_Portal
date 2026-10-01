@@ -19,6 +19,7 @@ import { PRODUCTION_CALENDAR_ZONE, type ChecklistCalendarEventDto, type Checklis
 import { applyPopup, openFieldPopup, pickPopupDay, pickRangeEnd, popupButton, pressInPopup, pressRangeFold, rangeToggles, typePopupTime } from "../testing/date-time-popup";
 import { ProjectQueryRuntime } from "../lib/project-query-sync";
 import { eventCalendarFake } from "../testing/event-calendar-fake";
+import { subtaskReminders } from "@/testing/subtask-schedule";
 import {
   ASSIGNEE,
   checklistMutationBody,
@@ -281,7 +282,7 @@ describe("ProductionEventCalendar checklist writes", () => {
     const base = oneDayEvent(dated("2026-08-12"));
     const external = { ...base, project: { ...base.project, stageKey: "editing" as const }, assignees: [{ ...ASSIGNEE, isExternal: true, roleLabel: "External Editor" }] } as ChecklistCalendarEventDto;
     const schedule = oneDaySchedule(dated("2026-08-13"), 3);
-    const body = { ...checklistMutationBody(external, schedule), assignmentVersion: 1, dueDate: schedule.due, createdBy: external.assignees[0], createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-20T00:00:00.000Z" };
+    const body = { ...checklistMutationBody(external, schedule), assignmentVersion: 1, dueDate: schedule.due, reminders: subtaskReminders(), createdBy: external.assignees[0], createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-20T00:00:00.000Z" };
     const fetch = await mount([external], { role: "external_editor", patch: () => json(body) });
     expect(eventCalendarFake.event(ID)?.draggable).toBe(true);
     await proposeUpdate(ID, { start: day("2026-08-13"), allDay: true });

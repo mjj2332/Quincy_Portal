@@ -9,6 +9,7 @@ import {
 } from "@quincy/shared";
 import { planSchedulingProposal, type SchedulingProposal } from "./scheduling-policy";
 import { scheduleWindowWarnings } from "./schedule-bounds";
+import { subtaskReminders } from "@/testing/subtask-schedule";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const project = { id: PROJECT_ID, street: "1 Example Street", stageKey: "editing" as const, checklist: { completed: 0, total: 1 }, delivered: false, archived: false };
@@ -33,7 +34,7 @@ function rangeEvent(start: string, end: string): ChecklistCalendarEventDto {
     timing: { allDay: false, start: startEndpoint.instant, end: endEndpoint.instant },
     status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false },
     schedule: { state: "range", version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: startEndpoint, end: endEndpoint, due: end },
-    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true },
+    reminders: subtaskReminders(), permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true },
   };
 }
 

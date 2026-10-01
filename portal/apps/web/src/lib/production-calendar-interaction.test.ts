@@ -14,6 +14,7 @@ import {
   type CalendarSettleState,
 } from "./production-calendar-interaction";
 import { startMoment, endMoment } from "@/testing/subtask-schedule";
+import { subtaskReminders } from "@/testing/subtask-schedule";
 
 const eventId = "project-deadline:11111111-1111-4111-8111-111111111111";
 const baseState: CalendarSettleState = { pending: false, recoveryReason: null };
@@ -53,7 +54,7 @@ describe("Production Calendar interaction model", () => {
         start: startMoment("2026-08-12"),
         end: endMoment("2026-08-13"),
       },
-      permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true },
+      reminders: subtaskReminders(), permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true },
     };
     const filters = { layers: ["checklist"] as ["checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, shootRange: null, deadlineRange: null, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false };
     const snapshot = beginCalendarInteraction({ event: range, filters, principalId: "principal", authorizationEpoch: 1, focus: { eventId: range.id, control: "event" }, capturedNow: 1 });

@@ -29,7 +29,7 @@ import { DEFAULT_GANTT_FACET_FILTERS } from "../lib/production-gantt-filters";
 import { clearToasts } from "../lib/toast-store";
 import { ToastViewport } from "./quincy/ToastViewport";
 import { ProductionGantt } from "./ProductionGantt";
-import { endMoment, startMoment } from "@/testing/subtask-schedule";
+import { endMoment, startMoment, subtaskReminders } from "@/testing/subtask-schedule";
 import { applyPopup, dateTimePopup, pickPopupDay, popupButton, pressInPopup, rangeToggles, typePopupTime, rangeMoment } from "@/testing/date-time-popup";
 
 vi.mock("../lib/stages", () => ({
@@ -82,7 +82,7 @@ function resetFixture(options: { canOpenScheduleEditor?: boolean; timedStart?: s
 function childRow(row: Row) {
   return {
     id: row.id, projectId: PROJECT_ID, title: row.title, done: false, position: row.position, assignees: [], otherAssigneeCount: 0, assignmentVersion: 1,
-    schedule: row.schedule, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: row.canOpenScheduleEditor, canEditAssignees: true },
+    schedule: row.schedule, reminders: subtaskReminders(), permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: row.canOpenScheduleEditor, canEditAssignees: true },
   };
 }
 
