@@ -41,6 +41,6 @@ export const UI_PRIMITIVE_ALLOWLIST: Record<string, UiPrimitiveAllowance> = {
   "components/kanban2/card.tsx": { count: 2, ledger: "baseline (#262)" },
   "components/kanban2/move-to-control.tsx": { count: 9, ledger: "baseline (#262)" },
   "screens/Admin.tsx": { count: 3, ledger: "baseline (#262)" },
-  "screens/Dashboard.tsx": { count: 7, ledger: "baseline (#262)" },
+  "screens/Dashboard.tsx": { count: 2, ledger: "baseline (#262), lowered by #427: the view buttons and the Kanban sort Select moved to reui/tabs and reui/dropdown-menu (screens/DashboardViewBar.tsx); the two raw buttons left are the Active/Archived scope segment, which #428 replaces." },
   "screens/ProjectWorkspace.tsx": { count: 3, ledger: "baseline (#262)" },
 };

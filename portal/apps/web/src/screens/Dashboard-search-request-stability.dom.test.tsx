@@ -242,14 +242,14 @@ describe("Dashboard search + Calendar request stability (#217 design-review, ite
   });
 
   it("(b) no `view` param at all, a remembered kanban preference, + q", async () => {
-    window.localStorage.setItem(DASHBOARD_VIEW_KEY, "kanban");
+    window.localStorage.setItem(DASHBOARD_VIEW_KEY, "board");
     // No Calendar view at all in this scenario, so no calendar ceiling to prove -- the Kanban
     // board mounts instead, `production-calendar` should never be requested.
     await assertIdleAfterSettling("/?q=Probe", 0, 2);
   });
 
   it("(c) the plain list facet + q", async () => {
-    await assertIdleAfterSettling("/?view=list&q=Probe", 0, 2);
+    await assertIdleAfterSettling("/?view=table&q=Probe", 0, 2);
   });
 
   // #217 build, step 4, new test (d): the explicit Kanban facet + q, the one cold deep-link shape
@@ -257,6 +257,6 @@ describe("Dashboard search + Calendar request stability (#217 design-review, ite
   // way regardless of which view governs, so this is here mostly to prove that explicitly, not
   // because Kanban's own request path differs from List's.
   it("(d) the explicit Kanban facet + q", async () => {
-    await assertIdleAfterSettling("/?view=kanban&q=Probe", 0, 2);
+    await assertIdleAfterSettling("/?view=board&q=Probe", 0, 2);
   });
 });

@@ -201,11 +201,11 @@ describe("Dashboard search results and Kanban movement gating (#217 fix round 1,
   });
 
   it("item 2: pointer/keyboard drag issues no mutation while searching (last-line-of-defence guard)", async () => {
-    window.history.replaceState(null, "", "/?view=kanban&q=smith");
+    window.history.replaceState(null, "", "/?view=board&q=smith");
     // #217 build, step 4: `Dashboard.tsx` reads the committed `q` from the route at render; nothing adopts it --
     // `ShellRoute` only syncs the input DRAFT from the location (`syncDashboardSearchDraftFromLocation`, `lib/app-router.tsx`).
     // Mirrored here directly, matching a real arrival.
-    const route = parseStaffLocation("/?view=kanban&q=smith");
+    const route = parseStaffLocation("/?view=board&q=smith");
     if (route.kind === "dashboard") syncDashboardSearchDraftFromLocation(dashboardSearchOf(route), "admin-1");
     apiGetMock.mockImplementation((path) => {
       if (!path.startsWith("/api/projects")) return Promise.resolve({});
@@ -228,7 +228,7 @@ describe("Dashboard search results and Kanban movement gating (#217 fix round 1,
   });
 
   it("item 2: the keyboard reorder arrows do not render while searching", async () => {
-    window.history.replaceState(null, "", "/?view=kanban&q=smith");
+    window.history.replaceState(null, "", "/?view=board&q=smith");
     apiGetMock.mockImplementation((path) => (path.startsWith("/api/projects") ? Promise.resolve(fullBoard) : Promise.resolve({})));
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" role="admin" />); await Promise.resolve(); }); await flush();
     expect(host.querySelector('[data-focus-key^="arrow-up:"]')).toBeNull();
@@ -236,7 +236,7 @@ describe("Dashboard search results and Kanban movement gating (#217 fix round 1,
   });
 
   it("item 2: the Move-to trigger is disabled while searching", async () => {
-    window.history.replaceState(null, "", "/?view=kanban&q=smith");
+    window.history.replaceState(null, "", "/?view=board&q=smith");
     apiGetMock.mockImplementation((path) => (path.startsWith("/api/projects") ? Promise.resolve(fullBoard) : Promise.resolve({})));
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" role="admin" />); await Promise.resolve(); }); await flush();
     const triggers = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="kanban2-move-to"]')];
@@ -368,35 +368,27 @@ describe("Dashboard search writer registration under StrictMode (#217 fix round 
 });
 
 /**
- * #217 fix round 5, item 1 (Sol re-review, BLOCKER) -- UPDATED by #217 build, step 4. The original
- * claim here was that a principal switch, mid-Dashboard-mount, must never let the NEW principal's
- * render show the OLD principal's committed search chip: the chip used to be sourced from the
+ * #217 fix round 5, item 1 (Sol re-review, BLOCKER) -- UPDATED by #217 build, step 4 and by #427.
+ * The original claim here was that a principal switch, mid-Dashboard-mount, must never let the NEW
+ * principal's render show the OLD principal's committed search: it used to be sourced from the
  * store's OWN `query`, which was principal-scoped, so "whose search is this" was a real question a
  * render had to answer correctly.
  *
- * Step 4 changes what the chip even IS: `committedQuery` is derived from the URL alone
+ * Step 4 changed what the committed search even IS: `committedQuery` is derived from the URL alone
  * (`dashboardSearchOf(parsedRoute)`), never the store -- so it is no longer principal-scoped BY
  * DESIGN. A's `commitDashboardSearchNow` below writes `smith` into the URL itself (`?q=smith`),
  * which is public, shared page state, not A's private draft -- B looking at that SAME URL is
- * correctly shown the SAME chip; that is not a leak, it is the whole point of "the URL is the only
- * committed search". `Dashboard-committed-query.dom.test.tsx`'s own scenario (e) is the test that
- * replaces this one's ORIGINAL intent, at the render-timing level that matters now (B's chip must
- * already agree with the URL on B's very first commit, not lag a principal-reset effect) -- this
- * test is kept, rewritten to assert exactly the new invariant, rather than deleted outright, since
- * the underlying scenario (a live principal swap while a Dashboard instance stays mounted) is still
- * worth covering at this file's own level of detail (a real DnD-capable Dashboard, not a probe-only
- * harness).
+ * correctly shown the SAME search; that is not a leak, it is the whole point of "the URL is the only
+ * committed search". #427 retired the chip that used to display it: the observable now is the header
+ * summary ("x of y") and B's own requests. `Dashboard-committed-query.dom.test.tsx`'s scenario (e)
+ * covers the first-request timing; this test is kept at this file's level of detail (a real
+ * DnD-capable Dashboard, not a probe-only harness).
  */
-describe("Dashboard's own render is principal-scoped for the DRAFT, but the committed chip is URL-derived and principal-agnostic by design (#217 fix round 5, item 1; updated #217 build, step 4)", () => {
-  function Probe({ onLayout }: { onLayout: () => void }) {
-    useLayoutEffect(() => { onLayout(); });
-    return null;
-  }
-
+describe("Dashboard's own render is principal-scoped for the DRAFT, but the committed search is URL-derived and principal-agnostic by design (#217 fix round 5, item 1; updated #217 build, step 4; #427)", () => {
   beforeEach(() => {
     authState.role = "admin";
     apiGetMock.mockReset(); apiPostMock.mockReset();
-    apiGetMock.mockImplementation((path) => (path.startsWith("/api/projects") ? Promise.resolve(fullBoard) : Promise.resolve({})));
+    apiGetMock.mockImplementation((path) => (path.startsWith("/api/projects") ? Promise.resolve(path.includes("q=smith") ? { ...fullBoard, search: { query: "smith", matching: 2, total: 5 } } : fullBoard) : Promise.resolve({})));
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
     Object.defineProperty(window, "localStorage", { configurable: true, value: { getItem: () => null, setItem: () => undefined } });
     window.history.replaceState(null, "", "/");
@@ -409,24 +401,20 @@ describe("Dashboard's own render is principal-scoped for the DRAFT, but the comm
     __resetDashboardSearchStoreForTest();
   });
 
-  it("B's render, captured on the FIRST commit after the swap, already agrees with the URL A's own commit just wrote -- no lag on either a reset effect or a draft-sync effect", async () => {
+  it("B's Dashboard, after the swap, agrees with the URL A's own commit just wrote -- B's requests carry that q and its summary names the search", async () => {
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" role="admin" />); await Promise.resolve(); }); await flush();
     await act(async () => { setDashboardSearchDraft("smith", "admin-1"); commitDashboardSearchNow("admin-1"); });
     await flush();
-    expect(host.querySelector('[data-testid="dashboard-search-chip"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="dashboard-summary"]')?.textContent).toContain("of 5 active");
     expect(window.location.search).toContain("q=smith");
 
-    let probed = false;
-    let capturedChip: Element | null | undefined;
-    act(() => {
-      root.render(<><Dashboard currentUserId="admin-2" role="admin" /><Probe onLayout={() => {
-        probed = true;
-        capturedChip = host.querySelector('[data-testid="dashboard-search-chip"]');
-      }} /></>);
-    });
+    apiGetMock.mockClear();
+    await act(async () => { root.render(<Dashboard currentUserId="admin-2" role="admin" />); await Promise.resolve(); });
+    await flush();
 
-    expect(probed).toBe(true);
-    expect(capturedChip).not.toBeNull();
-    expect(capturedChip?.querySelector('[data-testid="dashboard-search-chip-query"]')?.textContent).toContain("smith");
+    const projectsCalls = apiGetMock.mock.calls.map(([path]) => path).filter((path) => path.startsWith("/api/projects"));
+    expect(projectsCalls.length).toBeGreaterThan(0);
+    expect(projectsCalls.every((path) => path.includes("q=smith"))).toBe(true);
+    expect(host.querySelector('[data-testid="dashboard-summary"]')?.textContent).toContain("of 5 active");
   });
 });

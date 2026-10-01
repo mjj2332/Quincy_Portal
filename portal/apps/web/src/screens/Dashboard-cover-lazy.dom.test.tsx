@@ -76,7 +76,7 @@ afterEach(() => {
   Object.defineProperty(window, "requestIdleCallback", { configurable: true, writable: true, value: originalIdle });
 });
 
-async function renderView(view: "list" | "kanban") {
+async function renderView(view: "table" | "board") {
   window.history.replaceState(null, "", `/?view=${view}`);
   await act(async () => {
     root.render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><Dashboard currentUserId="user-1" role="admin" authorizationEpoch={0} /></QueryClientProvider>);
@@ -87,7 +87,7 @@ async function renderView(view: "list" | "kanban") {
 
 const coverImages = () => [...document.querySelectorAll<HTMLImageElement>('img[src*="/media/asset/"]')];
 
-describe.each(["list", "kanban"] as const)("Dashboard %s covers (#362)", (view) => {
+describe.each(["table", "board"] as const)("Dashboard %s covers (#362)", (view) => {
   it("does not request covers outside the viewport, and loads a cover once it approaches", async () => {
     await renderView(view);
     const observed = TestIntersectionObserver.instances.filter((instance) => instance.target);

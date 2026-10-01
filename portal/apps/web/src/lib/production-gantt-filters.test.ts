@@ -108,33 +108,33 @@ describe("ganttLegendEntries", () => {
 describe("Gantt filter mapping", () => {
   it("reads only the route's facet (never its search), defaults when absent", () => {
     expect(ganttFiltersFromRoute(null)).toEqual({ editorIds: [], stageKeys: [], delivered: false, completed: false });
-    const searched = parseStaffLocation("/?view=gantt&q=smith");
-    if (searched.kind !== "dashboard" || !("dashboardView" in searched) || searched.dashboardView !== "gantt") throw new Error("expected a Gantt route");
+    const searched = parseStaffLocation("/?view=timeline&q=smith");
+    if (searched.kind !== "dashboard" || !("dashboardView" in searched) || searched.dashboardView !== "timeline") throw new Error("expected a Gantt route");
     // The route's `search` is the Dashboard search box's, not a facet: it never appears here.
     expect(ganttFiltersFromRoute(searched)).toEqual({ editorIds: [], stageKeys: [], delivered: false, completed: false });
-    const route = parseStaffLocation("/?view=gantt&stages=raw_review&completed=1");
-    if (route.kind !== "dashboard" || !("dashboardView" in route) || route.dashboardView !== "gantt") throw new Error("expected a Gantt route");
+    const route = parseStaffLocation("/?view=timeline&stages=raw_review&completed=1");
+    if (route.kind !== "dashboard" || !("dashboardView" in route) || route.dashboardView !== "timeline") throw new Error("expected a Gantt route");
     expect(ganttFiltersFromRoute(route)).toEqual({ editorIds: [], stageKeys: ["raw_review"], delivered: false, completed: true });
   });
 
   it("writes an all-default facet as absent and canonicalises stage order", () => {
     expect(ganttFacetFor(DEFAULT_GANTT_FACET_FILTERS)).toBeUndefined();
     expect(ganttFacetFor({ editorIds: [], stageKeys: ["delivered", "awaiting_raw"], delivered: false, completed: false })).toEqual({ stageKeys: ["awaiting_raw", "delivered"], delivered: false, completed: false, editorIds: [] });
-    expect(staffPathFor(ganttRouteFor(DEFAULT_GANTT_FACET_FILTERS))).toBe("/?view=gantt");
-    expect(staffPathFor(ganttRouteFor({ editorIds: [], stageKeys: ["raw_review"], delivered: false, completed: true }, "smith"))).toBe("/?view=gantt&stages=raw_review&completed=1&q=smith");
+    expect(staffPathFor(ganttRouteFor(DEFAULT_GANTT_FACET_FILTERS))).toBe("/?view=timeline");
+    expect(staffPathFor(ganttRouteFor({ editorIds: [], stageKeys: ["raw_review"], delivered: false, completed: true }, "smith"))).toBe("/?view=timeline&stages=raw_review&completed=1&q=smith");
   });
 
   it("carries editors through route -> request -> route, sorted (#274)", () => {
-    const route = parseStaffLocation("/?view=gantt&editors=22222222-2222-4222-8222-222222222222%2C11111111-1111-4111-8111-111111111111");
-    if (route.kind !== "dashboard" || !("dashboardView" in route) || route.dashboardView !== "gantt") throw new Error("expected a Gantt route");
+    const route = parseStaffLocation("/?view=timeline&editors=22222222-2222-4222-8222-222222222222%2C11111111-1111-4111-8111-111111111111");
+    if (route.kind !== "dashboard" || !("dashboardView" in route) || route.dashboardView !== "timeline") throw new Error("expected a Gantt route");
     expect(ganttFiltersFromRoute(route).editorIds).toEqual(["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"]);
     expect(ganttFacetFor({ editorIds: ["22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111"], stageKeys: [], delivered: false, completed: false })).toEqual({ stageKeys: [], delivered: false, completed: false, editorIds: ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"] });
   });
 
   it("round-trips route -> request -> route", () => {
-    for (const location of ["/?view=gantt", "/?view=gantt&stages=raw_review&completed=1", "/?view=gantt&stages=awaiting_raw%2Cdelivered&delivered=1&q=smith", "/?view=gantt&editors=11111111-1111-4111-8111-111111111111&stages=raw_review"]) {
+    for (const location of ["/?view=timeline", "/?view=timeline&stages=raw_review&completed=1", "/?view=timeline&stages=awaiting_raw%2Cdelivered&delivered=1&q=smith", "/?view=timeline&editors=11111111-1111-4111-8111-111111111111&stages=raw_review"]) {
       const route = parseStaffLocation(location);
-      if (route.kind !== "dashboard" || !("dashboardView" in route) || route.dashboardView !== "gantt") throw new Error(location);
+      if (route.kind !== "dashboard" || !("dashboardView" in route) || route.dashboardView !== "timeline") throw new Error(location);
       const filters = ganttFiltersFromRoute(route);
       expect(staffPathFor(ganttRouteFor(filters, route.search))).toBe(location);
     }

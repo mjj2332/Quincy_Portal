@@ -49,7 +49,7 @@ export type StaffNavigationSectionId =
  * Note this is the opposite of the decision for notification rows, which deliberately have no type
  * icon. Different component, different constraint.
  */
-export type StaffNavigationIcon = "dashboard" | "list" | "kanban" | "gantt" | "calendar" | "notices" | "admin";
+export type StaffNavigationIcon = "dashboard" | "table" | "board" | "calendar" | "timeline" | "notices" | "admin";
 
 export type StaffNavigationItem = {
   id: string;
@@ -110,7 +110,7 @@ function sectionFor(route: StaffRoute): StaffNavigationSectionId {
  *
  * Without a publication (the pre-mount fallback) an explicit view in the URL wins, both Calendar
  * spellings mean Calendar, and a bare `/` falls back to the remembered preference — coerced to
- * Kanban when the Calendar capability is absent, since the preference outlives a role change and
+ * Board when the Calendar capability is absent, since the preference outlives a role change and
  * marking a child active the rail does not render would be worse than ignoring it.
  */
 function resolvedDashboardView(route: StaffRoute, remembered: DashboardView, capabilities: StaffNavigationCapabilities, publishedView: DashboardView | "none" | null): DashboardView | "none" | null {
@@ -125,21 +125,22 @@ function resolvedDashboardView(route: StaffRoute, remembered: DashboardView, cap
   const wanted = "calendar" in route ? "calendar" : "dashboardView" in route ? route.dashboardView : remembered;
   if (!CAPABILITY_GATED_VIEWS.has(wanted) || capabilities.viewProductionCalendar) return wanted;
   // Coerced. The fallback is the REMEMBERED view when that is itself viewable, not a hardcoded
-  // Kanban — a Staff member who works in List should land on List, not be moved to a third view
-  // they did not choose. Only a remembered Calendar or Gantt (which this role also cannot see)
-  // falls through to Kanban.
-  return CAPABILITY_GATED_VIEWS.has(remembered) ? "kanban" : remembered;
+  // Board — a Staff member who works in Table should land on Table, not be moved to a third view
+  // they did not choose. Only a remembered Calendar or Timeline (which this role also cannot see)
+  // falls through to Board.
+  return CAPABILITY_GATED_VIEWS.has(remembered) ? "board" : remembered;
 }
 
-/** Dashboard children gated on the `viewProductionCalendar` capability — Gantt (#220) exactly like
- * Calendar (#111): both read the production schedule, so both hide from a role that cannot see it. */
-const CAPABILITY_GATED_VIEWS = new Set<DashboardView>(["calendar", "gantt"]);
+/** Dashboard children gated on the `viewProductionCalendar` capability — Timeline (#220, then
+ * called Gantt) exactly like Calendar (#111): both read the production schedule, so both hide from
+ * a role that cannot see it. */
+const CAPABILITY_GATED_VIEWS = new Set<DashboardView>(["calendar", "timeline"]);
 
 const DASHBOARD_CHILDREN: readonly { view: DashboardView; id: string; label: string; icon: StaffNavigationIcon }[] = [
-  { view: "list", id: "dashboard-list", label: "List", icon: "list" },
-  { view: "kanban", id: "dashboard-kanban", label: "Kanban", icon: "kanban" },
-  { view: "gantt", id: "dashboard-gantt", label: "Gantt", icon: "gantt" },
+  { view: "table", id: "dashboard-table", label: "Table", icon: "table" },
+  { view: "board", id: "dashboard-board", label: "Board", icon: "board" },
   { view: "calendar", id: "dashboard-calendar", label: "Calendar", icon: "calendar" },
+  { view: "timeline", id: "dashboard-timeline", label: "Timeline", icon: "timeline" },
 ];
 
 export function buildStaffNavigation(

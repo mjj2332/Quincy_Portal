@@ -33,13 +33,13 @@ export type DashboardCalendarState = {
 };
 
 /**
- * The `view` allow-list is closed to exactly these three values. `kanban2` (#80) was a second Board
+ * The `view` allow-list is closed to `table`, `board`, `timeline` and `calendar` (plus the retired `list`, `kanban` and `gantt` spellings, accepted on parse only — #427). `kanban2` (#80) was a second Board
  * value on this same grammar, used for comparison against real studio data before cutover (#76
  * "Slice order"); the cutover (#83) retired it as a legal `view` value entirely — `/?view=kanban2`
  * now falls through to `not-found`, not to a redirect or a normalisation.
  *
- * `calendar` joined the allow-list in #111 and is not symmetrical with the other two. `list` and
- * `kanban` are destinations; a bare `/?view=calendar` is an *intent*, legal as the sole query
+ * `calendar` joined the allow-list in #111 and is not symmetrical with the others. `table` and
+ * `board` are destinations; a bare `/?view=calendar` is an *intent*, legal as the sole query
  * field OR paired with exactly one `q` (#217 fix round 4, item 1 -- `DashboardCalendarIntentRoute`'s
  * own docblock has why). The navigation rail links to it and the Dashboard canonicalises it to the
  * parameterised facet URL that `DashboardCalendarFacetRoute` describes, using the remembered
@@ -59,9 +59,9 @@ export type DashboardCalendarState = {
  * silently dropped on the way to the URL. A separate arm makes that state unrepresentable — the
  * List/Kanban serializer can never be handed a field it would discard.
  */
-export type DashboardListKanbanRoute = {
+export type DashboardTableBoardRoute = {
   kind: "dashboard";
-  dashboardView: "list" | "kanban";
+  dashboardView: "table" | "board";
   search?: string;
 };
 
@@ -83,9 +83,9 @@ export type DashboardGanttFacet = {
  * serialize -> parse -> serialize round trip is a fixed point. The Gantt's filter state is
  * independent of the Calendar's: the two arms never read each other's parameters.
  */
-export type DashboardGanttRoute = {
+export type DashboardTimelineRoute = {
   kind: "dashboard";
-  dashboardView: "gantt";
+  dashboardView: "timeline";
   search?: string;
   gantt?: DashboardGanttFacet;
 };
@@ -115,7 +115,7 @@ export type DashboardCalendarIntentRoute = {
   search?: string;
 };
 
-export type DashboardViewRoute = DashboardListKanbanRoute | DashboardGanttRoute | DashboardCalendarIntentRoute;
+export type DashboardViewRoute = DashboardTableBoardRoute | DashboardTimelineRoute | DashboardCalendarIntentRoute;
 
 export type DashboardCalendarFacetRoute = {
   kind: "dashboard";
@@ -161,8 +161,8 @@ const PROJECT_ARRIVAL_BY_QUERY: ReadonlyMap<string, WorkspaceTab> = new Map(
 const calendarParameterNames = new Set([
   "view", "date", "sub", "layers", "editors", "unassigned", "stages", "completed", "delivered", "overdue", "mine", "q",
 ]);
-const dashboardListKanbanParameterNames = new Set(["view", "q"]);
-const dashboardGanttParameterNames = new Set(["view", "q", "editors", "stages", "delivered", "completed"]);
+const dashboardTableBoardParameterNames = new Set(["view", "q"]);
+const dashboardTimelineParameterNames = new Set(["view", "q", "editors", "stages", "delivered", "completed"]);
 const calendarFilterDefaults = productionCalendarFiltersSchema.parse({});
 
 /** Shared with the Calendar facet's own `q` (`calendarPathFor`'s `normalizeDashboardSearchText`
@@ -408,12 +408,22 @@ function parseDashboardSearch(params: URLSearchParams): string | null | undefine
   return normalized === "" ? undefined : normalized;
 }
 
-function parseDashboardListKanbanLocation(params: URLSearchParams): DashboardListKanbanRoute | null {
+/** #427: `list` and `kanban` are the retired spellings of `table` and `board` (and `gantt` of
+ * `timeline`). They still PARSE, to the new value, so an old bookmark, an old-bundle tab or a
+ * stored OAuth return lands on the right view; `staffPathFor` only ever EMITS the new spellings. */
+const LEGACY_DASHBOARD_VIEW_SPELLINGS: Readonly<Record<string, "table" | "board" | "timeline">> = {
+  list: "table",
+  kanban: "board",
+  gantt: "timeline",
+};
+
+function parseDashboardTableBoardLocation(params: URLSearchParams): DashboardTableBoardRoute | null {
   for (const name of params.keys()) {
-    if (!dashboardListKanbanParameterNames.has(name)) return null;
+    if (!dashboardTableBoardParameterNames.has(name)) return null;
   }
-  const dashboardView = params.get("view");
-  if (dashboardView !== "list" && dashboardView !== "kanban") return null;
+  const rawView = params.get("view") ?? "";
+  const dashboardView = LEGACY_DASHBOARD_VIEW_SPELLINGS[rawView] ?? rawView;
+  if (dashboardView !== "table" && dashboardView !== "board") return null;
   const search = parseDashboardSearch(params);
   if (search === null) return null;
 
@@ -444,11 +454,12 @@ function parseStageKeysParam(params: URLSearchParams): StagePresentationKey[] | 
   return canonicalKnownList(stageValues as StagePresentationKey[], STAGE_PRESENTATION_KEYS);
 }
 
-function parseDashboardGanttLocation(params: URLSearchParams): DashboardGanttRoute | null {
+function parseDashboardTimelineLocation(params: URLSearchParams): DashboardTimelineRoute | null {
   for (const name of params.keys()) {
-    if (!dashboardGanttParameterNames.has(name)) return null;
+    if (!dashboardTimelineParameterNames.has(name)) return null;
   }
-  if (params.get("view") !== "gantt") return null;
+  const rawView = params.get("view");
+  if (rawView !== "timeline" && rawView !== "gantt") return null;
   const editorIds = parseEditorIdsParam(params);
   const stageKeys = parseStageKeysParam(params);
   const delivered = parseCalendarFlag(params, "delivered");
@@ -457,7 +468,7 @@ function parseDashboardGanttLocation(params: URLSearchParams): DashboardGanttRou
   const search = parseDashboardSearch(params);
   if (search === null) return null;
   const gantt: DashboardGanttFacet = { stageKeys, delivered, completed, editorIds };
-  return { kind: "dashboard", dashboardView: "gantt", ...(search ? { search } : {}), ...(isDefaultGanttFacet(gantt) ? {} : { gantt }) };
+  return { kind: "dashboard", dashboardView: "timeline", ...(search ? { search } : {}), ...(isDefaultGanttFacet(gantt) ? {} : { gantt }) };
 }
 
 /** Parse the complete, canonical relative staff location. Queries stay closed except for
@@ -492,8 +503,8 @@ export function parseStaffLocation(location: string): StaffRoute {
     // being entirely absent already did.
     return { kind: "dashboard", ...(search !== undefined ? { search } : {}) };
   }
-  if (view === "list" || view === "kanban") return parseDashboardListKanbanLocation(params) ?? { kind: "not-found" };
-  if (view === "gantt") return parseDashboardGanttLocation(params) ?? { kind: "not-found" };
+  if (view === "table" || view === "board" || view === "list" || view === "kanban") return parseDashboardTableBoardLocation(params) ?? { kind: "not-found" };
+  if (view === "timeline" || view === "gantt") return parseDashboardTimelineLocation(params) ?? { kind: "not-found" };
   if (view === "calendar") {
     // The bare `/?view=calendar` intent (#111), legal as the sole query field or paired with
     // exactly one `q` (#217 fix round 4, item 1 -- see `DashboardCalendarIntentRoute`'s own
@@ -515,6 +526,30 @@ export function parseStaffLocation(location: string): StaffRoute {
     return { kind: "dashboard", calendar };
   }
   return { kind: "not-found" };
+}
+
+/**
+ * #427: the canonical path for a Dashboard location whose raw `view` is a retired spelling
+ * (`list`, `kanban`, `gantt`), or `null` for everything else. The shell replaces the URL with this
+ * once, so an old bookmark does not stay in the address bar. It is deliberately NOT
+ * `staffPathFor(route) !== location`: that would also rewrite Calendar's accepted parameter orders
+ * and any other spelling the parser tolerates, which are not this migration's business.
+ */
+export function canonicalLegacyDashboardLocation(location: string): string | null {
+  if (typeof location !== "string") return null;
+  const question = location.indexOf("?");
+  if (question === -1 || location.slice(0, question) !== "/") return null;
+  const query = location.slice(question + 1);
+  let rawView: string | null = null;
+  for (const part of query.split("&")) {
+    const equals = part.indexOf("=");
+    if (equals === -1) continue;
+    if (part.slice(0, equals) === "view") rawView = part.slice(equals + 1);
+  }
+  if (rawView === null || !Object.hasOwn(LEGACY_DASHBOARD_VIEW_SPELLINGS, rawView)) return null;
+  const route = parseStaffLocation(location);
+  if (route.kind !== "dashboard") return null;
+  return staffPathFor(route);
 }
 
 /**

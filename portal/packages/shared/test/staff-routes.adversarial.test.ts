@@ -27,7 +27,7 @@ function calendar(search = ""): DashboardCalendarState {
   };
 }
 
-type View = "bare" | "list" | "kanban" | "gantt" | "calendar-intent" | "calendar-facet";
+type View = "bare" | "table" | "board" | "timeline" | "calendar-intent" | "calendar-facet";
 
 function routeFor(view: View, search?: string): StaffRoute {
   if (view === "calendar-facet") return { kind: "dashboard", calendar: calendar(search ?? "") };
@@ -62,7 +62,7 @@ describe("staff-route q grammar adversarial matrix (#217)", () => {
       "   ",
     ];
 
-    for (const view of ["bare", "list", "kanban", "gantt", "calendar-intent", "calendar-facet"] as const) {
+    for (const view of ["bare", "table", "board", "timeline", "calendar-intent", "calendar-facet"] as const) {
       for (const value of values) {
         const input = routeFor(view, value);
         const location = staffPathFor(input as Exclude<StaffRoute, { kind: "not-found" } | { kind: "reserved" }>);
@@ -87,14 +87,14 @@ describe("staff-route q grammar adversarial matrix (#217)", () => {
     const calendarBase = "view=calendar&date=2026-09-19&sub=month&layers=project%2Cchecklist";
     const locations = [
       "/?q=a&q=b",
-      "/?view=list&q=a&q=b",
-      "/?view=kanban&q=a&date=2026-09-19",
+      "/?view=table&q=a&q=b",
+      "/?view=board&q=a&date=2026-09-19",
       "/?view=calendar&q=a&date=2026-09-19",
       `/?${calendarBase}&q=a&unknown=1`,
       "/?q=%00a",
-      "/?view=list&q=a%0Db",
+      "/?view=table&q=a%0Db",
       `/?q=${encodeURIComponent("x".repeat(DASHBOARD_SEARCH_MAX_CHARS + 1))}`,
-      "/?view=list&q=a&view=list",
+      "/?view=table&q=a&view=table",
       "/?view=calendar&q=a&q=b",
     ];
 
@@ -102,15 +102,15 @@ describe("staff-route q grammar adversarial matrix (#217)", () => {
   });
 
   // #220: Gantt is a plain flat view exactly like List/Kanban — no facet params of its own. A
-  // `view=gantt` carrying one of Calendar's own facet keys must never be silently reinterpreted as
+  // `view=timeline` carrying one of Calendar's own facet keys must never be silently reinterpreted as
   // (or folded into) a Calendar route; it is simply not a legal route at all.
-  it("rejects `view=gantt` plus a calendar-only param rather than silently producing a calendar route", () => {
+  it("rejects `view=timeline` plus a calendar-only param rather than silently producing a calendar route", () => {
     for (const location of [
-      "/?view=gantt&date=2026-09-19",
-      "/?view=gantt&sub=month",
-      "/?view=gantt&layers=project",
-      "/?view=gantt&date=2026-09-19&sub=month&layers=project",
-      "/?view=gantt&q=smith&date=2026-09-19",
+      "/?view=timeline&date=2026-09-19",
+      "/?view=timeline&sub=month",
+      "/?view=timeline&layers=project",
+      "/?view=timeline&date=2026-09-19&sub=month&layers=project",
+      "/?view=timeline&q=smith&date=2026-09-19",
     ]) {
       expect(parseStaffLocation(location), location).toEqual({ kind: "not-found" });
     }
@@ -119,18 +119,18 @@ describe("staff-route q grammar adversarial matrix (#217)", () => {
   it("normalizes whitespace-only q to the same route as an absent q", () => {
     for (const location of [
       "/?q=+++",
-      "/?view=list&q=+++",
-      "/?view=kanban&q=+++",
+      "/?view=table&q=+++",
+      "/?view=board&q=+++",
       "/?view=calendar&q=+++",
       "/?view=calendar&date=2026-09-19&sub=month&layers=project%2Cchecklist&q=+++",
     ]) {
       const parsed = parseStaffLocation(location);
       expect(parsed, location).toEqual(location.includes("date=")
         ? { kind: "dashboard", calendar: { ...calendar(), editorIds: [] } }
-        : location.includes("view=list")
-          ? { kind: "dashboard", dashboardView: "list" }
-          : location.includes("view=kanban")
-            ? { kind: "dashboard", dashboardView: "kanban" }
+        : location.includes("view=table")
+          ? { kind: "dashboard", dashboardView: "table" }
+          : location.includes("view=board")
+            ? { kind: "dashboard", dashboardView: "board" }
             : location.includes("view=calendar")
               ? { kind: "dashboard", dashboardView: "calendar" }
               : { kind: "dashboard" });

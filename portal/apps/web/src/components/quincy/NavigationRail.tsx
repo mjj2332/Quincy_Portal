@@ -1,4 +1,4 @@
-import { useRef, useState, type MouseEvent, type Ref } from "react";
+import { useRef, useState, type MouseEvent } from "react";
 import {
   LayoutDashboard,
   List,
@@ -30,7 +30,6 @@ import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { InternalLink } from "../InternalLink";
 import { Menu } from "./menu";
 import { NotificationBell } from "./NotificationBell";
-import { ShellSearch, type ShellSearchHandle } from "./ShellSearch";
 import { signOut } from "../../lib/auth";
 import { dropDashboardSearchOwnership } from "../../lib/dashboard-search-store";
 import { locationStore, stripDashboardSearchFromLocation } from "../../lib/router";
@@ -49,7 +48,7 @@ import type {
  *
  * ## Shape
  *
- * - `rail` (wide): logo mark at the top; the project-search icon and the nav icons (Dashboard,
+ * - `rail` (wide): logo mark at the top; the nav icons (Dashboard,
  *   Notice board, Admin when permitted) in the middle, each with a tooltip; the bell, a settings
  *   icon (Notification preferences) and the avatar's account menu (name, email, Sign out) at the
  *   bottom. There is no expanded, labelled state, no collapse toggle, no ⌘B and no stored
@@ -58,7 +57,7 @@ import type {
  *   their visible labels and 44px targets, and the account menu keeps a Notification preferences
  *   row (there is no settings icon here, and the header owns the bell).
  *
- * Neither variant renders the Dashboard view links (List/Kanban/Gantt/Calendar): the Dashboard's
+ * Neither variant renders the Dashboard view links (Table/Board/Calendar/Timeline): the Dashboard's
  * own view controls choose a view (the tabs ticket, #427, replaces them). `item.children` stays in
  * the model because the breadcrumb reads it, but nothing here draws it.
  *
@@ -112,10 +111,10 @@ import type {
 /** Icons, by the model's `icon` name — lucide-react, already an app dependency (`ShellHeader.tsx`). */
 const NAVIGATION_ICONS: Record<StaffNavigationIcon, LucideIcon> = {
   dashboard: LayoutDashboard,
-  list: List,
-  kanban: SquareKanban,
-  gantt: GanttChart,
+  table: List,
+  board: SquareKanban,
   calendar: Calendar,
+  timeline: GanttChart,
   notices: Megaphone,
   admin: Shield,
 };
@@ -218,28 +217,9 @@ export type NavigationRailProps = {
    * a wide-window override is a call the shell makes, not the rail.
    */
   showBell?: boolean;
-  /**
-   * Whether the current route is already a Dashboard route — forwarded straight to `ShellSearch`,
-   * which only navigates on Enter when it isn't. Defaults to `false` so every #111/#112 call site
-   * that predates #217 keeps compiling.
-   */
-  isDashboard?: boolean;
-  /**
-   * `RailedShell`'s ⌘K listener focuses `ShellSearch`'s real input through this ref — the rail
-   * renders the control and decides nothing about when the shortcut fires.
-   */
-  searchRef?: Ref<ShellSearchHandle>;
-  /**
-   * Forwarded straight to `ShellSearch` (#217 fix round 4, item 3) — the render-time-current
-   * principal, for isolating the search box from a principal change with no flash. A SEPARATE prop
-   * from `user` (name/email only) rather than widening that type, so existing call sites/tests that
-   * construct a bare `{ name, email }` stay unaffected; optional, defaults through to `ShellSearch`'s
-   * own `""` default.
-   */
-  principalId?: string;
 };
 
-export function NavigationRail({ navigation, user, variant = "rail", showBell = true, isDashboard = false, searchRef, principalId }: NavigationRailProps) {
+export function NavigationRail({ navigation, user, variant = "rail", showBell = true }: NavigationRailProps) {
   const isRail = variant === "rail";
   const isSheet = variant === "sheet";
 
@@ -339,10 +319,6 @@ export function NavigationRail({ navigation, user, variant = "rail", showBell = 
           — so rendering the rail without this would silently remove primary navigation from a
           screen reader's landmark list. */}
       <SidebarContent>
-        {/* The search control sits above the nav landmark, not inside it — it is a real input
-            (#217), not a destination. Until the Dashboard toolbar takes search over (#427) it
-            stays reachable from the rail's search icon, which opens the existing popover. */}
-        <ShellSearch ref={searchRef} variant={variant} isDashboard={isDashboard} principalId={principalId} />
         <nav aria-label="Primary navigation" className="contents">
         {navigation.groups.map((group) => (
           <SidebarGroup key={group.id} data-testid="navigation-rail-group">

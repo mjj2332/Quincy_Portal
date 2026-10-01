@@ -4627,6 +4627,38 @@ remove the legacy readers) still applies.
 - **The photo-grid breakpoint follows the rail width.** 72px rail + 5×205 + 4×14 + 64 = 1217px, not the old
   1405px; update the comment and the media query together.
 
+## Dashboard tabs, toolbar search and view rename (#427)
+
+- **Renaming a persisted route value keeps the old spelling readable.** Views are `table`/`board`/
+  `timeline`/`calendar`; `list`/`kanban`/`gantt` still parse (to the new route, Timeline facets
+  included), are never emitted, and `canonicalLegacyDashboardLocation` is the one predicate `ShellRoute`
+  uses to replace an old address-bar spelling once. Stored `quincy:dashboard:view` goes through the
+  normaliser on read and is written back new; the boot-timing beacon accepts both enums so an old-bundle
+  tab cannot 400 it. The `quincy:dashboard:kanbanSort` storage key was deliberately not renamed.
+- **Tabs are `role="tab"`, not buttons.** Selection is `aria-selected`, disabled is `aria-disabled`
+  (Base UI keeps it focusable), and a click re-renders the tab: tests re-query `[role="tab"]` after every
+  click rather than holding a ref, and query by role/name, never vendor `data-slot`.
+- **The search lives in the Dashboard, so "off-Dashboard draft" means "typed, then navigated away".**
+  Tests type into `dashboard-search`, leave through a rail link, and assert the store draft still rides on
+  the rail's Dashboard href. The `Dashboard` mock in `App-navigation-rail-shell` mounts the real
+  `DashboardSearch` with the shell's focus request, so ⌘K is exercised end to end.
+- **⌘K is a focus request, never a navigation of its own.** Off-Dashboard it moves to the Dashboard (carrying
+  the draft) and then focuses the field; on the Dashboard it only focuses (no history push). When the
+  narrow Sheet is open it closes without returning focus to the hamburger, or it would steal the field back;
+  an ordinary Sheet close still restores it.
+- **The Display menu is a `reui/dropdown-menu` radio group.** A radio item leaves the menu open; tests open
+  it with `openDisplay` and close it with Escape. Priority is offered, and accepted by the handler, only
+  with the authorised board map, so a stored `priority` falls back to Board order otherwise.
+- **The Active/Archived row stays until #428**, so the view bar follows the heading directly or follows that
+  row (admin only); layout tests accept exactly those two shapes.
+- **Review round (#427).** One effective Board sort (`canPrioritize && hasAuthorizedBoardMap`, else Board
+  order) feeds the menu and the cards. The Calendar/Timeline tabs in Archived scope leave Archived (a
+  Calendar push bypasses `navigateCalendar`, whose closure still sees the archived scope). The tab row's
+  rule is the view bar's own border: tabs stretch to it with `-mb-px` and `after:bottom-[-1px]`, and below
+  722px the controls go above the tabs (`flex-col-reverse`) so the tabs stay on the rule. Display renders
+  on every view, disabled off Board, so the search never moves. A pointer-focused tab is not re-focused by
+  the focus-restore path (only a `:focus-visible` one is), or the global ring paints on a mouse click.
+
 ## #422 Deadline uses the date-time popup
 
 - **The Deadline editor is the popup, not a form beside it.** `ProjectDeadlineControl` is now a mutation

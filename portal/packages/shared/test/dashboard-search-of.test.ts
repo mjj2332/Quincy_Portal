@@ -35,19 +35,19 @@ describe("dashboardSearchOf", () => {
   });
 
   it("List route with no q: undefined", () => {
-    expect(dashboardSearchOf({ kind: "dashboard", dashboardView: "list" })).toBeUndefined();
+    expect(dashboardSearchOf({ kind: "dashboard", dashboardView: "table" })).toBeUndefined();
   });
 
   it("List route carrying q: the value", () => {
-    expect(dashboardSearchOf({ kind: "dashboard", dashboardView: "list", search: "smith" })).toBe("smith");
+    expect(dashboardSearchOf({ kind: "dashboard", dashboardView: "table", search: "smith" })).toBe("smith");
   });
 
   it("Kanban route carrying q: the value", () => {
-    expect(dashboardSearchOf({ kind: "dashboard", dashboardView: "kanban", search: "smith" })).toBe("smith");
+    expect(dashboardSearchOf({ kind: "dashboard", dashboardView: "board", search: "smith" })).toBe("smith");
   });
 
   it("Kanban route with no q: undefined", () => {
-    expect(dashboardSearchOf({ kind: "dashboard", dashboardView: "kanban" })).toBeUndefined();
+    expect(dashboardSearchOf({ kind: "dashboard", dashboardView: "board" })).toBeUndefined();
   });
 
   it("the bare Calendar-intent route with no q: undefined", () => {

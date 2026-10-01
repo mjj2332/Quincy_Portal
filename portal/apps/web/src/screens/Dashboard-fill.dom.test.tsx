@@ -79,7 +79,7 @@ describe("Dashboard fills the viewport (#363)", () => {
   }
 
   function switcherButton(label: string): HTMLButtonElement | undefined {
-    return [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === label);
+    return [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] [role="tab"]')].find((button) => button.textContent === label);
   }
 
   async function clickView(label: string) {
@@ -111,10 +111,10 @@ describe("Dashboard fills the viewport (#363)", () => {
   it("puts each view inside the region", async () => {
     await render();
     expect(region().contains(host.querySelector('[data-testid="dashboard-board"]'))).toBe(true);
-    await clickView("List");
+    await clickView("Table");
     expect(host.querySelector('[aria-label="Projects list"]')).not.toBeNull();
     expect(region().contains(host.querySelector('[aria-label="Projects list"]'))).toBe(true);
-    await clickView("Gantt");
+    await clickView("Timeline");
     expect(region().contains(host.querySelector('[data-testid="gantt-stub"]'))).toBe(true);
     await clickView("Calendar");
     expect(region().contains(host.querySelector('[data-testid="calendar-stub"]'))).toBe(true);
@@ -130,7 +130,7 @@ describe("Dashboard fills the viewport (#363)", () => {
 
   it("List keeps its header outside a scrolling body", async () => {
     await render();
-    await clickView("List");
+    await clickView("Table");
     const list = host.querySelector<HTMLElement>('[aria-label="Projects list"]')!;
     for (const token of ["flex", "flex-col", "flex-1", "min-h-0"]) expect(classesOf(list)).toContain(token);
     const header = list.querySelector('[data-testid="project-list-header"]');

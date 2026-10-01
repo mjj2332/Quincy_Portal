@@ -1,6 +1,6 @@
 import { env, SELF } from "cloudflare:test";
 import { makeSignature } from "better-auth/crypto";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { authInstanceBuildCount, createAuth } from "../src/auth";
 import type { Env } from "../src/env";
 import { derivedEnv, formatServerTiming, publishOutboxDetached, meteredD1, newRequestTiming, normalizeRoute, timingStorage, type RequestTiming } from "../src/lib/server-timing";
@@ -133,11 +133,27 @@ describe("Server-Timing on /api and /media (#361)", () => {
 });
 
 describe("boot-timing beacon (#361)", () => {
-  const body = JSON.stringify({ sessionMs: 812.4, dashboardMs: 1650.2, view: "kanban", hidden: false });
+  const body = JSON.stringify({ sessionMs: 812.4, dashboardMs: 1650.2, view: "board", hidden: false });
   const post = (payload: string, headers: Record<string, string>) => SELF.fetch("https://portal.test/api/boot-timing", { method: "POST", body: payload, headers: { "content-type": "application/json", ...headers } });
 
   it("accepts a valid beacon with 204", async () => {
     expect((await post(body, { cookie, origin: baseEnv.APP_ORIGIN })).status).toBe(204);
+  });
+  it("accepts both the current and the retired view spellings, and logs only the current ones (#427)", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      const expected: Record<string, string> = { table: "table", board: "board", calendar: "calendar", timeline: "timeline", list: "table", kanban: "board", gantt: "timeline" };
+      for (const [sent, logged] of Object.entries(expected)) {
+        log.mockClear();
+        const response = await post(JSON.stringify({ ...JSON.parse(body), view: sent }), { cookie, origin: baseEnv.APP_ORIGIN });
+        expect(response.status, sent).toBe(204);
+        const beacon = log.mock.calls.map(([line]) => String(line)).find((line) => line.includes("boot_timing"));
+        expect(beacon, sent).toBeDefined();
+        expect(JSON.parse(beacon!).view, sent).toBe(logged);
+      }
+    } finally {
+      log.mockRestore();
+    }
   });
   it("rejects extra fields and out-of-range values with 400", async () => {
     expect((await post(JSON.stringify({ ...JSON.parse(body), extra: 1 }), { cookie, origin: baseEnv.APP_ORIGIN })).status).toBe(400);

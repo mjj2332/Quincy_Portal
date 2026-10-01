@@ -33,9 +33,9 @@ describe("Dashboard routing grammar", () => {
   it("round-trips the canonical Dashboard arms without a project facet", () => {
     const routes: Array<Exclude<StaffRoute, { kind: "not-found" } | { kind: "reserved" }>> = [
       { kind: "dashboard" },
-      { kind: "dashboard", dashboardView: "list" },
-      { kind: "dashboard", dashboardView: "kanban" },
-      { kind: "dashboard", dashboardView: "gantt" },
+      { kind: "dashboard", dashboardView: "table" },
+      { kind: "dashboard", dashboardView: "board" },
+      { kind: "dashboard", dashboardView: "timeline" },
       { kind: "dashboard", calendar: calendar() },
     ];
 
@@ -46,9 +46,9 @@ describe("Dashboard routing grammar", () => {
       expect(staffPathFor(parsed as Exclude<StaffRoute, { kind: "not-found" } | { kind: "reserved" }>), location).toBe(location);
     }
 
-    expect(staffPathFor({ kind: "dashboard", dashboardView: "list" })).toBe("/?view=list");
-    expect(staffPathFor({ kind: "dashboard", dashboardView: "kanban" })).toBe("/?view=kanban");
-    expect(staffPathFor({ kind: "dashboard", dashboardView: "gantt" })).toBe("/?view=gantt");
+    expect(staffPathFor({ kind: "dashboard", dashboardView: "table" })).toBe("/?view=table");
+    expect(staffPathFor({ kind: "dashboard", dashboardView: "board" })).toBe("/?view=board");
+    expect(staffPathFor({ kind: "dashboard", dashboardView: "timeline" })).toBe("/?view=timeline");
   });
 
   it("preserves the complete Calendar state", () => {
@@ -73,7 +73,7 @@ describe("Dashboard routing grammar", () => {
     // `q` is deliberately NOT in this list (#217): it is a legal parameter on the bare Dashboard
     // and the List/Kanban/Gantt facets, exercised by the round-trip test just below. Only
     // date/sub/layers -- Calendar-facet-only parameters -- stay rejected here.
-    for (const view of ["list", "kanban", "gantt"]) {
+    for (const view of ["table", "board", "timeline"]) {
       for (const parameter of ["date=2026-08-30", "sub=week", "layers=project"]) {
         expect(parseStaffLocation(`/?view=${view}&${parameter}`), `${view} ${parameter}`).toEqual({ kind: "not-found" });
       }
@@ -88,7 +88,7 @@ describe("Dashboard routing grammar", () => {
       calendarUrl("view=calendar&date=2026-08-30&layers=project"),
       calendarUrl("view=calendar&date=2026-08-30&sub=month"),
       calendarUrl(`${retiredProjectParameter}=${projectId}`),
-      calendarUrl(`view=list&${retiredViewParameter}=activity`),
+      calendarUrl(`view=table&${retiredViewParameter}=activity`),
     ]) {
       expect(parseStaffLocation(location), location).toEqual({ kind: "not-found" });
       expect(safeStaffDestination(location), location).toBeNull();
@@ -97,9 +97,9 @@ describe("Dashboard routing grammar", () => {
 
   it("makes `q` legal on the bare Dashboard and the List/Kanban/Gantt facets (#217; Gantt #220)", () => {
     for (const [location, route] of [
-      ["/?view=list&q=search", { kind: "dashboard", dashboardView: "list", search: "search" }],
-      ["/?view=kanban&q=search", { kind: "dashboard", dashboardView: "kanban", search: "search" }],
-      ["/?view=gantt&q=search", { kind: "dashboard", dashboardView: "gantt", search: "search" }],
+      ["/?view=table&q=search", { kind: "dashboard", dashboardView: "table", search: "search" }],
+      ["/?view=board&q=search", { kind: "dashboard", dashboardView: "board", search: "search" }],
+      ["/?view=timeline&q=search", { kind: "dashboard", dashboardView: "timeline", search: "search" }],
       ["/?q=search", { kind: "dashboard", search: "search" }],
     ] as const) {
       expect(parseStaffLocation(location), location).toEqual(route);
@@ -110,24 +110,24 @@ describe("Dashboard routing grammar", () => {
 
   it("rejects malformed, duplicate, oversized, and retired query fields", () => {
     const malformed = [
-      calendarUrl(`view=list&${retiredProjectParameter}=${projectId}%`),
+      calendarUrl(`view=table&${retiredProjectParameter}=${projectId}%`),
       calendarUrl("view=calendar&date=2026-08-30&sub=week&layers=project&q=%"),
-      calendarUrl(`view=list&${retiredViewParameter}=act%00ivity`),
+      calendarUrl(`view=table&${retiredViewParameter}=act%00ivity`),
       calendarUrl("view=calendar&date=2026-08-30&sub=week&layers=project&%71%00=search"),
-      calendarUrl(`view=list&${retiredProjectParameter}=${projectId}&${retiredViewParameter}=activity`),
+      calendarUrl(`view=table&${retiredProjectParameter}=${projectId}&${retiredViewParameter}=activity`),
     ];
     for (const location of malformed) expect(parseStaffLocation(location), location).toEqual({ kind: "not-found" });
 
     for (const location of [
-      calendarUrl("view=list&view=list"),
+      calendarUrl("view=table&view=table"),
       calendarUrl("view=calendar&view=calendar&date=2026-08-30&sub=week&layers=project"),
-      calendarUrl(`view=list&${retiredProjectParameter}=${projectId}&${retiredProjectParameter}=${projectId}`),
-      calendarUrl("view=list&"),
-      calendarUrl(`view=list&${retiredProjectParameter}=${projectId}&`),
-      calendarUrl("view=list&&q=search"),
+      calendarUrl(`view=table&${retiredProjectParameter}=${projectId}&${retiredProjectParameter}=${projectId}`),
+      calendarUrl("view=table&"),
+      calendarUrl(`view=table&${retiredProjectParameter}=${projectId}&`),
+      calendarUrl("view=table&&q=search"),
     ]) expect(parseStaffLocation(location), location).toEqual({ kind: "not-found" });
 
-    const oversizedListQuery = `view=list&x=${"x".repeat(8_200)}`;
+    const oversizedListQuery = `view=table&x=${"x".repeat(8_200)}`;
     const oversizedCalendarQuery = `view=calendar&date=2026-08-30&sub=week&layers=project&q=${"x".repeat(8_200)}`;
     expect(new TextEncoder().encode(oversizedListQuery).byteLength).toBeGreaterThan(PRODUCTION_CALENDAR_MAX_ENCODED_QUERY_BYTES);
     expect(new TextEncoder().encode(oversizedCalendarQuery).byteLength).toBeGreaterThan(PRODUCTION_CALENDAR_MAX_ENCODED_QUERY_BYTES);
@@ -143,11 +143,11 @@ describe("Dashboard routing grammar", () => {
   });
 
   it("keeps Dashboard parsing ahead of the Calendar fallback and accepts collaboration", () => {
-    expect(parseStaffLocation("/?view=list")).toEqual({ kind: "dashboard", dashboardView: "list" });
-    expect(parseStaffLocation("/?view=kanban")).toEqual({ kind: "dashboard", dashboardView: "kanban" });
-    expect(parseStaffLocation("/?view=gantt")).toEqual({ kind: "dashboard", dashboardView: "gantt" });
+    expect(parseStaffLocation("/?view=table")).toEqual({ kind: "dashboard", dashboardView: "table" });
+    expect(parseStaffLocation("/?view=board")).toEqual({ kind: "dashboard", dashboardView: "board" });
+    expect(parseStaffLocation("/?view=timeline")).toEqual({ kind: "dashboard", dashboardView: "timeline" });
     expect(parseStaffLocation("/?view=unknown")).toEqual({ kind: "not-found" });
-    expect(parseStaffLocation("/admin?view=list")).toEqual({ kind: "not-found" });
+    expect(parseStaffLocation("/admin?view=table")).toEqual({ kind: "not-found" });
     expect(parseStaffLocation(`/?${retiredProjectParameter}=${projectId}`)).toEqual({ kind: "not-found" });
     expect(parseStaffLocation(`/projects/${projectId}?collaboration=open`)).toEqual({ kind: "project", projectId, arrivalTab: "collaboration" });
     expect(parseStaffLocation(`/projects/${projectId}?collaboration=closed`)).toEqual({ kind: "not-found" });
