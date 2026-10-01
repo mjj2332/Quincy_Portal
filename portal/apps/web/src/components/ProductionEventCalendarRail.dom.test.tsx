@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PRODUCTION_CALENDAR_ZONE, type CalendarEventDto } from "@quincy/shared";
 import { ProductionEventCalendarRail, upNextEvents } from "./ProductionEventCalendarRail";
 import { startMoment, endMoment } from "@/testing/subtask-schedule";
+import { subtaskReminders } from "@/testing/subtask-schedule";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -21,7 +22,7 @@ function deadline(id: string, start: string, civil: string): CalendarEventDto {
   return { id: `project-deadline:${id}`, kind: "project_deadline", title: "Deadline", project: { ...project, street: `${id} Street` }, timing: { allDay: false, start, end: null }, status, permissions: { canDrag: true, canResize: false }, deadlineLocalCivil: civil, deadlineVersion: 1, reminderOffsetsMinutes: [] };
 }
 function range(id: string, start: string, end: string): CalendarEventDto {
-  return { id: `checklist:${id}`, kind: "checklist", title: `Task ${id}`, project, assignees: [], otherAssigneeCount: 0, timing: { allDay: true, start, end }, status: { ...status, completed: false }, schedule: { state: "range", version: 1, zone: PRODUCTION_CALENDAR_ZONE, start: startMoment(start), end: endMoment(end), due: end }, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true } } as CalendarEventDto;
+  return { id: `checklist:${id}`, kind: "checklist", title: `Task ${id}`, project, assignees: [], otherAssigneeCount: 0, timing: { allDay: true, start, end }, status: { ...status, completed: false }, schedule: { state: "range", version: 1, zone: PRODUCTION_CALENDAR_ZONE, start: startMoment(start), end: endMoment(end), due: end }, reminders: subtaskReminders(), permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true } } as CalendarEventDto;
 }
 
 let host: HTMLDivElement;

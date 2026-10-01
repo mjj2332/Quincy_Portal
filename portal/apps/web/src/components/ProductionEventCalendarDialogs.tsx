@@ -214,16 +214,18 @@ export function ProductionEventCalendarFoldChoice({ open, eyebrow, endpoint, cho
 export type ProductionEventCalendarScheduleEditorSheetProps = {
   open: boolean;
   event: ChecklistScheduleEditorEvent;
-  onSubmit: (schedule: RangeChecklistScheduleInput) => void;
+  onSubmit: (schedule: RangeChecklistScheduleInput, reminderOffsetsMinutes?: number[]) => void;
   onCancel: () => void;
   initialSchedule?: RangeChecklistScheduleInput;
+  /** The offsets a failed save attempted (#425). */
+  initialReminderOffsets?: number[];
   validationError?: ProductionCalendarScheduleEditorError;
   /** The Project's default range, for the "Project default" shortcut. */
   projectDefault?: ProjectDefaultRangeDto | null;
 };
 
-export function ProductionEventCalendarScheduleEditorSheet({ open, event, onSubmit, onCancel, initialSchedule, validationError, projectDefault = null }: ProductionEventCalendarScheduleEditorSheetProps): JSX.Element | null {
-  const state = useChecklistScheduleDraft({ event, onSubmit, initialSchedule, validationError });
+export function ProductionEventCalendarScheduleEditorSheet({ open, event, onSubmit, onCancel, initialSchedule, initialReminderOffsets, validationError, projectDefault = null }: ProductionEventCalendarScheduleEditorSheetProps): JSX.Element | null {
+  const state = useChecklistScheduleDraft({ event, onSubmit, initialSchedule, initialReminderOffsets, validationError });
   return (
     <Sheet open={open} onOpenChange={(next) => { if (!next) onCancel(); }}>
       <SheetContent
@@ -340,10 +342,11 @@ export function ProductionEventCalendarDialogs({ commands, deadlineConfirm, sche
         // The old calendar's composite key: a failed save re-seeds the SAME open session with a new
         // `initialSchedule`, which must remount the draft (as the retired `ProductionCalendar.tsx` did).
         <ProductionEventCalendarScheduleEditorSheet
-          key={`schedule-editor:${editorToken}:${editor.source.id}:${JSON.stringify(editor.initialSchedule ?? null)}`}
+          key={`schedule-editor:${editorToken}:${editor.source.id}:${JSON.stringify(editor.initialSchedule ?? null)}:${JSON.stringify(editor.initialReminderOffsets ?? null)}`}
           open={scheduleEditor !== null}
           event={editor.source}
           initialSchedule={editor.initialSchedule}
+          initialReminderOffsets={editor.initialReminderOffsets}
           validationError={editor.validationError}
           projectDefault={projectDefaultFor?.(editor.source.project.id) ?? null}
           onSubmit={commands.submitScheduleEditor}

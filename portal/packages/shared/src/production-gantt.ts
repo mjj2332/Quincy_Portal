@@ -18,6 +18,7 @@ import {
   type DashboardPriorityFilterValue,
 } from "./dashboard-filter";
 import type { ChecklistScheduleDto } from "./checklist-schedule";
+import { subtaskRemindersDtoSchema, type SubtaskRemindersDto } from "./subtask-reminders";
 import type { ProjectEditorRef } from "./board-projection";
 
 export const PRODUCTION_GANTT_ZONE = SYDNEY_TIME_ZONE;
@@ -291,6 +292,8 @@ export type GanttChecklistRowDto = {
   /** The Subtask's `assignment_version`: the `expectedVersion` of the next assignee change. */
   assignmentVersion: number;
   schedule: ChecklistScheduleDto;
+  /** The Subtask's reminder set and next reminder (#425), for the range popup. */
+  reminders: SubtaskRemindersDto;
   permissions: { canDrag: boolean; canResize: boolean; canOpenScheduleEditor: boolean; canEditAssignees: boolean };
 };
 
@@ -355,6 +358,7 @@ function ganttChecklistRowSchema(): z.ZodType<GanttChecklistRowDto> {
     otherAssigneeCount: z.number().int().nonnegative(),
     assignmentVersion: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     schedule: checklistScheduleDtoSchema,
+    reminders: subtaskRemindersDtoSchema,
     permissions: ganttChecklistPermissionsSchema,
   }).strict();
 }

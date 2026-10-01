@@ -1,5 +1,6 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { buildSubtaskReminderMaterialization, buildSubtaskReminderSuppression } from "@quincy/db";
 import { NOTIFICATION_OUTBOX_EVENT_TYPES } from "@quincy/shared";
 import type { Env } from "../src/env";
 import { processNotificationMessage } from "../src/notification-delivery";
@@ -360,5 +361,92 @@ describe("Subtask reminder hourly reconcile (#424)", () => {
     const rows = (await database.DB.prepare("SELECT kind, reminder_offset_minutes AS offset, status, created_by AS createdBy FROM project_subtask_reminder_occurrences WHERE subtask_id = ? ORDER BY reminder_offset_minutes DESC").bind(subtaskId).all()).results;
     expect(rows).toEqual([{ kind: "advance", offset: 1440, status: "pending", createdBy: null }, { kind: "due_now", offset: 0, status: "pending", createdBy: null }]);
     expect((await reconcileSubtaskReminderOccurrences(deliveryEnv(), now)).inserted).toBe(0);
+  });
+});
+
+describe("Editing a Subtask's reminders, then the real scan and delivery (#425)", () => {
+  const HOUR = 60 * MINUTE;
+  const t0 = Date.now();
+  const dueAt = t0 + 3 * DAY;
+
+  /** A Subtask due in three days with one staff assignee, its occurrences materialised by the real bundle at `t0`. */
+  async function editable(offsets: number[]) {
+    const fixture = await seedSubtask(t0, { kind: "advance" });
+    await database.DB.prepare("DELETE FROM project_subtask_reminder_occurrences WHERE subtask_id = ?").bind(fixture.subtaskId).run();
+    await database.DB.prepare("UPDATE project_subtasks SET schedule_start_at = ?, schedule_end_at = ?, reminder_offsets_json = ? WHERE id = ?").bind(dueAt - 8 * HOUR, dueAt, JSON.stringify(offsets), fixture.subtaskId).run();
+    const staff = await addUser("editor", t0);
+    await addMember(fixture.projectId, staff, t0);
+    await assign(fixture.subtaskId, staff, 1, t0);
+    await database.DB.batch(buildSubtaskReminderMaterialization({ db: database.DB, scope: { kind: "subtask", subtaskId: fixture.subtaskId }, now: t0, createdBy: null }).statements);
+    return { ...fixture, staff };
+  }
+
+  /** The API's reminders-only edit: a new schedule version and offset set, the old pending set superseded, the new one materialised. */
+  async function editReminders(fixture: { projectId: string; subtaskId: string }, offsets: number[], now: number) {
+    const auditId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, NULL, 'project.subtask.update', 'project_subtask', ?, NULL, ?)").bind(auditId, fixture.subtaskId, now).run();
+    const gate = { db: database.DB, now, gateAuditId: auditId } as const;
+    await database.DB.batch([
+      database.DB.prepare("UPDATE project_subtasks SET schedule_version = schedule_version + 1, reminder_offsets_json = ? WHERE id = ?").bind(JSON.stringify(offsets), fixture.subtaskId),
+      ...buildSubtaskReminderSuppression({ ...gate, scope: { kind: "subtask", projectId: fixture.projectId, subtaskId: fixture.subtaskId }, reason: "reminders_changed" }).statements,
+      ...buildSubtaskReminderMaterialization({ ...gate, scope: { kind: "subtask", subtaskId: fixture.subtaskId }, createdBy: null }).statements,
+    ]);
+  }
+
+  /** Delivery re-reads the clock, so it runs at the simulated time, after the reminder's fire time. */
+  async function deliverAt(now: number, deliveryEnvironment: Env, outboxId: string) {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(now);
+    try { await processNotificationMessage(deliveryEnvironment, message(outboxId)); } finally { vi.useRealTimers(); }
+  }
+
+  const offsetOf = (row: { payloadJson: string }) => (JSON.parse(row.payloadJson) as { reminder: { offsetMinutes: number } }).reminder.offsetMinutes;
+  const statusOf = (outboxId: string) => database.DB.prepare("SELECT status FROM notification_outbox WHERE id = ?").bind(outboxId).first<{ status: string }>().then((row) => row?.status);
+
+  it("delivers a newly added offset, never delivers a removed one, and still delivers Due now", async () => {
+    const fixture = await editable([1440]);
+    await editReminders(fixture, [60], t0 + HOUR);
+    // Past the removed 1-day fire time: nothing is pending to fire.
+    await scanSubtaskReminderOccurrences(deliveryEnv(), dueAt - DAY + MINUTE);
+    expect(await outboxFor(fixture.subtaskId)).toEqual([]);
+    // The added 1-hour offset fires and is delivered through both channels.
+    await scanSubtaskReminderOccurrences(deliveryEnv(), dueAt - HOUR + MINUTE);
+    expect(await outboxFor(fixture.subtaskId)).toHaveLength(1);
+    const [advance] = await outboxFor(fixture.subtaskId);
+    expect(offsetOf(advance!)).toBe(60);
+    const send = vi.fn().mockResolvedValue({ messageId: "added" });
+    await deliverAt(dueAt - HOUR + MINUTE, deliveryEnv(send), advance!.id);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await ledgerFor(advance!.id)).toMatchObject([{ channel: "email", status: "sent" }, { channel: "in_app", status: "sent" }]);
+    // Due now is untouched by the edit.
+    await scanSubtaskReminderOccurrences(deliveryEnv(), dueAt);
+    expect((await outboxFor(fixture.subtaskId)).map(offsetOf).sort((a, b) => a - b)).toEqual([0, 60]);
+  });
+
+  it("an offset removed after it fired and was queued is suppressed, never delivered", async () => {
+    const fixture = await editable([1440]);
+    await scanSubtaskReminderOccurrences(deliveryEnv(), dueAt - DAY + MINUTE);
+    const [queued] = await outboxFor(fixture.subtaskId);
+    expect(offsetOf(queued!)).toBe(1440);
+    expect(await statusOf(queued!.id)).toBe("queued");
+    await editReminders(fixture, [], dueAt - DAY + 2 * MINUTE);
+    expect(await statusOf(queued!.id)).toBe("suppressed");
+    expect((await ledgerFor(queued!.id)).every((row) => row.status === "suppressed")).toBe(true);
+    const send = vi.fn().mockResolvedValue({ messageId: "never" });
+    await deliverAt(dueAt - DAY + 3 * MINUTE, deliveryEnv(send), queued!.id);
+    expect(send).not.toHaveBeenCalled();
+    expect((await ledgerFor(queued!.id)).some((row) => row.status === "sent")).toBe(false);
+  });
+
+  it("an offset removed while its delivery is already claimed stops the email at the delivery re-check", async () => {
+    const fixture = await editable([1440]);
+    await scanSubtaskReminderOccurrences(deliveryEnv(), dueAt - DAY + MINUTE);
+    const [row] = await outboxFor(fixture.subtaskId);
+    const send = vi.fn().mockResolvedValue({ messageId: "never" });
+    const racing = mutateBetweenChannels(() => editReminders(fixture, [], dueAt - DAY + 2 * MINUTE));
+    await deliverAt(dueAt - DAY + MINUTE, deliveryEnv(send, racing), row!.id);
+    expect(send).not.toHaveBeenCalled();
+    const ledger = await ledgerFor(row!.id);
+    expect(ledger.find((entry) => entry.channel === "email")?.status).toBe("suppressed");
   });
 });

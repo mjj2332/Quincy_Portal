@@ -10,7 +10,7 @@ import { projectDataKeys } from "../lib/project-data";
 import { applyPopup, dateTimePopup, pickPopupDay, pickRangeEnd, popupButton, rangeToggles, typePopupTime, rangeMoment } from "@/testing/date-time-popup";
 import { checklistScheduleToDto, normalizeChecklistSchedule } from "@quincy/shared";
 import { formatCivilRange } from "../lib/date-format";
-import { endMoment, momentScheduleDto, presetScheduleDto, startMoment } from "@/testing/subtask-schedule";
+import { endMoment, momentScheduleDto, presetScheduleDto, startMoment, subtaskReminders } from "@/testing/subtask-schedule";
 
 const confirmMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)));
 const floating = vi.hoisted(() => ({ modalValues: [] as Array<boolean | undefined> }));
@@ -48,7 +48,7 @@ const rangeOf = (day: string, version = 1) => presetScheduleDto(day, day, versio
 const person = (id: string, name: string) => ({ id, name, roleLabel: "Editor", isExternal: false, active: true });
 const nora = person("20000000-0000-4000-8000-000000000002", "Nora Jones"); const ada = person("30000000-0000-4000-8000-000000000003", "Ada Smith"); const ben = person("40000000-0000-4000-8000-000000000004", "Ben Ortiz"); const cy = person("50000000-0000-4000-8000-000000000005", "Cy Young"); const dee = person("60000000-0000-4000-8000-000000000006", "Dee Park");
 let optionsResponse: { candidates: Array<{ id: string; name: string; role: string }> };
-const task = { id: "task-1", title: "Call client", done: false, position: 1024, assignees: [nora], assignmentVersion: 1, dueDate: `${year}-05-30`, schedule: rangeOf(`${year}-05-30`), createdBy: "user", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-17T00:00:00.000Z" };
+const task = { reminders: subtaskReminders(), id: "task-1", title: "Call client", done: false, position: 1024, assignees: [nora], assignmentVersion: 1, dueDate: `${year}-05-30`, schedule: rangeOf(`${year}-05-30`), createdBy: "user", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-17T00:00:00.000Z" };
 const second = { ...task, id: "task-2", title: "Prepare files", position: 2048, assignees: [], assignmentVersion: 0, dueDate: `${year}-06-01`, schedule: rangeOf(`${year}-06-01`) };
 let root: Root | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

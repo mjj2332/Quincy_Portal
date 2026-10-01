@@ -45,7 +45,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { adminProductionCalendarRangeResponseSchema, PRODUCTION_CALENDAR_ZONE, type DashboardCalendarState } from "@quincy/shared";
 import { ProductionEventCalendar } from "./ProductionEventCalendar";
 import { DEADLINE_AGENDA_DOT } from "../lib/production-event-calendar-adapter";
-import { startMoment, endMoment } from "@/testing/subtask-schedule";
+import { startMoment, endMoment, subtaskReminders } from "@/testing/subtask-schedule";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -348,7 +348,7 @@ const checklistItem = (id: string, title: string, completed: boolean) => ({
   id, kind: "checklist", title, project,   assignees: [{ id: assignee, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }], otherAssigneeCount: 0,
   timing: { allDay: true, start: "2026-08-12", end: null }, status: { overdue: false, delivered: false, completed, sameAssigneeOverlap: false },
   schedule: { state: "range", version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: startMoment("2026-08-12"), end: endMoment("2026-08-12"), due: "2026-08-12" },
-  permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true },
+  reminders: subtaskReminders(), permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true },
 });
 const response = adminProductionCalendarRangeResponseSchema.parse({
   range: {

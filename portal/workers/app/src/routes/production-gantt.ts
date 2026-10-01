@@ -44,12 +44,15 @@ import {
   type Role,
   type StageKey,
   type StagePresentationKey,
+  DEFAULT_SUBTASK_REMINDERS,
+  type SubtaskRemindersDto,
 } from "@quincy/shared";
 import { requireCapability } from "../middleware/capability";
 import { terminalRoute } from "../lib/terminal-route";
 import { normalizeProjectSearch, projectSearchSql } from "../lib/project-search";
 import { archivedModeSql, authorizedProjectsBaseCte, dashboardPeopleCte, deadlineOverdueSql, deadlineRangeSql, parseReminderOffsets, productionRoleSql, shootRangeSql } from "../lib/production-scope-sql";
 import { serializeSubtaskSchedule } from "../lib/subtask-schedule";
+import { readSubtaskReminders } from "../lib/project-subtasks";
 import { assigneesForViewer, parseAssigneesJson, subtaskAssigneesJsonSql } from "../lib/subtask-assignees";
 import { activeEditorRefsByProject, projectTeamByProject } from "../lib/project-editors";
 import type { AppEnv } from "../env";
@@ -799,7 +802,7 @@ function ganttChecklistPermissions(canCollaborate: boolean): GanttChecklistRowDt
   return { canDrag: canCollaborate, canResize: canCollaborate, canOpenScheduleEditor: canCollaborate, canEditAssignees: canCollaborate };
 }
 
-export function serializeGanttChecklistRow(row: GanttChildBaseRow, role: GanttRole): GanttChecklistRowDto {
+export function serializeGanttChecklistRow(row: GanttChildBaseRow, role: GanttRole, reminders: SubtaskRemindersDto): GanttChecklistRowDto {
   const { assignees, otherAssigneeCount } = assigneesForViewer(parseAssigneesJson(row.assignees_json), role);
   const schedule = serializeSubtaskSchedule(row.subtask_id, scheduleStorageFromChildRow(row));
   const canCollaborate = row.can_collaborate === 1;
@@ -813,6 +816,7 @@ export function serializeGanttChecklistRow(row: GanttChildBaseRow, role: GanttRo
     otherAssigneeCount,
     assignmentVersion: Number(row.assignment_version ?? 0),
     schedule,
+    reminders,
     permissions: ganttChecklistPermissions(canCollaborate),
   };
 }
@@ -853,6 +857,7 @@ function serializeGanttProjectRow(
   archived: boolean,
   withDeadlineMarker: boolean,
   peopleFingerprint: string,
+  remindersBySubtask: ReadonlyMap<string, SubtaskRemindersDto>,
 ): GanttProjectRowDto {
   if (row.project_id === null || row.street === null || row.stage_key === null || row.bar_start_date === null || row.created_at === null) {
     throw new Error("Gantt project row is incomplete.");
@@ -899,7 +904,7 @@ function serializeGanttProjectRow(
       ...(teamByProject ? { canEditTeam: roleHasCapability(role, "editProject") && !archived } : {}),
     },
     children: {
-      rows: children.map((child) => serializeGanttChecklistRow(child, role)),
+      rows: children.map((child) => serializeGanttChecklistRow(child, role, remindersBySubtask.get(child.subtask_id) ?? DEFAULT_SUBTASK_REMINDERS)),
       total,
       returned,
       // #246: the revision is a window over the project's whole partition, so any row carries it.
@@ -952,10 +957,11 @@ async function handleChildren(c: Context<AppEnv>, parsed: ParsedGanttChildQuery)
   const nextCursor = truncated && lastRow
     ? encodeGanttChildCursor({ projectId: parsed.childrenOf, position: lastRow.position, id: lastRow.subtask_id, completed: parsed.completed, ...(peopleFingerprint ? { people: peopleFingerprint } : {}) })
     : null;
+  const reminders = await readSubtaskReminders(c.env.DB, pageRows.map((row) => row.subtask_id));
   const response: ProductionGanttChildPageResponse = {
     projectId: parsed.childrenOf,
     children: {
-      rows: pageRows.map((child) => serializeGanttChecklistRow(child, role)),
+      rows: pageRows.map((child) => serializeGanttChecklistRow(child, role, reminders.get(child.subtask_id) ?? DEFAULT_SUBTASK_REMINDERS)),
       total,
       returned: pageRows.length,
       truncated,
@@ -1014,7 +1020,8 @@ async function handlePage(c: Context<AppEnv>, parsed: ParsedGanttPageQuery): Pro
     const archivedRows = await c.env.DB.prepare("SELECT id FROM projects WHERE archived_at IS NOT NULL AND id IN (SELECT value FROM json_each(?1))").bind(JSON.stringify(projectIds)).all<{ id: string }>();
     for (const row of archivedRows.results ?? []) archivedIds.add(row.id);
   }
-  const projects = pageRows.map((row) => serializeGanttProjectRow(row, role, now, editorsByProject, childrenByProject, parsed.completed, parsed.revision, teamByProject, archivedIds.has(row.project_id!), parsed.deadlineMarker, ganttPeopleFingerprint(parsed)));
+  const remindersBySubtask = await readSubtaskReminders(c.env.DB, (childrenResult.results ?? []).map((child) => child.subtask_id), now);
+  const projects = pageRows.map((row) => serializeGanttProjectRow(row, role, now, editorsByProject, childrenByProject, parsed.completed, parsed.revision, teamByProject, archivedIds.has(row.project_id!), parsed.deadlineMarker, ganttPeopleFingerprint(parsed), remindersBySubtask));
   const lastRow = pageRows.at(-1);
   const nextCursor = truncatedPage && lastRow
     ? encodeGanttProjectCursor({ startDate: lastRow.bar_start_date!, id: lastRow.project_id! })

@@ -29,6 +29,11 @@ export type RangeChecklistScheduleInput = {
 export type SaveChecklistScheduleRequest = {
   expectedVersion: number;
   schedule: RangeChecklistScheduleInput;
+  /**
+   * The Subtask's advance reminder offsets (#425). Absent keeps the stored set, so a drag or an undo that sends only the range never
+   * resets a custom set. Present and different bumps the schedule version once, together with any range change in the same request.
+   */
+  reminderOffsetsMinutes?: number[];
 };
 
 export type ChecklistScheduleEndpointDto = {

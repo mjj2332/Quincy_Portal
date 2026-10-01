@@ -18,6 +18,7 @@ import {
 } from "@quincy/shared";
 import { canonicalChecklistEvent, optimisticChecklistEvent, planSchedulingProposal, timingFromChecklistSchedule, type SchedulingProposal } from "./scheduling-policy";
 import { endMoment, startMoment } from "@/testing/subtask-schedule";
+import { subtaskReminders } from "@/testing/subtask-schedule";
 
 /** Independently recomputes the timing a checklist plan should carry, from the SAME public
  * helpers `planSchedulingProposal` itself uses — so the assertion below is not tautological. */
@@ -52,7 +53,7 @@ const timedEndpoint = (localCivil: string, instant: string, fold: 0 | 1 = 0) => 
 const rangeSchedule = (start: ReturnType<typeof timedEndpoint>, end: ReturnType<typeof timedEndpoint>, version = 4) => ({ state: "range" as const, version, zone: PRODUCTION_CALENDAR_ZONE, start, end, due: end.localCivil });
 function checklistEvent(schedule: ReturnType<typeof rangeSchedule>): ChecklistCalendarEventDto<typeof EDITOR_STAGE> {
   const timing = { allDay: false as const, start: schedule.start.instant, end: schedule.end.instant };
-  return { id: `checklist:${PERSON_ID}`, kind: "checklist", title: "Select hero images", project: project(), assignees: [person], otherAssigneeCount: 0, timing, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true } };
+  return { id: `checklist:${PERSON_ID}`, kind: "checklist", title: "Select hero images", project: project(), assignees: [person], otherAssigneeCount: 0, timing, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule, reminders: subtaskReminders(), permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true } };
 }
 
 function projectEvent(deadlineLocalCivil = "2026-08-27T09:00"): ProjectDeadlineCalendarEventDto<typeof EDITOR_STAGE> {

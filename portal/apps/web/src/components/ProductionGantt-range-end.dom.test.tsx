@@ -29,7 +29,7 @@ import { DEFAULT_GANTT_FACET_FILTERS } from "../lib/production-gantt-filters";
 import { clearToasts } from "../lib/toast-store";
 import { ToastViewport } from "./quincy/ToastViewport";
 import { ProductionGantt } from "./ProductionGantt";
-import { endMoment, startMoment } from "@/testing/subtask-schedule";
+import { endMoment, startMoment, subtaskReminders } from "@/testing/subtask-schedule";
 import { applyPopup, dateTimePopup, pickPopupDay, popupButton, pressInPopup, rangeToggles, typePopupTime, rangeMoment } from "@/testing/date-time-popup";
 
 vi.mock("../lib/stages", () => ({
@@ -64,11 +64,13 @@ const range = (version: number, start: ChecklistScheduleEndpointDto, end: Checkl
 
 type Row = { id: string; title: string; position: number; schedule: ChecklistScheduleDto; canOpenScheduleEditor: boolean };
 type ScheduleInput = { state: string; start?: { localCivil: string; disambiguation?: "earlier" | "later" }; end?: { localCivil: string; disambiguation?: "earlier" | "later" } };
-type PatchBody = { schedule: { expectedVersion: number; schedule: ScheduleInput } };
+type PatchBody = { schedule: { expectedVersion: number; schedule: ScheduleInput; reminderOffsetsMinutes?: number[] } };
 
 /** The server's view: PATCH mutates it, GET reads it. */
 let rows: Row[];
 let pageTwo: Row[];
+/** The server's stored reminder offsets by Subtask id (#425); the default is "1 day before". */
+let storedOffsets: Record<string, number[]>;
 
 function resetFixture(options: { canOpenScheduleEditor?: boolean; timedStart?: string; timedEnd?: string } = {}) {
   const can = options.canOpenScheduleEditor ?? true;
@@ -77,12 +79,13 @@ function resetFixture(options: { canOpenScheduleEditor?: boolean; timedStart?: s
     { id: TIMED_ID, title: TIMED_TITLE, position: 1, canOpenScheduleEditor: can, schedule: range(1, timedEndpoint(options.timedStart ?? `${sydneyDay(2)}T09:00`), timedEndpoint(options.timedEnd ?? `${sydneyDay(2)}T17:00`)) },
   ];
   pageTwo = [];
+  storedOffsets = {};
 }
 
 function childRow(row: Row) {
   return {
     id: row.id, projectId: PROJECT_ID, title: row.title, done: false, position: row.position, assignees: [], otherAssigneeCount: 0, assignmentVersion: 1,
-    schedule: row.schedule, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: row.canOpenScheduleEditor, canEditAssignees: true },
+    schedule: row.schedule, reminders: subtaskReminders(storedOffsets[row.id] ?? [1440]), permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: row.canOpenScheduleEditor, canEditAssignees: true },
   };
 }
 
@@ -124,7 +127,8 @@ function echoPatch(body: PatchBody, subtaskId: string): Reply {
   const row = [...rows, ...pageTwo].find((candidate) => candidate.id === subtaskId)!;
   const schedule = scheduleFromInput(body.schedule.schedule, body.schedule.expectedVersion + 1);
   row.schedule = schedule;
-  return { status: 200, body: { id: row.id, title: row.title, done: false, position: row.position, schedule } };
+  if (body.schedule.reminderOffsetsMinutes) storedOffsets[row.id] = body.schedule.reminderOffsetsMinutes;
+  return { status: 200, body: { id: row.id, title: row.title, done: false, position: row.position, schedule, reminders: subtaskReminders(storedOffsets[row.id] ?? [1440]) } };
 }
 
 const patches = () => requests.filter((request) => request.method === "PATCH");
@@ -588,5 +592,127 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
       await waitFor(() => expect(picker(RANGE_TITLE)).toBeNull());
       expect(onAcceptGateChange).toHaveBeenLastCalledWith(false);
     } finally { window.matchMedia = original; }
+  });
+});
+
+describe("ProductionGantt — Subtask Due cell reminders (#425)", () => {
+  const chip = (title: string, name: string) => pickerButton(title, name)!;
+
+  it("G1 the popup shows the row's stored set; a reminders-only edit is one PATCH at the open version, range unchanged", async () => {
+    storedOffsets[RANGE_ID] = [60];
+    await render();
+    await openDue(RANGE_TITLE);
+    expect(chip(RANGE_TITLE, "1 hour").getAttribute("aria-pressed")).toBe("true");
+    expect(chip(RANGE_TITLE, "1 day").getAttribute("aria-pressed")).toBe("false");
+    await click(chip(RANGE_TITLE, "4 hours"));
+    await applyPopup(picker(RANGE_TITLE)!);
+    await flush(6);
+    expect(patches()).toHaveLength(1);
+    expect(patchBody().schedule.expectedVersion).toBe(1);
+    expect(patchBody().schedule.schedule).toEqual({ state: "range", start: { localCivil: `${sydneyDay(1)}T09:00` }, end: { localCivil: `${sydneyDay(3)}T17:00` } });
+    expect(patchBody().schedule.reminderOffsetsMinutes).toEqual([240, 60]);
+  });
+
+  it("G2 Undo after a reminders-only edit restores the prior offsets", async () => {
+    await render();
+    await openDue(RANGE_TITLE);
+    await click(chip(RANGE_TITLE, "4 hours"));
+    await applyPopup(picker(RANGE_TITLE)!);
+    await flush(6);
+    expect(storedOffsets[RANGE_ID]).toEqual([1440, 240]);
+    expect(undoButtons()).toHaveLength(1);
+    await click(undoButtons()[0]!);
+    await flush(6);
+    expect(patches()).toHaveLength(2);
+    expect(patchBody(1).schedule.expectedVersion).toBe(2);
+    expect(patchBody(1).schedule.reminderOffsetsMinutes).toEqual([1440]);
+    expect(storedOffsets[RANGE_ID]).toEqual([1440]);
+  });
+
+  it("G3 a range-only edit, and its Undo, leave the offsets out of the request", async () => {
+    await render();
+    await openDue(RANGE_TITLE);
+    await saveEnd(RANGE_TITLE, sydneyDay(5));
+    expect(patchBody().schedule).not.toHaveProperty("reminderOffsetsMinutes");
+    await click(undoButtons()[0]!);
+    await flush(6);
+    expect(patches()).toHaveLength(2);
+    expect(patchBody(1).schedule).not.toHaveProperty("reminderOffsetsMinutes");
+  });
+
+  it("G4 a conflict shows the latest reminders; Apply reapplies the retained offsets at the latest version", async () => {
+    await render();
+    await openDue(RANGE_TITLE);
+    await click(chip(RANGE_TITLE, "4 hours"));
+    const winner = range(3, startMoment(sydneyDay(1)), endMoment(sydneyDay(3)));
+    patchReply = () => {
+      rows[0]!.schedule = winner; storedOffsets[RANGE_ID] = [60];
+      return { status: 409, body: { error: "conflict", code: "subtask_schedule_version_conflict", current: winner, currentSubtask: { id: RANGE_ID, title: RANGE_TITLE, done: false, position: 0, schedule: winner, reminders: subtaskReminders([60]) } } };
+    };
+    await applyPopup(picker(RANGE_TITLE)!);
+    await flush(6);
+    expect(patches()).toHaveLength(1);
+    const conflict = picker(RANGE_TITLE)!;
+    expect(conflict.textContent).toContain("Latest schedule · v3");
+    expect(conflict.textContent).toContain("Reminders1 hour, Due now");
+    expect(chip(RANGE_TITLE, "4 hours").getAttribute("aria-pressed")).toBe("true");
+    expect(chip(RANGE_TITLE, "1 day").getAttribute("aria-pressed")).toBe("true");
+    patchReply = null;
+    await applyPopup(conflict);
+    await flush(6);
+    expect(patches()).toHaveLength(2);
+    expect(patchBody(1).schedule.expectedVersion).toBe(3);
+    expect(patchBody(1).schedule.reminderOffsetsMinutes).toEqual([1440, 240]);
+  });
+
+  it("G5 a range-only conflict then reapply sends no offsets and shows the latest set", async () => {
+    await render();
+    await openDue(RANGE_TITLE);
+    const winner = range(3, startMoment(sydneyDay(1)), endMoment(sydneyDay(3)));
+    patchReply = () => {
+      rows[0]!.schedule = winner; storedOffsets[RANGE_ID] = [60];
+      return { status: 409, body: { error: "conflict", code: "subtask_schedule_version_conflict", current: winner, currentSubtask: { id: RANGE_ID, title: RANGE_TITLE, done: false, position: 0, schedule: winner, reminders: subtaskReminders([60]) } } };
+    };
+    await saveEnd(RANGE_TITLE, sydneyDay(5));
+    expect(patches()).toHaveLength(1);
+    expect(patchBody().schedule).not.toHaveProperty("reminderOffsetsMinutes");
+    const conflict = picker(RANGE_TITLE)!;
+    expect(chip(RANGE_TITLE, "1 hour").getAttribute("aria-pressed")).toBe("true");
+    expect(chip(RANGE_TITLE, "1 day").getAttribute("aria-pressed")).toBe("false");
+    patchReply = null;
+    await applyPopup(conflict);
+    await flush(6);
+    expect(patches()).toHaveLength(2);
+    expect(patchBody(1).schedule.expectedVersion).toBe(3);
+    expect(patchBody(1).schedule).not.toHaveProperty("reminderOffsetsMinutes");
+    expect(storedOffsets[RANGE_ID]).toEqual([60]);
+  });
+
+  it("G6 a later-page row's conflict adopts the latest reminders too, so Undo after the reapply restores them, not the stale set", async () => {
+    pageTwo = [{ id: PAGE_TWO_ID, title: PAGE_TWO_TITLE, position: 2, canOpenScheduleEditor: true, schedule: range(1, startMoment(sydneyDay(2)), endMoment(sydneyDay(4))) }];
+    await render();
+    await waitFor(() => expect(dueTrigger(PAGE_TWO_TITLE)).not.toBeNull());
+    await openDue(PAGE_TWO_TITLE);
+    await click(chip(PAGE_TWO_TITLE, "4 hours"));
+    const winner = range(2, startMoment(sydneyDay(2)), endMoment(sydneyDay(4)));
+    patchReply = () => {
+      pageTwo[0]!.schedule = winner; storedOffsets[PAGE_TWO_ID] = [60];
+      return { status: 409, body: { error: "conflict", code: "subtask_schedule_version_conflict", current: winner, currentSubtask: { id: PAGE_TWO_ID, title: PAGE_TWO_TITLE, done: false, position: 2, schedule: winner, reminders: subtaskReminders([60]) } } };
+    };
+    await applyPopup(picker(PAGE_TWO_TITLE)!);
+    await flush(6);
+    expect(patches()).toHaveLength(1);
+    patchReply = null;
+    await applyPopup(picker(PAGE_TWO_TITLE)!);
+    await flush(8);
+    expect(patches()).toHaveLength(2);
+    expect(patchBody(1).schedule.expectedVersion).toBe(2);
+    expect(patchBody(1).schedule.reminderOffsetsMinutes).toEqual([1440, 240]);
+    expect(undoButtons()).toHaveLength(1);
+    await click(undoButtons()[0]!);
+    await flush(8);
+    expect(patches()).toHaveLength(3);
+    expect(patchBody(2).schedule.expectedVersion).toBe(3);
+    expect(patchBody(2).schedule.reminderOffsetsMinutes).toEqual([60]);
   });
 });

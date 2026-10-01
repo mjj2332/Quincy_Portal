@@ -21,7 +21,7 @@ import {
 import { eventCalendarFake } from "../testing/event-calendar-fake";
 import { ProductionEventCalendar } from "./ProductionEventCalendar";
 import { Sheet } from "./reui/sheet";
-import { startMoment, endMoment } from "@/testing/subtask-schedule";
+import { startMoment, endMoment, subtaskReminders } from "@/testing/subtask-schedule";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -46,7 +46,7 @@ function rawResponse(stageKey: "editing_autohdr" | "editing", events = true) {
     },
     events: events ? [
       { id: "project-deadline:project", kind: "project_deadline" as const, title: "Project handoff", project: { id: principal, street: "12 Harbour Street", stageKey, checklist: { completed: 3, total: 5 }, delivered: false, archived: false }, timing: { allDay: false as const, start: "2026-08-12T00:00:00.000Z", end: null }, status: { overdue: true, delivered: false, completed: false as const, sameAssigneeOverlap: false as const }, permissions: { canDrag: true, canResize: false as const }, deadlineLocalCivil: "2026-08-12T10:00", deadlineVersion: 3, reminderOffsetsMinutes: [] },
-      { id: "checklist:item", kind: "checklist" as const, title: "Select hero images", project: { id: principal, street: "12 Harbour Street", stageKey, checklist: { completed: 3, total: 5 }, delivered: false, archived: false }, assignees: [{ id: assignee, name: "Maya Editor", roleLabel: "Editor", isExternal: stageKey === "editing", active: true }], otherAssigneeCount: 0, timing: { allDay: true as const, start: "2026-08-12", end: null }, status: { overdue: false, delivered: false, completed: true, sameAssigneeOverlap: false }, schedule: { state: "range" as const, version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: startMoment("2026-08-12"), end: endMoment("2026-08-12"), due: "2026-08-12" }, permissions: { canDrag: true, canResize: false as const, canOpenScheduleEditor: true } },
+      { id: "checklist:item", kind: "checklist" as const, title: "Select hero images", project: { id: principal, street: "12 Harbour Street", stageKey, checklist: { completed: 3, total: 5 }, delivered: false, archived: false }, assignees: [{ id: assignee, name: "Maya Editor", roleLabel: "Editor", isExternal: stageKey === "editing", active: true }], otherAssigneeCount: 0, timing: { allDay: true as const, start: "2026-08-12", end: null }, status: { overdue: false, delivered: false, completed: true, sameAssigneeOverlap: false }, schedule: { state: "range" as const, version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: startMoment("2026-08-12"), end: endMoment("2026-08-12"), due: "2026-08-12" }, reminders: subtaskReminders(), permissions: { canDrag: true, canResize: false as const, canOpenScheduleEditor: true } },
     ] : [],
     filterFacets: { projects: [{ id: principal, street: "12 Harbour Street" }], people: [], myTasksUserId: assignee },
   };

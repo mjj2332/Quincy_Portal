@@ -1,5 +1,5 @@
 import { act } from "react";
-import { presetScheduleDto } from "@/testing/subtask-schedule";
+import { presetScheduleDto, subtaskReminders } from "@/testing/subtask-schedule";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -19,7 +19,7 @@ vi.mock("../lib/confirm", () => ({ confirm: vi.fn(() => Promise.resolve(true)) }
 
 const lateUserId = "77777777-7777-4777-8777-777777777777";
 const projectId = "11111111-1111-4111-8111-111111111111";
-const task = { id: "task-1", title: "Prepare delivery", done: false, position: 1024, assignees: [], assignmentVersion: 0, dueDate: null, createdBy: "u1", createdAt: "2026-08-25T00:00:00.000Z", updatedAt: "2026-08-25T00:00:00.000Z" };
+const task = { reminders: subtaskReminders(), id: "task-1", title: "Prepare delivery", done: false, position: 1024, assignees: [], assignmentVersion: 0, dueDate: null, createdBy: "u1", createdAt: "2026-08-25T00:00:00.000Z", updatedAt: "2026-08-25T00:00:00.000Z" };
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 let queryClient: QueryClient | null = null;
@@ -106,7 +106,7 @@ describe("SubtaskChecklist access-generation boundary", () => {
     const person = { id: "22222222-2222-4222-8222-222222222222", name: "Ada Smith", roleLabel: "Photographer", isExternal: false, active: true };
     const external = {
       id: "33333333-3333-4333-8333-333333333333", title: "Prepare delivery", done: false, position: 1024, assignees: [person], otherAssigneeCount: 2, assignmentVersion: 3, dueDate: null,
-      schedule: presetScheduleDto("2026-09-01", "2026-09-01", 1),
+      schedule: presetScheduleDto("2026-09-01", "2026-09-01", 1), reminders: subtaskReminders(),
       createdBy: person, createdAt: "2026-08-25T00:00:00.000Z", updatedAt: "2026-08-25T00:00:00.000Z",
     };
     apiGetMock.mockImplementation((path: string) => Promise.resolve(path.includes("subtask-assignee-options") ? { candidates: [person] } : { subtasks: [external], projectDefaultRange: { start: { localCivil: "2026-09-01T09:00", fold: 0 }, end: { localCivil: "2026-09-01T17:00", fold: 0 } } }));

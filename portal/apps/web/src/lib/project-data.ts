@@ -1,4 +1,4 @@
-import { isStageKey, subtaskAssigneeOptionsResponseSchema, type CalendarPerson, type ChecklistScheduleDto, type CollectionKind, type EditorFolderAttentionDto, type MonitoredRawFolder, type ProjectDeadlineSchedule, type ProjectDefaultRangeDto, type ProjectMembershipDto, type ProjectMemberRole, type Role } from "@quincy/shared";
+import { isStageKey, subtaskAssigneeOptionsResponseSchema, type CalendarPerson, type ChecklistScheduleDto, type CollectionKind, type EditorFolderAttentionDto, type MonitoredRawFolder, type ProjectDeadlineSchedule, type ProjectDefaultRangeDto, type ProjectMembershipDto, type ProjectMemberRole, type Role, type SubtaskRemindersDto } from "@quincy/shared";
 import { QueryClient, QueryClientContext, useQuery, useQueryClient, type QueryFunctionContext, type QueryKey, type UseQueryResult } from "@tanstack/react-query";
 import { useCallback, useContext, useEffect, useState, useSyncExternalStore } from "react";
 import { ApiError, apiGet } from "./api";
@@ -22,7 +22,9 @@ export type ProjectSubtask = {
   /** External responses only: assignees the viewer is not allowed to see, counted but never named. */
   otherAssigneeCount?: number;
   assignmentVersion: number;
-  dueDate: string | null; schedule: ChecklistScheduleDto; createdBy: string; createdAt: string; updatedAt: string;
+  dueDate: string | null; schedule: ChecklistScheduleDto;
+  /** The reminder set and next reminder (#425). */
+  reminders: SubtaskRemindersDto; createdBy: string; createdAt: string; updatedAt: string;
 };
 type AssetsResponse = { assets: WorkspaceAsset[] };
 

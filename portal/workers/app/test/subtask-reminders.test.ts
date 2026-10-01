@@ -45,18 +45,18 @@ async function occurrencesOf(subtaskId: string): Promise<Occurrence[]> {
 }
 const shape = (rows: Occurrence[]) => rows.map((row) => `v${row.schedule_version} ${row.kind}${row.reminder_offset_minutes || ""} ${row.status}${row.terminal_reason ? `:${row.terminal_reason}` : ""}`);
 
-async function create(title: string, options: { start?: string; end?: string; now?: number; assigneeIds?: string[] } = {}): Promise<{ id: string; version: number }> {
-  const result = await saveProjectSubtask({ env: baseEnv, projectId, principal, now: options.now ?? NOW, operation: { kind: "create", item: { title, assigneeIds: options.assigneeIds ?? [] }, schedule: { state: "range", start: { localCivil: options.start ?? START }, end: { localCivil: options.end ?? END } } } });
+async function create(title: string, options: { start?: string; end?: string; now?: number; assigneeIds?: string[]; offsets?: number[] } = {}): Promise<{ id: string; version: number }> {
+  const result = await saveProjectSubtask({ env: baseEnv, projectId, principal, now: options.now ?? NOW, operation: { kind: "create", item: { title, assigneeIds: options.assigneeIds ?? [], ...(options.offsets ? { reminderOffsetsMinutes: options.offsets } : {}) }, schedule: { state: "range", start: { localCivil: options.start ?? START }, end: { localCivil: options.end ?? END } } } });
   expect(result.outcome).toBe("created");
   if (result.outcome !== "created") throw new Error("fixture");
   return { id: result.item.id, version: result.item.schedule.version };
 }
 
-async function update(subtaskId: string, operation: { itemPatch?: Record<string, unknown>; scheduleRequest?: { expectedVersion: number; end: string; start?: string } }, now = NOW, db: D1Database = baseEnv.DB): Promise<ProjectSubtaskCommandResult> {
+async function update(subtaskId: string, operation: { itemPatch?: Record<string, unknown>; scheduleRequest?: { expectedVersion: number; end: string; start?: string; reminderOffsetsMinutes?: number[] } }, now = NOW, db: D1Database = baseEnv.DB): Promise<ProjectSubtaskCommandResult> {
   const { scheduleRequest, itemPatch } = operation;
   return saveProjectSubtask({
     env: { ...baseEnv, DB: db }, projectId, principal, now,
-    operation: { kind: "update", subtaskId, ...(itemPatch ? { itemPatch } : {}), ...(scheduleRequest ? { scheduleRequest: { expectedVersion: scheduleRequest.expectedVersion, schedule: { state: "range", start: { localCivil: scheduleRequest.start ?? START }, end: { localCivil: scheduleRequest.end } } } } : {}) },
+    operation: { kind: "update", subtaskId, ...(itemPatch ? { itemPatch } : {}), ...(scheduleRequest ? { scheduleRequest: { expectedVersion: scheduleRequest.expectedVersion, schedule: { state: "range", start: { localCivil: scheduleRequest.start ?? START }, end: { localCivil: scheduleRequest.end } }, ...(scheduleRequest.reminderOffsetsMinutes ? { reminderOffsetsMinutes: scheduleRequest.reminderOffsetsMinutes } : {}) } } : {}) },
   });
 }
 
@@ -217,5 +217,101 @@ describe("Subtask reminder occurrences follow the Subtask (#424)", () => {
     expect(await outboxStatus(waiting)).toBe("suppressed");
     expect(await ledgerStatuses(waiting)).toEqual(["in_app:suppressed"]);
     expect(await outboxStatus(leased)).toBe("processing");
+  });
+});
+
+describe("Editing a Subtask's reminders reschedules its pending occurrences (#425)", () => {
+  const pending = async (id: string) => shape((await occurrencesOf(id)).filter((row) => row.status === "pending"));
+  const edit = (id: string, expectedVersion: number, offsets: number[], now = NOW, end = END) => update(id, { scheduleRequest: { expectedVersion, end, reminderOffsetsMinutes: offsets } }, now);
+
+  it("adding an offset supersedes the old version as reminders_changed and fires the new set at the new version", async () => {
+    const { id } = await create("Add an offset");
+    expect((await edit(id, 1, [1440, 60])).outcome).toBe("updated");
+    const rows = await occurrencesOf(id);
+    expect(shape(rows)).toEqual(["v1 advance1440 superseded:reminders_changed", "v1 due_now superseded:reminders_changed", "v2 advance1440 pending", "v2 advance60 pending", "v2 due_now pending"]);
+    expect(rows.filter((row) => row.schedule_version === 2).map((row) => row.fire_at)).toEqual([END_AT - DAY, END_AT - HOUR, END_AT]);
+  });
+
+  it("a removed offset ends superseded and never fires: Due now is always kept", async () => {
+    const { id } = await create("Remove an offset", { offsets: [1440, 60] });
+    expect((await edit(id, 1, [])).outcome).toBe("updated");
+    expect(await pending(id)).toEqual(["v2 due_now pending"]);
+    expect((await occurrencesOf(id)).filter((row) => row.schedule_version === 1).every((row) => row.status === "superseded" && row.terminal_reason === "reminders_changed")).toBe(true);
+  });
+
+  it("an offset that already fired does not fire again at the new version, and its unsent delivery is suppressed", async () => {
+    const { id } = await create("Fired already");
+    const advance = (await occurrencesOf(id)).find((row) => row.kind === "advance")!;
+    await database.DB.prepare("UPDATE project_subtask_reminder_occurrences SET status = 'fired', fired_at = ? WHERE id = ?").bind(advance.fire_at, advance.id).run();
+    const waiting = await insertDelivery(id, advance.id, 1, "queued", [["in_app", "pending"], ["email", "pending"]]);
+    const leased = await insertDelivery(id, advance.id, 1, "processing", [["in_app", "processing"]], editorId);
+    expect((await edit(id, 1, [1440, 60], advance.fire_at + HOUR)).outcome).toBe("updated");
+    // The fired 1-day row stays as history; the new version carries only what is still ahead.
+    expect(shape(await occurrencesOf(id))).toEqual(["v1 advance1440 fired", "v1 due_now superseded:reminders_changed", "v2 advance60 pending", "v2 due_now pending"]);
+    // Matches the Deadline: a fired but undelivered old-version reminder is dropped, an in-flight one is left to the delivery re-check.
+    expect(await outboxStatus(waiting)).toBe("suppressed");
+    expect(await ledgerStatuses(waiting)).toEqual(["email:suppressed", "in_app:suppressed"]);
+    expect(await outboxStatus(leased)).toBe("processing");
+  });
+
+  it("a pending occurrence the scan has not claimed yet is lost when the edit lands after its fire time (as for the Deadline)", async () => {
+    const { id } = await create("Overdue pending");
+    expect((await edit(id, 1, [1440, 60], END_AT - DAY + HOUR)).outcome).toBe("updated");
+    expect(shape(await occurrencesOf(id))).toEqual(["v1 advance1440 superseded:reminders_changed", "v1 due_now superseded:reminders_changed", "v2 advance60 pending", "v2 due_now pending"]);
+  });
+
+  it("a range change together with the reminders is one schedule_replaced bump to a single new version", async () => {
+    const { id } = await create("Both at once");
+    expect((await edit(id, 1, [60], NOW, "2099-06-14T17:00")).outcome).toBe("updated");
+    const rows = await occurrencesOf(id);
+    expect(shape(rows)).toEqual(["v1 advance1440 superseded:schedule_replaced", "v1 due_now superseded:schedule_replaced", "v2 advance60 pending", "v2 due_now pending"]);
+    expect(rows.find((row) => row.schedule_version === 2 && row.kind === "advance")!.fire_at).toBe(Date.parse("2099-06-14T17:00:00+10:00") - HOUR);
+  });
+
+  it("the same offsets, or none sent, leave every occurrence exactly as it was", async () => {
+    const { id } = await create("Unchanged", { offsets: [1440, 60] });
+    const before = await occurrencesOf(id);
+    expect((await edit(id, 1, [60, 1440])).outcome).toBe("noop");
+    expect((await update(id, { scheduleRequest: { expectedVersion: 1, end: END } })).outcome).toBe("noop");
+    expect(await occurrencesOf(id)).toEqual(before);
+  });
+
+  it("a reminders edit on a done Subtask schedules nothing, and un-completing uses the new set", async () => {
+    const { id } = await create("Done then edited");
+    expect((await update(id, { itemPatch: { done: true } })).outcome).toBe("updated");
+    expect((await edit(id, 1, [60])).outcome).toBe("updated");
+    expect(await pending(id)).toEqual([]);
+    expect((await update(id, { itemPatch: { done: false } })).outcome).toBe("updated");
+    expect(await pending(id)).toEqual(["v2 advance60 pending", "v2 due_now pending"]);
+  });
+
+  it("completing and editing the reminders in one save leaves nothing pending", async () => {
+    const { id } = await create("Complete and edit");
+    expect((await update(id, { itemPatch: { done: true }, scheduleRequest: { expectedVersion: 1, end: END, reminderOffsetsMinutes: [60] } })).outcome).toBe("updated");
+    expect(await pending(id)).toEqual([]);
+  });
+
+  it("a reminders edit that loses the compare-and-swap writes no occurrence and leaves the stored set alone", async () => {
+    const { id } = await create("Lost reminders race");
+    const before = await occurrencesOf(id);
+    const racing = new Proxy(baseEnv.DB, {
+      get(target, property, receiver) {
+        if (property === "batch") return async (statements: D1PreparedStatement[]) => { await database.DB.prepare("UPDATE project_subtasks SET title = 'Someone else' WHERE id = ?").bind(id).run(); return target.batch(statements); };
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as unknown as D1Database;
+    const lost = await update(id, { scheduleRequest: { expectedVersion: 1, end: END, reminderOffsetsMinutes: [60] } }, NOW, racing);
+    expect(lost.outcome).not.toBe("updated");
+    expect(await occurrencesOf(id)).toEqual(before);
+    expect(await database.DB.prepare("SELECT reminder_offsets_json AS offsets, schedule_version AS v FROM project_subtasks WHERE id = ?").bind(id).first()).toEqual({ offsets: "[1440]", v: 1 });
+  });
+
+  it("an assignee-only or title-only edit after a reminders edit touches nothing", async () => {
+    const { id } = await create("Stable after edit");
+    expect((await edit(id, 1, [60])).outcome).toBe("updated");
+    const before = await occurrencesOf(id);
+    expect((await update(id, { itemPatch: { title: "Renamed after" } })).outcome).toBe("updated");
+    expect(await occurrencesOf(id)).toEqual(before);
   });
 });

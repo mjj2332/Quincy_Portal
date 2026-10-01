@@ -14,7 +14,7 @@
  * `ProductionCalendar.tsx` imported these from here instead of declaring them; no runtime
  * change, since these were always type-only.
  */
-import type { CalendarPerson, ChecklistScheduleDto } from "@quincy/shared";
+import type { CalendarPerson, ChecklistScheduleDto, SubtaskRemindersDto } from "@quincy/shared";
 
 export type SaveResponse = {
   changed: boolean;
@@ -40,6 +40,8 @@ export type ChecklistMutationResult = {
   position: number;
   schedule: ChecklistScheduleDto;
   scheduleVersion: number;
+  /** The Subtask's reminders (#425); absent when the wire carries none, so the source's are kept. */
+  reminders?: SubtaskRemindersDto;
 };
 
 export type CalendarDropInfo = {

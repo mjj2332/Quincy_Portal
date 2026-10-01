@@ -128,3 +128,8 @@ export function parseTypedTime(text: string): { ok: true; time: string } | { ok:
   if (hour > 23 || minute > 59) return { ok: false };
   return { ok: true, time: `${pad2(hour)}:${pad2(minute)}` };
 }
+
+/** Whether two reminder offset sets hold the same offsets, whatever their order. Shared by both popups' "saved line is stale" rule. */
+export function sameReminderOffsets(a: readonly number[], b: readonly number[]): boolean {
+  return a.length === b.length && a.every((offset) => b.includes(offset));
+}

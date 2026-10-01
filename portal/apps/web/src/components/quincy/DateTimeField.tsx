@@ -74,6 +74,7 @@ export type DateTimeFieldProps =
       openOn?: DateTimeRangePopupProps["openOn"];
       seed?: DateTimeRangePopupProps["seed"];
       seedKey?: DateTimeRangePopupProps["seedKey"];
+      reminders?: DateTimeRangePopupProps["reminders"];
       facts?: DateTimeRangePopupProps["facts"];
       feedback?: DateTimeRangePopupProps["feedback"];
       /** Commit both ends. Rejecting keeps the popup open on the same draft. */
@@ -203,7 +204,7 @@ export function DateTimeField(props: DateTimeFieldProps) {
           {props.variant === "date"
             ? <DatePopup label={label} value={props.value} clearable={clearable} onApply={props.onApply} onClose={() => setOpen(false)} />
             : props.variant === "range"
-              ? <DateTimeRangePopup label={label} value={props.value} projectDefault={props.projectDefault} openOn={props.openOn} seed={props.seed} seedKey={props.seedKey} facts={props.facts} feedback={props.feedback} onApply={props.onApply} onClose={() => setOpen(false)} />
+              ? <DateTimeRangePopup label={label} value={props.value} projectDefault={props.projectDefault} openOn={props.openOn} seed={props.seed} seedKey={props.seedKey} reminders={props.reminders} facts={props.facts} feedback={props.feedback} onApply={props.onApply} onClose={() => setOpen(false)} />
               : <DateTimePopup label={label} value={props.value} clearable={clearable} reminders={props.reminders} seed={props.seed} seedKey={props.seedKey} facts={props.facts} feedback={props.feedback} busy={props.busy} onApply={props.onApply} onClose={() => setOpen(false)} />}
         </DateTimePopoverContent>
       </Popover>

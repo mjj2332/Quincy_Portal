@@ -8,6 +8,10 @@
  * Its popup's Apply sets this DRAFT; the shell's footer ("Save schedule") is the only commit, which
  * calls `submit` from `useChecklistScheduleDraft` (normalised locally first, so the server's
  * validation is only ever the second line).
+ *
+ * #425 — the same popup carries the Subtask's reminder set (`RemindersStrip` inside `DateTimeRangePopup`). Its Apply puts the offsets in
+ * this DRAFT beside the range, and "Save schedule" sends them only when they differ from the event's stored set, so a range-only save
+ * never clobbers a set changed elsewhere.
  */
 import { foldToDisambiguation } from "../lib/fold-disambiguation";
 import { useId, useState, type JSX } from "react";
@@ -20,6 +24,7 @@ import {
   type RangeChecklistScheduleInput,
 } from "@quincy/shared";
 import type { ProjectDefaultRangeDto } from "@quincy/shared";
+import { sameReminderOffsets } from "../lib/date-time-field";
 import { DateTimeField, type DateTimeRangeApply } from "./quincy/DateTimeField";
 
 // FIELD_BOX (shared by NativeSelect / reui/input) already carries the border, radius, field
@@ -50,7 +55,8 @@ const EDITOR_ERROR =
   "[font:400_12px/1.4_var(--font-sans)]";
 
 export type ChecklistScheduleEditorEvent = ChecklistCalendarEventDto;
-export type ChecklistScheduleDraft = DateTimeRangeApply;
+/** The range half of a popup Apply; the offsets live beside it (`ChecklistScheduleDraftState.offsets`). */
+export type ChecklistScheduleDraft = Pick<DateTimeRangeApply, "start" | "end">;
 
 export type ProductionCalendarScheduleEditorError = { code: string; message: string; endpoint?: ChecklistScheduleValidationError["endpoint"]; choices?: ChecklistScheduleValidationError["choices"] };
 
@@ -87,15 +93,20 @@ function errorText(error: ProductionCalendarScheduleEditorError): string {
 
 export type ChecklistScheduleDraftInput = {
   event: ChecklistScheduleEditorEvent;
-  onSubmit: (schedule: RangeChecklistScheduleInput) => void;
+  /** `reminderOffsetsMinutes` only when the draft set differs from the event's stored one (#425). */
+  onSubmit: (schedule: RangeChecklistScheduleInput, reminderOffsetsMinutes?: number[]) => void;
   initialSchedule?: RangeChecklistScheduleInput;
+  /** The offsets a failed save attempted, so the reopened editor keeps them (#425). */
+  initialReminderOffsets?: number[];
   validationError?: ProductionCalendarScheduleEditorError;
 };
 
 export type ChecklistScheduleDraftState = {
   draft: ChecklistScheduleDraft;
+  /** The draft reminder set (#425). */
+  offsets: number[];
   /** Set by the range popup's Apply; nothing is saved until `submit`. */
-  setDraft: (next: ChecklistScheduleDraft) => void;
+  setDraft: (next: DateTimeRangeApply) => void;
   error: ProductionCalendarScheduleEditorError | undefined;
   /** Validates locally; calls `onSubmit` only when the draft normalises. */
   submit: () => void;
@@ -104,12 +115,14 @@ export type ChecklistScheduleDraftState = {
 };
 
 /** The editor's draft state and its submit, shared by both shells. */
-export function useChecklistScheduleDraft({ event, onSubmit, initialSchedule, validationError }: ChecklistScheduleDraftInput): ChecklistScheduleDraftState {
+export function useChecklistScheduleDraft({ event, onSubmit, initialSchedule, initialReminderOffsets, validationError }: ChecklistScheduleDraftInput): ChecklistScheduleDraftState {
   const [draft, setDraftState] = useState<ChecklistScheduleDraft>(() => initialSchedule ? draftFromInput(initialSchedule) : scheduleDraft(event.schedule));
+  const [offsets, setOffsets] = useState<number[]>(() => [...(initialReminderOffsets ?? event.reminders.offsetsMinutes)]);
   const [error, setError] = useState<ProductionCalendarScheduleEditorError | undefined>(validationError);
 
-  const setDraft = (next: ChecklistScheduleDraft) => {
-    setDraftState(next);
+  const setDraft = (next: DateTimeRangeApply) => {
+    setDraftState({ start: next.start, end: next.end });
+    if (next.reminderOffsetsMinutes) setOffsets(next.reminderOffsetsMinutes);
     setError(undefined);
   };
 
@@ -121,10 +134,11 @@ export function useChecklistScheduleDraft({ event, onSubmit, initialSchedule, va
       return;
     }
     setError(undefined);
-    onSubmit(input);
+    if (sameReminderOffsets(offsets, event.reminders.offsetsMinutes)) onSubmit(input);
+    else onSubmit(input, offsets);
   };
 
-  return { draft, setDraft, error, submit, event };
+  return { draft, offsets, setDraft, error, submit, event };
 }
 
 export type ProductionCalendarScheduleEditorFieldsProps = {
@@ -140,8 +154,12 @@ const asRange = (value: ChecklistScheduleDraft) => ({
 
 /** The editor body: intro, the range field (a Start | End popup), error. */
 export function ProductionCalendarScheduleEditorFields({ state, projectDefault = null }: ProductionCalendarScheduleEditorFieldsProps): JSX.Element {
-  const { draft, setDraft, error } = state;
+  const { draft, offsets, setDraft, error, event } = state;
   const id = useId();
+  const saved = event.reminders.offsetsMinutes;
+  // Reopened after an Apply that changed the set, the popup starts from the draft, not from the stored set. The popup mounts fresh
+  // on every open, so the seed is read then; no `seedKey` (a changing key would remount the draft mid-Apply and skip its close).
+  const seed = sameReminderOffsets(offsets, saved) ? undefined : { ...draft, reminderOffsetsMinutes: offsets };
   return <div className={EDITOR}>
     <p className={EDITOR_INTRO}>Sydney civil time is saved exactly as entered. Every end is a date and a time.</p>
     <DateTimeField
@@ -152,6 +170,8 @@ export function ProductionCalendarScheduleEditorFields({ state, projectDefault =
       projectDefault={projectDefault}
       positionerClassName="z-[calc(var(--z-dialog)+1)]"
       popupAlign="end"
+      reminders={{ offsets: saved, next: event.reminders.nextOccurrence }}
+      seed={seed}
       onApply={setDraft}
     />
     {error && <div className={EDITOR_ERROR} role="alert">{errorText(error)}</div>}

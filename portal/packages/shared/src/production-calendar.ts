@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { subtaskRemindersDtoSchema, type SubtaskRemindersDto } from "./subtask-reminders";
 import {
   normalizeChecklistSchedule,
   type ChecklistScheduleDto,
@@ -415,6 +416,8 @@ export type ChecklistCalendarEventBase<TStage extends StageTransportKey = StageT
 
 export type ChecklistCalendarEventDto<TStage extends StageTransportKey = StageTransportKey> = ChecklistCalendarEventBase<TStage> & {
   schedule: ChecklistScheduleDto;
+  /** The Subtask's reminder set and next reminder (#425), for the schedule editor. */
+  reminders: SubtaskRemindersDto;
   permissions: ChecklistCalendarPermissions;
 };
 
@@ -530,7 +533,7 @@ function checklistEventBaseSchema<TStage extends StageTransportKey>(stageSchema:
 
 export function calendarEventSchemaFor<TStage extends StageTransportKey>(stageSchema: z.ZodType<TStage>): z.ZodType<CalendarEventDto<TStage>> {
   const base = checklistEventBaseSchema(stageSchema);
-  const range = base.extend({ schedule: rangeChecklistScheduleSchema, permissions: z.object({ canDrag: z.boolean(), canResize: z.boolean(), canOpenScheduleEditor: z.boolean() }).strict() }).strict();
+  const range = base.extend({ schedule: rangeChecklistScheduleSchema, reminders: subtaskRemindersDtoSchema, permissions: z.object({ canDrag: z.boolean(), canResize: z.boolean(), canOpenScheduleEditor: z.boolean() }).strict() }).strict();
   return z.union([projectDeadlineEventSchema(stageSchema), range]);
 }
 

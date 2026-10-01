@@ -80,7 +80,7 @@ function projectForDeadlineId(baseline: GanttBaseline, id: string): GanttProject
 export function adoptGanttChecklistRow(row: GanttChecklistRowDto, result: ChecklistMutationResult): GanttChecklistRowDto {
   if (row.id !== result.id) return row;
   let next = row;
-  if (result.scheduleVersion > row.schedule.version) next = { ...next, schedule: result.schedule, done: result.done };
+  if (result.scheduleVersion > row.schedule.version) next = { ...next, schedule: result.schedule, done: result.done, ...(result.reminders ? { reminders: result.reminders } : {}) };
   // #372: the assignee list has its own version, so it is adopted on its own rule: a result carrying no list
   // (a response that predates #368) or an equal-or-older version never rolls a fresher row back.
   if (result.assignees && result.assignmentVersion !== undefined && result.assignmentVersion > row.assignmentVersion) {

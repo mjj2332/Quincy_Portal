@@ -1,4 +1,4 @@
-import { buildProjectActivityStatements, buildSubtaskReminderMaterialization, buildSubtaskReminderSuppression, createDb, schema } from "@quincy/db";
+import { buildProjectActivityStatements, buildSubtaskReminderMaterialization, buildSubtaskReminderSuppression, createDb, readSubtaskReminderState, schema } from "@quincy/db";
 import { and, eq } from "drizzle-orm";
 import {
   CHECKLIST_SCHEDULE_ZONE,
@@ -8,6 +8,11 @@ import {
   type ProjectDefaultRangeDto,
   effectiveDeadlineLocalCivil,
   normalizeChecklistSchedule,
+  normalizeSubtaskReminderOffsets,
+  SUBTASK_REMINDER_DEFAULT_OFFSETS,
+  DEFAULT_SUBTASK_REMINDERS,
+  SUBTASK_REMINDER_MAX_ADVANCE_OFFSETS,
+  type SubtaskRemindersDto,
   type ChecklistScheduleDto,
   type ChecklistScheduleStorage,
   type RangeChecklistScheduleInput,
@@ -40,7 +45,8 @@ import { publishOutboxDetached } from "../lib/server-timing";
 
 export const POSITION_STEP = 1024;
 
-export type CreateItemInput = { title: string; assigneeIds: string[] };
+/** `reminderOffsetsMinutes` is the advance set (#425); absent means the default "1 day before". The command validates it, whatever the caller. */
+export type CreateItemInput = { title: string; assigneeIds: string[]; reminderOffsetsMinutes?: number[] };
 /** `assignees` is the delta. */
 export type ItemPatch = { title?: string; done?: boolean; assignees?: SubtaskAssigneeDelta };
 
@@ -53,6 +59,8 @@ export type ProjectSubtaskDto = {
   assignmentVersion: number;
   dueDate: string | null;
   schedule: ChecklistScheduleDto;
+  /** The reminder offset set and the next reminder (#425). One set per Subtask, shared by its assignees. */
+  reminders: SubtaskRemindersDto;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -82,7 +90,7 @@ export type ProjectSubtaskCommandResult =
   | { outcome: "invalid_request"; status: 400; code: string; message: string; details?: RequestDetails }
   | { outcome: "forbidden" }
   | { outcome: "not_found"; target: "project" | "subtask" }
-  | { outcome: "schedule_conflict"; current: ChecklistScheduleDto; currentSubtask?: ProjectSubtaskDto }
+  | { outcome: "schedule_conflict"; current: ChecklistScheduleDto; currentSubtask: ProjectSubtaskDto }
   | { outcome: "item_conflict"; current: ChecklistScheduleDto; currentSubtask: ProjectSubtaskDto }
   | { outcome: "assignment_conflict"; currentSubtask: ProjectSubtaskDto };
 
@@ -125,7 +133,7 @@ export function assigneePerson(assignee: Pick<HydratedAssignee, "id" | "name" | 
   return { id: assignee.id, name: assignee.name, roleLabel: ROLE_LABELS[assignee.role], isExternal: assignee.role === "external_editor", active: assignee.active };
 }
 
-export function serializeProjectSubtask(row: SubtaskRow, assignees: HydratedAssignee[]): ProjectSubtaskDto {
+export function serializeProjectSubtask(row: SubtaskRow, assignees: HydratedAssignee[], reminders: SubtaskRemindersDto): ProjectSubtaskDto {
   const schedule = serializeSubtaskSchedule(row.subtask.id, scheduleStorage(row.subtask));
   return {
     id: row.subtask.id,
@@ -136,10 +144,38 @@ export function serializeProjectSubtask(row: SubtaskRow, assignees: HydratedAssi
     assignmentVersion: row.subtask.assignmentVersion,
     dueDate: row.subtask.dueDate,
     schedule,
+    reminders,
     createdBy: row.subtask.createdBy,
     createdAt: row.subtask.createdAt.toISOString(),
     updatedAt: row.subtask.updatedAt.toISOString(),
   };
+}
+
+/** The reminders of Subtasks as the API returns them: the stored set and the next pending occurrence of the current schedule version. */
+export async function readSubtaskReminders(db: D1Database, subtaskIds: readonly string[], now: number = Date.now()): Promise<Map<string, SubtaskRemindersDto>> {
+  return readSubtaskReminderState(db, subtaskIds, now);
+}
+
+/** One Subtask's reminders. A row that vanished mid-request reads as the default set rather than failing the response. */
+export async function readSubtaskRemindersOf(db: D1Database, subtaskId: string, now: number = Date.now()): Promise<SubtaskRemindersDto> {
+  return (await readSubtaskReminderState(db, [subtaskId], now)).get(subtaskId) ?? DEFAULT_SUBTASK_REMINDERS;
+}
+
+/** The raw array is bounded before normalising, so a huge request is refused without work. Eight advance offsets is the real limit. */
+const RAW_REMINDER_OFFSETS_MAX = 64;
+
+function parseReminderOffsets(value: unknown, field: string): number[] | ProjectSubtaskCommandResult {
+  if (Array.isArray(value) && value.length > RAW_REMINDER_OFFSETS_MAX) return invalidRequest("subtask_reminders_invalid", `Choose no more than ${SUBTASK_REMINDER_MAX_ADVANCE_OFFSETS} advance reminders.`, { field });
+  try { return normalizeSubtaskReminderOffsets(value); }
+  catch (error) { return invalidRequest("subtask_reminders_invalid", error instanceof Error ? error.message : "Invalid reminders.", { field }); }
+}
+
+function storedReminderOffsets(json: string): number[] {
+  try {
+    const parsed: unknown = JSON.parse(json);
+    if (Array.isArray(parsed) && parsed.every((value) => typeof value === "number" && Number.isSafeInteger(value))) return (parsed as number[]).slice().sort((a, b) => b - a);
+  } catch { /* the column CHECK guarantees a JSON array */ }
+  return [...SUBTASK_REMINDER_DEFAULT_OFFSETS];
 }
 
 /** `field` is the request path of the offending value, so a client can mark the input: `schedule.end.localCivil` on create, `schedule.schedule.end.localCivil` on update. */
@@ -279,6 +315,8 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
     const requested = operation.schedule ?? projectDefaultRange(project);
     // Ranges only (ADR 0011). The route's schema enforces this too; this guard covers direct callers.
     if (requested.state !== "range") return invalidRequest("subtask_schedule_range_required", "A Subtask needs a start and an end.");
+    const offsets = operation.item.reminderOffsetsMinutes === undefined ? [...SUBTASK_REMINDER_DEFAULT_OFFSETS] : parseReminderOffsets(operation.item.reminderOffsetsMinutes, "reminderOffsetsMinutes");
+    if (!Array.isArray(offsets)) return offsets;
     const assigneeIds = [...new Set(operation.item.assigneeIds ?? [])];
     if (assigneeIds.length) {
       const eligible = await eligibleToAdd(env, principal, projectId, assigneeIds);
@@ -292,10 +330,10 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
     const activity = activityFor(id, projectId, principal.id, now, operation.item.title, "created");
     const bundle = buildProjectActivityStatements({ db: env.DB, intent: activity, winnerAuditId: auditId, createdAt: now });
     const canonicalSchedule = normalized.value;
-    const insert = env.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(id, projectId, operation.item.title, (last?.position ?? 0) + POSITION_STEP, assigneeIds.length ? 1 : 0, canonicalSchedule.dueDate, canonicalSchedule.scheduleStartKind, canonicalSchedule.scheduleStartCivil, canonicalSchedule.scheduleStartAt, canonicalSchedule.scheduleStartUtcOffsetMinutes, canonicalSchedule.scheduleStartFold, canonicalSchedule.scheduleEndKind, canonicalSchedule.scheduleEndAt, canonicalSchedule.scheduleEndUtcOffsetMinutes, canonicalSchedule.scheduleEndFold, canonicalSchedule.scheduleZone, canonicalSchedule.scheduleVersion, principal.id, now, now);
+    const insert = env.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, reminder_offsets_json, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(id, projectId, operation.item.title, (last?.position ?? 0) + POSITION_STEP, assigneeIds.length ? 1 : 0, canonicalSchedule.dueDate, canonicalSchedule.scheduleStartKind, canonicalSchedule.scheduleStartCivil, canonicalSchedule.scheduleStartAt, canonicalSchedule.scheduleStartUtcOffsetMinutes, canonicalSchedule.scheduleStartFold, canonicalSchedule.scheduleEndKind, canonicalSchedule.scheduleEndAt, canonicalSchedule.scheduleEndUtcOffsetMinutes, canonicalSchedule.scheduleEndFold, canonicalSchedule.scheduleZone, canonicalSchedule.scheduleVersion, JSON.stringify(offsets), principal.id, now, now);
     const results = await env.DB.batch([
       insert,
-      env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project_subtask.create', 'project_subtask', ?, ?, ? WHERE changes() = 1").bind(auditId, principal.id, id, auditMeta(principal, { scheduleState: canonicalSchedule.state, scheduleVersion: canonicalSchedule.scheduleVersion }), now),
+      env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project_subtask.create', 'project_subtask', ?, ?, ? WHERE changes() = 1").bind(auditId, principal.id, id, auditMeta(principal, { scheduleState: canonicalSchedule.state, scheduleVersion: canonicalSchedule.scheduleVersion, reminderOffsetsMinutes: offsets }), now),
       ...bundle.statements,
       // Last, so the positional reads above stay valid (#364).
       ...(assigneeIds.length ? [relationInsertMany(env.DB, id, JSON.stringify(assigneeIds), 1, now, auditId)] : []),
@@ -306,7 +344,7 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
     if (!item) throw new Error("Subtask could not be created");
     return {
       outcome: "created",
-      item: serializeProjectSubtask(item, await hydrateSubtaskAssignees(env.DB, id)),
+      item: serializeProjectSubtask(item, await hydrateSubtaskAssignees(env.DB, id), await readSubtaskRemindersOf(env.DB, id, now)),
       broadPublicationIds: publicationIds(results, 2, bundle),
       assignmentNotices: assigneeIds.filter((assigneeId) => assigneeId !== principal.id).map((assigneeId) => ({ projectId, actorId: principal.id, assigneeId, subtaskId: id, assignmentVersion: 1 })),
     };
@@ -321,15 +359,25 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
 
   let requested: RangeChecklistScheduleInput | null = null;
   let expectedVersion: number | null = null;
+  let requestedOffsets: number[] | null = null;
   if (operation.scheduleRequest) {
     if (!Number.isSafeInteger(operation.scheduleRequest.expectedVersion) || operation.scheduleRequest.expectedVersion < 0) return invalidRequest("subtask_schedule_invalid_version", "Schedule version must be a nonnegative integer.");
     // Ranges only (ADR 0011). The route's schema enforces this too; this guard covers direct callers.
     if (operation.scheduleRequest.schedule.state !== "range") return invalidRequest("subtask_schedule_range_required", "A Subtask needs a start and an end.");
     requested = operation.scheduleRequest.schedule;
     expectedVersion = operation.scheduleRequest.expectedVersion;
+    // Absent keeps the stored set: a drag or an undo sends only the range and must not reset a custom one.
+    if (operation.scheduleRequest.reminderOffsetsMinutes !== undefined) {
+      const parsedOffsets = parseReminderOffsets(operation.scheduleRequest.reminderOffsetsMinutes, "schedule.reminderOffsetsMinutes");
+      if (!Array.isArray(parsedOffsets)) return parsedOffsets;
+      requestedOffsets = parsedOffsets;
+    }
   }
+  const storedOffsets = storedReminderOffsets(existing.subtask.reminderOffsetsJson);
+  const remindersChanged = requestedOffsets !== null && JSON.stringify(requestedOffsets) !== JSON.stringify(storedOffsets);
 
-  if (requested && expectedVersion !== existingStorage.scheduleVersion) return { outcome: "schedule_conflict", current: currentDto, ...(operation.itemPatch ? { currentSubtask: serializeProjectSubtask(existing, currentAssignees) } : {}) };
+  // The version check comes first for the reminders too: a stale save loses even when its offsets match what is stored now.
+  if (requested && expectedVersion !== existingStorage.scheduleVersion) return { outcome: "schedule_conflict", current: currentDto, currentSubtask: serializeProjectSubtask(existing, currentAssignees, await readSubtaskRemindersOf(env.DB, operation.subtaskId, now)) };
   let normalized: NormalizedChecklistSchedule | null = null;
   let scheduleChanged = false;
   let startChanged = false;
@@ -355,7 +403,7 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
 
   const delta: SubtaskAssigneeDelta | null = patch.assignees ?? null;
   if (delta) {
-    if (delta.expectedVersion !== existing.subtask.assignmentVersion) return { outcome: "assignment_conflict", currentSubtask: serializeProjectSubtask(existing, currentAssignees) };
+    if (delta.expectedVersion !== existing.subtask.assignmentVersion) return { outcome: "assignment_conflict", currentSubtask: serializeProjectSubtask(existing, currentAssignees, await readSubtaskRemindersOf(env.DB, operation.subtaskId, now)) };
     const currentIds = new Set(currentAssignees.map((assignee) => assignee.id));
     const hidden = principal.role === "external_editor" ? new Set(currentAssignees.filter((assignee) => !assignee.onTeam).map((assignee) => assignee.id)) : new Set<string>();
     // An external can never touch a person hidden from them, so a hidden id reads as "not an assignee".
@@ -372,7 +420,7 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
     ...(doneChanged ? ["completion" as const] : []),
     ...(assignmentChanged ? ["assignee" as const] : []),
   ];
-  if (!scheduleChanged && mappedChanges.length === 0) return { outcome: "noop", item: serializeProjectSubtask(existing, currentAssignees), broadPublicationIds: [], assignmentNotices: [] };
+  if (!scheduleChanged && !remindersChanged && mappedChanges.length === 0) return { outcome: "noop", item: serializeProjectSubtask(existing, currentAssignees, await readSubtaskRemindersOf(env.DB, operation.subtaskId, now)), broadPublicationIds: [], assignmentNotices: [] };
 
   const setParts: string[] = [];
   const bindings: unknown[] = [];
@@ -384,13 +432,19 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
     bindings.push(normalized.dueDate, normalized.scheduleStartKind, normalized.scheduleStartCivil, normalized.scheduleStartAt, normalized.scheduleStartUtcOffsetMinutes, normalized.scheduleStartFold, normalized.scheduleEndKind, normalized.scheduleEndAt, normalized.scheduleEndUtcOffsetMinutes, normalized.scheduleEndFold, normalized.scheduleZone, normalized.scheduleVersion);
     if (endChanged) setParts.push("due_reminder_sent_at = NULL");
   }
+  if (remindersChanged && requestedOffsets) {
+    setParts.push("reminder_offsets_json = ?"); bindings.push(JSON.stringify(requestedOffsets));
+    // The reminder set is part of the schedule version (#425): occurrences are keyed by it, and a concurrent editor's save conflicts on it.
+    // A range change in the same request already carries the one bump.
+    if (!scheduleChanged) { setParts.push("schedule_version = ?"); bindings.push(existingStorage.scheduleVersion + 1); }
+  }
   setParts.push("updated_at = ?"); bindings.push(now);
   const auditId = newId();
   const nextTitle = titleChanged ? patch.title! : existing.subtask.title;
-  const auditFields = [...mappedChanges, ...(scheduleChanged ? ["schedule"] : [])];
+  const auditFields = [...mappedChanges, ...(scheduleChanged ? ["schedule"] : []), ...(remindersChanged ? ["reminders"] : [])];
   const nextScheduleState = normalized?.state ?? currentDto.state;
-  const nextScheduleVersion = normalized?.scheduleVersion ?? existingStorage.scheduleVersion;
-  const auditDetails = { fields: auditFields, scheduleState: nextScheduleState, scheduleVersion: nextScheduleVersion, ...(delta ? { assigneesAdded: delta.add, assigneesRemoved: delta.remove } : {}) };
+  const nextScheduleVersion = normalized?.scheduleVersion ?? (remindersChanged ? existingStorage.scheduleVersion + 1 : existingStorage.scheduleVersion);
+  const auditDetails = { fields: auditFields, scheduleState: nextScheduleState, scheduleVersion: nextScheduleVersion, ...(delta ? { assigneesAdded: delta.add, assigneesRemoved: delta.remove } : {}), ...(remindersChanged ? { reminders: { before: storedOffsets, after: requestedOffsets } } : {}) };
   const statements: D1PreparedStatement[] = [env.DB.prepare(`UPDATE project_subtasks SET ${setParts.join(", ")} WHERE id = ? AND project_id = ? AND title IS ? AND done IS ? AND due_date IS ? AND assignment_version IS ? AND schedule_start_kind IS ? AND schedule_start_civil IS ? AND schedule_start_at IS ? AND schedule_start_utc_offset_minutes IS ? AND schedule_start_fold IS ? AND schedule_end_kind IS ? AND schedule_end_at IS ? AND schedule_end_utc_offset_minutes IS ? AND schedule_end_fold IS ? AND schedule_zone IS ? AND schedule_version IS ? RETURNING id, assignment_version AS assignmentVersion`).bind(...bindings, operation.subtaskId, projectId, existing.subtask.title, existing.subtask.done ? 1 : 0, existing.subtask.dueDate, existing.subtask.assignmentVersion, existing.subtask.scheduleStartKind, existing.subtask.scheduleStartCivil, existing.subtask.scheduleStartAt, existing.subtask.scheduleStartUtcOffsetMinutes, existing.subtask.scheduleStartFold, existing.subtask.scheduleEndKind, existing.subtask.scheduleEndAt, existing.subtask.scheduleEndUtcOffsetMinutes, existing.subtask.scheduleEndFold, existing.subtask.scheduleZone, existing.subtask.scheduleVersion)];
   statements.push(env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project_subtask.update', 'project_subtask', ?, ?, ? WHERE changes() = 1").bind(auditId, principal.id, operation.subtaskId, auditMeta(principal, auditDetails), now));
   const bundles: Array<{ bundle: ReturnType<typeof buildProjectActivityStatements>; offset: number }> = [];
@@ -413,9 +467,9 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
   const gate = { db: env.DB, now, gateAuditId: auditId } as const;
   const subtaskScope = { kind: "subtask", projectId, subtaskId: operation.subtaskId } as const;
   if (doneChanged && nextDone) statements.push(...buildSubtaskReminderSuppression({ ...gate, scope: subtaskScope, reason: "subtask_completed" }).statements);
-  if (scheduleChanged) statements.push(...buildSubtaskReminderSuppression({ ...gate, scope: subtaskScope, reason: "schedule_replaced" }).statements);
+  if (scheduleChanged || remindersChanged) statements.push(...buildSubtaskReminderSuppression({ ...gate, scope: subtaskScope, reason: scheduleChanged ? "schedule_replaced" : "reminders_changed" }).statements);
   // Un-completing recomputes the future ones, and a new schedule version needs its own set. Fired rows of the same version block repeats.
-  if ((doneChanged && !nextDone) || scheduleChanged) statements.push(...buildSubtaskReminderMaterialization({ ...gate, scope: { kind: "subtask", subtaskId: operation.subtaskId }, createdBy: principal.id }).statements);
+  if ((doneChanged && !nextDone) || scheduleChanged || remindersChanged) statements.push(...buildSubtaskReminderMaterialization({ ...gate, scope: { kind: "subtask", subtaskId: operation.subtaskId }, createdBy: principal.id }).statements);
   const results = await env.DB.batch(statements);
   const winner = rowsFromD1<{ id: string; assignmentVersion: number }>(results[0])[0];
   if (!winner) {
@@ -423,19 +477,20 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
     if (!current) return { outcome: "not_found", target: "subtask" };
     const authoritativeAssignees = await hydrateSubtaskAssignees(env.DB, operation.subtaskId);
     // A delta whose version moved lost to another assignee change.
-    if (delta && current.subtask.assignmentVersion !== existing.subtask.assignmentVersion) return { outcome: "assignment_conflict", currentSubtask: serializeProjectSubtask(current, authoritativeAssignees) };
+    const authoritativeReminders = await readSubtaskRemindersOf(env.DB, operation.subtaskId, now);
+    if (delta && current.subtask.assignmentVersion !== existing.subtask.assignmentVersion) return { outcome: "assignment_conflict", currentSubtask: serializeProjectSubtask(current, authoritativeAssignees, authoritativeReminders) };
     const authoritativeStorage = scheduleStorage(current.subtask);
     const authoritativeSchedule = serializeSubtaskSchedule(current.subtask.id, authoritativeStorage);
-    if (scheduleBearing && (!rawScheduleEqual(authoritativeStorage, existingStorage) || authoritativeStorage.scheduleVersion !== existingStorage.scheduleVersion)) return { outcome: "schedule_conflict", current: authoritativeSchedule, ...(operation.itemPatch ? { currentSubtask: serializeProjectSubtask(current, authoritativeAssignees) } : {}) };
+    if (scheduleBearing && (!rawScheduleEqual(authoritativeStorage, existingStorage) || authoritativeStorage.scheduleVersion !== existingStorage.scheduleVersion)) return { outcome: "schedule_conflict", current: authoritativeSchedule, currentSubtask: serializeProjectSubtask(current, authoritativeAssignees, authoritativeReminders) };
     // A delta that lost to any other concurrent edit must not report success it did not have.
-    if (scheduleBearing || delta) return { outcome: "item_conflict", current: authoritativeSchedule, currentSubtask: serializeProjectSubtask(current, authoritativeAssignees) };
-    return { outcome: "noop", item: serializeProjectSubtask(current, authoritativeAssignees), broadPublicationIds: [], assignmentNotices: [] };
+    if (scheduleBearing || delta) return { outcome: "item_conflict", current: authoritativeSchedule, currentSubtask: serializeProjectSubtask(current, authoritativeAssignees, authoritativeReminders) };
+    return { outcome: "noop", item: serializeProjectSubtask(current, authoritativeAssignees, authoritativeReminders), broadPublicationIds: [], assignmentNotices: [] };
   }
   const item = await subtaskQuery(db, projectId, operation.subtaskId).get();
   if (!item) throw new Error("Subtask could not be reread after update");
   return {
     outcome: "updated",
-    item: serializeProjectSubtask(item, await hydrateSubtaskAssignees(env.DB, operation.subtaskId)),
+    item: serializeProjectSubtask(item, await hydrateSubtaskAssignees(env.DB, operation.subtaskId), await readSubtaskRemindersOf(env.DB, operation.subtaskId, now)),
     broadPublicationIds: bundles.flatMap(({ bundle, offset }) => publicationIds(results, offset, bundle)),
     // Only the newly added people, and never the actor. Removal notifies nobody.
     assignmentNotices: (delta?.add ?? []).filter((assigneeId) => assigneeId !== principal.id).map((assigneeId) => ({ projectId, actorId: principal.id, assigneeId, subtaskId: operation.subtaskId, assignmentVersion: winner.assignmentVersion })),

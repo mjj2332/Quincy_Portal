@@ -1,3 +1,4 @@
+import { z } from "zod";
 import {
   normalizeReminderOffsets,
   PROJECT_DEADLINE_MAX_ADVANCE_OFFSETS,
@@ -59,8 +60,23 @@ export type SubtaskReminderOutboxPayload = {
   };
 };
 
-/** What `readSubtaskReminderState` returns for one Subtask (#425 reads it to show the next reminder). */
-export type SubtaskReminderState = {
+/**
+ * The reminders a Subtask carries on the wire (#425): the stored advance offsets (latest first; "Due now" is implied and never listed)
+ * and the next pending occurrence of the current schedule version, in the Deadline's `nextOccurrence` shape so `NextReminder` reads it unchanged.
+ */
+export type SubtaskRemindersDto = {
   offsetsMinutes: number[];
-  nextReminder: { fireAt: number; kind: SubtaskReminderKind; offsetMinutes: number } | null;
+  nextOccurrence: null | { kind: SubtaskReminderKind; offsetMinutes: number; firesAt: string };
 };
+
+/** A Subtask whose row vanished between a read and its serialisation: the default set and no next reminder. */
+export const DEFAULT_SUBTASK_REMINDERS: SubtaskRemindersDto = { offsetsMinutes: [...SUBTASK_REMINDER_DEFAULT_OFFSETS], nextOccurrence: null };
+
+/** What `readSubtaskReminderState` returns for one Subtask. */
+export type SubtaskReminderState = SubtaskRemindersDto;
+
+const iso = z.string().min(1).max(128);
+export const subtaskRemindersDtoSchema = z.object({
+  offsetsMinutes: z.array(z.number().int().positive()).max(SUBTASK_REMINDER_MAX_ADVANCE_OFFSETS),
+  nextOccurrence: z.object({ kind: z.enum(["advance", "due_now"]), offsetMinutes: z.number().int().nonnegative(), firesAt: iso }).strict().nullable(),
+}).strict();

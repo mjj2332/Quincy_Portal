@@ -30,12 +30,15 @@ import {
   type ProductionCalendarRangeResponse,
   type Role,
   type StageKey,
+  DEFAULT_SUBTASK_REMINDERS,
+  type SubtaskRemindersDto,
 } from "@quincy/shared";
 import { requireCapability } from "../middleware/capability";
 import { terminalRoute } from "../lib/terminal-route";
 import { projectSearchSql } from "../lib/project-search";
 import { authorizedProjectsBaseCte, dashboardPeopleCte, deadlineOverdueSql, deadlineRangeSql, parseReminderOffsets, shootRangeSql } from "../lib/production-scope-sql";
 import { serializeSubtaskSchedule } from "../lib/subtask-schedule";
+import { readSubtaskReminders } from "../lib/project-subtasks";
 import { assigneesForViewer, parseAssigneesJson, subtaskAssigneesJsonSql } from "../lib/subtask-assignees";
 import type { AppEnv } from "../env";
 
@@ -630,7 +633,7 @@ function projectDeadlineEvent(row: CalendarSqlRow, role: CalendarRole, parsed: P
   };
 }
 
-function checklistEvent(row: CalendarSqlRow, role: CalendarRole, parsed: ParsedCalendarRequest): CalendarEventDto | null {
+function checklistEvent(row: CalendarSqlRow, role: CalendarRole, parsed: ParsedCalendarRequest, reminders: SubtaskRemindersDto): CalendarEventDto | null {
   if (row.subtask_id === null || row.subtask_title === null) return null;
   const project = projectContext(row, role);
   // Throws (a 500) on storage that is not a valid range: see lib/subtask-schedule.ts.
@@ -651,6 +654,7 @@ function checklistEvent(row: CalendarSqlRow, role: CalendarRole, parsed: ParsedC
     timing,
     status: { overdue: checklistOverdue(schedule, done, parsed.now), delivered: project.delivered, completed: done, sameAssigneeOverlap: false },
     schedule,
+    reminders,
     permissions: { canDrag: collaboration, canResize: collaboration, canOpenScheduleEditor: collaboration },
   };
 }
@@ -694,12 +698,12 @@ function facetPerson(row: CalendarFacetRow): CalendarPerson | null {
   return { id: row.person_id, name: row.person_name, roleLabel: ROLE_LABELS[role] ?? row.person_role, isExternal: role === "external_editor", active: Boolean(row.person_active) };
 }
 
-function responseFromRows(role: CalendarRole, parsed: ParsedCalendarRequest, rows: CalendarSqlRow[], facets: CalendarFacetRow[]): ProductionCalendarRangeResponse {
+function responseFromRows(role: CalendarRole, parsed: ParsedCalendarRequest, rows: CalendarSqlRow[], facets: CalendarFacetRow[], remindersBySubtask: ReadonlyMap<string, SubtaskRemindersDto>): ProductionCalendarRangeResponse {
   const events: CalendarEventDto[] = [];
   for (const row of rows) {
     if (row.row_kind === "project") events.push(projectDeadlineEvent(row, role, parsed));
     else if (row.row_kind === "checklist_candidate") {
-      const event = checklistEvent(row, role, parsed);
+      const event = checklistEvent(row, role, parsed, remindersBySubtask.get(row.subtask_id ?? "") ?? DEFAULT_SUBTASK_REMINDERS);
       if (event) events.push(event);
     }
   }
@@ -750,7 +754,8 @@ async function productionCalendarHandlerImpl(c: Context<AppEnv>): Promise<Respon
   const density = rows.find((row) => row.row_kind === "density");
   if (density) return c.json({ error: "This Calendar view spans too many projects and checklist items to load; narrow the filters.", code: "calendar_range_too_dense", count: Number(density.scheduled_total), max: PRODUCTION_CALENDAR_MAX_SCHEDULED_EVENTS, refinement: "Refine the date range, Stage, Editor, layer, or search filters." }, 422);
   const second = await c.env.DB.prepare(productionCalendarFacetsSql(role)).bind(...params).all<CalendarFacetRow>();
-  const assembled = responseFromRows(role, parsed, rows, second.results ?? []);
+  const remindersBySubtask = await readSubtaskReminders(c.env.DB, rows.filter((row) => row.row_kind === "checklist_candidate" && row.subtask_id !== null).map((row) => row.subtask_id!), parsed.now);
+  const assembled = responseFromRows(role, parsed, rows, second.results ?? [], remindersBySubtask);
   // #222: the key exists ONLY when requested — an absent param must never serialize it, even as null.
   const response: ProductionCalendarRangeResponse = parsed.includeBounds
     ? { ...assembled, projectBounds: projectBoundsFor(assembled, (await c.env.DB.prepare(productionCalendarBoundsSql(role)).bind(...params).all<CalendarBoundsRow>()).results ?? []) }

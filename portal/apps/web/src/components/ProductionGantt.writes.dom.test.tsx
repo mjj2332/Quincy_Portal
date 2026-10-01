@@ -38,7 +38,7 @@ import { clearToasts } from "../lib/toast-store";
 import { ProjectQueryRuntime } from "../lib/project-query-sync";
 import { ToastViewport } from "./quincy/ToastViewport";
 import { ProductionGantt } from "./ProductionGantt";
-import { endMoment, startMoment } from "@/testing/subtask-schedule";
+import { endMoment, startMoment, subtaskReminders } from "@/testing/subtask-schedule";
 
 vi.mock("../lib/stages", () => ({
   presentationStages: (stages: unknown[]) => stages,
@@ -163,7 +163,7 @@ function ganttResponse() {
         team: [{ id: "33333333-3333-4333-8333-333333333333", name: "Eli Editor", roleLabel: "Editor", isExternal: false, active: true, roleOnProject: "editor" }],
         permissions: { canEditDeadline, canEditChildren: firstCanEditChildren, canEditTeam: true },
         children: {
-          rows: rows.filter((row) => !omittedFromGet.has(row.id)).map((row) => ({ id: row.id, projectId: PROJECT_ID, title: row.title, done: false, position: row.position, assignees: [], otherAssigneeCount: 0, assignmentVersion: 0, schedule: row.schedule, permissions: row.permissions })),
+          rows: rows.filter((row) => !omittedFromGet.has(row.id)).map((row) => ({ id: row.id, projectId: PROJECT_ID, title: row.title, done: false, position: row.position, assignees: [], otherAssigneeCount: 0, assignmentVersion: 0, schedule: row.schedule, reminders: subtaskReminders(), permissions: row.permissions })),
           total: truncatedTotal ?? rows.length,
           returned: rows.length,
           truncated: truncatedTotal !== null,
@@ -245,7 +245,7 @@ function echoCreate(body: { title: string }, projectId: string): Reply {
   if (projectId === PROJECT_ID) {
     rows.push({ id: CREATED_ID, title: body.title, position: 4, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true }, schedule });
   }
-  return { status: 201, body: { id: CREATED_ID, title: body.title, done: false, assignmentVersion: 1, position: 4, dueDate: schedule.due, schedule, createdBy: "user-1", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" } };
+  return { status: 201, body: { id: CREATED_ID, title: body.title, done: false, assignmentVersion: 1, position: 4, dueDate: schedule.due, schedule, reminders: subtaskReminders(), createdBy: "user-1", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" } };
 }
 
 function posts(): Request[] {
@@ -1495,7 +1495,7 @@ describe("ProductionGantt — Add task row (#344)", () => {
         body: {
           projectId: PROJECT_ID,
           children: {
-            rows: pageTwo.map((row) => ({ id: row.id, projectId: PROJECT_ID, title: row.title, done: false, position: row.position, assignees: [], otherAssigneeCount: 0, assignmentVersion: 0, schedule: { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: startMoment(sydneyDay(4)), end: endMoment(sydneyDay(6)), due: sydneyDay(6) }, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true } })),
+            rows: pageTwo.map((row) => ({ id: row.id, projectId: PROJECT_ID, title: row.title, done: false, position: row.position, assignees: [], otherAssigneeCount: 0, assignmentVersion: 0, schedule: { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: startMoment(sydneyDay(4)), end: endMoment(sydneyDay(6)), due: sydneyDay(6) }, reminders: subtaskReminders(), permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true } })),
             total: truncatedTotal!,
             returned: pageTwo.length,
             truncated: false,

@@ -3,6 +3,7 @@ import { PRODUCTION_CALENDAR_ZONE, type ChecklistCalendarEventDto, type ProjectC
 import { applyUndo, buildChecklistUndoTicket, buildDeadlineUndoTicket } from "./scheduling-undo";
 import { projectDeadlinePlaceholder } from "./scheduling-policy";
 import { startMoment, endMoment } from "@/testing/subtask-schedule";
+import { subtaskReminders } from "@/testing/subtask-schedule";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -23,7 +24,7 @@ function checklistEvent(version: number, start: string, end: string): ChecklistC
     timing: { allDay: true, start, end },
     status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false },
     schedule,
-    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true },
+    reminders: subtaskReminders(), permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true },
   };
 }
 
@@ -53,6 +54,17 @@ describe("buildChecklistUndoTicket", () => {
       expectedVersion: 5,
       request: { expectedVersion: 5, schedule: { state: "range", start: { localCivil: "2026-08-27T09:00", disambiguation: "earlier" }, end: { localCivil: "2026-08-27T17:00", disambiguation: "earlier" } } },
     });
+  });
+
+  it("restores the prior reminder offsets only when the forward edit changed them (#425)", () => {
+    const before = checklistEvent(4, "2026-08-27", "2026-08-27");
+    const base = { id: before.id, title: before.title, done: false, assignees: null, position: 0, schedule: { ...before.schedule, version: 5 }, scheduleVersion: 5 };
+    const changed = buildChecklistUndoTicket(before, { ...base, reminders: subtaskReminders([1440, 240]) });
+    expect(changed?.kind === "checklist" && changed.request.reminderOffsetsMinutes).toEqual([1440]);
+    const same = buildChecklistUndoTicket(before, { ...base, reminders: subtaskReminders([1440]) });
+    expect(same?.kind === "checklist" && same.request).not.toHaveProperty("reminderOffsetsMinutes");
+    const absent = buildChecklistUndoTicket(before, base);
+    expect(absent?.kind === "checklist" && absent.request).not.toHaveProperty("reminderOffsetsMinutes");
   });
 
   it("returns null when the forward edit changed nothing", () => {
