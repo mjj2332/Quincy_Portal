@@ -67,7 +67,7 @@ describe("Checklist reminders editing (#425)", () => {
     await click(scheduleTrigger(host, "Schedule for Call client"));
     const conflict = popupOf("Schedule for Call client");
     expect(conflict.textContent).toContain("Latest schedule · v2");
-    expect(conflict.textContent).toContain("Reminders: 1 hour, Due now");
+    expect(conflict.textContent).toContain("Reminders1 hour, Due now");
     await click(chip(conflict, "Use latest schedule (discard draft)"));
     await click(scheduleTrigger(host, "Schedule for Call client"));
     const reopened = popupOf("Schedule for Call client");

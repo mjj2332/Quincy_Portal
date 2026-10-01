@@ -654,7 +654,7 @@ describe("ProductionGantt — Subtask Due cell reminders (#425)", () => {
     expect(patches()).toHaveLength(1);
     const conflict = picker(RANGE_TITLE)!;
     expect(conflict.textContent).toContain("Latest schedule · v3");
-    expect(conflict.textContent).toContain("Reminders: 1 hour, Due now");
+    expect(conflict.textContent).toContain("Reminders1 hour, Due now");
     expect(chip(RANGE_TITLE, "4 hours").getAttribute("aria-pressed")).toBe("true");
     expect(chip(RANGE_TITLE, "1 day").getAttribute("aria-pressed")).toBe("true");
     patchReply = null;
