@@ -44,6 +44,7 @@ vi.mock("../lib/api", async (importOriginal) => ({ ...await importOriginal<typeo
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { id: "user-1", role: authState.role } } }) }));
 vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ role: authState.role, capabilities: ["moveProjectStage"], can: (capability: string) => capability === "moveProjectStage" }) }));
 vi.mock("../lib/stages", () => ({
+  presentationStages: (stages: readonly unknown[]) => stages,
   useStages: () => ({
     stages: [{ key: "raw_review" as const, label: "RAW review", displayOrder: 1, active: true }],
     presentationStageKey: (key: string) => key,
@@ -480,7 +481,7 @@ describe("Dashboard never accepts placeholder rows as the new committed query's 
     // accepted key's rows survive this (#232: Dashboard renders an accepted snapshot, not the
     // cache) -- an UN-accepted key, with no cached data of its own left either, shows the error
     // state instead, exactly as test (i) shows for a key that was never accepted at all.
-    const smithKey = dashboardProjectsKey("user-1", "admin", 0, false, "smith");
+    const smithKey = dashboardProjectsKey("user-1", "admin", 0, { archived: "hide" }, "smith");
     await act(async () => {
       // Not awaited -- `resetQueries()`'s own promise resolves only once the refetch it triggers
       // settles, and this test holds that refetch open deliberately (below).

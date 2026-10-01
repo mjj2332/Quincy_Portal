@@ -14,6 +14,7 @@ vi.mock("../lib/api", async (importOriginal) => ({ ...await importOriginal<typeo
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { id: "user-1", role: "admin" } } }) }));
 vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ role: "admin", capabilities: [], can: () => false }) }));
 vi.mock("../lib/stages", () => ({
+  presentationStages: (stages: readonly unknown[]) => stages,
   useStages: () => ({
     stages: [{ key: "raw_review" as const, label: "RAW review", displayOrder: 1, active: true }],
     presentationStageKey: (key: string) => key,

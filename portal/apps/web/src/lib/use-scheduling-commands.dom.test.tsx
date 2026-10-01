@@ -38,10 +38,10 @@ const assigneeId = "22222222-2222-4222-8222-222222222222";
 // `calendarChecklistEntityId` exactly like the real worker serializer does, so a regression in
 // the parse/re-mint boundary shows up as a fixture mismatch, not a silently honest-looking id.
 const subtaskId = "33333333-4333-4333-8333-333333333333";
-const project = { id: projectId, street: "12 Harbour Street", stageKey: "editing_autohdr" as const, checklist: { completed: 1, total: 3 }, delivered: false };
+const project = { id: projectId, street: "12 Harbour Street", stageKey: "editing_autohdr" as const, checklist: { completed: 1, total: 3 }, delivered: false, archived: false };
 const person = { id: assigneeId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true };
 const identity: DashboardIdentity = { principalId: projectId, role: "admin", authorizationEpoch: 0 };
-const calendar: DashboardCalendarState = { view: "calendar", date: "2026-08-12", subview: "month", layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false };
+const calendar: DashboardCalendarState = { view: "calendar", date: "2026-08-12", subview: "month", layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false };
 
 function timedEndpoint(localCivil: string) {
   const resolved = resolveSydneyCivilMinute(localCivil);
@@ -84,7 +84,7 @@ function mutationBody(event: ChecklistCalendarEventDto, schedule: ChecklistSched
 
 function response(range: { events: ProductionCalendarRangeResponse["events"] }): ProductionCalendarRangeResponse {
   const raw = {
-    range: { start: "2026-08-10", end: "2026-08-24", date: "2026-08-12", subview: "month" as const, zone: PRODUCTION_CALENDAR_ZONE, appliedFilters: { layers: ["project", "checklist"] as ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false } },
+    range: { start: "2026-08-10", end: "2026-08-24", date: "2026-08-12", subview: "month" as const, zone: PRODUCTION_CALENDAR_ZONE, appliedFilters: { layers: ["project", "checklist"] as ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false } },
     events: range.events,
     filterFacets: { projects: [{ id: projectId, street: project.street }], people: [person], myTasksUserId: assigneeId },
   };
@@ -261,7 +261,7 @@ describe("useSchedulingCommands submitProposal", () => {
   // after A's invalid drag, B is accepted and B's cancelled confirmation names B, never A.
   it("after A's invalid drag, B's cancelled-confirmation announcement names B and never A", async () => {
     const eventA = deadlineEvent("2026-08-27T09:00", 8);
-    const projectB = { id: "33333333-3333-4333-8333-333333333333", street: "44 Bridge Road", stageKey: "editing_autohdr" as const, checklist: { completed: 0, total: 2 }, delivered: false };
+    const projectB = { id: "33333333-3333-4333-8333-333333333333", street: "44 Bridge Road", stageKey: "editing_autohdr" as const, checklist: { completed: 0, total: 2 }, delivered: false, archived: false };
     const eventB: ProjectDeadlineCalendarEventDto = { ...deadlineEvent("2026-09-03T09:00", 8), id: `project-deadline:${projectB.id}`, project: projectB };
     await render(response({ events: [] }));
 

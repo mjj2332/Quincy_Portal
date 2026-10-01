@@ -87,6 +87,7 @@ function projectRow(overrides: {
     agentName: null,
     stageKey: "editing_autohdr",
     delivered: false,
+    archived: false,
     shootDate: SHOOT_DATE,
     shootDateCivil: SHOOT_DATE,
     createdAt: SHOOT_DATE + "T00:00:00.000Z",
@@ -104,7 +105,7 @@ function listResponse(project: GanttProjectRowDto) {
   return adminProductionGanttResponseSchema.parse({
     scope: "active",
     zone: PRODUCTION_GANTT_ZONE,
-    appliedFilters: { q: "", editorIds: [], stageKeys: [], includeDelivered: false, includeCompletedChecklist: false },
+    appliedFilters: { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide", includeDelivered: false, includeCompletedChecklist: false },
     projects: [project],
     page: { limit: 100, returned: 1, nextCursor: null },
     density: { matchedProjects: 1, matchedRows: 1, drawCap: 2000, tooManyToDraw: false },

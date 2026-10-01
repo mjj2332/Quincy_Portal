@@ -107,28 +107,28 @@ describe("ganttLegendEntries", () => {
 
 describe("Gantt filter mapping", () => {
   it("reads only the route's facet (never its search), defaults when absent", () => {
-    expect(ganttFiltersFromRoute(null)).toEqual({ editorIds: [], stageKeys: [], delivered: false, completed: false });
+    expect(ganttFiltersFromRoute(null)).toEqual({ editorIds: [], stageKeys: [], priorities: [], archived: "hide" as const, delivered: false, completed: false });
     const searched = parseStaffLocation("/?view=timeline&q=smith");
     if (searched.kind !== "dashboard" || !("dashboardView" in searched) || searched.dashboardView !== "timeline") throw new Error("expected a Gantt route");
     // The route's `search` is the Dashboard search box's, not a facet: it never appears here.
-    expect(ganttFiltersFromRoute(searched)).toEqual({ editorIds: [], stageKeys: [], delivered: false, completed: false });
+    expect(ganttFiltersFromRoute(searched)).toEqual({ editorIds: [], stageKeys: [], priorities: [], archived: "hide" as const, delivered: false, completed: false });
     const route = parseStaffLocation("/?view=timeline&stages=raw_review&completed=1");
     if (route.kind !== "dashboard" || !("dashboardView" in route) || route.dashboardView !== "timeline") throw new Error("expected a Gantt route");
-    expect(ganttFiltersFromRoute(route)).toEqual({ editorIds: [], stageKeys: ["raw_review"], delivered: false, completed: true });
+    expect(ganttFiltersFromRoute(route)).toEqual({ editorIds: [], stageKeys: ["raw_review"], priorities: [], archived: "hide" as const, delivered: false, completed: true });
   });
 
   it("writes an all-default facet as absent and canonicalises stage order", () => {
     expect(ganttFacetFor(DEFAULT_GANTT_FACET_FILTERS)).toBeUndefined();
-    expect(ganttFacetFor({ editorIds: [], stageKeys: ["delivered", "awaiting_raw"], delivered: false, completed: false })).toEqual({ stageKeys: ["awaiting_raw", "delivered"], delivered: false, completed: false, editorIds: [] });
+    expect(ganttFacetFor({ editorIds: [], stageKeys: ["delivered", "awaiting_raw"], priorities: [], archived: "hide" as const, delivered: false, completed: false })).toEqual({ stageKeys: ["awaiting_raw", "delivered"], priorities: [], archived: "hide" as const, delivered: false, completed: false, editorIds: [] });
     expect(staffPathFor(ganttRouteFor(DEFAULT_GANTT_FACET_FILTERS))).toBe("/?view=timeline");
-    expect(staffPathFor(ganttRouteFor({ editorIds: [], stageKeys: ["raw_review"], delivered: false, completed: true }, "smith"))).toBe("/?view=timeline&stages=raw_review&completed=1&q=smith");
+    expect(staffPathFor(ganttRouteFor({ editorIds: [], stageKeys: ["raw_review"], priorities: [], archived: "hide" as const, delivered: false, completed: true }, "smith"))).toBe("/?view=timeline&stages=raw_review&completed=1&q=smith");
   });
 
   it("carries editors through route -> request -> route, sorted (#274)", () => {
     const route = parseStaffLocation("/?view=timeline&editors=22222222-2222-4222-8222-222222222222%2C11111111-1111-4111-8111-111111111111");
     if (route.kind !== "dashboard" || !("dashboardView" in route) || route.dashboardView !== "timeline") throw new Error("expected a Gantt route");
     expect(ganttFiltersFromRoute(route).editorIds).toEqual(["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"]);
-    expect(ganttFacetFor({ editorIds: ["22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111"], stageKeys: [], delivered: false, completed: false })).toEqual({ stageKeys: [], delivered: false, completed: false, editorIds: ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"] });
+    expect(ganttFacetFor({ editorIds: ["22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111"], stageKeys: [], priorities: [], archived: "hide" as const, delivered: false, completed: false })).toEqual({ stageKeys: [], priorities: [], archived: "hide" as const, delivered: false, completed: false, editorIds: ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"] });
   });
 
   it("round-trips route -> request -> route", () => {
@@ -142,14 +142,14 @@ describe("Gantt filter mapping", () => {
 });
 
 describe("Gantt filters bar mapping (#255)", () => {
-  /** Every facet the Gantt URL can hold: all stage subsets x delivered x completed. */
+  const E1 = "11111111-1111-4111-8111-111111111111";
+  const E2 = "22222222-2222-4222-8222-222222222222";
+  const facetOf = (over: Partial<ProductionGanttFacetFilters> = {}): ProductionGanttFacetFilters => ({ ...DEFAULT_GANTT_FACET_FILTERS, ...over });
+
+  /** Every facet the bar can write: the bar owns Editor and Show only (Stage moved to the shared Filter, #428). */
   function everyFacet(): ProductionGanttFacetFilters[] {
     const facets: ProductionGanttFacetFilters[] = [];
-    const keys = [...STAGE_PRESENTATION_KEYS];
-    for (let mask = 0; mask < 1 << keys.length; mask += 1) {
-      const stageKeys = keys.filter((_, index) => mask & (1 << index));
-      for (const delivered of [false, true]) for (const completed of [false, true]) facets.push({ editorIds: [], stageKeys, delivered, completed });
-    }
+    for (const editorIds of [[], [E1], [E1, E2]]) for (const delivered of [false, true]) for (const completed of [false, true]) facets.push(facetOf({ editorIds, delivered, completed }));
     return facets;
   }
 
@@ -159,105 +159,112 @@ describe("Gantt filters bar mapping (#255)", () => {
 
   const editorRule = (value: unknown, extra: Record<string, unknown> = {}): FilterNode<unknown> => ({ id: "e", type: "rule", path: ["editor"], operator: "is_any_of", value, ...extra });
 
-  it("round-trips an Editor rule, sorted, beside Stage and Show (#274)", () => {
-    const facet: ProductionGanttFacetFilters = { editorIds: ["22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111"], stageKeys: ["raw_review"], delivered: false, completed: true };
+  it("round-trips an Editor rule, sorted, beside Show (#274); Stage is not a bar field any more (#428)", () => {
+    const facet = facetOf({ editorIds: [E2, E1], completed: true });
     const query = ganttFacetToQuery(facet);
-    expect(query.rules.map((rule) => (rule.type === "rule" ? rule.path[0] : "group"))).toEqual(["stage", "show", "editor"]);
-    expect(query.rules[2]).toEqual({ id: GANTT_FILTER_RULE_ID.editor, type: "rule", path: ["editor"], operator: "is_any_of", value: ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"] });
-    expect(queryToGanttFacet(query)).toEqual({ ...facet, editorIds: ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"] });
+    expect(query.rules.map((rule) => (rule.type === "rule" ? rule.path[0] : "group"))).toEqual(["show", "editor"]);
+    expect(query.rules[1]).toEqual({ id: GANTT_FILTER_RULE_ID.editor, type: "rule", path: ["editor"], operator: "is_any_of", value: [E1, E2] });
+    expect(queryToGanttFacet(query)).toEqual({ ...facet, editorIds: [E1, E2] });
+  });
+
+  it("never draws the shared Filter's facets as chips, and carries them through a read untouched (#428)", () => {
+    const shared = facetOf({ stageKeys: ["raw_review"], priorities: ["5", "none"], archived: "include", completed: true });
+    expect(ganttFacetToQuery(shared).rules.map((rule) => (rule.type === "rule" ? rule.path[0] : "group"))).toEqual(["show"]);
+    expect(queryToGanttFacet(ganttFacetToQuery(shared), { stageKeys: ["raw_review"], priorities: ["5", "none"], archived: "include" })).toEqual(shared);
+    // Without a carrier the shared fields read as the defaults.
+    expect(queryToGanttFacet(ganttFacetToQuery(shared))).toEqual({ ...DEFAULT_GANTT_FACET_FILTERS, completed: true });
+    // A Stage rule is not a bar rule: a query holding one is not something the bar can write.
+    expect(queryToGanttFacet(root([stageRule(["editing"])]))).toBeNull();
   });
 
   it("reads any lowercase UUID as an editor value (a stale id stays readable) and refuses anything else (#274)", () => {
     const stale = "33333333-3333-4333-8333-333333333333";
     expect(queryToGanttFacet(root([editorRule([stale])]))?.editorIds).toEqual([stale]);
     expect(queryToGanttFacet(root([editorRule(["not-a-uuid"])]))).toBeNull();
-    expect(queryToGanttFacet(root([editorRule(["11111111-1111-4111-8111-111111111111".toUpperCase().replace(/1/g, "A")])]))).toBeNull();
-    expect(queryToGanttFacet(root([editorRule(["11111111-1111-4111-8111-111111111111"], { operator: "is_not_any_of" })]))).toBeNull();
-    expect(queryToGanttFacet(root([editorRule(["11111111-1111-4111-8111-111111111111"]), editorRule(["22222222-2222-4222-8222-222222222222"])]))).toBeNull();
-    expect(queryToGanttFacet(root([editorRule(["11111111-1111-4111-8111-111111111111"], { operator: "" })]))).toEqual(DEFAULT_GANTT_FACET_FILTERS);
+    expect(queryToGanttFacet(root([editorRule([E1.toUpperCase().replace(/1/g, "A")])]))).toBeNull();
+    expect(queryToGanttFacet(root([editorRule([E1], { operator: "is_not_any_of" })]))).toBeNull();
+    expect(queryToGanttFacet(root([editorRule([E1]), editorRule([E2])]))).toBeNull();
+    expect(queryToGanttFacet(root([editorRule([E1], { operator: "" })]))).toEqual(DEFAULT_GANTT_FACET_FILTERS);
   });
 
-  it("round-trips every facet (all stage subsets x delivered x completed) through the query", () => {
+  it("round-trips every facet (editors x delivered x completed) through the query", () => {
     const facets = everyFacet();
-    expect(facets).toHaveLength((1 << STAGE_PRESENTATION_KEYS.length) * 4);
+    expect(facets).toHaveLength(3 * 4);
     for (const facet of facets) expect(queryToGanttFacet(ganttFacetToQuery(facet)), JSON.stringify(facet)).toEqual(facet);
   });
 
-  it("writes a flat and-root with a rule only for each non-default facet, stages in canonical order", () => {
+  it("writes a flat and-root with a rule only for each non-default facet", () => {
     expect(ganttFacetToQuery(DEFAULT_GANTT_FACET_FILTERS)).toEqual({ id: GANTT_FILTER_ROOT_ID, type: "group", combinator: "and", rules: [] });
-    expect(ganttFacetToQuery({ editorIds: [], stageKeys: ["delivered", "awaiting_raw"], delivered: false, completed: true })).toEqual({
+    expect(ganttFacetToQuery(facetOf({ completed: true }))).toEqual({
       id: GANTT_FILTER_ROOT_ID,
       type: "group",
       combinator: "and",
-      rules: [
-        { id: "gantt-stage", type: "rule", path: ["stage"], operator: "is_any_of", value: ["awaiting_raw", "delivered"] },
-        { id: "gantt-show", type: "rule", path: ["show"], operator: "includes", value: ["completed"] },
-      ],
+      rules: [{ id: "gantt-show", type: "rule", path: ["show"], operator: "includes", value: ["completed"] }],
     });
-    expect(ganttFacetToQuery({ editorIds: [], stageKeys: [], delivered: true, completed: true }).rules).toEqual([
+    expect(ganttFacetToQuery(facetOf({ delivered: true, completed: true })).rules).toEqual([
       { id: "gantt-show", type: "rule", path: ["show"], operator: "includes", value: ["delivered", "completed"] },
     ]);
   });
 
   it("gives the same rule ids every time (stable across re-seeds)", () => {
-    const facet: ProductionGanttFacetFilters = { editorIds: [], stageKeys: ["editing"], delivered: true, completed: false };
+    const facet = facetOf({ editorIds: [E1], delivered: true });
     const first = ganttFacetToQuery(facet);
     const second = ganttFacetToQuery({ ...facet });
     expect(first.id).toBe(second.id);
-    expect(first.rules.map((rule) => rule.id)).toEqual(["gantt-stage", "gantt-show"]);
-    expect(second.rules.map((rule) => rule.id)).toEqual(["gantt-stage", "gantt-show"]);
+    expect(first.rules.map((rule) => rule.id)).toEqual(["gantt-show", "gantt-editor"]);
+    expect(second.rules.map((rule) => rule.id)).toEqual(["gantt-show", "gantt-editor"]);
   });
 
   it("reads unfinished and empty rules as the default", () => {
     expect(queryToGanttFacet(root([]))).toEqual(DEFAULT_GANTT_FACET_FILTERS);
-    expect(queryToGanttFacet(root([stageRule(undefined, { operator: "" })]))).toEqual(DEFAULT_GANTT_FACET_FILTERS);
-    expect(queryToGanttFacet(root([stageRule(["editing"], { operator: "" })]))).toEqual(DEFAULT_GANTT_FACET_FILTERS);
-    expect(queryToGanttFacet(root([stageRule(undefined)]))).toEqual(DEFAULT_GANTT_FACET_FILTERS);
-    expect(queryToGanttFacet(root([stageRule([])]))).toEqual(DEFAULT_GANTT_FACET_FILTERS);
-    expect(queryToGanttFacet(root([showRule([]), stageRule(undefined, { operator: "" })]))).toEqual(DEFAULT_GANTT_FACET_FILTERS);
-    // An unfinished Show chip beside a finished Stage chip leaves the stage facet standing.
-    expect(queryToGanttFacet(root([stageRule(["raw_review"]), showRule(undefined, { operator: "" })]))).toEqual({ editorIds: [], stageKeys: ["raw_review"], delivered: false, completed: false });
+    expect(queryToGanttFacet(root([showRule(undefined, { operator: "" })]))).toEqual(DEFAULT_GANTT_FACET_FILTERS);
+    expect(queryToGanttFacet(root([showRule(["completed"], { operator: "" })]))).toEqual(DEFAULT_GANTT_FACET_FILTERS);
+    expect(queryToGanttFacet(root([showRule(undefined)]))).toEqual(DEFAULT_GANTT_FACET_FILTERS);
+    expect(queryToGanttFacet(root([showRule([])]))).toEqual(DEFAULT_GANTT_FACET_FILTERS);
+    expect(queryToGanttFacet(root([showRule([]), editorRule(undefined, { operator: "" })]))).toEqual(DEFAULT_GANTT_FACET_FILTERS);
+    // An unfinished Show chip beside a finished Editor chip leaves the editor facet standing.
+    expect(queryToGanttFacet(root([editorRule([E1]), showRule(undefined, { operator: "" })]))).toEqual(facetOf({ editorIds: [E1] }));
   });
 
   it("canonicalises order and duplicates inside a value", () => {
-    expect(queryToGanttFacet(root([stageRule(["delivered", "awaiting_raw", "delivered"]), showRule(["completed", "delivered"])]))).toEqual({ editorIds: [], stageKeys: ["awaiting_raw", "delivered"], delivered: true, completed: true });
+    expect(queryToGanttFacet(root([editorRule([E2, E1, E2]), showRule(["completed", "delivered"])]))).toEqual(facetOf({ editorIds: [E1, E2], delivered: true, completed: true }));
   });
 
   it("returns null for every shape the Gantt request cannot express", () => {
     const cases: Array<[string, FilterQuery<unknown>]> = [
-      ["or root", root([stageRule(["editing"])], "or")],
-      ["nested group", root([{ id: "g", type: "group", combinator: "and", rules: [stageRule(["editing"])] }])],
+      ["or root", root([showRule(["delivered"])], "or")],
+      ["nested group", root([{ id: "g", type: "group", combinator: "and", rules: [showRule(["delivered"])] }])],
       ["empty nested group", root([{ id: "g", type: "group", combinator: "and", rules: [] }])],
-      ["negated rule", root([stageRule(["editing"], { negated: true })])],
-      ["negated unfinished rule", root([stageRule(undefined, { operator: "", negated: true })])],
-      ["unknown field", root([{ id: "e", type: "rule", path: ["editor"], operator: "is_any_of", value: ["x"] }])],
-      ["nested path", root([{ id: "n", type: "rule", path: ["stage", "key"], operator: "is_any_of", value: ["editing"] }])],
-      ["empty path", root([{ id: "n", type: "rule", path: [], operator: "is_any_of", value: ["editing"] }])],
-      ["unknown stage operator", root([stageRule(["editing"], { operator: "is_none_of" })])],
+      ["negated rule", root([showRule(["delivered"], { negated: true })])],
+      ["negated unfinished rule", root([showRule(undefined, { operator: "", negated: true })])],
+      ["unknown field", root([{ id: "e", type: "rule", path: ["owner"], operator: "is_any_of", value: ["x"] }])],
+      ["stage is not a bar field", root([stageRule(["editing"])])],
+      ["nested path", root([{ id: "n", type: "rule", path: ["show", "key"], operator: "includes", value: ["delivered"] }])],
+      ["empty path", root([{ id: "n", type: "rule", path: [], operator: "includes", value: ["delivered"] }])],
       ["unknown show operator", root([showRule(["delivered"], { operator: "is_any_of" })])],
-      ["unknown stage value", root([stageRule(["editing_autohdr"])])],
       ["unknown show value", root([showRule(["overdue"])])],
-      ["non-string value", root([stageRule([1])])],
-      ["non-array value", root([stageRule("editing")])],
-      ["unfinished rule, unknown retained stage value", root([stageRule(["editing_autohdr"], { operator: "" })])],
+      ["non-string value", root([showRule([1])])],
+      ["non-array value", root([showRule("delivered")])],
       ["unfinished rule, unknown retained show value", root([showRule(["overdue"], { operator: "" })])],
-      ["unfinished rule, non-string retained value", root([stageRule([1], { operator: "" })])],
-      ["unfinished rule, non-array retained value", root([stageRule("editing", { operator: "" })])],
-      ["duplicate field, both finished", root([stageRule(["editing"]), { ...stageRule(["raw_review"]), id: "s2" } as FilterNode<unknown>])],
-      ["duplicate field, one unfinished", root([stageRule(["editing"]), { ...stageRule(undefined, { operator: "" }), id: "s2" } as FilterNode<unknown>])],
+      ["unfinished rule, non-string retained value", root([showRule([1], { operator: "" })])],
+      ["unfinished rule, non-array retained value", root([showRule("delivered", { operator: "" })])],
+      ["duplicate field, both finished", root([showRule(["delivered"]), { ...showRule(["completed"]), id: "w2" } as FilterNode<unknown>])],
+      ["duplicate field, one unfinished", root([showRule(["delivered"]), { ...showRule(undefined, { operator: "" }), id: "w2" } as FilterNode<unknown>])],
     ];
     for (const [name, query] of cases) expect(queryToGanttFacet(query), name).toBeNull();
   });
 
-  it("keys facets by value, not identity", () => {
-    expect(ganttFacetKey({ editorIds: [], stageKeys: ["delivered", "editing"], delivered: false, completed: false })).toBe(ganttFacetKey({ editorIds: [], stageKeys: ["editing", "delivered"], delivered: false, completed: false }));
+  it("keys facets by value, not identity, shared Filter facets included", () => {
+    expect(ganttFacetKey(facetOf({ stageKeys: ["delivered", "editing"] }))).toBe(ganttFacetKey(facetOf({ stageKeys: ["editing", "delivered"] })));
+    expect(ganttFacetKey(facetOf({ priorities: ["none", "5"] }))).toBe(ganttFacetKey(facetOf({ priorities: ["5", "none"] })));
     expect(ganttFacetKey(DEFAULT_GANTT_FACET_FILTERS)).toBe(ganttFacetKey({ ...DEFAULT_GANTT_FACET_FILTERS }));
     expect(ganttFacetKey(DEFAULT_GANTT_FACET_FILTERS)).not.toBe(ganttFacetKey({ ...DEFAULT_GANTT_FACET_FILTERS, completed: true }));
+    expect(ganttFacetKey(DEFAULT_GANTT_FACET_FILTERS)).not.toBe(ganttFacetKey({ ...DEFAULT_GANTT_FACET_FILTERS, archived: "only" }));
   });
 });
 
 describe("the Delivered pair: Stage = Delivered and Show -> Delivered (#255)", () => {
-  const facet = (stageKeys: ProductionGanttFacetFilters["stageKeys"], delivered: boolean, completed = false): ProductionGanttFacetFilters => ({ editorIds: [], stageKeys, delivered, completed });
+  const facet = (stageKeys: ProductionGanttFacetFilters["stageKeys"], delivered: boolean, completed = false): ProductionGanttFacetFilters => ({ editorIds: [], stageKeys, priorities: [], archived: "hide", delivered, completed });
 
   it("selecting Delivered as a stage turns delivered projects on in the same facet", () => {
     expect(ganttFacetForWrite(facet(["editing"], false), facet(["editing", "delivered"], false))).toEqual(facet(["editing", "delivered"], true));
@@ -289,40 +296,41 @@ describe("the Delivered pair: Stage = Delivered and Show -> Delivered (#255)", (
   });
 
   describe("ganttQueryForFacet", () => {
+    const E1 = "11111111-1111-4111-8111-111111111111";
     const root = (rules: FilterNode<string[]>[]): FilterQuery<string[]> => ({ id: "root", type: "group", combinator: "and", rules });
-    const rule = (id: string, field: "stage" | "show", value: string[] | undefined, operator = field === "stage" ? "is_any_of" : "includes"): FilterNode<string[]> => ({ id, type: "rule", path: [field], operator, value });
+    const rule = (id: string, field: "editor" | "show", value: string[] | undefined, operator = field === "editor" ? "is_any_of" : "includes"): FilterNode<string[]> => ({ id, type: "rule", path: [field], operator, value });
 
     it("updates a written rule's values in place, keeping its id", () => {
-      const next = ganttQueryForFacet(root([rule("a", "stage", ["editing", "delivered"]), rule("b", "show", ["completed"])]), facet(["editing", "delivered"], true, true));
-      expect(next.rules).toEqual([rule("a", "stage", ["editing", "delivered"]), rule("b", "show", ["delivered", "completed"])]);
+      const next = ganttQueryForFacet(root([rule("a", "editor", [E1]), rule("b", "show", ["completed"])]), { ...facet([], true, true), editorIds: [E1] });
+      expect(next.rules).toEqual([rule("a", "editor", [E1]), rule("b", "show", ["delivered", "completed"])]);
     });
 
     it("adds a Show rule the facet now needs", () => {
-      const next = ganttQueryForFacet(root([rule("a", "stage", ["delivered"])]), facet(["delivered"], true));
-      expect(next.rules).toEqual([rule("a", "stage", ["delivered"]), { id: "gantt-show", type: "rule", path: ["show"], operator: "includes", value: ["delivered"] }]);
+      const next = ganttQueryForFacet(root([rule("a", "editor", [E1])]), { ...facet(["delivered"], true), editorIds: [E1] });
+      expect(next.rules).toEqual([rule("a", "editor", [E1]), { id: "gantt-show", type: "rule", path: ["show"], operator: "includes", value: ["delivered"] }]);
     });
 
     it("finishes an unfinished Show rule the facet now needs", () => {
-      const next = ganttQueryForFacet(root([rule("a", "stage", ["delivered"]), rule("b", "show", undefined, "")]), facet(["delivered"], true));
-      expect(next.rules).toEqual([rule("a", "stage", ["delivered"]), rule("b", "show", ["delivered"])]);
+      const next = ganttQueryForFacet(root([rule("a", "editor", [E1]), rule("b", "show", undefined, "")]), { ...facet(["delivered"], true), editorIds: [E1] });
+      expect(next.rules).toEqual([rule("a", "editor", [E1]), rule("b", "show", ["delivered"])]);
     });
 
     it("drops a rule whose values the facet emptied, and keeps one the user emptied or has not finished", () => {
-      const next = ganttQueryForFacet(root([rule("a", "stage", ["delivered"]), rule("b", "show", [])]), facet([], false));
-      expect(next.rules).toEqual([rule("b", "show", [])]);
-      const unfinished = ganttQueryForFacet(root([rule("a", "stage", undefined, ""), rule("b", "show", ["completed"])]), facet([], false, true));
-      expect(unfinished.rules).toEqual([rule("a", "stage", undefined, ""), rule("b", "show", ["completed"])]);
+      const next = ganttQueryForFacet(root([rule("a", "show", ["delivered"]), rule("b", "editor", [])]), facet([], false));
+      expect(next.rules).toEqual([rule("b", "editor", [])]);
+      const unfinished = ganttQueryForFacet(root([rule("a", "editor", undefined, ""), rule("b", "show", ["completed"])]), facet([], false, true));
+      expect(unfinished.rules).toEqual([rule("a", "editor", undefined, ""), rule("b", "show", ["completed"])]);
     });
 
     it("projects back to the facet it was given", () => {
-      const target = facet(["raw_review"], false, true);
-      expect(queryToGanttFacet(ganttQueryForFacet(root([rule("a", "stage", ["raw_review", "delivered"]), rule("b", "show", ["completed"])]), target))).toEqual(target);
+      const target = { ...facet(["raw_review"], false, true), editorIds: [E1] };
+      expect(queryToGanttFacet(ganttQueryForFacet(root([rule("a", "editor", [E1]), rule("b", "show", ["completed"])]), target), { stageKeys: ["raw_review"], priorities: [], archived: "hide" })).toEqual(target);
     });
   });
 });
 
 describe("saying why the Delivered pair fired (#269) and offering its recovery (#270)", () => {
-  const facet = (stageKeys: ProductionGanttFacetFilters["stageKeys"], delivered: boolean, completed = false): ProductionGanttFacetFilters => ({ editorIds: [], stageKeys, delivered, completed });
+  const facet = (stageKeys: ProductionGanttFacetFilters["stageKeys"], delivered: boolean, completed = false): ProductionGanttFacetFilters => ({ editorIds: [], stageKeys, priorities: [], archived: "hide", delivered, completed });
 
   it("names the Show change when picking Stage = Delivered turned delivered projects on", () => {
     const edit = facet(["editing", "delivered"], false);

@@ -72,7 +72,7 @@ function project(): GanttProjectRowDto {
   const rows = server.map((input, index) => row(input, index));
   const total = rows.length + pageTwo.length;
   return {
-    id: PROJECT_ID, street: "1 Assignee Street", suburb: null, agencyName: null, agentName: null, stageKey: "editing_autohdr", delivered: false,
+    id: PROJECT_ID, street: "1 Assignee Street", suburb: null, agencyName: null, agentName: null, stageKey: "editing_autohdr", delivered: false, archived: false,
     shootDate: isoDate(0), shootDateCivil: isoDate(0), createdAt: `${isoDate(0)}T00:00:00.000Z`, barStartDate: isoDate(0),
     deadline: { at: `${isoDate(5)}T05:00:00.000Z`, localCivil: `${isoDate(5)}T15:00`, version: 1, reminderOffsetsMinutes: [], overdue: false },
     deadlineVersion: 1, editors: [], checklist: { completed: 0, total },
@@ -153,7 +153,7 @@ beforeEach(() => {
     }
     return Promise.resolve(adminProductionGanttResponseSchema.parse({
       scope: "active", zone: PRODUCTION_GANTT_ZONE,
-      appliedFilters: { q: "", editorIds: [], stageKeys: [], includeDelivered: false, includeCompletedChecklist: false },
+      appliedFilters: { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide", includeDelivered: false, includeCompletedChecklist: false },
       projects: [project()], page: { limit: 100, returned: 1, nextCursor: null },
       density: { matchedProjects: 1, matchedRows: 1, drawCap: 2000, tooManyToDraw: false },
     }));

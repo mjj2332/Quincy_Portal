@@ -4649,8 +4649,8 @@ remove the legacy readers) still applies.
 - **The Display menu is a `reui/dropdown-menu` radio group.** A radio item leaves the menu open; tests open
   it with `openDisplay` and close it with Escape. Priority is offered, and accepted by the handler, only
   with the authorised board map, so a stored `priority` falls back to Board order otherwise.
-- **The Active/Archived row stays until #428**, so the view bar follows the heading directly or follows that
-  row (admin only); layout tests accept exactly those two shapes.
+- **The Active/Archived row went with #428**: the view bar now follows the heading directly, and Archived is
+  a field of the shared Filter (see the #428 entry below).
 - **Review round (#427).** One effective Board sort (`canPrioritize && hasAuthorizedBoardMap`, else Board
   order) feeds the menu and the cards. The Calendar/Timeline tabs in Archived scope leave Archived (a
   Calendar push bypasses `navigateCalendar`, whose closure still sees the archived scope). The tab row's
@@ -4658,6 +4658,49 @@ remove the legacy readers) still applies.
   722px the controls go above the tabs (`flex-col-reverse`) so the tabs stay on the rule. Display renders
   on every view, disabled off Board, so the search never moves. A pointer-focused tab is not re-focused by
   the focus-restore path (only a `:focus-visible` one is), or the global ring paints on a mouse click.
+
+## #428 Shared Dashboard Filter (Stage, Priority, Archived)
+
+- **The filter is the URL's, and only two route helpers touch it.** `dashboardFilterOf(route)` projects the
+  `{ stageKeys, priorities, archived }` out of whichever arm carries it (Table/Board `filter`, Timeline `gantt`,
+  Calendar state); `withDashboardFilter(route, f)` puts one back. `Dashboard` derives it at render: no state
+  copy, no adoption effect (the lesson on state copies of the URL). Every writer that builds a URL from a route
+  (`selectView` including the Calendar-entry branch, `navigateCalendar`, `navigateGantt`, the search writer,
+  `handleCalendarAccessLoss`) carries it, reading `currentHistory.getLocation()` at fire time like the Timeline
+  branch always did. The bare `/` and the Calendar intent arm carry no filter: a Calendar URL is canonical
+  (date, sub, layers) before it can hold one, so tests append `&archived=only` to the canonical form.
+- **Serialise -> parse -> serialise is a fixed point, and old URLs are byte-identical.** `priority` and
+  `archived` are written right after `stages` in the one shared param writer, so every pre-#428 Calendar and
+  Timeline URL round-trips unchanged (literal URLs are pinned in the shared `staff-routes` tests). Lists are
+  canonical (`%2C`-encoded comma, `5,4,3,2,1,none`): a raw comma is a not-found, as for `stages`. `archived=hide`
+  is never emitted and does not parse.
+- **Archived is Admin-only on the server, not just in the UI.** `/api/projects`, Calendar and Timeline answer a
+  non-Admin `archived=include|only` with 403 (the old `archived=1` is `only`, Admin only); a pasted URL from a
+  non-Admin is read as Hide in the client and never sent. `Only` returns no Board map (`{}`); `Include`
+  builds it from the active rows alone, so an archived card never shifts a Board position.
+- **Stage and Priority filter in memory, after the order is fixed.** `/api/projects` filters `matchedRows` (where
+  the search already filters), never `orderedRows`, so `boardRank` and the Board map do not change under a
+  Priority filter. `editing` maps to the stored `editing_autohdr` the way `production-gantt.ts` does.
+- **A narrowed Board does not drag.** `boardNarrowed = searchActive || priorities.length > 0 || archived !== "hide"`
+  replaces the search-only gate for moves, reorders and `runBoardMovement`; a Stage filter alone does not narrow
+  a column. A drop that still reaches the server on an archived Project is a 409 `project_archived_read_only`
+  and rolls back like `project_stage_conflict`.
+- **The dashboard-projects key's trailing object is `{ archived: mode, q?, stages?, priority? }`**, defaults
+  omitted. `placeholderData` is gated on an equal mode: an Archived list must never flash as the Active list's
+  placeholder. A Priority or Stage edit invalidates the cached entries that carry a `stages`/`priority` facet
+  instead of patching a row into a list it no longer matches.
+- **One state machine, two bars.** `lib/use-filter-query-binding.ts` holds the chip query, pending writes and
+  the URL re-seed rules for both the Dashboard Filter and the Timeline's Editor/Show bar (Stage left the
+  latter; it still carries the shared facets through every write). The Dashboard's trigger and chips are one
+  `Filters` root (`DashboardFilterProvider`) rendered in two places; `FiltersRow builder={false}` is a Quincy
+  addition to the vendored `filters.tsx`. The Filter locks with the same
+  `movementInteractionActive || calendarInteractionBlocked` as Display; below 722px the trigger is icon-only
+  with `aria-label="Filter"`.
+- **Characterisation, not guard.** `project-search.test.ts` pins the Calendar SQL by SHA-256; changing
+  `authorizedProjectsBaseCte` (archived mode and request priorities) re-pins it in the same commit. That is the
+  fixture doing its job, not a loosened assertion.
+- **Tests that mock `../lib/stages`** now need `presentationStages` too: the Dashboard builds its Stage options
+  from it (`productionStageFilterOptions`).
 
 ## #422 Deadline uses the date-time popup
 

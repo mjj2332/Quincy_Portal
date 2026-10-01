@@ -26,7 +26,7 @@ export const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 export const ASSIGNEE_ID = "22222222-2222-4222-8222-222222222222";
 export const SUBTASK_ID = "33333333-3333-4333-8333-333333333333";
 
-const project = { id: PROJECT_ID, street: "1 Calendar Street", stageKey: "editing_autohdr" as const, checklist: { completed: 0, total: 2 }, delivered: false };
+const project = { id: PROJECT_ID, street: "1 Calendar Street", stageKey: "editing_autohdr" as const, checklist: { completed: 0, total: 2 }, delivered: false, archived: false };
 const assignee = { id: ASSIGNEE_ID, name: "Ada Lovelace", roleLabel: "Editor", isExternal: false, active: true };
 const status = { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false };
 
@@ -118,7 +118,7 @@ export function rangeResponse(input: RangeResponseInput = {}): ProductionCalenda
   const raw = {
     range: {
       start: window.start, end: window.end, date, subview, zone: PRODUCTION_CALENDAR_ZONE,
-      appliedFilters: { layers: input.layers ?? ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false },
+      appliedFilters: { layers: input.layers ?? ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false },
     },
     events: input.events ?? [],
     filterFacets: {

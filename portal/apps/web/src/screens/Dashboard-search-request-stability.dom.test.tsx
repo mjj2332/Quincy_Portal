@@ -41,7 +41,7 @@ const noOneId = "00000000-0000-4000-8000-000000000000";
 
 function calendarResponse(date: string) {
   return adminProductionCalendarRangeResponseSchema.parse({
-    range: { start: "2026-08-24", end: "2026-08-31", date, subview: "week", zone: PRODUCTION_CALENDAR_ZONE, appliedFilters: { layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "Probe", myTasks: false } },
+    range: { start: "2026-08-24", end: "2026-08-31", date, subview: "week", zone: PRODUCTION_CALENDAR_ZONE, appliedFilters: { layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "Probe", myTasks: false } },
     events: [], filterFacets: { projects: [], people: [], myTasksUserId: noOneId },
   });
 }

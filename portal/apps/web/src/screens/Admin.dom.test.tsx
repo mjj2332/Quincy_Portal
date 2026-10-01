@@ -26,6 +26,7 @@ vi.mock("../lib/capabilities", () => ({
   useCapabilities: () => ({ role: "admin", capabilities: ["adminBackend", "manageUsers", "manageIntegrations"], can: (capability: string) => capability === "adminBackend" || capability === "manageUsers" || capability === "manageIntegrations" }),
 }));
 vi.mock("../lib/stages", () => ({
+  presentationStages: (stages: readonly unknown[]) => stages,
   useStages: () => ({ stages: [], isLoading: false, refreshStages: refreshStagesMock }),
 }));
 vi.mock("../lib/project-data", () => ({

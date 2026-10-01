@@ -45,6 +45,7 @@ const project = () => ({
   stageKey: EDITOR_STAGE,
   checklist: { completed: 1, total: 3 },
   delivered: false,
+  archived: false,
 });
 const dateEndpoint = (localCivil: string) => ({ kind: "date" as const, localCivil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const });
 const timedEndpoint = (localCivil: string, instant: string, fold: 0 | 1 = 0) => ({ kind: "timed" as const, localCivil, instant, utcOffsetMinutes: fold === 1 ? 600 : 660, fold, resolution: "stored" as const });

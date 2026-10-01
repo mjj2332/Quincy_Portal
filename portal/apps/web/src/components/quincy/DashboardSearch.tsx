@@ -20,6 +20,7 @@ import {
   setDashboardSearchDraftDuringComposition,
   subscribeDashboardSearch,
 } from "../../lib/dashboard-search-store";
+import { useMediaQuery } from "../../lib/use-media-query";
 
 /**
  * The Dashboard toolbar's project search — #217, moved out of the rail by #427 (ADR 0015). A REAL
@@ -73,6 +74,8 @@ export type DashboardSearchProps = {
 };
 
 export function DashboardSearch({ principalId = "", focusRequest = null, onFocusRequestHandled, className }: DashboardSearchProps) {
+  // The long hint does not fit the narrow bar's share of the row: "Search…" at <=721px.
+  const narrow = useMediaQuery("(max-width: 721px)");
   const search = useSyncExternalStore(
     subscribeDashboardSearch,
     () => getDashboardSearchSnapshotForPrincipal(principalId),
@@ -195,7 +198,7 @@ export function DashboardSearch({ principalId = "", focusRequest = null, onFocus
         // `handleChange` above.
         onCompositionStart={handleCompositionStart}
         onCompositionEnd={handleCompositionEnd}
-        placeholder="Search address, suburb, client…"
+        placeholder={narrow ? "Search…" : "Search address, suburb, client…"}
       />
       {search.draft === "" && (
         // The ⌘K hint (the old rail search carried one). Decorative: the shortcut is a window

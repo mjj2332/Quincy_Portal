@@ -320,7 +320,9 @@ export function ProjectKanbanBoard2({
     onMoveToProposalChange?.(proposal);
   }, [onMoveToProposalChange]);
   const boardModel = useMemo(() => ({ projects }), [projects]);
-  const controlsDisabled = (projectId: string) => dragDisabled || dragActive || pendingMoves.has(projectId) || orderingPending(projectId);
+  // #428: an archived Project's card is read-only — never dragged, nudged or moved from its menu.
+  const archivedIds = new Set(projects.filter((project) => project.archivedAt).map((project) => project.id));
+  const controlsDisabled = (projectId: string) => dragDisabled || dragActive || archivedIds.has(projectId) || pendingMoves.has(projectId) || orderingPending(projectId);
 
   /**
    * Only for the paths that do NOT hand off to the Dashboard. Never on the valid path: the
@@ -595,7 +597,7 @@ export function ProjectKanbanBoard2({
                             // specificity than the vendor's bare `.opacity-50`, so it wins only while
                             // genuinely disabled — the real `isSortableDragging` drag ghost (a plain
                             // `opacity-50`, not gated on `data-disabled`) is untouched.
-                            <KanbanItem key={project.id} value={project.id} animateLayoutChanges={boardAnimateLayoutChanges} className="relative data-[disabled=true]:opacity-100" disabled={dragDisabled || pendingMoves.has(project.id) || orderingPending(project.id)}>
+                            <KanbanItem key={project.id} value={project.id} animateLayoutChanges={boardAnimateLayoutChanges} className="relative data-[disabled=true]:opacity-100" disabled={dragDisabled || Boolean(project.archivedAt) || pendingMoves.has(project.id) || orderingPending(project.id)}>
                               {shownProposal?.successor === project.id && <DropIndicator className="top-[calc(var(--space-3)/-2)] -translate-y-1/2" />}
                               {/* The FLIP's own node (#304): never `KanbanItem`, whose transform React and
                                   dnd-kit own. The drop indicator stays outside it, so it never flies. */}
@@ -603,8 +605,8 @@ export function ProjectKanbanBoard2({
                                 <KanbanCard2
                                   project={project}
                                   projectHref={projectHrefFor?.(project)}
-                                  dragDisabled={dragDisabled || pendingMoves.has(project.id) || orderingPending(project.id)}
-                                  canPrioritize={priorityEditable}
+                                  dragDisabled={dragDisabled || Boolean(project.archivedAt) || pendingMoves.has(project.id) || orderingPending(project.id)}
+                                  canPrioritize={priorityEditable && !project.archivedAt}
                                   priorityPending={orderingPending(project.id)}
                                   onPriorityChange={starClickGuard.handlePriorityChange}
                                   handleRef={registerHandle}

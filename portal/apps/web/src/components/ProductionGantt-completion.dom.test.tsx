@@ -77,6 +77,7 @@ function makeProject(overrides: Partial<GanttProjectRowDto> & { id: string; stre
     agentName: null,
     stageKey: "editing_autohdr",
     delivered: false,
+    archived: false,
     shootDate: isoDate(0),
     shootDateCivil: isoDate(0),
     createdAt: isoDate(0) + "T00:00:00.000Z",
@@ -115,7 +116,7 @@ function ganttResponse(projects: GanttProjectRowDto[]) {
   return adminProductionGanttResponseSchema.parse({
     scope: "active",
     zone: PRODUCTION_GANTT_ZONE,
-    appliedFilters: { q: "", editorIds: [], stageKeys: [], includeDelivered: false, includeCompletedChecklist: false },
+    appliedFilters: { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide", includeDelivered: false, includeCompletedChecklist: false },
     projects,
     page: { limit: 100, returned: projects.length, nextCursor: null },
     density: { matchedProjects: projects.length, matchedRows: projects.length, drawCap: 2000, tooManyToDraw: false },

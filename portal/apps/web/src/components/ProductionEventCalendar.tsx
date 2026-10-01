@@ -67,6 +67,7 @@ import {
   type ProductionEventCalendarData,
 } from "../lib/production-event-calendar-adapter";
 import { eventCalendarUpdateToProposal, type EventCalendarUpdateLike } from "../lib/production-event-calendar-scheduling";
+import { staffPathFor } from "../lib/router";
 import { calendarScheduleBounds, type ScheduleBounds } from "../lib/schedule-bounds";
 import { useCalendarSchedulingPort, type SchedulingDeadlineConfirmInput } from "../lib/use-scheduling-commands";
 import { useSchedulingControllerWithUndoToast } from "../lib/use-scheduling-undo-toast";
@@ -149,9 +150,13 @@ function eventCivilDate(event: CalendarEventDto): string {
   return event.timing.allDay ? event.timing.start.slice(0, 10) : formatSydneyCivilMinute(event.timing.start).slice(0, 10);
 }
 
-/** The old calendar's reset key: any route or filter change starts a fresh controller generation. */
+/**
+ * The controller's reset key: any route or filter change starts a fresh controller generation. It is the
+ * canonical Calendar URL (`staffPathFor`), so a facet added to the route (#428's Priority and Archived)
+ * resets the controller without anyone remembering to list it here.
+ */
 function calendarResetKey(calendar: DashboardCalendarState): string {
-  return `${calendar.date}|${calendar.subview}|${calendar.layers.join(",")}|${calendar.editorIds.join(",")}|${calendar.includeUnassigned}|${calendar.stageKeys.join(",")}|${calendar.showCompletedChecklist}|${calendar.showDeliveredProjects}|${calendar.overdueOnly}|${calendar.search}|${calendar.myTasks}`;
+  return staffPathFor({ kind: "dashboard", calendar });
 }
 
 function ChipContent({ id, data, title }: { id: string; data: ProductionEventCalendarData | undefined; title: string }): JSX.Element {

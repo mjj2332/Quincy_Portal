@@ -1,5 +1,8 @@
 import {
   adminProductionGanttResponseSchema,
+  canonicalDashboardPriorities,
+  type DashboardArchivedMode,
+  type DashboardPriorityFilterValue,
   editorProductionGanttResponseSchema,
   externalProductionGanttSchema,
   productionGanttChildPageSchema,
@@ -20,12 +23,15 @@ export type ProductionGanttFilters = {
   q: string;
   editorIds: string[];
   stageKeys: StagePresentationKey[];
+  /** #428: the shared Dashboard Filter's other two facets. */
+  priorities: DashboardPriorityFilterValue[];
+  archived: DashboardArchivedMode;
   delivered: boolean;
   completed: boolean;
   limit?: number;
 };
 
-const DEFAULT_FILTERS: ProductionGanttFilters = { q: "", editorIds: [], stageKeys: [], delivered: false, completed: false };
+const DEFAULT_FILTERS: ProductionGanttFilters = { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide", delivered: false, completed: false };
 
 export function buildGanttPageQuery(filters: ProductionGanttFilters, cursor: string | undefined): string {
   const params = new URLSearchParams();
@@ -38,6 +44,8 @@ export function buildGanttPageQuery(filters: ProductionGanttFilters, cursor: str
   if (filters.q) params.set("q", filters.q);
   if (filters.editorIds.length > 0) params.set("editors", filters.editorIds.join(","));
   if (filters.stageKeys.length > 0) params.set("stages", filters.stageKeys.join(","));
+  if (filters.priorities.length > 0) params.set("priority", canonicalDashboardPriorities(filters.priorities).join(","));
+  if (filters.archived !== "hide") params.set("archived", filters.archived);
   if (filters.delivered) params.set("delivered", "1");
   if (filters.completed) params.set("completed", "1");
   if (filters.limit) params.set("limit", String(filters.limit));
@@ -295,8 +303,10 @@ export function useProductionGanttProjects(identity: DashboardIdentity, filters:
  * (fix-218-r1 #1), so passing both is a caller error the server rejects with
  * `gantt_query_invalid` — omit `completed` once you have a cursor.
  */
-export async function fetchGanttChildPage(projectId: string, childCursor?: string, completed?: boolean, signal?: AbortSignal): Promise<ProductionGanttChildPageResponse> {
+export async function fetchGanttChildPage(projectId: string, childCursor?: string, completed?: boolean, signal?: AbortSignal, archived: DashboardArchivedMode = "hide"): Promise<ProductionGanttChildPageResponse> {
   const params = new URLSearchParams({ scope: "active", childrenOf: projectId });
+  // #428: the Archived mode that listed the Project (Admin only); the default sends nothing.
+  if (archived !== "hide") params.set("archived", archived);
   if (childCursor) params.set("childCursor", childCursor);
   else if (completed) params.set("completed", "1");
   const path = `/api/production-gantt?${params.toString()}`;

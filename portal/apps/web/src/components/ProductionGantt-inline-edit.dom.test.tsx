@@ -126,9 +126,9 @@ function ganttBody() {
   return {
     scope: "active",
     zone: PRODUCTION_GANTT_ZONE,
-    appliedFilters: { q: "", editorIds: [], stageKeys: [], includeDelivered: false, includeCompletedChecklist: false },
+    appliedFilters: { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide", includeDelivered: false, includeCompletedChecklist: false },
     projects: [{
-      id: PROJECT_ID, street: STREET, suburb: null, agencyName: null, agentName: null, stageKey: role === "admin" ? "editing_autohdr" : "editing", delivered: server.delivered,
+      id: PROJECT_ID, street: STREET, suburb: null, agencyName: null, agentName: null, stageKey: role === "admin" ? "editing_autohdr" : "editing", delivered: server.delivered, archived: false,
       shootDate: shoot, shootDateCivil: shoot, createdAt: `${shoot}T00:00:00.000Z`, barStartDate: shoot,
       deadline: server.deadline ? { at: server.deadline.at, localCivil: server.deadline.localCivil, version: server.deadlineVersion, reminderOffsetsMinutes: [], overdue: false } : null,
       deadlineVersion: server.deadlineVersion,

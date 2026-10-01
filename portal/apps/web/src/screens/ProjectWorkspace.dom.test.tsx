@@ -694,7 +694,7 @@ afterEach(async () => {
     const runtime = getProjectQueryRuntime(queryClient!);
     const publish = vi.spyOn(runtime!, "publish");
     const invalidate = vi.spyOn(queryClient!, "invalidateQueries");
-    const dashboardKey = dashboardProjectsKey("test-user", "admin", 0, false);
+    const dashboardKey = dashboardProjectsKey("test-user", "admin", 0, { archived: "hide" });
     queryClient!.setQueryData(dashboardKey, []);
     const dashboardObserver = new QueryObserver(queryClient!, { queryKey: dashboardKey, queryFn: () => Promise.resolve([]), staleTime: Infinity });
     const stopDashboardObserver = dashboardObserver.subscribe(() => undefined);

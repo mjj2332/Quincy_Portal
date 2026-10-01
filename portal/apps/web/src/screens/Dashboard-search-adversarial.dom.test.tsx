@@ -29,6 +29,7 @@ vi.mock("../lib/capabilities", () => ({
   }),
 }));
 vi.mock("../lib/stages", () => ({
+  presentationStages: (stages: readonly unknown[]) => stages,
   useStages: () => ({
     stages: [{ key: "raw_review", label: "RAW review", displayOrder: 1, active: true }],
     presentationStageKey: (key: string) => key,

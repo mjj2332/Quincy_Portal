@@ -23,13 +23,13 @@ describe("Production Calendar interaction model", () => {
       id: eventId,
       kind: "project_deadline" as const,
       title: "Deadline",
-      project: { id: "project", street: "Street", stageKey: "editing_autohdr" as const, checklist: { completed: 1, total: 2 }, delivered: false },
+      project: { id: "project", street: "Street", stageKey: "editing_autohdr" as const, checklist: { completed: 1, total: 2 }, delivered: false, archived: false },
       timing: { allDay: false as const, start: "instant", end: null },
       status: { overdue: false, delivered: false, completed: false as const, sameAssigneeOverlap: false as const },
       permissions: { canDrag: true, canResize: false as const },
       deadlineLocalCivil: "2026-08-10T09:30", deadlineVersion: 2, reminderOffsetsMinutes: [1440],
     };
-    const filters = { layers: ["project", "checklist"] as ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false };
+    const filters = { layers: ["project", "checklist"] as ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false };
     const snapshot = beginCalendarInteraction({ event, filters, principalId: "principal", authorizationEpoch: 4, focus: { eventId, control: "event" }, capturedNow: 123 });
     event.project.checklist.completed = 9;
     filters.layers.pop();
@@ -37,7 +37,7 @@ describe("Production Calendar interaction model", () => {
   });
 
   it("deep-clones a valid range checklist schedule's endpoints and assignee", () => {
-    const project = { id: "project", street: "Street", stageKey: "editing_autohdr" as const, checklist: { completed: 1, total: 2 }, delivered: false };
+    const project = { id: "project", street: "Street", stageKey: "editing_autohdr" as const, checklist: { completed: 1, total: 2 }, delivered: false, archived: false };
     const range: ChecklistCalendarEventDto = {
       id: "checklist:range",
       kind: "checklist",
@@ -54,7 +54,7 @@ describe("Production Calendar interaction model", () => {
       },
       permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true },
     };
-    const filters = { layers: ["checklist"] as ["checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false };
+    const filters = { layers: ["checklist"] as ["checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false };
     const snapshot = beginCalendarInteraction({ event: range, filters, principalId: "principal", authorizationEpoch: 1, focus: { eventId: range.id, control: "event" }, capturedNow: 1 });
 
     range.schedule.start!.localCivil = "2000-01-01";

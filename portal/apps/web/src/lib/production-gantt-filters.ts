@@ -15,6 +15,7 @@
  * filters bar use (`productionStageFilterOptions`), and the Gantt legend built from it (#254).
  */
 import {
+  canonicalDashboardPriorities,
   CANONICAL_LOWERCASE_UUID_REGEX,
   isDefaultGanttFacet,
   STAGE_PRESENTATION_KEYS,
@@ -36,7 +37,12 @@ export type StageFilterOption = { key: StagePresentationKey; label: string };
 /** `pattern` (#257): the stage's secondary cue beside its colour — `"hatch"` for Edited review, else `null`. */
 export type GanttLegendEntry = StageFilterOption & { color: string; pattern: StagePattern | null };
 
-export const DEFAULT_GANTT_FACET_FILTERS: ProductionGanttFacetFilters = { editorIds: [], stageKeys: [], delivered: false, completed: false };
+export const DEFAULT_GANTT_FACET_FILTERS: ProductionGanttFacetFilters = { editorIds: [], stageKeys: [], priorities: [], archived: "hide", delivered: false, completed: false };
+
+/** #428: the three facets of the shared Dashboard Filter (Stage, Project priority, Archived). The
+ * Gantt bar does not own them — the Dashboard's Filter does — but a write from the bar carries them
+ * through, so an Editor or Show edit never drops them from the URL. */
+export type GanttCarriedFilters = Pick<ProductionGanttFacetFilters, "stageKeys" | "priorities" | "archived">;
 
 /** URL -> the Gantt facets. A route with no `gantt` facet (the bare `/?view=timeline`, or no Gantt
  * route at all) reads as the defaults. The route's `search` is not read here: the Dashboard's
@@ -46,6 +52,8 @@ export function ganttFiltersFromRoute(route: Pick<DashboardTimelineRoute, "gantt
   return {
     editorIds: facet ? [...facet.editorIds] : [],
     stageKeys: facet ? [...facet.stageKeys] : [],
+    priorities: facet ? [...facet.priorities] : [],
+    archived: facet?.archived ?? "hide",
     delivered: facet?.delivered ?? false,
     completed: facet?.completed ?? false,
   };
@@ -57,6 +65,8 @@ export function ganttFacetFor(filters: ProductionGanttFacetFilters): DashboardGa
   const selected = new Set(filters.stageKeys);
   const facet: DashboardGanttFacet = {
     stageKeys: STAGE_PRESENTATION_KEYS.filter((key) => selected.has(key)),
+    priorities: canonicalDashboardPriorities(filters.priorities),
+    archived: filters.archived,
     delivered: filters.delivered,
     completed: filters.completed,
     editorIds: [...new Set(filters.editorIds)].sort(),
@@ -74,21 +84,17 @@ export function ganttRouteFor(filters: ProductionGanttFacetFilters, search?: str
 // #255: the Gantt filters bar (`ProductionGanttFiltersBar`, ReUI `Filters`) <-> the facet
 // ---------------------------------------------------------------------------
 
-/** The two bar fields. Their ids are the rule `path` segments the mapping reads. */
-export const GANTT_FILTER_FIELD = { stage: "stage", show: "show", editor: "editor" } as const;
+/** The two bar fields (Stage moved to the Dashboard's shared Filter in #428). Their ids are the rule `path` segments the mapping reads. */
+export const GANTT_FILTER_FIELD = { show: "show", editor: "editor" } as const;
 
 /** Stable rule ids, so a URL re-seed hands the bar the same chip identities it already had. */
-export const GANTT_FILTER_RULE_ID = { stage: "gantt-stage", show: "gantt-show", editor: "gantt-editor" } as const;
+export const GANTT_FILTER_RULE_ID = { show: "gantt-show", editor: "gantt-editor" } as const;
 
 /** The query root's id, stable for the same reason. */
 export const GANTT_FILTER_ROOT_ID = "gantt-filters";
 
-const STAGE_OPERATOR = "is_any_of";
 const SHOW_OPERATOR = "includes";
 const EDITOR_OPERATOR = "is_any_of";
-
-/** Stage: one operator, no negation. */
-export const GANTT_STAGE_OPERATORS: FilterOperator[] = [{ value: STAGE_OPERATOR, label: "is any of", arity: "many" }];
 
 /** Show: one operator, no negation. One chip replaces the old panel's two checkboxes. */
 export const GANTT_SHOW_OPERATORS: FilterOperator[] = [{ value: SHOW_OPERATOR, label: "includes", arity: "many" }];
@@ -106,19 +112,15 @@ export type GanttShowValue = (typeof GANTT_SHOW_OPTIONS)[number]["value"];
 
 export type GanttFilterQuery = FilterQuery<string[]>;
 
-const STAGE_VALUES = new Set<string>(STAGE_PRESENTATION_KEYS);
 const SHOW_VALUES = new Set<string>(GANTT_SHOW_OPTIONS.map((option) => option.value));
 
 /**
- * Facet -> the bar's query: a flat `and` root holding a rule only for each non-default facet, with
- * stable ids (`GANTT_FILTER_RULE_ID`) and stage values in `STAGE_PRESENTATION_KEYS` order.
+ * Facet -> the bar's query: a flat `and` root holding a rule only for each non-default facet it
+ * owns (Show and Editor), with stable ids (`GANTT_FILTER_RULE_ID`).
  */
 export function ganttFacetToQuery(facet: ProductionGanttFacetFilters): GanttFilterQuery {
   const canonical = ganttFiltersFromRoute({ gantt: ganttFacetFor(facet) });
   const rules: FilterRule<string[]>[] = [];
-  if (canonical.stageKeys.length > 0) {
-    rules.push({ id: GANTT_FILTER_RULE_ID.stage, type: "rule", path: [GANTT_FILTER_FIELD.stage], operator: STAGE_OPERATOR, value: [...canonical.stageKeys] });
-  }
   const show = GANTT_SHOW_OPTIONS.map((option) => option.value).filter((value) => canonical[value]);
   if (show.length > 0) {
     rules.push({ id: GANTT_FILTER_RULE_ID.show, type: "rule", path: [GANTT_FILTER_FIELD.show], operator: SHOW_OPERATOR, value: show });
@@ -139,10 +141,9 @@ export function ganttFacetToQuery(facet: ProductionGanttFacetFilters): GanttFilt
  * lowercase UUID), never against the known people: a stale id must stay readable, or the bar would
  * veto every later edit. Canonicalised through `ganttFacetFor` / `ganttFiltersFromRoute`.
  */
-export function queryToGanttFacet(query: FilterQuery<unknown>): ProductionGanttFacetFilters | null {
+export function queryToGanttFacet(query: FilterQuery<unknown>, carried: GanttCarriedFilters = { stageKeys: [], priorities: [], archived: "hide" }): ProductionGanttFacetFilters | null {
   if (query.type !== "group" || query.combinator !== "and") return null;
   const seen = new Set<string>();
-  let stageKeys: string[] = [];
   let editorIds: string[] = [];
   const show = new Set<string>();
   for (const node of query.rules) {
@@ -150,25 +151,27 @@ export function queryToGanttFacet(query: FilterQuery<unknown>): ProductionGanttF
     if (node.negated) return null;
     const [field, ...rest] = node.path;
     if (field === undefined || rest.length > 0) return null;
-    if (field !== GANTT_FILTER_FIELD.stage && field !== GANTT_FILTER_FIELD.show && field !== GANTT_FILTER_FIELD.editor) return null;
+    if (field !== GANTT_FILTER_FIELD.show && field !== GANTT_FILTER_FIELD.editor) return null;
     if (seen.has(field)) return null;
     seen.add(field);
     const unfinished = node.operator === "";
-    const expectedOperator = field === GANTT_FILTER_FIELD.stage ? STAGE_OPERATOR : field === GANTT_FILTER_FIELD.editor ? EDITOR_OPERATOR : SHOW_OPERATOR;
+    const expectedOperator = field === GANTT_FILTER_FIELD.editor ? EDITOR_OPERATOR : SHOW_OPERATOR;
     if (!unfinished && node.operator !== expectedOperator) return null;
     if (node.value === undefined) continue;
     // A value is checked even on an unfinished rule: one it retained must still be readable.
     if (!Array.isArray(node.value)) return null;
-    const allowed = (value: unknown) => typeof value === "string" && (field === GANTT_FILTER_FIELD.editor ? CANONICAL_LOWERCASE_UUID_REGEX.test(value) : (field === GANTT_FILTER_FIELD.stage ? STAGE_VALUES : SHOW_VALUES).has(value));
+    const allowed = (value: unknown) => typeof value === "string" && (field === GANTT_FILTER_FIELD.editor ? CANONICAL_LOWERCASE_UUID_REGEX.test(value) : SHOW_VALUES.has(value));
     for (const value of node.value) if (!allowed(value)) return null;
     if (unfinished) continue;
-    if (field === GANTT_FILTER_FIELD.stage) stageKeys = node.value as string[];
-    else if (field === GANTT_FILTER_FIELD.editor) editorIds = node.value as string[];
+    if (field === GANTT_FILTER_FIELD.editor) editorIds = node.value as string[];
     else for (const value of node.value as string[]) show.add(value);
   }
   const facet = ganttFacetFor({
     editorIds,
-    stageKeys: stageKeys as ProductionGanttFacetFilters["stageKeys"],
+    // Stage, Priority and Archived belong to the shared Filter: carried, never edited here.
+    stageKeys: carried.stageKeys,
+    priorities: carried.priorities,
+    archived: carried.archived,
     delivered: show.has("delivered"),
     completed: show.has("completed"),
   });

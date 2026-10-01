@@ -30,7 +30,7 @@ function snapshot(projects: Array<{ projectId: string; membershipCycleIds: strin
 }
 
 const calendarFilters = {
-  layers: ["project", "checklist"] as ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [],
+  layers: ["project", "checklist"] as ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const,
   showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false,
 };
 

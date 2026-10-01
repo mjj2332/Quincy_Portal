@@ -49,7 +49,7 @@ function ganttResponse() {
   return adminProductionGanttResponseSchema.parse({
     scope: "active",
     zone: PRODUCTION_GANTT_ZONE,
-    appliedFilters: { q: "", editorIds: [], stageKeys: [], includeDelivered: false, includeCompletedChecklist: false },
+    appliedFilters: { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide", includeDelivered: false, includeCompletedChecklist: false },
     projects: [
       {
         id: "11111111-1111-4111-8111-111111111111",
@@ -59,6 +59,7 @@ function ganttResponse() {
         agentName: null,
         stageKey: "raw_review",
         delivered: false,
+        archived: false,
         shootDate: isoDate(0),
         shootDateCivil: isoDate(0),
         createdAt: isoDate(0) + "T00:00:00.000Z",

@@ -26,7 +26,7 @@ const people: CalendarPerson[] = [
 ];
 
 const defaults: Filters = {
-  layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [],
+  layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const,
   showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false,
 };
 
@@ -167,13 +167,13 @@ describe("ProductionEventCalendarFacets — hidden URL filters", () => {
 
   it("counts Stage (once), Completed, Delivered, Overdue and My tasks, and Clear resets only those", async () => {
     const onChange = await renderFacets({
-      layers: ["project"], editorIds: [editorA], includeUnassigned: true, stageKeys: ["editing", "delivered"],
+      layers: ["project"], editorIds: [editorA], includeUnassigned: true, stageKeys: ["editing", "delivered"], priorities: [], archived: "hide" as const,
       showCompletedChecklist: true, showDeliveredProjects: true, overdueOnly: true, search: "smith street", myTasks: true,
     });
     expect(host.querySelector('[data-testid="event-calendar-hidden-filters"]')?.textContent).toContain("5 filters active");
     await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="event-calendar-hidden-filters-clear"]')!.click(); await Promise.resolve(); });
     expectCanonical(onChange, {
-      layers: ["project"], editorIds: [editorA], includeUnassigned: true, stageKeys: [],
+      layers: ["project"], editorIds: [editorA], includeUnassigned: true, stageKeys: [], priorities: [], archived: "hide" as const,
       showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "smith street", myTasks: false,
     });
     expect(host.querySelector('[data-testid="event-calendar-hidden-filters"]')).toBeNull();

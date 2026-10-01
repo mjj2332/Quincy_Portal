@@ -12,6 +12,7 @@ vi.mock("../lib/capabilities", () => ({
   useCapabilities: () => ({ role: roleState.role, capabilities: roleState.role === "photographer" ? [] : ["moveProjectStage"], can: (capability: string) => capability === "moveProjectStage" && roleState.role !== "photographer" }),
 }));
 vi.mock("../lib/stages", () => ({
+  presentationStages: (stages: readonly unknown[]) => stages,
   useStages: () => {
     const admin = roleState.role === "admin";
     const stages = admin

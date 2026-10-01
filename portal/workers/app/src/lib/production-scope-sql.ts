@@ -42,6 +42,24 @@ export function parseReminderOffsets(value: string | null): number[] {
   }
 }
 
+/**
+ * #428: the Archived mode predicate, one spelling for every read that takes the Dashboard filter.
+ * `modeRef` is a bound text reference holding `hide` | `include` | `only` (Hide is the default and
+ * the only mode a non-Admin ever reaches; the handlers refuse the others before SQL).
+ */
+export function archivedModeSql(archivedAtColumn: string, modeRef: string): string {
+  return `(${modeRef} = 'include' OR (${modeRef} = 'hide' AND ${archivedAtColumn} IS NULL) OR (${modeRef} = 'only' AND ${archivedAtColumn} IS NOT NULL))`;
+}
+
+/**
+ * #428: the Project priority predicate. `request_priorities` is a CTE of one row per requested
+ * priority (column `priority`, `'5'`..`'1'` or `'none'`); `none` is a NULL priority. No rows means
+ * unrestricted.
+ */
+export function priorityFilterSql(priorityColumn: string): string {
+  return `(NOT EXISTS (SELECT 1 FROM request_priorities) OR EXISTS (SELECT 1 FROM request_priorities rp WHERE rp.priority = COALESCE(CAST(${priorityColumn} AS TEXT), 'none')))`;
+}
+
 export type AuthorizedProjectsBaseOptions = {
   /**
    * Extra `SELECT` columns appended after `can_collaborate`, already valid SQL text (e.g.
@@ -54,6 +72,8 @@ export type AuthorizedProjectsBaseOptions = {
    * Every caller's own `request` CTE must define this column.
    */
   includeDeliveredColumn: string;
+  /** #428: the already-bound request-column reference holding the Archived mode (e.g. `"r.archived_mode"`). */
+  archivedModeColumn: string;
   /**
    * The complete, already-parenthesized project search predicate to `AND` onto the `WHERE`
    * clause (built with `projectSearchSql`, optionally wrapped with a caller-specific bypass).
@@ -66,7 +86,7 @@ export type AuthorizedProjectsBaseOptions = {
  * SQL for the Calendar's own call), parameterised only by which extra columns it selects, which
  * request column gates delivered projects, and the search predicate. Assumes the caller's own
  * `WITH` chain already defines `request` (with a `search` column referenced by `searchPredicate`)
- * and `request_stages` (one row per requested stage key, column `stage_key`) ahead of this
+ * `request_stages` (one row per requested stage key, column `stage_key`) and `request_priorities` (one row per requested priority, column `priority`) ahead of this
  * fragment — every caller of this helper must shape its own request CTEs to match.
  */
 export function authorizedProjectsBaseCte(role: Role, options: AuthorizedProjectsBaseOptions): string {
@@ -75,6 +95,7 @@ export function authorizedProjectsBaseCte(role: Role, options: AuthorizedProject
   return `authorized_projects_base AS (
   SELECT p.id AS project_id, p.street, p.suburb, p.stage_key,
     CASE WHEN p.stage_key = 'delivered' THEN 1 ELSE 0 END AS delivered,
+    CASE WHEN p.archived_at IS NULL THEN 0 ELSE 1 END AS archived,
     COALESCE(agencies.name, p.agency_name) AS agency_display_name,
     COALESCE(agents.name, p.agent_name) AS agent_display_name,
     p.deadline_at, p.deadline_local_civil, p.deadline_version,
@@ -85,9 +106,10 @@ export function authorizedProjectsBaseCte(role: Role, options: AuthorizedProject
   LEFT JOIN agencies ON agencies.id = p.agency_id
   LEFT JOIN agents ON agents.id = p.agent_id
   CROSS JOIN request r
-  WHERE p.archived_at IS NULL
+  WHERE ${archivedModeSql("p.archived_at", options.archivedModeColumn)}
     AND (${options.includeDeliveredColumn} = 1 OR p.stage_key <> 'delivered')
     AND (NOT EXISTS (SELECT 1 FROM request_stages) OR EXISTS (SELECT 1 FROM request_stages rs WHERE rs.stage_key = p.stage_key))
+    AND ${priorityFilterSql("p.priority")}
     AND ${options.searchPredicate}
 )`;
 }

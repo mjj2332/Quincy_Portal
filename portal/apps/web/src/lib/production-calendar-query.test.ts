@@ -14,17 +14,17 @@ const principal = "11111111-1111-4111-8111-111111111111";
 const editorId = "22222222-2222-4222-8222-222222222222";
 const calendar = (overrides: Partial<DashboardCalendarState> = {}): DashboardCalendarState => ({
   view: "calendar", date: "2026-08-12", subview: "month", layers: ["project", "checklist"], editorIds: [editorId], includeUnassigned: true,
-  stageKeys: ["editing"], showCompletedChecklist: true, showDeliveredProjects: true, overdueOnly: true, search: "  smith   street ", myTasks: true, ...overrides,
+  stageKeys: ["editing"], priorities: [], archived: "hide" as const, showCompletedChecklist: true, showDeliveredProjects: true, overdueOnly: true, search: "  smith   street ", myTasks: true, ...overrides,
 });
 
 function response(stageKey: "editing_autohdr" | "editing") {
   return {
     range: {
       start: "2026-07-27", end: "2026-09-07", date: "2026-08-12", subview: "month" as const, zone: PRODUCTION_CALENDAR_ZONE,
-      appliedFilters: { layers: ["project", "checklist"] as ["project", "checklist"], editorIds: [editorId], includeUnassigned: true, stageKeys: ["editing" as const], showCompletedChecklist: true, showDeliveredProjects: true, overdueOnly: true, search: "smith street", myTasks: true },
+      appliedFilters: { layers: ["project", "checklist"] as ["project", "checklist"], editorIds: [editorId], includeUnassigned: true, stageKeys: ["editing" as const], priorities: [], archived: "hide" as const, showCompletedChecklist: true, showDeliveredProjects: true, overdueOnly: true, search: "smith street", myTasks: true },
     },
     events: [{
-      id: "project-deadline:project", kind: "project_deadline" as const, title: "Deadline", project: { id: principal, street: "11 Calendar Street", stageKey, checklist: { completed: 1, total: 2 }, delivered: false },
+      id: "project-deadline:project", kind: "project_deadline" as const, title: "Deadline", project: { id: principal, street: "11 Calendar Street", stageKey, checklist: { completed: 1, total: 2 }, delivered: false, archived: false },
       timing: { allDay: false as const, start: "2026-08-12T00:00:00.000Z", end: null }, status: { overdue: false, delivered: false, completed: false as const, sameAssigneeOverlap: false as const },
       permissions: { canDrag: true, canResize: false as const }, deadlineLocalCivil: "2026-08-12T10:00", deadlineVersion: 1, reminderOffsetsMinutes: [],
     }],
@@ -34,15 +34,15 @@ function response(stageKey: "editing_autohdr" | "editing") {
 
 describe("production calendar query family", () => {
   it("composes the authorization, scope, window, subview, and filter key in order", () => {
-    const key = productionCalendarKey({ principalId: principal, role: "admin", authorizationEpoch: 4 }, "active", { start: "2026-07-27", end: "2026-09-07" }, "month", { layers: ["project", "checklist"], editorIds: [editorId], includeUnassigned: true, stageKeys: ["editing"], showCompletedChecklist: true, showDeliveredProjects: true, overdueOnly: true, search: "smith street", myTasks: true });
+    const key = productionCalendarKey({ principalId: principal, role: "admin", authorizationEpoch: 4 }, "active", { start: "2026-07-27", end: "2026-09-07" }, "month", { layers: ["project", "checklist"], editorIds: [editorId], includeUnassigned: true, stageKeys: ["editing"], priorities: [], archived: "hide" as const, showCompletedChecklist: true, showDeliveredProjects: true, overdueOnly: true, search: "smith street", myTasks: true });
     expect(key).toEqual(["production-calendar", principal, "admin", 4, "active", "2026-07-27", "2026-09-07", "month", expect.any(Object)]);
-    expect(productionCalendarKey({ principalId: principal, role: "admin", authorizationEpoch: 4 }, "active", { start: "2026-07-27", end: "2026-09-07" }, "month", { layers: ["project", "checklist"], editorIds: [], includeUnassigned: true, stageKeys: [], showCompletedChecklist: true, showDeliveredProjects: true, overdueOnly: true, search: "smith street", myTasks: true })).not.toEqual(key);
+    expect(productionCalendarKey({ principalId: principal, role: "admin", authorizationEpoch: 4 }, "active", { start: "2026-07-27", end: "2026-09-07" }, "month", { layers: ["project", "checklist"], editorIds: [], includeUnassigned: true, stageKeys: [], priorities: [], archived: "hide" as const, showCompletedChecklist: true, showDeliveredProjects: true, overdueOnly: true, search: "smith street", myTasks: true })).not.toEqual(key);
   });
 
   it("removes every range for one principal and leaves other principals", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const identity = { principalId: principal, role: "admin" as const, authorizationEpoch: 0 };
-    const filters = { layers: ["project", "checklist"] as ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false };
+    const filters = { layers: ["project", "checklist"] as ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false };
     client.setQueryData(productionCalendarKey(identity, "active", { start: "2026-01-01", end: "2026-02-12" }, "month", filters), { value: 1 });
     client.setQueryData(productionCalendarKey(identity, "active", { start: "2026-02-12", end: "2026-03-26" }, "month", filters), { value: 2 });
     client.setQueryData(productionCalendarKey({ ...identity, principalId: editorId }, "active", { start: "2026-01-01", end: "2026-02-12" }, "month", filters), { value: 3 });

@@ -40,7 +40,7 @@ const overlappingDue = (): ChecklistCalendarEventDto => {
   const event = oneDayEvent(timed("2026-08-12T10:00"));
   return { ...event, status: { ...event.status, sameAssigneeOverlap: true } } as ChecklistCalendarEventDto;
 };
-const project = { id: PROJECT_ID, street: "12 Harbour Street", stageKey: "editing_autohdr" as const, checklist: { completed: 1, total: 2 }, delivered: false };
+const project = { id: PROJECT_ID, street: "12 Harbour Street", stageKey: "editing_autohdr" as const, checklist: { completed: 1, total: 2 }, delivered: false, archived: false };
 
 let h: Harness;
 beforeEach(() => { h = createHarness(); stubMedia(PHONE); });
