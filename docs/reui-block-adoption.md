@@ -246,8 +246,10 @@ What was new:
 - **The one vendor edit: an additive `keyboardCodes` prop on `Kanban`** (`components/reui/kanban.tsx`, recorded in
   that file's header). The block's whole card is the drag handle, and dnd-kit's default pick-up keys are Space and
   Enter, so Enter would grab the card instead of opening it. The Board passes `{ start: ["Space"], cancel:
-  ["Escape"], end: ["Space", "Enter", "Tab"] }`. The options are built with `useMemo` inside the component, not a
-  module-level SCREAMING_CASE const (the guard scans for those).
+  ["Escape"], end: ["Space", "Enter", "Tab"] }`. The options are a module-level, lowercase const in `board.tsx`
+  (`boardKeyboardCodes`): the Kanban root memoises its sensor options on the object's identity, so a stable
+  module-level object is enough, and the lowercase name keeps it clear of the SCREAMING_CASE scan in
+  `design-system-guards.test.ts`.
 - **Deliberate divergence from the block: the link is the handle, not the Frame.** The block wraps the whole Frame
   in `KanbanItemHandle` (`role="button"`), which hides the stars' nested `radiogroup`: the #81 defect. Here the
   card's single `InternalLink` is `KanbanItemHandle render={<InternalLink/>}`, stretched over the card with
@@ -259,3 +261,24 @@ What was new:
   hands off to a dialog must withhold its own focus return (`finalFocus`) or it lands on top of the dialog.
 - **Estimating:** the install was free and the interaction work was the cost. Budget for focus handoff between a
   menu and a dialog, and for every test that reached a control by `data-focus-key` that moved into a menu.
+
+### Reuse ledger (#432 fix pass)
+
+- **Collapsed 48px rail** (`board.tsx`, `w-12` `KanbanColumn` with `[writing-mode:vertical-rl]` label): composed from
+  the installed `reui/kanban` `KanbanColumn` plus the block's own `DealLane` shape (`solution-crm-7`). Searched the ReUI
+  MCP (`kanban column collapse to rail collapsible`) and `tmp/ReUI_Full_Source_Code/reui-blocks-main/blocks/`.
+  Closest candidates: `kanban-board-2` and `kanban-board-5` (Pro, `card` surface: collapse to vertical rails) and
+  `c-sidebar-2` (icon rail). The kanban blocks are whole-board blocks that bring their own card, item and avatar
+  dependencies and their own collapse state, and a rail there still needs the same `KanbanColumn` we already use; adopting one
+  would replace the Board's drag, focus and collapse-store wiring for a 20-line rail. `c-sidebar-2` is a sidebar
+  primitive, not a droppable column. The rail's toggle is the installed `reui/button` ghost icon button.
+- **Column header count and overdue** (`board.tsx`): the count is plain text; "N overdue" is the installed
+  `reui/badge` `destructive-light`, size `sm`, the same element and variant as `DashboardHeader`'s overdue badge
+  (`screens/DashboardHeader.tsx`). The stage name is `StatusBadge` (`components/atoms.tsx`), given optional
+  `className` / `labelClassName` so it can truncate. The rail keeps a bare number: a badge with words cannot fit 48px.
+- **Move to… dialog** (`board/move-to-control.tsx`): `AnchoredPopover` (`components/AnchoredPopover.tsx`) with raw
+  `<button role="radio|option">` rows and `quincy/Button` actions. Searched `reui/popover`, `reui/dialog` (a 404 on
+  `@reui/dialog` points to the base-nova `dialog`) and `c-*` select and combobox examples. Why they fail: it is
+  anchored to the card's ⋯ trigger from a menu hand-off and must give focus back to it, and publishes a live
+  drop-indicator proposal while open; a modal dialog is not anchored and a popover's focus return would land on top
+  of the closing menu. The raw rows stay on the `ui-primitive-ratchet` allowlist with their ledger line.
