@@ -177,7 +177,7 @@ From `portal/workers/app`, `--remote`:
 2. Take a D1 Time Travel bookmark.
 3. `npx wrangler d1 migrations apply DB --remote`. The pending list must show only 0053.
 4. `gh run rerun --failed` on the deploy run, so the new Worker goes live.
-5. Post-check: `SELECT COUNT(*) FROM project_subtask_reminder_occurrences WHERE status = 'pending'` is positive and is about twice the first preflight count minus offsets already past;
+5. Post-check: `SELECT COUNT(*) FROM project_subtask_reminder_occurrences WHERE status = 'pending'` is positive (each Subtask in the first preflight count has one or two, fewer where an offset has already passed);
    no `project.subtask.due_today` outbox row is `pending` or `queued`; the next scheduled run logs the Subtask reminder scan and
    the hourly run logs a reconcile that inserted 0 (a non-zero count means the old Worker saved Subtasks in the window, and it is the heal). Finally, create a test Subtask two minutes out with
    you as assignee and confirm the bell notice and email arrive.

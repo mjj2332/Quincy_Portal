@@ -84,7 +84,7 @@ Subtask reminders fire. A Subtask's due is the end of its range, so every remind
 - **Firing.** The every-minute scan claims an occurrence and, in one batch, writes the audit marker, one outbox row per
   CURRENT assignee and their in-app and email ledger rows. Who is reminded is decided at fire time from the assignee
   relation, so an assignee added before the fire time is covered and a removed one is not. An unassigned Subtask consumes
-  the occurrence and writes nothing. Delivered does not cancel: marking a Subtask done does, completing it does not undo a sent reminder.
+  the occurrence and writes nothing. Completing the Subtask cancels the reminders still pending. Delivery does not cancel anything: a sent reminder stays sent.
 - **No doubles.** A Subtask whose legacy 08:00 alert was already sent for its current end gets no occurrences
   (`legacy_due_today_sent`). The 08:00 `scanDueSubtasks` producer is gone and a guard test rejects its return. Migration 0053
   suppresses undelivered legacy `project.subtask.due_today` ledger and outbox rows, and delivery refuses a late one.
