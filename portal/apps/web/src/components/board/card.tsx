@@ -8,7 +8,8 @@ import { InternalLink } from "../InternalLink";
 import { LazyImage } from "../LazyImage";
 import { KanbanItemHandle } from "../reui/kanban";
 import { PriorityStars } from "../quincy/PriorityStars";
-import { deadlineLabel } from "../../lib/deadline-label";
+import { formatSydneyCivil } from "@quincy/shared";
+import { deadlineTriggerText } from "../ProjectHeaderDeadline";
 import { isOverdueProject } from "../../lib/dashboard-summary";
 import { formatDashboardDate } from "../../screens/dashboard-helpers";
 import type { ProjectSummary } from "../../lib/kanban-interaction";
@@ -94,8 +95,11 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
   // Delivered and archived Projects are never overdue (the Portal's rule, `isOverdueProject`), so a
   // column's overdue count and the header's agree.
   const overdue = isOverdueProject(project, now ?? Date.now());
-  const projectDeadlineLabel = deadlineLabel(project);
+  // The same text the Dashboard table's Deadline cell shows ("Thu 8 Oct · 17:00"), from the same
+  // studio civil string; `formatSydneyCivil` only covers a summary that predates `deadlineLocalCivil`.
+  const projectDeadlineLabel = project.deadlineAt === null ? null : deadlineTriggerText(project.deadlineLocalCivil ?? formatSydneyCivil(project.deadlineAt));
   const archived = Boolean(project.archivedAt);
+  const hasEditors = (project.editors?.length ?? 0) > 0;
   const href = projectHref ?? `/projects/${encodeURIComponent(project.id)}`;
   const menuConfig = !archived && menu && menu.actions.length > 0 ? menu : null;
   // Move to… hand-off: the item only records the intent; the dialog opens once the menu has finished
@@ -130,7 +134,7 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
       data-testid="board-card-deadline"
       dateTime={new Date(project.deadlineAt!).toISOString()}
     >
-      {overdue ? "Overdue" : "Due"} {projectDeadlineLabel} Sydney
+      {overdue ? "Overdue" : "Due"} {projectDeadlineLabel}
     </time>
   );
   const shoot = project.shootDate !== null && (
@@ -156,9 +160,7 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
               <div className="serif text-base tracking-tight leading-snug [text-wrap:pretty]" data-testid="board-card-address">{project.street}</div>
               {shoot}
               {deadline}
-              <div className="mt-[var(--space-2)] flex items-center justify-end" data-testid="board-card-meta">
-                <AvatarStack people={project.editors ?? []} personNoun="Editor" emptyLabel="No Editor assigned" />
-              </div>
+              {hasEditors && <div className="mt-[var(--space-2)] flex items-center justify-end" data-testid="board-card-meta"><AvatarStack people={project.editors!} personNoun="Editor" emptyLabel="No Editor assigned" /></div>}
             </div>
           </div>
         </FramePanel>
@@ -204,14 +206,10 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
             </KanbanItemHandle>
             {shoot}
             {deadline}
-            <div className="mt-[var(--space-2)] flex items-center justify-end" data-testid="board-card-meta">
-              {/* #82: `editors` is already Editor-only, active-only and server-ordered (#79) — no client-side filter or sort. */}
-              <AvatarStack people={project.editors ?? []} personNoun="Editor" emptyLabel="No Editor assigned" />
-            </div>
           </div>
           {/* The star row is a sibling *outside* the link (#81): interactive controls cannot be <a>
               descendants — invalid HTML, and a click would navigate. Raised above the link's overlay. */}
-          <div className="relative z-[1]" data-testid="board-card-footer-slot">
+          <div className="relative z-[1] flex items-center justify-between" data-testid="board-card-footer-slot">
             <PriorityStars
               priority={project.priority}
               street={project.street}
@@ -219,6 +217,10 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
               pending={priorityPending}
               onPriorityChange={(next) => onPriorityChange?.(project, next)}
             />
+            {/* #82: `editors` is already Editor-only, active-only and server-ordered (#79) — no client-side
+                filter or sort. No Editors, no avatar slot: an empty dashed circle alone on a row read as
+                a defect on most cards. */}
+            {hasEditors && <div className="ml-auto px-[var(--space-3)] pb-[var(--space-3)]" data-testid="board-card-meta"><AvatarStack people={project.editors!} personNoun="Editor" emptyLabel="No Editor assigned" /></div>}
           </div>
           {coverFailed && (
             <Button

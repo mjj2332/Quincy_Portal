@@ -1058,7 +1058,7 @@ describe("ProjectKanbanBoard2 (#80)", () => {
       // `KanbanCard2(isOverlay)` is the only preview renderer now, so this re-pins it here.
       const overlayDeadline = overlayHost.querySelector('[data-testid="board-card-deadline"]');
       expect(overlayDeadline, "no Deadline rendered in the overlay preview — the assertion below would be vacuous").not.toBeNull();
-      expect(overlayDeadline!.textContent).toBe("Due 2026-09-02 08:00 Sydney");
+      expect(overlayDeadline!.textContent).toBe("Due Wed 2 Sep · 08:00");
 
       expect(overlayHost.querySelector("a")).toBeNull();
       expect(overlayHost.querySelector("button")).toBeNull();
@@ -1142,7 +1142,7 @@ describe("KanbanCard2 — Editor avatars, Deadline and RAW counts (#82)", () => 
     await renderCard({ deadlineAt, deadlineLocalCivil: "2999-01-01T09:15", deadlineZone: "Australia/Sydney" });
     expect(host.querySelector('[data-testid="board-card-address"]')).not.toBeNull();
     const time = host.querySelector('[data-testid="board-card-deadline"]')!;
-    expect(time.textContent).toBe("Due 2999-01-01 09:15 Sydney");
+    expect(time.textContent).toBe("Due Tue 1 Jan · 09:15");
     expect(time.getAttribute("dateTime")).toBe(new Date(deadlineAt).toISOString());
   });
 
@@ -1156,7 +1156,7 @@ describe("KanbanCard2 — Editor avatars, Deadline and RAW counts (#82)", () => 
       // expected Sydney civil string below is deterministic regardless of when this test runs.
       await renderCard({ deadlineAt, deadlineLocalCivil: null, deadlineZone: "Australia/Sydney" });
       const time = host.querySelector('[data-testid="board-card-deadline"]')!;
-      expect(time.textContent).toBe("Overdue 2026-08-27 09:15 Sydney");
+      expect(time.textContent).toBe("Overdue Thu 27 Aug · 09:15");
     } finally {
       process.env.TZ = originalTz;
     }
@@ -1233,20 +1233,26 @@ describe("KanbanCard2 — Editor avatars, Deadline and RAW counts (#82)", () => 
     expect(meta.querySelector('[aria-label*="more Editor"]')).toBeNull();
   });
 
-  it("renders the empty avatar slot, named 'No Editor assigned', for an empty Editors array", async () => {
+  it("renders no avatar slot at all for an empty Editors array", async () => {
     await renderCard({ editors: [] });
-    const meta = host.querySelector('[data-testid="board-card-meta"]')!;
-    const slot = meta.querySelector('[role="img"][aria-label="No Editor assigned"]');
-    expect(slot).not.toBeNull();
-    expect(meta.querySelectorAll('[role="img"]')).toHaveLength(1);
+    expect(host.querySelector('[data-testid="board-card-meta"]')).toBeNull();
+    expect(host.querySelector('[aria-label="No Editor assigned"]')).toBeNull();
   });
 
-  it("renders the empty avatar slot, named 'No Editor assigned', when Editors is absent", async () => {
+  it("renders no avatar slot at all when Editors is absent", async () => {
     await renderCard({ editors: undefined });
-    const meta = host.querySelector('[data-testid="board-card-meta"]')!;
-    const slot = meta.querySelector('[role="img"][aria-label="No Editor assigned"]');
-    expect(slot).not.toBeNull();
-    expect(meta.querySelectorAll('[role="img"]')).toHaveLength(1);
+    expect(host.querySelector('[data-testid="board-card-meta"]')).toBeNull();
+    expect(host.querySelector('[aria-label="No Editor assigned"]')).toBeNull();
+  });
+
+  it("puts the Editor avatars in the footer row with the stars: stars first, avatars last, outside the link", async () => {
+    await renderBoard({ projects: [project("source", "awaiting_raw", { editors: [{ id: "e1", name: "Jane Doe" }], priority: 3 })], canPrioritize: true });
+    const footer = host.querySelector('[data-testid="board-card-footer-slot"]')!;
+    const meta = footer.querySelector('[data-testid="board-card-meta"]');
+    expect(meta, "avatars live in the footer row").not.toBeNull();
+    expect(footer.lastElementChild).toBe(meta);
+    expect(footer.firstElementChild).not.toBe(meta);
+    expect(host.querySelector('[data-testid="board-card"]')!.contains(footer)).toBe(false);
   });
 
   // #432: the link is now the street alone and sits in the card's content block, so the slot is no
@@ -1712,7 +1718,7 @@ describe("Board card on ReUI frame (#432)", () => {
     expect(card.querySelector('[data-testid="board-card-address"]')?.textContent).toBe("12 Example St");
     expect(card.querySelector('[data-testid="board-card"]')?.textContent).toBe("12 Example St");
     expect(card.querySelector('[data-testid="board-card-shoot"]')?.textContent).toBe("Shoot 12 Mar 2027");
-    expect(card.querySelector('[data-testid="board-card-deadline"]')?.textContent).toBe("Due 2999-01-01 09:15 Sydney");
+    expect(card.querySelector('[data-testid="board-card-deadline"]')?.textContent).toBe("Due Tue 1 Jan · 09:15");
     expect(card.querySelector('[role="radiogroup"][aria-label="Priority for 12 Example St"]')).not.toBeNull();
     expect(card.querySelector('[data-testid="board-card-meta"] [role="img"][aria-label="Jane Doe"]')).not.toBeNull();
     expect(card.querySelector('[data-testid="board-card-cover"]')?.textContent, "no cover rendered").toBe("1");
