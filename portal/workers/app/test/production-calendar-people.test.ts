@@ -73,8 +73,8 @@ async function editor(projectId: string, userId: string): Promise<void> {
 async function subtask(projectId: string, title: string, date: string, assignees: string[]): Promise<void> {
   const subtaskId = crypto.randomUUID();
   const now = Date.now();
-  await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, 0, 1, ?, 'date', ?, 'date', 'Australia/Sydney', 1, ?, ?, ?)")
-    .bind(subtaskId, projectId, title, date, date, adminId, now, now).run();
+  await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, 0, 1, ?, 'timed', ?, ?, 600, 0, 'timed', ?, 600, 0, 'Australia/Sydney', 1, ?, ?, ?)")
+    .bind(subtaskId, projectId, title, `${date}T17:00`, `${date}T09:00`, Date.parse(`${date}T09:00:00+10:00`), Date.parse(`${date}T17:00:00+10:00`), adminId, now, now).run();
   for (const [index, userId] of assignees.entries()) {
     await database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 1, ?)").bind(subtaskId, userId, now + index).run();
   }
