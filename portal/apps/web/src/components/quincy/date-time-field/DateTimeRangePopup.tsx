@@ -4,8 +4,9 @@ import { Button } from "@/components/reui/button";
 import { ButtonGroup } from "@/components/reui/button-group";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/reui/field";
 import { Input } from "@/components/reui/input";
+import { cn } from "@/lib/utils";
 import { civilToCell, joinCivilMinute, parseTypedTime, splitCivilMinute, sydneyToday, timeSlots, yearBounds } from "@/lib/date-time-field";
-import { buildRangeShortcuts, type DateTimeRangeValue } from "@/lib/date-time-range";
+import { buildRangeShortcuts, dayLabel, type DateTimeRangeValue } from "@/lib/date-time-range";
 import { CalendarPane } from "./CalendarPane";
 import { FoldChoice } from "./FoldChoice";
 import { PopupAnchorContext, type Disambiguation } from "./DateTimePopup";
@@ -143,6 +144,8 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
   const [draft, setDraft] = useState<Draft>(() => initialDraft(value, seed, openOn));
   const [month, setMonth] = useState(() => civilToCell((openOn === "end" ? draft.end.day : draft.start.day) ?? draft.start.day ?? today));
   const [applying, setApplying] = useState(false);
+  // Spoken when the active end changes, so the handoff after a start pick is not silent.
+  const [announcement, setAnnouncement] = useState("");
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
@@ -187,6 +190,7 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
   const endYear = Math.max(bounds.endYear, endBounds.endYear);
 
   const pickDay = (day: string) => {
+    if (draft.active === "start") setAnnouncement("Editing end");
     setDraft((state) => {
       const start = { ...state.start };
       const end = { ...state.end };
@@ -235,6 +239,7 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
     change(active, { timeText: text, time: parsed.ok ? parsed.time : null });
   };
   const setActive = (which: End) => {
+    setAnnouncement(`Editing ${which}`);
     setDraft((state) => ({ ...state, active: which }));
     const day = draft[which].day;
     if (day) setMonth(civilToCell(day));
@@ -271,32 +276,46 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
     const { civil } = resolved[which];
     if (!civil) return "Not set";
     const parts = splitCivilMinute(civil);
-    return parts.day && parts.time ? `${parts.day.slice(8, 10).replace(/^0/, "")}/${parts.day.slice(5, 7).replace(/^0/, "")} ${parts.time}` : civil;
+    return parts.day && parts.time ? `${dayLabel(civil)} · ${parts.time}` : civil;
   };
 
   return (
-    <PopupFrame label={label} zoneId={zoneId} bodyRef={bodyRef} applying={applying} applyDisabled={blocked} onCancel={onCancel ?? onClose} onApply={() => { void apply(); }}>
+    <PopupFrame
+      label={label}
+      zoneId={zoneId}
+      bodyRef={bodyRef}
+      applying={applying}
+      applyDisabled={blocked}
+      onCancel={onCancel ?? onClose}
+      onApply={() => { void apply(); }}
+      pinned={(
+        <div className="flex flex-col gap-[var(--space-2)]">
+          <ButtonGroup aria-label="Edit which end" className="w-full">
+            {(["start", "end"] as const).map((which) => (
+              <Button
+                key={which}
+                type="button"
+                variant="outline"
+                className="flex-1 flex-col items-start gap-0 aria-pressed:border-primary aria-pressed:bg-primary aria-pressed:text-primary-foreground aria-pressed:hover:bg-primary"
+                aria-pressed={active === which}
+                data-initial-focus={openOn === which && openOn === "end" ? "true" : undefined}
+                onClick={() => setActive(which)}
+              >
+                <span>{TITLES[which]}</span>
+                <span className={cn("text-[length:var(--text-2xs)]", active === which ? "text-primary-foreground" : "text-foreground-secondary")}>{momentText(which)}</span>
+              </Button>
+            ))}
+          </ButtonGroup>
+          <div role="status" aria-live="polite" className="sr-only">{announcement}</div>
+          {order && <FieldError>{order}</FieldError>}
+        </div>
+      )}
+    >
       <div className="flex flex-col gap-[var(--space-4)]">
-        <ButtonGroup aria-label="Edit which end" className="w-full">
-          {(["start", "end"] as const).map((which) => (
-            <Button
-              key={which}
-              type="button"
-              variant="outline"
-              className="flex-1 flex-col items-start gap-0 aria-pressed:border-foreground aria-pressed:bg-secondary"
-              aria-pressed={active === which}
-              data-initial-focus={openOn === which && openOn === "end" ? "true" : undefined}
-              onClick={() => setActive(which)}
-            >
-              <span>{TITLES[which]}</span>
-              <span className="text-[length:var(--text-2xs)] text-foreground-secondary">{momentText(which)}</span>
-            </Button>
-          ))}
-        </ButtonGroup>
         <div className="flex flex-col gap-[var(--space-4)] sm:flex-row">
           <ShortcutList shortcuts={shortcuts} activeId={activeId} onPick={pickShortcut} />
           <CalendarPane
-            selection={{ mode: "range", start: draft.start.day, end: draft.end.day }}
+            selection={{ mode: "range", start: draft.start.day, end: draft.end.day, activeEnd: active }}
             today={today}
             month={month}
             onMonthChange={setMonth}
@@ -314,7 +333,6 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
           <FieldDescription id={`${timeId}-help`} className="text-[length:var(--text-xs)]">Any minute, for example 17:07, or pick a slot.</FieldDescription>
           {timeInvalid && <FieldError>{TIME_ERROR}</FieldError>}
           {(["start", "end"] as const).map((which) => resolved[which].gap && <FieldError key={which}>{TITLES[which]}: {resolved[which].gap}</FieldError>)}
-          {order && <FieldError>{order}</FieldError>}
           {hint && <FieldDescription className="text-[length:var(--text-xs)]">{hint}</FieldDescription>}
         </Field>
         {(["start", "end"] as const).map((which) => {

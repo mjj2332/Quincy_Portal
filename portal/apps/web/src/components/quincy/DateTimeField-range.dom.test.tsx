@@ -73,7 +73,7 @@ describe("DateTimeField range trigger and popup", () => {
   it("opens on Start with both ends shown on the toggle", async () => {
     await mount({ value: range("2026-11-03T09:00", "2026-11-07T17:00") });
     await open();
-    expect(rangeToggles(popup())).toMatchObject({ active: "Start", start: "3/11 09:00", end: "7/11 17:00" });
+    expect(rangeToggles(popup())).toMatchObject({ active: "Start", start: "Tue 3 Nov · 09:00", end: "Sat 7 Nov · 17:00" });
   });
 
   it("applies Next week as Monday 09:00 to Sunday 17:00", async () => {
@@ -103,7 +103,7 @@ describe("DateTimeField range trigger and popup", () => {
     await open();
     expect(highlighted(popup())).toEqual(["2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06", "2026-11-07"]);
     await pressInPopup(popup(), "Today");
-    expect(rangeToggles(popup())).toMatchObject({ start: "1/10 09:00", end: "1/10 17:00" });
+    expect(rangeToggles(popup())).toMatchObject({ start: "Thu 1 Oct · 09:00", end: "Thu 1 Oct · 17:00" });
     expect(highlighted(popup())).toEqual(["2026-10-01"]);
     await pickPopupDay(popup(), "2026-10-20");
     await pickPopupDay(popup(), "2026-10-23");
@@ -126,12 +126,41 @@ describe("DateTimeField range trigger and popup", () => {
     expect(onApply).toHaveBeenCalledWith({ start: { localCivil: "2026-10-20T09:00" }, end: { localCivil: "2026-10-23T17:00" } });
   });
 
+  it("announces the handoff to End after a start pick", async () => {
+    await mount();
+    await open();
+    const status = popup().querySelector<HTMLElement>('[role="status"]')!;
+    expect(status.textContent).toBe("");
+    await pickPopupDay(popup(), "2026-10-20");
+    expect(status.textContent).toBe("Editing end");
+  });
+
+  it("names a same-day Project default as one day, and a longer one as a compact span", async () => {
+    await mount({ projectDefault: range("2026-09-20T09:00", "2026-09-20T17:00") });
+    await open();
+    expect(popupButton(popup(), "Project default")!.textContent).toBe("Project defaultSun 20 Sep");
+    await act(async () => { root.unmount(); await Promise.resolve(); });
+    root = createRoot(host);
+    await mount({ projectDefault: range("2026-09-30T09:00", "2026-10-07T17:00") });
+    await open();
+    expect(popupButton(popup(), "Project default")!.textContent).toBe("Project default30 Sep – 7 Oct");
+  });
+
+  it("shows the order error directly with the Start | End toggle", async () => {
+    await mount({ value: range("2026-11-03T09:00", "2026-11-03T17:00") });
+    await open();
+    await typePopupTime(popup(), "17:00");
+    const toggle = popup().querySelector('[aria-label="Edit which end"]')!;
+    expect(toggle.parentElement!.textContent).toContain("Start must be before end.");
+    expect(popup().textContent!.split("Start must be before end.").length - 1).toBe(1);
+  });
+
   it("a day before the start restarts the range there while End is active", async () => {
     await mount();
     await open();
     await pickPopupDay(popup(), "2026-10-20");
     await pickPopupDay(popup(), "2026-10-15");
-    expect(rangeToggles(popup())).toMatchObject({ active: "End", start: "15/10 09:00", end: "15/10 17:00" });
+    expect(rangeToggles(popup())).toMatchObject({ active: "End", start: "Thu 15 Oct · 09:00", end: "Thu 15 Oct · 17:00" });
   });
 
   it("types the time of the active end only", async () => {
@@ -183,7 +212,7 @@ describe("DateTimeField range trigger and popup", () => {
     await pressInPopup(popup(), "Today");
     await applyPopup(popup());
     expect(dateTimePopup("Schedule")).not.toBeNull();
-    expect(rangeToggles(popup()).start).toBe("1/10 09:00");
+    expect(rangeToggles(popup()).start).toBe("Thu 1 Oct · 09:00");
   });
 
   it("closes without applying when nothing changed", async () => {

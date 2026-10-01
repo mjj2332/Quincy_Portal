@@ -30,7 +30,7 @@ import { clearToasts } from "../lib/toast-store";
 import { ToastViewport } from "./quincy/ToastViewport";
 import { ProductionGantt } from "./ProductionGantt";
 import { endMoment, startMoment } from "@/testing/subtask-schedule";
-import { applyPopup, dateTimePopup, pickPopupDay, popupButton, pressInPopup, rangeToggles, typePopupTime } from "@/testing/date-time-popup";
+import { applyPopup, dateTimePopup, pickPopupDay, popupButton, pressInPopup, rangeToggles, typePopupTime, rangeMoment } from "@/testing/date-time-popup";
 
 vi.mock("../lib/stages", () => ({
   presentationStages: (stages: unknown[]) => stages,
@@ -172,7 +172,7 @@ const dueCells = () => [...host.querySelectorAll<HTMLElement>('[data-testid="gan
 const dueText = (title: string) => dueTrigger(title)?.textContent ?? "";
 const picker = (title: string) => dateTimePopup(`Schedule for ${title}`);
 const pickerButton = (title: string, name: string) => (picker(title) ? popupButton(picker(title)!, name) : undefined);
-/** The End toggle's text in the open popup ("15/9 17:00"). */
+/** The End toggle's text in the open popup ("Tue 15 Sep · 17:00"). */
 const endText = (title: string) => rangeToggles(picker(title)!).end;
 const startText = (title: string) => rangeToggles(picker(title)!).start;
 const undoButtons = () => [...document.body.querySelectorAll<HTMLButtonElement>('[data-testid="toast-action"]')];
@@ -292,8 +292,8 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     // The fixture: shoot day -1 (2026-09-09), Deadline day +6 at 15:00 (2026-09-16).
     expect(pickerButton(RANGE_TITLE, "Project default")).toBeDefined();
     await pressInPopup(picker(RANGE_TITLE)!, "Project default");
-    expect(startText(RANGE_TITLE)).toBe("9/9 09:00");
-    expect(endText(RANGE_TITLE)).toBe("16/9 15:00");
+    expect(startText(RANGE_TITLE)).toBe("Wed 9 Sep · 09:00");
+    expect(endText(RANGE_TITLE)).toBe("Wed 16 Sep · 15:00");
   });
 
   it("R3 a timed End keeps the unchanged timed Start and its Sydney wall time on the wire", async () => {
@@ -343,8 +343,8 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     expect(picker(RANGE_TITLE)!.textContent).toContain("Start must be before end.");
     expect(patches()).toHaveLength(0);
     expect(picker(RANGE_TITLE)).not.toBeNull();
-    expect(endText(RANGE_TITLE)).toBe(`${Number(sydneyDay(1).slice(8))}/${Number(sydneyDay(1).slice(5, 7))} 08:00`);
-    expect(startText(RANGE_TITLE)).toBe(`${Number(sydneyDay(1).slice(8))}/${Number(sydneyDay(1).slice(5, 7))} 09:00`);
+    expect(endText(RANGE_TITLE)).toBe(rangeMoment(sydneyDay(1), "08:00"));
+    expect(startText(RANGE_TITLE)).toBe(rangeMoment(sydneyDay(1), "09:00"));
 
     // The same day, later than the start, is a range under a day: accepted.
     await typePopupTime(picker(RANGE_TITLE)!, "16:00");
@@ -416,7 +416,7 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     expect(patches()).toHaveLength(1);
     expect(picker(RANGE_TITLE)).not.toBeNull();
     expect(picker(RANGE_TITLE)!.textContent).toContain("Latest schedule · v3");
-    expect(endText(RANGE_TITLE)).toBe(`${Number(sydneyDay(5).slice(8))}/${Number(sydneyDay(5).slice(5, 7))} 17:00`);
+    expect(endText(RANGE_TITLE)).toBe(rangeMoment(sydneyDay(5), "17:00"));
 
     patchReply = null;
     await applyPopup(picker(RANGE_TITLE)!);
@@ -482,7 +482,7 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     expect(patches()).toHaveLength(1);
     expect(picker(RANGE_TITLE)).not.toBeNull();
     expect(picker(RANGE_TITLE)!.textContent).toContain("Latest checklist item · schedule v3");
-    expect(endText(RANGE_TITLE)).toBe(`${Number(sydneyDay(5).slice(8))}/${Number(sydneyDay(5).slice(5, 7))} 17:00`);
+    expect(endText(RANGE_TITLE)).toBe(rangeMoment(sydneyDay(5), "17:00"));
     await pressInPopup(picker(RANGE_TITLE)!, "Use latest item (discard draft)");
     await flush(6);
     expect(patches()).toHaveLength(1);

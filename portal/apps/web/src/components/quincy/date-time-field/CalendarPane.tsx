@@ -49,6 +49,13 @@ const COMPONENTS = {
  */
 const IGNORE_RANGE_SELECT = () => {};
 
+/**
+ * The range's endpoint that is NOT being edited: reui/calendar paints both ends bg-primary, so the
+ * inactive one is outlined instead and the active end alone stays solid. A modifier on the day cell,
+ * reaching the button inside it, keeps the vendored calendar untouched.
+ */
+const INACTIVE_END_CLASS = "[&_button]:!bg-card [&_button]:!text-foreground [&_button]:ring-2 [&_button]:ring-inset [&_button]:ring-primary";
+
 const LABELS = {
   labelMonthDropdown: () => "Month",
   labelYearDropdown: () => "Year",
@@ -61,7 +68,7 @@ const FORMATTERS = {
   formatWeekdayName: (date: Date) => WEEKDAY_SHORT[date.getDay()]!,
 };
 
-export type CalendarSelection = { mode: "single"; day: string | null } | { mode: "range"; start: string | null; end: string | null };
+export type CalendarSelection = { mode: "single"; day: string | null } | { mode: "range"; start: string | null; end: string | null; activeEnd?: "start" | "end" };
 
 export function CalendarPane({ selection, today, month, onMonthChange, onPickDay, startYear, endYear }: {
   selection: CalendarSelection;
@@ -104,6 +111,9 @@ export function CalendarPane({ selection, today, month, onMonthChange, onPickDay
           selected={selection.start ? { from: civilToCell(selection.start), to: selection.end ? civilToCell(selection.end) : undefined } : undefined}
           onSelect={IGNORE_RANGE_SELECT}
           onDayClick={(day) => onPickDay(cellToCivil(day))}
+          {...(selection.activeEnd && selection.start && selection.end && selection.start !== selection.end
+            ? { modifiers: { inactive_end: civilToCell(selection.activeEnd === "start" ? selection.end : selection.start) }, modifiersClassNames: { inactive_end: INACTIVE_END_CLASS } }
+            : {})}
         />
       )}
     </TodayWeekdayContext.Provider>

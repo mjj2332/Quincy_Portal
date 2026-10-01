@@ -40,6 +40,8 @@ type CommonProps = {
   label: string;
   /** Raises the popup's layer, for a field inside a dialog (see `reui/popover`'s positionerClassName). */
   positionerClassName?: string;
+  /** Which edge of the field the popup aligns to; "end" for a field near a container's left edge. Defaults to "start". */
+  popupAlign?: "start" | "end";
   clearable?: boolean;
   placeholder?: string;
   disabled?: boolean;
@@ -197,7 +199,7 @@ export function DateTimeField(props: DateTimeFieldProps) {
           <span id={valueId} className={cn("min-w-0 [overflow-wrap:anywhere]", display === null && "text-muted-foreground")}>{display ?? placeholder}</span>
           <CalendarIcon aria-hidden className="size-4 shrink-0 text-foreground-secondary" />
         </PopoverTrigger>
-        <DateTimePopoverContent label={label} positionerClassName={props.positionerClassName}>
+        <DateTimePopoverContent label={label} align={props.popupAlign ?? "start"} positionerClassName={props.positionerClassName}>
           {props.variant === "date"
             ? <DatePopup label={label} value={props.value} clearable={clearable} onApply={props.onApply} onClose={() => setOpen(false)} />
             : props.variant === "range"

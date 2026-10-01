@@ -33,7 +33,7 @@ import {
   type ProductionEventCalendarDialogCommands,
 } from "./ProductionEventCalendarDialogs";
 import { Sheet } from "./reui/sheet";
-import { applyPopup, dateTimePopup, openFieldPopup, openMoveDialogField, pickPopupDateTime, pickPopupDay, pickRangeEnd, popupButton, popupDraft, pressInPopup, pressRangeFold, rangeFoldPressed, rangeToggles, typePopupTime } from "@/testing/date-time-popup";
+import { applyPopup, dateTimePopup, openFieldPopup, openMoveDialogField, pickPopupDateTime, pickPopupDay, pickRangeEnd, popupButton, popupDraft, pressInPopup, pressRangeFold, rangeFoldPressed, rangeToggles, typePopupTime, rangeMoment } from "@/testing/date-time-popup";
 import { startMoment, endMoment } from "@/testing/subtask-schedule";
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
@@ -245,7 +245,7 @@ describe("ProductionEventCalendarScheduleEditorSheet (sheet shell)", () => {
     expect(document.body.querySelectorAll("select")).toHaveLength(0);
     expect(document.body.querySelectorAll('input[type="date"], input[type="time"], input[type="radio"]')).toHaveLength(0);
     const popup = await openFieldPopup("Schedule");
-    expect(rangeToggles(popup)).toEqual({ active: "Start", start: "20/8 09:00", end: "20/8 17:00" });
+    expect(rangeToggles(popup)).toEqual({ active: "Start", start: rangeMoment("2026-08-20", "09:00"), end: rangeMoment("2026-08-20", "17:00") });
   });
 
   it("refuses an end at or before the start in the popup, so nothing invalid reaches the draft", async () => {
@@ -275,7 +275,7 @@ describe("ProductionEventCalendarScheduleEditorSheet (sheet shell)", () => {
     await renderSheet({ initialSchedule: { state: "range", start: { localCivil: "2026-08-25T09:00" }, end: { localCivil: "2026-08-25T17:00" } }, validationError: { code: "subtask_schedule_invalid_order", message: "" } });
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain("start must be before");
     const popup = await openFieldPopup("Schedule");
-    expect(rangeToggles(popup)).toEqual({ active: "Start", start: "25/8 09:00", end: "25/8 17:00" });
+    expect(rangeToggles(popup)).toEqual({ active: "Start", start: rangeMoment("2026-08-25", "09:00"), end: rangeMoment("2026-08-25", "17:00") });
   });
 
   it("reports a nonexistent spring-forward time in the popup and blocks Apply", async () => {

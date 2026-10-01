@@ -9,12 +9,14 @@ import { Eyebrow } from "../Eyebrow";
  * scrolling body and a footer pinned below it so Cancel / Apply are always visible (#421). The
  * body is the caller's; the footer's two actions are the same for every form.
  */
-export function PopupFrame({ label, zoneId, bodyRef, applying, applyDisabled = false, onCancel, onApply, children }: {
+export function PopupFrame({ label, zoneId, bodyRef, applying, applyDisabled = false, pinned, onCancel, onApply, children }: {
   label: string;
   zoneId: string;
   bodyRef: Ref<HTMLDivElement>;
   applying: boolean;
   applyDisabled?: boolean;
+  /** Controls drawn between the header and the scrolling body, so they stay visible while it scrolls. */
+  pinned?: ReactNode;
   onCancel: () => void;
   onApply: () => void;
   children: ReactNode;
@@ -25,6 +27,7 @@ export function PopupFrame({ label, zoneId, bodyRef, applying, applyDisabled = f
         <FrameTitle><Eyebrow>{label}</Eyebrow></FrameTitle>
         <FrameDescription id={zoneId} className="text-[length:var(--text-xs)]">{SYDNEY_TIME_ZONE}</FrameDescription>
       </FrameHeader>
+      {pinned && <div className="shrink-0 px-(--frame-panel-header-px) pb-[var(--space-2)]">{pinned}</div>}
       {/* The body scrolls; the footer below stays pinned so Cancel / Apply are always visible. */}
       <FramePanel className="min-h-0 overflow-y-auto">{children}</FramePanel>
       <FrameFooter className="shrink-0 flex-row justify-end gap-[var(--space-2)]">

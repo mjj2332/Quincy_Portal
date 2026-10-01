@@ -247,9 +247,9 @@ describe("ProductionEventCalendar checklist writes", () => {
     await openReschedule(ID);
     const popup = await openFieldPopup("Schedule");
     expect(popupButton(popup, "Project default")).toBeDefined();
-    expect(rangeToggles(popup)).not.toMatchObject({ start: "1/8 09:00", end: "14/8 17:00" });
+    expect(rangeToggles(popup)).not.toMatchObject({ start: "Sat 1 Aug · 09:00", end: "Fri 14 Aug · 17:00" });
     await pressInPopup(popup, "Project default");
-    expect(rangeToggles(popup)).toMatchObject({ start: "1/8 09:00", end: "14/8 17:00" });
+    expect(rangeToggles(popup)).toMatchObject({ start: "Sat 1 Aug · 09:00", end: "Fri 14 Aug · 17:00" });
   });
 
   it("#288: warns when a range is moved before the shoot date (the Gantt's rule), and still sends the PATCH", async () => {
@@ -424,7 +424,7 @@ describe("ProductionEventCalendar checklist writes", () => {
     const fetch = await mount([event], { patch: () => json(checklistMutationBody(event, rangeSchedule(dated("2026-08-12"), dated("2026-08-13"), 5))) });
     await openReschedule(ID);
     const popup = await openFieldPopup("Schedule");
-    expect(rangeToggles(popup)).toEqual({ active: "Start", start: "12/8 09:00", end: "12/8 17:00" });
+    expect(rangeToggles(popup)).toEqual({ active: "Start", start: "Wed 12 Aug · 09:00", end: "Wed 12 Aug · 17:00" });
     await pickRangeEnd(popup, "End"); await pickPopupDay(popup, "2026-08-13"); await applyPopup(popup);
     await clickTestId("event-calendar-schedule-submit");
     expect(scheduleOf(fetch.patches()[0]!)).toEqual({ expectedVersion: 4, schedule: { state: "range", start: { localCivil: "2026-08-12T09:00" }, end: { localCivil: "2026-08-13T17:00" } } });
@@ -439,7 +439,7 @@ describe("ProductionEventCalendar checklist writes", () => {
     await clickTestId("event-calendar-schedule-submit");
     await flush(10);
     expect(fetch.patches()).toHaveLength(1);
-    expect(rangeToggles(await openFieldPopup("Schedule")).end).toBe("15/8 17:00");
+    expect(rangeToggles(await openFieldPopup("Schedule")).end).toBe("Sat 15 Aug · 17:00");
     expect(liveRegion()).toContain("changed elsewhere");
   });
 
@@ -554,7 +554,7 @@ describe("ProductionEventCalendar checklist editor Range option", () => {
     await openReschedule(ID);
     expect(byLabel("Checklist schedule state")).toBeNull();
     expect(document.querySelectorAll('input[type="date"], input[type="time"], input[type="radio"], select')).toHaveLength(0);
-    expect(rangeToggles(await openFieldPopup("Schedule")).start).toBe("12/8 09:00");
+    expect(rangeToggles(await openFieldPopup("Schedule")).start).toBe("Wed 12 Aug · 09:00");
   });
 
 });

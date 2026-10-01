@@ -154,3 +154,11 @@ export function rangeFoldPressed(popup: HTMLElement, which: "Start" | "End"): "E
   const pressed = [...(group?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((button) => button.getAttribute("aria-pressed") === "true");
   return pressed ? (pressed.textContent?.startsWith("Earlier") ? "Earlier" : "Later") : null;
 }
+
+/** The text a range popup's Start | End toggle shows for a civil day and time: `Thu 8 Oct · 13:00`. */
+export function rangeMoment(day: string, time: string): string {
+  const [year, month, date] = day.split("-").map(Number) as [number, number, number];
+  const weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(Date.UTC(year, month - 1, date)).getUTCDay()];
+  const monthName = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][month - 1];
+  return `${weekday} ${date} ${monthName} · ${time}`;
+}

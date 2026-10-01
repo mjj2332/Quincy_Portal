@@ -7,7 +7,7 @@ import { formatSchedule, scheduleReorderFocus, SubtaskChecklist } from "./Subtas
 import { reorderNeighbors } from "../lib/reorder-neighbors";
 import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project-query-sync";
 import { projectDataKeys } from "../lib/project-data";
-import { applyPopup, dateTimePopup, pickPopupDay, pickRangeEnd, popupButton, rangeToggles, typePopupTime } from "@/testing/date-time-popup";
+import { applyPopup, dateTimePopup, pickPopupDay, pickRangeEnd, popupButton, rangeToggles, typePopupTime, rangeMoment } from "@/testing/date-time-popup";
 import { checklistScheduleToDto, normalizeChecklistSchedule } from "@quincy/shared";
 import { formatCivilRange } from "../lib/date-format";
 import { endMoment, momentScheduleDto, presetScheduleDto, startMoment } from "@/testing/subtask-schedule";
@@ -165,7 +165,7 @@ describe("SubtaskChecklist", () => {
     const group = await openSchedule(host, "Call client"); expect(group).not.toBeNull();
     // A Subtask is always a range of two moments: no Date / Timed choice, no Due only, no Unscheduled.
     expect(group.textContent).not.toContain("Date or time"); expect(group.textContent).not.toContain("Due only"); expect(group.textContent).not.toContain("Unscheduled"); expect(group.querySelectorAll("input[type=date]")).toHaveLength(0);
-    expect(rangeToggles(group)).toEqual({ active: "Start", start: "30/5 09:00", end: "30/5 17:00" });
+    expect(rangeToggles(group)).toEqual({ active: "Start", start: rangeMoment(`${year}-05-30`, "09:00"), end: rangeMoment(`${year}-05-30`, "17:00") });
     // Nothing changed: Apply only closes.
     await applyPopup(group); await flush();
     expect(apiPatchMock).not.toHaveBeenCalled(); expect(popupOf("Call client")).toBeNull();
@@ -186,7 +186,7 @@ describe("SubtaskChecklist", () => {
     expect(control.disabled).toBe(false);
     expect(control.textContent).toContain("1 Jun");
     const editor = await openSchedule(host, "Existing range");
-    expect(rangeToggles(editor)).toEqual({ active: "Start", start: "1/6 09:00", end: "2/6 17:00" });
+    expect(rangeToggles(editor)).toEqual({ active: "Start", start: rangeMoment(`${year}-06-01`, "09:00"), end: rangeMoment(`${year}-06-02`, "17:00") });
     await pickRangeEnd(editor, "End"); await typePopupTime(editor, "18:00"); await applyPopup(editor); await flush();
     expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks/range-1`, { schedule: { expectedVersion: 1, schedule: { state: "range", start: { localCivil: `${year}-06-01T09:00` }, end: { localCivil: `${year}-06-02T18:00` } } } });
   });
@@ -221,7 +221,7 @@ describe("SubtaskChecklist", () => {
     apiPatchMock.mockRejectedValueOnce(new ApiError("Checklist item changed", 409, { code: "subtask_item_conflict", current: latest.schedule, currentSubtask: latest }));
     await draftDay(await openSchedule(host, "Call client"), `${year}-06-20`);
     const conflict = await openSchedule(host, "Call client");
-    expect(rangeToggles(conflict).start).toBe("20/6 09:00"); expect(conflict.textContent).toContain("Authoritative title"); expect(conflict.textContent).toContain("Complete"); expect(conflict.textContent).toContain("Ada Smith"); expect(conflict.textContent).toContain("Use latest item (discard draft)"); expect(conflict.textContent).toContain("Apply reapplies your retained schedule draft; Cancel discards it.");
+    expect(rangeToggles(conflict).start).toBe(rangeMoment(`${year}-06-20`, "09:00")); expect(conflict.textContent).toContain("Authoritative title"); expect(conflict.textContent).toContain("Complete"); expect(conflict.textContent).toContain("Ada Smith"); expect(conflict.textContent).toContain("Use latest item (discard draft)"); expect(conflict.textContent).toContain("Apply reapplies your retained schedule draft; Cancel discards it.");
     await click([...conflict.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Use latest item (discard draft)")!);
     // The authoritative item is done, so it now sits in the collapsed "Completed" group (#377).
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.startsWith("Completed ("))!); expect(item(host, "Authoritative title")).not.toBeNull();
@@ -232,7 +232,7 @@ describe("SubtaskChecklist", () => {
     const latest = { ...task, schedule: presetScheduleDto(`${year}-06-10`, `${year}-06-10`, 2) };
     apiPatchMock.mockRejectedValueOnce(new ApiError("Schedule changed", 409, { code: "subtask_schedule_conflict", current: latest.schedule }));
     await draftDay(await openSchedule(host, "Call client"), `${year}-06-20`);
-    expect(rangeToggles(await openSchedule(host, "Call client")).start).toBe("20/6 09:00");
+    expect(rangeToggles(await openSchedule(host, "Call client")).start).toBe(rangeMoment(`${year}-06-20`, "09:00"));
     await click(item(host, "Call client").querySelector<HTMLInputElement>('input[type="checkbox"]')!); await flush();
     expect(apiPatchMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { done: true });
     // Done moves the row into the collapsed "Completed" group (#377); open it to reach the row.
@@ -240,7 +240,7 @@ describe("SubtaskChecklist", () => {
     // An outside press closed the popup, but the retained draft and the conflict survive the remount: reopen it.
     const reopened = await ensureOpen(host, "Call client");
     expect(reopened.textContent).toContain("Latest schedule · v2");
-    expect(rangeToggles(reopened).start).toBe("20/6 09:00");
+    expect(rangeToggles(reopened).start).toBe(rangeMoment(`${year}-06-20`, "09:00"));
   });
 
   it("keeps the retained schedule draft when Done moves the row to Completed and the editor is reopened (#377)", async () => {
@@ -248,13 +248,13 @@ describe("SubtaskChecklist", () => {
     const latest = { ...task, schedule: presetScheduleDto(`${year}-06-10`, `${year}-06-10`, 2) };
     apiPatchMock.mockRejectedValueOnce(new ApiError("Schedule changed", 409, { code: "subtask_schedule_conflict", current: latest.schedule }));
     await draftDay(await openSchedule(host, "Call client"), `${year}-06-20`);
-    expect(rangeToggles(await openSchedule(host, "Call client")).start).toBe("20/6 09:00");
+    expect(rangeToggles(await openSchedule(host, "Call client")).start).toBe(rangeMoment(`${year}-06-20`, "09:00"));
     await keydown(popupOf("Call client"), "Escape"); await flush();
     await click(item(host, "Call client").querySelector<HTMLInputElement>('input[type="checkbox"]')!); await flush();
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.startsWith("Completed ("))!);
     const reopened = await openSchedule(host, "Call client");
     expect(reopened.textContent).toContain("Latest schedule · v2");
-    expect(rangeToggles(reopened).start).toBe("20/6 09:00");
+    expect(rangeToggles(reopened).start).toBe(rangeMoment(`${year}-06-20`, "09:00"));
     // Apply reapplies the draft against the latest version the conflict named, not the stored dates.
     apiPatchMock.mockResolvedValueOnce({ ...latest, done: true, schedule: presetScheduleDto(`${year}-06-20`, `${year}-06-20`, 3) });
     await applyPopup(reopened); await flush();
@@ -267,14 +267,14 @@ describe("SubtaskChecklist", () => {
     apiPatchMock.mockRejectedValueOnce(new ApiError("Schedule changed", 409, { code: "subtask_schedule_conflict", current: latest.schedule }));
     await draftDay(await openSchedule(host, "Call client"), `${year}-06-20`);
     await openSchedule(host, "Call client");
-    await waitFor(() => expect(rangeToggles(popupOf("Call client")).start).toBe("20/6 09:00"));
+    await waitFor(() => expect(rangeToggles(popupOf("Call client")).start).toBe(rangeMoment(`${year}-06-20`, "09:00")));
     // An unrelated write landing (a rename). A Done tick used to be the unrelated write, but it now moves the row into the
     // "Completed" group, which remounts it and discards the popover draft by design (#377).
     await click(item(host, "Call client").querySelector<HTMLButtonElement>('[data-testid="subtask-checklist-title"]')!); const renameInput = item(host, "Call client").querySelector<HTMLInputElement>('[aria-label="Subtask title"]')!; await typeInto(renameInput, "Renamed item"); await keydown(renameInput, "Enter"); await flush();
     await waitFor(() => expect(apiPatchMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { title: "Renamed item" }));
     const reopened = await ensureOpen(host, "Renamed item");
     expect(reopened.textContent).toContain("Latest schedule · v2");
-    expect(rangeToggles(reopened).start).toBe("20/6 09:00");
+    expect(rangeToggles(reopened).start).toBe(rangeMoment(`${year}-06-20`, "09:00"));
   });
 
   it("preserves an open schedule draft when a late authoritative refresh arrives", async () => {
@@ -287,7 +287,7 @@ describe("SubtaskChecklist", () => {
     await pickPopupDay(editor, `${year}-06-15`);
     queryClient.setQueryData(projectDataKeys.subtasks(projectId), [{ ...task, title: "Late authoritative title", dueDate: `${year}-07-01` }, second]);
     await flush();
-    expect(rangeToggles(portal("subtask-popover-task-1-schedule")).start).toBe("15/6 09:00");
+    expect(rangeToggles(portal("subtask-popover-task-1-schedule")).start).toBe(rangeMoment(`${year}-06-15`, "09:00"));
     runtime.dispose(); queryClient.clear();
   });
 
@@ -302,7 +302,7 @@ describe("SubtaskChecklist", () => {
     await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><SubtaskChecklist projectId={projectId} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); await Promise.resolve(); });
     const editor = await openSchedule(host, "Call client");
     // A stored range opens with its own start and end; the user moves the end to 10:00.
-    expect(rangeToggles(editor)).toEqual({ active: "Start", start: "1/6 00:00", end: "1/6 09:00" });
+    expect(rangeToggles(editor)).toEqual({ active: "Start", start: rangeMoment(`${year}-06-01`, "00:00"), end: rangeMoment(`${year}-06-01`, "09:00") });
     await pickRangeEnd(editor, "End"); await typePopupTime(editor, "10:00");
     await act(async () => { queryClient.setQueryData(projectDataKeys.subtasks(projectId), [versionTwo, second]); await new Promise((resolve) => window.setTimeout(resolve, 0)); });
     await flush();
@@ -312,7 +312,7 @@ describe("SubtaskChecklist", () => {
     expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { schedule: { expectedVersion: 1, schedule: { state: "range", start: { localCivil: `${year}-06-01T00:00` }, end: { localCivil: `${year}-06-01T10:00` } } } });
     const conflict = await openSchedule(host, "Late version 2");
     expect(conflict.textContent).toContain("Latest schedule · v2");
-    expect(rangeToggles(conflict).end).toBe("1/6 10:00");
+    expect(rangeToggles(conflict).end).toBe(rangeMoment(`${year}-06-01`, "10:00"));
     runtime.dispose(); queryClient.clear();
   });
 
@@ -325,7 +325,7 @@ describe("SubtaskChecklist", () => {
     apiGetMock.mockImplementation((path) => path.includes("subtask-assignee-options") ? Promise.resolve(optionsResponse) : Promise.resolve({ subtasks: [repeated, second] }));
     const host = mount(); await render();
     const editor = await openSchedule(host, "Call client");
-    expect(rangeToggles(editor)).toEqual({ active: "Start", start: "5/4 00:00", end: "5/4 02:30" });
+    expect(rangeToggles(editor)).toEqual({ active: "Start", start: rangeMoment(`${year}-04-05`, "00:00"), end: rangeMoment(`${year}-04-05`, "02:30") });
     // The End's Earlier / Later choice is seeded from the stored fold.
     const pressed = [...editor.querySelectorAll<HTMLButtonElement>('[aria-label="Which Sydney time, end"] button')].find((button) => button.getAttribute("aria-pressed") === "true");
     expect(pressed?.textContent?.startsWith(disambiguation === "earlier" ? "Earlier" : "Later")).toBe(true);
@@ -361,7 +361,7 @@ describe("SubtaskChecklist", () => {
     const defaultText = formatCivilRange(projectDefaultRange);
     expect(trigger().textContent).toContain(defaultText); expect(trigger().textContent).not.toContain("◷"); expect(trigger().getAttribute("aria-label")).toBe(`Schedule for new subtask: ${defaultText}`);
     // The popup seeds from the default, so its toggles already show the Project's range.
-    await click(trigger()); expect(rangeToggles(dateTimePopup("Schedule for new subtask")!)).toMatchObject({ start: "2/11 09:00", end: "6/11 17:00" }); await click(popupButton(dateTimePopup("Schedule for new subtask")!, "Cancel")!);
+    await click(trigger()); expect(rangeToggles(dateTimePopup("Schedule for new subtask")!)).toMatchObject({ start: rangeMoment(`${year}-11-02`, "09:00"), end: rangeMoment(`${year}-11-06`, "17:00") }); await click(popupButton(dateTimePopup("Schedule for new subtask")!, "Cancel")!);
     await typeInto(host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!, "Plain");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Add")!);
     expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks`, { title: "Plain" });
@@ -374,7 +374,7 @@ describe("SubtaskChecklist", () => {
     await click(host.querySelector<HTMLButtonElement>('[aria-label^="Schedule for new subtask"]')!);
     const editor = dateTimePopup("Schedule for new subtask")!;
     expect(rangeToggles(editor)).toEqual({ active: "Start", start: "Not set", end: "Not set" });
-    await pickPopupDay(editor, `${year}-06-04`); expect(rangeToggles(editor)).toEqual({ active: "End", start: "4/6 09:00", end: "4/6 17:00" });
+    await pickPopupDay(editor, `${year}-06-04`); expect(rangeToggles(editor)).toEqual({ active: "End", start: rangeMoment(`${year}-06-04`, "09:00"), end: rangeMoment(`${year}-06-04`, "17:00") });
     await pickPopupDay(editor, `${year}-06-06`); expect(popupButton(editor, "Apply")!.disabled).toBe(false); await applyPopup(editor);
     expect(host.querySelector<HTMLButtonElement>('[aria-label^="Schedule for new subtask"]')?.textContent).not.toContain("Project default");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Add")!);

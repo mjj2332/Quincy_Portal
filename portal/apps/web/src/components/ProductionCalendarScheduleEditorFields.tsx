@@ -151,6 +151,7 @@ export function ProductionCalendarScheduleEditorFields({ state, projectDefault =
       value={asRange(draft)}
       projectDefault={projectDefault}
       positionerClassName="z-[calc(var(--z-dialog)+1)]"
+      popupAlign="end"
       onApply={setDraft}
     />
     {error && <div className={EDITOR_ERROR} role="alert">{errorText(error)}</div>}

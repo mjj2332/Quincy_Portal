@@ -22,9 +22,18 @@ export type RangeShortcut = {
 const WEEKDAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
 
-function dayLabel(civil: string): string {
+export function dayLabel(civil: string): string {
   const [, month = "1", day = "1"] = civil.slice(0, 10).split("-");
   return `${WEEKDAY_NAMES[civilWeekday(civil.slice(0, 10)) - 1]} ${Number(day)} ${MONTH_NAMES[Number(month) - 1]}`;
+}
+
+/** `30 Sep – 7 Oct`, or one day (`Sun 20 Sep`) when both ends fall on it: fits two lines in the shortcut rail. */
+function spanLabel(startCivil: string, endCivil: string): string {
+  const start = startCivil.slice(0, 10);
+  const end = endCivil.slice(0, 10);
+  if (start === end) return dayLabel(start);
+  const short = (civil: string) => dayLabel(civil).split(" ").slice(1).join(" ");
+  return `${short(start)} – ${short(end)}`;
 }
 
 /** One day at the presets: 09:00 to 17:00. */
@@ -48,11 +57,11 @@ export function buildRangeShortcuts({ today, projectDefault }: { today: string; 
   const rows: RangeShortcut[] = [
     { id: "today", label: "Today", sublabel: dayLabel(today).split(" ")[0]!, resolve: () => presetDay(today) },
     { id: "tomorrow", label: "Tomorrow", sublabel: dayLabel(tomorrow).split(" ")[0]!, resolve: () => presetDay(tomorrow) },
-    { id: "this-week", label: "This week", sublabel: `${dayLabel(today).split(" ")[0]} to Sun`, resolve: () => presetDay(today, thisSunday) },
-    { id: "next-week", label: "Next week", sublabel: `${dayLabel(nextMonday)} to ${dayLabel(nextSunday)}`, resolve: () => presetDay(nextMonday, nextSunday) },
+    { id: "this-week", label: "This week", sublabel: spanLabel(today, thisSunday), resolve: () => presetDay(today, thisSunday) },
+    { id: "next-week", label: "Next week", sublabel: spanLabel(nextMonday, nextSunday), resolve: () => presetDay(nextMonday, nextSunday) },
   ];
   if (projectDefault) {
-    rows.push({ id: "project-default", label: "Project default", sublabel: `${dayLabel(projectDefault.start.localCivil)} to ${dayLabel(projectDefault.end.localCivil)}`, resolve: () => projectDefault });
+    rows.push({ id: "project-default", label: "Project default", sublabel: spanLabel(projectDefault.start.localCivil, projectDefault.end.localCivil), resolve: () => projectDefault });
   }
   return rows;
 }
