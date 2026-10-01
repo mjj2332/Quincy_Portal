@@ -247,9 +247,14 @@ export const notificationPreferences = sqliteTable(
   {
     userId: text("user_id").primaryKey().notNull().references(() => user.id, { onDelete: "cascade" }),
     projectDeadlineReminderEmails: integer("project_deadline_reminder_emails").notNull().default(1),
+    /** Migration 0053 (#424). Read with COALESCE(..., 1): an old Worker's upsert omits the column. */
+    subtaskReminderEmails: integer("subtask_reminder_emails").notNull().default(1),
     updatedAt: integer("updated_at").notNull(),
   },
-  (t) => [check("notification_preferences_email_check", sql`${t.projectDeadlineReminderEmails} IN (0, 1)`)],
+  (t) => [
+    check("notification_preferences_email_check", sql`${t.projectDeadlineReminderEmails} IN (0, 1)`),
+    check("notification_preferences_subtask_reminder_emails_check", sql`${t.subtaskReminderEmails} IN (0, 1)`),
+  ],
 );
 
 export const projectMembers = sqliteTable(
@@ -373,6 +378,8 @@ export const projectSubtasks = sqliteTable(
     /** Constant marker (always 1, never read or written by the app) that carries the migration 0052 timed-only CHECK below (ADR 0016).
      * Any migration that drops a schedule kind column must drop this column first. */
     scheduleTimedRequired: integer("schedule_timed_required").notNull().default(1),
+    /** Advance reminder offsets in minutes before due (migration 0053, #424). "Due now" is implied and never stored. */
+    reminderOffsetsJson: text("reminder_offsets_json").notNull().default("[1440]"),
     createdBy: text("created_by").notNull().references(() => user.id),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -411,6 +418,47 @@ export const projectSubtasks = sqliteTable(
     ), 0) = 1`),
     // Mirrors migration 0052: every Subtask end is a moment, so both endpoint kinds are the constant 'timed' (ADR 0016).
     check("project_subtasks_schedule_timed_required_check", sql`${t.scheduleTimedRequired} = 1 AND COALESCE((${t.scheduleStartKind} IS 'timed' AND ${t.scheduleEndKind} IS 'timed'), 0) = 1`),
+    // Mirrors migration 0053: the offsets are always a JSON array.
+    check("project_subtasks_reminder_offsets_check", sql`CASE WHEN json_valid(${t.reminderOffsetsJson}) THEN json_type(${t.reminderOffsetsJson}) = 'array' ELSE 0 END`),
+  ],
+);
+
+/** Scheduled Subtask reminders (migration 0053, #424), mirroring `projectDeadlineOccurrences`. `createdBy` is NULL for system and migration rows. */
+export const projectSubtaskReminderOccurrences = sqliteTable(
+  "project_subtask_reminder_occurrences",
+  {
+    id: id(),
+    subtaskId: text("subtask_id").notNull().references(() => projectSubtasks.id, { onDelete: "cascade" }),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    /** The Subtask `schedule_version` this occurrence was generated for. */
+    scheduleVersion: integer("schedule_version").notNull(),
+    kind: text("kind", { enum: ["advance", "due_now"] as const }).notNull(),
+    reminderOffsetMinutes: integer("reminder_offset_minutes").notNull(),
+    fireAt: integer("fire_at").notNull(),
+    dueAt: integer("due_at").notNull(),
+    dueLocalCivil: text("due_local_civil").notNull(),
+    dueZone: text("due_zone", { enum: ["Australia/Sydney"] as const }).notNull(),
+    dueUtcOffsetMinutes: integer("due_utc_offset_minutes").notNull(),
+    dueFold: integer("due_fold").notNull(),
+    status: text("status", { enum: ["pending", "fired", "superseded"] as const }).notNull(),
+    terminalReason: text("terminal_reason", { enum: ["schedule_replaced", "reminders_changed", "subtask_completed", "project_archived", "due_elapsed", "legacy_due_today_sent"] as const }),
+    firedAt: integer("fired_at"),
+    createdBy: text("created_by"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    index("project_subtask_reminder_occurrences_due_idx").on(t.status, t.fireAt, t.id),
+    index("project_subtask_reminder_occurrences_subtask_idx").on(t.subtaskId, t.status),
+    index("project_subtask_reminder_occurrences_project_idx").on(t.projectId, t.status),
+    uniqueIndex("project_subtask_reminder_occurrences_live_unique").on(t.subtaskId, t.scheduleVersion, t.kind, t.reminderOffsetMinutes).where(sql`${t.status} IN ('pending', 'fired')`),
+    check("project_subtask_reminder_occurrences_schedule_version_check", sql`typeof(${t.scheduleVersion}) = 'integer' AND ${t.scheduleVersion} >= 1`),
+    check("project_subtask_reminder_occurrences_kind_check", sql`(${t.kind} = 'due_now' AND ${t.reminderOffsetMinutes} = 0) OR (${t.kind} = 'advance' AND ${t.reminderOffsetMinutes} BETWEEN 1 AND 43200)`),
+    check("project_subtask_reminder_occurrences_offset_check", sql`typeof(${t.reminderOffsetMinutes}) = 'integer' AND ${t.reminderOffsetMinutes} BETWEEN 0 AND 43200`),
+    check("project_subtask_reminder_occurrences_zone_check", sql`${t.dueZone} = 'Australia/Sydney'`),
+    check("project_subtask_reminder_occurrences_fold_check", sql`${t.dueFold} IN (0, 1)`),
+    check("project_subtask_reminder_occurrences_fire_at_check", sql`${t.fireAt} = ${t.dueAt} - (${t.reminderOffsetMinutes} * 60000)`),
+    check("project_subtask_reminder_occurrences_terminal_check", sql`(${t.status} = 'pending' AND ${t.terminalReason} IS NULL AND ${t.firedAt} IS NULL) OR (${t.status} = 'fired' AND ${t.terminalReason} IS NULL AND ${t.firedAt} IS NOT NULL) OR (${t.status} = 'superseded' AND ${t.terminalReason} IS NOT NULL AND ${t.firedAt} IS NULL)`),
   ],
 );
 
