@@ -124,4 +124,21 @@ describe("CreateProject Client payload", () => {
     expect(onNavigate).toHaveBeenCalledWith("/projects/project-created", "Shoot created.");
     runtime.dispose(); queryClient.clear();
   });
+
+  it("takes the shoot date from the date popup, not a native date input (#421)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-01T02:00:00Z") }); // Thu 1 Oct, Sydney
+    try {
+      await render();
+      expect(host.querySelector('input[type="date"]')).toBeNull();
+      await typeInto(host.querySelector<HTMLInputElement>('input[placeholder="12 Kings Road, Vaucluse"]')!, "12 Test Street");
+      const popupButton = (name: string) => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"][aria-label="Shoot date"] button')].find((button) => button.textContent?.startsWith(name))!;
+      await act(async () => { host.querySelector<HTMLButtonElement>("button#project-shoot-date")!.click(); await Promise.resolve(); await Promise.resolve(); });
+      await flush();
+      for (const name of ["Tomorrow", "Apply"]) { await act(async () => { popupButton(name).click(); await Promise.resolve(); }); await flush(); }
+      await submit();
+      expect(apiPostMock).toHaveBeenCalledWith("/api/projects", expect.objectContaining({ shootDate: "2026-10-02" }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

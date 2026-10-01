@@ -3,6 +3,7 @@ import type { CollectionKind, MonitoredRawFolder, Role } from "@quincy/shared";
 import { apiGet } from "../lib/api";
 import { cn } from "@/lib/utils";
 import { FieldGroup } from "@/components/reui/field";
+import { DateTimeField } from "@/components/quincy/DateTimeField";
 import { QuincyField } from "@/components/quincy/QuincyField";
 import { QuincyTextareaField } from "@/components/quincy/QuincyTextareaField";
 import { SectionHead } from "@/components/quincy/SectionHead";
@@ -156,7 +157,7 @@ export function ProjectFields({ form, errors, existingCollections = [], mode = "
     <section className="create-project__section" aria-labelledby="shoot-heading">
       <SectionHead eyebrow="Shoot" id="shoot-heading">When is it happening?</SectionHead>
       <div className={FIELD_GRID_2}>
-        <QuincyField id="project-shoot-date" label="Shoot date" type="date" value={form.shootDate} onChange={(event) => onChange("shootDate", event.target.value)} />
+        <DateTimeField variant="date" id="project-shoot-date" label="Shoot date" clearable value={form.shootDate || null} onApply={(day) => onChange("shootDate", day ?? "")} />
         <QuincyField id="project-time-window" label="Time window" placeholder="e.g. 9:00–11:00 am" value={form.timeWindow} onChange={(event) => onChange("timeWindow", event.target.value)} />
       </div>
     </section>

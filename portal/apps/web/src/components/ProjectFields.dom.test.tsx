@@ -202,3 +202,24 @@ describe("ProjectFields Client controls", () => {
     expect(host.querySelector('[data-slot="notice"]')).toBeNull();
   });
 });
+
+describe("ProjectFields shoot date (#421)", () => {
+  let host: HTMLElement;
+
+  beforeEach(() => { host = mount(); apiGetMock.mockReset().mockResolvedValue({ photographers: [], editors: [] }); });
+  afterEach(async () => { await unmount(); host.remove(); });
+
+  it.each(["create", "edit"] as const)("is the date popup field, not a native date input, and reports the picked day in %s mode", async (mode) => {
+    const onChange = vi.fn();
+    await render(<ProjectFields form={{ ...form, shootDate: "2026-09-17" }} errors={{}} mode={mode} onChange={onChange} onToggle={() => undefined} />);
+
+    expect(host.querySelector('input[type="date"]')).toBeNull();
+    const trigger = host.querySelector<HTMLButtonElement>("button#project-shoot-date")!;
+    expect(trigger.textContent).toContain("Thu 17 Sep 2026");
+    await click(trigger);
+    const popupButton = (name: string) => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"][aria-label="Shoot date"] button')].find((button) => button.textContent?.startsWith(name))!;
+    await click(popupButton("No date"));
+    await click(popupButton("Apply"));
+    expect(onChange).toHaveBeenCalledWith("shootDate", "");
+  });
+});
