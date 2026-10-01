@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { isDeadlineOverdue } from "@quincy/shared";
+import { Badge } from "../reui/badge";
 import { Card, CardContent } from "../reui/card";
 import { AvatarStack } from "../quincy/AvatarStack";
 import { InternalLink } from "../InternalLink";
@@ -87,6 +88,7 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
   const overdue = isDeadlineOverdue(project.deadlineAt);
   const projectDeadlineLabel = deadlineLabel(project);
   const raw = rawCounts(project);
+  const archived = Boolean(project.archivedAt);
 
   const cardBody = (
     <>
@@ -94,6 +96,9 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
         <CoverMedia project={project} retryToken={coverRetry} onFailedChange={setCoverFailed} />
       </div>
       <CardContent className="p-[var(--space-3)]">
+        {/* #428: the Archived filter's Include mode draws archived Projects beside active ones. The card is
+            immovable (the Board gates it, `board.tsx`); #432 restyles the mark. */}
+        {archived && <Badge variant="secondary" size="sm" className="mb-[var(--space-1)]" data-testid="kanban2-card-archived">Archived</Badge>}
         <div className="serif text-base tracking-tight leading-snug [text-wrap:pretty]" data-testid="kanban2-card-address">{project.street}</div>
         {projectDeadlineLabel && (
           // Prominence is bought with contrast and position, not size (#82) — the street stays

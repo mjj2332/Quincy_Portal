@@ -130,6 +130,7 @@ function baseRow() {
     agentName: null,
     stageKey: "awaiting_raw" as const,
     delivered: false,
+    archived: false,
     shootDate: "2026-08-27",
     shootDateCivil: "2026-08-27",
     createdAt: "2026-08-01T00:00:00.000Z",
@@ -147,7 +148,7 @@ function baseResponse(): ProductionGanttResponse {
   return {
     scope: "active",
     zone: PRODUCTION_GANTT_ZONE,
-    appliedFilters: { q: "", editorIds: [], stageKeys: [], includeDelivered: false, includeCompletedChecklist: false },
+    appliedFilters: { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide", includeDelivered: false, includeCompletedChecklist: false },
     projects: [baseRow()],
     page: { limit: 100, returned: 1, nextCursor: null },
     density: { matchedProjects: 1, matchedRows: 1, drawCap: PRODUCTION_GANTT_DRAW_CAP, tooManyToDraw: false },

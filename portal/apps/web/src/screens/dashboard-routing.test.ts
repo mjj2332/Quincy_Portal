@@ -43,7 +43,7 @@ describe("TB6 Slice 0 dashboard routing characterization", () => {
       kind: "dashboard" as const,
       calendar: {
         view: "calendar" as const, date: "2026-09-01", subview: "week" as const, layers: ["project"] as ["project"],
-        editorIds: [], includeUnassigned: false, stageKeys: [], showCompletedChecklist: false,
+        editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, showCompletedChecklist: false,
         showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false,
       },
     };

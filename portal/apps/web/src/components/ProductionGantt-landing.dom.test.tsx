@@ -57,6 +57,7 @@ function projectRow({ n, shoot, deadline }: ProjectSpec) {
     agentName: null,
     stageKey: "editing_autohdr",
     delivered: false,
+    archived: false,
     shootDate: shoot,
     shootDateCivil: shoot,
     createdAt: `${shoot}T00:00:00.000Z`,
@@ -74,7 +75,7 @@ function response(specs: ProjectSpec[], nextCursor: string | null = null) {
   return adminProductionGanttResponseSchema.parse({
     scope: "active",
     zone: PRODUCTION_GANTT_ZONE,
-    appliedFilters: { q: "", editorIds: [], stageKeys: [], includeDelivered: false, includeCompletedChecklist: false },
+    appliedFilters: { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide", includeDelivered: false, includeCompletedChecklist: false },
     projects: specs.map(projectRow),
     page: { limit: 100, returned: specs.length, nextCursor },
     density: { matchedProjects: specs.length, matchedRows: specs.length, drawCap: 2000, tooManyToDraw: false },

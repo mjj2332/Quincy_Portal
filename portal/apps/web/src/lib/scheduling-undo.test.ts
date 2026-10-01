@@ -9,7 +9,7 @@ afterEach(() => vi.unstubAllGlobals());
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const PERSON_ID = "22222222-2222-4222-8222-222222222222";
 const person = { id: PERSON_ID, name: "Editor", roleLabel: "Editor", isExternal: false, active: true };
-const project = () => ({ id: PROJECT_ID, street: "1 Example Street", stageKey: "editing" as const, checklist: { completed: 1, total: 3 }, delivered: false });
+const project = () => ({ id: PROJECT_ID, street: "1 Example Street", stageKey: "editing" as const, checklist: { completed: 1, total: 3 }, delivered: false, archived: false });
 
 function checklistEvent(version: number, start: string, end: string): ChecklistCalendarEventDto<"editing"> {
   const schedule = { state: "range" as const, version, zone: PRODUCTION_CALENDAR_ZONE, start: startMoment(start), end: endMoment(end), due: end };

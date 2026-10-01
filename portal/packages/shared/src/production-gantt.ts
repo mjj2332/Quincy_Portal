@@ -11,6 +11,12 @@ import {
   checklistScheduleDtoSchema,
   type CalendarPerson,
 } from "./production-calendar";
+import {
+  DASHBOARD_ARCHIVED_MODES,
+  DASHBOARD_PRIORITY_FILTER_VALUES,
+  type DashboardArchivedMode,
+  type DashboardPriorityFilterValue,
+} from "./dashboard-filter";
 import type { ChecklistScheduleDto } from "./checklist-schedule";
 import type { ProjectEditorRef } from "./board-projection";
 
@@ -172,6 +178,8 @@ export type GanttProjectRowDto<TStage extends StageTransportKey = StageTransport
   agentName: string | null;
   stageKey: TStage;
   delivered: boolean;
+  /** #428: an archived Project (Archived: Include/Only). Always `false` for an external viewer. */
+  archived: boolean;
   /** Raw stored value, unvalidated — `projects.shoot_date` is free-form text, Tonomo-fed, and may
    * be any string Tonomo wrote. */
   shootDate: string | null;
@@ -256,7 +264,7 @@ export type GanttChecklistRowDto = {
 export type ProductionGanttResponse<TStage extends StageTransportKey = StageTransportKey> = {
   scope: "active";
   zone: typeof PRODUCTION_GANTT_ZONE;
-  appliedFilters: { q: string; editorIds: string[]; stageKeys: StagePresentationKey[]; includeDelivered: boolean; includeCompletedChecklist: boolean };
+  appliedFilters: { q: string; editorIds: string[]; stageKeys: StagePresentationKey[]; priorities: DashboardPriorityFilterValue[]; archived: DashboardArchivedMode; includeDelivered: boolean; includeCompletedChecklist: boolean };
   projects: GanttProjectRowDto<TStage>[];
   page: { limit: number; returned: number; nextCursor: string | null };
   density: { matchedProjects: number; matchedRows: number; drawCap: number; tooManyToDraw: boolean };
@@ -338,6 +346,7 @@ function ganttProjectRowSchemaFor<TStage extends StageTransportKey>(stageSchema:
     agentName: z.string().max(500).nullable(),
     stageKey: stageSchema,
     delivered: z.boolean(),
+    archived: z.boolean(),
     shootDate: z.string().max(500).nullable(),
     shootDateCivil: z.string().nullable(),
     createdAt: iso,
@@ -360,6 +369,8 @@ const ganttAppliedFiltersSchema = z.object({
   q: z.string().max(PRODUCTION_GANTT_MAX_SEARCH_LENGTH),
   editorIds: z.array(uuid),
   stageKeys: z.array(z.enum(STAGE_PRESENTATION_KEYS)),
+  priorities: z.array(z.enum(DASHBOARD_PRIORITY_FILTER_VALUES)),
+  archived: z.enum(DASHBOARD_ARCHIVED_MODES),
   includeDelivered: z.boolean(),
   includeCompletedChecklist: z.boolean(),
 }).strict();

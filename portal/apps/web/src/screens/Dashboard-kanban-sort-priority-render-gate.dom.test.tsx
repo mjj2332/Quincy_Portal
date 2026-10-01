@@ -29,6 +29,7 @@ vi.mock("../lib/capabilities", () => ({
   useCapabilities: () => ({ role: "photographer", capabilities: ["moveProjectStage"], can: (capability: string) => capability === "moveProjectStage" }),
 }));
 vi.mock("../lib/stages", () => ({
+  presentationStages: (stages: readonly unknown[]) => stages,
   useStages: () => ({
     stages: [{ key: "awaiting_raw", label: "Awaiting RAW", displayOrder: 0, active: true }],
     presentationStageKey: (stageKey: string) => stageKey,

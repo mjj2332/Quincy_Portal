@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { PRODUCTION_CALENDAR_ZONE, type ProjectCalendarUnscheduledEntryDto } from "@quincy/shared";
 import { buildDeadlineUndoTicket } from "./scheduling-undo";
 
-const project = { id: "11111111-1111-4111-8111-111111111111", street: "1 Example Street", stageKey: "editing" as const, checklist: { completed: 0, total: 1 }, delivered: false };
+const project = { id: "11111111-1111-4111-8111-111111111111", street: "1 Example Street", stageKey: "editing" as const, checklist: { completed: 0, total: 1 }, delivered: false, archived: false };
 const deadlineEntry: ProjectCalendarUnscheduledEntryDto = {
   id: "project-deadline:one", kind: "project_deadline", reason: "unscheduled", title: "Deadline", project,
   permissions: { canDrag: true, canResize: false }, deadlineVersion: 8, reminderOffsetsMinutes: [],

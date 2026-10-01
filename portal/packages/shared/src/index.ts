@@ -9,6 +9,7 @@ export * from "./tonomo";
 export * from "./transform-source";
 export * from "./renditions";
 export * from "./staff-routes";
+export * from "./dashboard-filter";
 export * from "./dropbox-paths";
 export * from "./autohdr";
 export * from "./dashboard-order";

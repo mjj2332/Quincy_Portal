@@ -18,6 +18,7 @@
  * `cascader-virtual.tsx`), and `filters-date.tsx` (nothing imports it).
  *
  * File-specific edits:
+ * - QUINCY ADDITION (#428 design review D2), additive: `FiltersBuilder` takes `align?: "start" | "center" | "end"` (default `"start"`, upstream's hard-coded value), passed to the field picker's `PopoverContent`, so a trigger near the page's right edge can open its menu inward. Omitted, it renders exactly as upstream.
  * - TRIM (no new production dependency): the field picker rendered `CascaderVirtualItems` from `cascader-virtual.tsx`, which needs `@tanstack/react-virtual`. It now renders `CascaderItems` from `cascader-item.tsx` — upstream's own comment says the virtual list renders exactly that below its windowing threshold, and a Quincy field list is two fields long.
  */
 import * as React from "react"
@@ -227,6 +228,8 @@ export interface FiltersBuilderProps {
   /** Replaces the default Add filter button. */
   trigger?: React.ReactNode
   className?: string
+  /** QUINCY ADDITION (#428): which edge of the trigger the field picker aligns to. Default `"start"`. */
+  align?: "start" | "center" | "end"
 }
 
 /**
@@ -237,6 +240,7 @@ export interface FiltersBuilderProps {
 export function FiltersBuilder<V, O>({
   trigger,
   className,
+  align = "start",
 }: FiltersBuilderProps) {
   const actions = useFilterActions<V, O>()
   const sizes = filterControlSizes(actions)
@@ -297,7 +301,7 @@ export function FiltersBuilder<V, O>({
       {/* The default, then the root override, then this `className` last, so
         the specific wins. */}
       <PopoverContent
-        align="start"
+        align={align}
         className={cn(
           FILTER_FIELD_PICKER_CLASS,
           /* See `instantExit`. Both PROPERTIES (an `exit` animation AND a

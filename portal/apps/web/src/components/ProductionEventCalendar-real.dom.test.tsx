@@ -20,16 +20,16 @@ vi.mock("../lib/auth", () => ({ useSession: () => ({ data: null, isPending: fals
 
 const principal = "11111111-1111-4111-8111-111111111111";
 const assignee = "22222222-2222-4222-8222-222222222222";
-const project = { id: principal, street: "12 Harbour Street", stageKey: "editing_autohdr" as const, checklist: { completed: 3, total: 5 }, delivered: false };
+const project = { id: principal, street: "12 Harbour Street", stageKey: "editing_autohdr" as const, checklist: { completed: 3, total: 5 }, delivered: false, archived: false };
 const calendar: DashboardCalendarState = {
-  view: "calendar", date: "2026-08-12", subview: "month", layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [],
+  view: "calendar", date: "2026-08-12", subview: "month", layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const,
   showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false,
 };
 
 const response = adminProductionCalendarRangeResponseSchema.parse({
   range: {
     start: "2026-07-27", end: "2026-09-07", date: "2026-08-12", subview: "month", zone: PRODUCTION_CALENDAR_ZONE,
-    appliedFilters: { layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false },
+    appliedFilters: { layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false },
   },
   events: [
     { id: "project-deadline:project", kind: "project_deadline", title: "Project handoff", project, timing: { allDay: false, start: "2026-08-12T00:00:00.000Z", end: null }, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, permissions: { canDrag: true, canResize: false }, deadlineLocalCivil: "2026-08-12T10:00", deadlineVersion: 3, reminderOffsetsMinutes: [] },
@@ -79,5 +79,28 @@ describe("ProductionEventCalendar through the real vendored event calendar", () 
     }
     expect(deadlineClass).not.toContain("data-selected:bg-(--ec-event-color)/30");
     expect(deadlineClass).not.toContain("data-selected:inset-ring-(--ec-event-color)/40");
+  });
+
+  it("drops the previous filter's events and shows the error when the request for the new filter fails (#428)", async () => {
+    const withArchived = { ...response, range: { ...response.range, appliedFilters: { ...response.range.appliedFilters, archived: "include" as const } } };
+    let failing = false;
+    vi.stubGlobal("fetch", vi.fn(async () => failing
+      ? new Response(JSON.stringify({ error: { code: "invalid_request", message: "boom" } }), { status: 400, headers: { "content-type": "application/json" } })
+      : new Response(JSON.stringify(withArchived), { status: 200, headers: { "content-type": "application/json" } })));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const identity = { principalId: principal, role: "admin" as const, authorizationEpoch: 0 };
+    const render = (archived: "hide" | "include") => act(async () => {
+      root.render(<QueryClientProvider client={client}><ProductionEventCalendar identity={identity} calendar={{ ...calendar, archived }} onNavigate={() => undefined} /></QueryClientProvider>);
+      await Promise.resolve();
+    });
+    await render("include");
+    for (let i = 0; i < 3; i += 1) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    expect(host.querySelectorAll('[data-testid="event-calendar-chip"]').length).toBeGreaterThanOrEqual(2);
+
+    failing = true;
+    await render("hide");
+    for (let i = 0; i < 3; i += 1) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    expect(host.querySelector('[data-testid="event-calendar-error"]')).not.toBeNull();
+    expect(host.querySelectorAll('[data-testid="event-calendar-chip"]')).toHaveLength(0);
   });
 });

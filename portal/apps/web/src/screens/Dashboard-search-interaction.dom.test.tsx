@@ -73,6 +73,7 @@ vi.mock("../lib/capabilities", () => ({
   useCapabilities: () => ({ role: authState.role, capabilities: ["moveProjectStage", "prioritizeProjects"], can: (capability: string) => capability === "moveProjectStage" || capability === "prioritizeProjects" }),
 }));
 vi.mock("../lib/stages", () => ({
+  presentationStages: (stages: readonly unknown[]) => stages,
   useStages: () => ({
     stages: [
       { key: "awaiting_raw" as const, label: "Awaiting RAW", displayOrder: 1, active: true },

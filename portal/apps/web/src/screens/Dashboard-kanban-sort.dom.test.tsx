@@ -27,6 +27,7 @@ vi.mock("../lib/capabilities", () => ({
   useCapabilities: () => ({ role: "admin", capabilities: ["prioritizeProjects", "moveProjectStage", "adminBackend"], can: (capability: string) => capability === "prioritizeProjects" || capability === "moveProjectStage" || capability === "adminBackend" }),
 }));
 vi.mock("../lib/stages", () => ({
+  presentationStages: (stages: readonly unknown[]) => stages,
   useStages: () => ({
     stages: [{ key: "awaiting_raw", label: "Awaiting RAW", displayOrder: 0, active: true }],
     presentationStageKey: (stageKey: string) => stageKey,
@@ -146,7 +147,7 @@ describe("Dashboard Kanban sort control", () => {
     expect(document.querySelector('[data-testid="project-list-row-raw"]')?.textContent).toBe("12");
   });
 
-  it("renders the current overdue label and keeps archived Dashboard scope List-only", async () => {
+  it("renders the current overdue label on the Board card", async () => {
     apiGetMock.mockImplementation((path) => path === "/api/projects" || path === "/api/projects?archived=1" ? Promise.resolve({ projects: [{
       id: "archived-project", street: "Archived Street", suburb: null, postcode: null, agencyName: null, agentName: null,
       stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 4, expectedCount: null, priority: null,
@@ -155,14 +156,6 @@ describe("Dashboard Kanban sort control", () => {
     await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
     await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-card"]')).not.toBeNull());
     expect(document.querySelector('[data-testid="kanban2-card"] [data-testid="kanban2-card-deadline"]')?.textContent).toContain("Overdue 2020-01-01 11:00 Sydney");
-
-    await act(async () => { (document.querySelector('[aria-label="Project status"] button:last-child') as HTMLButtonElement).click(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
-    await vi.waitFor(() => expect(document.querySelector('[data-testid="project-list-row"]')).not.toBeNull());
-    expect(document.querySelector('[aria-label="Project pipeline board"]')).toBeNull();
-    // The tabs stay (until #428 moves the scope switch); an archived scope shows Table.
-    const tabs = [...document.querySelectorAll<HTMLElement>('[aria-label="Dashboard view"] [role="tab"]')];
-    expect(tabs.find((tab) => tab.getAttribute("aria-selected") === "true")?.textContent).toBe("Table");
-    expect(displayTrigger()?.disabled).toBe(true);
   });
 
   // The Display menu replaced the Kanban sort `Select` (#427). The old `Select`'s ten release-blocking

@@ -715,3 +715,86 @@ describe("#370 Calendar reads the assignee relation", () => {
     }
   });
 });
+
+
+describe("shared Dashboard Filter: Project priority and Archived mode (#428)", () => {
+  const filterActive = "80b00000-0000-4000-8000-000000000001"; // active, priority 5
+  const filterActiveNone = "80b00000-0000-4000-8000-000000000002"; // active, no priority
+  const filterArchived = "80b00000-0000-4000-8000-000000000003"; // archived, priority 5, has a checklist row
+  const filterArchivedLow = "80b00000-0000-4000-8000-000000000004"; // archived, priority 1
+  const filterRange = "start=2026-10-12&end=2026-10-13&date=2026-10-12&sub=day&scope=active&layers=project,checklist";
+
+  async function seed(id: string, street: string, priority: number | null, archived: boolean) {
+    await insertProject(id, street, "editing_autohdr");
+    await database.DB.prepare("UPDATE projects SET priority = ?, archived_at = ?, deadline_at = ?, deadline_local_civil = '2026-10-12T09:00', deadline_zone = 'Australia/Sydney', deadline_utc_offset_minutes = ?, deadline_fold = 0, deadline_reminder_offsets_json = '[]', deadline_version = 1 WHERE id = ?")
+      .bind(priority, archived ? Date.now() : null, instant("2026-10-12T09:00").epochMs, instant("2026-10-12T09:00").utcOffsetMinutes, id).run();
+  }
+
+  beforeAll(async () => {
+    await seed(filterActive, "801 Filter Active Street", 5, false);
+    await seed(filterActiveNone, "802 Filter Active None Street", null, false);
+    await seed(filterArchived, "803 Filter Archived Street", 5, true);
+    await seed(filterArchivedLow, "804 Filter Archived Low Street", 1, true);
+    await insertSubtask(filterArchived, "Archived project checklist", null, { end: "2026-10-12", endKind: "date" });
+    await insertSubtask(filterActive, "Active project checklist", null, { end: "2026-10-12", endKind: "date" });
+  });
+
+  const streets = (body: Awaited<ReturnType<typeof adminCalendar>>) => body.events.filter((event) => event.kind === "project_deadline").map((event) => event.project.street).filter((street) => /Filter/u.test(street)).sort();
+  const checklistTitles = (body: Awaited<ReturnType<typeof adminCalendar>>) => body.events.filter((event) => event.kind === "checklist").map((event) => event.title).filter((title) => /project checklist/u.test(title)).sort();
+
+  it("Hide is the default: no archived project or archived checklist row, and the applied filters echo it", async () => {
+    const body = await adminCalendar(`/api/production-calendar?${filterRange}`);
+    expect(streets(body)).toEqual(["801 Filter Active Street", "802 Filter Active None Street"]);
+    expect(checklistTitles(body)).toEqual(["Active project checklist"]);
+    expect(body.range.appliedFilters).toMatchObject({ priorities: [], archived: "hide" });
+    expect(body.events.every((event) => event.project.archived === false)).toBe(true);
+  });
+
+  it("Only returns just the archived projects and their checklist rows, read-only", async () => {
+    const body = await adminCalendar(`/api/production-calendar?${filterRange}&archived=only`);
+    expect(streets(body)).toEqual(["803 Filter Archived Street", "804 Filter Archived Low Street"]);
+    expect(checklistTitles(body)).toEqual(["Archived project checklist"]);
+    expect(body.range.appliedFilters.archived).toBe("only");
+    for (const event of body.events.filter((entry) => /Filter Archived|Archived project/u.test(entry.kind === "checklist" ? entry.title : entry.project.street))) {
+      expect(event.project.archived).toBe(true);
+      expect(event.permissions.canDrag).toBe(false);
+      if (event.kind === "checklist") expect(event.permissions).toMatchObject({ canResize: false, canOpenScheduleEditor: false });
+    }
+  });
+
+  it("Include returns both, and only the archived ones are flagged", async () => {
+    const body = await adminCalendar(`/api/production-calendar?${filterRange}&archived=include`);
+    expect(streets(body)).toEqual(["801 Filter Active Street", "802 Filter Active None Street", "803 Filter Archived Street", "804 Filter Archived Low Street"]);
+    expect(checklistTitles(body)).toEqual(["Active project checklist", "Archived project checklist"]);
+    const flagged = body.events.filter((event) => event.project.archived).map((event) => event.project.street);
+    expect(flagged.every((street) => /Archived/u.test(street))).toBe(true);
+    const active = body.events.find((event) => event.kind === "project_deadline" && event.project.street === "801 Filter Active Street");
+    expect(active?.permissions.canDrag).toBe(true);
+  });
+
+  it("filters by Project priority, `none` meaning unset, composed with Archived", async () => {
+    expect(streets(await adminCalendar(`/api/production-calendar?${filterRange}&priority=5`))).toEqual(["801 Filter Active Street"]);
+    expect(streets(await adminCalendar(`/api/production-calendar?${filterRange}&priority=none`))).toEqual(["802 Filter Active None Street"]);
+    expect(streets(await adminCalendar(`/api/production-calendar?${filterRange}&priority=5,1&archived=include`))).toEqual(["801 Filter Active Street", "803 Filter Archived Street", "804 Filter Archived Low Street"]);
+    expect(streets(await adminCalendar(`/api/production-calendar?${filterRange}&priority=1&archived=only`))).toEqual(["804 Filter Archived Low Street"]);
+    const body = await adminCalendar(`/api/production-calendar?${filterRange}&priority=none,5`);
+    expect(body.range.appliedFilters.priorities).toEqual(["5", "none"]);
+  });
+
+  it("is Admin only for Archived, refused for every other role, and priority is withheld from an External Editor", async () => {
+    for (const token of [tokens.editor, tokens.photographer, tokens.external]) {
+      for (const mode of ["include", "only"]) {
+        const response = await request(`/api/production-calendar?${filterRange}&archived=${mode}`, token);
+        expect(response.status, `${token} ${mode}`).toBe(403);
+      }
+    }
+    expect((await request(`/api/production-calendar?${filterRange}&priority=5`, tokens.external)).status).toBe(400);
+    expect((await request(`/api/production-calendar?${filterRange}&priority=5`, tokens.editor)).status).toBe(200);
+  });
+
+  it("rejects malformed spellings", async () => {
+    for (const query of ["archived=hide", "archived=1", "archived=", "priority=", "priority=6", "priority=5,5", "priority=high"]) {
+      expect((await request(`/api/production-calendar?${filterRange}&${query}`, tokens.admin)).status, query).toBe(400);
+    }
+  });
+});

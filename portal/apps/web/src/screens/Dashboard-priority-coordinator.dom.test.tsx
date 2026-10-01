@@ -14,7 +14,7 @@ const apiGetMock = vi.hoisted(() => vi.fn());
 const apiPostMock = vi.hoisted(() => vi.fn());
 vi.mock("../lib/api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../lib/api")>()), apiGet: (path: string) => apiGetMock(path), apiPost: (path: string, body: unknown) => apiPostMock(path, body) }));
 vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ can: (capability: string) => capability === "prioritizeProjects" || capability === "adminBackend" }) }));
-vi.mock("../lib/stages", () => ({ useStages: () => ({ stages: [{ key: "awaiting_raw", label: "Awaiting RAW", active: true }], presentationStageKey: (key: string) => key }) }));
+vi.mock("../lib/stages", () => ({ presentationStages: (stages: readonly unknown[]) => stages, useStages: () => ({ stages: [{ key: "awaiting_raw", label: "Awaiting RAW", active: true }], presentationStageKey: (key: string) => key }) }));
 vi.mock("../components/NoticeBoard", () => ({ NoticeBoard: () => null }));
 vi.mock("../components/kanban2/board", () => ({
   // `<option value="3">` exists only so a value the (l) test's Beta fixture carries (priority 3,
@@ -112,8 +112,8 @@ describe("Dashboard priority coordinator wiring", () => {
 describe("Dashboard optimistic writes target the searched cache entry (#230)", () => {
   const searchedProject = { id: "project-priority", street: "1 Priority Street", suburb: null, postcode: null, agencyName: null, agentName: null, stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: 1, boardPosition: 0, boardRevision: 1, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null };
   const otherProject = { id: "project-other", street: "2 Off List Street", suburb: null, postcode: null, agencyName: null, agentName: null, stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: null, boardPosition: 1, boardRevision: 1, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null };
-  const searchedKey = dashboardProjectsKey("admin-1", "admin", 0, false, "priority");
-  const qLessKey = dashboardProjectsKey("admin-1", "admin", 0, false);
+  const searchedKey = dashboardProjectsKey("admin-1", "admin", 0, { archived: "hide" }, "priority");
+  const qLessKey = dashboardProjectsKey("admin-1", "admin", 0, { archived: "hide" });
 
   beforeEach(() => {
     window.history.replaceState(null, "", "/?q=priority");
@@ -442,9 +442,9 @@ describe("Dashboard optimistic writes target the searched cache entry (#230)", (
 // inactive sibling gets.
 describe("the sibling predicate uses the key ACTIVE at confirmation, not the key at click time (#230 Sol review round 2, item 1)", () => {
   const kProject = { id: "project-k", street: "1 K Street", suburb: null, postcode: null, agencyName: null, agentName: null, stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: 1, boardPosition: 0, boardRevision: 1, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null };
-  const qLessKey = dashboardProjectsKey("admin-1", "admin", 0, false);
-  const keyA = dashboardProjectsKey("admin-1", "admin", 0, false, "alpha");
-  const keyB = dashboardProjectsKey("admin-1", "admin", 0, false, "beta");
+  const qLessKey = dashboardProjectsKey("admin-1", "admin", 0, { archived: "hide" });
+  const keyA = dashboardProjectsKey("admin-1", "admin", 0, { archived: "hide" }, "alpha");
+  const keyB = dashboardProjectsKey("admin-1", "admin", 0, { archived: "hide" }, "beta");
 
   afterEach(() => {
     window.history.replaceState(null, "", "/");
@@ -550,8 +550,8 @@ describe("the queued-refresh effect's own refetch does not bypass the key/placeh
   const alphaProject = { id: "proj-alpha", street: "1 Alpha Street", suburb: null, postcode: null, agencyName: null, agentName: null, stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: 1, boardPosition: 0, boardRevision: 1, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null };
   const betaProject = { id: "proj-beta", street: "9 Beta Street", suburb: null, postcode: null, agencyName: null, agentName: null, stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: 3, boardPosition: 0, boardRevision: 1, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null };
   const qLessProject = { id: "proj-q", street: "0 Unfiltered Street", suburb: null, postcode: null, agencyName: null, agentName: null, stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: 1, boardPosition: 0, boardRevision: 1, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null };
-  const keyA = dashboardProjectsKey("admin-1", "admin", 0, false, "alpha");
-  const keyB = dashboardProjectsKey("admin-1", "admin", 0, false, "beta");
+  const keyA = dashboardProjectsKey("admin-1", "admin", 0, { archived: "hide" }, "alpha");
+  const keyB = dashboardProjectsKey("admin-1", "admin", 0, { archived: "hide" }, "beta");
 
   afterEach(() => {
     window.history.replaceState(null, "", "/");
@@ -785,7 +785,7 @@ describe("lastAcceptedResultRef dedupes by key AND updatedAt, not updatedAt alon
   const alphaProject = { id: "proj-alpha", street: "1 Alpha Street", suburb: null, postcode: null, agencyName: null, agentName: null, stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: 1, boardPosition: 0, boardRevision: 1, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null };
   const betaProject = { id: "proj-beta", street: "9 Beta Street", suburb: null, postcode: null, agencyName: null, agentName: null, stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: 3, boardPosition: 0, boardRevision: 1, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null };
   const qLessProject = { id: "proj-q", street: "0 Unfiltered Street", suburb: null, postcode: null, agencyName: null, agentName: null, stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: 1, boardPosition: 0, boardRevision: 1, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null };
-  const keyB = dashboardProjectsKey("admin-1", "admin", 0, false, "beta");
+  const keyB = dashboardProjectsKey("admin-1", "admin", 0, { archived: "hide" }, "beta");
 
   afterEach(() => {
     window.history.replaceState(null, "", "/");
@@ -839,7 +839,7 @@ describe("lastAcceptedResultRef dedupes by key AND updatedAt, not updatedAt alon
       syncDashboardSearchDraftFromLocation("alpha", "admin-1");
     });
     await flush();
-    await vi.waitFor(() => expect(queryClient.getQueryData(dashboardProjectsKey("admin-1", "admin", 0, false, "alpha"))).toBeDefined());
+    await vi.waitFor(() => expect(queryClient.getQueryData(dashboardProjectsKey("admin-1", "admin", 0, { archived: "hide" }, "alpha"))).toBeDefined());
 
     // Commit search B -- a BRAND NEW key, never fetched before. Its first-ever fetch ALSO resolves
     // at the identical frozen millisecond. Buggy: `lastAcceptedResultRef.current` already equals
@@ -909,8 +909,8 @@ describe("lastAcceptedResultRef dedupes by key AND updatedAt, not updatedAt alon
 // scope nobody has loaded yet") and would render as an empty list the moment that key became
 // active again.
 describe("updateProjects never manufactures an entry for a key removed while a save is in flight (#230)", () => {
-  const originKey = dashboardProjectsKey("admin-1", "admin", 0, false);
-  const searchedKey = dashboardProjectsKey("admin-1", "admin", 0, false, "moved");
+  const originKey = dashboardProjectsKey("admin-1", "admin", 0, { archived: "hide" });
+  const searchedKey = dashboardProjectsKey("admin-1", "admin", 0, { archived: "hide" }, "moved");
 
   afterEach(() => {
     window.history.replaceState(null, "", "/");
@@ -1066,7 +1066,7 @@ describe("an optimistic priority change is rendered while its POST is pending (#
     let releaseFresh!: () => void;
     apiGetMock.mockImplementationOnce(() => new Promise((resolve) => { releaseFresh = () => resolve(boardWith(2)); }));
     // Started before the POST resolves, the way a window-focus refetch would be.
-    await act(async () => { void queryClient.refetchQueries({ queryKey: dashboardProjectsKey("admin-1", "admin", 0, false) }); await Promise.resolve(); });
+    await act(async () => { void queryClient.refetchQueries({ queryKey: dashboardProjectsKey("admin-1", "admin", 0, { archived: "hide" }) }); await Promise.resolve(); });
     await act(async () => { post.settle({ priority: 2, boardRevision: 1 }); await Promise.resolve(); });
     await flush();
     expect(value()).toBe("2");

@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { dashboardSummary, isOverdueProject } from "./dashboard-summary";
 
 const NOW = 1_800_000_000_000;
-const project = (stageKey = "editing", deadlineAt: number | null = null) => ({ stageKey, deadlineAt });
-const base = { archived: false, searchActive: false, searchTotal: null, shown: null, now: NOW } as const;
+const project = (stageKey = "editing", deadlineAt: number | null = null, archivedAt: string | null = null) => ({ stageKey, deadlineAt, archivedAt });
+const base = { archived: "hide" as const, searchActive: false, searchTotal: null, shown: null, now: NOW } as const;
 
 describe("isOverdueProject (the server's rule)", () => {
   it("counts only a deadline strictly in the past", () => {
@@ -51,9 +51,32 @@ describe("dashboardSummary (#427)", () => {
     expect(dashboardSummary({ ...searching, shown: null })?.text).toBe("2 of 31 active projects");
   });
 
-  it("reports archived projects with no overdue badge", () => {
-    const projects = [project("editing", NOW - 5)];
-    expect(dashboardSummary({ ...base, projects, archived: true })).toEqual({ text: "1 archived project", overdue: 0 });
-    expect(dashboardSummary({ ...base, projects: [project(), project()], archived: true })?.text).toBe("2 archived projects");
+  it("reports archived projects (Only) with no overdue badge", () => {
+    const projects = [project("editing", NOW - 5, "2026-01-01T00:00:00.000Z")];
+    expect(dashboardSummary({ ...base, projects, archived: "only" })).toEqual({ text: "1 archived project", overdue: 0 });
+    expect(dashboardSummary({ ...base, projects: [project(), project()], archived: "only" })?.text).toBe("2 archived projects");
+  });
+
+  it("Include names the archived count after the total (#428)", () => {
+    const archivedAt = "2026-01-01T00:00:00.000Z";
+    const projects = [project(), project("editing", null, archivedAt), project("raw_review", null, archivedAt)];
+    expect(dashboardSummary({ ...base, projects, archived: "include" })?.text).toBe("3 projects · 2 archived");
+    expect(dashboardSummary({ ...base, projects: [project("editing", null, archivedAt)], archived: "include" })?.text).toBe("1 project · 1 archived");
+  });
+
+  it("never counts an archived project as overdue, in any mode", () => {
+    const archivedAt = "2026-01-01T00:00:00.000Z";
+    const projects = [project("editing", NOW - 5), project("editing", NOW - 5, archivedAt)];
+    expect(dashboardSummary({ ...base, projects, archived: "include" })).toEqual({ text: "2 projects · 1 archived", overdue: 1 });
+    expect(isOverdueProject(project("editing", NOW - 1, archivedAt), NOW)).toBe(false);
+  });
+
+  it("reads 'x of y' while a Filter narrows, in every mode, once the counts land", () => {
+    const archivedAt = "2026-01-01T00:00:00.000Z";
+    const filtered = { ...base, filterActive: true, searchTotal: 40 };
+    expect(dashboardSummary({ ...filtered, projects: [project(), project()] })?.text).toBe("2 of 40 active projects");
+    expect(dashboardSummary({ ...filtered, projects: [project("editing", null, archivedAt)], archived: "only" })?.text).toBe("1 of 40 archived projects");
+    expect(dashboardSummary({ ...filtered, projects: [project(), project("editing", null, archivedAt)], archived: "include" })?.text).toBe("2 of 40 projects · 1 archived");
+    expect(dashboardSummary({ ...filtered, searchTotal: null, projects: [project(), project()] })?.text).toBe("2 active projects");
   });
 });

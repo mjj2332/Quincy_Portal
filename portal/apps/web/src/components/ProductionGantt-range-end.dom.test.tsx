@@ -91,9 +91,9 @@ function ganttResponse() {
   const total = rows.length + pageTwo.length;
   return adminProductionGanttResponseSchema.parse({
     scope: "active", zone: PRODUCTION_GANTT_ZONE,
-    appliedFilters: { q: "", editorIds: [], stageKeys: [], includeDelivered: false, includeCompletedChecklist: false },
+    appliedFilters: { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide", includeDelivered: false, includeCompletedChecklist: false },
     projects: [{
-      id: PROJECT_ID, street: "1 Range Street", suburb: null, agencyName: null, agentName: null, stageKey: "editing_autohdr", delivered: false,
+      id: PROJECT_ID, street: "1 Range Street", suburb: null, agencyName: null, agentName: null, stageKey: "editing_autohdr", delivered: false, archived: false,
       shootDate: shoot, shootDateCivil: shoot, createdAt: `${shoot}T00:00:00.000Z`, barStartDate: shoot,
       deadline: { at: resolveSydneyCivilMinute(`${sydneyDay(6)}T15:00`).ok ? (resolveSydneyCivilMinute(`${sydneyDay(6)}T15:00`) as { ok: true; value: { instant: string } }).value.instant : "", localCivil: `${sydneyDay(6)}T15:00`, version: 1, reminderOffsetsMinutes: [], overdue: false },
       deadlineVersion: 1, editors: [], checklist: { completed: 0, total },

@@ -16,6 +16,8 @@ function calendar(overrides: Partial<DashboardCalendarState> = {}): DashboardCal
     editorIds: [],
     includeUnassigned: false,
     stageKeys: [],
+    priorities: [],
+    archived: "hide",
     showCompletedChecklist: false,
     showDeliveredProjects: false,
     overdueOnly: false,

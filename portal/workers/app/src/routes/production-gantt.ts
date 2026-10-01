@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { createDb } from "@quincy/db";
 import {
+  DASHBOARD_PRIORITY_FILTER_VALUES,
   EXTERNAL_API_RESPONSE_SCHEMAS,
   PRODUCTION_GANTT_CHILD_PAGE_LIMIT,
   PRODUCTION_GANTT_DRAW_CAP,
@@ -16,6 +17,7 @@ import {
   ROLE_LABELS,
   STAGE_PRESENTATION_KEYS,
   adminProductionGanttResponseSchema,
+  canonicalDashboardPriorities,
   decodeGanttChildCursor,
   decodeGanttProjectCursor,
   editorProductionGanttResponseSchema,
@@ -26,6 +28,8 @@ import {
   roleHasCapability,
   stageTransportKeyForRole,
   type CalendarPerson,
+  type DashboardArchivedMode,
+  type DashboardPriorityFilterValue,
   type GanttChecklistRowDto,
   type GanttChildCursor,
   type GanttProjectCursor,
@@ -41,7 +45,7 @@ import {
 import { requireCapability } from "../middleware/capability";
 import { terminalRoute } from "../lib/terminal-route";
 import { normalizeProjectSearch, projectSearchSql } from "../lib/project-search";
-import { authorizedProjectsBaseCte, parseReminderOffsets, productionRoleSql } from "../lib/production-scope-sql";
+import { archivedModeSql, authorizedProjectsBaseCte, parseReminderOffsets, productionRoleSql } from "../lib/production-scope-sql";
 import { serializeSubtaskSchedule } from "../lib/subtask-schedule";
 import { assigneesForViewer, parseAssigneesJson, subtaskAssigneesJsonSql } from "../lib/subtask-assignees";
 import { activeEditorRefsByProject, projectTeamByProject } from "../lib/project-editors";
@@ -49,7 +53,7 @@ import type { AppEnv } from "../env";
 
 type GanttRole = AppEnv["Variables"]["user"]["role"];
 
-const QUERY_NAMES = new Set(["cursor", "limit", "q", "editors", "stages", "delivered", "completed", "scope", "childrenOf", "childCursor", "facets", "rev", "team"]);
+const QUERY_NAMES = new Set(["cursor", "limit", "q", "editors", "stages", "delivered", "completed", "scope", "priority", "archived", "childrenOf", "childCursor", "facets", "rev", "team"]);
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 /** Canonical decimal only: no leading zero, no leading `+`, no whitespace. */
@@ -99,6 +103,9 @@ export type ParsedGanttPageQuery = {
   q: string;
   editorIds: string[];
   stageKeys: StagePresentationKey[];
+  /** #428: the shared Dashboard Filter's other two facets. */
+  priorities: DashboardPriorityFilterValue[];
+  archived: DashboardArchivedMode;
   delivered: boolean;
   completed: boolean;
   /** #274: `facets=1` asks for the Editor field's options. Page one only. */
@@ -112,6 +119,8 @@ export type ParsedGanttPageQuery = {
 export type ParsedGanttChildQuery = {
   mode: "children";
   childrenOf: string;
+  /** #428: an archived Project's children are readable only under the same Archived mode that listed it. */
+  archived: DashboardArchivedMode;
   childCursor: GanttChildCursor | null;
   /** The child list's own "include done rows" mode. On a first page (no `childCursor`) this comes
    * from the `completed` query param, defaulting to `false` exactly like page mode; on a
@@ -154,6 +163,12 @@ function parseGanttQuery(c: Context<AppEnv>): ParsedGanttQuery | GanttParseFailu
   // as the Calendar's parser).
   const valueFor = (name: string) => frameworkQuery[name] ?? params.get(name) ?? undefined;
 
+  // #428: `archived` is `include` | `only` (Hide is the default and never spelled), `priority` a canonical
+  // comma list. Both additive to the legacy `scope=active`.
+  const rawArchived = valueFor("archived");
+  if (rawArchived !== undefined && rawArchived !== "include" && rawArchived !== "only") return parseFailure("Gantt query is invalid.", "gantt_query_invalid");
+  const archived: DashboardArchivedMode = rawArchived ?? "hide";
+
   if (valueFor("scope") !== "active") return parseFailure("Gantt query is invalid.", "gantt_query_invalid");
 
   const childrenOf = valueFor("childrenOf");
@@ -187,7 +202,8 @@ function parseGanttQuery(c: Context<AppEnv>): ParsedGanttQuery | GanttParseFailu
       childCursor = decoded;
       childCompleted = decoded.completed;
     }
-    return { mode: "children", childrenOf, childCursor, completed: childCompleted };
+    if (valueFor("priority") !== undefined) return parseFailure("priority applies to the project list, not a child page.", "gantt_query_invalid");
+    return { mode: "children", childrenOf, archived, childCursor, completed: childCompleted };
   }
   if (rawChildCursor !== undefined) return parseFailure("childCursor requires childrenOf.", "gantt_query_invalid");
 
@@ -220,6 +236,11 @@ function parseGanttQuery(c: Context<AppEnv>): ParsedGanttQuery | GanttParseFailu
   if (rawStages.length > PRODUCTION_GANTT_MAX_STAGE_KEYS) return parseFailure("Gantt query exceeds the Stage filter limit.", "gantt_query_too_large");
   if (rawStages.some((value) => !STAGE_PRESENTATION_KEYS.includes(value as StagePresentationKey))) return parseFailure("Gantt query is invalid.", "gantt_query_invalid");
 
+  const rawPrioritiesValue = valueFor("priority");
+  const rawPriorities = rawPrioritiesValue === undefined ? [] : splitList(rawPrioritiesValue);
+  if (rawPriorities === null) return parseFailure("Gantt query is invalid.", "gantt_query_invalid");
+  if (rawPriorities.some((value) => !DASHBOARD_PRIORITY_FILTER_VALUES.includes(value as DashboardPriorityFilterValue))) return parseFailure("Gantt query is invalid.", "gantt_query_invalid");
+
   const deliveredFlag = valueFor("delivered");
   if (deliveredFlag !== undefined && deliveredFlag !== "1") return parseFailure("Gantt query is invalid.", "gantt_query_invalid");
   const completedFlag = valueFor("completed");
@@ -232,6 +253,8 @@ function parseGanttQuery(c: Context<AppEnv>): ParsedGanttQuery | GanttParseFailu
     q,
     editorIds: [...rawEditors].sort(),
     stageKeys: canonicalStageOrder(rawStages),
+    priorities: canonicalDashboardPriorities(rawPriorities),
+    archived,
     delivered: deliveredFlag === "1",
     completed: completedFlag === "1",
     facets: facetsFlag === "1",
@@ -304,7 +327,8 @@ const BAR_START_DATE_EXPR = "CASE WHEN p.shoot_date GLOB '[0-9][0-9][0-9][0-9]-[
  * order: `?1` me, `?2` search, `?3` include_delivered, `?4` include_completed (for the density
  * count's checklist-row visibility, matching statement 2's own `completed` rule), `?5` cursor
  * start date (`''` for none), `?6` cursor id (`''` for none), `?7` editor ids JSON, `?8` stage
- * keys JSON, `?9` `limit + 1` (the "is there a next page" probe row).
+ * keys JSON, `?9` `limit + 1` (the "is there a next page" probe row), `?10` include_facets, `?11`
+ * priority filter JSON (#428), `?12` Archived mode (#428).
  *
  * **Live-data pagination contract (fix-218-r2 #1, wording pinned fix-218-r3 #3):** a cursor is
  * minted from a row's `bar_start_date` at the moment it is read (`encodeGanttProjectCursor`
@@ -336,12 +360,14 @@ export function productionGanttProjectsSql(role: GanttRole): string {
   return `WITH
 request AS (
   SELECT ?1 AS me, ?2 AS search, ?3 AS include_delivered, ?4 AS include_completed,
-    ?5 AS cursor_start, ?6 AS cursor_id, ?10 AS include_facets
+    ?5 AS cursor_start, ?6 AS cursor_id, ?10 AS include_facets, ?12 AS archived_mode
 ),
 request_editors AS (SELECT value AS person_id FROM json_each(?7)),
 request_stages AS (SELECT value AS stage_key FROM json_each(?8)),
+request_priorities AS (SELECT value AS priority FROM json_each(?11)),
 ${authorizedProjectsBaseCte(role, {
   includeDeliveredColumn: "r.include_delivered",
+  archivedModeColumn: "r.archived_mode",
   searchPredicate,
   extraColumns: `p.shoot_date, p.created_at, ${BAR_START_DATE_EXPR}`,
 })},
@@ -354,7 +380,8 @@ authorized_people_base AS (
   ${productionRoleSql(role).from}
   INNER JOIN project_members pm ON pm.project_id = p.id AND pm.role_on_project = 'editor'
   INNER JOIN user u ON u.id = pm.user_id
-  WHERE p.archived_at IS NULL AND u.active = 1
+  CROSS JOIN request r
+  WHERE ${archivedModeSql("p.archived_at", "r.archived_mode")} AND u.active = 1
 ),
 valid_selected_editors AS (
   SELECT re.person_id
@@ -442,6 +469,8 @@ function ganttPageBindValues(userId: string, parsed: ParsedGanttPageQuery): unkn
     JSON.stringify(stageKeys),
     parsed.limit + 1,
     parsed.facets ? 1 : 0,
+    JSON.stringify(parsed.priorities),
+    parsed.archived,
   ];
 }
 
@@ -500,7 +529,7 @@ scoped_projects AS (
   FROM projects p
   ${branch.from}
   INNER JOIN request_ids ri ON ri.project_id = p.id
-  WHERE p.archived_at IS NULL
+  -- #428: no archived predicate. The ids are the page's own, already narrowed by the request's Archived mode.
 ),
 ranked AS (
   SELECT s.id AS subtask_id, s.project_id, s.title, s.done, s.position,
@@ -546,7 +575,7 @@ function ganttChildrenForPageBindValues(userId: string, projectIds: string[], in
 
 /**
  * Binds, in order: `?1` me, `?2` childrenOf project id, `?3` include_completed, `?4` "no cursor"
- * flag, `?5` cursor position (`0` when no cursor), `?6` cursor subtask id (`''` when no cursor).
+ * flag, `?5` cursor position (`0` when no cursor), `?6` cursor subtask id (`''` when no cursor), `?7` Archived mode (#428).
  * Fetches up to `CHILD_PAGE_LIMIT + 1` rows (the "is there a next page" probe row).
  */
 export function productionGanttChildPageSql(role: GanttRole): string {
@@ -556,7 +585,7 @@ scoped_project AS (
   SELECT p.id AS project_id, ${branch.collaboration} AS can_collaborate
   FROM projects p
   ${branch.from}
-  WHERE p.archived_at IS NULL AND p.id = ?2
+  WHERE ${archivedModeSql("p.archived_at", "?7")} AND p.id = ?2
 ),
 visible_subtasks AS (
   SELECT s.id AS subtask_id, s.project_id, s.title, s.done, s.position,
@@ -586,8 +615,8 @@ SELECT * FROM page`;
  * #3), where `page` above returns zero rows and there is no row left to read a `COUNT(*) OVER()`
  * off. A plain `COUNT(*)` with no `GROUP BY` always returns exactly one row (`0` for no matches),
  * so — unlike reading `total` off the first (possibly absent) row of `page` — this query can never
- * itself be empty. Binds: `?1` me, `?2` childrenOf project id, `?3` include_completed — the same
- * first three binds as the page query above, not the cursor ones.
+ * itself be empty. Binds: `?1` me, `?2` childrenOf project id, `?3` include_completed, `?4` Archived mode (#428) — the same
+ * leading binds as the page query above, not the cursor ones.
  */
 export function productionGanttChildPageTotalSql(role: GanttRole): string {
   const branch = productionRoleSql(role);
@@ -596,7 +625,7 @@ scoped_project AS (
   SELECT p.id AS project_id, ${branch.collaboration} AS can_collaborate
   FROM projects p
   ${branch.from}
-  WHERE p.archived_at IS NULL AND p.id = ?2
+  WHERE ${archivedModeSql("p.archived_at", "?4")} AND p.id = ?2
 )
 SELECT COUNT(*) AS total
 FROM project_subtasks s
@@ -604,12 +633,12 @@ INNER JOIN scoped_project sp ON sp.project_id = s.project_id
 WHERE (?3 = 1 OR s.done = 0)`;
 }
 
-function ganttChildPageTotalBindValues(userId: string, projectId: string, includeCompleted: boolean): unknown[] {
-  return [userId, projectId, includeCompleted ? 1 : 0];
+function ganttChildPageTotalBindValues(userId: string, projectId: string, includeCompleted: boolean, archived: DashboardArchivedMode): unknown[] {
+  return [userId, projectId, includeCompleted ? 1 : 0, archived];
 }
 
-function ganttChildPageBindValues(userId: string, projectId: string, includeCompleted: boolean, cursor: GanttChildCursor | null): unknown[] {
-  return [userId, projectId, includeCompleted ? 1 : 0, cursor ? 0 : 1, cursor?.position ?? 0, cursor?.id ?? ""];
+function ganttChildPageBindValues(userId: string, projectId: string, includeCompleted: boolean, cursor: GanttChildCursor | null, archived: DashboardArchivedMode): unknown[] {
+  return [userId, projectId, includeCompleted ? 1 : 0, cursor ? 0 : 1, cursor?.position ?? 0, cursor?.id ?? "", archived];
 }
 
 // ---------------------------------------------------------------------------
@@ -706,6 +735,7 @@ function serializeGanttProjectRow(
   completed: boolean,
   withRevision: boolean,
   teamByProject: Map<string, GanttTeamMemberDto[]> | null,
+  archived: boolean,
 ): GanttProjectRowDto {
   if (row.project_id === null || row.street === null || row.stage_key === null || row.bar_start_date === null || row.created_at === null) {
     throw new Error("Gantt project row is incomplete.");
@@ -732,6 +762,7 @@ function serializeGanttProjectRow(
     agentName: row.agent_display_name,
     stageKey: stageTransportKeyForRole(row.stage_key as StageKey, role),
     delivered,
+    archived,
     shootDate: row.shoot_date,
     shootDateCivil: shootDateCivil(row.shoot_date),
     createdAt: new Date(row.created_at).toISOString(),
@@ -743,9 +774,10 @@ function serializeGanttProjectRow(
     // #365: opt-in (`team=1`), so an old bundle's strict decoder never meets the keys.
     ...(teamByProject ? { team: teamByProject.get(row.project_id) ?? [] } : {}),
     permissions: {
-      canEditDeadline: roleHasCapability(role, "editProject") && !delivered,
-      canEditChildren: canCollaborate,
-      ...(teamByProject ? { canEditTeam: roleHasCapability(role, "editProject") } : {}),
+      // An archived Project is read-only everywhere (#428): no Deadline, checklist or team edit.
+      canEditDeadline: roleHasCapability(role, "editProject") && !delivered && !archived,
+      canEditChildren: canCollaborate && !archived,
+      ...(teamByProject ? { canEditTeam: roleHasCapability(role, "editProject") && !archived } : {}),
     },
     children: {
       rows: children.map((child) => serializeGanttChecklistRow(child, role)),
@@ -783,8 +815,8 @@ function parseGanttResponse(role: GanttRole, response: ProductionGanttResponse):
 async function handleChildren(c: Context<AppEnv>, parsed: ParsedGanttChildQuery): Promise<Response> {
   const user = c.get("user");
   const role = user.role;
-  const params = ganttChildPageBindValues(user.id, parsed.childrenOf, parsed.completed, parsed.childCursor);
-  const totalParams = ganttChildPageTotalBindValues(user.id, parsed.childrenOf, parsed.completed);
+  const params = ganttChildPageBindValues(user.id, parsed.childrenOf, parsed.completed, parsed.childCursor, parsed.archived);
+  const totalParams = ganttChildPageTotalBindValues(user.id, parsed.childrenOf, parsed.completed, parsed.archived);
   // fix-218-r4 #2: batched (not sequential) so both queries read the same D1 snapshot, and the
   // total is sourced from its own always-one-row query — never from `page`'s first row, which is
   // absent on an empty continuation page.
@@ -855,7 +887,14 @@ async function handlePage(c: Context<AppEnv>, parsed: ParsedGanttPageQuery): Pro
     childrenByProject.set(row.project_id, list);
   }
 
-  const projects = pageRows.map((row) => serializeGanttProjectRow(row, role, now, editorsByProject, childrenByProject, parsed.completed, parsed.revision, teamByProject));
+  // #428: which of the page's Projects are archived. Only Include/Only can return any, and only an Admin
+  // reaches them, so Hide (the default) pays nothing.
+  const archivedIds = new Set<string>();
+  if (parsed.archived !== "hide" && projectIds.length > 0) {
+    const archivedRows = await c.env.DB.prepare("SELECT id FROM projects WHERE archived_at IS NOT NULL AND id IN (SELECT value FROM json_each(?1))").bind(JSON.stringify(projectIds)).all<{ id: string }>();
+    for (const row of archivedRows.results ?? []) archivedIds.add(row.id);
+  }
+  const projects = pageRows.map((row) => serializeGanttProjectRow(row, role, now, editorsByProject, childrenByProject, parsed.completed, parsed.revision, teamByProject, archivedIds.has(row.project_id!)));
   const lastRow = pageRows.at(-1);
   const nextCursor = truncatedPage && lastRow
     ? encodeGanttProjectCursor({ startDate: lastRow.bar_start_date!, id: lastRow.project_id! })
@@ -877,6 +916,8 @@ async function handlePage(c: Context<AppEnv>, parsed: ParsedGanttPageQuery): Pro
       q: parsed.q,
       editorIds: parsed.editorIds.filter((id) => validEditorIds.has(id)),
       stageKeys: parsed.stageKeys,
+      priorities: parsed.priorities,
+      archived: parsed.archived,
       includeDelivered: parsed.delivered,
       includeCompletedChecklist: parsed.completed,
     },
@@ -897,6 +938,9 @@ export async function productionGanttHandler(c: Context<AppEnv>) {
 async function productionGanttHandlerImpl(c: Context<AppEnv>): Promise<Response> {
   const parsed = parseGanttQuery(c);
   if ("code" in parsed) return c.json(parsed, 400);
+  // #428: Archived Include/Only is Admin only, refused (not silently narrowed) for every other role.
+  if (parsed.archived !== "hide" && !roleHasCapability(c.get("user").role, "adminBackend")) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
+  if (parsed.mode === "page" && parsed.priorities.length > 0 && c.get("user").role === "external_editor") return c.json({ error: "Project priority is not available to this role.", code: "gantt_query_invalid" }, 400);
   if (parsed.mode === "children") return handleChildren(c, parsed);
   return handlePage(c, parsed);
 }

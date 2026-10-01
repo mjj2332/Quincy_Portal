@@ -106,7 +106,7 @@ describe("Dashboard contains a stale lazy view chunk (#292)", () => {
 
   function expectShellIntact() {
     expect(host.querySelector("h1")?.textContent).toBe("Projects");
-    expect(host.querySelector('[data-testid="dashboard-toolbar"]')).toBeTruthy();
+    expect(host.querySelector('[data-testid="dashboard-view-bar"]')).toBeTruthy();
     expect(host.querySelector('[aria-label="Dashboard view"]')).toBeTruthy();
     expect(switcherButtons().length).toBeGreaterThan(0);
     for (const button of switcherButtons()) expect(button.disabled).toBe(false);

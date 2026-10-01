@@ -95,7 +95,7 @@ function dayDelta(from: Date, to: Date): number {
 }
 
 function projectContext(project: GanttProjectRowDto): CalendarProjectContext {
-  return { id: project.id, street: project.street, stageKey: project.stageKey, checklist: { ...project.checklist }, delivered: project.delivered };
+  return { id: project.id, street: project.street, stageKey: project.stageKey, checklist: { ...project.checklist }, delivered: project.delivered, archived: project.archived };
 }
 
 // ---------------------------------------------------------------------------

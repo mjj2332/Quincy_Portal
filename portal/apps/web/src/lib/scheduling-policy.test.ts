@@ -46,6 +46,7 @@ const project = () => ({
   stageKey: EDITOR_STAGE,
   checklist: { completed: 1, total: 3 },
   delivered: false,
+  archived: false,
 });
 const timedEndpoint = (localCivil: string, instant: string, fold: 0 | 1 = 0) => ({ localCivil, instant, utcOffsetMinutes: fold === 1 ? 600 : 660, fold, resolution: "stored" as const });
 const rangeSchedule = (start: ReturnType<typeof timedEndpoint>, end: ReturnType<typeof timedEndpoint>, version = 4) => ({ state: "range" as const, version, zone: PRODUCTION_CALENDAR_ZONE, start, end, due: end.localCivil });

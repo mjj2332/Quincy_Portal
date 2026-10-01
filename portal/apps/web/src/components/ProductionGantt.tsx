@@ -820,11 +820,15 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // through the existing lifecycle exactly as a `q` change always has.
   // Keyed by value (`ganttFacetKey`: stages, delivered, completed; plus the editor ids, which that
   // key does not carry), so a fresh facet object with the same filters keeps the same request.
-  const { editorIds, stageKeys, delivered, completed } = facetFilters;
+  const { editorIds, stageKeys, priorities, archived, delivered, completed } = facetFilters;
+  // #428: a continuation page of an archived Project's checklist is readable only under the Archived mode
+  // that listed the Project; read at fetch time (the chain restarts on any filter change anyway).
+  const archivedModeRef = useRef(archived);
+  archivedModeRef.current = archived;
   const facetKey = ganttFacetKey(facetFilters);
   const editorIdsKey = editorIds.join(",");
   const filters = useMemo<ProductionGanttFilters>(
-    () => ({ q, editorIds, stageKeys, delivered, completed }),
+    () => ({ q, editorIds, stageKeys, priorities, archived, delivered, completed }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the arrays are read from the facet; its value keys stand in for them
     [q, facetKey, editorIdsKey],
   );
@@ -981,7 +985,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
       let cursor: string | null = seedCursor;
       try {
         while (cursor) {
-          const page = await fetchGanttChildPage(projectId, cursor, undefined, controller.signal);
+          const page = await fetchGanttChildPage(projectId, cursor, undefined, controller.signal, archivedModeRef.current);
           // fix-220-sol1b: `controller.signal.aborted` is checked alongside the generation guard —
           // a same-generation re-seed (this file's own reconciliation effect below) aborts THIS
           // controller without bumping `generationRef`, and a mocked/real fetch whose response had
@@ -1925,7 +1929,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
 
   return (
     <div ref={containerRef} className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)]" data-testid="production-gantt-root">
-      <ProductionGanttFiltersBar filters={facetFilters} stageOptions={stageOptions} people={filterPeople} onFiltersChange={onFiltersChange} triggerRef={filtersTriggerRef} />
+      <ProductionGanttFiltersBar filters={facetFilters} people={filterPeople} onFiltersChange={onFiltersChange} triggerRef={filtersTriggerRef} />
       <GanttLegend entries={legendEntries} />
       {commands.settle.recoveryReason && (
         <Notice role="alert" data-testid="production-gantt-recovery-notice" className="flex items-center justify-between gap-[var(--space-4)]">

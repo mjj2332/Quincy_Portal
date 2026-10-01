@@ -1,6 +1,6 @@
 import { env, SELF } from "cloudflare:test";
 import { makeSignature } from "better-auth/crypto";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   adminProductionGanttResponseSchema,
   editorProductionGanttResponseSchema,
@@ -137,6 +137,95 @@ beforeAll(async () => {
 
   await insertProject(completedTitleSearchProjectId, "40 Neutral Street", "editing_autohdr", "2026-08-24");
   await insertSubtask(completedTitleSearchProjectId, "OnlyDoneMatch Secret Task", 0, true);
+});
+
+
+describe("shared Dashboard Filter: Project priority and Archived mode (#428)", () => {
+  const rangeQuery = "scope=active&limit=100";
+  const gActive = "81b00000-0000-4000-8000-000000000001";
+  const gActiveNone = "81b00000-0000-4000-8000-000000000002";
+  const gArchived = "81b00000-0000-4000-8000-000000000003";
+  const gArchivedLow = "81b00000-0000-4000-8000-000000000004";
+
+  // Runs before "production-gantt" so the density fixtures' 100k checklist rows (which that
+  // describe seeds and keeps) are not in the table: the seeded Projects are removed again below, so
+  // the exact-count tests that follow are unaffected.
+  afterAll(async () => {
+    const ids = [gActive, gActiveNone, gArchived, gArchivedLow];
+    const marks = ids.map(() => "?").join(", ");
+    await database.DB.prepare(`DELETE FROM project_subtasks WHERE project_id IN (${marks})`).bind(...ids).run();
+    await database.DB.prepare(`DELETE FROM projects WHERE id IN (${marks})`).bind(...ids).run();
+  });
+
+  beforeAll(async () => {
+    await insertProject(gActive, "901 Gfilter Active Street", "editing_autohdr", "2026-10-12");
+    await insertProject(gActiveNone, "902 Gfilter Active None Street", "raw_review", "2026-10-12");
+    await insertProject(gArchived, "903 Gfilter Archived Street", "editing_autohdr", "2026-10-12");
+    await insertProject(gArchivedLow, "904 Gfilter Archived Low Street", "raw_review", "2026-10-12");
+    await database.DB.prepare("UPDATE projects SET priority = 5 WHERE id IN (?, ?)").bind(gActive, gArchived).run();
+    await database.DB.prepare("UPDATE projects SET priority = 1 WHERE id = ?").bind(gArchivedLow).run();
+    await database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id IN (?, ?)").bind(Date.now(), gArchived, gArchivedLow).run();
+    await insertSubtask(gArchived, "Archived Gfilter checklist", 0);
+  });
+
+  async function page(query: string, token = tokens.admin) {
+    const response = await request(`/api/production-gantt?${rangeQuery}&q=Gfilter${query}`, token);
+    return { status: response.status, body: response.status === 200 && token === tokens.admin ? adminProductionGanttResponseSchema.parse(await response.json()) : await response.json() as { code?: string; capability?: string } };
+  }
+  const streets = (body: ReturnType<typeof adminProductionGanttResponseSchema.parse>) => body.projects.map((project) => project.street).sort();
+
+  it("Hide is the default and echoes the default filter", async () => {
+    const { body } = await page("");
+    expect(streets(body as never)).toEqual(["901 Gfilter Active Street", "902 Gfilter Active None Street"]);
+    expect((body as { appliedFilters: unknown }).appliedFilters).toMatchObject({ priorities: [], archived: "hide" });
+  });
+
+  it("Only and Include return archived projects, flagged and read-only, with their checklist rows", async () => {
+    const only = (await page("&archived=only")).body as ReturnType<typeof adminProductionGanttResponseSchema.parse>;
+    expect(streets(only)).toEqual(["903 Gfilter Archived Street", "904 Gfilter Archived Low Street"]);
+    expect(only.projects.every((project) => project.archived)).toBe(true);
+    const archived = only.projects.find((project) => project.id === gArchived)!;
+    expect(archived.permissions).toMatchObject({ canEditDeadline: false, canEditChildren: false });
+    expect(archived.children.rows.map((row) => row.title)).toEqual(["Archived Gfilter checklist"]);
+    const include = (await page("&archived=include")).body as ReturnType<typeof adminProductionGanttResponseSchema.parse>;
+    expect(streets(include)).toEqual(["901 Gfilter Active Street", "902 Gfilter Active None Street", "903 Gfilter Archived Street", "904 Gfilter Archived Low Street"]);
+    expect(include.projects.filter((project) => project.archived).map((project) => project.id).sort()).toEqual([gArchived, gArchivedLow].sort());
+    expect(include.projects.find((project) => project.id === gActive)!.permissions.canEditDeadline).toBe(true);
+  });
+
+  it("filters by priority, composed with Stage and Archived", async () => {
+    expect(streets((await page("&priority=5")).body as never)).toEqual(["901 Gfilter Active Street"]);
+    expect(streets((await page("&priority=none")).body as never)).toEqual(["902 Gfilter Active None Street"]);
+    expect(streets((await page("&priority=5,1&archived=include&stages=raw_review")).body as never)).toEqual(["904 Gfilter Archived Low Street"]);
+    expect(((await page("&priority=none,5")).body as { appliedFilters: { priorities: string[] } }).appliedFilters.priorities).toEqual(["5", "none"]);
+  });
+
+  it("serves an archived project's children only under the mode that listed it", async () => {
+    const hidden = await request(`/api/production-gantt?scope=active&childrenOf=${gArchived}`, tokens.admin);
+    expect(hidden.status).toBe(200);
+    expect(((await hidden.json()) as { children: { total: number } }).children.total).toBe(0);
+    const shown = await request(`/api/production-gantt?scope=active&childrenOf=${gArchived}&archived=only`, tokens.admin);
+    expect(((await shown.json()) as { children: { total: number } }).children.total).toBe(1);
+  });
+
+  it("is Admin only for Archived, and priority is withheld from an External Editor", async () => {
+    for (const token of [tokens.editor, tokens.photographer, tokens.external]) {
+      expect((await page("&archived=include", token)).status).toBe(403);
+      expect((await page("&archived=only", token)).status).toBe(403);
+      const children = await request(`/api/production-gantt?scope=active&childrenOf=${gArchived}&archived=only`, token);
+      expect(children.status).toBe(403);
+    }
+    expect((await page("&priority=5", tokens.external)).status).toBe(400);
+    expect((await page("&priority=5", tokens.editor)).status).toBe(200);
+  });
+
+  it("rejects malformed spellings", async () => {
+    for (const query of ["&archived=hide", "&archived=1", "&archived=", "&priority=", "&priority=6", "&priority=5,5"]) {
+      expect((await page(query)).status, query).toBe(400);
+    }
+    const children = await request(`/api/production-gantt?scope=active&childrenOf=${gArchived}&priority=5`, tokens.admin);
+    expect(children.status).toBe(400);
+  });
 });
 
 describe("production-gantt", () => {
@@ -508,3 +597,4 @@ describe("serializeGanttDeadline", () => {
     expect(result).toMatchObject({ at: new Date(at).toISOString(), localCivil: "2026-09-01T10:00", version: 3, reminderOffsetsMinutes: [1440, 60], overdue: false });
   });
 });
+

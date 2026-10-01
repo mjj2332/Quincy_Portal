@@ -27,7 +27,7 @@ describe("legacy Dashboard view spellings (#427)", () => {
   it("carries the Timeline facets through a legacy gantt location", () => {
     const location = `/?view=gantt&editors=${editorId}&stages=raw_review&delivered=1&completed=1&q=smith`;
     const route = parseStaffLocation(location);
-    expect(route).toMatchObject({ kind: "dashboard", dashboardView: "timeline", search: "smith", gantt: { stageKeys: ["raw_review"], delivered: true, completed: true, editorIds: [editorId] } });
+    expect(route).toMatchObject({ kind: "dashboard", dashboardView: "timeline", search: "smith", gantt: { stageKeys: ["raw_review"], priorities: [], archived: "hide", delivered: true, completed: true, editorIds: [editorId] } });
     expect(canonicalLegacyDashboardLocation(location)).toBe(`/?view=timeline&editors=${editorId}&stages=raw_review&completed=1&delivered=1&q=smith`);
   });
 
@@ -48,10 +48,37 @@ describe("legacy Dashboard view spellings (#427)", () => {
   });
 
   it("keeps rejecting what the legacy grammar always rejected", () => {
-    expect(parseStaffLocation("/?view=list&stages=raw_review")).toEqual({ kind: "not-found" });
+    expect(parseStaffLocation("/?view=list&completed=1")).toEqual({ kind: "not-found" });
     expect(parseStaffLocation("/?view=kanban&delivered=1")).toEqual({ kind: "not-found" });
     expect(parseStaffLocation("/?view=gantt&stages=raw_review&stages=editing")).toEqual({ kind: "not-found" });
     expect(parseStaffLocation("/?view=gantt&delivered=0")).toEqual({ kind: "not-found" });
     expect(parseStaffLocation("/?view=kanban2")).toEqual({ kind: "not-found" });
   });
 });
+
+describe("legacy Dashboard scope spelling (#428)", () => {
+  it("reads /?scope=archived as the Board with Archived = Only, and canonicalises it", () => {
+    const location = "/?scope=archived";
+    expect(parseStaffLocation(location)).toEqual({ kind: "dashboard", dashboardView: "board", filter: { stageKeys: [], priorities: [], archived: "only" } });
+    expect(canonicalLegacyDashboardLocation(location)).toBe("/?view=board&archived=only");
+    expect(safeStaffDestination(location)).toBe("/?view=board&archived=only");
+  });
+
+  it("carries q through scope=archived", () => {
+    expect(canonicalLegacyDashboardLocation("/?scope=archived&q=smith")).toBe("/?view=board&archived=only&q=smith");
+  });
+
+  it("reads /?scope=active as the plain bare route, with no archived param", () => {
+    expect(parseStaffLocation("/?scope=active")).toEqual({ kind: "dashboard" });
+    expect(canonicalLegacyDashboardLocation("/?scope=active")).toBe("/");
+    expect(canonicalLegacyDashboardLocation("/?scope=active&q=smith")).toBe("/?q=smith");
+  });
+
+  it("rejects an unknown scope, a scope beside a view, and a duplicate scope", () => {
+    for (const location of ["/?scope=all", "/?scope=", "/?scope=archived&view=table", "/?view=board&scope=archived", "/?scope=archived&scope=active"]) {
+      expect(parseStaffLocation(location), location).toEqual({ kind: "not-found" });
+      expect(canonicalLegacyDashboardLocation(location), location).toBeNull();
+    }
+  });
+});
+

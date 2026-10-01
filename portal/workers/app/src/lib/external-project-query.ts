@@ -1,6 +1,6 @@
 import { boardContractEnabled, boardSchemaVariant, createDb, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
-import { externalProjectDetailSchema, externalProjectListResponseSchema, externalProjectSummarySchema, ROLE_LABELS, stageTransportKeyForRole, type ExternalProjectDetailDto, type ExternalProjectListResponse, type ExternalProjectSummaryDto, type ProjectEditorRef, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
+import { externalProjectDetailSchema, externalProjectListResponseSchema, externalProjectSummarySchema, ROLE_LABELS, stageTransportKeyForRole, type DashboardFilter, type ExternalProjectDetailDto, type ExternalProjectListResponse, type ExternalProjectSummaryDto, type ProjectEditorRef, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
 import type { Env } from "../env";
 import { readProjectDeadlineSchedule } from "./project-deadline";
 import { activeEditorRefsByProject } from "./project-editors";
@@ -180,7 +180,7 @@ function externalProjectMatchesSearch(project: ExternalProjectSummaryDto, needle
   return haystacks.some((value) => (value ?? "").toLowerCase().includes(needle));
 }
 
-export async function listExternalProjects(env: Env, userId: string, role: Role, search = ""): Promise<ExternalProjectListResponse> {
+export async function listExternalProjects(env: Env, userId: string, role: Role, search = "", filter?: Pick<DashboardFilter, "stageKeys">): Promise<ExternalProjectListResponse> {
   const variant = await boardSchemaVariant(env.DB);
   const db = createDb(env.DB);
   const rows = await projectRows(db, userId, role, variant);
@@ -213,7 +213,13 @@ export async function listExternalProjects(env: Env, userId: string, role: Role,
     fromClause: "project_subtasks s",
     columns: { checklistTitle: "s.title", street: "''", suburb: "''", agency: "''", agent: "''" },
   });
-  const projects = search === "" ? allProjects : allProjects.filter((project) => externalProjectMatchesSearch(project, needle) || checklistMatchingIds.has(project.id));
+  // #428: Stage narrows here, in the same place the search does, over the same full group — so the
+  // Board-order envelope and `total` below never move with it. The external DTO carries the
+  // presentation key already (`editing`). Priority is not offered to this role (the DTO withholds
+  // it), and the route refuses it before this point.
+  const stageKeys: ReadonlySet<string> = new Set(filter?.stageKeys ?? []);
+  const searched = search === "" ? allProjects : allProjects.filter((project) => externalProjectMatchesSearch(project, needle) || checklistMatchingIds.has(project.id));
+  const projects = stageKeys.size === 0 ? searched : searched.filter((project) => stageKeys.has(project.stageKey));
   return externalProjectListResponseSchema.parse({
     projects,
     board: {
@@ -222,7 +228,7 @@ export async function listExternalProjects(env: Env, userId: string, role: Role,
       // rank-within-the-filtered-set. Mirrors the internal path's own `orderedRows`/`matchedRows` split.
       orderedProjectIdsByStage: variant === "tb5a_0037" ? canonicalExternalBoardOrder(grouped.values()) : {},
     },
-    ...(search === "" ? {} : { search: { query: search, matching: projects.length, total: allProjects.length } }),
+    ...(search === "" && stageKeys.size === 0 ? {} : { search: { query: search, matching: projects.length, total: allProjects.length } }),
   });
 }
 

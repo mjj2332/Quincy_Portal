@@ -34,6 +34,12 @@ export interface ProjectSummary {
   receivedCount: number;
   expectedCount: number | null;
   priority: number | null;
+  /**
+   * #428: when the Project was archived (an ISO instant), or `null`/absent for an active one. Only
+   * an Admin viewing Archived: Include or Only ever receives a non-null value. An archived card is
+   * shown but never moved, reordered or re-prioritised.
+   */
+  archivedAt?: string | null;
   /** Legacy wire field retained for compatibility; Board rendering never reads it. */
   boardPosition?: number;
   /** The one authorized Board projection carried through the web adapter for interactions. */

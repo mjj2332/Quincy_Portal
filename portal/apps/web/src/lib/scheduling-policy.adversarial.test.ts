@@ -11,7 +11,7 @@ import { planSchedulingProposal, type SchedulingProposal } from "./scheduling-po
 import { scheduleWindowWarnings } from "./schedule-bounds";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
-const project = { id: PROJECT_ID, street: "1 Example Street", stageKey: "editing" as const, checklist: { completed: 0, total: 1 }, delivered: false };
+const project = { id: PROJECT_ID, street: "1 Example Street", stageKey: "editing" as const, checklist: { completed: 0, total: 1 }, delivered: false, archived: false };
 const person = { id: "22222222-2222-4222-8222-222222222222", name: "Editor", roleLabel: "Editor", isExternal: false, active: true };
 
 function timedEndpoint(localCivil: string, disambiguation?: "earlier" | "later") {

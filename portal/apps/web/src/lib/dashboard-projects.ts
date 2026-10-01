@@ -1,4 +1,4 @@
-import { authorizedBoardRank, type ExternalProjectSummaryDto, type Role } from "@quincy/shared";
+import { authorizedBoardRank, canonicalDashboardPriorities, canonicalDashboardStages, dashboardProjectsFilterQueryParams, type DashboardFilter, type ExternalProjectSummaryDto, type Role } from "@quincy/shared";
 import { keepPreviousData, skipToken, useQuery, type Query, type UseQueryResult } from "@tanstack/react-query";
 import { apiGet } from "./api";
 import { externalApiGet, externalProjectSummaryToDashboard } from "./external-api-response";
@@ -22,13 +22,12 @@ export type DashboardIdentity = { principalId: string; role: Role; authorization
  * tuple. Future key widening must audit both consumers.
  *
  * `q` (#217) widens the trailing object rather than adding a sixth element -- but ONLY when
- * non-empty (#217 fix round 1, item 7). An empty `q` produces exactly `{ archived }`, with no `q`
- * property at all: byte-identical to the pre-#217 tuple shape react-query hashes, so every
- * existing q-less call site's query key hashes to the SAME string it always did, not merely a
- * structurally-equivalent one. `react-query`'s own key hashing is order-and-shape-sensitive
- * (`{ archived }` and `{ archived, q: "" }` are different hashes), so this is a real compatibility
- * concern, not a cosmetic one -- `useQuery`'s cache would otherwise miss the pre-existing entry
- * for every already-mounted q-less observer the moment this file changed to write `q` unconditionally.
+ * non-empty (#217 fix round 1, item 7), and so does the shared Filter (#428): the trailing object is
+ * `{ archived: mode, q?, stages?, priority? }` with `archived` the Archived MODE (`"hide"` |
+ * `"include"` | `"only"`, no longer a boolean) and every other member present only when it narrows.
+ * Defaults are omitted, never written as empty values, so the key's hash is a pure function of the
+ * request: two filters that make the same request share one entry. `react-query`'s own key hashing
+ * is order-and-shape-sensitive, so the member order here is fixed.
  *
  * The cached VALUE under this key stays `ProjectSummary[]` — never `{ projects, search }` — because
  * production code (`Dashboard.tsx`'s optimistic Board `setQueryData<ProjectSummary[]>`) and the
@@ -36,8 +35,29 @@ export type DashboardIdentity = { principalId: string; role: Role; authorization
  * change here fails silently on that path. Search counts live in the sibling
  * `dashboardProjectSearchKey` cache entry instead, written once per fetch by this hook's `queryFn`.
  */
-export function dashboardProjectsKey(principalId: string, role: Role, authorizationEpoch: number, archived: boolean, q: string = "") {
-  return ["dashboard-projects", principalId, role, authorizationEpoch, q ? { archived, q } : { archived }] as const;
+export type DashboardProjectsKeyFilter = Pick<DashboardFilter, "archived"> & Partial<Pick<DashboardFilter, "stageKeys" | "priorities">>;
+export const DASHBOARD_HIDE_ARCHIVED: DashboardProjectsKeyFilter = { archived: "hide" };
+
+/** The trailing object of a Dashboard-projects key: only what narrows, in a fixed member order. */
+export type DashboardProjectsKeyScope = { archived: DashboardFilter["archived"]; q?: string; stages?: string[]; priority?: string[] };
+
+function dashboardProjectsKeyScope(filter: DashboardProjectsKeyFilter, q: string): DashboardProjectsKeyScope {
+  const stages = canonicalDashboardStages(filter.stageKeys ?? []);
+  const priority = canonicalDashboardPriorities(filter.priorities ?? []);
+  return {
+    archived: filter.archived,
+    ...(q ? { q } : {}),
+    ...(stages.length > 0 ? { stages } : {}),
+    ...(priority.length > 0 ? { priority } : {}),
+  };
+}
+
+function omitScope({ archived: _archived, ...rest }: DashboardProjectsKeyScope) {
+  return rest;
+}
+
+export function dashboardProjectsKey(principalId: string, role: Role, authorizationEpoch: number, filter: DashboardProjectsKeyFilter, q: string = "") {
+  return ["dashboard-projects", principalId, role, authorizationEpoch, dashboardProjectsKeyScope(filter, q)] as const;
 }
 
 /**
@@ -47,29 +67,30 @@ export function dashboardProjectsKey(principalId: string, role: Role, authorizat
  * directly — `useDashboardProjectSearch` reads it with `queryFn: skipToken`; the projects `queryFn`
  * below is its only writer, via `client.setQueryData`.
  */
-export function dashboardProjectSearchKey(principalId: string, role: Role, authorizationEpoch: number, archived: boolean, q: string = "") {
-  return ["dashboard-project-search", principalId, role, authorizationEpoch, { archived, q }] as const;
+export function dashboardProjectSearchKey(principalId: string, role: Role, authorizationEpoch: number, filter: DashboardProjectsKeyFilter, q: string = "") {
+  return ["dashboard-project-search", principalId, role, authorizationEpoch, { archived: filter.archived, q, ...omitScope(dashboardProjectsKeyScope(filter, "")) }] as const;
 }
 
-function dashboardProjectsPath(archived: boolean, q: string): string {
+function dashboardProjectsPath(filter: DashboardProjectsKeyFilter, q: string): string {
   const params = new URLSearchParams();
-  if (archived) params.set("archived", "1");
   if (q) params.set("q", q);
+  for (const [name, value] of dashboardProjectsFilterQueryParams({ stageKeys: filter.stageKeys ?? [], priorities: filter.priorities ?? [], archived: filter.archived })) params.set(name, value);
   const qs = params.toString();
   return qs ? `/api/projects?${qs}` : "/api/projects";
 }
 
-export function useDashboardProjects(archived: boolean, identity: DashboardIdentity = { principalId: "anonymous", role: "photographer", authorizationEpoch: 0 }, q: string = ""): UseQueryResult<ProjectSummary[], Error> {
+export function useDashboardProjects(filter: DashboardProjectsKeyFilter, identity: DashboardIdentity = { principalId: "anonymous", role: "photographer", authorizationEpoch: 0 }, q: string = ""): UseQueryResult<ProjectSummary[], Error> {
   const { principalId, role, authorizationEpoch } = identity;
   const external = role === "external_editor";
   return useQuery<ProjectSummary[], Error>({
-    queryKey: dashboardProjectsKey(principalId, role, authorizationEpoch, archived, q),
-    enabled: !external || !archived,
+    queryKey: dashboardProjectsKey(principalId, role, authorizationEpoch, filter, q),
+    // An External Editor never has archived Projects (the server refuses the request): never send it.
+    enabled: !external || filter.archived === "hide",
     queryFn: async ({ signal, client }) => {
       const runtime = getProjectQueryRuntime(client);
-      const searchKey = dashboardProjectSearchKey(principalId, role, authorizationEpoch, archived, q);
+      const searchKey = dashboardProjectSearchKey(principalId, role, authorizationEpoch, filter, q);
       if (external) {
-        const response = await externalApiGet("project-list", dashboardProjectsPath(archived, q), signal) as {
+        const response = await externalApiGet("project-list", dashboardProjectsPath(filter, q), signal) as {
           projects: ExternalProjectSummaryDto[];
           board: { contractEnabled: boolean; orderedProjectIdsByStage: Record<string, string[]> };
           search?: DashboardProjectSearchCounts;
@@ -81,7 +102,7 @@ export function useDashboardProjects(archived: boolean, identity: DashboardIdent
           response.board.contractEnabled,
         )).filter((project) => !runtime?.isProjectRemoved(project.id)) as ProjectSummary[];
       }
-      const response = await apiGet<ProjectsResponse>(dashboardProjectsPath(archived, q), { signal });
+      const response = await apiGet<ProjectsResponse>(dashboardProjectsPath(filter, q), { signal });
       client.setQueryData(searchKey, response.search ?? null);
       const board = response.board;
       return response.projects.map((project) => ({
@@ -101,11 +122,12 @@ export function useDashboardProjects(archived: boolean, identity: DashboardIdent
     refetchOnReconnect: true,
     retry: projectQueryRetry,
     // Keeps the Board from blanking between keystrokes — the 300ms search debounce already bounds
-    // the request rate. Gated off the archived-scope switch: stale archived rows must never flash
-    // into the active view (or vice versa) while the new scope's fetch is in flight.
+    // the request rate. Gated off the Archived MODE: stale archived rows must never flash into the
+    // active view (or vice versa) while the new mode's fetch is in flight. A Stage or Priority change
+    // keeps the previous rows as placeholder, like a search keystroke does.
     placeholderData: (previousData, previousQuery) => {
-      const previousArchived = (previousQuery?.queryKey[4] as { archived: boolean; q: string } | undefined)?.archived;
-      return previousArchived === archived ? keepPreviousData(previousData) : undefined;
+      const previousArchived = (previousQuery?.queryKey[4] as DashboardProjectsKeyScope | undefined)?.archived;
+      return previousArchived === filter.archived ? keepPreviousData(previousData) : undefined;
     },
   });
 }
@@ -116,10 +138,10 @@ export function useDashboardProjects(archived: boolean, identity: DashboardIdent
  * fetch still in flight) simply reads as `undefined`, distinct from the explicit `null` the writer
  * stores for "no search active" / "old server, no `search` in the response".
  */
-export function useDashboardProjectSearch(archived: boolean, identity: DashboardIdentity, q: string): UseQueryResult<DashboardProjectSearchCounts | null, Error> {
+export function useDashboardProjectSearch(filter: DashboardProjectsKeyFilter, identity: DashboardIdentity, q: string): UseQueryResult<DashboardProjectSearchCounts | null, Error> {
   const { principalId, role, authorizationEpoch } = identity;
   return useQuery<DashboardProjectSearchCounts | null, Error>({
-    queryKey: dashboardProjectSearchKey(principalId, role, authorizationEpoch, archived, q),
+    queryKey: dashboardProjectSearchKey(principalId, role, authorizationEpoch, filter, q),
     queryFn: skipToken,
     staleTime: Infinity,
   });
@@ -149,6 +171,22 @@ export function isDashboardProjectsQueryFor(principalId: string, exceptKeyString
     query.queryKey[0] === kind &&
     query.queryKey[1] === id &&
     (exceptKeyString === undefined || JSON.stringify(query.queryKey) !== exceptKeyString);
+}
+
+/**
+ * #428: a `Query` predicate for the dashboard-projects entries whose request carries a Stage or
+ * Priority filter. A Project's priority or stage edit can move it OUT of such an entry (or into one
+ * that never held it), so patching the cached row would leave a row in a list it no longer belongs
+ * to: these entries are invalidated and refetched on next use instead of patched.
+ */
+export function isFilteredDashboardProjectsQuery(principalId: string, facet: "stages" | "priority" | "any" = "any") {
+  const [kind, id] = dashboardProjectsKeyPrefix(principalId);
+  return (query: Query) => {
+    if (!Array.isArray(query.queryKey) || query.queryKey[0] !== kind || query.queryKey[1] !== id) return false;
+    const scope = query.queryKey[4] as DashboardProjectsKeyScope | undefined;
+    if (!scope) return false;
+    return facet === "stages" ? scope.stages !== undefined : facet === "priority" ? scope.priority !== undefined : scope.stages !== undefined || scope.priority !== undefined;
+  };
 }
 
 export function removeProjectFromDashboardQueries(queryClient: import("@tanstack/react-query").QueryClient, principalId: string, projectId: string) {
