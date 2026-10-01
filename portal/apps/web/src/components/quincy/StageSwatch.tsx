@@ -3,7 +3,7 @@ import type { StagePattern } from "../../lib/stage-colors";
 
 /**
  * #255: a stage's colour swatch, the one square both the Gantt's stage legend (`GanttLegend` in
- * `ProductionGantt.tsx`) and the filters bar's Stage options (`ProductionGanttFiltersBar.tsx`) draw
+ * `ProductionGantt.tsx`) and the shared Filter's Stage options draw
  * beside a stage label. Decorative: the label beside it carries the meaning. The colour comes from
  * the caller's entry (`stageOptionsWithColor` / `ganttLegendEntries`), never recomputed here.
  *

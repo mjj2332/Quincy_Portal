@@ -4785,6 +4785,17 @@ remove the legacy readers) still applies.
   access in try/catch. Role-invisible columns (Priority for an External Editor) and the narrow-screen set are computed
   at render and never stored, so a saved choice survives a role or width change.
 
+## #430 Calendar and Timeline join the shared Filter and Display
+
+- **Display content per view.** Calendar: Layers (Project deadlines / Subtasks) then Show (delivered Projects / completed Subtasks). Timeline: Show only. Board and Table are unchanged. `completed=` and `delivered=` are real server filters on both views, so they keep a control (Show) rather than going URL-only; the Calendar's Show is a deliberate departure from the issue's "Layers only".
+- **No parser or serialiser change.** Old Calendar and Timeline URLs resolve byte-identically (cold-URL tests in `Dashboard-calendar` and `Dashboard-gantt`). Display writes go through `navigateCalendar` / `navigateGantt`, so every toggle pushes.
+- **The Delivered pair now runs from Display.** `writeTimelineDisplay` -> `ganttFacetForWrite` -> `ganttPairingNotice` -> `setAnnouncement`. The visible pair notice is gone; only the Dashboard live region announces it.
+- **Last layer disabled.** The only checked Calendar layer is `disabled`, and the handler also refuses an empty set. Layers are written in canonical order (`project,checklist`).
+- **Gantt empty-state focus.** The Filter and Display triggers are outside the lazy Gantt, so it takes `focusFilterTrigger` / `focusDisplayTrigger` callbacks (Dashboard queries by `data-testid`). Clear filters -> Filter trigger; "Show delivered projects" -> Display trigger. The scroll-after-render flag now scrolls whichever trigger got focus; both triggers carry the `scroll-mt` that clears the sticky header.
+- **Test-mock trap.** A Calendar mock that always answers with fixed `appliedFilters.layers` makes the Dashboard's reconcile rewrite the URL back after a layer toggle. Echo the requested layers.
+- **Base UI checkbox items** keep the menu open; Display state is per view and is dropped on a tab switch.
+- Follow-up (not done): `useFilterQueryBinding`'s `forWrite`, `noticeFor`, `reconcile` options have no caller left.
+
 ## #432 Board cards on `frame`
 
 - **dnd-kit's post-drag click suppression only calls `stopPropagation`.** With the card's link as the drag handle,

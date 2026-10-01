@@ -150,8 +150,8 @@ function defaultValueDisplay<V>(
  *  makes the chip harder to scan than the list it came from. */
 /** Quincy (#255 browser pass G): a chip's value stays on ONE line. At 390px
  *  "Completed checklist items" wrapped and made its chip 62px tall. The
- *  segment never wraps, caps at the value menu's own 15rem (`w-60`, the
- *  Gantt bar's `VALUE_MENU_CLASS`), and may shrink below it (`min-w-0`) on a
+ *  segment never wraps, caps at the value menu's own 15rem (`w-60`, as the
+ *  Timeline's removed filters bar set it, #430), and may shrink below it (`min-w-0`) on a
  *  narrow row; the label inside truncates. The full value stays in the
  *  segment's `aria-label` and the chip's name. */
 const VALUE_SEGMENT_LINE_CLASS = "min-w-0 max-w-60 whitespace-nowrap"

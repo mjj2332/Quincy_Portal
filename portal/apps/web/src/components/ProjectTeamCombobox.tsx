@@ -74,7 +74,7 @@ const PROJECT_TEAM_MESSAGE =
   "col-span-full [font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)] " +
   "text-[color:var(--signal-critical)]";
 
-/** #222: also the event-calendar People/Layers chips' remove hit area (`ProductionEventCalendarFacets.tsx`). */
+/** #222: also the event-calendar People chips' remove hit area (the Calendar's facets were removed in #430). */
 export const TEAM_CHIP_REMOVE_HIT_AREA =
   // 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token. The visible icon-xs
   // button is 24px (`size-6`); a transparent pseudo-element extends the hit area to 44px
