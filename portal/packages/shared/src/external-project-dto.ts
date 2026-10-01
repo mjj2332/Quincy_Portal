@@ -219,7 +219,7 @@ export const externalMeResponseSchema = z.object({
   user: z.object({ id: uuid, name: z.string(), email: z.string().email(), role: z.literal("external_editor"), active: z.literal(true), impersonatedBy: uuid.nullable(), authorizationEpoch: z.number().int().nonnegative() }).strict(),
   capabilities: z.array(z.enum(EXTERNAL_EDITOR_CAPABILITIES)).length(EXTERNAL_EDITOR_CAPABILITIES.length),
 }).strict();
-export const externalNotificationPreferenceResponseSchema = z.object({ projectDeadlineReminderEmails: z.boolean() }).strict();
+export const externalNotificationPreferenceResponseSchema = z.object({ projectDeadlineReminderEmails: z.boolean(), subtaskReminderEmails: z.boolean() }).strict();
 export const externalMutationOkResponseSchema = z.object({ ok: z.literal(true) }).strict();
 export const externalProjectAccessSnapshotSchema = z.object({
   principal: z.object({ id: uuid, role: z.string(), authorizationEpoch: z.number().int().nonnegative() }).strict(),

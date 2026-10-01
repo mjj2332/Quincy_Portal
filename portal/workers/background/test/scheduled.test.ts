@@ -6,10 +6,15 @@ const scheduledJobs = vi.hoisted(() => ({
   manualPublish: vi.fn().mockResolvedValue({ scanned: 0, recovered: 0, skipped: 0 }),
   raw: vi.fn().mockResolvedValue({ attempted: 0, advanced: 0, skipped: 0, failures: 0 }),
   stalled: vi.fn().mockResolvedValue(0),
-  subtasks: vi.fn().mockResolvedValue(0),
+  subtaskScan: vi.fn().mockResolvedValue({ scanned: 0, fired: 0, published: 0 }),
+  subtasks: vi.fn().mockResolvedValue({ inserted: 0 }),
   prune: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("../src/subtask-reminders", () => ({
+  scanSubtaskReminderOccurrences: scheduledJobs.subtaskScan,
+  reconcileSubtaskReminderOccurrences: scheduledJobs.subtasks,
+}));
 vi.mock("../src/project-deadline", () => ({ scanProjectDeadlineOccurrences: scheduledJobs.deadline }));
 vi.mock("../src/notification-delivery", () => ({
   processNotificationDlqMessage: vi.fn(),
@@ -21,7 +26,6 @@ vi.mock("../src/reconcile-awaiting-raw", () => ({ reconcileAwaitingRawProjects: 
 vi.mock("../src/notifications", () => ({
   notifyProject: vi.fn(),
   pruneNotifications: scheduledJobs.prune,
-  scanDueSubtasks: scheduledJobs.subtasks,
   scanStalledAutoHdr: scheduledJobs.stalled,
 }));
 
@@ -41,6 +45,7 @@ function controller(cron: string): ScheduledController {
 beforeEach(() => {
   for (const job of Object.values(scheduledJobs)) job.mockReset().mockResolvedValue(undefined);
   scheduledJobs.deadline.mockResolvedValue({ scanned: 0, fired: 0, published: 0 });
+  scheduledJobs.subtaskScan.mockResolvedValue({ scanned: 0, fired: 0, published: 0 });
   scheduledJobs.manualPublish.mockResolvedValue({ scanned: 0, recovered: 0, skipped: 0 });
   scheduledJobs.raw.mockResolvedValue({ attempted: 0, advanced: 0, skipped: 0, failures: 0 });
   consoleError.mockClear();
@@ -53,9 +58,10 @@ afterAll(() => {
 });
 
 describe("background scheduled Cron dispatch", () => {
-  it("runs only the two minute jobs for the every-minute trigger", async () => {
+  it("runs only the minute jobs for the every-minute trigger", async () => {
     await worker().scheduled(controller("* * * * *"));
     expect(scheduledJobs.deadline).toHaveBeenCalledOnce();
+    expect(scheduledJobs.subtaskScan).toHaveBeenCalledOnce();
     expect(scheduledJobs.recovery).toHaveBeenCalledOnce();
     expect(scheduledJobs.raw).not.toHaveBeenCalled();
     expect(scheduledJobs.stalled).not.toHaveBeenCalled();
@@ -66,6 +72,7 @@ describe("background scheduled Cron dispatch", () => {
   it("runs only the four hourly jobs for the hourly trigger, including minute zero", async () => {
     await worker().scheduled(controller("0 * * * *"));
     expect(scheduledJobs.deadline).not.toHaveBeenCalled();
+    expect(scheduledJobs.subtaskScan).not.toHaveBeenCalled();
     expect(scheduledJobs.recovery).not.toHaveBeenCalled();
     expect(scheduledJobs.raw).toHaveBeenCalledOnce();
     expect(scheduledJobs.stalled).toHaveBeenCalledOnce();
@@ -75,6 +82,7 @@ describe("background scheduled Cron dispatch", () => {
 
   it.each([
     ["deadline", "* * * * *"],
+    ["subtaskScan", "* * * * *"],
     ["recovery", "* * * * *"],
     ["manualPublish", "* * * * *"],
     ["raw", "0 * * * *"],
@@ -85,7 +93,7 @@ describe("background scheduled Cron dispatch", () => {
     scheduledJobs[name].mockRejectedValueOnce(new Error(`${name} failed`));
     await expect(worker().scheduled(controller(cron))).resolves.toBeUndefined();
     const siblings = cron === "* * * * *"
-      ? [scheduledJobs.deadline, scheduledJobs.recovery, scheduledJobs.manualPublish]
+      ? [scheduledJobs.deadline, scheduledJobs.subtaskScan, scheduledJobs.recovery, scheduledJobs.manualPublish]
       : [scheduledJobs.raw, scheduledJobs.stalled, scheduledJobs.subtasks, scheduledJobs.prune];
     for (const job of siblings) expect(job).toHaveBeenCalledOnce();
     expect(consoleError).toHaveBeenCalled();

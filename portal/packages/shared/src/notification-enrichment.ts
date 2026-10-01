@@ -56,6 +56,7 @@ export type NotificationSource =
   | { kind: "notice_board_mention"; mentionId: string }
   | { kind: "subtask_assignment"; subtaskId: string; version: number }
   | { kind: "subtask_due"; subtaskId: string; dueDate: string }
+  | { kind: "subtask_reminder"; subtaskId: string }
   | { kind: "membership"; membershipId: string }
   | { kind: "ledger" }
   | { kind: "none" };
@@ -65,6 +66,8 @@ const UUID_RE = new RegExp(`^${UUID_PART}$`);
 const ANNOTATION_RE = new RegExp(`^annotation:(${UUID_PART})$`);
 const SUBTASK_ASSIGNMENT_RE = new RegExp(`^subtask-assignment:(${UUID_PART}):(\\d+)$`);
 // The due is a date on rows written before migration 0052 and a civil minute ("YYYY-MM-DDTHH:MM") after it (ADR 0016).
+// #424: the source key the reminder scan writes, `subtask-reminder:<subtask>:<occurrence>`. Only the Subtask is read back.
+const SUBTASK_REMINDER_RE = new RegExp(`^subtask-reminder:(${UUID_PART}):(${UUID_PART})$`);
 const SUBTASK_DUE_RE = new RegExp(`^subtask-due:(${UUID_PART}):(\\d{4}-\\d{2}-\\d{2}(?:T\\d{2}:\\d{2})?)$`);
 
 /**
@@ -92,6 +95,11 @@ export function parseNotificationSource(type: string, projectId: string | null, 
       if (!sourceKey) return { kind: "none" };
       const match = SUBTASK_DUE_RE.exec(sourceKey);
       return match ? { kind: "subtask_due", subtaskId: match[1]!, dueDate: match[2]! } : { kind: "none" };
+    }
+    case "subtask_reminder": {
+      if (!sourceKey) return { kind: "none" };
+      const match = SUBTASK_REMINDER_RE.exec(sourceKey);
+      return match ? { kind: "subtask_reminder", subtaskId: match[1]! } : { kind: "none" };
     }
     case "assigned_to_project":
       return sourceKey && UUID_RE.test(sourceKey) ? { kind: "membership", membershipId: sourceKey } : { kind: "none" };
@@ -131,6 +139,8 @@ export const NOTIFICATION_ENRICHMENT: Record<NotificationType, NotificationEnric
   // actor never resolves and the title stays stored — see ADR 0007's consequences.
   subtask_assigned: { actor: "ledger", subject: ["subtask"], asset: false, title: "composed", body: "subject" },
   subtask_due_today: { actor: "none", subject: ["subtask"], asset: false, title: "unchanged", body: "subject" },
+  // #424: a system reminder with no actor. The body becomes the Subtask's own title when it resolves, the stored title is kept.
+  subtask_reminder: { actor: "none", subject: ["subtask"], asset: false, title: "unchanged", body: "subject" },
   assigned_to_project: { actor: "ledger", subject: [], asset: false, title: "composed", body: "unchanged" },
   // The stored body already leads with the actor's name (renderProjectActivityNotification).
   project_activity: { actor: "ledger", subject: [], asset: false, title: "unchanged", body: "unchanged" },

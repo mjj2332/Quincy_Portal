@@ -3,7 +3,6 @@ import { makeSignature } from "better-auth/crypto";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
-import { scanDueSubtasks } from "../../background/src/notifications";
 import { presetSubtaskInsertValues, SUBTASK_SCHEDULE_INSERT_COLUMNS, externalSubtaskAssigneeOptionsResponseSchema, subtaskAssigneeOptionsResponseSchema } from "@quincy/shared";
 
 const database = env as unknown as { DB: D1Database };
@@ -210,9 +209,8 @@ describe("project subtasks API", () => {
     expect((await database.DB.prepare("SELECT id, position, updated_at FROM project_subtasks WHERE project_id = ? ORDER BY position, id").bind(midpointProject).all()).results).toEqual([{ id: before, position: 1024, updated_at: now }, { id: target, position: 1024.5, updated_at: expect.any(Number) }, { id: after, position: 1025, updated_at: now }]);
   });
 
-  it("clears a sent reminder when the range end is rescheduled, and the next end day fires again", async () => {
+  it("clears a legacy sent claim when the range end is rescheduled", async () => {
     const firstMorning = Date.UTC(2026, 7, 17, 22);
-    const nextMorning = Date.UTC(2026, 7, 18, 22);
     const scheduleActivityCount = async () => (await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE event_type = 'project.checklist.schedule_changed' AND project_id = ?").bind(projectId).first<{ count: number }>())!.count;
     const scheduleOutboxCount = async () => (await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox o JOIN project_activity_events a ON a.id = o.source_key WHERE o.event_type = 'project.activity.broad' AND a.event_type = 'project.checklist.schedule_changed' AND o.project_id = ?").bind(projectId).first<{ count: number }>())!.count;
     const beforeScheduleActivityCount = await scheduleActivityCount();
@@ -223,13 +221,10 @@ describe("project subtasks API", () => {
     expect(due).toMatchObject({ dueDate: "2026-08-18T14:30", schedule: { state: "range", version: 1, end: { localCivil: "2026-08-18T14:30" } } });
     expect(await scheduleActivityCount()).toBe(beforeScheduleActivityCount);
     expect(await scheduleOutboxCount()).toBe(beforeScheduleOutboxCount);
-    const reminderEnv = { ...baseEnv, DB: database.DB, EMAIL: { send: vi.fn().mockResolvedValue({ messageId: "reschedule" }) }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test" } as unknown as Env;
-    expect(await scanDueSubtasks(reminderEnv, firstMorning)).toBe(1);
+    await database.DB.prepare("UPDATE project_subtasks SET due_reminder_sent_at = ? WHERE id = ?").bind(firstMorning, due.id).run();
     expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(due.id).first()).toEqual({ due_reminder_sent_at: firstMorning });
     expect((await request(`/api/projects/${projectId}/subtasks/${due.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: due.schedule.version, schedule: { state: "range", start: { localCivil: "2026-08-18T09:00" }, end: { localCivil: "2026-08-19T17:00" } } } })).status).toBe(200);
     expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(due.id).first()).toEqual({ due_reminder_sent_at: null });
-    expect(await scanDueSubtasks(reminderEnv, nextMorning)).toBe(1);
-    expect((await database.DB.prepare("SELECT count(*) AS count FROM notifications WHERE type = 'subtask_due_today' AND project_id = ? AND user_id = ?").bind(projectId, photographerId).first<{ count: number }>())!.count).toBe(2);
     expect((await request(`/api/projects/${projectId}/subtasks/${due.id}`, "subtasks-editor-token", "DELETE")).status).toBe(200);
   });
 
@@ -244,7 +239,7 @@ describe("project subtasks API", () => {
     expect(await broadCount()).toBe(before + 1);
   });
 
-  it("resets a fold-only end claim without changing due_date or emitting a duplicate reminder", async () => {
+  it("resets a fold-only end claim without changing due_date", async () => {
     const firstMorning = Date.UTC(2026, 3, 4, 22);
     const created = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", {
       title: "Fold-only reminder",
@@ -253,8 +248,7 @@ describe("project subtasks API", () => {
     });
     expect(created.status).toBe(201);
     const item = await created.json() as { id: string; dueDate: string; schedule: { version: number; end: { fold: number } } };
-    const reminderEnv = { ...baseEnv, DB: database.DB, EMAIL: { send: vi.fn().mockResolvedValue({ messageId: "fold" }) }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test" } as unknown as Env;
-    expect(await scanDueSubtasks(reminderEnv, firstMorning)).toBe(1);
+    await database.DB.prepare("UPDATE project_subtasks SET due_reminder_sent_at = ? WHERE id = ?").bind(firstMorning, item.id).run();
     const changed = await request(`/api/projects/${projectId}/subtasks/${item.id}`, "subtasks-editor-token", "PATCH", {
       schedule: { expectedVersion: item.schedule.version, schedule: { state: "range", start: { localCivil: "2026-04-05T00:00" }, end: { localCivil: "2026-04-05T02:30", disambiguation: "later" } } },
     });
@@ -262,7 +256,6 @@ describe("project subtasks API", () => {
     const changedItem = await changed.json() as { dueDate: string; schedule: { end: { fold: number } } };
     expect(changedItem).toMatchObject({ dueDate: item.dueDate, schedule: { end: { fold: 1 } } });
     expect(await database.DB.prepare("SELECT due_reminder_sent_at, due_date FROM project_subtasks WHERE id = ?").bind(item.id).first()).toEqual({ due_reminder_sent_at: null, due_date: item.dueDate });
-    expect(await scanDueSubtasks(reminderEnv, firstMorning)).toBe(0);
   });
 
   it("clears only final-role non-admin assignees as part of the project membership batch", async () => {
@@ -461,14 +454,6 @@ describe("default Subtask range (#339)", () => {
     expect((await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE event_type = 'project.subtask.assigned' AND source_key = ?").bind(`subtask-assignment:${defaulted.id}:1`).first<{ count: number }>())!.count).toBe(1);
   });
 
-  it("makes a defaulted, assigned Subtask due on its range end for the due-day reminder scan", async () => {
-    const id = await seedProject({ shootDate: "2026-11-02", deadlineLocalCivil: "2026-11-06T17:00" });
-    const item = await create(id, { title: "Reminder default", assigneeIds: [photographerId] });
-    const reminderEnv = { ...baseEnv, DB: database.DB, EMAIL: { send: vi.fn().mockResolvedValue({ messageId: "default-range" }) }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test" } as unknown as Env;
-    const dueMorning = Date.UTC(2026, 10, 5, 21); // 2026-11-06 08:00 in Sydney (AEDT)
-    await scanDueSubtasks(reminderEnv, dueMorning);
-    expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(item.id).first()).toEqual({ due_reminder_sent_at: dueMorning });
-  });
 });
 
 describe("ranges only (#340)", () => {
@@ -534,18 +519,6 @@ describe("ranges only (#340)", () => {
     expect(fresh.status).toBe(200); expect(await fresh.json()).toMatchObject({ schedule: { version: 2 } });
   });
 
-  it("fires the due-day reminder on the range END day, and again after the end moves", async () => {
-    const reminderEnv = { ...baseEnv, DB: database.DB, EMAIL: { send: vi.fn().mockResolvedValue({ messageId: "range-end" }) }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test" } as unknown as Env;
-    const item = await createRange("Reminder on end", { assigneeIds: [photographerId] }, { state: "range", start: { localCivil: "2026-11-02T00:00" }, end: { localCivil: "2026-11-06T15:00" } });
-    const startMorning = Date.UTC(2026, 10, 1, 21); // 2026-11-02 08:00 Sydney
-    const endMorning = Date.UTC(2026, 10, 5, 21); // 2026-11-06 08:00 Sydney
-    expect(await scanDueSubtasks(reminderEnv, startMorning)).toBe(0);
-    expect(await scanDueSubtasks(reminderEnv, endMorning)).toBe(1);
-    const moved = await request(`${base()}/${item.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 1, schedule: { state: "range", start: { localCivil: "2026-11-02T00:00" }, end: { localCivil: "2026-11-09T15:00" } } } });
-    expect(moved.status).toBe(200);
-    expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(item.id).first()).toEqual({ due_reminder_sent_at: null });
-    expect(await scanDueSubtasks(reminderEnv, Date.UTC(2026, 10, 8, 21))).toBe(1); // 2026-11-09 08:00
-  });
 });
 
 describe("assignee relation writes (#364, #373)", () => {

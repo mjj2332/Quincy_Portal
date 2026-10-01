@@ -95,7 +95,7 @@ describe("staff route contract", () => {
     for (const type of ["edited_landed", "delivered"]) {
       expect(projectNotificationRoute(projectId, type)).toEqual({ kind: "project", projectId, arrivalTab: "edited" });
     }
-    for (const type of ["comment_added", "assigned_to_project", "mentioned", "subtask_assigned", "subtask_due_today", "project_deadline_reminder", "project_activity", "project_collaboration_activity"]) {
+    for (const type of ["comment_added", "assigned_to_project", "mentioned", "subtask_assigned", "subtask_due_today", "subtask_reminder", "project_deadline_reminder", "project_activity", "project_collaboration_activity"]) {
       expect(projectNotificationRoute(projectId, type)).toEqual({ kind: "project", projectId, arrivalTab: "collaboration" });
     }
     // A stored type the app no longer declares still opens the Project, on its default tab.

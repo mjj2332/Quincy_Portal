@@ -7,6 +7,8 @@ export const EXTERNAL_NOTIFICATION_OUTBOX_EVENT_TYPES = {
   subtaskAssigned: "project.subtask.assigned",
   subtaskDueToday: "project.subtask.due_today",
 } as const;
+// "project.subtask.reminder" is a durable event too, but its payload has its own strict parser (`SubtaskReminderOutboxPayload`) in the
+// background consumer, so it is not part of the external union above.
 
 const authorizationAtOccurrence = z.object({
   kind: z.literal("project_editor_membership"),
@@ -69,6 +71,7 @@ const COPY: Record<ExternalAllowedNotificationType, NotificationCopy | null> = {
   mentioned: { title: "You were mentioned", body: "You were mentioned in a project comment." },
   subtask_assigned: { title: "Checklist item assigned", body: "A checklist item was assigned to you." },
   subtask_due_today: { title: "Checklist item due today", body: "An assigned checklist item is due today." },
+  subtask_reminder: { title: "Checklist item reminder", body: "An assigned checklist item is due." },
   project_deadline_reminder: { title: "Project deadline reminder", body: "An assigned project deadline is approaching." },
   project_activity: null,
   project_collaboration_activity: null,
@@ -109,7 +112,7 @@ export function externalNotificationCopy(input: ExternalNotificationCopyInput): 
 const CHANNELS: Record<ExternalAllowedNotificationType, readonly ("in_app" | "email")[]> = {
   raw_ready: ["in_app"], edited_landed: ["in_app"], sent_to_editing: ["in_app"], autohdr_stalled: [],
   delivered: ["in_app"], comment_added: ["in_app"], assigned_to_project: ["in_app", "email"], mentioned: ["in_app", "email"],
-  subtask_assigned: ["in_app", "email"], subtask_due_today: ["in_app", "email"], project_deadline_reminder: ["in_app", "email"],
+  subtask_assigned: ["in_app", "email"], subtask_due_today: ["in_app", "email"], subtask_reminder: ["in_app", "email"], project_deadline_reminder: ["in_app", "email"],
   project_activity: [], project_collaboration_activity: [],
   "project.team.member_added": ["in_app"], "project.team.member_removed": ["in_app"], "project.deadline.schedule_changed": ["in_app"],
   "project.priority.changed": [], "project.details.changed": ["in_app"], "project.archived": [], "project.restored": [],

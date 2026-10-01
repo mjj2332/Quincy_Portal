@@ -65,6 +65,7 @@ export const EXTERNAL_LEGACY_NOTIFICATION_POLICY: Record<NotificationType, Exter
   mentioned: { decision: "allowed", durableEvent: "project.comment.mentioned" },
   subtask_assigned: { decision: "allowed", durableEvent: "project.subtask.assigned" },
   subtask_due_today: { decision: "allowed", durableEvent: "project.subtask.due_today" },
+  subtask_reminder: { decision: "allowed", durableEvent: "project.subtask.reminder" },
   project_deadline_reminder: { decision: "allowed", durableEvent: "project.deadline.reminder" },
   project_activity: { decision: "allowed", durableEvent: "project.activity.broad" },
   project_collaboration_activity: { decision: "allowed", durableEvent: "project.activity.broad" },

@@ -8,13 +8,15 @@ import {
 } from "../src/notification-types";
 
 describe("caution notification types", () => {
-  it("names exactly the stalled-AutoHDR and deadline-reminder types as caution", () => {
-    expect(NOTIFICATION_CAUTION_TYPES).toEqual(["autohdr_stalled", "project_deadline_reminder"]);
+  it("names exactly the stalled-AutoHDR, deadline-reminder and subtask-reminder types as caution", () => {
+    expect(NOTIFICATION_CAUTION_TYPES).toEqual(["autohdr_stalled", "project_deadline_reminder", "subtask_reminder"]);
   });
 
-  it("recognises only the two caution types, not an ordinary or unknown one", () => {
+  it("recognises only the three caution types, not an ordinary or unknown one", () => {
     expect(isCautionNotificationType("autohdr_stalled")).toBe(true);
     expect(isCautionNotificationType("project_deadline_reminder")).toBe(true);
+    expect(isCautionNotificationType("subtask_reminder")).toBe(true);
+    expect(isCautionNotificationType("subtask_due_today")).toBe(false);
     expect(isCautionNotificationType("mentioned")).toBe(false);
     expect(isCautionNotificationType("some_unknown_type")).toBe(false);
   });
@@ -40,6 +42,7 @@ describe("#337 notification type → Workspace tab", () => {
       mentioned: "collaboration",
       subtask_assigned: "collaboration",
       subtask_due_today: "collaboration",
+      subtask_reminder: "collaboration",
       project_collaboration_activity: "collaboration",
     };
     expect({ ...NOTIFICATION_WORKSPACE_TAB }).toEqual(expected);

@@ -90,7 +90,7 @@ export function scannedAuditTargetTypes(): string[] {
 export const PROJECT_DESCENDANT_AUDIT_TYPES = [
   "annotation", "asset", "autohdr_mapping", "collection_link", "document_upload", "job", "notification",
   "notification_outbox", "project", "project_comment", "project_deadline_occurrence", "project_member",
-  "project_subtask", "raw_reconciliation_claim", "rendition_dlq_event", "upload_manifest",
+  "project_subtask", "project_subtask_reminder_occurrence", "raw_reconciliation_claim", "rendition_dlq_event", "upload_manifest",
 ] as const;
 
 /** Target types whose target is never a project's descendant (a user, a flag, an integration, a
@@ -154,7 +154,7 @@ export function appRows(ctx: PlantContext, groups?: readonly AppRowGroup[]): Pla
     member: id("member"), comment: id("comment"), reply: id("reply"), mention: id("mention"), activity: id("activity"),
     job: id("job"), handoff: id("handoff"), mapping: id("mapping"), assetV1: id("asset-v1"), assetV2: id("asset-v2"), assetV3: id("asset-v3"),
     rendition: id("rendition"), dlq: id("dlq"), claim: id("claim"), outbox: id("outbox"), notification: id("notification"), ledger: id("ledger"),
-    annotation: id("annotation"), link: id("link"), manifest: id("manifest"), rawClaim: id("raw-claim"), document: id("document"), documentAudit: id("document-audit"),
+    annotation: id("annotation"), link: id("link"), manifest: id("manifest"), rawClaim: id("raw-claim"), subtaskOcc: id("subtask-reminder-occurrence"), document: id("document"), documentAudit: id("document-audit"),
   };
   const rows: PlantRow[] = [];
   const needsAssets = want("assets") || want("dlq") || want("autohdr") || want("documents");
@@ -257,10 +257,15 @@ export function appRows(ctx: PlantContext, groups?: readonly AppRowGroup[]): Pla
     rows.push({ table: "raw_reconciliation_claims", values: { id: ids.rawClaim, project_id: ctx.projectId, owner_job_id: ids.job, state: "completed", lease_expires_at: T0, trigger: "manual", created_at: T0, updated_at: T0 } });
   }
   if (want("audit")) {
+    rows.push({ table: "project_subtask_reminder_occurrences", values: {
+      id: ids.subtaskOcc, subtask_id: ctx.subtaskId, project_id: ctx.projectId, schedule_version: 1, kind: "due_now", reminder_offset_minutes: 0,
+      fire_at: T0 + 86_400_000, due_at: T0 + 86_400_000, due_local_civil: "2026-09-30T17:00", due_zone: "Australia/Sydney", due_utc_offset_minutes: 600, due_fold: 0,
+      status: "pending", created_by: ctx.userId, created_at: T0, updated_at: T0,
+    } });
     const targetFor: Record<(typeof PROJECT_DESCENDANT_AUDIT_TYPES)[number], string> = {
       annotation: ids.annotation, asset: ids.assetV1, autohdr_mapping: ids.mapping, collection_link: ids.link, document_upload: ids.document, job: ids.job,
       notification: ids.notification, notification_outbox: ids.outbox, project: ctx.projectId, project_comment: ids.comment,
-      project_deadline_occurrence: ctx.occurrenceId, project_member: ids.member, project_subtask: ctx.subtaskId, raw_reconciliation_claim: ids.rawClaim,
+      project_deadline_occurrence: ctx.occurrenceId, project_member: ids.member, project_subtask: ctx.subtaskId, project_subtask_reminder_occurrence: ids.subtaskOcc, raw_reconciliation_claim: ids.rawClaim,
       rendition_dlq_event: ids.dlq, upload_manifest: ids.manifest,
     };
     const types = groups ? PROJECT_DESCENDANT_AUDIT_TYPES.filter((type) => type === "project_comment") : PROJECT_DESCENDANT_AUDIT_TYPES;

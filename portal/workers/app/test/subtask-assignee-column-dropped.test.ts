@@ -3,7 +3,6 @@ import { makeSignature } from "better-auth/crypto";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
-import { scanDueSubtasks } from "../../background/src/notifications";
 
 /**
  * #373 part 1: no code reads or writes `project_subtasks.assignee_id`. The proof is this suite: migration 0050
@@ -162,15 +161,12 @@ describe("with project_subtasks.assignee_id dropped", () => {
     }
   });
 
-  it("runs the due-reminder scan over the relation", async () => {
+  it("schedules reminder occurrences without the dropped column", async () => {
     const created = await request(base, tokens.editor, "POST", { title: "Due in the dropped world", assigneeIds: [photographerId, externalId], schedule: range("2026-11-02", "2026-11-06") });
     expect(created.status).toBe(201);
-    const reminderEnv = { ...baseEnv, DB: database.DB, EMAIL: { send: vi.fn().mockResolvedValue({ messageId: "dropped" }) }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test" } as unknown as Env;
-    // Both Subtasks are past due and unclaimed: the earlier one reaches its one staff recipient, this one the photographer.
-    expect(await scanDueSubtasks(reminderEnv, Date.UTC(2026, 10, 5, 21))).toBe(2);
-    expect((await database.DB.prepare("SELECT COUNT(*) AS n FROM notifications WHERE type = 'subtask_due_today' AND project_id = ? AND user_id = ?").bind(projectId, photographerId).first<{ n: number }>())!.n).toBe(1);
-    // The External Editor is an assignee of both Subtasks: one due notice each.
-    expect((await database.DB.prepare("SELECT COUNT(*) AS n FROM notification_outbox WHERE event_type = 'project.subtask.due_today' AND recipient_id = ?").bind(externalId).first<{ n: number }>())!.n).toBe(2);
+    const { id } = await created.json() as { id: string };
+    // Occurrences are keyed by the Subtask, not by an assignee: the recipients are resolved from the relation when one fires.
+    expect((await database.DB.prepare("SELECT COUNT(*) AS n FROM project_subtask_reminder_occurrences WHERE subtask_id = ?").bind(id).first<{ n: number }>())!.n).toBeGreaterThan(0);
   });
 
   it("removes a person from the team and clears their assignments per person", async () => {

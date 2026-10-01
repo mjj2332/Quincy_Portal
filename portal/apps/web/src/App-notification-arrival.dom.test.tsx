@@ -29,6 +29,7 @@ const EXPECTED_TAB: Record<NotificationType, "RAW" | "Edited" | "Collaboration">
   mentioned: "Collaboration",
   subtask_assigned: "Collaboration",
   subtask_due_today: "Collaboration",
+  subtask_reminder: "Collaboration",
   project_deadline_reminder: "Collaboration",
   project_activity: "Collaboration",
   project_collaboration_activity: "Collaboration",

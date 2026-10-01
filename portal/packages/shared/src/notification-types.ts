@@ -11,6 +11,7 @@ export const NOTIFICATION_TYPES = [
   "mentioned",
   "subtask_assigned",
   "subtask_due_today",
+  "subtask_reminder",
   "project_deadline_reminder",
   "project_activity",
   "project_collaboration_activity",
@@ -34,6 +35,7 @@ export const NOTIFICATION_WORKSPACE_TAB: Readonly<Record<NotificationType, Works
   mentioned: "collaboration",
   subtask_assigned: "collaboration",
   subtask_due_today: "collaboration",
+  subtask_reminder: "collaboration",
   project_deadline_reminder: "collaboration",
   project_activity: "collaboration",
   project_collaboration_activity: "collaboration",
@@ -46,12 +48,13 @@ export function notificationWorkspaceTab(type: string): WorkspaceTab | undefined
 }
 
 /**
- * The two notification types #114's row grid tones with `text-warning` (never
+ * The notification types #114's row grid tones with `text-warning` (never
  * `text-signal-caution` directly, never `bg-warning` — see `design-system-guards.test.ts`'s
- * caution-token guard): a stalled AutoHDR job and an approaching project deadline are both
- * "this needs attention before it becomes a problem", distinct from the routine info types.
+ * caution-token guard): a stalled AutoHDR job, an approaching project deadline and an approaching
+ * Subtask due (#424) are all "this needs attention before it becomes a problem", distinct from the
+ * routine info types.
  */
-export const NOTIFICATION_CAUTION_TYPES = ["autohdr_stalled", "project_deadline_reminder"] as const;
+export const NOTIFICATION_CAUTION_TYPES = ["autohdr_stalled", "project_deadline_reminder", "subtask_reminder"] as const;
 
 export function isCautionNotificationType(type: string): boolean {
   return (NOTIFICATION_CAUTION_TYPES as readonly string[]).includes(type);

@@ -439,6 +439,57 @@ describe("notification list per-row project street and cover", () => {
     expect(after.unreadCount).toBe(after.notifications.filter((row) => row.readAt === null).length);
   });
 
+  /** A fired reminder for the external editor exactly as the scan writes it: occurrence, outbox row and a sent in-app ledger row. */
+  async function seedExternalSubtaskReminder(street: string, subtaskTitle: string) {
+    const { projectId } = await makeProject(street, "editing");
+    const now = Date.now();
+    const membershipId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(membershipId, projectId, externalEditor, now).run();
+    const subtaskId = crypto.randomUUID();
+    const occurrenceId = crypto.randomUUID();
+    const sourceKey = `subtask-reminder:${subtaskId}:${occurrenceId}`;
+    const outboxId = crypto.randomUUID();
+    const notificationId = crypto.randomUUID();
+    const payload = JSON.stringify({
+      schemaVersion: 1,
+      event: { type: "project.subtask.reminder", sourceKey, recipientId: externalEditor },
+      authorizationAtOccurrence: { kind: "subtask_assignment", assignmentVersion: 1, membershipCycle: membershipId, startedAt: now },
+      reminder: { occurrenceId, projectId, subtaskId, scheduleVersion: 1, kind: "due_now", offsetMinutes: 0, dueAt: "2099-12-31T17:00:00+11:00", dueLocalCivil: "2099-12-31T17:00", zone: "Australia/Sydney", utcOffsetMinutes: 660, fold: 0 },
+    });
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, 0, 1, '2099-12-31T17:00', 'timed', '2099-12-31T09:00', 4102351200000, 660, 0, 'timed', 4102380000000, 660, 0, 'Australia/Sydney', 1, ?, ?, ?)").bind(subtaskId, projectId, subtaskTitle, admin, now, now),
+      database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 1, ?)").bind(subtaskId, externalEditor, now),
+      database.DB.prepare("INSERT INTO project_subtask_reminder_occurrences (id, subtask_id, project_id, schedule_version, kind, reminder_offset_minutes, fire_at, due_at, due_local_civil, due_zone, due_utc_offset_minutes, due_fold, status, fired_at, created_at, updated_at) VALUES (?, ?, ?, 1, 'due_now', 0, 4102380000000, 4102380000000, '2099-12-31T17:00', 'Australia/Sydney', 660, 0, 'fired', ?, ?, ?)").bind(occurrenceId, subtaskId, projectId, now, now, now),
+      database.DB.prepare("INSERT INTO notifications (id, user_id, project_id, type, title, body, source_key, created_at) VALUES (?, ?, ?, 'subtask_reminder', 'Checklist item reminder', 'An assigned checklist item is due.', ?, ?)").bind(notificationId, externalEditor, projectId, sourceKey, now),
+      database.DB.prepare("INSERT INTO notification_outbox (id, schema_version, event_type, source_key, project_id, actor_id, recipient_id, recipient_authorization_epoch, payload_json, status, available_at, recipient_membership_cycle_id, created_at, updated_at) VALUES (?, 1, 'project.subtask.reminder', ?, ?, ?, ?, 0, ?, 'completed', ?, ?, ?, ?)").bind(outboxId, sourceKey, projectId, externalEditor, externalEditor, payload, now, membershipId, now, now),
+      database.DB.prepare("INSERT INTO notification_delivery_ledger (id, outbox_id, event_type, source_key, recipient_id, channel, status, notification_id, created_at, updated_at) VALUES (?, ?, 'project.subtask.reminder', ?, ?, 'in_app', 'sent', ?, ?, ?)").bind(crypto.randomUUID(), outboxId, sourceKey, externalEditor, notificationId, now, now),
+    ]);
+    return { projectId, subtaskId, membershipId, notificationId, occurrenceId };
+  }
+
+  it("shows an external editor their subtask_reminder notice with no Subtask title, and drops it on removal, a new membership cycle or a missing occurrence (#424)", async () => {
+    const title = `Secret subtask ${crypto.randomUUID()}`;
+    const { projectId, subtaskId, membershipId, notificationId, occurrenceId } = await seedExternalSubtaskReminder("External Reminder Street", title);
+    const body = await externalList();
+    const row = body.notifications.find((candidate) => candidate.id === notificationId);
+    expect(row).toMatchObject({ type: "subtask_reminder", title: "Checklist item reminder", body: "An assigned checklist item is due." });
+    // ADR 0008: the external list is plain, so the Subtask title and any assignee names never travel with it.
+    expect(JSON.stringify(row)).not.toContain(title);
+    expect(row!.subject ?? null).toBeNull();
+    expect(row!.actor ?? null).toBeNull();
+
+    // A rejoined membership is a new cycle: the old reminder is no longer theirs.
+    await database.DB.prepare("UPDATE project_members SET id = ? WHERE id = ?").bind(crypto.randomUUID(), membershipId).run();
+    expect((await externalList()).notifications.some((candidate) => candidate.id === notificationId)).toBe(false);
+    await database.DB.prepare("UPDATE project_members SET id = ? WHERE project_id = ? AND user_id = ?").bind(membershipId, projectId, externalEditor).run();
+    expect((await externalList()).notifications.some((candidate) => candidate.id === notificationId)).toBe(true);
+
+    // Without its occurrence the row is not a reminder the scan wrote.
+    await database.DB.prepare("DELETE FROM project_subtask_reminder_occurrences WHERE id = ?").bind(occurrenceId).run();
+    expect((await externalList()).notifications.some((candidate) => candidate.id === notificationId)).toBe(false);
+    expect(subtaskId).toBeDefined();
+  });
+
   it("drops the row and its count once the project is archived", async () => {
     const { projectId, title } = await seedExternalDirectNotification("Archived Street");
     expect(notificationRow(await externalList(), title)).toBeDefined();
@@ -821,6 +872,15 @@ describe("notification read-model enrichment", () => {
       subject: { kind: "subtask", label: "Deliver the gallery link" },
       assetId: null,
     });
+  });
+
+  it("enriches a staff subtask_reminder row with the Subtask title as body and subject, and no actor (#424)", async () => {
+    const { projectId } = await makeProject("Enrichment Subtask Reminder Street");
+    await makeStaffMember(projectId, userB);
+    const subtaskId = await makeSubtask(projectId, "Upload the twilight set", userB);
+    const id = await makeNotification({ userId: userB, projectId, type: "subtask_reminder", title: "Checklist item reminder", body: "An assigned checklist item is due.", sourceKey: `subtask-reminder:${subtaskId}:${crypto.randomUUID()}` });
+    const row = rowFor(await fetchAs(tokenB), id);
+    expect(row).toMatchObject({ title: "Checklist item reminder", body: "Upload the twilight set", actor: null, subject: { kind: "subtask", label: "Upload the twilight set" }, assetId: null });
   });
 
   it("issues no more prepared statements for a 30-row comment_added page than for a 1-row page", async () => {

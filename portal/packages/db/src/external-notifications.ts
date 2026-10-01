@@ -27,9 +27,8 @@ export type ExternalSubtaskNotificationInput = {
   subtaskId: string;
   assignmentVersion: number;
   sourceKey: string;
-  kind: "assigned" | "due_today";
-  dueDate?: string;
-  claimAt?: number;
+  /** The 08:00 due-today producer is retired (#424), so the Subtask reminder scan is the only due alert and this emits assignments only. */
+  kind: "assigned";
   now?: number;
 };
 
@@ -97,16 +96,9 @@ export async function emitExternalSafeLegacyNotification(db: D1Database, input: 
 }
 
 function externalSubtaskOutboxStatement(db: D1Database, input: ExternalSubtaskNotificationInput): { statement: D1PreparedStatement; policyType: NotificationType; now: number } {
-  const eventType = input.kind === "assigned"
-    ? EXTERNAL_NOTIFICATION_OUTBOX_EVENT_TYPES.subtaskAssigned
-    : EXTERNAL_NOTIFICATION_OUTBOX_EVENT_TYPES.subtaskDueToday;
-  const policyType: NotificationType = input.kind === "assigned" ? "subtask_assigned" : "subtask_due_today";
+  const eventType = EXTERNAL_NOTIFICATION_OUTBOX_EVENT_TYPES.subtaskAssigned;
+  const policyType: NotificationType = "subtask_assigned";
   const now = input.now ?? Date.now();
-  const dueCondition = input.kind === "due_today" ? "AND s.due_date = ? AND s.due_reminder_sent_at = ?" : "";
-  const dueBindings = input.kind === "due_today" ? [input.dueDate ?? null, input.claimAt ?? null] : [];
-  const payloadDue = input.kind === "due_today"
-    ? `, 'dueDate', s.due_date, 'claimAt', s.due_reminder_sent_at`
-    : "";
   const statement = db.prepare(`
     INSERT INTO notification_outbox (
       id, schema_version, event_type, source_key, project_id, actor_id, recipient_id,
@@ -118,7 +110,7 @@ function externalSubtaskOutboxStatement(db: D1Database, input: ExternalSubtaskNo
         'schemaVersion', 1,
         'event', json_object('type', ?, 'sourceKey', ?, 'recipientId', recipient.id),
         'authorizationAtOccurrence', json_object('kind', 'project_editor_membership', 'membershipCycle', member.id, 'startedAt', member.created_at),
-        'assignment', json_object('projectId', p.id, 'subtaskId', s.id, 'assigneeId', a.user_id, 'assignmentVersion', a.assignment_version${payloadDue})
+        'assignment', json_object('projectId', p.id, 'subtaskId', s.id, 'assigneeId', a.user_id, 'assignmentVersion', a.assignment_version)
       ), 'pending', ?, member.id, ?, ?
     FROM project_subtasks s
     INNER JOIN projects p ON p.id = s.project_id AND p.archived_at IS NULL
@@ -127,12 +119,11 @@ function externalSubtaskOutboxStatement(db: D1Database, input: ExternalSubtaskNo
     INNER JOIN user recipient ON recipient.id = a.user_id
     WHERE s.id = ? AND s.project_id = ? AND s.done = 0
       AND recipient.active = 1 AND recipient.role = 'external_editor'
-      ${dueCondition}
     ON CONFLICT(event_type, source_key, recipient_id) DO NOTHING
     RETURNING id
   `).bind(
     eventType, input.sourceKey, input.actorId, eventType, input.sourceKey, now, now, now,
-    input.assigneeId, input.assignmentVersion, input.subtaskId, input.projectId, ...dueBindings,
+    input.assigneeId, input.assignmentVersion, input.subtaskId, input.projectId,
   );
   return { statement, policyType, now };
 }
@@ -144,10 +135,7 @@ export async function emitExternalSubtaskNotification(db: D1Database, input: Ext
 
 /**
  * Emits every input's outbox row and delivery ledgers in ONE D1 batch (a single transaction), so a
- * fan-out either commits for all recipients or for none. A due-reminder claim is released when the
- * fan-out fails and a retry claims at a new timestamp; a partially committed fan-out would keep
- * the earlier recipients' rows (`ON CONFLICT DO NOTHING`) carrying the released claim's `claimAt`,
- * which delivery then rejects, permanently losing them. Returns the new outbox ids per input.
+ * fan-out either commits for all recipients or for none. Returns the new outbox ids per input.
  */
 export async function emitExternalSubtaskNotifications(db: D1Database, inputs: readonly ExternalSubtaskNotificationInput[]): Promise<string[][]> {
   if (!inputs.length) return [];
@@ -157,9 +145,7 @@ export async function emitExternalSubtaskNotifications(db: D1Database, inputs: r
     const { statement, policyType, now } = externalSubtaskOutboxStatement(db, input);
     outboxIndexes.push(statements.length);
     statements.push(statement);
-    const eventType = input.kind === "assigned"
-      ? EXTERNAL_NOTIFICATION_OUTBOX_EVENT_TYPES.subtaskAssigned
-      : EXTERNAL_NOTIFICATION_OUTBOX_EVENT_TYPES.subtaskDueToday;
+    const eventType = EXTERNAL_NOTIFICATION_OUTBOX_EVENT_TYPES.subtaskAssigned;
     for (const channel of externalNotificationChannels(policyType)) {
       // Keyed by the natural key rather than a returned id, so it can share the batch. A row that
       // already existed (conflict) has its ledger already, and ON CONFLICT DO NOTHING keeps it so.

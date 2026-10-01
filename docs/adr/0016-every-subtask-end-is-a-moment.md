@@ -67,5 +67,35 @@ the range reschedules them.
   must be before the end by instant, which allows a range under a day.
 - **Data.** Migration 0052 converts every date-only row to 09:00 / 17:00 and seals the table with a
   CHECK that refuses anything else (`docs/Guides/CI-Deploy.md`, "Subtask presets (0052)").
-- **Not yet.** Subtask reminders (the `Subtask reminder` term) arrive separately; this change only
-  makes every end a moment they can count back from.
+- **Next.** Reminders count back from this moment; see "What shipped in #424" below.
+
+## What shipped in #424
+
+Subtask reminders fire. A Subtask's due is the end of its range, so every reminder is a real moment.
+
+- **Offsets.** `project_subtasks.reminder_offsets_json` stores the advance offsets only (default `[1440]`, "1 day before"),
+  and "Due now" is always implied, exactly as for a Project Deadline. Up to eight, 1 minute to 30 days, via the shared
+  `normalizeSubtaskReminderOffsets`. No HTTP or DTO field yet: #425 reads them through `readSubtaskReminderState`.
+- **Occurrences.** `project_subtask_reminder_occurrences` mirrors `project_deadline_occurrences`, generation-keyed by the
+  Subtask's `schedule_version` (no second version counter). Only an occurrence whose fire time is still ahead is stored, as
+  `pending`. A reschedule, an offset change, completion or archiving supersedes the pending ones with a terminal reason.
+  One SQL builder (`buildSubtaskReminderMaterialization`) writes them everywhere; migration 0053's backfill copy is pinned
+  against it by `migration-0053.test.ts`.
+- **Firing.** The every-minute scan claims an occurrence and, in one batch, writes the audit marker, one outbox row per
+  CURRENT assignee and their in-app and email ledger rows. Who is reminded is decided at fire time from the assignee
+  relation, so an assignee added before the fire time is covered and a removed one is not. An unassigned Subtask consumes
+  the occurrence and writes nothing. Completing the Subtask cancels the reminders still pending. Delivery does not cancel anything: a sent reminder stays sent.
+- **No doubles.** A Subtask whose legacy 08:00 alert was already sent for its current end gets no occurrences
+  (`legacy_due_today_sent`). The 08:00 `scanDueSubtasks` producer is gone and a guard test rejects its return. Migration 0053
+  suppresses undelivered legacy `project.subtask.due_today` ledger and outbox rows, and delivery refuses a late one.
+  Delivered history stays readable.
+- **Healing.** An hourly reconcile inserts the occurrences a current schedule version lacks (an old Worker running between
+  the apply and the deploy), logging the count as a warning because the eager API paths keep it at zero.
+- **Delivery.** `subtask_reminder` is a caution-tone type in the collaboration tab. Email follows a new
+  `notification_preferences.subtask_reminder_emails` (default on, read with `COALESCE(..., 1)`); in-app is always on.
+  The preference PATCH takes either boolean or both, at least one, and an absent field keeps its stored value.
+- **External Editors (ADR 0007, 0008).** The outbox payload carries the assignment version, and for an External Editor the
+  membership cycle and its start. The external list shows the row only while that cycle is current and the occurrence
+  exists, and its copy is generic: no Subtask title, no names. Staff rows are enriched with the Subtask title.
+- **Settings.** Notification preferences gains a "Checklist item reminders" card with its own email switch.
+

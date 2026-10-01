@@ -5,7 +5,8 @@ import { Checkbox } from "@/components/reui/checkbox";
 import { Notice } from "@/components/quincy/Notice";
 import { cn } from "@/lib/utils";
 
-type NotificationPreferencesValue = { projectDeadlineReminderEmails: boolean };
+type NotificationPreferencesValue = { projectDeadlineReminderEmails: boolean; subtaskReminderEmails: boolean };
+type Section = "deadline" | "subtask";
 
 // The page frame. `.page` is unlayered app.css (capped at `--container-page`, 1480px), so the
 // narrower measure this single-column screen wants must be `!`-prefixed to beat it — same device as
@@ -57,26 +58,85 @@ const FOOT = "mt-[var(--space-4)] mb-0 " +
   "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] " +
   "text-muted-foreground";
 
+type EmailRowProps = { ariaLabel: string; checked: boolean; loading: boolean; unavailable: boolean; saving: boolean; disabled: boolean; onChange: (next: boolean) => void };
+
+/** One in-app + email pair. In-app is always on, so only the email switch is a control. */
+function EmailRows({ ariaLabel, checked, loading, unavailable, saving, disabled, onChange }: EmailRowProps) {
+  const valueText = loading ? "Loading…" : unavailable ? "Unavailable" : saving ? "Saving…" : checked ? "On" : "Off";
+  const valueTone = disabled ? "text-muted-foreground" : "text-foreground";
+  return (
+    <div className="mt-[var(--space-4)]">
+      <div className={ROW}>
+        <Eyebrow>In-app</Eyebrow>
+        <span className={cn(VALUE, "text-foreground-secondary")}>Always on</span>
+      </div>
+
+      <label className={CONTROL_ROW}>
+        <Eyebrow>Email</Eyebrow>
+        <span className={cn(VALUE, valueTone)}>
+          <Checkbox
+            // `aria-label` deliberately overrides the wrapping <label>'s computed name. The
+            // label exists to make the whole row clickable; without this the control would be
+            // announced as "Email On", which names the column rather than the preference.
+            // Load-bearing — do not remove as redundant.
+            aria-label={ariaLabel}
+            // Base UI auto-detects the wrapping <label>, writes an id onto it, and emits
+            // aria-labelledby pointing back at it. aria-labelledby BEATS aria-label, so
+            // without this the control is announced "Email On" — precisely what the line
+            // above exists to prevent, reintroduced by the component swap. Base UI reads
+            // `explicitAriaLabelledBy ?? labelId`, and `??` (not `||`) means the empty string
+            // suppresses the association instead of falling back to it.
+            // Load-bearing — do not remove as redundant.
+            aria-labelledby=""
+            checked={unavailable ? false : checked}
+            disabled={disabled}
+            // `data-disabled`, not `:disabled` — Base UI's root is a <span>, which the
+            // :disabled pseudo-class never matches. See the note in components/reui/checkbox.
+            // LIVE, unlike the six Button call sites dropped in #71: nothing in the checkbox
+            // chain sets `pointer-events-none` while disabled (reui/checkbox.tsx pairs
+            // `data-disabled:cursor-not-allowed` with `data-disabled:opacity-50` and no
+            // pointer-events rule), so the control still hit-tests and `!` beats the base's
+            // cursor-not-allowed at equal specificity. Do not "clean this up" by analogy.
+            className={saving ? "data-disabled:!cursor-wait" : undefined}
+            onCheckedChange={onChange}
+          />
+          {valueText}
+        </span>
+      </label>
+    </div>
+  );
+}
+
 export function NotificationPreferences() {
-  const [enabled, setEnabled] = useState(true);
+  const [deadlineEnabled, setEnabled] = useState(true);
+  const [subtaskEnabled, setSubtaskEnabled] = useState(true);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // One flag per card: the two saves are independent, so one must not clear or disable the other.
+  const [saving, setSaving] = useState<Record<Section, boolean>>({ deadline: false, subtask: false });
+  const [error, setError] = useState<{ section: Section; message: string } | null>(null);
+  // A failed load is page-level: it covers both cards, so it has its own slot rather than a card's.
+  const [loadError, setLoadError] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
-    apiGet<NotificationPreferencesValue>("/api/notification-preferences").then((value) => { if (active) setEnabled(value.projectDeadlineReminderEmails); }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "Preferences could not be loaded."); }).finally(() => { if (active) setLoading(false); });
+    apiGet<NotificationPreferencesValue>("/api/notification-preferences").then((value) => { if (active) setEnabled(value.projectDeadlineReminderEmails); if (active) setSubtaskEnabled(value.subtaskReminderEmails); }).catch((reason) => { if (active) setLoadError(reason instanceof Error ? reason.message : "Preferences could not be loaded."); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, []);
-  async function change(next: boolean) {
-    const previous = enabled; setEnabled(next); setSaving(true); setError(null);
-    try { const value = await apiPatch<NotificationPreferencesValue, NotificationPreferencesValue>("/api/notification-preferences", { projectDeadlineReminderEmails: next }); setEnabled(value.projectDeadlineReminderEmails); }
-    catch (reason) { setEnabled(previous); setError(reason instanceof ApiError ? reason.message : "Preferences could not be saved."); }
-    finally { setSaving(false); }
+  // One switch per PATCH. The route upserts atomically and keeps the other stored value when a
+  // field is absent (COALESCE), so concurrent PATCHes of different fields cannot clobber each other.
+  async function change(section: Section, next: boolean) {
+    const setValue = section === "deadline" ? setEnabled : setSubtaskEnabled;
+    const previous = section === "deadline" ? deadlineEnabled : subtaskEnabled;
+    setValue(next); setSaving((current) => ({ ...current, [section]: true })); setError((current) => (current?.section === section ? null : current));
+    try {
+      const value = await apiPatch<NotificationPreferencesValue, Partial<NotificationPreferencesValue>>("/api/notification-preferences", section === "deadline" ? { projectDeadlineReminderEmails: next } : { subtaskReminderEmails: next });
+      setValue(section === "deadline" ? value.projectDeadlineReminderEmails : value.subtaskReminderEmails);
+    }
+    catch (reason) { setValue(previous); setError({ section, message: reason instanceof ApiError ? reason.message : "Preferences could not be saved." }); }
+    finally { setSaving((current) => ({ ...current, [section]: false })); }
   }
 
-  const busy = loading || saving;
-  const valueText = loading ? "Loading…" : saving ? "Saving…" : enabled ? "On" : "Off";
-  const valueTone = busy ? "text-muted-foreground" : "text-foreground";
+  const unavailable = loadError !== null;
+  const anySaving = saving.deadline || saving.subtask;
 
   return (
     <main className={PAGE}>
@@ -84,59 +144,28 @@ export function NotificationPreferences() {
         <div>
           <Eyebrow className="block mb-[var(--space-3)]">Personal settings</Eyebrow>
           <h1 className={H1}>Notification preferences</h1>
-          <p className={LEDE}>How deadline reminders reach you.</p>
+          <p className={LEDE}>How reminders reach you.</p>
+          <p className={cn(FOOT, "mt-[var(--space-2)]")}>In-app reminders always arrive in your notification bell.</p>
         </div>
       </header>
 
+      {loadError && <Notice key="load" role="alert" className="mb-[var(--space-4)]">{loadError}</Notice>}
+
       <section className={CARD} aria-labelledby="deadline-reminders">
         <h2 id="deadline-reminders" className={CARD_TITLE}>Project deadlines</h2>
-
-        <div className="mt-[var(--space-4)]">
-          <div className={ROW}>
-            <Eyebrow>In-app</Eyebrow>
-            <span className={cn(VALUE, "text-foreground-secondary")}>Always on</span>
-          </div>
-
-          <label className={CONTROL_ROW}>
-            <Eyebrow>Email</Eyebrow>
-            <span className={cn(VALUE, valueTone)}>
-              <Checkbox
-                // `aria-label` deliberately overrides the wrapping <label>'s computed name. The
-                // label exists to make the whole row clickable; without this the control would be
-                // announced as "Email On", which names the column rather than the preference.
-                // Load-bearing — do not remove as redundant.
-                aria-label="Project deadline reminder emails"
-                // Base UI auto-detects the wrapping <label>, writes an id onto it, and emits
-                // aria-labelledby pointing back at it. aria-labelledby BEATS aria-label, so
-                // without this the control is announced "Email On" — precisely what the line
-                // above exists to prevent, reintroduced by the component swap. Base UI reads
-                // `explicitAriaLabelledBy ?? labelId`, and `??` (not `||`) means the empty string
-                // suppresses the association instead of falling back to it.
-                // Load-bearing — do not remove as redundant.
-                aria-labelledby=""
-                checked={enabled}
-                disabled={busy}
-                // `data-disabled`, not `:disabled` — Base UI's root is a <span>, which the
-                // :disabled pseudo-class never matches. See the note in components/reui/checkbox.
-                // LIVE, unlike the six Button call sites dropped in #71: nothing in the checkbox
-                // chain sets `pointer-events-none` while disabled (reui/checkbox.tsx pairs
-                // `data-disabled:cursor-not-allowed` with `data-disabled:opacity-50` and no
-                // pointer-events rule), so the control still hit-tests and `!` beats the base's
-                // cursor-not-allowed at equal specificity. Do not "clean this up" by analogy.
-                className={saving ? "data-disabled:!cursor-wait" : undefined}
-                onCheckedChange={(next) => void change(next)}
-              />
-              {valueText}
-            </span>
-          </label>
-        </div>
-
-        <p className={FOOT}>In-app reminders always arrive in your notification bell.</p>
-
-        {error && <Notice role="alert" className="mt-[var(--space-4)]">{error}</Notice>}
+        <EmailRows ariaLabel="Project deadline reminder emails" checked={deadlineEnabled} loading={loading} unavailable={unavailable} saving={saving.deadline} disabled={loading || unavailable || saving.deadline} onChange={(next) => void change("deadline", next)} />
+        <p className={FOOT}>Sent before and when a Project's deadline is due.</p>
+        {error?.section === "deadline" && <Notice role="alert" className="mt-[var(--space-4)]">{error.message}</Notice>}
       </section>
 
-      <div aria-live="polite" className="sr-only">{saving ? "Saving notification preferences" : ""}</div>
+      <section className={cn(CARD, "mt-[var(--space-4)]")} aria-labelledby="subtask-reminders">
+        <h2 id="subtask-reminders" className={CARD_TITLE}>Checklist item reminders</h2>
+        <EmailRows ariaLabel="Checklist item reminder emails" checked={subtaskEnabled} loading={loading} unavailable={unavailable} saving={saving.subtask} disabled={loading || unavailable || saving.subtask} onChange={(next) => void change("subtask", next)} />
+        <p className={FOOT}>Sent for checklist items assigned to you, before and when they're due.</p>
+        {error?.section === "subtask" && <Notice role="alert" className="mt-[var(--space-4)]">{error.message}</Notice>}
+      </section>
+
+      <div aria-live="polite" className="sr-only">{anySaving ? "Saving notification preferences" : ""}</div>
     </main>
   );
 }

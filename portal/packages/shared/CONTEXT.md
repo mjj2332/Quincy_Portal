@@ -102,6 +102,7 @@ One unit of work inside a Project's collaboration, with any number of Subtask as
 Subtask range. Completion is shared: whoever ticks it off completes it for everyone. The
 screen's "Add task" label is kept; the concept is Subtask.
 _Avoid_: Checklist item, task, to-do
+The UI deliberately labels a Subtask "checklist item" on preference and notification surfaces (ADR 0016); that is intended, not drift.
 
 **Subtask assignee**:
 A person responsible for a Subtask. A Subtask may have none, one or several; each is reminded
@@ -136,7 +137,8 @@ _Avoid_: Default schedule, inherited range
 A moment, counted back from a Subtask's due, when every Subtask assignee is reminded. "Due now"
 is always one; up to 8 offsets in all. A new Subtask starts with "1 day before" and "Due now".
 One set per Subtask, shared by its assignees. Completing the Subtask or archiving its Project
-cancels the ones not yet sent.
+cancels the ones not yet sent. Reminders go to the assignees at the moment they fire, in-app
+always and by email unless the person turned Checklist item reminder emails off.
 _Avoid_: Alert, due-today notice
 
 ### The two star scales
