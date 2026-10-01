@@ -49,6 +49,7 @@ vi.mock("./lib/query-client", () => ({
 }));
 
 import App from "./App";
+import { locationStore } from "./lib/router";
 
 let root: Root | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -106,10 +107,12 @@ describe("the navigation rail", () => {
 
     const destinations = [
       ...host.querySelectorAll(
-        '[data-testid="navigation-rail-link"], [data-testid="navigation-rail-child-link"]',
+        '[data-testid="navigation-rail-link"], [data-testid="navigation-rail-settings"]',
       ),
     ].map((element) => element.getAttribute("href")!);
-    expect(destinations).toEqual(["/", "/?view=list", "/?view=kanban", "/?view=gantt", "/?view=calendar", "/notices", "/admin"]);
+    // #426: the rail is icon-only and lists no Dashboard views; Settings is a rail destination too.
+    expect(host.querySelector('[data-testid="navigation-rail-child-link"]')).toBeNull();
+    expect(destinations).toEqual(["/", "/notices", "/admin", "/settings/notifications/preferences"]);
 
     for (const href of destinations) {
       await renderAt("/");
@@ -125,14 +128,11 @@ describe("the navigation rail", () => {
     }
   });
 
-  it("reaches the Calendar through the bare intent URL, not a facet the rail composed", async () => {
+  it("reaches the Calendar through the bare intent URL, which the shell accepts without a rail child", async () => {
     const host = await renderAt("/");
-    const calendar = [
-      ...host.querySelectorAll('[data-testid="navigation-rail-child-link"]'),
-    ].find((element) => element.textContent?.trim() === "Calendar")!;
+    expect(host.querySelector('[data-testid="navigation-rail-child-link"]')).toBeNull();
 
-    expect(calendar.getAttribute("href")).toBe("/?view=calendar");
-    await click(calendar);
+    await act(async () => { locationStore().push("/?view=calendar"); await Promise.resolve(); await Promise.resolve(); });
     // The shell accepts the intent and mounts the Dashboard. The rewrite to the full facet URL is
     // the Dashboard's own job, mocked out here and covered by its own DOM test.
     expect(host.textContent).toContain("Dashboard");

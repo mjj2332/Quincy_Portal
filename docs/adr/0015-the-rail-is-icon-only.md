@@ -24,8 +24,9 @@ opens the Dashboard and focuses the search there.
   (no cookie) and 2 (one breakpoint) still apply to whatever state it keeps.
 - The single 771px `SHELL_NARROW_QUERY` breakpoint stays, not app-shell-22's `lg` (1024px). Below
   it the narrow header, hamburger Sheet and header bell behave as before.
-- ADR 0006's bell rules are unchanged: one bell, anchored beside the rail when wide and under the
-  header when narrow.
+- ADR 0006's bell rules hold: one bell, anchored beside the rail when wide and under the header
+  when narrow. One refinement: the wide bell now sits at the rail's bottom, so its panel aligns to
+  the bell's bottom edge and grows upward instead of aligning to the top.
 - The scrim behind the wide account menu (ADR 0006, decision 4) is kept for the avatar menu.
 - A sign-out icon standing on its own, as in the block, was rejected so that one stray click
   cannot sign someone out.

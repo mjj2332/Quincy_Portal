@@ -1,33 +1,9 @@
 import { describe, expect, it } from "vitest";
-import {
-  isRailShortcut,
-  railMode,
-  readRailPreference,
-  RAIL_PREFERENCE_KEY,
-  SHELL_NARROW_QUERY,
-  writeRailPreference,
-  type RailShortcutEvent,
-} from "./shell-rail";
-
-/** A minimal `Storage`-shaped fake — no `window`, so this stays a node test. */
-function fakeStorage(initial: Record<string, string> = {}) {
-  const store = new Map(Object.entries(initial));
-  return {
-    getItem: (key: string) => store.get(key) ?? null,
-    setItem: (key: string, value: string) => { store.set(key, value); },
-    peek: () => store,
-  };
-}
-
-function throwingStorage() {
-  return {
-    getItem: () => { throw new Error("storage unavailable"); },
-    setItem: () => { throw new Error("storage unavailable"); },
-  };
-}
+import * as shellRail from "./shell-rail";
+import { isShellShortcut, SHELL_NARROW_QUERY, type RailShortcutEvent } from "./shell-rail";
 
 const BASE_EVENT: RailShortcutEvent = {
-  key: "b",
+  key: "k",
   metaKey: false,
   ctrlKey: false,
   altKey: false,
@@ -39,117 +15,89 @@ const BASE_EVENT: RailShortcutEvent = {
 };
 
 describe("shell-rail — the constants", () => {
-  it("keys the preference under the quincy: namespace", () => {
-    expect(RAIL_PREFERENCE_KEY).toBe("quincy:shell:rail");
-  });
-
   it("folds at 771px, the boundary the retired Topbar already folded at — not 1007/1008", () => {
     expect(SHELL_NARROW_QUERY).toBe("(max-width: 771px)");
   });
 });
 
-describe("readRailPreference / writeRailPreference — round trip", () => {
-  it("reads back exactly what was written", () => {
-    const storage = fakeStorage();
-    writeRailPreference(storage, "collapsed");
-    expect(readRailPreference(storage)).toBe("collapsed");
-    writeRailPreference(storage, "expanded");
-    expect(readRailPreference(storage)).toBe("expanded");
-  });
-
-  it("writes under RAIL_PREFERENCE_KEY specifically", () => {
-    const storage = fakeStorage();
-    writeRailPreference(storage, "collapsed");
-    expect(storage.peek().get(RAIL_PREFERENCE_KEY)).toBe("collapsed");
-  });
-
-  it("defaults to expanded with nothing stored", () => {
-    expect(readRailPreference(fakeStorage())).toBe("expanded");
-  });
-
-  it("reads a garbage value as expanded", () => {
-    expect(readRailPreference(fakeStorage({ [RAIL_PREFERENCE_KEY]: "sideways" }))).toBe("expanded");
-  });
-
-  it("reads expanded rather than throwing when storage.getItem throws", () => {
-    expect(readRailPreference(throwingStorage())).toBe("expanded");
-  });
-
-  it("does not throw when storage.setItem throws — the in-memory state carries on", () => {
-    expect(() => writeRailPreference(throwingStorage(), "collapsed")).not.toThrow();
-  });
+describe("shell-rail — the retired collapse API (#426, ADR 0015)", () => {
+  // The rail is always icon-only: no stored preference, no mode fold, no collapse shortcut.
+  it.each(["RAIL_PREFERENCE_KEY", "readRailPreference", "writeRailPreference", "railMode", "isRailShortcut"])(
+    "no longer exports %s",
+    (name) => {
+      expect(name in shellRail).toBe(false);
+    },
+  );
 });
 
-describe("railMode — the truth table", () => {
-  it("is always sheet when narrow, regardless of preference", () => {
-    expect(railMode(true, "expanded")).toBe("sheet");
-    expect(railMode(true, "collapsed")).toBe("sheet");
+// The predicate's whole rejection matrix, ported from the retired `isRailShortcut` suite onto the
+// shared `isShellShortcut` (the one predicate ⌘K still goes through) so no case was dropped when ⌘B
+// left. `lib/shell-search.test.ts` runs the same matrix through `isSearchShortcut`.
+describe("isShellShortcut", () => {
+  const fires = (event: RailShortcutEvent, key = "k") => isShellShortcut(event, key);
+
+  it("fires on Meta+<key>", () => {
+    expect(fires({ ...BASE_EVENT, metaKey: true })).toBe(true);
   });
 
-  it("follows the preference when not narrow", () => {
-    expect(railMode(false, "expanded")).toBe("expanded");
-    expect(railMode(false, "collapsed")).toBe("collapsed");
-  });
-});
-
-describe("isRailShortcut", () => {
-  it("fires on Meta+B", () => {
-    expect(isRailShortcut({ ...BASE_EVENT, metaKey: true })).toBe(true);
+  it("fires on Ctrl+<key>", () => {
+    expect(fires({ ...BASE_EVENT, ctrlKey: true })).toBe(true);
   });
 
-  it("fires on Ctrl+B", () => {
-    expect(isRailShortcut({ ...BASE_EVENT, ctrlKey: true })).toBe(true);
+  it("is case-insensitive on the event's key", () => {
+    expect(fires({ ...BASE_EVENT, metaKey: true, key: "K" })).toBe(true);
   });
 
-  it("is case-insensitive on the key", () => {
-    expect(isRailShortcut({ ...BASE_EVENT, metaKey: true, key: "B" })).toBe(true);
+  it("matches whichever letter it is asked about", () => {
+    expect(fires({ ...BASE_EVENT, metaKey: true, key: "j" }, "j")).toBe(true);
+    expect(fires({ ...BASE_EVENT, metaKey: true, key: "j" }, "k")).toBe(false);
   });
 
-  it("rejects a bare B with no modifier", () => {
-    expect(isRailShortcut(BASE_EVENT)).toBe(false);
+  it("rejects a bare key with no modifier", () => {
+    expect(fires(BASE_EVENT)).toBe(false);
   });
 
   it("rejects a different key even with the modifier held", () => {
-    expect(isRailShortcut({ ...BASE_EVENT, metaKey: true, key: "k" })).toBe(false);
+    expect(fires({ ...BASE_EVENT, metaKey: true, key: "b" })).toBe(false);
   });
 
-  it("rejects Alt+Meta+B — Tiptap binds Mod-B to bold, this must not fight it either", () => {
-    expect(isRailShortcut({ ...BASE_EVENT, metaKey: true, altKey: true })).toBe(false);
+  it("rejects Alt+Meta+<key> — Tiptap binds Mod-<key> chords, this must not fight them", () => {
+    expect(fires({ ...BASE_EVENT, metaKey: true, altKey: true })).toBe(false);
   });
 
-  it("rejects Shift+Meta+B", () => {
-    expect(isRailShortcut({ ...BASE_EVENT, metaKey: true, shiftKey: true })).toBe(false);
+  it("rejects Shift+Meta+<key>", () => {
+    expect(fires({ ...BASE_EVENT, metaKey: true, shiftKey: true })).toBe(false);
   });
 
   it("rejects a repeat (held key)", () => {
-    expect(isRailShortcut({ ...BASE_EVENT, metaKey: true, repeat: true })).toBe(false);
+    expect(fires({ ...BASE_EVENT, metaKey: true, repeat: true })).toBe(false);
   });
 
   it("rejects while an IME composition is in progress", () => {
-    expect(isRailShortcut({ ...BASE_EVENT, metaKey: true, isComposing: true })).toBe(false);
+    expect(fires({ ...BASE_EVENT, metaKey: true, isComposing: true })).toBe(false);
   });
 
   it("rejects when the event was already handled", () => {
-    expect(isRailShortcut({ ...BASE_EVENT, metaKey: true, defaultPrevented: true })).toBe(false);
+    expect(fires({ ...BASE_EVENT, metaKey: true, defaultPrevented: true })).toBe(false);
   });
 
   it("rejects a target that is an input", () => {
-    expect(isRailShortcut({ ...BASE_EVENT, metaKey: true, target: { tagName: "INPUT" } })).toBe(false);
+    expect(fires({ ...BASE_EVENT, metaKey: true, target: { tagName: "INPUT" } })).toBe(false);
   });
 
   it("rejects a target that is a textarea", () => {
-    expect(isRailShortcut({ ...BASE_EVENT, metaKey: true, target: { tagName: "TEXTAREA" } })).toBe(false);
+    expect(fires({ ...BASE_EVENT, metaKey: true, target: { tagName: "TEXTAREA" } })).toBe(false);
   });
 
   it("rejects a target that is a select", () => {
-    expect(isRailShortcut({ ...BASE_EVENT, metaKey: true, target: { tagName: "SELECT" } })).toBe(false);
+    expect(fires({ ...BASE_EVENT, metaKey: true, target: { tagName: "SELECT" } })).toBe(false);
   });
 
   it("rejects a contenteditable target (Tiptap's ProseMirror root)", () => {
-    expect(isRailShortcut({ ...BASE_EVENT, metaKey: true, target: { tagName: "DIV", isContentEditable: true } })).toBe(false);
+    expect(fires({ ...BASE_EVENT, metaKey: true, target: { tagName: "DIV", isContentEditable: true } })).toBe(false);
   });
 
   it("fires on a plain, non-editable target", () => {
-    expect(isRailShortcut({ ...BASE_EVENT, metaKey: true, target: { tagName: "BODY" } })).toBe(true);
+    expect(fires({ ...BASE_EVENT, metaKey: true, target: { tagName: "BODY" } })).toBe(true);
   });
 });

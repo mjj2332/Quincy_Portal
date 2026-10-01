@@ -26,11 +26,8 @@ import type { RailMode } from "../../lib/shell-rail";
  * would be a second, CSS-owned breakpoint (`styles/shell-breakpoint.guard.test.ts` forbids it), and
  * #112's AC needs the FULL trail regardless of width, not a hidden one.
  *
- * - **Wide** (`expanded`/`collapsed`): the breadcrumb, and NOTHING else. #122 moves the rail's own
- *   collapse toggle out of this header and into `NavigationRail`'s own header as a `SidebarTrigger`
- *   (`data-testid="rail-toggle"`) — the bell already lived there (#112 AC4), and the toggle now
- *   reads `SidebarProvider` context directly rather than a callback threaded down through this
- *   component, so this file no longer needs an `onToggleRail` prop at all.
+ * - **Wide** (`rail`): the breadcrumb, and NOTHING else. The rail is always the icon column
+ *   (ADR 0015) and has no collapse toggle; the bell lives at the rail's foot.
  * - **Narrow** (`sheet`): the Sheet's own `SheetTrigger` in place of the toggle, the same
  *   breadcrumb, and the bell — the one thing collapse below 772px must not cost is an unread count
  *   nobody can see, and there is no rail on screen to hold it there.

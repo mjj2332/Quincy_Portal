@@ -1,6 +1,9 @@
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   Sidebar,
   SidebarContent,
@@ -13,8 +16,8 @@ import {
 } from "./sidebar";
 
 /**
- * base-nova's `sidebar.tsx`, adopted whole in #122 (ADR 0005). These tests exercise the three
- * behavioural PATCHES against the vendored primitive itself, with minimal `data-testid` probe
+ * base-nova's `sidebar.tsx`, adopted whole in #122 (ADR 0005). These tests exercise the
+ * behavioural PATCHES (patch 3, the ⌘B shortcut, was retired by #426 and is pinned absent) against the vendored primitive itself, with minimal `data-testid` probe
  * components — never the primitive's own `data-slot` values (`testing/test-seam.guard.test.ts`
  * guard F). The conformance edits (imports, the `--sidebar-width` rename, the removed focus ring,
  * `bg-background` → `bg-[color:var(--bg-canvas)]`) are non-behavioural and are not re-tested here;
@@ -165,59 +168,57 @@ describe("SidebarProvider — patch 2: one breakpoint", () => {
   });
 });
 
-describe("SidebarProvider — patch 3: ⌘B through isRailShortcut", () => {
-  it("toggles at 772 (wide)", async () => {
-    await resizeTo(772);
+describe("SidebarProvider — patch 3 retired: no keyboard shortcut (#426, ADR 0015)", () => {
+  // The rail has no collapse, so the vendor's ⌘B handler (and the app's own replacement for it) is
+  // deleted. These replace the six toggle/ignore cases the retired patch carried: a shortcut that
+  // never fires cannot fire in an input, on a repeat, mid-IME, with Shift, or while narrow either.
+  function stateOf() {
+    return document.querySelector('[data-testid="probe-sidebar"]')?.closest("[data-state]")?.getAttribute("data-state");
+  }
+
+  it.each([772, 771])("does not toggle on ⌘B at %ipx", async (width) => {
+    await resizeTo(width);
     const onOpenChange = vi.fn();
     await render(<Probe open onOpenChange={onOpenChange} />);
+    const before = stateOf();
+    // Narrow renders the Sheet branch instead of the rail, so there is no rail state to read there.
+    if (width === 772) expect(before, "the probe must expose a real provider state").toBe("expanded");
 
     await keydown(window, { key: "b", metaKey: true });
-    expect(onOpenChange).toHaveBeenCalledWith(false);
-  });
-
-  it("is ignored in a focused input", async () => {
-    await resizeTo(772);
-    const onOpenChange = vi.fn();
-    await render(<Probe open onOpenChange={onOpenChange} />);
-    const input = document.createElement("input");
-    document.body.append(input);
-    input.focus();
-
-    await keydown(input, { key: "b", metaKey: true });
     expect(onOpenChange).not.toHaveBeenCalled();
-    input.remove();
+    expect(stateOf()).toBe(before);
   });
 
-  it("is ignored on a held-key repeat", async () => {
-    await resizeTo(772);
+  it.each([772, 771])("does not toggle on Ctrl+B at %ipx", async (width) => {
+    await resizeTo(width);
     const onOpenChange = vi.fn();
     await render(<Probe open onOpenChange={onOpenChange} />);
-    await keydown(window, { key: "b", metaKey: true, repeat: true });
+    const before = stateOf();
+    // Narrow renders the Sheet branch instead of the rail, so there is no rail state to read there.
+    if (width === 772) expect(before, "the probe must expose a real provider state").toBe("expanded");
+
+    await keydown(window, { key: "b", ctrlKey: true });
     expect(onOpenChange).not.toHaveBeenCalled();
+    expect(stateOf()).toBe(before);
   });
 
-  it("is ignored during IME composition", async () => {
+  it("does not toggle on ⌘B with the provider uncontrolled either", async () => {
     await resizeTo(772);
-    const onOpenChange = vi.fn();
-    await render(<Probe open onOpenChange={onOpenChange} />);
-    await keydown(window, { key: "b", metaKey: true, isComposing: true });
-    expect(onOpenChange).not.toHaveBeenCalled();
-  });
-
-  it("is ignored with Shift held", async () => {
-    await resizeTo(772);
-    const onOpenChange = vi.fn();
-    await render(<Probe open onOpenChange={onOpenChange} />);
-    await keydown(window, { key: "b", metaKey: true, shiftKey: true });
-    expect(onOpenChange).not.toHaveBeenCalled();
-  });
-
-  it("is inert at 771 (narrow)", async () => {
-    await resizeTo(771);
-    const onOpenChange = vi.fn();
-    await render(<Probe open onOpenChange={onOpenChange} />);
+    await render(
+      <SidebarProvider>
+        <Sidebar collapsible="icon" data-testid="probe-sidebar"><SidebarContent /></Sidebar>
+      </SidebarProvider>,
+    );
+    const before = stateOf();
     await keydown(window, { key: "b", metaKey: true });
-    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(stateOf()).toBe(before);
+  });
+
+  it("registers no keydown listener at all — the vendor handler is not restored", () => {
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "sidebar.tsx"), "utf8");
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+    expect(code).not.toMatch(/addEventListener\(\s*["']keydown["']/);
+    expect(code).not.toMatch(/SIDEBAR_KEYBOARD_SHORTCUT/);
   });
 });
 

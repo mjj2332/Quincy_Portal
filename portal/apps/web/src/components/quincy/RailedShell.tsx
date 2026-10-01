@@ -1,18 +1,11 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from "react";
 
 import { Sheet } from "@/components/reui/sheet";
 import { SidebarProvider } from "@/components/reui/sidebar";
 import { cn } from "../../lib/utils";
 import { locationStore, parseStaffLocation } from "../../lib/router";
 import { useMediaQuery } from "../../lib/use-media-query";
-import {
-  SHELL_NARROW_QUERY,
-  railMode,
-  readRailPreference,
-  writeRailPreference,
-  type RailPreference,
-  type RailShortcutTarget,
-} from "../../lib/shell-rail";
+import { SHELL_NARROW_QUERY, type RailMode, type RailShortcutTarget } from "../../lib/shell-rail";
 import { isSearchShortcut } from "../../lib/shell-search";
 import type { StaffNavigation } from "../../lib/staff-navigation";
 import { NavigationRail } from "./NavigationRail";
@@ -21,15 +14,13 @@ import { RailSheet } from "./RailSheet";
 import { ShellHeader } from "./ShellHeader";
 
 /**
- * Owns the rail's collapse preference, narrow/wide mode and the Sheet's open state — issue #112,
- * re-platformed onto base-nova's `SidebarProvider` in #122 (ADR 0005).
+ * Owns the narrow/wide mode and the Sheet's open state — issue #112, re-platformed onto
+ * base-nova's `SidebarProvider` in #122 (ADR 0005) and reduced to an always-icon rail by #426
+ * (ADR 0015).
  *
- * `SidebarProvider` now owns the ⌘B listener itself (`reui/sidebar.tsx`'s patch 3, `isRailShortcut`)
- * — the ⌘B effect #112 built here is DELETED, not duplicated. This component instead controls the
- * provider (`open`/`onOpenChange`) and is what persists the resulting preference to `localStorage`.
- *
- * `safeLocalStorage` guards the `window.localStorage` accessor itself, which can throw under some
- * privacy settings before `readRailPreference`/`writeRailPreference`'s own try/catch is reached.
+ * There is no collapse any more: no stored preference, no `localStorage`, no ⌘B, no
+ * `onOpenChange`. `SidebarProvider` is pinned `open={false}` (the icon-only state `Sidebar`'s
+ * `collapsible="icon"` renders), and `mode` is simply `narrow ? "sheet" : "rail"`.
  *
  * `sheetOpen` closes on a location change, on `mode` leaving `"sheet"`, and — a #112 review
  * finding — on a click on the link for the route already showing, which publishes the SAME
@@ -54,11 +45,10 @@ import { ShellHeader } from "./ShellHeader";
  * `.app--railed`'s.
  *
  * The ⌘K window listener (#217, replacing #122 P3's `activateProjectSearch`) focuses
- * `NavigationRail`'s own `ShellSearch` input through `searchRef` — it never navigates. Unlike ⌘B
- * (`isRailShortcut`'s own effect, inert while narrow — `reui/sidebar.tsx` patch 3), ⌘K stays live
+ * `NavigationRail`'s own `ShellSearch` input through `searchRef` — it never navigates. ⌘K stays live
  * in `mode === "sheet"` (#217 fix round 1, item 6): with the Sheet already open, it focuses the
  * Sheet's own `ShellSearch` instance (a second ref, `sheetSearchRef`, since it is a genuinely
- * different mounted component from the wide/collapsed one); with the Sheet closed, it opens the
+ * different mounted component from the wide rail one); with the Sheet closed, it opens the
  * Sheet and focuses that same input once its content actually mounts, via `RailSheet`'s own
  * `initialFocus` (a one-shot pending flag, `pendingSheetSearchFocusRef`, consumed and cleared by
  * `sheetInitialFocus` below) — an imperative `.focus()` call from an ancestor effect is not
@@ -73,35 +63,20 @@ import { ShellHeader } from "./ShellHeader";
  * location change, below) can restore focus to its own trigger the ordinary way.
  */
 
-function safeLocalStorage(): Storage | null {
-  try {
-    return window.localStorage;
-  } catch {
-    // Privacy settings can make even the `localStorage` accessor itself throw, before either
-    // `readRailPreference`/`writeRailPreference`'s own try/catch around a method call is reached.
-    return null;
-  }
-}
-
 export type RailedShellProps = {
   navigation: StaffNavigation;
   user: { name?: string | null; email?: string | null };
   /** Forwarded to `NavigationRail`/`ShellSearch` — see `NavigationRailProps.principalId`. */
   principalId?: string;
   /** #366: a modal Project sheet is open over the shell. ⌘K would open the rail sheet — the PARENT
-   * dialog Root — underneath it, so the shortcut stands down. ⌘B is left alone (it only toggles
-   * the dimmed rail). */
+   * dialog Root — underneath it, so the shortcut stands down. */
   shortcutsSuspended?: boolean;
   children: ReactNode;
 };
 
 export function RailedShell({ navigation, user, principalId, shortcutsSuspended = false, children }: RailedShellProps) {
-  const [preference, setPreference] = useState<RailPreference>(() => {
-    const storage = safeLocalStorage();
-    return storage ? readRailPreference(storage) : "expanded";
-  });
   const narrow = useMediaQuery(SHELL_NARROW_QUERY);
-  const mode = railMode(narrow, preference);
+  const mode: RailMode = narrow ? "sheet" : "rail";
 
   const history = locationStore();
   const location = useSyncExternalStore(history.subscribe, history.getLocation, () => "/");
@@ -112,16 +87,6 @@ export function RailedShell({ navigation, user, principalId, shortcutsSuspended 
     if (mode !== "sheet") setSheetOpen(false);
   }, [mode]);
 
-  // `SidebarProvider`'s own `toggleSidebar` (⌘B, or the rail's `SidebarTrigger`) calls this with
-  // the next open value — persistence is this component's job, not the vendored primitive's
-  // (`reui/sidebar.tsx`'s patch 1: no cookie, ever).
-  function handleOpenChange(open: boolean) {
-    const next: RailPreference = open ? "expanded" : "collapsed";
-    setPreference(next);
-    const storage = safeLocalStorage();
-    if (storage) writeRailPreference(storage, next);
-  }
-
   const isDashboard = parseStaffLocation(location).kind === "dashboard";
   const searchRef = useRef<ShellSearchHandle>(null);
   const sheetSearchRef = useRef<ShellSearchHandle>(null);
@@ -131,8 +96,10 @@ export function RailedShell({ navigation, user, principalId, shortcutsSuspended 
   const pendingSheetSearchFocusRef = useRef(false);
 
   // ⌘K. Only focuses; #217 replaces #122 P3's navigate-then-latch with a real input, so typing and
-  // Enter are what navigate, not the shortcut itself. Unlike ⌘B, this stays live while
-  // `mode === "sheet"` (#217 fix round 1, item 6) — see this file's own docblock.
+  // Enter are what navigate, not the shortcut itself. It stays live while `mode === "sheet"`
+  // (#217 fix round 1, item 6) — see this file's own docblock. In `rail` it opens the search
+  // popover and focuses its input, from every page (until the Dashboard toolbar takes search over,
+  // #427).
   useEffect(() => {
     if (shortcutsSuspended) return;
     function handleKeyDown(event: KeyboardEvent) {
@@ -219,12 +186,9 @@ export function RailedShell({ navigation, user, principalId, shortcutsSuspended 
   );
 
   return (
-    <SidebarProvider
-      open={mode !== "sheet" && preference === "expanded"}
-      onOpenChange={handleOpenChange}
-      className="app__shell min-w-0"
-      style={{ "--quincy-rail-width": "260px" } as CSSProperties}
-    >
+    // Pinned closed: the icon-only state is the only one the rail has (ADR 0015), so the provider
+    // takes no `onOpenChange` and nothing can open it.
+    <SidebarProvider open={false} className="app__shell min-w-0">
       <Sheet open={mode === "sheet" && sheetOpen} onOpenChange={handleSheetOpenChange}>
         {railSlot}
         {contentColumn}

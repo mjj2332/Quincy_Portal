@@ -268,23 +268,30 @@ describe("the rail's impersonation offset (#122)", () => {
 });
 
 /**
- * `--app-rail-inline-size` per `[data-rail-mode]` — #112. `RailedShell` resolves one JS-owned
- * breakpoint (`lib/shell-rail.ts`) into `expanded | collapsed | sheet` and sets it as
- * `data-rail-mode` on the content column; these three rules are the only place that resolved mode
- * turns back into a pixel value, and `styles/shell-breakpoint.guard.test.ts` is what pins that
- * neither rule sits inside an `@media` block of its own.
+ * `--app-rail-inline-size` per `[data-rail-mode]` — #112, reduced to two modes by #426 (ADR 0015).
+ * `RailedShell` resolves one JS-owned breakpoint (`lib/shell-rail.ts`) into `rail | sheet` and sets
+ * it as `data-rail-mode` on the content column; these two rules are the only place that resolved
+ * mode turns back into a pixel value, and `styles/shell-breakpoint.guard.test.ts` is what pins that
+ * neither rule sits inside an `@media` block of its own. The old `expanded` (260px) and `collapsed`
+ * modes are gone with the collapse control.
  */
-describe("the rail's inline size follows data-rail-mode (#112)", () => {
-  it("sets 260px expanded, the icon-width calc collapsed, and 0px for the Sheet (#122)", () => {
-    expect(ruleBody(appCss, '[data-rail-mode="expanded"]')).toContain("--app-rail-inline-size: 260px");
-    expect(ruleBody(appCss, '[data-rail-mode="collapsed"]')).toContain(
+describe("the rail's inline size follows data-rail-mode (#112, #426)", () => {
+  it("sets the icon-width calc for the rail and 0px for the Sheet", () => {
+    expect(ruleBody(appCss, '[data-rail-mode="rail"]')).toContain(
       "--app-rail-inline-size: calc(3rem + var(--space-4) + var(--space-2))",
     );
     expect(ruleBody(appCss, '[data-rail-mode="sheet"]')).toContain("--app-rail-inline-size: 0px");
   });
 
-  it("declares all three rules outside any @layer", () => {
-    for (const selector of ['[data-rail-mode="expanded"]', '[data-rail-mode="collapsed"]', '[data-rail-mode="sheet"]']) {
+  it("retires the expanded and collapsed rules and 260px entirely", () => {
+    expect(ruleBody(appCss, '[data-rail-mode="expanded"]')).toBeNull();
+    expect(ruleBody(appCss, '[data-rail-mode="collapsed"]')).toBeNull();
+    expect(appCss).not.toMatch(/data-rail-mode="(expanded|collapsed)"/);
+    expect(appCss).not.toMatch(/--app-rail-inline-size:\s*260px/);
+  });
+
+  it("declares both rules outside any @layer", () => {
+    for (const selector of ['[data-rail-mode="rail"]', '[data-rail-mode="sheet"]']) {
       const index = appCss.indexOf(selector);
       expect(index, `${selector} not found`).toBeGreaterThan(-1);
       const before = appCss.slice(0, index);
@@ -292,6 +299,11 @@ describe("the rail's inline size follows data-rail-mode (#112)", () => {
       const closed = (before.match(/\}/g) ?? []).length;
       expect(opened, `${selector} sits inside an @layer block`).toBeLessThanOrEqual(closed);
     }
+  });
+
+  it("sizes the photo-grid cap from the 72px icon rail: 72 + 5×205 + 4×14 + 64 = 1217px, not the old 1405px", () => {
+    expect(appCss).toContain("@media (min-width: 1217px)");
+    expect(appCss).not.toContain("1405px");
   });
 });
 
@@ -344,7 +356,7 @@ describe("--toast-inset-inline-start is redeclared per data-rail-mode (#112 P3b)
   const EXPECTED_VALUE = "calc(var(--app-rail-inline-size) + max(var(--space-5), env(safe-area-inset-left)))";
 
   it("redeclares the inset in each [data-rail-mode] rule, or in one shared rule after them", () => {
-    const perMode = ['[data-rail-mode="expanded"]', '[data-rail-mode="collapsed"]', '[data-rail-mode="sheet"]']
+    const perMode = ['[data-rail-mode="rail"]', '[data-rail-mode="sheet"]']
       .map((selector) => ruleBody(appCss, selector) ?? "");
     const perModeRedeclares = perMode.every((body) => body.includes(`--toast-inset-inline-start: ${EXPECTED_VALUE}`));
 
@@ -357,12 +369,12 @@ describe("--toast-inset-inline-start is redeclared per data-rail-mode (#112 P3b)
     ).toBe(true);
   });
 
-  it("declares the shared rule (if any) outside any @layer, after the three per-mode rules", () => {
+  it("declares the shared rule (if any) outside any @layer, after the per-mode rules", () => {
     const sharedIndex = appCss.indexOf("[data-rail-mode]");
     if (sharedIndex === -1) return; // No shared rule — the per-mode assertion above covers this shape instead.
     const sheetIndex = appCss.indexOf('[data-rail-mode="sheet"]');
     expect(sheetIndex, '[data-rail-mode="sheet"] not found').toBeGreaterThan(-1);
-    expect(sharedIndex, "the shared [data-rail-mode] rule must come after the three per-mode rules").toBeGreaterThan(sheetIndex);
+    expect(sharedIndex, "the shared [data-rail-mode] rule must come after the per-mode rules").toBeGreaterThan(sheetIndex);
 
     const before = appCss.slice(0, sharedIndex);
     const opened = (before.match(/@layer[^;{]*\{/g) ?? []).length;

@@ -29,7 +29,7 @@ async function render(value: ReactNode) {
 
 async function renderSearch(props: Partial<ShellSearchProps> & { variant: ShellSearchProps["variant"] }, ref?: React.RefObject<ShellSearchHandle | null>) {
   await render(
-    <SidebarProvider open={props.variant !== "collapsed"} onOpenChange={() => {}}>
+    <SidebarProvider open={false}>
       <TooltipProvider delay={0}>
         <ShellSearch ref={ref} variant={props.variant} isDashboard={props.isDashboard ?? false} principalId={props.principalId ?? "principal-a"} />
       </TooltipProvider>
@@ -70,22 +70,22 @@ afterEach(async () => {
   __resetDashboardSearchStoreForTest();
 });
 
-describe("ShellSearch adversarial mode matrix (#217)", () => {
-  it.each(["expanded", "collapsed", "sheet"] as const)("renders a usable search surface in %s mode", async (variant) => {
+describe("ShellSearch adversarial mode matrix (#217, #426)", () => {
+  it.each(["rail", "sheet"] as const)("renders a usable search surface in %s mode", async (variant) => {
     await renderSearch({ variant });
-    if (variant === "collapsed") {
+    if (variant === "rail") {
       expect(host.querySelector('[data-testid="shell-search-trigger"]')).not.toBeNull();
-      expect(host.querySelector('[data-testid="shell-search"]')).toBeNull();
+      expect(document.querySelector('[data-testid="shell-search"]')).toBeNull();
     } else {
       expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')).not.toBeNull();
     }
   });
 
-  // #217 design-review, item 8: a single Escape on a non-empty collapsed-popover draft now BOTH
+  // #217 design-review, item 8: a single Escape on a non-empty rail-popover draft now BOTH
   // clears it and closes the popover, where it previously took two. `keydown`'s dispatch already
   // bubbles (`bubbles: true`), which is what lets it reach the real Popover's own Escape handling.
-  it("clears a non-empty collapsed-popover draft AND closes the popover on the same Escape", async () => {
-    await renderSearch({ variant: "collapsed" });
+  it("clears a non-empty rail-popover draft AND closes the popover on the same Escape", async () => {
+    await renderSearch({ variant: "rail" });
     const trigger = host.querySelector<HTMLButtonElement>('[data-testid="shell-search-trigger"]')!;
     await act(async () => {
       trigger.click();
@@ -101,32 +101,43 @@ describe("ShellSearch adversarial mode matrix (#217)", () => {
     expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 
-  it("uses the normalized, encoded committed value for Enter from each inline mode off Dashboard", async () => {
-    for (const variant of ["expanded", "sheet"] as const) {
+  it("uses the normalized, encoded committed value for Enter from each mode off Dashboard", async () => {
+    for (const variant of ["rail", "sheet"] as const) {
       await renderSearch({ variant, isDashboard: false });
-      const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+      if (variant === "rail") {
+        await act(async () => {
+          host.querySelector<HTMLButtonElement>('[data-testid="shell-search-trigger"]')!.click();
+          await Promise.resolve();
+        });
+      }
+      const input = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
       await inputValue(input, "  smith   + co  ");
       await keydown(input, { key: "Enter" });
       // #217 build, step 5 (sanctioned): the committed value used to be read back from the store's
       // own `.query`; the URL push IS the commit now, so this asserts on it directly.
       expect(routerMock.push).toHaveBeenLastCalledWith("/?q=smith+%2B+co");
-      await renderSearch({ variant, isDashboard: false });
       await act(async () => {
         __resetDashboardSearchStoreForTest();
         await Promise.resolve();
       });
+      // Back to a closed, other-mode render so the next iteration starts clean.
+      await renderSearch({ variant: variant === "rail" ? "sheet" : "rail", isDashboard: false });
     }
   });
 
-  it("exposes the real input element through the ref in all three modes for shortcut focus plumbing", async () => {
+  it("exposes the real input element through the ref in both modes for shortcut focus plumbing", async () => {
     const ref = createRef<ShellSearchHandle>();
-    for (const variant of ["expanded", "sheet", "collapsed"] as const) {
+    for (const variant of ["sheet", "rail"] as const) {
       await renderSearch({ variant }, ref);
       await act(async () => ref.current?.focus());
+      for (let tick = 0; tick < 50 && !document.querySelector('[data-testid="shell-search"]'); tick += 1) {
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+      }
       const input = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]');
+      expect(input).not.toBeNull();
       expect(ref.current?.getElement()).toBe(input);
       expect(document.activeElement).toBe(input);
-      await renderSearch({ variant: "expanded" }, ref);
+      await renderSearch({ variant: "sheet" }, ref);
     }
   });
 });

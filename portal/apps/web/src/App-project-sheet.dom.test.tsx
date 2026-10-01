@@ -575,7 +575,9 @@ describe("exactly one toast viewport per route (#366)", () => {
 describe("a search typed just before the sheet opens survives it (#366)", () => {
   it("type, open a List project inside the 300ms debounce, close: the typed search is still there and reaches the URL", async () => {
     const host = await renderDashboardAt("list");
-    const input = () => host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    // #426: the search lives in the rail's popover now — open it from the icon, then type.
+    await click(host.querySelector('[data-testid="shell-search-trigger"]')!);
+    const input = () => document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input(), "jones");
       input().dispatchEvent(new Event("input", { bubbles: true }));
@@ -591,6 +593,8 @@ describe("a search typed just before the sheet opens survives it (#366)", () => 
     await traverseTo("/?view=list&q=smith", null);
     expect(sheet()).toBeNull();
 
+    // The popover closed when the project row was clicked; the draft survives in the store.
+    if (!document.querySelector('[data-testid="shell-search"]')) await click(host.querySelector('[data-testid="shell-search-trigger"]')!);
     expect(input().value).toBe("jones");
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
     await settle();
