@@ -12,6 +12,7 @@ import { KanbanCard2 } from "./card";
 import { STAR_GUARD_WINDOW_MS } from "../../lib/star-click-guard";
 import type { ProjectKanbanBoardProps, ProjectSummary } from "../../lib/kanban-interaction";
 import type { PipelineStage } from "../../lib/stages";
+import { cardMenuTrigger, chooseMenuItem, closeMenus, isMenuItemDisabled, menuItem, menuItems, openCardMenu, openContextMenu, openMoveTo } from "./board-menu-test-helpers";
 
 // happy-dom lacks `Element.getAnimations()`, which Base UI's ScrollArea (the Board's horizontal
 // scroll, `board/board.tsx`) calls on a timer after mount. The no-op stub means "no active
@@ -668,20 +669,21 @@ describe("ProjectKanbanBoard2 (#80)", () => {
       const { act } = await import("react");
       await act(async () => { element.click(); await Promise.resolve(); });
     };
-    const trigger = () => host.querySelector<HTMLButtonElement>('[data-focus-key="move-to:source"]');
+    // The ⋯ trigger: Move to… is an item in its menu (#432), and the dialog anchors to the trigger.
+    const trigger = () => cardMenuTrigger(host, "source");
     // Literal selectors only (test-seam guard B), so one finder per role rather than a shared one.
     const radio = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((node) => node.textContent?.startsWith(text));
     const option = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((node) => node.textContent?.startsWith(text));
     const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent?.startsWith(text));
     async function chooseBeforeT2() {
-      await click(trigger(), "Move-to trigger");
+      await openMoveTo(host, "source");
       await click(radio("RAW review"), "RAW review Stage");
       await click(option("Before t2 Street"), "Before t2 position");
     }
 
     it("offers every permitted position, previews the chosen one, and commits exactly that gap", async () => {
       const props = await renderBoard({ projects: threeTargets(), role: "admin" });
-      await click(trigger(), "Move-to trigger");
+      await openMoveTo(host, "source");
       await click(radio("RAW review"), "RAW review Stage");
       expect([...document.querySelectorAll('[role="option"]')].map((node) => node.textContent)).toEqual([
         "End of RAW review",
@@ -771,7 +773,7 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     it("withholds same-Stage positions from a principal who cannot reorder", async () => {
       const projects = withMap([project("source", "awaiting_raw"), project("sibling", "awaiting_raw"), project("t1", "raw_review")]);
       await renderBoard({ projects, role: "admin", canPrioritize: true, sameStageReorderEnabled: false });
-      await click(trigger(), "Move-to trigger");
+      await openMoveTo(host, "source");
       const stages = [...document.querySelectorAll('[role="radio"]')].map((node) => node.textContent);
       expect(stages, "anchor: the cross-Stage target is offered").toContain("RAW review");
       expect(stages).not.toContain("Awaiting RAW");
@@ -781,13 +783,15 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     // pending write must not lock it, and its own must.
     it("stays enabled while ANOTHER card's priority write is pending (#306)", async () => {
       await renderBoard({ projects: threeTargets(), role: "admin", pendingOrdering: new Set(["t1"]) });
-      expect(trigger(), "no Move-to trigger rendered").not.toBeNull();
+      expect(trigger(), "no ⋯ trigger rendered").not.toBeNull();
       expect(trigger()!.disabled).toBe(false);
+      await openCardMenu(host, "source");
+      expect(isMenuItemDisabled(menuItem("Move to…")!)).toBe(false);
     });
 
     it("is disabled while its OWN card's priority write is pending (#306)", async () => {
       await renderBoard({ projects: threeTargets(), role: "admin", pendingOrdering: new Set(["source"]) });
-      expect(trigger(), "no Move-to trigger rendered").not.toBeNull();
+      expect(trigger(), "no ⋯ trigger rendered").not.toBeNull();
       expect(trigger()!.disabled).toBe(true);
     });
 
@@ -803,68 +807,79 @@ describe("ProjectKanbanBoard2 (#80)", () => {
       // Anchor: before the chooser opens, nothing is aria-hidden.
       expect(otherCardAddress!.closest('[aria-hidden="true"]')).toBeNull();
 
-      await click(trigger(), "Move-to trigger");
+      await openMoveTo(host, "source");
       expect(document.querySelector('[role="dialog"]'), "no chooser dialog rendered — the assertion below would be vacuous").not.toBeNull();
       expect(otherCardAddress!.closest('[aria-hidden="true"]')).not.toBeNull();
     });
   });
 
-  // #99: the one-slot nudge. The Board only reports the intent; the Dashboard owns the gap.
-  describe("up/down arrows (#99)", () => {
-    const arrows = () => host.querySelectorAll('[data-focus-key^="arrow-"]');
-    const up = () => host.querySelector<HTMLButtonElement>('[data-focus-key="arrow-up:source"]');
-    const down = () => host.querySelector<HTMLButtonElement>('[data-focus-key="arrow-down:source"]');
+  // #99: the one-slot nudge, now the "Move up" / "Move down" items of the card's ⋯ menu (#432). The
+  // Board only reports the intent; the Dashboard owns the gap.
+  describe("Move up / Move down menu items (#99, #432)", () => {
+    // Three cards in one column, so `mid` is neither first nor last and both items are live.
+    const column = () => [
+      project("top", "awaiting_raw", { boardRank: 0 }),
+      project("mid", "awaiting_raw", { boardRank: 1 }),
+      project("low", "awaiting_raw", { boardRank: 2 }),
+    ];
+    const reorder = { canPrioritize: true, sameStageReorderEnabled: true } as const;
+    const labels = () => menuItems().map((node) => node.textContent);
 
     it("are offered only where the principal can reorder", async () => {
-      await renderBoard({ canPrioritize: true, sameStageReorderEnabled: false });
-      expect(host.querySelector('[data-focus-key="move-to:source"]'), "anchor: the card's controls rendered").not.toBeNull();
-      expect(arrows()).toHaveLength(0);
+      await renderBoard({ projects: column(), canPrioritize: true, sameStageReorderEnabled: false });
+      await openCardMenu(host, "mid");
+      expect(labels(), "anchor: the card's menu rendered").toEqual(["Move to…"]);
+      await closeMenus();
+      await renderBoard({ projects: column(), canPrioritize: false, sameStageReorderEnabled: true });
+      await openCardMenu(host, "mid");
+      expect(labels()).toEqual(["Move to…"]);
+      await closeMenus();
 
-      await renderBoard({ canPrioritize: false, sameStageReorderEnabled: true });
-      expect(arrows()).toHaveLength(0);
-
-      await renderBoard({ canPrioritize: true, sameStageReorderEnabled: true });
-      expect(up()?.getAttribute("aria-label")).toBe("Move source Street up");
-      expect(down()?.getAttribute("aria-label")).toBe("Move source Street down");
+      await renderBoard({ projects: column(), ...reorder });
+      await openCardMenu(host, "mid");
+      expect(labels()).toEqual(["Move to…", "Move up", "Move down"]);
     });
 
     it("report the direction pressed, for the Dashboard to resolve", async () => {
-      const props = await renderBoard({ canPrioritize: true, sameStageReorderEnabled: true });
-      const { act } = await import("react");
-      await act(async () => { up()!.click(); await Promise.resolve(); });
-      await act(async () => { down()!.click(); await Promise.resolve(); });
+      const props = await renderBoard({ projects: column(), ...reorder });
+      await openCardMenu(host, "mid");
+      await chooseMenuItem("Move up");
+      await openCardMenu(host, "mid");
+      await chooseMenuItem("Move down");
       const calls = (props.onBoardPosition as ReturnType<typeof vi.fn>).mock.calls;
-      expect(calls.map(([moved, direction]) => [moved.id, direction])).toEqual([["source", "up"], ["source", "down"]]);
+      expect(calls.map(([moved, direction]) => [moved.id, direction])).toEqual([["mid", "up"], ["mid", "down"]]);
     });
 
-    // Sol review: otherwise a keyboard user picks up one card, Tabs to another card's arrow or Move
-    // to…, and reorders the column out from under the live drag.
-    it("and Move to… are disabled for the whole of a drag, then come back", async () => {
-      await renderBoard({ canPrioritize: true, sameStageReorderEnabled: true });
-      const moveTo = () => host.querySelector<HTMLButtonElement>('[data-focus-key="move-to:source"]');
-      expect(up()!.disabled, "anchor: enabled before the drag").toBe(false);
-      await fireDnd("onDragStart", { active: { id: "other" } });
-      expect(up()!.disabled).toBe(true);
-      expect(down()!.disabled).toBe(true);
-      expect(moveTo()!.disabled).toBe(true);
-      await fireDnd("onDragCancel", { active: { id: "other" } });
-      expect(up()!.disabled).toBe(false);
-      expect(moveTo()!.disabled).toBe(false);
+    it("are disabled at the column's own edges", async () => {
+      await renderBoard({ projects: column(), ...reorder });
+      await openCardMenu(host, "top");
+      expect(isMenuItemDisabled(menuItem("Move up")!)).toBe(true);
+      expect(isMenuItemDisabled(menuItem("Move down")!)).toBe(false);
     });
 
-    // #306: per-card lock, same as the Move-to trigger above.
+    // Sol review: otherwise a keyboard user picks up one card, Tabs to another card's menu, and
+    // reorders the column out from under the live drag.
+    it("and the ⋯ trigger are disabled for the whole of a drag, then come back", async () => {
+      await renderBoard({ projects: column(), ...reorder });
+      expect(cardMenuTrigger(host, "mid")!.disabled, "anchor: enabled before the drag").toBe(false);
+      await fireDnd("onDragStart", { active: { id: "top" } });
+      expect(cardMenuTrigger(host, "mid")!.disabled).toBe(true);
+      await fireDnd("onDragCancel", { active: { id: "top" } });
+      expect(cardMenuTrigger(host, "mid")!.disabled).toBe(false);
+    });
+
+    // #306: per-card lock, same as the Move-to item above.
     it("stay enabled while ANOTHER card's priority write is pending (#306)", async () => {
-      await renderBoard({ canPrioritize: true, sameStageReorderEnabled: true, pendingOrdering: new Set(["other"]) });
-      expect(up(), "no arrows rendered").not.toBeNull();
-      expect(up()!.disabled).toBe(false);
-      expect(down()!.disabled).toBe(false);
+      await renderBoard({ projects: column(), ...reorder, pendingOrdering: new Set(["top"]) });
+      await openCardMenu(host, "mid");
+      expect(isMenuItemDisabled(menuItem("Move up")!)).toBe(false);
+      expect(isMenuItemDisabled(menuItem("Move down")!)).toBe(false);
     });
 
     it("are disabled while their OWN card's priority write is pending (#306)", async () => {
-      await renderBoard({ canPrioritize: true, sameStageReorderEnabled: true, pendingOrdering: new Set(["source"]) });
-      expect(up(), "no arrows rendered").not.toBeNull();
-      expect(up()!.disabled).toBe(true);
-      expect(down()!.disabled).toBe(true);
+      await renderBoard({ projects: column(), ...reorder, pendingOrdering: new Set(["mid"]) });
+      expect(cardMenuTrigger(host, "mid"), "no ⋯ trigger rendered").not.toBeNull();
+      expect(cardMenuTrigger(host, "mid")!.disabled).toBe(true);
     });
   });
 
@@ -1261,8 +1276,10 @@ describe("KanbanCard2 — Editor avatars, Deadline and RAW counts (#82)", () => 
       expect(accessibility!.screenReaderInstructions?.draggable).toContain("press Space");
       // #99 gave this Board a Move-to control, so the instructions now point to it. (Before that they
       // deliberately did not: promising a control that does not exist sends a user looking for it.)
-      expect(accessibility!.screenReaderInstructions?.draggable).toContain("Move to…");
-      expect(host.querySelector('[data-focus-key="move-to:source"]'), "the instructions promise a control that is not rendered").not.toBeNull();
+      // #432: Space picks up, Enter opens, and the rest lives in the card's Actions menu.
+      expect(accessibility!.screenReaderInstructions?.draggable).toContain("Press Enter to open it");
+      expect(accessibility!.screenReaderInstructions?.draggable).toContain("Actions menu");
+      expect(host.querySelector('[data-focus-key="card-menu:source"]'), "the instructions promise a menu that is not rendered").not.toBeNull();
     });
 
     it("suppresses the library's own drop and cancel announcements", async () => {
@@ -1434,16 +1451,14 @@ describe("KanbanCard2 — anchor and interactive-control siblings (#83)", () => 
     expect(retry!.closest("a")).toBeNull();
   });
 
-  it("keeps the Board's non-drag controls (arrows, Move to…) outside the project link", async () => {
+  it("keeps the Board's non-drag control (the ⋯ menu trigger) outside the project link", async () => {
     await renderBoard({ canPrioritize: true, sameStageReorderEnabled: true });
     const link = host.querySelector('[data-testid="board-card"]');
     expect(link, "no card link rendered — the assertion below would be vacuous").not.toBeNull();
-    const moveTo = host.querySelector('[data-focus-key="move-to:source"]');
-    expect(moveTo, "no Move-to control rendered — the assertion below would be vacuous").not.toBeNull();
-    expect(moveTo!.closest("a")).toBeNull();
-    const arrowUp = host.querySelector('[data-focus-key="arrow-up:source"]');
-    expect(arrowUp, "no arrow rendered — the assertion below would be vacuous").not.toBeNull();
-    expect(arrowUp!.closest("a")).toBeNull();
+    const menu = cardMenuTrigger(host, "source");
+    expect(menu, "no ⋯ trigger rendered — the assertion below would be vacuous").not.toBeNull();
+    expect(menu!.closest("a")).toBeNull();
+    expect(link!.contains(menu)).toBe(false);
   });
 });
 
@@ -1818,3 +1833,88 @@ describe("Board card on ReUI frame (#432)", () => {
     });
   });
 });
+
+// #432: the card's ⋯ menu and right-click menu are one descriptor list through two renderers, so the
+// two must always offer the same things, per capability.
+describe("KanbanCard2 — ⋯ and right-click menus (#432)", () => {
+  const column = () => [
+    project("top", "awaiting_raw", { boardRank: 0 }),
+    project("mid", "awaiting_raw", { boardRank: 1 }),
+    project("low", "awaiting_raw", { boardRank: 2 }),
+  ];
+  const wrap = (id: string) => [...host.querySelectorAll('[data-testid="board-card-wrap"]')].find((node) => node.querySelector(`[data-focus-key="card:${id}"]`));
+  const labels = () => menuItems().map((node) => node.textContent);
+
+  beforeEach(() => {
+    dnd.handlers.length = 0;
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    const { act } = await import("react");
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  const principals: Array<[string, Partial<ProjectKanbanBoardProps>, string[]]> = [
+    ["Admin (Stage moves and Board order)", { canMoveStages: true, canPrioritize: true, sameStageReorderEnabled: true }, ["Move to…", "Move up", "Move down"]],
+    ["Editor (Stage moves only)", { canMoveStages: true }, ["Move to…"]],
+    ["prioritize-only principal", { canMoveStages: false, canPrioritize: true, sameStageReorderEnabled: true }, ["Move to…", "Move up", "Move down"]],
+  ];
+
+  for (const [name, overrides, expected] of principals) {
+    it(`offers the same items from the ⋯ trigger and from a right-click: ${name}`, async () => {
+      await renderBoard({ projects: column(), role: "admin", ...overrides });
+      await openCardMenu(host, "mid");
+      expect(labels()).toEqual(expected);
+      await closeMenus();
+      await openContextMenu(wrap("mid")!);
+      expect(labels()).toEqual(expected);
+      await closeMenus();
+    });
+  }
+
+  it("renders no ⋯ and no right-click menu for a principal with nothing to offer", async () => {
+    await renderBoard({ projects: column(), canMoveStages: false });
+    expect(cardMenuTrigger(host, "mid")).toBeNull();
+    await act_(async () => { wrap("mid")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 })); });
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  it("gives an Archived card no ⋯, no context menu and no drag, but keeps the Archived mark and the link", async () => {
+    await renderBoard({ projects: [project("source", "awaiting_raw", { archivedAt: "2026-09-02T00:00:00.000Z" }), project("other", "raw_review")], canPrioritize: true, sameStageReorderEnabled: true });
+    expect(cardMenuTrigger(host, "source")).toBeNull();
+    expect(host.querySelector('[data-testid="board-card-archived"]')?.textContent).toBe("Archived");
+    expect(host.querySelector('[data-focus-key="card:source"]'), "the link still opens the project").not.toBeNull();
+    await act_(async () => { host.querySelector('[data-focus-key="card:source"]')!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 })); });
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  it("Move to… from the right-click menu opens the dialog anchored to the ⋯ trigger, and Cancel returns focus there", async () => {
+    const projects = column();
+    const authorizedBoardOrder = { awaiting_raw: ["top", "mid", "low"] };
+    await renderBoard({ projects: projects.map((item) => ({ ...item, authorizedBoardOrder })), role: "admin", canMoveStages: true });
+    await openContextMenu(wrap("mid")!);
+    await chooseMenuItem("Move to…");
+    for (let attempt = 0; attempt < 20 && !document.querySelector('[role="dialog"]'); attempt += 1) await act_(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(document.querySelector('[role="dialog"]'), "Move to… did not open").not.toBeNull();
+    // Step one has no Cancel (it is the Stage choice); Escape closes it from the panel.
+    await act_(async () => { document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
+    expect(document.activeElement).toBe(cardMenuTrigger(host, "mid"));
+  });
+
+  it("disables the right-click menu for the whole of a drag", async () => {
+    await renderBoard({ projects: column(), canMoveStages: true });
+    await fireDnd("onDragStart", { active: { id: "top" } });
+    await act_(async () => { wrap("mid")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 })); });
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    await fireDnd("onDragCancel", { active: { id: "top" } });
+  });
+});
+
+async function act_(callback: () => Promise<void> | void): Promise<void> {
+  const { act } = await import("react");
+  await act(async () => { await callback(); await Promise.resolve(); });
+}

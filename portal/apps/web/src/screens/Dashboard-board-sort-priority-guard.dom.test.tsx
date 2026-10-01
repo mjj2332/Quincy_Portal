@@ -43,6 +43,8 @@ vi.mock("../components/reui/dropdown-menu", () => {
     DropdownMenu: passthrough,
     DropdownMenuTrigger: ({ children }: { children?: React.ReactNode }) => <button type="button">{children}</button>,
     DropdownMenuContent: passthrough,
+    // The card's ⋯ menu (#432) imports this too; only the sort radio group is under test here.
+    DropdownMenuItem: () => null,
     DropdownMenuGroup: passthrough,
     DropdownMenuLabel: passthrough,
     DropdownMenuRadioItem: () => null,

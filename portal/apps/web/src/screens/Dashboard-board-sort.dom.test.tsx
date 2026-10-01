@@ -70,18 +70,25 @@ describe("Dashboard Kanban sort control", () => {
     vi.useRealTimers();
   });
 
-  it("hides only reorder arrows when shoot-date sorting is selected", async () => {
+  it("hides only the reorder items when shoot-date sorting is selected", async () => {
     await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
     await vi.waitFor(() => expect(document.querySelector('[data-testid="board-card"]')).not.toBeNull());
-    expect(document.querySelector('[aria-label="Move 1 Test Street up"]')).not.toBeNull();
-    expect(document.querySelector('[aria-label="Move 1 Test Street down"]')).not.toBeNull();
+    // Move up / Move down are items in the card's ⋯ menu now (#432), not buttons on the card.
+    const offered = async () => {
+      const trigger = document.querySelector<HTMLButtonElement>('[aria-label="Actions for 1 Test Street"]');
+      if (!trigger) return null;
+      await act(async () => { trigger.click(); await Promise.resolve(); await Promise.resolve(); });
+      const labels = [...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent);
+      await act(async () => { document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await vi.advanceTimersByTimeAsync(50); });
+      return labels;
+    };
+    expect(await offered()).toEqual(["Move to…", "Move up", "Move down"]);
     const priority = document.querySelector('[aria-label="Priority for 1 Test Street"]');
     expect(priority).not.toBeNull();
 
     await chooseSort("Shoot date, earliest first");
 
-    expect(document.querySelector('[aria-label="Move 1 Test Street up"]')).toBeNull();
-    expect(document.querySelector('[aria-label="Move 1 Test Street down"]')).toBeNull();
+    expect(await offered()).toEqual(["Move to…"]);
     expect(document.querySelector('[aria-label="Priority for 1 Test Street"]')).toBe(priority);
   });
 

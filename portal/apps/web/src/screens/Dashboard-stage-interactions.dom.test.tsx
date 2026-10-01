@@ -1,4 +1,5 @@
 // happy-dom does not prove PointerSensor / TouchSensor / KeyboardSensor activation, real collision geometry, autoscroll, scroll containers, link-click suppression, screen-reader delivery, browser focus timing, or active-drag DragOverlay rendering; those are QA-phase real-browser acceptance items.
+import { cardMenuTrigger, closeMenus, menuItems, openCardMenu, openMoveTo, openMoveToFrom, pressMenuItem } from "../components/board/board-menu-test-helpers";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -187,16 +188,15 @@ function isLocked(element: Element): boolean {
 function movementControls(host: ParentNode): HTMLElement[] {
   return [
     ...host.querySelectorAll<HTMLElement>('[data-testid="board-card"]'),
-    ...host.querySelectorAll<HTMLButtonElement>('[data-testid="board-move-to"]'),
-    ...host.querySelectorAll<HTMLButtonElement>('[data-focus-key^="arrow-up:"]'),
-    ...host.querySelectorAll<HTMLButtonElement>('[data-focus-key^="arrow-down:"]'),
+    // The ⋯ menu is the one non-drag control now (#432); Move to… and the arrows are its items.
+    ...host.querySelectorAll<HTMLButtonElement>('[data-testid="board-card-menu"]'),
   ];
 }
 
 async function moveToEnd(host: HTMLElement, street: string, targetLabel: string) {
-  const trigger = card(host, street).querySelector<HTMLButtonElement>('[data-focus-key^="move-to:"]');
-  if (!trigger) throw new Error(`Missing Move-to trigger for ${street}`);
-  await act(async () => { trigger.click(); await Promise.resolve(); });
+  const trigger = card(host, street).querySelector<HTMLButtonElement>('[data-testid="board-card-menu"]');
+  if (!trigger) throw new Error(`Missing ⋯ trigger for ${street}`);
+  await openMoveToFrom(trigger);
   const stage = [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((button) => button.textContent === targetLabel);
   if (!stage) throw new Error(`Missing target Stage ${targetLabel}`);
   await act(async () => { stage.click(); await Promise.resolve(); });
@@ -344,7 +344,7 @@ describe("Dashboard Stage interactions", () => {
 
   it("offers and submits End of a keyless empty Stage from Move-to", async () => {
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" role="admin" />); await Promise.resolve(); }); await flush();
-    await act(async () => { card(host, "Source Street").querySelector<HTMLButtonElement>('[data-focus-key="move-to:source"]')!.click(); await Promise.resolve(); });
+    await openMoveTo(host, "source");
     await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((button) => button.textContent === "Editing · autoHDR")!.click(); await Promise.resolve(); });
     expect([...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].map((button) => button.textContent)).toEqual(["End of Editing · autoHDR"]);
     await act(async () => { document.querySelector<HTMLButtonElement>('[role="option"]')!.click(); await Promise.resolve(); });
@@ -417,14 +417,14 @@ describe("Dashboard Stage interactions", () => {
       await Promise.resolve();
     });
     await flush();
-    await act(async () => { card(host, "target Street").querySelector<HTMLButtonElement>('[data-focus-key="arrow-up:target"]')!.click(); await Promise.resolve(); });
+    await pressMenuItem(host, "target", "Move up");
     await flush();
     expect(projectFetches).toBe(2);
     const movedCard = card(host, "target Street");
     const controls = movementControls(movedCard);
-    expect(controls).toHaveLength(4);
+    expect(controls).toHaveLength(2);
     expect(controls.every((element) => !isLocked(element))).toBe(true);
-    movedCard.querySelector<HTMLButtonElement>('[data-focus-key="arrow-down:target"]')!.click();
+    await pressMenuItem(movedCard, "target", "Move down");
     await flush();
     expect(apiPostMock).toHaveBeenCalledTimes(2);
     resolveRefresh(response());
@@ -453,7 +453,7 @@ describe("Dashboard Stage interactions", () => {
       return new Promise((resolve) => { resolveMove = resolve; });
     });
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); }); await flush();
-    card(host, "target Street").querySelector<HTMLButtonElement>('[data-focus-key="arrow-up:target"]')!.click();
+    await pressMenuItem(host, "target", "Move up");
     await flush();
     expect(apiPostMock).toHaveBeenCalledWith("/api/projects/target/board-position", {
       expected: { stageKey: "raw_review", boardRevision: 9 },
@@ -479,7 +479,7 @@ describe("Dashboard Stage interactions", () => {
     const serverSnapshot = queryClient.getQueryData<ProjectSummary[]>(key);
     const setQueryData = vi.spyOn(queryClient, "setQueryData");
     const publish = vi.spyOn(runtime, "publish");
-    await act(async () => { card(host, "target Street").querySelector<HTMLButtonElement>('[data-focus-key="arrow-up:target"]')!.click(); await Promise.resolve(); });
+    await pressMenuItem(host, "target", "Move up");
     await flush();
     expect(setQueryData).not.toHaveBeenCalled();
     expect(queryClient.getQueryData<ProjectSummary[]>(key)).toEqual(serverSnapshot);
@@ -502,7 +502,7 @@ describe("Dashboard Stage interactions", () => {
       : Promise.resolve({}));
     apiPostMock.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectMove = reject; }));
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); }); await flush();
-    await act(async () => { card(host, "target Street").querySelector<HTMLButtonElement>('[data-focus-key="arrow-up:target"]')!.click(); await Promise.resolve(); });
+    await pressMenuItem(host, "target", "Move up");
     await flush();
     const optimisticColumn = [...host.querySelectorAll<HTMLElement>('[data-testid="board-column"]')].find((column) => column.querySelector('[href="/projects/before"]'))!;
     expect([...optimisticColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["target Street", "before Street"]);
@@ -557,13 +557,14 @@ describe("Dashboard Stage interactions", () => {
     });
     apiPostMock.mockRejectedValueOnce(new ApiError("Board unavailable", 503, { code }));
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); }); await flush();
-    await act(async () => { card(host, "target Street").querySelector<HTMLButtonElement>('[data-focus-key="arrow-up:target"]')!.click(); await Promise.resolve(); });
+    await pressMenuItem(host, "target", "Move up");
     await flush();
     expect(host.textContent).toContain(copy);
     expect(host.querySelector('[aria-label="Priority for target Street"]')).not.toBeNull();
     expect(isLocked(card(host, "target Street").querySelector<HTMLElement>('[data-testid="board-card"]')!)).toBe(true);
-    expect(host.querySelector('[data-focus-key^="arrow-up:"]')).toBeNull();
-    const moveTo = host.querySelector<HTMLButtonElement>('[data-testid="board-move-to"]');
+    // Movement is off: the ⋯ trigger that fronts Move to… stays, disabled, and the Board-order nudges
+    // (the old arrows) are gone — the principal cannot reach either.
+    const moveTo = host.querySelector<HTMLButtonElement>('[data-testid="board-card-menu"]');
     expect(moveTo).not.toBeNull();
     expect(moveTo?.disabled).toBe(true);
     expect(apiPostMock).toHaveBeenCalledTimes(1);
@@ -690,8 +691,7 @@ describe("Dashboard Stage interactions", () => {
     expect([...proposedRawColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["Priority First", "Date First", "Board First"]);
     await dndCancel("sort-source");
 
-    const moveTo = card(host, "Sort Source").querySelector<HTMLButtonElement>('[data-focus-key="move-to:sort-source"]')!;
-    await act(async () => { moveTo.click(); await Promise.resolve(); });
+    await openMoveTo(host, "sort-source");
     await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((button) => button.textContent === "RAW review")!.click(); await Promise.resolve(); });
     expect([...document.querySelectorAll<HTMLButtonElement>('[role="dialog"][id^="board-move-to-"] [role="option"]')].map((button) => button.textContent)).toEqual([
       "End of RAW review",
@@ -792,9 +792,10 @@ describe("Dashboard Stage interactions", () => {
     expect(projectFetches).toBe(2);
     const movedCard = card(host, "Source Street");
     expect(isLocked(movedCard.querySelector<HTMLElement>('[data-testid="board-card"]')!)).toBe(true);
-    expect(movedCard.querySelector<HTMLButtonElement>('[aria-label="Move Source Street to…"]')?.disabled).toBe(true);
-    expect(movedCard.querySelector<HTMLButtonElement>('[data-focus-key="arrow-up:source"]')?.disabled).toBe(true);
-    movedCard.querySelector<HTMLButtonElement>('[data-focus-key="arrow-up:source"]')?.click();
+    // One ⋯ trigger now fronts Move to… and Move up/down, so one disabled assertion covers all three.
+    expect(cardMenuTrigger(movedCard, "source")?.disabled).toBe(true);
+    cardMenuTrigger(movedCard, "source")?.click();
+    expect(document.querySelector('[role="menu"]'), "a locked card's menu opened").toBeNull();
     expect(apiPostMock).toHaveBeenCalledTimes(1);
 
     const targetColumn = movedCard.closest<HTMLElement>('[data-testid="board-column"]')!;
@@ -809,7 +810,7 @@ describe("Dashboard Stage interactions", () => {
     const settledSourceColumn = card(host, "source-sibling-b Street").closest<HTMLElement>('[data-testid="board-column"]')!;
     expect([...settledSourceColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["source-sibling-b Street", "source-sibling-a Street"]);
     const controls = movementControls(host);
-    expect(controls).toHaveLength(20);
+    expect(controls).toHaveLength(10);
     expect(controls.every((element) => !isLocked(element))).toBe(true);
     expect(isLocked(card(host, "Source Street").querySelector<HTMLElement>('[data-testid="board-card"]')!)).toBe(false);
     runtime.dispose();
@@ -861,7 +862,7 @@ describe("Dashboard Stage interactions", () => {
     expect(isLocked(card(host, "Source Street").querySelector<HTMLElement>('[data-testid="board-card"]')!)).toBe(false);
     expect([...card(host, "source-sibling-b Street").closest<HTMLElement>('[data-testid="board-column"]')!.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["source-sibling-b Street", "source-sibling-a Street"]);
     const controls = movementControls(host);
-    expect(controls).toHaveLength(20);
+    expect(controls).toHaveLength(10);
     expect(controls.every((element) => !isLocked(element))).toBe(true);
     runtime.dispose();
     queryClient.clear();
@@ -888,7 +889,7 @@ describe("Dashboard Stage interactions", () => {
   it("uses the capability-only Board-position 403 response for the Priority-access copy", async () => {
     apiPostMock.mockRejectedValueOnce(new ApiError("Forbidden", 403, { error: "Forbidden", capability: "prioritizeProjects" }));
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); }); await flush();
-    await act(async () => { card(host, "target Street").querySelector<HTMLButtonElement>('[data-focus-key="arrow-up:target"]')!.click(); await Promise.resolve(); });
+    await pressMenuItem(host, "target", "Move up");
     await flush(); await flush();
     expect(host.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toContain("Manual Board reorder requires Priority access.");
   });
@@ -899,7 +900,7 @@ describe("Dashboard Stage interactions", () => {
     authState.moved = true;
     await moveToEnd(host, "Source Street", "RAW review"); await flush(); await flush();
     expect(apiPostMock).toHaveBeenCalledWith("/api/projects/source/stage", expect.objectContaining({ targetStageKey: "raw_review", placement: { kind: "append" } }));
-    expect(document.activeElement?.getAttribute("data-focus-key")).toBe("move-to:source");
+    expect(document.activeElement?.getAttribute("data-focus-key")).toBe("card-menu:source");
     expect(scrollTo).toHaveBeenCalledWith(window.scrollX, window.scrollY);
     expect(host.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toContain("Moved Source Street to RAW review, position");
   });
@@ -921,8 +922,7 @@ describe("Dashboard Stage interactions", () => {
       await Promise.resolve();
     });
     await flush();
-    const trigger = card(host, "Source Street").querySelector<HTMLButtonElement>('[data-focus-key="move-to:source"]')!;
-    await act(async () => { trigger.click(); await Promise.resolve(); });
+    await openMoveTo(host, "source");
     await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((button) => button.textContent === "RAW review")!.click(); await Promise.resolve(); });
     await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((button) => button.textContent?.includes("Before target Street"))!.click(); await Promise.resolve(); });
     runtime.markProjectRemoved("target");
@@ -933,7 +933,7 @@ describe("Dashboard Stage interactions", () => {
     expect(apiPostMock).not.toHaveBeenCalled();
     expect(host.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toContain("That position changed");
     expect(projectFetches).toBe(2);
-    expect(document.activeElement?.getAttribute("data-focus-key")).toBe("move-to:source");
+    expect(document.activeElement?.getAttribute("data-focus-key")).toBe("card-menu:source");
     runtime.dispose();
     queryClient.clear();
   });
@@ -1148,8 +1148,10 @@ describe("Dashboard Stage interactions", () => {
     expect([...editingColumn!.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["External Second Street", "External First Street"]);
     expect(editingColumn!.textContent).toContain("Editing");
     expect(host.querySelector('[aria-label="Priority for External First Street"]')).toBeNull();
-    expect(host.querySelector('[data-focus-key^="arrow-up:"]')).toBeNull();
-    expect(host.querySelector('[data-focus-key^="arrow-down:"]')).toBeNull();
+    // The Board-order nudges are Admin-only: an external editor's menu, if it has one, carries Move to… alone.
+    await openCardMenu(host, firstId);
+    expect(menuItems().map((item) => item.textContent)).toEqual(["Move to…"]);
+    await closeMenus();
     expect([...host.querySelectorAll<HTMLElement>('[data-testid="board-column"]')].some((column) => /Priority|Shoot date/.test(column.textContent ?? ""))).toBe(false);
 
     await dndStart(firstId);

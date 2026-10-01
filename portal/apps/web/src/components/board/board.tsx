@@ -21,7 +21,9 @@ import type { ProjectStageKey } from "../../lib/stages";
 import { usePrefersReducedMotion } from "../../lib/use-media-query";
 import { ScrollArea, ScrollBar } from "../reui/scroll-area";
 import { KanbanCard2 } from "./card";
-import { MoveToControl } from "./move-to-control";
+import { moveToStageOptions } from "./move-to-control";
+import { cardActions } from "./card-actions";
+import type { CardMenuConfig } from "./card-menu";
 
 /**
  * Keyboard drag keys (#432): Space picks a card up, so Enter is free to open it (the card's link is
@@ -34,8 +36,6 @@ const boardKeyboardCodes = { start: ["Space"], cancel: ["Escape"], end: ["Space"
 function semanticStageKey(value: ProjectStageKey): StageKey {
   return value === "editing" ? "editing_autohdr" : value;
 }
-
-const ARROW_CLASSES = "flex-none w-9 max-[641px]:w-11 pointer-coarse:w-11 min-h-[30px] max-[641px]:min-h-11 pointer-coarse:min-h-11 p-0 border-0 border-r border-r-border bg-card text-foreground-secondary text-sm leading-none cursor-pointer hover:not-disabled:bg-[var(--paper-100)] hover:not-disabled:text-foreground disabled:bg-surface-sunken disabled:cursor-not-allowed focus-visible:!outline-2 focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-[-2px]";
 
 /**
  * Where a dropped card will land (#99). Absolutely positioned inside the gap and ZERO-layout, and
@@ -161,6 +161,7 @@ export function ProjectKanbanBoard2({
   activeStages,
   canMoveStages,
   canPrioritize = false,
+  menuCapable = false,
   sameStageReorderEnabled = false,
   boardMutationEnabled,
   movementDisabled = false,
@@ -365,7 +366,59 @@ export function ProjectKanbanBoard2({
   const boardModel = useMemo(() => ({ projects }), [projects]);
   // #428: an archived Project's card is read-only — never dragged, nudged or moved from its menu.
   const archivedIds = new Set(projects.filter((project) => project.archivedAt).map((project) => project.id));
+  // Whether Move to… has anything to offer each card. Depends on the projects and the principal, never
+  // on a drag or its hover, so it is not recomputed while one is live.
+  const moveToAvailable = useMemo(() => {
+    const available = new Map<string, boolean>();
+    if (!(canMoveStages || canReorder)) return available;
+    for (const item of projects) {
+      if (item.archivedAt) continue;
+      // Fail closed: without a role, same-Stage positions (Admin-only) are withheld.
+      available.set(item.id, moveToStageOptions(item, boardModel, activeStages, role ?? "editor", { canMoveStages, canReorder, sort: effectiveKanbanSort }).length > 0);
+    }
+    return available;
+  }, [activeStages, boardModel, canMoveStages, canReorder, effectiveKanbanSort, projects, role]);
   const controlsDisabled = (projectId: string) => dragDisabled || dragActive || archivedIds.has(projectId) || pendingMoves.has(projectId) || orderingPending(projectId);
+
+  /**
+   * The card's ⋯ and right-click menus (#432): one descriptor list (`cardActions`), so the two menus
+   * cannot drift. Move up / Move down are the Admin Board-order nudges that were the card's arrow
+   * buttons — through the Dashboard's `adjacentBoardGap` and `/board-position`, and, like the Move to…
+   * dialog, disabled under search, a pending write or a live drag. An Archived card has no menu.
+   */
+  const menuFor = (project: ProjectSummary, column: readonly ProjectSummary[], index: number): CardMenuConfig | undefined => {
+    if (project.archivedAt) return undefined;
+    const disabled = controlsDisabled(project.id);
+    const actions = cardActions({
+      // `menuCapable`: the principal has a movement capability that is switched off RIGHT NOW (a search,
+      // a refresh settling, a 503). The ⋯ stays, with Move to… disabled — as the inline trigger did —
+      // instead of vanishing and reappearing.
+      canMoveTo: canMoveStages || menuCapable,
+      canReorder,
+      disabled,
+      hasMoveToOptions: moveToAvailable.get(project.id) ?? false,
+      isFirstInColumn: index === 0,
+      isLastInColumn: index === column.length - 1,
+    });
+    if (actions.length === 0) return undefined;
+    return {
+      actions,
+      disabled,
+      dragActive,
+      onReorder: (direction) => onBoardPosition(project, direction),
+      moveTo: {
+        model: boardModel,
+        activeStages,
+        // Fail closed: without a role, same-Stage positions (Admin-only) are withheld.
+        role: role ?? "editor",
+        sort: effectiveKanbanSort,
+        canMoveStages,
+        canReorder,
+        onMoveStage,
+        onProposalChange: handleMoveToProposal,
+      },
+    };
+  };
 
   /**
    * Only for the paths that do NOT hand off to the Dashboard. Never on the valid path: the
@@ -559,7 +612,7 @@ export function ProjectKanbanBoard2({
       onDragCancel: () => undefined,
     },
     screenReaderInstructions: {
-      draggable: "To pick up a project, focus its Move project handle and press Space. Use the arrow keys to move between Stages and positions. Press Space again to drop, or Escape to cancel. To choose a Stage and position without dragging, use Move to… on the card.",
+      draggable: "To pick up a project, focus its card and press Space. Use the arrow keys to move it. Press Space to drop, Escape to cancel. Press Enter to open it. For more actions, use the card's Actions menu.",
     },
   }), [activeStages, columns, hoverTarget, projects, terminal]);
 
@@ -637,7 +690,7 @@ export function ProjectKanbanBoard2({
                       <ScrollArea className="min-h-0 flex-1">
                         <KanbanColumnContent value={stage.key} className="relative flex flex-col gap-[var(--space-3)] p-[var(--space-3)] min-h-[120px]">
                           {stageProjects.length === 0 && <div className="py-[var(--space-5)] [font-family:var(--font-display)] text-lg text-center text-foreground-secondary">—</div>}
-                          {stageProjects.map((project) => (
+                          {stageProjects.map((project, index) => (
                             // Same `opacity-50` defect as the column above, but now on every OTHER card too
                             // once the pending-write lock (above) disables movement board-wide during a
                             // single write. `data-[disabled=true]:opacity-100` is a variant selector, higher
@@ -658,30 +711,7 @@ export function ProjectKanbanBoard2({
                                   onPriorityChange={starClickGuard.handlePriorityChange}
                                   now={now}
                                   handleRef={registerHandle}
-                                  controls={<div className="flex items-stretch border-t border-t-border">
-                                    {canReorder && <>
-                                      {/* Adjacent one-slot nudges (#99), through the Dashboard's `adjacentBoardGap` and
-                                          `/board-position`. Deliberately NOT disabled at a column's edge: the Dashboard
-                                          restores focus to `arrow-up:<id>` after the move settles, and a disabled target
-                                          would drop focus on the floor. An edge press is a silent no-op there instead.
-                                          44px coarse-pointer targets, as on the handle. */}
-                                      <button type="button" className={ARROW_CLASSES} data-focus-key={`arrow-up:${project.id}`} aria-label={`Move ${project.street} up`} disabled={controlsDisabled(project.id)} onClick={() => onBoardPosition(project, "up")}><span aria-hidden="true">↑</span></button>
-                                      <button type="button" className={ARROW_CLASSES} data-focus-key={`arrow-down:${project.id}`} aria-label={`Move ${project.street} down`} disabled={controlsDisabled(project.id)} onClick={() => onBoardPosition(project, "down")}><span aria-hidden="true">↓</span></button>
-                                    </>}
-                                    <MoveToControl
-                                      project={project}
-                                      model={boardModel}
-                                      activeStages={activeStages}
-                                      // Fail closed: without a role, same-Stage positions (Admin-only) are withheld.
-                                      role={role ?? "editor"}
-                                      sort={effectiveKanbanSort}
-                                      canMoveStages={canMoveStages}
-                                      canReorder={canReorder}
-                                      disabled={controlsDisabled(project.id)}
-                                      onMoveStage={onMoveStage}
-                                      onProposalChange={handleMoveToProposal}
-                                    />
-                                  </div>}
+                                  menu={menuFor(project, stageProjects, index)}
                                 />
                               </div>
                             </KanbanItem>

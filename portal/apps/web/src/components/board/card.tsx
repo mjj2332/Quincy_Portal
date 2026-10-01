@@ -1,6 +1,7 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState } from "react";
 import { Badge } from "../reui/badge";
 import { Button } from "../reui/button";
+import { ContextMenu, ContextMenuTrigger } from "../reui/context-menu";
 import { Frame, FramePanel } from "../reui/frame";
 import { AvatarStack } from "../quincy/AvatarStack";
 import { InternalLink } from "../InternalLink";
@@ -11,6 +12,9 @@ import { deadlineLabel } from "../../lib/deadline-label";
 import { isOverdueProject } from "../../lib/dashboard-summary";
 import { formatDashboardDate } from "../../screens/dashboard-helpers";
 import type { ProjectSummary } from "../../lib/kanban-interaction";
+import { CardActionsMenu, CardContextMenuContent, type CardMenuBinding, type CardMenuConfig } from "./card-menu";
+import type { CardActionId } from "./card-actions";
+import { MoveToDialog } from "./move-to-control";
 
 /**
  * The Board card (#432), composed on ReUI `frame` the way `solution-crm-7/board-card.tsx` is: a
@@ -64,10 +68,10 @@ export type KanbanCard2Props = {
    */
   handleRef?: (projectId: string, element: HTMLAnchorElement | null) => void;
   /**
-   * The Board's non-drag controls. A slot rather than controls the card builds, so the card stays
-   * presentation-only. Never rendered in the drag overlay, which must carry no interactive element (#98).
+   * The ⋯ menu and the right-click menu (#432), built from one descriptor list. Never rendered in the
+   * drag overlay, which must carry no interactive element (#98), nor on an Archived card.
    */
-  controls?: ReactNode;
+  menu?: CardMenuConfig;
 };
 
 /**
@@ -84,7 +88,7 @@ const LINK_ATTRIBUTE_OVERRIDES = {
   "aria-disabled": undefined,
 } as const;
 
-export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisabled = false, canPrioritize = false, priorityPending = false, onPriorityChange, now, handleRef, controls }: KanbanCard2Props) {
+export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisabled = false, canPrioritize = false, priorityPending = false, onPriorityChange, now, handleRef, menu }: KanbanCard2Props) {
   const [coverFailed, setCoverFailed] = useState(false);
   const [coverRetry, setCoverRetry] = useState(0);
   // Delivered and archived Projects are never overdue (the Portal's rule, `isOverdueProject`), so a
@@ -93,6 +97,32 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
   const projectDeadlineLabel = deadlineLabel(project);
   const archived = Boolean(project.archivedAt);
   const href = projectHref ?? `/projects/${encodeURIComponent(project.id)}`;
+  const menuConfig = !archived && menu && menu.actions.length > 0 ? menu : null;
+  // Move to… hand-off: the item only records the intent; the dialog opens once the menu has finished
+  // closing, so the menu's own focus return to the ⋯ trigger cannot land on top of it.
+  const [trigger, setTrigger] = useState<HTMLButtonElement | null>(null);
+  const [moveToOpen, setMoveToOpen] = useState(false);
+  const pendingMoveTo = useRef(false);
+  const binding: CardMenuBinding | null = menuConfig && {
+    actions: menuConfig.actions,
+    disabled: menuConfig.disabled,
+    triggerRef: setTrigger,
+    // Withheld while Move to… is pending: the dialog takes focus, and gives it back to the ⋯ trigger
+    // itself when it closes, so the menu's own return must not land on top of it.
+    returnFocus: () => !pendingMoveTo.current,
+    onSelect: (id: CardActionId) => {
+      if (id === "move-to") pendingMoveTo.current = true;
+      else menuConfig.onReorder(id === "move-up" ? "up" : "down");
+    },
+    onClosed: () => {
+      // `pendingMoveTo` stays set until the dialog closes: the menu's focus-return decision
+      // (`returnFocus`) runs as it UNMOUNTS, which is after this callback.
+      if (pendingMoveTo.current) setMoveToOpen(true);
+    },
+  };
+  // Base UI opens its context menu on a 500ms touch long-press, which would open over a live drag
+  // (the card's own long-press is the drag, 250ms). Touch gets the ⋯ menu instead.
+  const lastTouchAt = useRef(0);
 
   const deadline = projectDeadlineLabel && (
     <time
@@ -137,53 +167,73 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
   }
 
   return (
-    <Frame variant="ghost" className="relative select-none p-0" data-testid="board-card-wrap">
-      <FramePanel className="flex flex-col p-0 shadow-xs transition-[border-color,box-shadow] hover:shadow-sm">
-        {cover}
-        <div className="flex flex-col gap-[var(--space-1)] p-[var(--space-3)]">
-          {/* #428: the Archived filter's Include mode draws archived Projects beside active ones. The card is
-              immovable (the Board gates it, `board.tsx`); the link still opens it. */}
-          {archived && <Badge variant="secondary" size="sm" className="self-start" data-testid="board-card-archived">Archived</Badge>}
-          <KanbanItemHandle
-            // The street is the card's accessible name and the stretched hit area (`after:`), whose own
-            // focus ring is drawn on the pseudo-element so it frames the whole card, not just the text.
-            className="serif text-base tracking-tight leading-snug [text-wrap:pretty] no-underline text-inherit [touch-action:manipulation] after:absolute after:inset-0 focus-visible:!outline-none focus-visible:after:outline-2 focus-visible:after:outline-[var(--ink-900)] focus-visible:after:-outline-offset-2"
-            cursor={!dragDisabled}
-            {...LINK_ATTRIBUTE_OVERRIDES}
-            render={<InternalLink ref={(element: HTMLAnchorElement | null) => handleRef?.(project.id, element)} to={href} data-testid="board-card" data-focus-key={`card:${project.id}`} />}
-          >
-            <span data-testid="board-card-address">{project.street}</span>
-          </KanbanItemHandle>
-          {shoot}
-          {deadline}
-          <div className="mt-[var(--space-2)] flex items-center justify-end" data-testid="board-card-meta">
-            {/* #82: `editors` is already Editor-only, active-only and server-ordered (#79) — no client-side filter or sort. */}
-            <AvatarStack people={project.editors ?? []} personNoun="Editor" emptyLabel="No Editor assigned" />
+    // The context-menu trigger is an ANCESTOR of the drag handle, never inside it: Base UI stops
+    // touchstart propagation on its trigger, which would starve a handle nested beneath it.
+    <ContextMenu disabled={binding === null} onOpenChangeComplete={(open) => { if (!open) binding?.onClosed(); }}>
+      <ContextMenuTrigger
+        render={<Frame variant="ghost" className="relative select-none p-0" data-testid="board-card-wrap" />}
+        onTouchStart={(event) => {
+          lastTouchAt.current = Date.now();
+          event.preventBaseUIHandler();
+        }}
+        onContextMenu={(event) => {
+          const nativeEvent = event.nativeEvent as MouseEvent & { pointerType?: string };
+          const fromTouch = nativeEvent.pointerType === "touch" || Date.now() - lastTouchAt.current < 1000;
+          if (fromTouch || menuConfig?.dragActive) {
+            event.preventBaseUIHandler();
+            event.preventDefault();
+          }
+        }}
+      >
+        <FramePanel className="flex flex-col p-0 shadow-xs transition-[border-color,box-shadow] hover:shadow-sm">
+          {cover}
+          {binding && <CardActionsMenu projectId={project.id} street={project.street} menu={binding} />}
+          <div className="flex flex-col gap-[var(--space-1)] p-[var(--space-3)]">
+            {/* #428: the Archived filter's Include mode draws archived Projects beside active ones. The card is
+                immovable (the Board gates it, `board.tsx`); the link still opens it. */}
+            {archived && <Badge variant="secondary" size="sm" className="self-start" data-testid="board-card-archived">Archived</Badge>}
+            <KanbanItemHandle
+              // The street is the card's accessible name and the stretched hit area (`after:`), whose own
+              // focus ring is drawn on the pseudo-element so it frames the whole card, not just the text.
+              className="serif text-base tracking-tight leading-snug [text-wrap:pretty] no-underline text-inherit [touch-action:manipulation] after:absolute after:inset-0 focus-visible:!outline-none focus-visible:after:outline-2 focus-visible:after:outline-[var(--ink-900)] focus-visible:after:-outline-offset-2"
+              cursor={!dragDisabled}
+              {...LINK_ATTRIBUTE_OVERRIDES}
+              render={<InternalLink ref={(element: HTMLAnchorElement | null) => handleRef?.(project.id, element)} to={href} data-testid="board-card" data-focus-key={`card:${project.id}`} />}
+            >
+              <span data-testid="board-card-address">{project.street}</span>
+            </KanbanItemHandle>
+            {shoot}
+            {deadline}
+            <div className="mt-[var(--space-2)] flex items-center justify-end" data-testid="board-card-meta">
+              {/* #82: `editors` is already Editor-only, active-only and server-ordered (#79) — no client-side filter or sort. */}
+              <AvatarStack people={project.editors ?? []} personNoun="Editor" emptyLabel="No Editor assigned" />
+            </div>
           </div>
-        </div>
-        {/* The star row is a sibling *outside* the link (#81): interactive controls cannot be <a>
-            descendants — invalid HTML, and a click would navigate. Raised above the link's overlay. */}
-        <div className="relative z-[1]" data-testid="board-card-footer-slot">
-          <PriorityStars
-            priority={project.priority}
-            street={project.street}
-            canPrioritize={canPrioritize}
-            pending={priorityPending}
-            onPriorityChange={(next) => onPriorityChange?.(project, next)}
-          />
-        </div>
-        {controls && <div className="relative z-[1]">{controls}</div>}
-        {coverFailed && (
-          <Button
-            type="button"
-            variant="secondary"
-            className="relative z-[1] mx-[var(--space-3)] mb-[var(--space-3)]"
-            onClick={(event) => { event.preventDefault(); event.stopPropagation(); setCoverFailed(false); setCoverRetry((current) => current + 1); }}
-          >
-            Retry cover image
-          </Button>
-        )}
-      </FramePanel>
-    </Frame>
+          {/* The star row is a sibling *outside* the link (#81): interactive controls cannot be <a>
+              descendants — invalid HTML, and a click would navigate. Raised above the link's overlay. */}
+          <div className="relative z-[1]" data-testid="board-card-footer-slot">
+            <PriorityStars
+              priority={project.priority}
+              street={project.street}
+              canPrioritize={canPrioritize}
+              pending={priorityPending}
+              onPriorityChange={(next) => onPriorityChange?.(project, next)}
+            />
+          </div>
+          {coverFailed && (
+            <Button
+              type="button"
+              variant="secondary"
+              className="relative z-[1] mx-[var(--space-3)] mb-[var(--space-3)]"
+              onClick={(event) => { event.preventDefault(); event.stopPropagation(); setCoverFailed(false); setCoverRetry((current) => current + 1); }}
+            >
+              Retry cover image
+            </Button>
+          )}
+        </FramePanel>
+      </ContextMenuTrigger>
+      {binding && <CardContextMenuContent menu={binding} />}
+      {menuConfig && <MoveToDialog project={project} open={moveToOpen} anchor={trigger} onClose={() => { pendingMoveTo.current = false; setMoveToOpen(false); }} {...menuConfig.moveTo} />}
+    </ContextMenu>
   );
 }

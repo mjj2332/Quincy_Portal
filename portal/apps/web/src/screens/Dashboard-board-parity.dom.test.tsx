@@ -9,6 +9,7 @@
 // until this file existed. Routing is read-only history (`lib/staff-history.ts`) —
 // `useNavigate`/`<Link>` do nothing — so, like every other Dashboard DOM test, this sets the URL
 // directly with `window.history.replaceState` before render and restores it afterward.
+import { openMoveTo, pressMenuItem } from "../components/board/board-menu-test-helpers";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -266,9 +267,9 @@ describe("Dashboard Board seam (#98)", () => {
       expect(body).not.toHaveProperty("confirmation");
     });
 
-    // The arrows reach the same `/board-position` orchestrator as a drag, one slot at a time, and the
-    // focus comes back to the arrow that was pressed.
-    it("sends an up-arrow press to /board-position one slot up, and refocuses that arrow", async () => {
+    // The menu's Move up / Move down reach the same `/board-position` orchestrator as a drag, one slot at a time, and the
+    // focus comes back to the ⋯ trigger that opened the menu.
+    it("sends a Move up pick to /board-position one slot up, and refocuses the ⋯ trigger", async () => {
       apiGetMock.mockReset();
       apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
         projects: [
@@ -284,16 +285,16 @@ describe("Dashboard Board seam (#98)", () => {
         board: { sourceStageKey: "awaiting_raw", targetStageKey: "awaiting_raw", orderedVisibleProjectIds: ["kb2-a", "kb2-c", "kb2-b"] },
       });
       await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
-      await vi.waitFor(() => expect(document.querySelector('[data-focus-key="arrow-up:kb2-c"]'), "no up arrow rendered — nothing below is proved").not.toBeNull());
+      await vi.waitFor(() => expect(document.querySelector('[data-focus-key="card-menu:kb2-c"]'), "no ⋯ menu rendered — nothing below is proved").not.toBeNull());
 
-      await act(async () => { document.querySelector<HTMLButtonElement>('[data-focus-key="arrow-up:kb2-c"]')!.click(); await Promise.resolve(); });
+      await pressMenuItem(document, "kb2-c", "Move up");
       await vi.waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1));
 
       const [path, body] = apiPostMock.mock.calls[0]!;
       expect(path).toBe("/api/projects/kb2-c/board-position");
       expect(body).toHaveProperty("placement", { kind: "between", before: { projectId: "kb2-a", boardRevision: 2 }, after: { projectId: "kb2-b", boardRevision: 4 } });
       expect(body).not.toHaveProperty("confirmation");
-      await vi.waitFor(() => expect(document.activeElement?.getAttribute("data-focus-key")).toBe("arrow-up:kb2-c"));
+      await vi.waitFor(() => expect(document.activeElement?.getAttribute("data-focus-key")).toBe("card-menu:kb2-c"));
     });
   });
 
@@ -317,7 +318,7 @@ describe("Dashboard Board seam (#98)", () => {
     const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent?.startsWith(text));
     const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
     async function chooseBeforeTarget() {
-      await click(document.querySelector<HTMLButtonElement>('[data-focus-key="move-to:kb2-source"]'), "Move-to trigger");
+      await openMoveTo(document, "kb2-source");
       await click(radio("RAW review"), "RAW review Stage");
       await click(option("Before kb2-target Street"), "Before kb2-target position");
     }
@@ -333,7 +334,7 @@ describe("Dashboard Board seam (#98)", () => {
           board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["kb2-source", "kb2-target"] },
         });
       await act(async () => { root!.render(<><Dashboard currentUserId="admin-1" /><ConfirmModalHost /></>); await Promise.resolve(); await Promise.resolve(); });
-      await vi.waitFor(() => expect(document.querySelector('[data-focus-key="move-to:kb2-source"]')).not.toBeNull());
+      await vi.waitFor(() => expect(document.querySelector('[data-focus-key="card-menu:kb2-source"]')).not.toBeNull());
 
       await chooseBeforeTarget();
       await click(document.querySelector('[data-testid="board-move-to-submit"]'), "submit");
@@ -349,7 +350,7 @@ describe("Dashboard Board seam (#98)", () => {
       expect(apiPostMock.mock.calls[1]![1]).toEqual(expect.objectContaining({ placement: exact, confirmation: { reasons: ["backward"] } }));
 
       await flush(); await flush();
-      await vi.waitFor(() => expect(document.activeElement?.getAttribute("data-focus-key")).toBe("move-to:kb2-source"));
+      await vi.waitFor(() => expect(document.activeElement?.getAttribute("data-focus-key")).toBe("card-menu:kb2-source"));
     });
 
     // Ported from the default-view scenario in `Dashboard-stage-interactions.dom.test.tsx`: the chosen
@@ -369,7 +370,7 @@ describe("Dashboard Board seam (#98)", () => {
         root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><Dashboard currentUserId="admin-1" /></QueryClientProvider></ProjectQueryRuntimeProvider>);
         await Promise.resolve();
       });
-      await vi.waitFor(() => expect(document.querySelector('[data-focus-key="move-to:kb2-source"]')).not.toBeNull());
+      await vi.waitFor(() => expect(document.querySelector('[data-focus-key="card-menu:kb2-source"]')).not.toBeNull());
 
       await chooseBeforeTarget();
       runtime.markProjectRemoved("kb2-target");
@@ -380,7 +381,7 @@ describe("Dashboard Board seam (#98)", () => {
       expect(apiPostMock).not.toHaveBeenCalled();
       expect(document.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toContain("That position changed");
       expect(projectFetches).toBe(2);
-      expect(document.activeElement?.getAttribute("data-focus-key")).toBe("move-to:kb2-source");
+      expect(document.activeElement?.getAttribute("data-focus-key")).toBe("card-menu:kb2-source");
       runtime.dispose();
       queryClient.clear();
     });

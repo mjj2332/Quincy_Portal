@@ -228,19 +228,23 @@ describe("Dashboard search results and Kanban movement gating (#217 fix round 1,
     expect(apiPostMock).not.toHaveBeenCalled();
   });
 
-  it("item 2: the keyboard reorder arrows do not render while searching", async () => {
+  it("item 2: no Move up / Move down item can be reached while searching", async () => {
     window.history.replaceState(null, "", "/?view=board&q=smith");
     apiGetMock.mockImplementation((path) => (path.startsWith("/api/projects") ? Promise.resolve(fullBoard) : Promise.resolve({})));
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" role="admin" />); await Promise.resolve(); }); await flush();
-    expect(host.querySelector('[data-focus-key^="arrow-up:"]')).toBeNull();
-    expect(host.querySelector('[data-focus-key^="arrow-down:"]')).toBeNull();
+    // The nudges are items of the card's ⋯ menu (#432); a search disables the trigger itself.
+    const triggers = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="board-card-menu"]')];
+    expect(triggers.length, "anchor: the cards' menus rendered").toBeGreaterThan(0);
+    for (const trigger of triggers) expect(trigger.disabled).toBe(true);
+    await act(async () => { triggers[0]!.click(); await Promise.resolve(); });
+    expect(document.querySelector('[role="menuitem"]')).toBeNull();
   });
 
-  it("item 2: the Move-to trigger is disabled while searching", async () => {
+  it("item 2: the ⋯ menu that carries Move to… is disabled while searching", async () => {
     window.history.replaceState(null, "", "/?view=board&q=smith");
     apiGetMock.mockImplementation((path) => (path.startsWith("/api/projects") ? Promise.resolve(fullBoard) : Promise.resolve({})));
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" role="admin" />); await Promise.resolve(); }); await flush();
-    const triggers = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="board-move-to"]')];
+    const triggers = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="board-card-menu"]')];
     expect(triggers.length).toBeGreaterThan(0);
     for (const trigger of triggers) expect(trigger.disabled).toBe(true);
     await act(async () => { triggers[0]!.click(); await Promise.resolve(); });

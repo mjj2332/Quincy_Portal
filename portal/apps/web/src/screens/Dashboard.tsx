@@ -128,7 +128,8 @@ const zeroRuntimeSnapshot = () => 0;
 
 function focusKeyForControl(control: FocusDescriptor["control"], projectId: string): string {
   if (control === "handle") return `card:${projectId}`;
-  if (control === "move-to") return `move-to:${projectId}`;
+  // The arrows and Move to… are items in the card's ⋯ menu now (#432); focus goes back to its trigger.
+  if (control === "move-to" || control === "arrow-up" || control === "arrow-down") return `card-menu:${projectId}`;
   if (control === "rail-stage") return `rail-stage:${projectId}`;
   return `${control}:${projectId}`;
 }
@@ -1604,6 +1605,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
             role={role}
             boardMutationEnabled={boardMutationEnabled}
             movementDisabled={movementSettlePending || !boardMutationEnabled || boardNarrowed}
+            menuCapable={canMoveStagesCapability || canPrioritize}
             sameStageReorderEnabled={boardMutationEnabled && canPrioritize && hasAuthorizedBoardMap && effectiveBoardSort === "board" && !boardNarrowed}
             effectiveKanbanSort={effectiveBoardSort}
             pendingMoves={pendingMoves}

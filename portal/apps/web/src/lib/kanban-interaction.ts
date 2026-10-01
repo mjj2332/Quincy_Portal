@@ -122,6 +122,12 @@ export type ProjectKanbanBoardProps = {
   role?: Role;
   boardMutationEnabled: boolean;
   movementDisabled?: boolean;
+  /**
+   * The principal holds a movement capability (Stage moves or Priority), whether or not movement is
+   * switched on right now. Keeps the card's ⋯ menu visible but disabled through a search, a settling
+   * refresh or a 503, instead of letting it vanish (#432).
+   */
+  menuCapable?: boolean;
   sameStageReorderEnabled?: boolean;
   effectiveKanbanSort: KanbanSortMode;
   pendingMoves: ReadonlySet<string>;
