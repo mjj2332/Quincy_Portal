@@ -10,12 +10,16 @@ import {
 } from "@quincy/shared";
 
 /**
- * The Board rendered at `view=kanban` (and the Dashboard's default) is `ProjectKanbanBoard2`
+ * The Board rendered at `view=board` (and the Dashboard's default) is `ProjectKanbanBoard2`
  * (`components/kanban2/board.tsx`), ReUI `kanban-board-3`, cut over in #83. The original Board it
  * replaced, and the `kanban2` comparison value this type and the route grammar once carried for
  * #80, are both retired — see `docs/lessons.md` for the cutover.
+ *
+ * #427 renamed the views to the tabs' own names: list -> table, kanban -> board, gantt ->
+ * timeline. The old spellings survive only as READ-side input (a stored preference, an old URL):
+ * `normalizeDashboardView` below reads them as their new equivalents.
  */
-export type DashboardView = "kanban" | "list" | "gantt" | "calendar";
+export type DashboardView = "table" | "board" | "calendar" | "timeline";
 export type KanbanSortMode = "board" | "priority" | "shootDate-asc" | "shootDate-desc";
 
 export const DASHBOARD_CALENDAR_SUBVIEW_KEY = "quincy:dashboard:calendar:subview";
@@ -52,7 +56,26 @@ function daysInMonth(year: number, month: number): number {
 }
 
 export function normalizeDashboardView(value: string | null): DashboardView {
-  return value === "list" || value === "kanban" || value === "gantt" || value === "calendar" ? value : "kanban";
+  switch (value) {
+    case "table": case "board": case "calendar": case "timeline": return value;
+    case "list": return "table";
+    case "kanban": return "board";
+    case "gantt": return "timeline";
+    default: return "board";
+  }
+}
+
+/**
+ * The write half of the remembered Dashboard view: best-effort, because browser storage can be
+ * unavailable or reject a write. Every Dashboard write to the preference goes through here so the
+ * value stored is always a CURRENT spelling, never a retired one.
+ */
+export function writeDashboardViewPreference(storage: Pick<DashboardPreferenceStorage, "write">, view: DashboardView): void {
+  try {
+    storage.write(view);
+  } catch {
+    // Storage quotas/privacy settings can reject writes; the in-memory view is already chosen.
+  }
 }
 
 export const DASHBOARD_VIEW_KEY = "quincy:dashboard:view";
@@ -60,7 +83,7 @@ export const DASHBOARD_VIEW_KEY = "quincy:dashboard:view";
 /**
  * The read half of the remembered Dashboard view, with no write of any kind (#111).
  *
- * `initializeDashboardView` below performs a one-time grid-to-kanban migration write, which is
+ * `initializeDashboardView` below performs a one-time migration write (grid -> board, and since #427 list/kanban/gantt -> table/board/timeline), which is
  * correct for the Dashboard — it owns the preference — but wrong for a second caller: the
  * navigation model must read no storage at all, and the shell that feeds it must not race the
  * Dashboard for the same migration. So the shell resolves the view through this function and
@@ -77,12 +100,13 @@ export function readRememberedDashboardView(storage: Pick<DashboardPreferenceSto
   } catch {
     // Browser storage can be unavailable or throw on read under privacy settings; the default view
     // is a better answer than propagating that into navigation chrome.
-    return "kanban";
+    return "board";
   }
 }
 
 /**
- * Reads the preference before attempting its one-time grid-to-kanban migration.
+ * Reads the preference before attempting its one-time migration write (a retired spelling is
+ * written back as its current one).
  * Browser storage can be partially available (a read may succeed while a write
  * fails), so a failed migration must not discard a valid saved preference.
  */
@@ -91,7 +115,7 @@ export function initializeDashboardView(storage: DashboardPreferenceStorage): Da
   try {
     view = normalizeDashboardView(storage.read());
   } catch {
-    return "kanban";
+    return "board";
   }
   try {
     storage.write(view);
@@ -202,17 +226,4 @@ export function formatDashboardDate(value: string | null): string {
   const parsed = parseCanonicalShootDate(value);
   if (!parsed) return value;
   return `${parsed.day} ${MONTHS[parsed.month - 1]} ${parsed.year}`;
-}
-
-/**
- * #217. Where focus goes after the search chip's Clear button unmounts itself: a control that
- * SURVIVES the clear. The active view button first; it is absent in archived scope and
- * unfocusable while disabled (`interactionBlocked`), so the active scope button is next, and the
- * toolbar itself (`tabIndex={-1}`) is the target that always exists.
- */
-export function focusTargetAfterClearingSearch(toolbar: HTMLElement | null): HTMLElement | null {
-  if (!toolbar) return null;
-  return toolbar.querySelector<HTMLElement>('[data-focus-key^="dashboard-view-"][data-active="true"]:not(:disabled)')
-    ?? toolbar.querySelector<HTMLElement>("button.is-active:not(:disabled)")
-    ?? toolbar;
 }

@@ -113,8 +113,8 @@ describe("staff route contract", () => {
 describe("stripDashboardSearchFromLocation (#217 fix round 5, item 3)", () => {
   it("strips q from the bare, List, Kanban and Calendar-intent Dashboard arms", () => {
     expect(stripDashboardSearchFromLocation("/?q=smith")).toBe("/");
-    expect(stripDashboardSearchFromLocation("/?view=list&q=smith")).toBe("/?view=list");
-    expect(stripDashboardSearchFromLocation("/?view=kanban&q=smith")).toBe("/?view=kanban");
+    expect(stripDashboardSearchFromLocation("/?view=table&q=smith")).toBe("/?view=table");
+    expect(stripDashboardSearchFromLocation("/?view=board&q=smith")).toBe("/?view=board");
     expect(stripDashboardSearchFromLocation("/?view=calendar&q=smith")).toBe("/?view=calendar");
   });
 
@@ -125,7 +125,7 @@ describe("stripDashboardSearchFromLocation (#217 fix round 5, item 3)", () => {
 
   it("is a no-op on a Dashboard location that already carries no search", () => {
     expect(stripDashboardSearchFromLocation("/")).toBe("/");
-    expect(stripDashboardSearchFromLocation("/?view=kanban")).toBe("/?view=kanban");
+    expect(stripDashboardSearchFromLocation("/?view=board")).toBe("/?view=board");
   });
 
   // #217 fix round 6, item 2 (Sol re-review, NIT). A whitespace-only `q` normalises to no search
@@ -138,7 +138,7 @@ describe("stripDashboardSearchFromLocation (#217 fix round 5, item 3)", () => {
   // place) is what removes the literal param regardless of whether it was semantically empty.
   it("removes a whitespace-only q param entirely, not just the search it normalises to", () => {
     expect(stripDashboardSearchFromLocation("/?q=+++")).toBe("/");
-    expect(stripDashboardSearchFromLocation("/?view=kanban&q=+++")).toBe("/?view=kanban");
+    expect(stripDashboardSearchFromLocation("/?view=board&q=+++")).toBe("/?view=board");
     expect(stripDashboardSearchFromLocation("/?view=calendar&q=+++")).toBe("/?view=calendar");
   });
 
@@ -258,10 +258,10 @@ describe("one-time OAuth return fallback", () => {
 describe("Project sheet entry state (#366)", () => {
   const project = `/projects/${projectId}`;
   const otherProject = "/projects/223e4567-e89b-42d3-a456-426614174000";
-  const valid = (overrides: Record<string, unknown> = {}) => ({ quincySheet: { v: 1, backdrop: "/?view=kanban&q=smith", depth: 1, prev: "/?view=kanban&q=smith", ...overrides } });
+  const valid = (overrides: Record<string, unknown> = {}) => ({ quincySheet: { v: 1, backdrop: "/?view=board&q=smith", depth: 1, prev: "/?view=board&q=smith", ...overrides } });
 
   it("reads a valid state and rejects every tampered or malformed shape", () => {
-    expect(readSheetEntryState(valid())).toEqual({ v: 1, backdrop: "/?view=kanban&q=smith", depth: 1, prev: "/?view=kanban&q=smith" });
+    expect(readSheetEntryState(valid())).toEqual({ v: 1, backdrop: "/?view=board&q=smith", depth: 1, prev: "/?view=board&q=smith" });
     for (const bad of [
       null, undefined, "x", 3, {}, { quincySheet: null }, { quincySheet: "x" },
       valid({ v: 2 }), valid({ depth: 0 }), valid({ depth: -1 }), valid({ depth: 1.5 }), valid({ depth: "1" }),
@@ -276,7 +276,7 @@ describe("Project sheet entry state (#366)", () => {
     expect(isSheetLocation("/")).toBe(false);
     expect(isSheetLocation(`${project}/edit`)).toBe(true);
     expect(isSheetLocation("/projects/new")).toBe(false);
-    expect(isDashboardLayerLocation("/?view=list")).toBe(true);
+    expect(isDashboardLayerLocation("/?view=table")).toBe(true);
     expect(isDashboardLayerLocation(project)).toBe(true);
     expect(isDashboardLayerLocation("/admin")).toBe(false);
     expect(isDashboardLayerLocation(`${project}/edit`)).toBe(true);
@@ -285,11 +285,11 @@ describe("Project sheet entry state (#366)", () => {
 
   it("computes the state a push writes", () => {
     // dashboard -> sheet
-    expect(nextPushState("/?view=list&q=a", null, project)).toEqual({ quincySheet: { v: 1, backdrop: "/?view=list&q=a", depth: 1, prev: "/?view=list&q=a" } });
+    expect(nextPushState("/?view=table&q=a", null, project)).toEqual({ quincySheet: { v: 1, backdrop: "/?view=table&q=a", depth: 1, prev: "/?view=table&q=a" } });
     // sheet (with state) -> sheet
-    expect(nextPushState(project, valid(), otherProject)).toEqual({ quincySheet: { v: 1, backdrop: "/?view=kanban&q=smith", depth: 2, prev: project } });
+    expect(nextPushState(project, valid(), otherProject)).toEqual({ quincySheet: { v: 1, backdrop: "/?view=board&q=smith", depth: 2, prev: project } });
     // project -> edit (#374): depth + 1, prev is the project URL; and edit with no state stays stateless
-    expect(nextPushState(project, valid(), `${project}/edit`)).toEqual({ quincySheet: { v: 1, backdrop: "/?view=kanban&q=smith", depth: 2, prev: project } });
+    expect(nextPushState(project, valid(), `${project}/edit`)).toEqual({ quincySheet: { v: 1, backdrop: "/?view=board&q=smith", depth: 2, prev: project } });
     expect(nextPushState(project, null, `${project}/edit`)).toBeNull();
     // cold sheet (no state) -> sheet: nothing provable
     expect(nextPushState(project, null, otherProject)).toBeNull();
@@ -324,9 +324,9 @@ describe("Project sheet entry state (#366)", () => {
   }
 
   it("push writes the sheet state; replace keeps it only sheet-to-sheet; go delegates", () => {
-    const { adapter, writes, gos } = fakeHistory(null, "/?view=list");
+    const { adapter, writes, gos } = fakeHistory(null, "/?view=table");
     adapter.push(project);
-    expect(writes[0]).toEqual({ kind: "push", path: project, state: { quincySheet: { v: 1, backdrop: "/?view=list", depth: 1, prev: "/?view=list" } } });
+    expect(writes[0]).toEqual({ kind: "push", path: project, state: { quincySheet: { v: 1, backdrop: "/?view=table", depth: 1, prev: "/?view=table" } } });
     // a tab write (replace, sheet -> sheet) keeps the bookkeeping
     adapter.replace(`${project}?tab=raw`);
     expect(writes[1]!.state).toEqual(writes[0]!.state);

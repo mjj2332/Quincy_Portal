@@ -57,8 +57,8 @@ function DashboardHarness({ role }: { role: Role }) {
 
 /** The Dashboard's own segmented control, independent of the store — reflects `view` directly. */
 function dashboardViewControlActive(host: ParentNode): string | null {
-  return [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')]
-    .find((button) => button.dataset.active === "true")?.textContent?.trim() ?? null;
+  return [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] [role="tab"]')]
+    .find((button) => button.getAttribute("aria-selected") === "true")?.textContent?.trim() ?? null;
 }
 
 /** Two real-timer rounds — one for the lazy Calendar chunk's own promise to resolve past its
@@ -113,8 +113,8 @@ describe("a mounted Dashboard losing the Calendar capability (#119)", () => {
       expect(published).toContain("none");
       expect(host.querySelector(`[data-testid="${surface}"]`)).toBeNull();
       const settled = readDashboardView();
-      expect(settled === "list" || settled === "kanban").toBe(true);
-      expect(dashboardViewControlActive(host)).toBe(settled === "list" ? "List" : "Kanban");
+      expect(settled === "table" || settled === "board").toBe(true);
+      expect(dashboardViewControlActive(host)).toBe(settled === "table" ? "Table" : "Board");
     } finally {
       unsubscribe();
     }

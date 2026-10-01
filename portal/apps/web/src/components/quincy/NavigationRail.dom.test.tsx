@@ -175,7 +175,7 @@ afterEach(async () => {
 const USER = { name: "Terry Lee", email: "terry@example.test" };
 const FULL_CAPABILITIES = { adminBackend: true, viewProductionCalendar: true, viewNoticeBoard: true };
 
-function navigationFor(location: string, remembered: "list" | "kanban" | "calendar" = "kanban") {
+function navigationFor(location: string, remembered: "table" | "board" | "calendar" = "board") {
   return buildStaffNavigation(parseStaffLocation(location), remembered, FULL_CAPABILITIES);
 }
 
@@ -196,12 +196,12 @@ describe("NavigationRail", () => {
     const navigation = navigationFor("/");
     // The model still carries the four Dashboard views (the breadcrumb reads them) — the rail just
     // does not draw them.
-    expect(navigation.groups[0]!.items[0]!.children?.map((child) => child.label)).toEqual(["List", "Kanban", "Gantt", "Calendar"]);
+    expect(navigation.groups[0]!.items[0]!.children?.map((child) => child.label)).toEqual(["Table", "Board", "Calendar", "Timeline"]);
     await renderInProvider(navigation);
 
     expect(linkTexts("navigation-rail-link")).toEqual(["Dashboard", "Notice board", "Admin"]);
     expect(testids(CHILD_LINK)).toEqual([]);
-    for (const view of ["List", "Kanban", "Gantt", "Calendar"]) expect(host.textContent).not.toContain(view);
+    for (const view of ["Table", "Board", "Calendar", "Timeline"]) expect(host.textContent).not.toContain(view);
 
     // Every destination is an anchor with a real href — the rail cannot navigate through
     // `useNavigate`, which the read-only history makes a no-op.
@@ -236,7 +236,7 @@ describe("NavigationRail", () => {
   });
 
   it("renders no child links on any route, even one where the model marks a view active", async () => {
-    for (const location of ["/", "/?view=list", "/admin"]) {
+    for (const location of ["/", "/?view=table", "/admin"]) {
       await renderInProvider(navigationFor(location));
       expect(testids(CHILD_LINK), location).toEqual([]);
     }
@@ -269,7 +269,7 @@ describe("NavigationRail", () => {
   it("marks the active destination with aria-current, not only data-active", async () => {
     // `data-active` is a styling hook and announces nothing. Without `aria-current` a screen-reader
     // user is never told which destination is the current one.
-    await renderInProvider(navigationFor("/?view=kanban"));
+    await renderInProvider(navigationFor("/?view=board"));
 
     const current = [
       ...host.querySelectorAll('[aria-current="page"]'),
@@ -399,20 +399,18 @@ function accountTrigger() { return host.querySelector<HTMLElement>('[data-testid
 function follows(a: Element, b: Element) { return Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING); }
 
 describe("NavigationRail variant — rail (the always-icon column, #426)", () => {
-  it("orders the column logo, search, nav, then bell, settings and the account avatar at the foot", async () => {
+  it("orders the column logo, nav, then bell, settings and the account avatar at the foot", async () => {
     await renderInProvider(navigationFor("/"));
     const logo = testids("navigation-rail-brand")[0]!;
-    const search = host.querySelector('[data-testid="shell-search-trigger"]')!;
     const nav = host.querySelector("nav")!;
     const bell = bellTrigger()!;
     const settings = settingsLink()!;
     const account = accountTrigger()!;
-    for (const [label, element] of Object.entries({ logo, search, nav, bell, settings, account })) {
+    for (const [label, element] of Object.entries({ logo, nav, bell, settings, account })) {
       expect(element, label).not.toBeNull();
     }
 
-    expect(follows(logo, search)).toBe(true);
-    expect(follows(search, nav)).toBe(true);
+    expect(follows(logo, nav)).toBe(true);
     expect(follows(nav, bell)).toBe(true);
     expect(follows(bell, settings)).toBe(true);
     expect(follows(settings, account)).toBe(true);
@@ -459,12 +457,12 @@ describe("NavigationRail variant — rail (the always-icon column, #426)", () =>
   });
 
   it("gates Admin on the capability the model carries", async () => {
-    const withoutAdmin = buildStaffNavigation(parseStaffLocation("/"), "kanban", { ...FULL_CAPABILITIES, adminBackend: false });
+    const withoutAdmin = buildStaffNavigation(parseStaffLocation("/"), "board", { ...FULL_CAPABILITIES, adminBackend: false });
     await renderInProvider(withoutAdmin);
     expect(linkTexts("navigation-rail-link")).toEqual(["Dashboard", "Notice board"]);
     expect(host.textContent).not.toContain("Admin");
 
-    const withoutNotices = buildStaffNavigation(parseStaffLocation("/"), "kanban", { ...FULL_CAPABILITIES, viewNoticeBoard: false });
+    const withoutNotices = buildStaffNavigation(parseStaffLocation("/"), "board", { ...FULL_CAPABILITIES, viewNoticeBoard: false });
     await renderInProvider(withoutNotices);
     expect(linkTexts("navigation-rail-link")).toEqual(["Dashboard", "Admin"]);
   });
@@ -507,6 +505,19 @@ describe("the settings icon (#426)", () => {
   });
 });
 
+// #427: the project search moved to the Dashboard toolbar (ADR 0015). Neither variant renders a
+// search control — no input, no icon trigger, no popover — at any width.
+describe("NavigationRail carries no search control (#427)", () => {
+  it.each(["rail", "sheet"] as const)("%s: no search input, trigger or popover, on or off the Dashboard", async (variant) => {
+    for (const location of ["/", "/?view=board", "/admin"]) {
+      await renderInProvider(navigationFor(location), { variant });
+      expect(host.querySelector('input, [role="searchbox"], [role="combobox"]'), `${variant} ${location}`).toBeNull();
+      expect(document.querySelector('[data-testid="shell-search"], [data-testid="shell-search-trigger"], [data-testid="shell-search-field"]')).toBeNull();
+      expect(host.querySelector('[aria-label="Search projects"]')).toBeNull();
+    }
+  });
+});
+
 describe("NavigationRail variant — sheet", () => {
   it("shows visible labels", async () => {
     await renderInProvider(navigationFor("/"), { variant: "sheet" });
@@ -517,7 +528,7 @@ describe("NavigationRail variant — sheet", () => {
   });
 
   it("gives every link, account trigger and the brand/home link the 44px touch-target seam", async () => {
-    await renderInProvider(navigationFor("/?view=kanban"), { variant: "sheet" });
+    await renderInProvider(navigationFor("/?view=board"), { variant: "sheet" });
 
     for (const link of testids("navigation-rail-link")) {
       expect(link.getAttribute("data-touch-target")).toBe("true");
@@ -530,12 +541,12 @@ describe("NavigationRail variant — sheet", () => {
   });
 
   it("draws no Dashboard view children here either", async () => {
-    await renderInProvider(navigationFor("/?view=kanban"), { variant: "sheet" });
+    await renderInProvider(navigationFor("/?view=board"), { variant: "sheet" });
     expect(testids("navigation-rail-child-link")).toEqual([]);
   });
 
   it("does not expose a menu seam on its parent link", async () => {
-    await renderInProvider(navigationFor("/?view=kanban"), { variant: "sheet" });
+    await renderInProvider(navigationFor("/?view=board"), { variant: "sheet" });
     const dashboard = testids("navigation-rail-link").find((el) => el.textContent?.trim() === "Dashboard")!;
     expect(dashboard.hasAttribute("aria-haspopup")).toBe(false);
   });
@@ -735,16 +746,16 @@ describe("the account menu's sign out", () => {
   // fix does not touch).
   it("scrubs the Dashboard search from the URL before signing out, via replace not push", async () => {
     signOutMock.mockClear();
-    window.history.replaceState(null, "", "/?view=kanban&q=smith");
+    window.history.replaceState(null, "", "/?view=board&q=smith");
     const lengthBefore = window.history.length;
-    await renderInProvider(navigationFor("/?view=kanban&q=smith"));
+    await renderInProvider(navigationFor("/?view=board&q=smith"));
 
     const trigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]');
     await act(async () => { trigger!.click(); await Promise.resolve(); await Promise.resolve(); });
     const signOut = document.querySelector<HTMLElement>('[data-testid="navigation-rail-signout"]');
     await act(async () => { signOut!.click(); await Promise.resolve(); await Promise.resolve(); });
 
-    expect(`${window.location.pathname}${window.location.search}`).toBe("/?view=kanban");
+    expect(`${window.location.pathname}${window.location.search}`).toBe("/?view=board");
     // `replace`, not `push` -- correcting the current entry creates no new history entry.
     expect(window.history.length).toBe(lengthBefore);
     expect(signOutMock).toHaveBeenCalledTimes(1);

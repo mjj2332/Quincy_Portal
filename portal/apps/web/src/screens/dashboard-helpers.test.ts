@@ -1,33 +1,53 @@
 import { describe, expect, it, vi } from "vitest";
-import { readRememberedDashboardView, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, isCanonicalCalendarDate, isCanonicalShootDate, normalizeDashboardCalendarSearch, normalizeDashboardCalendarSubview, normalizeDashboardView, normalizeKanbanSortMode, sanitizeDashboardCalendarSearch, DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY } from "./dashboard-helpers";
+import { readRememberedDashboardView, writeDashboardViewPreference, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, isCanonicalCalendarDate, isCanonicalShootDate, normalizeDashboardCalendarSearch, normalizeDashboardCalendarSubview, normalizeDashboardView, normalizeKanbanSortMode, sanitizeDashboardCalendarSearch, DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY } from "./dashboard-helpers";
 
 describe("dashboard view preferences", () => {
-  it("keeps supported views and migrates grid, missing, and invalid values to kanban", () => {
-    expect(normalizeDashboardView("list")).toBe("list");
-    expect(normalizeDashboardView("kanban")).toBe("kanban");
-    expect(normalizeDashboardView("gantt")).toBe("gantt");
+  it("keeps supported views and migrates grid, missing, and invalid values to board", () => {
+    expect(normalizeDashboardView("table")).toBe("table");
+    expect(normalizeDashboardView("board")).toBe("board");
+    expect(normalizeDashboardView("timeline")).toBe("timeline");
     expect(normalizeDashboardView("calendar")).toBe("calendar");
-    expect(normalizeDashboardView("grid")).toBe("kanban");
-    expect(normalizeDashboardView(null)).toBe("kanban");
-    expect(normalizeDashboardView("other")).toBe("kanban");
+    expect(normalizeDashboardView("grid")).toBe("board");
+    expect(normalizeDashboardView(null)).toBe("board");
+    expect(normalizeDashboardView("other")).toBe("board");
   });
 
-  it("keeps a valid saved list preference when the migration write is rejected", () => {
+  // #427: the stored values were renamed. A real user's localStorage holds the OLD spellings, so
+  // each reads as its new equivalent.
+  it.each([["list", "table"], ["kanban", "board"], ["gantt", "timeline"]] as const)("reads a stored %s as %s, and writes the new spelling back", (stored, expected) => {
+    expect(normalizeDashboardView(stored)).toBe(expected);
+    const write = vi.fn();
+    expect(initializeDashboardView({ read: () => stored, write })).toBe(expected);
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(write).toHaveBeenCalledWith(expected);
+    expect(readRememberedDashboardView({ read: () => stored })).toBe(expected);
+  });
+
+  it("keeps a valid saved table preference when the migration write is rejected", () => {
     const write = vi.fn(() => { throw new Error("storage is read-only"); });
-    expect(initializeDashboardView({ read: () => "list", write })).toBe("list");
-    expect(write).toHaveBeenCalledWith("list");
+    expect(initializeDashboardView({ read: () => "table", write })).toBe("table");
+    expect(write).toHaveBeenCalledWith("table");
+    const legacyWrite = vi.fn(() => { throw new Error("storage is read-only"); });
+    expect(initializeDashboardView({ read: () => "list", write: legacyWrite })).toBe("table");
+  });
+
+  it("writeDashboardViewPreference writes the view and swallows a rejected write", () => {
+    const write = vi.fn();
+    writeDashboardViewPreference({ write }, "timeline");
+    expect(write).toHaveBeenCalledWith("timeline");
+    expect(() => writeDashboardViewPreference({ write: () => { throw new Error("quota"); } }, "board")).not.toThrow();
   });
 
   // #83 retired `kanban2` as a route/storage value (see dashboard-helpers.ts's header comment). It
   // is the one value a real user's localStorage can actually hold from before the cutover — every
   // other invalid value in the test above is synthetic — so it must be pinned as degrading to
-  // `kanban` explicitly, through both the read-time normalizer and the write-back migration path a
+  // `board` explicitly, through both the read-time normalizer and the write-back migration path a
   // real stored preference goes through.
-  it("migrates a stored kanban2 preference to kanban, and writes the migration back", () => {
-    expect(normalizeDashboardView("kanban2")).toBe("kanban");
+  it("migrates a stored kanban2 preference to board, and writes the migration back", () => {
+    expect(normalizeDashboardView("kanban2")).toBe("board");
     const write = vi.fn();
-    expect(initializeDashboardView({ read: () => "kanban2", write })).toBe("kanban");
-    expect(write).toHaveBeenCalledWith("kanban");
+    expect(initializeDashboardView({ read: () => "kanban2", write })).toBe("board");
+    expect(write).toHaveBeenCalledWith("board");
   });
 });
 
@@ -137,27 +157,27 @@ describe("readRememberedDashboardView", () => {
   // one-time migration WRITE; this is the pure read. So a storage failure now degrades navigation,
   // not just the Dashboard, and these are the cases that reach it.
   it("returns a canonical stored value unchanged", () => {
-    expect(readRememberedDashboardView({ read: () => "list" })).toBe("list");
+    expect(readRememberedDashboardView({ read: () => "table" })).toBe("table");
     expect(readRememberedDashboardView({ read: () => "calendar" })).toBe("calendar");
   });
 
-  it("degrades a corrupt stored value to Kanban", () => {
-    expect(readRememberedDashboardView({ read: () => "not-a-dashboard-view" })).toBe("kanban");
+  it("degrades a corrupt stored value to Board", () => {
+    expect(readRememberedDashboardView({ read: () => "not-a-dashboard-view" })).toBe("board");
   });
 
-  it("degrades an absent value to Kanban", () => {
-    expect(readRememberedDashboardView({ read: () => null })).toBe("kanban");
+  it("degrades an absent value to Board", () => {
+    expect(readRememberedDashboardView({ read: () => null })).toBe("board");
   });
 
   it("keeps navigation alive when the storage accessor throws", () => {
     // Private browsing, blocked site data, a quota error. The rail must still render.
-    expect(readRememberedDashboardView({ read: () => { throw new Error("storage disabled"); } })).toBe("kanban");
+    expect(readRememberedDashboardView({ read: () => { throw new Error("storage disabled"); } })).toBe("board");
   });
 
   it("does not write", () => {
     // The whole reason the read was split out of `initializeDashboardView`, which migrates a legacy
     // "grid" value and writes it back. A second caller must not repeat that write.
-    const read = vi.fn(() => "list");
+    const read = vi.fn(() => "list");  // a retired spelling: the read still never writes
     readRememberedDashboardView({ read });
     expect(read).toHaveBeenCalledTimes(1);
   });

@@ -23,15 +23,15 @@ describe("dashboard-view-store", () => {
 
   it("publishes and reads back the view", () => {
     const owner = {};
-    publishDashboardView(owner, "kanban");
-    expect(readDashboardView()).toBe("kanban");
+    publishDashboardView(owner, "board");
+    expect(readDashboardView()).toBe("board");
   });
 
   it("notifies subscribers on a publish", () => {
     const owner = {};
     let notifications = 0;
     const unsubscribe = subscribeDashboardView(() => { notifications++; });
-    publishDashboardView(owner, "list");
+    publishDashboardView(owner, "table");
     expect(notifications).toBe(1);
     unsubscribe();
   });
@@ -39,29 +39,29 @@ describe("dashboard-view-store", () => {
   it("publishing the same owner and view again notifies nobody — no render loop", () => {
     const owner = {};
     let notifications = 0;
-    publishDashboardView(owner, "list");
+    publishDashboardView(owner, "table");
     const unsubscribe = subscribeDashboardView(() => { notifications++; });
-    publishDashboardView(owner, "list");
+    publishDashboardView(owner, "table");
     expect(notifications).toBe(0);
-    expect(readDashboardView()).toBe("list");
+    expect(readDashboardView()).toBe("table");
     unsubscribe();
   });
 
   it("the same owner publishing a DIFFERENT view still notifies", () => {
     const owner = {};
-    publishDashboardView(owner, "list");
+    publishDashboardView(owner, "table");
     let notifications = 0;
     const unsubscribe = subscribeDashboardView(() => { notifications++; });
-    publishDashboardView(owner, "kanban");
+    publishDashboardView(owner, "board");
     expect(notifications).toBe(1);
-    expect(readDashboardView()).toBe("kanban");
+    expect(readDashboardView()).toBe("board");
     unsubscribe();
   });
 
   it("last publisher wins and becomes owner", () => {
     const first = {};
     const second = {};
-    publishDashboardView(first, "list");
+    publishDashboardView(first, "table");
     publishDashboardView(second, "calendar");
     expect(readDashboardView()).toBe("calendar");
     // The first owner's release is now stale — the second owner is current — and must be a no-op.
@@ -72,13 +72,13 @@ describe("dashboard-view-store", () => {
   it("a stale owner's release is a no-op and does not notify", () => {
     const first = {};
     const second = {};
-    publishDashboardView(first, "list");
-    publishDashboardView(second, "kanban");
+    publishDashboardView(first, "table");
+    publishDashboardView(second, "board");
     let notifications = 0;
     const unsubscribe = subscribeDashboardView(() => { notifications++; });
     releaseDashboardView(first);
     expect(notifications).toBe(0);
-    expect(readDashboardView()).toBe("kanban");
+    expect(readDashboardView()).toBe("board");
     unsubscribe();
   });
 
@@ -105,15 +105,15 @@ describe("dashboard-view-store", () => {
   it("a different owner publishing the SAME view still becomes owner and notifies, and only its own release clears the store", () => {
     const first = {};
     const second = {};
-    publishDashboardView(first, "kanban");
+    publishDashboardView(first, "board");
     let notifications = 0;
     const unsubscribe = subscribeDashboardView(() => { notifications++; });
-    publishDashboardView(second, "kanban");
+    publishDashboardView(second, "board");
     expect(notifications).toBe(1);
-    expect(readDashboardView()).toBe("kanban");
+    expect(readDashboardView()).toBe("board");
     releaseDashboardView(first);
     expect(notifications).toBe(1);
-    expect(readDashboardView()).toBe("kanban");
+    expect(readDashboardView()).toBe("board");
     releaseDashboardView(second);
     expect(notifications).toBe(2);
     expect(readDashboardView()).toBeNull();
@@ -124,9 +124,9 @@ describe("dashboard-view-store", () => {
     const owner = {};
     let notifications = 0;
     const unsubscribe = subscribeDashboardView(() => { notifications++; });
-    publishDashboardView(owner, "list");
+    publishDashboardView(owner, "table");
     unsubscribe();
-    publishDashboardView(owner, "kanban");
+    publishDashboardView(owner, "board");
     expect(notifications).toBe(1);
   });
 });

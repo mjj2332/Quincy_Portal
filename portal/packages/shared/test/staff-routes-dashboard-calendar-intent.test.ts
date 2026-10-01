@@ -70,8 +70,8 @@ describe("the bare Calendar intent", () => {
   });
 
   it("leaves the List, Kanban and Gantt spellings alone", () => {
-    expect(parseStaffLocation("/?view=list")).toEqual({ kind: "dashboard", dashboardView: "list" });
-    expect(parseStaffLocation("/?view=kanban")).toEqual({ kind: "dashboard", dashboardView: "kanban" });
-    expect(parseStaffLocation("/?view=gantt")).toEqual({ kind: "dashboard", dashboardView: "gantt" });
+    expect(parseStaffLocation("/?view=table")).toEqual({ kind: "dashboard", dashboardView: "table" });
+    expect(parseStaffLocation("/?view=board")).toEqual({ kind: "dashboard", dashboardView: "board" });
+    expect(parseStaffLocation("/?view=timeline")).toEqual({ kind: "dashboard", dashboardView: "timeline" });
   });
 });

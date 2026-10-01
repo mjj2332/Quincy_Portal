@@ -15,18 +15,22 @@ import { shouldInterceptInternalLink } from "../lib/router";
 // `KanbanCard2` to re-acquire a `canReorder` prop it deliberately does not have.
 
 describe("TB6 Slice 0 dashboard routing characterization", () => {
-  it("reads and remembers List/Kanban preferences in quincy:dashboard:view while Calendar remains a URL state", () => {
+  it("reads and remembers Table/Board preferences (and reads the retired list/kanban spellings as those) in quincy:dashboard:view while Calendar remains a URL state", () => {
     const writes: Array<[string, string]> = [];
     const storage = {
-      read: () => "list",
+      read: () => "table",
       write: (view: DashboardView) => writes.push(["quincy:dashboard:view", view]),
     };
-    expect(initializeDashboardView(storage)).toBe("list");
-    expect(writes).toEqual([["quincy:dashboard:view", "list"]]);
+    expect(initializeDashboardView(storage)).toBe("table");
+    expect(writes).toEqual([["quincy:dashboard:view", "table"]]);
 
-    expect(initializeDashboardView({ read: () => "kanban", write: storage.write })).toBe("kanban");
+    expect(initializeDashboardView({ read: () => "board", write: storage.write })).toBe("board");
     expect(initializeDashboardView({ read: () => "calendar", write: storage.write })).toBe("calendar");
-    expect(initializeDashboardView({ read: () => null, write: storage.write })).toBe("kanban");
+    expect(initializeDashboardView({ read: () => null, write: storage.write })).toBe("board");
+    writes.length = 0;
+    expect(initializeDashboardView({ read: () => "list", write: storage.write })).toBe("table");
+    expect(initializeDashboardView({ read: () => "kanban", write: storage.write })).toBe("board");
+    expect(writes).toEqual([["quincy:dashboard:view", "table"], ["quincy:dashboard:view", "board"]]);
   });
 
   it("lets a parsed Calendar route own date/subview and otherwise reads remembered Calendar preferences", () => {

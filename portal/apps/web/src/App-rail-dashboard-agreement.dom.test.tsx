@@ -284,9 +284,9 @@ async function renderAppFirstCommit(path: string, strict = false) {
 
 /** Which Dashboard view branch actually painted, read the same way a Staff member would see it —
  * not from `view`/`viewingArchived`, which is exactly the state this file catches disagreeing. */
-function renderedDashboardBranch(host: ParentNode): "list" | "kanban" | "calendar" | "none" {
-  if (host.querySelector('[aria-label="Projects list"]')) return "list";
-  if (host.querySelector('[data-testid="dashboard-board"]')) return "kanban";
+function renderedDashboardBranch(host: ParentNode): "table" | "board" | "calendar" | "none" {
+  if (host.querySelector('[aria-label="Projects list"]')) return "table";
+  if (host.querySelector('[data-testid="dashboard-board"]')) return "board";
   if (host.querySelector('[data-testid="event-calendar-body"]')
     || [...host.querySelectorAll('[role="status"]')].some((node) => node.textContent === "Loading calendar…")) return "calendar";
   return "none";
@@ -295,8 +295,8 @@ function renderedDashboardBranch(host: ParentNode): "list" | "kanban" | "calenda
 /** The Dashboard's own segmented control — reflects `view` directly, independent of whether the
  * data underneath it has loaded yet, unlike `renderedDashboardBranch`'s content markers. */
 function dashboardViewControlActive(host: ParentNode): string | null {
-  return [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')]
-    .find((button) => button.dataset.active === "true")?.textContent?.trim() ?? null;
+  return [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] [role="tab"]')]
+    .find((button) => button.getAttribute("aria-selected") === "true")?.textContent?.trim() ?? null;
 }
 
 /**
@@ -345,10 +345,10 @@ function railChildLinks(host: ParentNode) {
 }
 
 const DASHBOARD_VIEW_HREF: Record<string, string> = {
-  List: "/?view=list",
-  Kanban: "/?view=kanban",
-  Gantt: "/?view=gantt",
+  Table: "/?view=table",
+  Board: "/?view=board",
   Calendar: "/?view=calendar",
+  Timeline: "/?view=timeline",
 };
 
 /**
@@ -384,26 +384,25 @@ function lastBreadcrumbSegment(host: ParentNode): string | null {
   return host.querySelector('[data-testid="shell-breadcrumb"] [aria-current="page"]')?.textContent?.trim() ?? null;
 }
 
-async function openShellSearch(host: ParentNode) {
-  await click(host.querySelector<HTMLElement>('[data-testid="shell-search-trigger"]')!);
-  await settle();
-}
-
-/** The popover closes when the rail link click lands; the draft lives in the store, so reopening
- * it must show the same text. */
-async function reopenedSearchValue(host: ParentNode): Promise<string | undefined> {
-  await openShellSearch(host);
-  return document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')?.value;
+/** The Dashboard toolbar's search input (#427), or undefined while no Dashboard is mounted. */
+function dashboardSearchInput() {
+  return document.querySelector<HTMLInputElement>('[data-testid="dashboard-search"]');
 }
 
 function currentUrl() {
   return `${window.location.pathname}${window.location.search}`;
 }
 
-/** One of the Dashboard's own "List"/"Kanban"/"Calendar" segmented-control buttons — `disabled`
+/** One of the Dashboard's own "Table"/"Board"/"Calendar" segmented-control buttons — `disabled`
  * reflects `interactionBlocked || calendarInteractionBlocked` directly (`screens/Dashboard.tsx`). */
-function viewButton(host: ParentNode, label: "List" | "Kanban" | "Calendar"): HTMLButtonElement | undefined {
-  return findByText([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')], label);
+function viewButton(host: ParentNode, label: "Table" | "Board" | "Calendar"): HTMLButtonElement | undefined {
+  return findByText([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] [role="tab"]')], label);
+}
+
+/** A Base UI tab disables by `aria-disabled` (it stays focusable), a native button by `disabled`. */
+function tabDisabled(button: HTMLButtonElement | undefined): boolean | undefined {
+  if (!button) return undefined;
+  return button.disabled || button.getAttribute("aria-disabled") === "true";
 }
 
 // Two active Stages — enough for a cross-Stage drag between the single fixture project's own
@@ -424,7 +423,7 @@ async function dndStart(activeId: string) {
 
 describe("the rail and the Dashboard agree about the current view (#119)", () => {
   it("1a — clicking the rail's Kanban while archived exits archived and everything agrees", async () => {
-    const host = await renderApp("/?view=list");
+    const host = await renderApp("/?view=table");
     await clickButtonLabelled(host, "Archived");
 
     expect(host.textContent).toContain("Archived projects");
@@ -436,20 +435,20 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
     // #426: the rail lists no Dashboard views at all; every destination stays reachable through
     // the location (the Dashboard's own control is hidden while archived).
     expect(railChildLinks(host)).toEqual([]);
-    expect(activeRailChild(host)).toBe("List");
+    expect(activeRailChild(host)).toBe("Table");
 
-    await clickRailChild(host, "Kanban");
+    await clickRailChild(host, "Board");
 
-    expect(currentUrl()).toBe("/?view=kanban");
-    expect(activeRailChild(host)).toBe("Kanban");
-    expect(lastBreadcrumbSegment(host)).toBe("Kanban");
+    expect(currentUrl()).toBe("/?view=board");
+    expect(activeRailChild(host)).toBe("Board");
+    expect(lastBreadcrumbSegment(host)).toBe("Board");
     expect(host.querySelector('[data-testid="dashboard-board"]')).not.toBeNull();
     expect(host.textContent).toContain("1 Active Street");
     expect(host.textContent).not.toContain("Archived projects");
   });
 
   it("1b — clicking the rail's Calendar while archived exits archived and everything agrees", async () => {
-    const host = await renderApp("/?view=list");
+    const host = await renderApp("/?view=table");
     await clickButtonLabelled(host, "Archived");
 
     await clickRailChild(host, "Calendar");
@@ -462,19 +461,19 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
   });
 
   it("1c — clicking the rail's List while archived stays archived", async () => {
-    const host = await renderApp("/?view=list");
+    const host = await renderApp("/?view=table");
     await clickButtonLabelled(host, "Archived");
 
-    await clickRailChild(host, "List");
+    await clickRailChild(host, "Table");
 
     expect(host.textContent).toContain("Archived projects");
     expect(host.textContent).toContain("9 Archived Street");
-    expect(activeRailChild(host)).toBe("List");
-    expect(lastBreadcrumbSegment(host)).toBe("List");
+    expect(activeRailChild(host)).toBe("Table");
+    expect(lastBreadcrumbSegment(host)).toBe("Table");
   });
 
   it("1d — a history arrival at an explicit Kanban URL while archived exits archived", async () => {
-    const host = await renderApp("/?view=list");
+    const host = await renderApp("/?view=table");
     await clickButtonLabelled(host, "Archived");
     expect(host.textContent).toContain("Archived projects");
 
@@ -482,22 +481,22 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
     // explicit non-List view while still archived, the way pasting a URL or pressing Back could
     // already reach it before the rail made it a single click (#119's issue text).
     await act(async () => {
-      window.history.pushState(null, "", "/?view=kanban");
+      window.history.pushState(null, "", "/?view=board");
       window.dispatchEvent(new PopStateEvent("popstate"));
       await Promise.resolve();
       await Promise.resolve();
     });
     await settle();
 
-    expect(currentUrl()).toBe("/?view=kanban");
-    expect(activeRailChild(host)).toBe("Kanban");
-    expect(lastBreadcrumbSegment(host)).toBe("Kanban");
+    expect(currentUrl()).toBe("/?view=board");
+    expect(activeRailChild(host)).toBe("Board");
+    expect(lastBreadcrumbSegment(host)).toBe("Board");
     expect(host.querySelector('[data-testid="dashboard-board"]')).not.toBeNull();
     expect(host.textContent).not.toContain("Archived projects");
   });
 
   it("2 — Back past an explicit List switch restores Kanban everywhere, including the rail, though the remembered preference now says List", async () => {
-    window.localStorage.setItem("quincy:dashboard:view", "kanban");
+    window.localStorage.setItem("quincy:dashboard:view", "board");
     // A pushed anchor point of its own — `afterEach`'s `replaceState` only overwrites the CURRENT
     // entry, it does not guarantee a clean stack underneath it, so a genuine `history.back()`
     // needs a known bare "/" entry to land on. Same reasoning as
@@ -506,42 +505,42 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
     const host = await renderApp("/");
 
     expect(host.querySelector('[data-testid="dashboard-board"]')).not.toBeNull();
-    expect(activeRailChild(host)).toBe("Kanban");
-    expect(lastBreadcrumbSegment(host)).toBe("Kanban");
+    expect(activeRailChild(host)).toBe("Board");
+    expect(lastBreadcrumbSegment(host)).toBe("Board");
 
-    await clickButtonLabelled(host, "List");
+    await clickButtonLabelled(host, "Table");
 
-    expect(currentUrl()).toBe("/?view=list");
-    expect(activeRailChild(host)).toBe("List");
+    expect(currentUrl()).toBe("/?view=table");
+    expect(activeRailChild(host)).toBe("Table");
     expect(host.querySelector('[data-testid="dashboard-board"]')).toBeNull();
     expect(host.textContent).toContain("1 Active Street");
 
     await act(async () => { window.history.back(); await new Promise((resolve) => setTimeout(resolve, 0)); });
     await settle();
 
-    // Storage now says "list" — the click above wrote it — but the bare route Back landed on is
+    // Storage now says "table" — the click above wrote it — but the bare route Back landed on is
     // the one the Dashboard originally rendered Kanban for, and Kanban is what it renders again.
     // The rail must follow THAT, not a fresh read of storage, or it disagrees with the screen it
     // is supposedly describing (#119).
     expect(currentUrl()).toBe("/");
-    expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("list");
+    expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("table");
     expect(host.querySelector('[data-testid="dashboard-board"]')).not.toBeNull();
-    expect(activeRailChild(host)).toBe("Kanban");
-    expect(lastBreadcrumbSegment(host)).toBe("Kanban");
+    expect(activeRailChild(host)).toBe("Board");
+    expect(lastBreadcrumbSegment(host)).toBe("Board");
 
     await act(async () => { window.history.forward(); await new Promise((resolve) => setTimeout(resolve, 0)); });
     await settle();
 
-    expect(currentUrl()).toBe("/?view=list");
+    expect(currentUrl()).toBe("/?view=table");
     expect(host.querySelector('[data-testid="dashboard-board"]')).toBeNull();
-    expect(activeRailChild(host)).toBe("List");
-    expect(lastBreadcrumbSegment(host)).toBe("List");
+    expect(activeRailChild(host)).toBe("Table");
+    expect(lastBreadcrumbSegment(host)).toBe("Table");
   });
 
   it("lifecycle — navigating to a project and back leaves no stale active child, and the store clears on unmount", async () => {
-    const host = await renderApp("/?view=kanban");
-    expect(activeRailChild(host)).toBe("Kanban");
-    expect(readDashboardView()).toBe("kanban");
+    const host = await renderApp("/?view=board");
+    expect(activeRailChild(host)).toBe("Board");
+    expect(readDashboardView()).toBe("board");
 
     await act(async () => {
       locationStore().push(`/projects/${ACTIVE_PROJECT_ID}`);
@@ -554,8 +553,8 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
     // MOUNTED, so the view it published is still the truth — and the rail, which models the
     // backdrop while a sheet is open, still says Kanban rather than going blank.
     expect(document.body.textContent).toContain("Project workspace");
-    expect(activeRailChild(host)).toBe("Kanban");
-    expect(readDashboardView()).toBe("kanban");
+    expect(activeRailChild(host)).toBe("Board");
+    expect(readDashboardView()).toBe("board");
 
     await act(async () => {
       locationStore().push("/");
@@ -564,8 +563,8 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
     });
     await settle();
 
-    expect(activeRailChild(host)).toBe("Kanban");
-    expect(readDashboardView()).toBe("kanban");
+    expect(activeRailChild(host)).toBe("Board");
+    expect(readDashboardView()).toBe("board");
     // Leaving for a non-Dashboard screen unmounts the Dashboard: no stale child, and the store clears.
     await act(async () => {
       locationStore().push("/admin");
@@ -613,8 +612,8 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
       expect(viewButton(host, "Calendar")).toBeUndefined();
       expect(published.map((entry) => entry.value)).not.toContain("calendar");
       for (const entry of published) {
-        if (entry.value === "list" || entry.value === "kanban") {
-          expect(entry.control).toBe(entry.value === "list" ? "List" : "Kanban");
+        if (entry.value === "table" || entry.value === "board") {
+          expect(entry.control).toBe(entry.value === "table" ? "Table" : "Board");
         }
       }
 
@@ -633,13 +632,13 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
 
 describe("archive entry, Back navigation, StrictMode and unmount keep the rail and the Dashboard agreeing (#119)", () => {
   it("enters Archived from an explicit Kanban URL and stays archived", async () => {
-    const host = await renderApp("/?view=kanban");
-    expect(activeRailChild(host)).toBe("Kanban");
+    const host = await renderApp("/?view=board");
+    expect(activeRailChild(host)).toBe("Board");
 
     await clickButtonLabelled(host, "Archived");
 
-    expect(currentUrl()).toBe("/?view=list");
-    expect(activeRailChild(host)).toBe("List");
+    expect(currentUrl()).toBe("/?view=table");
+    expect(activeRailChild(host)).toBe("Table");
     expect(host.textContent).toContain("Archived projects");
     expect(host.textContent).toContain("9 Archived Street");
   });
@@ -650,17 +649,17 @@ describe("archive entry, Back navigation, StrictMode and unmount keep the rail a
 
     await clickButtonLabelled(host, "Archived");
 
-    expect(currentUrl()).toBe("/?view=list");
-    expect(activeRailChild(host)).toBe("List");
+    expect(currentUrl()).toBe("/?view=table");
+    expect(activeRailChild(host)).toBe("Table");
     expect(host.textContent).toContain("Archived projects");
     expect(host.textContent).toContain("9 Archived Street");
   });
 
   it("a real Back past the Archived click lands on the popped URL, with the rail and breadcrumb agreeing with whatever the Dashboard renders there", async () => {
-    // An anchored `?view=kanban` entry for Back to return to — same reasoning as sequence "2"'s own
+    // An anchored `?view=board` entry for Back to return to — same reasoning as sequence "2"'s own
     // pushed anchor above: `afterEach`'s `replaceState` only overwrites the current entry.
-    window.history.pushState(null, "", "/?view=kanban");
-    const host = await renderApp("/?view=kanban");
+    window.history.pushState(null, "", "/?view=board");
+    const host = await renderApp("/?view=board");
 
     await clickButtonLabelled(host, "Archived");
     expect(host.textContent).toContain("Archived projects");
@@ -671,39 +670,39 @@ describe("archive entry, Back navigation, StrictMode and unmount keep the rail a
     // Whatever the Dashboard's own reconciliation lands on here, the rail's active child and the
     // breadcrumb's last segment must name the SAME branch that actually rendered.
     const branch = renderedDashboardBranch(host);
-    const expectedLabel = branch === "list" ? "List" : branch === "kanban" ? "Kanban" : branch === "calendar" ? "Calendar" : null;
+    const expectedLabel = branch === "table" ? "Table" : branch === "board" ? "Board" : branch === "calendar" ? "Calendar" : null;
     expect(activeRailChild(host)).toBe(expectedLabel);
     expect(lastBreadcrumbSegment(host)).toBe(expectedLabel);
-    // A real Back always lands on the pushed `/?view=kanban` anchor this test itself set up — the
+    // A real Back always lands on the pushed `/?view=board` anchor this test itself set up — the
     // URL is a fact about where Back went, not a further guess, so it is checked against that
     // literal address rather than re-derived from `branch` the way the rail/breadcrumb checks are.
-    expect(currentUrl()).toBe(staffPathFor({ kind: "dashboard", dashboardView: "kanban" }));
+    expect(currentUrl()).toBe(staffPathFor({ kind: "dashboard", dashboardView: "board" }));
   });
 
   it("agrees inside StrictMode the same way production mounts (main.tsx)", async () => {
-    const host = await renderAppFirstCommit("/?view=list", true);
+    const host = await renderAppFirstCommit("/?view=table", true);
     await settle();
     await clickButtonLabelled(host, "Archived");
-    expect(activeRailChild(host)).toBe("List");
+    expect(activeRailChild(host)).toBe("Table");
 
-    await clickRailChild(host, "Kanban");
+    await clickRailChild(host, "Board");
 
-    expect(currentUrl()).toBe("/?view=kanban");
-    expect(activeRailChild(host)).toBe("Kanban");
+    expect(currentUrl()).toBe("/?view=board");
+    expect(activeRailChild(host)).toBe("Board");
     expect(host.querySelector('[data-testid="dashboard-board"]')).not.toBeNull();
     expect(host.textContent).not.toContain("Archived projects");
   });
 
   it("the Dashboard's main is the shell content column's direct child (#363 fill chain)", async () => {
-    const host = await renderAppFirstCommit("/?view=list");
+    const host = await renderAppFirstCommit("/?view=table");
     // `page--fill` relies on `.app:has(.page--fill)` sizing a chain with no wrapper between the
     // shell's content column and <main>; happy-dom cannot see a broken link, so pin it structurally.
     expect(host.querySelector("main")!.parentElement!.hasAttribute("data-rail-mode")).toBe(true);
   });
 
   it("clears the published view on a root unmount", async () => {
-    await renderApp("/?view=kanban");
-    expect(readDashboardView()).toBe("kanban");
+    await renderApp("/?view=board");
+    expect(readDashboardView()).toBe("board");
 
     await act(async () => { root!.unmount(); });
     root = null;
@@ -715,12 +714,12 @@ describe("archive entry, Back navigation, StrictMode and unmount keep the rail a
 describe("#152 — a route change mid-interaction releases the barriers the unmounted surface held", () => {
   it("1 — Back during a Calendar drop withdraws the confirm and re-enables every control, and the rail still agrees afterwards", async () => {
     calendarEventFixture.enabled = true;
-    const host = await renderApp("/?view=list");
+    const host = await renderApp("/?view=table");
     await clickRailChild(host, "Calendar");
     await dropDeadline();
 
     // Preconditions: the drop opened the confirm and the accept gate is blocking navigation.
-    expect(viewButton(host, "List")?.disabled).toBe(true);
+    expect(tabDisabled(viewButton(host, "Table"))).toBe(true);
     expect(deadlineConfirm()).not.toBeNull();
 
     await act(async () => { window.history.back(); await new Promise((resolve) => setTimeout(resolve, 0)); });
@@ -728,21 +727,21 @@ describe("#152 — a route change mid-interaction releases the barriers the unmo
 
     expect(host.querySelector('[data-testid="event-calendar-body"]')).toBeNull();
     expect(deadlineConfirm()).toBeNull();
-    expect(viewButton(host, "List")?.disabled).toBe(false);
-    expect(viewButton(host, "Kanban")?.disabled).toBe(false);
-    expect(viewButton(host, "Calendar")?.disabled).toBe(false);
-    expect(currentUrl()).toBe("/?view=list");
-    expect(renderedDashboardBranch(host)).toBe("list");
-    expect(activeRailChild(host)).toBe("List");
-    expect(lastBreadcrumbSegment(host)).toBe("List");
-    expect(readDashboardView()).toBe("list");
+    expect(tabDisabled(viewButton(host, "Table"))).toBe(false);
+    expect(tabDisabled(viewButton(host, "Board"))).toBe(false);
+    expect(tabDisabled(viewButton(host, "Calendar"))).toBe(false);
+    expect(currentUrl()).toBe("/?view=table");
+    expect(renderedDashboardBranch(host)).toBe("table");
+    expect(activeRailChild(host)).toBe("Table");
+    expect(lastBreadcrumbSegment(host)).toBe("Table");
+    expect(readDashboardView()).toBe("table");
     expect(apiPutMock).not.toHaveBeenCalled();
 
-    await clickRailChild(host, "Kanban");
-    expect(currentUrl()).toBe("/?view=kanban");
-    expect(renderedDashboardBranch(host)).toBe("kanban");
-    expect(activeRailChild(host)).toBe("Kanban");
-    expect(lastBreadcrumbSegment(host)).toBe("Kanban");
+    await clickRailChild(host, "Board");
+    expect(currentUrl()).toBe("/?view=board");
+    expect(renderedDashboardBranch(host)).toBe("board");
+    expect(activeRailChild(host)).toBe("Board");
+    expect(lastBreadcrumbSegment(host)).toBe("Board");
 
     await clickButtonLabelled(host, "Archived");
     expect(host.textContent).toContain("Archived projects");
@@ -753,78 +752,78 @@ describe("#152 — a route change mid-interaction releases the barriers the unmo
     let resolvePut!: (value: unknown) => void;
     apiPutMock.mockImplementation(() => new Promise((resolve) => { resolvePut = resolve; }));
 
-    const host = await renderApp("/?view=list");
+    const host = await renderApp("/?view=table");
     await clickRailChild(host, "Calendar");
     await dropDeadline();
-    expect(viewButton(host, "List")?.disabled).toBe(true);
+    expect(tabDisabled(viewButton(host, "Table"))).toBe(true);
 
     await click(document.querySelector('[data-testid="gantt-deadline-confirm-action"]')!);
     await settle();
     // The accepted write is now in flight, held open by the deferred `apiPutMock` above.
     expect(apiPutMock).toHaveBeenCalledTimes(1);
 
-    await clickRailChild(host, "List");
+    await clickRailChild(host, "Table");
 
-    expect(currentUrl()).toBe("/?view=list");
-    expect(renderedDashboardBranch(host)).toBe("list");
-    expect(activeRailChild(host)).toBe("List");
-    expect(lastBreadcrumbSegment(host)).toBe("List");
-    expect(readDashboardView()).toBe("list");
-    expect(viewButton(host, "List")?.disabled).toBe(false);
-    expect(viewButton(host, "Kanban")?.disabled).toBe(false);
-    expect(viewButton(host, "Calendar")?.disabled).toBe(false);
+    expect(currentUrl()).toBe("/?view=table");
+    expect(renderedDashboardBranch(host)).toBe("table");
+    expect(activeRailChild(host)).toBe("Table");
+    expect(lastBreadcrumbSegment(host)).toBe("Table");
+    expect(readDashboardView()).toBe("table");
+    expect(tabDisabled(viewButton(host, "Table"))).toBe(false);
+    expect(tabDisabled(viewButton(host, "Board"))).toBe(false);
+    expect(tabDisabled(viewButton(host, "Calendar"))).toBe(false);
 
     await act(async () => { resolvePut({ changed: true, current: { version: 2, deadline: { localCivil: "2026-09-20T09:00", instant: "2026-09-19T23:00:00.000Z" }, reminderOffsetsMinutes: [] } }); await Promise.resolve(); });
     await settle();
 
-    expect(viewButton(host, "List")?.disabled).toBe(false);
-    expect(viewButton(host, "Kanban")?.disabled).toBe(false);
+    expect(tabDisabled(viewButton(host, "Table"))).toBe(false);
+    expect(tabDisabled(viewButton(host, "Board"))).toBe(false);
     expect(apiPutMock).toHaveBeenCalledTimes(1);
   });
 
   it("3 — Back during a Kanban drag re-enables every control and the rail/breadcrumb agree with wherever Back landed", async () => {
     realBoardEnabled.value = true;
     stagesFixture.value = TWO_STAGES;
-    const host = await renderApp("/?view=list");
-    await clickRailChild(host, "Kanban");
+    const host = await renderApp("/?view=table");
+    await clickRailChild(host, "Board");
 
     await dndStart(ACTIVE_PROJECT_ID);
-    expect(viewButton(host, "List")?.disabled).toBe(true);
+    expect(tabDisabled(viewButton(host, "Table"))).toBe(true);
 
     await act(async () => { window.history.back(); await new Promise((resolve) => setTimeout(resolve, 0)); });
     await settle();
 
-    expect(viewButton(host, "List")?.disabled).toBe(false);
-    expect(viewButton(host, "Kanban")?.disabled).toBe(false);
-    expect(viewButton(host, "Calendar")?.disabled).toBe(false);
-    expect(currentUrl()).toBe("/?view=list");
-    expect(renderedDashboardBranch(host)).toBe("list");
-    expect(activeRailChild(host)).toBe("List");
-    expect(lastBreadcrumbSegment(host)).toBe("List");
-    expect(readDashboardView()).toBe("list");
+    expect(tabDisabled(viewButton(host, "Table"))).toBe(false);
+    expect(tabDisabled(viewButton(host, "Board"))).toBe(false);
+    expect(tabDisabled(viewButton(host, "Calendar"))).toBe(false);
+    expect(currentUrl()).toBe("/?view=table");
+    expect(renderedDashboardBranch(host)).toBe("table");
+    expect(activeRailChild(host)).toBe("Table");
+    expect(lastBreadcrumbSegment(host)).toBe("Table");
+    expect(readDashboardView()).toBe("table");
   });
 
   it("4 — a rail List click during a Kanban drag re-enables controls, and a cross-Stage drag-end the dead Board still receives writes nothing and opens no confirm", async () => {
     realBoardEnabled.value = true;
     stagesFixture.value = TWO_STAGES;
-    const host = await renderApp("/?view=list");
-    await clickRailChild(host, "Kanban");
+    const host = await renderApp("/?view=table");
+    await clickRailChild(host, "Board");
 
     await dndStart(ACTIVE_PROJECT_ID);
-    expect(viewButton(host, "List")?.disabled).toBe(true);
+    expect(tabDisabled(viewButton(host, "Table"))).toBe(true);
     // Captured before the Board unmounts — dnd-kit does not detach an active sensor when
     // `DndContext` unmounts, so this handler can still fire after the click below.
     const deadHandlers = dnd.handlers.at(-1);
 
-    await clickRailChild(host, "List");
+    await clickRailChild(host, "Table");
 
-    expect(currentUrl()).toBe("/?view=list");
-    expect(renderedDashboardBranch(host)).toBe("list");
-    expect(activeRailChild(host)).toBe("List");
-    expect(lastBreadcrumbSegment(host)).toBe("List");
-    expect(readDashboardView()).toBe("list");
-    expect(viewButton(host, "List")?.disabled).toBe(false);
-    expect(viewButton(host, "Kanban")?.disabled).toBe(false);
+    expect(currentUrl()).toBe("/?view=table");
+    expect(renderedDashboardBranch(host)).toBe("table");
+    expect(activeRailChild(host)).toBe("Table");
+    expect(lastBreadcrumbSegment(host)).toBe("Table");
+    expect(readDashboardView()).toBe("table");
+    expect(tabDisabled(viewButton(host, "Table"))).toBe(false);
+    expect(tabDisabled(viewButton(host, "Board"))).toBe(false);
 
     const end = deadHandlers?.props.onDragEnd as ((event: unknown) => void) | undefined;
     if (!end) throw new Error("No onDragEnd handler captured");
@@ -850,27 +849,30 @@ function railParentDashboardLink(host: ParentNode): HTMLAnchorElement | undefine
     .find((link) => link.textContent?.trim() === "Dashboard");
 }
 
-describe("the rail's top-level Dashboard link carries the live off-Dashboard draft (#217 fix round 8, item 1)", () => {
-  async function typeIntoShellSearch(host: ParentNode, value: string) {
-    await openShellSearch(host);
-    const input = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+describe("the rail's top-level Dashboard link carries the live off-Dashboard draft (#217 fix round 8, item 1; #427)", () => {
+  // #427: the search lives in the Dashboard toolbar, so an "off-Dashboard draft" is one typed on the
+  // Dashboard and carried across a rail navigation to another screen.
+  async function typeThenLeave(host: ParentNode, value: string) {
+    const input = dashboardSearchInput()!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
       input.dispatchEvent(new Event("input", { bubbles: true }));
       await Promise.resolve();
     });
+    await click(host.querySelector('[data-testid="navigation-rail-link"][href="/admin"]')!);
+    expect(currentUrl()).toBe("/admin");
   }
 
   it("clicking Dashboard mid-debounce (before the 300ms commit) lands on ?q=smith, keeps the input, and the projects request carries q", async () => {
-    const host = await renderApp("/admin");
-    await typeIntoShellSearch(host, "smith");
+    const host = await renderApp("/");
+    await typeThenLeave(host, "smith");
     // Still inside the 300ms debounce — no commit has happened anywhere yet.
     expect(railParentDashboardLink(host)!.getAttribute("href")).toBe("/?q=smith");
 
     await click(railParentDashboardLink(host)!);
 
     expect(currentUrl()).toBe("/?q=smith");
-    expect(document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')?.value ?? await reopenedSearchValue(host)).toBe("smith");
+    expect(dashboardSearchInput()?.value).toBe("smith");
     expect(apiGetMock.mock.calls.map(([path]) => path).some((path) => path.startsWith("/api/projects") && path.includes("q=smith"))).toBe(true);
   });
 
@@ -880,14 +882,14 @@ describe("the rail's top-level Dashboard link carries the live off-Dashboard dra
   // carries the live draft (`withLiveDashboardSearch`, `lib/app-router.tsx`), so clicking it is
   // what lands on `?q=smith`, independent of whether the dropped timer fired first.
   it("clicking Dashboard after the 300ms debounce fires (and is dropped, off-Dashboard) still lands on ?q=smith via the rail href, keeps the input, and the projects request carries q", async () => {
-    const host = await renderApp("/admin");
-    await typeIntoShellSearch(host, "smith");
+    const host = await renderApp("/");
+    await typeThenLeave(host, "smith");
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
 
     await click(railParentDashboardLink(host)!);
 
     expect(currentUrl()).toBe("/?q=smith");
-    expect(document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')?.value ?? await reopenedSearchValue(host)).toBe("smith");
+    expect(dashboardSearchInput()?.value).toBe("smith");
     expect(apiGetMock.mock.calls.map(([path]) => path).some((path) => path.startsWith("/api/projects") && path.includes("q=smith"))).toBe(true);
   });
 
@@ -903,7 +905,7 @@ describe("the rail's top-level Dashboard link carries the live off-Dashboard dra
  * `Dashboard` under `<StrictMode>` but synthesised the arrival itself — it pushed `/?q=smith` onto
  * `window.history` directly and drove the draft-to-URL sync through a LOCAL `ArrivalSync`
  * stand-in, never the real rail click/Enter path or the real `ShellRoute`. Hosted here instead,
- * against the real `App` this file already mounts: types into the REAL `ShellSearch` at `/admin`
+ * against the real `App` this file already mounts: types into the REAL `DashboardSearch`, leaves to `/admin`
  * under `<StrictMode>`, then arrives at Dashboard through (i) a REAL click on the rail's parent
  * Dashboard link and (ii) a REAL Enter keydown — asserting against a spy on `locationStore()`'s
  * own `push`/`replace`, not `window.location.search` alone, so a same-URL write that string
@@ -914,27 +916,18 @@ describe("the rail's top-level Dashboard link carries the live off-Dashboard dra
 describe("off-Dashboard, the draft reaches the URL exactly once through the rail click/Enter itself (never the dropped debounce), under StrictMode (#217 fix round 9, item 2)", () => {
   afterEach(() => { vi.useRealTimers(); });
 
-  async function typeIntoShellSearchFakeTimers(host: ParentNode, value: string) {
-    await act(async () => {
-      host.querySelector<HTMLElement>('[data-testid="shell-search-trigger"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
-    });
-    await act(async () => { await vi.advanceTimersByTimeAsync(50); });
-    const input = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+  /** Types into the Dashboard toolbar's search, then leaves for /admin through the rail (the draft survives in the store). */
+  async function typeThenLeaveFakeTimers(host: ParentNode, value: string) {
+    const input = dashboardSearchInput()!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
-  }
-
-  /** The popover may have closed on arrival; the draft lives in the store, so reopen and read it. */
-  async function searchValueFakeTimers(host: ParentNode) {
-    if (!document.querySelector('[data-testid="shell-search"]')) {
-      await act(async () => {
-        host.querySelector<HTMLElement>('[data-testid="shell-search-trigger"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
-      });
-      await act(async () => { await vi.advanceTimersByTimeAsync(50); });
-    }
-    return document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')?.value;
+    await act(async () => {
+      host.querySelector<HTMLElement>('[data-testid="navigation-rail-link"][href="/admin"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+    expect(currentUrl()).toBe("/admin");
   }
 
   async function renderAppUnderStrictModeFakeTimers(path: string) {
@@ -949,8 +942,8 @@ describe("off-Dashboard, the draft reaches the URL exactly once through the rail
 
   it("(i) clicking the rail's parent Dashboard link", async () => {
     vi.useFakeTimers();
-    const host = await renderAppUnderStrictModeFakeTimers("/admin");
-    await typeIntoShellSearchFakeTimers(host, "smith");
+    const host = await renderAppUnderStrictModeFakeTimers("/");
+    await typeThenLeaveFakeTimers(host, "smith");
 
     const pushSpy = vi.spyOn(locationStore(), "push");
     const replaceSpy = vi.spyOn(locationStore(), "replace");
@@ -963,7 +956,7 @@ describe("off-Dashboard, the draft reaches the URL exactly once through the rail
     await act(async () => { await vi.advanceTimersByTimeAsync(50); });
 
     expect(currentUrl()).toBe("/?q=smith");
-    expect(await searchValueFakeTimers(host)).toBe("smith");
+    expect(dashboardSearchInput()?.value).toBe("smith");
 
     const writesAtArrival = pushSpy.mock.calls.length + replaceSpy.mock.calls.length;
     // A full second past the original 300ms debounce — no LATER write occurs: the arrival itself
@@ -976,22 +969,22 @@ describe("off-Dashboard, the draft reaches the URL exactly once through the rail
     replaceSpy.mockRestore();
   });
 
-  it("(ii) pressing Enter in the ShellSearch input", async () => {
+  it("(ii) pressing ⌘K, which lands on the Dashboard carrying the draft (#427)", async () => {
     vi.useFakeTimers();
-    const host = await renderAppUnderStrictModeFakeTimers("/admin");
-    await typeIntoShellSearchFakeTimers(host, "smith");
+    const host = await renderAppUnderStrictModeFakeTimers("/");
+    await typeThenLeaveFakeTimers(host, "smith");
 
     const pushSpy = vi.spyOn(locationStore(), "push");
     const replaceSpy = vi.spyOn(locationStore(), "replace");
 
-    const input = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     await act(async () => {
-      input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }));
+      window.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "k", metaKey: true }));
     });
     await act(async () => { await vi.advanceTimersByTimeAsync(50); });
 
     expect(currentUrl()).toBe("/?q=smith");
-    expect(await searchValueFakeTimers(host)).toBe("smith");
+    expect(dashboardSearchInput()?.value).toBe("smith");
+    expect(document.activeElement).toBe(dashboardSearchInput());
 
     const writesAtArrival = pushSpy.mock.calls.length + replaceSpy.mock.calls.length;
     await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
@@ -1003,40 +996,47 @@ describe("off-Dashboard, the draft reaches the URL exactly once through the rail
   });
 });
 
+/** The header is the first child; the view bar follows it directly, or follows the Active/Archived scope row that stays until #428 (admin only). */
+function expectViewBarFollowsHeading(main: Element, label: string) {
+  const children = [...main.children].map((child) => child.getAttribute("data-testid"));
+  expect(children[0], label).toBe("dashboard-header");
+  expect(children[1] === "dashboard-view-bar" || (children[1] === "dashboard-toolbar" && children[2] === "dashboard-view-bar"), `${label}: ${children.join(",")}`).toBe(true);
+}
+
 describe("the Dashboard sheds the Notice board and summary strip; /notices hosts the board (#334)", () => {
   function signInAs(role: string) {
     sessionState.value = { data: { user: { id: "r1", name: "Role", role } }, isPending: false, refetch: vi.fn<() => Promise<void>>() };
   }
 
   it.each([
-    ["admin", ["list", "kanban", "gantt", "calendar"]],
-    ["editor", ["list", "kanban", "gantt", "calendar"]],
-    ["photographer", ["list", "kanban"]],
-    ["external_editor", ["list"]],
-  ])("%s: no Notice board and no project summary on any view, the toolbar follows the heading", async (role, views) => {
+    ["admin", ["table", "board", "timeline", "calendar"]],
+    ["editor", ["table", "board", "timeline", "calendar"]],
+    ["photographer", ["table", "board"]],
+    ["external_editor", ["table"]],
+  ])("%s: no Notice board and no project summary on any view, the view bar follows the heading", async (role, views) => {
     signInAs(role);
     for (const view of views) {
       const host = await renderApp(`/?view=${view}`);
       expect(host.querySelector('[data-testid="notice-board-marker"]'), `${role} ${view}`).toBeNull();
       expect(host.querySelector('[aria-label="Project summary"]'), `${role} ${view}`).toBeNull();
       const main = host.querySelector("main")!;
-      expect(main.children[1]?.getAttribute("data-testid"), `${role} ${view}`).toBe("dashboard-toolbar");
+      expectViewBarFollowsHeading(main, `${role} ${view}`);
       if (root) await act(async () => root!.unmount());
       root = null;
       document.body.replaceChildren();
     }
   });
 
-  it.each(["kanban", "gantt", "calendar"])("external_editor: ?view=%s never shows the Notice board or summary either, wherever it lands", async (view) => {
+  it.each(["board", "timeline", "calendar"])("external_editor: ?view=%s never shows the Notice board or summary either, wherever it lands", async (view) => {
     signInAs("external_editor");
     const host = await renderApp(`/?view=${view}`);
     expect(host.querySelector('[data-testid="notice-board-marker"]'), view).toBeNull();
     expect(host.querySelector('[aria-label="Project summary"]'), view).toBeNull();
-    expect(host.querySelector("main")!.children[1]?.getAttribute("data-testid"), view).toBe("dashboard-toolbar");
+    expectViewBarFollowsHeading(host.querySelector("main")!, view);
   });
 
   it("admin: the Active/Archived toggle still works and the Archived scope has no strip or board either", async () => {
-    const host = await renderApp("/?view=list");
+    const host = await renderApp("/?view=table");
     await clickButtonLabelled(host, "Archived");
     expect(host.textContent).toContain("Archived projects");
     expect(host.querySelector('[data-testid="notice-board-marker"]')).toBeNull();
@@ -1050,7 +1050,7 @@ describe("the Dashboard sheds the Notice board and summary strip; /notices hosts
     expect(main.querySelector('[data-testid="notice-board-marker"]')).not.toBeNull();
     const item = [...host.querySelectorAll('[data-testid="navigation-rail-link"]')].find((a) => a.textContent?.trim() === "Notice board")!;
     expect(item.getAttribute("aria-current")).toBe("page");
-    expect(host.querySelector('[data-testid="dashboard-toolbar"]')).toBeNull();
+    expect(host.querySelector('[data-testid="dashboard-view-bar"]')).toBeNull();
   });
 
   it("the rail item mounts the board from the Dashboard, and Back returns to a Dashboard without it", async () => {
@@ -1063,7 +1063,7 @@ describe("the Dashboard sheds the Notice board and summary strip; /notices hosts
     await act(async () => { window.history.back(); await new Promise((resolve) => setTimeout(resolve, 20)); });
     await settle();
     expect(currentUrl()).toBe("/");
-    expect(host.querySelector('[data-testid="dashboard-toolbar"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="dashboard-view-bar"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="notice-board-marker"]')).toBeNull();
   });
 

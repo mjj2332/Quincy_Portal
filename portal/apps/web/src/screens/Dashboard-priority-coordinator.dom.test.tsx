@@ -2,6 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { displayTrigger } from "./dashboard-display-test-helpers";
 import { Dashboard } from "./Dashboard";
 import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project-query-sync";
 import { dashboardProjectsKey } from "../lib/dashboard-projects";
@@ -1124,14 +1125,15 @@ describe("a priority save locks only its own card (#306)", () => {
 
   it("(a) keeps the view buttons and the sort control enabled while a priority POST is in flight", async () => {
     await renderAndSaveFirst();
-    const buttons = [...host.querySelectorAll<HTMLButtonElement>("button")];
-    const list = buttons.find((button) => button.textContent === "List")!;
-    const kanban = buttons.find((button) => button.textContent === "Kanban")!;
-    expect(list.disabled).toBe(false);
-    expect(kanban.disabled).toBe(false);
-    const sort = host.querySelector<HTMLElement>('[role="combobox"][aria-label="Sort Kanban board"]')!;
+    const tabs = [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] [role="tab"]')];
+    const list = tabs.find((button) => button.textContent === "Table")!;
+    const kanban = tabs.find((button) => button.textContent === "Board")!;
+    const isDisabled = (element: HTMLElement) => element.hasAttribute("disabled") || element.getAttribute("aria-disabled") === "true";
+    expect(isDisabled(list)).toBe(false);
+    expect(isDisabled(kanban)).toBe(false);
+    const sort = displayTrigger(host)!;
     expect(sort).not.toBeNull();
-    expect(sort.hasAttribute("disabled") || sort.getAttribute("aria-disabled") === "true").toBe(false);
+    expect(isDisabled(sort)).toBe(false);
   });
 
   it("(a2) still disables the view buttons and the sort control while a MOVE is in flight", async () => {
@@ -1142,11 +1144,12 @@ describe("a priority save locks only its own card (#306)", () => {
     await vi.waitFor(() => expect(host.querySelector('[data-testid="move-second"]')).not.toBeNull());
     await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="move-second"]')!.click(); await Promise.resolve(); });
     await flush();
-    const buttons = [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')];
-    expect(buttons.map((button) => button.textContent)).toEqual(expect.arrayContaining(["List", "Kanban"]));
-    expect(buttons.every((button) => button.disabled)).toBe(true);
-    const sort = host.querySelector<HTMLElement>('[role="combobox"][aria-label="Sort Kanban board"]')!;
-    expect(sort.hasAttribute("disabled") || sort.getAttribute("aria-disabled") === "true").toBe(true);
+    const buttons = [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] [role="tab"]')];
+    expect(buttons.map((button) => button.textContent)).toEqual(expect.arrayContaining(["Table", "Board"]));
+    const isDisabled = (element: HTMLElement) => element.hasAttribute("disabled") || element.getAttribute("aria-disabled") === "true";
+    expect(buttons.every(isDisabled)).toBe(true);
+    const sort = displayTrigger(host)!;
+    expect(isDisabled(sort)).toBe(true);
   });
 
   it("(c) keeps a card's CONFIRMED priority when that card moves before the refetch lands", async () => {

@@ -1,12 +1,12 @@
-// TB8-01 §2.2 item 8's guard half: `selectKanbanSort`'s client-side check at Dashboard.tsx:636
+// TB8-01 §2.2 item 8's guard half: `selectBoardSort`'s client-side check
 // (`next === "priority" && (!canPrioritize || !hasAuthorizedBoardMap)`) must refuse a "priority"
-// value even if it somehow reaches `onValueChange` — not merely rely on the option being
-// un-rendered. Since the real <Select> only ever offers rendered options (an unauthorized user
-// can never click "Priority" because it isn't in the list), this file mocks `../components/quincy/Select`
-// to a bare trigger that can invoke `onValueChange("priority")` directly, bypassing whatever
-// options were actually passed in, so the assertion is against Dashboard's own guard — not
-// against Select's list-filtering, which Dashboard-kanban-sort.dom.test.tsx's test 8 already
-// covers as the positive/render-gate half.
+// value even if it somehow reaches the radio group's `onValueChange` — not merely rely on the
+// option being un-rendered. Since the real menu only ever offers rendered options (an unauthorized
+// user can never click "Priority" because it isn't in the list), this file mocks the
+// `reui/dropdown-menu` radio group to a bare button that invokes `onValueChange("priority")`
+// directly, bypassing whatever items were actually rendered, so the assertion is against
+// Dashboard's own guard — not against the view bar's list-filtering, which
+// Dashboard-kanban-sort.dom.test.tsx (test 8) and -render-gate cover as the render halves.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -36,11 +36,20 @@ vi.mock("../lib/stages", () => ({
     presentationStageKey: (stageKey: string) => stageKey,
   }),
 }));
-vi.mock("../components/quincy/Select", () => ({
-  Select: ({ onValueChange, ariaLabel }: { onValueChange: (value: string) => void; ariaLabel: string }) => (
-    <button aria-label={ariaLabel} type="button" onClick={() => onValueChange("priority")}>mock sort trigger</button>
-  ),
-}));
+vi.mock("../components/reui/dropdown-menu", () => {
+  const passthrough = ({ children }: { children?: React.ReactNode }) => <>{children}</>;
+  return {
+    DropdownMenu: passthrough,
+    DropdownMenuTrigger: ({ children }: { children?: React.ReactNode }) => <button type="button">{children}</button>,
+    DropdownMenuContent: passthrough,
+    DropdownMenuGroup: passthrough,
+    DropdownMenuLabel: passthrough,
+    DropdownMenuRadioItem: () => null,
+    DropdownMenuRadioGroup: ({ onValueChange }: { onValueChange: (value: string) => void }) => (
+      <button aria-label="mock sort" type="button" onClick={() => onValueChange("priority")}>mock sort trigger</button>
+    ),
+  };
+});
 
 let root: Root | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -81,15 +90,15 @@ describe("Dashboard Kanban sort control — Priority gate guard (negative case)"
   it("refuses a 'priority' value from an unauthorized user even when it reaches onValueChange directly", async () => {
     await act(async () => { root!.render(<Dashboard currentUserId="photographer-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
     await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-card"]')).not.toBeNull());
-    const mockTrigger = document.querySelector<HTMLButtonElement>('[aria-label="Sort Kanban board"]')!;
+    const mockTrigger = document.querySelector<HTMLButtonElement>('[aria-label="mock sort"]')!;
     expect(mockTrigger).not.toBeNull();
     // The initial mount already persists the default "board" mode (initializeKanbanSortMode's
     // write-back), so the guard's effect must be checked as "stays unchanged", not "stays unset".
     const before = window.localStorage.getItem("quincy:dashboard:kanbanSort");
     expect(before).toBe("board");
     await act(async () => { mockTrigger.click(); await Promise.resolve(); });
-    // The guard returns before setKanbanSort/the localStorage write, so this staying "board"
-    // (rather than becoming "priority") is direct evidence Dashboard's own guard — not Select's
+    // The guard returns before setBoardSort/the localStorage write, so this staying "board"
+    // (rather than becoming "priority") is direct evidence Dashboard's own guard — not the menu's
     // rendering — refused the value.
     expect(window.localStorage.getItem("quincy:dashboard:kanbanSort")).toBe(before);
   });
