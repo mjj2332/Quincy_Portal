@@ -191,7 +191,7 @@ function DeadlineCellRenderer({ row }: { row: Row<DataGridFeatures, ProjectSumma
         projectId={project.id}
         street={project.street}
         deadline={deadlineViewOf(project)}
-        textClassName="text-[length:var(--text-sm)]"
+        textClassName="!text-[length:var(--text-sm)]"
         canEdit={canEdit}
         disabled={terminal}
         role={role}
