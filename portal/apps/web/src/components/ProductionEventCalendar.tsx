@@ -6,7 +6,7 @@
  * The ONLY app file that imports `components/reui/event-calendar/` — pinned by
  * `harness-reachability.guard.test.ts` (`ALLOWED_VENDOR_SCHEDULING_CONSUMERS`, an exact-file entry
  * scoped to that one tree) and `ProductionEventCalendar.import-boundary.guard.test.ts`. The rail,
- * facets and dialogs are presentational siblings that never import the tree.
+ * dialogs are presentational siblings that never import the tree.
  *
  * Writes (round 3): the shared scheduling controller (`useSchedulingController`,
  * `lib/use-scheduling-commands.tsx`) owns every write, exactly as `ProductionGantt.tsx` composes it —
@@ -95,7 +95,6 @@ import { Notice } from "./quincy/Notice";
 import { checklistScheduleEditorButtonLabel } from "./ProductionCalendarScheduleEditorFields";
 import { ProjectCalendarAnchor } from "./ProjectCalendarAnchor";
 import { ProductionEventCalendarDialogs, type ProductionEventCalendarDeadlineConfirm } from "./ProductionEventCalendarDialogs";
-import { ProductionEventCalendarFacets } from "./ProductionEventCalendarFacets";
 import { ProductionEventCalendarRail, type ProductionEventCalendarUpNext } from "./ProductionEventCalendarRail";
 
 export type ProductionEventCalendarProps = {
@@ -357,7 +356,6 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
       upNext={upNext}
       onOpenUpNext={(event) => { const civil = eventCivilDate(event); if (civil !== calendar.date) navigate({ date: civil }); setRailOpen(false); }}
       className={narrow ? "min-h-0 flex-1" : "min-h-0 border-r border-border"}
-      facets={<ProductionEventCalendarFacets filters={filters} disabled={loading || blocked} onChange={(next) => navigate(next)} />}
     />
   );
 
