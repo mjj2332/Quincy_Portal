@@ -25,6 +25,7 @@ import { ProjectDeadlineControl } from "./ProjectDeadlineControl";
 import { ProjectTeamCombobox } from "./ProjectTeamCombobox";
 import { deadlineTriggerText } from "./ProjectHeaderDeadline";
 import { POPOVER_CONTENT } from "./project-header-popover";
+import { DateTimePopoverContent } from "./quincy/DateTimeField";
 import { useProjectDetailQuery, type ProjectDetail } from "../lib/project-data";
 import { cn } from "../lib/utils";
 
@@ -50,19 +51,19 @@ const personLabel = (person: { name: string; inactive: boolean }) => `${person.n
  * Loads the Project detail behind a popover. Children render only once data exists: the Deadline
  * control seeds its draft once, at mount (`ProjectDeadlineControl.tsx`).
  */
-function GanttProjectDetailGate({ projectId, role, children }: { projectId: string; role: Role; children: (detail: ProjectDetail) => ReactNode }) {
+function GanttProjectDetailGate({ projectId, role, fallbackClassName, children }: { projectId: string; role: Role; fallbackClassName?: string; children: (detail: ProjectDetail) => ReactNode }) {
   const query = useProjectDetailQuery(projectId, true, false, role);
   if (query.data) return <>{children(query.data)}</>;
   if (query.isError) {
     return (
-      <Notice data-testid="gantt-project-detail-error" role="alert" className="flex items-center justify-between gap-[var(--space-3)]">
+      <Notice data-testid="gantt-project-detail-error" role="alert" className={cn("flex items-center justify-between gap-[var(--space-3)]", fallbackClassName)}>
         <span>Project details could not be loaded.</span>
         <Button type="button" size="xs" variant="outline" onClick={() => void query.refetch()}>Retry</Button>
       </Notice>
     );
   }
   return (
-    <div data-testid="gantt-project-detail-loading" role="status" aria-label="Loading project details" className="grid gap-[var(--space-2)]">
+    <div data-testid="gantt-project-detail-loading" role="status" aria-label="Loading project details" className={cn("grid gap-[var(--space-2)]", fallbackClassName)}>
       <Skeleton className="h-8 w-full" />
       <Skeleton className="h-4 w-2/3" />
     </div>
@@ -156,13 +157,6 @@ export function GanttDeadlineCell({ projectId, street, deadline, canEdit, disabl
 }) {
   const [open, setOpen] = useState(false);
   const reasonId = useId();
-  // The Date input mounts once the detail has loaded, after the popover opened: same attach-ref
-  // plus `initialFocus` pairing as the Team cell.
-  const dateRef = useRef<HTMLInputElement | null>(null);
-  const attachDate = useCallback((node: HTMLInputElement | null) => {
-    dateRef.current = node;
-    node?.focus();
-  }, []);
   if (action) {
     return (
       <>
@@ -209,13 +203,14 @@ export function GanttDeadlineCell({ projectId, street, deadline, canEdit, disabl
       >
         <span className="truncate">{text}</span>
       </PopoverTrigger>
-      {/* #325: `scroll-pb-18` reserves the pinned Clear / Save row, as in `ProjectHeaderDeadline`. */}
-      <PopoverContent align="start" aria-label="Deadline" className={cn(POPOVER_CONTENT, "scroll-pb-18")} initialFocus={() => dateRef.current ?? true}>
-        <PopoverTitle className="!font-medium">Deadline</PopoverTitle>
-        <GanttProjectDetailGate projectId={projectId} role={role}>
-          {(detail) => <ProjectDeadlineControl projectId={projectId} schedule={detail.deadlineSchedule} canEdit onSaved={() => setOpen(false)} dateInputRef={attachDate} />}
+      {/* #422: the date-time popup mounts once the detail has loaded, after the popover opened, so
+          Base UI's `initialFocus` (evaluated at open) found nothing: `focusOnMount` moves focus in
+          the moment the popup mounts. The cached-detail case is covered by `initialFocus`. */}
+      <DateTimePopoverContent label="Deadline">
+        <GanttProjectDetailGate projectId={projectId} role={role} fallbackClassName="m-[var(--space-3)] w-[min(20rem,calc(100vw-4*var(--space-4)))]">
+          {(detail) => <ProjectDeadlineControl projectId={projectId} schedule={detail.deadlineSchedule} canEdit onClose={() => setOpen(false)} focusOnMount />}
         </GanttProjectDetailGate>
-      </PopoverContent>
+      </DateTimePopoverContent>
     </Popover>
   );
 }

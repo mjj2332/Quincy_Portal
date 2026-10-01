@@ -12,6 +12,7 @@ import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveSydneyCivilMinute } from "@quincy/shared";
 import { ProjectQueryRuntime } from "../lib/project-query-sync";
+import { applyPopup, dateTimePopup, openMoveDialogField, pickPopupDateTime, popupButton, popupDraft, pressInPopup, setMoveDialogDeadline } from "../testing/date-time-popup";
 import { eventCalendarFake } from "../testing/event-calendar-fake";
 import { deadlineEvent, deadlineSaveBody, instantOf, PROJECT_ID, PROJECT_STREET, rangeResponse } from "../testing/production-calendar-fixtures";
 import {
@@ -122,8 +123,7 @@ describe("ProductionEventCalendar Project Deadline writes", () => {
     const fetch = await mount({ subview: "agenda", onAcceptGateChange: (blocked) => gate.push(blocked) });
     await openReschedule(ID);
     expect(gate.at(-1)).toBe(true);
-    await setValue(byLabel("Deadline date"), "2026-08-12");
-    await setValue(byLabel("Deadline time"), "09:00");
+    await setMoveDialogDeadline({ day: "2026-08-12", time: "09:00" });
     await clickTestId("event-calendar-move-submit");
     await flush(5);
     expect(fetch.puts()).toHaveLength(0);
@@ -140,7 +140,7 @@ describe("ProductionEventCalendar Project Deadline writes", () => {
     await flush(200);
     await openReschedule(ID);
     expect(document.querySelector('[data-testid="event-calendar-move-dialog"]')).not.toBeNull();
-    expect(byLabel("Deadline date")?.value).toBe("2026-08-12");
+    expect(popupDraft(await openMoveDialogField()).day).toBe("2026-08-12");
   });
 
   it("does not apply the optimistic overlay before confirmation resolves", async () => {
@@ -168,9 +168,12 @@ describe("ProductionEventCalendar Project Deadline writes", () => {
     const fetch = await mount({ subview: "week", date: "2026-04-04", range: rangeResponse({ events: [source("2026-04-04T10:00")], subview: "week", date: "2026-04-04" }) });
     await proposeUpdate(ID, { start: at("2026-04-05T02:30"), allDay: false, granularity: "minute" });
     expect(fetch.puts()).toHaveLength(0);
-    const radios = [...document.querySelectorAll<HTMLInputElement>('input[type="radio"]')];
-    expect(radios).toHaveLength(2);
-    await act(async () => { radios.find((input) => input.value === "later")!.click(); await Promise.resolve(); });
+    // The planner caught the fold before any request: the dialog opened on the draft, and the
+    // field asks which occurrence (#422).
+    const popup = await openMoveDialogField();
+    expect(popup.textContent).toContain("Earlier (UTC+11:00)");
+    await pressInPopup(popup, "Later (UTC+10:00)");
+    await applyPopup(popup);
     await clickTestId("event-calendar-move-submit");
     await flush(5);
     expect(confirmOpen()).toBe(true);
@@ -179,16 +182,17 @@ describe("ProductionEventCalendar Project Deadline writes", () => {
     expect(fetch.puts()[0]?.body).toEqual({ expectedVersion: 3, deadline: { localCivil: "2026-04-05T02:30", disambiguation: "later" }, reminderOffsetsMinutes: OFFSETS });
   });
 
-  it("surfaces direct-dialog fold choices before confirmation and sends the chosen disambiguation", async () => {
+  it("asks Earlier or Later in the field for a repeated time, before any request, and sends the chosen disambiguation", async () => {
     const fetch = await mount({ subview: "agenda" });
     await openReschedule(ID);
-    await setValue(byLabel("Deadline date"), "2026-04-05");
-    await setValue(byLabel("Deadline time"), "02:30");
-    await clickTestId("event-calendar-move-submit");
-    expect(confirmOpen()).toBe(false);
-    expect(document.querySelectorAll('input[type="radio"]')).toHaveLength(2);
-    expect(liveRegion()).toContain("That time occurs twice in Sydney");
-    await act(async () => { document.querySelector<HTMLInputElement>('input[type="radio"][value="later"]')!.click(); await Promise.resolve(); });
+    const popup = await openMoveDialogField();
+    await pickPopupDateTime(popup, "2026-04-05T02:30");
+    expect(popup.textContent).toContain("Earlier (UTC+11:00)");
+    expect(popup.textContent).toContain("Later (UTC+10:00)");
+    expect(popupButton(popup, "Apply")!.disabled).toBe(true);
+    expect(fetch.puts()).toHaveLength(0);
+    await pressInPopup(popup, "Later (UTC+10:00)");
+    await applyPopup(popup);
     await clickTestId("event-calendar-move-submit");
     await flush(5);
     await clickTestId("gantt-deadline-confirm-action");
@@ -196,17 +200,62 @@ describe("ProductionEventCalendar Project Deadline writes", () => {
     expect(fetch.puts()[0]?.body).toEqual({ expectedVersion: 3, deadline: { localCivil: "2026-04-05T02:30", disambiguation: "later" }, reminderOffsetsMinutes: OFFSETS });
   });
 
-  it("retains a direct-dialog DST gap draft, announces the gap, and sends no request", async () => {
+  it("refuses a DST gap time in the field, keeps the draft, and sends no request", async () => {
     const fetch = await mount({ subview: "agenda" });
     await openReschedule(ID);
-    await setValue(byLabel("Deadline date"), "2026-10-04");
-    await setValue(byLabel("Deadline time"), "02:30");
-    await clickTestId("event-calendar-move-submit");
+    const popup = await openMoveDialogField();
+    await pickPopupDateTime(popup, "2026-10-04T02:30");
+    expect(popup.textContent).toContain("That Sydney time does not exist");
+    expect(popupButton(popup, "Apply")!.disabled).toBe(true);
+    expect(popupDraft(popup)).toEqual({ day: "2026-10-04", time: "02:30" });
     expect(fetch.puts()).toHaveLength(0);
     expect(confirmOpen()).toBe(false);
-    expect(liveRegion()).toContain("That time does not exist in Sydney");
-    expect(byLabel("Deadline date")?.value).toBe("2026-10-04");
-    expect(byLabel("Deadline time")?.value).toBe("02:30");
+  });
+
+  it("saves a reminders-only edit from the Reschedule dialog (#422)", async () => {
+    const fetch = await mount({ subview: "agenda" });
+    await openReschedule(ID);
+    const popup = await openMoveDialogField();
+    await pressInPopup(popup, "4 hours");
+    await applyPopup(popup);
+    await clickTestId("event-calendar-move-submit");
+    await flush(5);
+    // Same instant, different reminders: not a no-op, so the confirmation opens and a PUT follows.
+    expect(confirmOpen()).toBe(true);
+    await clickTestId("gantt-deadline-confirm-action");
+    await flush(10);
+    expect(fetch.puts()).toHaveLength(1);
+    expect(fetch.puts()[0]?.body).toEqual({ expectedVersion: 3, deadline: { localCivil: "2026-08-12T09:00" }, reminderOffsetsMinutes: [1440, 240, 60] });
+  });
+
+  it("keeps the complete draft through a 409 and saves it again only on an explicit Save (#422)", async () => {
+    let puts = 0;
+    const fetch = await mount({
+      subview: "agenda",
+      put: () => (puts += 1) === 1 ? json({ code: "deadline_version_conflict", message: "changed" }, 409) : json(deadlineSaveBody("2026-08-20T10:30", 4, [1440, 240, 60])),
+    });
+    await openReschedule(ID);
+    const popup = await openMoveDialogField();
+    await pickPopupDateTime(popup, "2026-08-20T10:30");
+    await pressInPopup(popup, "4 hours");
+    await applyPopup(popup);
+    await clickTestId("event-calendar-move-submit");
+    await flush(5);
+    await clickTestId("gantt-deadline-confirm-action");
+    await flush(30);
+    expect(fetch.puts()).toHaveLength(1);
+    // The dialog is back on the whole attempt, and nothing was sent again by itself.
+    const reopened = await openMoveDialogField();
+    expect(popupDraft(reopened)).toEqual({ day: "2026-08-20", time: "10:30" });
+    expect(popupButton(reopened, "4 hours")!.getAttribute("aria-pressed")).toBe("true");
+    expect(fetch.puts()).toHaveLength(1);
+    await applyPopup(reopened);
+    await clickTestId("event-calendar-move-submit");
+    await flush(5);
+    await clickTestId("gantt-deadline-confirm-action");
+    await flush(10);
+    expect(fetch.puts()).toHaveLength(2);
+    expect(fetch.puts()[1]?.body).toEqual({ expectedVersion: 3, deadline: { localCivil: "2026-08-20T10:30" }, reminderOffsetsMinutes: [1440, 240, 60] });
   });
 
   it("treats a server fold response as a new confirmation and keeps the chip on its source", async () => {
@@ -218,17 +267,17 @@ describe("ProductionEventCalendar Project Deadline writes", () => {
     await flush(20);
     expect(fetch.puts()).toHaveLength(1);
     expect(chipStart(ID)).toBe(at("2026-08-12T09:00").toISOString());
-    expect(document.querySelectorAll('input[type="radio"]')).toHaveLength(2);
-    await act(async () => { document.querySelector<HTMLInputElement>('input[type="radio"][value="later"]')!.click(); await Promise.resolve(); });
+    // The dialog reopens on the attempted draft, reminders included; a repeated time resolves in
+    // the field itself, so this server fallback is simply saved again.
+    expect(popupDraft(await openMoveDialogField())).toEqual({ day: "2026-08-20", time: "10:00" });
+    await applyPopup(dateTimePopup("Deadline")!);
     await clickTestId("event-calendar-move-submit");
     await flush(5);
     expect(confirmOpen()).toBe(true);
-    const resolved = resolveSydneyCivilMinute("2026-08-20T10:00", "later");
-    if (!resolved.ok) throw new Error("target did not resolve");
     await clickTestId("gantt-deadline-confirm-action");
     await flush(10);
     expect(fetch.puts()).toHaveLength(2);
-    expect(fetch.puts()[1]?.body).toEqual({ expectedVersion: 3, deadline: { localCivil: "2026-08-20T10:00", disambiguation: "later" }, reminderOffsetsMinutes: OFFSETS });
+    expect(fetch.puts()[1]?.body).toEqual({ expectedVersion: 3, deadline: { localCivil: "2026-08-20T10:00" }, reminderOffsetsMinutes: OFFSETS });
   });
 
   it("rejects a late settle refetch after the Calendar range changes", async () => {
@@ -415,10 +464,8 @@ describe("ProductionEventCalendar Project Deadline writes", () => {
     expect(liveRegion()).toContain(announcement);
     expect(chipStart(ID)).toBe(at("2026-08-12T09:00").toISOString());
     if (retainDraft) {
-      expect(byLabel("Deadline date")?.value).toBe("2026-08-20");
-      expect(byLabel("Deadline time")?.value).toBe("09:00");
+      expect(popupDraft(await openMoveDialogField())).toEqual({ day: "2026-08-20", time: "09:00" });
     }
-    if (code === "deadline_repeated_local_time") expect(document.querySelectorAll('input[type="radio"]')).toHaveLength(2);
     if (locks) expect(eventCalendarFake.event(ID)?.draggable).toBe(false);
   });
 

@@ -1,18 +1,19 @@
 import { useEffect, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import type { ProjectDeadlineSchedule } from "@quincy/shared";
-import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@/components/reui/popover";
+import { Popover, PopoverTrigger } from "@/components/reui/popover";
 import { ProjectDeadlineControl } from "./ProjectDeadlineControl";
+import { DateTimePopoverContent } from "./quincy/DateTimeField";
 import { StatusPill } from "./quincy/StatusPill";
 import { dueIn } from "../lib/deadline-due-in";
 import { cn } from "../lib/utils";
-import { DASHED_TRIGGER, HEADER_KV_VALUE, POPOVER_CONTENT, TRIGGER_CHEVRON } from "./project-header-popover";
+import { DASHED_TRIGGER, HEADER_KV_VALUE, TRIGGER_CHEVRON } from "./project-header-popover";
 
 /**
  * #205 — the header's Deadline control (then a block in the rail's Production section, since #213 a
  * cell in the flat control row) is a dashed trigger that opens
- * `ProjectDeadlineControl` (since the #213 follow-up a live editor laid out as prototype 1b, which
- * closes this popover through `onSaved`) inside a `reui/popover.tsx` popover, the same primitive
+ * `ProjectDeadlineControl` (since #422 the date-time form of `quincy/DateTimeField`, which closes
+ * this popover through `onClose`) inside a `reui/popover.tsx` popover, the same primitive
  * `quincy/NotificationBell.tsx` vendored (see that file's own header for the Popover-not-Menu
  * rationale). The countdown badge (`lib/deadline-due-in.ts`) refreshes on a 60s interval — no
  * `setTimeout` chain, since a missed tick here is cosmetic, not a correctness bug.
@@ -81,11 +82,10 @@ export function ProjectHeaderDeadline({ projectId, schedule, canEdit }: {
       {due && <StatusPill tone={due.tone}>{due.label}</StatusPill>}
       <ChevronDown aria-hidden="true" className={TRIGGER_CHEVRON} />
     </PopoverTrigger>
-    {/* #325: `scroll-pb-18` (72px) reserves the pinned Clear / Save row (44px buttons + 8px + 10px)
-        so a control focused below the fold scrolls clear of it, not under it (WCAG 2.4.11). */}
-    <PopoverContent align="start" aria-label="Deadline" className={cn(POPOVER_CONTENT, "scroll-pb-18")}>
-      <PopoverTitle className="!font-medium">Deadline</PopoverTitle>
-      <ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} onSaved={() => setOpen(false)} />
-    </PopoverContent>
+    {/* #422: the popup is the date-time form of the shared date/time field (`quincy/DateTimeField`);
+        its own footer is pinned (#325), so the content needs no scroll padding of its own. */}
+    <DateTimePopoverContent label="Deadline">
+      <ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} onClose={() => setOpen(false)} />
+    </DateTimePopoverContent>
   </Popover>;
 }

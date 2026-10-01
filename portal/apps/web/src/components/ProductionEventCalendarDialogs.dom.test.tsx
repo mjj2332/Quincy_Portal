@@ -30,6 +30,7 @@ import {
   type ProductionEventCalendarDialogCommands,
 } from "./ProductionEventCalendarDialogs";
 import { Sheet } from "./reui/sheet";
+import { applyPopup, dateTimePopup, openMoveDialogField, pickPopupDateTime, pickPopupDay, popupDraft, pressInPopup } from "@/testing/date-time-popup";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -76,11 +77,12 @@ describe("ProductionEventCalendarMoveDialog (alert-dialog shell)", () => {
     await render(<ProductionEventCalendarMoveDialog open event={deadline} onSubmit={vi.fn()} onCancel={vi.fn()} {...props} />);
   }
 
-  it("seeds inputs from Sydney civil components and names the street", async () => {
+  it("seeds the date-time field from the event's Sydney civil time and names the street", async () => {
     await renderMove();
-    expect(input("Deadline date").value).toBe("2026-08-11");
-    expect(input("Deadline time").value).toBe("09:30");
+    const popup = await openMoveDialogField();
+    expect(popupDraft(popup)).toEqual({ day: "2026-08-11", time: "09:30" });
     expect(byTestId("event-calendar-move-dialog")?.textContent).toContain("12 Harbour Street");
+    expect(byTestId("event-calendar-move-dialog")?.querySelector('input[type="date"], input[type="time"]')).toBeNull();
   });
 
   it("disables submit for a malformed civil value", async () => {
@@ -88,34 +90,59 @@ describe("ProductionEventCalendarMoveDialog (alert-dialog shell)", () => {
     expect(byTestId<HTMLButtonElement>("event-calendar-move-submit")?.disabled).toBe(true);
   });
 
-  it("requires a fold choice and passes the civil value plus disambiguation, without also cancelling", async () => {
+  it("asks Earlier or Later for a repeated Sydney time, and passes the civil value, disambiguation and reminders, without also cancelling", async () => {
     const onSubmit = vi.fn();
     const onCancel = vi.fn();
-    await renderMove({ foldChoices: [{ disambiguation: "earlier", utcOffsetMinutes: 660 }, { disambiguation: "later", utcOffsetMinutes: 600 }], onSubmit, onCancel });
-    expect(document.body.textContent).toContain("Earlier occurrence (UTC+11:00)");
-    expect(document.body.textContent).toContain("Later occurrence (UTC+10:00)");
+    await renderMove({ initialCivil: "2026-04-05T02:30", onSubmit, onCancel });
+    // The draft has no choice yet, so it cannot be submitted.
     expect(byTestId<HTMLButtonElement>("event-calendar-move-submit")?.disabled).toBe(true);
-    const later = [...document.body.querySelectorAll<HTMLInputElement>('input[type="radio"]')].find((radio) => radio.value === "later")!;
-    await click(later);
+    const popup = await openMoveDialogField();
+    expect(popup.textContent).toContain("Earlier (UTC+11:00)");
+    expect(popup.textContent).toContain("Later (UTC+10:00)");
+    await pressInPopup(popup, "Later (UTC+10:00)");
+    await applyPopup(popup);
+    expect(byTestId<HTMLButtonElement>("event-calendar-move-submit")?.disabled).toBe(false);
     await click(byTestId("event-calendar-move-submit")!);
-    expect(onSubmit).toHaveBeenCalledWith("2026-08-11T09:30", "later");
+    expect(onSubmit).toHaveBeenCalledWith("2026-04-05T02:30", "later", [1440, 60]);
     expect(onCancel).not.toHaveBeenCalled();
   });
 
-  it("labels a negative occurrence offset with U+2212, like the fold choice (#222)", async () => {
-    await renderMove({ foldChoices: [{ disambiguation: "earlier", utcOffsetMinutes: -240 }, { disambiguation: "later", utcOffsetMinutes: -300 }] });
-    expect(document.body.textContent).toContain("Earlier occurrence (UTC\u221204:00)");
-    expect(document.body.textContent).toContain("Later occurrence (UTC\u221205:00)");
-    expect(document.body.textContent).not.toContain("UTC-");
+  it("starts a retry on the attempted fold and reminders", async () => {
+    const onSubmit = vi.fn();
+    await renderMove({ initialCivil: "2026-04-05T02:30", initialDisambiguation: "earlier", initialReminderOffsets: [240], onSubmit });
+    expect(byTestId<HTMLButtonElement>("event-calendar-move-submit")?.disabled).toBe(false);
+    await click(byTestId("event-calendar-move-submit")!);
+    expect(onSubmit).toHaveBeenCalledWith("2026-04-05T02:30", "earlier", [240]);
   });
 
-  it("edits date and time before submitting", async () => {
+  it("edits date, time and reminders before submitting", async () => {
     const onSubmit = vi.fn();
     await renderMove({ onSubmit });
-    await change(input("Deadline date"), "2026-08-20");
-    await change(input("Deadline time"), "15:45");
+    const popup = await openMoveDialogField();
+    await pickPopupDateTime(popup, "2026-08-20T15:45");
+    await pressInPopup(popup, "4 hours");
+    await applyPopup(popup);
     await click(byTestId("event-calendar-move-submit")!);
-    expect(onSubmit).toHaveBeenCalledWith("2026-08-20T15:45", undefined);
+    expect(onSubmit).toHaveBeenCalledWith("2026-08-20T15:45", undefined, [1440, 240, 60]);
+  });
+
+  it("keeps the dialog open when the field's popup is applied or dismissed with Escape", async () => {
+    const onCancel = vi.fn();
+    await renderMove({ onCancel });
+    const popup = await openMoveDialogField();
+    await pickPopupDay(popup, "2026-08-20");
+    // A real key press lands on the focused control inside the popup.
+    const target = popup.contains(document.activeElement) ? document.activeElement! : popup;
+    await act(async () => { target.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 20)); });
+    expect(dateTimePopup("Deadline")).toBeNull();
+    expect(byTestId("event-calendar-move-dialog")).not.toBeNull();
+    expect(onCancel).not.toHaveBeenCalled();
+    // The discarded draft left the dialog's own value alone.
+    expect(popupDraft(await openMoveDialogField()).day).toBe("2026-08-11");
+    await applyPopup(dateTimePopup("Deadline")!);
+    expect(byTestId("event-calendar-move-dialog")).not.toBeNull();
+    expect(onCancel).not.toHaveBeenCalled();
   });
 
   it("cancels through Cancel and through Escape", async () => {
@@ -291,9 +318,10 @@ describe("ProductionEventCalendarDialogs (wired to the scheduling controller's d
   it("wires the move dialog to submitMoveDialog / cancelMoveDialog", async () => {
     const wired = commands({ moveDialog: moveState });
     await render(<ProductionEventCalendarDialogs commands={wired} deadlineConfirm={null} />);
-    expect(input("Deadline date").value).toBe("2026-08-12");
+    expect(popupDraft(await openMoveDialogField()).day).toBe("2026-08-12");
+    await applyPopup(dateTimePopup("Deadline")!);
     await click(byTestId("event-calendar-move-submit")!);
-    expect(wired.submitMoveDialog).toHaveBeenCalledWith("2026-08-12T10:00", undefined);
+    expect(wired.submitMoveDialog).toHaveBeenCalledWith("2026-08-12T10:00", undefined, [1440, 60]);
     await click(byTestId("event-calendar-move-cancel")!);
     expect(wired.cancelMoveDialog).toHaveBeenCalledOnce();
   });

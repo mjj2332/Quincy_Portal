@@ -17,6 +17,7 @@
 if (!Element.prototype.getAnimations) {
   Element.prototype.getAnimations = () => [];
 }
+import { setMoveDialogDeadline } from "@/testing/date-time-popup";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -1031,7 +1032,7 @@ describe("ProductionGantt — project Deadline writes (#221 PR C)", () => {
     await click(fix!);
     await flush(2);
     expect(byTestId("event-calendar-move-dialog")).not.toBeNull();
-    await setInput(document.body.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, sydneyDay(-3));
+    await setMoveDialogDeadline({ day: sydneyDay(-3) });
     await click(byTestId("event-calendar-move-submit")!);
     await flush(4);
 
@@ -1054,7 +1055,7 @@ describe("ProductionGantt — project Deadline writes (#221 PR C)", () => {
     await click(set!);
     await flush(2);
     expect(byTestId("event-calendar-move-dialog")).not.toBeNull();
-    await setInput(document.body.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, sydneyDay(5));
+    await setMoveDialogDeadline({ day: sydneyDay(5) });
     await click(byTestId("event-calendar-move-submit")!);
     await flush(4);
 
@@ -1084,7 +1085,7 @@ describe("ProductionGantt — project Deadline writes (#221 PR C)", () => {
     await render();
     await click(deadlineActionButton()!);
     await flush(2);
-    await setInput(document.body.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, sydneyDay(5));
+    await setMoveDialogDeadline({ day: sydneyDay(5) });
     await click(byTestId("event-calendar-move-submit")!);
     await flush(4);
     expect(deadlineDialog()).not.toBeNull();
@@ -1118,7 +1119,7 @@ describe("ProductionGantt — project Deadline writes (#221 PR C)", () => {
     await render();
     await click(deadlineActionButton()!);
     await flush(2);
-    await setInput(document.body.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, sydneyDay(5));
+    await setMoveDialogDeadline({ day: sydneyDay(5) });
     await click(byTestId("event-calendar-move-submit")!);
     await flush(4);
     await click(byTestId("gantt-deadline-confirm-action")!);

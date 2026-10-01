@@ -4626,3 +4626,24 @@ remove the legacy readers) still applies.
   moved to the rail's bottom; `alignEndOffsetFor(triggerBottom, anchorBottom)` aligns its bottom edge.
 - **The photo-grid breakpoint follows the rail width.** 72px rail + 5×205 + 4×14 + 64 = 1217px, not the old
   1405px; update the comment and the media query together.
+
+## #422 Deadline uses the date-time popup
+
+- **The Deadline editor is the popup, not a form beside it.** `ProjectDeadlineControl` is now a mutation
+  adapter (version, 409, Clear confirm, Resume, query owner) around `DateTimePopup`; the header and the
+  Timeline cell render it inside `DateTimePopoverContent`, and the Calendar Reschedule / Timeline Set-Fix
+  dialog embeds `DateTimeField variant="date-time"`. Tests drive it through `testing/date-time-popup.ts`
+  (roles and names only), never `Deadline date` / `Deadline time` inputs.
+- **A seeded draft is already dirty, including a seeded clear.** A 409's Review-and-reapply seeds the popup
+  with the attempted draft; `seed.localCivil === null` must start as `clear`, or Apply on an untouched
+  draft just closes and the clear is silently dropped.
+- **A popover inside an alert dialog needs a higher layer.** `--z-popover` (90) is below `--z-dialog` (95),
+  so `reui/popover` takes a `positionerClassName`; the Move dialog passes `z-[calc(var(--z-dialog)+1)]`.
+  Escape on a control inside the popup closes the popup only (dispatch it on the focused element, as a real
+  key press would, not on `document`).
+- **Do not install a `getAnimations` stub suite-wide.** It makes a closing Base UI popup unmount one tick
+  later, which NotificationBell's synchronous assertions caught. `testing/dom-polyfills.ts` is imported by
+  `testing/date-time-popup.ts` only, so just the files that render the popup get it.
+- **Reminder offsets travel with the dialog draft.** `submitMoveDialog(localCivil, disambiguation,
+  reminderOffsetsMinutes)` carries them through the drop/place retry paths and the no-op check (a
+  reminders-only edit is a change); a rejected attempt reopens the dialog on the whole draft.

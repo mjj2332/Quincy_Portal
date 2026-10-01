@@ -8,6 +8,7 @@ import { ApiError } from "../lib/api";
 import { ProjectHeaderDeadline, deadlineTriggerText } from "./ProjectHeaderDeadline";
 import { ConfirmModalHost } from "./ConfirmDialog";
 import { confirmStore } from "../lib/confirm";
+import { applyPopup, pickPopupDateTime, pickPopupDay, popupButton, popupDraft, pressInPopup } from "@/testing/date-time-popup";
 
 /**
  * #205 — the Deadline trigger/popover wrapper. Mocks `lib/api` the same way
@@ -89,16 +90,15 @@ async function pressOutside(element: Element) {
   await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 20)); });
 }
 
-/** Types a date into the popover's live editor (#213 follow-up: no Set Deadline step), leaving an unsaved draft. */
+/** Picks a day in the popup (#422), leaving an unsaved draft. */
 async function dirtyDraft(dialog: HTMLElement) {
-  await setInput(dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2027-01-15");
+  await pickPopupDay(dialog, "2027-01-15");
 }
 
 /** Reopens the popover and checks the earlier draft is gone: the editor is reseeded from the (unset) schedule. */
 async function expectDraftDiscarded(host: HTMLElement) {
   const reopened = await openTrigger(host);
-  expect(reopened.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')?.value).toBe("");
-  expect(reopened.textContent).not.toContain("2027-01-15");
+  expect(popupDraft(reopened)).toEqual({ day: null, time: "" });
 }
 
 async function setInput(input: HTMLInputElement, value: string) {
@@ -134,7 +134,7 @@ describe("ProjectHeaderDeadline", () => {
     // needs `role="group"` (or similar) to be a legal target for `aria-label`.
     const unnamed = [...dialog.querySelectorAll<HTMLElement>("[aria-label]")]
       .filter((el) => el.getAttribute("aria-label") && !el.hasAttribute("role")
-        && !["BUTTON", "INPUT", "A", "SELECT", "TEXTAREA"].includes(el.tagName));
+        && !["BUTTON", "INPUT", "A", "SELECT", "TEXTAREA", "NAV", "TH"].includes(el.tagName));
     expect(unnamed).toEqual([]);
     // The scan above is a net; this is the specific catch it was cast for.
     expect(dialog.querySelector('[role="group"][aria-label="Deadline reminder summary"]')).not.toBeNull();
@@ -239,29 +239,27 @@ describe("ProjectHeaderDeadline", () => {
     }
   });
 
-  it("opens a dialog labelled Deadline with the live 1b editor for an unset schedule (#213)", async () => {
+  it("opens a dialog labelled Deadline with the date-time popup for an unset schedule (#422)", async () => {
     const host = await mount(emptySchedule);
     const dialog = await openTrigger(host);
     expect(dialog.textContent).not.toContain("Set Deadline");
-    expect(dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')?.value).toBe("");
-    expect(dialog.querySelector('input[aria-label="Deadline time"]')).not.toBeNull();
-    expect([...dialog.querySelectorAll<HTMLButtonElement>("button[aria-pressed]")].map((button) => button.textContent)).toEqual(["1 day", "4 hours", "1 hour"]);
+    expect(popupDraft(dialog)).toEqual({ day: null, time: "" });
+    expect([...dialog.querySelectorAll<HTMLButtonElement>("button[aria-pressed]")].map((button) => button.textContent).filter((text) => /^\d+ (day|hour)s?$/.test(text ?? ""))).toEqual(["1 day", "4 hours", "1 hour"]);
     // "+ custom" reveals the minutes field; it is not open by default.
-    expect(dialog.querySelector('input[aria-label="Custom reminder minutes"]')).toBeNull();
+    expect(dialog.querySelector('input[type="number"]')).toBeNull();
     await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "+ custom")!.click(); await Promise.resolve(); });
-    expect(dialog.querySelector('input[aria-label="Custom reminder minutes"]')).not.toBeNull();
+    expect(dialog.querySelector('input[type="number"]')).not.toBeNull();
     expect(dialog.textContent).toContain("Due-now reminder is mandatory.");
-    expect([...dialog.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.textContent === "Save")).toBe(true);
-    // No deadline yet, so nothing to Clear.
-    expect([...dialog.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.textContent === "Clear")).toBe(false);
+    expect(popupButton(dialog, "Apply")).toBeDefined();
+    // No deadline yet, so nothing to clear.
+    expect(popupButton(dialog, "No date")).toBeUndefined();
   });
 
-  it("closes the popover once a Save succeeds (#213)", async () => {
+  it("closes the popover once an Apply succeeds (#422)", async () => {
     const host = await mount(emptySchedule);
     const dialog = await openTrigger(host);
-    await setInput(dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2027-01-15");
-    await setInput(dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')!, "09:00");
-    await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!.click(); await Promise.resolve(); });
+    await pickPopupDateTime(dialog, "2027-01-15T09:00");
+    await applyPopup(dialog);
     await flush();
     expect(apiPutMock).toHaveBeenCalledTimes(1);
     expect(document.querySelector('[role="dialog"][aria-label="Deadline"]')).toBeNull();
@@ -272,18 +270,17 @@ describe("ProjectHeaderDeadline", () => {
     apiPutMock.mockReturnValueOnce(new Promise((resolve) => { resolveSave = resolve; }));
     const host = await mount(emptySchedule);
     const dialog = await openTrigger(host);
-    await setInput(dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2027-01-15");
-    await setInput(dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')!, "09:00");
-    await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!.click(); await Promise.resolve(); });
+    await pickPopupDateTime(dialog, "2027-01-15T09:00");
+    await act(async () => { popupButton(dialog, "Apply")!.click(); await Promise.resolve(); });
     await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await Promise.resolve(); await Promise.resolve(); });
     expect(document.querySelector('[role="dialog"][aria-label="Deadline"]')).toBeNull();
     const reopened = await openTrigger(host);
-    await setInput(reopened.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2027-03-03");
+    await pickPopupDay(reopened, "2027-03-03");
     await act(async () => { resolveSave({ changed: true, current: scheduleAt("2027-01-14T22:00:00.000Z", { version: 1 }), eventIntent: null, publicationIds: [] }); await Promise.resolve(); await Promise.resolve(); });
     await flush();
     // The stale completion neither closed the new session nor replaced its draft.
     expect(document.querySelector('[role="dialog"][aria-label="Deadline"]')).not.toBeNull();
-    expect(reopened.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')?.value).toBe("2027-03-03");
+    expect(popupDraft(reopened).day).toBe("2027-03-03");
   });
 
   it("shows no editor at all when canEdit is false", async () => {
@@ -291,17 +288,18 @@ describe("ProjectHeaderDeadline", () => {
     const dialog = await openTrigger(host);
     expect(dialog.querySelector("input")).toBeNull();
     expect(dialog.querySelectorAll("button")).toHaveLength(0);
+    expect(dialog.querySelector('[role="group"][aria-label="Time slots"]')).toBeNull();
   });
 
   it("keeps a dirty draft through a rerender with a new schedule object of the same version", async () => {
     const host = await mount(emptySchedule);
     const dialog = await openTrigger(host);
-    await setInput(dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2027-01-15");
+    await pickPopupDay(dialog, "2027-01-15");
 
     // A new object, same version — an ordinary background refresh, not a save conflict.
     await rerenderSchedule({ ...emptySchedule });
 
-    expect(dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')?.value).toBe("2027-01-15");
+    expect(popupDraft(dialog).day).toBe("2027-01-15");
     expect(apiPutMock).not.toHaveBeenCalled();
   });
 
@@ -311,9 +309,8 @@ describe("ProjectHeaderDeadline", () => {
     }));
     const host = await mount(emptySchedule);
     const dialog = await openTrigger(host);
-    await setInput(dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2027-01-15");
-    await setInput(dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')!, "09:00");
-    await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!.click(); await Promise.resolve(); });
+    await pickPopupDateTime(dialog, "2027-01-15T09:00");
+    await applyPopup(dialog);
     await flush();
 
     expect(document.querySelector('[role="dialog"][aria-label="Deadline"]')).not.toBeNull();
@@ -321,7 +318,7 @@ describe("ProjectHeaderDeadline", () => {
     const alerts = [...dialog.querySelectorAll('[role="alert"]')].map((el) => el.textContent ?? "");
     expect(alerts.some((text) => text.includes("Project deadline changed; reload before saving."))).toBe(true);
     expect(alerts.some((text) => text.includes("Deadline changed elsewhere."))).toBe(true);
-    expect(dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')?.value).toBe("2027-01-15");
+    expect(popupDraft(dialog)).toEqual({ day: "2027-01-15", time: "09:00" });
     expect(dialog.textContent).toContain("Reload latest");
     expect(dialog.textContent).toContain("Review and reapply my draft");
   });
@@ -358,8 +355,9 @@ describe("ProjectHeaderDeadline", () => {
     const dialog = await openTrigger(host);
 
     async function clickClear() {
-      const clearButton = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Clear")!;
-      await act(async () => { clearButton.click(); await Promise.resolve(); });
+      // "No date" only marks the draft; Apply is what asks to confirm and then saves.
+      if (popupButton(dialog, "No date")!.getAttribute("aria-pressed") !== "true") await pressInPopup(dialog, "No date");
+      await applyPopup(dialog);
       await flush();
     }
 
@@ -396,26 +394,20 @@ describe("ProjectHeaderDeadline", () => {
     expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${projectId}/deadline`, expect.objectContaining({ deadline: null }));
   });
 
-  // #325: at 390px the popover is capped to the available height and scrolls, which left Clear
-  // and Save below the fold. The action row sticks to the popover's bottom edge instead, on its
-  // own background so scrolled content passes under it.
-  it("pins the Clear / Save row to the bottom of the scrolling popover (#325)", async () => {
+  // #325 / #422: at 390px the popover is capped to the available height. The popup's frame bounds
+  // itself, scrolls only its body, and keeps Cancel / Apply in a footer OUTSIDE the scrolling
+  // body, so they stay visible however tall the content.
+  it("keeps Cancel / Apply outside the scrolling body of a height-bounded popup (#325, #422)", async () => {
     const host = await mount(scheduleAt("2026-10-01T06:00:00.000Z"));
     const dialog = await openTrigger(host);
-    const save = [...dialog.querySelectorAll("button")].find((b) => b.textContent === "Save")!;
-    const row = save.parentElement!;
-    expect([...row.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Clear", "Save"]);
-    const classes = row.className.split(/\s+/);
-    expect(classes).toContain("sticky");
-    expect(classes).toContain("bg-popover");
-    expect(classes.some((c) => /^-?bottom-/.test(c))).toBe(true);
-    // #325 design review: the row's own pb-2.5 (which covers the popup's padding while pinned)
-    // stacked on the popup's p-2.5 whenever the row sat in flow, doubling the bottom gap. A
-    // matching negative margin cancels it, so the gap is 10px pinned or not.
-    expect(classes).toContain("pb-2.5");
-    expect(classes).toContain("-mb-2.5");
-    // Review: a control Tabbed to below the fold scrolls only to the popover's edge, under the
-    // pinned row (WCAG 2.4.11). The popover's scroll padding reserves the row's height.
-    expect(dialog.className.split(/\s+/)).toContain("scroll-pb-18");
+    const apply = popupButton(dialog, "Apply")!;
+    const row = apply.parentElement!;
+    expect([...row.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Cancel", "Apply"]);
+    // The time slots live in the body; the footer is a sibling of that body, never inside it.
+    const slots = dialog.querySelector('[role="group"][aria-label="Time slots"]')!;
+    expect(slots).not.toBeNull();
+    expect(row.contains(slots)).toBe(false);
+    expect(slots.parentElement!.contains(row)).toBe(false);
+    expect(row.parentElement!.contains(slots)).toBe(true);
   });
 });

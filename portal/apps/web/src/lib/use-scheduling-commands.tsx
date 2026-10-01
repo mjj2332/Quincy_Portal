@@ -6,6 +6,7 @@ import {
   normalizeChecklistSchedule,
   previewProjectDeadlineReminderConsequences,
   type ProjectDeadlineReminderConsequence,
+  DEADLINE_PRESET_TIME,
   resolveSydneyCivilMinute,
   subtaskIdFromCalendarEntityId,
   type CalendarEventTiming,
@@ -94,6 +95,13 @@ export type MoveDialogState = {
   snapshot: CalendarAcceptedSnapshot<ProjectDeadlineCalendarEventDto>;
   initialCivil: string;
   foldChoices?: Array<{ disambiguation: ProjectDeadlineDisambiguation; utcOffsetMinutes: number }>;
+  /**
+   * #422: the rest of the attempted draft, so a retry reopens the dialog on exactly what was tried.
+   * `reminderOffsetsMinutes` is the Deadline reminders the user edited in the dialog (absent: the
+   * event's own); `disambiguation` is the Earlier / Later they chose for a repeated Sydney time.
+   */
+  reminderOffsetsMinutes?: number[];
+  disambiguation?: ProjectDeadlineDisambiguation;
   drop?: CalendarRevertable;
   subview?: "month" | "week";
   unscheduledEntry?: ProjectCalendarUnscheduledEntryDto;
@@ -332,7 +340,8 @@ export type SchedulingController<TBaseline> = {
   openUnscheduledProjectDialog: (entry: ProjectCalendarUnscheduledEntryDto) => void;
   /** `inline` (#372): the caller renders the editor itself, so a conflict's own body is adopted (see `ChecklistOperationInfo.inline`). */
   openChecklistScheduleEditor: (source: ChecklistSource, initialSchedule?: RangeChecklistScheduleInput, options?: { inline?: boolean }) => void;
-  submitMoveDialog: (localCivil: string, disambiguation?: ProjectDeadlineDisambiguation) => void;
+  /** `reminderOffsetsMinutes` is the dialog's edited Deadline reminders; absent, the event's own are kept (#422). */
+  submitMoveDialog: (localCivil: string, disambiguation?: ProjectDeadlineDisambiguation, reminderOffsetsMinutes?: number[]) => void;
   cancelMoveDialog: () => void;
   submitScheduleEditor: (schedule: RangeChecklistScheduleInput) => void;
   cancelScheduleEditor: () => void;
@@ -370,9 +379,17 @@ export type SchedulingCommands = SchedulingController<ProductionCalendarRangeRes
  */
 function attemptedDeadlineLocalCivil(proposal: Extract<SchedulingProposal, { entity: "project_deadline" }>, event: ProjectDeadlineCalendarEventDto): string {
   if (proposal.target.subview === "month") {
-    return proposal.kind === "place" ? `${proposal.target.targetDate}T17:00` : proposedCivilForAllDay(event, proposal.target.targetDate);
+    return proposal.kind === "place" ? `${proposal.target.targetDate}T${DEADLINE_PRESET_TIME}` : proposedCivilForAllDay(event, proposal.target.targetDate);
   }
   return proposal.target.targetCivilMinute ?? event.deadlineLocalCivil;
+}
+
+/** #422: the parts of a proposal's attempted draft a retried move dialog must reopen on. */
+function proposalDraft(proposal: DeadlineProposal): Pick<MoveDialogState, "reminderOffsetsMinutes" | "disambiguation"> {
+  return {
+    ...(proposal.request.deadline ? { reminderOffsetsMinutes: [...proposal.request.reminderOffsetsMinutes] } : {}),
+    ...(proposal.disambiguation ? { disambiguation: proposal.disambiguation } : {}),
+  };
 }
 
 function proposalProjectId(proposal: SchedulingProposal): string {
@@ -709,9 +726,12 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
   const isUnchangedDeadlineProposal = useCallback((event: ProjectDeadlineCalendarEventDto, proposal: DeadlineProposal): boolean => {
     // Defensive shape only (Deadlines are stored timed). Compare the full civil
     // string so a same-date time change is not mistaken for an unchanged target.
-    if (event.timing.allDay && proposal.timing.allDay) return proposal.localCivil === event.deadlineLocalCivil;
+    // #422: a reminders-only edit is a change, so the offsets are compared too (order-insensitively).
+    const sorted = (offsets: readonly number[]) => [...offsets].sort((a, b) => b - a).join(",");
+    const sameOffsets = !proposal.request.deadline || sorted(proposal.request.reminderOffsetsMinutes) === sorted(event.reminderOffsetsMinutes);
+    if (event.timing.allDay && proposal.timing.allDay) return sameOffsets && proposal.localCivil === event.deadlineLocalCivil;
     const resolved = resolveSydneyCivilMinute(proposal.localCivil, proposal.disambiguation);
-    return resolved.ok && resolved.value.instant === event.timing.start;
+    return sameOffsets && resolved.ok && resolved.value.instant === event.timing.start;
   }, []);
 
   const runConfirmedProposal = useCallback(async (proposal: DeadlineProposal) => {
@@ -721,7 +741,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     const consequences = previewProjectDeadlineReminderConsequences({
       oldDeadline: { localCivil: proposal.event.deadlineLocalCivil, instant: proposal.event.timing.allDay ? undefined : proposal.event.timing.start },
       newDeadline: { localCivil: proposal.localCivil, instant: proposal.timing.allDay ? undefined : proposal.timing.start },
-      reminderOffsetsMinutes: proposal.event.reminderOffsetsMinutes,
+      reminderOffsetsMinutes: proposal.request.deadline ? proposal.request.reminderOffsetsMinutes : proposal.event.reminderOffsetsMinutes,
       now: proposal.snapshot.capturedNow,
     });
     const scheduling = Boolean(proposal.unscheduledEntry);
@@ -812,7 +832,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
       if (action?.askFold) {
         const choices = choicesFromError(error);
         setAcceptGate(true);
-        setMoveDialog({ event: proposal.event, snapshot: proposal.snapshot, initialCivil: proposal.localCivil, foldChoices: choices, drop: proposal.drop, ...(proposal.unscheduledEntry ? { unscheduledEntry: proposal.unscheduledEntry } : {}) });
+        setMoveDialog({ event: proposal.event, snapshot: proposal.snapshot, initialCivil: proposal.localCivil, foldChoices: choices, drop: proposal.drop, ...proposalDraft(proposal), ...(proposal.unscheduledEntry ? { unscheduledEntry: proposal.unscheduledEntry } : {}) });
         if (action.announce) setAnnouncement(action.announce);
         return;
       }
@@ -847,7 +867,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
         const nextUnscheduledEntry = refreshedEntry ?? proposal.unscheduledEntry;
         commandLockRef.current.active = true;
         setAcceptGate(true);
-        setMoveDialog({ event: latest, snapshot: nextSnapshot, initialCivil: proposal.localCivil, drop: proposal.drop, ...(nextUnscheduledEntry ? { unscheduledEntry: nextUnscheduledEntry } : {}) });
+        setMoveDialog({ event: latest, snapshot: nextSnapshot, initialCivil: proposal.localCivil, drop: proposal.drop, ...proposalDraft(proposal), ...(nextUnscheduledEntry ? { unscheduledEntry: nextUnscheduledEntry } : {}) });
       } else {
         commandLockRef.current.active = false;
         setAcceptGate(false);
@@ -875,7 +895,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
    * `snapshotRef` on that same generic-invalid branch is unconditional for both, per main
    * (fix round 3 item 1).
    */
-  const runDeadlineProposal = useCallback((proposal: Extract<SchedulingProposal, { entity: "project_deadline" }>, snapshot: CalendarAcceptedSnapshot<ProjectDeadlineCalendarEventDto>, event: ProjectDeadlineCalendarEventDto, drop?: CalendarRevertable, attemptedLocalCivil?: string) => {
+  const runDeadlineProposal = useCallback((proposal: Extract<SchedulingProposal, { entity: "project_deadline" }>, snapshot: CalendarAcceptedSnapshot<ProjectDeadlineCalendarEventDto>, event: ProjectDeadlineCalendarEventDto, drop?: CalendarRevertable, attemptedLocalCivil?: string, reminderOffsets?: number[]) => {
     const isPlace = proposal.kind === "place";
     const planned = planSchedulingProposal(proposal, { bounds: portRef.current.boundsFor?.(proposalProjectId(proposal)) ?? null });
     if (!planned.ok) {
@@ -887,13 +907,14 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
         if (isPlace) drop?.revert();
         setMoveDialog({
           event, snapshot, initialCivil: seedLocalCivil, foldChoices: planned.error.choices, drop,
+          ...(reminderOffsets ? { reminderOffsetsMinutes: reminderOffsets } : {}),
           ...(isPlace ? { unscheduledEntry: proposal.entry } : { subview: proposal.target.subview === "month" ? "month" as const : "week" as const }),
         });
         return;
       }
       if (planned.error.code === "nonexistent_local_time") {
         drop?.revert();
-        setMoveDialog({ event, snapshot, initialCivil: seedLocalCivil, drop, ...(isPlace ? { unscheduledEntry: proposal.entry } : {}) });
+        setMoveDialog({ event, snapshot, initialCivil: seedLocalCivil, drop, ...(reminderOffsets ? { reminderOffsetsMinutes: reminderOffsets } : {}), ...(isPlace ? { unscheduledEntry: proposal.entry } : {}) });
         announceLifecycle("dst-gap", { entity: "deadline" });
         return;
       }
@@ -911,7 +932,9 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
       return;
     }
     if (planned.value.kind !== "deadline") return;
-    const proposalResult = proposalFromRequest(snapshot, event, planned.value.localCivil, proposal.disambiguation, planned.value.request, drop);
+    // #422: the dialog's edited reminders replace the ones the mapper copied from the event.
+    const plannedRequest = reminderOffsets && planned.value.request.deadline ? { ...planned.value.request, reminderOffsetsMinutes: [...reminderOffsets] } : planned.value.request;
+    const proposalResult = proposalFromRequest(snapshot, event, planned.value.localCivil, proposal.disambiguation, plannedRequest, drop);
     if (!proposalResult.ok) {
       drop?.revert();
       setAcceptGate(false);
@@ -927,7 +950,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     void runConfirmedProposal(isPlace ? { ...deadlineProposal, unscheduledEntry: proposal.entry } : deadlineProposal);
   }, [announceLifecycle, finishInteraction, flushQueuedRefetch, focusDescriptor, isUnchangedDeadlineProposal, proposalFromRequest, runConfirmedProposal, setAcceptGate, setOverlay]);
 
-  const mapAndRunDropProposal = useCallback((snapshot: CalendarAcceptedSnapshot<ProjectDeadlineCalendarEventDto>, event: ProjectDeadlineCalendarEventDto, localCivil: string, subview: "month" | "week", disambiguation: ProjectDeadlineDisambiguation | undefined, drop: CalendarDropInfo) => {
+  const mapAndRunDropProposal = useCallback((snapshot: CalendarAcceptedSnapshot<ProjectDeadlineCalendarEventDto>, event: ProjectDeadlineCalendarEventDto, localCivil: string, subview: "month" | "week", disambiguation: ProjectDeadlineDisambiguation | undefined, drop: CalendarDropInfo, reminderOffsets?: number[]) => {
     const target: CalendarManipulationTarget = subview === "month"
       ? { subview, targetDate: localCivil.slice(0, 10) }
       : { subview, targetDate: localCivil.slice(0, 10), targetCivilMinute: localCivil };
@@ -937,11 +960,11 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     // time/expectedVersion/reminder offsets), never the positional `event`. The positional `event`
     // is still passed separately to runDeadlineProposal for the dialog/focus/proposalFromRequest
     // uses, matching main exactly there too (see runDeadlineProposal's own docblock).
-    runDeadlineProposal({ kind: "deadline", entity: "project_deadline", event: snapshot.event, target, ...(disambiguation ? { disambiguation } : {}) }, snapshot, event, drop, localCivil);
+    runDeadlineProposal({ kind: "deadline", entity: "project_deadline", event: snapshot.event, target, ...(disambiguation ? { disambiguation } : {}) }, snapshot, event, drop, localCivil, reminderOffsets);
   }, [runDeadlineProposal]);
 
-  const mapAndRunUnscheduledProjectProposal = useCallback((snapshot: CalendarAcceptedSnapshot<ProjectDeadlineCalendarEventDto>, entry: ProjectCalendarUnscheduledEntryDto, event: ProjectDeadlineCalendarEventDto, localCivil: string, target: CalendarManipulationTarget, disambiguation: ProjectDeadlineDisambiguation | undefined, drop?: CalendarRevertable) => {
-    runDeadlineProposal({ kind: "place", entity: "project_deadline", entry, target, ...(disambiguation ? { disambiguation } : {}) }, snapshot, event, drop, localCivil);
+  const mapAndRunUnscheduledProjectProposal = useCallback((snapshot: CalendarAcceptedSnapshot<ProjectDeadlineCalendarEventDto>, entry: ProjectCalendarUnscheduledEntryDto, event: ProjectDeadlineCalendarEventDto, localCivil: string, target: CalendarManipulationTarget, disambiguation: ProjectDeadlineDisambiguation | undefined, drop?: CalendarRevertable, reminderOffsets?: number[]) => {
+    runDeadlineProposal({ kind: "place", entity: "project_deadline", entry, target, ...(disambiguation ? { disambiguation } : {}) }, snapshot, event, drop, localCivil, reminderOffsets);
   }, [runDeadlineProposal]);
 
   const openMoveDialog = useCallback((event: ProjectDeadlineCalendarEventDto) => {
@@ -958,15 +981,20 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     if (!sourceSnapshot) return;
     const event = projectDeadlinePlaceholder(entry);
     const snapshot = { ...sourceSnapshot, event } as CalendarAcceptedSnapshot<ProjectDeadlineCalendarEventDto>;
-    const initialCivil = `${portRef.current.defaultPlacementDate()}T17:00`;
+    const initialCivil = `${portRef.current.defaultPlacementDate()}T${DEADLINE_PRESET_TIME}`;
     announceLifecycle("picked-up", { entity: "deadline", street: entry.project.street, oldCivil: "Not scheduled" });
     setMoveDialog({ event, snapshot, initialCivil, unscheduledEntry: entry });
   }, [acceptForInteraction, announceLifecycle, calendarInteractionBlocked]);
 
-  const handleMoveDialogSubmit = useCallback((localCivil: string, disambiguation?: ProjectDeadlineDisambiguation) => {
+  const handleMoveDialogSubmit = useCallback((localCivil: string, disambiguation?: ProjectDeadlineDisambiguation, reminderOffsetsMinutes?: number[]) => {
     const state = moveDialog;
     if (!state || accessLostRef.current) return;
     setMoveDialog(null);
+    // #422: the whole attempted draft, so a failure below reopens the dialog on all of it.
+    const draft: Pick<MoveDialogState, "reminderOffsetsMinutes" | "disambiguation"> = {
+      ...(reminderOffsetsMinutes ? { reminderOffsetsMinutes: [...reminderOffsetsMinutes] } : {}),
+      ...(disambiguation ? { disambiguation } : {}),
+    };
     if (state.unscheduledEntry) {
       mapAndRunUnscheduledProjectProposal(
         state.snapshot,
@@ -976,30 +1004,31 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
         { subview: "week", targetDate: localCivil.slice(0, 10), targetCivilMinute: localCivil },
         disambiguation,
         state.drop,
+        reminderOffsetsMinutes,
       );
       return;
     }
     if (state.subview && state.drop) {
-      mapAndRunDropProposal(state.snapshot, state.event, localCivil, state.subview, disambiguation, state.drop as CalendarDropInfo);
+      mapAndRunDropProposal(state.snapshot, state.event, localCivil, state.subview, disambiguation, state.drop as CalendarDropInfo, reminderOffsetsMinutes);
       return;
     }
     const request: SaveProjectDeadlineRequest = {
       expectedVersion: state.snapshot.event.deadlineVersion,
       deadline: { localCivil, ...(disambiguation ? { disambiguation } : {}) },
-      reminderOffsetsMinutes: [...state.snapshot.event.reminderOffsetsMinutes],
+      reminderOffsetsMinutes: [...(reminderOffsetsMinutes ?? state.snapshot.event.reminderOffsetsMinutes)],
     };
     const proposalResult = proposalFromRequest(state.snapshot, state.event, localCivil, disambiguation, request, state.drop);
     if (!proposalResult.ok) {
       if (proposalResult.reason === "fold") {
         setAcceptGate(true);
         commandLockRef.current.active = true;
-        setMoveDialog({ ...state, initialCivil: localCivil, foldChoices: proposalResult.choices });
+        setMoveDialog({ ...state, ...draft, initialCivil: localCivil, foldChoices: proposalResult.choices });
         announceLifecycle("fold-choice", { entity: "deadline" });
       } else if (proposalResult.reason === "gap") {
-        setMoveDialog({ ...state, initialCivil: localCivil, foldChoices: undefined });
+        setMoveDialog({ ...state, ...draft, initialCivil: localCivil, foldChoices: undefined });
         announceLifecycle("dst-gap", { entity: "deadline" });
       } else {
-        setMoveDialog({ ...state, initialCivil: localCivil, foldChoices: undefined });
+        setMoveDialog({ ...state, ...draft, initialCivil: localCivil, foldChoices: undefined });
       }
       return;
     }

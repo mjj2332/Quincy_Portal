@@ -9,6 +9,8 @@ import {
 
 export const PROJECT_DEADLINE_ZONE = SYDNEY_TIME_ZONE;
 export const PROJECT_DEADLINE_PRESETS = [1440, 240, 60] as const;
+/** The Sydney wall-clock time a date-only Deadline pick lands on (#422): a shortcut, or a calendar day with no time yet. */
+export const DEADLINE_PRESET_TIME = "17:00";
 export const PROJECT_DEADLINE_MAX_ADVANCE_OFFSETS = 8;
 export const PROJECT_DEADLINE_MAX_OFFSET_MINUTES = 30 * 24 * 60;
 
