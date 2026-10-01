@@ -28,9 +28,10 @@
  * `deadline-confirm:`) — sibling tokens all reach 1, and a shared key makes React drop one
  * (docs/lessons.md, "Sibling retained dialogs must namespace their open-token keys").
  */
-import { useId, useRef, useState, type JSX } from "react";
-import { resolveSydneyCivilMinute, type ProjectDeadlineCalendarEventDto, type ProjectDeadlineDisambiguation, type RangeChecklistScheduleInput } from "@quincy/shared";
-import { projectDataKeys, useOptionalProjectQueryClient, type ProjectDetail } from "../lib/project-data";
+import { useEffect, useId, useRef, useState, type JSX } from "react";
+import { QueryObserver } from "@tanstack/react-query";
+import { resolveSydneyCivilMinute, type ProjectDeadlineCalendarEventDto, type ProjectDeadlineSchedule, type ProjectDeadlineDisambiguation, type RangeChecklistScheduleInput } from "@quincy/shared";
+import { projectDataKeys, projectDetailQueryOptions, useOptionalProjectQueryClient, type ProjectDetail } from "../lib/project-data";
 import type { SchedulingController } from "../lib/use-scheduling-commands";
 import { useOpenToken } from "../lib/use-open-token";
 import { utcOffsetLabel } from "../lib/sydney-time-labels";
@@ -118,8 +119,25 @@ function storedDisambiguation(event: ProjectDeadlineCalendarEventDto, localCivil
   return later.ok && later.value.instant === event.timing.start ? "later" : "earlier";
 }
 
-export function ProductionEventCalendarMoveDialog({ open, event, initialCivil, initialReminderOffsets, initialDisambiguation, onSubmit, onCancel }: ProductionEventCalendarMoveDialogProps): JSX.Element {
+/**
+ * The stored schedule's next reminder (the Calendar's event carries none). Reads the Project detail
+ * through an observer, so a cold cache loads it and a refresh updates the line; the draft is local
+ * to the field and is never reseeded by it. `undefined` hides the line until it is known.
+ */
+function useStoredNextReminder(projectId: string) {
   const queryClient = useOptionalProjectQueryClient();
+  const [next, setNext] = useState<ProjectDeadlineSchedule["nextOccurrence"] | undefined>(() => queryClient?.getQueryData<ProjectDetail>(projectDataKeys.detail(projectId))?.deadlineSchedule?.nextOccurrence);
+  useEffect(() => {
+    if (!queryClient) return;
+    const observer = new QueryObserver(queryClient, { ...projectDetailQueryOptions(projectId), staleTime: 15_000 });
+    const read = (data: ProjectDetail | undefined) => setNext(data?.deadlineSchedule?.nextOccurrence);
+    read(observer.getCurrentResult().data);
+    return observer.subscribe((result) => read(result.data));
+  }, [queryClient, projectId]);
+  return next;
+}
+
+export function ProductionEventCalendarMoveDialog({ open, event, initialCivil, initialReminderOffsets, initialDisambiguation, onSubmit, onCancel }: ProductionEventCalendarMoveDialogProps): JSX.Element {
   const fieldId = useId();
   const [draft, setDraft] = useState<MoveDraft>(() => {
     const localCivil = initialCivil ?? event.deadlineLocalCivil;
@@ -127,9 +145,7 @@ export function ProductionEventCalendarMoveDialog({ open, event, initialCivil, i
     return { localCivil, ...(disambiguation ? { disambiguation } : {}), offsets: [...(initialReminderOffsets ?? event.reminderOffsetsMinutes)] };
   });
   const valid = validCivil(draft.localCivil) && resolveSydneyCivilMinute(draft.localCivil, draft.disambiguation).ok;
-  // The stored schedule's next reminder, from the Project detail when it is already cached (the
-  // Calendar's event has none); no request is made for it, and nothing is predicted for the draft.
-  const next = queryClient?.getQueryData<ProjectDetail>(projectDataKeys.detail(event.project.id))?.deadlineSchedule.nextOccurrence;
+  const next = useStoredNextReminder(event.project.id);
 
   return (
     <AlertDialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onCancel(); }}>
@@ -140,7 +156,9 @@ export function ProductionEventCalendarMoveDialog({ open, event, initialCivil, i
           id={`${fieldId}-deadline`}
           label="Deadline"
           placeholder="Select a date and time"
-          value={validCivil(draft.localCivil) ? { localCivil: draft.localCivil, fold: draft.disambiguation === "later" ? 1 : 0 } : null}
+          // `fold` only once an occurrence is known (stored, retried or chosen): an unresolved drag onto a
+          // repeated minute reaches the popup with none, so Earlier / Later must be pressed.
+          value={validCivil(draft.localCivil) ? { localCivil: draft.localCivil, ...(draft.disambiguation ? { fold: draft.disambiguation === "later" ? 1 as const : 0 as const } : {}) } : null}
           reminders={{ offsets: draft.offsets, ...(next !== undefined ? { next } : {}) }}
           // The popup is portalled outside the dialog, so it needs a layer above it.
           positionerClassName="z-[calc(var(--z-dialog)+1)]"

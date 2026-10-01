@@ -30,7 +30,11 @@ import { TimeColumn } from "./TimeColumn";
  * - Apply closes only after `onApply` resolves; a rejection keeps the popup open on the same draft.
  */
 
-export type DateTimeStored = { localCivil: string; fold: 0 | 1 };
+/**
+ * `fold` is which occurrence of a repeated Sydney minute is stored. Leave it out when the caller has
+ * no stored occurrence (an unresolved drag): Earlier / Later then starts unchosen and must be pressed.
+ */
+export type DateTimeStored = { localCivil: string; fold?: 0 | 1 };
 export type Disambiguation = "earlier" | "later";
 
 /** What Apply hands back: `localCivil: null` is "No date". Offsets are present only with `reminders`. */
@@ -62,6 +66,8 @@ export type DateTimePopupProps = {
   feedback?: ReactNode;
   /** Move focus into the popup when it mounts (a popup that mounts after Base UI's own initial focus ran). */
   focusOnMount?: boolean;
+  /** A mutation the caller owns is in flight: Apply is disabled until it settles. */
+  busy?: boolean;
   onApply: (next: DateTimeApply) => void | Promise<void>;
   onClose: () => void;
 };
@@ -81,7 +87,7 @@ type Draft = {
 function initialDraft(value: DateTimeStored | null, reminders: DateTimeReminders | undefined, seed: DateTimeSeed | undefined): Draft {
   const localCivil = seed ? seed.localCivil : value?.localCivil ?? null;
   const parts = localCivil ? splitCivilMinute(localCivil) : { day: null, time: null };
-  const choice: Disambiguation | undefined = seed ? seed.disambiguation : value ? (value.fold === 1 ? "later" : "earlier") : undefined;
+  const choice: Disambiguation | undefined = seed ? seed.disambiguation : value?.fold === undefined ? undefined : value.fold === 1 ? "later" : "earlier";
   return {
     // A seeded draft (a conflict's reapply) differs from the stored value by design, so it is already dirty.
     touched: seed !== undefined,
@@ -98,7 +104,7 @@ function initialDraft(value: DateTimeStored | null, reminders: DateTimeReminders
 const TIME_ERROR = "Enter a time as HH:MM, from 00:00 to 23:59.";
 const SLOTS = timeSlots();
 
-function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedback, focusOnMount, onApply, onClose }: Omit<DateTimePopupProps, "seedKey">) {
+function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedback, focusOnMount, busy = false, onApply, onClose }: Omit<DateTimePopupProps, "seedKey">) {
   const anchor = useContext(PopupAnchorContext);
   const ownId = useId();
   const ownBodyRef = useRef<HTMLDivElement>(null);
@@ -190,7 +196,7 @@ function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedba
   const hint = draft.touched && !draft.clear && civil === null && !timeInvalid ? "Pick a date and a time." : null;
 
   return (
-    <PopupFrame label={label} zoneId={zoneId} bodyRef={bodyRef} applying={applying} applyDisabled={blocked} onCancel={onClose} onApply={() => { void apply(); }}>
+    <PopupFrame label={label} zoneId={zoneId} bodyRef={bodyRef} applying={applying} applyDisabled={blocked || busy} onCancel={onClose} onApply={() => { void apply(); }}>
       <div className="flex flex-col gap-[var(--space-4)]">
         <div className="flex flex-col gap-[var(--space-4)] sm:flex-row">
           <ShortcutList shortcuts={shortcuts} activeId={activeId} onPick={pickShortcut} />

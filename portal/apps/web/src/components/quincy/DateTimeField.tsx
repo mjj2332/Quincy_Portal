@@ -58,6 +58,7 @@ export type DateTimeFieldProps =
       seedKey?: DateTimePopupProps["seedKey"];
       facts?: DateTimePopupProps["facts"];
       feedback?: DateTimePopupProps["feedback"];
+      busy?: DateTimePopupProps["busy"];
       /** Commit the draft (`localCivil: null` clears). Rejecting keeps the popup open on the same draft. */
       onApply: (next: DateTimeApply) => void | Promise<void>;
     });
@@ -179,7 +180,7 @@ export function DateTimeField(props: DateTimeFieldProps) {
         <DateTimePopoverContent label={label} positionerClassName={props.positionerClassName}>
           {props.variant === "date"
             ? <DatePopup label={label} value={props.value} clearable={clearable} onApply={props.onApply} onClose={() => setOpen(false)} />
-            : <DateTimePopup label={label} value={props.value} clearable={clearable} reminders={props.reminders} seed={props.seed} seedKey={props.seedKey} facts={props.facts} feedback={props.feedback} onApply={props.onApply} onClose={() => setOpen(false)} />}
+            : <DateTimePopup label={label} value={props.value} clearable={clearable} reminders={props.reminders} seed={props.seed} seedKey={props.seedKey} facts={props.facts} feedback={props.feedback} busy={props.busy} onApply={props.onApply} onClose={() => setOpen(false)} />}
         </DateTimePopoverContent>
       </Popover>
     </Field>
