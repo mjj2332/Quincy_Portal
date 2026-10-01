@@ -433,7 +433,9 @@ export async function invalidateProjectSurfaces(queryClient: QueryClient, input:
     }
     runtime.publish(message);
   };
-  if (input.dashboard) converge("dashboard", "dashboard-projects", createDashboardBoardInvalidatedMessage());
+  // #429: the cross-tab message carries `people` so a receiving tab refetches its `dashboard-people` options too.
+  if (input.dashboard) converge("dashboard", "dashboard-projects", createDashboardBoardInvalidatedMessage({ people: input.people }));
+  else if (input.people) runtime.publish(createDashboardBoardInvalidatedMessage({ people: true }));
   if (input.people) pending.push(queryClient.invalidateQueries({ queryKey: ["dashboard-people"], refetchType: "active" }));
   if (input.calendar) converge("calendar", "production-calendar", createProductionCalendarInvalidatedMessage());
   if (input.gantt) converge("gantt", "production-gantt", createProductionGanttInvalidatedMessage());

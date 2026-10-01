@@ -417,6 +417,11 @@ function childPeoplePredicate(role: GanttRole, subtask: string): string {
  * has the same forward-duplicate / backward-omission behaviour for the same reason.
  */
 export function productionGanttProjectsSql(role: GanttRole): string {
+  // #429: the Project-level Deadline range / Overdue gate. It bounds the Project before either the Deadline
+  // branch or a matching child can admit it, so a matching Subtask never smuggles in a Project the range or
+  // Overdue excludes.
+  const projectDeadlineGate = `(r.overdue_only = 0 OR ${deadlineOverdueSql({ deadlineAt: "ap.deadline_at", notDelivered: "ap.delivered = 0", notArchived: "ap.archived = 0" }, "r.now")})
+      AND ${deadlineRangeSql("ap.deadline_at", "ap.deadline_local_civil", "r.deadline_from", "r.deadline_to")}`;
   const searchPredicate = withSubtaskTitleExists(projectSearchSql("r.search", {
     street: "p.street",
     suburb: "p.suburb",
@@ -468,13 +473,13 @@ project_scoped AS (
           WHERE no_editor.project_id = ap.project_id AND no_editor.role_on_project = 'editor')))
       AND (r.my_tasks = 0 OR EXISTS (SELECT 1 FROM project_members me_editor WHERE me_editor.project_id = ap.project_id
         AND me_editor.role_on_project = 'editor' AND me_editor.user_id = r.me))
-      AND (r.overdue_only = 0 OR ${deadlineOverdueSql({ deadlineAt: "ap.deadline_at", notDelivered: "ap.delivered = 0", notArchived: "ap.archived = 0" }, "r.now")})
-      AND ${deadlineRangeSql("ap.deadline_at", "ap.deadline_local_civil", "r.deadline_from", "r.deadline_to")}
+      AND ${projectDeadlineGate}
       THEN 1 ELSE 0 END AS deadline_matches,
     -- #429: or some visible checklist row matches the People / My tasks filter (only meaningful when one is set).
     CASE WHEN ((SELECT COUNT(*) FROM valid_selected_editors) > 0 OR r.include_unassigned = 1 OR r.my_tasks = 1)
       AND EXISTS (SELECT 1 FROM project_subtasks s WHERE s.project_id = ap.project_id AND (r.include_completed = 1 OR s.done = 0)
         AND ${childPeoplePredicate(role, "s")})
+      AND ${projectDeadlineGate}
       THEN 1 ELSE 0 END AS child_matches
   FROM authorized_projects_base ap
   CROSS JOIN request r

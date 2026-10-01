@@ -32,17 +32,20 @@ function sha256(value: string): string {
 // and Deadline range predicates, the My-tasks Project gate, the People activity rule (Unassigned alone
 // narrows) and `dashboard_people` as the People universe (a photographer's differs from an editor's now,
 // since it is scoped to the stages the photographer sees). Every digest changed for those reasons only.
+// RE-PINNED again in the #429 review round (a characterization fixture, not a guard): an External Editor's
+// People / Unassigned / My tasks match on a Subtask now requires the assignee to be on that Project's team, and
+// the shared Overdue facet gates checklist rows by their Project's Deadline rule. Every digest changed for that.
 const PRE_REFACTOR_RANGE_SQL_SHA256: Record<(typeof ROLES)[number], string> = {
-  admin: "60ccfa1e637662e333e023dc08176ce80815aa77f5dea7258313870c2976d460",
-  editor: "e48db104eaf61935d1f9a979c84ca4501989df91b8925a10c9737566531a9c81",
-  photographer: "91c844aa1a15de69b7fe6de2ad4f44a0c9a094fc093ba02633be92bf2bf4dd41",
-  external_editor: "72e868eed66a6529c25e2782619983946881fc758a0bf74198c7edcc28a407b8",
+  admin: "0eacb623a214aae56140bba7233450b6e012d6b9474e31db4c5219d1dc835392",
+  editor: "c8601900967303773c646a1e5a15457e4a13e4ba3ec2a8b502d9fbea321535f9",
+  photographer: "05bbbad478cff6ef4d6bc9267b752c9bb5d7d30dfd9f4874f5d2b445d4985b6b",
+  external_editor: "6bfe7d74dbd91bbea4dfa30697febedcf3ac29240a21af68a85778d217fa3a28",
 };
 const PRE_REFACTOR_FACETS_SQL_SHA256: Record<(typeof ROLES)[number], string> = {
-  admin: "242820479af71ec5e4be62ae033a3da54b16c2f532824069f22bd3c820ace9fb",
-  editor: "e0505fa79ec64a69905ae2b818c19f4ec21fdf2378bea3dfb71a61b8f5c98cfa",
-  photographer: "d3937675f283814e8c0962ae658a30fdd717b0909851c7cbe99e2fc163c5242e",
-  external_editor: "eb765e84f4d7512fa84b872f258c56a7cf7ff525036d2d08d72dba2e669dcf0f",
+  admin: "ebb5177c0a093e410349947762a36f1bebd59496a00fef18775e5437893ef94e",
+  editor: "e3c9779b5245e100f3b497ed2637c1c01cb1b66c0a0d52f25e23a0c359666763",
+  photographer: "4946d5efae17d1ea0c5170fcefc26e841de6078f69d705900700d7ed1678ceeb",
+  external_editor: "61097f23464a076b0c1246e358bb1ef8ad9cb13aa7bc950e0af7e2694eed5040",
 };
 
 describe("project-search", () => {

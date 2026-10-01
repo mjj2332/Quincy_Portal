@@ -41,6 +41,8 @@ export type ProjectDataSyncMessage =
       type: "dashboard-board-invalidated";
       sourceTabId: string;
       committedAt: string;
+      /** #429: the op can change who the Dashboard's People field lists, so receivers refetch `dashboard-people` too. */
+      people?: true;
     }
   | {
       version: 1;
@@ -101,8 +103,9 @@ export function parseProjectDataSyncMessage(value: unknown): ProjectDataSyncMess
   }
   if (message.type === "dashboard-board-invalidated") {
     if (!nonEmptyString(message.committedAt)) return null;
-    if (Object.keys(message).some((key) => !["version", "type", "sourceTabId", "committedAt"].includes(key))) return null;
-    return { version: 1, type: message.type, sourceTabId: message.sourceTabId, committedAt: message.committedAt };
+    if (Object.keys(message).some((key) => !["version", "type", "sourceTabId", "committedAt", "people"].includes(key))) return null;
+    if ("people" in message && message.people !== true) return null;
+    return { version: 1, type: message.type, sourceTabId: message.sourceTabId, committedAt: message.committedAt, ...(message.people === true ? { people: true as const } : {}) };
   }
   if (message.type === "production-calendar-invalidated") {
     if (!nonEmptyString(message.committedAt)) return null;
@@ -275,6 +278,13 @@ export class ProjectQueryRuntime {
         if (key[0] !== "dashboard-projects" || query.getObserversCount() === 0) continue;
         this.requestInvalidation(key);
       }
+      // #429: a team or assignee change in another tab also moves this tab's People options.
+      if (message.people) {
+        for (const query of this.queryClient.getQueryCache().getAll()) {
+          if (query.queryKey[0] !== "dashboard-people" || query.getObserversCount() === 0) continue;
+          this.requestInvalidation(query.queryKey);
+        }
+      }
       return;
     }
     if (message.type === "production-calendar-invalidated") {
@@ -326,8 +336,8 @@ export function createActiveProjectDetailsInvalidatedMessage(): ProjectDataOutgo
   return { version: 1, type: "active-project-details-invalidated", committedAt: new Date().toISOString() };
 }
 
-export function createDashboardBoardInvalidatedMessage(): ProjectDataOutgoingMessage {
-  return { version: 1, type: "dashboard-board-invalidated", committedAt: new Date().toISOString() };
+export function createDashboardBoardInvalidatedMessage(options: { people?: boolean } = {}): ProjectDataOutgoingMessage {
+  return { version: 1, type: "dashboard-board-invalidated", committedAt: new Date().toISOString(), ...(options.people ? { people: true as const } : {}) };
 }
 
 export function createProductionCalendarInvalidatedMessage(): ProjectDataOutgoingMessage {

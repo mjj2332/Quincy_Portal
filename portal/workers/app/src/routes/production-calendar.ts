@@ -34,7 +34,7 @@ import {
 import { requireCapability } from "../middleware/capability";
 import { terminalRoute } from "../lib/terminal-route";
 import { projectSearchSql } from "../lib/project-search";
-import { authorizedProjectsBaseCte, dashboardPeopleCte, deadlineRangeSql, parseReminderOffsets, shootRangeSql } from "../lib/production-scope-sql";
+import { authorizedProjectsBaseCte, dashboardPeopleCte, deadlineOverdueSql, deadlineRangeSql, parseReminderOffsets, shootRangeSql } from "../lib/production-scope-sql";
 import { serializeSubtaskSchedule } from "../lib/subtask-schedule";
 import { assigneesForViewer, parseAssigneesJson, subtaskAssigneesJsonSql } from "../lib/subtask-assignees";
 import type { AppEnv } from "../env";
@@ -258,6 +258,17 @@ function withChecklistLayerBypass(clause: string): string {
   return `${marker}r.checklist_layer = 1 OR ${clause.slice(marker.length)}`;
 }
 
+/**
+ * #429: "a Subtask's assignee" for SQL purposes. An External Editor only ever sees (and so only ever
+ * matches) an assignee who is on the Project's team, the rule `assigneesForViewer` applies elsewhere and the
+ * Timeline applies in `subtaskAssigneeExists`; for every other role every assignee counts. Without it,
+ * selecting a person visible on Project A would surface their hidden assignment on Project B's Subtask.
+ */
+function subtaskAssigneeExists(role: CalendarRole, projectRef: string, subtaskRef: string, extra = ""): string {
+  const team = role === "external_editor" ? ` AND EXISTS (SELECT 1 FROM project_members tm WHERE tm.project_id = ${projectRef} AND tm.user_id = sa.user_id)` : "";
+  return `EXISTS (SELECT 1 FROM project_subtask_assignees sa WHERE sa.subtask_id = ${subtaskRef}${team}${extra})`;
+}
+
 function calendarCtes(role: CalendarRole): string {
   const authorizedProjectsSearch = withChecklistLayerBypass(projectSearchSql("r.search", {
     street: "p.street",
@@ -341,15 +352,9 @@ candidate_subtasks_raw AS (
   CROSS JOIN request r
   WHERE r.checklist_layer = 1
     AND (r.show_completed = 1 OR s.done = 0)
-    -- overdue_only constrains Subtask ranges by their end (a Project with no Deadline still passes
-    -- the project branch).
-    AND (r.overdue_only = 0
-      OR (s.done = 0 AND (
-        (s.schedule_end_kind = 'timed' AND s.schedule_end_at < r.now)
-        OR (s.schedule_end_kind = 'date' AND s.due_date < r.today_date)
-        OR (s.schedule_start_kind = 'date' AND s.due_date < r.today_date)
-        OR (s.schedule_start_kind = 'timed' AND s.schedule_end_at < r.now)
-      )))
+    -- #429: the shared Overdue facet is the PROJECT Deadline rule (deadline set and passed, project not
+    -- delivered, not archived), so it gates a checklist row by its Project, never by the row's own end.
+    AND (r.overdue_only = 0 OR ${deadlineOverdueSql({ deadlineAt: "vp.deadline_at", notDelivered: "vp.delivered = 0", notArchived: "vp.archived = 0" }, "r.now")})
     AND ${checklistCandidateSearch}
 ),
 candidate_subtasks_unfiltered AS (
@@ -405,9 +410,9 @@ checklist_filtered_candidates AS (
   CROSS JOIN request r
   CROSS JOIN selected_editor_state selected
   WHERE (selected.valid = 0 AND r.include_unassigned = 0
-    OR EXISTS (SELECT 1 FROM project_subtask_assignees sa INNER JOIN valid_selected_editors v ON v.person_id = sa.user_id WHERE sa.subtask_id = c.subtask_id)
-    OR (r.include_unassigned = 1 AND NOT EXISTS (SELECT 1 FROM project_subtask_assignees sa WHERE sa.subtask_id = c.subtask_id)))
-    AND (r.my_tasks = 0 OR EXISTS (SELECT 1 FROM project_subtask_assignees sa WHERE sa.subtask_id = c.subtask_id AND sa.user_id = r.me))
+    OR ${subtaskAssigneeExists(role, "c.project_id", "c.subtask_id", " AND sa.user_id IN (SELECT person_id FROM valid_selected_editors)")}
+    OR (r.include_unassigned = 1 AND NOT ${subtaskAssigneeExists(role, "c.project_id", "c.subtask_id")}))
+    AND (r.my_tasks = 0 OR ${subtaskAssigneeExists(role, "c.project_id", "c.subtask_id", " AND sa.user_id = r.me")})
 ),
 project_event_candidates AS (
   SELECT * FROM project_filtered_candidates WHERE deadline_at IS NOT NULL
