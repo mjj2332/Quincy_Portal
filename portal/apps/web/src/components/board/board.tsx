@@ -1,5 +1,6 @@
 import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { StageKey } from "@quincy/shared";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { ScrollArea as ScrollAreaPrimitive } from "@base-ui/react/scroll-area";
 import { StatusBadge } from "../atoms";
 import type { DragEndEvent, DragOverEvent, DragStartEvent } from "@dnd-kit/core";
@@ -20,6 +21,8 @@ import { useStarClickGuard } from "../../lib/star-click-guard";
 import type { ProjectStageKey } from "../../lib/stages";
 import { usePrefersReducedMotion } from "../../lib/use-media-query";
 import { ScrollArea, ScrollBar } from "../reui/scroll-area";
+import { Button } from "../reui/button";
+import { isOverdueProject } from "../../lib/dashboard-summary";
 import { KanbanCard2 } from "./card";
 import { moveToStageOptions } from "./move-to-control";
 import { cardActions } from "./card-actions";
@@ -179,6 +182,8 @@ export function ProjectKanbanBoard2({
   role,
   projectHrefFor,
   now,
+  collapsedStageKeys,
+  onToggleStageCollapsed,
 }: ProjectKanbanBoardProps) {
   const columns = useMemo(() => {
     const record: Record<string, ProjectSummary[]> = {};
@@ -656,7 +661,7 @@ export function ProjectKanbanBoard2({
               <div
                 ref={boardRef}
                 {...starClickGuard.boardHandlers}
-                className="board-columns grid grid-flow-col auto-cols-[17.5rem] gap-[var(--space-4)] w-max min-w-full h-full grid-rows-[minmax(0,1fr)]"
+                className="board-columns flex items-stretch gap-[var(--space-4)] w-max min-w-full h-full"
                 aria-label="Project pipeline board"
                 // The Dashboard's focus-restore effect (`Dashboard.tsx:409-424`) resolves three tiers by
                 // `[data-focus-key]`: the moved card's control, then its Stage heading, then the Board root.
@@ -667,6 +672,43 @@ export function ProjectKanbanBoard2({
               >
                 {activeStages.map((stage, stageIndex) => {
                   const stageProjects = columns[stage.key] ?? [];
+                  const stageKey = semanticStageKey(stage.key);
+                  const collapsed = collapsedStageKeys?.includes(stageKey) ?? false;
+                  const overdueCount = stageProjects.filter((project) => isOverdueProject(project, now ?? Date.now())).length;
+                  const columnId = `board-column-${stageKey}`;
+                  // The collapse control: a ghost icon button, disabled for the whole of a drag (toggling
+                  // droppables mid-drag under `MeasuringStrategy.Always` is the loop lessons.md bans).
+                  const toggle = (label: string, expanded: boolean) => onToggleStageCollapsed && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      className="max-[641px]:size-11 pointer-coarse:size-11"
+                      aria-label={`${label} ${stage.label}`}
+                      aria-expanded={expanded}
+                      aria-controls={columnId}
+                      data-testid={expanded ? "board-column-collapse" : "board-column-expand"}
+                      disabled={dragActive}
+                      onClick={() => onToggleStageCollapsed(stageKey)}
+                    >
+                      {expanded ? <ChevronLeft aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
+                    </Button>
+                  );
+                  if (collapsed) {
+                    // The rail (block's `DealLane`): still a drop target (a drop appends to the Stage's end)
+                    // but with no `KanbanColumnContent`, so its cards are unmounted while collapsed.
+                    const receiving = shownProposal?.targetStageKey === stageKey;
+                    return (
+                      <KanbanColumn key={stage.key} id={columnId} value={stage.key} disabled className={`w-12 shrink-0 bg-[var(--paper-050)] min-h-0 border border-[length:var(--border-width-hair)] border-border opacity-100 ${receiving ? "border-[var(--ink-900)]" : ""}`} data-testid="board-column" data-collapsed="true">
+                        <div className="flex h-full flex-col items-center gap-[var(--space-3)] py-[var(--space-3)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${stageKey}`} tabIndex={-1}>
+                          {toggle("Expand", false)}
+                          <span className="tabular-nums text-sm text-foreground-secondary" data-testid="board-column-count">{stageProjects.length}</span>
+                          {overdueCount > 0 && <span className="tabular-nums text-xs text-signal-critical" data-testid="board-column-overdue">{overdueCount}<span className="sr-only"> overdue</span></span>}
+                          <span className="[writing-mode:vertical-rl] [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary">{stage.label}</span>
+                        </div>
+                      </KanbanColumn>
+                    );
+                  }
                   return (
                     // `disabled` is deliberate — it keeps every column (even an empty one) a valid drop
                     // target — but `reui/kanban.tsx` turns a disabled `KanbanColumn` into `opacity-50`
@@ -681,11 +723,13 @@ export function ProjectKanbanBoard2({
                     // `focusDescriptorFor` or `canonicalStageKey`), so a presentation spelling — an Editor
                     // sees `editing` for `editing_autohdr` — would never match, and tier 2 would fall
                     // through to the Board root. The Board this replaced keyed its headings the same way.
-                    <KanbanColumn key={stage.key} value={stage.key} disabled className="bg-[var(--paper-050)] min-h-0 min-w-0 border border-[length:var(--border-width-hair)] border-border opacity-100" data-testid="board-column">
-                      <div className="flex shrink-0 items-center gap-[var(--space-3)] p-[var(--space-4)] border-b border-b-border bg-[var(--bg-canvas)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${semanticStageKey(stage.key)}`} tabIndex={-1}>
+                    <KanbanColumn key={stage.key} id={columnId} value={stage.key} disabled className="w-[17.5rem] shrink-0 bg-[var(--paper-050)] min-h-0 min-w-0 border border-[length:var(--border-width-hair)] border-border opacity-100" data-testid="board-column">
+                      <div className="flex shrink-0 items-center gap-[var(--space-3)] p-[var(--space-4)] border-b border-b-border bg-[var(--bg-canvas)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${stageKey}`} tabIndex={-1}>
                         <span className="flex-none [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] tabular-nums text-foreground-secondary" aria-hidden="true">{String(stageIndex + 1).padStart(2, "0")}</span>
                         <StatusBadge stageKey={stage.key} />
-                        <span className="flex-none tabular-nums text-sm text-foreground-secondary">{stageProjects.length}</span>
+                        <span className="flex-none tabular-nums text-sm text-foreground-secondary" data-testid="board-column-count">{stageProjects.length}</span>
+                        {overdueCount > 0 && <span className="flex-none tabular-nums text-xs text-signal-critical" data-testid="board-column-overdue">{overdueCount} overdue</span>}
+                        <span className="ml-auto flex-none">{toggle("Collapse", true)}</span>
                       </div>
                       <ScrollArea className="min-h-0 flex-1">
                         <KanbanColumnContent value={stage.key} className="relative flex flex-col gap-[var(--space-3)] p-[var(--space-3)] min-h-[120px]">

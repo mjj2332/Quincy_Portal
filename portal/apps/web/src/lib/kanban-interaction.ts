@@ -143,6 +143,9 @@ export type ProjectKanbanBoardProps = {
   projectHrefFor?: (project: ProjectSummary) => string | undefined;
   /** The clock "overdue" is judged against (the Dashboard's `useNow`); the Board falls back to the wall clock. */
   now?: number;
+  /** Canonical keys of the Stage columns collapsed to a rail (#432); per viewer, owned by the Dashboard. */
+  collapsedStageKeys?: readonly StageKey[];
+  onToggleStageCollapsed?: (stageKey: StageKey) => void;
 };
 
 type CanonicalStageKey = StageKey;

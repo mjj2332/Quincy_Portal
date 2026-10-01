@@ -660,4 +660,46 @@ describe("Dashboard Board seam (#98)", () => {
       expect(document.querySelector('[data-testid="dashboard-toast-viewport"]')?.getAttribute("aria-live")).toBe("polite");
     });
   });
+
+  // #432: collapsing a Stage to a rail is a per-viewer preference that outlives the mount.
+  describe("Stage collapse (#432)", () => {
+    const render = async (userId: string) => {
+      await act(async () => { root!.render(<Dashboard currentUserId={userId} />); await Promise.resolve(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="board-column"]')).not.toBeNull());
+    };
+    const rails = () => document.querySelectorAll('[data-testid="board-column"][data-collapsed="true"]');
+    const collapse = () => document.querySelector<HTMLButtonElement>('[aria-label="Collapse Awaiting RAW"]');
+    const key = (userId: string) => `quincy:dashboard:board:collapsed:${userId}`;
+
+    it("persists per user id, survives a remount, and leaves another viewer expanded", async () => {
+      await render("admin-1");
+      expect(rails(), "anchor: expanded to begin with").toHaveLength(0);
+      await act(async () => { collapse()!.click(); await Promise.resolve(); });
+      expect(rails()).toHaveLength(1);
+      expect(window.localStorage.getItem(key("admin-1"))).toBe(JSON.stringify(["awaiting_raw"]));
+      expect(document.querySelector('[data-focus-key="stage-heading:awaiting_raw"]'), "the rail keeps its heading focus key").not.toBeNull();
+      expect(document.querySelector('[aria-label="Expand Awaiting RAW"]')?.getAttribute("aria-expanded")).toBe("false");
+
+      await act(async () => { root!.unmount(); await Promise.resolve(); });
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      root = createRoot(host);
+      await render("admin-1");
+      expect(rails(), "the collapse did not survive a remount").toHaveLength(1);
+
+      await render("admin-2");
+      expect(rails(), "another viewer inherited the collapse").toHaveLength(0);
+    });
+
+    it("reads corrupt storage as all expanded, and expands again from the rail", async () => {
+      window.localStorage.setItem(key("admin-1"), "{not json");
+      await render("admin-1");
+      expect(rails()).toHaveLength(0);
+      await act(async () => { collapse()!.click(); await Promise.resolve(); });
+      expect(rails()).toHaveLength(1);
+      await act(async () => { document.querySelector<HTMLButtonElement>('[aria-label="Expand Awaiting RAW"]')!.click(); await Promise.resolve(); });
+      expect(rails()).toHaveLength(0);
+      expect(window.localStorage.getItem(key("admin-1"))).toBe("[]");
+    });
+  });
 });

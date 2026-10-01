@@ -274,8 +274,9 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     expect(root!.getAttribute("aria-label")).toBe("Project pipeline board");
   });
 
-  // Tempo layout (ReUI `tempo-tasks` Kanban board): every column is one fixed 280px track
-  // (`auto-cols-[17.5rem]`, no minmax and no mobile/coarse variants), columns are separate
+  // Tempo layout (ReUI `tempo-tasks` Kanban board): every expanded column is one fixed 280px track
+  // (`w-[17.5rem] shrink-0` on a flex row since #432, so a collapsed rail can be 48px beside them;
+  // no minmax and no mobile/coarse variants), columns are separate
   // bordered surfaces with a `--space-4` gap between them (not a joined `bg-border` grid), and the
   // grid is a `w-max min-w-full` content box inside a Base UI scroll area (tempo's
   // `BoardScrollArea`), so it sits left-aligned and spare width is page background. The scroll area's
@@ -285,9 +286,9 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     const root = host.querySelector('[data-focus-key="board"]');
     expect(root, "no Board root rendered — the assertions below would be vacuous").not.toBeNull();
     const classes = [...root!.classList];
-    for (const token of ["auto-cols-[17.5rem]", "gap-[var(--space-4)]", "w-max", "min-w-full"]) expect(classes).toContain(token);
+    for (const token of ["flex", "gap-[var(--space-4)]", "w-max", "min-w-full"]) expect(classes).toContain(token);
     expect(classes.filter((token) => token.startsWith("overflow"))).toEqual([]);
-    expect(classes.filter((token) => token.includes("auto-cols-"))).toEqual(["auto-cols-[17.5rem]"]);
+    expect(classes.filter((token) => token.includes("auto-cols-")), "the grid track is gone: widths live on the columns").toEqual([]);
     // grid -> Content -> Viewport -> Root, and the horizontal bar is the Viewport's sibling (not inside
     // it), so `position: sticky` resolves against the page rather than the Viewport's own overflow.
     const viewport = root!.closest<HTMLElement>('[data-testid="board-scroll-viewport"]');
@@ -299,13 +300,15 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     const columns = [...host.querySelectorAll('[data-testid="board-column"]')];
     expect(columns.length, "no columns rendered — the per-column assertion would be vacuous").toBeGreaterThan(0);
     for (const column of columns) expect([...column.classList]).toContain("border-border");
+    // The fixed 280px lives on each expanded column, and never shrinks.
+    for (const column of columns) for (const token of ["w-[17.5rem]", "shrink-0"]) expect([...column.classList]).toContain(token);
   });
 
   it("each column scrolls on its own with its Stage heading pinned (#363)", async () => {
     await renderBoard();
     const root = host.querySelector('[data-focus-key="board"]')!;
     const gridClasses = [...root.classList];
-    for (const token of ["h-full", "grid-rows-[minmax(0,1fr)]"]) expect(gridClasses).toContain(token);
+    for (const token of ["h-full", "items-stretch"]) expect(gridClasses).toContain(token);
     expect(gridClasses).not.toContain("pb-[var(--space-2)]");
     expect(gridClasses.filter((token) => token.startsWith("overflow"))).toEqual([]);
     const boardViewport = host.querySelector<HTMLElement>('[data-testid="board-scroll-viewport"]')!;
@@ -1918,3 +1921,97 @@ async function act_(callback: () => Promise<void> | void): Promise<void> {
   const { act } = await import("react");
   await act(async () => { await callback(); await Promise.resolve(); });
 }
+
+// #432: the column header's count and overdue figure, and the collapsed rail.
+describe("ProjectKanbanBoard2 — column headers and collapse (#432)", () => {
+  const NOW = Date.UTC(2026, 8, 10);
+  const PAST = NOW - 86_400_000;
+  const FUTURE = NOW + 86_400_000;
+
+  beforeEach(() => {
+    dnd.handlers.length = 0;
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    const { act } = await import("react");
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  const column = (stage: string) => [...host.querySelectorAll<HTMLElement>('[data-testid="board-column"]')].find((node) => node.textContent?.includes(stage));
+  const mixed = () => [
+    project("late", "awaiting_raw", { deadlineAt: PAST }),
+    project("later", "awaiting_raw", { deadlineAt: PAST - 1000 }),
+    project("ontime", "awaiting_raw", { deadlineAt: FUTURE }),
+    // Archived Projects are never overdue (`isOverdueProject`), however late their deadline.
+    project("archived-late", "raw_review", { deadlineAt: PAST, archivedAt: "2026-09-02T00:00:00.000Z" }),
+    project("review-late", "raw_review", { deadlineAt: PAST }),
+  ];
+
+  it("shows each column's project count and 'N overdue' only when N > 0, in the red signal token", async () => {
+    await renderBoard({ projects: mixed(), now: NOW });
+    const first = column("Awaiting RAW")!;
+    expect(first.querySelector('[data-testid="board-column-count"]')?.textContent).toBe("3");
+    const overdue = first.querySelector('[data-testid="board-column-overdue"]');
+    expect(overdue?.textContent).toBe("2 overdue");
+    expect([...overdue!.classList]).toContain("text-signal-critical");
+    const second = column("RAW review")!;
+    expect(second.querySelector('[data-testid="board-column-count"]')?.textContent).toBe("2");
+    expect(second.querySelector('[data-testid="board-column-overdue"]')?.textContent, "an archived late Project counted as overdue").toBe("1 overdue");
+
+    await renderBoard({ projects: [project("ontime", "awaiting_raw", { deadlineAt: FUTURE })], now: NOW });
+    expect(column("Awaiting RAW")!.querySelector('[data-testid="board-column-overdue"]')).toBeNull();
+  });
+
+  it("column overdue figures sum to the Dashboard header's figure under the same clock", async () => {
+    const { dashboardSummary } = await import("../../lib/dashboard-summary");
+    const projects = mixed();
+    await renderBoard({ projects, now: NOW });
+    const total = [...host.querySelectorAll('[data-testid="board-column-overdue"]')].reduce((sum, node) => sum + Number.parseInt(node.textContent ?? "0", 10), 0);
+    const summary = dashboardSummary({ projects: projects as never, archived: "hide", searchActive: false, searchTotal: null, shown: projects.length, now: NOW });
+    expect(total, "anchor: something is overdue").toBeGreaterThan(0);
+    expect(total).toBe(summary!.overdue);
+  });
+
+  it("collapses to a rail that is still a column, with no cards, a vertical label, and the Stage heading focus key", async () => {
+    const onToggleStageCollapsed = vi.fn();
+    await renderBoard({ projects: mixed(), now: NOW, collapsedStageKeys: ["awaiting_raw"], onToggleStageCollapsed });
+    const rail = column("Awaiting RAW")!;
+    expect(rail.getAttribute("data-collapsed")).toBe("true");
+    expect(rail.querySelector('[data-testid="board-card"]'), "a collapsed Stage still mounts its cards").toBeNull();
+    expect(rail.querySelector('[data-testid="board-column-count"]')?.textContent).toBe("3");
+    expect(rail.querySelector('[data-testid="board-column-overdue"]')?.textContent).toContain("2");
+    expect(rail.querySelector('[data-focus-key="stage-heading:awaiting_raw"]')?.getAttribute("tabindex")).toBe("-1");
+    expect([...rail.classList]).toContain("w-12");
+    expect(column("RAW review")!.getAttribute("data-collapsed"), "the other column stays expanded").toBeNull();
+
+    const { act } = await import("react");
+    const expand = rail.querySelector<HTMLButtonElement>('[aria-label="Expand Awaiting RAW"]')!;
+    expect(expand.getAttribute("aria-expanded")).toBe("false");
+    await act(async () => { expand.click(); await Promise.resolve(); });
+    expect(onToggleStageCollapsed).toHaveBeenCalledWith("awaiting_raw");
+  });
+
+  it("drops onto a collapsed rail append to that Stage's end", async () => {
+    const props = await renderBoard({ projects: mixed(), now: NOW, collapsedStageKeys: ["raw_review"], onToggleStageCollapsed: vi.fn() });
+    await endDrag("late", "raw_review");
+    expect(props.onBoardMove).toHaveBeenCalledTimes(1);
+    expect((props.onBoardMove as ReturnType<typeof vi.fn>).mock.calls[0]![1]).toEqual({ targetStageKey: "raw_review", successor: "end" });
+  });
+
+  it("disables the collapse and expand controls for the whole of a drag, then gives them back", async () => {
+    await renderBoard({ projects: mixed(), now: NOW, collapsedStageKeys: ["raw_review"], onToggleStageCollapsed: vi.fn() });
+    const collapse = () => host.querySelector<HTMLButtonElement>('[aria-label="Collapse Awaiting RAW"]')!;
+    const expand = () => host.querySelector<HTMLButtonElement>('[aria-label="Expand RAW review"]')!;
+    expect(collapse().disabled, "anchor: enabled before the drag").toBe(false);
+    await fireDnd("onDragStart", { active: { id: "late" } });
+    expect(collapse().disabled).toBe(true);
+    expect(expand().disabled).toBe(true);
+    await fireDnd("onDragCancel", { active: { id: "late" } });
+    expect(collapse().disabled).toBe(false);
+    expect(expand().disabled).toBe(false);
+  });
+});
