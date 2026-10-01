@@ -12,6 +12,9 @@
  * - The concentric panel radius calc() and `ghost`'s variant of it are dropped: Quincy's radius is
  *   `0` (a unitless number), and calc(0 - 3px) is invalid CSS. The panel radius is its own bridged
  *   role (square, like the frame). `dense` still pins it to the frame radius.
+ * - `data-spacing` falls back to "default" when `spacing` is omitted: cva applies its default
+ *   variant but the registry rendered `undefined`, so the `data-[spacing=default]` panel-margin
+ *   selectors never matched (4px gap instead of 8px).
  * - FramePanel: `shadow-xs` (Quincy shadows are overlay-only), the `before:` inner-shadow overlay
  *   and its `dark:` classes are removed (reui-skin.guard.test.ts). The overlay carried no shadow
  *   size, so it painted nothing.
@@ -98,7 +101,7 @@ function Frame({
         className
       )}
       data-slot="frame"
-      data-spacing={spacing}
+      data-spacing={spacing ?? "default"}
       {...props}
     />
   )

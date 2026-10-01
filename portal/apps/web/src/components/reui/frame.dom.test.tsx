@@ -66,6 +66,20 @@ describe("Frame / FramePanel", () => {
     expect(q("panel").getAttribute("aria-label")).toBe("Panel label");
   });
 
+  it("exposes the default spacing when spacing is omitted", async () => {
+    await render(
+      <>
+        <Frame data-testid="implicit" />
+        <Frame data-testid="explicit" spacing="default" />
+        <Frame data-testid="small" spacing="sm" />
+      </>,
+    );
+    // the panel-margin selectors key off data-spacing; omitted must equal the cva default
+    expect(q("implicit").getAttribute("data-spacing")).toBe("default");
+    expect(q("implicit").getAttribute("data-spacing")).toBe(q("explicit").getAttribute("data-spacing"));
+    expect(q("small").getAttribute("data-spacing")).toBe("sm");
+  });
+
   // Computed radius/border/background are NOT asserted here: happy-dom loads no stylesheet, so a
   // custom property never resolves. That chain (frame.tsx -> --frame-* -> Quincy token) is
   // covered by styles/frame-token-bridge.guard.test.ts.
