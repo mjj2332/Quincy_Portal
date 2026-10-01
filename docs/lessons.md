@@ -4758,3 +4758,29 @@ remove the legacy readers) still applies.
   on a team or assignee commit (`invalidateProjectSurfaces({ people: true })`), not on every priority or stage edit.
 - **The URL is the source of truth for People on the Calendar.** `Dashboard` spreads the route's shared filter over the
   Calendar state, so a test that passes `calendar={...editorIds}` with a bare location silently loses the Editor.
+
+## #431 Dashboard Table on the ReUI data-grid
+
+- **`manualPagination: true` is mandatory.** The vendored grid's default page size is ten; without it the Table
+  silently shows ten Projects. Sorting is `manualSorting` too: `sortTableRows` (pure, in
+  `lib/dashboard-table-model.ts`) sorts before grouping, with missing values last in both directions and ties kept
+  in the server's order. A header click cycles ascending, descending, cleared (back to server order).
+- **Cells read volatile values from context, never from the column closure.** The grid renders `columnDef.cell`
+  as a component, so a column array rebuilt per render (a fresh `onPriorityChange`, a new `pendingOrdering` set)
+  hands React a new component type per cell and remounts every row: lost focus, a closed Deadline popover, a
+  restarted cover retry on any refetch. Columns depend on the width bucket alone; the rest travels by `CellContext`.
+- **The row opens through a real link, not `onRowClick`.** The Address cell's `InternalLink` stretches over the row
+  with `after:absolute after:inset-0` (`tr` is `relative`); stars, the Deadline trigger and the cover retry sit in
+  `relative z-[1]` wrappers outside the `<a>`. A bare `<tr onClick>` has no keyboard path.
+- **A popup portalled out of a row still bubbles through React to the row.** The Deadline popup's clicks must never
+  navigate; the Dashboard-table suite presses inside the popup and asserts the URL is unchanged.
+- **`safeStaffDestination` only intercepts a Project id that parses as a staff route.** A fixture id like `p2` is
+  not-found, so `InternalLink` falls through to the browser; link tests use a UUID. happy-dom also performs an
+  anchor's default navigation itself, so assert `defaultPrevented` rather than the pathname alone.
+- **An External Editor's Dashboard list goes through a strict DTO decoder** (`externalApiGet`). A DOM suite that
+  only wants the Table mocks `lib/external-api-response`, or the query never leaves pending.
+- **Collapsed groups belong to the Group by they were collapsed under.** Keep the key beside the set and reset it
+  during render when the Group by differs, or switching Stage -> Client -> Stage revives the old collapse.
+- **Per-viewer prefs live in `localStorage` under `quincy:dashboard:table:<principal>`**, normalised on read, every
+  access in try/catch. Role-invisible columns (Priority for an External Editor) and the narrow-screen set are computed
+  at render and never stored, so a saved choice survives a role or width change.

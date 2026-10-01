@@ -2,18 +2,10 @@ import type { ReactNode } from "react";
 import { Calendar, GanttChart, SlidersHorizontal, SquareKanban, Table2, type LucideIcon } from "lucide-react";
 import { DashboardSearch, type DashboardSearchFocusRequest } from "../components/quincy/DashboardSearch";
 import { buttonClasses } from "../components/quincy/Button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from "../components/reui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "../components/reui/dropdown-menu";
 import { Tabs, TabsList, TabsTrigger } from "../components/reui/tabs";
 import { cn } from "../lib/utils";
-import type { DashboardView, KanbanSortMode } from "./dashboard-helpers";
+import type { DashboardView } from "./dashboard-helpers";
 
 /**
  * The Dashboard's view bar (#427): the view tabs on the left; the project search and the Display
@@ -42,9 +34,10 @@ import type { DashboardView, KanbanSortMode } from "./dashboard-helpers";
  * `DashboardFilter.tsx`; the chips it adds sit in their own row under this bar's rule.
  *
  * ## Display
- * Rendered on every view so the search never moves; enabled only on Board in #427 (the Board's sort
- * order), disabled with an accessible reason elsewhere. "Priority" is offered only when the caller says it
- * is authorized (`canSortByPriority`).
+ * Rendered on every view so the search never moves. The trigger and popup are this bar's; the
+ * CONTENT is the view's, passed as the `display` slot (`DashboardDisplay.tsx`: the Board's Sort, the
+ * Table's Group by and Columns). A view that supplies none leaves the trigger disabled with an
+ * accessible reason (Calendar and Timeline arrive with #430).
  */
 
 export const VIEW_TAB_ID = (view: DashboardView) => `dashboard-view-tab-${view}`;
@@ -60,15 +53,8 @@ const TABS: { view: DashboardView; label: string; Icon: LucideIcon; gated: boole
 /** Search, Filter and Display share one fixed height — Quincy's control contract (`BUTTON_HEIGHT_CLASS`):
  * 38px, 44px at <=721px — so a content-sized input can never make one a pixel taller. */
 export const CONTROL_HEIGHT = "h-[38px] max-[721px]:h-[44px]";
-const DISPLAY_UNAVAILABLE = "Display options for this view arrive with #431";
+const DISPLAY_UNAVAILABLE = "Display options for this view arrive with #430";
 const DISPLAY_HINT_ID = "dashboard-display-unavailable";
-
-const SORT_LABELS: Record<KanbanSortMode, string> = {
-  board: "Board order",
-  priority: "Priority",
-  "shootDate-asc": "Shoot date, earliest first",
-  "shootDate-desc": "Shoot date, latest first",
-};
 
 export type DashboardViewBarProps = {
   /** The view the Dashboard is rendering, or "none" when nothing claims to be current. */
@@ -80,11 +66,8 @@ export type DashboardViewBarProps = {
   principalId: string;
   searchFocusRequest: DashboardSearchFocusRequest | null;
   onSearchFocusHandled: (signal: number) => void;
-  /** Enable the Display menu (the Board tab only in #427); it stays visible, disabled, elsewhere. */
-  showDisplay: boolean;
-  sort: KanbanSortMode;
-  canSortByPriority: boolean;
-  onSortChange: (next: KanbanSortMode) => void;
+  /** The rendered view's Display menu content; the trigger is enabled when it is provided and stays visible, disabled, otherwise. */
+  display?: ReactNode;
   /** The shared Filter's trigger (#428), drawn between the search and Display; the chips sit under the rule. */
   filterTrigger?: ReactNode;
 };
@@ -97,13 +80,10 @@ export function DashboardViewBar({
   principalId,
   searchFocusRequest,
   onSearchFocusHandled,
-  showDisplay,
-  sort,
-  canSortByPriority,
-  onSortChange,
+  display,
   filterTrigger,
 }: DashboardViewBarProps) {
-  const sortOptions = (Object.keys(SORT_LABELS) as KanbanSortMode[]).filter((mode) => mode !== "priority" || canSortByPriority);
+  const showDisplay = display !== undefined && display !== null;
   return (
     <div
       data-testid="dashboard-view-bar"
@@ -159,14 +139,7 @@ export function DashboardViewBar({
           </DropdownMenuTrigger>
           {!showDisplay && <span id={DISPLAY_HINT_ID} className="absolute size-px overflow-hidden [clip-path:inset(50%)] whitespace-nowrap">{DISPLAY_UNAVAILABLE}</span>}
           <DropdownMenuContent align="end" className="w-auto min-w-48">
-            <DropdownMenuGroup>
-              <DropdownMenuLabel>Sort</DropdownMenuLabel>
-              <DropdownMenuRadioGroup value={sort} onValueChange={(next) => onSortChange(next as KanbanSortMode)}>
-                {sortOptions.map((mode) => (
-                  <DropdownMenuRadioItem key={mode} value={mode}>{SORT_LABELS[mode]}</DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuGroup>
+            {display}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

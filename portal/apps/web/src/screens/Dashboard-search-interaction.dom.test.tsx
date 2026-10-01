@@ -124,7 +124,7 @@ async function dndEnd(activeId: string, overId: string | null) {
 }
 
 function addresses(host: HTMLElement): string[] {
-  return [...host.querySelectorAll<HTMLElement>('[data-testid="kanban2-card-address"], [data-testid="project-list-row"] span')].map((element) => element.textContent ?? "");
+  return [...host.querySelectorAll<HTMLElement>('[data-testid="kanban2-card-address"], [data-testid="project-table-row-link"]')].map((element) => element.textContent ?? "");
 }
 
 async function flush() {

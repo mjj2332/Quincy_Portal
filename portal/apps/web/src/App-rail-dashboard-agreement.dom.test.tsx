@@ -285,7 +285,7 @@ async function renderAppFirstCommit(path: string, strict = false) {
 /** Which Dashboard view branch actually painted, read the same way a Staff member would see it —
  * not from `view`/`viewingArchived`, which is exactly the state this file catches disagreeing. */
 function renderedDashboardBranch(host: ParentNode): "table" | "board" | "calendar" | "none" {
-  if (host.querySelector('[aria-label="Projects list"]')) return "table";
+  if (host.querySelector('[aria-label="Projects table"]')) return "table";
   if (host.querySelector('[data-testid="dashboard-board"]')) return "board";
   if (host.querySelector('[data-testid="event-calendar-body"]')
     || [...host.querySelectorAll('[role="status"]')].some((node) => node.textContent === "Loading calendar…")) return "calendar";

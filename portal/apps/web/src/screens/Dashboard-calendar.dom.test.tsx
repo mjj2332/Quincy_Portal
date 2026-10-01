@@ -199,7 +199,7 @@ describe("Dashboard Calendar routing", () => {
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Table")?.click(); await Promise.resolve(); });
     expect(window.location.search).toBe("?view=table");
     expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("table");
-    const row = host.querySelector<HTMLAnchorElement>('[data-testid="project-list-row"]');
+    const row = host.querySelector<HTMLAnchorElement>('[data-testid="project-table-row-link"]');
     expect(row?.getAttribute("href")).toBe("/projects/33333333-3333-4333-8333-333333333333");
     expect(row?.tabIndex).toBe(0);
     expect(row?.querySelector("button, select")).toBeNull();
@@ -212,7 +212,7 @@ describe("Dashboard Calendar routing", () => {
   it("opens List and Kanban project anchors on the Full Workspace", async () => {
     await render();
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Table")?.click(); await Promise.resolve(); });
-    const row = host.querySelector<HTMLAnchorElement>('[data-testid="project-list-row"]')!;
+    const row = host.querySelector<HTMLAnchorElement>('[data-testid="project-table-row-link"]')!;
     expect(row.href).toContain("/projects/33333333-3333-4333-8333-333333333333");
     await act(async () => { row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 })); await Promise.resolve(); });
     expect(window.location.pathname).toBe("/projects/33333333-3333-4333-8333-333333333333");
