@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { dashboardFilterOf, dashboardSearchOf, formatSydneyCivil, roleHasCapability, withDashboardFilter, type DashboardCalendarState, type DashboardFilter, type DashboardRoute, type DashboardTimelineRoute, type DashboardViewRoute as SharedDashboardViewRoute, type MoveProjectStageRequest, type MoveProjectStageResponse, type ProductionCalendarFilters, type StageKey } from "@quincy/shared";
+import { DEFAULT_DASHBOARD_FILTER, dashboardFilterOf, dashboardSearchOf, formatSydneyCivil, roleHasCapability, withDashboardFilter, type DashboardCalendarState, type DashboardFilter, type DashboardRoute, type DashboardTimelineRoute, type DashboardViewRoute as SharedDashboardViewRoute, type MoveProjectStageRequest, type MoveProjectStageResponse, type ProductionCalendarFilters, type StageKey } from "@quincy/shared";
 import { QueryClient, QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
 import { StatusBadge } from "../components/atoms";
 import { LazyImage } from "../components/LazyImage";
@@ -1014,6 +1014,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   }, [projectsQuery.refetch]);
 
   const activeStages = stages.filter((stage) => stage.active);
+  // #428: a Stage filter shows only the columns it names. A column the filter excludes would read
+  // "0" and mislead (the projects are not gone, they are filtered out). Moves stay locked or not
+  // exactly as `boardNarrowed` says; this only changes which columns are drawn.
+  const boardStages = filter.stageKeys.length === 0
+    ? activeStages
+    : activeStages.filter((stage) => filter.stageKeys.some((key) => canonicalStageKey(key) === canonicalStageKey(stage.key)));
   const handleCalendarAccessLoss = useCallback(() => {
     setCalendarInteractionBlocked(false);
     setCalendarSettle({ pending: false, recoveryReason: null });
@@ -1108,6 +1114,13 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     }
     const currentSearch = takeDashboardSearchForNavigation(currentUserId);
     history.push(staffPathFor(withDashboardFilter({ kind: "dashboard", dashboardView: view === "board" ? "board" : "table", ...(currentSearch ? { search: currentSearch } : {}) }, next)));
+  }
+
+  // The empty state's Clear filters unmounts with it, which would drop focus to the body: it goes to the
+  // Filter trigger, the control the user would reach for next (as the Timeline's does).
+  function clearFiltersFromEmptyState() {
+    writeFilter(DEFAULT_DASHBOARD_FILTER);
+    requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-testid="dashboard-filter-trigger"]')?.focus({ preventScroll: true }));
   }
 
   const handleSearchFocusHandled = useCallback((signal: number) => onSearchFocusHandled?.(signal), [onSearchFocusHandled]);
@@ -1584,8 +1597,15 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         )}
 
         {!isCalendarView && !isGanttView && !isLoading && !error && projects.length === 0 && (
-          <EmptyState title={searchActive || filterActive ? "No matches." : "No shoots yet — create the first one."} className="max-[721px]:px-[var(--space-4)] max-[721px]:py-[var(--space-7)] [&>strong]:max-w-[34ch] [&>strong]:mx-auto">
-            {searchActive && filterActive ? "No projects match this search and these filters." : searchActive ? "No projects match this search." : filterActive ? "No projects match these filters." : "Start the production desk with the property, client, and team details."}
+          <EmptyState title={filterActive ? "No projects match these filters." : searchActive ? "No matches." : "No shoots yet — create the first one."} className="max-[721px]:px-[var(--space-4)] max-[721px]:py-[var(--space-7)] [&>strong]:max-w-[34ch] [&>strong]:mx-auto">
+            {filterActive
+              ? (searchActive ? "Nothing matches this search with these filters. Change or clear the filters above to see more projects." : "Change or clear the filters above to see more projects.")
+              : searchActive ? "No projects match this search." : "Start the production desk with the property, client, and team details."}
+            {filterActive && (
+              <div>
+                <Button type="button" variant="text" className="mt-[var(--space-4)]" onClick={clearFiltersFromEmptyState}>Clear filters</Button>
+              </div>
+            )}
             {!searchActive && !filterActive && canCreateProject && <div><InternalLink className={buttonClasses("primary", { className: "mt-[var(--space-4)]" })} to="/projects/new">New shoot</InternalLink></div>}
           </EmptyState>
         )}
@@ -1607,7 +1627,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         {!isCalendarView && !isGanttView && !isLoading && !error && projects.length > 0 && view === "board" && (
           <ProjectKanbanBoard2
             projects={projects}
-            activeStages={activeStages}
+            activeStages={boardStages}
             canMoveStages={canMoveStages}
             canPrioritize={canPrioritize && hasAuthorizedBoardMap}
             role={role}

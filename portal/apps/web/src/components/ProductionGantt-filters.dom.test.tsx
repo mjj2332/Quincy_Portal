@@ -540,7 +540,7 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
         const trigger = addTrigger(host);
         expect(document.activeElement).toBe(trigger);
         // The bar is empty again, so the trigger is the labelled one, and a real tab stop.
-        expect(trigger.textContent).toBe("Add filter");
+        expect(trigger.textContent).toBe("Editor / Show");
         expect(trigger.tabIndex).toBe(0);
 
         const triggerFocus = focusSpy.mock.contexts.flatMap((context, index) => (context === trigger ? [focusSpy.mock.calls[index]] : []));

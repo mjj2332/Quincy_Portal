@@ -32,7 +32,7 @@
  * `Filters`).
  *
  * FOCUS. The add-filter trigger is a Quincy `Button` passed through `trigger`: labelled while the
- * bar is empty, icon-only with `aria-label="Add filter"` once a chip exists. It takes focus after
+ * bar is empty, icon-only with `aria-label="Editor / Show"` once a chip exists. It is named for what it adds, not "Add filter", because the Dashboard's own Filter (Stage, Priority, Archived) sits in the view bar above it and two "Add filter" buttons read as a duplicate (#428; the full merge is #429 / #430). It takes focus after
  * the bar's own Clear and after the last chip is removed (the control that had focus unmounts), and
  * `ProductionGantt` focuses it through `triggerRef` after the empty state's Clear filters. Its
  * scroll-margin clears the sticky shell header for that caller's `scrollIntoView`.
@@ -41,7 +41,7 @@ import type { CalendarPerson } from "@quincy/shared";
 import { ListFilterPlusIcon } from "lucide-react";
 import { useCallback, useMemo, useRef, type RefObject } from "react";
 import { Filters, countFilterRules, flattenFilterRules, type FilterField, type FilterLabels } from "@/components/reui/filters/filters";
-import { useFilterQueryBinding } from "../lib/use-filter-query-binding";
+import { focusFilterChip, useFilterQueryBinding } from "../lib/use-filter-query-binding";
 import {
   GANTT_EDITOR_OPERATORS,
   GANTT_FILTER_FIELD,
@@ -73,7 +73,7 @@ export type ProductionGanttFiltersBarProps = {
 
 const LABELS: Partial<FilterLabels> = { filtersLabel: "Gantt filters" };
 const RULE_MENU = { duplicate: false, negate: false } as const;
-const ADD_FILTER = "Add filter";
+const ADD_FILTER = "Editor / Show";
 /**
  * Browser pass F: the vendored value menu's 12rem (`w-48`) default truncated "Completed checklist
  * items" and the longer stage labels. `FilterField.className` lands last on the value panel
@@ -112,6 +112,8 @@ export function ProductionGanttFiltersBar({ filters, people = NO_PEOPLE, onFilte
   const ownTriggerRef = useRef<HTMLButtonElement | null>(null);
   const trigger = triggerRef ?? ownTriggerRef;
 
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const focusSurvivor = useCallback((ruleId: string) => focusFilterChip(rootRef.current, ruleId), []);
   const focusTrigger = useCallback(() => {
     // After the frame in which the control that had focus (the last chip, or Clear) unmounted.
     requestAnimationFrame(() => trigger.current?.focus({ preventScroll: true }));
@@ -132,6 +134,7 @@ export function ProductionGanttFiltersBar({ filters, people = NO_PEOPLE, onFilte
     reconcile: ganttQueryForFacet,
     onFacetChange: onFiltersChange,
     onEmptied: focusTrigger,
+    onSurvivor: focusSurvivor,
   });
 
   const usedFields = useMemo(() => new Set(flattenFilterRules(query).map((rule) => rule.path[0])), [query]);
@@ -174,7 +177,7 @@ export function ProductionGanttFiltersBar({ filters, people = NO_PEOPLE, onFilte
   const compact = countFilterRules(query) > 0;
 
   return (
-    <div data-testid="production-gantt-filters">
+    <div ref={rootRef} data-testid="production-gantt-filters">
       <Filters<string[]>
         fields={fields}
         query={query}

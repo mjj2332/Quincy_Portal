@@ -41,11 +41,11 @@ export const DASHBOARD_STAGE_OPERATORS: FilterOperator[] = [{ value: ANY_OF, lab
 export const DASHBOARD_PRIORITY_OPERATORS: FilterOperator[] = [{ value: ANY_OF, label: "is any of", arity: "many" }];
 export const DASHBOARD_ARCHIVED_OPERATORS: FilterOperator[] = [{ value: IS, label: "is", arity: "one" }];
 
-/** The Archived chip's options. Hide is the default: choosing it leaves the URL bare. */
+/** The Archived chip's options (the chip reads "Archived is Included"). The URL values stay hide / include / only; Hide is the default: choosing it leaves the URL bare. */
 export const DASHBOARD_ARCHIVED_OPTIONS: ReadonlyArray<{ value: DashboardArchivedMode; label: string }> = [
-  { value: "hide", label: "Hide" },
-  { value: "include", label: "Include" },
-  { value: "only", label: "Only" },
+  { value: "hide", label: "Hidden" },
+  { value: "include", label: "Included" },
+  { value: "only", label: "Only archived" },
 ];
 
 /** The Priority chip's options, in canonical order (5 stars first, "No priority" last). */

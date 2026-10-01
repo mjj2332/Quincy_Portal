@@ -185,7 +185,7 @@ describe("Dashboard shared Filter (#428)", () => {
 
   it("seeds the chips from the URL: Stage, Priority and Archived", async () => {
     await renderAt("/?view=table&stages=raw_review&priority=5%2Cnone&archived=only");
-    expect(chipNames()).toEqual(["Stage is any of RAW review", "Priority is any of 2 selected", "Archived is Only"]);
+    expect(chipNames()).toEqual(["Stage is any of RAW review", "Priority is any of 2 selected", "Archived is Only archived"]);
     // The request carries all three, in the canonical spelling.
     expect(lastProjectRequest()).toBe("/api/projects?stages=raw_review&priority=5%2Cnone&archived=only");
     expect(host.textContent).toContain("9 Archived Street");
@@ -265,7 +265,7 @@ describe("Dashboard shared Filter (#428)", () => {
     await tick();
     expect(url()).toBe("/?view=board&archived=only");
     expect(lastProjectRequest()).toBe("/api/projects?archived=only");
-    expect(chipNames()).toEqual(["Archived is Only"]);
+    expect(chipNames()).toEqual(["Archived is Only archived"]);
 
     await act(async () => { tab("Timeline")!.click(); await Promise.resolve(); });
     await tick();
@@ -276,18 +276,18 @@ describe("Dashboard shared Filter (#428)", () => {
     await tick();
     expect(url()).toContain("archived=only");
     expect(calendarProps.value?.calendar).toMatchObject({ archived: "only" });
-    expect(chipNames()).toEqual(["Archived is Only"]);
+    expect(chipNames()).toEqual(["Archived is Only archived"]);
   });
 
-  it("offers Archived (Hide / Include / Only) to an Admin, and writes the mode", async () => {
+  it("offers Archived (Hidden / Included / Only archived) to an Admin, and writes the mode", async () => {
     await renderAt("/?view=table");
     await click(trigger()!);
     await waitFor(() => expect(optionNames()).toEqual(["Stage", "Priority", "Archived"]));
     await click(option("Archived"));
     await waitFor(() => expect(optionNames()).toEqual(["is"]));
     await click(option("is"));
-    await waitFor(() => expect(optionNames()).toEqual(["Hide", "Include", "Only"]));
-    await click(option("Include"));
+    await waitFor(() => expect(optionNames()).toEqual(["Hidden", "Included", "Only archived"]));
+    await click(option("Included"));
     await waitFor(() => expect(url()).toBe("/?view=table&archived=include"));
     expect(lastProjectRequest()).toBe("/api/projects?archived=include");
   });
@@ -338,4 +338,53 @@ describe("Dashboard shared Filter (#428)", () => {
     await act(async () => { (calendarProps.value?.onAcceptGateChange as (blocked: boolean) => void)(false); await Promise.resolve(); });
     expect(trigger()?.disabled).toBe(false);
   });
+
+  describe("focus after a chip is removed from its menu", () => {
+    const chipByField = (field: string) => [...chipRegion().querySelectorAll<HTMLElement>('[role="group"]')].find((chip) => chip.getAttribute("aria-label")?.startsWith(`${field} `))!;
+    async function removeFromMenu(field: string) {
+      await click(chipByField(field).querySelector<HTMLElement>(`button[aria-label="${field} filter options"]`)!);
+      await waitFor(() => expect([...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent?.trim())).toEqual(["Remove"]));
+      await click([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')][0]!);
+      await tick(60);
+    }
+    const focusedChip = () => (document.activeElement as HTMLElement | null)?.closest<HTMLElement>('[role="group"]')?.getAttribute("aria-label") ?? null;
+
+    it("moves focus to the next chip, else the previous, else the Filter trigger", async () => {
+      await renderAt("/?view=table&stages=raw_review&priority=5&archived=only");
+      expect(chipNames()).toEqual(["Stage is any of RAW review", "Priority is any of 5 stars", "Archived is Only archived"]);
+
+      await removeFromMenu("Priority");
+      expect(chipNames()).toEqual(["Stage is any of RAW review", "Archived is Only archived"]);
+      await waitFor(() => expect(focusedChip()).toBe("Archived is Only archived"));
+
+      await removeFromMenu("Archived");
+      expect(chipNames()).toEqual(["Stage is any of RAW review"]);
+      await waitFor(() => expect(focusedChip()).toBe("Stage is any of RAW review"));
+
+      await removeFromMenu("Stage");
+      expect(chipNames()).toEqual([]);
+      await waitFor(() => expect(document.activeElement).toBe(trigger()));
+    });
+  });
+
+  it("draws only the Board columns a Stage filter names (an excluded column would read 0), and all of them without one", async () => {
+    await renderAt("/?view=board");
+    expect(boardProps.value?.activeStages.map((stage: { key: string }) => stage.key)).toEqual(["awaiting_raw", "raw_review"]);
+    await renderAt("/?view=board&stages=raw_review");
+    expect(boardProps.value?.activeStages.map((stage: { key: string }) => stage.key)).toEqual(["raw_review"]);
+    // A Stage-only filter still leaves moves as they were.
+    expect(boardProps.value?.movementDisabled).toBe(false);
+  });
+
+  it.each(["table", "board"])("the %s empty state under a filter reads like the Timeline's, with a Clear filters action", async (view) => {
+    apiGetMock.mockImplementation((path) => Promise.resolve(path.startsWith("/api/production-gantt") ? ganttResponse() : { projects: [], board: { contractEnabled: true, orderedProjectIdsByStage: {} } }));
+    await renderAt(`/?view=${view}&priority=5`);
+    expect(host.textContent).toContain("No projects match these filters.");
+    const clear = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "Clear filters")!;
+    expect(clear).toBeDefined();
+    await click(clear);
+    await waitFor(() => expect(url()).toBe(`/?view=${view}`));
+    expect(chipNames()).toEqual([]);
+  });
 });
+

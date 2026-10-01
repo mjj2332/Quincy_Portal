@@ -25,6 +25,7 @@
  * - QUINCY (#255 browser pass F): `SEGMENT_FOCUS_RADIUS_CLASS` (`focus-visible:rounded-(--radius-lg)!`) on the operator and value segments and the kebab / remove button, so a focused segment's global outline follows the chip's 14px radius instead of ButtonGroup's squared inner corners.
  * - RE-SKIN (#255 browser pass G): the finished operator segment's `text-muted-foreground` -> `text-foreground-secondary`. `--text-muted` measured 3.13:1 on the `hover:bg-muted` fill (3.36:1 at rest); `--text-secondary` is 8.09:1 / 8.66:1. The incomplete prompt stays `text-foreground`.
  * - QUINCY (#255 browser pass G): the value segment carries `VALUE_SEGMENT_LINE_CLASS` (`min-w-0 max-w-60 whitespace-nowrap`) and wraps its label in a `min-w-0 truncate` span; `valueWithIcon` adds `min-w-0` to its flex row and a `truncate` span around the text. A long value ellipsizes on one line instead of wrapping the chip to two.
+ * - QUINCY (#428 design review D6): the operator popover's handoff close (operator chosen, value editor next) is INSTANT, the same `instantExit` treatment `filters-builder.tsx`'s field picker already has, so the 160px operator card does not fade over the value editor that replaces it.
  * - QUINCY ADDITION (#255), additive: a `ruleMenu?: { duplicate?: boolean; negate?: boolean }` option (`FilterRuleMenuOptions`, `filters-context.tsx`) threaded root prop -> actions context -> `FilterRuleMenuItems`, so a consumer can hide the rule menu's Duplicate and Negate rows. Upstream has no option for it. Omitted, both rows render exactly as upstream.
  */
 import * as React from "react"
@@ -574,6 +575,9 @@ export function FilterOperatorPopover<V, O>({
   const focusStore = useFilterFocusStore()
   const autoOpen = useFilterChipAutoOpen(rule.id) === "operator"
   const [open, setOpen] = React.useState(false)
+  // QUINCY (#428 D6): latched when the close is the handoff to the value editor, cleared on the next
+  // open, so only that close skips the exit animation (Escape and an outside press still fade).
+  const [instantExit, setInstantExit] = React.useState(false)
   const locked = isFilterLocked(actions)
   /** Whether the close this panel is going through IS the step being handed
    *  on. A ref, so it survives the render that closes the popover. Every OPEN
@@ -602,6 +606,7 @@ export function FilterOperatorPopover<V, O>({
   React.useEffect(() => {
     if (!autoOpen || open) return
     handoff.current = false
+    setInstantExit(false)
     if (!locked) setOpen(true)
     focusStore.set({ id: rule.id, segment: "operator", autoOpen: false })
   }, [autoOpen, open, focusStore, rule.id, locked])
@@ -638,7 +643,10 @@ export function FilterOperatorPopover<V, O>({
            taken, so none may spend it. RETIRED ON OPEN, not on close, and that
            is a twin difference: in Radix an item choice dismisses through here
            too, so retiring on close wiped the request before the unmount. */
-        if (next) handoff.current = false
+        if (next) {
+          handoff.current = false
+          setInstantExit(false)
+        }
         setOpen(next)
       }}
     >
@@ -659,7 +667,16 @@ export function FilterOperatorPopover<V, O>({
         finalFocus={() => !handoff.current}
         /* `w-auto` with a FLOOR: a catalog sizes to its longest label, and a
            boolean field's "is" and "is not" would read as a scrap of paper. */
-        className={cn("w-auto min-w-40 p-0", className)}
+        className={cn(
+          "w-auto min-w-40 p-0",
+          /* QUINCY (#428 D6): see `instantExit`; the same pair of twins as the builder's. */
+          instantExit &&
+            cn(
+              "data-ending-style:animate-none data-ending-style:transition-none",
+              "data-[state=closed]:animate-none data-[state=closed]:transition-none"
+            ),
+          className
+        )}
       >
         {/* INSIDE the panel deliberately: only a child of the content is
             unmounted by the exit transition rather than by the close. */}
@@ -697,6 +714,7 @@ export function FilterOperatorPopover<V, O>({
               /* PARKED, not opened: `release` hands the row to its value
                  surface once this panel has unmounted. */
               handoff.current = true
+              setInstantExit(true)
               setOpen(false)
               return
             }

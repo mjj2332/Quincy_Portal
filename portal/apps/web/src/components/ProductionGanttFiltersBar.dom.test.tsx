@@ -220,7 +220,7 @@ describe("ProductionGanttFiltersBar (#255)", () => {
     await render();
     expect(toolbar().getAttribute("aria-label")).toBe("Gantt filters");
     expect(chips()).toHaveLength(0);
-    expect(addTrigger().textContent).toBe("Add filter");
+    expect(addTrigger().textContent).toBe("Editor / Show");
     expect(addTrigger().hasAttribute("aria-label")).toBe(false);
     expect(triggerRefValue.current).toBe(addTrigger());
 
@@ -230,13 +230,13 @@ describe("ProductionGanttFiltersBar (#255)", () => {
     expect(chipNames()).toEqual(["Show includes 2 selected"]);
     // Icon-only once chips sit beside it, and still named.
     expect(addTrigger().textContent).toBe("");
-    expect(addTrigger().getAttribute("aria-label")).toBe("Add filter");
+    expect(addTrigger().getAttribute("aria-label")).toBe("Editor / Show");
   });
 
   it("draws no chip for the shared Filter's Stage, Priority or Archived: the URL carries them, the Dashboard's Filter shows them (#428)", async () => {
     await render(facet(CARRIED));
     expect(chips()).toHaveLength(0);
-    expect(addTrigger().textContent).toBe("Add filter");
+    expect(addTrigger().textContent).toBe("Editor / Show");
     await click(addTrigger());
     await waitFor(() => expect(options().map((candidate) => candidate.textContent?.trim())).toEqual(["Show"]));
   });

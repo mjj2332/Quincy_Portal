@@ -437,6 +437,10 @@ const LEGACY_DASHBOARD_VIEW_SPELLINGS: Readonly<Record<string, "table" | "board"
   gantt: "timeline",
 };
 
+/** #428: the retired Active/Archived scope's query parameter. It PARSES (bare `/?scope=...` only);
+ * `staffPathFor` never emits it, and `canonicalLegacyDashboardLocation` rewrites it. */
+const LEGACY_SCOPE_PARAM = "scope";
+
 function parseDashboardTableBoardLocation(params: URLSearchParams): DashboardTableBoardRoute | null {
   for (const name of params.keys()) {
     if (!dashboardTableBoardParameterNames.has(name)) return null;
@@ -546,10 +550,20 @@ export function parseStaffLocation(location: string): StaffRoute {
     // Bare `/?q=...`: the only legal key here is `q` itself -- everything else (including a
     // `view` spelling this arm didn't already claim) falls through to `not-found` below.
     for (const name of params.keys()) {
-      if (name !== "q") return { kind: "not-found" };
+      if (name !== "q" && name !== LEGACY_SCOPE_PARAM) return { kind: "not-found" };
     }
     const search = parseDashboardSearch(params);
     if (search === null) return { kind: "not-found" };
+    // #428: the retired Active/Archived segment's spelling. `scope=archived` is the Board with the
+    // Archived filter set to Only (an Admin; any other role reads it as Hide, as every `archived`
+    // value); `scope=active` is the default, so it is the plain bare route. Anything else is rejected.
+    if (params.has(LEGACY_SCOPE_PARAM)) {
+      const scope = params.get(LEGACY_SCOPE_PARAM);
+      if (scope === "archived") {
+        return { kind: "dashboard", dashboardView: "board", ...(search ? { search } : {}), filter: { stageKeys: [], priorities: [], archived: "only" } };
+      }
+      if (scope !== "active") return { kind: "not-found" };
+    }
     // #217 fix round 5, item 4: `undefined` now also covers a `q` that NORMALIZES to no search
     // (all-whitespace) -- that reads as the plain bare route, not a rejection, the same way `q`
     // being entirely absent already did.
@@ -598,7 +612,8 @@ export function canonicalLegacyDashboardLocation(location: string): string | nul
     if (equals === -1) continue;
     if (part.slice(0, equals) === "view") rawView = part.slice(equals + 1);
   }
-  if (rawView === null || !Object.hasOwn(LEGACY_DASHBOARD_VIEW_SPELLINGS, rawView)) return null;
+  const hasLegacyScope = query.split("&").some((part) => part.startsWith(`${LEGACY_SCOPE_PARAM}=`));
+  if (rawView === null ? !hasLegacyScope : !Object.hasOwn(LEGACY_DASHBOARD_VIEW_SPELLINGS, rawView)) return null;
   const route = parseStaffLocation(location);
   if (route.kind !== "dashboard") return null;
   return staffPathFor(route);

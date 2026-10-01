@@ -59,7 +59,7 @@ const TABS: { view: DashboardView; label: string; Icon: LucideIcon; gated: boole
 
 /** Search, Filter and Display share one fixed height — Quincy's control contract (`BUTTON_HEIGHT_CLASS`):
  * 38px, 44px at <=721px — so a content-sized input can never make one a pixel taller. */
-const CONTROL_HEIGHT = "h-[38px] max-[721px]:h-[44px]";
+export const CONTROL_HEIGHT = "h-[38px] max-[721px]:h-[44px]";
 const DISPLAY_UNAVAILABLE = "Display options for this view arrive with #431";
 const DISPLAY_HINT_ID = "dashboard-display-unavailable";
 

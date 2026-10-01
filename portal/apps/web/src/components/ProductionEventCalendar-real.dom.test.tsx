@@ -79,4 +79,27 @@ describe("ProductionEventCalendar through the real vendored event calendar", () 
     expect(deadlineClass).not.toContain("data-selected:bg-(--ec-event-color)/30");
     expect(deadlineClass).not.toContain("data-selected:inset-ring-(--ec-event-color)/40");
   });
+
+  it("drops the previous filter's events and shows the error when the request for the new filter fails (#428)", async () => {
+    const withArchived = { ...response, range: { ...response.range, appliedFilters: { ...response.range.appliedFilters, archived: "include" as const } } };
+    let failing = false;
+    vi.stubGlobal("fetch", vi.fn(async () => failing
+      ? new Response(JSON.stringify({ error: { code: "invalid_request", message: "boom" } }), { status: 400, headers: { "content-type": "application/json" } })
+      : new Response(JSON.stringify(withArchived), { status: 200, headers: { "content-type": "application/json" } })));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const identity = { principalId: principal, role: "admin" as const, authorizationEpoch: 0 };
+    const render = (archived: "hide" | "include") => act(async () => {
+      root.render(<QueryClientProvider client={client}><ProductionEventCalendar identity={identity} calendar={{ ...calendar, archived }} onNavigate={() => undefined} /></QueryClientProvider>);
+      await Promise.resolve();
+    });
+    await render("include");
+    for (let i = 0; i < 3; i += 1) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    expect(host.querySelectorAll('[data-testid="event-calendar-chip"]').length).toBeGreaterThanOrEqual(2);
+
+    failing = true;
+    await render("hide");
+    for (let i = 0; i < 3; i += 1) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    expect(host.querySelector('[data-testid="event-calendar-error"]')).not.toBeNull();
+    expect(host.querySelectorAll('[data-testid="event-calendar-chip"]')).toHaveLength(0);
+  });
 });

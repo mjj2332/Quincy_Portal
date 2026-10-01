@@ -19,8 +19,9 @@ import {
   type DashboardFilterValue,
 } from "../lib/dashboard-filter-query";
 import { stageOptionsWithColor, type StageFilterOption } from "../lib/production-gantt-filters";
-import { useFilterQueryBinding } from "../lib/use-filter-query-binding";
+import { focusFilterChip, useFilterQueryBinding } from "../lib/use-filter-query-binding";
 import { cn } from "../lib/utils";
+import { CONTROL_HEIGHT } from "./DashboardViewBar";
 
 /**
  * The Dashboard's shared Filter (#428): Stage, Project priority and (Admin only) Archived
@@ -41,19 +42,17 @@ import { cn } from "../lib/utils";
  * - Stage, "is any of": the role-aware stage options with their legend swatches.
  * - Priority, "is any of": 5 stars ... 1 star, No priority. Not offered to an External Editor (the
  *   server withholds Project priority from them).
- * - Archived, "is": Hide, Include, Only. Offered only when `canFilterArchived` (an Admin): the other
+ * - Archived, "is": Hidden, Included, Only archived. Offered only when `canFilterArchived` (an Admin): the other
  *   roles never see the field, and a URL that names it is not honoured for them.
  * One rule per field; no negation, duplication, `or` or groups (`queryToDashboardFilter` vetoes them).
  */
 
-type FocusContextValue = { triggerRef: RefObject<HTMLButtonElement | null> };
+type FocusContextValue = { triggerRef: RefObject<HTMLButtonElement | null>; chipsRef: RefObject<HTMLDivElement | null> };
 const TriggerFocusContext = createContext<FocusContextValue | null>(null);
 
 const LABELS: Partial<FilterLabels> = { filtersLabel: "Dashboard filters" };
 const RULE_MENU = { duplicate: false, negate: false } as const;
 const VALUE_MENU_CLASS = "w-60";
-/** The same fixed control height `DashboardViewBar`'s search and Display share (`BUTTON_HEIGHT_CLASS`). */
-const CONTROL_HEIGHT = "h-[38px] max-[721px]:h-[44px]";
 
 export type DashboardFilterProviderProps = {
   /** The URL's filter, from `dashboardFilterOf(route)`. */
@@ -77,6 +76,8 @@ export function DashboardFilterProvider({ filter, onFilterChange, stageOptions, 
     // After the frame in which the control that had focus (the last chip, or Clear) unmounted.
     requestAnimationFrame(() => triggerRef.current?.focus({ preventScroll: true }));
   }, []);
+  const chipsRef = useRef<HTMLDivElement | null>(null);
+  const focusSurvivor = useCallback((ruleId: string) => focusFilterChip(chipsRef.current, ruleId), []);
   const toFacet = useCallback((next: DashboardFilterQuery) => queryToDashboardFilter(next, { archivedAllowed: canFilterArchived }), [canFilterArchived]);
   const { query, onQueryChange, onBeforeQueryChange } = useFilterQueryBinding<DashboardFilterValueOf, DashboardFilterValue>({
     facet: filter,
@@ -85,6 +86,7 @@ export function DashboardFilterProvider({ filter, onFilterChange, stageOptions, 
     toFacet,
     onFacetChange: onFilterChange,
     onEmptied: focusTrigger,
+    onSurvivor: focusSurvivor,
   });
 
   const rules = query.rules;
@@ -113,6 +115,8 @@ export function DashboardFilterProvider({ filter, onFilterChange, stageOptions, 
               label: "Priority",
               type: "multiselect" as const,
               operators: DASHBOARD_PRIORITY_OPERATORS,
+              // Six fixed rows, all on screen: a search box would only be a distraction.
+              searchable: false,
               disabled: priorityUsed,
               className: VALUE_MENU_CLASS,
               options: DASHBOARD_PRIORITY_OPTIONS.map((option) => ({
@@ -130,6 +134,8 @@ export function DashboardFilterProvider({ filter, onFilterChange, stageOptions, 
               label: "Archived",
               type: "select" as const,
               operators: DASHBOARD_ARCHIVED_OPERATORS,
+              // Three fixed rows.
+              searchable: false,
               disabled: archivedUsed,
               className: VALUE_MENU_CLASS,
               options: DASHBOARD_ARCHIVED_OPTIONS.map((option) => ({ value: option.value, label: option.label })),
@@ -139,7 +145,7 @@ export function DashboardFilterProvider({ filter, onFilterChange, stageOptions, 
     ],
     [archivedUsed, canFilterArchived, canFilterPriority, priorityUsed, stageOptions, stageUsed],
   );
-  const focus = useMemo(() => ({ triggerRef }), []);
+  const focus = useMemo(() => ({ triggerRef, chipsRef }), []);
 
   return (
     <TriggerFocusContext.Provider value={focus}>
@@ -160,12 +166,14 @@ export function DashboardFilterProvider({ filter, onFilterChange, stageOptions, 
 
 /**
  * The Filter button, for the view bar. Labelled "Filter" with the funnel glyph; at <=721px it is
- * icon-only and keeps the same accessible name. Its height is the bar's control height.
+ * icon-only (44 x 44) and keeps the same accessible name. Its height is the bar's control height.
  */
 export function DashboardFilterTrigger({ className }: { className?: string }) {
   const focus = useContext(TriggerFocusContext);
   return (
     <FiltersBuilder<DashboardFilterValue, unknown>
+      // The trigger sits at the bar's right edge: the field menu opens inward, not off the page.
+      align="end"
       trigger={
         <Button
           ref={focus?.triggerRef}
@@ -173,7 +181,7 @@ export function DashboardFilterTrigger({ className }: { className?: string }) {
           variant="secondary"
           aria-label="Filter"
           data-testid="dashboard-filter-trigger"
-          className={cn("shrink-0", CONTROL_HEIGHT, className)}
+          className={cn("shrink-0", CONTROL_HEIGHT, "max-[721px]:w-[44px] max-[721px]:min-w-[44px] max-[721px]:px-0", className)}
         >
           <FilterIcon aria-hidden="true" />
           <span className="max-[721px]:hidden">Filter</span>
@@ -190,8 +198,9 @@ export function DashboardFilterTrigger({ className }: { className?: string }) {
  */
 export function DashboardFilterChips({ className }: { className?: string }) {
   const { ruleCount } = useFilterState();
+  const focus = useContext(TriggerFocusContext);
   return (
-    <div data-testid="dashboard-filter-chips" className={cn(ruleCount > 0 && "mb-[var(--space-4)]", className)}>
+    <div ref={focus?.chipsRef} data-testid="dashboard-filter-chips" className={cn(ruleCount > 0 && "mb-[var(--space-4)]", className)}>
       <FiltersRow builder={false} showClear />
     </div>
   );
