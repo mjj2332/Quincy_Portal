@@ -24,17 +24,21 @@ function sha256(value: string): string {
 // and the `project-search` SQL helpers themselves are covered by the tests above.
 // (Re-pinned again in the #342 review round for a SQL comment reword; no logic change.)
 // (2026-09-30) #370: assignee relation replaces the per-Subtask assignee column — the Calendar reads `project_subtask_assignees`, so every digest changed.
+// RE-PINNED in #428 (a characterization fixture, not a guard): the shared Dashboard Filter added the
+// Archived mode predicate (`archived_at` Hide/Include/Only over a bound request column), the Project
+// priority predicate (`request_priorities`) and an `archived` column on `authorized_projects_base` and
+// the project/checklist candidate rows. Every digest changed for that reason only.
 const PRE_REFACTOR_RANGE_SQL_SHA256: Record<(typeof ROLES)[number], string> = {
-  admin: "c9edc6c3859b0ee81f60f60e9d1fb7acaf4e996fb3ca743ae1bce2e7ec23b95c",
-  editor: "8960d5ac091869669e0184ed4a3c822857d1f2840ac47a9aea5bf615d804349e",
-  photographer: "8960d5ac091869669e0184ed4a3c822857d1f2840ac47a9aea5bf615d804349e",
-  external_editor: "2a636d93d211b26fe157191cd5f1299b0b65c1f7df331e1a7d5d3f99b59e681c",
+  admin: "84d85a90e725d9887ac76969714cd6dc3a8e7bf515b1d59544e7b6b5327b895d",
+  editor: "f467ec6ba2fbf1fe8b38423d7ed2d8439c008ce01db56f073c0366ee1256c425",
+  photographer: "f467ec6ba2fbf1fe8b38423d7ed2d8439c008ce01db56f073c0366ee1256c425",
+  external_editor: "b696ffe591c1a7c27b2d878e7ded1002308b90e68e0542fb22d32f6d42ef4d68",
 };
 const PRE_REFACTOR_FACETS_SQL_SHA256: Record<(typeof ROLES)[number], string> = {
-  admin: "d7285b728fa6c8acc968f35ceec2a54d143c1f1cb17b6b59f20d5517572fc72a",
-  editor: "3940fc7b8a95dd92ad6a5cf674ee4ff7a519c6e515a5cfc1d8901b83c6a3e345",
-  photographer: "3940fc7b8a95dd92ad6a5cf674ee4ff7a519c6e515a5cfc1d8901b83c6a3e345",
-  external_editor: "db901ee20d06dd500a47739b6883b5371783b35a81b5b4e66d6857990a74f1a1",
+  admin: "91947fdd38f343f2f9b2a6fc09dd6336cac5dee3333c0b1dff7b2b10d1192c82",
+  editor: "46181f8f50e2b6dced520da5f9a5447ade98df26205a9d9972a51f84eca46d3c",
+  photographer: "46181f8f50e2b6dced520da5f9a5447ade98df26205a9d9972a51f84eca46d3c",
+  external_editor: "690f176e4c3d40e4aef74fe5d0f5d4de38e4d4103b4a4ad0636e513087e9fd55",
 };
 
 describe("project-search", () => {

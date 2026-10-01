@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import {
+  DASHBOARD_PRIORITY_FILTER_VALUES,
   EXTERNAL_API_RESPONSE_SCHEMAS,
   PRODUCTION_CALENDAR_MAX_EDITOR_IDS,
   PRODUCTION_CALENDAR_MAX_ENCODED_QUERY_BYTES,
@@ -21,6 +22,7 @@ import {
   stageTransportKeyForRole,
   type CalendarEventDto,
   type CalendarPerson,
+  type DashboardPriorityFilterValue,
   type ChecklistScheduleDto,
   type ProductionCalendarProjectBounds,
   type ProductionCalendarRangeQuery,
@@ -47,6 +49,7 @@ type CalendarSqlRow = {
   street: string | null;
   stage_key: string | null;
   delivered: number | null;
+  archived: number | null;
   checklist_completed: number | null;
   checklist_total: number | null;
   can_collaborate: number | null;
@@ -113,6 +116,8 @@ type ParseFailure = {
 const QUERY_NAMES = new Set([
   "start", "end", "date", "sub", "scope", "layers", "editors", "unassigned", "stages",
   "completed", "delivered", "overdue", "mine", "q",
+  // #428: the shared Dashboard Filter's Project priority and Archived mode, additive to `scope=active`.
+  "priority", "archived",
   // #222: request-gated project bounds — see `productionCalendarBoundsSql`.
   "bounds",
 ]);
@@ -182,6 +187,11 @@ function parseCalendarQuery(c: Context<AppEnv>): ParsedCalendarRequest | ParseFa
   const rawLayers = splitList(valueFor("layers") ?? null);
   const rawEditors = splitList(valueFor("editors") ?? null);
   const rawStages = splitList(valueFor("stages") ?? null);
+  const rawPriorities = splitList(valueFor("priority") ?? null);
+  const rawArchived = valueFor("archived");
+  if (valueFor("priority") !== undefined && rawPriorities === null) return parseFailure("Calendar query is invalid.", "calendar_query_invalid");
+  if (rawPriorities?.some((value) => !DASHBOARD_PRIORITY_FILTER_VALUES.includes(value as DashboardPriorityFilterValue))) return parseFailure("Calendar query is invalid.", "calendar_query_invalid");
+  if (rawArchived !== undefined && rawArchived !== "include" && rawArchived !== "only") return parseFailure("Calendar query is invalid.", "calendar_query_invalid");
   if (!start || !end || !date || !sub || !scope || rawLayers === null) return parseFailure("Calendar query is invalid.", "calendar_query_invalid");
   if (rawLayers.some((value) => !["project", "checklist"].includes(value))) return parseFailure("Calendar query is invalid.", "calendar_query_invalid");
   if (rawEditors !== null && rawEditors.length > PRODUCTION_CALENDAR_MAX_EDITOR_IDS) return parseFailure("Calendar query exceeds the Editor filter limit.", "calendar_query_too_large");
@@ -202,6 +212,8 @@ function parseCalendarQuery(c: Context<AppEnv>): ParsedCalendarRequest | ParseFa
       editorIds: rawEditors ?? [],
       includeUnassigned: flagValue(params, "unassigned") ?? false,
       stageKeys: rawStages ?? [],
+      priorities: rawPriorities ?? [],
+      archived: rawArchived ?? "hide",
       showCompletedChecklist: flagValue(params, "completed") ?? false,
       showDeliveredProjects: flagValue(params, "delivered") ?? false,
       overdueOnly: flagValue(params, "overdue") ?? false,
@@ -262,11 +274,12 @@ request AS (
     ?5 AS end_date, ?6 AS now, ?7 AS today_date, ?10 AS search,
     ?11 AS include_unassigned, ?12 AS my_tasks, ?13 AS show_completed,
     ?14 AS show_delivered, ?15 AS overdue_only, ?16 AS project_layer,
-    ?17 AS checklist_layer
+    ?17 AS checklist_layer, ?19 AS archived_mode
 ),
 request_editors AS (SELECT value AS person_id FROM json_each(?8)),
 request_stages AS (SELECT value AS stage_key FROM json_each(?9)),
-${authorizedProjectsBaseCte(role, { includeDeliveredColumn: "r.show_delivered", searchPredicate: authorizedProjectsSearch })},
+request_priorities AS (SELECT value AS priority FROM json_each(?18)),
+${authorizedProjectsBaseCte(role, { includeDeliveredColumn: "r.show_delivered", archivedModeColumn: "r.archived_mode", searchPredicate: authorizedProjectsSearch })},
 project_candidate_universe AS (
   SELECT ap.*
   FROM authorized_projects_base ap
@@ -289,7 +302,7 @@ candidate_subtasks_raw AS (
     s.schedule_start_utc_offset_minutes, s.schedule_start_fold, s.schedule_end_kind,
     s.schedule_end_at, s.schedule_end_utc_offset_minutes, s.schedule_end_fold,
     s.schedule_zone, s.schedule_version,
-    vp.project_id, vp.street, vp.stage_key, vp.delivered,
+    vp.project_id, vp.street, vp.stage_key, vp.delivered, vp.archived,
     COALESCE(cc.completed, 0) AS checklist_completed, COALESCE(cc.total, 0) AS checklist_total,
     vp.can_collaborate, vp.agency_display_name, vp.agent_display_name,
     vp.deadline_at, vp.deadline_local_civil, vp.deadline_version, vp.deadline_reminder_offsets_json,
@@ -415,7 +428,7 @@ export function productionCalendarRangeSql(role: CalendarRole): string {
   return calendarCtes(role) + `,
 candidate_rows AS (
   SELECT 'project' AS row_kind, d.scheduled_total, NULL AS unscheduled_rank, NULL AS unscheduled_matched,
-    p.project_id, p.street, p.stage_key, p.delivered, COALESCE(cc.completed, 0) AS checklist_completed,
+    p.project_id, p.street, p.stage_key, p.delivered, p.archived, COALESCE(cc.completed, 0) AS checklist_completed,
     COALESCE(cc.total, 0) AS checklist_total, p.can_collaborate, p.agency_display_name, p.agent_display_name,
     p.deadline_at, p.deadline_local_civil, p.deadline_version, p.deadline_reminder_offsets_json,
     NULL AS subtask_id, NULL AS subtask_title, NULL AS done, NULL AS assignees_json, NULL AS due_date, NULL AS schedule_start_kind,
@@ -427,7 +440,7 @@ candidate_rows AS (
   CROSS JOIN density d
   UNION ALL
   SELECT 'checklist_candidate', d.scheduled_total, NULL, NULL,
-    c.project_id, c.street, c.stage_key, c.delivered, c.checklist_completed, c.checklist_total,
+    c.project_id, c.street, c.stage_key, c.delivered, c.archived, c.checklist_completed, c.checklist_total,
     c.can_collaborate, c.agency_display_name, c.agent_display_name, c.deadline_at, c.deadline_local_civil,
     c.deadline_version, c.deadline_reminder_offsets_json, c.subtask_id, c.subtask_title, c.done,
     c.assignees_json, c.due_date, c.schedule_start_kind,
@@ -440,7 +453,7 @@ candidate_rows AS (
 SELECT * FROM candidate_rows
 WHERE scheduled_total <= ${PRODUCTION_CALENDAR_MAX_SCHEDULED_EVENTS}
 UNION ALL
-SELECT 'density', d.scheduled_total, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+SELECT 'density', d.scheduled_total, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
   NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
   NULL, NULL, NULL, NULL
 FROM density d
@@ -538,6 +551,8 @@ function bindValues(parsed: ParsedCalendarRequest): unknown[] {
     filters.overdueOnly ? 1 : 0,
     filters.layers.includes("project") ? 1 : 0,
     filters.layers.includes("checklist") ? 1 : 0,
+    JSON.stringify(filters.priorities),
+    filters.archived,
   ];
 }
 
@@ -549,6 +564,7 @@ function projectContext(row: CalendarSqlRow, role: CalendarRole) {
     stageKey: stageTransportKeyForRole(row.stage_key as StageKey, role),
     checklist: { completed: Number(row.checklist_completed ?? 0), total: Number(row.checklist_total ?? 0) },
     delivered: Boolean(row.delivered),
+    archived: Boolean(row.archived),
   };
 }
 
@@ -605,7 +621,7 @@ function projectDeadlineEvent(row: CalendarSqlRow, role: CalendarRole, parsed: P
     project,
     timing: { allDay: false, start: new Date(row.deadline_at).toISOString(), end: null },
     status: { overdue, delivered: project.delivered, completed: false, sameAssigneeOverlap: false },
-    permissions: { canDrag: roleHasCapability(role, "editProject") && !project.delivered, canResize: false },
+    permissions: { canDrag: roleHasCapability(role, "editProject") && !project.delivered && !project.archived, canResize: false },
     deadlineLocalCivil: row.deadline_local_civil,
     deadlineVersion: Number(row.deadline_version),
     reminderOffsetsMinutes: parseReminderOffsets(row.deadline_reminder_offsets_json),
@@ -619,7 +635,8 @@ function checklistEvent(row: CalendarSqlRow, role: CalendarRole, parsed: ParsedC
   const schedule = serializeSubtaskSchedule(row.subtask_id, scheduleStorage(row));
   const timing = scheduleTiming(schedule);
   if (!timing || !scheduleIntersects(schedule, parsed)) return null;
-  const collaboration = row.can_collaborate === 1;
+  // An archived Project is read-only (#428): its checklist rows are shown, never moved or rescheduled.
+  const collaboration = row.can_collaborate === 1 && !project.archived;
   const done = Boolean(row.done);
   const { assignees, otherAssigneeCount } = assigneesForViewer(parseAssigneesJson(row.assignees_json), role);
   return {
@@ -721,6 +738,9 @@ async function productionCalendarHandlerImpl(c: Context<AppEnv>): Promise<Respon
   if ("code" in parsed) return c.json(parsed, 400);
   const user = c.get("user");
   const role = user.role;
+  // #428: Archived Include/Only is Admin only, and Project priority is withheld from an External Editor.
+  if (parsed.query.filters.archived !== "hide" && !roleHasCapability(role, "adminBackend")) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
+  if (parsed.query.filters.priorities.length > 0 && role === "external_editor") return c.json({ error: "Project priority is not available to this role.", code: "calendar_query_invalid" }, 400);
   const params = bindValues(parsed);
   params[0] = user.id;
   const first = await c.env.DB.prepare(productionCalendarRangeSql(role)).bind(...params).all<CalendarSqlRow>();
