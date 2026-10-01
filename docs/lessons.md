@@ -4840,3 +4840,42 @@ remove the legacy readers) still applies.
 - **A partial PATCH must not reset the other switch.** The preference upsert uses `COALESCE(?, existing)` per column and
   `COALESCE(?, 1)` on insert, and the screen sends one switch per request.
 
+
+## #430 Calendar and Timeline join the shared Filter and Display
+
+- **Display content per view.** Calendar: Layers (Project deadlines / Subtasks) then Show (delivered Projects / completed Subtasks). Timeline: Show only. Board and Table are unchanged. `completed=` and `delivered=` are real server filters on both views, so they keep a control (Show) rather than going URL-only; the Calendar's Show is a deliberate departure from the issue's "Layers only".
+- **No parser or serialiser change.** Old Calendar and Timeline URLs resolve byte-identically (cold-URL tests in `Dashboard-calendar` and `Dashboard-gantt`). Display writes go through `navigateCalendar` / `navigateGantt`, so every toggle pushes.
+- **The Delivered pair now runs from Display.** `writeTimelineDisplay` -> `ganttFacetForWrite` -> `ganttPairingNotice` -> `setAnnouncement`. The visible pair notice is gone; only the Dashboard live region announces it.
+- **Last layer disabled.** The only checked Calendar layer is `disabled`, and the handler also refuses an empty set. Layers are written in canonical order (`project,checklist`).
+- **Gantt empty-state focus.** The Filter and Display triggers are outside the lazy Gantt, so it takes `focusFilterTrigger` / `focusDisplayTrigger` callbacks (Dashboard queries by `data-testid`). Clear filters -> Filter trigger; "Show delivered projects" -> Display trigger. The scroll-after-render flag now scrolls whichever trigger got focus; both triggers carry the `scroll-mt` that clears the sticky header.
+- **Test-mock trap.** A Calendar mock that always answers with fixed `appliedFilters.layers` makes the Dashboard's reconcile rewrite the URL back after a layer toggle. Echo the requested layers.
+- **Base UI checkbox items** keep the menu open; Display state is per view and is dropped on a tab switch.
+- Follow-up (not done): `useFilterQueryBinding`'s `forWrite`, `noticeFor`, `reconcile` options have no caller left.
+
+## #432 Board cards on `frame`
+
+- **dnd-kit's post-drag click suppression only calls `stopPropagation`.** With the card's link as the drag handle,
+  the click that follows a drag still reaches the anchor's default action and does a full page load. The Board adds a
+  capturing `window` click listener on drag start that `preventDefault()`s and `stopPropagation()`s, and removes it
+  ~100ms after the drag ends or cancels (and on unmount).
+- **Nest the handle inside the context-menu trigger, never the other way round.** Base UI's `ContextMenuTrigger`
+  stops `touchstart` propagation, so a handle beneath it never sees the touch that begins a long-press drag. Also
+  `preventBaseUIHandler()` on its `touchstart` and on a touch- or drag-originated `contextmenu`, or its own 500ms
+  long-press opens a menu over a live drag.
+- **A Base UI prop override needs a present `undefined`.** `KanbanItemHandle` spreads `role="button"`,
+  `tabIndex`, `aria-pressed`, `aria-roledescription` and `aria-disabled` onto the anchor; `mergeProps` lets an
+  explicit `undefined` win, an omitted prop does not. A test pins that the link keeps its own role.
+- **A menu's focus return decision is made as it UNMOUNTS, after `onOpenChangeComplete`.** Resetting the "Move to…
+  pending" flag in that callback made `finalFocus` see `false` and return focus to the ⋯ trigger over the dialog.
+  The flag stays set until the dialog closes, and the dialog gives focus back to ⋯ itself.
+- **`AnchoredPopover`'s focus order puts the reference first**, so `initialFocus={0}` focuses the anchor. The Move to…
+  dialog uses `initialFocus={1}` (the panel): a focused option would unmount when the step swaps, dropping focus out of a
+  modal.
+- **An empty menu has no trigger, but a locked one must stay.** Search, a settling refresh and a 503 switch movement
+  off; the ⋯ must remain, disabled, rather than vanish and reappear. The Board takes `menuCapable` (the principal's raw
+  capability) for that; a principal with no capability gets no ⋯ at all.
+- **Collapse is disabled for the whole of a drag.** Mounting and unmounting droppables under
+  `MeasuringStrategy.Always` is the re-measure loop #185 banned. A collapsed rail is still a `KanbanColumn`, so a drop
+  on it appends to that Stage's end, but it mounts no cards.
+- **Overdue means `isOverdueProject`, everywhere.** Delivered and archived Projects are never overdue, so the column
+  figures sum to the Dashboard header's. The card used to colour them red on date alone.

@@ -12,7 +12,7 @@ import { DataGridTable } from "./reui/data-grid/data-grid-table";
 import { Frame, FramePanel } from "./reui/frame";
 import { StatusBadge } from "./atoms";
 import { InternalLink } from "./InternalLink";
-import { CoverMedia } from "./kanban2/card";
+import { CoverMedia } from "./board/card";
 import { ProjectDeadlineCell, type ProjectDeadlineView } from "./ProjectDeadlineCell";
 import { AvatarStack } from "./quincy/AvatarStack";
 import { Eyebrow } from "./quincy/Eyebrow";

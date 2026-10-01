@@ -2,14 +2,14 @@
  * #222 — the event-calendar's left rail, composed after ReUI block `event-calendar-2`'s
  * `calendar-rail.tsx` (local source: the main checkout's `tmp/ReUI_Full_Source_Code/reui-blocks-main/
  * components/event-calendar-2/components/calendar-rail.tsx`; the ReUI MCP was down): a mini month
- * with busy dots, an Up next list, then the filters as a slot.
+ * with busy dots, an Up next list. (Its filters slot was removed in #430: Layers and Show live in the Dashboard's Display, the rest in the shared Filter.)
  * Presentational; never imports `components/reui/event-calendar/` (not even a type).
  *
  * Adapted from the block, on purpose:
  * - No `Intl.DateTimeFormat().resolvedOptions().timeZone` and no vendor `getDayKey`: every date here
  *   is a Sydney CIVIL date string. Busy days come from the DTOs' Sydney civil dates; the mini month's
  *   local-midnight `Date`s are converted with local getters, never `toISOString`.
- * - The block's "My Calendars" CRUD list is replaced by the Quincy filters slot; no `sonner`, no
+ * - The block's "My Calendars" CRUD list is dropped; no `sonner`, no
  *   `@/components/ui/*` (every primitive is `components/reui/*`).
  * - Up next is a read-only list from a second agenda query the surface owns (outside the accept
  *   gate); a row navigates the calendar to that day.
@@ -17,7 +17,7 @@
  * Reuse: `reui/calendar` (+ `CalendarDayButton`), `reui/item` rows, `reui/scroll-area` around the
  * whole rail (the block's own composition), `quincy/Eyebrow` section labels.
  */
-import { useCallback, useMemo, useState, type ComponentProps, type JSX, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ComponentProps, type JSX } from "react";
 import type { DayButton } from "react-day-picker";
 import { formatSydneyCivilMinute, shiftSydneyCalendarDate, type CalendarEventDto } from "@quincy/shared";
 import { cn } from "@/lib/utils";
@@ -38,7 +38,6 @@ export type ProductionEventCalendarRailProps = {
   nowCivil: string;
   upNext: ProductionEventCalendarUpNext;
   onOpenUpNext: (event: CalendarEventDto) => void;
-  facets: ReactNode;
   className?: string;
 };
 
@@ -136,7 +135,7 @@ function upNextDetail(event: CalendarEventDto): string {
   return event.kind === "project_deadline" ? "Deadline" : event.project.street;
 }
 
-export function ProductionEventCalendarRail({ date, onDateChange, events, nowCivil, upNext, onOpenUpNext, facets, className }: ProductionEventCalendarRailProps): JSX.Element {
+export function ProductionEventCalendarRail({ date, onDateChange, events, nowCivil, upNext, onOpenUpNext, className }: ProductionEventCalendarRailProps): JSX.Element {
   // The painted month is its own state (browse ahead without moving the grid), pulled back during
   // render whenever the calendar date lands in another month — the block's pattern.
   const dateMonth = date.slice(0, 7);
@@ -207,8 +206,6 @@ export function ProductionEventCalendarRail({ date, onDateChange, events, nowCiv
               </ItemGroup>
             )}
           </section>
-
-          {facets}
         </div>
       </ScrollArea>
     </aside>

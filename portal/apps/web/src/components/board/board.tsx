@@ -1,5 +1,6 @@
-import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { StageKey } from "@quincy/shared";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { ScrollArea as ScrollAreaPrimitive } from "@base-ui/react/scroll-area";
 import { StatusBadge } from "../atoms";
 import type { DragEndEvent, DragOverEvent, DragStartEvent } from "@dnd-kit/core";
@@ -20,15 +21,25 @@ import { useStarClickGuard } from "../../lib/star-click-guard";
 import type { ProjectStageKey } from "../../lib/stages";
 import { usePrefersReducedMotion } from "../../lib/use-media-query";
 import { ScrollArea, ScrollBar } from "../reui/scroll-area";
+import { Button } from "../reui/button";
+import { Badge } from "../reui/badge";
+import { isOverdueProject } from "../../lib/dashboard-summary";
 import { KanbanCard2 } from "./card";
-import { MoveToControl } from "./move-to-control";
+import { moveToStageOptions } from "./move-to-control";
+import { cardActions } from "./card-actions";
+import type { CardMenuConfig } from "./card-menu";
+
+/**
+ * Keyboard drag keys (#432): Space picks a card up, so Enter is free to open it (the card's link is
+ * the drag handle). Module-level and lowercase on purpose: the Kanban root memoises its sensor
+ * options on this object's identity, and `design-system-guards.test.ts` scans SCREAMING_CASE consts.
+ */
+const boardKeyboardCodes = { start: ["Space"], cancel: ["Escape"], end: ["Space", "Enter", "Tab"] };
 
 /** `editing` is the role-safe presentation of `editing_autohdr`. */
 function semanticStageKey(value: ProjectStageKey): StageKey {
   return value === "editing" ? "editing_autohdr" : value;
 }
-
-const ARROW_CLASSES = "flex-none w-9 max-[641px]:w-11 pointer-coarse:w-11 min-h-[30px] max-[641px]:min-h-11 pointer-coarse:min-h-11 p-0 border-0 border-r border-r-border bg-card text-foreground-secondary text-sm leading-none cursor-pointer hover:not-disabled:bg-[var(--paper-100)] hover:not-disabled:text-foreground disabled:bg-surface-sunken disabled:cursor-not-allowed focus-visible:!outline-2 focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-[-2px]";
 
 /**
  * Where a dropped card will land (#99). Absolutely positioned inside the gap and ZERO-layout, and
@@ -41,7 +52,7 @@ function DropIndicator({ className }: { className: string }) {
   return (
     <div
       className={`pointer-events-none absolute inset-x-0 z-10 h-[3px] rounded-[2px] bg-[var(--signal-positive)] shadow-[0_0_0_1px_color-mix(in_srgb,var(--signal-positive)_20%,transparent)] ${className}`}
-      data-testid="kanban2-drop-indicator"
+      data-testid="board-drop-indicator"
       aria-hidden="true"
     />
   );
@@ -154,6 +165,7 @@ export function ProjectKanbanBoard2({
   activeStages,
   canMoveStages,
   canPrioritize = false,
+  menuCapable = false,
   sameStageReorderEnabled = false,
   boardMutationEnabled,
   movementDisabled = false,
@@ -170,6 +182,9 @@ export function ProjectKanbanBoard2({
   onMoveToProposalChange,
   role,
   projectHrefFor,
+  now,
+  collapsedStageKeys,
+  onToggleStageCollapsed,
 }: ProjectKanbanBoardProps) {
   const columns = useMemo(() => {
     const record: Record<string, ProjectSummary[]> = {};
@@ -274,8 +289,8 @@ export function ProjectKanbanBoard2({
   // `restoreFocus: false` (below) hands focus back to us, so the Board keeps a handle registry and
   // refocuses the card the user was carrying. dnd-kit's own `RestoreFocus` only ever fired for
   // KEYBOARD drags and called a bare `.focus()`, which is why turning it off is also a scroll fix.
-  const handleRefs = useRef(new Map<string, HTMLButtonElement | null>());
-  const registerHandle = useCallback((projectId: string, element: HTMLButtonElement | null) => {
+  const handleRefs = useRef(new Map<string, HTMLAnchorElement | null>());
+  const registerHandle = useCallback((projectId: string, element: HTMLAnchorElement | null) => {
     if (element) handleRefs.current.set(projectId, element);
     else handleRefs.current.delete(projectId);
   }, []);
@@ -291,16 +306,63 @@ export function ProjectKanbanBoard2({
   // end/cancel never fire, so release it here, and fence every dnd-kit handler against firing
   // after unmount.
   const unmountedRef = useRef(false);
+  // The click that follows a drag (#432). The card's link is its drag handle, so releasing a drag
+  // over it dispatches a `click` on that anchor. dnd-kit's own post-drag suppression only
+  // `stopPropagation`s it, which leaves the anchor's DEFAULT action — a full page load to the
+  // Project — running. A window capture listener swallows it outright (`preventDefault` +
+  // `stopPropagation`, so `InternalLink`'s own handler never sees it either). Armed for the drag,
+  // released ~100ms after it ends, because the click lands after pointer-up.
+  const boardRef = useRef<HTMLDivElement | null>(null);
+  // Collapse/Expand unmounts the focused button (the rail and the header are different trees), so
+  // focus would fall to <body>. The click records which counterpart should receive it; once the
+  // toggled state has rendered, that button exists and takes focus.
+  const toggleButtons = useRef(new Map<string, HTMLButtonElement>());
+  const pendingToggleFocus = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    const target = pendingToggleFocus.current && toggleButtons.current.get(pendingToggleFocus.current);
+    if (!target) return;
+    pendingToggleFocus.current = null;
+    target.focus({ preventScroll: true });
+  });
+  const clickGuardRef = useRef<{ swallow: (event: MouseEvent) => void; timer: number | undefined } | null>(null);
+  const disarmClickGuard = useCallback(() => {
+    const guard = clickGuardRef.current;
+    if (!guard) return;
+    if (guard.timer !== undefined) window.clearTimeout(guard.timer);
+    window.removeEventListener("click", guard.swallow, true);
+    clickGuardRef.current = null;
+  }, []);
+  const armClickGuard = useCallback(() => {
+    disarmClickGuard();
+    // Only a click that lands on a link inside the Board — the one thing that can navigate. The Board's
+    // other controls, the 409 confirmation modal (portalled) and the rest of the page stay clickable
+    // in the ~100ms the guard is up. (A drag that ends over another card clicks their common
+    // ancestor, never an anchor, so only a release back over the card's own link gets here.)
+    const swallow = (event: MouseEvent) => {
+      if (!(event.target instanceof Element) || !boardRef.current?.contains(event.target) || !event.target.closest("a")) return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    window.addEventListener("click", swallow, true);
+    clickGuardRef.current = { swallow, timer: undefined };
+  }, [disarmClickGuard]);
+  const releaseClickGuard = useCallback(() => {
+    const guard = clickGuardRef.current;
+    if (!guard) return;
+    if (guard.timer !== undefined) window.clearTimeout(guard.timer);
+    guard.timer = window.setTimeout(disarmClickGuard, 100);
+  }, [disarmClickGuard]);
   useEffect(() => {
     unmountedRef.current = false;
     return () => {
       unmountedRef.current = true;
+      disarmClickGuard();
       if (activeProjectRef.current !== undefined) {
         activeProjectRef.current = undefined;
         onInteractionStateChangeRef.current?.({ activeId: undefined, proposal: null });
       }
     };
-  }, []);
+  }, [disarmClickGuard]);
   const [dropProposal, setDropProposal] = useState<SemanticGap | null>(null);
   // True while any drag is live. The non-drag controls are disabled for its duration: otherwise a
   // keyboard user can pick up card A, Tab to card B's arrow or Move to…, and reorder the column out
@@ -308,7 +370,6 @@ export function ProjectKanbanBoard2({
   // as active while the drop's own `onMove` runs, so a guard there would refuse every real drop.
   const [dragActive, setDragActive] = useState(false);
 
-  const boardRef = useRef<HTMLDivElement | null>(null);
   // The misclick guard (#304): wraps `onPriorityChange`, armed by the FLIP below.
   const starClickGuard = useStarClickGuard(onPriorityChange);
   // The Move-to chooser's chosen position (#99), drawn with the same indicator as a drag. Forwarded
@@ -322,7 +383,59 @@ export function ProjectKanbanBoard2({
   const boardModel = useMemo(() => ({ projects }), [projects]);
   // #428: an archived Project's card is read-only — never dragged, nudged or moved from its menu.
   const archivedIds = new Set(projects.filter((project) => project.archivedAt).map((project) => project.id));
+  // Whether Move to… has anything to offer each card. Depends on the projects and the principal, never
+  // on a drag or its hover, so it is not recomputed while one is live.
+  const moveToAvailable = useMemo(() => {
+    const available = new Map<string, boolean>();
+    if (!(canMoveStages || canReorder)) return available;
+    for (const item of projects) {
+      if (item.archivedAt) continue;
+      // Fail closed: without a role, same-Stage positions (Admin-only) are withheld.
+      available.set(item.id, moveToStageOptions(item, boardModel, activeStages, role ?? "editor", { canMoveStages, canReorder, sort: effectiveKanbanSort }).length > 0);
+    }
+    return available;
+  }, [activeStages, boardModel, canMoveStages, canReorder, effectiveKanbanSort, projects, role]);
   const controlsDisabled = (projectId: string) => dragDisabled || dragActive || archivedIds.has(projectId) || pendingMoves.has(projectId) || orderingPending(projectId);
+
+  /**
+   * The card's ⋯ and right-click menus (#432): one descriptor list (`cardActions`), so the two menus
+   * cannot drift. Move up / Move down are the Admin Board-order nudges that were the card's arrow
+   * buttons — through the Dashboard's `adjacentBoardGap` and `/board-position`, and, like the Move to…
+   * dialog, disabled under search, a pending write or a live drag. An Archived card has no menu.
+   */
+  const menuFor = (project: ProjectSummary, column: readonly ProjectSummary[], index: number): CardMenuConfig | undefined => {
+    if (project.archivedAt) return undefined;
+    const disabled = controlsDisabled(project.id);
+    const actions = cardActions({
+      // `menuCapable`: the principal has a movement capability that is switched off RIGHT NOW (a search,
+      // a refresh settling, a 503). The ⋯ stays, with Move to… disabled — as the inline trigger did —
+      // instead of vanishing and reappearing.
+      canMoveTo: canMoveStages || menuCapable,
+      canReorder,
+      disabled,
+      hasMoveToOptions: moveToAvailable.get(project.id) ?? false,
+      isFirstInColumn: index === 0,
+      isLastInColumn: index === column.length - 1,
+    });
+    if (actions.length === 0) return undefined;
+    return {
+      actions,
+      disabled,
+      dragActive,
+      onReorder: (direction) => onBoardPosition(project, direction),
+      moveTo: {
+        model: boardModel,
+        activeStages,
+        // Fail closed: without a role, same-Stage positions (Admin-only) are withheld.
+        role: role ?? "editor",
+        sort: effectiveKanbanSort,
+        canMoveStages,
+        canReorder,
+        onMoveStage,
+        onProposalChange: handleMoveToProposal,
+      },
+    };
+  };
 
   /**
    * Only for the paths that do NOT hand off to the Dashboard. Never on the valid path: the
@@ -362,7 +475,8 @@ export function ProjectKanbanBoard2({
     };
     if (dragDisabled) return reject("dnd-cancel");
     const project = projects.find((item) => item.id === projectId);
-    if (!project || pendingMoves.has(projectId) || orderingPending(projectId)) return reject("dnd-cancel");
+    // An archived Project is read-only (#428): its card is not draggable, and a drop that arrives anyway is refused.
+    if (!project || project.archivedAt || pendingMoves.has(projectId) || orderingPending(projectId)) return reject("dnd-cancel");
     const sameStage = semanticStageKey(activeContainer as ProjectStageKey) === semanticStageKey(overContainer as ProjectStageKey);
     const { gap } = gapFor(projectId, overContainer, overIndex);
     const verdict = dropVerdict(project, gap, sameStage);
@@ -376,13 +490,14 @@ export function ProjectKanbanBoard2({
   const handleDragStart = useCallback((event: DragStartEvent) => {
     if (unmountedRef.current) return;
     activeProjectRef.current = String(event.active.id);
+    armClickGuard();
     setDragActive(true);
     // Opens the Dashboard's refresh barrier: it blocks ACCEPTANCE of replacement data while a drag
     // is live (a fetch may still run), and disables the view control so the Board cannot be swapped
     // mid-drag. No drag-start eligibility guard is needed, unlike the old Board: `dragDisabled`
     // already disables every item and every handle, so a drag cannot start while movement is locked.
     onInteractionStateChange?.({ activeId: String(event.active.id), proposal: null });
-  }, [onInteractionStateChange]);
+  }, [armClickGuard, onInteractionStateChange]);
 
   /**
    * Clearing the barrier in drag-end is SAFE here, and this is the documented trap worth being
@@ -398,12 +513,13 @@ export function ProjectKanbanBoard2({
    * session. Clear in drag-end AND cancel; never only in `onMove`.
    */
   const clearInteraction = useCallback(() => {
+    releaseClickGuard();
     activeProjectRef.current = undefined;
     lastAnnouncedGapRef.current = undefined;
     setDropProposal(null);
     setDragActive(false);
     onInteractionStateChange?.({ activeId: undefined, proposal: null });
-  }, [onInteractionStateChange]);
+  }, [onInteractionStateChange, releaseClickGuard]);
 
   /**
    * The gap a hover over `overId` would commit, or `undefined` where a drop there would be refused —
@@ -513,7 +629,7 @@ export function ProjectKanbanBoard2({
       onDragCancel: () => undefined,
     },
     screenReaderInstructions: {
-      draggable: "To pick up a project, focus its Move project handle and press Space. Use the arrow keys to move between Stages and positions. Press Space again to drop, or Escape to cancel. To choose a Stage and position without dragging, use Move to… on the card.",
+      draggable: "To pick up a project, focus its card and press Space. Use the arrow keys to move it. Press Space to drop, Escape to cancel. Press Enter to open it. For more actions, use the card's Actions menu.",
     },
   }), [activeStages, columns, hoverTarget, projects, terminal]);
 
@@ -528,6 +644,7 @@ export function ProjectKanbanBoard2({
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
       accessibility={accessibility}
+      keyboardCodes={boardKeyboardCodes}
       className="flex min-h-0 min-w-0 w-full flex-1 flex-col"
     >
       {/* Horizontal scroll, composed as ReUI `tempo-tasks`' `BoardScrollArea`: Base UI's ScrollArea
@@ -548,7 +665,7 @@ export function ProjectKanbanBoard2({
       <ScrollAreaPrimitive.Root data-slot="scroll-area" className="relative flex min-h-0 w-full min-w-0 flex-1 flex-col has-[>[data-slot=scroll-area-viewport]:focus-visible]:outline has-[>[data-slot=scroll-area-viewport]:focus-visible]:outline-[length:var(--border-width-bold)] has-[>[data-slot=scroll-area-viewport]:focus-visible]:outline-[var(--focus-ring)] has-[>[data-slot=scroll-area-viewport]:focus-visible]:outline-offset-0">
         <ScrollAreaPrimitive.Viewport
           data-slot="scroll-area-viewport"
-          data-testid="kanban2-scroll-viewport"
+          data-testid="board-scroll-viewport"
           className="min-h-0 w-full flex-1 focus-visible:!outline-none"
         >
           <ScrollAreaPrimitive.Content data-slot="scroll-area-content" className="h-full w-max min-w-full">
@@ -556,7 +673,7 @@ export function ProjectKanbanBoard2({
               <div
                 ref={boardRef}
                 {...starClickGuard.boardHandlers}
-                className="kanban2 grid grid-flow-col auto-cols-[17.5rem] gap-[var(--space-4)] w-max min-w-full h-full grid-rows-[minmax(0,1fr)]"
+                className="board-columns flex items-stretch gap-[var(--space-4)] w-max min-w-full h-full"
                 aria-label="Project pipeline board"
                 // The Dashboard's focus-restore effect (`Dashboard.tsx:409-424`) resolves three tiers by
                 // `[data-focus-key]`: the moved card's control, then its Stage heading, then the Board root.
@@ -567,6 +684,44 @@ export function ProjectKanbanBoard2({
               >
                 {activeStages.map((stage, stageIndex) => {
                   const stageProjects = columns[stage.key] ?? [];
+                  const stageKey = semanticStageKey(stage.key);
+                  const collapsed = collapsedStageKeys?.includes(stageKey) ?? false;
+                  const overdueCount = stageProjects.filter((project) => isOverdueProject(project, now ?? Date.now())).length;
+                  const columnId = `board-column-${stageKey}`;
+                  // The collapse control: a ghost icon button, disabled for the whole of a drag (toggling
+                  // droppables mid-drag under `MeasuringStrategy.Always` is the loop lessons.md bans).
+                  const toggle = (label: string, expanded: boolean) => onToggleStageCollapsed && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      className="max-[641px]:size-11 pointer-coarse:size-11 aria-expanded:bg-transparent aria-expanded:hover:bg-muted"
+                      aria-label={`${label} ${stage.label}`}
+                      aria-expanded={expanded}
+                      aria-controls={columnId}
+                      data-testid={expanded ? "board-column-collapse" : "board-column-expand"}
+                      disabled={dragActive}
+                      ref={(element) => { if (element) toggleButtons.current.set(`${stageKey}:${expanded}`, element); else toggleButtons.current.delete(`${stageKey}:${expanded}`); }}
+                      onClick={() => { pendingToggleFocus.current = `${stageKey}:${!expanded}`; onToggleStageCollapsed(stageKey); }}
+                    >
+                      {expanded ? <ChevronLeft aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
+                    </Button>
+                  );
+                  if (collapsed) {
+                    // The rail (block's `DealLane`): still a drop target (a drop appends to the Stage's end)
+                    // but with no `KanbanColumnContent`, so its cards are unmounted while collapsed.
+                    const receiving = shownProposal?.targetStageKey === stageKey;
+                    return (
+                      <KanbanColumn key={stage.key} id={columnId} value={stage.key} disabled className={`w-12 shrink-0 bg-[var(--paper-050)] min-h-0 border border-[length:var(--border-width-hair)] border-border opacity-100 ${receiving ? "border-[var(--ink-900)]" : ""}`} data-testid="board-column" data-collapsed="true">
+                        <div className="flex h-full flex-col items-center gap-[var(--space-3)] py-[var(--space-3)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${stageKey}`} tabIndex={-1}>
+                          {toggle("Expand", false)}
+                          <span className="tabular-nums text-sm text-foreground-secondary" data-testid="board-column-count">{stageProjects.length}</span>
+                          {overdueCount > 0 && <span className="tabular-nums text-xs text-signal-critical" data-testid="board-column-overdue">{overdueCount}<span className="sr-only"> overdue</span></span>}
+                          <span className="[writing-mode:vertical-rl] [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary">{stage.label}</span>
+                        </div>
+                      </KanbanColumn>
+                    );
+                  }
                   return (
                     // `disabled` is deliberate — it keeps every column (even an empty one) a valid drop
                     // target — but `reui/kanban.tsx` turns a disabled `KanbanColumn` into `opacity-50`
@@ -581,16 +736,24 @@ export function ProjectKanbanBoard2({
                     // `focusDescriptorFor` or `canonicalStageKey`), so a presentation spelling — an Editor
                     // sees `editing` for `editing_autohdr` — would never match, and tier 2 would fall
                     // through to the Board root. The Board this replaced keyed its headings the same way.
-                    <KanbanColumn key={stage.key} value={stage.key} disabled className="bg-[var(--paper-050)] min-h-0 min-w-0 border border-[length:var(--border-width-hair)] border-border opacity-100" data-testid="kanban2-column">
-                      <div className="flex shrink-0 items-center gap-[var(--space-3)] p-[var(--space-4)] border-b border-b-border bg-[var(--bg-canvas)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${semanticStageKey(stage.key)}`} tabIndex={-1}>
-                        <span className="flex-none [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] tabular-nums text-foreground-secondary" aria-hidden="true">{String(stageIndex + 1).padStart(2, "0")}</span>
-                        <StatusBadge stageKey={stage.key} />
-                        <span className="flex-none tabular-nums text-sm text-foreground-secondary">{stageProjects.length}</span>
+                    <KanbanColumn key={stage.key} id={columnId} value={stage.key} disabled className="w-[17.5rem] shrink-0 bg-[var(--paper-050)] min-h-0 min-w-0 border border-[length:var(--border-width-hair)] border-border opacity-100" data-testid="board-column">
+                      <div className="flex shrink-0 flex-col gap-[var(--space-2)] p-[var(--space-4)] border-b border-b-border bg-[var(--bg-canvas)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${stageKey}`} tabIndex={-1}>
+                        <div className="flex min-w-0 items-center gap-[var(--space-3)]" data-testid="board-column-title-row">
+                          <span className="flex-none [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] tabular-nums text-foreground-secondary" aria-hidden="true">{String(stageIndex + 1).padStart(2, "0")}</span>
+                          {/* Full width for the name; `truncate` + `title` only catch an unusually long one. */}
+                          <StatusBadge stageKey={stage.key} className="min-w-0 flex-1" labelClassName="min-w-0 truncate whitespace-nowrap" />
+                        </div>
+                        {/* The toggle is on this row in every column, so headers match whether or not a badge shows. */}
+                        <div className="flex items-center gap-[var(--space-2)] whitespace-nowrap" data-testid="board-column-stats-row">
+                          <span className="tabular-nums text-sm text-foreground-secondary" data-testid="board-column-count">{stageProjects.length}</span>
+                          {overdueCount > 0 && <Badge variant="destructive-light" size="sm" data-testid="board-column-overdue">{overdueCount} overdue</Badge>}
+                          <span className="ml-auto flex-none">{toggle("Collapse", true)}</span>
+                        </div>
                       </div>
                       <ScrollArea className="min-h-0 flex-1">
                         <KanbanColumnContent value={stage.key} className="relative flex flex-col gap-[var(--space-3)] p-[var(--space-3)] min-h-[120px]">
                           {stageProjects.length === 0 && <div className="py-[var(--space-5)] [font-family:var(--font-display)] text-lg text-center text-foreground-secondary">—</div>}
-                          {stageProjects.map((project) => (
+                          {stageProjects.map((project, index) => (
                             // Same `opacity-50` defect as the column above, but now on every OTHER card too
                             // once the pending-write lock (above) disables movement board-wide during a
                             // single write. `data-[disabled=true]:opacity-100` is a variant selector, higher
@@ -609,31 +772,9 @@ export function ProjectKanbanBoard2({
                                   canPrioritize={priorityEditable && !project.archivedAt}
                                   priorityPending={orderingPending(project.id)}
                                   onPriorityChange={starClickGuard.handlePriorityChange}
+                                  now={now}
                                   handleRef={registerHandle}
-                                  controls={<div className="flex items-stretch border-t border-t-border">
-                                    {canReorder && <>
-                                      {/* Adjacent one-slot nudges (#99), through the Dashboard's `adjacentBoardGap` and
-                                          `/board-position`. Deliberately NOT disabled at a column's edge: the Dashboard
-                                          restores focus to `arrow-up:<id>` after the move settles, and a disabled target
-                                          would drop focus on the floor. An edge press is a silent no-op there instead.
-                                          44px coarse-pointer targets, as on the handle. */}
-                                      <button type="button" className={ARROW_CLASSES} data-focus-key={`arrow-up:${project.id}`} aria-label={`Move ${project.street} up`} disabled={controlsDisabled(project.id)} onClick={() => onBoardPosition(project, "up")}><span aria-hidden="true">↑</span></button>
-                                      <button type="button" className={ARROW_CLASSES} data-focus-key={`arrow-down:${project.id}`} aria-label={`Move ${project.street} down`} disabled={controlsDisabled(project.id)} onClick={() => onBoardPosition(project, "down")}><span aria-hidden="true">↓</span></button>
-                                    </>}
-                                    <MoveToControl
-                                      project={project}
-                                      model={boardModel}
-                                      activeStages={activeStages}
-                                      // Fail closed: without a role, same-Stage positions (Admin-only) are withheld.
-                                      role={role ?? "editor"}
-                                      sort={effectiveKanbanSort}
-                                      canMoveStages={canMoveStages}
-                                      canReorder={canReorder}
-                                      disabled={controlsDisabled(project.id)}
-                                      onMoveStage={onMoveStage}
-                                      onProposalChange={handleMoveToProposal}
-                                    />
-                                  </div>}
+                                  menu={menuFor(project, stageProjects, index)}
                                 />
                               </div>
                             </KanbanItem>
@@ -657,7 +798,7 @@ export function ProjectKanbanBoard2({
         <ScrollBar
           orientation="horizontal"
           style={{ position: "sticky" }}
-          data-testid="kanban2-scrollbar"
+          data-testid="board-scrollbar"
           className="z-10 bg-[var(--bg-canvas)] [&>[data-slot=scroll-area-thumb]]:bg-[var(--border-strong)]"
         />
         <ScrollAreaPrimitive.Corner />
