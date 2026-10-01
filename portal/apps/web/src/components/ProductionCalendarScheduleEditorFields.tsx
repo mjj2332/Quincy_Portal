@@ -19,6 +19,7 @@ import {
   type ChecklistScheduleValidationError,
   type RangeChecklistScheduleInput,
 } from "@quincy/shared";
+import type { ProjectDefaultRangeDto } from "@quincy/shared";
 import { DateTimeField, type DateTimeRangeApply } from "./quincy/DateTimeField";
 
 // FIELD_BOX (shared by NativeSelect / reui/input) already carries the border, radius, field
@@ -128,6 +129,8 @@ export function useChecklistScheduleDraft({ event, onSubmit, initialSchedule, va
 
 export type ProductionCalendarScheduleEditorFieldsProps = {
   state: ChecklistScheduleDraftState;
+  /** The Project's default range, for the popup's "Project default" shortcut; null hides it. */
+  projectDefault?: ProjectDefaultRangeDto | null;
 };
 
 const asRange = (value: ChecklistScheduleDraft) => ({
@@ -136,7 +139,7 @@ const asRange = (value: ChecklistScheduleDraft) => ({
 });
 
 /** The editor body: intro, the range field (a Start | End popup), error. */
-export function ProductionCalendarScheduleEditorFields({ state }: ProductionCalendarScheduleEditorFieldsProps): JSX.Element {
+export function ProductionCalendarScheduleEditorFields({ state, projectDefault = null }: ProductionCalendarScheduleEditorFieldsProps): JSX.Element {
   const { draft, setDraft, error } = state;
   const id = useId();
   return <div className={EDITOR}>
@@ -146,7 +149,7 @@ export function ProductionCalendarScheduleEditorFields({ state }: ProductionCale
       id={`${id}-schedule`}
       label="Schedule"
       value={asRange(draft)}
-      projectDefault={null}
+      projectDefault={projectDefault}
       positionerClassName="z-[calc(var(--z-dialog)+1)]"
       onApply={setDraft}
     />

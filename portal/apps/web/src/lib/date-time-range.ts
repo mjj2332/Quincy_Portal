@@ -1,4 +1,4 @@
-import { SUBTASK_END_PRESET_TIME, SUBTASK_START_PRESET_TIME, resolveSydneyCivilMinute, type ProjectDefaultRangeDto } from "@quincy/shared";
+import { SUBTASK_END_PRESET_TIME, SUBTASK_START_PRESET_TIME, defaultSubtaskRangeDto, resolveSydneyCivilMinute, type ProjectDefaultRangeDto } from "@quincy/shared";
 import { addCivilDays, civilWeekday } from "@/lib/date-time-field";
 
 /**
@@ -65,4 +65,17 @@ export function buildRangeShortcuts({ today, projectDefault }: { today: string; 
 export function deadlineFoldOf(localCivil: string, atInstant: string): 0 | 1 {
   const earlier = resolveSydneyCivilMinute(localCivil, "earlier");
   return earlier.ok && earlier.value.instant !== atInstant ? 1 : 0;
+}
+
+/**
+ * The Project default from a Project's own facts: the shoot date, creation instant (ISO) and the effective Deadline
+ * with its fold. Null when `createdAt` is not a usable instant (the shared rule throws on it). The Calendar's
+ * `projectBounds` and the Gantt's project row both carry exactly these.
+ */
+export function projectDefaultFromFacts(facts: { shootDate: string | null; createdAt: string; deadline: { localCivil: string; fold: 0 | 1 } | null }): ProjectDefaultRangeDto | null {
+  try {
+    return defaultSubtaskRangeDto({ shootDate: facts.shootDate, deadline: facts.deadline, projectCreatedAt: Date.parse(facts.createdAt) });
+  } catch {
+    return null;
+  }
 }

@@ -4677,3 +4677,9 @@ remove the legacy readers) still applies.
   `docs/Guides/CI-Deploy.md` ("Subtask presets (0052)") is what guards the floor, and
   `migration-0052.test.ts` proves every day in that window against `normalizeChecklistSchedule`.
 
+- **A range `Calendar` with `selected` and no `onSelect` is uncontrolled.** react-day-picker kept its own
+  highlight after a shortcut or an endpoint edit changed the draft. `CalendarPane` passes a stable no-op
+  `onSelect` so the grid mirrors the draft; picks arrive through `onDayClick`.
+- **A migration's rollback needs the executor's transaction to be tested.** `db.exec(file)` autocommits each
+  statement, so `migration-0052.test.ts` applies the file inside one `BEGIN`/`COMMIT` (as D1 does) to prove a
+  failing ALTER undoes the UPDATE.

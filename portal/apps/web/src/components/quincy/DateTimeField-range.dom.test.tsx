@@ -47,6 +47,13 @@ const trigger = () => host.querySelector<HTMLButtonElement>("button#subtask")!;
 const popup = () => dateTimePopup("Schedule")!;
 const applyButton = () => popupButton(popup(), "Apply")!;
 
+/** The civil days the calendar currently paints as part of the range. */
+function highlighted(from: HTMLElement): string[] {
+  return [...from.querySelectorAll<HTMLElement>("[data-day]")]
+    .filter((cell) => cell.getAttribute("data-selected") === "true" || [...cell.querySelectorAll("[data-selected-single],[data-range-start],[data-range-middle],[data-range-end]")].some((node) => node.getAttribute("data-selected-single") === "true" || node.getAttribute("data-range-start") === "true" || node.getAttribute("data-range-middle") === "true" || node.getAttribute("data-range-end") === "true"))
+    .map((cell) => cell.getAttribute("data-day")!);
+}
+
 async function open() {
   await act(async () => { trigger().click(); await Promise.resolve(); await Promise.resolve(); });
   await settle();
@@ -89,6 +96,24 @@ describe("DateTimeField range trigger and popup", () => {
     await pressInPopup(popup(), "Project default");
     await applyPopup(popup());
     expect(onApply).toHaveBeenCalledWith(expect.objectContaining({ start: expect.objectContaining({ localCivil: "2026-12-01T09:00" }), end: expect.objectContaining({ localCivil: "2026-12-04T17:00" }) }));
+  });
+
+  it("moves the calendar highlight with the draft after a shortcut and after Start/End edits", async () => {
+    await mount({ value: range("2026-11-03T09:00", "2026-11-07T17:00") });
+    await open();
+    expect(highlighted(popup())).toEqual(["2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06", "2026-11-07"]);
+    await pressInPopup(popup(), "Today");
+    expect(rangeToggles(popup())).toMatchObject({ start: "1/10 09:00", end: "1/10 17:00" });
+    expect(highlighted(popup())).toEqual(["2026-10-01"]);
+    await pickPopupDay(popup(), "2026-10-20");
+    await pickPopupDay(popup(), "2026-10-23");
+    expect(highlighted(popup())).toEqual(["2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23"]);
+    await pickRangeEnd(popup(), "Start");
+    await pickPopupDay(popup(), "2026-10-21");
+    expect(highlighted(popup())).toEqual(["2026-10-21", "2026-10-22", "2026-10-23"]);
+    await pickRangeEnd(popup(), "End");
+    await pickPopupDay(popup(), "2026-10-22");
+    expect(highlighted(popup())).toEqual(["2026-10-21", "2026-10-22"]);
   });
 
   it("picks the start, hands over to End, and keeps the preset times for a fresh range", async () => {

@@ -29,7 +29,7 @@
  * (docs/lessons.md, "Sibling retained dialogs must namespace their open-token keys").
  */
 import { useId, useRef, useState, type JSX } from "react";
-import { resolveSydneyCivilMinute, type ProjectDeadlineCalendarEventDto, type ProjectDeadlineDisambiguation, type RangeChecklistScheduleInput } from "@quincy/shared";
+import { resolveSydneyCivilMinute, type ProjectDefaultRangeDto, type ProjectDeadlineCalendarEventDto, type ProjectDeadlineDisambiguation, type RangeChecklistScheduleInput } from "@quincy/shared";
 import { projectDataKeys, useOptionalProjectQueryClient, type ProjectDetail } from "../lib/project-data";
 import type { SchedulingController } from "../lib/use-scheduling-commands";
 import { useOpenToken } from "../lib/use-open-token";
@@ -200,9 +200,11 @@ export type ProductionEventCalendarScheduleEditorSheetProps = {
   onCancel: () => void;
   initialSchedule?: RangeChecklistScheduleInput;
   validationError?: ProductionCalendarScheduleEditorError;
+  /** The Project's default range, for the "Project default" shortcut. */
+  projectDefault?: ProjectDefaultRangeDto | null;
 };
 
-export function ProductionEventCalendarScheduleEditorSheet({ open, event, onSubmit, onCancel, initialSchedule, validationError }: ProductionEventCalendarScheduleEditorSheetProps): JSX.Element | null {
+export function ProductionEventCalendarScheduleEditorSheet({ open, event, onSubmit, onCancel, initialSchedule, validationError, projectDefault = null }: ProductionEventCalendarScheduleEditorSheetProps): JSX.Element | null {
   const state = useChecklistScheduleDraft({ event, onSubmit, initialSchedule, validationError });
   return (
     <Sheet open={open} onOpenChange={(next) => { if (!next) onCancel(); }}>
@@ -225,7 +227,7 @@ export function ProductionEventCalendarScheduleEditorSheet({ open, event, onSubm
           <SheetDescription className="sr-only">{event.project.street}</SheetDescription>
         </SheetHeader>
         <div className="min-h-0 flex-1 overflow-auto px-[var(--space-6)] pb-[var(--space-6)]">
-          <ProductionCalendarScheduleEditorFields state={state} />
+          <ProductionCalendarScheduleEditorFields state={state} projectDefault={projectDefault} />
         </div>
         <SheetFooter className="flex-row justify-end gap-[var(--space-3)] px-[var(--space-6)] py-[var(--space-5)] [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border">
           <Button type="button" variant="outline" data-testid="event-calendar-schedule-cancel" onClick={onCancel}>Cancel</Button>
@@ -266,9 +268,11 @@ export type ProductionEventCalendarDialogsProps = {
    * `commands.scheduleEditor` itself. Move, fold and Deadline dialogs are unaffected.
    */
   scheduleEditorPresentation?: "sheet" | "inline";
+  /** #423: a Project's default Subtask range, for the sheet's "Project default" shortcut. */
+  projectDefaultFor?: (projectId: string) => ProjectDefaultRangeDto | null;
 };
 
-export function ProductionEventCalendarDialogs({ commands, deadlineConfirm, scheduleEditorPresentation = "sheet" }: ProductionEventCalendarDialogsProps): JSX.Element {
+export function ProductionEventCalendarDialogs({ commands, deadlineConfirm, scheduleEditorPresentation = "sheet", projectDefaultFor }: ProductionEventCalendarDialogsProps): JSX.Element {
   const { moveDialog, scheduleEditor, checklistFold } = commands;
 
   const moveRetained = useRef<typeof moveDialog>(null);
@@ -323,6 +327,7 @@ export function ProductionEventCalendarDialogs({ commands, deadlineConfirm, sche
           event={editor.source}
           initialSchedule={editor.initialSchedule}
           validationError={editor.validationError}
+          projectDefault={projectDefaultFor?.(editor.source.project.id) ?? null}
           onSubmit={commands.submitScheduleEditor}
           onCancel={commands.cancelScheduleEditor}
         />

@@ -19,6 +19,23 @@ function migrationSql(name: string): string {
   return readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8").replaceAll("--> statement-breakpoint", "");
 }
 
+/**
+ * Applies a migration file the way D1 (`wrangler d1 migrations apply`) does: every statement of the file inside ONE
+ * transaction, so a failure anywhere rolls the whole file back. A bare `db.exec(migrationSql(...))` autocommits each
+ * statement, which would hide a rollback gap between the UPDATE and the ALTER.
+ */
+function applyAsTransaction(db: SqliteDatabase, name: string): void {
+  const source = readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8");
+  db.exec("BEGIN");
+  try {
+    for (const statement of source.split("--> statement-breakpoint")) db.exec(statement);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 function applyThrough(db: SqliteDatabase, through: number): void {
   const directory = new URL("../migrations/", import.meta.url);
   for (const name of readdirSync(directory).filter((value) => /^\d{4}_.*\.sql$/.test(value) && Number(value.slice(0, 4)) <= through).sort()) db.exec(migrationSql(name));
@@ -176,6 +193,33 @@ describe("migration 0052 makes every Subtask end a moment (#423, ADR 0016)", () 
     expect(() => db.exec(migrationSql(MIGRATION))).toThrow(CHECK_FAILED);
     expect(db.prepare(READ).all()).toEqual(before);
     expect(db.prepare("SELECT name FROM pragma_table_info('project_subtasks') WHERE name = 'schedule_timed_required'").all()).toEqual([]);
+    db.close();
+  });
+
+  it("rolls the whole file back when the UPDATE succeeds and the later ALTER fails", () => {
+    const db = freshDb(51);
+    insertLegacyDate(db, "open", "2026-08-27", "2026-08-28", { version: 3, reminderSentAt: NOW });
+    insertLegacyDate(db, "done", "2026-08-29", "2026-08-30", { done: 1, version: 7 });
+    // The marker column already exists, so the file's ALTER ... ADD COLUMN fails AFTER step 1 converted both rows.
+    db.exec("ALTER TABLE project_subtasks ADD COLUMN schedule_timed_required integer");
+    const before = db.prepare("SELECT * FROM project_subtasks ORDER BY id").all();
+    expect(() => applyAsTransaction(db, MIGRATION)).toThrow(/duplicate column name/i);
+    expect(db.prepare("SELECT * FROM project_subtasks ORDER BY id").all()).toEqual(before);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM project_subtasks WHERE schedule_start_kind = 'date'").get()).toEqual({ n: 2 });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM project_subtasks WHERE schedule_start_kind = 'timed'").get()).toEqual({ n: 0 });
+    // The UPDATE alone would have converted them: the rollback, not a no-op UPDATE, is what kept them date-only.
+    db.exec("BEGIN");
+    const converted = db.prepare(migrationSql(MIGRATION).split("ALTER TABLE")[0]!.split("\n").filter((line) => !line.startsWith("--")).join("\n").trim().replace(/;$/, "")).run().changes;
+    db.exec("ROLLBACK");
+    expect(Number(converted)).toBe(2);
+    db.close();
+  });
+
+  it("applies as one transaction when nothing fails", () => {
+    const db = freshDb(51);
+    insertLegacyDate(db, "a", "2026-08-27", "2026-08-28");
+    applyAsTransaction(db, MIGRATION);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM project_subtasks WHERE schedule_start_kind = 'timed'").get()).toEqual({ n: 1 });
     db.close();
   });
 

@@ -16,7 +16,7 @@ if (!Element.prototype.getAnimations) {
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PRODUCTION_CALENDAR_ZONE, type ChecklistCalendarEventDto, type ChecklistScheduleDto, type ProductionCalendarProjectBounds } from "@quincy/shared";
-import { applyPopup, openFieldPopup, pickPopupDay, pickRangeEnd, pressRangeFold, rangeToggles, typePopupTime } from "../testing/date-time-popup";
+import { applyPopup, openFieldPopup, pickPopupDay, pickRangeEnd, popupButton, pressInPopup, pressRangeFold, rangeToggles, typePopupTime } from "../testing/date-time-popup";
 import { ProjectQueryRuntime } from "../lib/project-query-sync";
 import { eventCalendarFake } from "../testing/event-calendar-fake";
 import {
@@ -237,6 +237,19 @@ describe("ProductionEventCalendar checklist writes", () => {
     await flush(20);
     expect(fetch.patches()).toHaveLength(1);
     expect(liveRegion()).toContain("Warning: Ends after the project deadline.");
+  });
+
+  it("#423: the schedule sheet's popup offers the Project default from the bounds and resets the range to it", async () => {
+    const event = oneDayEvent(dated("2026-08-12"));
+    await mount([event], {
+      projectBounds: [{ projectId: PROJECT_ID, shootDate: "2026-08-01", createdAt: "2026-07-01T00:00:00.000Z", deadlineLocalCivil: "2026-08-14T17:00", deadlineFold: 0 }],
+    });
+    await openReschedule(ID);
+    const popup = await openFieldPopup("Schedule");
+    expect(popupButton(popup, "Project default")).toBeDefined();
+    expect(rangeToggles(popup)).not.toMatchObject({ start: "1/8 09:00", end: "14/8 17:00" });
+    await pressInPopup(popup, "Project default");
+    expect(rangeToggles(popup)).toMatchObject({ start: "1/8 09:00", end: "14/8 17:00" });
   });
 
   it("#288: warns when a range is moved before the shoot date (the Gantt's rule), and still sends the PATCH", async () => {

@@ -67,6 +67,7 @@ import {
   type ProductionEventCalendarData,
 } from "../lib/production-event-calendar-adapter";
 import { eventCalendarUpdateToProposal, type EventCalendarUpdateLike } from "../lib/production-event-calendar-scheduling";
+import { projectDefaultFromFacts } from "../lib/date-time-range";
 import { calendarScheduleBounds, type ScheduleBounds } from "../lib/schedule-bounds";
 import { useCalendarSchedulingPort, type SchedulingDeadlineConfirmInput } from "../lib/use-scheduling-commands";
 import { useSchedulingControllerWithUndoToast } from "../lib/use-scheduling-undo-toast";
@@ -251,6 +252,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
 
   // Draw from the accepted baseline; the live query only while nothing holds the gate.
   const source: ProductionCalendarRangeResponse | null = commands.acceptedResponse ?? (!blocked ? query.data ?? null : null);
+  const projectDefaults = useMemo(() => new Map((source?.projectBounds ?? query.data?.projectBounds ?? []).map((bound) => [bound.projectId, projectDefaultFromFacts({ shootDate: bound.shootDate, createdAt: bound.createdAt, deadline: bound.deadlineLocalCivil ? { localCivil: bound.deadlineLocalCivil, fold: bound.deadlineFold ?? 0 } : null })])), [source?.projectBounds, query.data?.projectBounds]);
   boundsRef.current = useMemo(() => new Map((source?.projectBounds ?? query.data?.projectBounds ?? []).map((bound) => [bound.projectId, calendarScheduleBounds(bound)])), [source?.projectBounds, query.data?.projectBounds]);
 
   const shownProjects = query.data?.projectBounds ? query.data.projectBounds.length : null;
@@ -500,7 +502,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
       )}
 
       <div className="sr-only" data-testid="dashboard-live-region" aria-live="polite" aria-atomic="true">{commands.announcement}</div>
-      <ProductionEventCalendarDialogs commands={commands} deadlineConfirm={deadlineConfirm} />
+      <ProductionEventCalendarDialogs commands={commands} deadlineConfirm={deadlineConfirm} projectDefaultFor={(projectId) => projectDefaults.get(projectId) ?? null} />
     </section>
   );
 }

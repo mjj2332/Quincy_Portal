@@ -286,6 +286,16 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     expect(barLabel(RANGE_TITLE)).toBe(before);
   });
 
+  it("#423 the Subtask picker offers the Project default from the project row and resets the range to it", async () => {
+    await render();
+    await openDue(RANGE_TITLE);
+    // The fixture: shoot day -1 (2026-09-09), Deadline day +6 at 15:00 (2026-09-16).
+    expect(pickerButton(RANGE_TITLE, "Project default")).toBeDefined();
+    await pressInPopup(picker(RANGE_TITLE)!, "Project default");
+    expect(startText(RANGE_TITLE)).toBe("9/9 09:00");
+    expect(endText(RANGE_TITLE)).toBe("16/9 15:00");
+  });
+
   it("R3 a timed End keeps the unchanged timed Start and its Sydney wall time on the wire", async () => {
     await render();
     await openDue(TIMED_TITLE);

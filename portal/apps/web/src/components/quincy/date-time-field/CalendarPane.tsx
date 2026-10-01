@@ -42,6 +42,13 @@ const COMPONENTS = {
   },
 };
 
+/**
+ * Passing `selected` without `onSelect` leaves react-day-picker treating the selection as uncontrolled: it
+ * keeps its own highlight after the draft changes from outside (a shortcut, an endpoint edit). A stable
+ * no-op makes it controlled, so the grid always mirrors `selected`; picks arrive through `onDayClick`.
+ */
+const IGNORE_RANGE_SELECT = () => {};
+
 const LABELS = {
   labelMonthDropdown: () => "Month",
   labelYearDropdown: () => "Year",
@@ -95,6 +102,7 @@ export function CalendarPane({ selection, today, month, onMonthChange, onPickDay
           {...shared}
           mode="range"
           selected={selection.start ? { from: civilToCell(selection.start), to: selection.end ? civilToCell(selection.end) : undefined } : undefined}
+          onSelect={IGNORE_RANGE_SELECT}
           onDayClick={(day) => onPickDay(cellToCivil(day))}
         />
       )}
