@@ -37,7 +37,8 @@ import type { DashboardView } from "./dashboard-helpers";
  * Rendered on every view so the search never moves. The trigger and popup are this bar's; the
  * CONTENT is the view's, passed as the `display` slot (`DashboardDisplay.tsx`: the Board's Sort, the
  * Table's Group by and Columns). A view that supplies none leaves the trigger disabled with an
- * accessible reason (Calendar and Timeline arrive with #430).
+ * accessible reason (only reachable while no view is rendered). Calendar (Layers, Show) and
+ * Timeline (Show) supply theirs since #430.
  */
 
 export const VIEW_TAB_ID = (view: DashboardView) => `dashboard-view-tab-${view}`;
@@ -53,7 +54,7 @@ const TABS: { view: DashboardView; label: string; Icon: LucideIcon; gated: boole
 /** Search, Filter and Display share one fixed height — Quincy's control contract (`BUTTON_HEIGHT_CLASS`):
  * 38px, 44px at <=721px — so a content-sized input can never make one a pixel taller. */
 export const CONTROL_HEIGHT = "h-[38px] max-[721px]:h-[44px]";
-const DISPLAY_UNAVAILABLE = "Display options for this view arrive with #430";
+const DISPLAY_UNAVAILABLE = "No display options for this view";
 const DISPLAY_HINT_ID = "dashboard-display-unavailable";
 
 export type DashboardViewBarProps = {
@@ -130,9 +131,10 @@ export function DashboardViewBar({
         <DropdownMenu>
           <DropdownMenuTrigger
             disabled={disabled || !showDisplay}
+            data-testid="dashboard-display-trigger"
             title={showDisplay ? undefined : DISPLAY_UNAVAILABLE}
             aria-describedby={showDisplay ? undefined : DISPLAY_HINT_ID}
-            className={buttonClasses("secondary", { className: cn("shrink-0", CONTROL_HEIGHT) })}
+            className={buttonClasses("secondary", { className: cn("shrink-0 scroll-mt-[calc(var(--shell-header-height)+var(--space-4))]", CONTROL_HEIGHT) })}
           >
             <SlidersHorizontal aria-hidden="true" />
             Display

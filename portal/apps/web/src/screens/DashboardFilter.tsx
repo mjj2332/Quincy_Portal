@@ -44,7 +44,7 @@ import { CONTROL_HEIGHT } from "./DashboardViewBar";
  * live under the bar's rule (`DashboardFilterChips`). `DashboardFilterProvider` is the single
  * `Filters` root both read, wrapping the two. The filter itself is the URL's: `filter` arrives from
  * `dashboardFilterOf(route)` at render, and a chip edit calls `onFilterChange`, which pushes the URL.
- * `useFilterQueryBinding` (shared with the Timeline's bar) keeps an unfinished chip alive across the
+ * `useFilterQueryBinding` (the Dashboard's Filter is its only caller since #430) keeps an unfinished chip alive across the
  * URL echo and re-seeds only on an outside navigation (Back/Forward, a reload).
  *
  * ## Fields
@@ -260,7 +260,7 @@ export function DashboardFilterTrigger({ className }: { className?: string }) {
           variant="secondary"
           aria-label="Filter"
           data-testid="dashboard-filter-trigger"
-          className={cn("shrink-0", CONTROL_HEIGHT, "max-[721px]:w-[44px] max-[721px]:min-w-[44px] max-[721px]:px-0", className)}
+          className={cn("shrink-0 scroll-mt-[calc(var(--shell-header-height)+var(--space-4))]", CONTROL_HEIGHT, "max-[721px]:w-[44px] max-[721px]:min-w-[44px] max-[721px]:px-0", className)}
         >
           <FilterIcon aria-hidden="true" />
           <span className="max-[721px]:hidden">Filter</span>

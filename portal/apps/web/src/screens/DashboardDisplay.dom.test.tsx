@@ -5,10 +5,10 @@
  */
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DashboardViewBar } from "./DashboardViewBar";
-import { BoardDisplayContent, TableDisplayContent } from "./DashboardDisplay";
-import { chooseGroupBy, columnCheckboxLabels, columnCheckboxes, displayMenu, displayTrigger, groupByRadios, openDisplay, sortRadioLabels, toggleColumn } from "./dashboard-display-test-helpers";
+import { BoardDisplayContent, CalendarDisplayContent, TableDisplayContent, TimelineDisplayContent } from "./DashboardDisplay";
+import { chooseGroupBy, columnCheckboxLabels, columnCheckboxes, displayGroup, displayMenu, groupCheckboxes, displayTrigger, groupByRadios, openDisplay, sortRadioLabels, toggleColumn } from "./dashboard-display-test-helpers";
 import { hideableColumnsFor, tablePrefsKey, type TableGroupBy, type HideableColumnId } from "../lib/dashboard-table-model";
 import { useDashboardTablePrefs } from "../lib/use-dashboard-table-prefs";
 import { __resetDashboardSearchStoreForTest } from "../lib/dashboard-search-store";
@@ -134,8 +134,77 @@ describe("Display menu content and Table preferences (#431)", () => {
     await openDisplay();
     expect(sortRadioLabels()).toEqual(["Board order", "Shoot date, earliest first", "Shoot date, latest first"]);
     expect(groupByRadios()).toHaveLength(0);
-    await render(<Bar principalId="u1" view="calendar" />);
+    await render(<DashboardViewBar renderedView="none" canViewProductionCalendar disabled={false} onSelectView={() => undefined} principalId="u1" searchFocusRequest={null} onSearchFocusHandled={() => undefined} />);
     expect(displayTrigger()!.disabled).toBe(true);
-    expect(document.getElementById(displayTrigger()!.getAttribute("aria-describedby") ?? "")?.textContent).toContain("#430");
+    expect(document.getElementById(displayTrigger()!.getAttribute("aria-describedby") ?? "")?.textContent).toBe("No display options for this view");
+  });
+});
+
+describe("Calendar and Timeline Display content (#430)", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    installStorage();
+    __resetDashboardSearchStoreForTest();
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    host.remove();
+    document.body.replaceChildren();
+  });
+
+  const bar = (display: React.ReactNode, view: "calendar" | "timeline") => (
+    <DashboardViewBar renderedView={view} canViewProductionCalendar disabled={false} onSelectView={() => undefined} principalId="u1" searchFocusRequest={null} onSearchFocusHandled={() => undefined} display={display} />
+  );
+  const render = async (node: React.ReactNode) => { await act(async () => { root.render(node); await Promise.resolve(); }); };
+  const checked = (items: HTMLElement[]) => items.map((item) => [item.textContent, item.getAttribute("aria-checked")]);
+
+  it("Calendar: Layers then Show, with the issue's copy", async () => {
+    await render(bar(<CalendarDisplayContent layers={["project", "checklist"]} onLayersChange={() => undefined} showDeliveredProjects={false} showCompletedChecklist onShowChange={() => undefined} />, "calendar"));
+    expect(displayTrigger()!.disabled).toBe(false);
+    await openDisplay();
+    expect(checked(groupCheckboxes("Layers"))).toEqual([["Project deadlines", "true"], ["Subtasks", "true"]]);
+    expect(checked(groupCheckboxes("Show"))).toEqual([["Show delivered Projects", "false"], ["Show completed Subtasks", "true"]]);
+  });
+
+  it("Calendar: the last checked layer is disabled and never emitted empty", async () => {
+    const layers = vi.fn();
+    await render(bar(<CalendarDisplayContent layers={["checklist"]} onLayersChange={layers} showDeliveredProjects={false} showCompletedChecklist={false} onShowChange={() => undefined} />, "calendar"));
+    await openDisplay();
+    const [project, subtasks] = groupCheckboxes("Layers");
+    expect(subtasks!.getAttribute("aria-disabled")).toBe("true");
+    expect(project!.getAttribute("aria-disabled")).toBeNull();
+    await act(async () => { subtasks!.click(); await Promise.resolve(); });
+    expect(layers).not.toHaveBeenCalled();
+  });
+
+  it("Calendar: a layer toggle emits the canonical order and a Show toggle emits its change", async () => {
+    const layers = vi.fn();
+    const show = vi.fn();
+    await render(bar(<CalendarDisplayContent layers={["checklist"]} onLayersChange={layers} showDeliveredProjects={false} showCompletedChecklist={false} onShowChange={show} />, "calendar"));
+    await openDisplay();
+    await act(async () => { groupCheckboxes("Layers")[0]!.click(); await Promise.resolve(); });
+    expect(layers).toHaveBeenCalledWith(["project", "checklist"]);
+    await act(async () => { groupCheckboxes("Show")[1]!.click(); await Promise.resolve(); });
+    expect(show).toHaveBeenCalledWith({ showCompletedChecklist: true });
+    await act(async () => { groupCheckboxes("Show")[0]!.click(); await Promise.resolve(); });
+    expect(show).toHaveBeenLastCalledWith({ showDeliveredProjects: true });
+  });
+
+  it("Timeline: the Show group only", async () => {
+    const change = vi.fn();
+    await render(bar(<TimelineDisplayContent delivered completed={false} onChange={change} />, "timeline"));
+    await openDisplay();
+    expect(displayGroup("Layers")).toBeNull();
+    expect(checked(groupCheckboxes("Show"))).toEqual([["Show delivered Projects", "true"], ["Show completed Subtasks", "false"]]);
+    await act(async () => { groupCheckboxes("Show")[0]!.click(); await Promise.resolve(); });
+    expect(change).toHaveBeenCalledWith({ delivered: false });
+    await act(async () => { groupCheckboxes("Show")[1]!.click(); await Promise.resolve(); });
+    expect(change).toHaveBeenLastCalledWith({ completed: true });
   });
 });

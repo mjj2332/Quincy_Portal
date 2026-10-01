@@ -15,7 +15,7 @@ export function displayMenu(): HTMLElement | null {
   return document.querySelector<HTMLElement>('[role="menu"]');
 }
 
-/** The open menu's group labelled `label` ("Sort", "Group by", "Columns"), or null. Menus hold several groups since #431. */
+/** The open menu's group labelled `label` ("Sort", "Group by", "Columns", "Layers", "Show"), or null. Menus hold several groups since #431. */
 export function displayGroup(label: string): HTMLElement | null {
   const groups = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="group"]')];
   return groups.find((group) => {
@@ -37,6 +37,19 @@ export function sortRadios(): HTMLElement[] {
 
 export function groupByRadios(): HTMLElement[] {
   return groupRadios("Group by");
+}
+
+/** The checkbox items of one group ("Layers", "Show", "Columns"), in menu order. */
+export function groupCheckboxes(label: string): HTMLElement[] {
+  return [...(displayGroup(label)?.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]') ?? [])];
+}
+
+/** Toggles one named checkbox item in a group; the menu stays open. */
+export async function toggleGroupCheckbox(group: string, label: string, scope: ParentNode = document): Promise<void> {
+  await openDisplay(scope);
+  const item = groupCheckboxes(group).find((candidate) => candidate.textContent === label);
+  if (!item) throw new Error(`Missing Display ${group} option ${label}`);
+  await act(async () => { item.click(); await Promise.resolve(); await Promise.resolve(); });
 }
 
 /** The Table menu's column checkbox items, in menu order. */
