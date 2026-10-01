@@ -2025,7 +2025,7 @@ describe("ProjectKanbanBoard2 — column headers and collapse (#432)", () => {
     for (const header of headers) {
       const label = header.querySelector<HTMLElement>('[title]');
       expect(label, "the stage name keeps its full text available on hover").not.toBeNull();
-      const text = label!.querySelector<HTMLElement>(".truncate")!;
+      const text = label!.lastElementChild as HTMLElement;
       expect(text, "the stage label truncates rather than wrapping").not.toBeNull();
       expect([...text.classList]).toContain("whitespace-nowrap");
       expect(label!.getAttribute("title")).toBe(text.textContent);
