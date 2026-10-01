@@ -55,3 +55,4 @@ scratchpad/
 # real directory, so a symlink slipped past the rule and five of them were committed onto
 # `main` — each an absolute path into one machine's checkout, one of them pointing at itself.
 node_modules
+*.tsbuildinfo
