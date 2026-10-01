@@ -46,7 +46,9 @@ export function RemindersStrip({ offsets, onChange }: { offsets: readonly number
   };
 
   return (
-    <fieldset className="m-0 grid min-w-0 gap-[var(--space-2)] border-0 p-0">
+    // [contain:inline-size] keeps the chip row's one-line width out of the fieldset's intrinsic size, so the (w-auto) popover is sized by the
+    // calendar row and the chips wrap inside it instead of stretching the popover away from its trigger at 8 offsets.
+    <fieldset className="m-0 grid min-w-0 gap-[var(--space-2)] border-0 p-0 [contain:inline-size]">
       <legend className="mb-[var(--space-1)] p-0 [font:var(--weight-regular)_var(--text-2xs)/1.2_var(--font-sans)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary">
         Advance reminders <span>({offsets.length}/{PROJECT_DEADLINE_MAX_ADVANCE_OFFSETS})</span>
       </legend>
