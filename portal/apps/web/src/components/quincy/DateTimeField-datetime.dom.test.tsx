@@ -458,9 +458,49 @@ describe("DateTimeField date-time: seeding a draft", () => {
       const viewport = group.parentElement!;
       expect(viewport.parentElement!.classList.contains("h-36")).toBe(true);
       expect(viewport.parentElement!.classList.contains("sm:h-72")).toBe(true);
+      // Below sm the grid's own scrollbar is hidden and its edges fade like the body's (#447).
+      const rootClass = viewport.parentElement!.className;
+      expect(rootClass).toContain("max-sm:*:data-[slot=scroll-area-scrollbar]:hidden");
+      expect(rootClass).toContain("max-sm:*:data-[slot=scroll-area-viewport]:mask-t-from-");
+      expect(rootClass).toContain("max-sm:*:data-[slot=scroll-area-viewport]:mask-b-from-");
       // 17:00 is slot 68: top 2040, centred in 144px => 2040 - 72 + 15.
       expect(viewport.scrollTop).toBe(1983);
     } finally { rect.mockRestore(); client.mockRestore(); offset.mockRestore(); }
+  });
+
+  it("re-centres the selected slot when the time grid is resized, with the selection unchanged (#447)", async () => {
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const top = this instanceof HTMLButtonElement && this.closest('[role="group"]') ? slotButtons().indexOf(this) * 30 : 0;
+      return { top, bottom: top + 30, left: 0, right: 0, width: 0, height: 30, x: 0, y: top, toJSON: () => ({}) } as DOMRect;
+    });
+    let height = 144;
+    const client = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(() => height);
+    const offset = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(30);
+    const callbacks: Array<() => void> = [];
+    const disconnected = vi.fn();
+    const original = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class {
+      cb: () => void;
+      constructor(cb: () => void) { this.cb = cb; }
+      // Floating UI observes the popup too; only the slot viewport's callback is ours.
+      observe(el: Element) { if (el.querySelector(':scope > [role="group"][aria-label="Time slots"]')) callbacks.push(this.cb); }
+      unobserve() {}
+      disconnect() { disconnected(); }
+    } as unknown as typeof ResizeObserver;
+    try {
+      await mount({ value: stored("2027-01-15T17:00") });
+      await open();
+      const viewport = popup()!.querySelector('[role="group"][aria-label="Time slots"]')!.parentElement!;
+      expect(viewport.scrollTop).toBe(1983);
+      // Crossing the sm breakpoint changes the window (144px grid -> 288px column) and the layout.
+      viewport.scrollTop = 0;
+      height = 288;
+      await act(async () => { callbacks.forEach((cb) => (cb as (...a: unknown[]) => void)([], undefined)); });
+      expect(viewport.scrollTop).toBe(2040 - 144 + 15);
+      await act(async () => { root.unmount(); await Promise.resolve(); });
+      expect(disconnected).toHaveBeenCalled();
+      root = createRoot(host);
+    } finally { globalThis.ResizeObserver = original; rect.mockRestore(); client.mockRestore(); offset.mockRestore(); }
   });
 
   it("keeps the eyebrow to one truncated line while the popup name stays the full label (#447)", async () => {
@@ -470,6 +510,7 @@ describe("DateTimeField date-time: seeding a draft", () => {
     expect(dialog.getAttribute("aria-label")).toBe("Deadline");
     const eyebrow = [...dialog.querySelectorAll<HTMLElement>("span")].find((el) => el.textContent === "Deadline")!;
     expect(eyebrow.classList.contains("truncate")).toBe(true);
+    expect(eyebrow.getAttribute("title")).toBe("Deadline");
   });
 
   it("asks whether the viewport is narrow to decide how the popup is positioned (#447)", async () => {

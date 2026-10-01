@@ -418,7 +418,11 @@ describe("ProjectHeaderDeadline", () => {
     }
     expect(scroller, "the time slots sit inside a vertically scrolling body").not.toBeNull();
     // The fade utility sits on the scroll root, the viewport's parent, targeting its direct child.
-    expect(scroller!.parentElement!.className).toContain("*:data-[slot=scroll-area-viewport]:mask-b-from-");
+    const rootClass = scroller!.parentElement!.className;
+    expect(rootClass).toContain("*:data-[slot=scroll-area-viewport]:mask-t-from-");
+    expect(rootClass).toContain("*:data-[slot=scroll-area-viewport]:mask-b-from-");
+    expect(rootClass).toContain("[--fade-size:var(--space-8)]");
+    expect(rootClass).toContain("has-[[data-slot=scroll-area-viewport]:focus-visible]:ring-[3px]");
     // The footer is outside it, beside it under the same bounded frame.
     expect(scroller!.contains(footer)).toBe(false);
     expect(footer.contains(scroller!)).toBe(false);
