@@ -79,7 +79,7 @@ describe("Dashboard fills the viewport (#363)", () => {
   }
 
   function switcherButton(label: string): HTMLButtonElement | undefined {
-    return [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === label);
+    return [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] [role="tab"]')].find((button) => button.textContent === label);
   }
 
   async function clickView(label: string) {

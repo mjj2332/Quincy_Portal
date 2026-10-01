@@ -24,8 +24,8 @@ import { OverlayContainerContext } from "../OverlayContainerContext";
  *
  * `finalFocus`/`initialFocus` forward straight through to `SheetContent`'s own `...props` spread
  * onto `SheetPrimitive.Popup` — `Dialog.Popup` already accepts both (`@base-ui/react/dialog`), so
- * no edit to `reui/sheet.tsx` is needed. `finalFocus` is unused since #217's rail-input rewrite
- * retired the one-shot suppression it existed for (#122 P3); kept as generic plumbing. `initialFocus`
+ * no edit to `reui/sheet.tsx` is needed. `finalFocus` is how `RailedShell` keeps a ⌘K close from
+ * handing focus back to the hamburger (#427). `initialFocus`
  * (#217 fix round 1, item 6) is how `RailedShell` sends ⌘K's search focus into a Sheet that was
  * just opened for it — the Sheet's own default open-focus behaviour (an animation-completion wait
  * an ancestor's plain `useEffect` cannot reliably out-race) is the reason this goes through Base

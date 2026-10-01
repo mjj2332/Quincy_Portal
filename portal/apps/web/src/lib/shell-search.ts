@@ -1,11 +1,7 @@
 /**
- * The rail's search shortcut predicate — #217. Everything else this module used to carry (the
- * one-shot latched focus request `requestProjectSearchFocus`/`subscribeProjectSearchFocus`/
- * `getProjectSearchFocusToken`/`consumeProjectSearchFocus`, and `activateProjectSearch`) is
- * deleted: the rail now owns a real search input (`quincy/ShellSearch.tsx`, backed by
- * `lib/dashboard-search-store.ts`), so there is nothing left to latch a request for. ⌘K now
- * focuses that input directly via a ref, rather than navigating and waiting for the Dashboard to
- * mount and consume a pending request.
+ * The search shortcut predicate — #217, kept by #427. The search input itself lives in the
+ * Dashboard toolbar (`quincy/DashboardSearch.tsx`); ⌘K asks `ShellRoute` (`lib/app-router.tsx`) to
+ * focus it, navigating to the Dashboard first when pressed elsewhere.
  */
 import { isShellShortcut, type RailShortcutEvent } from "./shell-rail";
 

@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Dashboard, type ProjectSummary } from "./Dashboard";
+import { chooseSort as chooseDisplaySort, displayMenu, displayTrigger } from "./dashboard-display-test-helpers";
 import { ConfirmModalHost } from "../components/ConfirmDialog";
 import { ApiError } from "../lib/api";
 import { dashboardProjectsKey } from "../lib/dashboard-projects";
@@ -201,18 +202,8 @@ async function moveToEnd(host: HTMLElement, street: string, targetLabel: string)
   await act(async () => { submit.click(); await Promise.resolve(); });
 }
 
-function sortTrigger(host: HTMLElement) {
-  return host.querySelector<HTMLButtonElement>('[aria-label="Sort Kanban board"][role="combobox"]');
-}
-
-async function chooseSort(host: HTMLElement, label: string) {
-  const trigger = sortTrigger(host);
-  if (!trigger) throw new Error("Missing Sort Kanban board trigger");
-  await act(async () => { trigger.click(); await Promise.resolve(); });
-  const option = [...document.querySelectorAll<HTMLElement>('[aria-label="Sort Kanban board"][role="listbox"] [role="option"]')]
-    .find((element) => element.textContent === label);
-  if (!option) throw new Error(`Missing Sort option ${label}`);
-  await act(async () => { option.click(); await Promise.resolve(); });
+async function chooseSort(_host: HTMLElement, label: string) {
+  await chooseDisplaySort(label);
 }
 
 async function flush() {
@@ -576,13 +567,12 @@ describe("Dashboard Stage interactions", () => {
 
   it("locks Kanban sorting and preserves the drag proposal while an interaction is active", async () => {
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); }); await flush();
-    const sort = sortTrigger(host)!;
+    const sort = displayTrigger(host)!;
     await dndStart("source");
     await dndOver("source", "target");
     expect(sort.disabled).toBe(true);
-    await act(async () => { sort.click(); await Promise.resolve(); });
-    expect(host.querySelector('[aria-label="Sort Kanban board"][role="listbox"]')).toBeNull();
-    expect(sort.textContent).toContain("Board order");
+    await act(async () => { sort.click(); await Promise.resolve(); await Promise.resolve(); });
+    expect(displayMenu()).toBeNull();
     // The accepted card order stays fixed during a drag; the live proposal shows as a drop
     // indicator (dnd-kit transforms open the gap in the browser). The moving card ghosts in its
     // source column, and the blocked sort change leaves the proposal intact.

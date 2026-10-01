@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard } from "./Dashboard";
+import { checkedSortLabel, chooseSort, displayMenu, displayTrigger, openDisplay, sortRadioLabels, sortRadios } from "./dashboard-display-test-helpers";
 
 // happy-dom lacks `Element.getAnimations()`, which Base UI's ScrollArea (the Board's horizontal
 // scroll, `kanban2/board.tsx`) calls on a timer after mount. The no-op stub means "no active
@@ -76,19 +77,7 @@ describe("Dashboard Kanban sort control", () => {
     const priority = document.querySelector('[aria-label="Priority for 1 Test Street"]');
     expect(priority).not.toBeNull();
 
-    const sortTrigger = document.querySelector<HTMLButtonElement>('[aria-label="Sort Kanban board"][role="combobox"]');
-    expect(sortTrigger).not.toBeNull();
-    await act(async () => {
-      sortTrigger!.click();
-      await Promise.resolve();
-    });
-    const shootDateOption = [...document.querySelectorAll<HTMLElement>('[aria-label="Sort Kanban board"][role="listbox"] [role="option"]')]
-      .find((option) => option.textContent === "Shoot date ↑");
-    expect(shootDateOption).not.toBeUndefined();
-    await act(async () => {
-      shootDateOption!.click();
-      await Promise.resolve();
-    });
+    await chooseSort("Shoot date ↑");
 
     expect(document.querySelector('[aria-label="Move 1 Test Street up"]')).toBeNull();
     expect(document.querySelector('[aria-label="Move 1 Test Street down"]')).toBeNull();
@@ -107,7 +96,7 @@ describe("Dashboard Kanban sort control", () => {
     expect(card.getAttribute("href")).toBe("/projects/project-1");
     expect(card.getAttribute("target")).toBeNull();
 
-    await act(async () => { (document.querySelector('[aria-label="Dashboard view"] button') as HTMLButtonElement).click(); await Promise.resolve(); });
+    await act(async () => { (document.querySelector('[aria-label="Dashboard view"] [role="tab"]') as HTMLButtonElement).click(); await Promise.resolve(); });
     expect(document.querySelector('[data-testid="project-list-row"]')?.getAttribute("href")).toBe("/projects/project-1");
     expect(document.querySelector('[data-testid="project-list-row-raw"]')?.textContent).toBe("12");
   });
@@ -125,168 +114,117 @@ describe("Dashboard Kanban sort control", () => {
     await act(async () => { (document.querySelector('[aria-label="Project status"] button:last-child') as HTMLButtonElement).click(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
     await vi.waitFor(() => expect(document.querySelector('[data-testid="project-list-row"]')).not.toBeNull());
     expect(document.querySelector('[aria-label="Project pipeline board"]')).toBeNull();
-    expect(document.querySelector('[aria-label="Dashboard view"]')).toBeNull();
+    // The tabs stay (until #428 moves the scope switch); an archived scope shows Table.
+    const tabs = [...document.querySelectorAll<HTMLElement>('[aria-label="Dashboard view"] [role="tab"]')];
+    expect(tabs.find((tab) => tab.getAttribute("aria-selected") === "true")?.textContent).toBe("Table");
+    expect(displayTrigger()).toBeNull();
   });
 
-  // TB8-01 §2.2 — the ten release-blocking accessibility tests for the Select primitive that
-  // replaced the bare native <select> for Kanban sort. Touch/phone geometry (item 10) is a
-  // best-effort structural proxy here (happy-dom has no real layout engine); real reachability at
-  // 390×844 is the Agy real-browser pass §2.2 also requires.
-  describe("Sort Select accessibility contract", () => {
+  // The Display menu replaced the Kanban sort `Select` (#427). The old `Select`'s ten release-blocking
+  // accessibility tests are carried over here for the menu: open/close, keyboard, commit, dismissal,
+  // the disabled lock, the Priority gate and touch-target geometry. Real-browser focus timing stays
+  // a design-reviewer/Agy item (happy-dom has no real focus management for floating popups).
+  describe("Display menu accessibility contract", () => {
     async function renderBoard() {
       await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
       await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-card"]')).not.toBeNull());
     }
-    function trigger() { return document.querySelector<HTMLButtonElement>('[aria-label="Sort Kanban board"][role="combobox"]')!; }
-    function listbox() { return document.querySelector<HTMLElement>('[aria-label="Sort Kanban board"][role="listbox"]'); }
-    function options() { return [...document.querySelectorAll<HTMLElement>('[aria-label="Sort Kanban board"][role="listbox"] [role="option"]')]; }
+    const trigger = () => displayTrigger()!;
 
     it("1. opens on trigger click and closes on a second click", async () => {
       await renderBoard();
-      expect(listbox()).toBeNull();
-      await act(async () => { trigger().click(); await Promise.resolve(); });
-      expect(listbox()).not.toBeNull();
-      await act(async () => { trigger().click(); await Promise.resolve(); });
-      expect(listbox()).toBeNull();
+      expect(displayMenu()).toBeNull();
+      expect(trigger().getAttribute("aria-expanded")).toBe("false");
+      await openDisplay();
+      expect(trigger().getAttribute("aria-expanded")).toBe("true");
+      await act(async () => { trigger().click(); await Promise.resolve(); await Promise.resolve(); });
+      expect(displayMenu()).toBeNull();
     });
 
-    // Space-to-open on the trigger was probed directly, four separate times with different
-    // dispatch strategies (keydown alone, keydown+keyup, with/without `code: "Space"`) — all
-    // consistently do not open the popup here, unlike ArrowDown (2b, below) and Enter-to-commit
-    // (test 4), both of which DO work under direct dispatch. Base UI's Popup imports
-    // `InteractionType` from `@base-ui/utils/useEnhancedClickHandler`, which floating-ui uses to
-    // distinguish real pointer/keyboard interaction by timing; unlike `openOnArrowKeyDown`'s plain
-    // state toggle, Space-to-open plausibly goes through that timing-sensitive path, which
-    // happy-dom's synthetic event dispatch does not reproduce. Escalated to the plan's QA
-    // acceptance section as a required real-browser verification item (same as Escape's
-    // focus-return, test 5) rather than asserted here as if it passed.
+    it("2. the menu is a labelled group of radio items, one checked (the current sort)", async () => {
+      await renderBoard();
+      await openDisplay();
+      expect(sortRadioLabels()).toEqual(["Board order", "Priority", "Shoot date ↑", "Shoot date ↓"]);
+      expect(sortRadios().filter((radio) => radio.getAttribute("aria-checked") === "true")).toHaveLength(1);
+      expect(checkedSortLabel()).toBe("Board order");
+      expect(document.querySelector('[role="menu"]')!.textContent).toContain("Sort Board");
+    });
 
-    it("2b. ArrowDown on the focused trigger opens the popup (no prior click)", async () => {
+    it("3. ArrowDown on the focused trigger opens the menu", async () => {
       await renderBoard();
       trigger().focus();
-      expect(listbox()).toBeNull();
-      await act(async () => { trigger().dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })); await Promise.resolve(); });
-      expect(listbox()).not.toBeNull();
-      const highlighted = options().find((option) => option.getAttribute("data-highlighted") !== null);
-      expect(highlighted).not.toBeUndefined();
+      await act(async () => { trigger().dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })); await Promise.resolve(); await Promise.resolve(); });
+      expect(displayMenu()).not.toBeNull();
     });
 
-    it("2c. ArrowDown, once open, moves the highlight forward", async () => {
+    it("4. choosing an option commits it and checks it", async () => {
       await renderBoard();
-      await act(async () => { trigger().click(); await Promise.resolve(); });
-      const before = options().find((option) => option.getAttribute("data-highlighted") !== null || option.getAttribute("aria-selected") === "true");
-      await act(async () => { listbox()!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })); await Promise.resolve(); });
-      const after = options().find((option) => option.getAttribute("data-highlighted") !== null);
-      expect(after).not.toBeUndefined();
-      expect(after).not.toBe(before);
+      await chooseSort("Shoot date ↓");
+      expect(window.localStorage.getItem("quincy:dashboard:kanbanSort")).toBe("shootDate-desc");
+      await openDisplay();
+      expect(checkedSortLabel()).toBe("Shoot date ↓");
     });
 
-    it("2d. ArrowUp, once open, moves the highlight backward", async () => {
+    it("5. Escape closes the menu without selecting a new value", async () => {
       await renderBoard();
-      await act(async () => { trigger().click(); await Promise.resolve(); });
-      await act(async () => { listbox()!.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true })); await Promise.resolve(); });
-      const atEnd = options().find((option) => option.getAttribute("data-highlighted") !== null);
-      await act(async () => { listbox()!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true })); await Promise.resolve(); });
-      const afterUp = options().find((option) => option.getAttribute("data-highlighted") !== null);
-      expect(afterUp).not.toBeUndefined();
-      expect(afterUp).not.toBe(atEnd);
-      expect(afterUp).toBe(options().at(-2));
-    });
-
-    it("3. Home/End jump to the first and last option", async () => {
-      await renderBoard();
-      await act(async () => { trigger().click(); await Promise.resolve(); });
-      await act(async () => { listbox()!.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true })); await Promise.resolve(); });
-      expect(options().at(-1)?.getAttribute("data-highlighted")).not.toBeNull();
-      await act(async () => { listbox()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true, cancelable: true })); await Promise.resolve(); });
-      expect(options()[0]?.getAttribute("data-highlighted")).not.toBeNull();
-    });
-
-    it("4. Enter commits the highlighted option and closes the popup", async () => {
-      // Base UI's Select.Item is a non-native `role="option"` element (useButton with
-      // `native: false`); useButton.mjs's non-native branch explicitly synthesizes a click on a
-      // real Enter keydown (dispatchClickWithModifiers), so this is a genuine JS-level code path,
-      // not deferred to native <button> browser semantics — it works under direct dispatch as
-      // long as the event targets the highlighted item itself (verified directly; dispatching on
-      // the list/listbox container instead does not reach the item's own listener).
-      await renderBoard();
-      await act(async () => { trigger().click(); await Promise.resolve(); });
-      await act(async () => { listbox()!.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true })); await Promise.resolve(); });
-      const highlighted = options().find((option) => option.getAttribute("data-highlighted") !== null)!;
-      expect(highlighted.textContent).toBe("Shoot date ↓");
-      await act(async () => { highlighted.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); await Promise.resolve(); });
-      expect(listbox()).toBeNull();
-      expect(trigger().textContent).toContain("Shoot date ↓");
-    });
-
-    it("5. Escape closes the popup without selecting a new value", async () => {
-      // Escape's close-without-select half is verified directly here. Focus returning to the
-      // trigger afterward depends on Base UI's floating-ui focus-management (a `document.activeElement`
-      // move), which does not reproduce under happy-dom even after flushing every microtask and
-      // fake-timer tick available (probed directly, several strategies, all landing focus on an
-      // unrelated ancestor element instead of the trigger) — unlike Enter-to-commit above, this one
-      // is plausibly a genuine DOM-focus-timing gap in the test environment, not a mistaken
-      // substitution. Tracked as a required real-browser QA item in the plan's acceptance criterion
-      // 18, not silently treated as covered here.
-      await renderBoard();
-      await act(async () => { trigger().click(); await Promise.resolve(); });
-      const before = trigger().textContent;
-      await act(async () => { listbox()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
-      expect(listbox()).toBeNull();
-      expect(trigger().textContent).toBe(before);
+      await openDisplay();
+      await act(async () => { displayMenu()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); await Promise.resolve(); });
+      expect(displayMenu()).toBeNull();
+      expect(window.localStorage.getItem("quincy:dashboard:kanbanSort")).toBe("board");
     });
 
     it("6. outside click dismisses without selecting", async () => {
       await renderBoard();
-      await act(async () => { trigger().click(); await Promise.resolve(); });
-      const before = trigger().textContent;
-      await act(async () => { document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); document.body.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })); document.body.dispatchEvent(new MouseEvent("click", { bubbles: true })); await Promise.resolve(); });
-      expect(listbox()).toBeNull();
-      expect(trigger().textContent).toBe(before);
+      await openDisplay();
+      await act(async () => { document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); document.body.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })); document.body.dispatchEvent(new MouseEvent("click", { bubbles: true })); await Promise.resolve(); await Promise.resolve(); });
+      expect(displayMenu()).toBeNull();
+      expect(window.localStorage.getItem("quincy:dashboard:kanbanSort")).toBe("board");
     });
 
-    it("7. disabled blocks opening entirely — no popover, no focus trap", async () => {
-      // The interactionBlocked path itself (drag/pending-move in progress) is covered end-to-end
-      // in Dashboard-stage-interactions.dom.test.tsx ("locks Kanban sorting…"). This asserts the
-      // primitive-level contract: a disabled trigger never opens on click.
+    it("7. disabled blocks opening entirely", async () => {
+      // The interactionBlocked path itself (drag/pending-move in progress) is covered end-to-end in
+      // Dashboard-stage-interactions.dom.test.tsx; this asserts the control-level contract.
       await renderBoard();
       trigger().disabled = true;
-      await act(async () => { trigger().click(); await Promise.resolve(); });
-      expect(listbox()).toBeNull();
+      await act(async () => { trigger().click(); await Promise.resolve(); await Promise.resolve(); });
+      expect(displayMenu()).toBeNull();
     });
 
-    it("8. Priority gate — render-gate presence half: rendered when authorized", async () => {
-      // This proves only that the option IS offered to an authorized user. The render-gate
-      // ABSENCE half (an unauthorized user never sees it) is Dashboard-kanban-sort-priority-render-gate.dom.test.tsx,
-      // and the client-side guard half — `selectKanbanSort`'s `next === "priority" &&
-      // (!canPrioritize || !hasAuthorizedBoardMap)` check at Dashboard.tsx:636 — is
-      // Dashboard-kanban-sort-priority-guard.dom.test.tsx, which mocks Select to invoke
-      // onValueChange("priority") past the render gate so the guard itself (not just Select's own
-      // option filtering) is what's proven to refuse it. All three together are §2.2 item 8.
+    it("8. Priority gate, presence half: offered when authorized", async () => {
+      // The absence half is Dashboard-kanban-sort-priority-render-gate.dom.test.tsx; the handler
+      // half is Dashboard-kanban-sort-priority-guard.dom.test.tsx.
       await renderBoard();
-      await act(async () => { trigger().click(); await Promise.resolve(); });
-      expect(options().some((option) => option.textContent === "Priority")).toBe(true);
+      await openDisplay();
+      expect(sortRadioLabels()).toContain("Priority");
     });
 
-    it("9. selected value is exposed on the trigger", async () => {
+    it("9. the selected value is exposed as the checked radio", async () => {
       await renderBoard();
-      expect(trigger().textContent).toContain("Board order");
-      await act(async () => { trigger().click(); await Promise.resolve(); });
-      const priority = options().find((option) => option.textContent === "Priority")!;
-      await act(async () => { priority.click(); await Promise.resolve(); });
-      expect(trigger().textContent).toContain("Priority");
+      await chooseSort("Priority");
+      await openDisplay();
+      expect(checkedSortLabel()).toBe("Priority");
     });
 
-    it("10. touch target geometry at 390×844 — trigger and options carry the 44px minimum-target classes", async () => {
+    it("10. touch target geometry — the trigger carries the 44px minimum-target class at phone width", async () => {
       window.innerWidth = 390;
       window.innerHeight = 844;
       await renderBoard();
-      expect(trigger().className).toContain("min-h-[44px]");
-      await act(async () => { trigger().click(); await Promise.resolve(); });
-      expect(options().every((option) => option.className.includes("min-h-[44px]"))).toBe(true);
-      // Full popover-within-viewport geometry needs a real layout engine (Base UI's Positioner
-      // collision/flip handling) — not verified here; pending the Agy real-browser pass (plan
-      // acceptance criterion 17), which has not yet run for this candidate.
+      expect(trigger().className).toContain("max-[721px]:min-h-[44px]");
+      // Full popup-within-viewport geometry needs a real layout engine: the Agy real-browser pass.
+    });
+
+    it("11. only the Board tab offers Display", async () => {
+      await renderBoard();
+      expect(displayTrigger()).not.toBeNull();
+      const tabs = [...document.querySelectorAll<HTMLElement>('[aria-label="Dashboard view"] [role="tab"]')];
+      await act(async () => { tabs.find((tab) => tab.textContent === "Table")!.click(); await Promise.resolve(); await Promise.resolve(); });
+      expect(displayTrigger()).toBeNull();
+    });
+
+    it("12. the radio items are exactly the sort modes the Board understands", async () => {
+      await renderBoard();
+      await openDisplay();
+      expect(sortRadios()).toHaveLength(4);
     });
   });
 

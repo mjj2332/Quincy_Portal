@@ -176,7 +176,7 @@ describe("Dashboard Calendar routing", () => {
     window.localStorage.setItem("quincy:dashboard:view", "calendar");
     await render({ role: "photographer" });
     expect([...host.querySelectorAll("button")].some((button) => button.textContent === "Calendar")).toBe(false);
-    expect([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Board")?.getAttribute("data-active")).toBe("true");
+    expect([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Board")?.getAttribute("aria-selected")).toBe("true");
     expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("board");
     expect(host.querySelector('[data-testid="event-calendar-body"]')).toBeNull();
     expect(apiGetMock.mock.calls.some(([path]) => path.startsWith("/api/production-calendar"))).toBe(false);
@@ -224,10 +224,10 @@ describe("Dashboard Calendar routing", () => {
   it("takes List/Kanban view state from the URL across history arrivals", async () => {
     window.history.replaceState(null, "", "/?view=table");
     await act(async () => { root.render(<DashboardRouteHarness />); await Promise.resolve(); await Promise.resolve(); });
-    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "Table")?.getAttribute("data-active")).toBe("true");
+    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] [role="tab"]')].find((button) => button.textContent === "Table")?.getAttribute("aria-selected")).toBe("true");
     window.history.replaceState(null, "", "/?view=board");
     await act(async () => { window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
-    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "Board")?.getAttribute("data-active")).toBe("true");
+    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] [role="tab"]')].find((button) => button.textContent === "Board")?.getAttribute("aria-selected")).toBe("true");
   });
 
   it("restores the bare-route remembered view on a real Back navigation past an explicit switch", async () => {
@@ -237,15 +237,15 @@ describe("Dashboard Calendar routing", () => {
     // genuine back() needs its own pushed anchor point.
     window.history.pushState(null, "", "/");
     await render();
-    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "Table")?.getAttribute("data-active")).toBe("true");
+    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] [role="tab"]')].find((button) => button.textContent === "Table")?.getAttribute("aria-selected")).toBe("true");
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Board")?.click(); await Promise.resolve(); });
     expect(window.location.search).toBe("?view=board");
-    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "Board")?.getAttribute("data-active")).toBe("true");
+    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] [role="tab"]')].find((button) => button.textContent === "Board")?.getAttribute("aria-selected")).toBe("true");
     // A REAL Back pops the history entry selectView just pushed, landing back on bare "/" — the
     // view must revert to what that bare route originally showed, not stay on Kanban.
     await act(async () => { window.history.back(); await new Promise((resolve) => setTimeout(resolve, 0)); });
     expect(window.location.search).toBe("");
-    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "Table")?.getAttribute("data-active")).toBe("true");
+    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] [role="tab"]')].find((button) => button.textContent === "Table")?.getAttribute("aria-selected")).toBe("true");
   });
 
   it("opens scheduled Calendar project anchors on the Full Workspace", async () => {
@@ -465,26 +465,34 @@ describe("Dashboard Calendar routing", () => {
   // #217 chip-row: the same toolbar/summary separation checked in List and Kanban
   // (Dashboard-search-adversarial.dom.test.tsx), for Calendar -- the summary sits between the
   // toolbar and the Calendar surface, so the chip never sits beside the Calendar's own controls.
-  it("keeps the search summary between the toolbar and the Calendar surface, not inside the toolbar (#217 chip-row)", async () => {
+  it("lays the page out header, view bar (tabs and search), then the Calendar surface (#427)", async () => {
     window.history.replaceState(null, "", "/?view=calendar&q=smith");
     await render({ calendar: { ...routeCalendar, search: "smith" } });
 
-    const toolbar = host.querySelector('[data-testid="dashboard-toolbar"]');
-    const summary = host.querySelector('[data-testid="dashboard-search-summary"]');
-    const chip = host.querySelector('[data-testid="dashboard-search-chip"]');
+    const header = host.querySelector('[data-testid="dashboard-header"]');
+    const summary = host.querySelector('[data-testid="dashboard-summary"]');
+    const bar = host.querySelector('[data-testid="dashboard-view-bar"]');
+    const field = host.querySelector('[data-testid="dashboard-search"]');
     const newShootLink = [...host.querySelectorAll("a")].find((node) => node.textContent === "New shoot");
+    const panel = host.querySelector('[role="tabpanel"]');
     const calendarSurface = host.querySelector('[data-testid="event-calendar-body"]');
 
-    expect(toolbar, "no toolbar rendered — the assertions below would be vacuous").not.toBeNull();
-    expect(summary, "no search summary rendered — the assertions below would be vacuous").not.toBeNull();
-    expect(chip, "no chip rendered — the assertions below would be vacuous").not.toBeNull();
+    expect(header, "no header rendered — the assertions below would be vacuous").not.toBeNull();
+    expect(summary, "no summary rendered — the assertions below would be vacuous").not.toBeNull();
+    expect(bar, "no view bar rendered — the assertions below would be vacuous").not.toBeNull();
+    expect(field, "no search field rendered — the assertions below would be vacuous").not.toBeNull();
     expect(newShootLink, "no New shoot link rendered — the assertions below would be vacuous").not.toBeUndefined();
     expect(calendarSurface, "no Calendar surface rendered — the assertions below would be vacuous").not.toBeNull();
 
-    expect(toolbar!.contains(chip!)).toBe(false);
-    expect(toolbar!.contains(newShootLink!)).toBe(true);
-    expect(toolbar!.nextElementSibling).toBe(summary);
-    expect(summary!.nextElementSibling?.contains(calendarSurface)).toBe(true);
+    expect(header!.contains(summary!)).toBe(true);
+    expect(header!.contains(newShootLink!)).toBe(true);
+    expect(bar!.contains(field!)).toBe(true);
+    expect(header!.contains(field!)).toBe(false);
+    expect(bar!.contains(host.querySelector('[role="tablist"]'))).toBe(true);
+    expect(header!.compareDocumentPosition(bar!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(bar!.compareDocumentPosition(panel!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(panel!.contains(calendarSurface)).toBe(true);
+    expect(panel!.getAttribute("aria-labelledby")).toBe(host.querySelector('[role="tab"][aria-selected="true"]')!.id);
   });
 
   it("silently replaces a URL after the server drops an inaccessible Editor", async () => {
@@ -540,13 +548,14 @@ describe("Dashboard Calendar routing", () => {
 
   it("disables Dashboard view navigation only while the Calendar accept gate is active", async () => {
     await render({ calendar: routeCalendar });
-    const list = () => [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Table")!;
-    expect(list().disabled).toBe(false);
+    const list = () => [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((button) => button.textContent === "Table")!;
+    const isDisabled = (button: HTMLButtonElement) => button.disabled || button.getAttribute("aria-disabled") === "true";
+    expect(isDisabled(list())).toBe(false);
     await dropDeadline();
     expect(document.querySelector('[data-testid="gantt-deadline-confirm"]'), "the drop never opened the confirm").not.toBeNull();
-    expect(list().disabled).toBe(true);
+    expect(isDisabled(list())).toBe(true);
     await act(async () => { document.querySelector<HTMLButtonElement>('[data-testid="gantt-deadline-confirm-cancel"]')!.click(); await Promise.resolve(); await new Promise((resolve) => setTimeout(resolve, 0)); });
-    expect(list().disabled).toBe(false);
+    expect(isDisabled(list())).toBe(false);
   });
 
   it("allows List/Kanban navigation after a failed Calendar settle without changing Board gates", async () => {

@@ -111,38 +111,50 @@ afterEach(() => {
   __resetDashboardSearchStoreForTest();
 });
 
-// #217 chip-row: the toolbar -> active search -> results reading order, checked the same way in
-// List, Kanban, and (Dashboard-calendar.dom.test.tsx) Calendar -- the chip must never be a toolbar
-// descendant, and the summary must be the toolbar's very next sibling.
-function assertToolbarChipSeparation(host: HTMLDivElement) {
-  const toolbar = host.querySelector('[data-testid="dashboard-toolbar"]');
-  const summary = host.querySelector('[data-testid="dashboard-search-summary"]');
-  const chip = host.querySelector('[data-testid="dashboard-search-chip"]');
+// #217 chip-row, reshaped by #427: the page reads header (title, summary, New shoot) -> view bar
+// (tabs, search, Display) -> view region, checked the same way in Table, Board and
+// (Dashboard-calendar.dom.test.tsx) Calendar. The search field lives in the view bar only; the summary
+// lives in the header only; neither depends on the query for where it sits.
+function assertHeaderBarSeparation(host: HTMLDivElement) {
+  const header = host.querySelector('[data-testid="dashboard-header"]');
+  const summary = host.querySelector('[data-testid="dashboard-summary"]');
+  const bar = host.querySelector('[data-testid="dashboard-view-bar"]');
+  const field = host.querySelector('[data-testid="dashboard-search"]');
+  const region = host.querySelector('[data-testid="dashboard-view-region"]');
   const newShootLink = [...host.querySelectorAll("a")].find((node) => node.textContent === "New shoot");
-  expect(toolbar, "no toolbar rendered — the assertions below would be vacuous").not.toBeNull();
-  expect(summary, "no search summary rendered — the assertions below would be vacuous").not.toBeNull();
-  expect(chip, "no chip rendered — the assertions below would be vacuous").not.toBeNull();
+  expect(header, "no header rendered — the assertions below would be vacuous").not.toBeNull();
+  expect(summary, "no summary rendered — the assertions below would be vacuous").not.toBeNull();
+  expect(bar, "no view bar rendered — the assertions below would be vacuous").not.toBeNull();
+  expect(field, "no search field rendered — the assertions below would be vacuous").not.toBeNull();
+  expect(region, "no view region rendered — the assertions below would be vacuous").not.toBeNull();
   expect(newShootLink, "no New shoot link rendered — the assertions below would be vacuous").not.toBeUndefined();
 
-  expect(toolbar!.contains(chip!)).toBe(false);
-  expect(toolbar!.contains(newShootLink!)).toBe(true);
-  expect(toolbar!.nextElementSibling).toBe(summary);
-  expect(summary!.contains(chip!)).toBe(true);
+  expect(header!.contains(summary!)).toBe(true);
+  expect(header!.contains(newShootLink!)).toBe(true);
+  expect(header!.contains(field!)).toBe(false);
+  expect(bar!.contains(field!)).toBe(true);
+  expect(bar!.contains(summary!)).toBe(false);
+  expect(header!.compareDocumentPosition(bar!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(bar!.compareDocumentPosition(region!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 }
 
-/** Every descendant's tag, testid, focus key, label and leaf text, in document order -- used to prove the toolbar's shape does not change with the query. */
-function toolbarShape(toolbar: Element): string[] {
-  return [...toolbar.querySelectorAll("*")].map((node) => [
-    node.tagName,
-    node.getAttribute("data-testid") ?? "",
-    node.getAttribute("data-focus-key") ?? "",
-    node.getAttribute("aria-label") ?? "",
-    node.children.length === 0 ? (node.textContent ?? "").trim() : "",
-  ].join(":"));
+/** Every descendant's tag, testid, focus key and label, in document order -- used to prove the page chrome's shape does not change with the query. The in-field Clear button (and the addon wrapping it) exists only while the field holds text, so it is the one element left out. */
+function chromeShape(container: Element): string[] {
+  return [...container.querySelectorAll("*")]
+    .filter((node) => node.closest('[aria-label="Clear search"]') === null
+      && !(node.querySelector('[aria-label="Clear search"]') !== null && node.querySelector("input") === null))
+    .map((node) => [
+      node.tagName,
+      node.getAttribute("data-testid") ?? "",
+      node.getAttribute("data-focus-key") ?? "",
+      node.getAttribute("aria-label") ?? "",
+    ].join(":"));
 }
+
+const summaryText = (host: HTMLElement) => host.querySelector('[data-testid="dashboard-summary"]')?.textContent ?? "";
 
 describe("Dashboard search presentation and navigation adversarial probes (#217)", () => {
-  it("hides the stats strip and reports exact matching/total counts in the search chip", async () => {
+  it("hides the stats strip and reports exact matching/total counts in the header summary", async () => {
     await renderAt("/?view=table&q=smith", {
       projects: match,
       board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
@@ -150,18 +162,18 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
     });
 
     expect(host.querySelector('[aria-label="Project summary"]')).toBeNull();
-    expect(host.querySelector('[data-testid="dashboard-search-chip"]')?.textContent).toContain("1 of 3 projects · 'smith'");
+    expect(summaryText(host)).toContain("1 of 3 active Projects");
   });
 
-  it("shows a search-only chip when an older response has no counts", async () => {
+  it("shows a plain count when an older response has no search counts", async () => {
     await renderAt("/?view=table&q=smith", {
       projects: match,
       board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
     });
 
-    const chip = host.querySelector('[data-testid="dashboard-search-chip"]')?.textContent ?? "";
-    expect(chip).toBe("'smith'");
-    expect(chip).not.toContain(" of ");
+    const text = summaryText(host);
+    expect(text).toContain("1 active Project");
+    expect(text).not.toContain(" of ");
   });
 
   it("pluralises to the singular when the total is exactly one match", async () => {
@@ -171,22 +183,22 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
       search: { query: "smith", matching: 1, total: 1 },
     });
 
-    expect(host.querySelector('[data-testid="dashboard-search-chip"]')?.textContent).toContain("1 of 1 project · 'smith'");
+    expect(summaryText(host)).toContain("1 of 1 active Project");
+    expect(summaryText(host)).not.toContain("Projects");
   });
 
-  it("renders the user's query exactly as typed, not uppercased by the Badge's own caps styling", async () => {
+  it("renders the user's query exactly as typed in the field, and never echoes it into the header", async () => {
     await renderAt("/?view=table&q=Probe", {
       projects: match,
       board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
       search: { query: "Probe", matching: 1, total: 3 },
     });
 
-    const queryNode = host.querySelector('[data-testid="dashboard-search-chip-query"]');
-    expect(queryNode?.textContent).toBe("'Probe'");
-    expect(queryNode?.className).toContain("normal-case");
+    expect(host.querySelector<HTMLInputElement>('[data-testid="dashboard-search"]')?.value).toBe("Probe");
+    expect(host.querySelector('[data-testid="dashboard-header"]')!.textContent).not.toContain("Probe");
   });
 
-  it("expands the chip's clear target past its 12px glyph, keeping an accessible name (#217 design-review, item 2)", async () => {
+  it("keeps an accessible name on the in-field clear button, inside the search field (#427, was the chip's clear target)", async () => {
     await renderAt("/?view=table&q=smith", {
       projects: match,
       board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
@@ -195,68 +207,64 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
 
     const clearButton = host.querySelector<HTMLButtonElement>('[aria-label="Clear search"]');
     expect(clearButton, "no clear button rendered — the assertions below would be vacuous").not.toBeNull();
-    expect(clearButton!.className).toContain("relative");
-    expect(clearButton!.className).toContain("after:absolute");
-    expect(clearButton!.className).toContain("after:-inset-2");
+    expect(clearButton!.tagName).toBe("BUTTON");
+    expect(clearButton!.getAttribute("type")).toBe("button");
+    expect(host.querySelector('[data-testid="dashboard-search-field"]')!.contains(clearButton!)).toBe(true);
   });
 
-  // SANCTIONED REWRITE (#217 chip-row): the chip moved out of the toolbar entirely, into a sibling
-  // "active search" summary row, so the old "not the same parent as New shoot" assertion no longer
-  // states the real contract. The toolbar's own geometry must never depend on the query -- the chip
-  // is not inside it at all, and the summary reads as the next thing on the page, not a toolbar
-  // child.
-  it("keeps the chip out of the toolbar entirely: it renders in a sibling summary row, reading toolbar -> active search -> results (#217 chip-row)", async () => {
+  it("lays the page out header -> view bar -> region, with the summary in the header and the search in the bar (#217 chip-row, #427)", async () => {
     await renderAt("/?view=table&q=smith", {
       projects: match,
       board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
       search: { query: "smith", matching: 1, total: 3 },
     });
 
-    assertToolbarChipSeparation(host);
+    assertHeaderBarSeparation(host);
   });
 
-  it("holds the toolbar/summary separation in Kanban after switching from a searched List (#217 chip-row)", async () => {
+  it("holds the header/bar separation in Board after switching from a searched Table (#217 chip-row, #427)", async () => {
     await renderAt("/?view=table&q=smith", {
       projects: match,
       board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
       search: { query: "smith", matching: 1, total: 3 },
     });
-    assertToolbarChipSeparation(host);
+    assertHeaderBarSeparation(host);
 
-    const kanban = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Board");
-    expect(kanban, "no Kanban control rendered — the assertion below would be vacuous").not.toBeUndefined();
+    const kanban = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((button) => button.textContent === "Board");
+    expect(kanban, "no Board tab rendered — the assertion below would be vacuous").not.toBeUndefined();
     await act(async () => {
       kanban!.click();
       await Promise.resolve();
     });
     await settle();
 
-    // Prove the switch happened -- otherwise this would merely repeat the List assertion.
+    // Prove the switch happened -- otherwise this would merely repeat the Table assertion.
     expect(window.location.search).toContain("view=board");
-    assertToolbarChipSeparation(host);
+    assertHeaderBarSeparation(host);
   });
 
-  it("keeps the toolbar's children identical, and the summary absent, when there is no search (#217 chip-row) — proves the toolbar's geometry does not depend on the query", async () => {
+  it("keeps the header and view bar's children identical with and without a search (#217 chip-row, #427) — proves the page chrome's geometry does not depend on the query", async () => {
     await renderAt("/?view=table", {
       projects: full,
       board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
     });
-    const toolbarUnsearched = host.querySelector('[data-testid="dashboard-toolbar"]');
-    expect(toolbarUnsearched, "no toolbar rendered — the assertions below would be vacuous").not.toBeNull();
-    const shapeUnsearched = toolbarShape(toolbarUnsearched!);
-    expect(host.querySelector('[data-testid="dashboard-search-summary"]')).toBeNull();
+    const barUnsearched = host.querySelector('[data-testid="dashboard-view-bar"]');
+    const headerUnsearched = host.querySelector('[data-testid="dashboard-header"]');
+    expect(barUnsearched, "no view bar rendered — the assertions below would be vacuous").not.toBeNull();
+    expect(headerUnsearched, "no header rendered — the assertions below would be vacuous").not.toBeNull();
+    const barShapeUnsearched = chromeShape(barUnsearched!);
+    const headerShapeUnsearched = chromeShape(headerUnsearched!);
+    expect(host.querySelector('button[aria-label="Clear search"]')).toBeNull();
 
     await renderAt("/?view=table&q=smith", {
       projects: match,
       board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
       search: { query: "smith", matching: 1, total: 3 },
     });
-    const toolbarSearched = host.querySelector('[data-testid="dashboard-toolbar"]');
-    expect(toolbarSearched, "no toolbar rendered — the assertions below would be vacuous").not.toBeNull();
-    const shapeSearched = toolbarShape(toolbarSearched!);
-    expect(host.querySelector('[data-testid="dashboard-search-summary"]')).not.toBeNull();
+    expect(host.querySelector('button[aria-label="Clear search"]')).not.toBeNull();
 
-    expect(shapeSearched).toEqual(shapeUnsearched);
+    expect(chromeShape(host.querySelector('[data-testid="dashboard-view-bar"]')!)).toEqual(barShapeUnsearched);
+    expect(chromeShape(host.querySelector('[data-testid="dashboard-header"]')!)).toEqual(headerShapeUnsearched);
   });
 
   it("titles a zero-result search 'No matches.', not the unsearched empty-Dashboard copy (#217 design-review, item 9)", async () => {
@@ -277,7 +285,7 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
       board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
       search: { query: "smith", matching: 1, total: 3 },
     });
-    const kanban = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Board");
+    const kanban = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((button) => button.textContent === "Board");
     expect(kanban).not.toBeUndefined();
     await act(async () => {
       kanban!.click();
@@ -317,7 +325,8 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
     });
     await settle();
 
-    expect(host.querySelector('[data-testid="dashboard-search-chip"]'), "chip still shown after clearing").toBeNull();
+    expect(host.querySelector('button[aria-label="Clear search"]'), "clear button still shown after clearing").toBeNull();
+    expect(summaryText(host), "summary still names the search after clearing").not.toContain(" of ");
     const callsAfterClear = apiGetMock.mock.calls.slice(callsBeforeClear).map(([path]) => path).filter((path) => path.startsWith("/api/projects"));
     for (const path of callsAfterClear) {
       expect(path, `a request after clearing the search still carried the stale q: ${path}`).not.toContain("q=smith");

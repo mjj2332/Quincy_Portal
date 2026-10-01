@@ -127,7 +127,7 @@ describe("Dashboard Gantt routing", () => {
   }
 
   function switcherButton(label: string): HTMLButtonElement | undefined {
-    return [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === label);
+    return [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] [role="tab"]')].find((button) => button.textContent === label);
   }
 
   it("shows Gantt only for a capable role, with its own data-focus-key", async () => {
@@ -145,7 +145,7 @@ describe("Dashboard Gantt routing", () => {
     await act(async () => { switcherButton("Timeline")!.click(); await Promise.resolve(); });
     expect(`${window.location.pathname}${window.location.search}`).toBe("/?view=timeline");
     expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("timeline");
-    expect(switcherButton("Timeline")?.getAttribute("data-active")).toBe("true");
+    expect(switcherButton("Timeline")?.getAttribute("aria-selected")).toBe("true");
     expect(host.querySelector('[data-testid="dashboard-gantt-surface"]')).toBeTruthy();
     expect(host.querySelector('[data-testid="dashboard-board"]')).toBeNull();
   });
@@ -176,17 +176,17 @@ describe("Dashboard Gantt routing", () => {
     window.history.replaceState(null, "", "/?view=timeline");
     await act(async () => { root.render(<DashboardRouteHarness />); await Promise.resolve(); await Promise.resolve(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
-    expect(switcherButton("Timeline")?.getAttribute("data-active")).toBe("true");
+    expect(switcherButton("Timeline")?.getAttribute("aria-selected")).toBe("true");
     expect(host.querySelector('[data-testid="dashboard-gantt-surface"]')).toBeTruthy();
 
     window.history.replaceState(null, "", "/?view=table");
     await act(async () => { window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
-    expect(switcherButton("Table")?.getAttribute("data-active")).toBe("true");
+    expect(switcherButton("Table")?.getAttribute("aria-selected")).toBe("true");
     expect(host.querySelector('[data-testid="dashboard-gantt-surface"]')).toBeNull();
 
     window.history.replaceState(null, "", "/?view=timeline");
     await act(async () => { window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
-    expect(switcherButton("Timeline")?.getAttribute("data-active")).toBe("true");
+    expect(switcherButton("Timeline")?.getAttribute("aria-selected")).toBe("true");
     expect(host.querySelector('[data-testid="dashboard-gantt-surface"]')).toBeTruthy();
   });
 
@@ -197,14 +197,14 @@ describe("Dashboard Gantt routing", () => {
     window.history.pushState(null, "", "/?view=timeline");
     await act(async () => { window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
     expect(host.textContent).not.toContain("Archived projects");
-    expect(switcherButton("Timeline")?.getAttribute("data-active")).toBe("true");
+    expect(switcherButton("Timeline")?.getAttribute("aria-selected")).toBe("true");
   });
 
   it("coerces and repairs a stored Gantt preference for a role without the capability", async () => {
     window.localStorage.setItem("quincy:dashboard:view", "timeline");
     await render({ role: "photographer" });
     expect(switcherButton("Timeline")).toBeUndefined();
-    expect([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Board")?.getAttribute("data-active")).toBe("true");
+    expect([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Board")?.getAttribute("aria-selected")).toBe("true");
     expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("board");
     expect(host.querySelector('[data-testid="dashboard-gantt-surface"]')).toBeNull();
   });
@@ -219,43 +219,48 @@ describe("Dashboard Gantt routing", () => {
     expect(ganttPropsState.value?.q).toBe("smith");
   });
 
-  describe("search chip names what the Gantt shows (#260)", () => {
+  describe("the header summary names what the Timeline shows (#260, #427)", () => {
     async function renderAt(location: string) {
       window.history.replaceState(null, "", location);
       await act(async () => { root.render(<DashboardRouteHarness />); await Promise.resolve(); await Promise.resolve(); });
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
     }
-    const chip = () => host.querySelector('[data-testid="dashboard-search-chip"]')?.textContent ?? "";
+    const summary = () => host.querySelector('[data-testid="dashboard-summary"]')?.textContent ?? "";
     const reportShown = async (count: number | null) => {
       await act(async () => { (ganttPropsState.value?.onShownProjectsChange as (count: number | null) => void)(count); await Promise.resolve(); });
     };
 
     beforeEach(() => {
-      apiGetMock.mockImplementation(() => Promise.resolve({ ...projectResponse(), search: { query: "Schedule", matching: 2, total: 31 } }));
+      const base = projectResponse();
+      const two = { ...base, projects: [base.projects[0]!, { ...base.projects[0]!, id: "44444444-4444-4444-8444-444444444444", street: "4 Board Street" }] };
+      apiGetMock.mockImplementation(() => Promise.resolve({ ...two, search: { query: "Schedule", matching: 2, total: 31 } }));
     });
 
-    it("names both counts when the Gantt's filters hide a match", async () => {
+    it("names both counts when the Timeline's filters hide a match", async () => {
       await renderAt("/?view=timeline&stages=raw_review&completed=1&q=Schedule");
-      expect(chip()).toContain("2 of 31 projects · 'Schedule'");
+      expect(summary()).toContain("2 of 31 active Projects");
+      expect(summary()).not.toContain("shown");
       await reportShown(1);
-      expect(chip()).toContain("2 of 31 projects match · 1 shown · 'Schedule'");
+      expect(summary()).toContain("2 of 31 active Projects · 1 shown");
     });
 
-    it("stays the plain search count when the Gantt shows every match, or has not reported", async () => {
+    it("stays the plain search count when the Timeline shows every match, or has not reported", async () => {
       await renderAt("/?view=timeline&q=Schedule");
       await reportShown(2);
-      expect(chip()).toContain("2 of 31 projects · 'Schedule'");
+      expect(summary()).toContain("2 of 31 active Projects");
+      expect(summary()).not.toContain("shown");
       await reportShown(null);
-      expect(chip()).toContain("2 of 31 projects · 'Schedule'");
+      expect(summary()).toContain("2 of 31 active Projects");
+      expect(summary()).not.toContain("shown");
     });
 
-    it("drops a Gantt's shown count once the Dashboard leaves the Gantt", async () => {
+    it("drops a Timeline's shown count once the Dashboard leaves the Timeline", async () => {
       await renderAt("/?view=timeline&q=Schedule");
       await reportShown(1);
       await act(async () => { switcherButton("Table")!.click(); await Promise.resolve(); });
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
-      expect(chip()).toContain("2 of 31 projects · 'Schedule'");
-      expect(chip()).not.toContain("shown");
+      expect(summary()).toContain("2 of 31 active Projects");
+      expect(summary()).not.toContain("shown");
     });
   });
 
@@ -274,7 +279,7 @@ describe("Dashboard Gantt routing", () => {
 
     it("applies a cold deep link's filters on the first render", async () => {
       await renderAt("/?view=timeline&stages=raw_review&completed=1");
-      expect(switcherButton("Timeline")?.getAttribute("data-active")).toBe("true");
+      expect(switcherButton("Timeline")?.getAttribute("aria-selected")).toBe("true");
       expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: ["raw_review"], delivered: false, completed: true });
       expect(url()).toBe("/?view=timeline&stages=raw_review&completed=1");
     });
@@ -423,7 +428,7 @@ describe("Dashboard Gantt routing", () => {
       expect(url()).toBe("/?view=timeline&completed=1&delivered=1");
       expectApplied({ delivered: true, completed: true });
       expectRequestedSinceTraversal({ delivered: true, completed: true });
-      expect(switcherButton("Timeline")?.getAttribute("data-active")).toBe("true");
+      expect(switcherButton("Timeline")?.getAttribute("aria-selected")).toBe("true");
     });
 
     it("starts the Gantt with default filters when switching in from another view", async () => {

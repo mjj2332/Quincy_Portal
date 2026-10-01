@@ -295,8 +295,8 @@ function renderedDashboardBranch(host: ParentNode): "table" | "board" | "calenda
 /** The Dashboard's own segmented control — reflects `view` directly, independent of whether the
  * data underneath it has loaded yet, unlike `renderedDashboardBranch`'s content markers. */
 function dashboardViewControlActive(host: ParentNode): string | null {
-  return [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')]
-    .find((button) => button.dataset.active === "true")?.textContent?.trim() ?? null;
+  return [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] [role="tab"]')]
+    .find((button) => button.getAttribute("aria-selected") === "true")?.textContent?.trim() ?? null;
 }
 
 /**
@@ -384,16 +384,9 @@ function lastBreadcrumbSegment(host: ParentNode): string | null {
   return host.querySelector('[data-testid="shell-breadcrumb"] [aria-current="page"]')?.textContent?.trim() ?? null;
 }
 
-async function openShellSearch(host: ParentNode) {
-  await click(host.querySelector<HTMLElement>('[data-testid="shell-search-trigger"]')!);
-  await settle();
-}
-
-/** The popover closes when the rail link click lands; the draft lives in the store, so reopening
- * it must show the same text. */
-async function reopenedSearchValue(host: ParentNode): Promise<string | undefined> {
-  await openShellSearch(host);
-  return document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')?.value;
+/** The Dashboard toolbar's search input (#427), or undefined while no Dashboard is mounted. */
+function dashboardSearchInput() {
+  return document.querySelector<HTMLInputElement>('[data-testid="dashboard-search"]');
 }
 
 function currentUrl() {
@@ -403,7 +396,13 @@ function currentUrl() {
 /** One of the Dashboard's own "Table"/"Board"/"Calendar" segmented-control buttons — `disabled`
  * reflects `interactionBlocked || calendarInteractionBlocked` directly (`screens/Dashboard.tsx`). */
 function viewButton(host: ParentNode, label: "Table" | "Board" | "Calendar"): HTMLButtonElement | undefined {
-  return findByText([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')], label);
+  return findByText([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] [role="tab"]')], label);
+}
+
+/** A Base UI tab disables by `aria-disabled` (it stays focusable), a native button by `disabled`. */
+function tabDisabled(button: HTMLButtonElement | undefined): boolean | undefined {
+  if (!button) return undefined;
+  return button.disabled || button.getAttribute("aria-disabled") === "true";
 }
 
 // Two active Stages — enough for a cross-Stage drag between the single fixture project's own
@@ -720,7 +719,7 @@ describe("#152 — a route change mid-interaction releases the barriers the unmo
     await dropDeadline();
 
     // Preconditions: the drop opened the confirm and the accept gate is blocking navigation.
-    expect(viewButton(host, "Table")?.disabled).toBe(true);
+    expect(tabDisabled(viewButton(host, "Table"))).toBe(true);
     expect(deadlineConfirm()).not.toBeNull();
 
     await act(async () => { window.history.back(); await new Promise((resolve) => setTimeout(resolve, 0)); });
@@ -728,9 +727,9 @@ describe("#152 — a route change mid-interaction releases the barriers the unmo
 
     expect(host.querySelector('[data-testid="event-calendar-body"]')).toBeNull();
     expect(deadlineConfirm()).toBeNull();
-    expect(viewButton(host, "Table")?.disabled).toBe(false);
-    expect(viewButton(host, "Board")?.disabled).toBe(false);
-    expect(viewButton(host, "Calendar")?.disabled).toBe(false);
+    expect(tabDisabled(viewButton(host, "Table"))).toBe(false);
+    expect(tabDisabled(viewButton(host, "Board"))).toBe(false);
+    expect(tabDisabled(viewButton(host, "Calendar"))).toBe(false);
     expect(currentUrl()).toBe("/?view=table");
     expect(renderedDashboardBranch(host)).toBe("table");
     expect(activeRailChild(host)).toBe("Table");
@@ -756,7 +755,7 @@ describe("#152 — a route change mid-interaction releases the barriers the unmo
     const host = await renderApp("/?view=table");
     await clickRailChild(host, "Calendar");
     await dropDeadline();
-    expect(viewButton(host, "Table")?.disabled).toBe(true);
+    expect(tabDisabled(viewButton(host, "Table"))).toBe(true);
 
     await click(document.querySelector('[data-testid="gantt-deadline-confirm-action"]')!);
     await settle();
@@ -770,15 +769,15 @@ describe("#152 — a route change mid-interaction releases the barriers the unmo
     expect(activeRailChild(host)).toBe("Table");
     expect(lastBreadcrumbSegment(host)).toBe("Table");
     expect(readDashboardView()).toBe("table");
-    expect(viewButton(host, "Table")?.disabled).toBe(false);
-    expect(viewButton(host, "Board")?.disabled).toBe(false);
-    expect(viewButton(host, "Calendar")?.disabled).toBe(false);
+    expect(tabDisabled(viewButton(host, "Table"))).toBe(false);
+    expect(tabDisabled(viewButton(host, "Board"))).toBe(false);
+    expect(tabDisabled(viewButton(host, "Calendar"))).toBe(false);
 
     await act(async () => { resolvePut({ changed: true, current: { version: 2, deadline: { localCivil: "2026-09-20T09:00", instant: "2026-09-19T23:00:00.000Z" }, reminderOffsetsMinutes: [] } }); await Promise.resolve(); });
     await settle();
 
-    expect(viewButton(host, "Table")?.disabled).toBe(false);
-    expect(viewButton(host, "Board")?.disabled).toBe(false);
+    expect(tabDisabled(viewButton(host, "Table"))).toBe(false);
+    expect(tabDisabled(viewButton(host, "Board"))).toBe(false);
     expect(apiPutMock).toHaveBeenCalledTimes(1);
   });
 
@@ -789,14 +788,14 @@ describe("#152 — a route change mid-interaction releases the barriers the unmo
     await clickRailChild(host, "Board");
 
     await dndStart(ACTIVE_PROJECT_ID);
-    expect(viewButton(host, "Table")?.disabled).toBe(true);
+    expect(tabDisabled(viewButton(host, "Table"))).toBe(true);
 
     await act(async () => { window.history.back(); await new Promise((resolve) => setTimeout(resolve, 0)); });
     await settle();
 
-    expect(viewButton(host, "Table")?.disabled).toBe(false);
-    expect(viewButton(host, "Board")?.disabled).toBe(false);
-    expect(viewButton(host, "Calendar")?.disabled).toBe(false);
+    expect(tabDisabled(viewButton(host, "Table"))).toBe(false);
+    expect(tabDisabled(viewButton(host, "Board"))).toBe(false);
+    expect(tabDisabled(viewButton(host, "Calendar"))).toBe(false);
     expect(currentUrl()).toBe("/?view=table");
     expect(renderedDashboardBranch(host)).toBe("table");
     expect(activeRailChild(host)).toBe("Table");
@@ -811,7 +810,7 @@ describe("#152 — a route change mid-interaction releases the barriers the unmo
     await clickRailChild(host, "Board");
 
     await dndStart(ACTIVE_PROJECT_ID);
-    expect(viewButton(host, "Table")?.disabled).toBe(true);
+    expect(tabDisabled(viewButton(host, "Table"))).toBe(true);
     // Captured before the Board unmounts — dnd-kit does not detach an active sensor when
     // `DndContext` unmounts, so this handler can still fire after the click below.
     const deadHandlers = dnd.handlers.at(-1);
@@ -823,8 +822,8 @@ describe("#152 — a route change mid-interaction releases the barriers the unmo
     expect(activeRailChild(host)).toBe("Table");
     expect(lastBreadcrumbSegment(host)).toBe("Table");
     expect(readDashboardView()).toBe("table");
-    expect(viewButton(host, "Table")?.disabled).toBe(false);
-    expect(viewButton(host, "Board")?.disabled).toBe(false);
+    expect(tabDisabled(viewButton(host, "Table"))).toBe(false);
+    expect(tabDisabled(viewButton(host, "Board"))).toBe(false);
 
     const end = deadHandlers?.props.onDragEnd as ((event: unknown) => void) | undefined;
     if (!end) throw new Error("No onDragEnd handler captured");
@@ -850,27 +849,30 @@ function railParentDashboardLink(host: ParentNode): HTMLAnchorElement | undefine
     .find((link) => link.textContent?.trim() === "Dashboard");
 }
 
-describe("the rail's top-level Dashboard link carries the live off-Dashboard draft (#217 fix round 8, item 1)", () => {
-  async function typeIntoShellSearch(host: ParentNode, value: string) {
-    await openShellSearch(host);
-    const input = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+describe("the rail's top-level Dashboard link carries the live off-Dashboard draft (#217 fix round 8, item 1; #427)", () => {
+  // #427: the search lives in the Dashboard toolbar, so an "off-Dashboard draft" is one typed on the
+  // Dashboard and carried across a rail navigation to another screen.
+  async function typeThenLeave(host: ParentNode, value: string) {
+    const input = dashboardSearchInput()!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
       input.dispatchEvent(new Event("input", { bubbles: true }));
       await Promise.resolve();
     });
+    await click(host.querySelector('[data-testid="navigation-rail-link"][href="/admin"]')!);
+    expect(currentUrl()).toBe("/admin");
   }
 
   it("clicking Dashboard mid-debounce (before the 300ms commit) lands on ?q=smith, keeps the input, and the projects request carries q", async () => {
-    const host = await renderApp("/admin");
-    await typeIntoShellSearch(host, "smith");
+    const host = await renderApp("/");
+    await typeThenLeave(host, "smith");
     // Still inside the 300ms debounce — no commit has happened anywhere yet.
     expect(railParentDashboardLink(host)!.getAttribute("href")).toBe("/?q=smith");
 
     await click(railParentDashboardLink(host)!);
 
     expect(currentUrl()).toBe("/?q=smith");
-    expect(document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')?.value ?? await reopenedSearchValue(host)).toBe("smith");
+    expect(dashboardSearchInput()?.value).toBe("smith");
     expect(apiGetMock.mock.calls.map(([path]) => path).some((path) => path.startsWith("/api/projects") && path.includes("q=smith"))).toBe(true);
   });
 
@@ -880,14 +882,14 @@ describe("the rail's top-level Dashboard link carries the live off-Dashboard dra
   // carries the live draft (`withLiveDashboardSearch`, `lib/app-router.tsx`), so clicking it is
   // what lands on `?q=smith`, independent of whether the dropped timer fired first.
   it("clicking Dashboard after the 300ms debounce fires (and is dropped, off-Dashboard) still lands on ?q=smith via the rail href, keeps the input, and the projects request carries q", async () => {
-    const host = await renderApp("/admin");
-    await typeIntoShellSearch(host, "smith");
+    const host = await renderApp("/");
+    await typeThenLeave(host, "smith");
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
 
     await click(railParentDashboardLink(host)!);
 
     expect(currentUrl()).toBe("/?q=smith");
-    expect(document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')?.value ?? await reopenedSearchValue(host)).toBe("smith");
+    expect(dashboardSearchInput()?.value).toBe("smith");
     expect(apiGetMock.mock.calls.map(([path]) => path).some((path) => path.startsWith("/api/projects") && path.includes("q=smith"))).toBe(true);
   });
 
@@ -903,7 +905,7 @@ describe("the rail's top-level Dashboard link carries the live off-Dashboard dra
  * `Dashboard` under `<StrictMode>` but synthesised the arrival itself — it pushed `/?q=smith` onto
  * `window.history` directly and drove the draft-to-URL sync through a LOCAL `ArrivalSync`
  * stand-in, never the real rail click/Enter path or the real `ShellRoute`. Hosted here instead,
- * against the real `App` this file already mounts: types into the REAL `ShellSearch` at `/admin`
+ * against the real `App` this file already mounts: types into the REAL `DashboardSearch`, leaves to `/admin`
  * under `<StrictMode>`, then arrives at Dashboard through (i) a REAL click on the rail's parent
  * Dashboard link and (ii) a REAL Enter keydown — asserting against a spy on `locationStore()`'s
  * own `push`/`replace`, not `window.location.search` alone, so a same-URL write that string
@@ -914,27 +916,18 @@ describe("the rail's top-level Dashboard link carries the live off-Dashboard dra
 describe("off-Dashboard, the draft reaches the URL exactly once through the rail click/Enter itself (never the dropped debounce), under StrictMode (#217 fix round 9, item 2)", () => {
   afterEach(() => { vi.useRealTimers(); });
 
-  async function typeIntoShellSearchFakeTimers(host: ParentNode, value: string) {
-    await act(async () => {
-      host.querySelector<HTMLElement>('[data-testid="shell-search-trigger"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
-    });
-    await act(async () => { await vi.advanceTimersByTimeAsync(50); });
-    const input = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+  /** Types into the Dashboard toolbar's search, then leaves for /admin through the rail (the draft survives in the store). */
+  async function typeThenLeaveFakeTimers(host: ParentNode, value: string) {
+    const input = dashboardSearchInput()!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
-  }
-
-  /** The popover may have closed on arrival; the draft lives in the store, so reopen and read it. */
-  async function searchValueFakeTimers(host: ParentNode) {
-    if (!document.querySelector('[data-testid="shell-search"]')) {
-      await act(async () => {
-        host.querySelector<HTMLElement>('[data-testid="shell-search-trigger"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
-      });
-      await act(async () => { await vi.advanceTimersByTimeAsync(50); });
-    }
-    return document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')?.value;
+    await act(async () => {
+      host.querySelector<HTMLElement>('[data-testid="navigation-rail-link"][href="/admin"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+    expect(currentUrl()).toBe("/admin");
   }
 
   async function renderAppUnderStrictModeFakeTimers(path: string) {
@@ -949,8 +942,8 @@ describe("off-Dashboard, the draft reaches the URL exactly once through the rail
 
   it("(i) clicking the rail's parent Dashboard link", async () => {
     vi.useFakeTimers();
-    const host = await renderAppUnderStrictModeFakeTimers("/admin");
-    await typeIntoShellSearchFakeTimers(host, "smith");
+    const host = await renderAppUnderStrictModeFakeTimers("/");
+    await typeThenLeaveFakeTimers(host, "smith");
 
     const pushSpy = vi.spyOn(locationStore(), "push");
     const replaceSpy = vi.spyOn(locationStore(), "replace");
@@ -963,7 +956,7 @@ describe("off-Dashboard, the draft reaches the URL exactly once through the rail
     await act(async () => { await vi.advanceTimersByTimeAsync(50); });
 
     expect(currentUrl()).toBe("/?q=smith");
-    expect(await searchValueFakeTimers(host)).toBe("smith");
+    expect(dashboardSearchInput()?.value).toBe("smith");
 
     const writesAtArrival = pushSpy.mock.calls.length + replaceSpy.mock.calls.length;
     // A full second past the original 300ms debounce — no LATER write occurs: the arrival itself
@@ -976,22 +969,22 @@ describe("off-Dashboard, the draft reaches the URL exactly once through the rail
     replaceSpy.mockRestore();
   });
 
-  it("(ii) pressing Enter in the ShellSearch input", async () => {
+  it("(ii) pressing ⌘K, which lands on the Dashboard carrying the draft (#427)", async () => {
     vi.useFakeTimers();
-    const host = await renderAppUnderStrictModeFakeTimers("/admin");
-    await typeIntoShellSearchFakeTimers(host, "smith");
+    const host = await renderAppUnderStrictModeFakeTimers("/");
+    await typeThenLeaveFakeTimers(host, "smith");
 
     const pushSpy = vi.spyOn(locationStore(), "push");
     const replaceSpy = vi.spyOn(locationStore(), "replace");
 
-    const input = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     await act(async () => {
-      input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }));
+      window.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "k", metaKey: true }));
     });
     await act(async () => { await vi.advanceTimersByTimeAsync(50); });
 
     expect(currentUrl()).toBe("/?q=smith");
-    expect(await searchValueFakeTimers(host)).toBe("smith");
+    expect(dashboardSearchInput()?.value).toBe("smith");
+    expect(document.activeElement).toBe(dashboardSearchInput());
 
     const writesAtArrival = pushSpy.mock.calls.length + replaceSpy.mock.calls.length;
     await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
@@ -1003,6 +996,13 @@ describe("off-Dashboard, the draft reaches the URL exactly once through the rail
   });
 });
 
+/** The header is the first child; the view bar follows it directly, or follows the Active/Archived scope row that stays until #428 (admin only). */
+function expectViewBarFollowsHeading(main: Element, label: string) {
+  const children = [...main.children].map((child) => child.getAttribute("data-testid"));
+  expect(children[0], label).toBe("dashboard-header");
+  expect(children[1] === "dashboard-view-bar" || (children[1] === "dashboard-toolbar" && children[2] === "dashboard-view-bar"), `${label}: ${children.join(",")}`).toBe(true);
+}
+
 describe("the Dashboard sheds the Notice board and summary strip; /notices hosts the board (#334)", () => {
   function signInAs(role: string) {
     sessionState.value = { data: { user: { id: "r1", name: "Role", role } }, isPending: false, refetch: vi.fn<() => Promise<void>>() };
@@ -1013,14 +1013,14 @@ describe("the Dashboard sheds the Notice board and summary strip; /notices hosts
     ["editor", ["table", "board", "timeline", "calendar"]],
     ["photographer", ["table", "board"]],
     ["external_editor", ["table"]],
-  ])("%s: no Notice board and no project summary on any view, the toolbar follows the heading", async (role, views) => {
+  ])("%s: no Notice board and no project summary on any view, the view bar follows the heading", async (role, views) => {
     signInAs(role);
     for (const view of views) {
       const host = await renderApp(`/?view=${view}`);
       expect(host.querySelector('[data-testid="notice-board-marker"]'), `${role} ${view}`).toBeNull();
       expect(host.querySelector('[aria-label="Project summary"]'), `${role} ${view}`).toBeNull();
       const main = host.querySelector("main")!;
-      expect(main.children[1]?.getAttribute("data-testid"), `${role} ${view}`).toBe("dashboard-toolbar");
+      expectViewBarFollowsHeading(main, `${role} ${view}`);
       if (root) await act(async () => root!.unmount());
       root = null;
       document.body.replaceChildren();
@@ -1032,7 +1032,7 @@ describe("the Dashboard sheds the Notice board and summary strip; /notices hosts
     const host = await renderApp(`/?view=${view}`);
     expect(host.querySelector('[data-testid="notice-board-marker"]'), view).toBeNull();
     expect(host.querySelector('[aria-label="Project summary"]'), view).toBeNull();
-    expect(host.querySelector("main")!.children[1]?.getAttribute("data-testid"), view).toBe("dashboard-toolbar");
+    expectViewBarFollowsHeading(host.querySelector("main")!, view);
   });
 
   it("admin: the Active/Archived toggle still works and the Archived scope has no strip or board either", async () => {
@@ -1050,7 +1050,7 @@ describe("the Dashboard sheds the Notice board and summary strip; /notices hosts
     expect(main.querySelector('[data-testid="notice-board-marker"]')).not.toBeNull();
     const item = [...host.querySelectorAll('[data-testid="navigation-rail-link"]')].find((a) => a.textContent?.trim() === "Notice board")!;
     expect(item.getAttribute("aria-current")).toBe("page");
-    expect(host.querySelector('[data-testid="dashboard-toolbar"]')).toBeNull();
+    expect(host.querySelector('[data-testid="dashboard-view-bar"]')).toBeNull();
   });
 
   it("the rail item mounts the board from the Dashboard, and Back returns to a Dashboard without it", async () => {
@@ -1063,7 +1063,7 @@ describe("the Dashboard sheds the Notice board and summary strip; /notices hosts
     await act(async () => { window.history.back(); await new Promise((resolve) => setTimeout(resolve, 20)); });
     await settle();
     expect(currentUrl()).toBe("/");
-    expect(host.querySelector('[data-testid="dashboard-toolbar"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="dashboard-view-bar"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="notice-board-marker"]')).toBeNull();
   });
 

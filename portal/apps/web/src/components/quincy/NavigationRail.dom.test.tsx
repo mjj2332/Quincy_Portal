@@ -399,20 +399,18 @@ function accountTrigger() { return host.querySelector<HTMLElement>('[data-testid
 function follows(a: Element, b: Element) { return Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING); }
 
 describe("NavigationRail variant — rail (the always-icon column, #426)", () => {
-  it("orders the column logo, search, nav, then bell, settings and the account avatar at the foot", async () => {
+  it("orders the column logo, nav, then bell, settings and the account avatar at the foot", async () => {
     await renderInProvider(navigationFor("/"));
     const logo = testids("navigation-rail-brand")[0]!;
-    const search = host.querySelector('[data-testid="shell-search-trigger"]')!;
     const nav = host.querySelector("nav")!;
     const bell = bellTrigger()!;
     const settings = settingsLink()!;
     const account = accountTrigger()!;
-    for (const [label, element] of Object.entries({ logo, search, nav, bell, settings, account })) {
+    for (const [label, element] of Object.entries({ logo, nav, bell, settings, account })) {
       expect(element, label).not.toBeNull();
     }
 
-    expect(follows(logo, search)).toBe(true);
-    expect(follows(search, nav)).toBe(true);
+    expect(follows(logo, nav)).toBe(true);
     expect(follows(nav, bell)).toBe(true);
     expect(follows(bell, settings)).toBe(true);
     expect(follows(settings, account)).toBe(true);
@@ -504,6 +502,19 @@ describe("the settings icon (#426)", () => {
   it("is absent from the Sheet, which keeps a labelled preferences row in its account menu instead", async () => {
     await renderInProvider(navigationFor("/"), { variant: "sheet" });
     expect(settingsLink()).toBeNull();
+  });
+});
+
+// #427: the project search moved to the Dashboard toolbar (ADR 0015). Neither variant renders a
+// search control — no input, no icon trigger, no popover — at any width.
+describe("NavigationRail carries no search control (#427)", () => {
+  it.each(["rail", "sheet"] as const)("%s: no search input, trigger or popover, on or off the Dashboard", async (variant) => {
+    for (const location of ["/", "/?view=board", "/admin"]) {
+      await renderInProvider(navigationFor(location), { variant });
+      expect(host.querySelector('input, [role="searchbox"], [role="combobox"]'), `${variant} ${location}`).toBeNull();
+      expect(document.querySelector('[data-testid="shell-search"], [data-testid="shell-search-trigger"], [data-testid="shell-search-field"]')).toBeNull();
+      expect(host.querySelector('[aria-label="Search projects"]')).toBeNull();
+    }
   });
 });
 

@@ -8,6 +8,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard } from "./Dashboard";
+import { openDisplay, sortRadioLabels } from "./dashboard-display-test-helpers";
 
 // happy-dom lacks `Element.getAnimations()`, which Base UI's ScrollArea (the Board's horizontal
 // scroll, `kanban2/board.tsx`) calls on a timer after mount. The no-op stub means "no active
@@ -70,15 +71,13 @@ describe("Dashboard Kanban sort control — Priority gate (render-gate absence h
     vi.useRealTimers();
   });
 
-  it("never offers 'Priority' in the real Select's option list to an unauthorized user", async () => {
+  it("never offers 'Priority' in the real Display menu's radio list to an unauthorized user", async () => {
     await act(async () => { root!.render(<Dashboard currentUserId="photographer-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
     await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-card"]')).not.toBeNull());
-    const trigger = document.querySelector<HTMLButtonElement>('[aria-label="Sort Kanban board"][role="combobox"]')!;
-    expect(trigger).not.toBeNull();
-    await act(async () => { trigger.click(); await Promise.resolve(); });
-    const options = [...document.querySelectorAll<HTMLElement>('[aria-label="Sort Kanban board"][role="listbox"] [role="option"]')];
-    expect(options.length).toBeGreaterThan(0);
-    expect(options.some((option) => option.textContent === "Priority")).toBe(false);
-    expect(options.map((option) => option.textContent)).toEqual(["Board order", "Shoot date ↑", "Shoot date ↓"]);
+    await openDisplay();
+    const labels = sortRadioLabels();
+    expect(labels.length).toBeGreaterThan(0);
+    expect(labels.includes("Priority")).toBe(false);
+    expect(labels).toEqual(["Board order", "Shoot date ↑", "Shoot date ↓"]);
   });
 });

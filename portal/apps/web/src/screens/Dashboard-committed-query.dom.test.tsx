@@ -12,9 +12,6 @@ import { ApiError } from "../lib/api";
 import { locationStore, parseStaffLocation } from "../lib/router";
 import { dashboardProjectsKey } from "../lib/dashboard-projects";
 import { dashboardSearchOf } from "@quincy/shared";
-import { SidebarProvider } from "@/components/reui/sidebar";
-import { TooltipProvider } from "@/components/reui/tooltip";
-import { ShellSearch } from "../components/quincy/ShellSearch";
 import {
   __getDashboardSearchSnapshotForTest,
   __resetDashboardSearchStoreForTest,
@@ -73,7 +70,8 @@ const fullBoard = { projects: [project("a", "Alpha Street"), project("b", "Beta 
 const smithBoard = { projects: [project("b", "Beta Street")], board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["b"] } } };
 
 function projectResponseFor(path: string) {
-  return path.includes("q=smith") ? smithBoard : fullBoard;
+  // The server's search counts ride on the response: `matching` of `total` active Projects.
+  return path.includes("q=smith") ? { ...smithBoard, search: { query: "smith", matching: 1, total: 2 } } : fullBoard;
 }
 
 /**
@@ -82,16 +80,16 @@ function projectResponseFor(path: string) {
  * route. `Dashboard.tsx` itself no longer performs any URL-to-store adoption (#217 build, step 4)
  * -- exercising the draft-sync seam at all requires this harness, not `Dashboard` standalone.
  *
- * #217 fix round 9, Sol review, item 1. Mounts a REAL `ShellSearch` beside the real `Dashboard`
- * (the way `RailedShell` actually composes them, not a store-draft stand-in) so a probe reading
- * `[data-testid="shell-search"]` sees the same `<input>` a Staff member types into, and so Escape
- * below can be dispatched as a real `keydown` on that input rather than calling
- * `clearDashboardSearch` directly. `ShellRoute` is not exported (`lib/app-router.tsx`'s
- * `rootRoute` wires it as a TanStack Router leaf component, coupled to `ShellIdentityContext` and
- * `RailedShell`'s own capability/impersonation plumbing) so it cannot be mounted standalone here;
- * `SidebarProvider`/`TooltipProvider` are the same minimum wrapper
- * `components/quincy/ShellSearch.dom.test.tsx`'s own `renderInProvider` requires, since
- * `reui/sidebar.tsx`'s primitives throw outside a `SidebarProvider`.
+ * #427: the search input is the Dashboard toolbar's own `DashboardSearch` now (it used to be a rail
+ * `ShellSearch` mounted beside the Dashboard), so the real `<input>` a Staff member types into is
+ * already inside `Dashboard` — `[data-testid="dashboard-search"]` — and Escape below is a real
+ * `keydown` on it. `ShellRoute` is not exported (`lib/app-router.tsx`'s `rootRoute` wires it as a
+ * TanStack Router leaf component coupled to `ShellIdentityContext` and `RailedShell`), so this
+ * harness only carries the one thing of it these tests exercise.
+ *
+ * "The search is active" is observed through the header summary's "x of y" (the response carries the
+ * server's search counts for `q=smith`), which is derived from the route at render like the request
+ * is, so it has no intermediate commit to excuse.
  */
 function ShellRouteHarness({ userId, role }: { userId: string; role: typeof authState.role }) {
   const history = locationStore();
@@ -101,18 +99,11 @@ function ShellRouteHarness({ userId, role }: { userId: string; role: typeof auth
     if (route.kind !== "dashboard") return;
     syncDashboardSearchDraftFromLocation(dashboardSearchOf(route), userId);
   }, [location, route, userId]);
-  return (
-    <SidebarProvider open={false}>
-      <TooltipProvider delay={0}>
-        {/* `sheet`, the one variant whose field is inline (the wide rail's is behind a popover since
-            #426): these tests exercise the Dashboard's committed-query contract against a real,
-            always-present `ShellSearch` input, and that contract is variant-independent. */}
-        <ShellSearch variant="sheet" isDashboard={route.kind === "dashboard"} principalId={userId} />
-      </TooltipProvider>
-      <Dashboard currentUserId={userId} role={role} authorizationEpoch={0} />
-    </SidebarProvider>
-  );
+  return <Dashboard currentUserId={userId} role={role} authorizationEpoch={0} />;
 }
+
+const searchSummary = () => host.querySelector('[data-testid="dashboard-summary"]')?.textContent ?? "";
+const searchShown = () => / of \d+ active/.test(searchSummary());
 
 let host: HTMLDivElement;
 let root: Root;
@@ -145,8 +136,8 @@ async function settle() {
   });
 }
 
-/** Dispatches a REAL native `keydown` on the given target, the way `ShellSearch.dom.test.tsx`'s
- * own `keydown` helper does -- lets React's own synthetic `onKeyDown` handler (`ShellSearch.tsx`'s
+/** Dispatches a REAL native `keydown` on the given target, the way `DashboardSearch.dom.test.tsx`'s
+ * own `keydown` helper does -- lets React's own synthetic `onKeyDown` handler (`DashboardSearch.tsx`'s
  * `handleKeyDown`) run, rather than calling a store function directly. */
 async function keydown(target: EventTarget, init: KeyboardEventInit) {
   await act(async () => {
@@ -156,15 +147,15 @@ async function keydown(target: EventTarget, init: KeyboardEventInit) {
 }
 
 describe("Dashboard's committed query is derived from the route, not adopted into the store (#217 build, step 4)", () => {
-  it("(a) a role without Calendar capability, at /?view=table&q=smith: the projects request carries q, the chip shows, and Kanban movement is gated", async () => {
+  it("(a) a role without Calendar capability, at /?view=table&q=smith: the projects request carries q, the summary names the search, and Kanban movement is gated", async () => {
     authState.role = "photographer";
     window.history.replaceState(null, "", "/?view=table&q=smith");
     await act(async () => { root.render(<ShellRouteHarness userId="user-1" role="photographer" />); await Promise.resolve(); });
     await settle();
 
     expect(apiGetMock.mock.calls.map(([path]) => path).some((path) => path.startsWith("/api/projects") && path.includes("q=smith"))).toBe(true);
-    expect(host.querySelector('[data-testid="dashboard-search-chip"]')).not.toBeNull();
-    expect(host.querySelector('[data-testid="dashboard-search-chip-query"]')?.textContent).toContain("smith");
+    expect(searchShown()).toBe(true);
+    expect(searchSummary()).toContain("1 of 2 active Project");
 
     // Movement gating: switch to Kanban (the search must survive the switch) and confirm every
     // Move-to trigger the mocked board renders is disabled -- the last-line-of-defence guard
@@ -178,9 +169,9 @@ describe("Dashboard's committed query is derived from the route, not adopted int
     for (const trigger of triggers) expect(trigger.disabled).toBe(true);
   });
 
-  it("(b) Back/Forward (popstate) to a q-less URL settles on a cleared chip, input and request, with no LATER commit reverting to searched", async () => {
+  it("(b) Back/Forward (popstate) to a q-less URL settles on a cleared summary, input and request, with no LATER commit reverting to searched", async () => {
     // #217 fix round 8, Sol review, item 4a; round 9, item 1. The probe now reads the REAL
-    // `ShellSearch` input's `.value` (`ShellRouteHarness` mounts a real one beside `Dashboard`, see
+    // `DashboardSearch` input's `.value` (the Dashboard renders a real one, see
     // its own docblock above), not the store's `draft` as a stand-in, and `requestQ` is actually
     // ASSERTED (it used to be captured but never checked). `requestQ` reads the MOST RECENT
     // `/api/projects` call, not `.some()` over every call ever made: the initial `/?q=smith` load
@@ -194,18 +185,18 @@ describe("Dashboard's committed query is derived from the route, not adopted int
     // `ShellRouteHarness`'s position in the tree, forces React to UNMOUNT and REMOUNT the entire
     // subtree instead of updating it in place. `Probe` subscribes to both `locationStore()` and
     // `subscribeDashboardSearch` directly (the SAME two external stores
-    // `ShellRouteHarness`/`ShellSearch` already subscribe to) so it re-renders, and its own passive
+    // `ShellRouteHarness`/`DashboardSearch` already subscribe to) so it re-renders, and its own passive
     // effect re-fires, on every commit either one produces.
     //
     // #217 fix round 9 -- INVESTIGATED, not asserted per-commit (STOP case, reported rather than
     // patched around). With that correctly-wired probe in place, this popstate genuinely produces
     // TWO commits, both completing synchronously inside ONE `act(() => {...})` call (i.e. both
-    // before any real paint): commit 1 has the chip and the request already cleared (`committedQuery`
+    // before any real paint): commit 1 has the summary and the request already cleared (`committedQuery`
     // is derived straight from the freshly-parsed route at render, no store read, no lag) but the
-    // `ShellSearch` input still showing the OLD store draft, because `ShellRouteHarness`'s own
-    // `syncDashboardSearchDraftFromLocation` layout effect (parent, runs AFTER `ShellSearch`'s own
+    // `DashboardSearch` input still showing the OLD store draft, because `ShellRouteHarness`'s own
+    // `syncDashboardSearchDraftFromLocation` layout effect (parent, runs AFTER `DashboardSearch`'s own
     // child effects in commit order) has not written the cleared draft yet; commit 2, triggered
-    // synchronously by that write notifying `ShellSearch`'s `useSyncExternalStore` subscription,
+    // synchronously by that write notifying `DashboardSearch`'s `useSyncExternalStore` subscription,
     // completes before `act` returns and shows the input cleared too. Per React's own layout-effect
     // contract ("a layout effect's state update is applied before the browser paints"), a Staff
     // member never sees commit 1 -- there is no paint between the two. Asserting EVERY captured
@@ -222,8 +213,8 @@ describe("Dashboard's committed query is derived from the route, not adopted int
       useEffect(() => {
         const projectsCalls = apiGetMock.mock.calls.map(([path]) => path).filter((path) => path.startsWith("/api/projects"));
         captures.push({
-          inputValue: host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')?.value ?? "",
-          chip: host.querySelector('[data-testid="dashboard-search-chip"]') !== null,
+          inputValue: host.querySelector<HTMLInputElement>('[data-testid="dashboard-search"]')?.value ?? "",
+          chip: searchShown(),
           requestQ: (projectsCalls.at(-1) ?? "").includes("q=smith"),
         });
       });
@@ -238,8 +229,8 @@ describe("Dashboard's committed query is derived from the route, not adopted int
       await Promise.resolve();
     });
     await settle();
-    expect(host.querySelector('[data-testid="dashboard-search-chip"]')).not.toBeNull();
-    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')?.value).toBe("smith");
+    expect(searchShown()).toBe(true);
+    expect(host.querySelector<HTMLInputElement>('[data-testid="dashboard-search"]')?.value).toBe("smith");
 
     window.history.pushState(null, "", "/?q=smith");
     window.history.replaceState(null, "", "/");
@@ -249,7 +240,7 @@ describe("Dashboard's committed query is derived from the route, not adopted int
     });
 
     expect(captures.length).toBeGreaterThan(0);
-    // The chip is route-derived at render, so it has no intermediate commit to excuse: EVERY
+    // The summary is route-derived at render, so it has no intermediate commit to excuse: EVERY
     // captured commit after the popstate must already show it gone. Only the input (a store draft,
     // written by the layout-effect sync) is allowed the pre-paint catch-up commit described above.
     // Nor has the request: network activity is not paint-dependent, so a stale `q` on ANY commit
@@ -286,30 +277,22 @@ describe("Dashboard's committed query is derived from the route, not adopted int
     }
   });
 
-  it("(e) principal A to B on /?q=smith: B's chip already agrees with the URL on B's VERY FIRST commit, never a render-scoped-empty flash while the URL still says smith", async () => {
-    function Probe({ onLayout }: { onLayout: (chipText: string | null) => void }) {
-      useLayoutEffect(() => {
-        onLayout(host.querySelector('[data-testid="dashboard-search-chip-query"]')?.textContent ?? null);
-      });
-      return null;
-    }
-
+  it("(e) principal A to B on /?q=smith: B's FIRST projects request already carries the URL's q, never a render-scoped-empty one while the URL still says smith", async () => {
     window.history.replaceState(null, "", "/?q=smith");
     await act(async () => { root.render(<Dashboard currentUserId="principal-a" role="admin" />); await Promise.resolve(); });
     await settle();
-    expect(host.querySelector('[data-testid="dashboard-search-chip-query"]')?.textContent).toContain("smith");
+    expect(apiGetMock.mock.calls.map(([path]) => path).some((path) => path.startsWith("/api/projects") && path.includes("q=smith"))).toBe(true);
 
-    // Principal switch, still on the SAME `/?q=smith` URL, captured on the FIRST layout commit --
-    // before B's own `resetDashboardSearchForPrincipal` PASSIVE effect has had any chance to run.
-    // A route-derived chip must already show "smith" here, on B's very first render; a store-derived
-    // one (principal-scoped-empty until that effect settles) shows nothing for at least one commit,
-    // even though the URL never stopped saying smith.
-    let captured: string | null | undefined;
-    act(() => {
-      root.render(<><Dashboard currentUserId="principal-b" role="admin" /><Probe onLayout={(chipText) => { captured = chipText; }} /></>);
-    });
-
-    expect(captured).toContain("smith");
+    // Principal switch, still on the SAME `/?q=smith` URL. The committed query is derived from the
+    // route at render (never from the principal-scoped store, which is empty for B until its own
+    // reset has run), so B's first request must already carry it.
+    apiGetMock.mockClear();
+    await act(async () => { root.render(<Dashboard currentUserId="principal-b" role="admin" />); await Promise.resolve(); });
+    await settle();
+    const projectsCalls = apiGetMock.mock.calls.map(([path]) => path).filter((path) => path.startsWith("/api/projects"));
+    expect(projectsCalls.length).toBeGreaterThan(0);
+    expect(projectsCalls[0]).toContain("q=smith");
+    expect(projectsCalls.every((path) => path.includes("q=smith"))).toBe(true);
   });
 
   // #217 fix round 8, Sol review, item 4b; round 9, item 1. (f) "the chip's x and Escape both
@@ -325,77 +308,66 @@ describe("Dashboard's committed query is derived from the route, not adopted int
   // button silently did nothing. Step 5 (already shipped -- `dashboard-search-store.ts` carries no
   // `query`/`lastWritten` fields any more, `commit()` writes through the writer unconditionally)
   // fixed the underlying bug this scenario exercises; these two cases add the coverage that was
-  // deferred until it did. Both now also assert the REAL `ShellSearch` input `ShellRouteHarness`
-  // mounts, and (f2) dispatches a real `keydown` Escape on it instead of calling
+  // deferred until it did. Both now also assert the REAL `DashboardSearch` input the Dashboard
+  // renders, and (f2) dispatches a real `keydown` Escape on it instead of calling
   // `clearDashboardSearch` directly.
-  // #217 design review (browser pass 3). The committed query is capped at 200 code points, not
-  // 200 pixels, and the Badge is `whitespace-nowrap`: an unbounded echo turns a deep link into a
-  // ~1000px pill that overflows the summary row and the page. jsdom cannot lay out, so this pins the contract
-  // the layout depends on: the echo is width-bounded + truncating, and the full text stays
-  // reachable through `title`.
-  it("(g) a 200-character committed query is echoed width-bounded and truncating, with the full text in its title", async () => {
+  // #217 design review (browser pass 3), reshaped by #427. The committed query is capped at 200 code
+  // points, not 200 pixels. The old chip echoed it in a truncating badge; the field now holds it and
+  // the header summary never echoes it, so the page's geometry cannot depend on the query. This pins
+  // both halves: the input carries the whole 200 characters, the summary carries none of them.
+  it("(g) a 200-character committed query fills the input and is never echoed into the header summary", async () => {
     const long = "a".repeat(200);
     window.history.replaceState(null, "", `/?q=${long}`);
     await act(async () => { root.render(<ShellRouteHarness userId="user-1" role="admin" />); await Promise.resolve(); });
     await settle();
-    const echo = host.querySelector<HTMLElement>('[data-testid="dashboard-search-chip-query"]');
-    expect(echo).not.toBeNull();
-    expect(echo!.title).toBe(long);
-    expect(echo!.textContent).toContain(long);
-    const classes = echo!.className.split(/\s+/);
-    expect(classes).toContain("truncate");
-    expect(classes.some((token) => token.startsWith("max-w-["))).toBe(true);
-    // #217 chip-row: exactly one `max-w-` bound, and no responsive `min-[...]:` variant swapping it
-    // out at a breakpoint -- the toolbar's geometry must not depend on the query at ANY width, so
-    // the echo's cap cannot be conditional on viewport size either.
-    expect(classes.filter((token) => token.startsWith("max-w-"))).toHaveLength(1);
-    expect(classes.some((token) => token.includes("min-["))).toBe(false);
-    // The exact cap, so the two failed intermediate caps (12ch, 28ch) cannot come back either.
-    expect(classes).toContain("max-w-[40ch]");
+    expect(host.querySelector<HTMLInputElement>('[data-testid="dashboard-search"]')?.value).toBe(long);
+    expect(searchSummary()).not.toContain("aaaa");
+    expect(host.querySelector('[data-testid="dashboard-header"]')!.textContent).not.toContain("aaaa");
   });
 
-  it("(f1) the chip's x clears the URL, the chip, the input and the list in one step", async () => {
+  it("(f1) the in-field clear button clears the URL, the summary, the input and the list in one step, and focus stays in the input", async () => {
     window.history.replaceState(null, "", "/?view=table&q=smith");
     await act(async () => { root.render(<ShellRouteHarness userId="user-1" role="admin" />); await Promise.resolve(); });
     await settle();
-    expect(host.querySelector('[data-testid="dashboard-search-chip"]')).not.toBeNull();
-    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')?.value).toBe("smith");
+    expect(searchShown()).toBe(true);
+    const input = host.querySelector<HTMLInputElement>('[data-testid="dashboard-search"]')!;
+    expect(input.value).toBe("smith");
     expect(apiGetMock.mock.calls.map(([path]) => path).some((path) => path.startsWith("/api/projects") && path.includes("q=smith"))).toBe(true);
 
-    const clearButton = host.querySelector<HTMLButtonElement>('[data-testid="dashboard-search-chip"] button[aria-label="Clear search"]')!;
-    // Clear unmounts the very button that holds focus. Focus must land on a deliberate surviving
-    // control (the active view button, the same target `selectProjectScope` already uses), never
-    // fall back to `document.body` -- from there the next Tab restarts in the page chrome.
+    const clearButton = host.querySelector<HTMLButtonElement>('button[aria-label="Clear search"]')!;
+    // Clear removes the very button that holds focus. Focus stays in the INPUT (which survives the
+    // clear), never falling back to `document.body`, from where the next Tab restarts in the page chrome.
     clearButton.focus();
     expect(document.activeElement).toBe(clearButton);
     await act(async () => { clearButton.click(); await Promise.resolve(); });
     await settle();
     await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 5)); });
 
-    expect(document.activeElement).toBe(host.querySelector('[data-focus-key="dashboard-view-table"]'));
+    expect(document.activeElement).toBe(input);
     expect(window.location.search).toBe("?view=table");
-    expect(host.querySelector('[data-testid="dashboard-search-chip"]')).toBeNull();
-    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')?.value).toBe("");
+    expect(searchShown()).toBe(false);
+    expect(host.querySelector('button[aria-label="Clear search"]')).toBeNull();
+    expect(input.value).toBe("");
     const projectsCalls = apiGetMock.mock.calls.map(([path]) => path).filter((path) => path.startsWith("/api/projects"));
     expect(projectsCalls.at(-1)).not.toContain("q=");
   });
 
-  it("(f2) Escape (a real keydown on the ShellSearch input) clears the URL, the chip, the input and the list in one step", async () => {
+  it("(f2) Escape (a real keydown on the DashboardSearch input) clears the URL, the summary, the input and the list in one step", async () => {
     window.history.replaceState(null, "", "/?view=table&q=smith");
     await act(async () => { root.render(<ShellRouteHarness userId="user-1" role="admin" />); await Promise.resolve(); });
     await settle();
-    expect(host.querySelector('[data-testid="dashboard-search-chip"]')).not.toBeNull();
-    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    expect(searchShown()).toBe(true);
+    const input = host.querySelector<HTMLInputElement>('[data-testid="dashboard-search"]')!;
     expect(input.value).toBe("smith");
 
     // A real native `keydown`, not a direct `clearDashboardSearch(...)` call -- exercises
-    // `ShellSearch.tsx`'s own `handleKeyDown` Escape branch the way a Staff member's keystroke
+    // `DashboardSearch.tsx`'s own `handleKeyDown` Escape branch the way a Staff member's keystroke
     // actually reaches it.
     await keydown(input, { key: "Escape" });
     await settle();
 
     expect(window.location.search).toBe("?view=table");
-    expect(host.querySelector('[data-testid="dashboard-search-chip"]')).toBeNull();
+    expect(searchShown()).toBe(false);
     expect(input.value).toBe("");
     const projectsCalls = apiGetMock.mock.calls.map(([path]) => path).filter((path) => path.startsWith("/api/projects"));
     expect(projectsCalls.at(-1)).not.toContain("q=");
