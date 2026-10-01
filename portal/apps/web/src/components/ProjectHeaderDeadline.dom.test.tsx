@@ -410,21 +410,27 @@ describe("ProjectHeaderDeadline", () => {
     const slots = dialog.querySelector('[role="group"][aria-label="Time slots"]')!;
     expect(slots).not.toBeNull();
 
-    // The scrolling panel is the body ancestor that actually scrolls vertically.
-    let scroller: HTMLElement | null = slots.parentElement;
-    while (scroller && scroller !== dialog && !scroller.classList.contains("overflow-y-auto")) scroller = scroller.parentElement;
-    expect(scroller, "the time slots sit inside a vertically scrolling panel").not.toBe(dialog);
-    expect(scroller).not.toBeNull();
+    // The body's scroller is the OUTERMOST ancestor Base UI's ScrollArea gave an inline
+    // `overflow: scroll` (happy-dom keeps the shorthand; #447; the time column's own viewport is the nearer one).
+    let scroller: HTMLElement | null = null;
+    for (let node = slots.parentElement; node && node !== dialog; node = node.parentElement) {
+      if (node.style.overflowY === "scroll" || node.style.overflow === "scroll") scroller = node;
+    }
+    expect(scroller, "the time slots sit inside a vertically scrolling body").not.toBeNull();
+    // The fade utility sits on the scroll root, the viewport's parent, targeting its direct child.
+    expect(scroller!.parentElement!.className).toContain("*:data-[slot=scroll-area-viewport]:mask-b-from-");
     // The footer is outside it, beside it under the same bounded frame.
     expect(scroller!.contains(footer)).toBe(false);
     expect(footer.contains(scroller!)).toBe(false);
-    const frame = scroller!.parentElement!;
+    const panel = scroller!.parentElement!.parentElement!;
+    expect(panel.classList.contains("min-h-0")).toBe(true);
+    expect(scroller!.parentElement!.classList.contains("min-h-0")).toBe(true);
+    const frame = panel.parentElement!;
     expect(frame.contains(footer) && footer.parentElement === frame).toBe(true);
     // The frame carries the height bound, and both it and the scroller may shrink below their
     // content so the panel (not the page) takes the overflow; the footer may not shrink.
     expect(frame.classList.contains("max-h-[var(--available-height)]")).toBe(true);
     expect(frame.classList.contains("min-h-0")).toBe(true);
-    expect(scroller!.classList.contains("min-h-0")).toBe(true);
     expect(footer.classList.contains("shrink-0")).toBe(true);
   });
 });
