@@ -187,6 +187,8 @@ describe("shared Dashboard Filter: Project priority and Archived mode (#428)", (
     const archived = only.projects.find((project) => project.id === gArchived)!;
     expect(archived.permissions).toMatchObject({ canEditDeadline: false, canEditChildren: false });
     expect(archived.children.rows.map((row) => row.title)).toEqual(["Archived Gfilter checklist"]);
+    // #446: the row advertises no edit either, so the client never offers a drag, resize or editor the server will refuse.
+    for (const row of archived.children.rows) expect(row.permissions).toEqual({ canDrag: false, canResize: false, canOpenScheduleEditor: false, canEditAssignees: false });
     const include = (await page("&archived=include")).body as ReturnType<typeof adminProductionGanttResponseSchema.parse>;
     expect(streets(include)).toEqual(["901 Gfilter Active Street", "902 Gfilter Active None Street", "903 Gfilter Archived Street", "904 Gfilter Archived Low Street"]);
     expect(include.projects.filter((project) => project.archived).map((project) => project.id).sort()).toEqual([gArchived, gArchivedLow].sort());
@@ -205,7 +207,9 @@ describe("shared Dashboard Filter: Project priority and Archived mode (#428)", (
     expect(hidden.status).toBe(200);
     expect(((await hidden.json()) as { children: { total: number } }).children.total).toBe(0);
     const shown = await request(`/api/production-gantt?scope=active&childrenOf=${gArchived}&archived=only`, tokens.admin);
-    expect(((await shown.json()) as { children: { total: number } }).children.total).toBe(1);
+    const shownBody = (await shown.json()) as { children: { total: number; rows: Array<{ permissions: Record<string, boolean> }> } };
+    expect(shownBody.children.total).toBe(1);
+    for (const row of shownBody.children.rows) expect(row.permissions).toEqual({ canDrag: false, canResize: false, canOpenScheduleEditor: false, canEditAssignees: false });
   });
 
   it("is Admin only for Archived, and priority is withheld from an External Editor", async () => {

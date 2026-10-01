@@ -797,12 +797,12 @@ function ganttPerson(row: { person_id: string | null; person_name: string | null
   return { id: row.person_id, name: row.person_name, roleLabel: ROLE_LABELS[role] ?? row.person_role, isExternal: role === "external_editor", active: Boolean(row.person_active) };
 }
 
-/** Every Subtask is a range (ADR 0011), so every permission is the caller's collaboration access. */
+/** Every Subtask is a range (ADR 0011), so every permission is the caller's collaboration access. An archived Project's Checklist is read-only (#446): the caller passes `canCollaborate && !archived`. */
 function ganttChecklistPermissions(canCollaborate: boolean): GanttChecklistRowDto["permissions"] {
   return { canDrag: canCollaborate, canResize: canCollaborate, canOpenScheduleEditor: canCollaborate, canEditAssignees: canCollaborate };
 }
 
-export function serializeGanttChecklistRow(row: GanttChildBaseRow, role: GanttRole, reminders: SubtaskRemindersDto): GanttChecklistRowDto {
+export function serializeGanttChecklistRow(row: GanttChildBaseRow, role: GanttRole, reminders: SubtaskRemindersDto, archived = false): GanttChecklistRowDto {
   const { assignees, otherAssigneeCount } = assigneesForViewer(parseAssigneesJson(row.assignees_json), role);
   const schedule = serializeSubtaskSchedule(row.subtask_id, scheduleStorageFromChildRow(row));
   const canCollaborate = row.can_collaborate === 1;
@@ -817,7 +817,7 @@ export function serializeGanttChecklistRow(row: GanttChildBaseRow, role: GanttRo
     assignmentVersion: Number(row.assignment_version ?? 0),
     schedule,
     reminders,
-    permissions: ganttChecklistPermissions(canCollaborate),
+    permissions: ganttChecklistPermissions(canCollaborate && !archived),
   };
 }
 
@@ -904,7 +904,7 @@ function serializeGanttProjectRow(
       ...(teamByProject ? { canEditTeam: roleHasCapability(role, "editProject") && !archived } : {}),
     },
     children: {
-      rows: children.map((child) => serializeGanttChecklistRow(child, role, remindersBySubtask.get(child.subtask_id) ?? DEFAULT_SUBTASK_REMINDERS)),
+      rows: children.map((child) => serializeGanttChecklistRow(child, role, remindersBySubtask.get(child.subtask_id) ?? DEFAULT_SUBTASK_REMINDERS, archived)),
       total,
       returned,
       // #246: the revision is a window over the project's whole partition, so any row carries it.
@@ -958,10 +958,12 @@ async function handleChildren(c: Context<AppEnv>, parsed: ParsedGanttChildQuery)
     ? encodeGanttChildCursor({ projectId: parsed.childrenOf, position: lastRow.position, id: lastRow.subtask_id, completed: parsed.completed, ...(peopleFingerprint ? { people: peopleFingerprint } : {}) })
     : null;
   const reminders = await readSubtaskReminders(c.env.DB, pageRows.map((row) => row.subtask_id));
+  // #446: an archived Project's rows advertise no edit permission. Only Admin-only `archived=` modes can list one, so a page read pays one tiny SELECT.
+  const archived = (await c.env.DB.prepare("SELECT archived_at FROM projects WHERE id = ?").bind(parsed.childrenOf).first<{ archived_at: number | null }>())?.archived_at != null;
   const response: ProductionGanttChildPageResponse = {
     projectId: parsed.childrenOf,
     children: {
-      rows: pageRows.map((child) => serializeGanttChecklistRow(child, role, reminders.get(child.subtask_id) ?? DEFAULT_SUBTASK_REMINDERS)),
+      rows: pageRows.map((child) => serializeGanttChecklistRow(child, role, reminders.get(child.subtask_id) ?? DEFAULT_SUBTASK_REMINDERS, archived)),
       total,
       returned: pageRows.length,
       truncated,
