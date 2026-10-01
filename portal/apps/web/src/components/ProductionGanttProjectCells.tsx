@@ -10,28 +10,24 @@
  * optimistic chip, rollback and 409 merge are identical to the workspace's with no fork. Popover
  * content mounts only while open (no `keepMounted`): 100 rows never start 100 candidate queries.
  *
+ * The Deadline popover editor and the detail gate now live in `ProjectDeadlineCell.tsx` (#431), shared with the
+ * Dashboard Table; this file keeps the Gantt-only action button and test ids.
+ *
  * `producer: "gantt"` is never passed: the pickers' own `invalidateProjectSurfaces(…, gantt: true)`
  * calls are what refresh the Gantt, Dashboard, Calendar and detail.
  */
-import { useCallback, useId, useRef, useState, type ReactNode } from "react";
+import { useCallback, useId, useRef, useState } from "react";
 import type { GanttProjectRowDto, GanttTeamMemberDto, Role } from "@quincy/shared";
 import { AvatarStack } from "./quincy/AvatarStack";
 import { EmptyAssigneeGlyph } from "./quincy/EmptyAssigneeGlyph";
-import { Notice } from "./quincy/Notice";
 import { Button } from "./reui/button";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "./reui/popover";
-import { Skeleton } from "./reui/skeleton";
-import { ProjectDeadlineControl } from "./ProjectDeadlineControl";
-import { ProjectTeamCombobox } from "./ProjectTeamCombobox";
-import { deadlineTriggerText } from "./ProjectHeaderDeadline";
-import { POPOVER_CONTENT } from "./project-header-popover";
-import { DateTimePopoverContent } from "./quincy/DateTimeField";
-import { useProjectDetailQuery, type ProjectDetail } from "../lib/project-data";
-import { cn } from "../lib/utils";
+import { CELL_TRIGGER, ProjectDeadlineCell, ProjectDetailGate } from "./ProjectDeadlineCell";
 
-/** A real 44px hit area on coarse pointers and phones, compact on desktop. */
-// `-ml-1` cancels the ghost button's `px-1` so the cell's text starts where its column header's does.
-export const CELL_TRIGGER = "h-auto min-h-6 max-w-full justify-start -ml-1 px-1 normal-case tracking-[var(--tracking-normal)] pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] max-[720px]:min-h-[44px] max-[720px]:min-w-[44px]";
+export { CELL_TRIGGER };
+import { ProjectTeamCombobox } from "./ProjectTeamCombobox";
+import { POPOVER_CONTENT } from "./project-header-popover";
+import { cn } from "../lib/utils";
 
 /** One person once, first occurrence wins: a dual-role member is one avatar and one name. */
 function distinctPeople(team: GanttTeamMemberDto[]) {
@@ -46,29 +42,6 @@ function distinctPeople(team: GanttTeamMemberDto[]) {
 }
 
 const personLabel = (person: { name: string; inactive: boolean }) => `${person.name.trim() || "Name unavailable"}${person.inactive ? " (inactive)" : ""}`;
-
-/**
- * Loads the Project detail behind a popover. Children render only once data exists: the Deadline
- * control seeds its draft once, at mount (`ProjectDeadlineControl.tsx`).
- */
-function GanttProjectDetailGate({ projectId, role, fallbackClassName, children }: { projectId: string; role: Role; fallbackClassName?: string; children: (detail: ProjectDetail) => ReactNode }) {
-  const query = useProjectDetailQuery(projectId, true, false, role);
-  if (query.data) return <>{children(query.data)}</>;
-  if (query.isError) {
-    return (
-      <Notice data-testid="gantt-project-detail-error" role="alert" className={cn("flex items-center justify-between gap-[var(--space-3)]", fallbackClassName)}>
-        <span>Project details could not be loaded.</span>
-        <Button type="button" size="xs" variant="outline" onClick={() => void query.refetch()}>Retry</Button>
-      </Notice>
-    );
-  }
-  return (
-    <div data-testid="gantt-project-detail-loading" role="status" aria-label="Loading project details" className={cn("grid gap-[var(--space-2)]", fallbackClassName)}>
-      <Skeleton className="h-8 w-full" />
-      <Skeleton className="h-4 w-2/3" />
-    </div>
-  );
-}
 
 export function GanttTeamCell({ projectId, street, team, canEdit, disabled, role }: {
   projectId: string;
@@ -128,9 +101,9 @@ export function GanttTeamCell({ projectId, street, team, canEdit, disabled, role
         }}
       >
         <PopoverTitle className="!font-medium">Team</PopoverTitle>
-        <GanttProjectDetailGate projectId={projectId} role={role}>
+        <ProjectDetailGate projectId={projectId} role={role} testIdPrefix="gantt">
           {(detail) => <ProjectTeamCombobox projectId={projectId} members={detail.members} canEdit inputRef={attachInput} />}
-        </GanttProjectDetailGate>
+        </ProjectDetailGate>
       </PopoverContent>
     </Popover>
   );
@@ -155,7 +128,6 @@ export function GanttDeadlineCell({ projectId, street, deadline, canEdit, disabl
   role: Role;
   action?: GanttDeadlineCellAction;
 }) {
-  const [open, setOpen] = useState(false);
   const reasonId = useId();
   if (action) {
     return (
@@ -183,34 +155,6 @@ export function GanttDeadlineCell({ projectId, street, deadline, canEdit, disabl
       </>
     );
   }
-  if (deadline === null) {
-    // No Deadline and no action (the viewer cannot edit it): an inert dash.
-    return <span data-testid="gantt-deadline" className="text-foreground-secondary">—<span className="sr-only">No deadline</span></span>;
-  }
-  const text = deadlineTriggerText(deadline.localCivil);
-  const tone = deadline.overdue ? "text-signal-critical-text" : "text-foreground";
-  if (!canEdit) {
-    return <time data-testid="gantt-deadline" dateTime={deadline.at} className={cn("truncate", tone)}>{text}</time>;
-  }
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        render={<Button type="button" size="xs" variant="ghost" className={cn(CELL_TRIGGER, tone)} />}
-        data-testid="gantt-deadline-trigger"
-        aria-label={`Deadline for ${street}: ${text}`}
-        disabled={disabled}
-        onClick={(event: { stopPropagation: () => void }) => event.stopPropagation()}
-      >
-        <span className="truncate">{text}</span>
-      </PopoverTrigger>
-      {/* #422: the date-time popup mounts once the detail has loaded, after the popover opened, so
-          Base UI's `initialFocus` (evaluated at open) found nothing: `focusOnMount` moves focus in
-          the moment the popup mounts. The cached-detail case is covered by `initialFocus`. */}
-      <DateTimePopoverContent label="Deadline">
-        <GanttProjectDetailGate projectId={projectId} role={role} fallbackClassName="m-[var(--space-3)] w-[min(20rem,calc(100vw-4*var(--space-4)))]">
-          {(detail) => <ProjectDeadlineControl projectId={projectId} schedule={detail.deadlineSchedule} canEdit onClose={() => setOpen(false)} focusOnMount />}
-        </GanttProjectDetailGate>
-      </DateTimePopoverContent>
-    </Popover>
-  );
+  // The popover editor (and its inert / read-only forms) is the shared surface-neutral cell.
+  return <ProjectDeadlineCell projectId={projectId} street={street} deadline={deadline} canEdit={canEdit} disabled={disabled} role={role} testIdPrefix="gantt" />;
 }

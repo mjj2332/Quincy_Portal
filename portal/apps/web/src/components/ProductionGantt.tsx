@@ -386,7 +386,7 @@ function GanttRowAttentionBadge({ reason }: { reason: ProductionGanttAttentionRe
     <span
       className={cn(
         "shrink-0 truncate text-[10px] uppercase tracking-[0.04em]",
-        critical ? "text-signal-critical-text" : "text-muted-foreground",
+        critical ? "text-signal-critical" : "text-muted-foreground",
       )}
       data-testid={`gantt-row-attention-${reason}`}
     >
@@ -407,7 +407,7 @@ function GanttChildLoadErrorBadge({ onRetry }: { onRetry: () => void }) {
     <button
       type="button"
       data-testid="gantt-children-retry"
-      className="shrink-0 truncate text-[10px] uppercase tracking-[0.04em] text-signal-critical-text underline"
+      className="shrink-0 truncate text-[10px] uppercase tracking-[0.04em] text-signal-critical underline"
       onClick={(event) => {
         // The row label sits inside the tree panel's own row-select affordance — stop this click
         // from also being read as "select this row".

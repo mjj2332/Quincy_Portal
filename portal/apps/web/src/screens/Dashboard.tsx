@@ -1,26 +1,26 @@
 import { lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { DEFAULT_DASHBOARD_FILTER, dashboardFilterOf, dashboardSearchOf, formatSydneyCivil, roleHasCapability, withDashboardFilter, type DashboardCalendarState, type DashboardFilter, type DashboardRoute, type DashboardTimelineRoute, type DashboardViewRoute as SharedDashboardViewRoute, type MoveProjectStageRequest, type MoveProjectStageResponse, type ProductionCalendarFilters, type StageKey } from "@quincy/shared";
 import { QueryClient, QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
-import { StatusBadge } from "../components/atoms";
-import { LazyImage } from "../components/LazyImage";
 import { ApiError, apiPost } from "../lib/api";
 import { confirmStore } from "../lib/confirm";
 import { useCapabilities } from "../lib/capabilities";
 import { useStages } from "../lib/stages";
-import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, DASHBOARD_VIEW_KEY, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, normalizeDashboardView, writeDashboardViewPreference, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
+import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, DASHBOARD_VIEW_KEY, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, normalizeDashboardView, writeDashboardViewPreference, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
 import { publishDashboardView, releaseDashboardView } from "../lib/dashboard-view-store";
 import { InternalLink } from "../components/InternalLink";
 import { pushToast as toast } from "../lib/toast-store";
 import { ToastViewport } from "../components/quincy/ToastViewport";
 import { Button, buttonClasses } from "../components/quincy/Button";
-import { Eyebrow } from "../components/quincy/Eyebrow";
 import { DashboardHeader } from "./DashboardHeader";
 import { DashboardViewBar, VIEW_PANEL_ID, VIEW_TAB_ID } from "./DashboardViewBar";
+import { BoardDisplayContent, TableDisplayContent } from "./DashboardDisplay";
+import { DashboardTable } from "../components/DashboardTable";
+import { hideableColumnsFor } from "../lib/dashboard-table-model";
+import { useDashboardTablePrefs } from "../lib/use-dashboard-table-prefs";
 import { DashboardFilterChips, DashboardFilterProvider, DashboardFilterTrigger } from "./DashboardFilter";
 import { dashboardSummary } from "../lib/dashboard-summary";
 import { useNow } from "../lib/use-now";
 import { Skeleton } from "../components/reui/skeleton";
-import { ScrollArea } from "../components/reui/scroll-area";
 import { EmptyState } from "../components/quincy/EmptyState";
 import { Notice } from "../components/quincy/Notice";
 import { ViewLoadBoundary } from "../components/ViewLoadBoundary";
@@ -148,14 +148,6 @@ function postSuccessRefetchFailureAnnouncement(recovery: MovementRecovery | null
   });
 }
 
-function CoverMedia({ project, className = "", inlinePlaceholder = false, retryToken, onFailedChange }: { project: ProjectSummary; className?: string; inlinePlaceholder?: boolean; retryToken?: number; onFailedChange?: (failed: boolean) => void }) {
-  if (project.coverAssetId) return <LazyImage className={className} src={`/media/asset/${encodeURIComponent(project.coverAssetId)}/thumb`} alt={`Preview of ${project.street}`} retryToken={retryToken} onFailedChange={onFailedChange} />;
-  const content = project.street.trim().charAt(0).toUpperCase() || "Q";
-  return inlinePlaceholder ? <span className={`project-cover-placeholder ${className}`} aria-hidden="true">{content}</span> : <div className={`project-cover-placeholder ${className}`} aria-hidden="true">{content}</div>;
-}
-
-function location(project: ProjectSummary) { return [project.suburb, project.postcode].filter(Boolean).join(" · ") || "Location pending"; }
-
 function canonicalStageKey(stageKey: ProjectSummary["stageKey"]): StageKey {
   return stageKey === "editing" ? "editing_autohdr" : stageKey;
 }
@@ -163,36 +155,6 @@ function canonicalStageKey(stageKey: ProjectSummary["stageKey"]): StageKey {
 function boardModelFromProjects(projects: ProjectSummary[]): BoardModel {
   const authorizedBoardOrder = projects.find((project) => project.authorizedBoardOrder !== undefined)?.authorizedBoardOrder;
   return authorizedBoardOrder ? { projects: [...projects], authorizedBoardOrder } : { projects: [...projects] };
-}
-
-// TB8-01 §8.1 — shared List grid; header and body rows share the same column template so cells
-// line up. `minmax(0, …)` on every fractional track lets long addresses shrink instead of forcing
-// the grid wider than its container at 1024.
-const PROW_GRID = "[display:grid] grid-cols-[72px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.1fr)_96px] " +
-  "items-center gap-[var(--space-4)] px-[var(--space-5)] py-[var(--space-3)] " +
-  "max-[721px]:grid-cols-[56px_1fr_84px] max-[721px]:py-[var(--space-4)]";
-const PROW_ROW = PROW_GRID + " w-full border-0 [border-top-style:solid] border-t-[length:var(--border-width-hair)] " +
-  "border-t-border first:border-t-0 text-inherit text-left bg-transparent cursor-pointer " +
-  "no-underline transition-colors duration-[var(--dur-fast)] ease-[var(--ease-standard)] hover:bg-secondary " +
-  "active:bg-surface-sunken focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
-  "focus-visible:outline-ring focus-visible:-outline-offset-2";
-
-function ProjectListRow({ project, projectHref }: { project: ProjectSummary; projectHref: string }) {
-  const [coverFailed, setCoverFailed] = useState(false); const [coverRetry, setCoverRetry] = useState(0);
-  return <div>
-    <InternalLink className={cn(PROW_ROW)} data-testid="project-list-row" to={projectHref}>
-      <CoverMedia project={project} className="prow__thumb" inlinePlaceholder retryToken={coverRetry} onFailedChange={setCoverFailed} />
-      <span>
-        <span className="block font-[family-name:var(--font-display)] text-[length:var(--text-md)] tracking-[var(--tracking-tight)]">{project.street}</span>
-        <Eyebrow className="block mt-[var(--space-1)]">{location(project)}</Eyebrow>
-      </span>
-      <span className="text-[length:var(--text-sm)] max-[721px]:hidden">{project.agencyName || "Agency pending"}<span className="block mt-[var(--space-1)] text-[length:var(--text-xs)] text-muted-foreground">{project.agentName || "Agent pending"}</span></span>
-      <span className="text-[length:var(--text-sm)] max-[721px]:hidden">{formatDashboardDate(project.shootDate)}</span>
-      <span className="max-[721px]:hidden"><StatusBadge stageKey={project.stageKey} /></span>
-      <span className="text-right tabular-nums text-[length:var(--text-sm)]" data-testid="project-list-row-raw">{project.receivedCount}</span>
-    </InternalLink>
-    {coverFailed && <Button type="button" variant="secondary" className="mt-[var(--space-2)]" onClick={() => { setCoverFailed(false); setCoverRetry((current) => current + 1); }}>Retry cover image</Button>}
-  </div>;
 }
 
 type DashboardProps = { currentUserId: string; role?: Parameters<typeof dashboardProjectsKey>[1]; authorizationEpoch?: number; calendar?: DashboardCalendarState | null;
@@ -237,6 +199,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const canMoveStagesCapability = can("moveProjectStage");
   const canPrioritize = can("prioritizeProjects");
   const canViewArchived = can("adminBackend");
+  // #431: the Table's Group by and hidden columns, per viewer.
+  const { prefs: tablePrefs, update: updateTablePrefs } = useDashboardTablePrefs(currentUserId);
   const canViewProductionCalendar = roleHasCapability(role, "viewProductionCalendar");
   // #366: through the location lens — the live store by default, the remembered Dashboard location
   // while the Project sheet floats over this Dashboard (`lib/dashboard-location.ts`).
@@ -1518,10 +1482,17 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           principalId={currentUserId}
           searchFocusRequest={searchFocusRequest}
           onSearchFocusHandled={handleSearchFocusHandled}
-          showDisplay={renderedView === "board"}
-          sort={effectiveBoardSort}
-          canSortByPriority={canSortByPriority}
-          onSortChange={selectBoardSort}
+          display={renderedView === "board"
+            ? <BoardDisplayContent sort={effectiveBoardSort} canSortByPriority={canSortByPriority} onSortChange={selectBoardSort} />
+            : renderedView === "table"
+              ? <TableDisplayContent
+                  groupBy={tablePrefs.groupBy}
+                  onGroupByChange={(groupBy) => updateTablePrefs({ groupBy })}
+                  hiddenColumns={tablePrefs.hiddenColumns}
+                  hideableColumns={hideableColumnsFor(role)}
+                  onColumnVisibilityChange={(column, visible) => updateTablePrefs({ hiddenColumns: visible ? tablePrefs.hiddenColumns.filter((id) => id !== column) : [...tablePrefs.hiddenColumns, column] })}
+                />
+              : undefined}
           filterTrigger={<DashboardFilterTrigger />}
         />
         <DashboardFilterChips />
@@ -1611,17 +1582,17 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         )}
 
         {!isCalendarView && !isGanttView && !isLoading && !error && projects.length > 0 && view === "table" && (
-          <div className="flex min-h-0 flex-1 flex-col border-solid border-[length:var(--border-width-hair)] border-border bg-card" aria-label="Projects list">
-            <div data-testid="project-list-header" className={cn(PROW_GRID, "shrink-0 bg-secondary cursor-default")}>
-              <div />
-              <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary">Address</div>
-              <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary max-[721px]:hidden">Client</div>
-              <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary max-[721px]:hidden">Shoot date</div>
-              <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary max-[721px]:hidden">Status</div>
-              <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary text-right">RAW received</div>
-            </div>
-            <ScrollArea className="min-h-0 flex-1">{projects.map((project) => <ProjectListRow key={project.id} project={project} projectHref={projectHrefFor(project.id)} />)}</ScrollArea>
-          </div>
+          <DashboardTable
+            projects={projects}
+            role={role}
+            groupBy={tablePrefs.groupBy}
+            hiddenColumns={tablePrefs.hiddenColumns}
+            canPrioritize={canPrioritize && hasAuthorizedBoardMap}
+            pendingOrdering={pendingOrdering}
+            terminal={Boolean(queryRuntime?.principalTerminal || projects.some((project) => queryRuntime?.isProjectRemoved(project.id)))}
+            onPriorityChange={setProjectPriority}
+            projectHrefFor={projectHrefFor}
+          />
         )}
 
         {!isCalendarView && !isGanttView && !isLoading && !error && projects.length > 0 && view === "board" && (
