@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, 
 import { DEADLINE_PRESET_TIME, resolveSydneyCivilMinute, type ProjectDeadlineSchedule } from "@quincy/shared";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/reui/field";
 import { Input } from "@/components/reui/input";
-import { buildShortcuts, civilToCell, joinCivilMinute, parseTypedTime, splitCivilMinute, sydneyToday, timeSlots, yearBounds, type DateShortcut } from "@/lib/date-time-field";
+import { buildShortcuts, civilToCell, joinCivilMinute, parseTypedTime, sameReminderOffsets, splitCivilMinute, sydneyToday, timeSlots, yearBounds, type DateShortcut } from "@/lib/date-time-field";
 import { CalendarPane } from "./CalendarPane";
 import { FoldChoice } from "./FoldChoice";
 import { NextReminder } from "./NextReminder";
@@ -198,8 +198,7 @@ function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedba
   const savedLineStale = draft.touched && (
     draft.clear
     || civil !== (value?.localCivil ?? null)
-    || draft.offsets.length !== savedOffsets.length
-    || draft.offsets.some((offset) => !savedOffsets.includes(offset))
+    || !sameReminderOffsets(draft.offsets, savedOffsets)
   );
 
   const hint = draft.touched && !draft.clear && civil === null && !timeInvalid ? "Pick a date and a time." : null;

@@ -5,12 +5,14 @@ import { ButtonGroup } from "@/components/reui/button-group";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/reui/field";
 import { Input } from "@/components/reui/input";
 import { cn } from "@/lib/utils";
-import { civilToCell, joinCivilMinute, parseTypedTime, splitCivilMinute, sydneyToday, timeSlots, yearBounds } from "@/lib/date-time-field";
+import { civilToCell, joinCivilMinute, parseTypedTime, sameReminderOffsets, splitCivilMinute, sydneyToday, timeSlots, yearBounds } from "@/lib/date-time-field";
 import { buildRangeShortcuts, dayLabel, type DateTimeRangeValue } from "@/lib/date-time-range";
 import { CalendarPane } from "./CalendarPane";
 import { FoldChoice } from "./FoldChoice";
-import { PopupAnchorContext, type Disambiguation } from "./DateTimePopup";
+import { NextReminder } from "./NextReminder";
+import { PopupAnchorContext, type DateTimeReminders, type Disambiguation } from "./DateTimePopup";
 import { PopupFrame } from "./PopupFrame";
+import { RemindersStrip } from "./RemindersStrip";
 import { ShortcutList } from "./ShortcutList";
 import { TimeColumn } from "./TimeColumn";
 
@@ -20,6 +22,11 @@ import { TimeColumn } from "./TimeColumn";
  * typed time and the Earlier / Later choice edit; the shortcuts (Today, Tomorrow, This week, Next
  * week and, when the caller has one, Project default) set both ends at once. There is no "No date":
  * a Subtask always has a range. The draft lives here and nothing is committed until Apply.
+ *
+ * #425: when `reminders` is given the popup also edits the Subtask's reminder set with the Deadline's own strip (`RemindersStrip`):
+ * the offsets are part of the draft, a toggle alone is an edit, and Apply hands them back beside the range. The next-reminder
+ * line states the SAVED schedule and goes quiet once the draft departs from it; a caller with nothing saved yet (a new Subtask's
+ * composer) leaves `reminders.next` undefined, which hides the line.
  *
  * Rules the form owns:
  * - A shortcut applies the presets (09:00 start, 17:00 end) or the Project default. A day picked on
@@ -40,9 +47,11 @@ import { TimeColumn } from "./TimeColumn";
 export type DateTimeRangeApply = {
   start: { localCivil: string; disambiguation?: Disambiguation };
   end: { localCivil: string; disambiguation?: Disambiguation };
+  /** Present only when the popup was given `reminders`. */
+  reminderOffsetsMinutes?: number[];
 };
 
-/** A draft to start from in place of the stored value (a conflict's reapply). */
+/** A draft to start from in place of the stored value (a conflict's reapply). Without offsets the stored ones are kept. */
 export type DateTimeRangeSeed = DateTimeRangeApply;
 
 export type DateTimeRangePopupProps = {
@@ -55,7 +64,9 @@ export type DateTimeRangePopupProps = {
   seed?: DateTimeRangeSeed;
   /** Changing it starts a fresh draft from `seed` (the popup remounts its draft). */
   seedKey?: string | number;
-  /** Facts and actions drawn in the body, below the time controls (a reminders strip, #424). */
+  /** The Subtask's reminder set (#425): the strip, and the saved next-reminder line when `next` is given. Omit it for a range-only popup. */
+  reminders?: DateTimeReminders;
+  /** Facts and actions drawn in the body, below the reminders. */
   facts?: ReactNode;
   /** Failure and conflict feedback drawn at the foot of the body. */
   feedback?: ReactNode;
@@ -77,7 +88,7 @@ type EndDraft = {
   fold: { minute: string; choice: Disambiguation } | null;
 };
 
-type Draft = { touched: boolean; active: End; start: EndDraft; end: EndDraft };
+type Draft = { touched: boolean; active: End; start: EndDraft; end: EndDraft; offsets: number[] };
 
 function endDraft(localCivil: string | null, choice: Disambiguation | undefined): EndDraft {
   const parts = localCivil ? splitCivilMinute(localCivil) : { day: null, time: null };
@@ -86,13 +97,15 @@ function endDraft(localCivil: string | null, choice: Disambiguation | undefined)
 
 const foldChoice = (fold: 0 | 1): Disambiguation => (fold === 1 ? "later" : "earlier");
 
-function initialDraft(value: DateTimeRangeValue | null, seed: DateTimeRangeSeed | undefined, openOn: End): Draft {
+function initialDraft(value: DateTimeRangeValue | null, seed: DateTimeRangeSeed | undefined, openOn: End, reminders: DateTimeReminders | undefined): Draft {
+  const stored = [...(reminders?.offsets ?? [])];
   if (seed) {
-    return { touched: true, active: openOn, start: endDraft(seed.start.localCivil, seed.start.disambiguation), end: endDraft(seed.end.localCivil, seed.end.disambiguation) };
+    return { touched: true, active: openOn, offsets: seed.reminderOffsetsMinutes ? [...seed.reminderOffsetsMinutes] : stored, start: endDraft(seed.start.localCivil, seed.start.disambiguation), end: endDraft(seed.end.localCivil, seed.end.disambiguation) };
   }
   return {
     touched: false,
     active: openOn,
+    offsets: stored,
     start: endDraft(value?.start.localCivil ?? null, value ? foldChoice(value.start.fold) : undefined),
     end: endDraft(value?.end.localCivil ?? null, value ? foldChoice(value.end.fold) : undefined),
   };
@@ -131,7 +144,7 @@ function resolveEnd(draft: EndDraft): Resolved {
   return { civil, gap, choices, chosen, epochMs };
 }
 
-export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "start", seed, facts, feedback, focusOnMount, onApply, onClose, onCancel }: Omit<DateTimeRangePopupProps, "seedKey">) {
+export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "start", seed, reminders, facts, feedback, focusOnMount, onApply, onClose, onCancel }: Omit<DateTimeRangePopupProps, "seedKey">) {
   const anchor = useContext(PopupAnchorContext);
   const ownId = useId();
   const ownBodyRef = useRef<HTMLDivElement>(null);
@@ -141,7 +154,7 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
 
   // Sydney's today, read once when the popup opens so it cannot change under the user.
   const [today] = useState(() => sydneyToday());
-  const [draft, setDraft] = useState<Draft>(() => initialDraft(value, seed, openOn));
+  const [draft, setDraft] = useState<Draft>(() => initialDraft(value, seed, openOn, reminders));
   const [month, setMonth] = useState(() => civilToCell((openOn === "end" ? draft.end.day : draft.start.day) ?? draft.start.day ?? today));
   const [applying, setApplying] = useState(false);
   // Spoken when the active end changes, so the handoff after a start pick is not silent.
@@ -215,7 +228,7 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
         nextEnd = reset(end, DEADLINE_PRESET_TIME);
       }
       const dropFold = (before: EndDraft, after: EndDraft): EndDraft => (joinCivilMinute(before.day, before.time) === joinCivilMinute(after.day, after.time) ? after : { ...after, fold: null });
-      return { touched: true, active: nextActive, start: dropFold(state.start, nextStart), end: dropFold(state.end, nextEnd) };
+      return { touched: true, active: nextActive, offsets: state.offsets, start: dropFold(state.start, nextStart), end: dropFold(state.end, nextEnd) };
     });
     setMonth(civilToCell(day));
   };
@@ -227,6 +240,7 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
     setDraft((state) => ({
       touched: true,
       active: state.active,
+      offsets: state.offsets,
       start: { day: startParts.day, time: startParts.time, timeText: startParts.time ?? "", fold: { minute: range.start.localCivil, choice: foldChoice(range.start.fold) } },
       end: { day: endParts.day, time: endParts.time, timeText: endParts.time ?? "", fold: { minute: range.end.localCivil, choice: foldChoice(range.end.fold) } },
     }));
@@ -258,6 +272,7 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
     const payload: DateTimeRangeApply = {
       start: { localCivil: resolved.start.civil, ...(resolved.start.chosen ? { disambiguation: resolved.start.chosen } : {}) },
       end: { localCivil: resolved.end.civil, ...(resolved.end.chosen ? { disambiguation: resolved.end.chosen } : {}) },
+      ...(reminders ? { reminderOffsetsMinutes: draft.offsets } : {}),
     };
     setApplying(true);
     try {
@@ -271,6 +286,13 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
       if (mounted.current) setApplying(false);
     }
   };
+
+  // The next-reminder line states the SAVED schedule; it goes quiet once the draft departs from it (either end's minute, or the offsets).
+  const savedLineStale = reminders !== undefined && draft.touched && (
+    resolved.start.civil !== (value?.start.localCivil ?? null)
+    || resolved.end.civil !== (value?.end.localCivil ?? null)
+    || !sameReminderOffsets(draft.offsets, reminders.offsets)
+  );
 
   const momentText = (which: End) => {
     const { civil } = resolved[which];
@@ -340,6 +362,8 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
           const civil = resolved[which].civil;
           return choices && civil ? <FoldChoice key={which} subject={TITLES[which]} choices={choices} selected={resolved[which].chosen} onSelect={(choice) => change(which, { fold: { minute: civil, choice } })} /> : null;
         })}
+        {reminders && <RemindersStrip offsets={draft.offsets} onChange={(offsets) => setDraft((state) => ({ ...state, touched: true, offsets }))} />}
+        {reminders && reminders.next !== undefined && <NextReminder saved stale={savedLineStale} next={reminders.next} hasReminders={reminders.offsets.length > 0} />}
         {facts}
         {feedback}
       </div>
