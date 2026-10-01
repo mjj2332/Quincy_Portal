@@ -1,22 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { parseStaffLocation, staffPathFor, STAGE_PRESENTATION_KEYS } from "@quincy/shared";
-import type { FilterNode, FilterQuery } from "../components/reui/filters/filters-types";
 import {
-  GANTT_FILTER_RULE_ID,
   DEFAULT_GANTT_FACET_FILTERS,
-  GANTT_FILTER_ROOT_ID,
   ganttFacetFor,
   ganttFacetKey,
   ganttFacetForWrite,
   ganttPairingNotice,
   ganttShowDeliveredRecovery,
-  ganttFacetToQuery,
   ganttFiltersFromRoute,
   ganttLegendEntries,
-  ganttQueryForFacet,
   ganttRouteFor,
   productionStageFilterOptions,
-  queryToGanttFacet,
   stageOptionsWithColor,
   type ProductionGanttFacetFilters,
 } from "./production-gantt-filters";
@@ -139,109 +133,8 @@ describe("Gantt filter mapping", () => {
       expect(staffPathFor(ganttRouteFor(filters, route.search))).toBe(location);
     }
   });
-});
 
-describe("Gantt filters bar mapping (#255)", () => {
-  const E1 = "11111111-1111-4111-8111-111111111111";
-  const E2 = "22222222-2222-4222-8222-222222222222";
   const facetOf = (over: Partial<ProductionGanttFacetFilters> = {}): ProductionGanttFacetFilters => ({ ...DEFAULT_GANTT_FACET_FILTERS, ...over });
-
-  /** What the shared Filter owns, as the Dashboard hands it to a bar write. */
-  const CARRIED: NonNullable<Parameters<typeof queryToGanttFacet>[1]> = { stageKeys: [], priorities: [], archived: "hide", editorIds: [], includeUnassigned: false, myTasks: false, overdueOnly: false, shootRange: null, deadlineRange: null };
-
-  /** Every facet the bar can write: the bar owns Show only (Stage moved to the shared Filter in #428, Editor in #429). */
-  function everyFacet(): ProductionGanttFacetFilters[] {
-    const facets: ProductionGanttFacetFilters[] = [];
-    for (const delivered of [false, true]) for (const completed of [false, true]) facets.push(facetOf({ delivered, completed }));
-    return facets;
-  }
-
-  const root = (rules: FilterNode<unknown>[], combinator: "and" | "or" = "and"): FilterQuery<unknown> => ({ id: "root", type: "group", combinator, rules });
-  const stageRule = (value: unknown, extra: Record<string, unknown> = {}): FilterNode<unknown> => ({ id: "s", type: "rule", path: ["stage"], operator: "is_any_of", value, ...extra });
-  const showRule = (value: unknown, extra: Record<string, unknown> = {}): FilterNode<unknown> => ({ id: "w", type: "rule", path: ["show"], operator: "includes", value, ...extra });
-
-  const editorRule = (value: unknown, extra: Record<string, unknown> = {}): FilterNode<unknown> => ({ id: "e", type: "rule", path: ["editor"], operator: "is_any_of", value, ...extra });
-
-  it("draws only Show: People are the shared Filter's, and an Editor rule is no longer a bar field (#429)", () => {
-    const facet = facetOf({ editorIds: [E2, E1], completed: true });
-    expect(ganttFacetToQuery(facet).rules.map((rule) => (rule.type === "rule" ? rule.path[0] : "group"))).toEqual(["show"]);
-    expect(queryToGanttFacet(ganttFacetToQuery(facet), { ...CARRIED, editorIds: [E1, E2] })).toEqual({ ...facet, editorIds: [E1, E2] });
-    expect(queryToGanttFacet(root([editorRule([E1])]))).toBeNull();
-  });
-
-  it("never draws the shared Filter's facets as chips, and carries them through a read untouched (#428)", () => {
-    const shared = facetOf({ stageKeys: ["raw_review"], priorities: ["5", "none"], archived: "include", completed: true });
-    expect(ganttFacetToQuery(shared).rules.map((rule) => (rule.type === "rule" ? rule.path[0] : "group"))).toEqual(["show"]);
-    expect(queryToGanttFacet(ganttFacetToQuery(shared), { ...CARRIED, stageKeys: ["raw_review"], priorities: ["5", "none"], archived: "include" })).toEqual(shared);
-    // Without a carrier the shared fields read as the defaults.
-    expect(queryToGanttFacet(ganttFacetToQuery(shared))).toEqual({ ...DEFAULT_GANTT_FACET_FILTERS, completed: true });
-    // A Stage rule is not a bar rule: a query holding one is not something the bar can write.
-    expect(queryToGanttFacet(root([stageRule(["editing"])]))).toBeNull();
-  });
-
-  it("round-trips every facet (delivered x completed) through the query", () => {
-    const facets = everyFacet();
-    expect(facets).toHaveLength(4);
-    for (const facet of facets) expect(queryToGanttFacet(ganttFacetToQuery(facet)), JSON.stringify(facet)).toEqual(facet);
-  });
-
-  it("writes a flat and-root with a rule only for each non-default facet", () => {
-    expect(ganttFacetToQuery(DEFAULT_GANTT_FACET_FILTERS)).toEqual({ id: GANTT_FILTER_ROOT_ID, type: "group", combinator: "and", rules: [] });
-    expect(ganttFacetToQuery(facetOf({ completed: true }))).toEqual({
-      id: GANTT_FILTER_ROOT_ID,
-      type: "group",
-      combinator: "and",
-      rules: [{ id: "gantt-show", type: "rule", path: ["show"], operator: "includes", value: ["completed"] }],
-    });
-    expect(ganttFacetToQuery(facetOf({ delivered: true, completed: true })).rules).toEqual([
-      { id: "gantt-show", type: "rule", path: ["show"], operator: "includes", value: ["delivered", "completed"] },
-    ]);
-  });
-
-  it("gives the same rule ids every time (stable across re-seeds)", () => {
-    const facet = facetOf({ delivered: true });
-    const first = ganttFacetToQuery(facet);
-    const second = ganttFacetToQuery({ ...facet });
-    expect(first.id).toBe(second.id);
-    expect(first.rules.map((rule) => rule.id)).toEqual(["gantt-show"]);
-    expect(second.rules.map((rule) => rule.id)).toEqual(["gantt-show"]);
-  });
-
-  it("reads unfinished and empty rules as the default", () => {
-    expect(queryToGanttFacet(root([]))).toEqual(DEFAULT_GANTT_FACET_FILTERS);
-    expect(queryToGanttFacet(root([showRule(undefined, { operator: "" })]))).toEqual(DEFAULT_GANTT_FACET_FILTERS);
-    expect(queryToGanttFacet(root([showRule(["completed"], { operator: "" })]))).toEqual(DEFAULT_GANTT_FACET_FILTERS);
-    expect(queryToGanttFacet(root([showRule(undefined)]))).toEqual(DEFAULT_GANTT_FACET_FILTERS);
-    expect(queryToGanttFacet(root([showRule([])]))).toEqual(DEFAULT_GANTT_FACET_FILTERS);
-  });
-
-  it("canonicalises order inside a value", () => {
-    expect(queryToGanttFacet(root([showRule(["completed", "delivered"])]))).toEqual(facetOf({ delivered: true, completed: true }));
-  });
-
-  it("returns null for every shape the Gantt request cannot express", () => {
-    const cases: Array<[string, FilterQuery<unknown>]> = [
-      ["or root", root([showRule(["delivered"])], "or")],
-      ["nested group", root([{ id: "g", type: "group", combinator: "and", rules: [showRule(["delivered"])] }])],
-      ["empty nested group", root([{ id: "g", type: "group", combinator: "and", rules: [] }])],
-      ["negated rule", root([showRule(["delivered"], { negated: true })])],
-      ["negated unfinished rule", root([showRule(undefined, { operator: "", negated: true })])],
-      ["unknown field", root([{ id: "e", type: "rule", path: ["owner"], operator: "is_any_of", value: ["x"] }])],
-      ["stage is not a bar field", root([stageRule(["editing"])])],
-      ["nested path", root([{ id: "n", type: "rule", path: ["show", "key"], operator: "includes", value: ["delivered"] }])],
-      ["empty path", root([{ id: "n", type: "rule", path: [], operator: "includes", value: ["delivered"] }])],
-      ["unknown show operator", root([showRule(["delivered"], { operator: "is_any_of" })])],
-      ["unknown show value", root([showRule(["overdue"])])],
-      ["non-string value", root([showRule([1])])],
-      ["non-array value", root([showRule("delivered")])],
-      ["unfinished rule, unknown retained show value", root([showRule(["overdue"], { operator: "" })])],
-      ["unfinished rule, non-string retained value", root([showRule([1], { operator: "" })])],
-      ["unfinished rule, non-array retained value", root([showRule("delivered", { operator: "" })])],
-      ["duplicate field, both finished", root([showRule(["delivered"]), { ...showRule(["completed"]), id: "w2" } as FilterNode<unknown>])],
-      ["duplicate field, one unfinished", root([showRule(["delivered"]), { ...showRule(undefined, { operator: "" }), id: "w2" } as FilterNode<unknown>])],
-    ];
-    for (const [name, query] of cases) expect(queryToGanttFacet(query), name).toBeNull();
-  });
 
   it("keys facets by value, not identity, shared Filter facets included", () => {
     expect(ganttFacetKey(facetOf({ stageKeys: ["delivered", "editing"] }))).toBe(ganttFacetKey(facetOf({ stageKeys: ["editing", "delivered"] })));
@@ -282,39 +175,6 @@ describe("the Delivered pair: Stage = Delivered and Show -> Delivered (#255)", (
     ] as const) {
       expect(ganttFacetForWrite(previous, next)).toEqual(next);
     }
-  });
-
-  describe("ganttQueryForFacet", () => {
-    const CARRIED: NonNullable<Parameters<typeof queryToGanttFacet>[1]> = { stageKeys: [], priorities: [], archived: "hide", editorIds: [], includeUnassigned: false, myTasks: false, overdueOnly: false, shootRange: null, deadlineRange: null };
-    const root = (rules: FilterNode<string[]>[]): FilterQuery<string[]> => ({ id: "root", type: "group", combinator: "and", rules });
-    const rule = (id: string, value: string[] | undefined, operator = "includes"): FilterNode<string[]> => ({ id, type: "rule", path: ["show"], operator, value });
-
-    it("updates a written rule's values in place, keeping its id", () => {
-      const next = ganttQueryForFacet(root([rule("b", ["completed"])]), facet([], true, true));
-      expect(next.rules).toEqual([rule("b", ["delivered", "completed"])]);
-    });
-
-    it("adds a Show rule the facet now needs", () => {
-      const next = ganttQueryForFacet(root([]), facet(["delivered"], true));
-      expect(next.rules).toEqual([{ id: "gantt-show", type: "rule", path: ["show"], operator: "includes", value: ["delivered"] }]);
-    });
-
-    it("finishes an unfinished Show rule the facet now needs", () => {
-      const next = ganttQueryForFacet(root([rule("b", undefined, "")]), facet(["delivered"], true));
-      expect(next.rules).toEqual([rule("b", ["delivered"])]);
-    });
-
-    it("drops a rule whose values the facet emptied, and keeps one the user has not finished", () => {
-      const next = ganttQueryForFacet(root([rule("a", ["delivered"])]), facet([], false));
-      expect(next.rules).toEqual([]);
-      const unfinished = ganttQueryForFacet(root([rule("a", undefined, ""), { id: "x", type: "rule", path: ["other"], operator: "", value: undefined }]), facet([], false));
-      expect(unfinished.rules).toEqual([rule("a", undefined, ""), { id: "x", type: "rule", path: ["other"], operator: "", value: undefined }]);
-    });
-
-    it("projects back to the facet it was given", () => {
-      const target = facet(["raw_review"], false, true);
-      expect(queryToGanttFacet(ganttQueryForFacet(root([rule("b", ["completed"])]), target), { ...CARRIED, stageKeys: ["raw_review"] })).toEqual(target);
-    });
   });
 });
 
