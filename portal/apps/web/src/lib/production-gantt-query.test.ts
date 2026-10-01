@@ -73,16 +73,17 @@ function checklistRow(id: string, overrides: Partial<GanttChecklistRowDto> = {})
 }
 
 describe("buildGanttPageQuery (#274)", () => {
-  const filters = { q: "", editorIds: [editorId], stageKeys: [], priorities: [], archived: "hide" as const, delivered: false, completed: false };
-  it("asks for the Editor options on page one only", () => {
-    expect(new URLSearchParams(buildGanttPageQuery(filters, undefined)).get("facets")).toBe("1");
+  const filters = { q: "", editorIds: [editorId], stageKeys: [], priorities: [], archived: "hide" as const, delivered: false, completed: false, includeUnassigned: false, myTasks: false, overdueOnly: false, shootRange: null, deadlineRange: null };
+  it("sends the editors, never asks for option facets (People options come from /api/dashboard/people, #429), and asks for deadline marks", () => {
+    expect(new URLSearchParams(buildGanttPageQuery(filters, undefined)).has("facets")).toBe(false);
     expect(new URLSearchParams(buildGanttPageQuery(filters, "cursor-2")).has("facets")).toBe(false);
     expect(new URLSearchParams(buildGanttPageQuery(filters, undefined)).get("editors")).toBe(editorId);
+    expect(new URLSearchParams(buildGanttPageQuery(filters, undefined)).get("dm")).toBe("1");
   });
 });
 
 describe("the shared Filter's Priority and Archived on the Gantt request (#428)", () => {
-  const base = { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide" as const, delivered: false, completed: false };
+  const base = { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide" as const, delivered: false, completed: false, includeUnassigned: false, myTasks: false, overdueOnly: false, shootRange: null, deadlineRange: null };
 
   it("sends nothing for the defaults and `priority` / `archived` only when they narrow", () => {
     const query = new URLSearchParams(buildGanttPageQuery(base, undefined));
@@ -101,7 +102,7 @@ describe("the shared Filter's Priority and Archived on the Gantt request (#428)"
 });
 
 describe("buildGanttPageQuery (#365)", () => {
-  const filters = { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide" as const, delivered: false, completed: false };
+  const filters = { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide" as const, delivered: false, completed: false, includeUnassigned: false, myTasks: false, overdueOnly: false, shootRange: null, deadlineRange: null };
   it("asks for each row's Project team on page one and on a cursor page", () => {
     expect(new URLSearchParams(buildGanttPageQuery(filters, undefined)).get("team")).toBe("1");
     expect(new URLSearchParams(buildGanttPageQuery(filters, "cursor-2")).get("team")).toBe("1");
@@ -111,7 +112,7 @@ describe("buildGanttPageQuery (#365)", () => {
 describe("production gantt query family", () => {
   it("composes the authorization, scope, and filter key in order, with the principal load-bearing at index 1", () => {
     const identity = { principalId: principal, role: "admin" as const, authorizationEpoch: 4 };
-    const filters = { q: "smith street", editorIds: [editorId], stageKeys: ["editing" as const], priorities: [], archived: "hide" as const, delivered: true, completed: true };
+    const filters = { q: "smith street", editorIds: [editorId], stageKeys: ["editing" as const], priorities: [], archived: "hide" as const, delivered: true, completed: true, includeUnassigned: false, myTasks: false, overdueOnly: false, shootRange: null, deadlineRange: null };
     const key = productionGanttKey(identity, "active", filters);
     expect(key[0]).toBe("production-gantt");
     expect(key[1]).toBe(principal);
@@ -123,7 +124,7 @@ describe("production gantt query family", () => {
   it("removes every filtered variant for one principal and leaves other principals", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const identity = { principalId: principal, role: "admin" as const, authorizationEpoch: 0 };
-    const filters = { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide" as const, delivered: false, completed: false };
+    const filters = { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide" as const, delivered: false, completed: false, includeUnassigned: false, myTasks: false, overdueOnly: false, shootRange: null, deadlineRange: null };
     client.setQueryData(productionGanttKey(identity, "active", filters), { value: 1 });
     client.setQueryData(productionGanttKey(identity, "active", { ...filters, delivered: true }), { value: 2 });
     client.setQueryData(productionGanttKey({ ...identity, principalId: editorId }, "active", filters), { value: 3 });
@@ -154,7 +155,7 @@ describe("production gantt query family", () => {
   it("keeps the selected data's referential identity across a re-render with unchanged pages (fix-218-r3 #1)", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const identity = { principalId: principal, role: "admin" as const, authorizationEpoch: 0 };
-    const filters = { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide" as const, delivered: false, completed: false };
+    const filters = { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide" as const, delivered: false, completed: false, includeUnassigned: false, myTasks: false, overdueOnly: false, shootRange: null, deadlineRange: null };
     const queryKey = productionGanttKey(identity, "active", filters);
     const infiniteData = { pages: [page([project("a")])], pageParams: [undefined] };
     client.setQueryData(queryKey, infiniteData);
@@ -187,7 +188,7 @@ describe("production gantt query family", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const runtime = new ProjectQueryRuntime(queryClient, "gantt-producer-coordinator");
     const identity = { principalId: principal, role: "admin" as const, authorizationEpoch: 0 };
-    const filters = { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide" as const, delivered: false, completed: false };
+    const filters = { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide" as const, delivered: false, completed: false, includeUnassigned: false, myTasks: false, overdueOnly: false, shootRange: null, deadlineRange: null };
     const ganttKey = productionGanttKey(identity, "active", filters);
     queryClient.setQueryData(ganttKey, baseResponse());
     const observer = new QueryObserver(queryClient, { queryKey: ganttKey, queryFn: () => Promise.resolve(baseResponse()), staleTime: Infinity });
@@ -210,7 +211,7 @@ describe("production gantt query family", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const runtime = new ProjectQueryRuntime(queryClient, "gantt-non-producer");
     const identity = { principalId: principal, role: "admin" as const, authorizationEpoch: 0 };
-    const filters = { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide" as const, delivered: false, completed: false };
+    const filters = { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide" as const, delivered: false, completed: false, includeUnassigned: false, myTasks: false, overdueOnly: false, shootRange: null, deadlineRange: null };
     const ganttKey = productionGanttKey(identity, "active", filters);
     queryClient.setQueryData(ganttKey, baseResponse());
     const observer = new QueryObserver(queryClient, { queryKey: ganttKey, queryFn: () => Promise.resolve(baseResponse()), staleTime: Infinity });

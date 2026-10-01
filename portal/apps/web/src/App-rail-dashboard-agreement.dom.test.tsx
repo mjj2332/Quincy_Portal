@@ -160,7 +160,7 @@ function calendarRangeResponse(path: string) {
       date: params.get("date") ?? "2026-09-16",
       subview: (params.get("sub") ?? "month") as "month" | "week" | "agenda",
       zone: PRODUCTION_CALENDAR_ZONE,
-      appliedFilters: { layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: (params.get("archived") ?? "hide") as "hide" | "include" | "only", showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false },
+      appliedFilters: { layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: (params.get("archived") ?? "hide") as "hide" | "include" | "only", shootRange: null, deadlineRange: null, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false },
     },
     events: calendarEventFixture.enabled ? [calendarDeadlineEvent()] : [],
     filterFacets: { projects: [], people: [], myTasksUserId: "00000000-0000-4000-8000-000000000000" },

@@ -10,29 +10,22 @@ if (!Element.prototype.getAnimations) {
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { productionCalendarFiltersSchema, type CalendarPerson, type ProductionCalendarFilters as Filters } from "@quincy/shared";
+import { productionCalendarFiltersSchema, type ProductionCalendarFilters as Filters } from "@quincy/shared";
 import { ProductionEventCalendarFacets } from "./ProductionEventCalendarFacets";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const editorA = "11111111-1111-4111-8111-111111111111";
-const editorB = "22222222-2222-4222-8222-222222222222";
-const staleEditor = "33333333-3333-4333-8333-333333333333";
-
-const people: CalendarPerson[] = [
-  { id: editorA.toUpperCase(), name: "Alex Editor", roleLabel: "Editor", isExternal: false, active: true },
-  { id: editorA, name: "Alex Duplicate", roleLabel: "Editor", isExternal: false, active: true },
-  { id: editorB, name: "Bea External", roleLabel: "External Editor", isExternal: true, active: false },
-];
 
 const defaults: Filters = {
   layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const,
+  shootRange: null, deadlineRange: null,
   showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false,
 };
 
-function Controlled({ initial, facetPeople = people, disabled = false, onChange }: { initial: Filters; facetPeople?: CalendarPerson[]; disabled?: boolean; onChange: (next: Filters) => void }) {
+function Controlled({ initial, disabled = false, onChange }: { initial: Filters; disabled?: boolean; onChange: (next: Filters) => void }) {
   const [filters, setFilters] = useState(initial);
-  return <ProductionEventCalendarFacets filters={filters} facetPeople={facetPeople} disabled={disabled} onChange={(next) => { onChange(next); setFilters(next); }} />;
+  return <ProductionEventCalendarFacets filters={filters} disabled={disabled} onChange={(next) => { onChange(next); setFilters(next); }} />;
 }
 
 let host: HTMLDivElement;
@@ -41,7 +34,7 @@ let root: Root;
 beforeEach(() => { host = document.createElement("div"); document.body.append(host); root = createRoot(host); });
 afterEach(async () => { await act(async () => { root.unmount(); await Promise.resolve(); }); host.remove(); document.body.replaceChildren(); });
 
-async function renderFacets(initial: Filters = defaults, options: { facetPeople?: CalendarPerson[]; disabled?: boolean } = {}) {
+async function renderFacets(initial: Filters = defaults, options: { disabled?: boolean } = {}) {
   const onChange = vi.fn<(next: Filters) => void>();
   await act(async () => { root.render(<Controlled initial={initial} {...options} onChange={onChange} />); await Promise.resolve(); });
   return onChange;
@@ -111,51 +104,11 @@ describe("ProductionEventCalendarFacets — Layers", () => {
   });
 });
 
-describe("ProductionEventCalendarFacets — People", () => {
-  it("offers only response people (deduplicated, lowercased) plus Unassigned, and no chips means all", async () => {
-    await renderFacets();
+describe("ProductionEventCalendarFacets — People moved to the shared Filter (#429)", () => {
+  it("has no People picker and no person chip", async () => {
+    await renderFacets({ ...defaults, editorIds: [editorA], includeUnassigned: true });
+    expect(host.querySelector('[aria-label="Filter people"]')).toBeNull();
     expect(chipIds("event-calendar-person-")).toEqual([]);
-    expect(host.querySelector<HTMLInputElement>('[aria-label="Filter people"]')?.placeholder).toBe("All people");
-    await openPicker("Filter people");
-    const labels = [...document.querySelectorAll<HTMLElement>('[role="option"]')].map((candidate) => candidate.textContent);
-    expect(labels.some((text) => text?.includes("Alex Editor"))).toBe(true);
-    expect(labels.some((text) => text?.includes("Alex Duplicate"))).toBe(false);
-    expect(labels.some((text) => text?.includes("Bea External"))).toBe(true);
-    expect(labels.some((text) => text?.includes("Unassigned"))).toBe(true);
-  });
-
-  it("adds a person chip with an avatar, keeps a stale URL id without showing it, and emits sorted lowercase ids", async () => {
-    const onChange = await renderFacets({ ...defaults, editorIds: [staleEditor, editorB] });
-    expect(chipIds("event-calendar-person-")).toEqual([`event-calendar-person-${editorB}`]);
-    expect(host.textContent).not.toContain(staleEditor);
-    await openPicker("Filter people");
-    await act(async () => { option("Alex Editor").click(); await Promise.resolve(); });
-    expectCanonical(onChange, { editorIds: [editorA, editorB, staleEditor].sort() });
-    const chip = host.querySelector<HTMLElement>(`[data-testid="event-calendar-person-${editorA}"]`)!;
-    expect(chip.textContent).toContain("AE");
-    expect(chip.textContent).toContain("Alex");
-  });
-
-  it("toggles Unassigned as a chip", async () => {
-    const onChange = await renderFacets();
-    await openPicker("Filter people");
-    await act(async () => { option("Unassigned").click(); await Promise.resolve(); });
-    expectCanonical(onChange, { includeUnassigned: true, editorIds: [] });
-    expect(chipIds("event-calendar-person-")).toEqual(["event-calendar-person-unassigned"]);
-    await removeChip("event-calendar-person-unassigned");
-    expectCanonical(onChange, { includeUnassigned: false });
-  });
-
-  it("removes a person chip", async () => {
-    const onChange = await renderFacets({ ...defaults, editorIds: [editorA] });
-    await removeChip(`event-calendar-person-${editorA}`);
-    expectCanonical(onChange, { editorIds: [] });
-  });
-
-  it("offers only Unassigned when the response has no people", async () => {
-    await renderFacets(defaults, { facetPeople: [] });
-    await openPicker("Filter people");
-    expect([...document.querySelectorAll('[role="option"]')].map((candidate) => candidate.textContent)).toEqual(["Unassigned"]);
   });
 });
 
@@ -165,33 +118,34 @@ describe("ProductionEventCalendarFacets — hidden URL filters", () => {
     expect(host.querySelector('[data-testid="event-calendar-hidden-filters"]')).toBeNull();
   });
 
-  it("counts Stage (once), Completed, Delivered, Overdue and My tasks, and Clear resets only those", async () => {
+  it("counts Completed and Delivered only (the shared Filter owns the rest), and Clear resets only those", async () => {
     const onChange = await renderFacets({
       layers: ["project"], editorIds: [editorA], includeUnassigned: true, stageKeys: ["editing", "delivered"], priorities: [], archived: "hide" as const,
+      shootRange: null, deadlineRange: null,
       showCompletedChecklist: true, showDeliveredProjects: true, overdueOnly: true, search: "smith street", myTasks: true,
     });
-    expect(host.querySelector('[data-testid="event-calendar-hidden-filters"]')?.textContent).toContain("5 filters active");
+    expect(host.querySelector('[data-testid="event-calendar-hidden-filters"]')?.textContent).toContain("2 filters active");
     await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="event-calendar-hidden-filters-clear"]')!.click(); await Promise.resolve(); });
     expectCanonical(onChange, {
-      layers: ["project"], editorIds: [editorA], includeUnassigned: true, stageKeys: [], priorities: [], archived: "hide" as const,
-      showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "smith street", myTasks: false,
+      layers: ["project"], editorIds: [editorA], includeUnassigned: true, stageKeys: ["editing", "delivered"], priorities: [], archived: "hide" as const,
+      shootRange: null, deadlineRange: null,
+      showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: true, search: "smith street", myTasks: true,
     });
     expect(host.querySelector('[data-testid="event-calendar-hidden-filters"]')).toBeNull();
   });
 
   it("says 1 filter active in the singular", async () => {
-    await renderFacets({ ...defaults, overdueOnly: true });
+    await renderFacets({ ...defaults, showCompletedChecklist: true });
     expect(host.querySelector('[data-testid="event-calendar-hidden-filters"]')?.textContent).toContain("1 filter active");
   });
 });
 
 describe("ProductionEventCalendarFacets — disabled", () => {
-  it("disables both pickers, every chip remove and Clear", async () => {
-    const onChange = await renderFacets({ ...defaults, myTasks: true, editorIds: [editorA] }, { disabled: true });
+  it("disables the picker, every chip remove and Clear", async () => {
+    const onChange = await renderFacets({ ...defaults, showDeliveredProjects: true }, { disabled: true });
     expect(host.querySelector<HTMLInputElement>('[aria-label="Add layer"]')?.disabled).toBe(true);
-    expect(host.querySelector<HTMLInputElement>('[aria-label="Filter people"]')?.disabled).toBe(true);
     expect(host.querySelector<HTMLButtonElement>('[data-testid="event-calendar-hidden-filters-clear"]')?.disabled).toBe(true);
-    await removeChip(`event-calendar-person-${editorA}`);
+    await removeChip("event-calendar-layer-checklist");
     expect(onChange).not.toHaveBeenCalled();
   });
 });

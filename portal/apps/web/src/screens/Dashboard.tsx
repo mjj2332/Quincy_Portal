@@ -78,7 +78,8 @@ import {
 } from "../lib/dashboard-search-store";
 import type { CalendarSettleState } from "../lib/production-calendar-interaction";
 import { ganttFacetForWrite, ganttFiltersFromRoute, ganttPairingNotice, ganttRouteFor, productionStageFilterOptions, type ProductionGanttFacetFilters } from "../lib/production-gantt-filters";
-import { dashboardFilterNarrowCount } from "../lib/dashboard-filter-query";
+import { dashboardFilterKey, dashboardFilterNarrowCount } from "../lib/dashboard-filter-query";
+import { useDashboardPeople } from "../lib/dashboard-people";
 
 /** A lazy Dashboard view's loading box (#363): fills the view region instead of a fixed floor. */
 const VIEW_STATE_BOX = "min-h-0 flex-1 grid place-content-center gap-[4px]";
@@ -267,9 +268,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const canFilterArchived = canViewArchived;
   const canFilterPriority = role !== "external_editor";
   const urlFilter = dashboardFilterOf(parsedRoute);
-  const filterKey = JSON.stringify([urlFilter.stageKeys, urlFilter.priorities, urlFilter.archived]);
+  const filterKey = dashboardFilterKey(urlFilter);
   const filter = useMemo<DashboardFilter>(() => ({
-    stageKeys: urlFilter.stageKeys,
+    ...urlFilter,
     priorities: canFilterPriority ? urlFilter.priorities : [],
     archived: canFilterArchived ? urlFilter.archived : "hide",
   // eslint-disable-next-line react-hooks/exhaustive-deps -- `filterKey` is the value key of `urlFilter`
@@ -388,6 +389,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const firstDataReady = projectsQuery.isSuccess && !projectsQuery.isPlaceholderData;
   useEffect(() => { if (firstDataReady) markDashboardData(view); }, [firstDataReady, view]);
   const searchCountsQuery = useDashboardProjectSearch(filter, identity, committedQuery);
+  // #429: after the Projects request, so a harness that serves its first reply to the first request still serves the list.
+  const { people: dashboardPeople } = useDashboardPeople(identity, filter.archived);
   // #260: the projects the Gantt / Calendar actually draws under its own filters (the chip's "shown").
   const [viewShownProjects, setViewShownProjects] = useState<number | null>(null);
   // #230: widened to carry `committedQuery` as the fifth argument -- ONE q-aware key, not a second
@@ -474,7 +477,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // the real column, so a position computed against it is wrong. Stage alone does not narrow within
   // a column. The same gate the search had, on the three places it was read (`canMoveStages`,
   // `movementDisabled`/`sameStageReorderEnabled`, `runBoardMovement`).
-  const boardNarrowed = searchActive || filter.priorities.length > 0 || filter.archived !== "hide";
+  // #429: People, Unassigned, Shoot date, Deadline, Overdue and My tasks narrow within a column too.
+  const boardNarrowed = searchActive || dashboardFilterNarrowCount({ ...filter, stageKeys: [] }) > 0;
   const filterActive = dashboardFilterNarrowCount(filter) > 0;
   // #306: the UI lock is NOT the data barrier. `movementInteractionActive` locks the view switcher
   // and the sort; `interactionBlocked` is that plus a pending priority save, and is the barrier that
@@ -1508,6 +1512,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         stageOptions={stageFilterOptions}
         canFilterPriority={canFilterPriority}
         canFilterArchived={canFilterArchived}
+        people={dashboardPeople}
         disabled={movementInteractionActive || calendarInteractionBlocked}
       >
         <DashboardViewBar

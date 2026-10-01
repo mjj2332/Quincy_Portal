@@ -1,4 +1,4 @@
-import { authorizedBoardRank, canonicalDashboardPriorities, canonicalDashboardStages, dashboardProjectsFilterQueryParams, type DashboardFilter, type ExternalProjectSummaryDto, type Role } from "@quincy/shared";
+import { authorizedBoardRank, canonicalDashboardEditorIds, canonicalDashboardPriorities, canonicalDashboardStages, dashboardProjectsFilterQueryParams, normalizeDashboardFilter, type DashboardFilter, type ExternalProjectSummaryDto, type Role } from "@quincy/shared";
 import { keepPreviousData, skipToken, useQuery, type Query, type UseQueryResult } from "@tanstack/react-query";
 import { apiGet } from "./api";
 import { externalApiGet, externalProjectSummaryToDashboard } from "./external-api-response";
@@ -35,20 +35,40 @@ export type DashboardIdentity = { principalId: string; role: Role; authorization
  * change here fails silently on that path. Search counts live in the sibling
  * `dashboardProjectSearchKey` cache entry instead, written once per fetch by this hook's `queryFn`.
  */
-export type DashboardProjectsKeyFilter = Pick<DashboardFilter, "archived"> & Partial<Pick<DashboardFilter, "stageKeys" | "priorities">>;
+export type DashboardProjectsKeyFilter = Pick<DashboardFilter, "archived"> & Partial<Omit<DashboardFilter, "archived">>;
 export const DASHBOARD_HIDE_ARCHIVED: DashboardProjectsKeyFilter = { archived: "hide" };
 
 /** The trailing object of a Dashboard-projects key: only what narrows, in a fixed member order. */
-export type DashboardProjectsKeyScope = { archived: DashboardFilter["archived"]; q?: string; stages?: string[]; priority?: string[] };
+export type DashboardProjectsKeyScope = {
+  archived: DashboardFilter["archived"];
+  q?: string;
+  stages?: string[];
+  priority?: string[];
+  /** #429: the relation and date facets, after Priority and in this order. Each is present only when it narrows. */
+  editors?: string[];
+  unassigned?: true;
+  shoot?: DashboardFilter["shootRange"];
+  deadline?: DashboardFilter["deadlineRange"];
+  overdue?: true;
+  mine?: true;
+};
 
 function dashboardProjectsKeyScope(filter: DashboardProjectsKeyFilter, q: string): DashboardProjectsKeyScope {
   const stages = canonicalDashboardStages(filter.stageKeys ?? []);
   const priority = canonicalDashboardPriorities(filter.priorities ?? []);
+  const editors = canonicalDashboardEditorIds(filter.editorIds ?? []);
   return {
     archived: filter.archived,
     ...(q ? { q } : {}),
     ...(stages.length > 0 ? { stages } : {}),
     ...(priority.length > 0 ? { priority } : {}),
+    ...(editors.length > 0 ? { editors } : {}),
+    ...(filter.includeUnassigned ? { unassigned: true as const } : {}),
+    ...(filter.shootRange ? { shoot: { from: filter.shootRange.from, to: filter.shootRange.to } } : {}),
+    ...(filter.deadlineRange ? { deadline: { from: filter.deadlineRange.from, to: filter.deadlineRange.to } } : {}),
+    // A Deadline range and Overdue are one rule: the range wins (the shared normaliser drops the other).
+    ...(filter.overdueOnly && !filter.deadlineRange ? { overdue: true as const } : {}),
+    ...(filter.myTasks ? { mine: true as const } : {}),
   };
 }
 
@@ -74,7 +94,7 @@ export function dashboardProjectSearchKey(principalId: string, role: Role, autho
 function dashboardProjectsPath(filter: DashboardProjectsKeyFilter, q: string): string {
   const params = new URLSearchParams();
   if (q) params.set("q", q);
-  for (const [name, value] of dashboardProjectsFilterQueryParams({ stageKeys: filter.stageKeys ?? [], priorities: filter.priorities ?? [], archived: filter.archived })) params.set(name, value);
+  for (const [name, value] of dashboardProjectsFilterQueryParams(normalizeDashboardFilter(filter))) params.set(name, value);
   const qs = params.toString();
   return qs ? `/api/projects?${qs}` : "/api/projects";
 }
@@ -174,18 +194,19 @@ export function isDashboardProjectsQueryFor(principalId: string, exceptKeyString
 }
 
 /**
- * #428: a `Query` predicate for the dashboard-projects entries whose request carries a Stage or
- * Priority filter. A Project's priority or stage edit can move it OUT of such an entry (or into one
+ * #428/#429: a `Query` predicate for the dashboard-projects entries whose request carries a Stage,
+ * Priority, People, Unassigned, My tasks, Overdue or date-range filter. A Project's priority or stage edit can move it OUT of such an entry (or into one
  * that never held it), so patching the cached row would leave a row in a list it no longer belongs
  * to: these entries are invalidated and refetched on next use instead of patched.
  */
-export function isFilteredDashboardProjectsQuery(principalId: string, facet: "stages" | "priority" | "any" = "any") {
+export function isFilteredDashboardProjectsQuery(principalId: string, facet: "stages" | "priority" | "relation" | "any" = "any") {
   const [kind, id] = dashboardProjectsKeyPrefix(principalId);
   return (query: Query) => {
     if (!Array.isArray(query.queryKey) || query.queryKey[0] !== kind || query.queryKey[1] !== id) return false;
     const scope = query.queryKey[4] as DashboardProjectsKeyScope | undefined;
     if (!scope) return false;
-    return facet === "stages" ? scope.stages !== undefined : facet === "priority" ? scope.priority !== undefined : scope.stages !== undefined || scope.priority !== undefined;
+    const relation = scope.editors !== undefined || scope.unassigned !== undefined || scope.shoot !== undefined || scope.deadline !== undefined || scope.overdue !== undefined || scope.mine !== undefined;
+    return facet === "stages" ? scope.stages !== undefined : facet === "priority" ? scope.priority !== undefined : facet === "relation" ? relation : scope.stages !== undefined || scope.priority !== undefined || relation;
   };
 }
 

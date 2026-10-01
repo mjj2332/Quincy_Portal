@@ -25,7 +25,7 @@ import { PROJECT_ID } from "./production-calendar-fixtures";
 import { eventCalendarFake } from "./event-calendar-fake";
 
 export function calendarState(subview: DashboardCalendarState["subview"] = "month", date = "2026-08-12", layers: DashboardCalendarState["layers"] = ["project", "checklist"]): DashboardCalendarState {
-  return { view: "calendar", date, subview, layers, editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide", showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false };
+  return { view: "calendar", date, subview, layers, editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide", shootRange: null, deadlineRange: null, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false };
 }
 
 export function json(body: unknown, status = 200): Response {

@@ -36,6 +36,8 @@ export function productionCalendarFiltersFor(calendar: DashboardCalendarState): 
     stageKeys: calendar.stageKeys,
     priorities: calendar.priorities,
     archived: calendar.archived,
+    shootRange: calendar.shootRange,
+    deadlineRange: calendar.deadlineRange,
     showCompletedChecklist: calendar.showCompletedChecklist,
     showDeliveredProjects: calendar.showDeliveredProjects,
     overdueOnly: calendar.overdueOnly,

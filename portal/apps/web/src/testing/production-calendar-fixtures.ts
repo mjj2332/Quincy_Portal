@@ -118,7 +118,7 @@ export function rangeResponse(input: RangeResponseInput = {}): ProductionCalenda
   const raw = {
     range: {
       start: window.start, end: window.end, date, subview, zone: PRODUCTION_CALENDAR_ZONE,
-      appliedFilters: { layers: input.layers ?? ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false },
+      appliedFilters: { layers: input.layers ?? ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, shootRange: null, deadlineRange: null, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false },
     },
     events: input.events ?? [],
     filterFacets: {

@@ -242,7 +242,7 @@ describe("ProductionGantt — Subtask assignees (#372)", () => {
 
     expect(invalidateMock).toHaveBeenCalledTimes(1);
     const options_ = invalidateMock.mock.calls[0]![1];
-    expect(options_).toMatchObject({ projectId: PROJECT_ID, calendar: true, gantt: true, dashboard: false, resources: [{ kind: "subtasks" }, { kind: "activity" }] });
+    expect(options_).toMatchObject({ projectId: PROJECT_ID, calendar: true, gantt: true, dashboard: true, dashboardSearchOnly: true, people: true, resources: [{ kind: "subtasks" }, { kind: "activity" }] });
     expect(options_).not.toHaveProperty("producer");
   });
 
