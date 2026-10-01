@@ -279,6 +279,51 @@ describe("ProductionEventCalendarScheduleEditorSheet (sheet shell)", () => {
     expect(rangeToggles(popup)).toEqual({ active: "Start", start: rangeMoment("2026-08-25", "09:00"), end: rangeMoment("2026-08-25", "17:00") });
   });
 
+  describe("reminders (#425)", () => {
+    const strip = (popup: HTMLElement, name: string) => popupButton(popup, name)!;
+
+    it("shows the event's stored set in the popup, and a reminders-only draft is saved with the unchanged range", async () => {
+      const onSubmit = await renderSheet({ event: { ...dueEvent, reminders: subtaskReminders([60]) } });
+      const popup = await openFieldPopup("Schedule");
+      expect(strip(popup, "1 hour").getAttribute("aria-pressed")).toBe("true");
+      await click(strip(popup, "4 hours"));
+      await applyPopup(popup);
+      await click(byTestId("event-calendar-schedule-submit")!);
+      expect(onSubmit).toHaveBeenCalledWith({ state: "range", start: { localCivil: "2026-08-20T09:00" }, end: { localCivil: "2026-08-20T17:00" } }, [240, 60]);
+    });
+
+    it("a range-only draft submits no offsets", async () => {
+      const onSubmit = await renderSheet();
+      const popup = await openFieldPopup("Schedule");
+      await pickPopupDay(popup, "2026-08-21");
+      await applyPopup(popup);
+      await click(byTestId("event-calendar-schedule-submit")!);
+      expect(onSubmit).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(onSubmit).mock.calls[0]).toHaveLength(1);
+    });
+
+    it("keeps the applied offsets when the popup is reopened, still stating the saved schedule", async () => {
+      await renderSheet({ event: { ...dueEvent, reminders: subtaskReminders([1440], { kind: "advance", offsetMinutes: 1440, firesAt: "2026-08-18T23:00:00.000Z" }) } });
+      let popup = await openFieldPopup("Schedule");
+      expect(popup.textContent).toContain("Currently saved: next reminder");
+      await click(strip(popup, "4 hours"));
+      await applyPopup(popup);
+      popup = await openFieldPopup("Schedule");
+      expect(strip(popup, "4 hours").getAttribute("aria-pressed")).toBe("true");
+      expect(strip(popup, "1 day").getAttribute("aria-pressed")).toBe("true");
+      expect(popup.textContent).toContain("Currently saved: next reminder");
+    });
+
+    it("reopens with the retained offsets of a failed save", async () => {
+      const onSubmit = await renderSheet({ initialSchedule: { state: "range", start: { localCivil: "2026-08-25T09:00" }, end: { localCivil: "2026-08-25T17:00" } }, initialReminderOffsets: [240, 1440] });
+      const popup = await openFieldPopup("Schedule");
+      expect(strip(popup, "4 hours").getAttribute("aria-pressed")).toBe("true");
+      await pressInPopup(popup, "Cancel");
+      await click(byTestId("event-calendar-schedule-submit")!);
+      expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ state: "range" }), [240, 1440]);
+    });
+  });
+
   it("reports a nonexistent spring-forward time in the popup and blocks Apply", async () => {
     await renderSheet();
     const popup = await openFieldPopup("Schedule");
@@ -373,6 +418,16 @@ describe("ProductionEventCalendarDialogs (wired to the scheduling controller's d
     expect(wired.submitChecklistFold).toHaveBeenCalledWith("later");
     await click(byTestId("event-calendar-schedule-submit")!);
     expect(wired.submitScheduleEditor).toHaveBeenCalledWith({ state: "range", start: { localCivil: "2026-08-20T09:00" }, end: { localCivil: "2026-08-20T17:00" } });
+  });
+
+  it("forwards a changed reminder set from the schedule editor to submitScheduleEditor (#425)", async () => {
+    const wired = commands({ scheduleEditor: editorState });
+    await render(<ProductionEventCalendarDialogs commands={wired} deadlineConfirm={null} />);
+    const popup = await openFieldPopup("Schedule");
+    await click(popupButton(popup, "4 hours")!);
+    await applyPopup(popup);
+    await click(byTestId("event-calendar-schedule-submit")!);
+    expect(wired.submitScheduleEditor).toHaveBeenCalledWith({ state: "range", start: { localCivil: "2026-08-20T09:00" }, end: { localCivil: "2026-08-20T17:00" } }, [1440, 240]);
   });
 
   it("reuses the Deadline confirm with no preview and shows each reminder consequence", async () => {

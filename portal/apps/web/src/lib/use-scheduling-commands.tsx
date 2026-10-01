@@ -165,6 +165,8 @@ export type ScheduleEditorState = {
   source: ChecklistSource;
   snapshot: ChecklistSnapshot;
   initialSchedule?: RangeChecklistScheduleInput;
+  /** #425: the reminder offsets of the save that failed, so the reopened editor keeps them. */
+  initialReminderOffsets?: number[];
   validationError?: ProductionCalendarScheduleEditorError;
   /** #372: set for a surface's own inline picker (`openChecklistScheduleEditor`'s `inline` option). */
   inline?: boolean;
@@ -1149,7 +1151,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
           if (proposal.operation.editor) {
             setAcceptGate(true);
             commandLockRef.current.active = true;
-            setScheduleEditor({ source: proposal.source, snapshot: proposal.snapshot, initialSchedule: proposal.schedule, ...(proposal.operation.inline ? { inline: true } : {}), validationError: { code: action.code, message: action.announce, endpoint, choices } });
+            setScheduleEditor({ source: proposal.source, snapshot: proposal.snapshot, initialSchedule: proposal.schedule, ...(proposal.request.reminderOffsetsMinutes ? { initialReminderOffsets: proposal.request.reminderOffsetsMinutes } : {}), ...(proposal.operation.inline ? { inline: true } : {}), validationError: { code: action.code, message: action.announce, endpoint, choices } });
           } else {
             setAcceptGate(true);
             commandLockRef.current.active = true;
@@ -1189,7 +1191,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
         const nextSnapshot: ChecklistSnapshot = { ...proposal.snapshot, event: cloneSource(latest) };
         commandLockRef.current.active = true;
         setAcceptGate(true);
-        setScheduleEditor({ source: latest, snapshot: nextSnapshot, initialSchedule: proposal.schedule, ...(proposal.operation.inline ? { inline: true } : {}), ...(editorConflict?.item ? { latestItem: editorConflict.item } : {}), validationError: { code: action.code, message: action.announce, ...(endpointOfError(error) ? { endpoint: endpointOfError(error) } : {}) } });
+        setScheduleEditor({ source: latest, snapshot: nextSnapshot, initialSchedule: proposal.schedule, ...(proposal.request.reminderOffsetsMinutes ? { initialReminderOffsets: proposal.request.reminderOffsetsMinutes } : {}), ...(proposal.operation.inline ? { inline: true } : {}), ...(editorConflict?.item ? { latestItem: editorConflict.item } : {}), validationError: { code: action.code, message: action.announce, ...(endpointOfError(error) ? { endpoint: endpointOfError(error) } : {}) } });
       } else {
         setScheduleEditor(null);
         setChecklistFold(null);
@@ -1308,7 +1310,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     if (!state || accessLostRef.current) return;
     const normalized = normalizeChecklistSchedule(schedule, state.source.schedule.version);
     if (!normalized.ok) {
-      setScheduleEditor({ ...state, initialSchedule: schedule, validationError: normalized.error });
+      setScheduleEditor({ ...state, initialSchedule: schedule, ...(reminderOffsetsMinutes ? { initialReminderOffsets: reminderOffsetsMinutes } : {}), validationError: normalized.error });
       return;
     }
     const proposal: ChecklistProposal = {
