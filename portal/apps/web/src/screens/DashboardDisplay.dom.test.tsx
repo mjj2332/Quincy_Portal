@@ -169,7 +169,7 @@ describe("Calendar and Timeline Display content (#430)", () => {
     expect(displayTrigger()!.disabled).toBe(false);
     await openDisplay();
     expect(checked(groupCheckboxes("Layers"))).toEqual([["Project deadlines", "true"], ["Subtasks", "true"]]);
-    expect(checked(groupCheckboxes("Show"))).toEqual([["Show delivered Projects", "false"], ["Show completed Subtasks", "true"]]);
+    expect(checked(groupCheckboxes("Show"))).toEqual([["Delivered Projects", "false"], ["Completed Subtasks", "true"]]);
   });
 
   it("Calendar: the last checked layer is disabled and never emitted empty", async () => {
@@ -201,7 +201,7 @@ describe("Calendar and Timeline Display content (#430)", () => {
     await render(bar(<TimelineDisplayContent delivered completed={false} onChange={change} />, "timeline"));
     await openDisplay();
     expect(displayGroup("Layers")).toBeNull();
-    expect(checked(groupCheckboxes("Show"))).toEqual([["Show delivered Projects", "true"], ["Show completed Subtasks", "false"]]);
+    expect(checked(groupCheckboxes("Show"))).toEqual([["Delivered Projects", "true"], ["Completed Subtasks", "false"]]);
     await act(async () => { groupCheckboxes("Show")[0]!.click(); await Promise.resolve(); });
     expect(change).toHaveBeenCalledWith({ delivered: false });
     await act(async () => { groupCheckboxes("Show")[1]!.click(); await Promise.resolve(); });

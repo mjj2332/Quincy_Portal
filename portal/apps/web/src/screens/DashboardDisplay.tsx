@@ -94,8 +94,8 @@ function ShowGroup({ delivered, completed, onDeliveredChange, onCompletedChange 
   return (
     <DropdownMenuGroup>
       <DropdownMenuLabel>Show</DropdownMenuLabel>
-      <DropdownMenuCheckboxItem checked={delivered} onCheckedChange={onDeliveredChange}>Show delivered Projects</DropdownMenuCheckboxItem>
-      <DropdownMenuCheckboxItem checked={completed} onCheckedChange={onCompletedChange}>Show completed Subtasks</DropdownMenuCheckboxItem>
+      <DropdownMenuCheckboxItem checked={delivered} onCheckedChange={onDeliveredChange}>Delivered Projects</DropdownMenuCheckboxItem>
+      <DropdownMenuCheckboxItem checked={completed} onCheckedChange={onCompletedChange}>Completed Subtasks</DropdownMenuCheckboxItem>
     </DropdownMenuGroup>
   );
 }

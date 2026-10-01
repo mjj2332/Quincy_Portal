@@ -240,7 +240,7 @@ export type ProductionGanttProps = {
   /**
    * #430: the Filter and Display triggers live in the Dashboard's view bar, outside this lazy view.
    * The empty state's buttons unmount with it, so each hands focus to the control the user would
-   * reach for next: Clear filters -> the Filter trigger, Show delivered projects -> Display.
+   * reach for next: Clear filters -> the Filter trigger, Show delivered Projects -> Display.
    */
   focusFilterTrigger?: () => void;
   focusDisplayTrigger?: () => void;
@@ -842,7 +842,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   const legendEntries = useMemo(() => ganttLegendEntries({ stageOptions, filters }), [stageOptions, filters]);
   // #255: the empty state's Clear filters button unmounts with the empty state, which would drop
   // focus to <body>. Focus moves to the Dashboard's always-mounted Filter trigger instead (#430; the
-  // Display trigger for Show delivered projects) — the controls the empty state pointed the user to. The browser's own focus scroll only brings the
+  // Display trigger for Show delivered Projects) — the controls the empty state pointed the user to. The browser's own focus scroll only brings the
   // target to the nearest edge, which at 390×844 left it clipped at the viewport's bottom; so focus
   // without scrolling, then scroll it to the top — the trigger's scroll-margin-top clears the sticky
   // shell header. Default (instant) scroll behaviour: no animation for reduced-motion users.
@@ -854,7 +854,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // (the loading slot in place of the empty state) has reached the DOM, and before it paints. No
   // other filter change arms it, so the Filter's and Display's own edits never scroll the page.
   const scrollToTriggerPendingRef = useRef<"filter" | "display" | null>(null);
-  // #270: the empty state's Show delivered projects takes the same path — its button unmounts too.
+  // #270: the empty state's Show delivered Projects takes the same path — its button unmounts too.
   const writeFiltersFromEmptyState = useCallback((next: ProductionGanttFacetFilters, target: "filter" | "display") => {
     scrollToTriggerPendingRef.current = target;
     onFiltersChange(next);
@@ -1870,7 +1870,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
                     reason (a cold link is never rewritten on load), so offer that specific fix. */}
                 {showDeliveredRecovery && (
                   <QuincyButton variant="text" type="button" onClick={() => writeFiltersFromEmptyState(showDeliveredRecovery, "display")}>
-                    Show delivered projects
+                    Show delivered Projects
                   </QuincyButton>
                 )}
                 <button type="button" className={buttonClasses("text")} onClick={clearFiltersFromEmptyState}>

@@ -349,7 +349,7 @@ describe("Dashboard Gantt routing", () => {
       const expectApplied = (expected: { delivered: boolean; completed: boolean }) => {
         expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: [], priorities: [], archived: "hide", includeUnassigned: false, myTasks: false, overdueOnly: false, shootRange: null, deadlineRange: null, ...expected });
         // The Display checkboxes follow the URL (Back/Forward included), with the menu still open.
-        if (displayMenu()) expect(showChecked()).toEqual([["Show delivered Projects", String(expected.delivered)], ["Show completed Subtasks", String(expected.completed)]]);
+        if (displayMenu()) expect(showChecked()).toEqual([["Delivered Projects", String(expected.delivered)], ["Completed Subtasks", String(expected.completed)]]);
       };
       // A filter push fetches its new key, so the latest project-list request is the new filters'.
       const expectRequested = (expected: { delivered: boolean; completed: boolean }) => {
@@ -373,15 +373,15 @@ describe("Dashboard Gantt routing", () => {
 
       // Open Display once: a checkbox item leaves the menu open across each URL push and traversal.
       await openDisplay(host);
-      expect(showChecked()).toEqual([["Show delivered Projects", "false"], ["Show completed Subtasks", "false"]]);
-      await toggleGroupCheckbox("Show", "Show delivered Projects", host);
+      expect(showChecked()).toEqual([["Delivered Projects", "false"], ["Completed Subtasks", "false"]]);
+      await toggleGroupCheckbox("Show", "Delivered Projects", host);
       await settle();
       expect(displayMenu()).not.toBeNull();
       expect(url()).toBe("/?view=timeline&delivered=1");
       expectApplied({ delivered: true, completed: false });
       expectRequested({ delivered: true, completed: false });
 
-      await toggleGroupCheckbox("Show", "Show completed Subtasks", host);
+      await toggleGroupCheckbox("Show", "Completed Subtasks", host);
       await settle();
       expect(displayMenu()).not.toBeNull();
       expect(url()).toBe("/?view=timeline&completed=1&delivered=1");
@@ -408,7 +408,7 @@ describe("Dashboard Gantt routing", () => {
         expect(url()).toBe(COLD);
         expect(ganttFilters()).toMatchObject({ stageKeys: ["delivered"], delivered: true, completed: true });
         await openDisplay(host);
-        expect(groupCheckboxes("Show").map((item) => [item.textContent, item.getAttribute("aria-checked")])).toEqual([["Show delivered Projects", "true"], ["Show completed Subtasks", "true"]]);
+        expect(groupCheckboxes("Show").map((item) => [item.textContent, item.getAttribute("aria-checked")])).toEqual([["Delivered Projects", "true"], ["Completed Subtasks", "true"]]);
         // Opening and closing Display never rewrites the URL.
         await closeDisplay();
         expect(url()).toBe(COLD);
@@ -433,7 +433,7 @@ describe("Dashboard Gantt routing", () => {
       it("a Show toggle pushes the URL and keeps the other filters", async () => {
         await renderAt("/?view=timeline&stages=raw_review");
         const lengthBefore = window.history.length;
-        await toggleGroupCheckbox("Show", "Show completed Subtasks", host);
+        await toggleGroupCheckbox("Show", "Completed Subtasks", host);
         expect(url()).toBe("/?view=timeline&stages=raw_review&completed=1");
         expect(window.history.length).toBe(lengthBefore + 1);
         // The menu stays open across the URL push.
@@ -442,7 +442,7 @@ describe("Dashboard Gantt routing", () => {
 
       it("unchecking delivered while Stage = Delivered drops it from Stage and announces why", async () => {
         await renderAt(COLD);
-        await toggleGroupCheckbox("Show", "Show delivered Projects", host);
+        await toggleGroupCheckbox("Show", "Delivered Projects", host);
         expect(url()).toBe("/?view=timeline&completed=1");
         expect(document.body.textContent).toContain("Removed Delivered from Stage.");
       });
@@ -450,7 +450,7 @@ describe("Dashboard Gantt routing", () => {
       it("announces a repeated Delivered-pair removal again after Back", async () => {
         const live = () => host.querySelector('[data-testid="dashboard-live-region"]')?.textContent ?? "";
         await renderAt("/?view=timeline&stages=delivered&delivered=1");
-        await toggleGroupCheckbox("Show", "Show delivered Projects", host);
+        await toggleGroupCheckbox("Show", "Delivered Projects", host);
         expect(live()).toBe("Removed Delivered from Stage.");
         // Back is an outside navigation: the pair notice clears, as the old bar's did.
         await act(async () => {
@@ -464,13 +464,13 @@ describe("Dashboard Gantt routing", () => {
         });
         expect(url()).toBe("/?view=timeline&stages=delivered&delivered=1");
         expect(live()).toBe("");
-        await toggleGroupCheckbox("Show", "Show delivered Projects", host);
+        await toggleGroupCheckbox("Show", "Delivered Projects", host);
         expect(live()).toBe("Removed Delivered from Stage.");
       });
 
       // The real Display menu (#430): the checkbox item in use keeps focus, and is the same node,
       // while the changed filter's first page is pending or fails.
-      const checkboxItem = () => groupCheckboxes("Show").find((item) => item.textContent === "Show delivered Projects")!;
+      const checkboxItem = () => groupCheckboxes("Show").find((item) => item.textContent === "Delivered Projects")!;
       const toggleFocusedItem = async () => {
         await openDisplay(host);
         const item = checkboxItem();

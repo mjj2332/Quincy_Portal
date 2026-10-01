@@ -381,10 +381,10 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
     });
 
     function showDeliveredButton(scope: HTMLElement): HTMLButtonElement | undefined {
-      return [...scope.querySelectorAll("button")].find((button) => button.textContent === "Show delivered projects");
+      return [...scope.querySelectorAll("button")].find((button) => button.textContent === "Show delivered Projects");
     }
 
-    it("#270: offers Show delivered projects for Stage = Delivered with delivered hidden, keeping the other filters", async () => {
+    it("#270: offers Show delivered Projects for Stage = Delivered with delivered hidden, keeping the other filters", async () => {
       apiGetMock.mockImplementation((path: string) => Promise.resolve(path.includes("stages=delivered") && !path.includes("delivered=1") ? emptyGanttResponse() : ganttResponse()));
       const onFiltersChange = vi.fn<(next: ProductionGanttFacetFilters) => void>();
       await render({ ...deliveredStageOnly, completed: true }, onFiltersChange);
@@ -402,7 +402,7 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
       expect(document.activeElement).toBe(displayTrigger());
     });
 
-    it("#270: offers no Show delivered projects when the empty state has another cause", async () => {
+    it("#270: offers no Show delivered Projects when the empty state has another cause", async () => {
       apiGetMock.mockImplementation(() => Promise.resolve(emptyGanttResponse()));
       await render({ ...DEFAULT_GANTT_FACET_FILTERS, stageKeys: ["editing"] });
       expect(clearButton(emptyState()!)).toBeDefined();
