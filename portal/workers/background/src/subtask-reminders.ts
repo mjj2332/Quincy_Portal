@@ -182,7 +182,7 @@ export async function scanSubtaskReminderOccurrences(env: Env, now = Date.now())
 }
 
 /**
- * The hourly reconcile. It replaces the retired 08:00 `scanDueSubtasks` pass: it inserts the occurrences a Subtask's current schedule
+ * The hourly reconcile. It replaces the retired 08:00 due-today pass: it inserts the occurrences a Subtask's current schedule
  * version still lacks, which heals a gap an old Worker left in the apply-then-deploy window. The eager paths in the API keep this at zero,
  * so a non-zero count is logged as a warning.
  */
