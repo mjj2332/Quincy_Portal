@@ -14,7 +14,9 @@
  * Quincy copies of `button`, `checkbox`, `dropdown-menu` and `spinner` are reused; the vendored
  * duplicates were not copied.
  *
- * File-specific edits: none beyond the mechanical ones.
+ * File-specific edits, additive (#431 review S1): a `containerClassName` prop for the outer
+ * `relative` wrapper div, which was unconstrained (auto height), so a `h-full` Root grew to content
+ * height and the viewport never scrolled. Existing callers are unchanged.
  */
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { PointerEvent, ReactNode } from "react"
@@ -67,6 +69,8 @@ type DataGridScrollAreaProps = Omit<
 > & {
   children: ReactNode
   orientation?: DataGridScrollAreaOrientation
+  /** Classes for the outer wrapper div (Quincy addition; see the file header). */
+  containerClassName?: string
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -107,6 +111,7 @@ function DataGridScrollArea({
   children,
   className,
   orientation = "both",
+  containerClassName,
   ...props
 }: DataGridScrollAreaProps) {
   const { props: dataGridProps, table } = useDataGrid()
@@ -409,7 +414,7 @@ function DataGridScrollArea({
   }
 
   return (
-    <div ref={containerRef} className="relative">
+    <div ref={containerRef} className={cn("relative", containerClassName)}>
       <ScrollAreaPrimitive.Root
         data-slot="data-grid-scroll-area"
         // Styling hook: present while the sticky-header scroll mode detects

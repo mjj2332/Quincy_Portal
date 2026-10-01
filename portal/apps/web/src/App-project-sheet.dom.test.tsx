@@ -348,14 +348,16 @@ describe("open from each Dashboard view (#366)", () => {
   it("keeps the Dashboard's own DOM (a scrolled list) across open and close", async () => {
     const host = await renderDashboardAt("table");
     const list = host.querySelector<HTMLElement>('[aria-label="Projects table"]')!;
-    list.scrollTop = 300;
+    const viewport = scrollViewportOf(list);
+    viewport.scrollTop = 300;
     await click(host.querySelector('[data-testid="project-table-row-link"]')!);
     const closeGo = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
     await click(document.querySelector('[data-testid="project-sheet-close"]')!);
     expect(closeGo).toHaveBeenCalledWith(-1);
     await traverseTo("/?view=table&q=smith", null);
     expect(host.querySelector('[aria-label="Projects table"]')).toBe(list);
-    expect(list.scrollTop).toBe(300);
+    expect(scrollViewportOf(list)).toBe(viewport);
+    expect(viewport.scrollTop).toBe(300);
   });
 
   // #415: the Gantt must not remount (which would re-land it) or lose its scroll when a sheet closes.
@@ -373,6 +375,15 @@ describe("open from each Dashboard view (#366)", () => {
     expect(surface.scrollTop).toBe(300);
   });
 });
+
+/** The real scroller of the Table: the nearest scrolling ancestor of its <table> (the ScrollArea viewport). */
+function scrollViewportOf(list: HTMLElement): HTMLElement {
+  for (let node = list.querySelector("table")!.parentElement; node && node !== list; node = node.parentElement) {
+    const { overflowY, overflow } = getComputedStyle(node);
+    if (/auto|scroll/.test(overflowY) || /auto|scroll/.test(overflow)) return node;
+  }
+  throw new Error("no scrolling ancestor between the Table and its section");
+}
 
 describe("closing returns to the same view (#366)", () => {
   const closers: Array<[string, () => Promise<void>]> = [

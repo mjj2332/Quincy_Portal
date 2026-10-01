@@ -52,7 +52,7 @@ export function ProjectDetailGate({ projectId, role, fallbackClassName, testIdPr
   );
 }
 
-export function ProjectDeadlineCell({ projectId, street, deadline, canEdit, disabled, role, emptyLabel = "No deadline", testIdPrefix, triggerClassName, overdueInName = false }: {
+export function ProjectDeadlineCell({ projectId, street, deadline, canEdit, disabled, role, emptyLabel = "No deadline", testIdPrefix, triggerClassName, textClassName, overdueInName = false }: {
   projectId: string;
   street: string;
   deadline: ProjectDeadlineView | null;
@@ -64,6 +64,8 @@ export function ProjectDeadlineCell({ projectId, street, deadline, canEdit, disa
   /** Test ids are `<prefix>-deadline`, `<prefix>-deadline-trigger` and `<prefix>-project-detail-*`. */
   testIdPrefix: string;
   triggerClassName?: string;
+  /** Font-size class applied to both the read-only text and the trigger, so the two match. */
+  textClassName?: string;
   /** Adds "overdue" to the trigger's accessible name and a visually hidden word to the read-only text. */
   overdueInName?: boolean;
 }) {
@@ -73,15 +75,15 @@ export function ProjectDeadlineCell({ projectId, street, deadline, canEdit, disa
     return <span data-testid={`${testIdPrefix}-deadline`} className="text-foreground-secondary">—<span className="sr-only">{emptyLabel}</span></span>;
   }
   const text = deadlineTriggerText(deadline.localCivil);
-  const tone = deadline.overdue ? "text-signal-critical-text" : "text-foreground";
+  const tone = deadline.overdue ? "text-signal-critical" : "text-foreground";
   const overdueWord = overdueInName && deadline.overdue;
   if (!canEdit) {
-    return <time data-testid={`${testIdPrefix}-deadline`} dateTime={deadline.at} className={cn("truncate", tone)}>{text}{overdueWord && <span className="sr-only"> (overdue)</span>}</time>;
+    return <time data-testid={`${testIdPrefix}-deadline`} dateTime={deadline.at} className={cn("truncate", tone, textClassName)}>{text}{overdueWord && <span className="sr-only"> (overdue)</span>}</time>;
   }
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
-        render={<Button type="button" size="xs" variant="ghost" className={cn(CELL_TRIGGER, tone, triggerClassName)} />}
+        render={<Button type="button" size="xs" variant="ghost" className={cn(CELL_TRIGGER, tone, textClassName, triggerClassName)} />}
         data-testid={`${testIdPrefix}-deadline-trigger`}
         aria-label={`Deadline for ${street}: ${text}${overdueWord ? " (overdue)" : ""}`}
         disabled={disabled}

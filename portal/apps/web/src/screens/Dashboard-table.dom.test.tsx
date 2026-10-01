@@ -603,7 +603,10 @@ describe("the Deadline cell (#431)", () => {
     projects = [row("p1", { deadlineAt: Date.parse("2020-01-01T00:00:00.000Z"), deadlineLocalCivil: "2020-01-01T11:00" })];
     await renderTable();
     expect(trigger("p1")!.getAttribute("aria-label")).toBe("Deadline for p1 Street: Wed 1 Jan · 11:00 (overdue)");
-    expect(trigger("p1")!.className).toContain("text-signal-critical-text");
+    // The tone must be a utility that exists (`--color-signal-critical`); `signal-text-tokens.guard.test.ts`
+    // proves every `text-signal-*` in src resolves, so a typo here cannot ship as a silent no-op.
+    expect(trigger("p1")!.classList.contains("text-signal-critical")).toBe(true);
+    expect(trigger("p1")!.classList.contains("text-foreground")).toBe(false);
   });
 
   it("is plain text without the edit capability, for a delivered Project, and for an archived one", async () => {
@@ -642,4 +645,109 @@ describe("rows survive a Dashboard re-render (#431)", () => {
   function star(id: string, label: string) {
     return rowFor(id).querySelector<HTMLElement>(`[role="radio"][aria-label="${label}"]`)!;
   }
+});
+
+describe("review fixes (#431)", () => {
+  const PAST = Date.parse("2020-01-01T00:00:00.000Z");
+  const pastRow = (id: string, over: Partial<Row> = {}) => row(id, { deadlineAt: PAST, deadlineLocalCivil: "2020-01-01T11:00", ...over });
+
+  it("D9: a delivered Project with a past Deadline is not overdue (no red, no spoken word)", async () => {
+    auth.caps = new Set(["adminBackend", "prioritizeProjects"]);
+    projects = [pastRow("p1", { stageKey: "delivered" }), pastRow("p2", { stageKey: "awaiting_raw" })];
+    await renderTable();
+    const delivered = rowFor("p1").querySelector<HTMLElement>('time[data-testid="project-table-deadline"]')!;
+    expect(delivered.textContent).not.toContain("overdue");
+    expect(delivered.classList.contains("text-signal-critical")).toBe(false);
+    const active = rowFor("p2").querySelector<HTMLElement>('time[data-testid="project-table-deadline"]')!;
+    expect(active.textContent).toContain("(overdue)");
+    expect(active.classList.contains("text-signal-critical")).toBe(true);
+  });
+
+  it("D2: the read-only Deadline and the editable trigger share the Shoot date's text size", async () => {
+    projects = [row("p1", { shootDate: "2026-03-01", deadlineAt: day(1), deadlineLocalCivil: civil(1) }), row("p2", { stageKey: "delivered", deadlineAt: day(1), deadlineLocalCivil: civil(1) })];
+    await renderTable();
+    const size = "text-[length:var(--text-sm)]";
+    expect(rowFor("p1").querySelector('[data-testid="project-table-deadline-trigger"]')!.className).toContain(size);
+    expect(rowFor("p2").querySelector('time[data-testid="project-table-deadline"]')!.className).toContain(size);
+  });
+
+  it("S2: only interactive Deadline and Priority controls ride above the row link; read-only content lets the click through", async () => {
+    auth.caps = new Set(["adminBackend", "editProject"]); // no prioritizeProjects: stars are read-only
+    projects = [row("p1", { deadlineAt: day(1), deadlineLocalCivil: civil(1), priority: 3 }), row("p2", { stageKey: "delivered", deadlineAt: day(1), deadlineLocalCivil: civil(1), priority: 3 }), row("p3")];
+    await renderTable();
+    // `lifted`: the control sits in a wrapper with `z-[1]`, i.e. above the row link's ::after overlay.
+    const lifted = (element: Element | null) => {
+      for (let node = element; node && node !== table(); node = node.parentElement) if (node.classList.contains("z-[1]")) return true;
+      return false;
+    };
+    // editable Deadline is lifted; read-only timestamp and the empty dash are not
+    expect(lifted(rowFor("p1").querySelector('[data-testid="project-table-deadline-trigger"]'))).toBe(true);
+    expect(lifted(rowFor("p2").querySelector('time[data-testid="project-table-deadline"]'))).toBe(false);
+    expect(lifted(rowFor("p3").querySelector('[data-testid="project-table-deadline"]'))).toBe(false);
+    // read-only stars are not lifted
+    expect(lifted(rowFor("p1").querySelector('[data-testid="project-table-priority"]'))).toBe(false);
+    auth.caps = new Set(["adminBackend", "editProject", "prioritizeProjects"]);
+    await rerender();
+    expect(lifted(rowFor("p1").querySelector('[data-testid="project-table-priority"]'))).toBe(true);
+  });
+
+  it("D3: the card-padding cancelling margins apply to the read-only stars only", async () => {
+    projects = [row("p1", { priority: 3 })];
+    await renderTable();
+    const wrapper = () => rowFor("p1").querySelector<HTMLElement>('[data-testid="project-table-priority"]')!;
+    expect(wrapper().classList.contains("-mx-[var(--space-3)]")).toBe(false);
+    expect(wrapper().classList.contains("-mb-[var(--space-3)]")).toBe(false);
+    auth.caps = new Set(["adminBackend", "editProject"]);
+    await rerender();
+    expect(wrapper().classList.contains("-mx-[var(--space-3)]")).toBe(true);
+  });
+
+  it("S3: group headings get unique ids even when two labels sanitise alike", async () => {
+    projects = [row("p1", { agencyName: "A&B" }), row("p2", { agencyName: "A B" })];
+    await renderTable();
+    await chooseGroupBy("Client");
+    const sections = [...table().querySelectorAll('[data-testid="project-table-group"]')];
+    expect(sections).toHaveLength(2);
+    const ids = sections.map((section) => section.getAttribute("aria-labelledby")!);
+    expect(new Set(ids).size).toBe(2);
+    for (const [index, id] of ids.entries()) expect(document.getElementById(id)).toBe(sections[index]!.querySelector("h3"));
+  });
+
+  it("D7: the group marker is a chevron that rotates when open; the heading is not the column header's fill", async () => {
+    await renderTable();
+    await chooseGroupBy("Stage");
+    const trigger = groupTriggers()[0]!;
+    const chevron = () => trigger.querySelector("svg")!;
+    expect(trigger.textContent).not.toMatch(/[+−]/);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(chevron().classList.contains("rotate-90")).toBe(true);
+    await click(trigger);
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(chevron().classList.contains("rotate-90")).toBe(false);
+    expect(trigger.closest("h3")!.classList.contains("bg-secondary")).toBe(false);
+  });
+
+  it("the Client cell and the Client group agree on the empty label", async () => {
+    projects = [row("p1", { agencyName: null })];
+    await renderTable();
+    expect(rowFor("p1").textContent).toContain("No client");
+    expect(rowFor("p1").textContent).not.toContain("Agency pending");
+  });
+
+  it("S1: the ungrouped scroll area is a bounded flex chain, so the viewport (not the clipped container) scrolls", async () => {
+    await renderTable();
+    // Every box between the <table> and the section must be a bounded flex column (container and
+    // wrapper at least), or the viewport grows to content height and the container clips it.
+    let bounded = 0;
+    for (let node = table().querySelector("table")!.parentElement; node && node !== table(); node = node.parentElement) {
+      if (/\bmin-h-0\b/.test(node.className) && /\bflex-col\b/.test(node.className)) bounded += 1;
+    }
+    expect(bounded).toBeGreaterThanOrEqual(2);
+  });
+
+  it("D4: the cover letter fallback is sized for the 48px box, not the Board card", async () => {
+    await renderTable();
+    const letter = [...rowFor("p1").querySelectorAll<HTMLElement>('[aria-hidden="true"]')].find((node) => node.textContent === "1")!;
+    expect(letter.className).toContain("text-[length:var(--text-lg)]");
+  });
 });

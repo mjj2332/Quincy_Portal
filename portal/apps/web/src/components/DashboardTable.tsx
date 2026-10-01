@@ -1,6 +1,7 @@
-import { createContext, memo, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, memo, useContext, useId, useMemo, useState, type ReactNode } from "react";
+import { ChevronRight } from "lucide-react";
 import { useTable, type ColumnDef, type ColumnVisibilityState, type Row, type SortingState } from "@tanstack/react-table";
-import { formatSydneyCivil, isDeadlineOverdue, type Role } from "@quincy/shared";
+import { formatSydneyCivil, type Role } from "@quincy/shared";
 import { Badge } from "./reui/badge";
 import { Button } from "./reui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./reui/collapsible";
@@ -11,14 +12,16 @@ import { DataGridTable } from "./reui/data-grid/data-grid-table";
 import { Frame, FramePanel } from "./reui/frame";
 import { StatusBadge } from "./atoms";
 import { InternalLink } from "./InternalLink";
-import { LazyImage } from "./LazyImage";
+import { CoverMedia } from "./kanban2/card";
 import { ProjectDeadlineCell, type ProjectDeadlineView } from "./ProjectDeadlineCell";
 import { AvatarStack } from "./quincy/AvatarStack";
 import { Eyebrow } from "./quincy/Eyebrow";
 import { PriorityStars } from "./quincy/PriorityStars";
 import { formatDashboardDate } from "../screens/dashboard-helpers";
 import { useCapabilities } from "../lib/capabilities";
+import { isOverdueProject } from "../lib/dashboard-summary";
 import {
+  NO_CLIENT_LABEL,
   TABLE_COLUMN_IDS,
   TABLE_NARROW_QUERY,
   TABLE_COLUMN_LABELS,
@@ -92,21 +95,18 @@ function deadlineViewOf(project: ProjectSummary): ProjectDeadlineView | null {
   return {
     at: new Date(project.deadlineAt).toISOString(),
     localCivil: project.deadlineLocalCivil ?? formatSydneyCivil(project.deadlineAt),
-    overdue: isDeadlineOverdue(project.deadlineAt),
+    // The Portal rule (#427): delivered and archived Projects are never overdue.
+    overdue: isOverdueProject(project, Date.now()),
   };
 }
 
 function TableCover({ project, retryToken, onFailedChange }: { project: ProjectSummary; retryToken: number; onFailedChange: (failed: boolean) => void }) {
-  const box = "h-12 w-[72px] shrink-0 overflow-hidden bg-[var(--ink-800)] max-[721px]:h-[37px] max-[721px]:w-14";
-  if (project.coverAssetId) {
-    return (
-      <span className={box}>
-        <LazyImage className="size-full object-cover" src={`/media/asset/${encodeURIComponent(project.coverAssetId)}/thumb`} alt={`Preview of ${project.street}`} retryToken={retryToken} onFailedChange={onFailedChange} />
-      </span>
-    );
-  }
-  const initial = project.street.trim().charAt(0).toUpperCase() || "Q";
-  return <span className={cn("project-cover-placeholder", box)} aria-hidden="true">{initial}</span>;
+  return (
+    <span className="block h-12 w-[72px] shrink-0 overflow-hidden bg-[var(--ink-800)] max-[721px]:h-[37px] max-[721px]:w-14">
+      {/* `!`: `.project-cover-placeholder` (unlayered app.css) sets a Board-card font size that would clip in this box. */}
+      <CoverMedia project={project} retryToken={retryToken} onFailedChange={onFailedChange} placeholderClassName="!text-[length:var(--text-lg)]" />
+    </span>
+  );
 }
 
 function AddressCell({ project, href }: { project: ProjectSummary; href: string }) {
@@ -115,7 +115,7 @@ function AddressCell({ project, href }: { project: ProjectSummary; href: string 
   return (
     <div className="flex min-w-0 items-center gap-[var(--space-3)]">
       <TableCover project={project} retryToken={coverRetry} onFailedChange={setCoverFailed} />
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <InternalLink
           to={href}
           data-testid="project-table-row-link"
@@ -170,7 +170,7 @@ function StageCellRenderer({ row }: { row: Row<DataGridFeatures, ProjectSummary>
 function ClientCellRenderer({ row }: { row: Row<DataGridFeatures, ProjectSummary> }) {
   return (
     <span className="block min-w-0 text-[length:var(--text-sm)]">
-      <span className="block truncate">{row.original.agencyName || "Agency pending"}</span>
+      <span className="block truncate">{row.original.agencyName || NO_CLIENT_LABEL}</span>
       <span className="mt-[var(--space-1)] block truncate text-[length:var(--text-xs)] text-foreground-secondary">{row.original.agentName || "Agent pending"}</span>
     </span>
   );
@@ -183,13 +183,16 @@ function ShootDateCellRenderer({ row }: { row: Row<DataGridFeatures, ProjectSumm
 function DeadlineCellRenderer({ row }: { row: Row<DataGridFeatures, ProjectSummary> }) {
   const { canEditDeadline, terminal, role } = useCells();
   const project = row.original;
+  const canEdit = canEditDeadline && project.stageKey !== "delivered" && !project.archivedAt;
   return (
-    <div className="relative z-[1] min-w-0">
+    // Only an interactive control rides above the row link's overlay; read-only text lets the click through.
+    <div className={cn("min-w-0", canEdit && project.deadlineAt !== null && "relative z-[1]")}>
       <ProjectDeadlineCell
         projectId={project.id}
         street={project.street}
         deadline={deadlineViewOf(project)}
-        canEdit={canEditDeadline && project.stageKey !== "delivered" && !project.archivedAt}
+        textClassName="text-[length:var(--text-sm)]"
+        canEdit={canEdit}
         disabled={terminal}
         role={role}
         testIdPrefix="project-table"
@@ -207,13 +210,15 @@ function EditorsCellRenderer({ row }: { row: Row<DataGridFeatures, ProjectSummar
 function PriorityCellRenderer({ row }: { row: Row<DataGridFeatures, ProjectSummary> }) {
   const { canPrioritize, terminal, pendingOrdering, onPriorityChange } = useCells();
   const project = row.original;
+  const editable = canPrioritize && !terminal && !project.archivedAt;
   return (
-    // The read-only form carries card padding (`px/pb-[--space-3]`); the negative margins cancel it.
-    <div className="relative z-[1] -mx-[var(--space-3)] -mb-[var(--space-3)] w-max max-w-full" data-testid="project-table-priority">
+    // Interactive stars ride above the row link's overlay; read-only ones let the click through. The
+    // read-only form carries card padding (`px/pb-[--space-3]`), which the negative margins cancel.
+    <div className={cn("w-max max-w-full", editable ? "relative z-[1]" : "-mx-[var(--space-3)] -mb-[var(--space-3)]")} data-testid="project-table-priority">
       <PriorityStars
         priority={project.priority}
         street={project.street}
-        canPrioritize={canPrioritize && !terminal && !project.archivedAt}
+        canPrioritize={editable}
         pending={pendingOrdering.has(project.id)}
         onPriorityChange={(next) => onPriorityChange(project, next)}
       />
@@ -297,8 +302,14 @@ const GroupGrid = memo(function GroupGrid({ rows, columns, sorting, onSortingCha
         bodyRow: "relative",
       }}
     >
-      <DataGridContainer className={sticky ? "min-h-0 flex-1" : undefined}>
-        <DataGridScrollArea orientation={sticky ? "both" : "horizontal"} className={sticky ? "h-full" : undefined}>
+      {/* Sticky: a flex-column chain (container, wrapper, Root) so the ScrollArea viewport is the
+          scroller and the header sticks inside it. */}
+      <DataGridContainer className={sticky ? "flex min-h-0 flex-1 flex-col" : undefined}>
+        <DataGridScrollArea
+          orientation={sticky ? "both" : "horizontal"}
+          containerClassName={sticky ? "flex min-h-0 flex-1 flex-col" : undefined}
+          className={sticky ? "min-h-0 flex-1" : undefined}
+        >
           <DataGridTable />
         </DataGridScrollArea>
       </DataGridContainer>
@@ -307,14 +318,15 @@ const GroupGrid = memo(function GroupGrid({ rows, columns, sorting, onSortingCha
 });
 
 function GroupSection({ group, open, onOpenChange, children }: { group: TableGroup; open: boolean; onOpenChange: (open: boolean) => void; children: ReactNode }) {
-  const headingId = `dashboard-table-group-${group.key.replace(/[^\w-]/g, "_") || "none"}`;
+  // useId: two groups whose labels sanitise to the same string ("A&B", "A B") must not share an id.
+  const headingId = `dashboard-table-group-${useId()}`;
   return (
-    <section aria-labelledby={headingId} data-testid="project-table-group" className="border-b border-border last:border-b-0">
+    <section aria-labelledby={headingId} data-testid="project-table-group" className="border-t border-t-foreground first:border-t-0">
       <Collapsible open={open} onOpenChange={onOpenChange}>
-        <h3 id={headingId} className="m-0 flex items-center gap-[var(--space-2)] bg-secondary px-[var(--space-2)] py-[var(--space-1)] font-normal">
+        <h3 id={headingId} className="m-0 flex items-center gap-[var(--space-2)] bg-card px-[var(--space-2)] py-[var(--space-1)] font-medium">
           <CollapsibleTrigger render={<Button type="button" variant="ghost" size="sm" className="gap-[var(--space-2)]" data-testid="project-table-group-trigger" />}>
-            <span aria-hidden="true">{open ? "−" : "+"}</span>
-            <span>{group.label}</span>
+            <ChevronRight aria-hidden="true" className={cn("size-4 transition-transform", open && "rotate-90")} />
+            <span className="font-semibold">{group.label}</span>
             <Badge variant="outline" size="sm" className="tabular-nums" data-testid="project-table-group-count">{group.rows.length}</Badge>
           </CollapsibleTrigger>
         </h3>
@@ -375,7 +387,7 @@ export function DashboardTable({ projects, role, groupBy, hiddenColumns, canPrio
   return (
     <section aria-label="Projects table" data-testid="dashboard-table" className="flex min-h-0 flex-1 flex-col">
       <CellContext.Provider value={cells}>
-        <Frame className="min-h-0 flex-1">
+        <Frame dense className="min-h-0 flex-1">
           <FramePanel className="flex min-h-0 flex-col p-0">
             {groupBy === "none" ? (
               <GroupGrid rows={groups[0]?.rows ?? []} columns={columns} sorting={sorting} onSortingChange={setSorting} visibility={visibility} sticky label="this view" />
