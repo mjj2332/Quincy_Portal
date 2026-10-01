@@ -42,9 +42,15 @@ The staff home: every Project the viewer can see, shown through one Dashboard vi
 _Avoid_: Home page, production desk
 
 **Dashboard view**:
-One way of laying out the Dashboard's Projects: List, Kanban, Gantt or Calendar. The viewer's
-last choice is remembered.
-_Avoid_: Mode, layout, tab
+One way of laying out the Dashboard's Projects: Table, Board, Calendar or Timeline, chosen
+from the Dashboard's tabs — the only place a Dashboard view is chosen. The tabs are the control;
+the Dashboard view is what they select. The viewer's last choice is remembered.
+_Avoid_: Mode, layout, List (now Table), Kanban (now Board), Gantt (now Timeline)
+
+**Table**:
+The Dashboard view that lists Projects as sortable rows, one Project per row, ungrouped unless
+the viewer groups them.
+_Avoid_: List, grid
 
 **Project sheet**:
 The Project workspace presented floating over the Dashboard, covering the whole window.
@@ -62,13 +68,23 @@ The pipeline step a Project currently occupies. Keys are fixed in code; labels, 
 state and display order are admin configuration.
 _Avoid_: Status, state, column, phase
 
-**Kanban**:
-The cross-Project view that groups Projects into columns by Stage. One column per Stage.
-The user interface, `PRD.md` and the rail's navigation entry have always said Kanban; the
-stored view preference is `"kanban"`. Promoting the view to a navigation destination in #109
-made the glossary's disagreement with the screen user-visible, and it is settled towards the
-word on the screen.
-_Avoid_: Board, dashboard, pipeline view
+**Archived Project**:
+A Project withdrawn from active work, and restorable. The Dashboard hides Archived Projects;
+only an Admin can include them, or show nothing else, through the Archived filter (Hide /
+Include / Only), in any Dashboard view. On the Board an Archived Project is shown but never moved.
+_Avoid_: Status, deleted, closed
+
+**Board**:
+The Dashboard view that groups Projects into columns by Stage. One column per Stage. It was
+called Kanban until the Dashboard took its Table / Board / Calendar / Timeline tabs; as when
+#109 settled "Kanban", the glossary follows the word on the screen. Board order and Board
+position already used this word.
+_Avoid_: Kanban, dashboard, pipeline view
+
+**Timeline**:
+The Dashboard view that lays Projects and their Subtasks out against time, one bar per span.
+It was called Gantt until the Dashboard took its tabs.
+_Avoid_: Gantt, roadmap
 
 **Shoot date**:
 The civil day, in the studio's timezone, a Project's property is shot. A date, never a time.
@@ -101,10 +117,19 @@ else's unchanged.
 _Avoid_: Assignment token, assignee revision
 
 **Subtask range**:
-The span a Subtask is scheduled across, from start to end; every Subtask has one, and one
-day is the shortest. A Subtask's "due" is simply the end of its range. When none is given, it
-is copied once from the Project (shoot date to Deadline) and is the Subtask's own thereafter.
-_Avoid_: Schedule mode, unscheduled, due-only, milestone
+The span a Subtask is scheduled across, from a start moment to a later end moment, both civil
+date-times in the studio's timezone; every Subtask has one. A date picked without a time takes the
+preset time: 09:00 for a start, 17:00 for an end. A Subtask's "due" is simply the end of its
+range. When none is given, it is copied once from the Project (shoot date at 09:00 to the
+Deadline) and is the Subtask's own thereafter.
+_Avoid_: Schedule mode, all-day, date-only, unscheduled, due-only, milestone
+
+**Subtask reminder**:
+A moment, counted back from a Subtask's due, when every Subtask assignee is reminded. "Due now"
+is always one; up to 8 offsets in all. A new Subtask starts with "1 day before" and "Due now".
+One set per Subtask, shared by its assignees. Completing the Subtask or archiving its Project
+cancels the ones not yet sent.
+_Avoid_: Alert, due-today notice
 
 ### The two star scales
 

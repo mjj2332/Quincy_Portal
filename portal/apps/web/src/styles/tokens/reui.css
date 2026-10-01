@@ -195,6 +195,26 @@
   --sidebar-accent: var(--bg-raised);
   --sidebar-accent-foreground: var(--text-primary);
   --sidebar-border: var(--border-hairline);
+
+  /* ---- Frame roles (#420, ADR 0014) ----------------------------------
+     `components/reui/frame.tsx` consumes these and declares none of them itself; the registry
+     pointed them at nova's --radius-xl / --color-card / --color-border, which are not Quincy's.
+     `styles/frame-token-bridge.guard.test.ts` derives the consumed set from the TSX and checks
+     both directions, so this list cannot drift. A Frame is meant to read like a Card does today:
+     the panel resolves to the same paper (--card is --bg-surface), hairline and square radius
+     (--radius-card, 0 — "cards are square by default"), so frames render square, unlike ReUI's
+     preview. That is the token set winning, not a porting defect.
+
+     Panel radius is its own role rather than a calc() off --frame-radius: the radius is the
+     unitless 0, and calc(0 - 3px) is invalid. Like the sidebar roles these read the raw aliases,
+     not the inverse-scoped role layer. No @theme inline entries: frame.tsx reaches them through
+     `var()`, not through a colour utility. */
+  --frame-radius: var(--radius-card);
+  --frame-panel-radius: var(--radius-card);
+  --frame-gap: var(--space-1);
+  --frame-border-color: var(--border-hairline);
+  --frame-panel-border-color: var(--border-hairline);
+  --frame-panel-bg: var(--bg-surface);
 }
 
 /* nova ships dozens of `dark:` utilities. Tailwind v4's DEFAULT `dark` variant
