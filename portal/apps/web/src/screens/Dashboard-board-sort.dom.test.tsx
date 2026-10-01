@@ -6,7 +6,7 @@ import { Dashboard } from "./Dashboard";
 import { checkedSortLabel, chooseSort, closeDisplay, displayMenu, displayTrigger, groupByRadios, openDisplay, sortRadioLabels, sortRadios } from "./dashboard-display-test-helpers";
 
 // happy-dom lacks `Element.getAnimations()`, which Base UI's ScrollArea (the Board's horizontal
-// scroll, `kanban2/board.tsx`) calls on a timer after mount. The no-op stub means "no active
+// scroll, `board/board.tsx`) calls on a timer after mount. The no-op stub means "no active
 // animations"; see `reui/gantt/gantt-adjust-ghost-marker.dom.test.tsx` for the same polyfill.
 if (!Element.prototype.getAnimations) {
   Element.prototype.getAnimations = () => [];
@@ -72,7 +72,7 @@ describe("Dashboard Kanban sort control", () => {
 
   it("hides only reorder arrows when shoot-date sorting is selected", async () => {
     await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
-    await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-card"]')).not.toBeNull());
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="board-card"]')).not.toBeNull());
     expect(document.querySelector('[aria-label="Move 1 Test Street up"]')).not.toBeNull();
     expect(document.querySelector('[aria-label="Move 1 Test Street down"]')).not.toBeNull();
     const priority = document.querySelector('[aria-label="Priority for 1 Test Street"]');
@@ -95,8 +95,8 @@ describe("Dashboard Kanban sort control", () => {
     apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({ projects: [mk("a", "1 Alpha Street", 1, 1), mk("b", "2 Bravo Street", 5, 0)] }) : Promise.resolve({ stages: [] }));
     window.localStorage.setItem("quincy:dashboard:kanbanSort", "priority");
     await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
-    await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-card"]')).not.toBeNull());
-    const order = () => [...document.querySelectorAll('[data-testid="kanban2-card"]')].map((card) => card.textContent?.includes("Alpha") ? "alpha" : "bravo");
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="board-card"]')).not.toBeNull());
+    const order = () => [...document.querySelectorAll('[data-testid="board-card"]')].map((card) => card.textContent?.includes("Alpha") ? "alpha" : "bravo");
     await openDisplay();
     const menuSort = checkedSortLabel();
     await closeDisplay();
@@ -115,7 +115,7 @@ describe("Dashboard Kanban sort control", () => {
     tab.focus();
     const focusSpy = vi.spyOn(HTMLElement.prototype, "focus");
     await act(async () => { await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
-    await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-card"]')).not.toBeNull());
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="board-card"]')).not.toBeNull());
     const refocused = focusSpy.mock.contexts.some((el) => (el as HTMLElement).getAttribute?.("data-focus-key") === "dashboard-view-table");
     focusSpy.mockRestore();
     matches.mockRestore();
@@ -132,13 +132,13 @@ describe("Dashboard Kanban sort control", () => {
 
   it("renders the Sydney deadline and exposes RAW on the Kanban card", async () => {
     await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(1); });
-    await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-card"]')).not.toBeNull());
-    const card = document.querySelector('[data-testid="kanban2-card"]')!;
-    expect(card.querySelector('[data-testid="kanban2-card-deadline"]')?.textContent).toContain("Due 2027-01-15 09:00 Sydney");
-    const raw = card.querySelector('[data-testid="kanban2-card-raw"]')!;
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="board-card"]')).not.toBeNull());
+    const card = document.querySelector('[data-testid="board-card"]')!;
+    expect(card.querySelector('[data-testid="board-card-deadline"]')?.textContent).toContain("Due 2027-01-15 09:00 Sydney");
+    const raw = card.querySelector('[data-testid="board-card-raw"]')!;
     expect(raw.querySelector('[aria-hidden="true"]')?.textContent).toBe("12/40");
     expect(raw.querySelector('[aria-hidden="true"] + span')?.textContent).toBe("12 of 40 RAW files received");
-    expect(card.querySelector('[data-testid="kanban2-card-deadline"]')?.getAttribute("dateTime")).toBe("2027-01-14T22:00:00.000Z");
+    expect(card.querySelector('[data-testid="board-card-deadline"]')?.getAttribute("dateTime")).toBe("2027-01-14T22:00:00.000Z");
     expect(card.getAttribute("href")).toBe("/projects/project-1");
     expect(card.getAttribute("target")).toBeNull();
 
@@ -156,8 +156,8 @@ describe("Dashboard Kanban sort control", () => {
       boardPosition: 10, deadlineAt: Date.parse("2020-01-01T00:00:00.000Z"), deadlineLocalCivil: "2020-01-01T11:00", deadlineZone: "Australia/Sydney", boardRevision: 1,
     }], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["archived-project"] } } }) : Promise.resolve({ stages: [] }));
     await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
-    await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-card"]')).not.toBeNull());
-    expect(document.querySelector('[data-testid="kanban2-card"] [data-testid="kanban2-card-deadline"]')?.textContent).toContain("Overdue 2020-01-01 11:00 Sydney");
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="board-card"]')).not.toBeNull());
+    expect(document.querySelector('[data-testid="board-card"] [data-testid="board-card-deadline"]')?.textContent).toContain("Overdue 2020-01-01 11:00 Sydney");
   });
 
   // The Display menu replaced the Kanban sort `Select` (#427). The old `Select`'s ten release-blocking
@@ -167,7 +167,7 @@ describe("Dashboard Kanban sort control", () => {
   describe("Display menu accessibility contract", () => {
     async function renderBoard() {
       await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
-      await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-card"]')).not.toBeNull());
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="board-card"]')).not.toBeNull());
     }
     const trigger = () => displayTrigger()!;
 
@@ -284,7 +284,7 @@ describe("Dashboard Kanban sort control", () => {
   // Dashboard sort-suite pin that the post-write refresh does not steal focus to the Board root.
   it("keeps focus on the Priority star after its write refreshes the Board (#98)", async () => {
     await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
-    await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-card"]')).not.toBeNull());
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="board-card"]')).not.toBeNull());
 
     const group = document.querySelector<HTMLElement>('[aria-label="Priority for 1 Test Street"]');
     expect(group, "no Priority control rendered — every assertion below would be vacuous").not.toBeNull();

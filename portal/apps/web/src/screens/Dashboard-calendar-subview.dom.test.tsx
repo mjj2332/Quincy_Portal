@@ -16,7 +16,7 @@ vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { id: "user-1
 vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ role: "admin", capabilities: [], can: (capability: string) => ["adminBackend", "createProject", "viewNoticeBoard"].includes(capability) }) }));
 vi.mock("../lib/stages", () => ({ presentationStages: (stages: unknown[]) => stages, useStages: () => ({ stages: [], presentationStageKey: (key: string) => key }) }));
 vi.mock("../components/NoticeBoard", () => ({ NoticeBoard: () => null }));
-vi.mock("../components/kanban2/board", () => ({ ProjectKanbanBoard2: () => <div data-testid="dashboard-board" /> }));
+vi.mock("../components/board/board", () => ({ ProjectKanbanBoard2: () => <div data-testid="dashboard-board" /> }));
 vi.mock("../components/ProductionEventCalendar", () => ({ ProductionEventCalendar: (props: { calendar: { subview: string } }) => <div data-testid="dashboard-event-calendar" data-subview={props.calendar.subview} /> }));
 
 const noOneId = "00000000-0000-4000-8000-000000000000";

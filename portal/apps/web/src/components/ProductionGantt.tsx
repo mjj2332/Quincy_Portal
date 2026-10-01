@@ -77,7 +77,7 @@
  * Project (`ProjectCalendarAnchor` -> the Dashboard's `openCalendarProject`).
  * Reuse ledger: tree columns — vendored `reui/gantt` `columns`/`GanttColumn`; row link —
  * `ProjectCalendarAnchor` (+`testId`/`className`); avatar stack — `quincy/AvatarStack` (moved from
- * `kanban2/card.tsx`) on `reui/avatar`; trigger + popover — `reui/popover` + `reui/button` ghost
+ * `board/card.tsx`) on `reui/avatar`; trigger + popover — `reui/popover` + `reui/button` ghost
  * `xs` skinned with `project-header-popover`'s `POPOVER_CONTENT`; Team picker + remove confirm +
  * conflict — `ProjectTeamCombobox` whole, `lib/confirm`; Deadline editor — `ProjectDeadlineControl`
  * whole; loading/error — `reui/skeleton`, `quincy/Notice`, `reui/button`; read-only Due — plain

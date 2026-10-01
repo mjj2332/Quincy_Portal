@@ -100,7 +100,7 @@ export function MoveToControl({ project, model, activeStages, role, sort, canMov
   }, [activeStages, caps, model, project.id, role]);
   const positions = targetStageKey === null ? [] : moveToPositionOptions(model, project.id, targetStageKey, role, caps);
   const targetLabel = targetStageKey === null ? "" : stageLabels[targetStageKey] ?? targetStageKey;
-  const dialogId = `kanban2-move-to-${project.id}`;
+  const dialogId = `board-move-to-${project.id}`;
 
   const openMoveTo = () => {
     focusDescriptorRef.current = focusDescriptorFor("move-to", project, model, "move-to");
@@ -127,7 +127,7 @@ export function MoveToControl({ project, model, activeStages, role, sort, canMov
       ref={setTrigger}
       type="button"
       className="flex-1 min-w-0 min-h-[30px] max-[641px]:min-h-11 pointer-coarse:min-h-11 px-[9px] py-[7px] border-0 bg-card text-foreground-secondary [font:inherit] !text-[length:var(--text-2xs)] text-left cursor-pointer focus-visible:!outline-2 focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-[-2px] hover:not-disabled:bg-[var(--paper-100)] hover:not-disabled:text-foreground disabled:bg-surface-sunken disabled:cursor-not-allowed"
-      data-testid="kanban2-move-to"
+      data-testid="board-move-to"
       data-focus-key={`move-to:${project.id}`}
       aria-label={`Move ${project.street} to…`}
       aria-expanded={open}
@@ -153,7 +153,7 @@ export function MoveToControl({ project, model, activeStages, role, sort, canMov
           <div className="flex justify-end gap-[var(--space-2)]">
             <button type="button" className={buttonClasses("secondary", { className: ACTION_CLASSES })} onClick={back}>Back</button>
             <button type="button" className={buttonClasses("secondary", { className: ACTION_CLASSES })} onClick={close}>Cancel</button>
-            <button type="button" data-testid="kanban2-move-to-submit" className={buttonClasses("primary", { className: ACTION_CLASSES })} disabled={successor === null} onClick={submit}>Move project</button>
+            <button type="button" data-testid="board-move-to-submit" className={buttonClasses("primary", { className: ACTION_CLASSES })} disabled={successor === null} onClick={submit}>Move project</button>
           </div>
         </>}
       </div>

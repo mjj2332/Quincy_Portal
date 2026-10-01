@@ -41,7 +41,7 @@ function DropIndicator({ className }: { className: string }) {
   return (
     <div
       className={`pointer-events-none absolute inset-x-0 z-10 h-[3px] rounded-[2px] bg-[var(--signal-positive)] shadow-[0_0_0_1px_color-mix(in_srgb,var(--signal-positive)_20%,transparent)] ${className}`}
-      data-testid="kanban2-drop-indicator"
+      data-testid="board-drop-indicator"
       aria-hidden="true"
     />
   );
@@ -548,7 +548,7 @@ export function ProjectKanbanBoard2({
       <ScrollAreaPrimitive.Root data-slot="scroll-area" className="relative flex min-h-0 w-full min-w-0 flex-1 flex-col has-[>[data-slot=scroll-area-viewport]:focus-visible]:outline has-[>[data-slot=scroll-area-viewport]:focus-visible]:outline-[length:var(--border-width-bold)] has-[>[data-slot=scroll-area-viewport]:focus-visible]:outline-[var(--focus-ring)] has-[>[data-slot=scroll-area-viewport]:focus-visible]:outline-offset-0">
         <ScrollAreaPrimitive.Viewport
           data-slot="scroll-area-viewport"
-          data-testid="kanban2-scroll-viewport"
+          data-testid="board-scroll-viewport"
           className="min-h-0 w-full flex-1 focus-visible:!outline-none"
         >
           <ScrollAreaPrimitive.Content data-slot="scroll-area-content" className="h-full w-max min-w-full">
@@ -556,7 +556,7 @@ export function ProjectKanbanBoard2({
               <div
                 ref={boardRef}
                 {...starClickGuard.boardHandlers}
-                className="kanban2 grid grid-flow-col auto-cols-[17.5rem] gap-[var(--space-4)] w-max min-w-full h-full grid-rows-[minmax(0,1fr)]"
+                className="board-columns grid grid-flow-col auto-cols-[17.5rem] gap-[var(--space-4)] w-max min-w-full h-full grid-rows-[minmax(0,1fr)]"
                 aria-label="Project pipeline board"
                 // The Dashboard's focus-restore effect (`Dashboard.tsx:409-424`) resolves three tiers by
                 // `[data-focus-key]`: the moved card's control, then its Stage heading, then the Board root.
@@ -581,7 +581,7 @@ export function ProjectKanbanBoard2({
                     // `focusDescriptorFor` or `canonicalStageKey`), so a presentation spelling — an Editor
                     // sees `editing` for `editing_autohdr` — would never match, and tier 2 would fall
                     // through to the Board root. The Board this replaced keyed its headings the same way.
-                    <KanbanColumn key={stage.key} value={stage.key} disabled className="bg-[var(--paper-050)] min-h-0 min-w-0 border border-[length:var(--border-width-hair)] border-border opacity-100" data-testid="kanban2-column">
+                    <KanbanColumn key={stage.key} value={stage.key} disabled className="bg-[var(--paper-050)] min-h-0 min-w-0 border border-[length:var(--border-width-hair)] border-border opacity-100" data-testid="board-column">
                       <div className="flex shrink-0 items-center gap-[var(--space-3)] p-[var(--space-4)] border-b border-b-border bg-[var(--bg-canvas)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${semanticStageKey(stage.key)}`} tabIndex={-1}>
                         <span className="flex-none [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] tabular-nums text-foreground-secondary" aria-hidden="true">{String(stageIndex + 1).padStart(2, "0")}</span>
                         <StatusBadge stageKey={stage.key} />
@@ -657,7 +657,7 @@ export function ProjectKanbanBoard2({
         <ScrollBar
           orientation="horizontal"
           style={{ position: "sticky" }}
-          data-testid="kanban2-scrollbar"
+          data-testid="board-scrollbar"
           className="z-10 bg-[var(--bg-canvas)] [&>[data-slot=scroll-area-thumb]]:bg-[var(--border-strong)]"
         />
         <ScrollAreaPrimitive.Corner />

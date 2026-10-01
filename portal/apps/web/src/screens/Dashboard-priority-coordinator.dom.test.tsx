@@ -16,7 +16,7 @@ vi.mock("../lib/api", async (importOriginal) => ({ ...(await importOriginal<type
 vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ can: (capability: string) => capability === "prioritizeProjects" || capability === "adminBackend" }) }));
 vi.mock("../lib/stages", () => ({ presentationStages: (stages: readonly unknown[]) => stages, useStages: () => ({ stages: [{ key: "awaiting_raw", label: "Awaiting RAW", active: true }], presentationStageKey: (key: string) => key }) }));
 vi.mock("../components/NoticeBoard", () => ({ NoticeBoard: () => null }));
-vi.mock("../components/kanban2/board", () => ({
+vi.mock("../components/board/board", () => ({
   // `<option value="3">` exists only so a value the (l) test's Beta fixture carries (priority 3,
   // never legitimately reachable through this mocked board's own UI) is even representable as a
   // DOM selection -- without it, an unmatched `value` prop leaves every `<option>`'s `selected`

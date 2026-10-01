@@ -52,7 +52,7 @@ vi.mock("../lib/stages", () => ({
   }),
 }));
 vi.mock("../components/NoticeBoard", () => ({ NoticeBoard: () => null }));
-vi.mock("../components/kanban2/board", () => ({ ProjectKanbanBoard2: () => <div data-testid="dashboard-board" /> }));
+vi.mock("../components/board/board", () => ({ ProjectKanbanBoard2: () => <div data-testid="dashboard-board" /> }));
 
 type Row = {
   id: string; street: string; suburb: string | null; postcode: string | null; agencyName: string | null; agentName: string | null; stageKey: string; shootDate: string | null;

@@ -101,21 +101,21 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
       <CardContent className="p-[var(--space-3)]">
         {/* #428: the Archived filter's Include mode draws archived Projects beside active ones. The card is
             immovable (the Board gates it, `board.tsx`); #432 restyles the mark. */}
-        {archived && <Badge variant="secondary" size="sm" className="mb-[var(--space-1)]" data-testid="kanban2-card-archived">Archived</Badge>}
-        <div className="serif text-base tracking-tight leading-snug [text-wrap:pretty]" data-testid="kanban2-card-address">{project.street}</div>
+        {archived && <Badge variant="secondary" size="sm" className="mb-[var(--space-1)]" data-testid="board-card-archived">Archived</Badge>}
+        <div className="serif text-base tracking-tight leading-snug [text-wrap:pretty]" data-testid="board-card-address">{project.street}</div>
         {projectDeadlineLabel && (
           // Prominence is bought with contrast and position, not size (#82) — the street stays
           // the card's title; this is the only line below it at full `foreground`.
           <time
             className={`block mt-[var(--space-1)] text-sm tabular-nums ${overdue ? "text-[var(--signal-critical)]" : "text-foreground"}`}
-            data-testid="kanban2-card-deadline"
+            data-testid="board-card-deadline"
             dateTime={new Date(project.deadlineAt!).toISOString()}
           >
             {overdue ? "Overdue" : "Due"} {projectDeadlineLabel} Sydney
           </time>
         )}
-        <div className="flex items-center justify-between gap-[var(--space-2)] mt-[var(--space-3)] text-xs text-foreground-secondary" data-testid="kanban2-card-meta">
-          <span className="text-xs tabular-nums text-foreground-secondary" data-testid="kanban2-card-raw">
+        <div className="flex items-center justify-between gap-[var(--space-2)] mt-[var(--space-3)] text-xs text-foreground-secondary" data-testid="board-card-meta">
+          <span className="text-xs tabular-nums text-foreground-secondary" data-testid="board-card-raw">
             <span aria-hidden="true">{raw.visible}</span>
             <span className="sr-only">{raw.spoken}</span>
           </span>
@@ -127,23 +127,23 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
   );
 
   return (
-    <Card size="sm" className="relative gap-0 p-0 shadow-xs transition-[border-color,box-shadow] hover:shadow-sm" data-testid="kanban2-card-wrap">
+    <Card size="sm" className="relative gap-0 p-0 shadow-xs transition-[border-color,box-shadow] hover:shadow-sm" data-testid="board-card-wrap">
       {isOverlay ? (
         // The floating overlay follows the pointer/keyboard focus but is not itself a real card:
         // it must carry no interactive element at all (#98), so it renders the same visual content
         // in a plain, non-hit-testing, assistive-tech-hidden wrapper instead of `InternalLink`.
-        <div className="block pointer-events-none no-underline text-inherit" data-testid="kanban2-card-overlay" aria-hidden="true">
+        <div className="block pointer-events-none no-underline text-inherit" data-testid="board-card-overlay" aria-hidden="true">
           {cardBody}
         </div>
       ) : (
-        <InternalLink className="block no-underline text-inherit" data-testid="kanban2-card" to={projectHref ?? `/projects/${encodeURIComponent(project.id)}`}>
+        <InternalLink className="block no-underline text-inherit" data-testid="board-card" to={projectHref ?? `/projects/${encodeURIComponent(project.id)}`}>
           {cardBody}
         </InternalLink>
       )}
       {/* The star row is a sibling *outside* the anchor (#81): interactive controls cannot be <a>
           descendants — invalid HTML, and a click would navigate. In the drag overlay it is
           presentation-only, so it is dropped entirely rather than rendered non-focusable. */}
-      <div data-testid="kanban2-card-footer-slot">
+      <div data-testid="board-card-footer-slot">
         {!isOverlay && (
           <PriorityStars
             priority={project.priority}
@@ -165,7 +165,7 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
           // (TB8-06) and this exact grip to 2.51:1 (TB8-07 §2.1). `cursor-not-allowed` pairs it.
           className="absolute top-[var(--space-2)] right-[var(--space-2)] z-[2] size-9 max-[641px]:size-11 pointer-coarse:size-11 inline-grid place-items-center border border-[color-mix(in_srgb,var(--ink-900)_18%,transparent)] rounded-[var(--radius-sm)] bg-[color-mix(in_srgb,var(--paper-000)_88%,transparent)] text-foreground-secondary text-[20px] leading-none [touch-action:none] disabled:bg-surface-sunken disabled:cursor-not-allowed focus-visible:!outline-2 focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-2"
           cursor={!dragDisabled}
-          render={<button ref={(element) => handleRef?.(project.id, element)} type="button" data-testid="kanban2-card-handle" data-focus-key={`move-handle:${project.id}`} aria-label={`Move ${project.street}`} disabled={dragDisabled} />}
+          render={<button ref={(element) => handleRef?.(project.id, element)} type="button" data-testid="board-card-handle" data-focus-key={`move-handle:${project.id}`} aria-label={`Move ${project.street}`} disabled={dragDisabled} />}
         >
           <span aria-hidden="true">⠿</span>
         </KanbanItemHandle>

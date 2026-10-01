@@ -45,7 +45,7 @@ vi.mock("./lib/api", async (importOriginal) => ({
 
 const calendarEventFixture = vi.hoisted(() => ({ enabled: false }));
 
-// The real Kanban board (so `kanban2-card` is the real opener). Its DnD is not under test here.
+// The real Kanban board (so `board-card` is the real opener). Its DnD is not under test here.
 vi.mock("./components/reui/event-calendar/event-calendar", async () => (await import("./testing/event-calendar-fake")).eventCalendarModule);
 vi.mock("./components/reui/event-calendar/event-calendar-nav", async () => (await import("./testing/event-calendar-fake")).eventCalendarNavModule);
 vi.mock("./components/reui/event-calendar/event-calendar-content", async () => (await import("./testing/event-calendar-fake")).eventCalendarContentModule);
@@ -282,7 +282,7 @@ async function click(element: Element, init: MouseEventInit = {}) {
 /** The Dashboard's project opener for `view`, ready to activate. */
 async function openerFor(host: HTMLElement, view: string): Promise<Element> {
   if (view === "table") return host.querySelector('[data-testid="project-table-row-link"]')!;
-  if (view === "board") return host.querySelector('[data-testid="kanban2-card"]')!;
+  if (view === "board") return host.querySelector('[data-testid="board-card"]')!;
   if (view === "timeline") return host.querySelector('[data-testid="gantt-project-link"]')!;
   await act(async () => { eventCalendarFake.click("project-deadline:one"); await Promise.resolve(); });
   return host.querySelector('[data-testid="calendar-project-link"]')!;
@@ -447,9 +447,9 @@ describe("a direct Project link (#366)", () => {
   it("loads the remembered view under the sheet, and closing replaces (never walks history)", async () => {
     window.localStorage.setItem("quincy:dashboard:view", "board");
     const host = await renderApp(PROJECT_PATH, null);
-    expect(host.querySelector('[data-testid="kanban2-card"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="board-card"]')).not.toBeNull();
     expect(sheet()?.querySelector('[data-testid="ws-stub"]')).not.toBeNull();
-    const board = host.querySelector('[data-testid="kanban2-card"]');
+    const board = host.querySelector('[data-testid="board-card"]');
     const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
     const replace = vi.spyOn(window.history, "replaceState");
     await click(document.querySelector('[data-testid="project-sheet-close"]')!);
@@ -457,14 +457,14 @@ describe("a direct Project link (#366)", () => {
     expect(replace).toHaveBeenCalledWith(null, "", "/");
     expect(sheet()).toBeNull();
     expect(currentUrl()).toBe("/");
-    expect(host.querySelector('[data-testid="kanban2-card"]')).toBe(board);
+    expect(host.querySelector('[data-testid="board-card"]')).toBe(board);
   });
 
   it("a reloaded sheet entry restores the Dashboard view its state names", async () => {
     window.localStorage.setItem("quincy:dashboard:view", "board");
     const host = await renderApp(PROJECT_PATH, { quincySheet: { v: 1, backdrop: "/?view=table", depth: 1, prev: "/?view=table" } });
     expect(host.querySelector('[aria-label="Projects table"]')).not.toBeNull();
-    expect(host.querySelector('[data-testid="kanban2-card"]')).toBeNull();
+    expect(host.querySelector('[data-testid="board-card"]')).toBeNull();
   });
 
   it.each([
@@ -476,7 +476,7 @@ describe("a direct Project link (#366)", () => {
     window.localStorage.setItem("quincy:dashboard:view", "board");
     const host = await renderApp(PROJECT_PATH, state);
     expect(host.querySelector('[aria-label="Projects table"]')).toBeNull();
-    expect(host.querySelector('[data-testid="kanban2-card"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="board-card"]')).not.toBeNull();
     const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
     await click(document.querySelector('[data-testid="project-sheet-close"]')!);
     expect(go).not.toHaveBeenCalled();

@@ -50,7 +50,7 @@ import {
   type ProjectSummary,
   type SemanticGap,
 } from "../lib/kanban-interaction";
-import { ProjectKanbanBoard2 } from "../components/kanban2/board";
+import { ProjectKanbanBoard2 } from "../components/board/board";
 // #220: code-split — the vendored ReUI Gantt tree loads only when a
 // capable principal opens the Gantt view. `ProductionGantt.tsx` is the ONLY app file allowed to
 // import `components/reui/gantt/` (`harness-reachability.guard.test.ts`'s
