@@ -1,16 +1,16 @@
 /**
- * #255 / #254 — the Gantt's filters bar (`ProductionGanttFiltersBar`, a ReUI `Filters` chip row)
- * and legend in a real render: each edit changes the `/api/production-gantt` request, the control
- * the user just used keeps focus while the new filter's first page is pending (the bar sits in one
- * always-mounted root above the loading slot), and the legend follows the filters — built from the
- * role-aware stage options, not the colour map. The bar's own chip mechanics (unfinished chips,
- * re-seeding, Duplicate/Negate, keyboard) are covered in `ProductionGanttFiltersBar.dom.test.tsx`.
+ * #255 / #254 / #430 -- the Gantt's request filters and legend in a real render: each Show change
+ * (Display, #430) or shared-Filter change changes the `/api/production-gantt` request, and the
+ * legend follows the filters, built from the role-aware stage options, not the colour map. The
+ * Filter and Display triggers live in the Dashboard's view bar, outside this lazy view; the
+ * wrapper below stands in for them (same test ids) so the empty state's focus and scroll hand-off
+ * is tested here, and `Dashboard-gantt.dom.test.tsx` covers the real controls and the URL round trip.
  *
- * `onFiltersChange` is wired to local state here, standing in for the Dashboard's URL round trip
- * (`Dashboard-gantt.dom.test.tsx` covers that half). Same rendering technique as
- * `ProductionGantt-readonly.dom.test.tsx`: `apiGet` mocked, no vendor `[data-slot]` selectors.
+ * `onFiltersChange` is wired to local state, standing in for the Dashboard's URL round trip. Same
+ * rendering technique as `ProductionGantt-readonly.dom.test.tsx`: `apiGet` mocked, no vendor
+ * `[data-slot]` selectors.
  */
-import { act, useState } from "react";
+import { act, useState, type SetStateAction } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -97,23 +97,30 @@ function ganttResponse() {
 
 const identity: DashboardIdentity = { principalId: "user-1", role: "admin", authorizationEpoch: 0 };
 
-/** Sets the URL facet, as the Dashboard would after a navigation or a shared-Filter edit. */
-let setFacet: (next: ProductionGanttFacetFilters) => void = () => {};
+/** Sets the URL facet, as the Dashboard would after a navigation, a shared-Filter edit or a Display toggle. */
+let setFacet: (next: SetStateAction<ProductionGanttFacetFilters>) => void = () => {};
 
 function ControlledGantt({ initial = DEFAULT_GANTT_FACET_FILTERS, q = "", onFiltersChange, onShownProjectsChange }: { initial?: ProductionGanttFacetFilters; q?: string; onFiltersChange?: (next: ProductionGanttFacetFilters) => void; onShownProjectsChange?: (count: number | null) => void }) {
   const [filters, setFilters] = useState(initial);
   setFacet = setFilters;
+  // Stand-ins for the Dashboard view bar's Filter and Display triggers (the Gantt reaches them by test id).
   return (
-    <ProductionGantt
-      identity={identity}
-      q={q}
-      filters={filters}
-      {...(onShownProjectsChange ? { onShownProjectsChange } : {})}
-      onFiltersChange={(next) => {
-        onFiltersChange?.(next);
-        setFilters(next);
-      }}
-    />
+    <>
+      <button type="button" data-testid="dashboard-filter-trigger">Filter</button>
+      <button type="button" data-testid="dashboard-display-trigger">Display</button>
+      <ProductionGantt
+        identity={identity}
+        q={q}
+        filters={filters}
+        {...(onShownProjectsChange ? { onShownProjectsChange } : {})}
+        focusFilterTrigger={() => filterTrigger().focus({ preventScroll: true })}
+        focusDisplayTrigger={() => displayTrigger().focus({ preventScroll: true })}
+        onFiltersChange={(next) => {
+          onFiltersChange?.(next);
+          setFilters(next);
+        }}
+      />
+    </>
   );
 }
 
@@ -126,43 +133,18 @@ async function settle() {
   }
 }
 
-function bar(host: HTMLElement): HTMLElement {
-  const element = host.querySelector<HTMLElement>('[data-testid="production-gantt-filters"]');
-  if (!element) throw new Error("no Gantt filters bar");
-  return element;
+function filterTrigger(): HTMLButtonElement {
+  return document.querySelector<HTMLButtonElement>('[data-testid="dashboard-filter-trigger"]')!;
 }
 
-function toolbar(host: HTMLElement): HTMLElement {
-  const element = bar(host).querySelector<HTMLElement>('[role="toolbar"][aria-label="Gantt filters"]');
-  if (!element) throw new Error("no Gantt filters toolbar");
-  return element;
+function displayTrigger(): HTMLButtonElement {
+  return document.querySelector<HTMLButtonElement>('[data-testid="dashboard-display-trigger"]')!;
 }
 
-function chipNames(host: HTMLElement): string[] {
-  return [...toolbar(host).querySelectorAll('[role="group"]')].map((chip) => chip.getAttribute("aria-label") ?? "");
-}
-
-function addTrigger(host: HTMLElement): HTMLButtonElement {
-  const element = host.querySelector<HTMLButtonElement>('[data-testid="production-gantt-filters-add"]');
-  if (!element) throw new Error("no add-filter trigger");
-  return element;
-}
-
-/** An option's spoken label: its text without the decorative (`aria-hidden`) icon, e.g. an avatar's initials. */
-function optionLabel(candidate: Element): string {
-  const copy = candidate.cloneNode(true) as Element;
-  copy.querySelectorAll('[aria-hidden="true"]').forEach((node) => node.remove());
-  return copy.textContent?.trim() ?? "";
-}
-
-function optionNames(): string[] {
-  return [...document.querySelectorAll('[role="option"]')].map(optionLabel);
-}
-
-function option(name: string): HTMLElement {
-  const match = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((candidate) => optionLabel(candidate) === name);
-  if (!match) throw new Error(`no option "${name}" in [${optionNames().join(", ")}]`);
-  return match;
+/** A Show change as the Timeline's Display makes it: only the changed facet, everything else kept. */
+async function setShow(changes: Pick<Partial<ProductionGanttFacetFilters>, "delivered" | "completed">) {
+  await act(async () => { setFacet((previous) => ({ ...previous, ...changes })); });
+  await settle();
 }
 
 /** Real-timer poll — Base UI's open-state transitions land a tick removed from the triggering render. */
@@ -177,44 +159,6 @@ async function waitFor(assertion: () => void, timeoutMs = 1500) {
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     }
   }
-}
-
-async function click(element: HTMLElement) {
-  await act(async () => { element.click(); });
-}
-
-/** Adds a chip through the bar: the picker's field, its one condition, then the named values. The
- * value menu stays open (a multi-select commits per toggle), so further `toggle`s land in it. */
-async function addFilter(host: HTMLElement, field: "Stage" | "Show", values: string[]) {
-  await click(addTrigger(host));
-  await waitFor(() => option(field));
-  await click(option(field));
-  const condition = field === "Stage" ? "is any of" : "includes";
-  await waitFor(() => expect(optionNames()).toEqual([condition]));
-  await click(option(condition));
-  for (const value of values) await toggle(value);
-}
-
-/** Toggles one value in the open value menu. */
-async function toggle(value: string) {
-  await waitFor(() => option(value));
-  await click(option(value));
-  await settle();
-}
-
-/** Closes whatever menu is open, as Escape does. */
-async function escape() {
-  await act(async () => {
-    (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
-  });
-  await settle();
-}
-
-/** Opens a chip's value menu from its value segment (named by the value it shows). */
-async function openValue(host: HTMLElement, shown: string) {
-  const segment = [...toolbar(host).querySelectorAll<HTMLButtonElement>("button")].find((candidate) => candidate.getAttribute("aria-label") === shown);
-  if (!segment) throw new Error(`no value segment "${shown}"`);
-  await click(segment);
 }
 
 function projectListPaths(): string[] {
@@ -277,24 +221,11 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
     root = createRoot(host);
   });
 
-  it("offers only Show here (delivered, completed): Stage moved to the Dashboard's shared Filter (#428)", async () => {
-    await render();
-    expect(chipNames(host)).toEqual([]);
-    await click(addTrigger(host));
-    await waitFor(() => expect(optionNames()).toEqual(["Show"]));
-    await click(option("Show"));
-    await waitFor(() => expect(optionNames()).toEqual(["includes"]));
-    await click(option("includes"));
-    await waitFor(() => expect(optionNames()).toEqual(["Delivered projects", "Completed checklist items"]));
-  });
-
   it("sends the shared Filter's stages, priority and archived mode with every request (#428)", async () => {
     await render({ ...DEFAULT_GANTT_FACET_FILTERS, stageKeys: ["raw_review"], priorities: ["5", "none"], archived: "include" });
     expect(lastListQuery().get("stages")).toBe("raw_review");
     expect(lastListQuery().get("priority")).toBe("5,none");
     expect(lastListQuery().get("archived")).toBe("include");
-    // The bar draws no chip for them: the Dashboard's Filter owns them.
-    expect(chipNames(host)).toEqual([]);
   });
 
   it("changes the /api/production-gantt request when delivered or completed is toggled", async () => {
@@ -303,24 +234,22 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
     expect(lastListQuery().get("delivered")).toBeNull();
     expect(lastListQuery().get("completed")).toBeNull();
 
-    await addFilter(host, "Show", ["Delivered projects"]);
+    await setShow({ delivered: true });
     expect(lastListQuery().get("delivered")).toBe("1");
     expect(lastListQuery().get("completed")).toBeNull();
 
-    await toggle("Completed checklist items");
+    await setShow({ completed: true });
     expect(lastListQuery().get("completed")).toBe("1");
     expect(lastListQuery().get("delivered")).toBe("1");
     expect(lastListQuery().get("stages")).toBe("awaiting_raw,raw_review");
 
-    await toggle("Delivered projects");
+    await setShow({ delivered: false });
     expect(lastListQuery().get("delivered")).toBeNull();
     expect(lastListQuery().get("completed")).toBe("1");
     expect(lastListQuery().get("editors")).toBeNull();
-    await escape();
-    expect(chipNames(host)).toEqual(["Show includes Completed checklist items"]);
   });
 
-  it("keeps focus on the control in use while the new filter's first page is pending", async () => {
+  it("keeps focus on the Display control in use while the new filter's first page is pending", async () => {
     await render();
     expect(host.querySelector('[data-testid="production-gantt"]')).not.toBeNull();
 
@@ -330,19 +259,14 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
       return Promise.resolve(ganttResponse());
     });
 
-    await addFilter(host, "Show", ["Delivered projects"]);
-    const focused = document.activeElement as HTMLElement;
-    // The option the user just toggled, in the still-open value menu.
-    expect(focused).toBe(option("Delivered projects"));
-
-    // Pending: the chart slot shows the skeleton, but the bar — its chip, its open value menu and
-    // the very control that has focus — stayed mounted and focused.
+    // The Display trigger lives outside the view; a Show change must not take focus from it.
+    displayTrigger().focus();
+    await setShow({ delivered: true });
     expect(host.querySelector('[data-testid="production-gantt-loading"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="production-gantt"]')).toBeNull();
-    expect(focused.isConnected).toBe(true);
-    expect(document.activeElement).toBe(focused);
-    expect(optionNames()).toEqual(["Delivered projects", "Completed checklist items"]);
-    expect(chipNames(host)).toEqual(["Show includes Delivered projects"]);
+    expect(document.activeElement).toBe(displayTrigger());
+    // The legend stays mounted through the pending page.
+    expect(host.querySelector('[data-testid="production-gantt-legend"]')).not.toBeNull();
 
     await act(async () => {
       resolvePending?.(ganttResponse());
@@ -350,21 +274,18 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
     });
     await settle();
     expect(host.querySelector('[data-testid="production-gantt"]')).not.toBeNull();
-    expect(document.activeElement).toBe(focused);
+    expect(document.activeElement).toBe(displayTrigger());
   });
 
-  it("keeps the bar mounted through an error state too", async () => {
+  it("keeps the legend mounted through an error state too", async () => {
     await render();
     // A 4xx is not retried (`projectQueryRetry`), so the error state lands without a retry delay.
     apiGetMock.mockImplementation((path: string) => (path.includes("completed=1") ? Promise.reject(new ApiError("boom", 400)) : Promise.resolve(ganttResponse())));
-    await addFilter(host, "Show", ["Completed checklist items"]);
-    const focused = document.activeElement as HTMLElement;
-    expect(focused).toBe(option("Completed checklist items"));
-    await settle();
+    displayTrigger().focus();
+    await setShow({ completed: true });
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("The production schedule is unavailable.");
-    expect(focused.isConnected).toBe(true);
-    expect(document.activeElement).toBe(focused);
-    expect(chipNames(host)).toEqual(["Show includes Completed checklist items"]);
+    expect(host.querySelector('[data-testid="production-gantt-legend"]')).not.toBeNull();
+    expect(document.activeElement).toBe(displayTrigger());
   });
 
   it("shows no Delivered legend entry until delivered projects are shown", async () => {
@@ -372,7 +293,7 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
     expect(legendKeys(host)).toEqual(["awaiting_raw", "raw_review", "editing", "edited_review"]);
     expect(legendLabels(host)).not.toContain("Delivered");
 
-    await addFilter(host, "Show", ["Delivered projects"]);
+    await setShow({ delivered: true });
     expect(legendKeys(host)).toEqual(["awaiting_raw", "raw_review", "editing", "edited_review", "delivered"]);
     expect(legendLabels(host)).toContain("Delivered");
   });
@@ -384,7 +305,6 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
     // The shared Filter's Stage = Delivered arrives with delivered projects on (#255), so its legend entry follows.
     await act(async () => { setFacet({ ...DEFAULT_GANTT_FACET_FILTERS, stageKeys: ["raw_review", "delivered"], delivered: true }); });
     await waitFor(() => expect(legendKeys(host)).toEqual(["raw_review", "delivered"]));
-    expect(chipNames(host)).toEqual(["Show includes Delivered projects"]);
   });
 
   it("#257: draws legend labels in the secondary text role, and hatches only the Edited review swatch", async () => {
@@ -422,9 +342,8 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
     });
     await render();
     expect(host.querySelector('[data-testid="production-gantt-too-many"]')?.textContent).toBe("Too many projects match these filters to draw at once — narrow the filters above to see the rest.");
-    // The filters the banner points at are actually on screen, above the chart slot.
-    expect(toolbar(host)).not.toBeNull();
-    expect(addTrigger(host).isConnected).toBe(true);
+    // The controls the banner points at (Filter, Display) are in the Dashboard's view bar, above the view.
+    expect(filterTrigger().isConnected).toBe(true);
   });
 
   describe("empty state", () => {
@@ -443,7 +362,7 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
 
     const deliveredStageOnly: ProductionGanttFacetFilters = { ...DEFAULT_GANTT_FACET_FILTERS, stageKeys: ["delivered"], delivered: false };
 
-    it("says no projects match the filters, keeps the bar mounted and draws no chart", async () => {
+    it("says no projects match the filters, keeps the legend mounted and draws no chart", async () => {
       apiGetMock.mockImplementation((path: string) => Promise.resolve(path.includes("stages=delivered") ? emptyGanttResponse() : ganttResponse()));
       await render(deliveredStageOnly);
       expect(lastListQuery().get("stages")).toBe("delivered");
@@ -457,8 +376,7 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
       const chartSlot = host.querySelector('[data-testid="production-gantt"]');
       expect(chartSlot).not.toBeNull();
       expect([...chartSlot!.children]).toEqual([empty]);
-      // The bar and legend stay mounted around it.
-      expect(chipNames(host)).toEqual([]);
+      // The legend stays mounted around it.
       expect(host.querySelector('[data-testid="production-gantt-legend"]')).not.toBeNull();
     });
 
@@ -480,8 +398,8 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
       expect(onFiltersChange).toHaveBeenCalledTimes(1);
       expect(onFiltersChange).toHaveBeenCalledWith({ ...deliveredStageOnly, delivered: true, completed: true });
       expect(emptyState()).toBeNull();
-      // The button unmounted with the empty state; focus lands on the filters, not <body>.
-      expect(document.activeElement).toBe(addTrigger(host));
+      // The button unmounted with the empty state; focus lands on Display (the setting it flipped), not <body>.
+      expect(document.activeElement).toBe(displayTrigger());
     });
 
     it("#270: offers no Show delivered projects when the empty state has another cause", async () => {
@@ -505,11 +423,9 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
       // Cleared filters load projects again, so the chart replaces the empty state.
       expect(lastListQuery().get("stages")).toBeNull();
       expect(emptyState()).toBeNull();
-      // The bar re-seeds from the cleared URL.
-      expect(chipNames(host)).toEqual([]);
     });
 
-    it("moves focus to the filters bar's Add filter trigger when the empty state's Clear filters unmounts with it", async () => {
+    it("moves focus to the Dashboard's Filter trigger when the empty state's Clear filters unmounts with it", async () => {
       apiGetMock.mockImplementation((path: string) => Promise.resolve(path.includes("stages=delivered") ? emptyGanttResponse() : ganttResponse()));
       await render(deliveredStageOnly);
       const button = clearButton(emptyState()!)!;
@@ -525,11 +441,8 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
         await act(async () => { button.click(); });
         await settle();
         expect(emptyState()).toBeNull();
-        const trigger = addTrigger(host);
+        const trigger = filterTrigger();
         expect(document.activeElement).toBe(trigger);
-        // The bar is empty again, so the trigger is the labelled one, and a real tab stop.
-        expect(trigger.textContent).toBe("Show");
-        expect(trigger.tabIndex).toBe(0);
 
         const triggerFocus = focusSpy.mock.contexts.flatMap((context, index) => (context === trigger ? [focusSpy.mock.calls[index]] : []));
         expect(triggerFocus).toEqual([[{ preventScroll: true }]]);
@@ -537,8 +450,7 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
         expect(scrollIntoView.mock.contexts[0]).toBe(trigger);
         // Instant (default) behaviour, so reduced-motion users get no animated scroll.
         expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
-        // Clears the sticky shell header rather than landing underneath it.
-        expect(trigger.className).toContain("scroll-mt-[calc(var(--shell-header-height)+var(--space-4))]");
+        // The scroll-margin that clears the sticky shell header is on the real triggers; `Dashboard-gantt.dom.test.tsx` asserts it.
       } finally {
         focusSpy.mockRestore();
         scrollIntoView.mockRestore();
@@ -553,19 +465,18 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
       // Pass F: scrolling synchronously in the click handler measured the OLD layout (the short empty
       // state), so at 390x844 the trigger ended 7px below the viewport. Record what the page says at
       // the moment of the scroll.
-      const atScroll: { emptyState: boolean; loading: boolean; chips: string[] }[] = [];
+      const atScroll: { emptyState: boolean; loading: boolean }[] = [];
       const scrollIntoView = vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {
         atScroll.push({
           emptyState: emptyState() !== null,
           loading: host.querySelector('[data-testid="production-gantt-loading"]') !== null,
-          chips: chipNames(host),
         });
       });
       try {
         await act(async () => { button.click(); });
         await settle();
         expect(scrollIntoView).toHaveBeenCalledTimes(1);
-        expect(atScroll).toEqual([{ emptyState: false, loading: true, chips: [] }]);
+        expect(atScroll).toEqual([{ emptyState: false, loading: true }]);
       } finally {
         scrollIntoView.mockRestore();
       }
@@ -577,24 +488,20 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
       expect(emptyState()).not.toBeNull();
       const scrollIntoView = vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
       try {
-        // The bar's own Clear: same destination (default filters), different path.
-        const barClear = [...bar(host).querySelectorAll<HTMLButtonElement>("button")].find((candidate) => candidate.textContent?.trim() === "Clear");
-        expect(barClear).toBeDefined();
-        await act(async () => { barClear!.click(); });
+        // The Filter's own Clear: same destination (default filters), different path.
+        await act(async () => { setFacet(DEFAULT_GANTT_FACET_FILTERS); });
         await settle();
         expect(emptyState()).toBeNull();
-        expect(chipNames(host)).toEqual([]);
         expect(scrollIntoView).not.toHaveBeenCalled();
 
-        // And an empty-state Clear leaves nothing armed: one scroll, then none for a later bar edit.
-        await addFilter(host, "Show", ["Completed checklist items"]);
-        await settle();
+        // And an empty-state Clear leaves nothing armed: one scroll, then none for a later Display edit.
+        await setShow({ completed: true });
         const again = clearButton(emptyState()!)!;
         await act(async () => { again.click(); });
         await settle();
         expect(scrollIntoView).toHaveBeenCalledTimes(1);
-        await addFilter(host, "Show", ["Completed checklist items"]);
-        await settle();
+        await setShow({ completed: false });
+        await setShow({ completed: true });
         expect(scrollIntoView).toHaveBeenCalledTimes(1);
       } finally {
         scrollIntoView.mockRestore();

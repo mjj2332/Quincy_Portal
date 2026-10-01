@@ -135,8 +135,10 @@ function findByText(host: HTMLElement, text: string): Element | undefined {
 }
 
 /** #255: `onFiltersChange` wired to local state, standing in for the Dashboard's URL round trip. */
+let setGanttFilters: (next: ProductionGanttFacetFilters) => void = () => {};
 function FilterableGantt() {
   const [filters, setFilters] = useState<ProductionGanttFacetFilters>(DEFAULT_GANTT_FACET_FILTERS);
+  setGanttFilters = setFilters;
   return <ProductionGantt identity={identity} q="" filters={filters} onFiltersChange={setFilters} />;
 }
 
@@ -290,22 +292,9 @@ describe("ProductionGantt — child-page pagination (fix-220-sol1 #1, #2, #3)", 
     expect(findByText(host, "Pre-filter embedded task")).toBeDefined();
     expect(childPaths).toHaveLength(1);
 
-    // #255: the filter change goes through the real filters bar — Show / includes / Completed
-    // checklist items — selected by Quincy test id, role and name.
-    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="production-gantt-filters-add"]');
-    if (!trigger) throw new Error("no add-filter trigger");
-    await act(async () => { trigger.click(); });
-    for (const name of ["Show", "includes", "Completed checklist items"]) {
-      let match: HTMLElement | undefined;
-      for (let attempt = 0; attempt < 50 && !match; attempt++) {
-        match = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((candidate) => candidate.textContent?.trim() === name);
-        // eslint-disable-next-line no-await-in-loop
-        if (!match) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
-      }
-      if (!match) throw new Error(`no option "${name}"`);
-      // eslint-disable-next-line no-await-in-loop
-      await act(async () => { match!.click(); await Promise.resolve(); });
-    }
+    // #255 / #430: the filter change is a Show -> Completed Subtasks toggle in the Dashboard's Display;
+    // here, the same facet change the Dashboard's URL round trip would deliver.
+    await act(async () => { setGanttFilters({ ...DEFAULT_GANTT_FACET_FILTERS, completed: true }); });
     await settle();
 
     expect(apiGetMock.mock.calls.some(([path]) => path.includes("completed=1") && !path.includes("childrenOf="))).toBe(true);
