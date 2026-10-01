@@ -695,7 +695,7 @@ describe("ProjectKanbanBoard2 (#80)", () => {
       expect(target!.hasAttribute("aria-current")).toBe(false);
       expect(target!.textContent).not.toContain("Current");
       expect(current!.className.split(" ")).toContain("!text-sm");
-      expect(current!.className.split(" ")).toContain("min-h-11");
+      expect(current!.className.split(" ")).toContain("max-[641px]:min-h-11");
     });
 
     it("offers every permitted position, previews the chosen one, and commits exactly that gap", async () => {
@@ -2018,18 +2018,23 @@ describe("ProjectKanbanBoard2 — column headers and collapse (#432)", () => {
     expect(column("Awaiting RAW")!.querySelector('[data-testid="board-column-overdue"]')).toBeNull();
   });
 
-  it("keeps every column header on one line with a truncating label, and a titled full stage name", async () => {
-    await renderBoard({ projects: mixed(), now: NOW });
+  it("lays each header out as two rows: index and full stage name, then count, overdue and the toggle", async () => {
+    await renderBoard({ projects: mixed(), now: NOW, collapsedStageKeys: [], onToggleStageCollapsed: vi.fn() });
     const headers = [...host.querySelectorAll<HTMLElement>('[data-testid="board-column"] [data-focus-key^="stage-heading:"]')];
     expect(headers.length).toBeGreaterThan(1);
     for (const header of headers) {
-      const label = header.querySelector<HTMLElement>('[title]');
-      expect(label, "the stage name keeps its full text available on hover").not.toBeNull();
-      const text = label!.lastElementChild as HTMLElement;
-      expect(text, "the stage label truncates rather than wrapping").not.toBeNull();
-      expect([...text.classList]).toContain("whitespace-nowrap");
-      expect(label!.getAttribute("title")).toBe(text.textContent);
+      const titleRow = header.querySelector<HTMLElement>('[data-testid="board-column-title-row"]')!;
+      const statsRow = header.querySelector<HTMLElement>('[data-testid="board-column-stats-row"]')!;
+      expect(titleRow.firstElementChild!.textContent, "the index leads row 1").toMatch(/^\d\d$/);
+      expect(titleRow.querySelector('[title]'), "the full stage name stays available on hover").not.toBeNull();
+      expect(titleRow.querySelector('[data-testid="board-column-count"]')).toBeNull();
+      expect(titleRow.querySelector("button")).toBeNull();
+      expect(statsRow.querySelector('[data-testid="board-column-count"]')).not.toBeNull();
+      expect(statsRow.lastElementChild!.querySelector('[aria-label^="Collapse "]'), "the toggle ends row 2").not.toBeNull();
+      expect(statsRow.textContent).not.toContain(titleRow.querySelector('[title]')!.textContent!);
     }
+    const lateStats = column("Awaiting RAW")!.querySelector('[data-testid="board-column-stats-row"]')!;
+    expect(lateStats.querySelector('[data-testid="board-column-overdue"]'), "the overdue badge sits on row 2").not.toBeNull();
   });
 
   it("column overdue figures sum to the Dashboard header's figure under the same clock", async () => {

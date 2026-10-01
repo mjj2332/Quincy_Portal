@@ -695,7 +695,7 @@ export function ProjectKanbanBoard2({
                       type="button"
                       variant="ghost"
                       size="icon-sm"
-                      className="max-[641px]:size-11 pointer-coarse:size-11"
+                      className="max-[641px]:size-11 pointer-coarse:size-11 aria-expanded:bg-transparent aria-expanded:hover:bg-muted"
                       aria-label={`${label} ${stage.label}`}
                       aria-expanded={expanded}
                       aria-controls={columnId}
@@ -737,14 +737,18 @@ export function ProjectKanbanBoard2({
                     // sees `editing` for `editing_autohdr` — would never match, and tier 2 would fall
                     // through to the Board root. The Board this replaced keyed its headings the same way.
                     <KanbanColumn key={stage.key} id={columnId} value={stage.key} disabled className="w-[17.5rem] shrink-0 bg-[var(--paper-050)] min-h-0 min-w-0 border border-[length:var(--border-width-hair)] border-border opacity-100" data-testid="board-column">
-                      <div className="flex shrink-0 items-center gap-[var(--space-3)] p-[var(--space-4)] border-b border-b-border bg-[var(--bg-canvas)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${stageKey}`} tabIndex={-1}>
-                        <span className="flex-none [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] tabular-nums text-foreground-secondary" aria-hidden="true">{String(stageIndex + 1).padStart(2, "0")}</span>
-                        <StatusBadge stageKey={stage.key} className="min-w-0 flex-1" labelClassName="min-w-0 truncate whitespace-nowrap" />
-                        <span className="flex flex-none items-center gap-[var(--space-2)] whitespace-nowrap">
+                      <div className="flex shrink-0 flex-col gap-[var(--space-2)] p-[var(--space-4)] border-b border-b-border bg-[var(--bg-canvas)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${stageKey}`} tabIndex={-1}>
+                        <div className="flex min-w-0 items-center gap-[var(--space-3)]" data-testid="board-column-title-row">
+                          <span className="flex-none [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] tabular-nums text-foreground-secondary" aria-hidden="true">{String(stageIndex + 1).padStart(2, "0")}</span>
+                          {/* Full width for the name; `truncate` + `title` only catch an unusually long one. */}
+                          <StatusBadge stageKey={stage.key} className="min-w-0 flex-1" labelClassName="min-w-0 truncate whitespace-nowrap" />
+                        </div>
+                        {/* The toggle is on this row in every column, so headers match whether or not a badge shows. */}
+                        <div className="flex items-center gap-[var(--space-2)] whitespace-nowrap" data-testid="board-column-stats-row">
                           <span className="tabular-nums text-sm text-foreground-secondary" data-testid="board-column-count">{stageProjects.length}</span>
                           {overdueCount > 0 && <Badge variant="destructive-light" size="sm" data-testid="board-column-overdue">{overdueCount} overdue</Badge>}
-                        </span>
-                        <span className="flex-none">{toggle("Collapse", true)}</span>
+                          <span className="ml-auto flex-none">{toggle("Collapse", true)}</span>
+                        </div>
                       </div>
                       <ScrollArea className="min-h-0 flex-1">
                         <KanbanColumnContent value={stage.key} className="relative flex flex-col gap-[var(--space-3)] p-[var(--space-3)] min-h-[120px]">

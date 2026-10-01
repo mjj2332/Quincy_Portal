@@ -209,7 +209,9 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
           </div>
           {/* The star row is a sibling *outside* the link (#81): interactive controls cannot be <a>
               descendants — invalid HTML, and a click would navigate. Raised above the link's overlay. */}
-          <div className="relative z-[1] flex items-center justify-between" data-testid="board-card-footer-slot">
+          {/* One centre line for stars and avatars: no per-child bottom padding. The interactive stars' 36px cells are flush with the card's
+              bottom edge; the read-only row and a stars-less row take the bottom gap from the footer instead. */}
+          <div className={`relative z-[1] flex items-center justify-between ${canPrioritize ? "" : "pb-[var(--space-3)]"}`} data-testid="board-card-footer-slot">
             <PriorityStars
               priority={project.priority}
               street={project.street}
@@ -220,7 +222,7 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
             {/* #82: `editors` is already Editor-only, active-only and server-ordered (#79) — no client-side
                 filter or sort. No Editors, no avatar slot: an empty dashed circle alone on a row read as
                 a defect on most cards. */}
-            {hasEditors && <div className="ml-auto px-[var(--space-3)] pb-[var(--space-3)]" data-testid="board-card-meta"><AvatarStack people={project.editors!} personNoun="Editor" emptyLabel="No Editor assigned" /></div>}
+            {hasEditors && <div className="ml-auto px-[var(--space-3)]" data-testid="board-card-meta"><AvatarStack people={project.editors!} personNoun="Editor" emptyLabel="No Editor assigned" /></div>}
           </div>
           {coverFailed && (
             <Button

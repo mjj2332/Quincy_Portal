@@ -89,7 +89,7 @@ export function PriorityStars({ priority, street, canPrioritize, pending = false
   // it is a live defect on the Asset-rating surface, and must not be copied here.)
   if (!canPrioritize) {
     return (
-      <div className="flex items-center px-[var(--space-3)] pb-[var(--space-3)]" data-testid="board-card-priority">
+      <div className="flex items-center px-[var(--space-3)]" data-testid="board-card-priority">
         <span role="img" aria-label={`Priority ${priority} of 5 stars`} className="inline-flex items-center gap-[2px] text-base leading-none">
           {STARS.map((star) => (
             <span key={star} aria-hidden="true" className={star <= (priority ?? 0) ? "text-star-on" : "text-star-off"}>★</span>

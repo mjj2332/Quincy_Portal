@@ -17,7 +17,7 @@ function moveToStageKey(value: ProjectStageKey): StageKey {
   return value === "editing" ? "editing_autohdr" : value;
 }
 
-const OPTION_CLASSES = "w-full min-h-11 px-[var(--space-3)] py-[var(--space-2)] border-0 border-l-[length:var(--border-width-bold)] border-l-transparent bg-transparent text-foreground [font:inherit] !text-sm text-left cursor-pointer active:bg-[var(--bg-sunken)] hover:bg-[var(--paper-100)] aria-selected:border-l-[var(--border-strong)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-[-2px]";
+const OPTION_CLASSES = "w-full max-[641px]:min-h-11 px-[var(--space-3)] py-1 border-0 border-l-[length:var(--border-width-bold)] border-l-transparent bg-transparent text-foreground [font:inherit] !text-sm text-left cursor-pointer active:bg-[var(--bg-sunken)] hover:bg-[var(--paper-100)] aria-selected:border-l-[var(--border-strong)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-[-2px]";
 const ACTION_CLASSES = "min-h-[38px] px-[14px] py-[9px] text-xs focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-[-2px]";
 
 export type MoveToDialogProps = {
@@ -152,7 +152,7 @@ export function MoveToDialog({ project, model, activeStages, role, sort, canMove
   return <>
     {floating.mounted && <AnchoredPopover context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={1} modal onKeyDown={floating.onKeyDown} status={floating.status}>
       <div id={dialogId} className="grid gap-[var(--space-3)] p-[var(--space-3)]" role="dialog" aria-label={`Move ${project.street} to…`} data-step={targetStageKey === null ? "stage" : "position"}>
-        <div className="ey">{targetStageKey === null ? "Choose a Stage" : `Choose a position in ${targetLabel}`}</div>
+        <div className="ey px-[calc(var(--space-3)+var(--border-width-bold))]">{targetStageKey === null ? "Choose a Stage" : `Choose a position in ${targetLabel}`}</div>
         {targetStageKey === null ? <div className="grid gap-[2px]" role="radiogroup" aria-label={`Target Stage for ${project.street}`}>
           {stageOptions.map((stage) => {
             const key = moveToStageKey(stage.key);
