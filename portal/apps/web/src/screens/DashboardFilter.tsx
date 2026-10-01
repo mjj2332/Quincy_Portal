@@ -64,9 +64,9 @@ const RULE_MENU = { duplicate: false, negate: false } as const;
 const VALUE_MENU_CLASS = "w-60";
 
 /** "Mon 1 Jun 2026 – Wed 3 Jun 2026" for a `[from, to]` value. */
-function rangeText(values: unknown[]): string {
+export function rangeText(values: unknown[]): string {
   const [from, to] = values;
-  return typeof from === "string" && typeof to === "string" ? `${formatCivilDay(from)} – ${formatCivilDay(to)}` : "";
+  return typeof from === "string" && typeof to === "string" ? `${formatCivilDay(from)} – ${formatCivilDay(to)}` : "Select dates";
 }
 
 export type DashboardFilterProviderProps = {
@@ -186,7 +186,7 @@ export function DashboardFilterProvider({ filter, onFilterChange, stageOptions, 
             value: person.id,
             label: person.active ? person.name : `${person.name} (inactive)`,
             description: person.roleLabel,
-            icon: <InitialsAvatar name={person.name} />,
+            icon: <InitialsAvatar name={person.name} className="size-6" />,
           })),
           ...unknownIds.map((id) => ({ value: id, label: "Unknown person (not applied)" })),
         ],
