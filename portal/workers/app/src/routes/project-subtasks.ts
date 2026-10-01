@@ -26,10 +26,14 @@ import {
   readSubtaskRemindersOf,
   saveProjectSubtask,
   serializeProjectSubtask,
+  ARCHIVED_SNAPSHOT_SQL,
+  archivedInSnapshot,
   type ItemPatch,
 } from "../lib/project-subtasks";
 
 const idParam = z.string().uuid();
+/** Fences a Subtask write on its Project not being archived, inside the one statement, so an archive landing mid-request wins (#446). Binds nothing. */
+const ARCHIVE_FENCE = " AND EXISTS (SELECT 1 FROM projects p WHERE p.id = project_subtasks.project_id AND p.archived_at IS NULL)";
 const TITLE_MAX_LENGTH = 500;
 const POSITION_STEP = 1024;
 
@@ -67,7 +71,7 @@ function rowsFromD1<T>(result: unknown): T[] {
 
 async function ensureProjectAccessAndExists(c: Parameters<typeof hasProjectCollaborationAccess>[0], projectId: string) {
   if (!await hasProjectCollaborationAccess(c, projectId)) return "forbidden" as const;
-  return createDb(c.env.DB).select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
+  return createDb(c.env.DB).select({ id: schema.projects.id, archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
 }
 
 function subtaskQuery(db: ReturnType<typeof createDb>, projectId: string, subtaskId?: string) {
@@ -121,6 +125,12 @@ async function conflictSubtask(c: Context<AppEnv>, projectId: string, current: {
   return row ? externalSubtaskDto(row, await hydrateSubtaskAssignees(c.env.DB, current.id), await readSubtaskRemindersOf(c.env.DB, current.id)) : null;
 }
 
+/** An archived Project's Checklist is read-only (#446). An External Editor cannot see an archived Project, so for them it is the ordinary 404. */
+function archivedResponse(c: Context<AppEnv>) {
+  if (c.get("user").role === "external_editor") return c.json({ error: "Project not found" }, 404);
+  return c.json({ error: "Archived projects are read-only; the checklist can't be changed.", code: "subtask_project_archived" }, 409);
+}
+
 async function commandResponse(c: Context<AppEnv>, projectId: string, result: Awaited<ReturnType<typeof saveProjectSubtask>>, status: 200 | 201 = 200) {
   switch (result.outcome) {
     case "created":
@@ -135,6 +145,7 @@ async function commandResponse(c: Context<AppEnv>, projectId: string, result: Aw
     case "invalid_request": return c.json({ error: result.message, code: result.code, ...(result.details ? { details: result.details } : {}) }, result.status);
     case "forbidden": return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
     case "not_found": return c.json({ error: result.target === "project" ? "Project not found" : "Subtask not found" }, 404);
+    case "project_archived": return archivedResponse(c);
     case "schedule_conflict": {
       const currentSubtask = result.currentSubtask ? await conflictSubtask(c, projectId, result.currentSubtask) : undefined;
       return c.json({ error: "Checklist schedule changed; review the latest schedule before saving.", code: "subtask_schedule_version_conflict", current: result.current, ...(currentSubtask ? { currentSubtask } : {}) }, 409);
@@ -231,6 +242,7 @@ projectSubtasksRoutes.post("/projects/:projectId/subtasks/:subtaskId/reorder", t
   if (!idParam.safeParse(projectId).success || !idParam.safeParse(subtaskId).success) return c.json({ error: "Invalid project or subtask id" }, 400);
   if (c.get("user").role === "external_editor" && !await resolveVisibleProject(c.env, c.get("user"), projectId)) return c.json({ error: "Project not found" }, 404);
   const project = await ensureProjectAccessAndExists(c, projectId); if (project === "forbidden") return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); if (!project) return c.json({ error: "Project not found" }, 404);
+  if (project.archivedAt !== null) return archivedResponse(c);
   const data = await jsonInput(c, reorderInput); if (data instanceof Response) return data;
   if (data.beforeId === subtaskId || data.afterId === subtaskId) return c.json({ error: "A subtask cannot be its own neighbor" }, 400);
   const db = createDb(c.env.DB); const target = await db.select({ id: schema.projectSubtasks.id, position: schema.projectSubtasks.position }).from(schema.projectSubtasks).where(and(eq(schema.projectSubtasks.id, subtaskId), eq(schema.projectSubtasks.projectId, projectId))).get();
@@ -249,8 +261,9 @@ projectSubtasksRoutes.post("/projects/:projectId/subtasks/:subtaskId/reorder", t
   if (tied) {
     const insertAt = before ? beforeIndex + 1 : 0; const desired = [...remaining]; desired.splice(insertAt, 0, target);
     const snapshotJson = JSON.stringify(desired.map((item, index) => ({ id: item.id, oldPosition: item.position, newPosition: (index + 1) * POSITION_STEP })));
-    const [rebased] = await c.env.DB.batch([c.env.DB.prepare(`UPDATE project_subtasks SET position = (SELECT CAST(json_extract(value, '$.newPosition') AS INTEGER) FROM json_each(?1) WHERE json_extract(value, '$.id') = project_subtasks.id), updated_at = ?2 WHERE project_id = ?3 AND (id, position) IN (SELECT json_extract(value, '$.id'), json_extract(value, '$.oldPosition') FROM json_each(?1)) AND (SELECT COUNT(*) FROM project_subtasks WHERE project_id = ?3 AND (id, position) IN (SELECT json_extract(value, '$.id'), json_extract(value, '$.oldPosition') FROM json_each(?1))) = json_array_length(?1) AND (SELECT COUNT(*) FROM project_subtasks WHERE project_id = ?3) = json_array_length(?1)`).bind(snapshotJson, now, projectId)]);
+    const [rebased, archivedRead] = await c.env.DB.batch([c.env.DB.prepare(`UPDATE project_subtasks SET position = (SELECT CAST(json_extract(value, '$.newPosition') AS INTEGER) FROM json_each(?1) WHERE json_extract(value, '$.id') = project_subtasks.id), updated_at = ?2 WHERE project_id = ?3 AND (id, position) IN (SELECT json_extract(value, '$.id'), json_extract(value, '$.oldPosition') FROM json_each(?1)) AND (SELECT COUNT(*) FROM project_subtasks WHERE project_id = ?3 AND (id, position) IN (SELECT json_extract(value, '$.id'), json_extract(value, '$.oldPosition') FROM json_each(?1))) = json_array_length(?1) AND (SELECT COUNT(*) FROM project_subtasks WHERE project_id = ?3) = json_array_length(?1)${ARCHIVE_FENCE}`).bind(snapshotJson, now, projectId), c.env.DB.prepare(ARCHIVED_SNAPSHOT_SQL).bind(projectId)]);
     changes = rebased?.meta.changes ?? 0;
+    if (changes !== snapshot.length && archivedInSnapshot(archivedRead)) return archivedResponse(c);
     if (changes !== snapshot.length) return c.json({ error: "Subtask order changed; reload and try again" }, 409);
     const targetPosition = desired.findIndex((item) => item.id === subtaskId) + 1;
     await audit(c.env, c.get("user"), "project_subtask.reorder", "project_subtask", subtaskId, { beforeId: data.beforeId, afterId: data.afterId });
@@ -263,8 +276,9 @@ projectSubtasksRoutes.post("/projects/:projectId/subtasks/:subtaskId/reorder", t
   if (before && after) { guard += " AND NOT EXISTS (SELECT 1 FROM project_subtasks AS candidate WHERE candidate.project_id = ? AND candidate.id <> ? AND (candidate.position > ? OR (candidate.position = ? AND candidate.id > ?)) AND (candidate.position < ? OR (candidate.position = ? AND candidate.id < ?)))"; params.push(projectId, target.id, before.position, before.position, before.id, after.position, after.position, after.id); }
   else if (before) { guard += " AND NOT EXISTS (SELECT 1 FROM project_subtasks AS candidate WHERE candidate.project_id = ? AND candidate.id <> ? AND (candidate.position > ? OR (candidate.position = ? AND candidate.id > ?)))"; params.push(projectId, target.id, before.position, before.position, before.id); }
   else if (after) { guard += " AND NOT EXISTS (SELECT 1 FROM project_subtasks AS candidate WHERE candidate.project_id = ? AND candidate.id <> ? AND (candidate.position < ? OR (candidate.position = ? AND candidate.id < ?)))"; params.push(projectId, target.id, after.position, after.position, after.id); }
-  const [updated] = await c.env.DB.batch([c.env.DB.prepare(`UPDATE project_subtasks SET position = ?, updated_at = ? WHERE id = ? AND project_id = ? AND position = ? AND (SELECT COUNT(*) FROM project_subtasks WHERE project_id = ?) = ?${guard}`).bind(...params)]);
+  const [updated, archivedRead] = await c.env.DB.batch([c.env.DB.prepare(`UPDATE project_subtasks SET position = ?, updated_at = ? WHERE id = ? AND project_id = ? AND position = ? AND (SELECT COUNT(*) FROM project_subtasks WHERE project_id = ?) = ?${guard}${ARCHIVE_FENCE}`).bind(...params), c.env.DB.prepare(ARCHIVED_SNAPSHOT_SQL).bind(projectId)]);
   changes = updated?.meta.changes ?? 0;
+  if (changes !== 1 && archivedInSnapshot(archivedRead)) return archivedResponse(c);
   if (changes !== 1) return c.json({ error: "Subtask order changed; reload and try again" }, 409);
     await audit(c.env, c.get("user"), "project_subtask.reorder", "project_subtask", subtaskId, { beforeId: data.beforeId, afterId: data.afterId });
   return c.json({ position });
@@ -275,6 +289,7 @@ projectSubtasksRoutes.delete("/projects/:projectId/subtasks/:subtaskId", termina
   if (!idParam.safeParse(projectId).success || !idParam.safeParse(subtaskId).success) return c.json({ error: "Invalid project or subtask id" }, 400);
   if (c.get("user").role === "external_editor" && !await resolveVisibleProject(c.env, c.get("user"), projectId)) return c.json({ error: "Project not found" }, 404);
   const project = await ensureProjectAccessAndExists(c, projectId); if (project === "forbidden") return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); if (!project) return c.json({ error: "Project not found" }, 404);
+  if (project.archivedAt !== null) return archivedResponse(c);
   const db = createDb(c.env.DB); const existing = await subtaskQuery(db, projectId, subtaskId).get(); if (!existing) return c.json({ error: "Subtask not found" }, 404);
   const auditId = newId(); const activityId = newId();
   const activity: ProjectActivityIntent = {
@@ -286,13 +301,16 @@ projectSubtasksRoutes.delete("/projects/:projectId/subtasks/:subtaskId", termina
   const results = await c.env.DB.batch([
     // The title is part of the delete snapshot because the activity payload is prepared before
     // the batch. A concurrent rename therefore loses this delete rather than producing stale bell copy.
-    c.env.DB.prepare("DELETE FROM project_subtasks WHERE id = ? AND project_id = ? AND title IS ? RETURNING id").bind(subtaskId, projectId, existing.subtask.title),
+    c.env.DB.prepare(`DELETE FROM project_subtasks WHERE id = ? AND project_id = ? AND title IS ?${ARCHIVE_FENCE} RETURNING id`).bind(subtaskId, projectId, existing.subtask.title),
     c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project_subtask.delete', 'project_subtask', ?, ?, ? WHERE changes() = 1").bind(auditId, c.get("user").id, subtaskId, auditMeta(c.get("user")), Date.now()),
     ...activityStatements.statements,
     // A reminder already written for this Subtask must not be delivered once it is gone (#424). Its occurrences cascade with the row.
     ...buildSubtaskReminderSuppression({ db: c.env.DB, scope: { kind: "subtask", projectId, subtaskId }, reason: "subtask_deleted", now: Date.now(), gateAuditId: auditId }).statements,
+    // Last, so the positional reads below stay valid. Classifies a lost delete (#446).
+    c.env.DB.prepare(ARCHIVED_SNAPSHOT_SQL).bind(projectId),
   ]);
   if (!rowsFromD1<{ id: string }>(results[0])[0]) {
+    if (archivedInSnapshot(results[results.length - 1])) return archivedResponse(c);
     const current = await subtaskQuery(db, projectId, subtaskId).get();
     if (current) return c.json({ error: "Subtask changed while deleting; reload and try again", code: "subtask_changed" }, 409);
     return c.json({ error: "Subtask not found" }, 404);
