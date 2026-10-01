@@ -176,7 +176,7 @@ landing ahead of a consumer (the Gantt's reused checkbox panel). What it actuall
 | Skin-guard strips | 15 class tokens across 4 files (`dark:`, `shadow-*`, `rounded-lg`) |
 | Other class edits (browser passes F/G) | 7 across 3 files: in `filters-chip.tsx` the segments' `hover:bg-accent` → `hover:bg-muted`, the finished operator's `text-muted-foreground` → `text-foreground-secondary`, the chip height (the button's `BUTTON_HEIGHT_CLASS`), the segments' focus radius, and the value's one-line truncation; in `filters-editors.tsx` the tick's forced `text-foreground!` removed; in `cascader.tsx` the retry button's `hover:bg-accent` → `hover:bg-muted`. Each is recorded in its file's header |
 | Behavioural vendor edits | 2: `ruleMenu`, additive, hides the rule menu's Duplicate/Negate rows (3 files); `writtenRef` in `filters.tsx`, so the live status announces the count after an outside re-seed of a controlled `query` |
-| Quincy code | One composition file, `ProductionGanttFiltersBar.tsx` (the schema, URL sync and focus), and the pure mapping and Delivered-pair rule in `lib/production-gantt-filters.ts` |
+| Quincy code | One composition file, `ProductionGanttFiltersBar.tsx` (the schema, URL sync and focus; removed in #430, when its Show chip became the Timeline's Display), and the Delivered-pair rule in `lib/production-gantt-filters.ts` |
 | Bundle (`vite build`, raw / gzip, all JS) | 2,289 kB / 679 kB before, 2,429 kB / 721 kB after; the entry chunk shrank (1,280 → 1,250 kB) as rolldown re-split shared modules into a new chunk |
 
 What was new this time:
