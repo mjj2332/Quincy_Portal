@@ -23,12 +23,15 @@ import {
   editorProductionGanttResponseSchema,
   encodeGanttChildCursor,
   encodeGanttProjectCursor,
+  ganttPeopleFingerprint,
   isSydneyCalendarDate,
+  parseDashboardDateRange,
   productionGanttChildPageSchema,
   roleHasCapability,
   stageTransportKeyForRole,
   type CalendarPerson,
   type DashboardArchivedMode,
+  type DashboardDateRange,
   type DashboardPriorityFilterValue,
   type GanttChecklistRowDto,
   type GanttChildCursor,
@@ -45,7 +48,7 @@ import {
 import { requireCapability } from "../middleware/capability";
 import { terminalRoute } from "../lib/terminal-route";
 import { normalizeProjectSearch, projectSearchSql } from "../lib/project-search";
-import { archivedModeSql, authorizedProjectsBaseCte, parseReminderOffsets, productionRoleSql } from "../lib/production-scope-sql";
+import { archivedModeSql, authorizedProjectsBaseCte, dashboardPeopleCte, deadlineOverdueSql, deadlineRangeSql, parseReminderOffsets, productionRoleSql, shootRangeSql } from "../lib/production-scope-sql";
 import { serializeSubtaskSchedule } from "../lib/subtask-schedule";
 import { assigneesForViewer, parseAssigneesJson, subtaskAssigneesJsonSql } from "../lib/subtask-assignees";
 import { activeEditorRefsByProject, projectTeamByProject } from "../lib/project-editors";
@@ -53,7 +56,9 @@ import type { AppEnv } from "../env";
 
 type GanttRole = AppEnv["Variables"]["user"]["role"];
 
-const QUERY_NAMES = new Set(["cursor", "limit", "q", "editors", "stages", "delivered", "completed", "scope", "priority", "archived", "childrenOf", "childCursor", "facets", "rev", "team"]);
+const QUERY_NAMES = new Set(["cursor", "limit", "q", "editors", "stages", "delivered", "completed", "scope", "priority", "archived", "childrenOf", "childCursor", "facets", "rev", "team",
+  // #429: the shared Filter's relation and date facets, and the request-gated context-row marker (`dm=1`).
+  "unassigned", "mine", "overdue", "shoot", "deadline", "dm"]);
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 /** Canonical decimal only: no leading zero, no leading `+`, no whitespace. */
@@ -108,6 +113,15 @@ export type ParsedGanttPageQuery = {
   archived: DashboardArchivedMode;
   delivered: boolean;
   completed: boolean;
+  /** #429: Unassigned (no Editor on a Project, no assignee on a Subtask), My tasks (the session user),
+   * Overdue and the two civil-day ranges. */
+  includeUnassigned: boolean;
+  myTasks: boolean;
+  overdueOnly: boolean;
+  shootRange: DashboardDateRange | null;
+  deadlineRange: DashboardDateRange | null;
+  /** #429: `dm=1` — embed `deadlineInScope` on each Project row (the context-row marker). */
+  deadlineMarker: boolean;
   /** #274: `facets=1` asks for the Editor field's options. Page one only. */
   facets: boolean;
   /** #246: `rev=1` — embed each project's child-collection revision (`children.revision`). */
@@ -121,6 +135,10 @@ export type ParsedGanttChildQuery = {
   childrenOf: string;
   /** #428: an archived Project's children are readable only under the same Archived mode that listed it. */
   archived: DashboardArchivedMode;
+  /** #429: the People / My tasks filter a child list is narrowed by (the cursor carries its fingerprint). */
+  editorIds: string[];
+  includeUnassigned: boolean;
+  myTasks: boolean;
   childCursor: GanttChildCursor | null;
   /** The child list's own "include done rows" mode. On a first page (no `childCursor`) this comes
    * from the `completed` query param, defaulting to `false` exactly like page mode; on a
@@ -183,6 +201,25 @@ function parseGanttQuery(c: Context<AppEnv>): ParsedGanttQuery | GanttParseFailu
   if (rawTeam !== undefined && rawTeam !== "1") return parseFailure("Gantt query is invalid.", "gantt_query_invalid");
   if (rawRevision !== undefined && rawRevision !== "1") return parseFailure("Gantt query is invalid.", "gantt_query_invalid");
 
+  // #429: People / Unassigned / My tasks are shared by the project list and a child page.
+  const rawEditorsValue = valueFor("editors");
+  const rawEditors = rawEditorsValue === undefined ? [] : splitList(rawEditorsValue);
+  if (rawEditors === null) return parseFailure("Gantt query is invalid.", "gantt_query_invalid");
+  if (rawEditors.length > PRODUCTION_GANTT_MAX_EDITOR_IDS) return parseFailure("Gantt query exceeds the Editor filter limit.", "gantt_query_too_large");
+  if (rawEditors.some((value) => !UUID_RE.test(value))) return parseFailure("Gantt query is invalid.", "gantt_query_invalid");
+  const unassignedFlag = valueFor("unassigned");
+  const mineFlag = valueFor("mine");
+  const overdueFlag = valueFor("overdue");
+  const dmFlag = valueFor("dm");
+  for (const flag of [unassignedFlag, mineFlag, overdueFlag, dmFlag]) if (flag !== undefined && flag !== "1") return parseFailure("Gantt query is invalid.", "gantt_query_invalid");
+  const rawShoot = valueFor("shoot");
+  const rawDeadline = valueFor("deadline");
+  const shootRange = rawShoot === undefined ? null : parseDashboardDateRange(rawShoot);
+  const deadlineRange = rawDeadline === undefined ? null : parseDashboardDateRange(rawDeadline);
+  if ((rawShoot !== undefined && shootRange === null) || (rawDeadline !== undefined && deadlineRange === null)) return parseFailure("Gantt query is invalid.", "gantt_query_invalid");
+  if (deadlineRange !== null && overdueFlag === "1") return parseFailure("A Deadline range and Overdue are exclusive.", "gantt_query_invalid");
+  const peopleFilter = { editorIds: [...rawEditors].sort(), includeUnassigned: unassignedFlag === "1", myTasks: mineFlag === "1" };
+
   if (childrenOf !== undefined) {
     if (rawCursor !== undefined || rawLimit !== undefined) return parseFailure("childrenOf cannot be combined with cursor or limit.", "gantt_query_invalid");
     // #246: the revision rides on the embedded first page, which is what the client's cache is keyed to.
@@ -203,7 +240,11 @@ function parseGanttQuery(c: Context<AppEnv>): ParsedGanttQuery | GanttParseFailu
       childCompleted = decoded.completed;
     }
     if (valueFor("priority") !== undefined) return parseFailure("priority applies to the project list, not a child page.", "gantt_query_invalid");
-    return { mode: "children", childrenOf, archived, childCursor, completed: childCompleted };
+    // #429: the Project-level facets belong to the list; only the people/My tasks filter narrows a child list.
+    if (valueFor("stages") !== undefined || rawShoot !== undefined || rawDeadline !== undefined || overdueFlag !== undefined || dmFlag !== undefined) return parseFailure("stages, shoot, deadline and overdue apply to the project list, not a child page.", "gantt_query_invalid");
+    // A continuation must name the same People / My tasks filter its cursor was minted under.
+    if (childCursor && (childCursor.people ?? "") !== ganttPeopleFingerprint(peopleFilter)) return parseFailure("The People filter does not match the child cursor.", "gantt_query_invalid");
+    return { mode: "children", childrenOf, archived, ...peopleFilter, childCursor, completed: childCompleted };
   }
   if (rawChildCursor !== undefined) return parseFailure("childCursor requires childrenOf.", "gantt_query_invalid");
 
@@ -223,12 +264,6 @@ function parseGanttQuery(c: Context<AppEnv>): ParsedGanttQuery | GanttParseFailu
 
   const q = normalizeProjectSearch(valueFor("q") ?? "");
   if ([...q].length > PRODUCTION_GANTT_MAX_SEARCH_LENGTH) return parseFailure("Gantt query exceeds the search limit.", "gantt_query_too_large");
-
-  const rawEditorsValue = valueFor("editors");
-  const rawEditors = rawEditorsValue === undefined ? [] : splitList(rawEditorsValue);
-  if (rawEditors === null) return parseFailure("Gantt query is invalid.", "gantt_query_invalid");
-  if (rawEditors.length > PRODUCTION_GANTT_MAX_EDITOR_IDS) return parseFailure("Gantt query exceeds the Editor filter limit.", "gantt_query_too_large");
-  if (rawEditors.some((value) => !UUID_RE.test(value))) return parseFailure("Gantt query is invalid.", "gantt_query_invalid");
 
   const rawStagesValue = valueFor("stages");
   const rawStages = rawStagesValue === undefined ? [] : splitList(rawStagesValue);
@@ -251,7 +286,13 @@ function parseGanttQuery(c: Context<AppEnv>): ParsedGanttQuery | GanttParseFailu
     cursor,
     limit,
     q,
-    editorIds: [...rawEditors].sort(),
+    editorIds: peopleFilter.editorIds,
+    includeUnassigned: peopleFilter.includeUnassigned,
+    myTasks: peopleFilter.myTasks,
+    overdueOnly: overdueFlag === "1",
+    shootRange,
+    deadlineRange,
+    deadlineMarker: dmFlag === "1",
     stageKeys: canonicalStageOrder(rawStages),
     priorities: canonicalDashboardPriorities(rawPriorities),
     archived,
@@ -286,6 +327,8 @@ type GanttProjectSqlRow = {
   bar_start_date: string | null;
   checklist_completed: number | null;
   checklist_total: number | null;
+  /** #429: 1 when the Project's own Deadline matches the request, 0 when it is listed only as a context parent. */
+  deadline_in_scope: number | null;
   matched_projects: number | null;
   matched_rows: number | null;
   valid_editor_ids_json: string | null;
@@ -321,6 +364,29 @@ function withSubtaskTitleExists(clause: string): string {
  * `shootDateCivil`/`barStartDate` must never diverge from it.
  */
 const BAR_START_DATE_EXPR = "CASE WHEN p.shoot_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' AND date(p.shoot_date) = p.shoot_date THEN p.shoot_date ELSE strftime('%Y-%m-%d', p.created_at/1000, 'unixepoch') END AS bar_start_date";
+
+/**
+ * #429: "a Subtask's assignee" for SQL purposes. An External Editor only ever sees (and so only ever
+ * matches) an assignee who is on the Project's team, the rule `assigneesForViewer` applies to every other
+ * surface; for every other role every assignee counts.
+ */
+function subtaskAssigneeExists(role: GanttRole, subtask: string, extra = ""): string {
+  const team = role === "external_editor" ? ` AND EXISTS (SELECT 1 FROM project_members team_member WHERE team_member.project_id = ${subtask}.project_id AND team_member.user_id = ga.user_id)` : "";
+  return `EXISTS (SELECT 1 FROM project_subtask_assignees ga WHERE ga.subtask_id = ${subtask}.id${team}${extra})`;
+}
+
+/**
+ * #429: does this Subtask match the People / My tasks filter? Needs `r.include_unassigned`, `r.my_tasks`
+ * and a `valid_selected_editors` CTE (the request's People that are in the viewer's universe). People is
+ * active when a known person is named OR Unassigned is on (so Unassigned alone narrows); named-but-all-unknown
+ * with no Unassigned applies no People filter. My tasks is People = me: assigned to the session user.
+ */
+function childPeoplePredicate(role: GanttRole, subtask: string): string {
+  return `(((SELECT COUNT(*) FROM valid_selected_editors) = 0 AND r.include_unassigned = 0)
+    OR ${subtaskAssigneeExists(role, subtask, " AND ga.user_id IN (SELECT person_id FROM valid_selected_editors)")}
+    OR (r.include_unassigned = 1 AND NOT ${subtaskAssigneeExists(role, subtask)}))
+    AND (r.my_tasks = 0 OR ${subtaskAssigneeExists(role, subtask, " AND ga.user_id = r.me")})`;
+}
 
 /**
  * Statement 1: the projects page, keyset-paginated on `(bar_start_date, project_id)`. Binds, in
@@ -360,7 +426,9 @@ export function productionGanttProjectsSql(role: GanttRole): string {
   return `WITH
 request AS (
   SELECT ?1 AS me, ?2 AS search, ?3 AS include_delivered, ?4 AS include_completed,
-    ?5 AS cursor_start, ?6 AS cursor_id, ?10 AS include_facets, ?12 AS archived_mode
+    ?5 AS cursor_start, ?6 AS cursor_id, ?10 AS include_facets, ?12 AS archived_mode,
+    ?13 AS include_unassigned, ?14 AS my_tasks, ?15 AS overdue_only, ?16 AS now,
+    ?17 AS shoot_from, ?18 AS shoot_to, ?19 AS deadline_from, ?20 AS deadline_to, ?21 AS deadline_marker
 ),
 request_editors AS (SELECT value AS person_id FROM json_each(?7)),
 request_stages AS (SELECT value AS stage_key FROM json_each(?8)),
@@ -370,27 +438,17 @@ ${authorizedProjectsBaseCte(role, {
   archivedModeColumn: "r.archived_mode",
   searchPredicate,
   extraColumns: `p.shoot_date, p.created_at, ${BAR_START_DATE_EXPR}`,
+  // #429: the Shoot date range is a Project-level facet (the Gantt bar starts at the shoot date).
+  extraPredicates: [shootRangeSql("p.shoot_date", "r.shoot_from", "r.shoot_to")],
 })},
--- #274: every active editor on a project this viewer can see, independent of the other filters.
--- Validity does not depend on Stage, Show or search, so an editor with no project in the chosen
--- Stage narrows the view to nothing rather than dropping out of the filter and widening it.
-authorized_people_base AS (
-  SELECT DISTINCT u.id AS person_id, u.name AS person_name, u.role AS person_role, u.active AS person_active
-  FROM projects p
-  ${productionRoleSql(role).from}
-  INNER JOIN project_members pm ON pm.project_id = p.id AND pm.role_on_project = 'editor'
-  INNER JOIN user u ON u.id = pm.user_id
-  CROSS JOIN request r
-  WHERE ${archivedModeSql("p.archived_at", "r.archived_mode")} AND u.active = 1
-),
+-- #429: the People universe (every Editor and Subtask assignee on a Project this viewer can see under the
+-- Archived mode, inactive people included), independent of Stage, Show, search and every other facet, so a
+-- chosen person never drops out of the options and a stale id is "unknown", never widening the view.
+${dashboardPeopleCte(role, "r.archived_mode")},
 valid_selected_editors AS (
   SELECT re.person_id
   FROM request_editors re
-  WHERE EXISTS (SELECT 1 FROM authorized_people_base ap WHERE ap.person_id = re.person_id)
-),
-selected_editor_state AS (
-  SELECT (SELECT COUNT(*) FROM request_editors) AS requested,
-    (SELECT COUNT(*) FROM valid_selected_editors) AS valid
+  WHERE EXISTS (SELECT 1 FROM dashboard_people dp WHERE dp.person_id = re.person_id)
 ),
 checklist_counts AS (
   SELECT subtasks.project_id, SUM(CASE WHEN subtasks.done = 1 THEN 1 ELSE 0 END) AS completed, COUNT(*) AS total
@@ -398,14 +456,31 @@ checklist_counts AS (
   INNER JOIN authorized_projects_base count_projects ON count_projects.project_id = subtasks.project_id
   GROUP BY subtasks.project_id
 ),
-project_filtered_candidates AS (
-  SELECT ap.*
+project_scoped AS (
+  SELECT ap.*,
+    -- #429: the Project's own Deadline matches the request: its Editors against People / Unassigned / My
+    -- tasks, and the Overdue rule or the Deadline range.
+    CASE WHEN (((SELECT COUNT(*) FROM valid_selected_editors) = 0 AND r.include_unassigned = 0)
+        OR EXISTS (SELECT 1 FROM project_members editor_filter WHERE editor_filter.project_id = ap.project_id
+          AND editor_filter.role_on_project = 'editor'
+          AND editor_filter.user_id IN (SELECT person_id FROM valid_selected_editors))
+        OR (r.include_unassigned = 1 AND NOT EXISTS (SELECT 1 FROM project_members no_editor
+          WHERE no_editor.project_id = ap.project_id AND no_editor.role_on_project = 'editor')))
+      AND (r.my_tasks = 0 OR EXISTS (SELECT 1 FROM project_members me_editor WHERE me_editor.project_id = ap.project_id
+        AND me_editor.role_on_project = 'editor' AND me_editor.user_id = r.me))
+      AND (r.overdue_only = 0 OR ${deadlineOverdueSql({ deadlineAt: "ap.deadline_at", notDelivered: "ap.delivered = 0", notArchived: "ap.archived = 0" }, "r.now")})
+      AND ${deadlineRangeSql("ap.deadline_at", "ap.deadline_local_civil", "r.deadline_from", "r.deadline_to")}
+      THEN 1 ELSE 0 END AS deadline_matches,
+    -- #429: or some visible checklist row matches the People / My tasks filter (only meaningful when one is set).
+    CASE WHEN ((SELECT COUNT(*) FROM valid_selected_editors) > 0 OR r.include_unassigned = 1 OR r.my_tasks = 1)
+      AND EXISTS (SELECT 1 FROM project_subtasks s WHERE s.project_id = ap.project_id AND (r.include_completed = 1 OR s.done = 0)
+        AND ${childPeoplePredicate(role, "s")})
+      THEN 1 ELSE 0 END AS child_matches
   FROM authorized_projects_base ap
-  CROSS JOIN selected_editor_state selected
-  WHERE (selected.requested = 0 OR selected.valid = 0
-    OR EXISTS (SELECT 1 FROM project_members editor_filter WHERE editor_filter.project_id = ap.project_id
-      AND editor_filter.role_on_project = 'editor'
-      AND EXISTS (SELECT 1 FROM valid_selected_editors v WHERE v.person_id = editor_filter.user_id)))
+  CROSS JOIN request r
+),
+project_filtered_candidates AS (
+  SELECT * FROM project_scoped WHERE deadline_matches = 1 OR child_matches = 1
 ),
 visible_checklist_candidates AS (
   SELECT s.id AS subtask_id
@@ -413,6 +488,7 @@ visible_checklist_candidates AS (
   INNER JOIN project_filtered_candidates pf ON pf.project_id = s.project_id
   CROSS JOIN request r
   WHERE (r.include_completed = 1 OR s.done = 0)
+    AND ${childPeoplePredicate(role, "s")}
 ),
 density_candidates AS (
   SELECT project_id AS candidate_id FROM project_filtered_candidates
@@ -429,7 +505,8 @@ project_rows AS (
     pf.agency_display_name, pf.agent_display_name, pf.deadline_at, pf.deadline_local_civil,
     pf.deadline_version, pf.deadline_reminder_offsets_json, pf.can_collaborate,
     pf.shoot_date, pf.created_at, pf.bar_start_date,
-    COALESCE(cc.completed, 0) AS checklist_completed, COALESCE(cc.total, 0) AS checklist_total
+    COALESCE(cc.completed, 0) AS checklist_completed, COALESCE(cc.total, 0) AS checklist_total,
+    pf.deadline_matches AS deadline_in_scope
   FROM project_filtered_candidates pf
   LEFT JOIN checklist_counts cc ON cc.project_id = pf.project_id
   CROSS JOIN request r
@@ -440,23 +517,24 @@ project_rows AS (
 SELECT 'project' AS row_kind, project_id, street, suburb, stage_key, delivered, agency_display_name,
   agent_display_name, deadline_at, deadline_local_civil, deadline_version, deadline_reminder_offsets_json,
   can_collaborate, shoot_date, created_at, bar_start_date, checklist_completed, checklist_total,
+  deadline_in_scope,
   NULL AS matched_projects, NULL AS matched_rows, NULL AS valid_editor_ids_json,
   NULL AS person_id, NULL AS person_name, NULL AS person_role, NULL AS person_active
 FROM project_rows
 UNION ALL
-SELECT 'meta', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+SELECT 'meta', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
   d.matched_projects, d.matched_rows, (SELECT json_group_array(person_id) FROM valid_selected_editors),
   NULL, NULL, NULL, NULL
 FROM density d
 UNION ALL
-SELECT 'person', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+SELECT 'person', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
   NULL, NULL, NULL, ap.person_id, ap.person_name, ap.person_role, ap.person_active
-FROM authorized_people_base ap
+FROM dashboard_people ap
 CROSS JOIN request r
 WHERE r.include_facets = 1`;
 }
 
-function ganttPageBindValues(userId: string, parsed: ParsedGanttPageQuery): unknown[] {
+function ganttPageBindValues(userId: string, parsed: ParsedGanttPageQuery, now: number): unknown[] {
   const stageKeys = parsed.stageKeys.map((stage) => (stage === "editing" ? "editing_autohdr" : stage));
   return [
     userId,
@@ -471,6 +549,15 @@ function ganttPageBindValues(userId: string, parsed: ParsedGanttPageQuery): unkn
     parsed.facets ? 1 : 0,
     JSON.stringify(parsed.priorities),
     parsed.archived,
+    parsed.includeUnassigned ? 1 : 0,
+    parsed.myTasks ? 1 : 0,
+    parsed.overdueOnly ? 1 : 0,
+    now,
+    parsed.shootRange?.from ?? "",
+    parsed.shootRange?.to ?? "",
+    parsed.deadlineRange?.from ?? "",
+    parsed.deadlineRange?.to ?? "",
+    parsed.deadlineMarker ? 1 : 0,
   ];
 }
 
@@ -518,11 +605,15 @@ type GanttChildPageTotalSqlRow = { total: number };
 
 /**
  * Statement 2: children for the page's project ids (bound as a `json_each(?2)` list, `?2 <=
- * limit` ids). Binds: `?1` me, `?2` project ids JSON, `?3` include_completed.
+ * limit` ids). Binds: `?1` me, `?2` project ids JSON, `?3` include_completed, `?4` include_unassigned,
+ * `?5` my_tasks, `?6` the request's VALID People ids JSON (statement 1's meta row: already in the viewer's
+ * universe, so nothing here re-derives it) (#429).
  */
 export function productionGanttChildrenForPageSql(role: GanttRole): string {
   const branch = productionRoleSql(role);
   return `WITH
+request AS (SELECT ?1 AS me, ?4 AS include_unassigned, ?5 AS my_tasks),
+valid_selected_editors AS (SELECT value AS person_id FROM json_each(?6)),
 request_ids AS (SELECT value AS project_id FROM json_each(?2)),
 scoped_projects AS (
   SELECT p.id AS project_id, ${branch.collaboration} AS can_collaborate
@@ -543,13 +634,14 @@ ranked AS (
     MAX(s.updated_at) OVER (PARTITION BY s.project_id) AS revision
   FROM project_subtasks s
   INNER JOIN scoped_projects sp ON sp.project_id = s.project_id
-  WHERE (?3 = 1 OR s.done = 0)
+  CROSS JOIN request r
+  WHERE (?3 = 1 OR s.done = 0) AND ${childPeoplePredicate(role, "s")}
 )
 SELECT * FROM ranked WHERE rnk <= ${PRODUCTION_GANTT_CHILD_PAGE_LIMIT} ORDER BY project_id ASC, position ASC, subtask_id ASC`;
 }
 
-function ganttChildrenForPageBindValues(userId: string, projectIds: string[], includeCompleted: boolean): unknown[] {
-  return [userId, JSON.stringify(projectIds), includeCompleted ? 1 : 0];
+function ganttChildrenForPageBindValues(userId: string, projectIds: string[], includeCompleted: boolean, people: { includeUnassigned: boolean; myTasks: boolean; validEditorIds: string[] }): unknown[] {
+  return [userId, JSON.stringify(projectIds), includeCompleted ? 1 : 0, people.includeUnassigned ? 1 : 0, people.myTasks ? 1 : 0, JSON.stringify(people.validEditorIds)];
 }
 
 // ---------------------------------------------------------------------------
@@ -575,12 +667,20 @@ function ganttChildrenForPageBindValues(userId: string, projectIds: string[], in
 
 /**
  * Binds, in order: `?1` me, `?2` childrenOf project id, `?3` include_completed, `?4` "no cursor"
- * flag, `?5` cursor position (`0` when no cursor), `?6` cursor subtask id (`''` when no cursor), `?7` Archived mode (#428).
+ * flag, `?5` cursor position (`0` when no cursor), `?6` cursor subtask id (`''` when no cursor), `?7` Archived mode (#428),
+ * `?8` include_unassigned, `?9` my_tasks, `?10` the request's People ids JSON (#429: validated here against the
+ * viewer's own universe, the same `dashboardPeopleCte` the project list uses).
  * Fetches up to `CHILD_PAGE_LIMIT + 1` rows (the "is there a next page" probe row).
  */
 export function productionGanttChildPageSql(role: GanttRole): string {
   const branch = productionRoleSql(role);
   return `WITH
+request AS (SELECT ?1 AS me, ?7 AS archived_mode, ?8 AS include_unassigned, ?9 AS my_tasks),
+request_editors AS (SELECT value AS person_id FROM json_each(?10)),
+${dashboardPeopleCte(role, "r.archived_mode")},
+valid_selected_editors AS (
+  SELECT re.person_id FROM request_editors re WHERE EXISTS (SELECT 1 FROM dashboard_people dp WHERE dp.person_id = re.person_id)
+),
 scoped_project AS (
   SELECT p.id AS project_id, ${branch.collaboration} AS can_collaborate
   FROM projects p
@@ -597,7 +697,8 @@ visible_subtasks AS (
     COUNT(*) OVER () AS total
   FROM project_subtasks s
   INNER JOIN scoped_project sp ON sp.project_id = s.project_id
-  WHERE (?3 = 1 OR s.done = 0)
+  CROSS JOIN request r
+  WHERE (?3 = 1 OR s.done = 0) AND ${childPeoplePredicate(role, "s")}
 ),
 page AS (
   SELECT * FROM visible_subtasks
@@ -615,12 +716,18 @@ SELECT * FROM page`;
  * #3), where `page` above returns zero rows and there is no row left to read a `COUNT(*) OVER()`
  * off. A plain `COUNT(*)` with no `GROUP BY` always returns exactly one row (`0` for no matches),
  * so — unlike reading `total` off the first (possibly absent) row of `page` — this query can never
- * itself be empty. Binds: `?1` me, `?2` childrenOf project id, `?3` include_completed, `?4` Archived mode (#428) — the same
- * leading binds as the page query above, not the cursor ones.
+ * itself be empty. Binds: `?1` me, `?2` childrenOf project id, `?3` include_completed, `?4` Archived mode (#428), `?5` include_unassigned,
+ * `?6` my_tasks, `?7` People ids JSON (#429) — the same filter as the page query above, not the cursor ones.
  */
 export function productionGanttChildPageTotalSql(role: GanttRole): string {
   const branch = productionRoleSql(role);
   return `WITH
+request AS (SELECT ?1 AS me, ?4 AS archived_mode, ?5 AS include_unassigned, ?6 AS my_tasks),
+request_editors AS (SELECT value AS person_id FROM json_each(?7)),
+${dashboardPeopleCte(role, "r.archived_mode")},
+valid_selected_editors AS (
+  SELECT re.person_id FROM request_editors re WHERE EXISTS (SELECT 1 FROM dashboard_people dp WHERE dp.person_id = re.person_id)
+),
 scoped_project AS (
   SELECT p.id AS project_id, ${branch.collaboration} AS can_collaborate
   FROM projects p
@@ -630,15 +737,18 @@ scoped_project AS (
 SELECT COUNT(*) AS total
 FROM project_subtasks s
 INNER JOIN scoped_project sp ON sp.project_id = s.project_id
-WHERE (?3 = 1 OR s.done = 0)`;
+CROSS JOIN request r
+WHERE (?3 = 1 OR s.done = 0) AND ${childPeoplePredicate(role, "s")}`;
 }
 
-function ganttChildPageTotalBindValues(userId: string, projectId: string, includeCompleted: boolean, archived: DashboardArchivedMode): unknown[] {
-  return [userId, projectId, includeCompleted ? 1 : 0, archived];
+type ChildPeopleFilter = { editorIds: string[]; includeUnassigned: boolean; myTasks: boolean };
+
+function ganttChildPageTotalBindValues(userId: string, projectId: string, includeCompleted: boolean, archived: DashboardArchivedMode, people: ChildPeopleFilter): unknown[] {
+  return [userId, projectId, includeCompleted ? 1 : 0, archived, people.includeUnassigned ? 1 : 0, people.myTasks ? 1 : 0, JSON.stringify(people.editorIds)];
 }
 
-function ganttChildPageBindValues(userId: string, projectId: string, includeCompleted: boolean, cursor: GanttChildCursor | null, archived: DashboardArchivedMode): unknown[] {
-  return [userId, projectId, includeCompleted ? 1 : 0, cursor ? 0 : 1, cursor?.position ?? 0, cursor?.id ?? "", archived];
+function ganttChildPageBindValues(userId: string, projectId: string, includeCompleted: boolean, cursor: GanttChildCursor | null, archived: DashboardArchivedMode, people: ChildPeopleFilter): unknown[] {
+  return [userId, projectId, includeCompleted ? 1 : 0, cursor ? 0 : 1, cursor?.position ?? 0, cursor?.id ?? "", archived, people.includeUnassigned ? 1 : 0, people.myTasks ? 1 : 0, JSON.stringify(people.editorIds)];
 }
 
 // ---------------------------------------------------------------------------
@@ -672,7 +782,7 @@ function parseValidEditorIds(value: string | null): string[] {
   }
 }
 
-/** The editor facet's person: a Project editor, not a Subtask assignee. */
+/** The People facet's person: a Project Editor or a Subtask assignee (#429). */
 function ganttPerson(row: { person_id: string | null; person_name: string | null; person_role: string | null; person_active: number | null }): CalendarPerson | null {
   if (!row.person_id || row.person_name === null || row.person_role === null) return null;
   const role = row.person_role as Role;
@@ -736,6 +846,8 @@ function serializeGanttProjectRow(
   withRevision: boolean,
   teamByProject: Map<string, GanttTeamMemberDto[]> | null,
   archived: boolean,
+  withDeadlineMarker: boolean,
+  peopleFingerprint: string,
 ): GanttProjectRowDto {
   if (row.project_id === null || row.street === null || row.stage_key === null || row.bar_start_date === null || row.created_at === null) {
     throw new Error("Gantt project row is incomplete.");
@@ -773,6 +885,8 @@ function serializeGanttProjectRow(
     checklist: { completed: Number(row.checklist_completed ?? 0), total: Number(row.checklist_total ?? 0) },
     // #365: opt-in (`team=1`), so an old bundle's strict decoder never meets the keys.
     ...(teamByProject ? { team: teamByProject.get(row.project_id) ?? [] } : {}),
+    // #429: opt-in (`dm=1`), so an old bundle's strict decoder never meets the key.
+    ...(withDeadlineMarker ? { deadlineInScope: Boolean(row.deadline_in_scope) } : {}),
     permissions: {
       // An archived Project is read-only everywhere (#428): no Deadline, checklist or team edit.
       canEditDeadline: roleHasCapability(role, "editProject") && !delivered && !archived,
@@ -792,7 +906,7 @@ function serializeGanttProjectRow(
       // have `total > returned` with nothing left to page to — see that section's docblock.
       truncated: total > returned,
       nextCursor: total > returned
-        ? encodeGanttChildCursor({ projectId: row.project_id, position: children[returned - 1]!.position, id: children[returned - 1]!.subtask_id, completed })
+        ? encodeGanttChildCursor({ projectId: row.project_id, position: children[returned - 1]!.position, id: children[returned - 1]!.subtask_id, completed, ...(peopleFingerprint ? { people: peopleFingerprint } : {}) })
         : null,
     },
   };
@@ -815,8 +929,8 @@ function parseGanttResponse(role: GanttRole, response: ProductionGanttResponse):
 async function handleChildren(c: Context<AppEnv>, parsed: ParsedGanttChildQuery): Promise<Response> {
   const user = c.get("user");
   const role = user.role;
-  const params = ganttChildPageBindValues(user.id, parsed.childrenOf, parsed.completed, parsed.childCursor, parsed.archived);
-  const totalParams = ganttChildPageTotalBindValues(user.id, parsed.childrenOf, parsed.completed, parsed.archived);
+  const params = ganttChildPageBindValues(user.id, parsed.childrenOf, parsed.completed, parsed.childCursor, parsed.archived, parsed);
+  const totalParams = ganttChildPageTotalBindValues(user.id, parsed.childrenOf, parsed.completed, parsed.archived, parsed);
   // fix-218-r4 #2: batched (not sequential) so both queries read the same D1 snapshot, and the
   // total is sourced from its own always-one-row query — never from `page`'s first row, which is
   // absent on an empty continuation page.
@@ -826,11 +940,12 @@ async function handleChildren(c: Context<AppEnv>, parsed: ParsedGanttChildQuery)
   ]);
   const rows = (batchResults[0]?.results ?? []) as GanttChildPageSqlRow[];
   const total = Number((batchResults[1]?.results as GanttChildPageTotalSqlRow[] | undefined)?.[0]?.total ?? 0);
+  const peopleFingerprint = ganttPeopleFingerprint(parsed);
   const truncated = rows.length > PRODUCTION_GANTT_CHILD_PAGE_LIMIT;
   const pageRows = truncated ? rows.slice(0, PRODUCTION_GANTT_CHILD_PAGE_LIMIT) : rows;
   const lastRow = pageRows.at(-1);
   const nextCursor = truncated && lastRow
-    ? encodeGanttChildCursor({ projectId: parsed.childrenOf, position: lastRow.position, id: lastRow.subtask_id, completed: parsed.completed })
+    ? encodeGanttChildCursor({ projectId: parsed.childrenOf, position: lastRow.position, id: lastRow.subtask_id, completed: parsed.completed, ...(peopleFingerprint ? { people: peopleFingerprint } : {}) })
     : null;
   const response: ProductionGanttChildPageResponse = {
     projectId: parsed.childrenOf,
@@ -851,7 +966,7 @@ async function handlePage(c: Context<AppEnv>, parsed: ParsedGanttPageQuery): Pro
   const user = c.get("user");
   const role = user.role;
   const now = Date.now();
-  const params = ganttPageBindValues(user.id, parsed);
+  const params = ganttPageBindValues(user.id, parsed, now);
   const first = await c.env.DB.prepare(productionGanttProjectsSql(role)).bind(...params).all<GanttProjectSqlRow>();
   const rows = first.results ?? [];
   const meta = rows.find((row) => row.row_kind === "meta");
@@ -877,7 +992,7 @@ async function handlePage(c: Context<AppEnv>, parsed: ParsedGanttPageQuery): Pro
     activeEditorRefsByProject(db, projectIds),
     parsed.team ? projectTeamByProject(db, projectIds) : Promise.resolve(null),
     projectIds.length > 0
-      ? c.env.DB.prepare(productionGanttChildrenForPageSql(role)).bind(...ganttChildrenForPageBindValues(user.id, projectIds, parsed.completed)).all<GanttChildSqlRow>()
+      ? c.env.DB.prepare(productionGanttChildrenForPageSql(role)).bind(...ganttChildrenForPageBindValues(user.id, projectIds, parsed.completed, { includeUnassigned: parsed.includeUnassigned, myTasks: parsed.myTasks, validEditorIds: [...parseValidEditorIds(meta?.valid_editor_ids_json ?? null)] })).all<GanttChildSqlRow>()
       : Promise.resolve({ results: [] as GanttChildSqlRow[] }),
   ]);
   const childrenByProject = new Map<string, GanttChildSqlRow[]>();
@@ -894,7 +1009,7 @@ async function handlePage(c: Context<AppEnv>, parsed: ParsedGanttPageQuery): Pro
     const archivedRows = await c.env.DB.prepare("SELECT id FROM projects WHERE archived_at IS NOT NULL AND id IN (SELECT value FROM json_each(?1))").bind(JSON.stringify(projectIds)).all<{ id: string }>();
     for (const row of archivedRows.results ?? []) archivedIds.add(row.id);
   }
-  const projects = pageRows.map((row) => serializeGanttProjectRow(row, role, now, editorsByProject, childrenByProject, parsed.completed, parsed.revision, teamByProject, archivedIds.has(row.project_id!)));
+  const projects = pageRows.map((row) => serializeGanttProjectRow(row, role, now, editorsByProject, childrenByProject, parsed.completed, parsed.revision, teamByProject, archivedIds.has(row.project_id!), parsed.deadlineMarker, ganttPeopleFingerprint(parsed)));
   const lastRow = pageRows.at(-1);
   const nextCursor = truncatedPage && lastRow
     ? encodeGanttProjectCursor({ startDate: lastRow.bar_start_date!, id: lastRow.project_id! })
