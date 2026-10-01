@@ -446,6 +446,27 @@ describe("Dashboard Gantt routing", () => {
         expect(document.body.textContent).toContain("Removed Delivered from Stage.");
       });
 
+      it("announces a repeated Delivered-pair removal again after Back", async () => {
+        const live = () => host.querySelector('[data-testid="dashboard-live-region"]')?.textContent ?? "";
+        await renderAt("/?view=timeline&stages=delivered&delivered=1");
+        await toggleGroupCheckbox("Show", "Show delivered Projects", host);
+        expect(live()).toBe("Removed Delivered from Stage.");
+        // Back is an outside navigation: the pair notice clears, as the old bar's did.
+        await act(async () => {
+          const popped = new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error("no popstate after history traversal")), 1000);
+            window.addEventListener("popstate", () => { clearTimeout(timer); resolve(); }, { once: true });
+          });
+          window.history.back();
+          await popped;
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        });
+        expect(url()).toBe("/?view=timeline&stages=delivered&delivered=1");
+        expect(live()).toBe("");
+        await toggleGroupCheckbox("Show", "Show delivered Projects", host);
+        expect(live()).toBe("Removed Delivered from Stage.");
+      });
+
       it("both view-bar triggers clear the sticky shell header when scrolled to", async () => {
         await renderAt("/?view=timeline");
         const classes = (element: Element | null) => (element?.getAttribute("class") ?? "").split(/\s+/);

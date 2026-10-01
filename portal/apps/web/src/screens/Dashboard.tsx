@@ -323,6 +323,10 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const [calendarSettle, setCalendarSettle] = useState<CalendarSettleState>({ pending: false, recoveryReason: null });
   const [recoveryReason, setRecoveryReason] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
+  // #430: the Delivered pair's notice is one-shot. `pairWriteInFlightRef` marks the notice's own write
+  // (set until its URL lands); a Timeline URL change from anywhere else clears it.
+  const pairNoticeLiveRef = useRef(false);
+  const pairWriteInFlightRef = useRef(false);
   const [boardUnavailableReason, setBoardUnavailableReason] = useState<string | null>(null);
   const [, setDocumentActivityVersion] = useState(0);
   useEffect(() => {
@@ -1085,9 +1089,28 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   function writeGanttFacet(changes: Partial<ProductionGanttFacetFilters>) {
     const written = ganttFacetForWrite(ganttFilters, { ...ganttFilters, ...changes });
     const notice = ganttPairingNotice({ ...ganttFilters, ...changes }, written);
-    if (notice) setAnnouncement(notice);
+    if (notice) {
+      setAnnouncement(notice);
+      pairNoticeLiveRef.current = true;
+      pairWriteInFlightRef.current = true;
+    } else if (pairNoticeLiveRef.current) {
+      pairNoticeLiveRef.current = false;
+      setAnnouncement("");
+    }
     navigateGantt(written);
   }
+
+  // #430: the old filters bar cleared its pair notice on any navigation it did not write (Back/Forward,
+  // another control), so a repeated removal is announced again rather than matching the stale string.
+  useEffect(() => {
+    if (pairWriteInFlightRef.current) {
+      pairWriteInFlightRef.current = false;
+      return;
+    }
+    if (!pairNoticeLiveRef.current) return;
+    pairNoticeLiveRef.current = false;
+    setAnnouncement("");
+  }, [ganttFilters]);
 
   // #430: a Show toggle in the Timeline's Display (delivered Projects, completed Subtasks).
   function writeTimelineDisplay(changes: { delivered?: boolean; completed?: boolean }) {
