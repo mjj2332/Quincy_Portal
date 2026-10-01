@@ -24,31 +24,31 @@ describe("boot timing", () => {
   it("sends exactly one beacon per page load, with rounded numbers and no identifiers", () => {
     captureBootLanding("/");
     markSessionResolved();
-    markDashboardData("kanban"); markDashboardData("list");
+    markDashboardData("board"); markDashboardData("table");
     expect(apiPost).toHaveBeenCalledTimes(1);
-    expect(apiPost).toHaveBeenCalledWith("/api/boot-timing", { sessionMs: 800, dashboardMs: 1650.3, view: "kanban", hidden: false });
+    expect(apiPost).toHaveBeenCalledWith("/api/boot-timing", { sessionMs: 800, dashboardMs: 1650.3, view: "board", hidden: false });
     expect(marks.mock.calls.map((call) => call[0])).toEqual(["quincy:session-resolved", "quincy:dashboard-data"]);
   });
 
   it("sends no beacon when the page did not land on the Dashboard", () => {
     captureBootLanding("/admin");
-    markSessionResolved(); markDashboardData("kanban");
+    markSessionResolved(); markDashboardData("board");
     expect(apiPost).not.toHaveBeenCalled();
   });
 
   it("sends no beacon when landing was never captured (standalone mounts, DOM tests)", () => {
-    markSessionResolved(); markDashboardData("kanban");
+    markSessionResolved(); markDashboardData("board");
     expect(apiPost).not.toHaveBeenCalled();
   });
 
   it("swallows a rejected beacon and a synchronous throw", async () => {
     captureBootLanding("/");
     apiPost.mockRejectedValueOnce(new Error("offline"));
-    expect(() => markDashboardData("kanban")).not.toThrow();
+    expect(() => markDashboardData("board")).not.toThrow();
     await Promise.resolve();
     resetBootTimingForTests(); captureBootLanding("/");
     apiPost.mockImplementationOnce(() => { throw new Error("sync"); });
-    expect(() => markDashboardData("kanban")).not.toThrow();
+    expect(() => markDashboardData("board")).not.toThrow();
   });
 
   it("survives a timeline that rejects marks", () => {

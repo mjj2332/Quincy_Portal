@@ -40,9 +40,13 @@ export function ShortcutList<TRow extends ShortcutRow>({ shortcuts, activeId, on
             aria-pressed={activeId === shortcut.id}
             className={cn(
               // One fixed height so a row without a sublabel ("No date") matches the rest, and one
-              // inward ring (RING_IN): Item's own ring would double the global focus outline.
+              // inward ring (RING_IN): Item's own ring would double the global focus outline. Item's
+              // base `outline-none` sets `--tw-outline-style: none`, which RING_IN's width utility
+              // reads, and twMerge drops RING_IN's bare `!outline`, so `!outline-solid` restores the
+              // style: without it the ring has a width and a colour and draws nothing.
               "min-h-[52px] min-w-0 flex-nowrap text-left hover:bg-muted focus-visible:ring-0 aria-pressed:border-border aria-pressed:bg-muted",
               RING_IN,
+              "focus-visible:!outline-solid",
             )}
             onClick={() => onPick(shortcut)}
           >

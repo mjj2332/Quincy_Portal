@@ -336,9 +336,9 @@ describe("shared staff route contract", () => {
       for (const search of values) {
         const routes: StaffRoute[] = [
           { kind: "dashboard", search },
-          { kind: "dashboard", dashboardView: "list", search },
-          { kind: "dashboard", dashboardView: "kanban", search },
-          { kind: "dashboard", dashboardView: "gantt", search },
+          { kind: "dashboard", dashboardView: "table", search },
+          { kind: "dashboard", dashboardView: "board", search },
+          { kind: "dashboard", dashboardView: "timeline", search },
         ];
         for (const route of routes) {
           const location = staffPathFor(route as Exclude<StaffRoute, { kind: "not-found" } | { kind: "reserved" }>);
@@ -362,7 +362,7 @@ describe("shared staff route contract", () => {
         "/?view=calendar&q=",
         "/?view=calendar&q=a&q=b",
         "/?search=x",
-        "/?view=list&q=x&bogus=1",
+        "/?view=table&q=x&bogus=1",
       ]) {
         expect(parseStaffLocation(location), location).toEqual({ kind: "not-found" });
         expect(safeStaffDestination(location), location).toBeNull();
@@ -399,7 +399,7 @@ describe("shared staff route contract", () => {
     });
 
     it("serializes the canonical view+q spelling with `+` for spaces", () => {
-      expect(safeStaffDestination("/?view=kanban&q=hi+there")).toBe("/?view=kanban&q=hi+there");
+      expect(safeStaffDestination("/?view=board&q=hi+there")).toBe("/?view=board&q=hi+there");
     });
 
     // #217 fix round 5, item 4 (Sol re-review, SHOULD-FIX). The parser used to return `q` raw --
@@ -410,9 +410,9 @@ describe("shared staff route contract", () => {
     // every `q` through the same shared `normalizeDashboardSearchText` the serializer already uses.
     it("normalizes raw whitespace in a freshly-typed `q`, matching the serializer/store's own normalisation", () => {
       expect(parseStaffLocation("/?q=++smith+++street++")).toEqual({ kind: "dashboard", search: "smith street" });
-      expect(parseStaffLocation("/?view=list&q=++smith+++street++")).toEqual({ kind: "dashboard", dashboardView: "list", search: "smith street" });
-      expect(parseStaffLocation("/?view=kanban&q=++smith+++street++")).toEqual({ kind: "dashboard", dashboardView: "kanban", search: "smith street" });
-      expect(parseStaffLocation("/?view=gantt&q=++smith+++street++")).toEqual({ kind: "dashboard", dashboardView: "gantt", search: "smith street" });
+      expect(parseStaffLocation("/?view=table&q=++smith+++street++")).toEqual({ kind: "dashboard", dashboardView: "table", search: "smith street" });
+      expect(parseStaffLocation("/?view=board&q=++smith+++street++")).toEqual({ kind: "dashboard", dashboardView: "board", search: "smith street" });
+      expect(parseStaffLocation("/?view=timeline&q=++smith+++street++")).toEqual({ kind: "dashboard", dashboardView: "timeline", search: "smith street" });
       expect(parseStaffLocation("/?view=calendar&q=++smith+++street++")).toEqual({ kind: "dashboard", dashboardView: "calendar", search: "smith street" });
       const location = "/?view=calendar&date=2026-08-30&sub=month&layers=project&q=++smith+++street++";
       const parsed = parseStaffLocation(location);
@@ -423,9 +423,9 @@ describe("shared staff route contract", () => {
     // emits a `q` for -- so it must parse as the search-less route, not a rejected one.
     it("an all-whitespace `q` parses as no search, not a rejected route", () => {
       expect(parseStaffLocation("/?q=+++")).toEqual({ kind: "dashboard" });
-      expect(parseStaffLocation("/?view=list&q=+++")).toEqual({ kind: "dashboard", dashboardView: "list" });
-      expect(parseStaffLocation("/?view=kanban&q=+++")).toEqual({ kind: "dashboard", dashboardView: "kanban" });
-      expect(parseStaffLocation("/?view=gantt&q=+++")).toEqual({ kind: "dashboard", dashboardView: "gantt" });
+      expect(parseStaffLocation("/?view=table&q=+++")).toEqual({ kind: "dashboard", dashboardView: "table" });
+      expect(parseStaffLocation("/?view=board&q=+++")).toEqual({ kind: "dashboard", dashboardView: "board" });
+      expect(parseStaffLocation("/?view=timeline&q=+++")).toEqual({ kind: "dashboard", dashboardView: "timeline" });
       expect(parseStaffLocation("/?view=calendar&q=+++")).toEqual({ kind: "dashboard", dashboardView: "calendar" });
       const location = "/?view=calendar&date=2026-08-30&sub=month&layers=project&q=+++";
       const parsed = parseStaffLocation(location);
@@ -456,9 +456,9 @@ describe("shared staff route contract", () => {
       it.each(searchCases)("bare/List/Kanban/Calendar-intent, %s", (_label, search) => {
         const routes: StaffRoute[] = [
           { kind: "dashboard", ...(search !== undefined ? { search } : {}) },
-          { kind: "dashboard", dashboardView: "list", ...(search !== undefined ? { search } : {}) },
-          { kind: "dashboard", dashboardView: "kanban", ...(search !== undefined ? { search } : {}) },
-          { kind: "dashboard", dashboardView: "gantt", ...(search !== undefined ? { search } : {}) },
+          { kind: "dashboard", dashboardView: "table", ...(search !== undefined ? { search } : {}) },
+          { kind: "dashboard", dashboardView: "board", ...(search !== undefined ? { search } : {}) },
+          { kind: "dashboard", dashboardView: "timeline", ...(search !== undefined ? { search } : {}) },
           { kind: "dashboard", dashboardView: "calendar", ...(search !== undefined ? { search } : {}) },
         ];
         for (const route of routes) {

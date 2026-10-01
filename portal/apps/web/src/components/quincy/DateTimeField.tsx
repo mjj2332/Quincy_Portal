@@ -60,6 +60,7 @@ export type DateTimeFieldProps =
       seedKey?: DateTimePopupProps["seedKey"];
       facts?: DateTimePopupProps["facts"];
       feedback?: DateTimePopupProps["feedback"];
+      busy?: DateTimePopupProps["busy"];
       /** Commit the draft (`localCivil: null` clears). Rejecting keeps the popup open on the same draft. */
       onApply: (next: DateTimeApply) => void | Promise<void>;
     })
@@ -156,6 +157,8 @@ export function DateTimePopoverContent({ label, className, children, ...props }:
     <PopoverContent
       align="start"
       collisionPadding={16}
+      // ~530-680px tall: if it fits neither side, stay above/below and scroll the body rather than opening sideways.
+      collisionAvoidance={{ fallbackAxisSide: "none" }}
       {...props}
       aria-label={label}
       aria-describedby={zoneId}
@@ -199,7 +202,7 @@ export function DateTimeField(props: DateTimeFieldProps) {
             ? <DatePopup label={label} value={props.value} clearable={clearable} onApply={props.onApply} onClose={() => setOpen(false)} />
             : props.variant === "range"
               ? <DateTimeRangePopup label={label} value={props.value} projectDefault={props.projectDefault} openOn={props.openOn} seed={props.seed} seedKey={props.seedKey} facts={props.facts} feedback={props.feedback} onApply={props.onApply} onClose={() => setOpen(false)} />
-              : <DateTimePopup label={label} value={props.value} clearable={clearable} reminders={props.reminders} seed={props.seed} seedKey={props.seedKey} facts={props.facts} feedback={props.feedback} onApply={props.onApply} onClose={() => setOpen(false)} />}
+              : <DateTimePopup label={label} value={props.value} clearable={clearable} reminders={props.reminders} seed={props.seed} seedKey={props.seedKey} facts={props.facts} feedback={props.feedback} busy={props.busy} onApply={props.onApply} onClose={() => setOpen(false)} />}
         </DateTimePopoverContent>
       </Popover>
     </Field>

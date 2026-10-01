@@ -2,10 +2,8 @@ import { act, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SidebarProvider } from "@/components/reui/sidebar";
-import { TooltipProvider } from "@/components/reui/tooltip";
 import { PrincipalFreshnessBoundary } from "../PrincipalFreshnessBoundary";
-import { ShellSearch } from "./ShellSearch";
+import { DashboardSearch } from "./DashboardSearch";
 import {
   __resetDashboardSearchStoreForTest,
   DASHBOARD_SEARCH_DEBOUNCE_MS,
@@ -14,21 +12,20 @@ import {
 } from "../../lib/dashboard-search-store";
 
 /**
- * #217 fix round 4, item 3 (BLOCKER) — the rail's `ShellSearch` renders on EVERY staff route, so a
- * signed-in-again principal's very first render must never carry the previous principal's search
- * text, and no timer that principal armed may go on to write a URL for the next one. The full
- * `PrincipalFreshnessBoundary` + `ShellSearch` pairing is exercised together, the same wiring
- * `App.tsx` gives the real app — a `ShellSearch`-only harness would prove nothing about the
- * boundary's own unmount/sign-out cleanup (this file's last two tests).
+ * #217 fix round 4, item 3 (BLOCKER), carried to `DashboardSearch` by #427 — the Dashboard toolbar's
+ * search must never carry the previous principal's search text into a signed-in-again principal's
+ * very first render, and no timer that principal armed may go on to write a URL for the next one.
+ * The full `PrincipalFreshnessBoundary` + `DashboardSearch` pairing is exercised together, the same
+ * wiring `App.tsx` gives the real app — a `DashboardSearch`-only harness would prove nothing about
+ * the boundary's own unmount/sign-out cleanup (the last test). The rail-popover cases of #426 are
+ * gone with the popover; the field's isolation logic was always variant-independent.
  *
  * `Probe`'s own `useLayoutEffect` is the "capture before any effect has run" technique: React
  * flushes EVERY layout effect in a commit, tree-wide, before it flushes ANY passive effect in that
  * same commit (`useEffect`, which is what `PrincipalFreshnessBoundary`'s own reset is) — a
  * documented ordering guarantee, not an `act()`-specific one. So `Probe`'s callback genuinely runs
  * after B's own render has committed to the DOM but strictly before the boundary's reset effect
- * has had any chance to run, inside one ordinary `act(() => {...})` call — no raw, unwrapped
- * `render()` call needed (React 18+ concurrent roots do not commit synchronously outside `act`, so
- * reading the DOM right after an un-acted `render()` call reads the PREVIOUS commit, not B's).
+ * has had any chance to run, inside one ordinary `act(() => {...})` call.
  */
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -37,12 +34,6 @@ const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>())
 const sessionRefetchMock = vi.hoisted(() => vi.fn());
 vi.mock("../../lib/api", () => ({ apiGet: (path: string) => apiGetMock(path) }));
 vi.mock("../../lib/auth", () => ({ useSession: () => ({ refetch: sessionRefetchMock }) }));
-
-const routerMock = vi.hoisted(() => ({ push: vi.fn<(location: string) => void>() }));
-vi.mock("../../lib/router", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../lib/router")>();
-  return { ...actual, locationStore: () => ({ getLocation: () => "/", push: routerMock.push }) };
-});
 
 function accessSnapshot(id: string) {
   return { principal: { id, role: "editor" as const, authorizationEpoch: 0 }, authorizationFingerprint: `${id}-0`, projects: [] };
@@ -59,19 +50,11 @@ function Probe({ onLayout }: { onLayout: () => void }) {
   return null;
 }
 
-// `variant="sheet"` by default: its field is inline, so the isolation behaviour (render-time snapshot
-// for the CURRENT principal, layout-effect ownership claim) is observable without opening anything.
-// That logic sits in `ShellSearch`'s body and is variant-independent; the `rail` variant — the wide
-// shell's only one since #426 — gets its own cases below, with the popover opened.
-function harness(id: string, onLayout?: () => void, variant: "rail" | "sheet" = "sheet") {
+function harness(id: string, onLayout?: () => void) {
   return (
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <PrincipalFreshnessBoundary principalId={id} role="editor" authorizationEpoch={0}>
-        <SidebarProvider open={false}>
-          <TooltipProvider delay={0}>
-            <ShellSearch variant={variant} isDashboard={false} principalId={id} />
-          </TooltipProvider>
-        </SidebarProvider>
+        <DashboardSearch principalId={id} />
         {onLayout ? <Probe onLayout={onLayout} /> : null}
       </PrincipalFreshnessBoundary>
     </QueryClientProvider>
@@ -85,7 +68,6 @@ beforeEach(() => {
   apiGetMock.mockReset();
   mockAccessSnapshotFor("user-a");
   sessionRefetchMock.mockReset();
-  routerMock.push.mockClear();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -110,13 +92,13 @@ async function type(input: HTMLInputElement, value: string) {
   });
 }
 
-describe("ShellSearch + PrincipalFreshnessBoundary — principal isolation (#217 fix round 4, item 3)", () => {
+describe("DashboardSearch + PrincipalFreshnessBoundary — principal isolation (#217 fix round 4, item 3)", () => {
   it("B's FIRST committed render shows an empty input, captured before any effect has run", async () => {
     await act(async () => {
       root.render(harness("user-a"));
       await Promise.resolve();
     });
-    const inputA = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    const inputA = document.querySelector<HTMLInputElement>('[data-testid="dashboard-search"]')!;
     await type(inputA, "smith");
     expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
 
@@ -124,7 +106,7 @@ describe("ShellSearch + PrincipalFreshnessBoundary — principal isolation (#217
     let capturedValue: string | null = null;
     act(() => {
       root.render(harness("user-b", () => {
-        capturedValue = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value;
+        capturedValue = document.querySelector<HTMLInputElement>('[data-testid="dashboard-search"]')!.value;
       }));
     });
     expect(capturedValue).toBe("");
@@ -135,7 +117,7 @@ describe("ShellSearch + PrincipalFreshnessBoundary — principal isolation (#217
       root.render(harness("admin-1"));
       await Promise.resolve();
     });
-    const adminInput = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    const adminInput = document.querySelector<HTMLInputElement>('[data-testid="dashboard-search"]')!;
     await type(adminInput, "smith");
     expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
 
@@ -144,11 +126,11 @@ describe("ShellSearch + PrincipalFreshnessBoundary — principal isolation (#217
     let capturedAtStart: string | null = null;
     act(() => {
       root.render(harness("editor-2", () => {
-        capturedAtStart = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value;
+        capturedAtStart = document.querySelector<HTMLInputElement>('[data-testid="dashboard-search"]')!.value;
       }));
     });
     expect(capturedAtStart).toBe("");
-    const impersonatedInput = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    const impersonatedInput = document.querySelector<HTMLInputElement>('[data-testid="dashboard-search"]')!;
     await type(impersonatedInput, "jones");
     expect(__getDashboardSearchSnapshotForTest().draft).toBe("jones");
 
@@ -158,7 +140,7 @@ describe("ShellSearch + PrincipalFreshnessBoundary — principal isolation (#217
     let capturedAtStop: string | null = null;
     act(() => {
       root.render(harness("admin-1", () => {
-        capturedAtStop = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value;
+        capturedAtStop = document.querySelector<HTMLInputElement>('[data-testid="dashboard-search"]')!.value;
       }));
     });
     expect(capturedAtStop).toBe("");
@@ -174,7 +156,7 @@ describe("ShellSearch + PrincipalFreshnessBoundary — principal isolation (#217
         root.render(harness("user-a"));
         await Promise.resolve();
       });
-      const inputA = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+      const inputA = document.querySelector<HTMLInputElement>('[data-testid="dashboard-search"]')!;
       await act(async () => {
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(inputA, "smith");
         inputA.dispatchEvent(new Event("input", { bubbles: true }));
@@ -205,7 +187,7 @@ describe("ShellSearch + PrincipalFreshnessBoundary — principal isolation (#217
       root.render(harness("user-a"));
       await Promise.resolve();
     });
-    const input = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    const input = document.querySelector<HTMLInputElement>('[data-testid="dashboard-search"]')!;
     await type(input, "smith");
     expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
 
@@ -221,64 +203,8 @@ describe("ShellSearch + PrincipalFreshnessBoundary — principal isolation (#217
       root.render(harness("user-a"));
       await Promise.resolve();
     });
-    const inputAfterSignIn = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    const inputAfterSignIn = document.querySelector<HTMLInputElement>('[data-testid="dashboard-search"]')!;
     expect(inputAfterSignIn.value).toBe("");
-    expect(__getDashboardSearchSnapshotForTest().draft).toBe("");
-  });
-});
-
-describe("ShellSearch rail variant + PrincipalFreshnessBoundary — principal isolation (#426)", () => {
-  async function openPopover() {
-    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="shell-search-trigger"]')!;
-    await act(async () => {
-      trigger.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
-      await Promise.resolve();
-    });
-    for (let tick = 0; tick < 50 && !document.querySelector('[data-testid="shell-search"]'); tick += 1) {
-      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
-    }
-  }
-
-  it("B's first committed render of an already-open rail popover shows an empty input, captured before any effect has run", async () => {
-    await act(async () => {
-      root.render(harness("user-a", undefined, "rail"));
-      await Promise.resolve();
-    });
-    await openPopover();
-    const inputA = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
-    expect(inputA, "the rail popover must be open").not.toBeNull();
-    await type(inputA, "smith");
-    expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
-
-    mockAccessSnapshotFor("user-b");
-    let capturedValue: string | null = null;
-    act(() => {
-      root.render(harness("user-b", () => {
-        capturedValue = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')?.value ?? null;
-      }, "rail"));
-    });
-    // Either the popover stayed open and shows no leftover text, or it closed — never A's "smith".
-    expect(capturedValue === "" || capturedValue === null).toBe(true);
-    expect(__getDashboardSearchSnapshotForTest().draft).toBe("");
-  });
-
-  it("sign-out then signing back in as the SAME id starts empty, through the rail popover", async () => {
-    await act(async () => {
-      root.render(harness("user-a", undefined, "rail"));
-      await Promise.resolve();
-    });
-    await openPopover();
-    await type(document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!, "smith");
-    expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
-
-    await act(async () => { root.unmount(); });
-    root = createRoot(host);
-    await act(async () => {
-      root.render(harness("user-a", undefined, "rail"));
-      await Promise.resolve();
-    });
-    await openPopover();
-    expect(document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("");
     expect(__getDashboardSearchSnapshotForTest().draft).toBe("");
   });
 });

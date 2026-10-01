@@ -54,10 +54,10 @@ describe("staff search codec", () => {
     // %2C and + survive: TanStack must never re-serialise Quincy's closed query contract.
     for (const raw of [
       "view=calendar&date=2026-08-30&sub=agenda&layers=project%2Cchecklist&mine=1&q=smith+street",
-      "view=list",
+      "view=table",
       "collaboration=open",
       "tab=edited",
-      "view=list&detail=123e4567-e89b-42d3-a456-426614174000",
+      "view=table&detail=123e4567-e89b-42d3-a456-426614174000",
     ]) {
       expect(stringifyStaffSearch(parseStaffSearch(`?${raw}`))).toBe(`?${raw}`);
     }
@@ -74,7 +74,7 @@ describe("staff search codec", () => {
 describe("staff router history — reads are raw", () => {
   it("hands the router an arriving location byte-for-byte, including one the parser rejects", () => {
     // The load-bearing case: App.dom.test.tsx renders here and asserts the URL is untouched.
-    const invalid = `/?view=list&detail=${projectId}`;
+    const invalid = `/?view=table&detail=${projectId}`;
     const { history } = build(invalid);
     expect(history.location.href).toBe(invalid);
   });
@@ -92,8 +92,8 @@ describe("staff router history — reads are raw", () => {
     const { browser, history } = build("/");
     const seen: string[] = [];
     history.subscribe(({ location }) => seen.push(location.href));
-    browser.travelTo("/?view=kanban");
-    expect(seen).toEqual(["/?view=kanban"]);
+    browser.travelTo("/?view=board");
+    expect(seen).toEqual(["/?view=board"]);
     expect(browser.calls).toEqual([]);
   });
 
@@ -157,8 +157,8 @@ describe("the property the read-only history rests on", () => {
   // sentence a future reader will lean on, so it is checked here rather than asserted in a comment.
   const canonical = [
     "/",
-    "/?view=list",
-    "/?view=kanban",
+    "/?view=table",
+    "/?view=board",
     "/?view=calendar&date=2026-08-30&sub=agenda&layers=project%2Cchecklist&mine=1&q=smith+street",
     "/projects/new",
     `/projects/${projectId}`,
@@ -230,19 +230,19 @@ describe("staff router history — lifecycle", () => {
 
 describe("staff router history — beforeNotify (#366)", () => {
   it("hands the full previous and next raw locations alongside pathnameChanged", () => {
-    const browser = fakeBrowser("/?view=list");
+    const browser = fakeBrowser("/?view=table");
     const adapter = createHistoryAdapter(browser.source);
     const changes: Array<{ pathnameChanged: boolean; from: string; to: string }> = [];
     const { connect } = createStaffRouterHistory(adapter, { beforeNotify: (change) => { changes.push(change); } });
     const disconnect = connect();
-    adapter.push("/?view=list&q=smith");
+    adapter.push("/?view=table&q=smith");
     adapter.push(`/projects/${projectId}`);
-    browser.travelTo("/?view=list&q=smith");
+    browser.travelTo("/?view=table&q=smith");
     disconnect();
     expect(changes).toEqual([
-      { pathnameChanged: false, from: "/?view=list", to: "/?view=list&q=smith" },
-      { pathnameChanged: true, from: "/?view=list&q=smith", to: `/projects/${projectId}` },
-      { pathnameChanged: true, from: `/projects/${projectId}`, to: "/?view=list&q=smith" },
+      { pathnameChanged: false, from: "/?view=table", to: "/?view=table&q=smith" },
+      { pathnameChanged: true, from: "/?view=table&q=smith", to: `/projects/${projectId}` },
+      { pathnameChanged: true, from: `/projects/${projectId}`, to: "/?view=table&q=smith" },
     ]);
   });
 });

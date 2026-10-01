@@ -6,6 +6,7 @@ import { ApiError } from "../lib/api";
 import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project-query-sync";
 import { projectDataKeys } from "../lib/project-data";
 import type { ProjectDeadlineSchedule } from "@quincy/shared";
+import { RING_IN } from "./AnchoredPopover";
 import { applyPopup, pickPopupDateTime, pickPopupDay, popupButton, popupDraft, pressInPopup, typePopupTime } from "@/testing/date-time-popup";
 
 const apiPutMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
@@ -177,14 +178,29 @@ describe("ProjectDeadlineControl", () => {
     const host = await mount(emptySchedule);
     const controls = [...host.querySelectorAll<HTMLElement>("input, button")];
     expect(controls.length).toBeGreaterThan(0);
+    let shortcutRows = 0;
     for (const control of controls) {
-      // #422: the date/time popup's shortcut rows (reui `Item`) swap the outline for the inward
-      // focus ring `RING_IN` (a visible `focus-visible:ring-*`), not for nothing; every other
-      // control must still keep the global outline.
-      if (/focus-visible:ring-\[?(?!0\b)/.test(control.className)) continue;
-      expect(suppressesOutline(control.className)).toBe(false);
+      // #422: the popup's shortcut rows (reui `Item`) drop their own focus ring (`focus-visible:ring-0`)
+      // so it does not double the global outline. Dropping it is only legitimate when the precise
+      // replacement is there: RING_IN's inward outline (width, colour, offset) made drawable by
+      // `!outline-solid` (Item's `outline-none` would otherwise leave its style at none, and
+      // twMerge drops RING_IN's bare `!outline`). Neither is an exemption from the outline check.
+      if (/(?:^|\s)focus-visible:ring-0(?:\s|$)/.test(control.className)) {
+        shortcutRows += 1;
+        const tokens = new Set(control.className.split(/\s+/));
+        const replacement = [...RING_IN.split(/\s+/).filter((token) => token !== "focus-visible:!outline"), "focus-visible:!outline-solid"];
+        expect(replacement).toHaveLength(4);
+        for (const token of replacement) expect(tokens, `shortcut row lacks ${token}: ${control.className}`).toContain(token);
+        // Item's resting `outline-none` is what the replacement above overrides on focus-visible;
+        // nothing may suppress the outline ON focus-visible.
+        expect(suppressesOutline(control.className.split(/\s+/).filter((token) => token.startsWith("focus-visible:")).join(" "))).toBe(false);
+      } else {
+        expect(suppressesOutline(control.className)).toBe(false);
+      }
       expect((control.getAttribute("style") ?? "")).not.toMatch(/outline\s*:\s*(?:none|0)\b/i);
     }
+    // The date shortcuts (Later this week drops out late in the week; no "No date": nothing is stored).
+    expect(shortcutRows).toBeGreaterThanOrEqual(3);
   });
 
   it("the outline-suppression detector catches every entry in its bounded vocabulary — Tailwind's named outline-suppressing utilities plus a hand-picked, verified set of arbitrary-value/property spellings — never flags legitimate outline-* classes, and — by explicit, documented design — misses real suppressors outside that vocabulary", () => {
@@ -416,6 +432,34 @@ describe("ProjectDeadlineControl", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("holds Apply while Resume is in flight, so a second PUT never races it on the same version", async () => {
+    const host = await mount({ ...activeSchedule, canResume: true, state: "scheduled" });
+    await pickPopupDateTime(host, "2027-03-01T10:00");
+    let finish: (value: unknown) => void = () => undefined;
+    apiPutMock.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    await pressInPopup(host, "Resume reminders");
+    expect(apiPutMock).toHaveBeenCalledTimes(1);
+    expect(popupButton(host, "Apply")?.disabled).toBe(true);
+    await applyPopup(host);
+    expect(apiPutMock).toHaveBeenCalledTimes(1);
+    await act(async () => { finish({ changed: true, current: activeSchedule, eventIntent: null, publicationIds: [] }); await Promise.resolve(); await Promise.resolve(); });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds Resume while an Apply is in flight, and a conflict from that Apply is kept", async () => {
+    const host = await mount({ ...activeSchedule, canResume: true, state: "scheduled" });
+    await pickPopupDateTime(host, "2027-03-01T10:00");
+    let fail: (reason: unknown) => void = () => undefined;
+    apiPutMock.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject; }));
+    await applyPopup(host);
+    expect(apiPutMock).toHaveBeenCalledTimes(1);
+    expect(popupButton(host, "Resume reminders")?.disabled).toBe(true);
+    await act(async () => { fail(new ApiError("Project deadline changed; reload before saving.", 409, { current: authorityAfterConflict })); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.textContent).toContain("Deadline changed elsewhere.");
+    expect(onClose).not.toHaveBeenCalled();
+    expect(popupButton(host, "Resume reminders")?.disabled).toBe(false);
+  });
+
   it("keeps a dirty, unsaved draft through a background schedule refresh unrelated to any save attempt", async () => {
     const host = await mount(emptySchedule);
     await pickPopupDateTime(host, "2027-01-15T09:00");
@@ -435,8 +479,14 @@ describe("ProjectDeadlineControl", () => {
     ["archived", { ...summarySchedule, state: "inactive_archived" as const }, false],
   ])("shows every configured and skipped reminder offset for the %s rail state", async (_name, schedule, canWrite) => {
     const host = await mount(schedule, canWrite);
-    expect(host.textContent).toContain("Configured advance reminders: 1 day, 4 hours, 1 hour");
-    expect(host.textContent).toContain("Skipped elapsed advances: 1 day, 4 hours");
+    // The editable popup drops the summary (it describes the saved schedule while a draft is edited); read-only keeps it.
+    if (canWrite) {
+      expect(host.textContent).not.toContain("Configured advance reminders");
+      expect(host.textContent).not.toContain("Skipped elapsed advances");
+    } else {
+      expect(host.textContent).toContain("Configured advance reminders: 1 day, 4 hours, 1 hour");
+      expect(host.textContent).toContain("Skipped elapsed advances: 1 day, 4 hours");
+    }
     if (_name === "overdue") expect(host.textContent).toContain("Overdue");
   });
 
@@ -445,6 +495,7 @@ describe("ProjectDeadlineControl", () => {
     expect(host.textContent).toContain("Configured advance reminders: 1 day, 4 hours, 1 hour");
     expect(host.textContent).toContain("Skipped elapsed advances: 1 day, 4 hours");
     expect(host.querySelectorAll("button")).toHaveLength(0);
+    expect(host.querySelector('[role="group"][aria-label="Deadline reminder summary"]')).not.toBeNull();
   });
 
   it("is a live editor from mount, seeded from the schedule, and holds the project-detail query owner only for a writer (#213)", async () => {
@@ -453,7 +504,7 @@ describe("ProjectDeadlineControl", () => {
     expect(toggle(host, "1 day").getAttribute("aria-pressed")).toBe("true");
     expect(toggle(host, "4 hours").getAttribute("aria-pressed")).toBe("false");
     expect([...host.querySelectorAll("button")].map((button) => button.textContent)).toEqual(expect.arrayContaining(["Cancel", "Apply"]));
-    expect(host.textContent).toContain("Next reminder");
+    expect(host.textContent).toContain("Currently saved: next reminder");
     expect(host.textContent).not.toContain("Edit Deadline");
     expect(mountedRuntime().isOwned(projectDataKeys.detail(projectId))).toBe(true);
     await act(async () => { root!.unmount(); await Promise.resolve(); });
@@ -464,6 +515,26 @@ describe("ProjectDeadlineControl", () => {
     expect(viewer.querySelector('[role="group"][aria-label="Time slots"]')).toBeNull();
     expect(viewer.querySelectorAll("button")).toHaveLength(0);
     expect(mountedRuntime().isOwned(projectDataKeys.detail(projectId))).toBe(false);
+  });
+
+  it("labels the next reminder as the saved schedule, in 24h Sydney time, and quietens it once the draft differs (#422)", async () => {
+    const host = await mount(activeSchedule);
+    const line = () => host.querySelector("time")!;
+    expect(host.textContent).toContain("Currently saved: next reminder");
+    expect(line().textContent).toBe("1 day · Thu 14 Jan · 09:00");
+    expect(line().parentElement!.className).not.toContain("text-foreground-secondary");
+    await act(async () => { toggle(host, "4 hours").click(); await Promise.resolve(); });
+    expect(host.textContent).toContain("Currently saved: next reminder");
+    expect(line().parentElement!.className).toContain("text-foreground-secondary");
+    expect(line().textContent).toBe("1 day · Thu 14 Jan · 09:00");
+  });
+
+  it("locks the Due now chip: pressed and disabled, with a lock icon (#422)", async () => {
+    const host = await mount(activeSchedule);
+    const chip = toggle(host, "Due now");
+    expect(chip.getAttribute("aria-pressed")).toBe("true");
+    expect(chip.disabled).toBe(true);
+    expect(chip.querySelector("svg")).not.toBeNull();
   });
 
   it("renders no native date or time input", async () => {

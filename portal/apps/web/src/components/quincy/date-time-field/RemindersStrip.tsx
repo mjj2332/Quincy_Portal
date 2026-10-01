@@ -1,5 +1,6 @@
 import { useId, useRef, useState } from "react";
 import { PROJECT_DEADLINE_MAX_ADVANCE_OFFSETS, PROJECT_DEADLINE_MAX_OFFSET_MINUTES, PROJECT_DEADLINE_PRESETS, deadlineOffsetLabel } from "@quincy/shared";
+import { Lock } from "lucide-react";
 import { Button } from "@/components/reui/button";
 import { Field, FieldDescription, FieldLabel } from "@/components/reui/field";
 import { Input } from "@/components/reui/input";
@@ -59,8 +60,8 @@ export function RemindersStrip({ offsets, onChange }: { offsets: readonly number
           <Button key={value} type="button" size="sm" variant="outline" className={CHIP} aria-pressed onClick={() => removeCustom(value)}>{deadlineOffsetLabel(value)}</Button>
         ))}
         <Button ref={customToggle} type="button" size="sm" variant="outline" className={CHIP} aria-expanded={customOpen} aria-controls={customId} disabled={full} onClick={() => setCustomOpen((open) => !open)}>+ custom</Button>
-        {/* Mandatory, so it is a pressed chip nobody can press. */}
-        <Button type="button" size="sm" variant="outline" className={cn(CHIP, "disabled:opacity-100")} aria-pressed disabled>Due now</Button>
+        {/* Mandatory, so it reads as locked (muted, with a lock) rather than a pressed toggle; still aria-pressed and disabled. */}
+        <Button type="button" size="sm" variant="outline" className={cn(CHIP, "border-border bg-transparent text-muted-foreground aria-pressed:border-border aria-pressed:bg-transparent aria-pressed:!text-muted-foreground disabled:opacity-100")} aria-pressed disabled><Lock aria-hidden className="size-3.5" />Due now</Button>
       </div>
       {customOpen && (
         <Field id={customId} orientation="horizontal" className="items-end">

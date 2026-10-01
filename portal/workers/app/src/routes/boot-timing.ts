@@ -4,11 +4,15 @@ import { terminalRoute } from "../lib/terminal-route";
 import type { AppEnv } from "../env";
 import { jsonInput } from "./helpers";
 
+const LEGACY_VIEWS: Record<string, "table" | "board" | "timeline" | undefined> = { list: "table", kanban: "board", gantt: "timeline" };
 const ms = z.number().finite().min(0).max(600_000);
 const bootTimingSchema = z.object({
   sessionMs: ms,
   dashboardMs: ms,
-  view: z.enum(["kanban", "list", "gantt", "calendar"]),
+  // #427: the view names were renamed (list -> table, kanban -> board, gantt -> timeline). A tab
+  // still running the old bundle beacons the old names, and must not 400 — so both spellings are
+  // accepted, and the old ones are logged as the new ones.
+  view: z.enum(["table", "board", "calendar", "timeline", "list", "kanban", "gantt"]).transform((view) => LEGACY_VIEWS[view] ?? view),
   hidden: z.boolean(),
 }).strict();
 

@@ -85,6 +85,9 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onClose, 
   const [conflict, setConflict] = useState<ProjectDeadlineSchedule | null>(null);
   const [attempt, setAttempt] = useState<Attempt | null>(null);
   const [saving, setSaving] = useState(false);
+  // One mutation at a time: Apply, Clear and Resume all PUT against the same schedule version, so a
+  // second request started while one is in flight would lose its conflict and draft.
+  const inFlight = useRef(false);
 
   const inactive = visibleSchedule.state === "inactive_delivered" || visibleSchedule.state === "inactive_archived";
   const canWrite = canEdit && !inactive;
@@ -131,7 +134,7 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onClose, 
   }
 
   async function save(body: SaveProjectDeadlineRequest, attempted: Attempt) {
-    setSaving(true); setError(null);
+    setError(null);
     try {
       const response = await apiPut<SaveResponse, SaveProjectDeadlineRequest>(`/api/projects/${encodeURIComponent(projectId)}/deadline`, body);
       await commit(response.current);
@@ -140,10 +143,23 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onClose, 
       if (latest) { setConflict(latest); setAttempt(attempted); }
       setError(reason instanceof Error ? reason.message : "Deadline could not be saved.");
       throw reason;
-    } finally { setSaving(false); }
+    }
+  }
+
+  /** Runs one mutation at a time; `null` when another is already in flight. */
+  async function exclusive<T>(run: () => Promise<T>): Promise<{ value: T } | null> {
+    if (inFlight.current) return null;
+    inFlight.current = true; setSaving(true);
+    try { return { value: await run() }; }
+    finally { inFlight.current = false; if (mounted.current) setSaving(false); }
   }
 
   async function apply(next: DateTimeApply) {
+    // A refused second Apply rejects, so the popup stays open on its draft.
+    if (!await exclusive(() => applyNow(next))) throw new ApplyDeclined();
+  }
+
+  async function applyNow(next: DateTimeApply) {
     const offsets = next.reminderOffsetsMinutes ?? visibleSchedule.reminderOffsetsMinutes;
     const attempted: Attempt = { localCivil: next.localCivil, ...(next.disambiguation ? { disambiguation: next.disambiguation } : {}), offsets: [...offsets] };
     if (next.localCivil === null) {
@@ -155,8 +171,13 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onClose, 
   }
 
   async function resume() {
-    if (!deadline) return;
-    setSaving(true); setError(null);
+    const current = visibleSchedule.deadline;
+    if (!current) return;
+    await exclusive(() => resumeNow(current));
+  }
+
+  async function resumeNow(deadline: NonNullable<ProjectDeadlineSchedule["deadline"]>) {
+    setError(null);
     try {
       const response = await apiPut<SaveResponse, SaveProjectDeadlineRequest>(`/api/projects/${encodeURIComponent(projectId)}/deadline`, {
         expectedVersion: visibleSchedule.version,
@@ -171,7 +192,6 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onClose, 
       if (latest) setConflict(latest);
       setError(reason instanceof Error ? reason.message : "Reminders could not be resumed.");
     }
-    finally { setSaving(false); }
   }
 
   /** Reload latest: show the authoritative schedule and drop the draft; the attempt stays offered. */
@@ -194,8 +214,10 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onClose, 
 
   // #206: a plain `<div>` cannot carry an accessible name (html-aria naming rules) — `role="group"`
   // makes the summary a legal target for its `aria-label`.
-  const summary = <>
-    {deadline && <div className={DEADLINE_SUMMARY_TEXT} role="group" aria-label="Deadline reminder summary"><span>Configured advance reminders: {visibleSchedule.reminderOffsetsMinutes.length ? visibleSchedule.reminderOffsetsMinutes.slice(0, 8).map(deadlineOffsetLabel).join(", ") : "None"}</span><span>Due-now reminder: Mandatory</span><span>{skippedOffsets.length ? `Skipped elapsed advances: ${skippedOffsets.map(deadlineOffsetLabel).join(", ")}` : "Skipped elapsed advances: None"}</span></div>}
+  const summaryLines = deadline && <div className={DEADLINE_SUMMARY_TEXT} role="group" aria-label="Deadline reminder summary"><span>Configured advance reminders: {visibleSchedule.reminderOffsetsMinutes.length ? visibleSchedule.reminderOffsetsMinutes.slice(0, 8).map(deadlineOffsetLabel).join(", ") : "None"}</span><span>Due-now reminder: Mandatory</span><span>{skippedOffsets.length ? `Skipped elapsed advances: ${skippedOffsets.map(deadlineOffsetLabel).join(", ")}` : "Skipped elapsed advances: None"}</span></div>;
+  // The editable popup drops the three-line summary: it describes the SAVED schedule while the user
+  // edits a draft, and the chip row already shows the draft's reminders. Read-only keeps it.
+  const notes = <>
     {inactive && <p className={DEADLINE_SUMMARY_TEXT} role="status">{visibleSchedule.state === "inactive_delivered" ? "Reminders inactive while Delivered. Move the project out of Delivered before changing or resuming them." : "Reminders inactive while archived. Restore the project before changing or resuming them."}</p>}
     {visibleSchedule.canResume && <p className={DEADLINE_SUMMARY_TEXT} role="status">Reminders inactive. Resume to create a new reminder schedule.</p>}
   </>;
@@ -216,13 +238,14 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onClose, 
         </> : "Not set"}</span>
       </div>
       <NextReminder next={visibleSchedule.nextOccurrence} hasReminders={visibleSchedule.reminderOffsetsMinutes.length > 0} />
-      {summary}
+      {summaryLines}
+      {notes}
     </div>;
   }
 
   const facts = <>
     {overdue && <div><StatusPill tone="critical">Overdue</StatusPill></div>}
-    {summary}
+    {notes}
     {visibleSchedule.canResume && <div><Button type="button" variant="secondary" onClick={() => void resume()} disabled={saving}>Resume reminders</Button></div>}
   </>;
 
@@ -251,6 +274,7 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onClose, 
     seedKey={seedKey}
     facts={facts}
     feedback={feedback}
+    busy={saving}
     focusOnMount={focusOnMount}
     onApply={apply}
     onClose={() => onClose?.()}

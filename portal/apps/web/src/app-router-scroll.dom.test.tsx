@@ -62,40 +62,40 @@ const resetsToTop = () => scrollTo.mock.calls.filter(([options]) => typeof optio
 
 describe("router scroll reset (#266)", () => {
   it("keeps the scroll position on a query-only push or replace", async () => {
-    await renderAt("/?view=gantt");
+    await renderAt("/?view=timeline");
     scrollTo.mockReset();
-    await write("push", "/?view=gantt&stages=raw_review");
-    await write("replace", "/?view=gantt&stages=raw_review&q=smith");
-    await write("push", "/?view=list&q=smith");
+    await write("push", "/?view=timeline&stages=raw_review");
+    await write("replace", "/?view=timeline&stages=raw_review&q=smith");
+    await write("push", "/?view=table&q=smith");
     expect(resetsToTop()).toBe(0);
   });
 
   it("keeps the scroll position when Back/Forward stays on the same pathname", async () => {
-    await renderAt("/?view=gantt");
-    await write("push", "/?view=gantt&stages=raw_review");
+    await renderAt("/?view=timeline");
+    await write("push", "/?view=timeline&stages=raw_review");
     scrollTo.mockReset();
     await act(async () => { window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
     expect(resetsToTop()).toBe(0);
   });
 
   it("still lands at the top when the pathname changes", async () => {
-    await renderAt("/?view=gantt&stages=raw_review");
+    await renderAt("/?view=timeline&stages=raw_review");
     scrollTo.mockReset();
     // #366: `/projects/<id>` is a sheet over the Dashboard, no longer a "new screen" — /admin is.
     await write("push", "/admin");
     expect(resetsToTop()).toBe(1);
     scrollTo.mockReset();
-    await write("push", "/?view=gantt");
+    await write("push", "/?view=timeline");
     expect(resetsToTop()).toBe(1);
   });
 
   it("#366: opening and closing the Project sheet, and moving between two Projects, never reset the scroll", async () => {
     const other = "223e4567-e89b-42d3-a456-426614174000";
-    await renderAt("/?view=list");
+    await renderAt("/?view=table");
     scrollTo.mockReset();
     await write("push", `/projects/${projectId}`);
     await write("push", `/projects/${other}`);
-    await write("push", "/?view=list");
+    await write("push", "/?view=table");
     expect(resetsToTop()).toBe(0);
   });
 
@@ -108,9 +108,9 @@ describe("router scroll reset (#266)", () => {
 
   it("keeps a query-only change still after a pathname change, under StrictMode", async () => {
     await renderAt(`/projects/${projectId}`, true);
-    await write("push", "/?view=list");
+    await write("push", "/?view=table");
     scrollTo.mockReset();
-    await write("push", "/?view=list&q=smith");
+    await write("push", "/?view=table&q=smith");
     expect(resetsToTop()).toBe(0);
   });
 

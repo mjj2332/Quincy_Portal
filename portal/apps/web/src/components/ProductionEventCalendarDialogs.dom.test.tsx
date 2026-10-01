@@ -14,10 +14,12 @@ if (!Element.prototype.getAnimations) {
 import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   PRODUCTION_CALENDAR_ZONE,
   checklistScheduleToDto,
   normalizeChecklistSchedule,
+  resolveSydneyCivilMinute,
   type ChecklistCalendarEventDto,
   type ProjectDeadlineCalendarEventDto,
 } from "@quincy/shared";
@@ -33,6 +35,12 @@ import {
 import { Sheet } from "./reui/sheet";
 import { applyPopup, dateTimePopup, openFieldPopup, openMoveDialogField, pickPopupDateTime, pickPopupDay, pickRangeEnd, popupButton, popupDraft, pressInPopup, pressRangeFold, rangeFoldPressed, rangeToggles, typePopupTime } from "@/testing/date-time-popup";
 import { startMoment, endMoment } from "@/testing/subtask-schedule";
+
+const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
+vi.mock("../lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/api")>();
+  return { ...actual, apiGet: (path: string) => apiGetMock(path) };
+});
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -106,6 +114,48 @@ describe("ProductionEventCalendarMoveDialog (alert-dialog shell)", () => {
     await click(byTestId("event-calendar-move-submit")!);
     expect(onSubmit).toHaveBeenCalledWith("2026-04-05T02:30", "later", [1440, 60]);
     expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("starts an unresolved repeated time with neither Earlier nor Later chosen, and blocks Apply until one is pressed", async () => {
+    const onSubmit = vi.fn();
+    // A drag onto 02:30 on the fall-back day arrives with no disambiguation at all.
+    await renderMove({ initialCivil: "2026-04-05T02:30", onSubmit });
+    const popup = await openMoveDialogField();
+    expect(popupButton(popup, "Earlier (UTC+11:00)")?.getAttribute("aria-pressed")).toBe("false");
+    expect(popupButton(popup, "Later (UTC+10:00)")?.getAttribute("aria-pressed")).toBe("false");
+    // Touch the draft (a reminder), so Apply would hand it back; it still needs a choice.
+    await pressInPopup(popup, "4 hours");
+    expect(popupButton(popup, "Apply")?.disabled).toBe(true);
+    expect(byTestId<HTMLButtonElement>("event-calendar-move-submit")?.disabled).toBe(true);
+    await pressInPopup(popup, "Earlier (UTC+11:00)");
+    expect(popupButton(popup, "Apply")?.disabled).toBe(false);
+  });
+
+  it("keeps the stored occurrence selected when the draft is the stored repeated time", async () => {
+    const resolved = resolveSydneyCivilMinute("2026-04-05T02:30", "later");
+    if (!resolved.ok) throw new Error("fold fixture did not resolve");
+    const stored = { ...deadline, deadlineLocalCivil: "2026-04-05T02:30", timing: { allDay: false as const, start: resolved.value.instant, end: null } };
+    await renderMove({ event: stored });
+    const popup = await openMoveDialogField();
+    expect(popupButton(popup, "Later (UTC+10:00)")?.getAttribute("aria-pressed")).toBe("true");
+    expect(popupButton(popup, "Earlier (UTC+11:00)")?.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("loads the stored next reminder on a cold cache, and does not reseed an open draft when it arrives", async () => {
+    let release: (detail: unknown) => void = () => undefined;
+    apiGetMock.mockReset().mockImplementation(() => new Promise((resolve) => { release = resolve; }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    await render(<QueryClientProvider client={client}><ProductionEventCalendarMoveDialog open event={deadline} onSubmit={vi.fn()} onCancel={vi.fn()} /></QueryClientProvider>);
+    const popup = await openMoveDialogField();
+    expect(apiGetMock).toHaveBeenCalledWith(`/api/projects/${deadline.project.id}`);
+    expect(popup.textContent).not.toContain("next reminder");
+    await pressInPopup(popup, "4 hours");
+    await act(async () => { release({ deadlineSchedule: { nextOccurrence: { kind: "advance", offsetMinutes: 1440, firesAt: "2026-08-10T09:30:00.000Z" } } }); await Promise.resolve(); await Promise.resolve(); });
+    expect(popup.textContent).toContain("Currently saved: next reminder");
+    expect(popup.textContent).toContain("1 day");
+    // The draft the user was editing is untouched by the arrival.
+    expect(popupButton(popup, "4 hours")?.getAttribute("aria-pressed")).toBe("true");
+    client.clear();
   });
 
   it("starts a retry on the attempted fold and reminders", async () => {

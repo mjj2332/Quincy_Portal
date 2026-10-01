@@ -39,14 +39,14 @@ import { createContext, use, useCallback, useEffect, useLayoutEffect, useMemo, u
 import { createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from "@tanstack/react-router";
 import { dashboardSearchOf, roleHasCapability, type DashboardCalendarState, type Role, type WorkspaceTab } from "@quincy/shared";
 import { pushToast } from "./toast-store";
-import { isDashboardLayerLocation, isSheetLocation, locationStore, parseStaffLocation, readSheetEntryState, staffPathFor, type StaffRoute } from "./router";
+import { canonicalLegacyDashboardLocation, isDashboardLayerLocation, isSheetLocation, locationStore, parseStaffLocation, readSheetEntryState, staffPathFor, type StaffRoute } from "./router";
 import { createDashboardBackdropSource, DashboardLocationContext, type DashboardBackdropSource } from "./dashboard-location";
 import { createStaffRouterHistory, parseStaffSearch, stringifyStaffSearch } from "./staff-history";
 import { useCapabilities } from "./capabilities";
 import { buildStaffNavigation, type StaffNavigation } from "./staff-navigation";
 import { DASHBOARD_VIEW_KEY, readRememberedDashboardView } from "../screens/dashboard-helpers";
 import { readDashboardView, subscribeDashboardView } from "./dashboard-view-store";
-import { getDashboardSearchSnapshotForPrincipal, subscribeDashboardSearch, syncDashboardSearchDraftFromLocation } from "./dashboard-search-store";
+import { getDashboardSearchSnapshotForPrincipal, subscribeDashboardSearch, syncDashboardSearchDraftFromLocation, takeDashboardSearchForNavigation } from "./dashboard-search-store";
 import { consumeSignInDestination } from "./auth";
 import { cn } from "./utils";
 import { RailedShell } from "../components/quincy/RailedShell";
@@ -78,6 +78,13 @@ export function ShellIdentityProvider({ user, impersonating, children }: { user:
  * URL is still a fresh signal. The Workspace's own tab `replace` is not an arrival. */
 type ArrivalIntent = { projectId: string; tab: WorkspaceTab; signal: number; location: string };
 
+/** #427: a ⌘K request to focus the Dashboard toolbar's search, for ONE Dashboard location. Same shape
+ * as `ArrivalIntent` (#367): current only while `location` is the Dashboard layer's location, then
+ * acknowledged by the field that took focus. Held here — not in the search store, not in a module
+ * singleton — so it is scoped to this shell (and so to its principal: `App.tsx` remounts the shell
+ * on a principal change). */
+type SearchFocusRequest = { location: string; signal: number };
+
 /** Everything the root route computes once and the leaves below it consume. */
 type ShellState = {
   user: SessionUser;
@@ -90,6 +97,9 @@ type ShellState = {
   arrivalIntent: ArrivalIntent | null;
   acknowledgeArrivalSignal: (projectId: string, signal: number) => void;
   syncProjectTab: (projectId: string, tab: WorkspaceTab) => void;
+  /** #427: the ⌘K request that is current for the Dashboard layer's location, or null. */
+  searchFocusSignal: number | null;
+  acknowledgeSearchFocus: (signal: number) => void;
   impersonating: boolean;
   /** #366: the Project route renders as a sheet floating over the live Dashboard. */
   isSheetRoute: boolean;
@@ -182,6 +192,8 @@ function ShellRoute() {
   const selfWriteRef = useRef<string | null>(null);
   const arrivalSignalRef = useRef(0);
   const [arrivalIntent, setArrivalIntent] = useState<ArrivalIntent | null>(null);
+  const searchFocusSignalRef = useRef(0);
+  const [searchFocusRequest, setSearchFocusRequest] = useState<SearchFocusRequest | null>(null);
   const { can } = useCapabilities();
   const canAccessAdmin = can("adminBackend");
   const canViewNoticeBoard = can("viewNoticeBoard");
@@ -261,13 +273,30 @@ function ShellRoute() {
     history.replace(target);
   };
 
+  // #427: ⌘K. On the Dashboard it targets the current location; anywhere else it first moves to the
+  // Dashboard (`locationStore()` push, carrying the live search the way every other push does) and
+  // targets THAT location. The field takes focus when it mounts for the targeted location.
+  const userId = user.id;
+  const requestSearchFocus = useCallback(() => {
+    let location = history.getLocation();
+    if (parseStaffLocation(location).kind !== "dashboard" || isSheetLocation(location)) {
+      history.push(staffPathFor({ kind: "dashboard", search: takeDashboardSearchForNavigation(userId) }));
+      location = history.getLocation();
+    }
+    setSearchFocusRequest({ location, signal: ++searchFocusSignalRef.current });
+  }, [history, userId]);
+  const currentSearchFocusSignal = searchFocusRequest !== null && searchFocusRequest.location === layerLocation ? searchFocusRequest.signal : null;
+  const acknowledgeSearchFocus = useCallback((signal: number) => {
+    setSearchFocusRequest((request) => (request?.signal === signal ? null : request));
+  }, []);
+
   useEffect(() => {
     if (blocked) history.replace("/");
   }, [blocked, history]);
 
   // #217 build, step 3: the ONE draft-from-URL sync call, replacing every render-side adoption
   // path `Dashboard.tsx` used to own (step 4 deletes that machinery). `useLayoutEffect`, not
-  // `useEffect` -- same reasoning `ShellSearch.tsx`'s own ownership-claim effect already documents:
+  // `useEffect` -- same reasoning `DashboardSearch.tsx`'s own ownership-claim effect already documents:
   // React flushes every layout effect in a commit, tree-wide, before any passive effect in that
   // same commit, so the draft is never one paint behind the URL that governs it. Keyed on
   // `completeLocation` (not just `route`, though the two always change together here) and
@@ -276,7 +305,7 @@ function ShellRoute() {
   // whole subtree for a principal change via its own `key`, but the layout effect ordering
   // guarantee is what matters for a location change alone) both run it. A non-Dashboard route's
   // lack of `q` is not authoritative (an Enter on the rail must still navigate with whatever text
-  // is showing, `ShellSearch.tsx`'s own off-Dashboard Enter path) -- this only calls the store when
+  // is showing, the retired rail search's off-Dashboard Enter path) -- this only calls the store when
   // `route.kind === "dashboard"`, never unconditionally.
   // #366: keyed on the layer's location STRING, never the parsed `layerRoute` object -- opening a
   // sheet swaps `layerRoute` between separately parsed objects for the SAME Dashboard location, and
@@ -302,6 +331,16 @@ function ShellRoute() {
     history.replace(staffPathFor({ kind: "dashboard", ...(search ? { search } : {}) }));
   }, [calendarBlocked, history, route]);
 
+  // #427: the Dashboard views were renamed (list/kanban/gantt -> table/board/timeline). An old
+  // spelling PARSES to the new route, so the first render is already correct; this replaces the
+  // address-bar spelling with the canonical one, Timeline facets and `q` carried. Keyed on the
+  // pure predicate, NOT `staffPathFor(route) !== completeLocation`, which would also rewrite
+  // Calendar's accepted parameter orders. A `replace` through `locationStore()`, never the router.
+  useEffect(() => {
+    const canonical = canonicalLegacyDashboardLocation(completeLocation);
+    if (canonical !== null && canonical !== completeLocation) history.replace(canonical);
+  }, [completeLocation, history]);
+
   function navigate(path: string, message?: string, replace = false) {
     if (message) setNotice({ path, message });
     else setNotice(null);
@@ -318,11 +357,11 @@ function ShellRoute() {
   const dashboardCalendar = layerRoute.kind === "dashboard" && "calendar" in layerRoute && !calendarBlocked && !backdropCalendarBlocked ? layerRoute.calendar : null;
   // #217 fix round 3, item 1: the rail's own Dashboard child links, read here (not inside
   // `staff-navigation.ts`, which stays pure) so a rail click carries the live search the same way
-  // the in-Dashboard view switcher already does. `ShellSearch` reads the identical store, so the
+  // the in-Dashboard view switcher already does. `DashboardSearch` reads the identical store, so the
   // input and every rail href this produces can never disagree about what "the current q" is.
   // #217 fix round 5, item 1 (Sol re-review, BLOCKER): principal-scoped -- an unscoped read here
   // could serialise the PREVIOUS principal's draft into the rail's own hrefs for a render pass
-  // (worst on the narrow layout with the Sheet closed, where no `ShellSearch` instance is even
+  // (worst on the narrow layout with the Sheet closed, where no search field is even
   // mounted to make the layout-effect ownership claim).
   const dashboardSearchDraft = useSyncExternalStore(
     subscribeDashboardSearch,
@@ -397,6 +436,7 @@ function ShellRoute() {
   const shell: ShellState = {
     user, route, pathname, notice, navigate,
     clearNotice: () => setNotice(null),
+    searchFocusSignal: currentSearchFocusSignal, acknowledgeSearchFocus,
     dashboardCalendar, arrivalIntent: currentArrivalIntent, acknowledgeArrivalSignal, syncProjectTab,
     impersonating, isSheetRoute, backdropLocation, backdropSource, closeProjectSheet,
     returnToWorkspace, leaveDeletedProject,
@@ -408,7 +448,7 @@ function ShellRoute() {
 
   return (
     <div className={cn("app", impersonating && "app--impersonating", "app--railed")}>
-      <RailedShell navigation={navigation} user={user} principalId={user.id} shortcutsSuspended={isSheetRoute}>{routedContent}</RailedShell>
+      <RailedShell navigation={navigation} user={user} shortcutsSuspended={isSheetRoute} onSearchShortcut={requestSearchFocus}>{routedContent}</RailedShell>
     </div>
   );
 }
@@ -425,7 +465,7 @@ const rootRoute = createRootRoute({ component: ShellRoute, notFoundComponent: No
  * Fixed sibling positions below keep every element's identity across those changes.
  */
 function DashboardLayer() {
-  const { route, user, dashboardCalendar, impersonating, isSheetRoute, backdropLocation, backdropSource, closeProjectSheet } = useShell();
+  const { route, user, dashboardCalendar, searchFocusSignal, acknowledgeSearchFocus, impersonating, isSheetRoute, backdropLocation, backdropSource, closeProjectSheet } = useShell();
   const showDashboard = route.kind === "dashboard" || isSheetRoute;
 
   // The opener, captured the moment the location goes Dashboard -> sheet: the adapter notifies
@@ -456,7 +496,7 @@ function DashboardLayer() {
 
   return (
     <DashboardLocationContext value={backdropSource}>
-      {showDashboard ? <Dashboard currentUserId={user.id} role={user.role} authorizationEpoch={user.authorizationEpoch} calendar={dashboardCalendar} /> : null}
+      {showDashboard ? <Dashboard currentUserId={user.id} role={user.role} authorizationEpoch={user.authorizationEpoch} calendar={dashboardCalendar} searchFocusSignal={searchFocusSignal} onSearchFocusHandled={acknowledgeSearchFocus} /> : null}
       {showDashboard ? (
         <ProjectSheet
           open={isSheetRoute}

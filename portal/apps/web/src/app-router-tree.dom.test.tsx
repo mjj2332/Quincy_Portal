@@ -66,8 +66,14 @@ async function renderAt(path: string) {
 describe("every route kind resolves to its screen through the router", () => {
   it.each([
     ["/", "DASHBOARD SCREEN"],
+    ["/?view=table", "DASHBOARD SCREEN"],
+    ["/?view=board", "DASHBOARD SCREEN"],
+    ["/?view=calendar", "DASHBOARD SCREEN"],
+    ["/?view=timeline", "DASHBOARD SCREEN"],
+    // #427: the retired spellings still land on the Dashboard.
     ["/?view=list", "DASHBOARD SCREEN"],
     ["/?view=kanban", "DASHBOARD SCREEN"],
+    ["/?view=gantt", "DASHBOARD SCREEN"],
     ["/projects/new", "CREATE SCREEN"],
     ["/admin", "ADMIN SCREEN u1"],
     ["/notices", "NOTICES SCREEN u1"],
@@ -118,6 +124,33 @@ describe("every route kind resolves to its screen through the router", () => {
   });
 });
 
+describe("a retired Dashboard view spelling is replaced with the canonical one (#427)", () => {
+  const editor = "11111111-1111-4111-8111-111111111111";
+  it.each([
+    ["/?view=list", "/?view=table"],
+    ["/?view=kanban", "/?view=board"],
+    ["/?view=gantt", "/?view=timeline"],
+    ["/?view=kanban&q=smith+street", "/?view=board&q=smith+street"],
+    [`/?view=gantt&stages=raw_review&editors=${editor}&q=x`, `/?view=timeline&editors=${editor}&stages=raw_review&q=x`],
+  ])("%s becomes %s, mounting the Dashboard throughout", async (legacy, canonical) => {
+    const host = await renderAt(legacy);
+    expect(`${window.location.pathname}${window.location.search}`).toBe(canonical);
+    expect(host.textContent).toContain("DASHBOARD SCREEN");
+  });
+
+  it("leaves Calendar's accepted parameter orders alone (the predicate is the legacy spelling, not 'differs from staffPathFor')", async () => {
+    const reordered = "/?layers=project%2Cchecklist&sub=week&date=2026-08-30&view=calendar";
+    const host = await renderAt(reordered);
+    expect(`${window.location.pathname}${window.location.search}`).toBe(reordered);
+    expect(host.textContent).toContain("DASHBOARD SCREEN");
+  });
+
+  it("does not rewrite a canonical location", async () => {
+    await renderAt("/?view=board&q=smith");
+    expect(`${window.location.pathname}${window.location.search}`).toBe("/?view=board&q=smith");
+  });
+});
+
 describe("the parser overrules the router's matcher, and the URL is left alone", () => {
   // Each of these MATCHES a route pattern but parseStaffLocation rejects it. The leaf must render
   // the not-available view rather than its screen, and must not rewrite the location.
@@ -131,7 +164,7 @@ describe("the parser overrules the router's matcher, and the URL is left alone",
     ["/notices/", "trailing slash on /notices"],
     ["/%6eotices", "percent-encoded spelling of /notices"],
     ["/notices?x=1", "query on /notices"],
-    [`/?view=list&detail=${projectId}`, "retired dashboard facet"],
+    [`/?view=table&detail=${projectId}`, "retired dashboard facet"],
     ["/unknown", "unroutable path"],
   ])("%s renders not-available (%s)", async (path) => {
     const host = await renderAt(path);

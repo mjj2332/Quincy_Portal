@@ -326,8 +326,8 @@ describe("DateTimeField date-time: reminders", () => {
   it("states the stored next reminder and never a prediction", async () => {
     await mount({ value: stored("2027-01-15T09:00"), offsets: [1440], next: { kind: "advance", offsetMinutes: 1440, firesAt: "2027-01-13T22:00:00.000Z" } });
     await open();
-    expect(popup()!.textContent).toContain("Next reminder");
-    expect(popup()!.textContent).toContain("1 day");
+    expect(popup()!.textContent).toContain("Currently saved: next reminder");
+    expect(popup()!.textContent).toContain("1 day · Thu 14 Jan · 09:00");
     await click(chip("4 hours")!);
     expect(popup()!.textContent).toContain("1 day ·");
     expect(popup()!.textContent).not.toContain("4 hours ·");

@@ -258,9 +258,9 @@ async function click(element: Element, init: MouseEventInit = {}) {
 
 /** The Dashboard's project opener for `view`, ready to activate. */
 async function openerFor(host: HTMLElement, view: string): Promise<Element> {
-  if (view === "list") return host.querySelector('[data-testid="project-list-row"]')!;
-  if (view === "kanban") return host.querySelector('[data-testid="kanban2-card"]')!;
-  if (view === "gantt") return host.querySelector('[data-testid="gantt-project-link"]')!;
+  if (view === "table") return host.querySelector('[data-testid="project-list-row"]')!;
+  if (view === "board") return host.querySelector('[data-testid="kanban2-card"]')!;
+  if (view === "timeline") return host.querySelector('[data-testid="gantt-project-link"]')!;
   await act(async () => { eventCalendarFake.click("project-deadline:one"); await Promise.resolve(); });
   return host.querySelector('[data-testid="calendar-project-link"]')!;
 }
@@ -319,13 +319,13 @@ async function closeSheet() {
   await click(document.querySelector('[data-testid="project-sheet-close"]')!);
   expect(go).toHaveBeenCalledWith(-1);
   go.mockRestore();
-  await traverseTo("/?view=list&q=smith", null);
+  await traverseTo("/?view=table&q=smith", null);
   expect(sheet()).toBeNull();
 }
 
 describe("Project comment drafts (#375)", () => {
   it("restores an unsent comment on reopen, keeps a separate draft per Project, and restores both", async () => {
-    const host = await renderDashboardAt("list");
+    const host = await renderDashboardAt("table");
     await openProject(host, 0);
     await typeDraft("hello");
     await closeSheet();
@@ -348,7 +348,7 @@ describe("Project comment drafts (#375)", () => {
 
   it("a post clears the draft: reopening shows an empty composer", async () => {
     apiPostMock.mockResolvedValue({ id: "c1", author: { id: "u1", name: "Ada Lovelace", isExternal: false }, content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hello" }] }] }, createdAt: "2026-09-01T00:00:00.000Z", editedAt: null });
-    const host = await renderDashboardAt("list");
+    const host = await renderDashboardAt("table");
     await openProject(host, 0);
     await typeDraft("hello");
     const form = document.querySelector<HTMLFormElement>('[data-testid="discussion-composer"]')!;
@@ -364,7 +364,7 @@ describe("Project comment drafts (#375)", () => {
   it("a post that resolves after the sheet closed still clears the draft (no double-post on reopen)", async () => {
     let resolvePost: (value: unknown) => void = () => undefined;
     apiPostMock.mockImplementation(() => new Promise((resolve) => { resolvePost = resolve; }));
-    const host = await renderDashboardAt("list");
+    const host = await renderDashboardAt("table");
     await openProject(host, 0);
     await typeDraft("hello");
     const form = document.querySelector<HTMLFormElement>('[data-testid="discussion-composer"]')!;
@@ -379,7 +379,7 @@ describe("Project comment drafts (#375)", () => {
   });
 
   it("never leaks across signed-in users: another user, or sign-out and back in, sees no draft", async () => {
-    const host = await renderDashboardAt("list");
+    const host = await renderDashboardAt("table");
     await openProject(host, 0);
     await typeDraft("secret");
     await closeSheet();

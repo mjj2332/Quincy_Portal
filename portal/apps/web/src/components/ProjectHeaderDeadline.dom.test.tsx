@@ -136,8 +136,9 @@ describe("ProjectHeaderDeadline", () => {
       .filter((el) => el.getAttribute("aria-label") && !el.hasAttribute("role")
         && !["BUTTON", "INPUT", "A", "SELECT", "TEXTAREA", "NAV", "TH"].includes(el.tagName));
     expect(unnamed).toEqual([]);
-    // The scan above is a net; this is the specific catch it was cast for.
-    expect(dialog.querySelector('[role="group"][aria-label="Deadline reminder summary"]')).not.toBeNull();
+    // The editable popup no longer draws the summary (#422); the read-only branch keeps its `role="group"`
+    // (ProjectDeadlineControl.dom.test.tsx).
+    expect(dialog.querySelector('[role="group"][aria-label="Deadline reminder summary"]')).toBeNull();
 
     const interactive = [...dialog.querySelectorAll<HTMLElement>("button, a, input, select, textarea")];
     for (const element of interactive) expect(element.querySelector("button, a, input, select, textarea")).toBeNull();
@@ -395,19 +396,35 @@ describe("ProjectHeaderDeadline", () => {
   });
 
   // #325 / #422: at 390px the popover is capped to the available height. The popup's frame bounds
-  // itself, scrolls only its body, and keeps Cancel / Apply in a footer OUTSIDE the scrolling
-  // body, so they stay visible however tall the content.
+  // itself, scrolls only its body, and keeps Cancel / Apply in a footer OUTSIDE the scrolling body
+  // and not allowed to shrink, so they stay visible however tall the content. happy-dom loads no
+  // stylesheet, so the bound and the scroll are asserted as the Tailwind utilities that produce them
+  // (utility tokens, which guard C does not treat as Quincy class coupling), on the structure found
+  // through roles: the time-slot group (body content) and the Apply button (footer content).
   it("keeps Cancel / Apply outside the scrolling body of a height-bounded popup (#325, #422)", async () => {
     const host = await mount(scheduleAt("2026-10-01T06:00:00.000Z"));
     const dialog = await openTrigger(host);
     const apply = popupButton(dialog, "Apply")!;
-    const row = apply.parentElement!;
-    expect([...row.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Cancel", "Apply"]);
-    // The time slots live in the body; the footer is a sibling of that body, never inside it.
+    const footer = apply.parentElement!;
+    expect([...footer.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Cancel", "Apply"]);
     const slots = dialog.querySelector('[role="group"][aria-label="Time slots"]')!;
     expect(slots).not.toBeNull();
-    expect(row.contains(slots)).toBe(false);
-    expect(slots.parentElement!.contains(row)).toBe(false);
-    expect(row.parentElement!.contains(slots)).toBe(true);
+
+    // The scrolling panel is the body ancestor that actually scrolls vertically.
+    let scroller: HTMLElement | null = slots.parentElement;
+    while (scroller && scroller !== dialog && !scroller.classList.contains("overflow-y-auto")) scroller = scroller.parentElement;
+    expect(scroller, "the time slots sit inside a vertically scrolling panel").not.toBe(dialog);
+    expect(scroller).not.toBeNull();
+    // The footer is outside it, beside it under the same bounded frame.
+    expect(scroller!.contains(footer)).toBe(false);
+    expect(footer.contains(scroller!)).toBe(false);
+    const frame = scroller!.parentElement!;
+    expect(frame.contains(footer) && footer.parentElement === frame).toBe(true);
+    // The frame carries the height bound, and both it and the scroller may shrink below their
+    // content so the panel (not the page) takes the overflow; the footer may not shrink.
+    expect(frame.classList.contains("max-h-[var(--available-height)]")).toBe(true);
+    expect(frame.classList.contains("min-h-0")).toBe(true);
+    expect(scroller!.classList.contains("min-h-0")).toBe(true);
+    expect(footer.classList.contains("shrink-0")).toBe(true);
   });
 });
