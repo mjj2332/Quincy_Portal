@@ -13,6 +13,7 @@ import { act, useLayoutEffect, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { adminProductionGanttResponseSchema, dashboardSearchOf, PRODUCTION_GANTT_ZONE } from "@quincy/shared";
+import { ApiError } from "../lib/api";
 import { Dashboard } from "./Dashboard";
 import { closeDisplay, displayGroup, displayMenu, groupCheckboxes, openDisplay, toggleGroupCheckbox } from "./dashboard-display-test-helpers";
 import { locationStore, parseStaffLocation } from "../lib/router";
@@ -465,6 +466,55 @@ describe("Dashboard Gantt routing", () => {
         expect(live()).toBe("");
         await toggleGroupCheckbox("Show", "Show delivered Projects", host);
         expect(live()).toBe("Removed Delivered from Stage.");
+      });
+
+      // The real Display menu (#430): the checkbox item in use keeps focus, and is the same node,
+      // while the changed filter's first page is pending or fails.
+      const checkboxItem = () => groupCheckboxes("Show").find((item) => item.textContent === "Show delivered Projects")!;
+      const toggleFocusedItem = async () => {
+        await openDisplay(host);
+        const item = checkboxItem();
+        act(() => { item.focus(); });
+        expect(document.activeElement).toBe(item);
+        await act(async () => { item.click(); await new Promise((resolve) => setTimeout(resolve, 10)); });
+        return item;
+      };
+
+      it("keeps focus on the Display checkbox item while the new filter's first page is pending, and after it lands", async () => {
+        realGantt.value = true;
+        await renderAt("/?view=timeline");
+        let resolvePending: ((value: unknown) => void) | undefined;
+        apiGetMock.mockImplementation((path: string) => {
+          if (!path.startsWith("/api/production-gantt")) return Promise.resolve(projectResponse());
+          if (path.includes("delivered=1")) return new Promise((resolve) => { resolvePending = resolve; });
+          return Promise.resolve(ganttResponse());
+        });
+        const item = await toggleFocusedItem();
+        expect(url()).toBe("/?view=timeline&delivered=1");
+        expect(host.querySelector('[data-testid="production-gantt-loading"]')).not.toBeNull();
+        expect(checkboxItem()).toBe(item);
+        expect(item.isConnected).toBe(true);
+        expect(document.activeElement).toBe(item);
+
+        await act(async () => { resolvePending?.(ganttResponse()); await Promise.resolve(); });
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+        expect(checkboxItem()).toBe(item);
+        expect(document.activeElement).toBe(item);
+      });
+
+      it("keeps focus on the Display checkbox item when the new filter's request fails", async () => {
+        realGantt.value = true;
+        await renderAt("/?view=timeline");
+        apiGetMock.mockImplementation((path: string) => {
+          if (!path.startsWith("/api/production-gantt")) return Promise.resolve(projectResponse());
+          return path.includes("delivered=1") ? Promise.reject(new ApiError("boom", 400)) : Promise.resolve(ganttResponse());
+        });
+        const item = await toggleFocusedItem();
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+        expect(host.querySelector('[role="alert"]')?.textContent).toContain("The production schedule is unavailable.");
+        expect(checkboxItem()).toBe(item);
+        expect(item.isConnected).toBe(true);
+        expect(document.activeElement).toBe(item);
       });
 
       it("both view-bar triggers clear the sticky shell header when scrolled to", async () => {
