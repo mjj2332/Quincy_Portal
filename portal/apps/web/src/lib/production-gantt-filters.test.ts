@@ -183,12 +183,18 @@ describe("saying why the Delivered pair fired (#269) and offering its recovery (
 
   it("names the Show change when picking Stage = Delivered turned delivered projects on", () => {
     const edit = facet(["editing", "delivered"], false);
-    expect(ganttPairingNotice(edit, ganttFacetForWrite(facet(["editing"], false), edit))).toBe("Also showing delivered projects.");
+    expect(ganttPairingNotice(edit, ganttFacetForWrite(facet(["editing"], false), edit))).toBe("Also showing delivered Projects.");
   });
 
   it("names the Stage change when hiding delivered projects dropped Delivered from Stage", () => {
     const edit = facet(["editing", "delivered"], false);
     expect(ganttPairingNotice(edit, ganttFacetForWrite(facet(["editing", "delivered"], true), edit))).toBe("Removed Delivered from Stage.");
+  });
+
+  it("serves the Calendar's pair (Stage and showDeliveredProjects) with the same rule, keeping its other fields (#430)", () => {
+    const calendar = { stageKeys: ["delivered" as const], delivered: false, layers: ["project"] };
+    expect(ganttFacetForWrite({ stageKeys: [], delivered: false }, calendar)).toEqual({ ...calendar, delivered: true });
+    expect(ganttShowDeliveredRecovery(calendar)).toEqual({ ...calendar, delivered: true });
   });
 
   it("says nothing when the write was the user's edit as made", () => {
@@ -201,7 +207,7 @@ describe("saying why the Delivered pair fired (#269) and offering its recovery (
     }
   });
 
-  it("offers Show delivered projects only for Stage = Delivered with delivered projects hidden, keeping the other filters", () => {
+  it("offers Show delivered Projects only for Stage = Delivered with delivered projects hidden, keeping the other filters", () => {
     expect(ganttShowDeliveredRecovery(facet(["delivered"], false, true))).toEqual(facet(["delivered"], true, true));
     expect(ganttShowDeliveredRecovery(facet(["editing", "delivered"], false))).toEqual(facet(["editing", "delivered"], true));
     expect(ganttShowDeliveredRecovery(facet(["delivered"], true))).toBeNull();

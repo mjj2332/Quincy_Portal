@@ -43,10 +43,13 @@ const routeCalendar: DashboardCalendarState = {
 };
 
 function calendarResponse(appliedEditors = routeCalendar.editorIds, appliedSearch = "", overrides: Partial<ProductionCalendarFilters> = {}, date = routeCalendar.date) {
-  return adminProductionCalendarRangeResponseSchema.parse({
+  // The server draws nothing for Stage = Delivered while delivered Projects are hidden (#430).
+  const drawsNothing = (overrides.stageKeys ?? []).includes("delivered") && !overrides.showDeliveredProjects;
+  const response = adminProductionCalendarRangeResponseSchema.parse({
     range: { start: "2026-07-27", end: "2026-09-07", date, subview: "month", zone: PRODUCTION_CALENDAR_ZONE, appliedFilters: { layers: ["project", "checklist"], editorIds: appliedEditors, includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, shootRange: null, deadlineRange: null, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: appliedSearch, myTasks: false, ...overrides } },
     events: [{ id: "project-deadline:one", kind: "project_deadline", title: "Deadline", project: { id: projectId, street: "1 Calendar Street", stageKey: "editing_autohdr", checklist: { completed: 0, total: 0 }, delivered: false, archived: false }, timing: { allDay: true, start: "2026-08-12", end: null }, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, permissions: { canDrag: true, canResize: false }, deadlineLocalCivil: "2026-08-12T09:00", deadlineVersion: 1, reminderOffsetsMinutes: [] }], filterFacets: { projects: [], people: [], myTasksUserId: projectId },
   });
+  return drawsNothing ? { ...response, events: [] } : response;
 }
 
 function projectResponse() {
@@ -426,7 +429,7 @@ describe("Dashboard Calendar routing", () => {
       await mountAt(BOTH);
       await openDisplay(host);
       expect(state("Layers")).toEqual([["Project deadlines", "true", null], ["Subtasks", "true", null]]);
-      expect(state("Show")).toEqual([["Show delivered Projects", "false", null], ["Show completed Subtasks", "false", null]]);
+      expect(state("Show")).toEqual([["Delivered Projects", "false", null], ["Completed Subtasks", "false", null]]);
       expect(displayGroup("Sort")).toBeNull();
       expect(displayGroup("Columns")).toBeNull();
     });
@@ -457,16 +460,61 @@ describe("Dashboard Calendar routing", () => {
       expect(query.get("overdue")).toBe("1");
       expect(query.get("mine")).toBe("1");
       await openDisplay(host);
-      expect(state("Show")).toEqual([["Show delivered Projects", "true", null], ["Show completed Subtasks", "true", null]]);
+      expect(state("Show")).toEqual([["Delivered Projects", "true", null], ["Completed Subtasks", "true", null]]);
       await closeDisplay();
       expect(url()).toBe(COLD);
     });
 
     it("unchecking a Show item from a cold URL pushes the URL without it", async () => {
       await mountAt(COLD);
-      await toggleGroupCheckbox("Show", "Show completed Subtasks", host);
+      await toggleGroupCheckbox("Show", "Completed Subtasks", host);
       expect(url()).toBe(`${BOTH}&stages=delivered&delivered=1&overdue=1&mine=1`);
-      expect(state("Show")).toEqual([["Show delivered Projects", "true", null], ["Show completed Subtasks", "false", null]]);
+      expect(state("Show")).toEqual([["Delivered Projects", "true", null], ["Completed Subtasks", "false", null]]);
+    });
+
+    describe("the Delivered pair", () => {
+      // The Dashboard's region, not the Calendar's own (both carry the test id).
+      const live = () => [...host.querySelectorAll('[data-testid="dashboard-live-region"]')].filter((region) => !region.closest('[data-testid="event-calendar-screen"]')).map((region) => region.textContent).join("");
+      const COLD_HIDDEN = `${BOTH}&stages=delivered&completed=1`;
+      const emptyShowDelivered = () => host.querySelector<HTMLButtonElement>('[data-testid="event-calendar-show-delivered"]');
+
+      it("unchecking Delivered Projects while Stage = Delivered drops it from Stage and announces why", async () => {
+        await mountAt(COLD);
+        await toggleGroupCheckbox("Show", "Delivered Projects", host);
+        expect(url()).toBe(`${BOTH}&completed=1&overdue=1&mine=1`);
+        expect(live()).toBe("Removed Delivered from Stage.");
+      });
+
+      it("leaves a Show write beside no Delivered stage as made, with no notice", async () => {
+        await mountAt(`${BOTH}&stages=raw_review`);
+        await toggleGroupCheckbox("Show", "Completed Subtasks", host);
+        expect(url()).toBe(`${BOTH}&stages=raw_review&completed=1`);
+        expect(live()).toBe("");
+      });
+
+      it("explains an empty range for Stage = Delivered with delivered Projects hidden, and offers Show delivered Projects", async () => {
+        await mountAt(COLD_HIDDEN);
+        expect(url()).toBe(COLD_HIDDEN);
+        expect(host.querySelector('[data-testid="event-calendar-empty"]')?.textContent).toBe("No scheduled work in this range.");
+        expect(emptyShowDelivered()?.textContent).toBe("Show delivered Projects");
+      });
+
+      it("Show delivered Projects keeps the other filters, pushes the URL and moves focus to the Display trigger", async () => {
+        await mountAt(COLD_HIDDEN);
+        const lengthBefore = window.history.length;
+        await act(async () => { emptyShowDelivered()!.click(); await Promise.resolve(); });
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+        expect(url()).toBe(`${COLD_HIDDEN}&delivered=1`);
+        expect(window.history.length).toBe(lengthBefore + 1);
+        expect(emptyShowDelivered()).toBeNull();
+        expect(document.activeElement).toBe(host.querySelector('[data-testid="dashboard-display-trigger"]'));
+      });
+
+      it("offers no Show delivered Projects when the empty range has another cause", async () => {
+        await mountAt(COLD);
+        calendarRefetchFails.value = false;
+        expect(emptyShowDelivered()).toBeNull();
+      });
     });
 
     it("keeps the Calendar's Stage, Overdue and My tasks reachable through the shared Filter", async () => {

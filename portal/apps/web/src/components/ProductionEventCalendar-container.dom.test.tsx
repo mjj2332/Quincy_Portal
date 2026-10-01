@@ -304,8 +304,11 @@ describe("ProductionEventCalendar container", () => {
     expect(host.querySelector('[data-testid="event-calendar-rail"]')).toBeNull();
     const toggle = host.querySelector<HTMLButtonElement>('[data-testid="event-calendar-rail-toggle"]')!;
     expect(toggle).not.toBeNull();
+    // #430: the sheet holds the mini month and Up next only, so the button is named for the sheet, not for filters.
+    expect(toggle.textContent).toBe("Calendar");
     await act(async () => { toggle.click(); await Promise.resolve(); });
     expect(document.querySelector('[data-testid="event-calendar-rail-sheet"] [data-testid="event-calendar-rail"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="event-calendar-rail-sheet"]')!.textContent).not.toMatch(/filters/i);
   });
 
   it("Up next runs a second read-only agenda query from today, with the same filters", async () => {

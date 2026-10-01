@@ -86,6 +86,8 @@ import {
 import { TooltipProvider } from "./reui/tooltip";
 import { EventCalendarContent } from "./reui/event-calendar/event-calendar-content";
 import { Button } from "./reui/button";
+import { Button as QuincyButton } from "./quincy/Button";
+import { ganttShowDeliveredRecovery } from "../lib/production-gantt-filters";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "./reui/sheet";
 import { Skeleton } from "./reui/skeleton";
 import { EmptyState } from "./quincy/EmptyState";
@@ -113,6 +115,8 @@ export type ProductionEventCalendarProps = {
    * landed and on unmount.
    */
   onShownProjectsChange?: (count: number | null) => void;
+  /** #430: the empty state's "Show delivered Projects" (Stage = Delivered with delivered Projects hidden). */
+  onShowDeliveredProjects?: () => void;
 };
 
 /** Below this width the rail leaves the grid's side and moves into a sheet. */
@@ -185,7 +189,7 @@ function ChipContent({ id, data, title }: { id: string; data: ProductionEventCal
   );
 }
 
-export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppliedFilters, onAcceptGateChange, onSettleStateChange, onAccessLoss, projectHrefFor, onOpenProject, onShownProjectsChange }: ProductionEventCalendarProps): JSX.Element {
+export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppliedFilters, onAcceptGateChange, onSettleStateChange, onAccessLoss, projectHrefFor, onOpenProject, onShownProjectsChange, onShowDeliveredProjects }: ProductionEventCalendarProps): JSX.Element {
   const query = useProductionCalendarRange({ identity, calendar, enabled: true, bounds: true });
 
   // Up next: a second, read-only agenda range from today (Sydney), same filters, outside any gate.
@@ -363,6 +367,17 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
   const refinement = errorDetail(query.error, "refinement") ?? "Refine the date range, Stage, Editor, layer, or search filters.";
   const showGrid = everLoaded && !commands.accessLost && !(query.error && !source && !query.isFetching);
   const empty = source !== null && source.events.length === 0;
+  // #430: the Timeline's recovery, same rule: Stage = Delivered while delivered Projects are hidden draws nothing for a known reason.
+  const showDeliveredRecovery = empty && onShowDeliveredProjects && ganttShowDeliveredRecovery({ stageKeys: calendar.stageKeys, delivered: calendar.showDeliveredProjects }) !== null;
+  const showDeliveredButton = showDeliveredRecovery ? (
+    <QuincyButton variant="text" type="button" data-testid="event-calendar-show-delivered" onClick={() => {
+      onShowDeliveredProjects?.();
+      // The button unmounts with the empty state, so focus goes to the Display trigger, as the Timeline's does.
+      document.querySelector<HTMLElement>('[data-testid="dashboard-display-trigger"]')?.focus({ preventScroll: true });
+    }}>
+      Show delivered Projects
+    </QuincyButton>
+  ) : null;
   // The FullCalendar toolbar's "Sydney time · AEST/AEDT", for the window the server is asked for.
   const zoneLabel = useMemo(() => productionCalendarZoneLabel(deriveProductionCalendarWindow(calendar.date, calendar.subview)), [calendar.date, calendar.subview]);
 
@@ -431,10 +446,11 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
                       {empty && (
                         <p className="m-0 min-w-0 text-[length:var(--text-xs)] text-muted-foreground" role="status" data-testid="event-calendar-empty">No scheduled work in this range.</p>
                       )}
+                      {showDeliveredButton}
                     </div>
                     <div className="flex min-w-0 basis-full flex-wrap items-center gap-[var(--space-1)]" data-testid="event-calendar-controls">
                       <Button type="button" variant="outline" size="sm" className="min-h-[44px]" data-testid="event-calendar-rail-toggle" aria-expanded={railOpen} onClick={() => setRailOpen(true)}>
-                        Filters
+                        Calendar
                       </Button>
                       <EventCalendarNavToday className="min-h-[44px]" />
                       <EventCalendarViewSwitcher className="min-h-[44px]" />
@@ -447,7 +463,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
               <div className="flex min-w-0 flex-wrap items-center gap-[var(--space-2)]">
                 {narrow && (
                   <Button type="button" variant="outline" size="sm" className="ms-[var(--space-2)] max-[721px]:min-h-[44px]" data-testid="event-calendar-rail-toggle" aria-expanded={railOpen} onClick={() => setRailOpen(true)}>
-                    Filters
+                    Calendar
                   </Button>
                 )}
                 <EventCalendarNav showViewSwitcher className="min-w-0 flex-1" />
@@ -456,6 +472,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
                   // Quiet, in the toolbar row: an empty range never pushes the grid down.
                   <p className="m-0 me-[var(--space-2)] min-w-0 shrink truncate text-[length:var(--text-xs)] text-muted-foreground" role="status" data-testid="event-calendar-empty">No scheduled work in this range.</p>
                 )}
+                {showDeliveredButton}
               </div>
               )}
               {selected && (
@@ -493,7 +510,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
               >
                 <SheetHeader className="border-b border-border">
                   <SheetTitle>Calendar</SheetTitle>
-                  <SheetDescription className="sr-only">Mini month, up next and filters.</SheetDescription>
+                  <SheetDescription className="sr-only">Mini month and up next.</SheetDescription>
                 </SheetHeader>
                 {rail}
               </SheetContent>

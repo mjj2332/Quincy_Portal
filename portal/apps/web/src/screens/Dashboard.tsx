@@ -1073,7 +1073,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   function writeFilter(next: DashboardFilter) {
     if (movementInteractionActive || calendarInteractionBlocked) return;
     if (isCalendarView && calendarState) {
-      navigateCalendar({ ...calendarState, ...next, view: "calendar" });
+      writeCalendarState(next);
       return;
     }
     if (isGanttView) {
@@ -1088,7 +1088,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // The Delivered pair: Stage = Delivered draws nothing while delivered projects are hidden.
   function writeGanttFacet(changes: Partial<ProductionGanttFacetFilters>) {
     const written = ganttFacetForWrite(ganttFilters, { ...ganttFilters, ...changes });
-    const notice = ganttPairingNotice({ ...ganttFilters, ...changes }, written);
+    announcePairing(ganttPairingNotice({ ...ganttFilters, ...changes }, written));
+    navigateGantt(written);
+  }
+
+  // The Delivered pair's one-shot notice, shared by both views' writers.
+  function announcePairing(notice: string | null) {
     if (notice) {
       setAnnouncement(notice);
       pairNoticeLiveRef.current = true;
@@ -1097,11 +1102,24 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       pairNoticeLiveRef.current = false;
       setAnnouncement("");
     }
-    navigateGantt(written);
+  }
+
+  // #430: the Calendar's counterpart to `writeGanttFacet`. The pair is Stage and `showDeliveredProjects`
+  // (the Timeline's `delivered`), through the same rule; the write is still one `navigateCalendar`.
+  function writeCalendarState(changes: Partial<DashboardCalendarState>) {
+    if (!calendarState) return;
+    const edit = { ...calendarState, ...changes };
+    const pairEdit = { stageKeys: edit.stageKeys, delivered: edit.showDeliveredProjects };
+    const paired = ganttFacetForWrite({ stageKeys: calendarState.stageKeys, delivered: calendarState.showDeliveredProjects }, pairEdit);
+    announcePairing(ganttPairingNotice(pairEdit, paired));
+    navigateCalendar({ ...edit, stageKeys: paired.stageKeys, showDeliveredProjects: paired.delivered, view: "calendar" });
   }
 
   // #430: the old filters bar cleared its pair notice on any navigation it did not write (Back/Forward,
   // another control), so a repeated removal is announced again rather than matching the stale string.
+  // Keyed on the Timeline's filters and the Calendar's route value together: both views' URL writes land
+  // in one render, so a single effect spends the in-flight flag once.
+  const calendarStateKey = effectiveRouteCalendar ? JSON.stringify(effectiveRouteCalendar) : "";
   useEffect(() => {
     if (pairWriteInFlightRef.current) {
       pairWriteInFlightRef.current = false;
@@ -1110,7 +1128,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     if (!pairNoticeLiveRef.current) return;
     pairNoticeLiveRef.current = false;
     setAnnouncement("");
-  }, [ganttFilters]);
+  }, [ganttFilters, calendarStateKey]);
 
   // #430: a Show toggle in the Timeline's Display (delivered Projects, completed Subtasks).
   function writeTimelineDisplay(changes: { delivered?: boolean; completed?: boolean }) {
@@ -1121,7 +1139,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // #430: a Layers or Show toggle in the Calendar's Display; pushed like every Calendar write.
   function writeCalendarDisplay(changes: Partial<Pick<DashboardCalendarState, "layers" | "showDeliveredProjects" | "showCompletedChecklist">>) {
     if (movementInteractionActive || calendarInteractionBlocked || !calendarState) return;
-    navigateCalendar({ ...calendarState, ...changes, view: "calendar" });
+    writeCalendarState(changes);
   }
 
   // The Gantt is lazy and mounts outside the Filter provider, so its empty state reaches the
@@ -1577,6 +1595,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
                 onSettleStateChange={setCalendarSettle}
                 onAccessLoss={handleCalendarAccessLoss}
                 onShownProjectsChange={setViewShownProjects}
+                onShowDeliveredProjects={() => writeCalendarDisplay({ showDeliveredProjects: true })}
                 projectHrefFor={projectHrefFor}
                 onOpenProject={openCalendarProject}
               />

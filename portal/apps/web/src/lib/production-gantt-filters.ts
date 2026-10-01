@@ -89,6 +89,12 @@ export function ganttRouteFor(filters: ProductionGanttFacetFilters, search?: str
 // ---------------------------------------------------------------------------
 
 /**
+ * The two fields the Delivered pair reads. The Timeline's facet and the Calendar's state (#430, which
+ * keeps `delivered` as `showDeliveredProjects`) both project to it, so one rule serves both.
+ */
+export type DeliveredPair = Pick<ProductionGanttFacetFilters, "stageKeys" | "delivered">;
+
+/**
  * The Delivered pair (#255, owner decision): Stage = Delivered only draws anything while delivered
  * projects are shown, so a write never leaves one without the other. Given the facet last
  * written (`previous`) and the one an edit produces (`next`), when `next` holds `delivered` as a stage
@@ -102,7 +108,7 @@ export function ganttRouteFor(filters: ProductionGanttFacetFilters, search?: str
  * Any other facet is returned as is. Only the user's own edits (Filter or Display) go through this: a URL that already
  * holds the inconsistent pair is never rewritten on load.
  */
-export function ganttFacetForWrite(previous: ProductionGanttFacetFilters, next: ProductionGanttFacetFilters): ProductionGanttFacetFilters {
+export function ganttFacetForWrite<T extends DeliveredPair>(previous: DeliveredPair, next: T): T {
   if (next.delivered || !next.stageKeys.includes("delivered")) return next;
   if (previous.delivered) return { ...next, stageKeys: next.stageKeys.filter((key) => key !== "delivered") };
   return { ...next, delivered: true };
@@ -114,8 +120,8 @@ export function ganttFacetForWrite(previous: ProductionGanttFacetFilters, next: 
  * turned it into. The Dashboard announces it once, so the second chip (or the vanished stage)
  * does not appear without explanation.
  */
-export function ganttPairingNotice(edit: ProductionGanttFacetFilters, written: ProductionGanttFacetFilters): string | null {
-  if (written.delivered && !edit.delivered) return "Also showing delivered projects.";
+export function ganttPairingNotice(edit: DeliveredPair, written: DeliveredPair): string | null {
+  if (written.delivered && !edit.delivered) return "Also showing delivered Projects.";
   if (edit.stageKeys.includes("delivered") && !written.stageKeys.includes("delivered")) return "Removed Delivered from Stage.";
   return null;
 }
@@ -126,7 +132,7 @@ export function ganttPairingNotice(edit: ProductionGanttFacetFilters, written: P
  * known reason; this is that facet with delivered projects shown and every other filter kept, or
  * `null` when the facet is not in that state.
  */
-export function ganttShowDeliveredRecovery(facet: ProductionGanttFacetFilters): ProductionGanttFacetFilters | null {
+export function ganttShowDeliveredRecovery<T extends DeliveredPair>(facet: T): T | null {
   if (facet.delivered || !facet.stageKeys.includes("delivered")) return null;
   return { ...facet, delivered: true };
 }
