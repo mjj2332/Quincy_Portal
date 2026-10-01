@@ -190,3 +190,16 @@ export function formatDueCivil(localCivil: string): string {
   const text = `${weekday} ${day} ${MONTH_NAMES[month - 1]}`;
   return time ? `${text} · ${time.slice(0, 5)}` : text;
 }
+
+const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+/**
+ * "Thu 17 Sep 2026" for a canonical civil day (`YYYY-MM-DD`), from fixed weekday and month tables
+ * (never `Intl`: recent ICU data renders September as "Sept" for en-AU). The weekday is the only
+ * thing a `Date` is used for, read in UTC so the viewer's zone cannot move it.
+ */
+export function formatCivilDay(civil: string): string {
+  const { year, month, day } = parseKey(civil);
+  const weekday = WEEKDAY_SHORT[new Date(Date.UTC(year, month - 1, day)).getUTCDay()];
+  return `${weekday} ${day} ${MONTH_NAMES[month - 1]} ${year}`;
+}
