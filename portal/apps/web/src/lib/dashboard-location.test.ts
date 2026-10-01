@@ -26,22 +26,22 @@ const sheetState = (backdrop: string, depth = 1) => ({ quincySheet: { v: 1, back
 
 describe("Dashboard location lens (#366)", () => {
   it("passes a real Dashboard location straight through and reports not-backdrop", () => {
-    const { adapter } = fakeAdapter("/?view=list&q=smith");
+    const { adapter } = fakeAdapter("/?view=table&q=smith");
     const lens = createDashboardBackdropSource(adapter, () => null);
-    expect(lens.getLocation()).toBe("/?view=list&q=smith");
+    expect(lens.getLocation()).toBe("/?view=table&q=smith");
     expect(lens.isBackdrop()).toBe(false);
   });
 
   it("remembers the last Dashboard location and returns it while a sheet is the real location", () => {
-    const fake = fakeAdapter("/?view=kanban&q=smith");
-    const lens = createDashboardBackdropSource(fake.adapter, () => sheetState("/?view=kanban&q=smith"));
+    const fake = fakeAdapter("/?view=board&q=smith");
+    const lens = createDashboardBackdropSource(fake.adapter, () => sheetState("/?view=board&q=smith"));
     const seen: string[] = [];
     const off = lens.subscribe(() => seen.push(lens.getLocation()));
     fake.adapter.push(project);
     expect(lens.isBackdrop()).toBe(true);
-    expect(lens.getLocation()).toBe("/?view=kanban&q=smith");
-    expect(lens.backdrop()).toBe("/?view=kanban&q=smith");
-    expect(seen).toEqual(["/?view=kanban&q=smith"]);
+    expect(lens.getLocation()).toBe("/?view=board&q=smith");
+    expect(lens.backdrop()).toBe("/?view=board&q=smith");
+    expect(seen).toEqual(["/?view=board&q=smith"]);
     off();
   });
 
@@ -57,55 +57,55 @@ describe("Dashboard location lens (#366)", () => {
     const seen: string[] = [];
     const off = lens.subscribe(() => seen.push(lens.getLocation()));
     lens.replace("/?view=calendar&date=2026-08-30&sub=agenda&layers=project%2Cchecklist");
-    lens.push("/?view=list");
+    lens.push("/?view=table");
     expect(fake.replace).not.toHaveBeenCalled();
     expect(fake.push).not.toHaveBeenCalled();
-    expect(lens.getLocation()).toBe("/?view=list");
+    expect(lens.getLocation()).toBe("/?view=table");
     expect(lens.backdropRewritten()).toBe(true);
-    expect(seen).toEqual(["/?view=calendar&date=2026-08-30&sub=agenda&layers=project%2Cchecklist", "/?view=list"]);
+    expect(seen).toEqual(["/?view=calendar&date=2026-08-30&sub=agenda&layers=project%2Cchecklist", "/?view=table"]);
     lens.resetRewritten();
     expect(lens.backdropRewritten()).toBe(false);
     off();
   });
 
   it("forwards a non-Dashboard push (the Dashboard's own project opens) to the adapter for real", () => {
-    const fake = fakeAdapter("/?view=list");
+    const fake = fakeAdapter("/?view=table");
     const lens = createDashboardBackdropSource(fake.adapter, () => null);
     lens.push(project);
     expect(fake.push).toHaveBeenCalledWith(project);
     // and a Dashboard write while NOT a backdrop is also forwarded
-    const fake2 = fakeAdapter("/?view=list");
+    const fake2 = fakeAdapter("/?view=table");
     const lens2 = createDashboardBackdropSource(fake2.adapter, () => null);
-    lens2.replace("/?view=kanban");
-    expect(fake2.replace).toHaveBeenCalledWith("/?view=kanban");
+    lens2.replace("/?view=board");
+    expect(fake2.replace).toHaveBeenCalledWith("/?view=board");
     expect(lens2.backdropRewritten()).toBe(false);
   });
 
   it("re-seeds from the state of a sheet entry it lands on (Back from /admin into a sheet)", () => {
-    const fake = fakeAdapter("/?view=list");
+    const fake = fakeAdapter("/?view=table");
     let state: unknown = null;
     const lens = createDashboardBackdropSource(fake.adapter, () => state);
     const off = lens.subscribe(() => undefined);
-    state = sheetState("/?view=kanban");
+    state = sheetState("/?view=board");
     fake.arrive(project);
-    expect(lens.getLocation()).toBe("/?view=kanban");
+    expect(lens.getLocation()).toBe("/?view=board");
     fake.arrive("/admin");
     expect(lens.getLocation()).toBe("/admin");
-    state = sheetState("/?view=list&q=x");
+    state = sheetState("/?view=table&q=x");
     fake.arrive(project);
-    expect(lens.getLocation()).toBe("/?view=list&q=x");
+    expect(lens.getLocation()).toBe("/?view=table&q=x");
     off();
   });
 
   it("does not let a tab replace on the same entry clobber an in-memory rewrite", () => {
-    const fake = fakeAdapter("/?view=list");
-    const state = sheetState("/?view=list");
+    const fake = fakeAdapter("/?view=table");
+    const state = sheetState("/?view=table");
     const lens = createDashboardBackdropSource(fake.adapter, () => state);
     const off = lens.subscribe(() => undefined);
     fake.adapter.push(project);
-    lens.replace("/?view=kanban");
+    lens.replace("/?view=board");
     fake.adapter.replace(`${project}?tab=raw`);
-    expect(lens.getLocation()).toBe("/?view=kanban");
+    expect(lens.getLocation()).toBe("/?view=board");
     off();
   });
 

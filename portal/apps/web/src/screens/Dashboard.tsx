@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { dashboardSearchOf, formatSydneyCivil, roleHasCapability, type DashboardCalendarState, type DashboardRoute, type DashboardGanttRoute, type DashboardViewRoute as SharedDashboardViewRoute, type MoveProjectStageRequest, type MoveProjectStageResponse, type ProductionCalendarFilters, type StageKey } from "@quincy/shared";
+import { dashboardSearchOf, formatSydneyCivil, roleHasCapability, type DashboardCalendarState, type DashboardRoute, type DashboardTimelineRoute, type DashboardViewRoute as SharedDashboardViewRoute, type MoveProjectStageRequest, type MoveProjectStageResponse, type ProductionCalendarFilters, type StageKey } from "@quincy/shared";
 import { QueryClient, QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
 import { StatusBadge } from "../components/atoms";
 import { LazyImage } from "../components/LazyImage";
@@ -7,7 +7,7 @@ import { ApiError, apiPost } from "../lib/api";
 import { confirmStore } from "../lib/confirm";
 import { useCapabilities } from "../lib/capabilities";
 import { useStages } from "../lib/stages";
-import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, focusTargetAfterClearingSearch, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
+import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, DASHBOARD_VIEW_KEY, focusTargetAfterClearingSearch, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, normalizeDashboardView, writeDashboardViewPreference, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
 import { publishDashboardView, releaseDashboardView } from "../lib/dashboard-view-store";
 import { InternalLink } from "../components/InternalLink";
 import { pushToast as toast } from "../lib/toast-store";
@@ -214,16 +214,16 @@ function isDashboardCalendarRoute(route: DashboardRouteArm): route is DashboardC
   return "calendar" in route;
 }
 
-function isDashboardGanttRoute(route: DashboardRouteArm): route is DashboardGanttRoute {
-  return "dashboardView" in route && route.dashboardView === "gantt";
+function isDashboardTimelineRoute(route: DashboardRouteArm): route is DashboardTimelineRoute {
+  return "dashboardView" in route && route.dashboardView === "timeline";
 }
 
 /** #255: the Gantt route a location carries, read at call time — `null` for any location that is
  * not a Gantt URL. Used by the debounced search writer so a search commit on a filtered Gantt
  * rewrites `q` without wiping the filters beside it. */
-function ganttRouteOfLocation(location: string): DashboardGanttRoute | null {
+function ganttRouteOfLocation(location: string): DashboardTimelineRoute | null {
   const route = parseStaffLocation(location);
-  return route.kind === "dashboard" && isDashboardGanttRoute(route) ? route : null;
+  return route.kind === "dashboard" && isDashboardTimelineRoute(route) ? route : null;
 }
 
 function DashboardContent({ currentUserId, role = "photographer", authorizationEpoch = 0, calendar: routeCalendar = null }: DashboardProps) {
@@ -255,7 +255,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // (defaults for the bare `/?view=gantt` or any non-Gantt location), never copied into state, so a
   // cold deep link and Back/Forward both apply on their first commit. Independent of the Calendar's
   // own filter state.
-  const routeGantt = currentDashboardRoute && isDashboardGanttRoute(currentDashboardRoute) ? currentDashboardRoute : null;
+  const routeGantt = currentDashboardRoute && isDashboardTimelineRoute(currentDashboardRoute) ? currentDashboardRoute : null;
   const ganttFilters = useMemo<ProductionGanttFacetFilters>(() => ganttFiltersFromRoute(routeGantt), [routeGantt]);
   const calendarStorage = {
     read: (key: string) => window.localStorage.getItem(key),
@@ -295,13 +295,15 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     // and `calendarState` already `null` (that init is gated correctly), so no render branch
     // matched anything until the reconciliation effect caught up. #220: "gantt" is gated on the
     // same capability (`isGanttView` above), so it gets the identical treatment.
-    if (routeDashboardView && ((routeDashboardView !== "calendar" && routeDashboardView !== "gantt") || canViewProductionCalendar)) return routeDashboardView;
+    if (routeDashboardView && ((routeDashboardView !== "calendar" && routeDashboardView !== "timeline") || canViewProductionCalendar)) return routeDashboardView;
     if (effectiveRouteCalendar && canViewProductionCalendar) return "calendar";
+    // #427: `initializeDashboardView` reads through the normaliser (a stored `list`/`kanban`/`gantt`
+    // reads as table/board/timeline) and writes the current spelling back once.
     const stored = initializeDashboardView({
-      read: () => window.localStorage.getItem("quincy:dashboard:view"),
-      write: (next) => window.localStorage.setItem("quincy:dashboard:view", next),
+      read: () => window.localStorage.getItem(DASHBOARD_VIEW_KEY),
+      write: (next) => window.localStorage.setItem(DASHBOARD_VIEW_KEY, next),
     });
-    return !canViewProductionCalendar && (stored === "calendar" || stored === "gantt") ? "kanban" : stored;
+    return !canViewProductionCalendar && (stored === "calendar" || stored === "timeline") ? "board" : stored;
   });
   // Captured once at mount, before any explicit List/Kanban selection can overwrite
   // localStorage — the value a fresh bare-route "/" load would show. Restoring TO this fixed
@@ -354,10 +356,11 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   useEffect(() => {
     if (canViewProductionCalendar) return;
     try {
-      // #220: "gantt" is stored-preference-repaired the same way "calendar" already was.
-      const stored = window.localStorage.getItem("quincy:dashboard:view");
-      if (stored === "calendar" || stored === "gantt") {
-        window.localStorage.setItem("quincy:dashboard:view", "kanban");
+      // #220: Timeline is stored-preference-repaired the same way Calendar already was. Read
+      // through the normaliser (#427): a stored `gantt` must not survive the repair.
+      const stored = normalizeDashboardView(window.localStorage.getItem(DASHBOARD_VIEW_KEY));
+      if (stored === "calendar" || stored === "timeline") {
+        window.localStorage.setItem(DASHBOARD_VIEW_KEY, "board");
       }
     } catch { /* Storage can be disabled. */ }
   }, [canViewProductionCalendar]);
@@ -510,7 +513,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // the same production schedule, see `lib/staff-navigation.ts`'s `CAPABILITY_GATED_VIEWS`), minus
   // the extra `calendarState !== null` clause Calendar alone needs (Gantt owns no comparable piece
   // of Dashboard-level state — its `date`/`scale` are local to `ProductionGantt.tsx` itself).
-  const isGanttView = view === "gantt" && !viewingArchived && canViewProductionCalendar;
+  const isGanttView = view === "timeline" && !viewingArchived && canViewProductionCalendar;
   // Published for the rail (#119), mirroring the branch selection above and below (List ~1092,
   // Kanban ~1106) instead of re-deriving `view`/`viewingArchived` a second time, so the two cannot
   // drift: Calendar only when `isCalendarView` itself is true (so a `view` of "calendar" with no
@@ -520,9 +523,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // `useLayoutEffect`, not `useEffect`, so the rail updates in the same paint as the screen; see
   // `lib/dashboard-view-store.ts` for the owner rule.
   const renderedView: DashboardView | "none" = isCalendarView ? "calendar"
-    : isGanttView ? "gantt"
-    : viewingArchived || view === "list" ? "list"
-    : !viewingArchived && view === "kanban" ? "kanban"
+    : isGanttView ? "timeline"
+    : viewingArchived || view === "table" ? "table"
+    : !viewingArchived && view === "board" ? "board"
     : "none";
   const dashboardViewOwnerRef = useRef({});
   useLayoutEffect(() => {
@@ -610,7 +613,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     // #220: "gantt" joins "kanban"/"calendar" here — the rail keeps offering Gantt while archived
     // too (`lib/staff-navigation.ts`'s `DASHBOARD_CHILDREN` is not scope-gated), so an explicit
     // `/?view=gantt` arrival must bounce out of archived exactly like the other two already do.
-    const explicitNonListLocation = routeDashboardView === "kanban" || routeDashboardView === "gantt" || routeDashboardView === "calendar" || locationHasCalendar;
+    const explicitNonListLocation = routeDashboardView === "board" || routeDashboardView === "timeline" || routeDashboardView === "calendar" || locationHasCalendar;
     if (viewingArchived && explicitNonListLocation) {
       if (arrivedAtNewLocation) setProjectScope("active");
       return;
@@ -619,7 +622,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       calendarFallbackLocationRef.current = false;
       // #220: "gantt" is gated on this same capability (see `isGanttView` above) — a role that
       // loses it mid-session while parked on Gantt gets bounced to List exactly like Calendar.
-      if (view === "calendar" || view === "gantt") setView("list");
+      if (view === "calendar" || view === "timeline") setView("table");
       return;
     }
     if (routeDashboardView) {
@@ -746,10 +749,10 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       // #255: a Gantt search commit keeps the Gantt's filters. They live only in the URL, so they
       // are read from the LIVE location at fire time — never from this closure's render-time
       // snapshot, which a filter change since the last render would make stale.
-      else if (currentView === "gantt") {
+      else if (currentView === "timeline") {
         const liveFilters = ganttFiltersFromRoute(ganttRouteOfLocation(currentHistory.getLocation()));
         currentHistory.replace(staffPathFor(ganttRouteFor(liveFilters, q)));
-      } else currentHistory.replace(staffPathFor({ kind: "dashboard", dashboardView: currentView === "calendar" ? "list" : currentView, search: q }));
+      } else currentHistory.replace(staffPathFor({ kind: "dashboard", dashboardView: currentView === "calendar" ? "table" : currentView, search: q }));
     });
     return unregister;
   }, []);
@@ -1004,8 +1007,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     setCalendarInteractionBlocked(false);
     setCalendarSettle({ pending: false, recoveryReason: null });
     calendarFallbackLocationRef.current = false;
-    setView("list");
-    try { window.localStorage.setItem("quincy:dashboard:view", "list"); } catch { /* Storage can be disabled by the browser. */ }
+    setView("table");
+    writeDashboardViewPreference({ write: (next) => window.localStorage.setItem(DASHBOARD_VIEW_KEY, next) }, "table");
     // #217 fix round 8, Sol review, item 3 (MEDIUM). A bare `history.push("/")` dropped any
     // committed `q` the Calendar facet URL carried -- a Calendar mutation returning 401/403 while
     // parked at `/?view=calendar&...&q=smith` landed on the bare `/`, and `ShellRoute`'s own sync
@@ -1014,11 +1017,11 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     // this file already carries a committed-or-mid-debounce search across a route change.
     // #221 PR B2: the Gantt reports access loss through this same handler, so its facet URL
     // (`/?view=gantt&...`) is rewritten to the list the same way, committed q carried.
-    if (view === "calendar" || routeCalendar !== null || locationHasCalendar || view === "gantt" || routeGantt !== null) {
+    if (view === "calendar" || routeCalendar !== null || locationHasCalendar || view === "timeline" || routeGantt !== null) {
       const currentSearch = takeDashboardSearchForNavigation(currentUserId);
       history.push(staffPathFor({ kind: "dashboard", ...(currentSearch ? { search: currentSearch } : {}) }));
     }
-    window.setTimeout(() => document.querySelector<HTMLElement>('[data-focus-key="dashboard-view-list"]')?.focus(), 0);
+    window.setTimeout(() => document.querySelector<HTMLElement>('[data-focus-key="dashboard-view-table"]')?.focus(), 0);
   }, [currentUserId, history, locationHasCalendar, routeCalendar, routeGantt, view]);
 
   const projectHrefFor = useCallback((projectId: string) => `/projects/${encodeURIComponent(projectId)}`, []);
@@ -1036,7 +1039,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       const nextCalendar = calendarState ?? initializeDashboardCalendarState({ kind: "dashboard" }, calendarStorage, { now: Date.now(), isPhone: window.matchMedia?.("(max-width: 720px)").matches ?? false });
       calendarFallbackLocationRef.current = false;
       setView("calendar");
-      try { window.localStorage.setItem("quincy:dashboard:view", "calendar"); } catch { /* Storage can be disabled by the browser. */ }
+      writeDashboardViewPreference({ write: (value) => window.localStorage.setItem(DASHBOARD_VIEW_KEY, value) }, "calendar");
       // #217 fix round 8, Sol review, item 2 (MEDIUM). No Calendar-state search read here any
       // more, and no `setDashboardSearchDraft` call to clobber the draft with it: reading
       // `effectiveRouteCalendar.search`/`calendarState.search` (the last COMMITTED `q`) and
@@ -1052,7 +1055,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     const alreadyAtView = routeDashboardView === next;
     const shouldPushViewRoute = !alreadyAtView || currentDashboardRoute?.kind === "dashboard" && !routeDashboardView;
     setView(next);
-    try { window.localStorage.setItem("quincy:dashboard:view", next); } catch { /* Storage can be disabled by the browser. */ }
+    writeDashboardViewPreference({ write: (value) => window.localStorage.setItem(DASHBOARD_VIEW_KEY, value) }, next);
     if (shouldPushViewRoute) {
       setCalendarSettle({ pending: false, recoveryReason: null });
       calendarFallbackLocationRef.current = false;
@@ -1072,16 +1075,16 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   function selectProjectScope(next: ProjectScope) {
     if (movementInteractionActive || calendarInteractionBlocked) return;
     setProjectScope(next);
-    if (next === "archived" && view !== "list") {
+    if (next === "archived" && view !== "table") {
       const leavingCalendar = view === "calendar";
       if (leavingCalendar) setCalendarSettle({ pending: false, recoveryReason: null });
-      setView("list");
-      try { window.localStorage.setItem("quincy:dashboard:view", "list"); } catch { /* Storage can be disabled by the browser. */ }
+      setView("table");
+      writeDashboardViewPreference({ write: (value) => window.localStorage.setItem(DASHBOARD_VIEW_KEY, value) }, "table");
       calendarFallbackLocationRef.current = false;
-      if (leavingCalendar || routeCalendar !== null || locationHasCalendar || routeDashboardView !== "list") {
+      if (leavingCalendar || routeCalendar !== null || locationHasCalendar || routeDashboardView !== "table") {
         // Same flush-then-read as `selectView` above.
         const currentSearch = takeDashboardSearchForNavigation(currentUserId);
-        history.push(staffPathFor({ kind: "dashboard", dashboardView: "list", ...(currentSearch ? { search: currentSearch } : {}) }));
+        history.push(staffPathFor({ kind: "dashboard", dashboardView: "table", ...(currentSearch ? { search: currentSearch } : {}) }));
       }
     }
   }
@@ -1454,15 +1457,15 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         {!viewingArchived && <>
         <Eyebrow className="max-[721px]:basis-full max-[721px]:-mb-[var(--space-1)]">View</Eyebrow>
         <div className={SEGMENT_GROUP} aria-label="Dashboard view">
-          <button className={cn(SEGMENT_BUTTON, view === "list" && "is-active")} type="button" data-focus-key="dashboard-view-list" data-active={view === "list" ? "true" : undefined} disabled={movementInteractionActive || calendarInteractionBlocked} onClick={() => selectView("list")}>List</button>
-          <button className={cn(SEGMENT_BUTTON, view === "kanban" && "is-active")} type="button" data-focus-key="dashboard-view-kanban" data-active={view === "kanban" ? "true" : undefined} disabled={movementInteractionActive || calendarInteractionBlocked} onClick={() => selectView("kanban")}>Kanban</button>
+          <button className={cn(SEGMENT_BUTTON, view === "table" && "is-active")} type="button" data-focus-key="dashboard-view-table" data-active={view === "table" ? "true" : undefined} disabled={movementInteractionActive || calendarInteractionBlocked} onClick={() => selectView("table")}>Table</button>
+          <button className={cn(SEGMENT_BUTTON, view === "board" && "is-active")} type="button" data-focus-key="dashboard-view-board" data-active={view === "board" ? "true" : undefined} disabled={movementInteractionActive || calendarInteractionBlocked} onClick={() => selectView("board")}>Board</button>
           {/* #220: gated on the same `canViewProductionCalendar` capability Calendar uses — see
               `lib/staff-navigation.ts`'s `CAPABILITY_GATED_VIEWS`, which gates the rail's own Gantt
               child identically. */}
-          {canViewProductionCalendar && <button className={cn(SEGMENT_BUTTON, view === "gantt" && "is-active")} type="button" data-focus-key="dashboard-view-gantt" data-active={view === "gantt" ? "true" : undefined} disabled={movementInteractionActive || calendarInteractionBlocked} onClick={() => selectView("gantt")}>Gantt</button>}
+          {canViewProductionCalendar && <button className={cn(SEGMENT_BUTTON, view === "timeline" && "is-active")} type="button" data-focus-key="dashboard-view-timeline" data-active={view === "timeline" ? "true" : undefined} disabled={movementInteractionActive || calendarInteractionBlocked} onClick={() => selectView("timeline")}>Timeline</button>}
           {canViewProductionCalendar && <button className={cn(SEGMENT_BUTTON, view === "calendar" && "is-active")} type="button" data-focus-key="dashboard-view-calendar" data-active={view === "calendar" ? "true" : undefined} disabled={movementInteractionActive || calendarInteractionBlocked} onClick={() => selectView("calendar")}>Calendar</button>}
         </div>
-        {!viewingArchived && view === "kanban" && (
+        {!viewingArchived && view === "board" && (
           <div className="max-[721px]:basis-full">
             <Select
               value={effectiveKanbanSort}
@@ -1563,8 +1566,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
             Calendar. The Calendar and the Gantt are never mounted together, so they share the
             Dashboard's one scheduling gate. */}
         {isGanttView && (
-          <ViewLoadBoundary viewLabel="Gantt">
-            <Suspense fallback={<div className={cn("empty", VIEW_STATE_BOX)} role="status">Loading gantt…</div>}>
+          <ViewLoadBoundary viewLabel="timeline">
+            <Suspense fallback={<div className={cn("empty", VIEW_STATE_BOX)} role="status">Loading timeline…</div>}>
               <ProductionGantt
                 identity={identity}
                 q={committedQuery}
@@ -1608,7 +1611,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           </EmptyState>
         )}
 
-        {!isCalendarView && !isGanttView && !isLoading && !error && projects.length > 0 && (viewingArchived || view === "list") && (
+        {!isCalendarView && !isGanttView && !isLoading && !error && projects.length > 0 && (viewingArchived || view === "table") && (
           <div className="flex min-h-0 flex-1 flex-col border-solid border-[length:var(--border-width-hair)] border-border bg-card" aria-label="Projects list">
             <div data-testid="project-list-header" className={cn(PROW_GRID, "shrink-0 bg-secondary cursor-default")}>
               <div />
@@ -1622,7 +1625,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           </div>
         )}
 
-        {!isCalendarView && !isGanttView && !isLoading && !error && !viewingArchived && projects.length > 0 && view === "kanban" && (
+        {!isCalendarView && !isGanttView && !isLoading && !error && !viewingArchived && projects.length > 0 && view === "board" && (
           <ProjectKanbanBoard2
             projects={projects}
             activeStages={activeStages}

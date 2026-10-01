@@ -52,8 +52,8 @@ afterEach(async () => { if (root) await act(async () => root!.unmount()); root =
 
 describe("App Dashboard route transport", () => {
   it.each([
-    "/?view=list",
-    "/?view=kanban",
+    "/?view=table",
+    "/?view=board",
   ])("preserves a canonical Admin Dashboard route (%s)", async (location) => {
     const host = await renderAt(location);
     expect(`${window.location.pathname}${window.location.search}`).toBe(location);
@@ -69,8 +69,8 @@ describe("App Dashboard route transport", () => {
 
   it("does not mount Dashboard for a retired project facet", async () => {
     sessionState.value = { data: { user: { id: "photographer", name: "Photographer", role: "photographer" } }, isPending: false, refetch: vi.fn<() => Promise<void>>() };
-    const host = await renderAt("/?view=list&detail=123e4567-e89b-42d3-a456-426614174000");
-    expect(`${window.location.pathname}${window.location.search}`).toBe("/?view=list&detail=123e4567-e89b-42d3-a456-426614174000");
+    const host = await renderAt("/?view=table&detail=123e4567-e89b-42d3-a456-426614174000");
+    expect(`${window.location.pathname}${window.location.search}`).toBe("/?view=table&detail=123e4567-e89b-42d3-a456-426614174000");
     expect(host.textContent).toContain("That page is not available.");
     expect(host.querySelector("[data-calendar-route]")).toBeNull();
   });
@@ -91,7 +91,7 @@ describe("App Dashboard route transport", () => {
   it("keeps explicit Dashboard routes stable on Back/Forward arrivals", async () => {
     const host = await renderAt("/");
     expect(`${window.location.pathname}${window.location.search}`).toBe("/");
-    for (const facet of ["/?view=kanban", "/?view=list", "/?view=calendar&date=2026-08-30&sub=agenda&layers=project%2Cchecklist"]) {
+    for (const facet of ["/?view=board", "/?view=table", "/?view=calendar&date=2026-08-30&sub=agenda&layers=project%2Cchecklist"]) {
       await act(async () => { window.history.replaceState(null, "", facet); window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
       expect(`${window.location.pathname}${window.location.search}`).toBe(facet);
     }

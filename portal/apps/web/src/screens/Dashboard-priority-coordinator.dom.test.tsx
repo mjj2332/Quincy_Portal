@@ -1125,8 +1125,8 @@ describe("a priority save locks only its own card (#306)", () => {
   it("(a) keeps the view buttons and the sort control enabled while a priority POST is in flight", async () => {
     await renderAndSaveFirst();
     const buttons = [...host.querySelectorAll<HTMLButtonElement>("button")];
-    const list = buttons.find((button) => button.textContent === "List")!;
-    const kanban = buttons.find((button) => button.textContent === "Kanban")!;
+    const list = buttons.find((button) => button.textContent === "Table")!;
+    const kanban = buttons.find((button) => button.textContent === "Board")!;
     expect(list.disabled).toBe(false);
     expect(kanban.disabled).toBe(false);
     const sort = host.querySelector<HTMLElement>('[role="combobox"][aria-label="Sort Kanban board"]')!;
@@ -1143,7 +1143,7 @@ describe("a priority save locks only its own card (#306)", () => {
     await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="move-second"]')!.click(); await Promise.resolve(); });
     await flush();
     const buttons = [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')];
-    expect(buttons.map((button) => button.textContent)).toEqual(expect.arrayContaining(["List", "Kanban"]));
+    expect(buttons.map((button) => button.textContent)).toEqual(expect.arrayContaining(["Table", "Board"]));
     expect(buttons.every((button) => button.disabled)).toBe(true);
     const sort = host.querySelector<HTMLElement>('[role="combobox"][aria-label="Sort Kanban board"]')!;
     expect(sort.hasAttribute("disabled") || sort.getAttribute("aria-disabled") === "true").toBe(true);

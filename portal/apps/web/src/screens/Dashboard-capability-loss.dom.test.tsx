@@ -113,8 +113,8 @@ describe("a mounted Dashboard losing the Calendar capability (#119)", () => {
       expect(published).toContain("none");
       expect(host.querySelector(`[data-testid="${surface}"]`)).toBeNull();
       const settled = readDashboardView();
-      expect(settled === "list" || settled === "kanban").toBe(true);
-      expect(dashboardViewControlActive(host)).toBe(settled === "list" ? "List" : "Kanban");
+      expect(settled === "table" || settled === "board").toBe(true);
+      expect(dashboardViewControlActive(host)).toBe(settled === "table" ? "Table" : "Board");
     } finally {
       unsubscribe();
     }

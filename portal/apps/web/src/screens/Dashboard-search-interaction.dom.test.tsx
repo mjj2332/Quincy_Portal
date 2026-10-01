@@ -201,11 +201,11 @@ describe("Dashboard search results and Kanban movement gating (#217 fix round 1,
   });
 
   it("item 2: pointer/keyboard drag issues no mutation while searching (last-line-of-defence guard)", async () => {
-    window.history.replaceState(null, "", "/?view=kanban&q=smith");
+    window.history.replaceState(null, "", "/?view=board&q=smith");
     // #217 build, step 4: `Dashboard.tsx` reads the committed `q` from the route at render; nothing adopts it --
     // `ShellRoute` only syncs the input DRAFT from the location (`syncDashboardSearchDraftFromLocation`, `lib/app-router.tsx`).
     // Mirrored here directly, matching a real arrival.
-    const route = parseStaffLocation("/?view=kanban&q=smith");
+    const route = parseStaffLocation("/?view=board&q=smith");
     if (route.kind === "dashboard") syncDashboardSearchDraftFromLocation(dashboardSearchOf(route), "admin-1");
     apiGetMock.mockImplementation((path) => {
       if (!path.startsWith("/api/projects")) return Promise.resolve({});
@@ -228,7 +228,7 @@ describe("Dashboard search results and Kanban movement gating (#217 fix round 1,
   });
 
   it("item 2: the keyboard reorder arrows do not render while searching", async () => {
-    window.history.replaceState(null, "", "/?view=kanban&q=smith");
+    window.history.replaceState(null, "", "/?view=board&q=smith");
     apiGetMock.mockImplementation((path) => (path.startsWith("/api/projects") ? Promise.resolve(fullBoard) : Promise.resolve({})));
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" role="admin" />); await Promise.resolve(); }); await flush();
     expect(host.querySelector('[data-focus-key^="arrow-up:"]')).toBeNull();
@@ -236,7 +236,7 @@ describe("Dashboard search results and Kanban movement gating (#217 fix round 1,
   });
 
   it("item 2: the Move-to trigger is disabled while searching", async () => {
-    window.history.replaceState(null, "", "/?view=kanban&q=smith");
+    window.history.replaceState(null, "", "/?view=board&q=smith");
     apiGetMock.mockImplementation((path) => (path.startsWith("/api/projects") ? Promise.resolve(fullBoard) : Promise.resolve({})));
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" role="admin" />); await Promise.resolve(); }); await flush();
     const triggers = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="kanban2-move-to"]')];

@@ -117,11 +117,11 @@ describe("Dashboard contains a stale lazy view chunk (#292)", () => {
   }
 
   it.each([
-    ["Gantt", "ProductionGantt-OLD.js", "Reload to open the Gantt."],
+    ["Timeline", "ProductionGantt-OLD.js", "Reload to open the timeline."],
     ["Calendar", "ProductionEventCalendar-OLD.js", "Reload to open the calendar."],
   ])("keeps a stale %s chunk inside the view region, and shows it again on return", async (label, chunk, copy) => {
     await render();
-    expect(switcherButton("Kanban")?.getAttribute("data-active")).toBe("true");
+    expect(switcherButton("Board")?.getAttribute("data-active")).toBe("true");
     expect(host.querySelector('[data-testid="dashboard-board"]')).toBeTruthy();
 
     await clickView(label);
@@ -133,7 +133,7 @@ describe("Dashboard contains a stale lazy view chunk (#292)", () => {
     // The chunk that failed is the one named in the error.
     expect(consoleError.mock.calls.flat().map(String).join("\n")).toContain(chunk);
 
-    await clickView("Kanban");
+    await clickView("Board");
     expect(viewLoadError()).toBeNull();
     expect(host.querySelector('[data-testid="dashboard-board"]')).toBeTruthy();
     expectShellIntact();

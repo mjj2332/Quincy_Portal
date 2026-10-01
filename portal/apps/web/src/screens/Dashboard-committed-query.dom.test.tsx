@@ -156,9 +156,9 @@ async function keydown(target: EventTarget, init: KeyboardEventInit) {
 }
 
 describe("Dashboard's committed query is derived from the route, not adopted into the store (#217 build, step 4)", () => {
-  it("(a) a role without Calendar capability, at /?view=list&q=smith: the projects request carries q, the chip shows, and Kanban movement is gated", async () => {
+  it("(a) a role without Calendar capability, at /?view=table&q=smith: the projects request carries q, the chip shows, and Kanban movement is gated", async () => {
     authState.role = "photographer";
-    window.history.replaceState(null, "", "/?view=list&q=smith");
+    window.history.replaceState(null, "", "/?view=table&q=smith");
     await act(async () => { root.render(<ShellRouteHarness userId="user-1" role="photographer" />); await Promise.resolve(); });
     await settle();
 
@@ -169,9 +169,9 @@ describe("Dashboard's committed query is derived from the route, not adopted int
     // Movement gating: switch to Kanban (the search must survive the switch) and confirm every
     // Move-to trigger the mocked board renders is disabled -- the last-line-of-defence guard
     // `canMoveStages` feeds, computed from `committedQuery`, not the store.
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Kanban")?.click(); await Promise.resolve(); });
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Board")?.click(); await Promise.resolve(); });
     await settle();
-    expect(window.location.search).toContain("view=kanban");
+    expect(window.location.search).toContain("view=board");
     expect(window.location.search).toContain("q=smith");
     const triggers = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="kanban2-move-to"]')];
     expect(triggers.length).toBeGreaterThan(0);
@@ -273,7 +273,7 @@ describe("Dashboard's committed query is derived from the route, not adopted int
 
       // Back to a DIFFERENT, q-less location within the 300ms debounce window.
       act(() => {
-        window.history.pushState(null, "", "/?view=list");
+        window.history.pushState(null, "", "/?view=table");
         window.dispatchEvent(new PopStateEvent("popstate"));
       });
 
@@ -355,7 +355,7 @@ describe("Dashboard's committed query is derived from the route, not adopted int
   });
 
   it("(f1) the chip's x clears the URL, the chip, the input and the list in one step", async () => {
-    window.history.replaceState(null, "", "/?view=list&q=smith");
+    window.history.replaceState(null, "", "/?view=table&q=smith");
     await act(async () => { root.render(<ShellRouteHarness userId="user-1" role="admin" />); await Promise.resolve(); });
     await settle();
     expect(host.querySelector('[data-testid="dashboard-search-chip"]')).not.toBeNull();
@@ -372,8 +372,8 @@ describe("Dashboard's committed query is derived from the route, not adopted int
     await settle();
     await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 5)); });
 
-    expect(document.activeElement).toBe(host.querySelector('[data-focus-key="dashboard-view-list"]'));
-    expect(window.location.search).toBe("?view=list");
+    expect(document.activeElement).toBe(host.querySelector('[data-focus-key="dashboard-view-table"]'));
+    expect(window.location.search).toBe("?view=table");
     expect(host.querySelector('[data-testid="dashboard-search-chip"]')).toBeNull();
     expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')?.value).toBe("");
     const projectsCalls = apiGetMock.mock.calls.map(([path]) => path).filter((path) => path.startsWith("/api/projects"));
@@ -381,7 +381,7 @@ describe("Dashboard's committed query is derived from the route, not adopted int
   });
 
   it("(f2) Escape (a real keydown on the ShellSearch input) clears the URL, the chip, the input and the list in one step", async () => {
-    window.history.replaceState(null, "", "/?view=list&q=smith");
+    window.history.replaceState(null, "", "/?view=table&q=smith");
     await act(async () => { root.render(<ShellRouteHarness userId="user-1" role="admin" />); await Promise.resolve(); });
     await settle();
     expect(host.querySelector('[data-testid="dashboard-search-chip"]')).not.toBeNull();
@@ -394,7 +394,7 @@ describe("Dashboard's committed query is derived from the route, not adopted int
     await keydown(input, { key: "Escape" });
     await settle();
 
-    expect(window.location.search).toBe("?view=list");
+    expect(window.location.search).toBe("?view=table");
     expect(host.querySelector('[data-testid="dashboard-search-chip"]')).toBeNull();
     expect(input.value).toBe("");
     const projectsCalls = apiGetMock.mock.calls.map(([path]) => path).filter((path) => path.startsWith("/api/projects"));
@@ -410,7 +410,7 @@ describe("Dashboard's committed query is derived from the route, not adopted int
 // stayed on screen as though they were the new key's own confirmed result.
 describe("Dashboard never accepts placeholder rows as the new committed query's own result (Sol review round 1, item 2)", () => {
   it("(i) a committed search whose fetch is DEFERRED still renders the previous rows while pending, then the error state (not the previous rows) once it's REJECTED", async () => {
-    window.history.replaceState(null, "", "/?view=list");
+    window.history.replaceState(null, "", "/?view=table");
     await act(async () => { root.render(<ShellRouteHarness userId="user-1" role="admin" />); await Promise.resolve(); });
     await settle();
     expect([...host.querySelectorAll('[data-testid="project-list-row"]')]).toHaveLength(2);
@@ -422,7 +422,7 @@ describe("Dashboard never accepts placeholder rows as the new committed query's 
     });
 
     act(() => {
-      window.history.pushState(null, "", "/?view=list&q=smith");
+      window.history.pushState(null, "", "/?view=table&q=smith");
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
     await settle();
@@ -466,7 +466,7 @@ describe("Dashboard never accepts placeholder rows as the new committed query's 
     // fallback, indistinguishable from acceptance by content alone -- see that item's own Dashboard.
     // tsx fix and its test (m) for the full mechanism this reuses).
     const testQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    window.history.replaceState(null, "", "/?view=list");
+    window.history.replaceState(null, "", "/?view=table");
     await act(async () => {
       root.render(<QueryClientProvider client={testQueryClient}><ShellRouteHarness userId="user-1" role="admin" /></QueryClientProvider>);
       await Promise.resolve();
@@ -488,7 +488,7 @@ describe("Dashboard never accepts placeholder rows as the new committed query's 
     });
 
     act(() => {
-      window.history.pushState(null, "", "/?view=list&q=smith");
+      window.history.pushState(null, "", "/?view=table&q=smith");
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
     await settle();

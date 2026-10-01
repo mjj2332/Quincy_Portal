@@ -353,12 +353,12 @@ describe("the railed shell's rail, header, breadcrumb and Sheet (#112, #426)", (
   });
 
   it("reads Home › Dashboard › Kanban, and clicking Dashboard changes the location", async () => {
-    const host = await renderAt("/?view=kanban");
+    const host = await renderAt("/?view=board");
     const crumb = host.querySelector('[data-testid="shell-breadcrumb"]')!;
     expect(crumb.textContent).toContain("Home");
     expect(crumb.textContent).toContain("Dashboard");
-    expect(crumb.textContent).toContain("Kanban");
-    expect(crumb.querySelector('[aria-current="page"]')?.textContent?.trim()).toBe("Kanban");
+    expect(crumb.textContent).toContain("Board");
+    expect(crumb.querySelector('[aria-current="page"]')?.textContent?.trim()).toBe("Board");
 
     // Home › Dashboard › Kanban is 3 segments, so 2 separators — asserted structurally (every
     // `li` that is not a separator is a segment) rather than hard-coding "2", so this still means
@@ -382,7 +382,7 @@ describe("the railed shell's rail, header, breadcrumb and Sheet (#112, #426)", (
   });
 
   it("wide header contains no button and exactly one nav, and every a sits inside the nav (#122)", async () => {
-    const host = await renderAt("/?view=kanban");
+    const host = await renderAt("/?view=board");
     const header = host.querySelector('[data-testid="shell-header"]')!;
     // The breadcrumb nav is the only interactive landmark in ShellHeader while wide.
     expect(header.querySelectorAll("button")).toHaveLength(0);
@@ -454,13 +454,13 @@ describe("the railed shell's rail, header, breadcrumb and Sheet (#112, #426)", (
     });
 
     it("clicking a Sheet nav link closes it", async () => {
-      const host = await renderAt("/?view=kanban");
+      const host = await renderAt("/?view=board");
       await resizeTo(600);
       await tick();
 
       await click(sheetTrigger(host)!);
       const sheet = document.querySelector('[data-testid="rail-sheet"]')!;
-      // The Dashboard link's own href ("/") differs from the current "/?view=kanban", so
+      // The Dashboard link's own href ("/") differs from the current "/?view=board", so
       // following it is a genuine location change RailedShell's close-on-location effect reacts to.
       const dashboardLink = [...sheet.querySelectorAll('[data-testid="navigation-rail-link"]')]
         .find((a) => a.textContent?.trim() === "Dashboard")! as HTMLAnchorElement;
@@ -620,7 +620,7 @@ describe("the railed shell's rail, header, breadcrumb and Sheet (#112, #426)", (
       // The current route's link publishes the same location, so the close-on-location effect alone
       // would leave the Sheet open. (The Dashboard view child links this once clicked are gone, #426;
       // the Dashboard link itself is the current page on every Dashboard view.)
-      const host = await renderAt("/?view=kanban");
+      const host = await renderAt("/?view=board");
       await resizeTo(771);
       await tick();
 
@@ -763,12 +763,12 @@ describe("⌘K project search (#217, replacing #122 P3's navigate-then-latch)", 
   });
 
   it("wide, already on a Dashboard view: opens the popover and focuses the input without touching the URL", async () => {
-    await renderAt("/?view=kanban");
+    await renderAt("/?view=board");
 
     await keydown(window, { key: "k", metaKey: true });
     await waitFor(() => expect(document.querySelector('[data-testid="shell-search"]')).not.toBeNull());
 
-    expect(window.location.search).toBe("?view=kanban");
+    expect(window.location.search).toBe("?view=board");
     expect(document.activeElement).toBe(document.querySelector('[data-testid="shell-search"]'));
   });
 
@@ -919,7 +919,7 @@ describe("the rail's Dashboard link carries the live search; the view links are 
   }
 
   it("renders no Dashboard view child links on any Dashboard route, wide or narrow", async () => {
-    const host = await renderAt("/?view=list");
+    const host = await renderAt("/?view=table");
     expect(host.querySelectorAll('[data-testid="navigation-rail-child-link"]')).toHaveLength(0);
     await resizeTo(600);
     await tick();
@@ -1027,11 +1027,11 @@ describe("ShellRoute's draft-from-URL sync (#217 build, step 3)", () => {
   });
 
   it("a Dashboard route with no q resets a leftover draft to empty on arrival", async () => {
-    const host = await renderAt("/?view=list&q=smith");
+    const host = await renderAt("/?view=table&q=smith");
     expect((await openRailSearch(host)).value).toBe("smith");
 
     await act(async () => {
-      window.history.pushState(null, "", "/?view=list");
+      window.history.pushState(null, "", "/?view=table");
       window.dispatchEvent(new PopStateEvent("popstate"));
       await Promise.resolve();
     });

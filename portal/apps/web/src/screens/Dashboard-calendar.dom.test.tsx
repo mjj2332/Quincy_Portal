@@ -176,8 +176,8 @@ describe("Dashboard Calendar routing", () => {
     window.localStorage.setItem("quincy:dashboard:view", "calendar");
     await render({ role: "photographer" });
     expect([...host.querySelectorAll("button")].some((button) => button.textContent === "Calendar")).toBe(false);
-    expect([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Kanban")?.getAttribute("data-active")).toBe("true");
-    expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("kanban");
+    expect([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Board")?.getAttribute("data-active")).toBe("true");
+    expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("board");
     expect(host.querySelector('[data-testid="event-calendar-body"]')).toBeNull();
     expect(apiGetMock.mock.calls.some(([path]) => path.startsWith("/api/production-calendar"))).toBe(false);
   });
@@ -188,64 +188,64 @@ describe("Dashboard Calendar routing", () => {
     expect(window.location.pathname).toBe("/");
     expect(window.location.search).toContain("view=calendar");
     expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("calendar");
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
-    expect(`${window.location.pathname}${window.location.search}`).toBe("/?view=list");
-    expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("list");
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Table")?.click(); await Promise.resolve(); });
+    expect(`${window.location.pathname}${window.location.search}`).toBe("/?view=table");
+    expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("table");
   });
 
   it("keeps List and Kanban as local-storage views with a focusable List project anchor", async () => {
     await render();
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
-    expect(window.location.search).toBe("?view=list");
-    expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("list");
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Table")?.click(); await Promise.resolve(); });
+    expect(window.location.search).toBe("?view=table");
+    expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("table");
     const row = host.querySelector<HTMLAnchorElement>('[data-testid="project-list-row"]');
     expect(row?.getAttribute("href")).toBe("/projects/33333333-3333-4333-8333-333333333333");
     expect(row?.tabIndex).toBe(0);
     expect(row?.querySelector("button, select")).toBeNull();
 
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Kanban")?.click(); await Promise.resolve(); });
-    expect(window.location.search).toBe("?view=kanban");
-    expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("kanban");
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Board")?.click(); await Promise.resolve(); });
+    expect(window.location.search).toBe("?view=board");
+    expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("board");
   });
 
   it("opens List and Kanban project anchors on the Full Workspace", async () => {
     await render();
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Table")?.click(); await Promise.resolve(); });
     const row = host.querySelector<HTMLAnchorElement>('[data-testid="project-list-row"]')!;
     expect(row.href).toContain("/projects/33333333-3333-4333-8333-333333333333");
     await act(async () => { row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 })); await Promise.resolve(); });
     expect(window.location.pathname).toBe("/projects/33333333-3333-4333-8333-333333333333");
     expect(window.location.search).toBe("");
 
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Kanban")?.click(); await Promise.resolve(); });
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Board")?.click(); await Promise.resolve(); });
     expect(host.querySelector<HTMLAnchorElement>('[data-testid="mock-kanban-project-link"]')?.getAttribute("href")).toBe("/projects/33333333-3333-4333-8333-333333333333");
   });
 
   it("takes List/Kanban view state from the URL across history arrivals", async () => {
-    window.history.replaceState(null, "", "/?view=list");
+    window.history.replaceState(null, "", "/?view=table");
     await act(async () => { root.render(<DashboardRouteHarness />); await Promise.resolve(); await Promise.resolve(); });
-    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "List")?.getAttribute("data-active")).toBe("true");
-    window.history.replaceState(null, "", "/?view=kanban");
+    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "Table")?.getAttribute("data-active")).toBe("true");
+    window.history.replaceState(null, "", "/?view=board");
     await act(async () => { window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
-    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "Kanban")?.getAttribute("data-active")).toBe("true");
+    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "Board")?.getAttribute("data-active")).toBe("true");
   });
 
   it("restores the bare-route remembered view on a real Back navigation past an explicit switch", async () => {
-    window.localStorage.setItem("quincy:dashboard:view", "list");
+    window.localStorage.setItem("quincy:dashboard:view", "table");
     // Establish a known bare "/" history entry to return to — afterEach's replaceState from a
     // prior test only overwrites the current entry, it doesn't guarantee a clean stack, so a
     // genuine back() needs its own pushed anchor point.
     window.history.pushState(null, "", "/");
     await render();
-    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "List")?.getAttribute("data-active")).toBe("true");
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Kanban")?.click(); await Promise.resolve(); });
-    expect(window.location.search).toBe("?view=kanban");
-    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "Kanban")?.getAttribute("data-active")).toBe("true");
+    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "Table")?.getAttribute("data-active")).toBe("true");
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Board")?.click(); await Promise.resolve(); });
+    expect(window.location.search).toBe("?view=board");
+    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "Board")?.getAttribute("data-active")).toBe("true");
     // A REAL Back pops the history entry selectView just pushed, landing back on bare "/" — the
     // view must revert to what that bare route originally showed, not stay on Kanban.
     await act(async () => { window.history.back(); await new Promise((resolve) => setTimeout(resolve, 0)); });
     expect(window.location.search).toBe("");
-    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "List")?.getAttribute("data-active")).toBe("true");
+    expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')].find((button) => button.textContent === "Table")?.getAttribute("data-active")).toBe("true");
   });
 
   it("opens scheduled Calendar project anchors on the Full Workspace", async () => {
@@ -282,10 +282,10 @@ describe("Dashboard Calendar routing", () => {
 
   it("sanitizes shared search input in List and carries it into a canonical Calendar URL", async () => {
     await render();
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Table")?.click(); await Promise.resolve(); });
     await typeSearch(`smith\\${String.fromCharCode(7)} street`);
     expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith street");
-    expect(window.location.search).toBe("?view=list");
+    expect(window.location.search).toBe("?view=table");
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Calendar")?.click(); await Promise.resolve(); });
     expect(window.location.search).toContain("view=calendar");
     expect(window.location.search).toContain("q=smith+street");
@@ -301,7 +301,7 @@ describe("Dashboard Calendar routing", () => {
   // last wrote there, not necessarily what is live in the store right now.
   it("canonicalises a bare `/?view=calendar` arrival (the rail's own link) with the LIVE search, not a stale remembered one", async () => {
     await render({ calendar: { ...routeCalendar, editorIds: [], search: "oldterm" } });
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Table")?.click(); await Promise.resolve(); });
     await typeSearch("newterm");
     // Still mid-debounce -- the URL has not been written yet, only the store's `draft` has changed.
     expect(window.location.search).not.toContain("newterm");
@@ -406,11 +406,11 @@ describe("Dashboard Calendar routing", () => {
   // must not be disabled just because a search is active.
   it("type then switch view inside the debounce carries q into the new view's URL", async () => {
     await render();
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Table")?.click(); await Promise.resolve(); });
     await typeSearch("smith");
     // Switched BEFORE the 300ms debounce elapses -- the pending draft must not be dropped.
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Kanban")?.click(); await Promise.resolve(); });
-    expect(window.location.search).toContain("view=kanban");
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Board")?.click(); await Promise.resolve(); });
+    expect(window.location.search).toContain("view=board");
     expect(window.location.search).toContain("q=smith");
   });
 
@@ -423,7 +423,7 @@ describe("Dashboard Calendar routing", () => {
   // writer being gone, not an explicit `cancelPendingDashboardSearchWrite()` call in the cleanup.
   it("cancels a pending debounce on unmount: no later commit and no later URL write", async () => {
     await render();
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Table")?.click(); await Promise.resolve(); });
     await typeSearch("smith");
     const locationBeforeUnmount = window.location.search;
     // Still mid-debounce: the draft is live, but the URL hasn't been written yet.
@@ -455,10 +455,10 @@ describe("Dashboard Calendar routing", () => {
     await typeSearch("smith");
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 350)); });
     expect(window.location.search).toContain("q=smith");
-    const listButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "List")!;
+    const listButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Table")!;
     expect(listButton.disabled).toBe(false);
     await act(async () => { listButton.click(); await Promise.resolve(); });
-    expect(window.location.search).toContain("view=list");
+    expect(window.location.search).toContain("view=table");
     expect(window.location.search).toContain("q=smith");
   });
 
@@ -498,29 +498,29 @@ describe("Dashboard Calendar routing", () => {
   it("leaves Calendar when Archived is selected", async () => {
     await render({ calendar: routeCalendar });
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Archived")?.click(); await Promise.resolve(); });
-    expect(`${window.location.pathname}${window.location.search}`).toBe("/?view=list");
+    expect(`${window.location.pathname}${window.location.search}`).toBe("/?view=table");
     expect(host.querySelector('[data-testid="event-calendar-body"]')).toBeNull();
     expect(host.textContent).toContain("Archived projects");
   });
 
   it("enters Archived from Kanban by selecting and recording List", async () => {
     await render();
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Kanban")?.click(); await Promise.resolve(); });
-    expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("kanban");
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Board")?.click(); await Promise.resolve(); });
+    expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("board");
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Archived")?.click(); await Promise.resolve(); });
-    expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("list");
+    expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("table");
     expect(host.textContent).toContain("Archived projects");
   });
 
   // #217 fix round 2, item 1 (Sol's diff review). `selectProjectScope` never pushes a URL when
-  // `next === "archived"` and `view` is ALREADY "list" (the common case) -- the class-level bug is
+  // `next === "archived"` and `view` is ALREADY "table" (the common case) -- the class-level bug is
   // that `viewingArchived` changing recreates `navigateCalendar` (its own dep list), which
   // re-registers the search-store's URL writer, and a re-registration must not strand a search
   // that is still mid-debounce (or, defensively, one already committed) regardless of which
   // specific call site triggered it.
   it("type then select Archived while already on List (inside the debounce) still carries q into the URL", async () => {
     await render();
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Table")?.click(); await Promise.resolve(); });
     await typeSearch("smith");
     // Selected BEFORE the 300ms debounce elapses.
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Archived")?.click(); await Promise.resolve(); });
@@ -530,7 +530,7 @@ describe("Dashboard Calendar routing", () => {
 
   it("a committed q survives selecting Archived while already on List", async () => {
     await render();
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Table")?.click(); await Promise.resolve(); });
     await typeSearch("smith");
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 350)); });
     expect(window.location.search).toContain("q=smith");
@@ -540,7 +540,7 @@ describe("Dashboard Calendar routing", () => {
 
   it("disables Dashboard view navigation only while the Calendar accept gate is active", async () => {
     await render({ calendar: routeCalendar });
-    const list = () => [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "List")!;
+    const list = () => [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Table")!;
     expect(list().disabled).toBe(false);
     await dropDeadline();
     expect(document.querySelector('[data-testid="gantt-deadline-confirm"]'), "the drop never opened the confirm").not.toBeNull();
@@ -551,7 +551,7 @@ describe("Dashboard Calendar routing", () => {
 
   it("allows List/Kanban navigation after a failed Calendar settle without changing Board gates", async () => {
     await render();
-    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Kanban")!.click(); await Promise.resolve(); });
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Board")!.click(); await Promise.resolve(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
     const boardBefore = boardPropsState.value;
     expect(boardBefore).not.toBeNull();
@@ -564,12 +564,12 @@ describe("Dashboard Calendar routing", () => {
     await act(async () => { document.querySelector<HTMLButtonElement>('[data-testid="gantt-deadline-confirm-action"]')!.click(); await Promise.resolve(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 150)); await Promise.resolve(); });
 
-    const list = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "List")!;
-    const kanban = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Kanban")!;
+    const list = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Table")!;
+    const kanban = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Board")!;
     expect(list.disabled).toBe(false);
     expect(kanban.disabled).toBe(false);
     await act(async () => { list.click(); await Promise.resolve(); });
-    expect(`${window.location.pathname}${window.location.search}`).toBe("/?view=list");
+    expect(`${window.location.pathname}${window.location.search}`).toBe("/?view=table");
     await act(async () => { kanban.click(); await Promise.resolve(); });
     expect(boardPropsState.value).toMatchObject({
       movementDisabled: boardBefore!.movementDisabled,

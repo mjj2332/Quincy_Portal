@@ -6,8 +6,11 @@ const decide = (location: string, remembered: string) => dashboardViewChunkToPre
 
 describe("dashboardViewChunkToPreload (#359)", () => {
   it.each([
-    ["gantt", "gantt"],
+    ["timeline", "timeline"],
+    ["gantt", "timeline"], // a stored pre-#427 value
     ["calendar", "calendar"],
+    ["board", null],
+    ["table", null],
     ["kanban", null],
     ["list", null],
   ])("bare / with remembered %s -> %s", (remembered, expected) => {
@@ -15,23 +18,26 @@ describe("dashboardViewChunkToPreload (#359)", () => {
   });
 
   it("an explicit ?view= intent beats the remembered view", () => {
-    expect(decide("/?view=gantt", "kanban")).toBe("gantt");
-    expect(decide("/?view=calendar", "kanban")).toBe("calendar");
-    expect(decide("/?view=kanban", "gantt")).toBeNull();
+    expect(decide("/?view=timeline", "board")).toBe("timeline");
+    expect(decide("/?view=gantt", "board")).toBe("timeline"); // an old URL
+    expect(decide("/?view=calendar", "board")).toBe("calendar");
+    expect(decide("/?view=board", "timeline")).toBeNull();
+    expect(decide("/?view=kanban", "timeline")).toBeNull();
+    expect(decide("/?view=table", "calendar")).toBeNull();
     expect(decide("/?view=list", "calendar")).toBeNull();
   });
 
   it("the canonical Calendar facet URL preloads the Calendar whatever is remembered", () => {
     const calendarRoute = parseStaffLocation("/?view=calendar");
     expect(calendarRoute).toMatchObject({ kind: "dashboard", dashboardView: "calendar" });
-    expect(dashboardViewChunkToPreload({ kind: "dashboard", calendar: {} as never }, "kanban")).toBe("calendar");
+    expect(dashboardViewChunkToPreload({ kind: "dashboard", calendar: {} as never }, "board")).toBe("calendar");
   });
 
   it("returns null for every non-Dashboard route, even with a remembered lazy view", () => {
-    expect(decide("/projects/11111111-1111-4111-8111-111111111111", "gantt")).toBeNull();
+    expect(decide("/projects/11111111-1111-4111-8111-111111111111", "timeline")).toBeNull();
     expect(decide("/admin", "calendar")).toBeNull();
-    expect(decide("/notices", "gantt")).toBeNull();
-    expect(decide("/no-such-page", "gantt")).toBeNull();
+    expect(decide("/notices", "timeline")).toBeNull();
+    expect(decide("/no-such-page", "timeline")).toBeNull();
   });
 });
 

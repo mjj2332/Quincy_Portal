@@ -1,7 +1,7 @@
 /**
  * #255 — the Gantt's filter state, as pure functions between its three spellings:
  *
- * - the URL (`DashboardGanttRoute`, `@quincy/shared`'s `staff-routes.ts` — the ONLY place the
+ * - the URL (`DashboardTimelineRoute`, `@quincy/shared`'s `staff-routes.ts` — the ONLY place the
  *   Gantt's filter state lives; Gantt and Calendar keep independent filter state),
  * - the request (`ProductionGanttFilters`, `lib/production-gantt-query.ts`), and
  * - the filters bar's query (`ProductionGanttFiltersBar`, a ReUI `Filters` chip row, which speaks
@@ -19,7 +19,7 @@ import {
   isDefaultGanttFacet,
   STAGE_PRESENTATION_KEYS,
   type DashboardGanttFacet,
-  type DashboardGanttRoute,
+  type DashboardTimelineRoute,
   type StagePresentationKey,
 } from "@quincy/shared";
 import type { FilterOperator, FilterQuery, FilterRule } from "../components/reui/filters/filters-types";
@@ -38,10 +38,10 @@ export type GanttLegendEntry = StageFilterOption & { color: string; pattern: Sta
 
 export const DEFAULT_GANTT_FACET_FILTERS: ProductionGanttFacetFilters = { editorIds: [], stageKeys: [], delivered: false, completed: false };
 
-/** URL -> the Gantt facets. A route with no `gantt` facet (the bare `/?view=gantt`, or no Gantt
+/** URL -> the Gantt facets. A route with no `gantt` facet (the bare `/?view=timeline`, or no Gantt
  * route at all) reads as the defaults. The route's `search` is not read here: the Dashboard's
  * shared search box owns it. */
-export function ganttFiltersFromRoute(route: Pick<DashboardGanttRoute, "gantt"> | null | undefined): ProductionGanttFacetFilters {
+export function ganttFiltersFromRoute(route: Pick<DashboardTimelineRoute, "gantt"> | null | undefined): ProductionGanttFacetFilters {
   const facet = route?.gantt;
   return {
     editorIds: facet ? [...facet.editorIds] : [],
@@ -65,9 +65,9 @@ export function ganttFacetFor(filters: ProductionGanttFacetFilters): DashboardGa
 }
 
 /** Request -> the full Gantt route, carrying `search` when there is one. */
-export function ganttRouteFor(filters: ProductionGanttFacetFilters, search?: string): DashboardGanttRoute {
+export function ganttRouteFor(filters: ProductionGanttFacetFilters, search?: string): DashboardTimelineRoute {
   const gantt = ganttFacetFor(filters);
-  return { kind: "dashboard", dashboardView: "gantt", ...(search ? { search } : {}), ...(gantt ? { gantt } : {}) };
+  return { kind: "dashboard", dashboardView: "timeline", ...(search ? { search } : {}), ...(gantt ? { gantt } : {}) };
 }
 
 // ---------------------------------------------------------------------------

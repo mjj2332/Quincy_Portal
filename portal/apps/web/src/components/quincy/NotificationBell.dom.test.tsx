@@ -148,7 +148,7 @@ describe("NotificationBell", () => {
 
   it("renders, badge included, inside a collapsed rail", async () => {
     apiGetMock.mockResolvedValue(notificationsResponse(2));
-    const navigation = buildStaffNavigation(parseStaffLocation("/"), "kanban", {
+    const navigation = buildStaffNavigation(parseStaffLocation("/"), "board", {
       adminBackend: true,
       viewProductionCalendar: true,
       viewNoticeBoard: true,

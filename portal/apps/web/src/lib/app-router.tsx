@@ -39,7 +39,7 @@ import { createContext, use, useCallback, useEffect, useLayoutEffect, useMemo, u
 import { createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from "@tanstack/react-router";
 import { dashboardSearchOf, roleHasCapability, type DashboardCalendarState, type Role, type WorkspaceTab } from "@quincy/shared";
 import { pushToast } from "./toast-store";
-import { isDashboardLayerLocation, isSheetLocation, locationStore, parseStaffLocation, readSheetEntryState, staffPathFor, type StaffRoute } from "./router";
+import { canonicalLegacyDashboardLocation, isDashboardLayerLocation, isSheetLocation, locationStore, parseStaffLocation, readSheetEntryState, staffPathFor, type StaffRoute } from "./router";
 import { createDashboardBackdropSource, DashboardLocationContext, type DashboardBackdropSource } from "./dashboard-location";
 import { createStaffRouterHistory, parseStaffSearch, stringifyStaffSearch } from "./staff-history";
 import { useCapabilities } from "./capabilities";
@@ -301,6 +301,16 @@ function ShellRoute() {
     const search = "calendar" in route ? route.calendar.search : "dashboardView" in route ? route.search : undefined;
     history.replace(staffPathFor({ kind: "dashboard", ...(search ? { search } : {}) }));
   }, [calendarBlocked, history, route]);
+
+  // #427: the Dashboard views were renamed (list/kanban/gantt -> table/board/timeline). An old
+  // spelling PARSES to the new route, so the first render is already correct; this replaces the
+  // address-bar spelling with the canonical one, Timeline facets and `q` carried. Keyed on the
+  // pure predicate, NOT `staffPathFor(route) !== completeLocation`, which would also rewrite
+  // Calendar's accepted parameter orders. A `replace` through `locationStore()`, never the router.
+  useEffect(() => {
+    const canonical = canonicalLegacyDashboardLocation(completeLocation);
+    if (canonical !== null && canonical !== completeLocation) history.replace(canonical);
+  }, [completeLocation, history]);
 
   function navigate(path: string, message?: string, replace = false) {
     if (message) setNotice({ path, message });

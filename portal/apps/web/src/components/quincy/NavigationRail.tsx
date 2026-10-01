@@ -58,7 +58,7 @@ import type {
  *   their visible labels and 44px targets, and the account menu keeps a Notification preferences
  *   row (there is no settings icon here, and the header owns the bell).
  *
- * Neither variant renders the Dashboard view links (List/Kanban/Gantt/Calendar): the Dashboard's
+ * Neither variant renders the Dashboard view links (Table/Board/Calendar/Timeline): the Dashboard's
  * own view controls choose a view (the tabs ticket, #427, replaces them). `item.children` stays in
  * the model because the breadcrumb reads it, but nothing here draws it.
  *
@@ -112,10 +112,10 @@ import type {
 /** Icons, by the model's `icon` name — lucide-react, already an app dependency (`ShellHeader.tsx`). */
 const NAVIGATION_ICONS: Record<StaffNavigationIcon, LucideIcon> = {
   dashboard: LayoutDashboard,
-  list: List,
-  kanban: SquareKanban,
-  gantt: GanttChart,
+  table: List,
+  board: SquareKanban,
   calendar: Calendar,
+  timeline: GanttChart,
   notices: Megaphone,
   admin: Shield,
 };

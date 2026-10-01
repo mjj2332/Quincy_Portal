@@ -143,7 +143,7 @@ function toolbarShape(toolbar: Element): string[] {
 
 describe("Dashboard search presentation and navigation adversarial probes (#217)", () => {
   it("hides the stats strip and reports exact matching/total counts in the search chip", async () => {
-    await renderAt("/?view=list&q=smith", {
+    await renderAt("/?view=table&q=smith", {
       projects: match,
       board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
       search: { query: "smith", matching: 1, total: 3 },
@@ -154,7 +154,7 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
   });
 
   it("shows a search-only chip when an older response has no counts", async () => {
-    await renderAt("/?view=list&q=smith", {
+    await renderAt("/?view=table&q=smith", {
       projects: match,
       board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
     });
@@ -165,7 +165,7 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
   });
 
   it("pluralises to the singular when the total is exactly one match", async () => {
-    await renderAt("/?view=list&q=smith", {
+    await renderAt("/?view=table&q=smith", {
       projects: match,
       board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
       search: { query: "smith", matching: 1, total: 1 },
@@ -175,7 +175,7 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
   });
 
   it("renders the user's query exactly as typed, not uppercased by the Badge's own caps styling", async () => {
-    await renderAt("/?view=list&q=Probe", {
+    await renderAt("/?view=table&q=Probe", {
       projects: match,
       board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
       search: { query: "Probe", matching: 1, total: 3 },
@@ -187,7 +187,7 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
   });
 
   it("expands the chip's clear target past its 12px glyph, keeping an accessible name (#217 design-review, item 2)", async () => {
-    await renderAt("/?view=list&q=smith", {
+    await renderAt("/?view=table&q=smith", {
       projects: match,
       board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
       search: { query: "smith", matching: 1, total: 3 },
@@ -206,7 +206,7 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
   // is not inside it at all, and the summary reads as the next thing on the page, not a toolbar
   // child.
   it("keeps the chip out of the toolbar entirely: it renders in a sibling summary row, reading toolbar -> active search -> results (#217 chip-row)", async () => {
-    await renderAt("/?view=list&q=smith", {
+    await renderAt("/?view=table&q=smith", {
       projects: match,
       board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
       search: { query: "smith", matching: 1, total: 3 },
@@ -216,14 +216,14 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
   });
 
   it("holds the toolbar/summary separation in Kanban after switching from a searched List (#217 chip-row)", async () => {
-    await renderAt("/?view=list&q=smith", {
+    await renderAt("/?view=table&q=smith", {
       projects: match,
       board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
       search: { query: "smith", matching: 1, total: 3 },
     });
     assertToolbarChipSeparation(host);
 
-    const kanban = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Kanban");
+    const kanban = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Board");
     expect(kanban, "no Kanban control rendered — the assertion below would be vacuous").not.toBeUndefined();
     await act(async () => {
       kanban!.click();
@@ -232,12 +232,12 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
     await settle();
 
     // Prove the switch happened -- otherwise this would merely repeat the List assertion.
-    expect(window.location.search).toContain("view=kanban");
+    expect(window.location.search).toContain("view=board");
     assertToolbarChipSeparation(host);
   });
 
   it("keeps the toolbar's children identical, and the summary absent, when there is no search (#217 chip-row) — proves the toolbar's geometry does not depend on the query", async () => {
-    await renderAt("/?view=list", {
+    await renderAt("/?view=table", {
       projects: full,
       board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
     });
@@ -246,7 +246,7 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
     const shapeUnsearched = toolbarShape(toolbarUnsearched!);
     expect(host.querySelector('[data-testid="dashboard-search-summary"]')).toBeNull();
 
-    await renderAt("/?view=list&q=smith", {
+    await renderAt("/?view=table&q=smith", {
       projects: match,
       board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
       search: { query: "smith", matching: 1, total: 3 },
@@ -260,7 +260,7 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
   });
 
   it("titles a zero-result search 'No matches.', not the unsearched empty-Dashboard copy (#217 design-review, item 9)", async () => {
-    await renderAt("/?view=list&q=smith", {
+    await renderAt("/?view=table&q=smith", {
       projects: [],
       board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: [] } },
       search: { query: "smith", matching: 0, total: 3 },
@@ -272,23 +272,23 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
   });
 
   it("preserves q when switching views from a searched Dashboard", async () => {
-    await renderAt("/?view=list&q=smith", {
+    await renderAt("/?view=table&q=smith", {
       projects: match,
       board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
       search: { query: "smith", matching: 1, total: 3 },
     });
-    const kanban = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Kanban");
+    const kanban = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Board");
     expect(kanban).not.toBeUndefined();
     await act(async () => {
       kanban!.click();
       await Promise.resolve();
     });
 
-    expect(window.location.search).toBe("?view=kanban&q=smith");
+    expect(window.location.search).toBe("?view=board&q=smith");
   });
 
   it("the FIRST /api/projects request on a cold deep link already carries q — never an unfiltered request first (#217 design-fix round 3, item 1)", async () => {
-    await renderAt("/?view=list&q=smith", {
+    await renderAt("/?view=table&q=smith", {
       projects: match,
       board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
       search: { query: "smith", matching: 1, total: 3 },
@@ -302,7 +302,7 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
   });
 
   it("clearing the search never resurrects a stale route q into a later request (#217 design-fix round 3, item 1)", async () => {
-    await renderAt("/?view=list&q=smith", {
+    await renderAt("/?view=table&q=smith", {
       projects: match,
       board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
       search: { query: "smith", matching: 1, total: 3 },

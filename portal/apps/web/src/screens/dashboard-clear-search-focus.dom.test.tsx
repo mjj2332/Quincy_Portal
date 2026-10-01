@@ -17,8 +17,8 @@ afterEach(() => { document.body.replaceChildren(); });
 
 describe("focusTargetAfterClearingSearch (#217)", () => {
   it("prefers the enabled active view button", () => {
-    const root = toolbar('<button class="is-active">Active</button><button data-focus-key="dashboard-view-list">List</button><button data-focus-key="dashboard-view-kanban" data-active="true">Kanban</button>');
-    expect(focusTargetAfterClearingSearch(root)?.textContent).toBe("Kanban");
+    const root = toolbar('<button class="is-active">Active</button><button data-focus-key="dashboard-view-table">Table</button><button data-focus-key="dashboard-view-board" data-active="true">Board</button>');
+    expect(focusTargetAfterClearingSearch(root)?.textContent).toBe("Board");
   });
 
   it("archived scope (no view group): falls back to the active scope button", () => {
@@ -27,12 +27,12 @@ describe("focusTargetAfterClearingSearch (#217)", () => {
   });
 
   it("a DISABLED active view button is skipped -- a disabled button cannot take focus", () => {
-    const root = toolbar('<button class="is-active">Active</button><button data-focus-key="dashboard-view-kanban" data-active="true" disabled>Kanban</button>');
+    const root = toolbar('<button class="is-active">Active</button><button data-focus-key="dashboard-view-board" data-active="true" disabled>Board</button>');
     expect(focusTargetAfterClearingSearch(root)?.textContent).toBe("Active");
   });
 
   it("nothing enabled at all: the toolbar itself, which can always take programmatic focus", () => {
-    const root = toolbar('<button class="is-active" disabled>Active</button><button data-focus-key="dashboard-view-list" data-active="true" disabled>List</button>');
+    const root = toolbar('<button class="is-active" disabled>Active</button><button data-focus-key="dashboard-view-table" data-active="true" disabled>Table</button>');
     const target = focusTargetAfterClearingSearch(root);
     expect(target).toBe(root);
     target!.focus();
