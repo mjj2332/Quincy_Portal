@@ -56,6 +56,17 @@ describe("buildChecklistUndoTicket", () => {
     });
   });
 
+  it("restores the prior reminder offsets only when the forward edit changed them (#425)", () => {
+    const before = checklistEvent(4, "2026-08-27", "2026-08-27");
+    const base = { id: before.id, title: before.title, done: false, assignees: null, position: 0, schedule: { ...before.schedule, version: 5 }, scheduleVersion: 5 };
+    const changed = buildChecklistUndoTicket(before, { ...base, reminders: subtaskReminders([1440, 240]) });
+    expect(changed?.kind === "checklist" && changed.request.reminderOffsetsMinutes).toEqual([1440]);
+    const same = buildChecklistUndoTicket(before, { ...base, reminders: subtaskReminders([1440]) });
+    expect(same?.kind === "checklist" && same.request).not.toHaveProperty("reminderOffsetsMinutes");
+    const absent = buildChecklistUndoTicket(before, base);
+    expect(absent?.kind === "checklist" && absent.request).not.toHaveProperty("reminderOffsetsMinutes");
+  });
+
   it("returns null when the forward edit changed nothing", () => {
     const before = checklistEvent(4, "2026-08-27", "2026-08-27");
     const ticket = buildChecklistUndoTicket(before, { id: before.id, title: before.title, done: false, assignees: null, position: 0, schedule: before.schedule, scheduleVersion: 4 });
