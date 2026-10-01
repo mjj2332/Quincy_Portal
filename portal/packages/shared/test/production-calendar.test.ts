@@ -69,7 +69,7 @@ function projectEvent(stageKey: typeof ADMIN_STAGE | typeof EDITOR_STAGE, deadli
 
 function checklistEvent(stageKey: typeof ADMIN_STAGE | typeof EDITOR_STAGE, schedule: ReturnType<typeof rangeSchedule>): ChecklistCalendarEventDto<typeof stageKey> {
   const timing = { allDay: false as const, start: schedule.start.instant, end: schedule.end.instant };
-  return { id: `checklist:${PERSON_ID}`, kind: "checklist", title: "Select hero images", project: project(stageKey), assignees: [person], otherAssigneeCount: 0, timing, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true } };
+  return { id: `checklist:${PERSON_ID}`, kind: "checklist", title: "Select hero images", project: project(stageKey), assignees: [person], otherAssigneeCount: 0, timing, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule, reminders: { offsetsMinutes: [1440], nextOccurrence: null }, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true } };
 }
 
 function response(stageKey: typeof ADMIN_STAGE | typeof EDITOR_STAGE) {

@@ -147,6 +147,7 @@ describe("checklist mutation response domains", () => {
       assignmentVersion: 2,
       dueDate: "2026-08-20",
       schedule,
+      reminders: { offsetsMinutes: [1440], nextOccurrence: null },
       createdBy: { id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true },
       createdAt: "2026-08-01T00:00:00.000Z",
       updatedAt: "2026-08-20T00:00:00.000Z",
@@ -160,7 +161,7 @@ describe("checklist mutation response domains", () => {
     expect(staff.assignees?.[1]).toMatchObject({ name: "Bo", roleLabel: "Admin", active: false });
     const old = decodeChecklistMutationResponse("editor", { id: itemId, title: "t", done: false, position: 1, schedule });
     expect(old.assignees).toBeNull();
-    const external = decodeChecklistMutationResponse("external_editor", { id: itemId, title: "t", done: false, position: 1, assignees: [{ id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }], otherAssigneeCount: 2, assignmentVersion: 1, dueDate: null, schedule, createdBy: { id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }, createdAt: "x", updatedAt: "y" });
+    const external = decodeChecklistMutationResponse("external_editor", { id: itemId, title: "t", done: false, position: 1, assignees: [{ id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }], otherAssigneeCount: 2, assignmentVersion: 1, dueDate: null, schedule, reminders: { offsetsMinutes: [1440], nextOccurrence: null }, createdBy: { id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }, createdAt: "x", updatedAt: "y" });
     // The external item carries the team-filtered list and the hidden count (#368).
     expect(external.assignees?.map((person) => person.id)).toEqual([personId]);
     expect(external.otherAssigneeCount).toBe(2);

@@ -138,6 +138,7 @@ describe("ganttChecklistSource", () => {
       timing: { allDay: false, start: "2026-06-09T23:00:00.000Z", end: "2026-06-10T01:00:00.000Z" },
       status: { overdue: false, delivered: true, completed: true, sameAssigneeOverlap: false },
       schedule: row.schedule,
+      reminders: row.reminders,
       permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true },
     });
     expect(source!.project.checklist).not.toBe(project.checklist);
