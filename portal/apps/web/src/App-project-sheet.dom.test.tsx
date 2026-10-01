@@ -281,7 +281,7 @@ async function click(element: Element, init: MouseEventInit = {}) {
 
 /** The Dashboard's project opener for `view`, ready to activate. */
 async function openerFor(host: HTMLElement, view: string): Promise<Element> {
-  if (view === "table") return host.querySelector('[data-testid="project-list-row"]')!;
+  if (view === "table") return host.querySelector('[data-testid="project-table-row-link"]')!;
   if (view === "board") return host.querySelector('[data-testid="kanban2-card"]')!;
   if (view === "timeline") return host.querySelector('[data-testid="gantt-project-link"]')!;
   await act(async () => { eventCalendarFake.click("project-deadline:one"); await Promise.resolve(); });
@@ -331,7 +331,7 @@ describe("open from each Dashboard view (#366)", () => {
   it("a keyboard activation (detail 0) opens the sheet as an SPA push; Ctrl+Enter is left native", async () => {
     const host = await renderDashboardAt("table");
     const main = dashboardMain(host);
-    const row = host.querySelector('[data-testid="project-list-row"]')!;
+    const row = host.querySelector('[data-testid="project-table-row-link"]')!;
     const ctrl = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 0, ctrlKey: true });
     await act(async () => { row.dispatchEvent(ctrl); await Promise.resolve(); });
     expect(ctrl.defaultPrevented).toBe(false);
@@ -347,14 +347,14 @@ describe("open from each Dashboard view (#366)", () => {
 
   it("keeps the Dashboard's own DOM (a scrolled list) across open and close", async () => {
     const host = await renderDashboardAt("table");
-    const list = host.querySelector<HTMLElement>('[aria-label="Projects list"]')!;
+    const list = host.querySelector<HTMLElement>('[aria-label="Projects table"]')!;
     list.scrollTop = 300;
-    await click(host.querySelector('[data-testid="project-list-row"]')!);
+    await click(host.querySelector('[data-testid="project-table-row-link"]')!);
     const closeGo = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
     await click(document.querySelector('[data-testid="project-sheet-close"]')!);
     expect(closeGo).toHaveBeenCalledWith(-1);
     await traverseTo("/?view=table&q=smith", null);
-    expect(host.querySelector('[aria-label="Projects list"]')).toBe(list);
+    expect(host.querySelector('[aria-label="Projects table"]')).toBe(list);
     expect(list.scrollTop).toBe(300);
   });
 
@@ -392,7 +392,7 @@ describe("closing returns to the same view (#366)", () => {
     const host = await renderDashboardAt("table");
     const from = currentUrl();
     const main = dashboardMain(host);
-    const opener = host.querySelector<HTMLElement>('[data-testid="project-list-row"]')!;
+    const opener = host.querySelector<HTMLElement>('[data-testid="project-table-row-link"]')!;
     await click(opener);
     expect(sheet()).not.toBeNull();
     expect(sheet()!.contains(document.activeElement)).toBe(true);
@@ -423,7 +423,7 @@ describe("closing returns to the same view (#366)", () => {
 
   it("closing twice before the traversal lands walks back only once", async () => {
     const host = await renderDashboardAt("table");
-    await click(host.querySelector('[data-testid="project-list-row"]')!);
+    await click(host.querySelector('[data-testid="project-table-row-link"]')!);
     const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
     const escape = () => act(async () => { sheet()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
     await escape();
@@ -452,7 +452,7 @@ describe("a direct Project link (#366)", () => {
   it("a reloaded sheet entry restores the Dashboard view its state names", async () => {
     window.localStorage.setItem("quincy:dashboard:view", "board");
     const host = await renderApp(PROJECT_PATH, { quincySheet: { v: 1, backdrop: "/?view=table", depth: 1, prev: "/?view=table" } });
-    expect(host.querySelector('[aria-label="Projects list"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Projects table"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="kanban2-card"]')).toBeNull();
   });
 
@@ -464,7 +464,7 @@ describe("a direct Project link (#366)", () => {
   ])("ignores tampered state (%s)", async (_name, state) => {
     window.localStorage.setItem("quincy:dashboard:view", "board");
     const host = await renderApp(PROJECT_PATH, state);
-    expect(host.querySelector('[aria-label="Projects list"]')).toBeNull();
+    expect(host.querySelector('[aria-label="Projects table"]')).toBeNull();
     expect(host.querySelector('[data-testid="kanban2-card"]')).not.toBeNull();
     const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
     await click(document.querySelector('[data-testid="project-sheet-close"]')!);
@@ -486,7 +486,7 @@ describe("Workspace-tab deep links open the sheet (#366)", () => {
 describe("focus (#366)", () => {
   it("moves into the sheet on open and back to the opener on close (keyboard-opened too)", async () => {
     const host = await renderDashboardAt("table");
-    const opener = host.querySelector<HTMLElement>('[data-testid="project-list-row"]')!;
+    const opener = host.querySelector<HTMLElement>('[data-testid="project-table-row-link"]')!;
     opener.focus();
     await act(async () => { opener.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 0 })); await Promise.resolve(); await Promise.resolve(); });
     await settle();
@@ -501,7 +501,7 @@ describe("focus (#366)", () => {
 describe("the Project sheet is a route-derived layer (#366)", () => {
   it("navigating to a non-sheet location closes it and unmounts the Dashboard; Back into the sheet entry reopens it over that entry's backdrop", async () => {
     const host = await renderDashboardAt("table");
-    await click(host.querySelector('[data-testid="project-list-row"]')!);
+    await click(host.querySelector('[data-testid="project-table-row-link"]')!);
     const sheetState = window.history.state;
     expect(sheet()).not.toBeNull();
 
@@ -509,18 +509,18 @@ describe("the Project sheet is a route-derived layer (#366)", () => {
     await settle();
     expect(document.querySelector('[data-testid="admin-stub"]')).not.toBeNull();
     expect(sheet()).toBeNull();
-    expect(host.querySelector('[aria-label="Projects list"]')).toBeNull();
+    expect(host.querySelector('[aria-label="Projects table"]')).toBeNull();
 
     await traverseTo(PROJECT_PATH, sheetState);
     expect(sheet()).not.toBeNull();
-    expect(host.querySelector('[aria-label="Projects list"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Projects table"]')).not.toBeNull();
     expect(document.querySelector('[data-testid="admin-stub"]')).toBeNull();
   });
 
   it("⌘K stands down while the sheet is open (it would open the parent rail Root beneath it)", async () => {
     setViewportWidth(700);
     const host = await renderDashboardAt("table");
-    await click(host.querySelector('[data-testid="project-list-row"]')!);
+    await click(host.querySelector('[data-testid="project-table-row-link"]')!);
     expect(sheet()).not.toBeNull();
     await act(async () => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true, cancelable: true })); await Promise.resolve(); });
     await settle();
@@ -533,7 +533,7 @@ describe("nesting under the rail Sheet Root (#366)", () => {
   it("in narrow mode, after a Project sheet has opened and closed, the rail sheet still opens and closes on its own scrim", async () => {
     setViewportWidth(700);
     const host = await renderDashboardAt("table");
-    await click(host.querySelector('[data-testid="project-list-row"]')!);
+    await click(host.querySelector('[data-testid="project-table-row-link"]')!);
     expect(sheet()).not.toBeNull();
     // A Project sheet uses its own scrim even though it is a nested Root.
     expect(document.querySelector('[data-testid="project-sheet-scrim"]')).not.toBeNull();
@@ -561,7 +561,7 @@ describe("exactly one toast viewport per route (#366)", () => {
     expect(mountedToastViewports()).toBe(1);
     expect(host.querySelector('[data-testid="dashboard-toast-viewport"]')).not.toBeNull();
 
-    await click(host.querySelector('[data-testid="project-list-row"]')!);
+    await click(host.querySelector('[data-testid="project-table-row-link"]')!);
     expect(mountedToastViewports()).toBe(1);
     expect(host.querySelector('[data-testid="dashboard-toast-viewport"]')).toBeNull();
 
@@ -583,7 +583,7 @@ describe("a search typed just before the sheet opens survives it (#366)", () => 
       await Promise.resolve();
     });
     // Still inside the debounce: open the project straight away.
-    await click(host.querySelector('[data-testid="project-list-row"]')!);
+    await click(host.querySelector('[data-testid="project-table-row-link"]')!);
     expect(sheet()).not.toBeNull();
 
     const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
@@ -630,7 +630,7 @@ async function openEditFromList() {
   const host = await renderDashboardAt("table");
   const from = currentUrl();
   const main = dashboardMain(host);
-  await click(host.querySelector('[data-testid="project-list-row"]')!);
+  await click(host.querySelector('[data-testid="project-table-row-link"]')!);
   await click(sheet()!.querySelector('[data-testid="ws-edit-link"]')!);
   return { host, from, main };
 }
@@ -723,7 +723,7 @@ describe("a direct edit link (#374)", () => {
     window.localStorage.setItem("quincy:dashboard:view", "table");
     const host = await renderApp(EDIT_PATH, null);
     expect(editForm()).not.toBeNull();
-    expect(host.querySelector('[aria-label="Projects list"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Projects table"]')).not.toBeNull();
     const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
     const replace = vi.spyOn(window.history, "replaceState");
     await click(cancelLink());
@@ -751,13 +751,13 @@ describe("a direct edit link (#374)", () => {
   ])("closing from the edit form with %s lands on / with the List, same <main>", async (_name, close) => {
     window.localStorage.setItem("quincy:dashboard:view", "table");
     const host = await renderApp(EDIT_PATH, null);
-    const list = host.querySelector('[aria-label="Projects list"]');
+    const list = host.querySelector('[aria-label="Projects table"]');
     const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
     await close();
     expect(go).not.toHaveBeenCalled();
     expect(currentUrl()).toBe("/");
     expect(sheet()).toBeNull();
-    expect(host.querySelector('[aria-label="Projects list"]')).toBe(list);
+    expect(host.querySelector('[aria-label="Projects table"]')).toBe(list);
   });
 });
 

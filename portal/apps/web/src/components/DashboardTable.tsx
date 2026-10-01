@@ -1,5 +1,5 @@
-import { memo, useMemo, useState, type ReactNode } from "react";
-import { useTable, type ColumnDef, type ColumnVisibilityState, type SortingState } from "@tanstack/react-table";
+import { createContext, memo, useContext, useMemo, useState, type ReactNode } from "react";
+import { useTable, type ColumnDef, type ColumnVisibilityState, type Row, type SortingState } from "@tanstack/react-table";
 import { formatSydneyCivil, isDeadlineOverdue, type Role } from "@quincy/shared";
 import { Badge } from "./reui/badge";
 import { Button } from "./reui/button";
@@ -81,7 +81,6 @@ type CellContext = {
   terminal: boolean;
   onPriorityChange: (project: ProjectSummary, priority: number | null) => void;
   projectHrefFor: (projectId: string) => string;
-  narrow: boolean;
 };
 
 function location(project: ProjectSummary) {
@@ -143,78 +142,122 @@ function AddressCell({ project, href }: { project: ProjectSummary; href: string 
   );
 }
 
-function header(id: TableColumnId): Column["header"] {
-  return ({ column }) => <DataGridColumnHeader column={column} title={TABLE_COLUMN_LABELS[id]} />;
+/**
+ * The volatile values the cells read. They travel by context, NOT by closing over them in the
+ * column definitions: the grid renders `columnDef.cell` as a component, so a column array rebuilt
+ * on every change of `onPriorityChange` (a fresh function each Dashboard render) or
+ * `pendingOrdering` would hand React a new component type per cell and REMOUNT every row, losing
+ * focus, an open Deadline popover and a failed-cover retry on any refetch. The columns depend on
+ * the width bucket alone.
+ */
+const CellContext = createContext<CellContext | null>(null);
+
+function useCells(): CellContext {
+  const value = useContext(CellContext);
+  if (!value) throw new Error("DashboardTable cells render inside DashboardTable");
+  return value;
 }
 
-function createColumns(ctx: CellContext): Column[] {
-  const sizes = ctx.narrow
-    ? { address: 200, stage: 140, client: 160, shootDate: 120, deadline: 140, editors: 100, priority: 190, raw: 110 }
-    : { address: 320, stage: 150, client: 200, shootDate: 130, deadline: 170, editors: 110, priority: 190, raw: 130 };
-  const base = <T,>(id: TableColumnId, accessorFn: (project: ProjectSummary) => T, cell: Column["cell"], extra: Partial<Column> = {}): Column => ({
+function AddressCellRenderer({ row }: { row: Row<DataGridFeatures, ProjectSummary> }) {
+  const { projectHrefFor } = useCells();
+  return <AddressCell project={row.original} href={projectHrefFor(row.original.id)} />;
+}
+
+function StageCellRenderer({ row }: { row: Row<DataGridFeatures, ProjectSummary> }) {
+  return <StatusBadge stageKey={row.original.stageKey} />;
+}
+
+function ClientCellRenderer({ row }: { row: Row<DataGridFeatures, ProjectSummary> }) {
+  return (
+    <span className="block min-w-0 text-[length:var(--text-sm)]">
+      <span className="block truncate">{row.original.agencyName || "Agency pending"}</span>
+      <span className="mt-[var(--space-1)] block truncate text-[length:var(--text-xs)] text-foreground-secondary">{row.original.agentName || "Agent pending"}</span>
+    </span>
+  );
+}
+
+function ShootDateCellRenderer({ row }: { row: Row<DataGridFeatures, ProjectSummary> }) {
+  return <span className="text-[length:var(--text-sm)]">{formatDashboardDate(row.original.shootDate)}</span>;
+}
+
+function DeadlineCellRenderer({ row }: { row: Row<DataGridFeatures, ProjectSummary> }) {
+  const { canEditDeadline, terminal, role } = useCells();
+  const project = row.original;
+  return (
+    <div className="relative z-[1] min-w-0">
+      <ProjectDeadlineCell
+        projectId={project.id}
+        street={project.street}
+        deadline={deadlineViewOf(project)}
+        canEdit={canEditDeadline && project.stageKey !== "delivered" && !project.archivedAt}
+        disabled={terminal}
+        role={role}
+        testIdPrefix="project-table"
+        overdueInName
+        emptyLabel="No deadline"
+      />
+    </div>
+  );
+}
+
+function EditorsCellRenderer({ row }: { row: Row<DataGridFeatures, ProjectSummary> }) {
+  return <AvatarStack people={row.original.editors ?? []} personNoun="Editor" emptyLabel="No Editor assigned" />;
+}
+
+function PriorityCellRenderer({ row }: { row: Row<DataGridFeatures, ProjectSummary> }) {
+  const { canPrioritize, terminal, pendingOrdering, onPriorityChange } = useCells();
+  const project = row.original;
+  return (
+    // The read-only form carries card padding (`px/pb-[--space-3]`); the negative margins cancel it.
+    <div className="relative z-[1] -mx-[var(--space-3)] -mb-[var(--space-3)] w-max max-w-full" data-testid="project-table-priority">
+      <PriorityStars
+        priority={project.priority}
+        street={project.street}
+        canPrioritize={canPrioritize && !terminal && !project.archivedAt}
+        pending={pendingOrdering.has(project.id)}
+        onPriorityChange={(next) => onPriorityChange(project, next)}
+      />
+    </div>
+  );
+}
+
+function RawCellRenderer({ row }: { row: Row<DataGridFeatures, ProjectSummary> }) {
+  const raw = rawCounts(row.original);
+  return (
+    <span className="tabular-nums text-[length:var(--text-sm)]">
+      <span aria-hidden="true" data-testid="project-table-raw">{raw.visible}</span>
+      <span className="sr-only">{raw.spoken}</span>
+    </span>
+  );
+}
+
+const SIZES: Record<"wide" | "narrow", Record<TableColumnId, number>> = {
+  wide: { address: 320, stage: 150, client: 200, shootDate: 130, deadline: 170, editors: 110, priority: 190, raw: 130 },
+  narrow: { address: 200, stage: 140, client: 160, shootDate: 120, deadline: 140, editors: 100, priority: 190, raw: 110 },
+};
+
+const CELLS: Record<TableColumnId, { value: (project: ProjectSummary) => unknown; cell: Column["cell"] }> = {
+  address: { value: (project) => project.street, cell: AddressCellRenderer },
+  stage: { value: (project) => project.stageKey, cell: StageCellRenderer },
+  client: { value: (project) => project.agencyName, cell: ClientCellRenderer },
+  shootDate: { value: (project) => project.shootDate, cell: ShootDateCellRenderer },
+  deadline: { value: (project) => project.deadlineAt, cell: DeadlineCellRenderer },
+  editors: { value: (project) => project.editors?.[0]?.name, cell: EditorsCellRenderer },
+  priority: { value: (project) => project.priority, cell: PriorityCellRenderer },
+  raw: { value: (project) => project.receivedCount, cell: RawCellRenderer },
+};
+
+function createColumns(narrow: boolean): Column[] {
+  const sizes = SIZES[narrow ? "narrow" : "wide"];
+  return TABLE_COLUMN_IDS.map((id): Column => ({
     id,
-    accessorFn,
-    header: header(id),
-    cell,
+    accessorFn: CELLS[id].value,
+    header: ({ column }) => <DataGridColumnHeader column={column} title={TABLE_COLUMN_LABELS[id]} />,
+    cell: CELLS[id].cell,
     size: sizes[id],
     enableSorting: true,
     enableHiding: id !== "address",
-    ...extra,
-  });
-  return [
-    base("address", (project) => project.street, ({ row }) => <AddressCell project={row.original} href={ctx.projectHrefFor(row.original.id)} />),
-    base("stage", (project) => project.stageKey, ({ row }) => <StatusBadge stageKey={row.original.stageKey} />),
-    base("client", (project) => project.agencyName, ({ row }) => (
-      <span className="block min-w-0 text-[length:var(--text-sm)]">
-        <span className="block truncate">{row.original.agencyName || "Agency pending"}</span>
-        <span className="mt-[var(--space-1)] block truncate text-[length:var(--text-xs)] text-foreground-secondary">{row.original.agentName || "Agent pending"}</span>
-      </span>
-    )),
-    base("shootDate", (project) => project.shootDate, ({ row }) => <span className="text-[length:var(--text-sm)]">{formatDashboardDate(row.original.shootDate)}</span>),
-    base("deadline", (project) => project.deadlineAt, ({ row }) => {
-      const project = row.original;
-      return (
-        <div className="relative z-[1] min-w-0">
-          <ProjectDeadlineCell
-            projectId={project.id}
-            street={project.street}
-            deadline={deadlineViewOf(project)}
-            canEdit={ctx.canEditDeadline && project.stageKey !== "delivered" && !project.archivedAt}
-            disabled={ctx.terminal}
-            role={ctx.role}
-            testIdPrefix="project-table"
-            overdueInName
-            emptyLabel="No deadline"
-          />
-        </div>
-      );
-    }),
-    base("editors", (project) => project.editors?.[0]?.name, ({ row }) => <AvatarStack people={row.original.editors ?? []} personNoun="Editor" emptyLabel="No Editor assigned" />),
-    base("priority", (project) => project.priority, ({ row }) => {
-      const project = row.original;
-      return (
-        // The read-only form carries card padding (`px/pb-[--space-3]`); the negative margins cancel it.
-        <div className="relative z-[1] -mx-[var(--space-3)] -mb-[var(--space-3)] w-max max-w-full" data-testid="project-table-priority">
-          <PriorityStars
-            priority={project.priority}
-            street={project.street}
-            canPrioritize={ctx.canPrioritize && !ctx.terminal && !project.archivedAt}
-            pending={ctx.pendingOrdering.has(project.id)}
-            onPriorityChange={(next) => ctx.onPriorityChange(project, next)}
-          />
-        </div>
-      );
-    }),
-    base("raw", (project) => project.receivedCount, ({ row }) => {
-      const raw = rawCounts(row.original);
-      return (
-        <span className="tabular-nums text-[length:var(--text-sm)]" data-testid="project-table-raw">
-          <span aria-hidden="true">{raw.visible}</span>
-          <span className="sr-only">{raw.spoken}</span>
-        </span>
-      );
-    }),
-  ];
+  }));
 }
 
 const EDGE_CELL = "first:ps-[var(--space-4)] last:pe-[var(--space-4)]";
@@ -303,6 +346,7 @@ export function DashboardTable({ projects, role, groupBy, hiddenColumns, canPrio
   const [sorting, setSorting] = useState<SortingState>([]);
   // Collapsed groups belong to the Group by they were collapsed under; a change starts fresh.
   const [collapsed, setCollapsed] = useState<{ groupBy: TableGroupBy; keys: ReadonlySet<string> }>({ groupBy, keys: new Set() });
+  if (collapsed.groupBy !== groupBy) setCollapsed({ groupBy, keys: new Set() });
   const collapsedKeys = collapsed.groupBy === groupBy ? collapsed.keys : new Set<string>();
 
   const visibility = useMemo<ColumnVisibilityState>(() => {
@@ -313,9 +357,10 @@ export function DashboardTable({ projects, role, groupBy, hiddenColumns, canPrio
     return state;
   }, [hiddenColumns, narrow, role]);
 
-  const columns = useMemo(
-    () => createColumns({ role, canPrioritize, canEditDeadline, pendingOrdering, terminal, onPriorityChange, projectHrefFor, narrow }),
-    [canEditDeadline, canPrioritize, narrow, onPriorityChange, pendingOrdering, projectHrefFor, role, terminal],
+  const columns = useMemo(() => createColumns(narrow), [narrow]);
+  const cells = useMemo<CellContext>(
+    () => ({ role, canPrioritize, canEditDeadline, pendingOrdering, terminal, onPriorityChange, projectHrefFor }),
+    [canEditDeadline, canPrioritize, onPriorityChange, pendingOrdering, projectHrefFor, role, terminal],
   );
 
   const sorted = useMemo(() => sortTableRows(projects, sorting, stages), [projects, sorting, stages]);
@@ -329,21 +374,23 @@ export function DashboardTable({ projects, role, groupBy, hiddenColumns, canPrio
 
   return (
     <section aria-label="Projects table" data-testid="dashboard-table" className="flex min-h-0 flex-1 flex-col">
-      <Frame className="min-h-0 flex-1">
-        <FramePanel className="flex min-h-0 flex-col p-0">
-          {groupBy === "none" ? (
-            <GroupGrid rows={groups[0]?.rows ?? []} columns={columns} sorting={sorting} onSortingChange={setSorting} visibility={visibility} sticky label="this view" />
-          ) : (
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              {groups.map((group) => (
-                <GroupSection key={group.key} group={group} open={!collapsedKeys.has(group.key)} onOpenChange={(open) => toggle(group.key, open)}>
-                  <GroupGrid rows={group.rows} columns={columns} sorting={sorting} onSortingChange={setSorting} visibility={visibility} sticky={false} label={group.label} />
-                </GroupSection>
-              ))}
-            </div>
-          )}
-        </FramePanel>
-      </Frame>
+      <CellContext.Provider value={cells}>
+        <Frame className="min-h-0 flex-1">
+          <FramePanel className="flex min-h-0 flex-col p-0">
+            {groupBy === "none" ? (
+              <GroupGrid rows={groups[0]?.rows ?? []} columns={columns} sorting={sorting} onSortingChange={setSorting} visibility={visibility} sticky label="this view" />
+            ) : (
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                {groups.map((group) => (
+                  <GroupSection key={group.key} group={group} open={!collapsedKeys.has(group.key)} onOpenChange={(open) => toggle(group.key, open)}>
+                    <GroupGrid rows={group.rows} columns={columns} sorting={sorting} onSortingChange={setSorting} visibility={visibility} sticky={false} label={group.label} />
+                  </GroupSection>
+                ))}
+              </div>
+            )}
+          </FramePanel>
+        </Frame>
+      </CellContext.Provider>
     </section>
   );
 }

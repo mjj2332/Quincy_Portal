@@ -163,16 +163,6 @@ button { font-family: var(--font-sans); }
 .meter--ondark { background: rgba(246,244,239,.18); }
 .meter--ondark > i { background: var(--paper-050); }
 
-/* list view — TB8-01: row/header/typography moved to Tailwind utilities in Dashboard.tsx
-   (§8.1). `.prow__thumb` stays here (not Tailwind) because it must win the cascade over the
-   un-layered `.project-cover-placeholder` background rule; app.css is imported un-layered so it
-   always beats a Tailwind utility class regardless of source order. */
-.prow__thumb { width: 72px; height: 48px; object-fit: cover; background: var(--ink-800); }
-@media (max-width: 720px) {
-  /* match PROW_GRID's max-[721px] 56px thumb track in Dashboard.tsx */
-  .prow__thumb { width: 56px; height: 37px; }
-}
-
 /* ---------------------------------------------------------------------
    Photo grid + tiles (shared by review & client)
    --------------------------------------------------------------------- */
