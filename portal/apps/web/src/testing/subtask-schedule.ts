@@ -4,7 +4,7 @@
  * `presetSubtaskStorage`) and `checklistScheduleToDto`, so a hand-built `{ kind, instant: null }` shape
  * can never creep back in (ADR 0016: every end is a moment).
  */
-import { checklistScheduleToDto, normalizeChecklistSchedule, presetSubtaskStorage, type ChecklistScheduleDto } from "@quincy/shared";
+import { checklistScheduleToDto, normalizeChecklistSchedule, presetSubtaskStorage, type ChecklistScheduleDto, type SubtaskRemindersDto } from "@quincy/shared";
 
 /** A range from two civil dates at the presets: the start day at 09:00 to the end day at 17:00. */
 export function presetScheduleDto(startDate: string, endDate: string = startDate, version = 1): ChecklistScheduleDto {
@@ -33,3 +33,8 @@ export function endMoment(dayOrCivil: string): ChecklistScheduleDto["end"] {
 /** A bare day for a request body's start / end moment (`{ localCivil }`), at the preset times. */
 export const startCivil = (day: string): string => `${day}T09:00`;
 export const endCivil = (day: string): string => `${day}T17:00`;
+
+/** A Subtask's reminders as the API returns them (#425): the stored advance set (the default is "1 day before") and the next pending occurrence. */
+export function subtaskReminders(offsetsMinutes: number[] = [1440], nextOccurrence: SubtaskRemindersDto["nextOccurrence"] = null): SubtaskRemindersDto {
+  return { offsetsMinutes, nextOccurrence };
+}

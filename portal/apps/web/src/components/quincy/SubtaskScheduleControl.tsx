@@ -1,7 +1,7 @@
 import { useEffect, useRef, type ComponentPropsWithRef, type ReactNode } from "react";
 import { POPOVER_LABEL } from "../AnchoredPopover";
 import { formatCivilSchedule } from "../../lib/date-format";
-import { type ChecklistScheduleDto, type ProjectDefaultRangeDto, type RangeChecklistScheduleInput } from "@quincy/shared";
+import { deadlineOffsetLabel, type ChecklistScheduleDto, type ProjectDefaultRangeDto, type RangeChecklistScheduleInput, type SubtaskRemindersDto } from "@quincy/shared";
 import { cn } from "../../lib/utils";
 import { META_TEXT } from "./Eyebrow";
 import { Notice } from "./Notice";
@@ -11,6 +11,7 @@ import { META_TRIGGER } from "./icon-button";
 import { Popover, PopoverTrigger } from "../reui/popover";
 import { DateTimePopoverContent } from "./DateTimeField";
 import { DateTimeRangePopup, type DateTimeRangeApply } from "./date-time-field/DateTimeRangePopup";
+import type { DateTimeReminders } from "./date-time-field/DateTimePopup";
 import type { ProjectSubtask } from "../../lib/project-data";
 
 const formatSchedule = formatCivilSchedule;
@@ -27,13 +28,21 @@ type Subtask = ProjectSubtask;
 const COMPOSER_TRIGGER_CLASSES = cn(META_TRIGGER, "border-solid border-[length:var(--border-width-hair)] border-border");
 
 // A Subtask is always a range, and every end is a moment (ADR 0016), so the editor saves only that shape.
-export type RangeScheduleRequest = { expectedVersion: number; schedule: RangeChecklistScheduleInput };
+// `reminderOffsetsMinutes` rides along only when the caller gave the popup `reminders` (#425); absent keeps the stored set server-side.
+export type RangeScheduleRequest = { expectedVersion: number; schedule: RangeChecklistScheduleInput; reminderOffsetsMinutes?: number[] };
 /** What the latest-item notice reads of a Subtask: the Checklist hands its whole item, the Gantt a summary of its own decoded conflict body. */
-export type LatestSubtaskSummary = { title: string; done: boolean; assignees: Array<{ name: string }>; otherAssigneeCount?: number; schedule: ChecklistScheduleDto };
+export type LatestSubtaskSummary = { title: string; done: boolean; assignees: Array<{ name: string }>; otherAssigneeCount?: number; schedule: ChecklistScheduleDto; reminders?: SubtaskRemindersDto };
+
+/** "1 day, 1 hour, Due now": the stored advance offsets, then the always-on Due now. */
+export function formatReminderSet(offsets: readonly number[]): string {
+  return [...offsets.map((offset) => deadlineOffsetLabel(offset)), "Due now"].join(", ");
+}
 export type ScheduleError<TItem extends LatestSubtaskSummary = Subtask> = {
   endpoint?: "start" | "end";
   choices?: Array<{ disambiguation: "earlier" | "later"; utcOffsetMinutes: number }>;
   current?: ChecklistScheduleDto;
+  /** The latest reminders a schedule conflict carries (#425), so a reapply and the strip start from what the server has now. */
+  currentReminders?: SubtaskRemindersDto;
   currentSubtask?: TItem;
   /** A caller-supplied validation sentence (the Gantt's controller names why a range is refused); shown in place of the generic one. */
   message?: string;
@@ -53,13 +62,15 @@ const storedRange = (value: ChecklistScheduleDto | null): ProjectDefaultRangeDto
   ? { start: { localCivil: value.start.localCivil, fold: value.start.fold }, end: { localCivil: value.end.localCivil, fold: value.end.fold } }
   : null;
 
-export function SubtaskScheduleControl<TItem extends LatestSubtaskSummary = Subtask>({ owner, label, value, open, setOpen, onSave, onUseLatest, onUseLatestItem, busy, compact = false, error, defaultLabel, retained: retainedProp, trigger, initialFocus = "first", projectDefault = null }: { owner: string; label: string; value: ChecklistScheduleDto | null; defaultLabel?: string; open: boolean; setOpen: (open: boolean) => void; onSave: (value: RangeScheduleRequest) => void; onUseLatest?: (value: ChecklistScheduleDto) => void; onUseLatestItem?: (value: TItem) => void; busy: boolean; compact?: boolean; error?: ScheduleError<TItem>; retained?: RetainedSchedule;
+export function SubtaskScheduleControl<TItem extends LatestSubtaskSummary = Subtask>({ owner, label, value, open, setOpen, onSave, onUseLatest, onUseLatestItem, busy, compact = false, error, defaultLabel, retained: retainedProp, trigger, initialFocus = "first", projectDefault = null, reminders }: { owner: string; label: string; value: ChecklistScheduleDto | null; defaultLabel?: string; open: boolean; setOpen: (open: boolean) => void; onSave: (value: RangeScheduleRequest) => void; onUseLatest?: (value: ChecklistScheduleDto, reminders?: SubtaskRemindersDto) => void; onUseLatestItem?: (value: TItem) => void; busy: boolean; compact?: boolean; error?: ScheduleError<TItem>; retained?: RetainedSchedule;
   /** Replaces the built-in trigger (the Gantt's Due cell). The popover keeps `aria-label={label}` either way. */
   trigger?: (props: SubtaskScheduleTriggerProps) => ReactNode;
   /** Which end the popup opens on: the Start (the Checklist), or the End (the Gantt's Due cell). */
   initialFocus?: "first" | "end";
   /** The Project's default range, for the popup's "Project default" shortcut; null hides it. */
-  projectDefault?: ProjectDefaultRangeDto | null }) {
+  projectDefault?: ProjectDefaultRangeDto | null;
+  /** The Subtask's reminder set for the popup's strip (#425). `next` undefined hides the saved next-reminder line (a new Subtask). Omit for a range-only popup. */
+  reminders?: DateTimeReminders }) {
   const ownRetained = useRef<RetainedSchedule>({ draft: null, baseVersion: null });
   const retained = retainedProp ?? ownRetained.current;
   // A failed save keeps the draft Apply handed over, because the conflict is shown after the popup closes and the user must be able
@@ -78,14 +89,17 @@ export function SubtaskScheduleControl<TItem extends LatestSubtaskSummary = Subt
   const seed = error && retained.draft ? retained.draft : undefined;
   const apply = (next: DateTimeRangeApply) => {
     retained.draft = next;
-    onSave({ expectedVersion: error?.current?.version ?? retained.baseVersion ?? value?.version ?? 0, schedule: { state: "range", start: next.start, end: next.end } });
+    onSave({ expectedVersion: error?.current?.version ?? retained.baseVersion ?? value?.version ?? 0, schedule: { state: "range", start: next.start, end: next.end }, ...(next.reminderOffsetsMinutes ? { reminderOffsetsMinutes: next.reminderOffsetsMinutes } : {}) });
   };
   const discard = () => { retained.baseVersion = null; retained.draft = null; };
+  // After a conflict the saved set is the latest one the server reported, not the stale row's.
+  const latestReminders = error?.currentReminders ?? error?.currentSubtask?.reminders;
+  const popupReminders: DateTimeReminders | undefined = reminders && (latestReminders ? { offsets: latestReminders.offsetsMinutes, next: latestReminders.nextOccurrence } : reminders);
   const triggerClass = compact ? COMPOSER_TRIGGER_CLASSES : META_TRIGGER;
   const valueText = value ? formatSchedule(value) : defaultLabel;
   const feedback = <>
     {error && !error.current && !error.currentSubtask && <Notice tone="critical" role="alert">{error.message ?? "The schedule could not be saved. Review the highlighted fields."}</Notice>}
-    {error?.currentSubtask ? <Notice tone="caution" role="status"><strong>Latest checklist item · schedule v{error.currentSubtask.schedule.version}</strong><dl className="grid gap-[var(--space-1)] m-0"><div className="flex items-baseline justify-between gap-[var(--space-3)]"><dt className={POPOVER_LABEL}>Title</dt><dd className="m-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground">{error.currentSubtask.title}</dd></div><div className="flex items-baseline justify-between gap-[var(--space-3)]"><dt className={POPOVER_LABEL}>Done</dt><dd className="m-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground">{error.currentSubtask.done ? "Complete" : "Open"}</dd></div><div className="flex items-baseline justify-between gap-[var(--space-3)]"><dt className={POPOVER_LABEL}>Assignees</dt><dd className="m-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground">{error.currentSubtask.assignees.length ? error.currentSubtask.assignees.map((person) => person.name).join(", ") : "Unassigned"}{error.currentSubtask.otherAssigneeCount ? ` and ${error.currentSubtask.otherAssigneeCount} other${error.currentSubtask.otherAssigneeCount === 1 ? "" : "s"}` : ""}</dd></div><div className="flex items-baseline justify-between gap-[var(--space-3)]"><dt className={POPOVER_LABEL}>Schedule</dt><dd className="m-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground">{formatSchedule(error.currentSubtask.schedule)}</dd></div></dl><button type="button" className={buttonClasses("secondary", { className: "justify-self-start" })} disabled={busy} onClick={() => { onUseLatestItem?.(error.currentSubtask!); setOpen(false); }}>Use latest item (discard draft)</button><span className={cn(META_TEXT, "!normal-case")}>Apply reapplies your retained schedule draft; Cancel discards it.</span></Notice> : error?.current && <Notice tone="caution" role="status"><strong>Latest schedule · v{error.current.version}</strong><span>{formatSchedule(error.current)}</span><button type="button" className={buttonClasses("secondary", { className: "justify-self-start" })} disabled={busy} onClick={() => { onUseLatest?.(error.current!); setOpen(false); }}>Use latest schedule (discard draft)</button><span className={cn(META_TEXT, "!normal-case")}>Apply reapplies your retained schedule draft; Cancel discards it.</span></Notice>}
+    {error?.currentSubtask ? <Notice tone="caution" role="status"><strong>Latest checklist item · schedule v{error.currentSubtask.schedule.version}</strong><dl className="grid gap-[var(--space-1)] m-0"><div className="flex items-baseline justify-between gap-[var(--space-3)]"><dt className={POPOVER_LABEL}>Title</dt><dd className="m-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground">{error.currentSubtask.title}</dd></div><div className="flex items-baseline justify-between gap-[var(--space-3)]"><dt className={POPOVER_LABEL}>Done</dt><dd className="m-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground">{error.currentSubtask.done ? "Complete" : "Open"}</dd></div><div className="flex items-baseline justify-between gap-[var(--space-3)]"><dt className={POPOVER_LABEL}>Assignees</dt><dd className="m-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground">{error.currentSubtask.assignees.length ? error.currentSubtask.assignees.map((person) => person.name).join(", ") : "Unassigned"}{error.currentSubtask.otherAssigneeCount ? ` and ${error.currentSubtask.otherAssigneeCount} other${error.currentSubtask.otherAssigneeCount === 1 ? "" : "s"}` : ""}</dd></div><div className="flex items-baseline justify-between gap-[var(--space-3)]"><dt className={POPOVER_LABEL}>Schedule</dt><dd className="m-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground">{formatSchedule(error.currentSubtask.schedule)}</dd></div>{error.currentSubtask.reminders && <div className="flex items-baseline justify-between gap-[var(--space-3)]"><dt className={POPOVER_LABEL}>Reminders</dt><dd className="m-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground">{formatReminderSet(error.currentSubtask.reminders.offsetsMinutes)}</dd></div>}</dl><button type="button" className={buttonClasses("secondary", { className: "justify-self-start" })} disabled={busy} onClick={() => { onUseLatestItem?.(error.currentSubtask!); setOpen(false); }}>Use latest item (discard draft)</button><span className={cn(META_TEXT, "!normal-case")}>Apply reapplies your retained schedule draft; Cancel discards it.</span></Notice> : error?.current && <Notice tone="caution" role="status"><strong>Latest schedule · v{error.current.version}</strong><span>{formatSchedule(error.current)}</span>{error.currentReminders && <span>Reminders: {formatReminderSet(error.currentReminders.offsetsMinutes)}</span>}<button type="button" className={buttonClasses("secondary", { className: "justify-self-start" })} disabled={busy} onClick={() => { onUseLatest?.(error.current!, error.currentReminders); setOpen(false); }}>Use latest schedule (discard draft)</button><span className={cn(META_TEXT, "!normal-case")}>Apply reapplies your retained schedule draft; Cancel discards it.</span></Notice>}
   </>;
   return <Popover open={open} onOpenChange={setOpen}>
     <PopoverTrigger
@@ -105,6 +119,7 @@ export function SubtaskScheduleControl<TItem extends LatestSubtaskSummary = Subt
         openOn={initialFocus === "end" ? "end" : "start"}
         seed={seed}
         seedKey={seed ? JSON.stringify(seed) : "stored"}
+        reminders={popupReminders}
         feedback={feedback}
         onApply={apply}
         onClose={() => setOpen(false)}
