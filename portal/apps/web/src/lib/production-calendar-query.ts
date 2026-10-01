@@ -92,11 +92,10 @@ function responseSchemaFor(role: Role): { parse: (value: unknown) => ProductionC
 }
 
 const mutationEndpointSchema = z.object({
-  kind: z.enum(["date", "timed"]),
   localCivil: z.string(),
-  instant: z.string().nullable(),
-  utcOffsetMinutes: z.number().int().nullable(),
-  fold: z.union([z.literal(0), z.literal(1)]).nullable(),
+  instant: z.string(),
+  utcOffsetMinutes: z.number().int(),
+  fold: z.union([z.literal(0), z.literal(1)]),
   resolution: z.literal("stored"),
 }).strict();
 

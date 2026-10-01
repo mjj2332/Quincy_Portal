@@ -175,13 +175,12 @@ export function ganttEditToProposal(source: ChecklistCalendarEventDto, edit: Gan
   const originalInstant = edit.kind === "resize-end" ? edit.eventEnd : edit.eventStart;
   const edge = edit.kind === "resize-start" ? "start" : edit.kind === "resize-end" ? "end" : null;
   const movedEndpoint = edit.kind === "resize-end" ? end : start;
-  const timed = movedEndpoint.kind === "timed";
 
   const wrap = (target: CalendarManipulationTarget): SchedulingProposal => (edge
     ? { kind: "resize", entity: "checklist", source, edge, target: { ...target, edge } }
     : { kind: "move", entity: "checklist", source, target });
 
-  if (edit.scale === "day" && timed) {
+  if (edit.scale === "day") {
     const target = dayScaleTimedTarget(edgeInstant);
     return target ? wrap(target) : null;
   }
@@ -194,16 +193,6 @@ export function ganttEditToProposal(source: ChecklistCalendarEventDto, edit: Gan
     // endpoint, preserving wall time for timed endpoints.
     const targetDate = shiftDate(movedEndpoint.localCivil.slice(0, 10), delta);
     return targetDate ? wrap({ subview: "month", targetDate }) : null;
-  }
-
-  if (!timed) {
-    if (edge === "start") {
-      const targetDate = shiftDate(movedEndpoint.localCivil, delta);
-      return targetDate ? wrap({ subview: "month", targetDate }) : null;
-    }
-    // The end-resize mapper reads `target.end` as the EXCLUSIVE all-day end.
-    const exclusive = shiftDate(movedEndpoint.localCivil, delta + 1);
-    return exclusive ? wrap({ subview: "month", targetDate: exclusive, end: exclusive }) : null;
   }
 
   const shifted = shiftCivilMinute(movedEndpoint.localCivil, delta);

@@ -162,7 +162,7 @@ function installApiMocks() {
     if (path.includes("/annotations")) return Promise.resolve({ annotations: [] });
     if (path.includes("/comments?")) return Promise.resolve({ project: { id: PROJECT_ID, street: "12 Example St" }, comments: [] });
     if (path.includes("comment-read-marker")) return Promise.resolve({ projectId: PROJECT_ID, marker: null, latest: null, unreadCount: 0 });
-    if (path.includes("/subtasks")) return Promise.resolve({ subtasks: [] });
+    if (path.includes("/subtasks")) return Promise.resolve({ subtasks: [], projectDefaultRange: { start: { localCivil: "2026-09-01T09:00", fold: 0 }, end: { localCivil: "2026-09-01T17:00", fold: 0 } } });
     if (path.includes("/mentionable-users")) return Promise.resolve({ users: [] });
     if (path.includes("/activity")) return Promise.resolve({ events: [], nextCursor: null });
     if (path.includes("/collaboration-summary")) return Promise.resolve({ project: { id: PROJECT_ID, street: "12 Example St", stageKey: "raw_review" }, members: [] });

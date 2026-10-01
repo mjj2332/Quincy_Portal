@@ -99,7 +99,6 @@ export function GanttSubtaskDueCell({ row, editorOpen, disabled, error, retained
         onUseLatest={() => { closeHandledRef.current = true; onCancel(); }}
         onUseLatestItem={() => { closeHandledRef.current = true; onCancel(); }}
         initialFocus="end"
-        returnFocusOnClose
         trigger={({ disabled: triggerDisabled, onClick, ...props }) => (
           <Button
             {...props}
@@ -113,7 +112,7 @@ export function GanttSubtaskDueCell({ row, editorOpen, disabled, error, retained
             // Stays focusable while frozen: the trigger holds focus across a Save (the popover hands focus back to it), and a
             // disabled button would drop it to the page.
             focusableWhenDisabled
-            onClick={() => { if (!triggerDisabled) onClick(); }}
+            onClick={(event) => { if (!triggerDisabled) onClick?.(event); }}
           >
             <time dateTime={end.instant ?? end.localCivil} className="truncate">{text}</time>
           </Button>

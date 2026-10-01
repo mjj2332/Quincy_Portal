@@ -7,6 +7,10 @@ import { formatSchedule, scheduleReorderFocus, SubtaskChecklist } from "./Subtas
 import { reorderNeighbors } from "../lib/reorder-neighbors";
 import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project-query-sync";
 import { projectDataKeys } from "../lib/project-data";
+import { applyPopup, dateTimePopup, pickPopupDay, pickRangeEnd, popupButton, rangeToggles, typePopupTime } from "@/testing/date-time-popup";
+import { checklistScheduleToDto, normalizeChecklistSchedule } from "@quincy/shared";
+import { formatCivilRange } from "../lib/date-format";
+import { endMoment, momentScheduleDto, presetScheduleDto, startMoment } from "@/testing/subtask-schedule";
 
 const confirmMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)));
 const floating = vi.hoisted(() => ({ modalValues: [] as Array<boolean | undefined> }));
@@ -40,7 +44,7 @@ vi.mock("../lib/api", async (importOriginal) => { const actual = await importOri
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const year = new Date().getFullYear();
-const rangeOf = (day: string, version = 0) => { const endpoint = { kind: "date" as const, localCivil: day, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }; return { state: "range" as const, version, zone: "Australia/Sydney" as const, start: endpoint, end: endpoint, due: day }; };
+const rangeOf = (day: string, version = 1) => presetScheduleDto(day, day, version);
 const person = (id: string, name: string) => ({ id, name, roleLabel: "Editor", isExternal: false, active: true });
 const nora = person("20000000-0000-4000-8000-000000000002", "Nora Jones"); const ada = person("30000000-0000-4000-8000-000000000003", "Ada Smith"); const ben = person("40000000-0000-4000-8000-000000000004", "Ben Ortiz"); const cy = person("50000000-0000-4000-8000-000000000005", "Cy Young"); const dee = person("60000000-0000-4000-8000-000000000006", "Dee Park");
 let optionsResponse: { candidates: Array<{ id: string; name: string; role: string }> };
@@ -70,7 +74,13 @@ async function pickAssignee(name: string) { const option = pickerOptions().find(
 async function closeAssignees() { const active = document.activeElement ?? document.body; await act(async () => { active.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); }); await waitFor(() => expect(document.querySelector('[role="listbox"]')).toBeNull()); await flush(); }
 const assigneeTrigger = (host: HTMLElement, title = "Call client") => item(host, title).querySelector<HTMLButtonElement>(`[aria-label="Assignees for ${title}"]`)!;
 const stackLabels = (scope: Element) => [...scope.querySelectorAll('[role="img"]')].map((element) => element.getAttribute("aria-label"));
-function saveButton(scope: Element) { return [...scope.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!; }
+const popupOf = (title: string) => dateTimePopup(`Schedule for ${title}`)!;
+const openSchedule = async (host: HTMLElement, title: string) => { await click(item(host, title).querySelector<HTMLButtonElement>(`[aria-label="Schedule for ${title}"]`)!); return popupOf(title); };
+/** Picks a start day in the open popup and applies it: the one-step way to write a retained draft. */
+/** Opens the popup unless an earlier outside press left it open. */
+const ensureOpen = async (host: HTMLElement, title: string) => popupOf(title) ?? openSchedule(host, title);
+const draftDay = async (popup: HTMLElement, day: string) => { await pickPopupDay(popup, day); await applyPopup(popup); await flush(); };
+function saveButton(scope: Element) { return [...scope.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Apply")!; }
 
 beforeEach(() => { optionsResponse = { candidates: [{ id: "20000000-0000-4000-8000-000000000002", name: "Nora Jones", role: "editor" }, { id: "30000000-0000-4000-8000-000000000003", name: "Ada Smith", role: "photographer" }, { id: "40000000-0000-4000-8000-000000000004", name: "Ben Ortiz", role: "editor" }, { id: "50000000-0000-4000-8000-000000000005", name: "Cy Young", role: "editor" }, { id: "60000000-0000-4000-8000-000000000006", name: "Dee Park", role: "editor" }] }; floating.modalValues.length = 0; apiGetMock.mockReset().mockImplementation((path) => path.includes("subtask-assignee-options") ? Promise.resolve(optionsResponse) : Promise.resolve({ subtasks: [task, second] })); apiPostMock.mockReset().mockResolvedValue({ ...task, id: "task-new", title: "Schedule staging", position: 3072 }); apiPatchMock.mockReset().mockImplementation((path, body) => { const base = path.includes("task-2") ? second : task; return Promise.resolve({ ...base, ...("schedule" in (body as object) || "assignees" in (body as object) ? {} : body as object) }); }); apiDeleteMock.mockReset().mockResolvedValue({ ok: true }); confirmMock.mockReset().mockResolvedValue(true); });
 afterEach(async () => { await act(async () => root?.unmount()); root = null; document.body.replaceChildren(); });
@@ -100,18 +110,16 @@ describe("SubtaskChecklist", () => {
 
   it("keeps the checklist popover non-modal by default", async () => {
     const host = mount(); await render();
-    await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
-    expect(floating.modalValues.at(-1)).toBe(false);
+    const popup = await openSchedule(host, "Call client");
+    expect(popup).not.toBeNull();
+    expect(popup.getAttribute("aria-modal")).not.toBe("true");
   });
 
   it("patches a saved schedule locally and flushes its deferred invalidation once", async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const runtime = new ProjectQueryRuntime(queryClient, "subtask-schedule-owner-test");
     const subtasksKey = projectDataKeys.subtasks(projectId);
-    const updated = {
-      ...task,
-      schedule: { state: "range" as const, version: 1, zone: "Australia/Sydney" as const, start: { kind: "date" as const, localCivil: `${year}-06-15`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, end: { kind: "date" as const, localCivil: `${year}-06-15`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, due: `${year}-06-15` },
-    };
+    const updated = { ...task, schedule: presetScheduleDto(`${year}-06-15`, `${year}-06-15`, 2) };
     queryClient.setQueryData(subtasksKey, [task, second]);
     let patchSettled = false;
     apiGetMock.mockImplementation((path) => {
@@ -132,11 +140,9 @@ describe("SubtaskChecklist", () => {
     const host = mount();
     await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><SubtaskChecklist projectId={projectId} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); await Promise.resolve(); });
 
-    const schedule = item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!;
-    await click(schedule);
+    const popup = await openSchedule(host, "Call client");
     expect(runtime.isOwned(subtasksKey)).toBe(true);
-    await click(saveButton(portal("subtask-popover-task-1-schedule")));
-    await flush();
+    await draftDay(popup, `${year}-06-15`);
 
     expect(runtime.isOwned(subtasksKey)).toBe(true);
     expect(requestOwnership).toEqual([]);
@@ -145,7 +151,7 @@ describe("SubtaskChecklist", () => {
     resolvePatch(updated);
     await flush();
     expect(apiPatchMock).toHaveBeenCalled();
-    expect(queryClient.getQueryData<typeof updated[]>(subtasksKey)?.find((entry) => entry.id === task.id)).toMatchObject({ schedule: { due: `${year}-06-15` } });
+    expect(queryClient.getQueryData<typeof updated[]>(subtasksKey)?.find((entry) => entry.id === task.id)).toMatchObject({ schedule: { due: `${year}-06-15T17:00` } });
     expect(requestOwnership).toEqual([true]);
     expect(invalidate.mock.calls.filter(([options]) => JSON.stringify(options?.queryKey) === JSON.stringify(subtasksKey))).toHaveLength(1);
     expect(publish.mock.calls.some(([message]) => message.type === "dashboard-board-invalidated")).toBe(false);
@@ -155,40 +161,34 @@ describe("SubtaskChecklist", () => {
   });
 
   it("edits a one-day range row and a timed range, and never offers a mode picker (start = end is one day)", async () => {
-    const host = mount(); await render(); const first = item(host, "Call client"); const schedule = first.querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!; const assignee = first.querySelector<HTMLButtonElement>('[aria-label="Assignees for Call client"]')!;
-    await click(schedule); const group = portal("subtask-popover-task-1-schedule"); expect(group).not.toBeNull();
-    // Only the Date / Timed choice remains;.
-    expect(group.querySelectorAll("select")).toHaveLength(1); expect(group.textContent).not.toContain("Due only"); expect(group.textContent).not.toContain("Unscheduled");
-    // The popover scrolls under AnchoredPopover's height cap, so Save/Cancel are pinned to the bottom of it, and the mode label reads "Date or time".
-    expect(saveButton(group).parentElement!.classList.contains("sticky")).toBe(true); expect(saveButton(group).parentElement!.classList.contains("bottom-0")).toBe(true); expect(group.textContent).toContain("Date or time");
-    expect(dateInputs(group).map((input) => input.value)).toEqual([`${year}-05-30`, `${year}-05-30`]);
-    await click(saveButton(group));
-    expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { schedule: { expectedVersion: 0, schedule: { state: "range", start: { kind: "date", localCivil: `${year}-05-30` }, end: { kind: "date", localCivil: `${year}-05-30` } } } });
-    await click(schedule); const editor = portal("subtask-popover-task-1-schedule"); await selectValue(editor.querySelector<HTMLSelectElement>("select")!, "timed");
-    expect(timeInputs(editor)).toHaveLength(2); expect(timeInputs(editor)[0]!.step).toBe("60");
-    expect(saveButton(editor).disabled).toBe(true);
-    const [startDate, endDate] = dateInputs(editor); const [startTime, endTime] = timeInputs(editor);
-    await typeInto(startDate!, `${year}-06-01`); await typeInto(endDate!, `${year}-06-01`); await typeInto(startTime!, "09:00"); await typeInto(endTime!, "09:30"); expect(saveButton(editor).disabled).toBe(false); await click(saveButton(editor));
-    expect(apiPatchMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { schedule: { expectedVersion: 0, schedule: { state: "range", start: { kind: "timed", localCivil: `${year}-06-01T09:00` }, end: { kind: "timed", localCivil: `${year}-06-01T09:30` } } } });
-    await click(schedule); const clearing = portal("subtask-popover-task-1-schedule"); await typeInto(dateInputs(clearing)[0]!, ""); expect(saveButton(clearing).disabled).toBe(true);
+    const host = mount(); await render(); const assignee = item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Assignees for Call client"]')!;
+    const group = await openSchedule(host, "Call client"); expect(group).not.toBeNull();
+    // A Subtask is always a range of two moments: no Date / Timed choice, no Due only, no Unscheduled.
+    expect(group.textContent).not.toContain("Date or time"); expect(group.textContent).not.toContain("Due only"); expect(group.textContent).not.toContain("Unscheduled"); expect(group.querySelectorAll("input[type=date]")).toHaveLength(0);
+    expect(rangeToggles(group)).toEqual({ active: "Start", start: "30/5 09:00", end: "30/5 17:00" });
+    // Nothing changed: Apply only closes.
+    await applyPopup(group); await flush();
+    expect(apiPatchMock).not.toHaveBeenCalled(); expect(popupOf("Call client")).toBeNull();
+    // An end at or before the start is refused, by time of day within one day.
+    const editor = await openSchedule(host, "Call client"); await pickRangeEnd(editor, "End"); await typePopupTime(editor, "08:00");
+    expect(editor.textContent).toContain("Start must be before end."); expect(popupButton(editor, "Apply")!.disabled).toBe(true);
+    await typePopupTime(editor, "09:30"); expect(popupButton(editor, "Apply")!.disabled).toBe(false); await applyPopup(editor); await flush();
+    expect(apiPatchMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { schedule: { expectedVersion: 1, schedule: { state: "range", start: { localCivil: `${year}-05-30T09:00` }, end: { localCivil: `${year}-05-30T09:30` } } } });
     await openAssignees(assignee); await pickAssignee("Ada Smith"); await closeAssignees(); expect(apiPatchMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { assignees: { expectedVersion: 1, add: ["30000000-0000-4000-8000-000000000003"], remove: [] } });
   });
 
-  it("lets an existing range be edited: the control is enabled, offers only the endpoint kind, and saves a versioned range PATCH", async () => {
-    const endpoint = (localCivil: string) => ({ kind: "date" as const, localCivil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const });
-    const rangeTask = { ...task, id: "range-1", title: "Existing range", position: 512, dueDate: `${year}-06-02`, schedule: { state: "range" as const, version: 1, zone: "Australia/Sydney" as const, start: endpoint(`${year}-06-01`), end: endpoint(`${year}-06-02`), due: `${year}-06-02` } };
+  it("lets an existing range be edited: the control is enabled, shows both moments, and saves a versioned range PATCH", async () => {
+    const rangeTask = { ...task, id: "range-1", title: "Existing range", position: 512, dueDate: `${year}-06-02T17:00`, schedule: presetScheduleDto(`${year}-06-01`, `${year}-06-02`, 1) };
     apiGetMock.mockImplementation((path) => path.includes("subtask-assignee-options") ? Promise.resolve(optionsResponse) : Promise.resolve({ subtasks: [rangeTask, second] }));
     apiPatchMock.mockResolvedValue(rangeTask);
     const host = mount(); await render();
     const control = item(host, "Existing range").querySelector<HTMLButtonElement>('[aria-label="Schedule for Existing range"]')!;
     expect(control.disabled).toBe(false);
     expect(control.textContent).toContain("1 Jun");
-    await click(control);
-    const editor = portal("subtask-popover-range-1-schedule");
-    expect(editor.querySelectorAll("select")).toHaveLength(1);
-    expect([...editor.querySelector<HTMLSelectElement>("select")!.options].map((option) => option.value)).toEqual(["date", "timed"]);
-    await click(saveButton(editor)); await flush();
-    expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks/range-1`, { schedule: { expectedVersion: 1, schedule: { state: "range", start: { kind: "date", localCivil: `${year}-06-01` }, end: { kind: "date", localCivil: `${year}-06-02` } } } });
+    const editor = await openSchedule(host, "Existing range");
+    expect(rangeToggles(editor)).toEqual({ active: "Start", start: "1/6 09:00", end: "2/6 17:00" });
+    await pickRangeEnd(editor, "End"); await typePopupTime(editor, "18:00"); await applyPopup(editor); await flush();
+    expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks/range-1`, { schedule: { expectedVersion: 1, schedule: { state: "range", start: { localCivil: `${year}-06-01T09:00` }, end: { localCivil: `${year}-06-02T18:00` } } } });
   });
 
   it("keeps one Delete-only popover and restores deletion focus", async () => {
@@ -217,14 +217,11 @@ describe("SubtaskChecklist", () => {
 
   it("shows the full authoritative item on an item conflict with explicit discard and reapply choices", async () => {
     const host = mount(); await render();
-    const latest = { ...task, title: "Authoritative title", done: true, assignees: [ada], schedule: { state: "range", version: 2, zone: "Australia/Sydney", start: { kind: "date", localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, end: { kind: "date", localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, due: `${year}-06-10` } };
+    const latest = { ...task, title: "Authoritative title", done: true, assignees: [ada], schedule: presetScheduleDto(`${year}-06-10`, `${year}-06-10`, 2) };
     apiPatchMock.mockRejectedValueOnce(new ApiError("Checklist item changed", 409, { code: "subtask_item_conflict", current: latest.schedule, currentSubtask: latest }));
-    await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
-    const draft = portal("subtask-popover-task-1-schedule"); await typeInto(draft.querySelector<HTMLInputElement>('input[type="date"]')!, `${year}-06-20`); await click(saveButton(draft));
-    await flush();
-    await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
-    const conflict = portal("subtask-popover-task-1-schedule");
-    expect(conflict.querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe(`${year}-06-20`); expect(conflict.textContent).toContain("Authoritative title"); expect(conflict.textContent).toContain("Complete"); expect(conflict.textContent).toContain("Ada Smith"); expect(conflict.textContent).toContain("Use latest item (discard draft)"); expect(conflict.textContent).toContain("Save reapplies your retained schedule draft; Cancel discards it.");
+    await draftDay(await openSchedule(host, "Call client"), `${year}-06-20`);
+    const conflict = await openSchedule(host, "Call client");
+    expect(rangeToggles(conflict).start).toBe("20/6 09:00"); expect(conflict.textContent).toContain("Authoritative title"); expect(conflict.textContent).toContain("Complete"); expect(conflict.textContent).toContain("Ada Smith"); expect(conflict.textContent).toContain("Use latest item (discard draft)"); expect(conflict.textContent).toContain("Apply reapplies your retained schedule draft; Cancel discards it.");
     await click([...conflict.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Use latest item (discard draft)")!);
     // The authoritative item is done, so it now sits in the collapsed "Completed" group (#377).
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.startsWith("Completed ("))!); expect(item(host, "Authoritative title")).not.toBeNull();
@@ -232,59 +229,53 @@ describe("SubtaskChecklist", () => {
 
   it("keeps a retained schedule conflict draft when an unrelated Done update succeeds", async () => {
     const host = mount(); await render();
-    const latest = { ...task, schedule: { state: "range" as const, version: 2, zone: "Australia/Sydney" as const, start: { kind: "date" as const, localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, end: { kind: "date" as const, localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, due: `${year}-06-10` } };
+    const latest = { ...task, schedule: presetScheduleDto(`${year}-06-10`, `${year}-06-10`, 2) };
     apiPatchMock.mockRejectedValueOnce(new ApiError("Schedule changed", 409, { code: "subtask_schedule_conflict", current: latest.schedule }));
-    await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
-    const editor = portal("subtask-popover-task-1-schedule"); await typeInto(editor.querySelector<HTMLInputElement>('input[type="date"]')!, `${year}-06-20`); await click(saveButton(editor)); await flush();
-    await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
-    expect(portal("subtask-popover-task-1-schedule").querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe(`${year}-06-20`);
+    await draftDay(await openSchedule(host, "Call client"), `${year}-06-20`);
+    expect(rangeToggles(await openSchedule(host, "Call client")).start).toBe("20/6 09:00");
     await click(item(host, "Call client").querySelector<HTMLInputElement>('input[type="checkbox"]')!); await flush();
     expect(apiPatchMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { done: true });
     // Done moves the row into the collapsed "Completed" group (#377); open it to reach the row.
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.startsWith("Completed ("))!);
-    expect(portal("subtask-popover-task-1-schedule").textContent).toContain("Latest schedule · v2");
-    expect(portal("subtask-popover-task-1-schedule").querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe(`${year}-06-20`);
+    // An outside press closed the popup, but the retained draft and the conflict survive the remount: reopen it.
+    const reopened = await ensureOpen(host, "Call client");
+    expect(reopened.textContent).toContain("Latest schedule · v2");
+    expect(rangeToggles(reopened).start).toBe("20/6 09:00");
   });
 
   it("keeps the retained schedule draft when Done moves the row to Completed and the editor is reopened (#377)", async () => {
     const host = mount(); await render();
-    const latest = { ...task, schedule: { state: "range" as const, version: 2, zone: "Australia/Sydney" as const, start: { kind: "date" as const, localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, end: { kind: "date" as const, localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, due: `${year}-06-10` } };
+    const latest = { ...task, schedule: presetScheduleDto(`${year}-06-10`, `${year}-06-10`, 2) };
     apiPatchMock.mockRejectedValueOnce(new ApiError("Schedule changed", 409, { code: "subtask_schedule_conflict", current: latest.schedule }));
-    await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
-    const editor = portal("subtask-popover-task-1-schedule"); await typeInto(editor.querySelector<HTMLInputElement>('input[type="date"]')!, `${year}-06-20`); await click(saveButton(editor)); await flush();
-    await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
-    expect(portal("subtask-popover-task-1-schedule").querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe(`${year}-06-20`);
-    await keydown(portal("subtask-popover-task-1-schedule"), "Escape"); await flush();
+    await draftDay(await openSchedule(host, "Call client"), `${year}-06-20`);
+    expect(rangeToggles(await openSchedule(host, "Call client")).start).toBe("20/6 09:00");
+    await keydown(popupOf("Call client"), "Escape"); await flush();
     await click(item(host, "Call client").querySelector<HTMLInputElement>('input[type="checkbox"]')!); await flush();
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.startsWith("Completed ("))!);
-    await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
-    const reopened = portal("subtask-popover-task-1-schedule");
+    const reopened = await openSchedule(host, "Call client");
     expect(reopened.textContent).toContain("Latest schedule · v2");
-    expect(reopened.querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe(`${year}-06-20`);
-    // Save reapplies the draft against the latest version the conflict named, not the stored dates.
-    apiPatchMock.mockResolvedValueOnce({ ...latest, done: true, schedule: { ...latest.schedule, version: 3 } });
-    await click(saveButton(reopened)); await flush();
+    expect(rangeToggles(reopened).start).toBe("20/6 09:00");
+    // Apply reapplies the draft against the latest version the conflict named, not the stored dates.
+    apiPatchMock.mockResolvedValueOnce({ ...latest, done: true, schedule: presetScheduleDto(`${year}-06-20`, `${year}-06-20`, 3) });
+    await applyPopup(reopened); await flush();
     expect(apiPatchMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/subtasks/task-1`, expect.objectContaining({ schedule: expect.objectContaining({ expectedVersion: 2 }) }));
   });
 
   it("keeps a retained schedule conflict draft when an unrelated rename succeeds", async () => {
     const host = mount(); await render();
-    const latest = { ...task, schedule: { state: "range" as const, version: 2, zone: "Australia/Sydney" as const, start: { kind: "date" as const, localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, end: { kind: "date" as const, localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, due: `${year}-06-10` } };
+    const latest = { ...task, schedule: presetScheduleDto(`${year}-06-10`, `${year}-06-10`, 2) };
     apiPatchMock.mockRejectedValueOnce(new ApiError("Schedule changed", 409, { code: "subtask_schedule_conflict", current: latest.schedule }));
-    await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
-    const editor = portal("subtask-popover-task-1-schedule"); await typeInto(editor.querySelector<HTMLInputElement>('input[type="date"]')!, `${year}-06-20`); await click(saveButton(editor)); await flush();
-    await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
-    await waitFor(() => expect(portal("subtask-popover-task-1-schedule").querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe(`${year}-06-20`));
+    await draftDay(await openSchedule(host, "Call client"), `${year}-06-20`);
+    await openSchedule(host, "Call client");
+    await waitFor(() => expect(rangeToggles(popupOf("Call client")).start).toBe("20/6 09:00"));
     // An unrelated write landing (a rename). A Done tick used to be the unrelated write, but it now moves the row into the
     // "Completed" group, which remounts it and discards the popover draft by design (#377).
     await click(item(host, "Call client").querySelector<HTMLButtonElement>('[data-testid="subtask-checklist-title"]')!); const renameInput = item(host, "Call client").querySelector<HTMLInputElement>('[aria-label="Subtask title"]')!; await typeInto(renameInput, "Renamed item"); await keydown(renameInput, "Enter"); await flush();
-    // Each post-action assertion waits for its rendered result rather than trusting a fixed number of microtask flushes,
-    // which is a load-timing flake under a busy full-suite run.
     await waitFor(() => expect(apiPatchMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { title: "Renamed item" }));
-    await waitFor(() => expect(portal("subtask-popover-task-1-schedule").textContent).toContain("Latest schedule · v2"));
-    await waitFor(() => expect(portal("subtask-popover-task-1-schedule").querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe(`${year}-06-20`));
+    const reopened = await ensureOpen(host, "Renamed item");
+    expect(reopened.textContent).toContain("Latest schedule · v2");
+    expect(rangeToggles(reopened).start).toBe("20/6 09:00");
   });
-
 
   it("preserves an open schedule draft when a late authoritative refresh arrives", async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -292,64 +283,64 @@ describe("SubtaskChecklist", () => {
     queryClient.setQueryData(projectDataKeys.subtasks(projectId), [task, second]);
     const host = mount();
     await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><SubtaskChecklist projectId={projectId} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); await Promise.resolve(); });
-    const schedule = item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!;
-    await click(schedule);
-    const editor = portal("subtask-popover-task-1-schedule");
-    await typeInto(editor.querySelector<HTMLInputElement>('input[type="date"]')!, `${year}-06-15`);
+    const editor = await openSchedule(host, "Call client");
+    await pickPopupDay(editor, `${year}-06-15`);
     queryClient.setQueryData(projectDataKeys.subtasks(projectId), [{ ...task, title: "Late authoritative title", dueDate: `${year}-07-01` }, second]);
     await flush();
-    expect(portal("subtask-popover-task-1-schedule").querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe(`${year}-06-15`);
+    expect(rangeToggles(portal("subtask-popover-task-1-schedule")).start).toBe("15/6 09:00");
     runtime.dispose(); queryClient.clear();
   });
 
   it("submits the schedule version captured at editor open after a late versioned refresh", async () => {
-    const versionOne = { ...task, schedule: { state: "range" as const, version: 1, zone: "Australia/Sydney" as const, start: { kind: "timed" as const, localCivil: `${year}-06-01T00:00`, instant: "2026-06-01T23:00:00.000Z", utcOffsetMinutes: 600, fold: null, resolution: "stored" as const }, end: { kind: "timed" as const, localCivil: `${year}-06-01T09:00`, instant: "2026-06-01T23:00:00.000Z", utcOffsetMinutes: 600, fold: 0 as const, resolution: "stored" as const }, due: `${year}-06-01T09:00` } };
-    const versionTwo = { ...versionOne, title: "Late version 2", dueDate: `${year}-06-02T09:00`, schedule: { ...versionOne.schedule, version: 2, end: { ...versionOne.schedule.end, localCivil: `${year}-06-02T09:00`, instant: "2026-06-02T23:00:00.000Z" }, due: `${year}-06-02T09:00` } };
+    const versionOne = { ...task, schedule: momentScheduleDto(`${year}-06-01T00:00`, `${year}-06-01T09:00`, 1) };
+    const versionTwo = { ...versionOne, title: "Late version 2", dueDate: `${year}-06-02T09:00`, schedule: momentScheduleDto(`${year}-06-01T00:00`, `${year}-06-02T09:00`, 2) };
     apiGetMock.mockImplementation((path) => path.includes("subtask-assignee-options") ? Promise.resolve(optionsResponse) : Promise.resolve({ subtasks: [versionOne, second] }));
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const runtime = new ProjectQueryRuntime(queryClient, "subtask-version-refresh-test");
     queryClient.setQueryData(projectDataKeys.subtasks(projectId), [versionOne, second]);
     const host = mount();
     await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><SubtaskChecklist projectId={projectId} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); await Promise.resolve(); });
-    await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
-    const editor = portal("subtask-popover-task-1-schedule");
-    // A stored timed range opens with its own start and end; the user moves the end to 10:00.
-    expect(timeInputs(editor).map((input) => input.value)).toEqual(["00:00", "09:00"]);
-    await typeInto(timeInputs(editor)[1]!, "10:00");
+    const editor = await openSchedule(host, "Call client");
+    // A stored range opens with its own start and end; the user moves the end to 10:00.
+    expect(rangeToggles(editor)).toEqual({ active: "Start", start: "1/6 00:00", end: "1/6 09:00" });
+    await pickRangeEnd(editor, "End"); await typePopupTime(editor, "10:00");
     await act(async () => { queryClient.setQueryData(projectDataKeys.subtasks(projectId), [versionTwo, second]); await new Promise((resolve) => window.setTimeout(resolve, 0)); });
     await flush();
     expect(item(host, "Late version 2")).not.toBeNull();
     apiPatchMock.mockRejectedValueOnce(new ApiError("Schedule changed", 409, { code: "subtask_schedule_conflict", current: versionTwo.schedule }));
-    await click(saveButton(portal("subtask-popover-task-1-schedule")));
-    expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { schedule: { expectedVersion: 1, schedule: { state: "range", start: { kind: "timed", localCivil: `${year}-06-01T00:00` }, end: { kind: "timed", localCivil: `${year}-06-01T10:00`, disambiguation: "earlier" } } } });
-    await flush();
-    await click(item(host, "Late version 2").querySelector<HTMLButtonElement>('[aria-label="Schedule for Late version 2"]')!);
-    const conflict = portal("subtask-popover-task-1-schedule");
+    await applyPopup(popupOf("Late version 2")); await flush();
+    expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { schedule: { expectedVersion: 1, schedule: { state: "range", start: { localCivil: `${year}-06-01T00:00` }, end: { localCivil: `${year}-06-01T10:00` } } } });
+    const conflict = await openSchedule(host, "Late version 2");
     expect(conflict.textContent).toContain("Latest schedule · v2");
-    expect(timeInputs(conflict)[1]?.value).toBe("10:00");
+    expect(rangeToggles(conflict).end).toBe("1/6 10:00");
     runtime.dispose(); queryClient.clear();
   });
 
-  it.each([[0 as const, "earlier", 660], [1 as const, "later", 600]])("seeds a timed range endpoint's stored fold %s into the popover as the %s Sydney occurrence", async (fold, disambiguation, offset) => {
+  it.each([[0 as const, "earlier" as const, 660], [1 as const, "later" as const, 600]])("seeds a timed range endpoint's stored fold %s into the popover as the %s Sydney occurrence", async (fold, disambiguation, offset) => {
     // 02:30 on 2026-04-05 happens twice in Sydney (DST ends): fold 0 is +11:00, fold 1 is +10:00.
-    const repeated = { ...task, dueDate: "2026-04-05T02:30", schedule: { state: "range" as const, version: 1, zone: "Australia/Sydney" as const, start: { kind: "timed" as const, localCivil: "2026-04-05T00:00", instant: null, utcOffsetMinutes: 660, fold: null, resolution: "stored" as const }, end: { kind: "timed" as const, localCivil: "2026-04-05T02:30", instant: null, utcOffsetMinutes: offset, fold, resolution: "stored" as const }, due: "2026-04-05T02:30" } };
+    const stored = normalizeChecklistSchedule({ state: "range", start: { localCivil: "2026-04-05T00:00" }, end: { localCivil: "2026-04-05T02:30", disambiguation } }, 1);
+    if (!stored.ok) throw new Error(stored.error.code);
+    const repeated = { ...task, dueDate: "2026-04-05T02:30", schedule: checklistScheduleToDto(stored.value) };
+    expect(repeated.schedule.end.utcOffsetMinutes).toBe(offset); expect(repeated.schedule.end.fold).toBe(fold);
     apiGetMock.mockImplementation((path) => path.includes("subtask-assignee-options") ? Promise.resolve(optionsResponse) : Promise.resolve({ subtasks: [repeated, second] }));
     const host = mount(); await render();
-    await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
-    const editor = portal("subtask-popover-task-1-schedule");
-    expect(dateInputs(editor).map((input) => input.value)).toEqual(["2026-04-05", "2026-04-05"]);
-    expect(timeInputs(editor).map((input) => input.value)).toEqual(["00:00", "02:30"]);
-    await click(saveButton(editor));
-    expect(apiPatchMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { schedule: { expectedVersion: 1, schedule: { state: "range", start: { kind: "timed", localCivil: "2026-04-05T00:00" }, end: { kind: "timed", localCivil: "2026-04-05T02:30", disambiguation } } } });
+    const editor = await openSchedule(host, "Call client");
+    expect(rangeToggles(editor)).toEqual({ active: "Start", start: "5/4 00:00", end: "5/4 02:30" });
+    // The End's Earlier / Later choice is seeded from the stored fold.
+    const pressed = [...editor.querySelectorAll<HTMLButtonElement>('[aria-label="Which Sydney time, end"] button')].find((button) => button.getAttribute("aria-pressed") === "true");
+    expect(pressed?.textContent?.startsWith(disambiguation === "earlier" ? "Earlier" : "Later")).toBe(true);
+    // Moving only the start keeps the end's fold.
+    await typePopupTime(editor, "00:30"); await applyPopup(editor); await flush();
+    expect(apiPatchMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { schedule: { expectedVersion: 1, schedule: { state: "range", start: { localCivil: "2026-04-05T00:30" }, end: { localCivil: "2026-04-05T02:30", disambiguation } } } });
   });
 
   it("uses one canonical schedule POST from the compact composer and preserves a failed draft", async () => {
-    const host = mount(); await render(); await click(document.getElementById(`subtask-add-${projectId}`)!); const input = host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!; await click(host.querySelector<HTMLButtonElement>('[aria-label^="Schedule for new subtask"]')!); const editor = portal("subtask-popover-composer-schedule"); await typeInto(dateInputs(editor)[0]!, `${year}-06-02`); await typeInto(dateInputs(editor)[1]!, `${year}-06-02`); await click(saveButton(editor)); await typeInto(input, "Schedule staging"); await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Add")!); expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks`, { title: "Schedule staging", schedule: { state: "range", start: { kind: "date", localCivil: `${year}-06-02` }, end: { kind: "date", localCivil: `${year}-06-02` } } });
+    const host = mount(); await render(); await click(document.getElementById(`subtask-add-${projectId}`)!); const input = host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!; await click(host.querySelector<HTMLButtonElement>('[aria-label^="Schedule for new subtask"]')!); const editor = dateTimePopup("Schedule for new subtask")!; await pickPopupDay(editor, `${year}-06-02`); await applyPopup(editor); await typeInto(input, "Schedule staging"); await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Add")!); expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks`, { title: "Schedule staging", schedule: { state: "range", start: { localCivil: `${year}-06-02T09:00` }, end: { localCivil: `${year}-06-02T17:00` } } });
     await click(document.getElementById(`subtask-add-${projectId}`)!); const retry = host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!; await typeInto(retry, "Retry"); apiPostMock.mockRejectedValueOnce(new Error("No network")); await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Add")!); expect(retry.value).toBe("Retry"); const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }); await act(async () => retry.dispatchEvent(escape)); expect(escape.defaultPrevented).toBe(true); expect(document.getElementById(`subtask-add-${projectId}`)).not.toBeNull();
   });
 
   it("resets composer metadata on Cancel", async () => {
-    const host = mount(); await render(); await click(document.getElementById(`subtask-add-${projectId}`)!); const composer = host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!; await typeInto(composer, "Discard me"); await click(host.querySelector<HTMLButtonElement>('[aria-label^="Schedule for new subtask"]')!); const editor = portal("subtask-popover-composer-schedule"); await typeInto(dateInputs(editor)[0]!, `${year}-06-04`); await typeInto(dateInputs(editor)[1]!, `${year}-06-04`); await click(saveButton(editor)); await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Cancel")!); expect(document.activeElement).toBe(document.getElementById(`subtask-add-${projectId}`));
+    const host = mount(); await render(); await click(document.getElementById(`subtask-add-${projectId}`)!); const composer = host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!; await typeInto(composer, "Discard me"); await click(host.querySelector<HTMLButtonElement>('[aria-label^="Schedule for new subtask"]')!); const editor = dateTimePopup("Schedule for new subtask")!; await pickPopupDay(editor, `${year}-06-04`); await applyPopup(editor); await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Cancel")!); expect(document.activeElement).toBe(document.getElementById(`subtask-add-${projectId}`));
     await click(document.getElementById(`subtask-add-${projectId}`)!); expect(host.querySelector<HTMLButtonElement>('[aria-label^="Schedule for new subtask"]')?.textContent).toContain("Project default");
     // The reset returns to the Project default, not the stale range choice: an untouched Add sends no schedule.
     const retitled = host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!; await typeInto(retitled, "After cancel"); await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Add")!);
@@ -357,29 +348,37 @@ describe("SubtaskChecklist", () => {
   });
 
   it("shows the Project default on the composer trigger and posts no schedule when none was chosen", async () => {
-    const created = { ...task, id: "task-default", title: "Plain", position: 3072, dueDate: `${year}-11-06`, schedule: { state: "range" as const, version: 1, zone: "Australia/Sydney" as const, start: { kind: "date" as const, localCivil: `${year}-11-02`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, end: { kind: "date" as const, localCivil: `${year}-11-06`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, due: `${year}-11-06` } };
-    apiPostMock.mockResolvedValueOnce(created);
-    const host = mount(); await render(); await click(document.getElementById(`subtask-add-${projectId}`)!);
+    const projectDefaultRange = { start: { localCivil: `${year}-11-02T09:00`, fold: 0 as const }, end: { localCivil: `${year}-11-06T17:00`, fold: 0 as const } };
+    const created = { ...task, id: "task-default", title: "Plain", position: 3072, dueDate: `${year}-11-06T17:00`, schedule: presetScheduleDto(`${year}-11-02`, `${year}-11-06`, 1) };
+    let posted = false;
+    apiGetMock.mockImplementation((path) => path.includes("subtask-assignee-options") ? Promise.resolve(optionsResponse) : Promise.resolve({ subtasks: posted ? [task, second, created] : [task, second], projectDefaultRange }));
+    apiPostMock.mockImplementationOnce(() => { posted = true; return Promise.resolve(created); });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const host = mount(); await act(async () => { root!.render(<QueryClientProvider client={queryClient}><SubtaskChecklist projectId={projectId} /></QueryClientProvider>); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    for (let attempt = 0; attempt < 50 && document.body.textContent?.includes("Loading checklist…"); attempt += 1) await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 5)); });
+    await click(document.getElementById(`subtask-add-${projectId}`)!);
     const trigger = () => host.querySelector<HTMLButtonElement>('[aria-label^="Schedule for new subtask"]')!;
-    expect(trigger().textContent).toContain("Project default"); expect(trigger().textContent).not.toContain("◷"); expect(trigger().getAttribute("aria-label")).toBe("Schedule for new subtask: Project default");
+    const defaultText = formatCivilRange(projectDefaultRange);
+    expect(trigger().textContent).toContain(defaultText); expect(trigger().textContent).not.toContain("◷"); expect(trigger().getAttribute("aria-label")).toBe(`Schedule for new subtask: ${defaultText}`);
+    // The popup seeds from the default, so its toggles already show the Project's range.
+    await click(trigger()); expect(rangeToggles(dateTimePopup("Schedule for new subtask")!)).toMatchObject({ start: "2/11 09:00", end: "6/11 17:00" }); await click(popupButton(dateTimePopup("Schedule for new subtask")!, "Cancel")!);
     await typeInto(host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!, "Plain");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Add")!);
     expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks`, { title: "Plain" });
-    expect(item(host, "Plain").textContent).toContain(`2 Nov ${year} → 6 Nov ${year}`);
+    await waitFor(() => expect(item(host, "Plain").textContent).toContain(formatSchedule(created.schedule)));
   });
 
-  it("sends a chosen range from the composer, and cannot choose Unscheduled (Save waits for a start and an end)", async () => {
+  it("sends a chosen range from the composer, and cannot choose Unscheduled (Apply waits for both ends)", async () => {
     const host = mount(); await render(); await click(document.getElementById(`subtask-add-${projectId}`)!);
     await typeInto(host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!, "Chosen range");
     await click(host.querySelector<HTMLButtonElement>('[aria-label^="Schedule for new subtask"]')!);
-    const editor = portal("subtask-popover-composer-schedule");
-    expect(editor.querySelectorAll("select")).toHaveLength(1); expect([...editor.querySelector<HTMLSelectElement>("select")!.options].map((option) => option.value)).toEqual(["date", "timed"]);
-    expect(dateInputs(editor).map((input) => input.value)).toEqual(["", ""]); expect(saveButton(editor).disabled).toBe(true);
-    await typeInto(dateInputs(editor)[0]!, `${year}-06-04`); expect(saveButton(editor).disabled).toBe(true);
-    await typeInto(dateInputs(editor)[1]!, `${year}-06-06`); expect(saveButton(editor).disabled).toBe(false); await click(saveButton(editor));
+    const editor = dateTimePopup("Schedule for new subtask")!;
+    expect(rangeToggles(editor)).toEqual({ active: "Start", start: "Not set", end: "Not set" });
+    await pickPopupDay(editor, `${year}-06-04`); expect(rangeToggles(editor)).toEqual({ active: "End", start: "4/6 09:00", end: "4/6 17:00" });
+    await pickPopupDay(editor, `${year}-06-06`); expect(popupButton(editor, "Apply")!.disabled).toBe(false); await applyPopup(editor);
     expect(host.querySelector<HTMLButtonElement>('[aria-label^="Schedule for new subtask"]')?.textContent).not.toContain("Project default");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Add")!);
-    expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks`, { title: "Chosen range", schedule: { state: "range", start: { kind: "date", localCivil: `${year}-06-04` }, end: { kind: "date", localCivil: `${year}-06-06` } } });
+    expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks`, { title: "Chosen range", schedule: { state: "range", start: { localCivil: `${year}-06-04T09:00` }, end: { localCivil: `${year}-06-06T17:00` } } });
   });
 
   it("derives pure reorder neighbors and mounts grip-only activators", async () => {
@@ -562,113 +561,12 @@ describe("SubtaskChecklist assignees (#368)", () => {
 });
 
 describe("formatSchedule", () => {
-  const ep = (kind: "date" | "timed", localCivil: string) => ({ kind, localCivil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const });
-  const dto = (start: ReturnType<typeof ep>, end: ReturnType<typeof ep>) => ({ state: "range" as const, version: 1, zone: "Australia/Sydney" as const, start, end, due: end.localCivil.slice(0, 10) });
-
-  it("prints a one-day date range as the date once", () => {
-    expect(formatSchedule(dto(ep("date", "2026-10-08"), ep("date", "2026-10-08")))).toBe("8 Oct 2026");
+  it("names a same-day range's date once, with both times", () => {
+    expect(formatSchedule(momentScheduleDto("2026-10-08T09:00", "2026-10-08T17:00"))).toBe("Thu 8 Oct 09:00 → 17:00");
+    expect(formatSchedule(momentScheduleDto("2026-10-08T13:00", "2026-10-08T14:00"))).toBe("Thu 8 Oct 13:00 → 14:00");
   });
-  it("prints a same-day timed range with the date once and both times", () => {
-    expect(formatSchedule(dto(ep("timed", "2026-10-08T13:00"), ep("timed", "2026-10-08T14:00")))).toBe("8 Oct 2026 · 13:00 → 14:00");
-  });
-  it("keeps a multi-day range as two full endpoints", () => {
-    expect(formatSchedule(dto(ep("date", "2026-10-08"), ep("date", "2026-10-10")))).toBe("8 Oct 2026 → 10 Oct 2026");
-    expect(formatSchedule(dto(ep("timed", "2026-10-08T13:00"), ep("timed", "2026-10-09T09:00")))).toBe("8 Oct 2026 · 13:00 → 9 Oct 2026 · 09:00");
-  });
-});
-
-describe("SubtaskChecklist as a rail (#377)", () => {
-  const row = (id: string, title: string, position: number, done = false) => ({ ...second, id, title, position, done, dueDate: null, schedule: rangeOf(`${year}-06-01`) });
-  const A = row("row-a", "Alpha", 1024); const B = row("row-b", "Bravo", 2048, true); const C = row("row-c", "Charlie", 3072); const D = row("row-d", "Delta", 4096);
-  const serve = (rows: Array<ReturnType<typeof row>>) => {
-    apiGetMock.mockImplementation((path) => path.includes("subtask-assignee-options") ? Promise.resolve(optionsResponse) : Promise.resolve({ subtasks: rows }));
-    apiPatchMock.mockImplementation((path, body) => Promise.resolve({ ...rows.find((candidate) => path.endsWith(`/${candidate.id}`))!, ...(body as object) }));
-  };
-  const count = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-testid="subtask-checklist-count"]')!;
-  const completedTrigger = (host: HTMLElement) => [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.startsWith("Completed ("));
-  const visibleRows = (host: HTMLElement) => [...host.querySelectorAll<HTMLElement>("article")].filter((article) => !article.closest("[hidden]")).map((article) => article.querySelector('[data-testid="subtask-checklist-title"]')?.textContent);
-  const checkbox = (host: HTMLElement, title: string) => item(host, title).querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-
-  it("shows a small count and a real progressbar, outside any button", async () => {
-    serve([A, B, C, { ...D, done: true }]);
-    const host = mount(); await render();
-    expect(count(host).textContent).toContain("2 / 4");
-    expect(count(host).className).not.toContain("type-h3");
-    const bar = host.querySelector<HTMLElement>('[role="progressbar"]')!;
-    expect(bar.getAttribute("aria-valuenow")).toBe("2"); expect(bar.getAttribute("aria-valuemax")).toBe("4"); expect(bar.getAttribute("aria-valuetext")).toBe("2 of 4 complete");
-    expect(bar.closest("button")).toBeNull();
-    expect(host.querySelector("progress")).toBeNull();
-    expect(host.querySelector("h3")!.textContent).toBe("Checklist");
-  });
-
-  it("collapses to the count and keeps the progress bar visible", async () => {
-    serve([A, C]);
-    const host = mount(); await render();
-    const toggle = host.querySelector<HTMLButtonElement>('button[aria-label="Collapse checklist"]')!;
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    await click(toggle);
-    expect(host.querySelector<HTMLButtonElement>('button[aria-label="Expand checklist"]')!.getAttribute("aria-expanded")).toBe("false");
-    expect(visibleRows(host)).toEqual([]);
-    expect(host.querySelector('[role="progressbar"]')!.closest("[hidden]")).toBeNull();
-    expect(count(host).closest("[hidden]")).toBeNull();
-  });
-
-  it("groups done rows under a collapsed 'Completed (n)' with no grip, and ticking moves rows between groups", async () => {
-    const open = { ...B, done: false };
-    serve([{ ...A, done: true }, open, C, { ...D, done: true }]);
-    const host = mount(); await render();
-    expect(visibleRows(host)).toEqual(["Bravo", "Charlie"]);
-    const trigger = completedTrigger(host)!; expect(trigger.textContent).toBe("Completed (2)"); expect(trigger.getAttribute("aria-expanded")).toBe("false");
-    await click(trigger);
-    expect(trigger.getAttribute("aria-expanded")).toBe("true");
-    expect(visibleRows(host)).toEqual(["Bravo", "Charlie", "Alpha", "Delta"]);
-    expect(item(host, "Alpha").querySelector('[aria-label^="Reorder"]')).toBeNull();
-    expect(item(host, "Bravo").querySelector('[aria-label="Reorder Bravo"]')).not.toBeNull();
-    await click(checkbox(host, "Bravo")); await flush();
-    expect(count(host).textContent).toContain("3 / 4"); expect(completedTrigger(host)!.textContent).toBe("Completed (3)");
-    await click(checkbox(host, "Alpha")); await flush();
-    expect(count(host).textContent).toContain("2 / 4"); expect(completedTrigger(host)!.textContent).toBe("Completed (2)");
-  });
-
-  it("has no Completed group when nothing is done", async () => {
-    serve([A, C]);
-    const host = mount(); await render();
-    expect(completedTrigger(host)).toBeUndefined();
-  });
-
-  it("reorders against the FULL list: dropping Delta on Charlie past a hidden completed Bravo sends adjacent neighbours", async () => {
-    serve([A, B, C, D]);
-    const host = mount(); await render();
-    apiPostMock.mockResolvedValueOnce({ position: 3500 });
-    await act(async () => { dnd.onDragEnd!({ active: { id: "row-d" }, over: { id: "row-c" } }); await Promise.resolve(); await Promise.resolve(); });
-    expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks/row-d/reorder`, { beforeId: "row-b", afterId: "row-c" });
-  });
-
-  it("focus follows a completed row to the next open checkbox, then to the Completed trigger when none is left", async () => {
-    serve([A, C]);
-    const host = mount(); await render();
-    const first = checkbox(host, "Alpha"); await act(async () => { first.focus(); });
-    await click(first);
-    await waitFor(() => expect(document.activeElement).toBe(checkbox(host, "Charlie")));
-    await click(checkbox(host, "Charlie"));
-    await waitFor(() => expect(document.activeElement).toBe(completedTrigger(host)));
-  });
-
-  it("deleting the last open row with done rows present leaves focus on a surviving control, never the body", async () => {
-    serve([{ ...A, done: true }, C]);
-    const host = mount(); await render();
-    await click(item(host, "Charlie").querySelector<HTMLButtonElement>('[aria-label="Actions for Charlie"]')!);
-    await click(portal("subtask-popover-row-c-actions").querySelector("button")!); await flush();
-    expect(apiDeleteMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks/row-c`);
-    await waitFor(() => { expect(document.activeElement).not.toBe(document.body); expect(host.contains(document.activeElement)).toBe(true); expect(document.activeElement!.closest("[hidden]")).toBeNull(); });
-  });
-
-  it("empty: '+ Add an item' with one quiet hint, no title, count 0 / 0", async () => {
-    serve([]);
-    const host = mount(); await render();
-    expect(host.textContent).not.toContain("No subtasks yet.");
-    expect(host.querySelector(`#subtask-add-${projectId}`)).not.toBeNull();
-    expect(host.textContent).toContain("Break the shoot into steps anyone on the project can tick off.");
-    expect(count(host).textContent).toContain("0 / 0");
+  it("keeps a multi-day range as two full moments", () => {
+    expect(formatSchedule(momentScheduleDto("2026-10-08T09:00", "2026-10-10T17:00"))).toBe("Thu 8 Oct 09:00 → Sat 10 Oct 17:00");
+    expect(formatSchedule(momentScheduleDto("2026-10-08T13:00", "2026-10-09T09:00"))).toBe("Thu 8 Oct 13:00 → Fri 9 Oct 09:00");
   });
 });

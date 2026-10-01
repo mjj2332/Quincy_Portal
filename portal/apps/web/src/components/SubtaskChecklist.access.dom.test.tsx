@@ -1,4 +1,5 @@
 import { act } from "react";
+import { presetScheduleDto } from "@/testing/subtask-schedule";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -103,15 +104,15 @@ describe("SubtaskChecklist access-generation boundary", () => {
   it("an External Editor sees the named team assignee and only a count of the rest, with no hidden text anywhere", async () => {
     session.role = "external_editor";
     const person = { id: "22222222-2222-4222-8222-222222222222", name: "Ada Smith", roleLabel: "Photographer", isExternal: false, active: true };
-    const endpoint = { kind: "date" as const, localCivil: "2026-09-01", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const };
     const external = {
       id: "33333333-3333-4333-8333-333333333333", title: "Prepare delivery", done: false, position: 1024, assignees: [person], otherAssigneeCount: 2, assignmentVersion: 3, dueDate: null,
-      schedule: { state: "range" as const, version: 1, zone: "Australia/Sydney" as const, start: endpoint, end: endpoint, due: "2026-09-01" },
+      schedule: presetScheduleDto("2026-09-01", "2026-09-01", 1),
       createdBy: person, createdAt: "2026-08-25T00:00:00.000Z", updatedAt: "2026-08-25T00:00:00.000Z",
     };
-    apiGetMock.mockImplementation((path: string) => Promise.resolve(path.includes("subtask-assignee-options") ? { candidates: [person] } : { subtasks: [external] }));
+    apiGetMock.mockImplementation((path: string) => Promise.resolve(path.includes("subtask-assignee-options") ? { candidates: [person] } : { subtasks: [external], projectDefaultRange: { start: { localCivil: "2026-09-01T09:00", fold: 0 }, end: { localCivil: "2026-09-01T17:00", fold: 0 } } }));
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
     await act(async () => { root!.render(<SubtaskChecklist projectId={projectId} />); await Promise.resolve(); await Promise.resolve(); }); await flush();
+    for (let attempt = 0; attempt < 50 && host.textContent?.includes("Loading checklist…"); attempt += 1) await flush();
     const trigger = host.querySelector<HTMLButtonElement>('[aria-label="Assignees for Prepare delivery"]')!;
     expect([...trigger.querySelectorAll('[role="img"]')].map((element) => element.getAttribute("aria-label"))).toEqual(["Ada Smith", "2 others not shown"]);
     expect(trigger.textContent).toContain("+2 others");

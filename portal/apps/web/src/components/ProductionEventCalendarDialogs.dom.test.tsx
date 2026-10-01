@@ -16,7 +16,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   PRODUCTION_CALENDAR_ZONE,
-  resolveSydneyCivilMinute,
+  checklistScheduleToDto,
+  normalizeChecklistSchedule,
   type ChecklistCalendarEventDto,
   type ProjectDeadlineCalendarEventDto,
 } from "@quincy/shared";
@@ -30,13 +31,13 @@ import {
   type ProductionEventCalendarDialogCommands,
 } from "./ProductionEventCalendarDialogs";
 import { Sheet } from "./reui/sheet";
-import { applyPopup, dateTimePopup, openMoveDialogField, pickPopupDateTime, pickPopupDay, popupDraft, pressInPopup } from "@/testing/date-time-popup";
+import { applyPopup, dateTimePopup, openFieldPopup, openMoveDialogField, pickPopupDateTime, pickPopupDay, pickRangeEnd, popupButton, popupDraft, pressInPopup, pressRangeFold, rangeFoldPressed, rangeToggles, typePopupTime } from "@/testing/date-time-popup";
+import { startMoment, endMoment } from "@/testing/subtask-schedule";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const project = { id: "11111111-1111-4111-8111-111111111111", street: "12 Harbour Street", stageKey: "editing_autohdr" as const, checklist: { completed: 1, total: 2 }, delivered: false };
 const person = { id: "22222222-2222-4222-8222-222222222222", name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true };
-const dateEndpoint = (localCivil: string) => ({ kind: "date" as const, localCivil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const });
 
 const deadline: ProjectDeadlineCalendarEventDto = {
   id: "project-deadline:11111111-1111-4111-8111-111111111111", kind: "project_deadline", title: "Deadline", project,
@@ -44,7 +45,7 @@ const deadline: ProjectDeadlineCalendarEventDto = {
   permissions: { canDrag: true, canResize: false }, deadlineLocalCivil: "2026-08-11T09:30", deadlineVersion: 7, reminderOffsetsMinutes: [1440, 60],
 };
 
-const dueEvent: ChecklistCalendarEventDto = { id: "checklist:33333333-3333-4333-8333-333333333333", kind: "checklist", title: "Select hero images", project, assignees: [person], otherAssigneeCount: 0, timing: { allDay: true, start: "2026-08-20", end: null }, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule: { state: "range", version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: dateEndpoint("2026-08-20"), end: dateEndpoint("2026-08-20"), due: "2026-08-20" }, permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true } };
+const dueEvent: ChecklistCalendarEventDto = { id: "checklist:33333333-3333-4333-8333-333333333333", kind: "checklist", title: "Select hero images", project, assignees: [person], otherAssigneeCount: 0, timing: { allDay: true, start: "2026-08-20", end: null }, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule: { state: "range", version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: startMoment("2026-08-20"), end: endMoment("2026-08-20"), due: "2026-08-20" }, permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true } };
 
 let host: HTMLDivElement;
 let root: Root;
@@ -179,95 +180,81 @@ describe("ProductionEventCalendarFoldChoice (alert-dialog shell)", () => {
 });
 
 describe("ProductionEventCalendarScheduleEditorSheet (sheet shell)", () => {
-  const modeSelect = () => document.body.querySelector<HTMLSelectElement>('[aria-label="Checklist endpoint mode"]')!;
   async function renderSheet(props: Partial<ComponentProps<typeof ProductionEventCalendarScheduleEditorSheet>> = {}) {
     const onSubmit = props.onSubmit ?? vi.fn();
     await render(<ProductionEventCalendarScheduleEditorSheet open event={dueEvent} onSubmit={onSubmit} onCancel={vi.fn()} {...props} />);
     return onSubmit;
   }
 
-  it("offers no state picker: start and end, plus one endpoint mode select (#340)", async () => {
+  it("offers no state picker, no mode select and no native inputs: one range field of two moments (#423)", async () => {
     await renderSheet();
     const sheet = byTestId("event-calendar-schedule-editor")!;
     expect(sheet.textContent).toContain("Schedule checklist item");
     expect(sheet.textContent).toContain("12 Harbour Street");
     expect(document.body.querySelector('[aria-label="Checklist schedule state"]')).toBeNull();
-    expect(document.body.querySelectorAll("select")).toHaveLength(1);
-    expect([...document.body.querySelector<HTMLSelectElement>('[aria-label="Checklist endpoint mode"]')!.options].map((option) => option.value)).toEqual(["date", "timed"]);
-    expect(input("Checklist start date").value).toBe("2026-08-20");
-    expect(input("Checklist end date").value).toBe("2026-08-20");
+    expect(document.body.querySelectorAll("select")).toHaveLength(0);
+    expect(document.body.querySelectorAll('input[type="date"], input[type="time"], input[type="radio"]')).toHaveLength(0);
+    const popup = await openFieldPopup("Schedule");
+    expect(rangeToggles(popup)).toEqual({ active: "Start", start: "20/8 09:00", end: "20/8 17:00" });
   });
 
-  it("surfaces local preflight errors and does not submit", async () => {
+  it("refuses an end at or before the start in the popup, so nothing invalid reaches the draft", async () => {
     const onSubmit = await renderSheet();
-    await change(document.body.querySelector<HTMLSelectElement>('[aria-label="Checklist endpoint mode"]')!, "timed");
-    await change(input("Checklist start date"), "2026-08-20"); await change(input("Checklist start time"), "10:00");
-    await change(input("Checklist end date"), "2026-08-20"); await change(input("Checklist end time"), "09:00");
+    const popup = await openFieldPopup("Schedule");
+    await pickRangeEnd(popup, "End"); await typePopupTime(popup, "08:00");
+    expect(popup.textContent).toContain("Start must be before end.");
+    expect(popupButton(popup, "Apply")!.disabled).toBe(true);
+    await pressInPopup(popup, "Cancel");
     await click(byTestId("event-calendar-schedule-submit")!);
-    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain("start must be before");
-    expect(onSubmit).not.toHaveBeenCalled();
+    expect(onSubmit).toHaveBeenCalledWith({ state: "range", start: { localCivil: "2026-08-20T09:00" }, end: { localCivil: "2026-08-20T17:00" } });
   });
 
-  it("asks for a fold choice at the endpoint that repeats, then submits it", async () => {
+  it("asks for a fold choice at the end that repeats, then submits it", async () => {
     const onSubmit = await renderSheet();
-    await change(document.body.querySelector<HTMLSelectElement>('[aria-label="Checklist endpoint mode"]')!, "timed");
-    await change(input("Checklist start date"), "2026-04-05"); await change(input("Checklist start time"), "02:30");
-    await change(input("Checklist end date"), "2026-04-05"); await change(input("Checklist end time"), "04:00");
+    const popup = await openFieldPopup("Schedule");
+    await pickPopupDay(popup, "2026-04-05"); await pickPopupDay(popup, "2026-04-05"); await pickRangeEnd(popup, "Start"); await typePopupTime(popup, "02:30");
+    expect(popupButton(popup, "Apply")!.disabled).toBe(true);
+    await pickRangeEnd(popup, "End"); await typePopupTime(popup, "04:00");
+    await pressRangeFold(popup, "Start", "Earlier");
+    await applyPopup(popup);
     await click(byTestId("event-calendar-schedule-submit")!);
-    expect(onSubmit).not.toHaveBeenCalled();
-    await click(document.body.querySelector<HTMLInputElement>('input[type="radio"][value="earlier"]')!);
-    await click(byTestId("event-calendar-schedule-submit")!);
-    expect(onSubmit).toHaveBeenCalledWith({ state: "range", start: { kind: "timed", localCivil: "2026-04-05T02:30", disambiguation: "earlier" }, end: { kind: "timed", localCivil: "2026-04-05T04:00" } });
+    expect(onSubmit).toHaveBeenCalledWith({ state: "range", start: { localCivil: "2026-04-05T02:30", disambiguation: "earlier" }, end: { localCivil: "2026-04-05T04:00" } });
   });
 
   it("reopens with a retained draft and its server validation error", async () => {
-    await renderSheet({ initialSchedule: { state: "range", start: { kind: "date", localCivil: "2026-08-25" }, end: { kind: "date", localCivil: "2026-08-25" } }, validationError: { code: "subtask_schedule_invalid_order", message: "" } });
-    expect(input("Checklist start date").value).toBe("2026-08-25");
-    expect(input("Checklist end date").value).toBe("2026-08-25");
+    await renderSheet({ initialSchedule: { state: "range", start: { localCivil: "2026-08-25T09:00" }, end: { localCivil: "2026-08-25T17:00" } }, validationError: { code: "subtask_schedule_invalid_order", message: "" } });
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain("start must be before");
+    const popup = await openFieldPopup("Schedule");
+    expect(rangeToggles(popup)).toEqual({ active: "Start", start: "25/8 09:00", end: "25/8 17:00" });
   });
 
-  const radios = () => [...document.body.querySelectorAll<HTMLInputElement>('input[type="radio"]')];
-
-  it("keeps endpoint mode to one select and reports a nonexistent spring-forward time", async () => {
+  it("reports a nonexistent spring-forward time in the popup and blocks Apply", async () => {
     await renderSheet();
-    await change(modeSelect(), "timed");
-    expect(document.body.querySelectorAll('select[aria-label="Checklist endpoint mode"]')).toHaveLength(1);
-    await change(input("Checklist start date"), "2026-10-04"); await change(input("Checklist start time"), "02:30");
-    await change(input("Checklist end date"), "2026-10-04"); await change(input("Checklist end time"), "04:00");
-    await click(byTestId("event-calendar-schedule-submit")!);
-    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain("does not exist");
+    const popup = await openFieldPopup("Schedule");
+    await pickPopupDay(popup, "2026-10-04"); await pickRangeEnd(popup, "Start"); await typePopupTime(popup, "02:30");
+    expect(popup.textContent).toContain("does not exist");
+    expect(popupButton(popup, "Apply")!.disabled).toBe(true);
   });
 
-  it("collects independent fold choices for both range endpoints", async () => {
+  it("collects independent fold choices for both range ends", async () => {
     const onSubmit = await renderSheet();
-    await change(modeSelect(), "timed");
-    await change(input("Checklist start date"), "2026-04-05"); await change(input("Checklist start time"), "02:30");
-    await change(input("Checklist end date"), "2026-04-05"); await change(input("Checklist end time"), "02:30");
-    const folds = radios();
-    expect(folds).toHaveLength(4);
-    await click(folds[0]!); await click(folds[3]!);
+    const popup = await openFieldPopup("Schedule");
+    await pickPopupDay(popup, "2026-04-05"); await pickPopupDay(popup, "2026-04-05"); await pickRangeEnd(popup, "Start"); await typePopupTime(popup, "02:30");
+    await pickRangeEnd(popup, "End"); await typePopupTime(popup, "02:30");
+    await pressRangeFold(popup, "Start", "Earlier"); await pressRangeFold(popup, "End", "Later");
+    await applyPopup(popup);
     await click(byTestId("event-calendar-schedule-submit")!);
-    expect(onSubmit).toHaveBeenCalledWith({ state: "range", start: { kind: "timed", localCivil: "2026-04-05T02:30", disambiguation: "earlier" }, end: { kind: "timed", localCivil: "2026-04-05T02:30", disambiguation: "later" } });
+    expect(onSubmit).toHaveBeenCalledWith({ state: "range", start: { localCivil: "2026-04-05T02:30", disambiguation: "earlier" }, end: { localCivil: "2026-04-05T02:30", disambiguation: "later" } });
   });
 
-  it("seeds a stored fold with the matching endpoint occurrence selected", async () => {
-    const resolved = resolveSydneyCivilMinute("2026-04-05T02:30", "earlier");
-    if (!resolved.ok) throw new Error("fold fixture did not resolve");
-    const event = {
-      ...dueEvent,
-      id: "checklist:stored-fold",
-      timing: { allDay: false as const, start: resolved.value.instant, end: null },
-      schedule: {
-        ...dueEvent.schedule,
-        due: "2026-04-05T02:30",
-        end: { kind: "timed" as const, localCivil: "2026-04-05T02:30", instant: resolved.value.instant, utcOffsetMinutes: resolved.value.utcOffsetMinutes, fold: 0 as const, resolution: "stored" as const },
-      },
-    };
+  it("seeds a stored fold with the matching end occurrence selected", async () => {
+    const stored = normalizeChecklistSchedule({ state: "range", start: { localCivil: "2026-04-05T00:00" }, end: { localCivil: "2026-04-05T02:30", disambiguation: "earlier" } }, 4);
+    if (!stored.ok) throw new Error("fold fixture did not normalize");
+    const schedule = checklistScheduleToDto(stored.value);
+    const event = { ...dueEvent, id: "checklist:stored-fold", timing: { allDay: false as const, start: schedule.start.instant, end: schedule.end.instant }, schedule };
     await renderSheet({ event });
-    await change(modeSelect(), "timed");
-    expect(document.body.querySelector<HTMLInputElement>('input[type="radio"][value="earlier"]')?.checked).toBe(true);
-    expect(document.body.querySelector<HTMLInputElement>('input[type="radio"][value="later"]')?.checked).toBe(false);
+    const popup = await openFieldPopup("Schedule");
+    expect(rangeFoldPressed(popup, "End")).toBe("Earlier");
   });
 });
 
@@ -334,7 +321,7 @@ describe("ProductionEventCalendarDialogs (wired to the scheduling controller's d
     await click(byTestId("event-calendar-fold-submit")!);
     expect(wired.submitChecklistFold).toHaveBeenCalledWith("later");
     await click(byTestId("event-calendar-schedule-submit")!);
-    expect(wired.submitScheduleEditor).toHaveBeenCalledWith({ state: "range", start: { kind: "date", localCivil: "2026-08-20" }, end: { kind: "date", localCivil: "2026-08-20" } });
+    expect(wired.submitScheduleEditor).toHaveBeenCalledWith({ state: "range", start: { localCivil: "2026-08-20T09:00" }, end: { localCivil: "2026-08-20T17:00" } });
   });
 
   it("reuses the Deadline confirm with no preview and shows each reminder consequence", async () => {

@@ -8,7 +8,6 @@ import {
   mapUnscheduledProjectDropToCommand,
   normalizeChecklistSchedule,
   resolveSydneyCivilMinute,
-  shiftSydneyCalendarDate,
   type CalendarManipulationTarget,
   type CalendarMappingResult,
   type CalendarPerson,
@@ -155,16 +154,12 @@ export function checklistSchedulesEqual(left: ChecklistScheduleDto, right: Check
 }
 
 export function timingFromChecklistSchedule(schedule: ChecklistScheduleDto): CalendarEventTiming | null {
-  if (schedule.start.kind === "date" && schedule.end.kind === "date") {
-    const exclusive = shiftSydneyCalendarDate(schedule.end.localCivil, 1);
-    return exclusive.ok ? { allDay: true, start: schedule.start.localCivil, end: exclusive.value } : null;
-  }
-  if (schedule.start.kind !== "timed" || schedule.end.kind !== "timed" || !schedule.start.instant || !schedule.end.instant) return null;
+  // Every Subtask is a timed range (ADR 0016): the Calendar draws its stored instants.
   return { allDay: false, start: schedule.start.instant, end: schedule.end.instant };
 }
 
 function endpointInput(endpoint: ChecklistScheduleDto["start"]): RangeChecklistScheduleInput["start"] {
-  return { kind: endpoint.kind, localCivil: endpoint.localCivil, ...(endpoint.fold === 1 ? { disambiguation: "later" as const } : endpoint.fold === 0 ? { disambiguation: "earlier" as const } : {}) };
+  return { localCivil: endpoint.localCivil, disambiguation: endpoint.fold === 1 ? "later" as const : "earlier" as const };
 }
 
 export function checklistInputFromSchedule(schedule: ChecklistScheduleDto): RangeChecklistScheduleInput {
@@ -176,8 +171,7 @@ export function checklistCurrentCivil(event: ChecklistCalendarEventDto): string 
 }
 
 export function inputDisambiguation(schedule: RangeChecklistScheduleInput, endpoint: "start" | "end"): "earlier" | "later" | undefined {
-  const value = schedule[endpoint];
-  return value.kind === "timed" ? value.disambiguation : undefined;
+  return schedule[endpoint].disambiguation;
 }
 
 export function checklistSourceFromResponse(response: ProductionCalendarRangeResponse | null, id: string): ChecklistSource | undefined {

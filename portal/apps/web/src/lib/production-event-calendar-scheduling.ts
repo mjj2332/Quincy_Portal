@@ -28,7 +28,6 @@
 import {
   formatSydneyCivilMinute,
   isSydneyCalendarDate,
-  shiftSydneyCalendarDate,
   type CalendarEventDto,
   type CalendarManipulationTarget,
   type ChecklistCalendarEventDto,
@@ -78,11 +77,6 @@ function civilMinute(instant: Date): string | null {
   return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value) && isSydneyCalendarDate(value.slice(0, 10)) ? value : null;
 }
 
-function nextDate(date: string): string | null {
-  const shifted = shiftSydneyCalendarDate(date, 1);
-  return shifted.ok ? shifted.value : null;
-}
-
 // ---------------------------------------------------------------------------
 // Edge classification
 // ---------------------------------------------------------------------------
@@ -127,29 +121,18 @@ function editKind(update: EventCalendarUpdateLike, pointOnly: boolean, granulari
  * `targetCivilMinute`; the move mappers read only the date and preserve wall time themselves).
  * Minute granularity → `week` + the dropped civil minute. `null` = no change.
  */
-function endpointTarget(endpoint: ChecklistScheduleEndpointDto | { kind: "timed"; localCivil: string }, proposed: Date, original: Date, granularity: Granularity, withWallTime: boolean): CalendarManipulationTarget | null | "invalid" {
+function endpointTarget(endpoint: { localCivil: string }, proposed: Date, original: Date, granularity: Granularity, withWallTime: boolean): CalendarManipulationTarget | null | "invalid" {
   const minute = civilMinute(proposed);
   if (!minute) return "invalid";
   const date = minute.slice(0, 10);
   if (granularity === "day") {
     if (date === endpoint.localCivil.slice(0, 10)) return null;
-    return endpoint.kind === "timed" && withWallTime
+    return withWallTime
       ? { subview: "month", targetDate: date, targetCivilMinute: `${date}${endpoint.localCivil.slice(10, 16)}` }
       : { subview: "month", targetDate: date };
   }
   if (proposed.getTime() === original.getTime()) return null;
-  return endpoint.kind === "date" ? { subview: "week", targetDate: date } : { subview: "week", targetDate: date, targetCivilMinute: minute };
-}
-
-/** A dated range's end resize: the vendor's end is an exclusive zoned midnight. */
-function exclusiveEndTarget(endpoint: ChecklistScheduleEndpointDto, proposed: Date, granularity: Granularity): CalendarManipulationTarget | null | "invalid" {
-  const minute = civilMinute(proposed);
-  if (!minute) return "invalid";
-  const exclusive = minute.endsWith("T00:00") ? minute.slice(0, 10) : nextDate(minute.slice(0, 10));
-  const current = nextDate(endpoint.localCivil.slice(0, 10));
-  if (!exclusive || !current) return "invalid";
-  if (exclusive === current) return null;
-  return { subview: granularity === "day" ? "month" : "week", targetDate: exclusive, end: exclusive };
+  return { subview: "week", targetDate: date, targetCivilMinute: minute };
 }
 
 function toResult(target: CalendarManipulationTarget | null | "invalid", wrap: (target: CalendarManipulationTarget) => SchedulingProposal): EventCalendarSchedulingResult {
@@ -162,7 +145,7 @@ function toResult(target: CalendarManipulationTarget | null | "invalid", wrap: (
 // ---------------------------------------------------------------------------
 
 function deadlineProposal(event: ProjectDeadlineCalendarEventDto, update: EventCalendarUpdateLike, granularity: Granularity): EventCalendarSchedulingResult {
-  const endpoint = { kind: "timed" as const, localCivil: event.deadlineLocalCivil };
+  const endpoint = { localCivil: event.deadlineLocalCivil };
   // The mapper's month path shifts the deadline's civil date and preserves its wall time.
   const target = endpointTarget(endpoint, update.start, update.event.start, granularity, false);
   return toResult(target, (t) => ({ kind: "deadline", entity: "project_deadline", event, target: t }));
@@ -179,9 +162,7 @@ function checklistProposal(source: ChecklistCalendarEventDto, update: EventCalen
     const target = endpointTarget(schedule.start, update.start, update.event.start, granularity, true);
     return toResult(target, (t) => ({ kind: "resize", entity: "checklist", source, edge: "start", target: { ...t, edge: "start" } }));
   }
-  const target = schedule.end.kind === "date"
-    ? exclusiveEndTarget(schedule.end, update.end, granularity)
-    : endpointTarget(schedule.end, update.end, update.event.end, granularity, true);
+  const target = endpointTarget(schedule.end, update.end, update.event.end, granularity, true);
   return toResult(target, (t) => ({ kind: "resize", entity: "checklist", source, edge: "end", target: { ...t, edge: "end" } }));
 }
 

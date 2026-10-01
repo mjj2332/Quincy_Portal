@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import type { CalendarPerson, GanttChecklistRowDto, GanttProjectRowDto } from "@quincy/shared";
 import { adoptGanttChecklist, adoptGanttChecklistRow, adoptGanttChecklistSchedule, adoptGanttChildRows, adoptGanttChildSchedule } from "./production-gantt-port";
 import type { ChecklistMutationResult } from "./scheduling-types";
+import { startMoment, endMoment } from "@/testing/subtask-schedule";
 
 const person = (n: number): CalendarPerson => ({ id: `33333333-3333-4333-8333-00000000000${n}`, name: `Person ${n}`, roleLabel: "Editor", isExternal: false, active: true });
-const endpoint = (civil: string) => ({ kind: "date" as const, localCivil: civil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const });
-const schedule = (version: number, civil = "2026-06-10") => ({ state: "range" as const, version, zone: "Australia/Sydney" as const, start: endpoint(civil), end: endpoint(civil), due: civil });
+const schedule = (version: number, civil = "2026-06-10") => ({ state: "range" as const, version, zone: "Australia/Sydney" as const, start: startMoment(civil), end: endMoment(civil), due: civil });
 
 function row(overrides: Partial<GanttChecklistRowDto> = {}): GanttChecklistRowDto {
   return {
@@ -121,7 +121,7 @@ describe("adoptGanttChecklistSchedule — a schedule-only conflict body (#372)",
     const current = row({ done: true, title: "Keep me" });
     const next = adoptGanttChecklistSchedule(current, schedule(5, "2026-06-12"));
     expect(next.schedule.version).toBe(5);
-    expect(next.schedule.end.localCivil).toBe("2026-06-12");
+    expect(next.schedule.end.localCivil).toBe("2026-06-12T17:00");
     expect(next.done).toBe(true);
     expect(next.title).toBe("Keep me");
     expect(next.assignees).toBe(current.assignees);

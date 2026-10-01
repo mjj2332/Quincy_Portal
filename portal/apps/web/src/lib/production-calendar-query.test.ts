@@ -9,6 +9,7 @@ import {
   productionCalendarRangeQueryOptions,
   removeProductionCalendarQueries,
 } from "./production-calendar-query";
+import { startMoment, endMoment } from "@/testing/subtask-schedule";
 
 const principal = "11111111-1111-4111-8111-111111111111";
 const editorId = "22222222-2222-4222-8222-222222222222";
@@ -80,11 +81,11 @@ describe("production calendar query family", () => {
     expect(bounded.queryKey.slice(0, 2)).toEqual(["production-calendar", principal]);
 
     const api = await import("./api");
-    const apiGet = vi.spyOn(api, "apiGet").mockResolvedValue({ ...response("editing_autohdr"), projectBounds: [{ projectId: principal, shootDate: "2026-08-10", createdAt: "2026-07-01T00:00:00.000Z", deadlineLocalCivil: "2026-08-12T10:00" }] });
+    const apiGet = vi.spyOn(api, "apiGet").mockResolvedValue({ ...response("editing_autohdr"), projectBounds: [{ projectId: principal, shootDate: "2026-08-10", createdAt: "2026-07-01T00:00:00.000Z", deadlineLocalCivil: "2026-08-12T10:00", deadlineFold: 0 }] });
     try {
       const decoded = await bounded.queryFn({ signal: new AbortController().signal } as never);
       expect(apiGet.mock.calls[0]![0]).toMatch(/&bounds=1$/u);
-      expect(decoded.projectBounds).toEqual([{ projectId: principal, shootDate: "2026-08-10", createdAt: "2026-07-01T00:00:00.000Z", deadlineLocalCivil: "2026-08-12T10:00" }]);
+      expect(decoded.projectBounds).toEqual([{ projectId: principal, shootDate: "2026-08-10", createdAt: "2026-07-01T00:00:00.000Z", deadlineLocalCivil: "2026-08-12T10:00", deadlineFold: 0 }]);
       apiGet.mockResolvedValue(response("editing_autohdr"));
       await plain.queryFn({ signal: new AbortController().signal } as never);
       expect(apiGet.mock.calls[1]![0]).not.toContain("bounds");
@@ -130,8 +131,8 @@ describe("checklist mutation response domains", () => {
     state: "range" as const,
     version: 9,
     zone: PRODUCTION_CALENDAR_ZONE,
-    start: { kind: "date" as const, localCivil: "2026-08-19", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const },
-    end: { kind: "date" as const, localCivil: "2026-08-20", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const },
+    start: startMoment("2026-08-19"),
+    end: endMoment("2026-08-20"),
     due: "2026-08-20",
   };
 

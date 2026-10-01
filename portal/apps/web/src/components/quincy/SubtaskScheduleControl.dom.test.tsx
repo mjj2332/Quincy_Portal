@@ -1,5 +1,5 @@
 /**
- * #372 — the Checklist's range picker, extracted to `quincy/SubtaskScheduleControl.tsx`, gains three opt-in
+ * #372, rebuilt in #423 on the shared range popup (`quincy/DateTimeField` range form) — the Checklist's range picker, extracted to `quincy/SubtaskScheduleControl.tsx`, gains three opt-in
  * presentation props for the Gantt's Subtask Due cell (a caller-supplied trigger, initial focus on End, focus
  * returned to the trigger) and a caller-supplied validation message. Every default reproduces the Checklist.
  */
@@ -8,12 +8,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CHECKLIST_SCHEDULE_ZONE, type ChecklistScheduleDto } from "@quincy/shared";
 import { SubtaskScheduleControl, type RangeScheduleRequest, type ScheduleError } from "./SubtaskScheduleControl";
+import { startMoment, endMoment } from "@/testing/subtask-schedule";
+import { applyPopup, dateTimePopup, pickPopupDay, popupButton, pressInPopup, rangeToggles } from "@/testing/date-time-popup";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 if (!Element.prototype.getAnimations) Element.prototype.getAnimations = () => [];
-
-const endpoint = (civil: string) => ({ kind: "date" as const, localCivil: civil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const });
-const value: ChecklistScheduleDto = { state: "range", version: 3, zone: CHECKLIST_SCHEDULE_ZONE, start: endpoint("2026-10-08"), end: endpoint("2026-10-10"), due: "2026-10-10" };
+const value: ChecklistScheduleDto = { state: "range", version: 3, zone: CHECKLIST_SCHEDULE_ZONE, start: startMoment("2026-10-08"), end: endMoment("2026-10-10"), due: "2026-10-10T17:00" };
 
 let host: HTMLDivElement;
 let root: Root;
@@ -30,9 +30,8 @@ function Harness({ extra = {} }: { extra?: Extra }) {
 async function mount(extra: Extra = {}, wrap: (node: ReactNode) => ReactNode = (node) => node) {
   await act(async () => { root.render(wrap(<Harness extra={extra} />)); await Promise.resolve(); });
 }
-const popover = () => document.querySelector<HTMLElement>('[role="group"][aria-label="Schedule for Row"]');
-const endDate = () => [...(popover()?.querySelectorAll("fieldset") ?? [])].find((set) => set.querySelector("legend")?.textContent === "End")?.querySelector<HTMLInputElement>('input[type="date"]') ?? null;
-const button = (name: string) => [...(popover()?.querySelectorAll("button") ?? [])].find((el) => el.textContent === name) as HTMLButtonElement;
+const popover = () => dateTimePopup("Schedule for Row");
+const button = (name: string) => popupButton(popover()!, name);
 async function click(el: HTMLElement) { await act(async () => { el.click(); await Promise.resolve(); }); }
 async function settle(rounds = 4) { for (let i = 0; i < rounds; i++) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); }); }
 
@@ -50,8 +49,8 @@ afterEach(async () => {
 
 const customTrigger: NonNullable<Extra["trigger"]> = ({ ref, ...props }) => <button ref={ref} type="button" data-testid="custom-trigger" aria-label="Due for Row" {...props}>Sat 10 Oct</button>;
 
-describe("SubtaskScheduleControl (#372)", () => {
-  it("S1 a caller-supplied trigger replaces the built-in one, is wired to the popover and opens it", async () => {
+describe("SubtaskScheduleControl (#372, #423)", () => {
+  it("S1 a caller-supplied trigger replaces the built-in one, is wired to the popup and opens it", async () => {
     await mount({ trigger: customTrigger });
     const trigger = host.querySelector<HTMLButtonElement>('[data-testid="custom-trigger"]');
     expect(trigger).not.toBeNull();
@@ -61,49 +60,62 @@ describe("SubtaskScheduleControl (#372)", () => {
     await settle();
     expect(trigger!.getAttribute("aria-expanded")).toBe("true");
     expect(popover()).not.toBeNull();
-    expect(trigger!.getAttribute("aria-controls")).toBe(popover()!.id);
   });
 
-  it("S1b with no trigger prop the built-in Checklist trigger is unchanged", async () => {
+  it("S1b with no trigger prop the built-in Checklist trigger names the range with both moments", async () => {
     await mount();
     const trigger = host.querySelector<HTMLButtonElement>('[aria-label="Schedule for Row"]');
     expect(trigger).not.toBeNull();
-    expect(trigger!.textContent).toContain("10 Oct 2026");
+    expect(trigger!.textContent).toContain("Thu 8 Oct 09:00 → Sat 10 Oct 17:00");
   });
 
-  it("S2 initialFocus='end' focuses the End date input; the default focuses the first field", async () => {
+  it("S2 initialFocus='end' opens the popup on End; the default opens on Start", async () => {
     await mount({ trigger: customTrigger, initialFocus: "end" });
     await click(host.querySelector<HTMLButtonElement>('[data-testid="custom-trigger"]')!);
     await settle();
-    expect(endDate()).not.toBeNull();
-    expect(document.activeElement).toBe(endDate());
-  });
-
-  it("S2b without initialFocus the picker does not land on the End field", async () => {
+    expect(rangeToggles(popover()!).active).toBe("End");
+    await click(button("Cancel")!);
+    await settle(12);
     await mount({ trigger: customTrigger });
     await click(host.querySelector<HTMLButtonElement>('[data-testid="custom-trigger"]')!);
     await settle();
-    // (happy-dom lays nothing out, so floating-ui's index-based initial focus cannot pick a control here; the
-    // claim is only that the End field is not the default landing.)
-    expect(document.activeElement).not.toBe(endDate());
+    expect(rangeToggles(popover()!).active).toBe("Start");
   });
 
-  it("S5 returnFocusOnClose returns focus to the trigger on Save and on Cancel", async () => {
-    await mount({ trigger: customTrigger, returnFocusOnClose: true });
-    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="custom-trigger"]')!;
-    await click(trigger);
+  it("S3 Apply hands the new range to onSave at the open version, both ends as civil minutes", async () => {
+    await mount();
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Schedule for Row"]')!);
     await settle();
-    await click(button("Cancel"));
-    await settle(12);
-    expect(popover()).toBeNull();
-    expect(document.activeElement).toBe(trigger);
+    await pickPopupDay(popover()!, "2026-10-12");
+    await applyPopup(popover()!);
+    await settle();
+    expect(saved).toEqual([{ expectedVersion: 3, schedule: { state: "range", start: { localCivil: "2026-10-12T09:00" }, end: { localCivil: "2026-10-12T17:00" } } }]);
+  });
 
-    await click(trigger);
+  it("S4 Cancel closes without calling onSave", async () => {
+    await mount();
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Schedule for Row"]')!);
     await settle();
-    await click(button("Save"));
+    await pressInPopup(popover()!, "Cancel");
+    await settle(12);
+    expect(saved).toHaveLength(0);
+    expect(popover()).toBeNull();
+  });
+
+  it("S5 the Project default shortcut appears only when the caller has one, and applies it", async () => {
+    await mount();
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Schedule for Row"]')!);
     await settle();
-    expect(saved).toHaveLength(1);
-    expect(document.activeElement).toBe(trigger);
+    expect(button("Project default")).toBeUndefined();
+    await click(button("Cancel")!);
+    await settle(12);
+    await mount({ projectDefault: { start: { localCivil: "2026-11-02T09:00", fold: 0 }, end: { localCivil: "2026-11-06T17:00", fold: 0 } } });
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Schedule for Row"]')!);
+    await settle();
+    await pressInPopup(popover()!, "Project default");
+    await applyPopup(popover()!);
+    await settle();
+    expect(saved[0]!.schedule).toEqual({ state: "range", start: { localCivil: "2026-11-02T09:00" }, end: { localCivil: "2026-11-06T17:00" } });
   });
 
   it("S7 a caller-supplied message is shown in the critical notice instead of the generic sentence", async () => {
@@ -130,7 +142,7 @@ describe("SubtaskScheduleControl (#372)", () => {
     await click(host.querySelector<HTMLButtonElement>('[data-testid="custom-trigger"]')!);
     await settle();
     expect(popover()!.textContent).toContain("Ada Smith and 2 others");
-    await click(button("Use latest item (discard draft)"));
+    await pressInPopup(popover()!, "Use latest item (discard draft)");
     expect(onUseLatestItem).toHaveBeenCalledWith(summary);
   });
 });

@@ -13,6 +13,7 @@ import {
   transitionCalendarSettle,
   type CalendarSettleState,
 } from "./production-calendar-interaction";
+import { startMoment, endMoment } from "@/testing/subtask-schedule";
 
 const eventId = "project-deadline:11111111-1111-4111-8111-111111111111";
 const baseState: CalendarSettleState = { pending: false, recoveryReason: null };
@@ -49,8 +50,8 @@ describe("Production Calendar interaction model", () => {
       status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false },
       schedule: {
         state: "range", version: 4, zone: "Australia/Sydney", due: "2026-08-13",
-        start: { kind: "date", localCivil: "2026-08-12", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" },
-        end: { kind: "date", localCivil: "2026-08-13", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" },
+        start: startMoment("2026-08-12"),
+        end: endMoment("2026-08-13"),
       },
       permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true },
     };
@@ -62,7 +63,7 @@ describe("Production Calendar interaction model", () => {
     range.assignees[0]!.name = "Someone Else";
 
     expect(snapshot.event).toMatchObject({
-      schedule: { start: { localCivil: "2026-08-12" }, end: { localCivil: "2026-08-13" } },
+      schedule: { start: { localCivil: "2026-08-12T09:00" }, end: { localCivil: "2026-08-13T17:00" } },
     });
     expect(snapshot.event.schedule.start).not.toBe(range.schedule.start);
     expect((snapshot.event as ChecklistCalendarEventDto).assignees).toEqual([{ id: "person-1", name: "Ivy", roleLabel: "Editor", isExternal: true, active: true }]);

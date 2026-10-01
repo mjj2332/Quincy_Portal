@@ -153,25 +153,27 @@ export function formatDayGroupedTime(instant: Instant, now: number): string {
   return clock12(hour, minute);
 }
 
-function displayCivil(value: string): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}:\d{2}))?$/.exec(value);
-  if (!match) return value;
-  return `${Number(match[3])} ${MONTH_NAMES[Number(match[2]) - 1] ?? match[2]} ${match[1]}${match[4] ? ` · ${match[4]}` : ""}`;
+/** "Mon 3 Nov 09:00": a Sydney civil minute as a Subtask range names an end (the weekday is the date's own). */
+function momentLabel(localCivil: string): string {
+  const [date = "", time = ""] = localCivil.split("T");
+  const [year, month, day] = date.split("-").map(Number);
+  if (!year || !month || !day) return localCivil;
+  return `${WEEKDAY_NAMES[new Date(Date.UTC(year, month - 1, day)).getUTCDay()]} ${day} ${MONTH_NAMES[month - 1]} ${time}`;
 }
 
 /**
- * A checklist schedule's civil (zone-less) endpoints. A one-day range names its date once:
- * "8 Oct 2026", or "8 Oct 2026 · 13:00 → 14:00" when timed. 24-hour by design (owner question 4).
- * Moved here unchanged from `SubtaskChecklist.formatSchedule`.
+ * A Subtask range's two moments (ADR 0016), in 24-hour time: "Mon 3 Nov 09:00 → Fri 7 Nov 17:00", and a
+ * one-day range names its day once: "Mon 3 Nov 09:00 → 17:00".
  */
 export function formatCivilSchedule(value: ChecklistScheduleDto): string {
+  return formatCivilRange(value);
+}
+
+/** The same text for any two civil moments (the range field's stored value, a Project default). */
+export function formatCivilRange(value: { start: { localCivil: string }; end: { localCivil: string } }): string {
   const { start, end } = value;
-  const startDay = start.localCivil.slice(0, 10);
-  if (startDay === end.localCivil.slice(0, 10)) {
-    if (start.kind === "date" || end.kind === "date") return displayCivil(startDay);
-    return `${displayCivil(start.localCivil)} → ${end.localCivil.slice(11, 16)}`;
-  }
-  return `${displayCivil(start.localCivil)} → ${displayCivil(end.localCivil)}`;
+  if (start.localCivil.slice(0, 10) === end.localCivil.slice(0, 10)) return `${momentLabel(start.localCivil)} → ${end.localCivil.slice(11, 16)}`;
+  return `${momentLabel(start.localCivil)} → ${momentLabel(end.localCivil)}`;
 }
 
 // Frozen weekday table, for the same reason as `MONTH_NAMES`.

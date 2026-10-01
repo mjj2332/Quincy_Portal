@@ -4,15 +4,17 @@ import { Field, FieldLabel } from "@/components/reui/field";
 import { FIELD_BOX } from "@/components/reui/input";
 import { PopoverContent, Popover, PopoverTrigger } from "@/components/reui/popover";
 import { isSydneyCalendarDate } from "@quincy/shared";
-import { formatCivilDay } from "@/lib/date-format";
+import { formatCivilDay, formatCivilRange } from "@/lib/date-format";
 import { buildShortcuts, civilToCell, sydneyToday, yearBounds } from "@/lib/date-time-field";
 import { cn } from "@/lib/utils";
 import { CalendarPane } from "./date-time-field/CalendarPane";
 import { DateTimePopup, PopupAnchorContext, type DateTimeApply, type DateTimePopupProps, type DateTimeStored } from "./date-time-field/DateTimePopup";
+import { DateTimeRangePopup, type DateTimeRangeApply, type DateTimeRangePopupProps } from "./date-time-field/DateTimeRangePopup";
 import { PopupFrame } from "./date-time-field/PopupFrame";
 import { ShortcutList } from "./date-time-field/ShortcutList";
 
 export { DateTimePopup, PopupAnchorContext };
+export type { DateTimeRangeApply, DateTimeRangePopupProps } from "./date-time-field/DateTimeRangePopup";
 export type { DateTimeApply, DateTimePopupProps, DateTimeSeed, DateTimeStored } from "./date-time-field/DateTimePopup";
 
 /**
@@ -60,6 +62,19 @@ export type DateTimeFieldProps =
       feedback?: DateTimePopupProps["feedback"];
       /** Commit the draft (`localCivil: null` clears). Rejecting keeps the popup open on the same draft. */
       onApply: (next: DateTimeApply) => void | Promise<void>;
+    })
+  | (Omit<CommonProps, "clearable"> & {
+      variant: "range";
+      /** The stored range, or null while a draft has none yet. A Subtask's range is never cleared. */
+      value: DateTimeRangePopupProps["value"];
+      projectDefault: DateTimeRangePopupProps["projectDefault"];
+      openOn?: DateTimeRangePopupProps["openOn"];
+      seed?: DateTimeRangePopupProps["seed"];
+      seedKey?: DateTimeRangePopupProps["seedKey"];
+      facts?: DateTimeRangePopupProps["facts"];
+      feedback?: DateTimeRangePopupProps["feedback"];
+      /** Commit both ends. Rejecting keeps the popup open on the same draft. */
+      onApply: (next: DateTimeRangeApply) => void | Promise<void>;
     });
 
 type Draft = { touched: false } | { touched: true; day: string | null };
@@ -144,7 +159,7 @@ export function DateTimePopoverContent({ label, className, children, ...props }:
       {...props}
       aria-label={label}
       aria-describedby={zoneId}
-      initialFocus={() => bodyRef.current?.querySelector<HTMLElement>('[aria-selected="true"] button') ?? bodyRef.current?.querySelector<HTMLElement>("button") ?? true}
+      initialFocus={() => bodyRef.current?.querySelector<HTMLElement>('[data-initial-focus="true"]') ?? bodyRef.current?.querySelector<HTMLElement>('[aria-selected="true"] button') ?? bodyRef.current?.querySelector<HTMLElement>("button") ?? true}
       className={cn("w-auto max-w-[calc(100vw-2*var(--space-4))] gap-0 overflow-hidden rounded-[var(--radius-card)] p-0", className)}
     >
       <PopupAnchorContext.Provider value={{ zoneId, bodyRef }}>{children}</PopupAnchorContext.Provider>
@@ -153,13 +168,16 @@ export function DateTimePopoverContent({ label, className, children, ...props }:
 }
 
 export function DateTimeField(props: DateTimeFieldProps) {
-  const { id, label, clearable = false, placeholder = "Select a date", disabled } = props;
+  const { id, label, placeholder = "Select a date", disabled } = props;
+  const clearable = props.variant === "range" ? false : (props.clearable ?? false);
   const [open, setOpen] = useState(false);
   const labelId = `${id}-label`;
   const valueId = `${id}-value`;
   const display = props.variant === "date"
     ? (props.value ? (isSydneyCalendarDate(props.value) ? formatCivilDay(props.value) : props.value) : null)
-    : (props.value ? `${formatCivilDay(props.value.localCivil.slice(0, 10))} · ${props.value.localCivil.slice(11, 16)}` : null);
+    : props.variant === "range"
+      ? (props.value ? formatCivilRange(props.value) : null)
+      : (props.value ? `${formatCivilDay(props.value.localCivil.slice(0, 10))} · ${props.value.localCivil.slice(11, 16)}` : null);
 
   return (
     <Field>
@@ -179,7 +197,9 @@ export function DateTimeField(props: DateTimeFieldProps) {
         <DateTimePopoverContent label={label} positionerClassName={props.positionerClassName}>
           {props.variant === "date"
             ? <DatePopup label={label} value={props.value} clearable={clearable} onApply={props.onApply} onClose={() => setOpen(false)} />
-            : <DateTimePopup label={label} value={props.value} clearable={clearable} reminders={props.reminders} seed={props.seed} seedKey={props.seedKey} facts={props.facts} feedback={props.feedback} onApply={props.onApply} onClose={() => setOpen(false)} />}
+            : props.variant === "range"
+              ? <DateTimeRangePopup label={label} value={props.value} projectDefault={props.projectDefault} openOn={props.openOn} seed={props.seed} seedKey={props.seedKey} facts={props.facts} feedback={props.feedback} onApply={props.onApply} onClose={() => setOpen(false)} />
+              : <DateTimePopup label={label} value={props.value} clearable={clearable} reminders={props.reminders} seed={props.seed} seedKey={props.seedKey} facts={props.facts} feedback={props.feedback} onApply={props.onApply} onClose={() => setOpen(false)} />}
         </DateTimePopoverContent>
       </Popover>
     </Field>

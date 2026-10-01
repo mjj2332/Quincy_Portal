@@ -5,10 +5,10 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { AnchoredPopover, useAnchoredPopover, POPOVER_ACTIONS, POPOVER_CONTENT, RING_IN } from "./AnchoredPopover";
 import { ApiError, apiDelete, apiPatch, apiPost } from "../lib/api";
 import { useSession } from "../lib/auth";
-import { invalidateProjectSurfaces, projectDataKeys, useOptionalProjectQueryClient, useProjectAccessTermination, useProjectSubtasksQuery, type ProjectSubtask } from "../lib/project-data";
+import { invalidateProjectSurfaces, projectDataKeys, useOptionalProjectQueryClient, useProjectAccessTermination, useProjectSubtaskDefaultRange, useProjectSubtasksQuery, type ProjectSubtask } from "../lib/project-data";
 import { createProjectDataInvalidationMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
-import { formatCivilSchedule } from "../lib/date-format";
-import { CHECKLIST_SCHEDULE_ZONE, type ChecklistScheduleDto, type RangeChecklistScheduleInput, type Role } from "@quincy/shared";
+import { formatCivilRange, formatCivilSchedule } from "../lib/date-format";
+import { checklistScheduleToDto, normalizeChecklistSchedule, type ChecklistScheduleDto, type RangeChecklistScheduleInput, type Role } from "@quincy/shared";
 import { reorderNeighbors } from "../lib/reorder-neighbors";
 import { confirm } from "../lib/confirm";
 import { cn } from "../lib/utils";
@@ -51,9 +51,10 @@ type ActivePopover = { owner: string; kind: PopoverKind } | null;
 function message(error: unknown, fallback: string) { return error instanceof Error ? error.message : fallback; }
 /** A one-day range names its date once: "8 Oct 2026", or "8 Oct 2026 · 13:00 → 14:00" when timed. Lives in `lib/date-format.ts` (#376). */
 export const formatSchedule = formatCivilSchedule;
-function schedulePreview(input: RangeChecklistScheduleInput): ChecklistScheduleDto {
-  const endpoint = (value: { kind: "date" | "timed"; localCivil: string }) => ({ kind: value.kind, localCivil: value.localCivil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const });
-  return { state: "range", version: 0, zone: CHECKLIST_SCHEDULE_ZONE, start: endpoint(input.start), end: endpoint(input.end), due: input.end.localCivil };
+/** The range the composer shows once the user has applied one: a real resolution of the request, never a hand-built DTO. */
+function schedulePreview(input: RangeChecklistScheduleInput): ChecklistScheduleDto | null {
+  const result = normalizeChecklistSchedule(input, 1);
+  return result.ok ? checklistScheduleToDto(result.value) : null;
 }
 
 export function scheduleReorderFocus(grips: Map<string, HTMLButtonElement>, id: string, formerIndex: number, composerOpen: boolean, composerInput: HTMLInputElement | null, projectId: string, isBusy: () => boolean = () => false) {
@@ -71,6 +72,7 @@ function ActionsControl({ owner, title, open, setOpen, busy, onDelete }: { owner
 }
 
 function SortableSubtaskRow({ item, projectId, role, busy, editing, draftTitle, popover, setPopover, scheduleError, retainedSchedule, onUpdate, onCommitAssignees, onUseLatest, onUseLatestItem, onRemove, onBeginEditing, onEndEditing, titleInputRef, itemRef, gripRef, sortable, twoLine }: { twoLine: boolean; sortable: boolean; item: Subtask; projectId: string; role: Role; busy: boolean; editing: boolean; draftTitle: string; popover: ActivePopover; setPopover: (value: ActivePopover) => void; scheduleError?: ScheduleError; retainedSchedule: RetainedSchedule; onUpdate: (body: Record<string, unknown>, action: string) => void; onCommitAssignees: (ids: string[], baseline: { ids: string[]; version: number | undefined }) => Promise<void>; onUseLatest: (schedule: ChecklistScheduleDto) => void; onUseLatestItem: (item: Subtask) => void; onRemove: () => void; onBeginEditing: () => void; onEndEditing: () => void; titleInputRef: (element: HTMLInputElement | null) => void; itemRef: (element: HTMLElement | null) => void; gripRef: (element: HTMLButtonElement | null) => void }) {
+  const projectDefault = useProjectSubtaskDefaultRange(projectId);
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: item.id, disabled: busy || !sortable });
   const activeKind = popover?.owner === item.id ? popover.kind : null;
   const setKind = (kind: PopoverKind, open: boolean) => setPopover(open ? { owner: item.id, kind } : null);
@@ -132,7 +134,7 @@ function SortableSubtaskRow({ item, projectId, role, busy, editing, draftTitle, 
           ? "col-span-full flex flex-wrap items-center gap-[var(--space-1)] pt-[var(--space-1)] [&>:last-child]:ms-auto"
           : cn("max-[721px]:col-span-full max-[721px]:flex max-[721px]:flex-wrap max-[721px]:items-center", "max-[721px]:gap-[var(--space-1)] max-[721px]:pt-[var(--space-1)] max-[721px]:[&>:last-child]:ms-auto", "min-[721px]:contents"),
       )}>
-        <SubtaskScheduleControl owner={item.id} label={`Schedule for ${item.title}`} value={item.schedule} error={scheduleError} retained={retainedSchedule} open={activeKind === "schedule"} setOpen={(open) => setKind("schedule", open)} onSave={(schedule) => onUpdate({ schedule }, "schedule")} onUseLatest={onUseLatest} onUseLatestItem={onUseLatestItem} busy={busy} />
+        <SubtaskScheduleControl owner={item.id} label={`Schedule for ${item.title}`} value={item.schedule} error={scheduleError} retained={retainedSchedule} open={activeKind === "schedule"} setOpen={(open) => setKind("schedule", open)} onSave={(schedule) => onUpdate({ schedule }, "schedule")} onUseLatest={onUseLatest} onUseLatestItem={onUseLatestItem} busy={busy} projectDefault={projectDefault} />
         <SubtaskAssigneePicker projectId={projectId} role={role} label={`Assignees for ${item.title}`} selected={item.assignees} version={item.assignmentVersion} hiddenCount={item.otherAssigneeCount ?? 0} busy={busy} onCommit={(ids, _people, baseline) => onCommitAssignees(ids, baseline)} />
         <ActionsControl owner={item.id} title={item.title} open={activeKind === "actions"} setOpen={(open) => setKind("actions", open)} busy={busy} onDelete={onRemove} />
       </div>
@@ -145,6 +147,7 @@ export function SubtaskChecklist({ projectId, onAccessFailure, layout = "rail" }
   const session = useSession();
   const role: Role = session.data?.user.role === "external_editor" ? "external_editor" : "admin";
   const subtasksQuery = useProjectSubtasksQuery(projectId, true, false, role);
+  const projectDefault = useProjectSubtaskDefaultRange(projectId);
   const queryRuntime = queryClient ? getProjectQueryRuntime(queryClient) : undefined;
   const terminateOnUnauthorized = useProjectAccessTermination();
   const onAccessFailureRef = useRef(onAccessFailure);
@@ -224,7 +227,7 @@ export function SubtaskChecklist({ projectId, onAccessFailure, layout = "rail" }
             <CollapsibleContent><div>{doneItems.map((item) => rowFor(item, false))}</div></CollapsibleContent>
           </Collapsible>}
         </DndContext>
-        {composerOpen ? <form className="grid gap-[var(--space-2)]" onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); resetComposer(); } }} onSubmit={(event) => void add(event)}><label className="sr-only" htmlFor={`subtask-composer-${projectId}`}>Add a subtask</label><Input ref={composerInputRef} id={`subtask-composer-${projectId}`} autoFocus value={newTitle} maxLength={500} disabled={adding} onChange={(event) => setNewTitle(event.target.value)} placeholder="Add a subtask…" /><div className={POPOVER_ACTIONS}><SubtaskAssigneePicker projectId={projectId} role={role} label="Assignees for new subtask" selected={newAssignees} disabled={adding} compact onCommit={(_ids, people) => setNewAssignees(people)} /><SubtaskScheduleControl owner="composer" label="Schedule for new subtask" value={newSchedulePreview} defaultLabel={newSchedule ? undefined : "Project default"} open={activePopover?.owner === "composer" && activePopover.kind === "schedule"} setOpen={(value) => setActivePopover(value ? { owner: "composer", kind: "schedule" } : null)} onSave={(request) => { setNewSchedule(request.schedule); setNewSchedulePreview(schedulePreview(request.schedule)); }} busy={adding} compact /><span className="flex-1 max-[601px]:hidden" /><button className={buttonClasses("secondary")} type="button" disabled={adding} onClick={() => resetComposer()}>Cancel</button><button className={buttonClasses("primary")} type="submit" disabled={adding || !newTitle.trim()}>{adding ? "Adding…" : "Add"}</button></div></form> : <button id={`subtask-add-${projectId}`} type="button" className={ADD_BUTTON_CLASSES} onClick={() => setComposerOpen(true)}>+ Add an item</button>}
+        {composerOpen ? <form className="grid gap-[var(--space-2)]" onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); resetComposer(); } }} onSubmit={(event) => void add(event)}><label className="sr-only" htmlFor={`subtask-composer-${projectId}`}>Add a subtask</label><Input ref={composerInputRef} id={`subtask-composer-${projectId}`} autoFocus value={newTitle} maxLength={500} disabled={adding} onChange={(event) => setNewTitle(event.target.value)} placeholder="Add a subtask…" /><div className={POPOVER_ACTIONS}><SubtaskAssigneePicker projectId={projectId} role={role} label="Assignees for new subtask" selected={newAssignees} disabled={adding} compact onCommit={(_ids, people) => setNewAssignees(people)} /><SubtaskScheduleControl owner="composer" label="Schedule for new subtask" value={newSchedulePreview} defaultLabel={newSchedule ? undefined : (projectDefault ? formatCivilRange(projectDefault) : "Project default")} open={activePopover?.owner === "composer" && activePopover.kind === "schedule"} setOpen={(value) => setActivePopover(value ? { owner: "composer", kind: "schedule" } : null)} onSave={(request) => { setNewSchedule(request.schedule); setNewSchedulePreview(schedulePreview(request.schedule)); }} projectDefault={projectDefault} busy={adding} compact /><span className="flex-1 max-[601px]:hidden" /><button className={buttonClasses("secondary")} type="button" disabled={adding} onClick={() => resetComposer()}>Cancel</button><button className={buttonClasses("primary")} type="submit" disabled={adding || !newTitle.trim()}>{adding ? "Adding…" : "Add"}</button></div></form> : <button id={`subtask-add-${projectId}`} type="button" className={ADD_BUTTON_CLASSES} onClick={() => setComposerOpen(true)}>+ Add an item</button>}
         {!subtasks.length && <EmptyState size="compact" title="Break the shoot into steps anyone on the project can tick off." />}
       </>}</CollapsibleContent>
     </Collapsible>

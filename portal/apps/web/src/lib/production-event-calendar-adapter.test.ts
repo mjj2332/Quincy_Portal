@@ -15,7 +15,7 @@ import {
   toProductionEventCalendarEvent,
   toProductionEventCalendarEvents,
 } from "./production-event-calendar-adapter";
-import { dated, deadlineEvent, instantOf, rangeEvent, timed } from "../testing/production-calendar-fixtures";
+import { deadlineEvent, instantOf, rangeEvent, timed } from "../testing/production-calendar-fixtures";
 
 const at = (localCivil: string) => new Date(instantOf(localCivil));
 
@@ -37,20 +37,18 @@ describe("production event-calendar adapter: DTO → vendor event (#222)", () =>
     expect(event.data.syntheticEnd).toBe(false);
   });
 
-  it("maps an all-day range to Sydney zoned midnights with an EXCLUSIVE end", () => {
-    const event = toProductionEventCalendarEvent(rangeEvent(dated("2026-08-26"), dated("2026-08-28")))!;
-    expect(event.allDay).toBe(true);
-    expect(event.start).toEqual(at("2026-08-26T00:00"));
-    expect(event.end).toEqual(at("2026-08-29T00:00"));
+  it("maps a multi-day range to its two instants, never an all-day event", () => {
+    const event = toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-28T17:00")))!;
+    expect(event.allDay).toBe(false);
+    expect(event.start).toEqual(at("2026-08-26T09:00"));
+    expect(event.end).toEqual(at("2026-08-28T17:00"));
   });
 
-  it("uses the zone's midnight on both 2026 DST transition days, not UTC midnight", () => {
-    const fallBack = toProductionEventCalendarEvent(rangeEvent(dated("2026-04-05"), dated("2026-04-05")))!;
-    expect(fallBack.start.toISOString()).toBe("2026-04-04T13:00:00.000Z"); // AEDT midnight
-    expect(fallBack.end.toISOString()).toBe("2026-04-05T14:00:00.000Z"); // AEST midnight: a 25h day
-    const springForward = toProductionEventCalendarEvent(rangeEvent(dated("2026-10-04"), dated("2026-10-04")))!;
-    expect(springForward.start.toISOString()).toBe("2026-10-03T14:00:00.000Z");
-    expect(springForward.end.toISOString()).toBe("2026-10-04T13:00:00.000Z"); // a 23h day
+  it("keeps a range across both 2026 DST transition days at its real duration", () => {
+    const fallBack = toProductionEventCalendarEvent(rangeEvent(timed("2026-04-04T12:00"), timed("2026-04-05T12:00")))!;
+    expect(fallBack.end.getTime() - fallBack.start.getTime()).toBe(25 * 3_600_000);
+    const springForward = toProductionEventCalendarEvent(rangeEvent(timed("2026-10-03T12:00"), timed("2026-10-04T12:00")))!;
+    expect(springForward.end.getTime() - springForward.start.getTime()).toBe(23 * 3_600_000);
   });
 
   it("gives a timed Deadline a synthetic display end", () => {

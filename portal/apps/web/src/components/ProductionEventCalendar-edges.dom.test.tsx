@@ -95,7 +95,7 @@ describe("ProductionEventCalendar resize edges on the real vendor tree", () => {
     expect(fetch.patches()).toHaveLength(1);
     // The untouched END keeps its civil minute; the shared mapper re-sends it pinned to its stored
     // occurrence (`disambiguation`), which is not a change.
-    expect(patchedSchedule(fetch)).toMatchObject({ state: "range", start: { kind: "timed", localCivil: "2026-08-12T09:45" }, end: { kind: "timed", localCivil: "2026-08-12T11:00" } });
+    expect(patchedSchedule(fetch)).toMatchObject({ state: "range", start: { localCivil: "2026-08-12T09:45" }, end: { localCivil: "2026-08-12T11:00" } });
     expect((patchedSchedule(fetch) as { start: { disambiguation?: string } }).start.disambiguation).toBeUndefined();
   });
 
@@ -104,7 +104,7 @@ describe("ProductionEventCalendar resize edges on the real vendor tree", () => {
     const fetch = await mount([event], rangeSchedule(timed("2026-08-12T10:00"), timed("2026-08-12T11:15"), 4));
     await adjust(CHECKLIST_ID, ["e", "ArrowDown"]);
     expect(fetch.patches()).toHaveLength(1);
-    expect(patchedSchedule(fetch)).toMatchObject({ state: "range", start: { kind: "timed", localCivil: "2026-08-12T10:00" }, end: { kind: "timed", localCivil: "2026-08-12T11:15" } });
+    expect(patchedSchedule(fetch)).toMatchObject({ state: "range", start: { localCivil: "2026-08-12T10:00" }, end: { localCivil: "2026-08-12T11:15" } });
     expect((patchedSchedule(fetch) as { end: { disambiguation?: string } }).end.disambiguation).toBeUndefined();
   });
 

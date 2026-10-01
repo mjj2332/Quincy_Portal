@@ -111,15 +111,7 @@ describe("event-calendar scheduling: checklist ranges", () => {
     const dto = timedRange();
     const p = proposal(eventCalendarUpdateToProposal(dto, update(dto, { granularity: "day", allDay: true, start: at("2026-08-28T00:00"), end: at("2026-08-29T00:00") })));
     const command = checklistCommand(p);
-    expect(command.ok && command.value.schedule).toMatchObject({ start: { kind: "timed", localCivil: "2026-08-28T09:00" } });
-  });
-
-  it("an all-day range moved by day cells keeps its span", () => {
-    const dto = datedRange();
-    const p = proposal(eventCalendarUpdateToProposal(dto, update(dto, { granularity: "day", start: at("2026-08-31T00:00"), end: at("2026-09-03T00:00") })));
-    expect(p.target).toEqual({ subview: "month", targetDate: "2026-08-31" });
-    const command = checklistCommand(p);
-    expect(command.ok && command.value.schedule).toMatchObject({ start: { kind: "date", localCivil: "2026-08-31" }, end: { kind: "date", localCivil: "2026-09-02" } });
+    expect(command.ok && command.value.schedule).toMatchObject({ start: { localCivil: "2026-08-28T09:00" } });
   });
 
   it("start resize patches the start only", () => {
@@ -143,23 +135,7 @@ describe("event-calendar scheduling: checklist ranges", () => {
     const p = proposal(eventCalendarUpdateToProposal(dto, update(dto, { source: "resize-end", granularity: "day", end: at("2026-08-28T11:00") })));
     expect(p.target).toMatchObject({ subview: "month", targetDate: "2026-08-28", targetCivilMinute: "2026-08-28T11:00", edge: "end" });
     const command = checklistCommand(p);
-    expect(command.ok && command.value.schedule).toMatchObject({ end: { kind: "timed", localCivil: "2026-08-28T11:00" } });
-  });
-
-  it("end resize of an all-day range passes the EXCLUSIVE end", () => {
-    const dto = datedRange();
-    const p = proposal(eventCalendarUpdateToProposal(dto, update(dto, { source: "resize-end", granularity: "day", end: at("2026-08-31T00:00") })));
-    expect(p.target).toEqual({ subview: "month", targetDate: "2026-08-31", end: "2026-08-31", edge: "end" });
-    const command = checklistCommand(p);
-    expect(command.ok && command.value.schedule).toMatchObject({ end: { kind: "date", localCivil: "2026-08-30" } });
-  });
-
-  it("start resize of an all-day range targets the new start date", () => {
-    const dto = datedRange();
-    const p = proposal(eventCalendarUpdateToProposal(dto, update(dto, { source: "resize-start", granularity: "day", start: at("2026-08-24T00:00") })));
-    expect(p.target).toEqual({ subview: "month", targetDate: "2026-08-24", edge: "start" });
-    const command = checklistCommand(p);
-    expect(command.ok && command.value.schedule).toMatchObject({ start: { localCivil: "2026-08-24" }, end: { localCivil: "2026-08-28" } });
+    expect(command.ok && command.value.schedule).toMatchObject({ end: { localCivil: "2026-08-28T11:00" } });
   });
 
   it("keyboard deltas classify like the Gantt: both edges equal → move, one edge → that resize", () => {
@@ -195,12 +171,12 @@ describe("event-calendar scheduling: Deadlines", () => {
     expect(p).toMatchObject({ kind: "deadline", target: { subview: "week", targetCivilMinute: "2026-08-27T10:00" } });
   });
 
-  it("a one-day dated range moves by its display start and stays a one-day range", () => {
-    const dto = rangeEvent(dated("2026-08-27"), dated("2026-08-27"));
-    const p = proposal(eventCalendarUpdateToProposal(dto, update(dto, { granularity: "day", start: at("2026-08-30T00:00"), end: at("2026-08-31T00:00") })));
+  it("a one-day range moves by its start moment and stays a one-day range", () => {
+    const dto = rangeEvent(dated("2026-08-27"), timed("2026-08-27T17:00"));
+    const p = proposal(eventCalendarUpdateToProposal(dto, update(dto, { granularity: "day", start: at("2026-08-30T09:00"), end: at("2026-08-30T17:00") })));
     expect(p).toMatchObject({ kind: "move", target: { subview: "month", targetDate: "2026-08-30" } });
     const command = checklistCommand(p);
-    expect(command.ok && command.value.schedule).toMatchObject({ state: "range", start: { kind: "date", localCivil: "2026-08-30" }, end: { kind: "date", localCivil: "2026-08-30" } });
+    expect(command.ok && command.value.schedule).toMatchObject({ state: "range", start: { localCivil: "2026-08-30T09:00" }, end: { localCivil: "2026-08-30T17:00" } });
   });
 });
 
@@ -221,30 +197,30 @@ describe("event-calendar scheduling: DST (both 2026 Sydney transitions)", () => 
     expect(command.ok && command.value.deadline?.localCivil).toBe("2026-10-05T17:00");
   });
 
-  it("spring-forward week: an all-day range across the 23h day keeps its dates", () => {
-    const dto = rangeEvent(dated("2026-10-02"), dated("2026-10-03"));
-    const p = proposal(eventCalendarUpdateToProposal(dto, update(dto, { granularity: "day", start: at("2026-10-04T00:00"), end: at("2026-10-06T00:00") })));
+  it("spring-forward week: a multi-day range moved across the 23h day keeps its dates and wall times", () => {
+    const dto = rangeEvent(dated("2026-10-02"), timed("2026-10-03T17:00"));
+    const p = proposal(eventCalendarUpdateToProposal(dto, update(dto, { granularity: "day", start: at("2026-10-04T09:00"), end: at("2026-10-05T17:00") })));
     const command = checklistCommand(p);
-    expect(command.ok && command.value.schedule).toMatchObject({ start: { localCivil: "2026-10-04" }, end: { localCivil: "2026-10-05" } });
+    expect(command.ok && command.value.schedule).toMatchObject({ start: { localCivil: "2026-10-04T09:00" }, end: { localCivil: "2026-10-05T17:00" } });
   });
 
   // Keyboard Adjust in month view shifts each endpoint by calendar days on its own, so when only one
   // endpoint crosses the transition the two millisecond deltas differ by an hour. That is still a
   // move, not a compound edit.
-  it("fall-back: a keyboard +1 day on a dated range whose END crosses the 25h day is a move", () => {
-    const dto = rangeEvent(dated("2026-04-03"), dated("2026-04-04"));
-    const p = proposal(eventCalendarUpdateToProposal(dto, update(dto, { source: "keyboard", granularity: "day", start: at("2026-04-04T00:00"), end: at("2026-04-06T00:00") })));
+  it("fall-back: a keyboard +1 day on a range whose END crosses the 25h day is a move", () => {
+    const dto = rangeEvent(dated("2026-04-03"), timed("2026-04-04T17:00"));
+    const p = proposal(eventCalendarUpdateToProposal(dto, update(dto, { source: "keyboard", granularity: "day", start: at("2026-04-04T09:00"), end: at("2026-04-05T17:00") })));
     expect(p.kind).toBe("move");
     const command = checklistCommand(p);
-    expect(command.ok && command.value.schedule).toMatchObject({ start: { localCivil: "2026-04-04" }, end: { localCivil: "2026-04-05" } });
+    expect(command.ok && command.value.schedule).toMatchObject({ start: { localCivil: "2026-04-04T09:00" }, end: { localCivil: "2026-04-05T17:00" } });
   });
 
-  it("spring-forward: a keyboard +1 day on a dated range whose END crosses the 23h day is a move", () => {
-    const dto = rangeEvent(dated("2026-10-02"), dated("2026-10-03"));
-    const p = proposal(eventCalendarUpdateToProposal(dto, update(dto, { source: "keyboard", granularity: "day", start: at("2026-10-03T00:00"), end: at("2026-10-05T00:00") })));
+  it("spring-forward: a keyboard +1 day on a range whose END crosses the 23h day is a move", () => {
+    const dto = rangeEvent(dated("2026-10-02"), timed("2026-10-03T17:00"));
+    const p = proposal(eventCalendarUpdateToProposal(dto, update(dto, { source: "keyboard", granularity: "day", start: at("2026-10-03T09:00"), end: at("2026-10-04T17:00") })));
     expect(p.kind).toBe("move");
     const command = checklistCommand(p);
-    expect(command.ok && command.value.schedule).toMatchObject({ start: { localCivil: "2026-10-03" }, end: { localCivil: "2026-10-04" } });
+    expect(command.ok && command.value.schedule).toMatchObject({ start: { localCivil: "2026-10-03T09:00" }, end: { localCivil: "2026-10-04T17:00" } });
   });
 
   it("fall-back: a keyboard END-only +1 day across the 25h day is still an end resize", () => {

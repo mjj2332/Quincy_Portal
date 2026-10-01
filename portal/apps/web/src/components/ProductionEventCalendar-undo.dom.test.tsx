@@ -32,6 +32,7 @@ import {
   PROJECT_STREET,
   rangeResponse,
   SUBTASK_ID,
+  timed,
 } from "../testing/production-calendar-fixtures";
 import {
   calendarState,
@@ -129,7 +130,7 @@ function checklistServer(initial: ChecklistScheduleDto, options: { projectBounds
       const request = (body as { schedule: { expectedVersion: number; schedule: { state: string; start: { localCivil: string }; end: { localCivil: string } } } }).schedule;
       if (request.expectedVersion !== server.schedule.version) return json({ error: "changed", code: "subtask_schedule_version_conflict", current: { version: server.schedule.version } }, 409);
       const version = server.schedule.version + 1;
-      server.schedule = rangeSchedule(dated(request.schedule.start.localCivil), dated(request.schedule.end.localCivil), version);
+      server.schedule = rangeSchedule(timed(request.schedule.start.localCivil), timed(request.schedule.end.localCivil), version);
       if (garbleNextPatch) { garbleNextPatch = false; return json({ unreadable: true }); }
       return json(checklistMutationBody(base, server.schedule));
     },
@@ -174,7 +175,7 @@ describe("ProductionEventCalendar Undo toast (#291)", () => {
   });
 
   it("1b. a warned save's toast is caution-toned with the warning; the live region alone announces it", async () => {
-    checklistServer(oneDaySchedule(dated("2026-08-12"), 2), { projectBounds: [{ projectId: PROJECT_ID, shootDate: "2026-08-01", createdAt: "2026-07-01T00:00:00.000Z", deadlineLocalCivil: "2026-08-14T17:00" }] });
+    checklistServer(oneDaySchedule(dated("2026-08-12"), 2), { projectBounds: [{ projectId: PROJECT_ID, shootDate: "2026-08-01", createdAt: "2026-07-01T00:00:00.000Z", deadlineLocalCivil: "2026-08-14T17:00", deadlineFold: 0 }] });
     await h.render(calendarState("month"));
     await proposeUpdate(ID, { start: day("2026-08-20"), allDay: true });
     await flush(20);
@@ -193,16 +194,16 @@ describe("ProductionEventCalendar Undo toast (#291)", () => {
     await h.render(calendarState("month"));
     await proposeUpdate(ID, { start: day("2026-08-15"), allDay: true });
     await flush(20);
-    expect(chipStart(ID)).toBe(day("2026-08-15").toISOString());
+    expect(chipStart(ID)).toBe(at("2026-08-15T09:00").toISOString());
     const getsBefore = fetch.rangeGets().length;
 
     await click(undoButtons()[0]!);
     await flush(20);
     expect(fetch.patches()).toHaveLength(2);
-    expect(fetch.patches()[1]!.body).toEqual({ schedule: { expectedVersion: 3, schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-12" }, end: { kind: "date", localCivil: "2026-08-12" } } } });
+    expect(fetch.patches()[1]!.body).toEqual({ schedule: { expectedVersion: 3, schedule: { state: "range", start: { localCivil: "2026-08-12T09:00", disambiguation: "earlier" }, end: { localCivil: "2026-08-12T17:00", disambiguation: "earlier" } } } });
     expect(server.schedule.version).toBe(4);
     expect(fetch.rangeGets().length).toBeGreaterThan(getsBefore);
-    expect(chipStart(ID)).toBe(day("2026-08-12").toISOString());
+    expect(chipStart(ID)).toBe(at("2026-08-12T09:00").toISOString());
     expect(liveRegion()).toBe("Change undone.");
     expect(undoButtons()).toHaveLength(0);
   });
@@ -257,7 +258,7 @@ describe("ProductionEventCalendar Undo toast (#291)", () => {
     await click(undoButtons()[0]!);
     await flush(20);
     expect(fetch.patches()).toHaveLength(2);
-    expect(fetch.patches()[1]!.body).toEqual({ schedule: { expectedVersion: 3, schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-12" }, end: { kind: "date", localCivil: "2026-08-12" } } } });
+    expect(fetch.patches()[1]!.body).toEqual({ schedule: { expectedVersion: 3, schedule: { state: "range", start: { localCivil: "2026-08-12T09:00", disambiguation: "earlier" }, end: { localCivil: "2026-08-12T17:00", disambiguation: "earlier" } } } });
   });
 
   describe("6. the live Undo is dismissed", () => {
@@ -382,7 +383,7 @@ describe("ProductionEventCalendar Undo toast (#291)", () => {
     release();
     await flush(20);
     expect(settle.at(-1)).toEqual({ pending: false, recoveryReason: null });
-    expect(chipStart(ID)).toBe(day("2026-08-12").toISOString());
+    expect(chipStart(ID)).toBe(at("2026-08-12T09:00").toISOString());
     expect(liveRegion()).toBe("Change undone.");
   });
 });
@@ -418,19 +419,19 @@ describe("ProductionEventCalendar Up next rail after a save or Undo (#295)", () 
   it("a checklist save and its Undo each refresh the rail once, and the main range once", async () => {
     const { fetch } = checklistServer(oneDaySchedule(dated("2026-08-12"), 2));
     await renderBeforeFixtures();
-    expect(upNextItems()).toEqual([expect.stringContaining("Wed 12 Aug · All day")]);
+    expect(upNextItems()).toEqual([expect.stringContaining("Wed 12 Aug · 09:00")]);
 
     let before = counts(fetch);
     await proposeUpdate(ID, { start: day("2026-08-15"), allDay: true });
     await flush(20);
     expect(counts(fetch)).toEqual({ main: before.main + 1, rail: before.rail + 1 });
-    expect(upNextItems()).toEqual([expect.stringContaining("Sat 15 Aug · All day")]);
+    expect(upNextItems()).toEqual([expect.stringContaining("Sat 15 Aug · 09:00")]);
 
     before = counts(fetch);
     await click(undoButtons()[0]!);
     await flush(20);
     expect(counts(fetch)).toEqual({ main: before.main + 1, rail: before.rail + 1 });
-    expect(upNextItems()).toEqual([expect.stringContaining("Wed 12 Aug · All day")]);
+    expect(upNextItems()).toEqual([expect.stringContaining("Wed 12 Aug · 09:00")]);
   });
 
   it("a confirmed Deadline save and its Undo each refresh the rail once; a no-op does not", async () => {

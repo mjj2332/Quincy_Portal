@@ -11,7 +11,9 @@ export type FoldOption = { disambiguation: "earlier" | "later"; utcOffsetMinutes
  * fall-back). Each option names its UTC offset so the choice is not a guess. Nothing is
  * pre-selected for a newly picked time; Apply stays disabled until one is pressed.
  */
-export function FoldChoice({ choices, selected, onSelect }: {
+export function FoldChoice({ choices, selected, onSelect, subject }: {
+  /** Names the end this choice is for in a range ("Start", "End"); absent in the single-moment forms. */
+  subject?: string;
   choices: readonly FoldOption[];
   selected: "earlier" | "later" | undefined;
   onSelect: (choice: "earlier" | "later") => void;
@@ -19,8 +21,8 @@ export function FoldChoice({ choices, selected, onSelect }: {
   const helpId = useId();
   return (
     <div className="grid gap-[var(--space-2)]">
-      <FieldDescription id={helpId} className="text-[length:var(--text-xs)]">This time happens twice in Sydney. Choose which one.</FieldDescription>
-      <ButtonGroup aria-label="Which Sydney time" aria-describedby={helpId} className="w-full">
+      <FieldDescription id={helpId} className="text-[length:var(--text-xs)]">{subject ? `${subject}: this` : "This"} time happens twice in Sydney. Choose which one.</FieldDescription>
+      <ButtonGroup aria-label={subject ? `Which Sydney time, ${subject.toLowerCase()}` : "Which Sydney time"} aria-describedby={helpId} className="w-full">
         {choices.map((choice) => (
           <Button
             key={choice.disambiguation}

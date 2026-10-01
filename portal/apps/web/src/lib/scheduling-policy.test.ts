@@ -17,6 +17,7 @@ import {
   type SaveProjectDeadlineRequest,
 } from "@quincy/shared";
 import { canonicalChecklistEvent, optimisticChecklistEvent, planSchedulingProposal, timingFromChecklistSchedule, type SchedulingProposal } from "./scheduling-policy";
+import { endMoment, startMoment } from "@/testing/subtask-schedule";
 
 /** Independently recomputes the timing a checklist plan should carry, from the SAME public
  * helpers `planSchedulingProposal` itself uses — so the assertion below is not tautological. */
@@ -46,13 +47,10 @@ const project = () => ({
   checklist: { completed: 1, total: 3 },
   delivered: false,
 });
-const dateEndpoint = (localCivil: string) => ({ kind: "date" as const, localCivil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const });
-const timedEndpoint = (localCivil: string, instant: string, fold: 0 | 1 = 0) => ({ kind: "timed" as const, localCivil, instant, utcOffsetMinutes: fold === 1 ? 600 : 660, fold, resolution: "stored" as const });
-const rangeSchedule = (start: ReturnType<typeof dateEndpoint> | ReturnType<typeof timedEndpoint>, end: ReturnType<typeof dateEndpoint> | ReturnType<typeof timedEndpoint>, version = 4) => ({ state: "range" as const, version, zone: PRODUCTION_CALENDAR_ZONE, start, end, due: end.localCivil });
+const timedEndpoint = (localCivil: string, instant: string, fold: 0 | 1 = 0) => ({ localCivil, instant, utcOffsetMinutes: fold === 1 ? 600 : 660, fold, resolution: "stored" as const });
+const rangeSchedule = (start: ReturnType<typeof timedEndpoint>, end: ReturnType<typeof timedEndpoint>, version = 4) => ({ state: "range" as const, version, zone: PRODUCTION_CALENDAR_ZONE, start, end, due: end.localCivil });
 function checklistEvent(schedule: ReturnType<typeof rangeSchedule>): ChecklistCalendarEventDto<typeof EDITOR_STAGE> {
-  const timing = schedule.start.kind === "date"
-    ? { allDay: true as const, start: schedule.start.localCivil, end: "2026-08-29" }
-    : { allDay: false as const, start: schedule.start.instant!, end: schedule.end.instant };
+  const timing = { allDay: false as const, start: schedule.start.instant, end: schedule.end.instant };
   return { id: `checklist:${PERSON_ID}`, kind: "checklist", title: "Select hero images", project: project(), assignees: [person], otherAssigneeCount: 0, timing, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true } };
 }
 
@@ -89,8 +87,8 @@ describe("planSchedulingProposal", () => {
   });
 
   it("end-resizes a checklist range exactly as mapChecklistEndResizeToCommand", () => {
-    const source = checklistEvent(rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-27")));
-    const target = { subview: "month" as const, targetDate: "2026-08-29" };
+    const source = checklistEvent(rangeSchedule(startMoment("2026-08-27"), endMoment("2026-08-27")));
+    const target = { subview: "week" as const, targetDate: "2026-08-29", targetCivilMinute: "2026-08-29T17:00" };
     const proposal: SchedulingProposal = { kind: "resize", entity: "checklist", source, edge: "end", target };
     const plan = planSchedulingProposal(proposal);
     const direct = mapChecklistEndResizeToCommand({ event: source, target });
@@ -101,8 +99,8 @@ describe("planSchedulingProposal", () => {
   });
 
   it("start-resizes a checklist range exactly as mapChecklistStartResizeToCommand", () => {
-    const source = checklistEvent(rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-29")));
-    const target = { subview: "month" as const, targetDate: "2026-08-26" };
+    const source = checklistEvent(rangeSchedule(startMoment("2026-08-27"), endMoment("2026-08-29")));
+    const target = { subview: "week" as const, targetDate: "2026-08-26", targetCivilMinute: "2026-08-26T09:00" };
     const proposal: SchedulingProposal = { kind: "resize", entity: "checklist", source, edge: "start", target };
     const plan = planSchedulingProposal(proposal);
     const direct = mapChecklistStartResizeToCommand({ event: source, target });
@@ -139,7 +137,7 @@ describe("planSchedulingProposal", () => {
   });
 
   it("propagates mapper errors unchanged", () => {
-    const source = checklistEvent(rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-29")));
+    const source = checklistEvent(rangeSchedule(startMoment("2026-08-27"), endMoment("2026-08-29")));
     const target = { subview: "agenda" as const, targetDate: "2026-08-29" };
     const proposal: SchedulingProposal = { kind: "move", entity: "checklist", source, target };
     const plan = planSchedulingProposal(proposal);
@@ -157,7 +155,7 @@ describe("planSchedulingProposal", () => {
   });
 
   it("warns after the project deadline", () => {
-    const source = checklistEvent(rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-29")));
+    const source = checklistEvent(rangeSchedule(startMoment("2026-08-27"), endMoment("2026-08-29")));
     const target = { subview: "month" as const, targetDate: "2026-08-27" };
     const proposal: SchedulingProposal = { kind: "move", entity: "checklist", source, target };
     const plan = planSchedulingProposal(proposal, { bounds: { lower: null, deadlineLocalCivil: "2026-08-28T17:00" } });
@@ -166,7 +164,7 @@ describe("planSchedulingProposal", () => {
   });
 
   it("never warns before a lower bound when there is none", () => {
-    const source = checklistEvent(rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-29")));
+    const source = checklistEvent(rangeSchedule(startMoment("2026-08-27"), endMoment("2026-08-29")));
     const target = { subview: "month" as const, targetDate: "2026-08-01" };
     const proposal: SchedulingProposal = { kind: "move", entity: "checklist", source, target };
     const plan = planSchedulingProposal(proposal, { bounds: { lower: null, deadlineLocalCivil: null } });
@@ -175,7 +173,7 @@ describe("planSchedulingProposal", () => {
   });
 
   it("warns before the shoot date when present", () => {
-    const source = checklistEvent(rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-29")));
+    const source = checklistEvent(rangeSchedule(startMoment("2026-08-27"), endMoment("2026-08-29")));
     const target = { subview: "month" as const, targetDate: "2026-08-01" };
     const proposal: SchedulingProposal = { kind: "move", entity: "checklist", source, target };
     const plan = planSchedulingProposal(proposal, { bounds: { lower: { civilDate: "2026-08-10", kind: "shoot" }, deadlineLocalCivil: null } });
@@ -184,7 +182,7 @@ describe("planSchedulingProposal", () => {
   });
 
   it("a warning is never a rejection (ok stays true)", () => {
-    const source = checklistEvent(rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-29")));
+    const source = checklistEvent(rangeSchedule(startMoment("2026-08-27"), endMoment("2026-08-29")));
     const target = { subview: "month" as const, targetDate: "2026-08-01" };
     const proposal: SchedulingProposal = { kind: "move", entity: "checklist", source, target };
     const plan = planSchedulingProposal(proposal, { bounds: { lower: { civilDate: "2026-08-10", kind: "shoot" }, deadlineLocalCivil: "2026-08-15T09:00" } });
@@ -197,8 +195,8 @@ describe("planSchedulingProposal", () => {
 
 describe("checklist assignees across a schedule edit (#370)", () => {
   const second = { id: "33333333-3333-4333-8333-333333333333", name: "Bo", roleLabel: "Editor", isExternal: false, active: true };
-  const schedule = rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-28"), 5);
-  const source = { ...checklistEvent(rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-28"), 4)), assignees: [person, second], otherAssigneeCount: 2 };
+  const schedule = rangeSchedule(startMoment("2026-08-27"), endMoment("2026-08-28"), 5);
+  const source = { ...checklistEvent(rangeSchedule(startMoment("2026-08-27"), endMoment("2026-08-28"), 4)), assignees: [person, second], otherAssigneeCount: 2 };
   const result = (assignees: typeof source.assignees | null) => ({ id: source.id, title: source.title, done: false, assignees, position: 1, schedule, scheduleVersion: 5 });
 
   it("keeps the source objects and the hidden count when the result names the same people", () => {

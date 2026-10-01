@@ -17,6 +17,7 @@ import { DEFAULT_GANTT_FACET_FILTERS } from "../lib/production-gantt-filters";
 import { clearToasts } from "../lib/toast-store";
 import { ToastViewport } from "./quincy/ToastViewport";
 import { ProductionGantt } from "./ProductionGantt";
+import { startMoment, endMoment } from "@/testing/subtask-schedule";
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 const apiPatchMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
@@ -50,8 +51,7 @@ const cy = person(3, "Cy Young");
 const candidates = [ada, ben, cy].map(({ id, name }) => ({ id, name, role: "editor" }));
 
 const isoDate = (days: number) => { const date = new Date(); date.setDate(date.getDate() + days); return date.toISOString().slice(0, 10); };
-const endpoint = (civil: string) => ({ kind: "date" as const, localCivil: civil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const });
-const schedule = () => ({ state: "range" as const, version: 1, zone: PRODUCTION_GANTT_ZONE, start: endpoint(isoDate(2)), end: endpoint(isoDate(2)), due: isoDate(2) });
+const schedule = () => ({ state: "range" as const, version: 1, zone: PRODUCTION_GANTT_ZONE, start: startMoment(isoDate(2)), end: endMoment(isoDate(2)), due: isoDate(2) });
 
 type RowInput = { id: string; title: string; assignees: CalendarPerson[]; otherAssigneeCount?: number; assignmentVersion: number; canEditAssignees: boolean };
 function row(input: RowInput, position: number): GanttChecklistRowDto {
