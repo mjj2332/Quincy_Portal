@@ -11,7 +11,7 @@ import {
 
 /**
  * The Board rendered at `view=board` (and the Dashboard's default) is `ProjectKanbanBoard2`
- * (`components/kanban2/board.tsx`), ReUI `kanban-board-3`, cut over in #83. The original Board it
+ * (`components/board/board.tsx`), ReUI `kanban-board-3`, cut over in #83. The original Board it
  * replaced, and the `kanban2` comparison value this type and the route grammar once carried for
  * #80, are both retired — see `docs/lessons.md` for the cutover.
  *

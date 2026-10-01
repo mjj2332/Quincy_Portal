@@ -1,3 +1,8 @@
+// Quincy edits to this vendored file (additive unless noted; see docs/reui-block-adoption.md):
+//   #81  dnd-kit `attributes` moved from the item wrapper onto `KanbanItemHandle` (behavioural).
+//   #99  `onDragOver` pass-through prop.
+//   #432 `keyboardCodes` prop, forwarded to the `KeyboardSensor` options, so the Board can make
+//        Space the only pick-up key and let Enter open the card.
 import * as React from "react"
 import type { CSSProperties, ReactNode } from "react"
 import {
@@ -143,9 +148,6 @@ const MOUSE_SENSOR_OPTIONS = { activationConstraint: { distance: 10 } }
 const TOUCH_SENSOR_OPTIONS = {
   activationConstraint: { delay: 250, tolerance: 5 },
 }
-const KEYBOARD_SENSOR_OPTIONS = {
-  coordinateGetter: sortableKeyboardCoordinates,
-}
 const MEASURING_CONFIG = {
   droppable: { strategy: MeasuringStrategy.Always },
 }
@@ -195,6 +197,13 @@ export interface KanbanRootProps<T> extends Omit<
   onDragCancel?: (event: DragCancelEvent) => void
   accessibility?: React.ComponentProps<typeof DndContext>["accessibility"]
   modifiers?: Modifiers
+  /**
+   * Quincy addition (#432), additive only. Overrides dnd-kit's `KeyboardSensor` activation keys
+   * (default start: Space + Enter). The Board passes a Space-only start so Enter on a card opens it
+   * instead of picking it up. Built into the sensor options inside this component (`useMemo`), not
+   * as a module-level constant.
+   */
+  keyboardCodes?: { start: string[]; cancel: string[]; end: string[] }
 }
 
 function Kanban<T>({
@@ -213,6 +222,7 @@ function Kanban<T>({
   onDragCancel,
   accessibility,
   modifiers,
+  keyboardCodes,
   ...props
 }: KanbanRootProps<T>) {
   const columns = value
@@ -235,10 +245,17 @@ function Kanban<T>({
     index: number
   } | null>(null)
 
+  const keyboardSensorOptions = useMemo(
+    () => ({
+      coordinateGetter: sortableKeyboardCoordinates,
+      ...(keyboardCodes ? { keyboardCodes } : {}),
+    }),
+    [keyboardCodes]
+  )
   const sensors = useSensors(
     useSensor(MouseSensor, MOUSE_SENSOR_OPTIONS),
     useSensor(TouchSensor, TOUCH_SENSOR_OPTIONS),
-    useSensor(KeyboardSensor, KEYBOARD_SENSOR_OPTIONS)
+    useSensor(KeyboardSensor, keyboardSensorOptions)
   )
 
   const columnIds = useMemo(() => {

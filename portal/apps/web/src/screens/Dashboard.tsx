@@ -16,6 +16,7 @@ import { DashboardViewBar, VIEW_PANEL_ID, VIEW_TAB_ID } from "./DashboardViewBar
 import { BoardDisplayContent, TableDisplayContent } from "./DashboardDisplay";
 import { DashboardTable } from "../components/DashboardTable";
 import { hideableColumnsFor } from "../lib/dashboard-table-model";
+import { useBoardCollapse } from "../lib/use-board-collapse";
 import { useDashboardTablePrefs } from "../lib/use-dashboard-table-prefs";
 import { DashboardFilterChips, DashboardFilterProvider, DashboardFilterTrigger } from "./DashboardFilter";
 import { dashboardSummary } from "../lib/dashboard-summary";
@@ -50,7 +51,7 @@ import {
   type ProjectSummary,
   type SemanticGap,
 } from "../lib/kanban-interaction";
-import { ProjectKanbanBoard2 } from "../components/kanban2/board";
+import { ProjectKanbanBoard2 } from "../components/board/board";
 // #220: code-split — the vendored ReUI Gantt tree loads only when a
 // capable principal opens the Gantt view. `ProductionGantt.tsx` is the ONLY app file allowed to
 // import `components/reui/gantt/` (`harness-reachability.guard.test.ts`'s
@@ -128,8 +129,9 @@ const noRuntimeSubscribe = () => () => undefined;
 const zeroRuntimeSnapshot = () => 0;
 
 function focusKeyForControl(control: FocusDescriptor["control"], projectId: string): string {
-  if (control === "handle") return `move-handle:${projectId}`;
-  if (control === "move-to") return `move-to:${projectId}`;
+  if (control === "handle") return `card:${projectId}`;
+  // The arrows and Move to… are items in the card's ⋯ menu now (#432); focus goes back to its trigger.
+  if (control === "move-to" || control === "arrow-up" || control === "arrow-down") return `card-menu:${projectId}`;
   if (control === "rail-stage") return `rail-stage:${projectId}`;
   return `${control}:${projectId}`;
 }
@@ -202,6 +204,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const canViewArchived = can("adminBackend");
   // #431: the Table's Group by and hidden columns, per viewer.
   const { prefs: tablePrefs, update: updateTablePrefs } = useDashboardTablePrefs(currentUserId);
+  const { collapsedStageKeys, toggleStageCollapsed } = useBoardCollapse(currentUserId);
   const canViewProductionCalendar = roleHasCapability(role, "viewProductionCalendar");
   // #366: through the location lens — the live store by default, the remembered Dashboard location
   // while the Project sheet floats over this Dashboard (`lib/dashboard-location.ts`).
@@ -1609,6 +1612,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
             role={role}
             boardMutationEnabled={boardMutationEnabled}
             movementDisabled={movementSettlePending || !boardMutationEnabled || boardNarrowed}
+            menuCapable={canMoveStagesCapability || canPrioritize}
+            collapsedStageKeys={collapsedStageKeys}
+            onToggleStageCollapsed={toggleStageCollapsed}
             sameStageReorderEnabled={boardMutationEnabled && canPrioritize && hasAuthorizedBoardMap && effectiveBoardSort === "board" && !boardNarrowed}
             effectiveKanbanSort={effectiveBoardSort}
             pendingMoves={pendingMoves}
@@ -1622,6 +1628,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
             onInteractionStateChange={setBoardInteraction}
             onAnnounce={(message) => { if (message !== undefined) setAnnouncement(message); }}
             projectHrefFor={(project) => projectHrefFor(project.id)}
+            now={now}
           />
         )}
       </div>

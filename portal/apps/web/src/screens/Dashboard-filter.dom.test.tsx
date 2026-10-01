@@ -50,7 +50,7 @@ vi.mock("../lib/stages", () => ({
   }),
 }));
 vi.mock("../components/NoticeBoard", () => ({ NoticeBoard: () => null }));
-vi.mock("../components/kanban2/board", () => ({ ProjectKanbanBoard2: (props: Record<string, any>) => { boardProps.value = props; return <div data-testid="dashboard-board" />; } }));
+vi.mock("../components/board/board", () => ({ ProjectKanbanBoard2: (props: Record<string, any>) => { boardProps.value = props; return <div data-testid="dashboard-board" />; } }));
 vi.mock("../components/ProductionGantt", () => ({ ProductionGantt: (props: Record<string, any>) => { ganttProps.value = props; return <div data-testid="dashboard-gantt-surface" />; } }));
 vi.mock("../components/ProductionEventCalendar", () => ({ ProductionEventCalendar: (props: Record<string, any>) => { calendarProps.value = props; return <div data-testid="event-calendar-body" />; } }));
 

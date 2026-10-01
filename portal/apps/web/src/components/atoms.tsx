@@ -5,15 +5,17 @@ export function StageDot({ stageKey }: { stageKey: ProjectStageKey }) {
   return <span aria-hidden="true" className="sdot" style={{ background: stageColorFor(stageKey) }} />;
 }
 
-export function StatusBadge({ stageKey }: { stageKey: ProjectStageKey }) {
+export function StatusBadge({ stageKey, className, labelClassName }: { stageKey: ProjectStageKey; className?: string; labelClassName?: string }) {
   const { presentationStageKey, stages } = useStages();
   const visibleStageKey = presentationStageKey(stageKey);
   const stage = stages.find(({ key }) => key === visibleStageKey);
 
+  const label = stage?.label ?? visibleStageKey;
+
   return (
-    <span className="row gap2">
+    <span className={className ? `row gap2 ${className}` : "row gap2"} title={className || labelClassName ? label : undefined}>
       <StageDot stageKey={visibleStageKey} />
-      <span className="ey">{stage?.label ?? visibleStageKey}</span>
+      <span className={labelClassName ? `ey ${labelClassName}` : "ey"}>{label}</span>
     </span>
   );
 }

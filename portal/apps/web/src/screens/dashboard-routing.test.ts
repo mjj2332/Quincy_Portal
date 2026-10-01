@@ -4,14 +4,14 @@ import { shouldInterceptInternalLink } from "../lib/router";
 
 // #83: the card-level markup suite this file used to carry (anchor/retry-button siblings, ordering
 // controls outside the link) was ported onto `KanbanCard2` in commit A — see
-// `components/kanban2/board.dom.test.tsx`'s "KanbanCard2 — anchor and interactive-control siblings
+// `components/board/board.dom.test.tsx`'s "KanbanCard2 — anchor and interactive-control siblings
 // (#83)" describe, specifically "keeps the cover-retry button a sibling of the project link, not
 // inside it" and "keeps the Board's non-drag controls (arrows, Move to…) outside the project link".
 //
 // The 4-case priority × reorder matrix this file also carried is retired, not ported, because the
-// capability split moved off the card onto the Board: `components/kanban2/board.tsx:184,463` gate
+// capability split moved off the card onto the Board: `components/board/board.tsx:184,463` gate
 // the arrows and `:458` gates priority, and both halves are covered by
-// `components/kanban2/board.dom.test.tsx:216` and `:576`. Porting it as written would require
+// `components/board/board.dom.test.tsx:216` and `:576`. Porting it as written would require
 // `KanbanCard2` to re-acquire a `canReorder` prop it deliberately does not have.
 
 describe("TB6 Slice 0 dashboard routing characterization", () => {

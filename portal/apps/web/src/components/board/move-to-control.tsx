@@ -17,10 +17,10 @@ function moveToStageKey(value: ProjectStageKey): StageKey {
   return value === "editing" ? "editing_autohdr" : value;
 }
 
-const OPTION_CLASSES = "w-full min-h-11 px-[var(--space-3)] py-[var(--space-2)] border-0 border-l-[length:var(--border-width-bold)] border-l-transparent bg-transparent text-foreground [font:inherit] !text-xs text-left cursor-pointer active:bg-[var(--bg-sunken)] hover:bg-[var(--paper-100)] aria-selected:border-l-[var(--border-strong)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-[-2px]";
+const OPTION_CLASSES = "w-full max-[641px]:min-h-11 px-[var(--space-3)] py-1 border-0 border-l-[length:var(--border-width-bold)] border-l-transparent bg-transparent text-foreground [font:inherit] !text-sm text-left cursor-pointer active:bg-[var(--bg-sunken)] hover:bg-[var(--paper-100)] aria-selected:border-l-[var(--border-strong)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-[-2px]";
 const ACTION_CLASSES = "min-h-[38px] px-[14px] py-[9px] text-xs focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-[-2px]";
 
-export type MoveToControlProps = {
+export type MoveToDialogProps = {
   project: ProjectSummary;
   model: BoardModel;
   activeStages: readonly PipelineStage[];
@@ -29,14 +29,51 @@ export type MoveToControlProps = {
   canMoveStages: boolean;
   /** Same-Stage positions: Priority access AND the Board's own reorder gate, already combined. */
   canReorder: boolean;
-  disabled: boolean;
+  open: boolean;
+  /**
+   * The card's ⋯ trigger, which the dialog anchors to and gives focus back to — even when it was
+   * opened from the right-click menu.
+   */
+  anchor: HTMLElement | null;
+  /** Called once the dialog has closed itself (Cancel, Escape, outside press or submit). */
+  onClose: () => void;
   onMoveStage: (project: ProjectSummary, gap: SemanticGap, kind: "cross" | "same", focusDescriptor: FocusDescriptor) => void;
   onProposalChange: (proposal: SemanticGap | null) => void;
 };
 
 /**
- * The non-drag way to move a card (#99): pick a Stage, then a position, then commit explicitly.
- * Ported from the old Board's `MoveToControl` rather than extracted from it — #83 deletes that
+ * The Stage options Move to… would offer: a Stage is offered only if it has at least one position
+ * this principal may choose. Shared with the card menu, which disables "Move to…" when this is empty.
+ */
+export function moveToStageOptions(
+  project: ProjectSummary,
+  model: BoardModel,
+  activeStages: readonly PipelineStage[],
+  role: Role,
+  caps: { canMoveStages: boolean; canReorder: boolean; sort: KanbanSortMode },
+): PipelineStage[] {
+  const stageLabels = Object.fromEntries(activeStages.map((stage) => [moveToStageKey(stage.key), stage.label]));
+  const resolved = {
+    canMoveProjectStage: caps.canMoveStages,
+    canPrioritize: caps.canReorder,
+    sort: caps.sort,
+    activeStageKeys: activeStages.map((stage) => moveToStageKey(stage.key)),
+    stageLabels,
+  };
+  const seen = new Set<StageKey>();
+  return activeStages.filter((stage) => {
+    const key = moveToStageKey(stage.key);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return moveToPositionOptions(model, project.id, key, role, resolved).length > 0;
+  });
+}
+
+/**
+ * The non-drag way to move a card (#99): pick a Stage, then a position, then commit explicitly. A
+ * controlled dialog since #432 — the card's ⋯ / right-click menu opens it from its "Move to…" item,
+ * once that menu has finished closing, so the menu's own focus return cannot land on top of it.
+ * Ported from the old Board's `MoveToControl` rather than extracted from it — #83 deleted that
  * Board, and a shared extraction through dying code costs more than the duplication.
  *
  * Every position list comes from `moveToPositionOptions`, the role-safe allow-list, so a hidden
@@ -45,23 +82,35 @@ export type MoveToControlProps = {
  * clear it. Confirmation is NOT handled here: a cross-Stage submit goes through the Dashboard's
  * ordinary 409 round trip and modal, exactly like a drop.
  */
-export function MoveToControl({ project, model, activeStages, role, sort, canMoveStages, canReorder, disabled, onMoveStage, onProposalChange }: MoveToControlProps) {
-  const [open, setOpen] = useState(false);
+export function MoveToDialog({ project, model, activeStages, role, sort, canMoveStages, canReorder, open, anchor, onClose, onMoveStage, onProposalChange }: MoveToDialogProps) {
   const [targetStageKey, setTargetStageKey] = useState<StageKey | null>(null);
   const [successor, setSuccessor] = useState<string | "end" | null>(null);
-  const focusDescriptorRef = useRef<FocusDescriptor | null>(null);
-  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  // Captured when the dialog opens, so the focus restore targets where the card WAS, not where a
+  // refresh has since put it. State, set in the render that sees `open` flip (React's own
+  // derived-state pattern), rather than an effect.
+  const [focusDescriptor, setFocusDescriptor] = useState<FocusDescriptor | null>(null);
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
+      setTargetStageKey(null);
+      setSuccessor(null);
+      setFocusDescriptor(focusDescriptorFor("move-to", project, model, "move-to"));
+    }
+  }
   const close = useCallback(() => {
-    setOpen(false);
     setTargetStageKey(null);
     setSuccessor(null);
     publish(null);
+    onClose();
     // Synchronous, and `preventScroll`: a bare `.focus()` on a trigger low on a long Board scrolls it.
-    triggerRef.current?.focus({ preventScroll: true });
+    anchor?.focus({ preventScroll: true });
   // eslint-disable-next-line react-hooks/exhaustive-deps -- `publish` only forwards to `onProposalChange`
-  }, [onProposalChange]);
+  }, [anchor, onClose, onProposalChange]);
   const floating = useAnchoredPopover({ open, onClose: close, placement: "bottom-end" });
-  // A published proposal must be withdrawn if this control goes away with it still set — browser
+  const { setReference } = floating.refs;
+  useEffect(() => { setReference(anchor); }, [anchor, setReference]);
+  // A published proposal must be withdrawn if this dialog goes away with it still set — browser
   // Back leaving the view, or the project being removed elsewhere. The Dashboard counts a live
   // proposal as an interaction and holds refreshes and the view/sort controls for it, so an orphaned
   // one latches all of that until reload. Refs, so the cleanup runs on unmount only.
@@ -73,13 +122,6 @@ export function MoveToControl({ project, model, activeStages, role, sort, canMov
     publishedRef.current = proposal !== null;
     onProposalChange(proposal);
   };
-  // Stable identity is load-bearing, not tidiness: floating-ui's `setReference` calls setState with
-  // no equality guard, and an inline ref callback re-runs on every render — under a Board drag's
-  // rapid re-renders that detach/attach storm blew React's update-depth limit on the old Board.
-  const setTrigger = useCallback((node: HTMLButtonElement | null) => {
-    triggerRef.current = node;
-    floating.refs.setReference(node);
-  }, [floating.refs.setReference]);
   const stageLabels = useMemo(() => Object.fromEntries(activeStages.map((stage) => [moveToStageKey(stage.key), stage.label])), [activeStages]);
   const caps = useMemo(() => ({
     canMoveProjectStage: canMoveStages,
@@ -88,27 +130,12 @@ export function MoveToControl({ project, model, activeStages, role, sort, canMov
     activeStageKeys: activeStages.map((stage) => moveToStageKey(stage.key)),
     stageLabels,
   }), [activeStages, canMoveStages, canReorder, sort, stageLabels]);
-  // A Stage is offered only if it has at least one position this principal may choose.
-  const stageOptions = useMemo(() => {
-    const seen = new Set<StageKey>();
-    return activeStages.filter((stage) => {
-      const key = moveToStageKey(stage.key);
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return moveToPositionOptions(model, project.id, key, role, caps).length > 0;
-    });
-  }, [activeStages, caps, model, project.id, role]);
+  const stageOptions = useMemo(() => moveToStageOptions(project, model, activeStages, role, { canMoveStages, canReorder, sort }), [activeStages, canMoveStages, canReorder, model, project, role, sort]);
   const positions = targetStageKey === null ? [] : moveToPositionOptions(model, project.id, targetStageKey, role, caps);
   const targetLabel = targetStageKey === null ? "" : stageLabels[targetStageKey] ?? targetStageKey;
-  const dialogId = `kanban2-move-to-${project.id}`;
+  const currentStageKey = moveToStageKey(project.stageKey as ProjectStageKey);
+  const dialogId = `board-move-to-${project.id}`;
 
-  const openMoveTo = () => {
-    focusDescriptorRef.current = focusDescriptorFor("move-to", project, model, "move-to");
-    setTargetStageKey(null);
-    setSuccessor(null);
-    publish(null);
-    setOpen(true);
-  };
   const back = () => {
     setTargetStageKey(null);
     setSuccessor(null);
@@ -116,34 +143,22 @@ export function MoveToControl({ project, model, activeStages, role, sort, canMov
   };
   const submit = () => {
     if (targetStageKey === null || successor === null) return;
-    const descriptor = focusDescriptorRef.current ?? focusDescriptorFor("move-to", project, model, "move-to");
+    const descriptor = focusDescriptor ?? focusDescriptorFor("move-to", project, model, "move-to");
     const kind = moveToStageKey(project.stageKey as ProjectStageKey) === targetStageKey ? "same" : "cross";
     close();
     onMoveStage(project, { targetStageKey, successor }, kind, descriptor);
   };
 
   return <>
-    <button
-      ref={setTrigger}
-      type="button"
-      className="flex-1 min-w-0 min-h-[30px] max-[641px]:min-h-11 pointer-coarse:min-h-11 px-[9px] py-[7px] border-0 bg-card text-foreground-secondary [font:inherit] !text-[length:var(--text-2xs)] text-left cursor-pointer focus-visible:!outline-2 focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-[-2px] hover:not-disabled:bg-[var(--paper-100)] hover:not-disabled:text-foreground disabled:bg-surface-sunken disabled:cursor-not-allowed"
-      data-testid="kanban2-move-to"
-      data-focus-key={`move-to:${project.id}`}
-      aria-label={`Move ${project.street} to…`}
-      aria-expanded={open}
-      aria-controls={open ? dialogId : undefined}
-      disabled={disabled || stageOptions.length === 0}
-      onKeyDown={floating.onKeyDown}
-      onClick={openMoveTo}
-    >Move to…</button>
-    {floating.mounted && <AnchoredPopover context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={0} modal onKeyDown={floating.onKeyDown} status={floating.status}>
+    {floating.mounted && <AnchoredPopover context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={1} modal onKeyDown={floating.onKeyDown} status={floating.status}>
       <div id={dialogId} className="grid gap-[var(--space-3)] p-[var(--space-3)]" role="dialog" aria-label={`Move ${project.street} to…`} data-step={targetStageKey === null ? "stage" : "position"}>
-        <div className="ey">{targetStageKey === null ? "Choose a Stage" : `Choose a position in ${targetLabel}`}</div>
+        <div className="ey px-[calc(var(--space-3)+var(--border-width-bold))]">{targetStageKey === null ? "Choose a Stage" : `Choose a position in ${targetLabel}`}</div>
         {targetStageKey === null ? <div className="grid gap-[2px]" role="radiogroup" aria-label={`Target Stage for ${project.street}`}>
           {stageOptions.map((stage) => {
             const key = moveToStageKey(stage.key);
             // 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token
-            return <button key={key} type="button" role="radio" aria-checked={false} className={OPTION_CLASSES} onClick={() => { setTargetStageKey(key); setSuccessor(null); }}>{stage.label}</button>;
+            const isCurrent = key === currentStageKey;
+            return <button key={key} type="button" role="radio" aria-checked={false} aria-current={isCurrent ? "true" : undefined} className={`${OPTION_CLASSES} ${isCurrent ? "flex items-center justify-between gap-[var(--space-3)]" : ""}`} onClick={() => { setTargetStageKey(key); setSuccessor(null); }}>{stage.label}{isCurrent && <span className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary">Current</span>}</button>;
           })}
         </div> : <>
           <div className="grid gap-[2px]" role="listbox" aria-label={`Position in ${targetLabel}`}>
@@ -153,7 +168,7 @@ export function MoveToControl({ project, model, activeStages, role, sort, canMov
           <div className="flex justify-end gap-[var(--space-2)]">
             <button type="button" className={buttonClasses("secondary", { className: ACTION_CLASSES })} onClick={back}>Back</button>
             <button type="button" className={buttonClasses("secondary", { className: ACTION_CLASSES })} onClick={close}>Cancel</button>
-            <button type="button" data-testid="kanban2-move-to-submit" className={buttonClasses("primary", { className: ACTION_CLASSES })} disabled={successor === null} onClick={submit}>Move project</button>
+            <button type="button" data-testid="board-move-to-submit" className={buttonClasses("primary", { className: ACTION_CLASSES })} disabled={successor === null} onClick={submit}>Move project</button>
           </div>
         </>}
       </div>

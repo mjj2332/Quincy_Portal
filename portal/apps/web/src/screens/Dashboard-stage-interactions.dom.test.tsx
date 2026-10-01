@@ -1,4 +1,5 @@
 // happy-dom does not prove PointerSensor / TouchSensor / KeyboardSensor activation, real collision geometry, autoscroll, scroll containers, link-click suppression, screen-reader delivery, browser focus timing, or active-drag DragOverlay rendering; those are QA-phase real-browser acceptance items.
+import { cardMenuTrigger, closeMenus, menuItems, openCardMenu, openMoveTo, openMoveToFrom, pressMenuItem } from "../components/board/board-menu-test-helpers";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,7 +12,7 @@ import { dashboardProjectsKey } from "../lib/dashboard-projects";
 import { createDashboardBoardInvalidatedMessage, ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project-query-sync";
 
 // happy-dom lacks `Element.getAnimations()`, which Base UI's ScrollArea (the Board's horizontal
-// scroll, `kanban2/board.tsx`) calls on a timer after mount. The no-op stub means "no active
+// scroll, `board/board.tsx`) calls on a timer after mount. The no-op stub means "no active
 // animations"; see `reui/gantt/gantt-adjust-ghost-marker.dom.test.tsx` for the same polyfill.
 if (!Element.prototype.getAnimations) {
   Element.prototype.getAnimations = () => [];
@@ -174,31 +175,35 @@ async function dndCancel(activeId: string) {
 }
 
 function card(host: HTMLElement, street: string) {
-  const address = [...host.querySelectorAll<HTMLElement>('[data-testid="kanban2-card-address"]')].find((element) => element.textContent === street);
+  const address = [...host.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].find((element) => element.textContent === street);
   if (!address) throw new Error(`Missing card ${street}`);
-  return address.closest<HTMLElement>('[data-testid="kanban2-card-wrap"]')!;
+  return address.closest<HTMLElement>('[data-testid="board-card-wrap"]')!;
 }
 
-function movementControls(host: ParentNode): HTMLButtonElement[] {
+/** The card's link is its drag handle (#432): a disabled drag shows as `data-disabled`, not `disabled`. */
+function isLocked(element: Element): boolean {
+  return element.hasAttribute("disabled") || element.getAttribute("data-disabled") === "true";
+}
+
+function movementControls(host: ParentNode): HTMLElement[] {
   return [
-    ...host.querySelectorAll<HTMLButtonElement>('[data-testid="kanban2-card-handle"]'),
-    ...host.querySelectorAll<HTMLButtonElement>('[data-testid="kanban2-move-to"]'),
-    ...host.querySelectorAll<HTMLButtonElement>('[data-focus-key^="arrow-up:"]'),
-    ...host.querySelectorAll<HTMLButtonElement>('[data-focus-key^="arrow-down:"]'),
+    ...host.querySelectorAll<HTMLElement>('[data-testid="board-card"]'),
+    // The ⋯ menu is the one non-drag control now (#432); Move to… and the arrows are its items.
+    ...host.querySelectorAll<HTMLButtonElement>('[data-testid="board-card-menu"]'),
   ];
 }
 
 async function moveToEnd(host: HTMLElement, street: string, targetLabel: string) {
-  const trigger = card(host, street).querySelector<HTMLButtonElement>('[data-focus-key^="move-to:"]');
-  if (!trigger) throw new Error(`Missing Move-to trigger for ${street}`);
-  await act(async () => { trigger.click(); await Promise.resolve(); });
+  const trigger = card(host, street).querySelector<HTMLButtonElement>('[data-testid="board-card-menu"]');
+  if (!trigger) throw new Error(`Missing ⋯ trigger for ${street}`);
+  await openMoveToFrom(trigger);
   const stage = [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((button) => button.textContent === targetLabel);
   if (!stage) throw new Error(`Missing target Stage ${targetLabel}`);
   await act(async () => { stage.click(); await Promise.resolve(); });
   const position = [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((button) => button.textContent?.startsWith("End of "));
   if (!position) throw new Error("Missing Move-to end position");
   await act(async () => { position.click(); await Promise.resolve(); });
-  const submit = document.querySelector<HTMLButtonElement>('[data-testid="kanban2-move-to-submit"]');
+  const submit = document.querySelector<HTMLButtonElement>('[data-testid="board-move-to-submit"]');
   if (!submit) throw new Error("Missing Move-to submit button");
   await act(async () => { submit.click(); await Promise.resolve(); });
 }
@@ -285,8 +290,8 @@ describe("Dashboard Stage interactions", () => {
     document.querySelector<HTMLButtonElement>('[data-testid="confirm-modal-confirm"]')!.click();
     await flush();
     expect(apiPostMock).toHaveBeenNthCalledWith(2, "/api/projects/source/stage", expect.objectContaining({ targetStageKey: "editing", confirmation: { reasons: ["editing_boundary"] } }));
-    const editingColumn = [...host.querySelectorAll<HTMLElement>('[data-testid="kanban2-column"]')].find((column) => column.querySelector('[data-focus-key="stage-heading:editing_autohdr"]'))!;
-    expect([...editingColumn.querySelectorAll<HTMLElement>('[data-testid="kanban2-card-address"]')].map((element) => element.textContent)).toContain("Source Street");
+    const editingColumn = [...host.querySelectorAll<HTMLElement>('[data-testid="board-column"]')].find((column) => column.querySelector('[data-focus-key="stage-heading:editing_autohdr"]'))!;
+    expect([...editingColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toContain("Source Street");
     expect(editingColumn.querySelector('[data-focus-key="stage-heading:editing_autohdr"]')?.textContent).toContain("Editing");
     expect(editingColumn.querySelector('[data-focus-key="stage-heading:editing_autohdr"]')?.textContent).not.toContain("autoHDR");
 
@@ -330,8 +335,8 @@ describe("Dashboard Stage interactions", () => {
       targetStageKey: "editing_autohdr",
       placement: { kind: "append" },
     }));
-    const editingColumn = [...host.querySelectorAll<HTMLElement>('[data-testid="kanban2-column"]')].find((column) => column.querySelector('[data-focus-key="stage-heading:editing_autohdr"]'))!;
-    expect([...editingColumn.querySelectorAll<HTMLElement>('[data-testid="kanban2-card-address"]')].map((element) => element.textContent)).toEqual(["Source Street"]);
+    const editingColumn = [...host.querySelectorAll<HTMLElement>('[data-testid="board-column"]')].find((column) => column.querySelector('[data-focus-key="stage-heading:editing_autohdr"]'))!;
+    expect([...editingColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["Source Street"]);
     expect(host.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toBe("Moved Source Street to Editing · autoHDR, position 1 of 1.");
     expect(host.querySelector('[data-testid="dashboard-live-region"]')?.textContent).not.toContain("Cancelled");
     expect(host.querySelector('[data-testid="dashboard-live-region"]')?.textContent).not.toContain("That position changed");
@@ -339,11 +344,11 @@ describe("Dashboard Stage interactions", () => {
 
   it("offers and submits End of a keyless empty Stage from Move-to", async () => {
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" role="admin" />); await Promise.resolve(); }); await flush();
-    await act(async () => { card(host, "Source Street").querySelector<HTMLButtonElement>('[data-focus-key="move-to:source"]')!.click(); await Promise.resolve(); });
+    await openMoveTo(host, "source");
     await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((button) => button.textContent === "Editing · autoHDR")!.click(); await Promise.resolve(); });
     expect([...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].map((button) => button.textContent)).toEqual(["End of Editing · autoHDR"]);
     await act(async () => { document.querySelector<HTMLButtonElement>('[role="option"]')!.click(); await Promise.resolve(); });
-    await act(async () => { document.querySelector<HTMLButtonElement>('[data-testid="kanban2-move-to-submit"]')!.click(); await Promise.resolve(); });
+    await act(async () => { document.querySelector<HTMLButtonElement>('[data-testid="board-move-to-submit"]')!.click(); await Promise.resolve(); });
     await flush();
     expect(apiPostMock).toHaveBeenCalledTimes(1);
     expect(apiPostMock).toHaveBeenCalledWith("/api/projects/source/stage", expect.objectContaining({
@@ -366,7 +371,7 @@ describe("Dashboard Stage interactions", () => {
     await dndEnd(firstId, secondId);
     await flush();
     expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${firstId}/stage`, expect.objectContaining({ targetStageKey: "editing" }));
-    expect(host.querySelectorAll('[data-testid="kanban2-card-address"]')).toHaveLength(2);
+    expect(host.querySelectorAll('[data-testid="board-card-address"]')).toHaveLength(2);
     expect(host.textContent).not.toContain("Unassigned");
   });
 
@@ -387,8 +392,8 @@ describe("Dashboard Stage interactions", () => {
       placement: { kind: "between", before: null, after: { projectId: "before", boardRevision: 8 } },
     });
     expect(apiPostMock.mock.calls.some(([path]) => path.endsWith("/stage"))).toBe(false);
-    const rawColumn = [...host.querySelectorAll<HTMLElement>('[data-testid="kanban2-column"]')].find((column) => column.querySelector('[href="/projects/before"]'))!;
-    expect([...rawColumn.querySelectorAll<HTMLElement>('[data-testid="kanban2-card-address"]')].map((element) => element.textContent)).toEqual(["target Street", "before Street"]);
+    const rawColumn = [...host.querySelectorAll<HTMLElement>('[data-testid="board-column"]')].find((column) => column.querySelector('[href="/projects/before"]'))!;
+    expect([...rawColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["target Street", "before Street"]);
     resolveMove({ changed: true, project: { projectId: "target", stageKey: "raw_review", boardRevision: 10 }, board: { sourceStageKey: "raw_review", targetStageKey: "raw_review", orderedVisibleProjectIds: ["target", "before"] } });
     await flush();
   });
@@ -412,14 +417,14 @@ describe("Dashboard Stage interactions", () => {
       await Promise.resolve();
     });
     await flush();
-    await act(async () => { card(host, "target Street").querySelector<HTMLButtonElement>('[data-focus-key="arrow-up:target"]')!.click(); await Promise.resolve(); });
+    await pressMenuItem(host, "target", "Move up");
     await flush();
     expect(projectFetches).toBe(2);
     const movedCard = card(host, "target Street");
     const controls = movementControls(movedCard);
-    expect(controls).toHaveLength(4);
-    expect(controls.every((element) => !element.disabled)).toBe(true);
-    movedCard.querySelector<HTMLButtonElement>('[data-focus-key="arrow-down:target"]')!.click();
+    expect(controls).toHaveLength(2);
+    expect(controls.every((element) => !isLocked(element))).toBe(true);
+    await pressMenuItem(movedCard, "target", "Move down");
     await flush();
     expect(apiPostMock).toHaveBeenCalledTimes(2);
     resolveRefresh(response());
@@ -431,14 +436,14 @@ describe("Dashboard Stage interactions", () => {
   it("routes an eligible keyboard cross-Stage drop through the exact Stage request and restores the handle", async () => {
     apiPostMock.mockResolvedValueOnce({ changed: true, project: { projectId: "source", stageKey: "raw_review", boardRevision: 4 }, board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["before", "target", "source"] } });
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); }); await flush();
-    const handle = card(host, "Source Street").querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')!;
+    const handle = card(host, "Source Street").querySelector<HTMLElement>('[data-testid="board-card"]')!;
     handle.focus();
     await dndStart("source", true);
     await dndOver("source", "target");
     await dndEnd("source", "target");
     await flush();
     expect(apiPostMock).toHaveBeenCalledWith("/api/projects/source/stage", expect.objectContaining({ targetStageKey: "raw_review", placement: { kind: "between", before: { projectId: "before", boardRevision: 8 }, after: { projectId: "target", boardRevision: 9 } } }));
-    expect(document.activeElement?.getAttribute("data-focus-key")).toBe("move-handle:source");
+    expect(document.activeElement?.getAttribute("data-focus-key")).toBe("card:source");
   });
 
   it("routes Board-order arrows through the same board-position orchestrator", async () => {
@@ -448,7 +453,7 @@ describe("Dashboard Stage interactions", () => {
       return new Promise((resolve) => { resolveMove = resolve; });
     });
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); }); await flush();
-    card(host, "target Street").querySelector<HTMLButtonElement>('[data-focus-key="arrow-up:target"]')!.click();
+    await pressMenuItem(host, "target", "Move up");
     await flush();
     expect(apiPostMock).toHaveBeenCalledWith("/api/projects/target/board-position", {
       expected: { stageKey: "raw_review", boardRevision: 9 },
@@ -474,12 +479,12 @@ describe("Dashboard Stage interactions", () => {
     const serverSnapshot = queryClient.getQueryData<ProjectSummary[]>(key);
     const setQueryData = vi.spyOn(queryClient, "setQueryData");
     const publish = vi.spyOn(runtime, "publish");
-    await act(async () => { card(host, "target Street").querySelector<HTMLButtonElement>('[data-focus-key="arrow-up:target"]')!.click(); await Promise.resolve(); });
+    await pressMenuItem(host, "target", "Move up");
     await flush();
     expect(setQueryData).not.toHaveBeenCalled();
     expect(queryClient.getQueryData<ProjectSummary[]>(key)).toEqual(serverSnapshot);
-    const rawColumn = [...host.querySelectorAll<HTMLElement>('[data-testid="kanban2-column"]')].find((column) => column.querySelector('[href="/projects/before"]'))!;
-    expect([...rawColumn.querySelectorAll<HTMLElement>('[data-testid="kanban2-card-address"]')].map((element) => element.textContent)).toEqual(["target Street", "before Street"]);
+    const rawColumn = [...host.querySelectorAll<HTMLElement>('[data-testid="board-column"]')].find((column) => column.querySelector('[href="/projects/before"]'))!;
+    expect([...rawColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["target Street", "before Street"]);
     resolveMove({ changed: true, project: { projectId: "target", stageKey: "raw_review", boardRevision: 10 }, board: { sourceStageKey: "raw_review", targetStageKey: "raw_review", orderedVisibleProjectIds: ["target", "before"] } });
     await flush();
     const boardMessage = publish.mock.calls.map(([message]) => message).find((message) => message.type === "dashboard-board-invalidated");
@@ -497,14 +502,14 @@ describe("Dashboard Stage interactions", () => {
       : Promise.resolve({}));
     apiPostMock.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectMove = reject; }));
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); }); await flush();
-    await act(async () => { card(host, "target Street").querySelector<HTMLButtonElement>('[data-focus-key="arrow-up:target"]')!.click(); await Promise.resolve(); });
+    await pressMenuItem(host, "target", "Move up");
     await flush();
-    const optimisticColumn = [...host.querySelectorAll<HTMLElement>('[data-testid="kanban2-column"]')].find((column) => column.querySelector('[href="/projects/before"]'))!;
-    expect([...optimisticColumn.querySelectorAll<HTMLElement>('[data-testid="kanban2-card-address"]')].map((element) => element.textContent)).toEqual(["target Street", "before Street"]);
+    const optimisticColumn = [...host.querySelectorAll<HTMLElement>('[data-testid="board-column"]')].find((column) => column.querySelector('[href="/projects/before"]'))!;
+    expect([...optimisticColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["target Street", "before Street"]);
     rejectMove(new ApiError("Board conflict", 409, { code: "project_stage_conflict", current: { projectId: "target", stageKey: "raw_review", boardRevision: 20 } }));
     await flush(); await flush();
-    const restoredColumn = [...host.querySelectorAll<HTMLElement>('[data-testid="kanban2-column"]')].find((column) => column.querySelector('[href="/projects/before"]'))!;
-    expect([...restoredColumn.querySelectorAll<HTMLElement>('[data-testid="kanban2-card-address"]')].map((element) => element.textContent)).toEqual(["before Street", "target Street"]);
+    const restoredColumn = [...host.querySelectorAll<HTMLElement>('[data-testid="board-column"]')].find((column) => column.querySelector('[href="/projects/before"]'))!;
+    expect([...restoredColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["before Street", "target Street"]);
     expect(apiPostMock).toHaveBeenCalledTimes(1);
     expect(projectFetches).toBe(2);
     expect(host.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toContain("Board changed elsewhere");
@@ -532,8 +537,8 @@ describe("Dashboard Stage interactions", () => {
     expect(apiPostMock).toHaveBeenCalledWith("/api/projects/source/stage", expect.objectContaining({ targetStageKey: "raw_review" }));
     expect(markPrincipalTerminal).not.toHaveBeenCalled();
     expect(projectFetches).toBe(2);
-    expect(card(host, "Source Street").closest<HTMLElement>('[data-testid="kanban2-column"]')?.querySelector('[data-focus-key^="stage-heading:"]')?.textContent).toContain("Awaiting RAW");
-    expect(card(host, "Source Street").querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')?.disabled).toBe(false);
+    expect(card(host, "Source Street").closest<HTMLElement>('[data-testid="board-column"]')?.querySelector('[data-focus-key^="stage-heading:"]')?.textContent).toContain("Awaiting RAW");
+    expect(isLocked(card(host, "Source Street").querySelector<HTMLElement>('[data-testid="board-card"]')!)).toBe(false);
     expect(host.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toContain("Forbidden");
     runtime.dispose();
     queryClient.clear();
@@ -552,13 +557,14 @@ describe("Dashboard Stage interactions", () => {
     });
     apiPostMock.mockRejectedValueOnce(new ApiError("Board unavailable", 503, { code }));
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); }); await flush();
-    await act(async () => { card(host, "target Street").querySelector<HTMLButtonElement>('[data-focus-key="arrow-up:target"]')!.click(); await Promise.resolve(); });
+    await pressMenuItem(host, "target", "Move up");
     await flush();
     expect(host.textContent).toContain(copy);
     expect(host.querySelector('[aria-label="Priority for target Street"]')).not.toBeNull();
-    expect(host.querySelector('[aria-label="Move target Street"]')?.getAttribute("disabled")).toBe("");
-    expect(host.querySelector('[data-focus-key^="arrow-up:"]')).toBeNull();
-    const moveTo = host.querySelector<HTMLButtonElement>('[data-testid="kanban2-move-to"]');
+    expect(isLocked(card(host, "target Street").querySelector<HTMLElement>('[data-testid="board-card"]')!)).toBe(true);
+    // Movement is off: the ⋯ trigger that fronts Move to… stays, disabled, and the Board-order nudges
+    // (the old arrows) are gone — the principal cannot reach either.
+    const moveTo = host.querySelector<HTMLButtonElement>('[data-testid="board-card-menu"]');
     expect(moveTo).not.toBeNull();
     expect(moveTo?.disabled).toBe(true);
     expect(apiPostMock).toHaveBeenCalledTimes(1);
@@ -577,10 +583,10 @@ describe("Dashboard Stage interactions", () => {
     // The accepted card order stays fixed during a drag; the live proposal shows as a drop
     // indicator (dnd-kit transforms open the gap in the browser). The moving card ghosts in its
     // source column, and the blocked sort change leaves the proposal intact.
-    const rawColumn = [...host.querySelectorAll<HTMLElement>('[data-testid="kanban2-column"]')].find((column) => column.querySelector('[href="/projects/target"]'))!;
-    expect(rawColumn.querySelector('[data-testid="kanban2-drop-indicator"]')).not.toBeNull();
-    expect([...rawColumn.querySelectorAll<HTMLElement>('[data-testid="kanban2-card-address"]')].map((element) => element.textContent)).toEqual(["before Street", "target Street"]);
-    expect([...card(host, "Source Street").closest<HTMLElement>('[data-testid="kanban2-column"]')!.querySelectorAll<HTMLElement>('[data-testid="kanban2-card-address"]')].map((element) => element.textContent)).toEqual(["Source Street"]);
+    const rawColumn = [...host.querySelectorAll<HTMLElement>('[data-testid="board-column"]')].find((column) => column.querySelector('[href="/projects/target"]'))!;
+    expect(rawColumn.querySelector('[data-testid="board-drop-indicator"]')).not.toBeNull();
+    expect([...rawColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["before Street", "target Street"]);
+    expect([...card(host, "Source Street").closest<HTMLElement>('[data-testid="board-column"]')!.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["Source Street"]);
     await dndCancel("source");
   });
 
@@ -666,8 +672,8 @@ describe("Dashboard Stage interactions", () => {
     apiGetMock.mockImplementation((path) => path === "/api/projects" ? (projectFetches += 1, Promise.resolve(sortSnapshot)) : Promise.resolve({}));
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); });
     await flush();
-    const rawColumn = [...host.querySelectorAll<HTMLElement>('[data-testid="kanban2-column"]')].find((column) => column.querySelector('[href="/projects/board-first"]'))!;
-    const order = () => [...rawColumn.querySelectorAll<HTMLElement>('[data-testid="kanban2-card-address"]')].map((element) => element.textContent);
+    const rawColumn = [...host.querySelectorAll<HTMLElement>('[data-testid="board-column"]')].find((column) => column.querySelector('[href="/projects/board-first"]'))!;
+    const order = () => [...rawColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent);
     expect(order()).toEqual(["Board First", "Priority First", "Date First"]);
     expect(dashboardProjectsKey("admin-1", "photographer", 0, { archived: "hide" })).toHaveLength(5);
 
@@ -679,16 +685,15 @@ describe("Dashboard Stage interactions", () => {
 
     await dndStart("sort-source");
     await dndOver("sort-source", "priority-first");
-    const proposedRawColumn = [...host.querySelectorAll<HTMLElement>('[data-testid="kanban2-column"]')].find((column) => column.querySelector('[href="/projects/priority-first"]'))!;
+    const proposedRawColumn = [...host.querySelectorAll<HTMLElement>('[data-testid="board-column"]')].find((column) => column.querySelector('[href="/projects/priority-first"]'))!;
     // The drag proposal is a drop indicator over the frozen sorted order, not a live list rewrite.
-    expect(proposedRawColumn.querySelector('[data-testid="kanban2-drop-indicator"]')).not.toBeNull();
-    expect([...proposedRawColumn.querySelectorAll<HTMLElement>('[data-testid="kanban2-card-address"]')].map((element) => element.textContent)).toEqual(["Priority First", "Date First", "Board First"]);
+    expect(proposedRawColumn.querySelector('[data-testid="board-drop-indicator"]')).not.toBeNull();
+    expect([...proposedRawColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["Priority First", "Date First", "Board First"]);
     await dndCancel("sort-source");
 
-    const moveTo = card(host, "Sort Source").querySelector<HTMLButtonElement>('[data-focus-key="move-to:sort-source"]')!;
-    await act(async () => { moveTo.click(); await Promise.resolve(); });
+    await openMoveTo(host, "sort-source");
     await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((button) => button.textContent === "RAW review")!.click(); await Promise.resolve(); });
-    expect([...document.querySelectorAll<HTMLButtonElement>('[role="dialog"][id^="kanban2-move-to-"] [role="option"]')].map((button) => button.textContent)).toEqual([
+    expect([...document.querySelectorAll<HTMLButtonElement>('[role="dialog"][id^="board-move-to-"] [role="option"]')].map((button) => button.textContent)).toEqual([
       "End of RAW review",
       "Before Priority First — position 1",
       "Before Date First — position 2",
@@ -736,12 +741,12 @@ describe("Dashboard Stage interactions", () => {
     await dndEnd("source", "target");
     await flush();
     expect(host.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toBe(`Source Street is already in RAW review, position ${expectedPosition} of 3.`);
-    expect(host.querySelector('[data-testid="kanban2-drop-indicator"]')).toBeNull();
-    expect(document.querySelector('[data-testid="kanban2-card-overlay"]')).toBeNull();
+    expect(host.querySelector('[data-testid="board-drop-indicator"]')).toBeNull();
+    expect(document.querySelector('[data-testid="board-card-overlay"]')).toBeNull();
     const controls = movementControls(host);
     // Count varies by parameterised case (6 or 12); a bare .every() would pass on an empty list.
     expect(controls).not.toHaveLength(0);
-    expect(controls.every((element) => !element.hasAttribute("disabled"))).toBe(true);
+    expect(controls.every((element) => !isLocked(element))).toBe(true);
     expect(projectFetches).toBeGreaterThanOrEqual(1);
   });
 
@@ -786,27 +791,28 @@ describe("Dashboard Stage interactions", () => {
     expect(invalidate.mock.calls.some(([options]) => options?.queryKey?.[0] === "dashboard-projects")).toBe(false);
     expect(projectFetches).toBe(2);
     const movedCard = card(host, "Source Street");
-    expect(movedCard.querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')?.disabled).toBe(true);
-    expect(movedCard.querySelector<HTMLButtonElement>('[aria-label="Move Source Street to…"]')?.disabled).toBe(true);
-    expect(movedCard.querySelector<HTMLButtonElement>('[data-focus-key="arrow-up:source"]')?.disabled).toBe(true);
-    movedCard.querySelector<HTMLButtonElement>('[data-focus-key="arrow-up:source"]')?.click();
+    expect(isLocked(movedCard.querySelector<HTMLElement>('[data-testid="board-card"]')!)).toBe(true);
+    // One ⋯ trigger now fronts Move to… and Move up/down, so one disabled assertion covers all three.
+    expect(cardMenuTrigger(movedCard, "source")?.disabled).toBe(true);
+    cardMenuTrigger(movedCard, "source")?.click();
+    expect(document.querySelector('[role="menu"]'), "a locked card's menu opened").toBeNull();
     expect(apiPostMock).toHaveBeenCalledTimes(1);
 
-    const targetColumn = movedCard.closest<HTMLElement>('[data-testid="kanban2-column"]')!;
-    expect([...targetColumn.querySelectorAll<HTMLElement>('[data-testid="kanban2-card-address"]')].map((element) => element.textContent)).toEqual(["Source Street", "before Street", "target Street"]);
-    const provisionalSourceColumn = card(host, "source-sibling-a Street").closest<HTMLElement>('[data-testid="kanban2-column"]')!;
-    expect([...provisionalSourceColumn.querySelectorAll<HTMLElement>('[data-testid="kanban2-card-address"]')].map((element) => element.textContent)).toEqual(["source-sibling-a Street", "source-sibling-b Street"]);
+    const targetColumn = movedCard.closest<HTMLElement>('[data-testid="board-column"]')!;
+    expect([...targetColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["Source Street", "before Street", "target Street"]);
+    const provisionalSourceColumn = card(host, "source-sibling-a Street").closest<HTMLElement>('[data-testid="board-column"]')!;
+    expect([...provisionalSourceColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["source-sibling-a Street", "source-sibling-b Street"]);
     resolveSettle(settledSnapshot);
     await flush();
     expect(projectFetches).toBe(2);
-    const settledColumn = card(host, "Source Street").closest<HTMLElement>('[data-testid="kanban2-column"]')!;
-    expect([...settledColumn.querySelectorAll<HTMLElement>('[data-testid="kanban2-card-address"]')].map((element) => element.textContent)).toEqual(["target Street", "Source Street", "before Street"]);
-    const settledSourceColumn = card(host, "source-sibling-b Street").closest<HTMLElement>('[data-testid="kanban2-column"]')!;
-    expect([...settledSourceColumn.querySelectorAll<HTMLElement>('[data-testid="kanban2-card-address"]')].map((element) => element.textContent)).toEqual(["source-sibling-b Street", "source-sibling-a Street"]);
+    const settledColumn = card(host, "Source Street").closest<HTMLElement>('[data-testid="board-column"]')!;
+    expect([...settledColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["target Street", "Source Street", "before Street"]);
+    const settledSourceColumn = card(host, "source-sibling-b Street").closest<HTMLElement>('[data-testid="board-column"]')!;
+    expect([...settledSourceColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["source-sibling-b Street", "source-sibling-a Street"]);
     const controls = movementControls(host);
-    expect(controls).toHaveLength(20);
-    expect(controls.every((element) => !element.hasAttribute("disabled"))).toBe(true);
-    expect(card(host, "Source Street").querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')?.disabled).toBe(false);
+    expect(controls).toHaveLength(10);
+    expect(controls.every((element) => !isLocked(element))).toBe(true);
+    expect(isLocked(card(host, "Source Street").querySelector<HTMLElement>('[data-testid="board-card"]')!)).toBe(false);
     runtime.dispose();
     queryClient.clear();
   });
@@ -844,8 +850,8 @@ describe("Dashboard Stage interactions", () => {
     expect(projectFetches).toBe(2);
     // Scope to the notice: the live region carries this exact copy as its announcement too, so host.textContent cannot tell them apart.
     expect(host.querySelector('[data-testid="board-unavailable-notice"]')?.textContent).toBe("The move was saved, but the latest Board could not be loaded. Refresh to continue.");
-    expect([...card(host, "source-sibling-a Street").closest<HTMLElement>('[data-testid="kanban2-column"]')!.querySelectorAll<HTMLElement>('[data-testid="kanban2-card-address"]')].map((element) => element.textContent)).toEqual(["source-sibling-a Street", "source-sibling-b Street"]);
-    expect(card(host, "Source Street").querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')?.disabled).toBe(true);
+    expect([...card(host, "source-sibling-a Street").closest<HTMLElement>('[data-testid="board-column"]')!.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["source-sibling-a Street", "source-sibling-b Street"]);
+    expect(isLocked(card(host, "Source Street").querySelector<HTMLElement>('[data-testid="board-card"]')!)).toBe(true);
     await act(async () => {
       void queryClient.invalidateQueries({ queryKey: dashboardProjectsKey("admin-1", "photographer", 0, { archived: "hide" }), exact: true, refetchType: "active" });
       await Promise.resolve();
@@ -853,11 +859,11 @@ describe("Dashboard Stage interactions", () => {
     await flush();
     expect(projectFetches).toBe(3);
     expect(host.querySelector('[data-testid="board-unavailable-notice"]')).toBeNull();
-    expect(card(host, "Source Street").querySelector<HTMLButtonElement>('[aria-label="Move Source Street"]')?.disabled).toBe(false);
-    expect([...card(host, "source-sibling-b Street").closest<HTMLElement>('[data-testid="kanban2-column"]')!.querySelectorAll<HTMLElement>('[data-testid="kanban2-card-address"]')].map((element) => element.textContent)).toEqual(["source-sibling-b Street", "source-sibling-a Street"]);
+    expect(isLocked(card(host, "Source Street").querySelector<HTMLElement>('[data-testid="board-card"]')!)).toBe(false);
+    expect([...card(host, "source-sibling-b Street").closest<HTMLElement>('[data-testid="board-column"]')!.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["source-sibling-b Street", "source-sibling-a Street"]);
     const controls = movementControls(host);
-    expect(controls).toHaveLength(20);
-    expect(controls.every((element) => !element.hasAttribute("disabled"))).toBe(true);
+    expect(controls).toHaveLength(10);
+    expect(controls.every((element) => !isLocked(element))).toBe(true);
     runtime.dispose();
     queryClient.clear();
   });
@@ -873,8 +879,8 @@ describe("Dashboard Stage interactions", () => {
     await dndOver("source", "target");
     await dndEnd("source", "target");
     await flush(); await flush();
-    const rawColumn = [...host.querySelectorAll<HTMLElement>('[data-testid="kanban2-column"]')].find((column) => column.querySelector('[href="/projects/before"]'))!;
-    expect([...rawColumn.querySelectorAll<HTMLElement>('[data-testid="kanban2-card-address"]')].map((element) => element.textContent)).toEqual(["before Street", "target Street"]);
+    const rawColumn = [...host.querySelectorAll<HTMLElement>('[data-testid="board-column"]')].find((column) => column.querySelector('[href="/projects/before"]'))!;
+    expect([...rawColumn.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["before Street", "target Street"]);
     expect(apiPostMock).toHaveBeenCalledWith("/api/projects/source/stage", expect.objectContaining({ targetStageKey: "raw_review" }));
     expect(apiPostMock).toHaveBeenCalledTimes(1);
     expect(projectFetches).toBe(2);
@@ -883,7 +889,7 @@ describe("Dashboard Stage interactions", () => {
   it("uses the capability-only Board-position 403 response for the Priority-access copy", async () => {
     apiPostMock.mockRejectedValueOnce(new ApiError("Forbidden", 403, { error: "Forbidden", capability: "prioritizeProjects" }));
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); }); await flush();
-    await act(async () => { card(host, "target Street").querySelector<HTMLButtonElement>('[data-focus-key="arrow-up:target"]')!.click(); await Promise.resolve(); });
+    await pressMenuItem(host, "target", "Move up");
     await flush(); await flush();
     expect(host.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toContain("Manual Board reorder requires Priority access.");
   });
@@ -894,7 +900,7 @@ describe("Dashboard Stage interactions", () => {
     authState.moved = true;
     await moveToEnd(host, "Source Street", "RAW review"); await flush(); await flush();
     expect(apiPostMock).toHaveBeenCalledWith("/api/projects/source/stage", expect.objectContaining({ targetStageKey: "raw_review", placement: { kind: "append" } }));
-    expect(document.activeElement?.getAttribute("data-focus-key")).toBe("move-to:source");
+    expect(document.activeElement?.getAttribute("data-focus-key")).toBe("card-menu:source");
     expect(scrollTo).toHaveBeenCalledWith(window.scrollX, window.scrollY);
     expect(host.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toContain("Moved Source Street to RAW review, position");
   });
@@ -916,19 +922,18 @@ describe("Dashboard Stage interactions", () => {
       await Promise.resolve();
     });
     await flush();
-    const trigger = card(host, "Source Street").querySelector<HTMLButtonElement>('[data-focus-key="move-to:source"]')!;
-    await act(async () => { trigger.click(); await Promise.resolve(); });
+    await openMoveTo(host, "source");
     await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((button) => button.textContent === "RAW review")!.click(); await Promise.resolve(); });
     await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((button) => button.textContent?.includes("Before target Street"))!.click(); await Promise.resolve(); });
     runtime.markProjectRemoved("target");
     await flush();
-    const submit = document.querySelector<HTMLButtonElement>('[data-testid="kanban2-move-to-submit"]')!;
+    const submit = document.querySelector<HTMLButtonElement>('[data-testid="board-move-to-submit"]')!;
     await act(async () => { submit.click(); await Promise.resolve(); });
     await flush(); await flush();
     expect(apiPostMock).not.toHaveBeenCalled();
     expect(host.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toContain("That position changed");
     expect(projectFetches).toBe(2);
-    expect(document.activeElement?.getAttribute("data-focus-key")).toBe("move-to:source");
+    expect(document.activeElement?.getAttribute("data-focus-key")).toBe("card-menu:source");
     runtime.dispose();
     queryClient.clear();
   });
@@ -1001,7 +1006,7 @@ describe("Dashboard Stage interactions", () => {
     expect(apiPostMock).toHaveBeenCalledTimes(1);
     expect(requestCount).toBe(2);
     expect(host.textContent).toContain("Fresh Street");
-    const freshColumn = card(host, "Fresh Street").closest('[data-testid="kanban2-column"]')!;
+    const freshColumn = card(host, "Fresh Street").closest('[data-testid="board-column"]')!;
     expect(freshColumn.querySelector('[data-focus-key^="stage-heading:"]')?.textContent).toContain("Awaiting RAW");
     expect(freshColumn.querySelector('[data-focus-key^="stage-heading:"]')?.textContent).not.toContain("RAW review");
     runtime.dispose();
@@ -1057,7 +1062,7 @@ describe("Dashboard Stage interactions", () => {
     runtime.markPrincipalTerminal();
     resolveLate!(freshResponse);
     await flush();
-    expect(host.querySelector('[data-testid="kanban2-card"]')).toBeNull();
+    expect(host.querySelector('[data-testid="board-card"]')).toBeNull();
     runtime.dispose();
     queryClient.clear();
   });
@@ -1093,7 +1098,7 @@ describe("Dashboard Stage interactions", () => {
     if (!cancelHandler || !announcementHandler) throw new Error("No terminal drag-cancel handlers were rendered");
     await act(async () => { cancelHandler({ active: { id: "source" }, over: null }); await Promise.resolve(); });
     expect(announcementHandler({} as Parameters<typeof announcementHandler>[0])).toBeUndefined();
-    expect(document.querySelector('[data-testid="kanban2-card-overlay"]')).toBeNull();
+    expect(document.querySelector('[data-testid="board-card-overlay"]')).toBeNull();
     expect(host.querySelector('[data-testid="dashboard-live-region"]')?.textContent).not.toContain("Source Street");
     resolveLate!(freshResponse);
     await flush();
@@ -1122,11 +1127,11 @@ describe("Dashboard Stage interactions", () => {
     });
     await flush();
     expect(requestCount).toBe(2);
-    expect(host.querySelector('[data-testid="kanban2-card"]')).toBeNull();
+    expect(host.querySelector('[data-testid="board-card"]')).toBeNull();
     // The access-loss response is terminal for this accepted snapshot; later promise turns do not
     // repopulate private project markup through the stale query data.
     await flush();
-    expect(host.querySelector('[data-testid="kanban2-card"]')).toBeNull();
+    expect(host.querySelector('[data-testid="board-card"]')).toBeNull();
     runtime.dispose();
     queryClient.clear();
   });
@@ -1138,14 +1143,16 @@ describe("Dashboard Stage interactions", () => {
     apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve(externalResponse()) : Promise.resolve({}));
     await act(async () => { root.render(<Dashboard currentUserId="external-1" role="external_editor" />); await Promise.resolve(); });
     await flush();
-    const editingColumn = [...host.querySelectorAll<HTMLElement>('[data-testid="kanban2-column"]')].find((column) => column.querySelector('[href="/projects/123e4567-e89b-42d3-a456-426614174001"]'));
+    const editingColumn = [...host.querySelectorAll<HTMLElement>('[data-testid="board-column"]')].find((column) => column.querySelector('[href="/projects/123e4567-e89b-42d3-a456-426614174001"]'));
     expect(editingColumn).not.toBeUndefined();
-    expect([...editingColumn!.querySelectorAll<HTMLElement>('[data-testid="kanban2-card-address"]')].map((element) => element.textContent)).toEqual(["External Second Street", "External First Street"]);
+    expect([...editingColumn!.querySelectorAll<HTMLElement>('[data-testid="board-card-address"]')].map((element) => element.textContent)).toEqual(["External Second Street", "External First Street"]);
     expect(editingColumn!.textContent).toContain("Editing");
     expect(host.querySelector('[aria-label="Priority for External First Street"]')).toBeNull();
-    expect(host.querySelector('[data-focus-key^="arrow-up:"]')).toBeNull();
-    expect(host.querySelector('[data-focus-key^="arrow-down:"]')).toBeNull();
-    expect([...host.querySelectorAll<HTMLElement>('[data-testid="kanban2-column"]')].some((column) => /Priority|Shoot date/.test(column.textContent ?? ""))).toBe(false);
+    // The Board-order nudges are Admin-only: an external editor's menu, if it has one, carries Move to… alone.
+    await openCardMenu(host, firstId);
+    expect(menuItems().map((item) => item.textContent)).toEqual(["Move to…"]);
+    await closeMenus();
+    expect([...host.querySelectorAll<HTMLElement>('[data-testid="board-column"]')].some((column) => /Priority|Shoot date/.test(column.textContent ?? ""))).toBe(false);
 
     await dndStart(firstId);
     await dndOver(firstId, secondId);

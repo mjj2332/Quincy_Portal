@@ -1,19 +1,17 @@
-// TB8-01 §2.2 item 8's guard half: `selectBoardSort`'s client-side check
-// (`next === "priority" && (!canPrioritize || !hasAuthorizedBoardMap)`) must refuse a "priority"
-// value even if it somehow reaches the radio group's `onValueChange` — not merely rely on the
-// option being un-rendered. Since the real menu only ever offers rendered options (an unauthorized
-// user can never click "Priority" because it isn't in the list), this file mocks the
-// `reui/dropdown-menu` radio group to a bare button that invokes `onValueChange("priority")`
-// directly, bypassing whatever items were actually rendered, so the assertion is against
-// Dashboard's own guard — not against the view bar's list-filtering, which
-// Dashboard-kanban-sort.dom.test.tsx (test 8) and -render-gate cover as the render halves.
+// TB8-01 §2.2 item 8's render-gate ABSENCE half: an unauthorized user must never see "Priority"
+// as an option in the real Select at all — not just have a would-be selection refused. This
+// renders the real (unmocked) Select — unlike Dashboard-kanban-sort-priority-guard.dom.test.tsx,
+// which mocks Select to test the guard half — so the assertion is against Select's actual
+// rendered option list. Dashboard-kanban-sort.dom.test.tsx's test 8 covers the render-gate
+// PRESENCE half (authorized user sees it).
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard } from "./Dashboard";
+import { openDisplay, sortRadioLabels } from "./dashboard-display-test-helpers";
 
 // happy-dom lacks `Element.getAnimations()`, which Base UI's ScrollArea (the Board's horizontal
-// scroll, `kanban2/board.tsx`) calls on a timer after mount. The no-op stub means "no active
+// scroll, `board/board.tsx`) calls on a timer after mount. The no-op stub means "no active
 // animations"; see `reui/gantt/gantt-adjust-ghost-marker.dom.test.tsx` for the same polyfill.
 if (!Element.prototype.getAnimations) {
   Element.prototype.getAnimations = () => [];
@@ -25,8 +23,8 @@ vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
   return { ...actual, apiGet: (path: string) => apiGetMock(path), apiPost: (path: string, body: unknown) => apiPostMock(path, body) };
 });
-// Unauthorized: no `prioritizeProjects` capability, so `canPrioritize` is false and the guard's
-// `!canPrioritize` branch is the one under test.
+// Unauthorized: no `prioritizeProjects` capability, so `canPrioritize` is false and the render
+// gate (`canPrioritize && hasAuthorizedBoardMap`) must exclude the "Priority" option.
 vi.mock("../lib/capabilities", () => ({
   useCapabilities: () => ({ role: "photographer", capabilities: ["moveProjectStage"], can: (capability: string) => capability === "moveProjectStage" }),
 }));
@@ -37,26 +35,12 @@ vi.mock("../lib/stages", () => ({
     presentationStageKey: (stageKey: string) => stageKey,
   }),
 }));
-vi.mock("../components/reui/dropdown-menu", () => {
-  const passthrough = ({ children }: { children?: React.ReactNode }) => <>{children}</>;
-  return {
-    DropdownMenu: passthrough,
-    DropdownMenuTrigger: ({ children }: { children?: React.ReactNode }) => <button type="button">{children}</button>,
-    DropdownMenuContent: passthrough,
-    DropdownMenuGroup: passthrough,
-    DropdownMenuLabel: passthrough,
-    DropdownMenuRadioItem: () => null,
-    DropdownMenuRadioGroup: ({ onValueChange }: { onValueChange: (value: string) => void }) => (
-      <button aria-label="mock sort" type="button" onClick={() => onValueChange("priority")}>mock sort trigger</button>
-    ),
-  };
-});
 
 let root: Root | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const testNow = new Date("2026-08-27T00:00:00.000Z");
 
-describe("Dashboard Kanban sort control — Priority gate guard (negative case)", () => {
+describe("Dashboard Kanban sort control — Priority gate (render-gate absence half)", () => {
   beforeEach(() => {
     vi.useFakeTimers({ now: testNow });
     window.history.replaceState(null, "", "/");
@@ -88,19 +72,13 @@ describe("Dashboard Kanban sort control — Priority gate guard (negative case)"
     vi.useRealTimers();
   });
 
-  it("refuses a 'priority' value from an unauthorized user even when it reaches onValueChange directly", async () => {
+  it("never offers 'Priority' in the real Display menu's radio list to an unauthorized user", async () => {
     await act(async () => { root!.render(<Dashboard currentUserId="photographer-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
-    await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-card"]')).not.toBeNull());
-    const mockTrigger = document.querySelector<HTMLButtonElement>('[aria-label="mock sort"]')!;
-    expect(mockTrigger).not.toBeNull();
-    // The initial mount already persists the default "board" mode (initializeKanbanSortMode's
-    // write-back), so the guard's effect must be checked as "stays unchanged", not "stays unset".
-    const before = window.localStorage.getItem("quincy:dashboard:kanbanSort");
-    expect(before).toBe("board");
-    await act(async () => { mockTrigger.click(); await Promise.resolve(); });
-    // The guard returns before setBoardSort/the localStorage write, so this staying "board"
-    // (rather than becoming "priority") is direct evidence Dashboard's own guard — not the menu's
-    // rendering — refused the value.
-    expect(window.localStorage.getItem("quincy:dashboard:kanbanSort")).toBe(before);
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="board-card"]')).not.toBeNull());
+    await openDisplay();
+    const labels = sortRadioLabels();
+    expect(labels.length).toBeGreaterThan(0);
+    expect(labels.includes("Priority")).toBe(false);
+    expect(labels).toEqual(["Board order", "Shoot date, earliest first", "Shoot date, latest first"]);
   });
 });
