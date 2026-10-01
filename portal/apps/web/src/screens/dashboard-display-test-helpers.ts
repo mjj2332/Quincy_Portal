@@ -73,7 +73,7 @@ export async function openDisplay(scope: ParentNode = document): Promise<void> {
   if (displayMenu()) return;
   const trigger = displayTrigger(scope);
   if (!trigger) throw new Error("Missing Display trigger");
-  await act(async () => { trigger.click(); await new Promise((resolve) => setTimeout(resolve, 60)); });
+  await act(async () => { trigger.click(); await Promise.resolve(); await Promise.resolve(); });
   if (!displayMenu()) throw new Error("The Display menu did not open");
 }
 
