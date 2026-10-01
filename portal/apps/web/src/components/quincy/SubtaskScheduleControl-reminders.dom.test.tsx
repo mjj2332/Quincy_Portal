@@ -63,7 +63,10 @@ describe("SubtaskScheduleControl reminders (#425)", () => {
     await mount({ error });
     await open();
     expect(popover()!.textContent).toContain("Latest schedule · v4");
-    expect(popover()!.textContent).toContain("Reminders: 1 hour, Due now");
+    const notice = [...popover()!.querySelectorAll("strong")].find((el) => el.textContent === "Latest schedule · v4")!.parentElement!;
+    // Schedule and Reminders are separate term/definition pairs, not one run-together line.
+    const pairs = [...notice.querySelectorAll("dt")].map((dt) => [dt.textContent, dt.nextElementSibling?.tagName, dt.nextElementSibling?.textContent]);
+    expect(pairs).toEqual([["Schedule", "DD", expect.stringMatching(/\S/)], ["Reminders", "DD", "1 hour, Due now"]]);
     expect(chip("1 hour")!.getAttribute("aria-pressed")).toBe("true");
     expect(chip("1 day")!.getAttribute("aria-pressed")).toBe("false");
   });
