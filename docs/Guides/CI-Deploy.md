@@ -189,11 +189,11 @@ Subtask whose reminder already fired. Before rolling background back, stamp thos
 ```sql
 UPDATE project_subtasks SET due_reminder_sent_at = CAST(strftime('%s','now') AS INTEGER) * 1000
 WHERE due_reminder_sent_at IS NULL AND done = 0 AND id IN (
-  SELECT subtask_id FROM project_subtask_reminder_occurrences
-  WHERE status = 'fired' AND fired_at >= CAST(strftime('%s','now','start of day') AS INTEGER) * 1000);
+  SELECT subtask_id FROM project_subtask_reminder_occurrences WHERE status = 'fired');
 ```
 
-Run it against UTC midnight as written, or widen the `fired_at` window to cover the studio's Sydney day. The old Worker cannot
+It has no time window on purpose: a day boundary in UTC would miss part of the Sydney day, and stamping a Subtask that
+already had a reminder only stops the old pass from repeating it. The old Worker cannot
 fire or retract occurrences, so reminders for later Subtasks stop until the roll-forward. The legacy rows suppressed by 0053 stay suppressed. Removing the schema is a forward drop
 migration, never an edit of 0053.
 
