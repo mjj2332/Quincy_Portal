@@ -1184,7 +1184,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
         // conflict body's own newer schedule replaces it, so the retained draft is never re-sent at a version that lost.
         const authoritative = editorConflict?.schedule;
         if (authoritative && authoritative.version > latest.schedule.version) {
-          latest = { ...latest, schedule: authoritative, timing: timingFromChecklistSchedule(authoritative) ?? latest.timing };
+          latest = { ...latest, schedule: authoritative, timing: timingFromChecklistSchedule(authoritative) ?? latest.timing, ...(editorConflict.item?.reminders ? { reminders: editorConflict.item.reminders } : {}) };
           const subtaskId = subtaskIdFromCalendarEntityId(latest.id);
           if (subtaskId) onEditorConflictRef.current?.({ projectId: latest.project.id, subtaskId, schedule: authoritative, ...(editorConflict.item ? { item: editorConflict.item } : {}) });
         }

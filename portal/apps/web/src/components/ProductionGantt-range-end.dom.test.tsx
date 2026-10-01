@@ -687,4 +687,32 @@ describe("ProductionGantt — Subtask Due cell reminders (#425)", () => {
     expect(patchBody(1).schedule).not.toHaveProperty("reminderOffsetsMinutes");
     expect(storedOffsets[RANGE_ID]).toEqual([60]);
   });
+
+  it("G6 a later-page row's conflict adopts the latest reminders too, so Undo after the reapply restores them, not the stale set", async () => {
+    pageTwo = [{ id: PAGE_TWO_ID, title: PAGE_TWO_TITLE, position: 2, canOpenScheduleEditor: true, schedule: range(1, startMoment(sydneyDay(2)), endMoment(sydneyDay(4))) }];
+    await render();
+    await waitFor(() => expect(dueTrigger(PAGE_TWO_TITLE)).not.toBeNull());
+    await openDue(PAGE_TWO_TITLE);
+    await click(chip(PAGE_TWO_TITLE, "4 hours"));
+    const winner = range(2, startMoment(sydneyDay(2)), endMoment(sydneyDay(4)));
+    patchReply = () => {
+      pageTwo[0]!.schedule = winner; storedOffsets[PAGE_TWO_ID] = [60];
+      return { status: 409, body: { error: "conflict", code: "subtask_schedule_version_conflict", current: winner, currentSubtask: { id: PAGE_TWO_ID, title: PAGE_TWO_TITLE, done: false, position: 2, schedule: winner, reminders: subtaskReminders([60]) } } };
+    };
+    await applyPopup(picker(PAGE_TWO_TITLE)!);
+    await flush(6);
+    expect(patches()).toHaveLength(1);
+    patchReply = null;
+    await applyPopup(picker(PAGE_TWO_TITLE)!);
+    await flush(8);
+    expect(patches()).toHaveLength(2);
+    expect(patchBody(1).schedule.expectedVersion).toBe(2);
+    expect(patchBody(1).schedule.reminderOffsetsMinutes).toEqual([1440, 240]);
+    expect(undoButtons()).toHaveLength(1);
+    await click(undoButtons()[0]!);
+    await flush(8);
+    expect(patches()).toHaveLength(3);
+    expect(patchBody(2).schedule.expectedVersion).toBe(3);
+    expect(patchBody(2).schedule.reminderOffsetsMinutes).toEqual([60]);
+  });
 });
