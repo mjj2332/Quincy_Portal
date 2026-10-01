@@ -334,3 +334,55 @@ describe("DateTimeField stateful host", () => {
     expect(trigger().textContent).toContain("Fri 2 Oct 2026");
   });
 });
+
+describe("DateTimeField focus and header contract (#421 review)", () => {
+  it("keeps focus on the Month and Year selects after they change the grid", async () => {
+    await mount({ value: "2026-09-17" });
+    await open();
+    const month = select("Month");
+    await act(async () => { month.focus(); await Promise.resolve(); });
+    await setSelect(month, "1");
+    await settle();
+    expect(select("Month").value).toBe("1");
+    expect(document.activeElement).toBe(select("Month"));
+    const year = select("Year");
+    await act(async () => { year.focus(); await Promise.resolve(); });
+    await setSelect(year, "2027");
+    await settle();
+    expect(select("Year").value).toBe("2027");
+    expect(document.activeElement).toBe(select("Year"));
+  });
+
+  it("opens with focus on the selected day when there is one", async () => {
+    await mount({ value: "2026-09-17" });
+    await open();
+    expect(popup()!.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement?.getAttribute("aria-label")).toContain("17");
+  });
+
+  it("opens with focus on the first shortcut when nothing is selected, without marking it pressed", async () => {
+    await mount({ value: null });
+    await open();
+    expect(document.activeElement?.textContent).toMatch(/^Today/);
+    expect(pressedShortcut()).toBeNull();
+  });
+
+  it("marks a shortcut pressed only when the selection is that shortcut's day", async () => {
+    await mount({ value: "2026-10-01" }); // today
+    await open();
+    expect(pressedShortcut()?.startsWith("Today")).toBe(true);
+    await press("Tomorrow");
+    expect(pressedShortcut()?.startsWith("Tomorrow")).toBe(true);
+    await clickEl(dayButton("22")!);
+    expect(pressedShortcut()).toBeNull();
+  });
+
+  it("titles the popup with the field label and keeps Australia/Sydney visible beneath it", async () => {
+    await mount({ value: null });
+    await open();
+    const zone = document.getElementById(popup()!.getAttribute("aria-describedby")!)!;
+    expect(zone.textContent).toBe("Australia/Sydney");
+    expect(popup()!.textContent?.indexOf("Shoot date")).toBeLessThan(popup()!.textContent!.indexOf("Australia/Sydney"));
+  });
+});
+

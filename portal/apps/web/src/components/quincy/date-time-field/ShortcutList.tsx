@@ -1,5 +1,6 @@
 import type { ComponentType } from "react";
 import { Calendar, CalendarPlus, Clock, Sun, X } from "lucide-react";
+import { RING_IN } from "@/components/AnchoredPopover";
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/reui/item";
 import type { DateShortcut } from "@/lib/date-time-field";
 import { cn } from "@/lib/utils";
@@ -14,7 +15,7 @@ const ICONS: Record<DateShortcut["id"], { icon: ComponentType<{ className?: stri
   tomorrow: { icon: Clock, tone: "text-signal-info" },
   "later-this-week": { icon: Calendar, tone: "text-primary" },
   "next-week": { icon: CalendarPlus, tone: "text-signal-positive" },
-  "no-date": { icon: X, tone: "text-destructive" },
+  "no-date": { icon: X, tone: "text-foreground-secondary" },
 };
 
 export function ShortcutList({ shortcuts, activeId, onPick }: {
@@ -33,7 +34,12 @@ export function ShortcutList({ shortcuts, activeId, onPick }: {
             size="xs"
             render={<button type="button" />}
             aria-pressed={activeId === shortcut.id}
-            className={cn("min-w-0 flex-nowrap text-left hover:bg-muted max-[721px]:min-h-[44px] aria-pressed:border-border aria-pressed:bg-muted")}
+            className={cn(
+              // One fixed height so a row without a sublabel ("No date") matches the rest, and one
+              // inward ring (RING_IN): Item's own ring would double the global focus outline.
+              "min-h-[52px] min-w-0 flex-nowrap text-left hover:bg-muted focus-visible:ring-0 aria-pressed:border-border aria-pressed:bg-muted",
+              RING_IN,
+            )}
             onClick={() => onPick(shortcut)}
           >
             <Icon aria-hidden className={cn("size-4 shrink-0", tone)} />

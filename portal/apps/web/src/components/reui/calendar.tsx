@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils"
 import {
   DayPicker,
   getDefaultClassNames,
-  type DayButton,
+  type DayButton as DayButtonType,
   type Locale,
 } from "react-day-picker"
 
@@ -25,10 +25,50 @@ import { ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon } from "lucide-react
  *    calls `ref.current?.focus()` when `modifiers.focused` flips, but never attaches it, so
  *    keyboard focus could not follow the focused date. Found by Sol's #202 diff review.
  *
+ * 4. **Renderer components are hoisted out of `Calendar`'s render (#421).** The registry source
+ *    declares `Root`, `Chevron`, `DayButton` and `WeekNumber` as inline arrow functions inside the
+ *    `components` prop, so every render gave react-day-picker a NEW component type and it remounted
+ *    the whole tree. A controlled `month` therefore destroyed the focused month/year `<select>` on
+ *    each change and focus fell to `<body>`. They are module-level (`DayButton` memoised on
+ *    `locale`) so identity is stable.
+ *
  * No Positioner/Popup (`z-50` does not apply), no Portal, and no `outline-hidden` token, so none
  * of `reui/popover.tsx`'s other conformance edits apply. Nothing composes it yet: #205 may replace
  * the Deadline popover's native date input with `c-calendar-30` at the builder's discretion.
  */
+
+const CalendarRoot: NonNullable<React.ComponentProps<typeof DayPicker>["components"]>["Root"] = ({ className, rootRef, ...props }) => {
+  return (
+    <div
+      data-slot="calendar"
+      ref={rootRef}
+      className={cn(className)}
+      {...props}
+    />
+  )
+}
+
+const CalendarChevron: NonNullable<React.ComponentProps<typeof DayPicker>["components"]>["Chevron"] = ({ className, orientation, ...props }) => {
+  if (orientation === "left") {
+    return <ChevronLeftIcon className={cn("size-4", className)} {...props} />
+  }
+
+  if (orientation === "right") {
+    return <ChevronRightIcon className={cn("size-4", className)} {...props} />
+  }
+
+  return <ChevronDownIcon className={cn("size-4", className)} {...props} />
+}
+
+const CalendarWeekNumber: NonNullable<React.ComponentProps<typeof DayPicker>["components"]>["WeekNumber"] = ({ children, ...props }) => {
+  return (
+    <td {...props}>
+      <div className="flex size-(--cell-size) items-center justify-center text-center">
+        {children}
+      </div>
+    </td>
+  )
+}
 
 function Calendar({
   className,
@@ -44,6 +84,12 @@ function Calendar({
   buttonVariant?: React.ComponentProps<typeof Button>["variant"]
 }) {
   const defaultClassNames = getDefaultClassNames()
+  const DayButton = React.useMemo(
+    () => function LocalisedDayButton(dayProps: React.ComponentProps<typeof DayButtonType>) {
+      return <CalendarDayButton locale={locale} {...dayProps} />
+    },
+    [locale]
+  )
 
   return (
     <DayPicker
@@ -152,45 +198,10 @@ function Calendar({
         ...classNames,
       }}
       components={{
-        Root: ({ className, rootRef, ...props }) => {
-          return (
-            <div
-              data-slot="calendar"
-              ref={rootRef}
-              className={cn(className)}
-              {...props}
-            />
-          )
-        },
-        Chevron: ({ className, orientation, ...props }) => {
-          if (orientation === "left") {
-            return (
-              <ChevronLeftIcon className={cn("size-4", className)} {...props} />
-            )
-          }
-
-          if (orientation === "right") {
-            return (
-              <ChevronRightIcon className={cn("size-4", className)} {...props} />
-            )
-          }
-
-          return (
-            <ChevronDownIcon className={cn("size-4", className)} {...props} />
-          )
-        },
-        DayButton: ({ ...props }) => (
-          <CalendarDayButton locale={locale} {...props} />
-        ),
-        WeekNumber: ({ children, ...props }) => {
-          return (
-            <td {...props}>
-              <div className="flex size-(--cell-size) items-center justify-center text-center">
-                {children}
-              </div>
-            </td>
-          )
-        },
+        Root: CalendarRoot,
+        Chevron: CalendarChevron,
+        DayButton,
+        WeekNumber: CalendarWeekNumber,
         ...components,
       }}
       {...props}
@@ -204,7 +215,7 @@ function CalendarDayButton({
   modifiers,
   locale,
   ...props
-}: React.ComponentProps<typeof DayButton> & { locale?: Partial<Locale> }) {
+}: React.ComponentProps<typeof DayButtonType> & { locale?: Partial<Locale> }) {
   const defaultClassNames = getDefaultClassNames()
 
   const ref = React.useRef<HTMLButtonElement>(null)
