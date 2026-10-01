@@ -2,6 +2,7 @@ import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DateTimeField } from "./DateTimeField";
+import "@/testing/dom-polyfills";
 
 /**
  * Seam E (#421): the date field + popup, driven through roles, names and aria state only — never a

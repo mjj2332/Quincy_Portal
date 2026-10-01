@@ -17,6 +17,7 @@ vi.mock("../lib/api", async (importOriginal) => {
 });
 
 import { CreateProject } from "./CreateProject";
+import "@/testing/dom-polyfills";
 
 let root: Root | null = null;
 let host: HTMLElement;

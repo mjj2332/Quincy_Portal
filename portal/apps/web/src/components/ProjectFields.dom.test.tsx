@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyProjectForm, ProjectFields, type ProjectForm, type User } from "./ProjectFields";
+import "@/testing/dom-polyfills";
 
 const apiGetMock = vi.fn<(path: string) => Promise<unknown>>();
 vi.mock("../lib/api", async (importOriginal) => {
