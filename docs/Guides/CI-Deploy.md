@@ -182,8 +182,19 @@ From `portal/workers/app`, `--remote`:
    the hourly run logs a reconcile that inserted 0 (a non-zero count means the old Worker saved Subtasks in the window, and it is the heal). Finally, create a test Subtask two minutes out with
    you as assignee and confirm the bell notice and email arrive.
 
-**Rollback.** The schema is additive. Rolling the Worker back resumes the 08:00 pass; the `due_reminder_sent_at` filter,
-the suppressed legacy rows and `due_elapsed` stop a Subtask being alerted twice. Removing the schema is a forward drop
+**Rollback.** The schema is additive, but rolling background back to the pre-#424 Worker is only duplicate-safe after a
+reconciliation step. The new delivery path never sets `due_reminder_sent_at`, so the old 08:00 pass would alert again any
+Subtask whose reminder already fired. Before rolling background back, stamp those Subtasks:
+
+```sql
+UPDATE project_subtasks SET due_reminder_sent_at = CAST(strftime('%s','now') AS INTEGER) * 1000
+WHERE due_reminder_sent_at IS NULL AND done = 0 AND id IN (
+  SELECT subtask_id FROM project_subtask_reminder_occurrences
+  WHERE status = 'fired' AND fired_at >= CAST(strftime('%s','now','start of day') AS INTEGER) * 1000);
+```
+
+Run it against UTC midnight as written, or widen the `fired_at` window to cover the studio's Sydney day. The old Worker cannot
+fire or retract occurrences, so reminders for later Subtasks stop until the roll-forward. The legacy rows suppressed by 0053 stay suppressed. Removing the schema is a forward drop
 migration, never an edit of 0053.
 
 ### Calendar (since #224)

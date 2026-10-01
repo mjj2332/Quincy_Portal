@@ -27,6 +27,25 @@ export const SQL_UUID_V4 = "lower(hex(randomblob(4)) || '-' || hex(randomblob(2)
 
 const AUDIT_GATE = "EXISTS (SELECT 1 FROM audit_log WHERE id = ?)";
 
+/**
+ * The legacy 08:00 pass stamped `due_reminder_sent_at` before its queued delivery went out. A stamped Subtask whose legacy due-today
+ * outbox row is still waiting (or was suppressed) and has no sent ledger row was never alerted, so the stamp is cleared and it is treated
+ * like an unstamped one. Migration 0053 carries a copy that runs before its backfill and its cutover, and the hourly reconcile runs this one.
+ */
+export const SUBTASK_LEGACY_UNSTAMP_SQL = `UPDATE project_subtasks SET due_reminder_sent_at = NULL
+WHERE due_reminder_sent_at IS NOT NULL AND done = 0
+  AND EXISTS (
+    SELECT 1 FROM notification_outbox o
+    WHERE o.event_type = 'project.subtask.due_today' AND o.status IN ('pending', 'queued', 'suppressed')
+      AND json_valid(o.payload_json) AND json_extract(o.payload_json, '$.assignment.subtaskId') = project_subtasks.id
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM notification_outbox o2
+    JOIN notification_delivery_ledger l ON l.outbox_id = o2.id
+    WHERE o2.event_type = 'project.subtask.due_today' AND l.status = 'sent'
+      AND json_valid(o2.payload_json) AND json_extract(o2.payload_json, '$.assignment.subtaskId') = project_subtasks.id
+  )`;
+
 export function subtaskReminderMaterializationSql(input: { scope: SubtaskReminderMaterializationScope; now: number; createdBy: string | null; gateAuditId?: string }): SqlWithValues {
   const scopeClause = input.scope.kind === "subtask" ? "AND s.id = ?" : input.scope.kind === "project" ? "AND s.project_id = ?" : "";
   const scopeValues = input.scope.kind === "subtask" ? [input.scope.subtaskId] : input.scope.kind === "project" ? [input.scope.projectId] : [];

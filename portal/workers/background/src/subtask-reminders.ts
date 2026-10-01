@@ -3,7 +3,7 @@ import {
   PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID,
   publishNotificationOutbox,
 } from "@quincy/shared";
-import { buildSubtaskReminderMaterialization } from "@quincy/db";
+import { buildSubtaskReminderMaterialization, SUBTASK_LEGACY_UNSTAMP_SQL } from "@quincy/db";
 import type { Env } from "./env";
 import { sqlUuidV4 } from "./project-deadline";
 
@@ -188,8 +188,9 @@ export async function scanSubtaskReminderOccurrences(env: Env, now = Date.now())
  */
 export async function reconcileSubtaskReminderOccurrences(env: Env, now = Date.now()): Promise<{ inserted: number }> {
   const bundle = buildSubtaskReminderMaterialization({ db: env.DB, scope: { kind: "all" }, now, createdBy: null });
-  const results = await env.DB.batch(bundle.statements);
-  const inserted = results[bundle.indexes.materialize]?.meta?.changes ?? 0;
+  // First clear a legacy stamp on a Subtask whose 08:00 alert never went out, or the materialization would skip it for good.
+  const results = await env.DB.batch([env.DB.prepare(SUBTASK_LEGACY_UNSTAMP_SQL), ...bundle.statements]);
+  const inserted = results[1 + bundle.indexes.materialize]?.meta?.changes ?? 0;
   if (inserted > 0) console.warn("Subtask reminder reconcile inserted missing occurrences", { inserted });
   else console.log("Subtask reminder reconcile", { inserted });
   return { inserted };

@@ -68,7 +68,25 @@ CREATE UNIQUE INDEX project_subtask_reminder_occurrences_live_unique
 ALTER TABLE notification_preferences ADD COLUMN subtask_reminder_emails integer NOT NULL DEFAULT 1
   CHECK (subtask_reminder_emails IN (0, 1));
 --> statement-breakpoint
--- Step 4 backfills the occurrences that are still ahead. Only a live Subtask in a live Project qualifies
+-- Step 4 first repairs the legacy stamp. The retired 08:00 pass set due_reminder_sent_at before its queued delivery went out,
+-- so a stamped Subtask whose legacy due-today outbox row is still waiting (or was suppressed) and has no sent ledger row was never
+-- alerted. Clearing its stamp lets the backfill below and the hourly reconcile treat it like any other live Subtask, while step 5
+-- still suppresses the legacy delivery so nobody gets both. A stamped Subtask whose alert was delivered keeps its stamp.
+UPDATE project_subtasks SET due_reminder_sent_at = NULL
+WHERE due_reminder_sent_at IS NOT NULL AND done = 0
+  AND EXISTS (
+    SELECT 1 FROM notification_outbox o
+    WHERE o.event_type = 'project.subtask.due_today' AND o.status IN ('pending', 'queued', 'suppressed')
+      AND json_valid(o.payload_json) AND json_extract(o.payload_json, '$.assignment.subtaskId') = project_subtasks.id
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM notification_outbox o2
+    JOIN notification_delivery_ledger l ON l.outbox_id = o2.id
+    WHERE o2.event_type = 'project.subtask.due_today' AND l.status = 'sent'
+      AND json_valid(o2.payload_json) AND json_extract(o2.payload_json, '$.assignment.subtaskId') = project_subtasks.id
+  );
+--> statement-breakpoint
+-- Step 4b backfills the occurrences that are still ahead. Only a live Subtask in a live Project qualifies
 -- (not done, Project not archived, no legacy 08:00 alert already sent for the current end), and only an offset whose
 -- fire time is in the future becomes pending, so nothing already elapsed is stored and nothing fires on deploy.
 -- The offsets are the stored advance offsets plus the implied due-now offset 0. The same predicate is written by

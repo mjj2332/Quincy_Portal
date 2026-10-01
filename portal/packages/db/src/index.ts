@@ -27,6 +27,7 @@ export { projectColumnsForVariant, projectColumnsPre0037 } from "./project-proje
 export { emitExternalSafeLegacyNotification, emitExternalSubtaskNotification, emitExternalSubtaskNotifications, emitStaffSubtaskAssignedNotification, type ExternalSafeLegacyInput, type ExternalSubtaskNotificationInput, type StaffSubtaskAssignedInput } from "./external-notifications";
 export {
   SQL_UUID_V4,
+  SUBTASK_LEGACY_UNSTAMP_SQL,
   buildSubtaskReminderMaterialization,
   buildSubtaskReminderSuppression,
   readSubtaskReminderState,

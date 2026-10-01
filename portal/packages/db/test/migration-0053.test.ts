@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { subtaskReminderMaterializationSql } from "../src/subtask-reminder-bundles";
+import { SUBTASK_LEGACY_UNSTAMP_SQL, subtaskReminderMaterializationSql } from "../src/subtask-reminder-bundles";
 
 type SqliteStatement = { all: (...values: unknown[]) => unknown[]; get: (...values: unknown[]) => unknown; run: (...values: unknown[]) => { changes: number | bigint } };
 type SqliteDatabase = { close: () => void; exec: (source: string) => void; prepare: (source: string) => SqliteStatement };
@@ -250,6 +250,43 @@ describe("migration 0053 gives every Subtask its reminders (#424, ADR 0016)", ()
     expect(status("notification_outbox", "leased")).toBe("queued");
     expect(status("notification_delivery_ledger", "l9")).toBe("pending");
     expect(status("notification_outbox", "other")).toBe("queued");
+    db.close();
+  });
+
+  it("gives a stamped Subtask whose legacy due-today alert was never delivered the same treatment as an unstamped one", () => {
+    const db = freshDb(52);
+    const now = Date.now();
+    const link = (id: string, subtaskId: string, status: string, ledger: Array<[string, string]>) => {
+      db.prepare("INSERT INTO notification_outbox (id, schema_version, event_type, source_key, project_id, actor_id, recipient_id, payload_json, status, available_at, created_at, updated_at) VALUES (?, 1, 'project.subtask.due_today', ?, 'p1', 'u1', 'u1', ?, ?, ?, ?, ?)").run(id, `subtask-due:${subtaskId}:x`, JSON.stringify({ assignment: { subtaskId } }), status, now, now, now);
+      ledger.forEach(([channel, st], index) => db.prepare("INSERT INTO notification_delivery_ledger (id, outbox_id, event_type, source_key, recipient_id, channel, status, created_at, updated_at) VALUES (?, ?, 'project.subtask.due_today', ?, 'u1', ?, ?, ?, ?)").run(`${id}-l${index}`, id, `subtask-due:${subtaskId}:x`, channel, st, now, now));
+    };
+    insertSubtask(db, "queued-stamped", now + 3 * DAY, { reminderSentAt: now - HOUR });
+    link("o1", "queued-stamped", "queued", [["in_app", "pending"], ["email", "pending"]]);
+    insertSubtask(db, "delivered-stamped", now + 3 * DAY, { reminderSentAt: now - HOUR });
+    link("o2", "delivered-stamped", "completed", [["in_app", "sent"], ["email", "sent"]]);
+    insertSubtask(db, "staff-only-stamped", now + 3 * DAY, { reminderSentAt: now - HOUR });
+    applyAsTransaction(db, MIGRATION);
+    const byId = (id: string) => occurrences(db).filter((row) => row.subtask_id === id).map((row) => row.kind);
+    expect(byId("queued-stamped")).toEqual(["advance", "due_now"]);
+    expect(db.prepare("SELECT due_reminder_sent_at AS at FROM project_subtasks WHERE id = 'queued-stamped'").get()).toEqual({ at: null });
+    expect(db.prepare("SELECT status FROM notification_outbox WHERE id = 'o1'").get()).toEqual({ status: "suppressed" });
+    expect(db.prepare("SELECT status FROM notification_delivery_ledger WHERE outbox_id = 'o1' ORDER BY channel").all()).toEqual([{ status: "suppressed" }, { status: "suppressed" }]);
+    expect(byId("delivered-stamped")).toEqual([]);
+    expect(byId("staff-only-stamped")).toEqual([]);
+    expect(db.prepare("SELECT due_reminder_sent_at IS NOT NULL AS stamped FROM project_subtasks WHERE id = 'delivered-stamped'").get()).toEqual({ stamped: 1 });
+    db.close();
+  });
+
+  it("the runtime reconcile SQL applies the same rule to a stamped Subtask whose legacy alert was suppressed unsent", () => {
+    const db = freshDb(53);
+    const now = Date.now();
+    insertSubtask(db, "late", now + 3 * DAY, { reminderSentAt: now - HOUR });
+    db.exec("DELETE FROM project_subtask_reminder_occurrences");
+    db.prepare("INSERT INTO notification_outbox (id, schema_version, event_type, source_key, project_id, actor_id, recipient_id, payload_json, status, available_at, created_at, updated_at) VALUES ('o', 1, 'project.subtask.due_today', 'k', 'p1', 'u1', 'u1', ?, 'suppressed', ?, ?, ?)").run(JSON.stringify({ assignment: { subtaskId: "late" } }), now, now, now);
+    expect(db.prepare(SUBTASK_LEGACY_UNSTAMP_SQL).run().changes).toBe(1);
+    const { sql, values } = subtaskReminderMaterializationSql({ scope: { kind: "all" }, now: Date.now(), createdBy: null });
+    expect(db.prepare(sql).run(...values).changes).toBe(2);
+    expect(db.prepare(SUBTASK_LEGACY_UNSTAMP_SQL).run().changes).toBe(0);
     db.close();
   });
 
