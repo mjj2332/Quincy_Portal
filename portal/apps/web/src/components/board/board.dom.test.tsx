@@ -1924,6 +1924,20 @@ async function act_(callback: () => Promise<void> | void): Promise<void> {
 
 // #432: the column header's count and overdue figure, and the collapsed rail.
 describe("ProjectKanbanBoard2 — column headers and collapse (#432)", () => {
+  /** The class string of the Dashboard header's "N OVERDUE" Badge, rendered by `DashboardHeader` itself. */
+  async function headerOverdueClass(): Promise<string> {
+    const { act } = await import("react");
+    const { DashboardHeader } = await import("../../screens/DashboardHeader");
+    const probe = document.createElement("div");
+    document.body.append(probe);
+    const probeRoot = createRoot(probe);
+    await act(async () => { probeRoot.render(createElement(DashboardHeader, { summary: { text: "x", overdue: 1 } as never, busy: false, canCreateProject: false })); await Promise.resolve(); });
+    const className = probe.querySelector('[data-testid="dashboard-overdue-badge"]')!.className;
+    await act(async () => probeRoot.unmount());
+    probe.remove();
+    return className;
+  }
+
   const NOW = Date.UTC(2026, 8, 10);
   const PAST = NOW - 86_400_000;
   const FUTURE = NOW + 86_400_000;
@@ -1957,13 +1971,28 @@ describe("ProjectKanbanBoard2 — column headers and collapse (#432)", () => {
     expect(first.querySelector('[data-testid="board-column-count"]')?.textContent).toBe("3");
     const overdue = first.querySelector('[data-testid="board-column-overdue"]');
     expect(overdue?.textContent).toBe("2 overdue");
-    expect([...overdue!.classList]).toContain("text-signal-critical");
+    // The Dashboard header's badge: same component and variant, so the two read as one signal.
+    expect(overdue!.className).toBe(await headerOverdueClass());
     const second = column("RAW review")!;
     expect(second.querySelector('[data-testid="board-column-count"]')?.textContent).toBe("2");
     expect(second.querySelector('[data-testid="board-column-overdue"]')?.textContent, "an archived late Project counted as overdue").toBe("1 overdue");
 
     await renderBoard({ projects: [project("ontime", "awaiting_raw", { deadlineAt: FUTURE })], now: NOW });
     expect(column("Awaiting RAW")!.querySelector('[data-testid="board-column-overdue"]')).toBeNull();
+  });
+
+  it("keeps every column header on one line with a truncating label, and a titled full stage name", async () => {
+    await renderBoard({ projects: mixed(), now: NOW });
+    const headers = [...host.querySelectorAll<HTMLElement>('[data-testid="board-column"] [data-focus-key^="stage-heading:"]')];
+    expect(headers.length).toBeGreaterThan(1);
+    for (const header of headers) {
+      const label = header.querySelector<HTMLElement>('[title]');
+      expect(label, "the stage name keeps its full text available on hover").not.toBeNull();
+      const text = label!.querySelector<HTMLElement>(".truncate")!;
+      expect(text, "the stage label truncates rather than wrapping").not.toBeNull();
+      expect([...text.classList]).toContain("whitespace-nowrap");
+      expect(label!.getAttribute("title")).toBe(text.textContent);
+    }
   });
 
   it("column overdue figures sum to the Dashboard header's figure under the same clock", async () => {
@@ -1993,6 +2022,31 @@ describe("ProjectKanbanBoard2 — column headers and collapse (#432)", () => {
     expect(expand.getAttribute("aria-expanded")).toBe("false");
     await act(async () => { expand.click(); await Promise.resolve(); });
     expect(onToggleStageCollapsed).toHaveBeenCalledWith("awaiting_raw");
+  });
+
+  it("keeps keyboard focus on the toggle across a real collapse and expand", async () => {
+    const { act, useState } = await import("react");
+    function Stateful() {
+      const [collapsed, setCollapsed] = useState<NonNullable<ProjectKanbanBoardProps["collapsedStageKeys"]>>([]);
+      return createElement(ProjectKanbanBoard2, baseProps({
+        projects: mixed(),
+        now: NOW,
+        collapsedStageKeys: collapsed,
+        onToggleStageCollapsed: (key: NonNullable<ProjectKanbanBoardProps["collapsedStageKeys"]>[number]) => setCollapsed((current) => (current.includes(key) ? current.filter((entry) => entry !== key) : [...current, key])),
+      }));
+    }
+    await act(async () => { root.render(createElement(Stateful)); await Promise.resolve(); });
+    const collapse = host.querySelector<HTMLButtonElement>('[aria-label="Collapse Awaiting RAW"]')!;
+    collapse.focus();
+    expect(document.activeElement, "anchor: the Collapse button holds focus").toBe(collapse);
+    await act(async () => { collapse.click(); await Promise.resolve(); });
+    const expand = host.querySelector<HTMLButtonElement>('[aria-label="Expand Awaiting RAW"]')!;
+    expect(expand, "anchor: the column collapsed").not.toBeNull();
+    expect(document.activeElement, "focus fell off the unmounted Collapse button").toBe(expand);
+    await act(async () => { expand.click(); await Promise.resolve(); });
+    const collapseAgain = host.querySelector<HTMLButtonElement>('[aria-label="Collapse Awaiting RAW"]')!;
+    expect(collapseAgain, "anchor: the column expanded").not.toBeNull();
+    expect(document.activeElement, "focus fell off the unmounted Expand button").toBe(collapseAgain);
   });
 
   it("drops onto a collapsed rail append to that Stage's end", async () => {

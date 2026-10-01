@@ -1,4 +1,4 @@
-import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { StageKey } from "@quincy/shared";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { ScrollArea as ScrollAreaPrimitive } from "@base-ui/react/scroll-area";
@@ -22,6 +22,7 @@ import type { ProjectStageKey } from "../../lib/stages";
 import { usePrefersReducedMotion } from "../../lib/use-media-query";
 import { ScrollArea, ScrollBar } from "../reui/scroll-area";
 import { Button } from "../reui/button";
+import { Badge } from "../reui/badge";
 import { isOverdueProject } from "../../lib/dashboard-summary";
 import { KanbanCard2 } from "./card";
 import { moveToStageOptions } from "./move-to-control";
@@ -312,6 +313,17 @@ export function ProjectKanbanBoard2({
   // `stopPropagation`, so `InternalLink`'s own handler never sees it either). Armed for the drag,
   // released ~100ms after it ends, because the click lands after pointer-up.
   const boardRef = useRef<HTMLDivElement | null>(null);
+  // Collapse/Expand unmounts the focused button (the rail and the header are different trees), so
+  // focus would fall to <body>. The click records which counterpart should receive it; once the
+  // toggled state has rendered, that button exists and takes focus.
+  const toggleButtons = useRef(new Map<string, HTMLButtonElement>());
+  const pendingToggleFocus = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    const target = pendingToggleFocus.current && toggleButtons.current.get(pendingToggleFocus.current);
+    if (!target) return;
+    pendingToggleFocus.current = null;
+    target.focus({ preventScroll: true });
+  });
   const clickGuardRef = useRef<{ swallow: (event: MouseEvent) => void; timer: number | undefined } | null>(null);
   const disarmClickGuard = useCallback(() => {
     const guard = clickGuardRef.current;
@@ -689,7 +701,8 @@ export function ProjectKanbanBoard2({
                       aria-controls={columnId}
                       data-testid={expanded ? "board-column-collapse" : "board-column-expand"}
                       disabled={dragActive}
-                      onClick={() => onToggleStageCollapsed(stageKey)}
+                      ref={(element) => { if (element) toggleButtons.current.set(`${stageKey}:${expanded}`, element); else toggleButtons.current.delete(`${stageKey}:${expanded}`); }}
+                      onClick={() => { pendingToggleFocus.current = `${stageKey}:${!expanded}`; onToggleStageCollapsed(stageKey); }}
                     >
                       {expanded ? <ChevronLeft aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
                     </Button>
@@ -726,10 +739,12 @@ export function ProjectKanbanBoard2({
                     <KanbanColumn key={stage.key} id={columnId} value={stage.key} disabled className="w-[17.5rem] shrink-0 bg-[var(--paper-050)] min-h-0 min-w-0 border border-[length:var(--border-width-hair)] border-border opacity-100" data-testid="board-column">
                       <div className="flex shrink-0 items-center gap-[var(--space-3)] p-[var(--space-4)] border-b border-b-border bg-[var(--bg-canvas)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${stageKey}`} tabIndex={-1}>
                         <span className="flex-none [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] tabular-nums text-foreground-secondary" aria-hidden="true">{String(stageIndex + 1).padStart(2, "0")}</span>
-                        <StatusBadge stageKey={stage.key} />
-                        <span className="flex-none tabular-nums text-sm text-foreground-secondary" data-testid="board-column-count">{stageProjects.length}</span>
-                        {overdueCount > 0 && <span className="flex-none tabular-nums text-xs text-signal-critical" data-testid="board-column-overdue">{overdueCount} overdue</span>}
-                        <span className="ml-auto flex-none">{toggle("Collapse", true)}</span>
+                        <StatusBadge stageKey={stage.key} className="min-w-0 flex-1" labelClassName="min-w-0 truncate whitespace-nowrap" />
+                        <span className="flex flex-none items-center gap-[var(--space-2)] whitespace-nowrap">
+                          <span className="tabular-nums text-sm text-foreground-secondary" data-testid="board-column-count">{stageProjects.length}</span>
+                          {overdueCount > 0 && <Badge variant="destructive-light" size="sm" data-testid="board-column-overdue">{overdueCount} overdue</Badge>}
+                        </span>
+                        <span className="flex-none">{toggle("Collapse", true)}</span>
                       </div>
                       <ScrollArea className="min-h-0 flex-1">
                         <KanbanColumnContent value={stage.key} className="relative flex flex-col gap-[var(--space-3)] p-[var(--space-3)] min-h-[120px]">
