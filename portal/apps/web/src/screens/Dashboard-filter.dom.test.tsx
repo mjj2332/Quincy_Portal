@@ -11,7 +11,7 @@
 import { act, useLayoutEffect, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { adminProductionGanttResponseSchema, dashboardSearchOf, PRODUCTION_GANTT_ZONE } from "@quincy/shared";
+import { adminProductionGanttResponseSchema, dashboardSearchOf, formatDashboardFilterTree, PRODUCTION_GANTT_ZONE, type DashboardFilterTree } from "@quincy/shared";
 import { Dashboard } from "./Dashboard";
 import { locationStore, parseStaffLocation } from "../lib/router";
 import { confirmStore } from "../lib/confirm";
@@ -493,6 +493,70 @@ describe("Dashboard shared Filter (#428)", () => {
     await click(clear);
     await waitFor(() => expect(url()).toBe(`/?view=${view}`));
     expect(await chipNames()).toEqual([]);
+  });
+
+  describe("filter trees (#461)", () => {
+    const orTree: DashboardFilterTree = {
+      kind: "group", op: "or",
+      children: [{ kind: "leaf", field: "stages", values: ["raw_review"] }, { kind: "leaf", field: "priority", values: ["5"] }],
+    };
+    const treeUrl = (view: string, tree: DashboardFilterTree = orTree) => `/?${new URLSearchParams([["view", view], ...(view === "calendar" ? [["date", "2026-08-12"], ["sub", "month"], ["layers", "project,checklist"]] : []), ["f", formatDashboardFilterTree(tree)]]).toString()}`;
+
+    it("renders a cold f= URL as rows, counts the applied rules in the badge, and requests the tree", async () => {
+      await renderAt(treeUrl("table"));
+      expect(trigger()!.getAttribute("aria-label")).toBe("Filter, 2 rules");
+      expect(await chipNames()).toEqual(["Stage is any of RAW review", "Priority is any of 5 stars"]);
+      expect(lastProjectRequest()).toContain("f=");
+    });
+
+    it("carries the tree to the Calendar's and Timeline's requests", async () => {
+      await renderAt(treeUrl("calendar"));
+      expect(calendarProps.value?.calendar.tree).toEqual(orTree);
+      await renderAt(treeUrl("timeline"));
+      expect(ganttProps.value?.filters.tree).toEqual(orTree);
+    });
+
+    it("an unfinished row changes neither the URL nor the badge", async () => {
+      await renderAt("/?view=table&stages=raw_review");
+      const before = url();
+      await openPicker();
+      await click(option("Priority"));
+      expect(url()).toBe(before);
+      expect(trigger()!.getAttribute("aria-label")).toBe("Filter, 1 rule");
+    });
+
+    it("a flat edit after a tree leaves no stale tree behind (Calendar view)", async () => {
+      await renderAt(treeUrl("calendar"));
+      await openPanel();
+      await click(panel()!.querySelector<HTMLElement>('button[aria-label="Priority filter options"]')!);
+      await waitFor(() => expect([...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent?.trim())).toContain("Remove"));
+      await click([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent?.trim() === "Remove")!);
+      await waitFor(() => expect(url()).not.toContain("f="));
+      expect(url()).toContain("stages=raw_review");
+      expect(calendarProps.value?.calendar.tree).toBeUndefined();
+    });
+
+    it("disables Add filter and Add group at the 20-rule cap", async () => {
+      const leaves = Array.from({ length: 20 }, () => ({ kind: "leaf" as const, field: "mine" as const }));
+      await renderAt(treeUrl("table", { kind: "group", op: "or", children: leaves }));
+      await openPanel();
+      const buttons = [...panel()!.querySelectorAll<HTMLButtonElement>("button")];
+      expect(buttons.find((button) => button.textContent?.trim() === "Add filter")!.disabled).toBe(true);
+      expect(buttons.find((button) => button.textContent?.trim() === "Add group")!.disabled).toBe(true);
+    });
+
+    it("keeps Board moves under a Stage-only OR tree and locks them under any other leaf", async () => {
+      await renderAt(treeUrl("board", { kind: "group", op: "or", children: [{ kind: "leaf", field: "stages", values: ["raw_review"] }, { kind: "leaf", field: "stages", values: ["awaiting_raw"] }] }));
+      expect(boardProps.value?.movementDisabled).toBe(false);
+      await renderAt(treeUrl("board"));
+      expect(boardProps.value?.movementDisabled).toBe(true);
+    });
+
+    it("a Stage rule naming Delivered shows delivered Projects while Display hides them", async () => {
+      // A tree shows them; a flat `stages=delivered` keeps its own empty-state recovery (#270).
+      await renderAt(treeUrl("timeline", { kind: "group", op: "or", children: [{ kind: "leaf", field: "stages", values: ["delivered"] }, { kind: "leaf", field: "priority", values: ["5"] }] }));
+      expect(ganttProps.value?.filters.delivered).toBe(true);
+    });
   });
 });
 
