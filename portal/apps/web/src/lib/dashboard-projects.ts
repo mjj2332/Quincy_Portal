@@ -1,4 +1,4 @@
-import { authorizedBoardRank, canonicalDashboardEditorIds, canonicalDashboardPriorities, canonicalDashboardStages, dashboardFilterArchivedMode, dashboardFilterFingerprint, dashboardProjectsFilterQueryParams, normalizeDashboardFilter, type DashboardFilter, type ExternalProjectSummaryDto, type Role } from "@quincy/shared";
+import { canonicalDashboardEditorIds, canonicalDashboardPriorities, canonicalDashboardStages, dashboardFilterArchivedMode, dashboardFilterFingerprint, dashboardProjectsFilterQueryParams, normalizeDashboardFilter, type DashboardFilter, type ExternalProjectSummaryDto, type Role } from "@quincy/shared";
 import { keepPreviousData, skipToken, useQuery, type Query, type UseQueryResult } from "@tanstack/react-query";
 import { apiGet } from "./api";
 import { externalApiGet, externalProjectSummaryToDashboard } from "./external-api-response";
@@ -10,7 +10,8 @@ export type DashboardProjectSearchCounts = { query: string; matching: number; to
 
 type ProjectsResponse = {
   projects: ProjectSummary[];
-  board?: { contractEnabled: boolean; orderedProjectIdsByStage: Record<string, string[]> };
+  /** `orderedProjectIdsByStage` is deprecated (#475, removed in #476) and never read: the order is derived from the data. */
+  board?: { contractEnabled: boolean; orderedProjectIdsByStage?: Record<string, string[]> };
   search?: DashboardProjectSearchCounts;
 };
 export type DashboardIdentity = { principalId: string; role: Role; authorizationEpoch: number };
@@ -107,6 +108,17 @@ function dashboardProjectsPath(filter: DashboardProjectsKeyFilter, q: string): s
   return qs ? `/api/projects?${qs}` : "/api/projects";
 }
 
+/**
+ * The internal list response as Dashboard summaries. Only `board.contractEnabled` is read from the envelope
+ * (a missing envelope is an old deployed server; an explicit false is the post-migration flag-off state and must
+ * hide Board mutation controls). The deprecated `orderedProjectIdsByStage` is never read: the Board order is
+ * derived from the data (#470, #475).
+ */
+export function mapInternalProjects(response: Pick<ProjectsResponse, "projects" | "board">): ProjectSummary[] {
+  const boardContractEnabled = response.board?.contractEnabled ?? true;
+  return response.projects.map((project) => ({ ...project, boardContractEnabled }));
+}
+
 export function useDashboardProjects(filter: DashboardProjectsKeyFilter, identity: DashboardIdentity = { principalId: "anonymous", role: "photographer", authorizationEpoch: 0 }, q: string = ""): UseQueryResult<ProjectSummary[], Error> {
   const { principalId, role, authorizationEpoch } = identity;
   const external = role === "external_editor";
@@ -120,28 +132,18 @@ export function useDashboardProjects(filter: DashboardProjectsKeyFilter, identit
       if (external) {
         const response = await externalApiGet("project-list", dashboardProjectsPath(filter, q), signal) as {
           projects: ExternalProjectSummaryDto[];
-          board: { contractEnabled: boolean; orderedProjectIdsByStage: Record<string, string[]> };
+          board: { contractEnabled: boolean };
           search?: DashboardProjectSearchCounts;
         };
         client.setQueryData(searchKey, response.search ?? null);
         return response.projects.map((project) => externalProjectSummaryToDashboard(
           project,
-          response.board.orderedProjectIdsByStage,
           response.board.contractEnabled,
         )).filter((project) => !runtime?.isProjectRemoved(project.id)) as ProjectSummary[];
       }
       const response = await apiGet<ProjectsResponse>(dashboardProjectsPath(filter, q), { signal });
       client.setQueryData(searchKey, response.search ?? null);
-      const board = response.board;
-      return response.projects.map((project) => ({
-        ...project,
-        boardRank: board ? authorizedBoardRank(project.id, project.stageKey, board.orderedProjectIdsByStage) : undefined,
-        boardMapPresent: Boolean(board && Object.keys(board.orderedProjectIdsByStage).length > 0),
-        authorizedBoardOrder: board?.orderedProjectIdsByStage,
-        // A missing board envelope is an old deployed server; an explicit false is the
-        // post-migration flag-off state and must hide Board mutation controls.
-        boardContractEnabled: board?.contractEnabled ?? true,
-      })).filter((project) => !runtime?.isProjectRemoved(project.id));
+      return mapInternalProjects(response).filter((project) => !runtime?.isProjectRemoved(project.id));
     },
     staleTime: 15_000,
     refetchInterval: 30_000,

@@ -1,6 +1,5 @@
 import {
   STAGE_KEYS,
-  authorizedBoardRank,
   compareBoardCards,
   parseStageTransportKey,
   stageMoveConfirmationReasons,
@@ -38,14 +37,6 @@ export interface ProjectSummary {
    * shown but never moved, reordered or re-prioritised.
    */
   archivedAt?: string | null;
-  /** Legacy wire field retained for compatibility; Board rendering never reads it. */
-  boardPosition?: number;
-  /** The one authorized Board projection carried through the web adapter for interactions. */
-  authorizedBoardOrder?: Record<string, string[]>;
-  /** Private, non-wire rendering rank derived from the authorized Board ID map. */
-  boardRank?: number;
-  /** Private marker: Board ordering is authoritative even when this card's ID is absent. */
-  boardMapPresent?: boolean;
   boardContractEnabled?: boolean;
   boardRevision: number;
   deadlineAt: number | null;
@@ -82,7 +73,6 @@ export type FocusDescriptor = {
 /** The accepted Board snapshot. Optional metadata is pure model state, never query-cache state. */
 export type BoardModel = {
   projects: ProjectSummary[];
-  authorizedBoardOrder?: Record<string, string[]>;
   provisionalSourceStageKey?: StageKey;
 };
 
@@ -172,52 +162,6 @@ export function boardLandingSlot(
   };
 }
 
-function cloneOrders(orders: Record<string, readonly string[]>): Record<string, string[]> {
-  return Object.fromEntries(Object.entries(orders).map(([stageKey, ids]) => [stageKey, [...ids]]));
-}
-
-function canonicalOrders(orders: Record<string, readonly string[]>): Record<string, string[]> {
-  const result: Record<string, string[]> = {};
-  for (const [stageKey, ids] of Object.entries(orders)) {
-    const canonical = canonicalStageKey(stageKey);
-    if (canonical) result[canonical] = [...ids];
-  }
-  return result;
-}
-
-function modelOrders(model: BoardModel): Record<string, string[]> {
-  const fromModel = model.authorizedBoardOrder
-    ?? model.projects.find((project) => project.authorizedBoardOrder !== undefined)?.authorizedBoardOrder;
-  const orders = fromModel ? canonicalOrders(fromModel) : {};
-  // A complete authorized map normally contains every visible Stage. Keeping a defensive
-  // visible fallback makes the settled map useful for fixtures and pre-contract snapshots.
-  for (const project of model.projects) {
-    const stageKey = projectStageKey(project);
-    if (!stageKey || orders[stageKey]) continue;
-    orders[stageKey] = model.projects
-      .filter((candidate) => projectStageKey(candidate) === stageKey)
-      .map((candidate) => candidate.id);
-  }
-  return orders;
-}
-
-function attachOrders(model: BoardModel, orders: Record<string, string[]>): BoardModel {
-  const attachedOrders = cloneOrders(orders);
-  const hadMap = model.authorizedBoardOrder !== undefined
-    || model.projects.some((project) => project.authorizedBoardOrder !== undefined);
-  const projects = model.projects.map((project) => {
-    const stageKey = projectStageKey(project);
-    const rank = stageKey ? authorizedBoardRank(project.id, stageKey, attachedOrders) : undefined;
-    return {
-      ...project,
-      authorizedBoardOrder: cloneOrders(attachedOrders),
-      boardRank: rank,
-      boardMapPresent: hadMap || Object.keys(attachedOrders).length > 0,
-    };
-  });
-  return { ...model, projects, authorizedBoardOrder: attachedOrders };
-}
-
 /**
  * The request for a Stage move: always an append (#470). The Board is sorted by data, so a move
  * names a Stage and nothing else; the server accepts any placement but plans an append regardless.
@@ -288,34 +232,26 @@ export function reconcileAuthoritativeResponse(
 ): { model: BoardModel; sourceProvisional: boolean } {
   const moving = baseline.projects.find((project) => project.id === movingProjectId);
   if (!moving || response.project.projectId !== movingProjectId) return { model: rollbackToBaseline(baseline), sourceProvisional: false };
-  const orders = modelOrders(baseline);
   const sourceStage = canonicalStageKey(response.board.sourceStageKey) ?? projectStageKey(moving);
   const targetStage = canonicalStageKey(response.board.targetStageKey);
   if (!sourceStage || !targetStage) return { model: rollbackToBaseline(baseline), sourceProvisional: false };
-  orders[targetStage] = [...response.board.orderedVisibleProjectIds];
   const sourceProvisional = sourceStage !== targetStage;
-  if (sourceProvisional) orders[sourceStage] = (orders[sourceStage] ?? []).filter((projectId) => projectId !== movingProjectId);
   const responseStage = response.project.stageKey;
   const nextProjects = baseline.projects.map((project) => project.id === movingProjectId
     ? { ...project, stageKey: responseStage, boardRevision: response.project.boardRevision }
     : { ...project });
-  const model = attachOrders({
+  // The column order is derived from the data (`sortKanbanProjects`) at render; the response's deprecated
+  // `orderedVisibleProjectIds` is never read (#475).
+  const model: BoardModel = {
     ...baseline,
     projects: nextProjects,
     provisionalSourceStageKey: sourceProvisional ? sourceStage : undefined,
-  }, orders);
+  };
   return { model, sourceProvisional };
 }
 
 export function rollbackToBaseline(baseline: MovementBaseline): BoardModel {
-  return {
-    ...baseline,
-    projects: baseline.projects.map((project) => ({
-      ...project,
-      ...(project.authorizedBoardOrder ? { authorizedBoardOrder: cloneOrders(project.authorizedBoardOrder) } : {}),
-    })),
-    ...(baseline.authorizedBoardOrder ? { authorizedBoardOrder: cloneOrders(baseline.authorizedBoardOrder) } : {}),
-  };
+  return { ...baseline, projects: baseline.projects.map((project) => ({ ...project })) };
 }
 
 function normalizeStageTransport(value: unknown, role: Role): StageKey | null {

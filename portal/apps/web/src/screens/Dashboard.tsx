@@ -154,8 +154,7 @@ function canonicalStageKey(stageKey: ProjectSummary["stageKey"]): StageKey {
 }
 
 function boardModelFromProjects(projects: ProjectSummary[]): BoardModel {
-  const authorizedBoardOrder = projects.find((project) => project.authorizedBoardOrder !== undefined)?.authorizedBoardOrder;
-  return authorizedBoardOrder ? { projects: [...projects], authorizedBoardOrder } : { projects: [...projects] };
+  return { projects: [...projects] };
 }
 
 type DashboardProps = { currentUserId: string; role?: Parameters<typeof dashboardProjectsKey>[1]; authorizationEpoch?: number; calendar?: DashboardCalendarState | null;
@@ -500,7 +499,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // while a move is pending.
   const projects = useMemo(() => applyPriorityOverlay(baseProjects, priorityOverlay), [baseProjects, priorityOverlay]);
   const boardContractEnabled = projects.some((project) => project.boardContractEnabled === true);
-  const hasAuthorizedBoardMap = projects.some((project) => project.boardMapPresent === true || project.boardRank !== undefined || project.authorizedBoardOrder?.[project.stageKey] !== undefined);
   const boardContractDisabled = projects.some((project) => project.boardContractEnabled === false);
   const boardUnavailableMessage = recoveryReason ?? boardUnavailableReason ?? (boardContractDisabled ? "Board interactions are temporarily unavailable while the Board contract is disabled." : null);
   const boardMutationEnabled = boardContractEnabled && !boardUnavailableMessage;
@@ -1768,7 +1766,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
             role={role}
             groupBy={tablePrefs.groupBy}
             hiddenColumns={tablePrefs.hiddenColumns}
-            canPrioritize={canPrioritize && hasAuthorizedBoardMap}
+            canPrioritize={canPrioritize}
             pendingOrdering={pendingOrdering}
             terminal={Boolean(queryRuntime?.principalTerminal || projects.some((project) => queryRuntime?.isProjectRemoved(project.id)))}
             onPriorityChange={setProjectPriority}
@@ -1781,7 +1779,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
             projects={projects}
             activeStages={boardStages}
             canMoveStages={canMoveStages}
-            canPrioritize={canPrioritize && hasAuthorizedBoardMap}
+            canPrioritize={canPrioritize}
             role={role}
             boardMutationEnabled={boardMutationEnabled}
             movementDisabled={movementSettlePending || !boardMutationEnabled || boardNarrowed}

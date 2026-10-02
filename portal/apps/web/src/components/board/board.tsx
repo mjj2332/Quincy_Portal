@@ -241,10 +241,7 @@ export function ProjectKanbanBoard2({
   // flag, and the shipped contract is that Priority stays editable while movement is off. Gating
   // it on that flag was this Board's own regression (#98).
   //
-  // The Dashboard already folds the identical map-evidence check into the `canPrioritize` prop at
-  // both render sites; this Board re-evaluates it itself because, since #83's cutover, it is the
-  // only Board and the only place this guarantee is enforced — it must not depend on a caller
-  // getting its own prop right.
+  // Priority no longer depends on any server order map (#475): the order is derived from the data.
   //
   // `pendingOrdering` is NOT folded in here. `PriorityStars` already disables its own commits and
   // sets `aria-busy` while a write is pending, and removing a control the user has focused
@@ -253,10 +250,7 @@ export function ProjectKanbanBoard2({
   //
   // A non-editable viewer still *sees* a set priority (read-only), and sees nothing at all where
   // none is set; `PriorityStars` owns that split.
-  const hasAuthorizedBoardMap = projects.some(
-    (item) => item.boardMapPresent === true || item.boardRank !== undefined || item.authorizedBoardOrder?.[item.stageKey] !== undefined,
-  );
-  const priorityEditable = canPrioritize && hasAuthorizedBoardMap && !terminal;
+  const priorityEditable = canPrioritize && !terminal;
 
   // `restoreFocus: false` (below) hands focus back to us, so the Board keeps a handle registry and
   // refocuses the card the user was carrying. dnd-kit's own `RestoreFocus` only ever fired for

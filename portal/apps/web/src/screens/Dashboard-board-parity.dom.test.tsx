@@ -69,7 +69,7 @@ function projectFixture(id: string, overrides: Record<string, unknown> = {}) {
   return {
     id, street: `${id} Street`, suburb: null, postcode: null, agencyName: null, agentName: null,
     stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null,
-    priority: null, boardPosition: 0, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null,
+    priority: null, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null,
     boardRevision: 0,
     ...overrides,
   };
@@ -120,8 +120,9 @@ describe("Dashboard Board seam (#98)", () => {
     function flagOffProjects() {
       apiGetMock.mockReset();
       apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
-        projects: [projectFixture("kb2-flag-off", { priority: 1, boardMapPresent: true })],
-        board: { contractEnabled: false, orderedProjectIdsByStage: { awaiting_raw: ["kb2-flag-off"] } },
+        // No `orderedProjectIdsByStage`: the Dashboard no longer reads it (#475), so its absence is ordinary.
+        projects: [projectFixture("kb2-flag-off", { priority: 1 })],
+        board: { contractEnabled: false },
       }) : Promise.resolve({ stages: [] }));
     }
 
@@ -140,13 +141,6 @@ describe("Dashboard Board seam (#98)", () => {
       // The write itself, not merely the presence of a control.
       expect(apiPostMock).toHaveBeenCalledWith("/api/projects/kb2-flag-off/priority", { priority: 3 });
     });
-
-    // The missing-board-map case is NOT testable from this seam, and that is a finding, not a
-    // gap: `lib/dashboard-projects.ts:48-50` derives `boardRank`, `boardMapPresent` and
-    // `authorizedBoardOrder` from the payload's `orderedProjectIdsByStage`, and without that key
-    // the Board does not render at all. So any Dashboard state in which this Board is on screen
-    // already carries map evidence. The Board-level predicate is covered in
-    // `components/board/board.dom.test.tsx`, where props are passed directly.
   });
 
   // The confirmation round trip. Every cross-Stage move on real data answers `409`
@@ -161,8 +155,8 @@ describe("Dashboard Board seam (#98)", () => {
       apiGetMock.mockReset();
       apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
         projects: [
-          projectFixture("kb2-source", { boardMapPresent: true }),
-          projectFixture("kb2-target", { stageKey: "raw_review", boardPosition: 1, boardMapPresent: true }),
+          projectFixture("kb2-source", {}),
+          projectFixture("kb2-target", { stageKey: "raw_review", boardPosition: 1 }),
         ],
         board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-source"], raw_review: ["kb2-target"] } },
       }) : Promise.resolve({ stages: [] }));
@@ -214,10 +208,10 @@ describe("Dashboard Board seam (#98)", () => {
       apiGetMock.mockReset();
       apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
         projects: [
-          projectFixture("kb2-source", { boardMapPresent: true }),
-          projectFixture("kb2-t1", { stageKey: "raw_review", boardRevision: 3, boardMapPresent: true }),
-          projectFixture("kb2-t2", { stageKey: "raw_review", boardRevision: 5, boardMapPresent: true }),
-          projectFixture("kb2-t3", { stageKey: "raw_review", boardRevision: 7, boardMapPresent: true }),
+          projectFixture("kb2-source", {}),
+          projectFixture("kb2-t1", { stageKey: "raw_review", boardRevision: 3 }),
+          projectFixture("kb2-t2", { stageKey: "raw_review", boardRevision: 5 }),
+          projectFixture("kb2-t3", { stageKey: "raw_review", boardRevision: 7 }),
         ],
         board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-source"], raw_review: ["kb2-t1", "kb2-t2", "kb2-t3"] } },
       }) : Promise.resolve({ stages: [] }));
@@ -244,9 +238,9 @@ describe("Dashboard Board seam (#98)", () => {
       apiGetMock.mockReset();
       apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
         projects: [
-          projectFixture("kb2-a", { boardRevision: 2, boardMapPresent: true }),
-          projectFixture("kb2-b", { boardRevision: 4, boardMapPresent: true }),
-          projectFixture("kb2-c", { boardRevision: 6, boardMapPresent: true }),
+          projectFixture("kb2-a", { boardRevision: 2 }),
+          projectFixture("kb2-b", { boardRevision: 4 }),
+          projectFixture("kb2-c", { boardRevision: 6 }),
         ],
         board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-a", "kb2-b", "kb2-c"] } },
       }) : Promise.resolve({ stages: [] }));
@@ -268,8 +262,8 @@ describe("Dashboard Board seam (#98)", () => {
   describe("Move to submenu", () => {
     const twoStages = () => ({
       projects: [
-        projectFixture("kb2-source", { boardMapPresent: true }),
-        projectFixture("kb2-target", { stageKey: "raw_review", boardRevision: 5, boardMapPresent: true }),
+        projectFixture("kb2-source", {}),
+        projectFixture("kb2-target", { stageKey: "raw_review", boardRevision: 5 }),
       ],
       board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-source"], raw_review: ["kb2-target"] } },
     });
@@ -380,8 +374,8 @@ describe("Dashboard Board seam (#98)", () => {
       apiGetMock.mockReset();
       apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
         projects: [
-          projectFixture("kb2-source", { boardMapPresent: true }),
-          projectFixture("kb2-target", { stageKey: "raw_review", boardPosition: 1, boardMapPresent: true }),
+          projectFixture("kb2-source", {}),
+          projectFixture("kb2-target", { stageKey: "raw_review", boardPosition: 1 }),
         ],
         board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-source"], raw_review: ["kb2-target"] } },
       }) : Promise.resolve({ stages: [] }));
@@ -450,7 +444,7 @@ describe("Dashboard Board seam (#98)", () => {
       if (path !== "/api/projects") return Promise.resolve({ stages: [] });
       reads += 1;
       return Promise.resolve({
-        projects: [{ ...projectFixture("kb2-source", { boardMapPresent: true }), street: reads === 1 ? "kb2-source Street" : "Fresh Street" }],
+        projects: [{ ...projectFixture("kb2-source", {}), street: reads === 1 ? "kb2-source Street" : "Fresh Street" }],
         board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-source"] } },
       });
     });
@@ -503,8 +497,8 @@ describe("Dashboard Board seam (#98)", () => {
       apiGetMock.mockReset();
       apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
         projects: [
-          projectFixture("kb2-source", { boardMapPresent: true }),
-          projectFixture("kb2-target", { stageKey: "raw_review", boardPosition: 1, boardMapPresent: true }),
+          projectFixture("kb2-source", {}),
+          projectFixture("kb2-target", { stageKey: "raw_review", boardPosition: 1 }),
         ],
         board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-source"], raw_review: ["kb2-target"] } },
       }) : Promise.resolve({ stages: [] }));
@@ -554,7 +548,7 @@ describe("Dashboard Board seam (#98)", () => {
     it("speaks the same specific reason a silenced error toast shows", async () => {
       apiGetMock.mockReset();
       apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
-        projects: [projectFixture("kb2-prio", { priority: 1, boardMapPresent: true })],
+        projects: [projectFixture("kb2-prio", { priority: 1 })],
         board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-prio"] } },
       }) : Promise.resolve({ stages: [] }));
       apiPostMock.mockReset().mockRejectedValue(new Error("Priority is locked for this project."));
