@@ -444,7 +444,7 @@ function GanttChildLoadErrorBadge({ onRetry }: { onRetry: () => void }) {
  */
 /**
  * #372: a Subtask row's assignee cell: the row itself (overlaid with any newer adopted assignees) and its Project.
- * Only rows the chart draws from `displayProjects` get one, so a pinned created row (display-only) has none.
+ * Only rows the chart draws from `displayProjects` get one, so a pinned created row (display-only) gets Open project only (#463, `findTaskTarget`).
  */
 type GanttAssigneeCell = { projectId: string; row: GanttChecklistRowDto };
 
@@ -1688,6 +1688,17 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // controlled host anchored to it (`scheduling-item-menu.tsx`), never the vendor's `renderEventMenu`.
   // Edit schedule… opens the controller's SHEET at every width (not the inline Due popover).
   // ---------------------------------------------------------------------------------------------
+  // A drawn checklist row, or a #344 pinned created row the refetch has not returned yet (read-only, so
+  // only Open project is offered on it; `ganttChecklistSource` / its permissions veto the rest).
+  const findTaskTarget = (taskId: string): { project: (typeof displayProjects)[number]; row: (typeof displayProjects)[number]["children"]["rows"][number] } | null => {
+    for (const project of displayProjects) {
+      const row = project.children.rows.find((candidate) => candidate.id === taskId);
+      if (row) return { project, row };
+    }
+    const pin = pins.find((candidate) => candidate.row.id === taskId && candidate.generationKey === generationKey);
+    const project = pin ? projectById.get(pin.row.projectId) : undefined;
+    return pin && project ? { project, row: pin.row } : null;
+  };
   const describeItem = (key: string): SchedulingMenuContent | null => {
     if (key.startsWith("project-bar:")) {
       const project = projectById.get(key.slice("project-bar:".length));
@@ -1704,21 +1715,19 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
       };
     }
     if (key.startsWith("task:")) {
-      const taskId = key.slice("task:".length);
-      for (const project of displayProjects) {
-        const row = project.children.rows.find((candidate) => candidate.id === taskId);
-        if (!row) continue;
-        return {
-          label: `${row.title} · ${project.street}`,
-          actions: schedulingItemActions({
-            kind: "checklist",
-            canOpenProject: onOpenProject !== undefined,
-            canReschedule: false,
-            canEditSchedule: row.permissions.canOpenScheduleEditor && ganttChecklistSource(project, row) !== null,
-            live,
-          }),
-        };
-      }
+      const target = findTaskTarget(key.slice("task:".length));
+      if (!target) return null;
+      const { project, row } = target;
+      return {
+        label: `${row.title} · ${project.street}`,
+        actions: schedulingItemActions({
+          kind: "checklist",
+          canOpenProject: onOpenProject !== undefined,
+          canReschedule: false,
+          canEditSchedule: row.permissions.canOpenScheduleEditor && ganttChecklistSource(project, row) !== null,
+          live,
+        }),
+      };
     }
     return null;
   };
@@ -1734,14 +1743,10 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
       else if (id === "reschedule") { const event = ganttDeadlineEvent(project); if (event) commands.openMoveDialog(event); }
       return;
     }
-    const taskId = key.slice("task:".length);
-    for (const project of displayProjects) {
-      const row = project.children.rows.find((candidate) => candidate.id === taskId);
-      if (!row) continue;
-      if (id === "open-project") onOpenProject?.(project.id);
-      else if (id === "edit-schedule") { const source = ganttChecklistSource(project, row); if (source) commands.openChecklistScheduleEditor(source); }
-      return;
-    }
+    const target = findTaskTarget(key.slice("task:".length));
+    if (!target) return;
+    if (id === "open-project") onOpenProject?.(target.project.id);
+    else if (id === "edit-schedule") { const source = ganttChecklistSource(target.project, target.row); if (source) commands.openChecklistScheduleEditor(source); }
   };
   const itemMenu = useSchedulingItemMenu({
     describe: describeItem,
