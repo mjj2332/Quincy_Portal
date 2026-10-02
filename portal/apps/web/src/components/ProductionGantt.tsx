@@ -195,6 +195,7 @@ import {
 } from "../lib/production-gantt-query";
 import {
   ganttLandingProject,
+  resolveCivilDayStart,
   type ProductionGanttAttention,
   type ProductionGanttAttentionReason,
   type ProductionGanttModel,
@@ -226,6 +227,20 @@ import { StageSwatch } from "./quincy/StageSwatch";
 import { SubtaskAssigneePicker, type AssigneePickerBaseline } from "./quincy/SubtaskAssigneePicker";
 import { type RetainedSchedule } from "./quincy/SubtaskScheduleControl";
 import { Skeleton } from "./reui/skeleton";
+
+/** #464: the Project Show in Timeline asks the Gantt to land on. `token` is the Dashboard's one-shot request id. */
+export type ProductionGanttFocus = { projectId: string; token: number };
+
+/** #464: what became of a focus request. Reported once per token through `onFocusSettled`. */
+export type ProductionGanttFocusOutcome =
+  | { kind: "found"; street: string }
+  /** The walk completed and the Project is not among the rows these filters draw. */
+  | { kind: "hidden" }
+  /** The Project is past the draw cap (or the cap stopped the walk before it appeared). */
+  | { kind: "too-many" }
+  | { kind: "error" }
+  /** A user filter change superseded the request mid-walk. */
+  | { kind: "cancelled" };
 
 export type ProductionGanttProps = {
   identity: DashboardIdentity;
@@ -263,6 +278,9 @@ export type ProductionGanttProps = {
    */
   projectHrefFor?: (projectId: string) => string;
   onOpenProject?: (projectId: string) => void;
+  /** #464: land on this Project (expand, scroll, highlight, focus its row link) and report the outcome. */
+  focus?: ProductionGanttFocus | null;
+  onFocusSettled?: (token: number, outcome: ProductionGanttFocusOutcome) => void;
 };
 
 const GANTT_TIME_ZONE = "Australia/Sydney";
@@ -298,6 +316,7 @@ const NEAR_BOTTOM_THRESHOLD_PX = 240;
 const COARSE_TAP_TARGET = "pointer-coarse:min-w-[44px] pointer-coarse:min-h-[44px] max-[720px]:min-w-[44px]";
 
 const NO_LOADED_PROJECTS: readonly GanttProjectRowDto[] = [];
+const NO_SELECTED_ROWS: string[] = [];
 
 /**
  * #415: scroll the Gantt so the given Project row sits directly under the sticky timeline header.
@@ -814,7 +833,7 @@ function GestureAwareCell({ live, children }: { live: boolean; children: (disabl
   return <>{children(!live || gestureActive)}</>;
 }
 
-export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersChange, focusFilterTrigger, focusDisplayTrigger, onAcceptGateChange, onSettleStateChange, onAccessLoss, onShownProjectsChange, projectHrefFor, onOpenProject }: ProductionGanttProps) {
+export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersChange, focusFilterTrigger, focusDisplayTrigger, onAcceptGateChange, onSettleStateChange, onAccessLoss, onShownProjectsChange, projectHrefFor, onOpenProject, focus = null, onFocusSettled }: ProductionGanttProps) {
   const { stages } = useStages();
   // Role-derived (the same `identity` the request is authorised as), not a second session read.
   const canAdminBackend = roleHasCapability(identity.role, "adminBackend");
@@ -1610,10 +1629,21 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // not scroll), and so does a filter change (a new result never lands); while the viewport is
   // unmeasured the ResizeObserver only retries once the pane reports a height, because it notifies
   // once on `observe` and a zero-height pane would otherwise loop.
-  const landingRequestRef = useRef<"open" | "today" | null>("open");
+  type LandingRequest = "open" | "today" | { kind: "focus"; projectId: string; token: number };
+  const landingRequestRef = useRef<LandingRequest | null>(focus ? { kind: "focus", projectId: focus.projectId, token: focus.token } : "open");
   const [landingTick, setLandingTick] = useState(0);
+  // #464: the vendor's tree expand/collapse and row selection, controlled so the landing can expand
+  // the target row and tint it. `[]` / `[]` is exactly the vendor's own uncontrolled default
+  // (`rowCheckboxes` stays false, so nothing else selects a row).
+  const [collapsedGroups, setCollapsedGroups] = useState<string[]>([]);
+  const [highlightedRowId, setHighlightedRowId] = useState<string | null>(null);
+  const focusRef = useRef(focus);
+  focusRef.current = focus;
+  const onFocusSettledRef = useRef(onFocusSettled);
+  onFocusSettledRef.current = onFocusSettled;
   const armLanding = useCallback(() => {
     landingRequestRef.current = "today";
+    setHighlightedRowId(null);
     setLandingTick((tick) => tick + 1);
   }, []);
   const loadedProjects = query.data?.projects ?? NO_LOADED_PROJECTS;
@@ -1623,29 +1653,112 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   useLayoutEffect(() => {
     if (landingGenerationRef.current === generationKey) return;
     landingGenerationRef.current = generationKey;
+    const cancelled = landingRequestRef.current;
     landingRequestRef.current = null;
+    setHighlightedRowId(null);
+    // The filters changed under a focus request that is still walking (the Dashboard keeps passing
+    // the same request until it hears back): the user's change wins, and the Dashboard is told. A
+    // Show in that changes the filters carries a NEW token instead, which the effect below arms in
+    // this same commit, so there is nothing to report for the request it replaced.
+    if (cancelled !== null && typeof cancelled === "object" && focusRef.current?.token === cancelled.token) {
+      onFocusSettledRef.current?.(cancelled.token, { kind: "cancelled" });
+    }
   }, [generationKey]);
+  // #464: arm a focus request. Declared AFTER the generation reset above on purpose: when Show in
+  // broadens a filter (Delivered, Archived) the generation changes in the very commit that carries
+  // the new token, the reset clears the request, and this effect then arms the new one.
+  const focusToken = focus?.token ?? null;
+  useLayoutEffect(() => {
+    const request = focusRef.current;
+    if (!request) return;
+    const current = landingRequestRef.current;
+    if (typeof current === "object" && current !== null && current.token === request.token) return;
+    landingRequestRef.current = { kind: "focus", projectId: request.projectId, token: request.token };
+    setLandingTick((tick) => tick + 1);
+  }, [focusToken]);
   useLayoutEffect(() => {
     const request = landingRequestRef.current;
     const container = containerRef.current;
-    if (request === null || !container || queryPending || queryErrored) return;
+    if (request === null) return;
+    const focusRequest = typeof request === "object" ? request : null;
+    const settle = (outcome: ProductionGanttFocusOutcome) => {
+      landingRequestRef.current = null;
+      if (focusRequest) onFocusSettledRef.current?.(focusRequest.token, outcome);
+    };
+    if (focusRequest && queryErrored && !queryPending) {
+      settle({ kind: "error" });
+      return;
+    }
+    if (!container || queryPending || queryErrored) return;
     // The chart draws the controller's accepted rows, which can trail the loaded pages by a commit:
     // deciding on a stale prefix would pair a `complete` flag with rows the next page has yet to join.
     const displayedIds = new Set(displayProjects.map((project) => project.id));
     if (loadedProjects.some((project) => !displayedIds.has(project.id))) return;
     const drawn = displayProjects.filter((project) => baseModel.includedProjectIds.has(project.id));
+    const loadNextPage = () => {
+      if (fetchingNextPageRef.current) return;
+      fetchingNextPageRef.current = true;
+      void fetchNextPage().finally(() => {
+        fetchingNextPageRef.current = false;
+      });
+    };
+
+    if (focusRequest) {
+      const rowId = `project:${focusRequest.projectId}`;
+      const target = drawn.find((project) => project.id === focusRequest.projectId);
+      if (!target) {
+        // Loaded but not drawn: past the draw cap. Not loaded: keep walking pages through the same
+        // latch as scroll-paging until the walk is complete (or the cap stops it).
+        if (displayProjects.some((project) => project.id === focusRequest.projectId)) { settle({ kind: "too-many" }); return; }
+        if (tooManyToDraw) { settle({ kind: "too-many" }); return; }
+        if (hasNextPage) { loadNextPage(); return; }
+        settle({ kind: "hidden" });
+        return;
+      }
+      // One step per pass: expand first (the next pass scrolls once the rows have re-rendered).
+      if (collapsedGroups.includes(rowId)) {
+        setCollapsedGroups((current) => current.filter((id) => id !== rowId));
+        setLandingTick((tick) => tick + 1);
+        return;
+      }
+      const result = scrollGanttRowToTop(container, rowId);
+      if (result === "done") {
+        const anchor = target.deadline ? new Date(target.deadline.at) : (() => {
+          const resolved = target.shootDateCivil ? resolveCivilDayStart(target.shootDateCivil) : null;
+          return resolved?.ok ? resolved.date : new Date(target.createdAt);
+        })();
+        if (!Number.isNaN(anchor.getTime())) setDate(anchor);
+        setHighlightedRowId(rowId);
+        // The row link lives in the tree pane; `preventScroll` because the landing owns the scroll.
+        const link = Array.from(container.querySelectorAll<HTMLElement>("[data-gantt-row-id]"))
+          .find((row) => row.getAttribute("data-gantt-row-id") === rowId && row.querySelector('[data-testid="gantt-project-link"]'))
+          ?.querySelector<HTMLElement>('[data-testid="gantt-project-link"]');
+        link?.focus({ preventScroll: true });
+        settle({ kind: "found", street: target.street });
+        return;
+      }
+      if (result === "unmeasured") {
+        const timeline = container.querySelector<HTMLElement>('[data-slot="gantt-timeline-pane"] [data-slot="scroll-area-viewport"]');
+        if (timeline && typeof ResizeObserver !== "undefined") {
+          const observer = new ResizeObserver(() => {
+            if (timeline.clientHeight <= 0) return;
+            observer.disconnect();
+            setLandingTick((tick) => tick + 1);
+          });
+          observer.observe(timeline);
+          return () => observer.disconnect();
+        }
+      }
+      return;
+    }
+
     const landing = ganttLandingProject(drawn, new Date(), { complete: !hasNextPage || tooManyToDraw });
     if (landing.status === "empty") {
       landingRequestRef.current = null;
       return;
     }
     if (landing.status === "undecided") {
-      if (!fetchingNextPageRef.current) {
-        fetchingNextPageRef.current = true;
-        void fetchNextPage().finally(() => {
-          fetchingNextPageRef.current = false;
-        });
-      }
+      loadNextPage();
       return;
     }
     const timeline = container.querySelector<HTMLElement>('[data-slot="gantt-timeline-pane"] [data-slot="scroll-area-viewport"]');
@@ -1668,7 +1781,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
       observer.observe(timeline);
       return () => observer.disconnect();
     }
-  }, [displayProjects, loadedProjects, baseModel, hasNextPage, tooManyToDraw, fetchNextPage, landingTick, queryPending, queryErrored]);
+  }, [displayProjects, loadedProjects, baseModel, hasNextPage, tooManyToDraw, fetchNextPage, landingTick, queryPending, queryErrored, collapsedGroups]);
 
   const [date, setDate] = useState<Date>(() => new Date());
   const [scale, setScale] = useState<GanttScale>("month");
@@ -1915,6 +2028,9 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             dependencyLines={false}
             scheduleMode="single"
             rowCheckboxes={false}
+            collapsedGroups={collapsedGroups}
+            onCollapsedGroupsChange={setCollapsedGroups}
+            selectedRows={highlightedRowId ? [highlightedRowId] : NO_SELECTED_ROWS}
             barLabel="auto"
             displayScheduleHint
             displayCreateTaskHint={false}
