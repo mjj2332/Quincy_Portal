@@ -94,6 +94,11 @@ The Dashboard view that groups Projects into columns by Stage. One column per St
 called Kanban until the Dashboard took its Table / Board / Calendar / Timeline tabs; as when
 #109 settled "Kanban", the glossary follows the word on the screen. Board order and Board
 position already used this word.
+
+Since #470 a column's order is derived, never stored or hand-arranged: Priority 5 down to 1 then
+unset, then the oldest Shoot date (missing last), then street and id. Dragging a card to another
+column, or Move to in its menu, changes its Stage only, and the card lands where that rule puts it.
+A drop inside its own column is refused.
 _Avoid_: Kanban, dashboard, pipeline view
 
 **Timeline**:

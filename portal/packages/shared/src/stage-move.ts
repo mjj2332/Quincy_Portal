@@ -224,8 +224,3 @@ export const stageConfirmationRequiredResponseSchema = z.object({
   current: stageMoveProjectStateSchema,
 }).strict();
 
-export type ProjectBoardReorderForbiddenResponse = {
-  error: "Forbidden: manual Board reorder requires prioritizeProjects.";
-  code: "project_board_reorder_forbidden";
-  capability: "prioritizeProjects";
-};

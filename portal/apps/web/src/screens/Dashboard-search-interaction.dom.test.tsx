@@ -44,7 +44,7 @@ function ClientCapture({ onClient }: { onClient: (client: QueryClient) => void }
  * `interactionBlocked` restores the accept path for a searched result the same way an unsearched
  * load already worked -- but it also removes the incidental Board-movement blocking that flag used
  * to provide while searching. Item 2 restores that gating explicitly: `canMoveStages` /
- * `sameStageReorderEnabled` / `movementDisabled` now carry `searchActive` themselves, and
+ * `movementDisabled` now carry `searchActive` themselves, and
  * `runBoardMovement`'s own guard refuses as a last line of defence.
  */
 
@@ -221,9 +221,9 @@ describe("Dashboard search results and Kanban movement gating (#217 fix round 1,
     // The mocked DndContext handler is invoked directly, bypassing whatever visual/pointer-level
     // affordance would normally stop a drag from starting -- this is deliberately the strictest
     // check available in this harness for "last line of defence, not just UI disabled".
-    await dndStart("before");
-    await dndOver("before", "target");
-    await dndEnd("before", "target");
+    await dndStart("source");
+    await dndOver("source", "target");
+    await dndEnd("source", "target");
     await flush();
     expect(apiPostMock).not.toHaveBeenCalled();
   });
@@ -273,9 +273,9 @@ describe("Dashboard search results and Kanban movement gating (#217 fix round 1,
     // commit below, and are never settled: left pending at test end is an accepted pattern here.
     apiPostMock.mockImplementation(() => new Promise(() => {}));
 
-    await dndStart("before");
-    await dndOver("before", "target");
-    await dndEnd("before", "target");
+    await dndStart("source");
+    await dndOver("source", "target");
+    await dndEnd("source", "target");
     await flush();
     expect(apiPostMock).toHaveBeenCalled();
 

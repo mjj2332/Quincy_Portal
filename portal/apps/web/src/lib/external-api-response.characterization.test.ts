@@ -23,15 +23,16 @@ function summary(id: string): ExternalProjectSummaryDto {
 }
 
 describe("TB5A Slice 4 External Board adapter", () => {
-	it("renders the authorized server order when raw boardPosition is unavailable", () => {
+	it("sorts External cards with the same comparator, with no Priority tier (#470)", () => {
 		const z = summary("00000000-0000-4000-8000-000000000002");
 		const a = summary("00000000-0000-4000-8000-000000000001");
-		const mapped: ProjectSummary[] = [a, z]
-			.map((project) => externalProjectSummaryToDashboard(project, { awaiting_raw: [z.id, a.id] }, false))
+		const mapped: ProjectSummary[] = [z, a]
+			.map((project) => externalProjectSummaryToDashboard(project, { awaiting_raw: [a.id, z.id] }, false))
 			.map((project) => ({ ...project, stageKey: "awaiting_raw" as const }));
 
 		expect(mapped.every((project) => project.boardPosition === undefined)).toBe(true);
-		expect(sortKanbanProjects(mapped, "board").map((project) => project.id)).toEqual([z.id, a.id]);
+		expect(mapped.every((project) => project.priority === null)).toBe(true);
+		expect(sortKanbanProjects(mapped).map((project) => project.id)).toEqual([a.id, z.id]);
 	});
 
 	it("carries assigned Editors from the external summary into the dashboard adapter", () => {

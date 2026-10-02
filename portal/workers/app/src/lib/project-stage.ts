@@ -1,7 +1,6 @@
 import {
   boardContractEnabled,
   boardSchemaVariant,
-  buildCompactingStageWinner,
   buildDeadlineSuppressionBundle,
   buildNonCompactingStageWinner,
   buildStageActivityBundle,
@@ -32,13 +31,10 @@ import { newId } from "./ids";
 import type { AppEnv, SessionUser } from "../env";
 import { ensurePipelineStages } from "../routes/stages";
 import {
-  moveProjectBoardOrder,
   planBoardPlacement,
-  placementChangesLogicalSlot,
   readBoardProject,
   readBoardRows,
   readVisibleBoardRows,
-  type BoardOrderResult,
 } from "./project-board-order";
 
 export type MoveProjectStageInput = {
@@ -53,7 +49,6 @@ export type MoveProjectStageResult =
   | { kind: "moved"; response: MoveProjectStageResponse; finalizer: CommittedStageFinalizerIntent; /** Internal: a Shoot date fill landed in this batch; never part of the HTTP body. */ shootDateFilled: boolean }
   | { kind: "no_change"; response: MoveProjectStageResponse }
   | { kind: "forbidden"; capability: "moveProjectStage" }
-  | { kind: "reorder_forbidden"; code: "project_board_reorder_forbidden"; capability: "prioritizeProjects" }
   | { kind: "not_found" }
   | { kind: "archived"; current: StageMoveProjectState }
   | { kind: "inactive_destination"; current: StageMoveProjectState }
@@ -110,12 +105,6 @@ async function resolveStageVisibleProject(input: MoveProjectStageInput) {
   } : null;
 }
 
-function mapBoardResult(result: BoardOrderResult): MoveProjectStageResult {
-  if (result.kind === "forbidden") return { kind: "forbidden", capability: "moveProjectStage" };
-  if (result.kind === "moved" || result.kind === "no_change" || result.kind === "conflict" || result.kind === "not_found" || result.kind === "disabled" || result.kind === "schema_maintenance") return result as MoveProjectStageResult;
-  return { kind: "conflict", current: null };
-}
-
 function finalizerFromResults(results: D1Result<unknown>[], projectId: string, auditIndex: number, winnerIndex: number, activityIndex: number) {
   const winner = (results[winnerIndex]?.results ?? []).find((item) => (item as { id?: unknown }).id === projectId) as { id?: string; stage_key?: StageKey; stageKey?: StageKey; board_position?: number; boardPosition?: number; board_revision?: number; boardRevision?: number } | undefined;
   const marker = results[auditIndex]?.results?.[0] as { id?: string } | undefined;
@@ -155,18 +144,11 @@ export async function moveProjectStage(input: MoveProjectStageInput): Promise<Mo
     return { kind: "conflict", current };
   }
 
+  // The Board is sorted by data (#470), so a same-Stage request has nothing to change whatever
+  // placement a stale tab attached to it. The source CAS above already rejected a stale card.
   if (targetStageKey === project.stageKey) {
-    const rows = await readBoardRows(db, project.stageKey);
     const visibleRows = await readVisibleBoardRows(db, principal, project.stageKey);
-    if (placementChangesLogicalSlot({ target: project, destinationRows: rows, visibleRows, request: { ...input.request, targetStageKey } })
-      && !roleHasCapability(principal.role, "prioritizeProjects")) {
-      return { kind: "reorder_forbidden", code: "project_board_reorder_forbidden", capability: "prioritizeProjects" };
-    }
-    const placement = planBoardPlacement({ target: project, destinationRows: rows, visibleRows, request: { ...input.request, targetStageKey } });
-    if (!placement) return { kind: "conflict", current };
-    if (!placement.changed) return { kind: "no_change", response: responseFor(project, principal.role, project.stageKey, visibleRows, false) };
-    if (!roleHasCapability(principal.role, "prioritizeProjects")) return { kind: "reorder_forbidden", code: "project_board_reorder_forbidden", capability: "prioritizeProjects" };
-    return mapBoardResult(await moveProjectBoardOrder(input));
+    return { kind: "no_change", response: responseFor(project, principal.role, project.stageKey, visibleRows, false) };
   }
 
   await ensurePipelineStages(createDb(db));
@@ -186,27 +168,18 @@ export async function moveProjectStage(input: MoveProjectStageInput): Promise<Mo
   }
 
   const destinationRows = await readBoardRows(db, targetStageKey);
-  const visibleRows = await readVisibleBoardRows(db, principal, targetStageKey);
-  const placement = planBoardPlacement({ target: project, destinationRows, visibleRows, request: { ...input.request, targetStageKey } });
-  if (!placement) return { kind: "conflict", current };
+  // Always an append, whatever placement the request carried (a stale tab may still send `between`).
+  const placement = planBoardPlacement({ target: project, destinationRows, request: { targetStageKey } });
   const auditId = newId();
   const activityId = newId();
   const now = input.now ?? Date.now();
-  const stage = placement.compact
-    ? buildCompactingStageWinner({
-      db, projectId: project.id, sourceStageKey: project.stageKey, targetStageKey,
-      oldBoardRevision: project.boardRevision, expectedTarget: placement.expectedTarget.map((row) => ({ ...row, newBoardPosition: row.newBoardPosition! })),
-      changedPlan: placement.changedPlan, expectedChangedRowCount: placement.changedPlan.length,
-      auditId, actorId: principal.id, auditAction: "stage.set",
-      auditMetaJson: auditMeta(principal, { from: project.stageKey, to: targetStageKey }) ?? "{}", now,
-    })
-    : buildNonCompactingStageWinner({
-      db, projectId: project.id, sourceStageKey: project.stageKey, targetStageKey,
-      oldBoardRevision: project.boardRevision, expectedTarget: placement.expectedTarget,
-      placement: placement.placement, exactBoardPosition: placement.boardPosition,
-      auditId, actorId: principal.id, auditAction: "stage.set",
-      auditMetaJson: auditMeta(principal, { from: project.stageKey, to: targetStageKey }) ?? "{}", now,
-    });
+  const stage = buildNonCompactingStageWinner({
+    db, projectId: project.id, sourceStageKey: project.stageKey, targetStageKey,
+    oldBoardRevision: project.boardRevision, expectedTarget: placement.expectedTarget,
+    placement: "append", exactBoardPosition: placement.boardPosition,
+    auditId, actorId: principal.id, auditAction: "stage.set",
+    auditMetaJson: auditMeta(principal, { from: project.stageKey, to: targetStageKey }) ?? "{}", now,
+  });
   const activity = buildStageActivityBundle({ db, projectId: project.id, activityId, actorId: principal.id, occurredAt: now, winnerAuditId: auditId });
   const deadline = targetStageKey === "delivered"
     ? buildDeadlineSuppressionBundle({ db, projectId: project.id, now, reason: "project_delivered", auditId })

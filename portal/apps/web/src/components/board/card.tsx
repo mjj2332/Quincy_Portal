@@ -14,8 +14,6 @@ import { isOverdueProject } from "../../lib/dashboard-summary";
 import { formatDashboardDate } from "../../screens/dashboard-helpers";
 import type { ProjectSummary } from "../../lib/kanban-interaction";
 import { CardActionsMenu, CardContextMenuContent, type CardMenuBinding, type CardMenuConfig } from "./card-menu";
-import type { CardActionId } from "./card-actions";
-import { MoveToDialog } from "./move-to-control";
 
 /**
  * The Board card (#432), composed on ReUI `frame` the way `solution-crm-7/board-card.tsx` is: a
@@ -69,7 +67,7 @@ export type KanbanCard2Props = {
    */
   handleRef?: (projectId: string, element: HTMLAnchorElement | null) => void;
   /**
-   * The ⋯ menu and the right-click menu (#432), built from one descriptor list. Never rendered in the
+   * The ⋯ menu and the right-click menu (#432, #470): Move to ▸ Stage, from one config. Never rendered in the
    * drag overlay, which must carry no interactive element (#98), nor on an Archived card.
    */
   menu?: CardMenuConfig;
@@ -101,28 +99,20 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
   const archived = Boolean(project.archivedAt);
   const hasEditors = (project.editors?.length ?? 0) > 0;
   const href = projectHref ?? `/projects/${encodeURIComponent(project.id)}`;
-  const menuConfig = !archived && menu && menu.actions.length > 0 ? menu : null;
-  // Move to… hand-off: the item only records the intent; the dialog opens once the menu has finished
-  // closing, so the menu's own focus return to the ⋯ trigger cannot land on top of it.
-  const [trigger, setTrigger] = useState<HTMLButtonElement | null>(null);
-  const [moveToOpen, setMoveToOpen] = useState(false);
-  const pendingMoveTo = useRef(false);
+  const menuConfig = !archived && menu ? menu : null;
+  // A chosen Stage is a MOVE: the optimistic overlay remounts this card in another column while the
+  // menu is still closing, so the menu's own focus return to this card's ⋯ trigger would land on a
+  // node that is leaving. It is withheld, and the Dashboard's restore effect focuses the ⋯ in the
+  // card's new column instead. Reset once the menu has finished closing.
+  const chose = useRef(false);
   const binding: CardMenuBinding | null = menuConfig && {
-    actions: menuConfig.actions,
-    disabled: menuConfig.disabled,
-    triggerRef: setTrigger,
-    // Withheld while Move to… is pending: the dialog takes focus, and gives it back to the ⋯ trigger
-    // itself when it closes, so the menu's own return must not land on top of it.
-    returnFocus: () => !pendingMoveTo.current,
-    onSelect: (id: CardActionId) => {
-      if (id === "move-to") pendingMoveTo.current = true;
-      else menuConfig.onReorder(id === "move-up" ? "up" : "down");
+    menu: menuConfig,
+    returnFocus: () => !chose.current,
+    onChoose: (stageKey) => {
+      chose.current = true;
+      menuConfig.onMoveStage(stageKey);
     },
-    onClosed: () => {
-      // `pendingMoveTo` stays set until the dialog closes: the menu's focus-return decision
-      // (`returnFocus`) runs as it UNMOUNTS, which is after this callback.
-      if (pendingMoveTo.current) setMoveToOpen(true);
-    },
+    onClosed: () => { chose.current = false; },
   };
   // Base UI opens its context menu on a 500ms touch long-press, which would open over a live drag
   // (the card's own long-press is the drag, 250ms). Touch gets the ⋯ menu instead.
@@ -189,7 +179,7 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
       >
         <FramePanel className="flex flex-col p-0 shadow-xs transition-[border-color,box-shadow] hover:shadow-sm">
           {cover}
-          {binding && <CardActionsMenu projectId={project.id} street={project.street} menu={binding} />}
+          {binding && <CardActionsMenu projectId={project.id} street={project.street} binding={binding} />}
           <div className="flex flex-col gap-[var(--space-1)] p-[var(--space-3)]">
             {/* #428: the Archived filter's Include mode draws archived Projects beside active ones. The card is
                 immovable (the Board gates it, `board.tsx`); the link still opens it. */}
@@ -236,8 +226,7 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
           )}
         </FramePanel>
       </ContextMenuTrigger>
-      {binding && <CardContextMenuContent menu={binding} />}
-      {menuConfig && <MoveToDialog project={project} open={moveToOpen} anchor={trigger} onClose={() => { pendingMoveTo.current = false; setMoveToOpen(false); }} {...menuConfig.moveTo} />}
+      {binding && <CardContextMenuContent binding={binding} />}
     </ContextMenu>
   );
 }

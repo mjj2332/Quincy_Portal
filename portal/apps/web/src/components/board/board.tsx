@@ -7,11 +7,10 @@ import type { DragEndEvent, DragOverEvent, DragStartEvent } from "@dnd-kit/core"
 import { Kanban, KanbanColumn, KanbanColumnContent, KanbanItem, KanbanOverlay, type KanbanMoveEvent } from "../reui/kanban";
 import {
   announce,
-  boardGapChangesOrder,
+  boardLandingSlot,
   eligibleTarget,
   focusDescriptorFor,
   sortKanbanProjects,
-  type KanbanSortMode,
   type ProjectKanbanBoardProps,
   type ProjectSummary,
   type SemanticGap,
@@ -25,8 +24,7 @@ import { Button } from "../reui/button";
 import { Badge } from "../reui/badge";
 import { isOverdueProject } from "../../lib/dashboard-summary";
 import { KanbanCard2 } from "./card";
-import { moveToStageOptions } from "./move-to-control";
-import { cardActions } from "./card-actions";
+import { cardMoveTo, moveToChoices } from "./card-actions";
 import type { CardMenuConfig } from "./card-menu";
 
 /**
@@ -35,6 +33,13 @@ import type { CardMenuConfig } from "./card-menu";
  * options on this object's identity, and `design-system-guards.test.ts` scans SCREAMING_CASE consts.
  */
 const boardKeyboardCodes = { start: ["Space"], cancel: ["Escape"], end: ["Space", "Enter", "Tab"] };
+
+/**
+ * A Stage column is sorted by data (#470), so a card dragged over one must not shift the cards that
+ * are already in it: the landing slot is shown by the drop indicator instead. dnd-kit reads `null`
+ * as "no transform". Module-level and lowercase for the same reason as `boardKeyboardCodes`.
+ */
+const boardNoShiftStrategy = () => null;
 
 /** `editing` is the role-safe presentation of `editing_autohdr`. */
 function semanticStageKey(value: ProjectStageKey): StageKey {
@@ -61,7 +66,6 @@ function DropIndicator({ className }: { className: string }) {
 type FlipScopeProps = {
   /** Every column's card order; the FLIP measures only when this changes. */
   orderKey: string;
-  sort: KanbanSortMode;
   /** False while a drag is live. */
   enabled: boolean;
   /** False under reduced motion: moves are still measured and reported, but not played. */
@@ -91,8 +95,7 @@ function measureCards(root: HTMLElement): FlipSnapshot {
  * stale after any scroll or image load in between.
  *
  * Measured unless both commits were eligible: the drop commit (drag live in the previous one) belongs
- * to dnd-kit's overlay drop animation, and a sort-mode change reshuffles everything at once, which
- * reads as noise rather than as a card going somewhere.
+ * to dnd-kit's overlay drop animation.
  */
 class FlipScope extends Component<FlipScopeProps> {
   private flights = new Map<string, () => void>();
@@ -100,7 +103,7 @@ class FlipScope extends Component<FlipScopeProps> {
   override getSnapshotBeforeUpdate(previous: FlipScopeProps): FlipSnapshot | null {
     const root = this.props.rootRef.current;
     if (!root || previous.orderKey === this.props.orderKey) return null;
-    if (!previous.enabled || !this.props.enabled || previous.sort !== this.props.sort) return null;
+    if (!previous.enabled || !this.props.enabled) return null;
     // Mid-flight cards are measured WITH their transform: a second re-sort starts from where the
     // card is on screen, not from where the first one was heading.
     return measureCards(root);
@@ -166,10 +169,8 @@ export function ProjectKanbanBoard2({
   canMoveStages,
   canPrioritize = false,
   menuCapable = false,
-  sameStageReorderEnabled = false,
   boardMutationEnabled,
   movementDisabled = false,
-  effectiveKanbanSort,
   pendingMoves,
   pendingOrdering,
   terminal,
@@ -177,9 +178,7 @@ export function ProjectKanbanBoard2({
   onPriorityChange,
   onAnnounce,
   onInteractionStateChange,
-  onBoardPosition,
   onMoveStage,
-  onMoveToProposalChange,
   role,
   projectHrefFor,
   now,
@@ -192,56 +191,33 @@ export function ProjectKanbanBoard2({
       const key = semanticStageKey(stage.key);
       record[stage.key] = sortKanbanProjects(
         projects.filter((project) => semanticStageKey(project.stageKey as ProjectStageKey) === key),
-        effectiveKanbanSort,
       );
     }
     return record;
-  }, [activeStages, effectiveKanbanSort, projects]);
+  }, [activeStages, projects]);
 
   /**
-   * The exact drop gap for a card released at `overIndex` in `overContainer` (#99). Placement is
-   * semantic — "before project X" — never an index, so the index the primitive reports is turned
-   * into a successor id here.
-   *
-   * The mover is removed BEFORE indexing, and that is the whole point, not a tidy-up. `overIndex` is
-   * the hovered card's index in the column as rendered, mover included. Cross-Stage and dragging UP
-   * within a column, removal shifts nothing and the successor is the hovered card: the card lands
-   * before it. Dragging DOWN within a column, removal shifts every later index by one, so the
-   * successor is the card AFTER the hovered one: the card lands after it, which is what the user
-   * saw. Reading `event.over.id` as the successor instead lands every downward move one slot early.
-   * A column hit reports `overIndex === length`, which falls off the end to `"end"`.
+   * Where a card released over `overContainer` would land (#470): its sorted slot among that Stage's
+   * cards, never the slot it was released on. The hovered card plays no part, so every hit anywhere
+   * in a target column — a card, the column itself, its rail — yields the same slot.
    */
-  const gapFor = useCallback((projectId: string, overContainer: string, overIndex: number) => {
-    const withoutMover = (columns[overContainer] ?? []).filter((item) => item.id !== projectId);
-    const successor = withoutMover[overIndex]?.id ?? "end";
-    const position = successor === "end" ? withoutMover.length + 1 : withoutMover.findIndex((item) => item.id === successor) + 1;
-    return {
-      gap: { targetStageKey: semanticStageKey(overContainer as ProjectStageKey), successor } satisfies SemanticGap,
-      position,
-      count: withoutMover.length + 1,
-    };
-  }, [columns]);
+  const landingFor = useCallback((projectId: string, overContainer: string) => (
+    boardLandingSlot(projects, projectId, semanticStageKey(overContainer as ProjectStageKey))
+  ), [projects]);
 
   /**
-   * Whether a drop into `gap` would be accepted — shared by the drop, the narration and the
-   * indicator so none of them promises a landing another refuses. Shares the verdict shape with
-   * the Dashboard's own checks (`runBoardMovement`), which re-validate anyway: each capability
-   * gates its own kind of drop, `eligibleTarget` enforces the rest (a same-Stage move needs
-   * Priority access and Board sort), and a same-Stage gap that leaves the order unchanged —
-   * dropping a card back into its own slot — is `"unchanged"`, not a write.
+   * Whether a drop into `overContainer` would be accepted — shared by the drop, the narration and
+   * the indicator so none of them promises a landing another refuses. A same-Stage drop is its own
+   * verdict because it is refused with its own words: the column's order is not the user's to change.
    */
-  const dropVerdict = useCallback((project: ProjectSummary, gap: SemanticGap, sameStage: boolean): "ok" | "refused" | "unchanged" => {
-    if (!(sameStage ? sameStageReorderEnabled : canMoveStages)) return "refused";
-    const model = { projects };
-    if (!eligibleTarget(gap, model, project.id, {
+  const dropVerdict = useCallback((project: ProjectSummary, overContainer: string): "ok" | "same-stage" | "refused" => {
+    const target = semanticStageKey(overContainer as ProjectStageKey);
+    if (semanticStageKey(project.stageKey as ProjectStageKey) === target) return "same-stage";
+    return eligibleTarget(target, { projects }, project.id, {
       canMoveProjectStage: canMoveStages,
-      canPrioritize,
-      sort: effectiveKanbanSort,
       activeStageKeys: activeStages.map((stage) => semanticStageKey(stage.key)),
-    })) return "refused";
-    if (sameStage && !boardGapChangesOrder(gap, model, project.id)) return "unchanged";
-    return "ok";
-  }, [activeStages, canMoveStages, canPrioritize, effectiveKanbanSort, projects, sameStageReorderEnabled]);
+    }) ? "ok" : "refused";
+  }, [activeStages, canMoveStages, projects]);
 
   const getItemValue = useCallback((project: ProjectSummary) => project.id, []);
   // Kanban's `onValueChange` is only reachable via its own internal reorder paths; in `onMove`
@@ -258,10 +234,9 @@ export function ProjectKanbanBoard2({
   // (#98 locked the whole Board, which froze every other card for the length of one star click).
   const movementLocked = movementDisabled || pendingMoves.size > 0;
   const orderingPending = (projectId: string) => pendingOrdering?.has(projectId) ?? false;
-  // Either capability is enough to pick a card up: a prioritize-only principal reorders within a
-  // Stage without being able to change it. Which drops each capability permits is decided per
-  // drop, in `handleMove`.
-  const dragDisabled = movementLocked || terminal || !boardMutationEnabled || !(canMoveStages || sameStageReorderEnabled);
+  // A card can only be dragged to another Stage (#470), so picking one up needs the Stage-move
+  // capability.
+  const dragDisabled = movementLocked || terminal || !boardMutationEnabled || !canMoveStages;
   // Priority deliberately does NOT depend on `boardMutationEnabled`: that is the Board *movement*
   // flag, and the shipped contract is that Priority stays editable while movement is off. Gating
   // it on that flag was this Board's own regression (#98).
@@ -282,9 +257,6 @@ export function ProjectKanbanBoard2({
     (item) => item.boardMapPresent === true || item.boardRank !== undefined || item.authorizedBoardOrder?.[item.stageKey] !== undefined,
   );
   const priorityEditable = canPrioritize && hasAuthorizedBoardMap && !terminal;
-  // Same-Stage reordering by any non-drag path — the arrows and Move to…'s same-Stage positions.
-  // `sameStageReorderEnabled` already folds in the movement flag, map evidence and Board sort.
-  const canReorder = canPrioritize && sameStageReorderEnabled && !terminal;
 
   // `restoreFocus: false` (below) hands focus back to us, so the Board keeps a handle registry and
   // refocuses the card the user was carrying. dnd-kit's own `RestoreFocus` only ever fired for
@@ -372,68 +344,44 @@ export function ProjectKanbanBoard2({
 
   // The misclick guard (#304): wraps `onPriorityChange`, armed by the FLIP below.
   const starClickGuard = useStarClickGuard(onPriorityChange);
-  // The Move-to chooser's chosen position (#99), drawn with the same indicator as a drag. Forwarded
-  // to the Dashboard too, which treats a live proposal as an interaction and holds refreshes for it.
-  const [moveToProposal, setMoveToProposal] = useState<SemanticGap | null>(null);
-  const shownProposal = dropProposal ?? moveToProposal;
-  const handleMoveToProposal = useCallback((proposal: SemanticGap | null) => {
-    setMoveToProposal(proposal);
-    onMoveToProposalChange?.(proposal);
-  }, [onMoveToProposalChange]);
+  const shownProposal = dropProposal;
   const boardModel = useMemo(() => ({ projects }), [projects]);
   // #428: an archived Project's card is read-only — never dragged, nudged or moved from its menu.
   const archivedIds = new Set(projects.filter((project) => project.archivedAt).map((project) => project.id));
-  // Whether Move to… has anything to offer each card. Depends on the projects and the principal, never
-  // on a drag or its hover, so it is not recomputed while one is live.
-  const moveToAvailable = useMemo(() => {
-    const available = new Map<string, boolean>();
-    if (!(canMoveStages || canReorder)) return available;
+  // The Stage choices of each card's Move to submenu. Depend on the projects and the principal, never
+  // on a drag or its hover, so they are not recomputed while one is live.
+  const moveToByCard = useMemo(() => {
+    const byCard = new Map<string, ReturnType<typeof moveToChoices>>();
     for (const item of projects) {
       if (item.archivedAt) continue;
-      // Fail closed: without a role, same-Stage positions (Admin-only) are withheld.
-      available.set(item.id, moveToStageOptions(item, boardModel, activeStages, role ?? "editor", { canMoveStages, canReorder, sort: effectiveKanbanSort }).length > 0);
+      byCard.set(item.id, moveToChoices(item, boardModel, activeStages, canMoveStages));
     }
-    return available;
-  }, [activeStages, boardModel, canMoveStages, canReorder, effectiveKanbanSort, projects, role]);
+    return byCard;
+  }, [activeStages, boardModel, canMoveStages, projects]);
   const controlsDisabled = (projectId: string) => dragDisabled || dragActive || archivedIds.has(projectId) || pendingMoves.has(projectId) || orderingPending(projectId);
 
   /**
-   * The card's ⋯ and right-click menus (#432): one descriptor list (`cardActions`), so the two menus
-   * cannot drift. Move up / Move down are the Admin Board-order nudges that were the card's arrow
-   * buttons — through the Dashboard's `adjacentBoardGap` and `/board-position`, and, like the Move to…
-   * dialog, disabled under search, a pending write or a live drag. An Archived card has no menu.
+   * The card's ⋯ and right-click menus (#432, #470): Move to ▸ Stage, one config for both so they
+   * cannot drift. Disabled under search, a pending write or a live drag. An Archived card has no menu.
    */
-  const menuFor = (project: ProjectSummary, column: readonly ProjectSummary[], index: number): CardMenuConfig | undefined => {
+  const menuFor = (project: ProjectSummary): CardMenuConfig | undefined => {
     if (project.archivedAt) return undefined;
     const disabled = controlsDisabled(project.id);
-    const actions = cardActions({
+    const choices = moveToByCard.get(project.id) ?? [];
+    const moveTo = cardMoveTo({
       // `menuCapable`: the principal has a movement capability that is switched off RIGHT NOW (a search,
-      // a refresh settling, a 503). The ⋯ stays, with Move to… disabled — as the inline trigger did —
-      // instead of vanishing and reappearing.
+      // a refresh settling, a 503). The ⋯ stays, with Move to disabled, instead of vanishing and reappearing.
       canMoveTo: canMoveStages || menuCapable,
-      canReorder,
       disabled,
-      hasMoveToOptions: moveToAvailable.get(project.id) ?? false,
-      isFirstInColumn: index === 0,
-      isLastInColumn: index === column.length - 1,
+      choices,
     });
-    if (actions.length === 0) return undefined;
+    if (!moveTo) return undefined;
     return {
-      actions,
       disabled,
       dragActive,
-      onReorder: (direction) => onBoardPosition(project, direction),
-      moveTo: {
-        model: boardModel,
-        activeStages,
-        // Fail closed: without a role, same-Stage positions (Admin-only) are withheld.
-        role: role ?? "editor",
-        sort: effectiveKanbanSort,
-        canMoveStages,
-        canReorder,
-        onMoveStage,
-        onProposalChange: handleMoveToProposal,
-      },
+      choices,
+      moveToDisabled: moveTo.disabled,
+      onMoveStage: (stageKey) => onMoveStage(project, stageKey, focusDescriptorFor("move-to", project, boardModel, "move-to")),
     };
   };
 
@@ -452,7 +400,7 @@ export function ProjectKanbanBoard2({
     handleRefs.current.get(projectId)?.focus({ preventScroll: true });
   }, []);
 
-  const announceRejection = useCallback((type: "dnd-cancel" | "drop-outside" | "unchanged-gap" | "invalid-keyboard-target", projectId: string | undefined) => {
+  const announceRejection = useCallback((type: "dnd-cancel" | "drop-outside" | "same-stage-refused" | "invalid-keyboard-target", projectId: string | undefined) => {
     if (!onAnnounce) return;
     const project = projectId ? projects.find((item) => item.id === projectId) : undefined;
     if (!project) return;
@@ -462,14 +410,14 @@ export function ProjectKanbanBoard2({
     onAnnounce(announce({ type, street: project.street, sourceStageLabel }, { terminal }));
   }, [activeStages, onAnnounce, projects, terminal]);
 
-  const handleMove = useCallback(({ event, activeContainer, overContainer, overIndex }: KanbanMoveEvent) => {
+  const handleMove = useCallback(({ event, overContainer }: KanbanMoveEvent) => {
     if (unmountedRef.current) return;
     const projectId = String(event.active.id);
     const keyboardOrigin = event.activatorEvent?.type === "keydown";
     // Every `return` below is a REJECTED drop, and a rejected drop must say so and give the handle
     // back — dnd-kit's default announcement ("was dropped over droppable area raw_review") is both
     // wrong and in the other live region, which is why they are all suppressed in `accessibility`.
-    const reject = (type: "dnd-cancel" | "unchanged-gap" | "invalid-keyboard-target") => {
+    const reject = (type: "dnd-cancel" | "same-stage-refused" | "invalid-keyboard-target") => {
       announceRejection(type, projectId);
       refocusHandle(projectId);
     };
@@ -477,15 +425,13 @@ export function ProjectKanbanBoard2({
     const project = projects.find((item) => item.id === projectId);
     // An archived Project is read-only (#428): its card is not draggable, and a drop that arrives anyway is refused.
     if (!project || project.archivedAt || pendingMoves.has(projectId) || orderingPending(projectId)) return reject("dnd-cancel");
-    const sameStage = semanticStageKey(activeContainer as ProjectStageKey) === semanticStageKey(overContainer as ProjectStageKey);
-    const { gap } = gapFor(projectId, overContainer, overIndex);
-    const verdict = dropVerdict(project, gap, sameStage);
-    if (verdict !== "ok") return reject(verdict === "unchanged" ? "unchanged-gap" : keyboardOrigin ? "invalid-keyboard-target" : "dnd-cancel");
+    const verdict = dropVerdict(project, overContainer);
+    if (verdict === "same-stage") return reject("same-stage-refused");
+    if (verdict !== "ok") return reject(keyboardOrigin ? "invalid-keyboard-target" : "dnd-cancel");
     const focusDescriptor = focusDescriptorFor(keyboardOrigin ? "keyboard" : "pointer", project, { projects }, "handle");
-    // `"same"` routes to the Dashboard's `/board-position` branch, where a confirmation is forbidden;
-    // `"cross"` to `/stage`, where the 409 confirmation round trip is the normal path.
-    onBoardMove?.(projectId, gap, sameStage ? "same" : "cross", focusDescriptor);
-  }, [announceRejection, dragDisabled, dropVerdict, gapFor, onBoardMove, pendingMoves, pendingOrdering, projects, refocusHandle]);
+    // Always an append: the Board is sorted by data, so a drop names a Stage and nothing else.
+    onBoardMove?.(projectId, semanticStageKey(overContainer as ProjectStageKey), focusDescriptor);
+  }, [announceRejection, dragDisabled, dropVerdict, onBoardMove, pendingMoves, pendingOrdering, projects, refocusHandle]);
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     if (unmountedRef.current) return;
@@ -522,9 +468,9 @@ export function ProjectKanbanBoard2({
   }, [onInteractionStateChange, releaseClickGuard]);
 
   /**
-   * The gap a hover over `overId` would commit, or `undefined` where a drop there would be refused —
-   * so the narration and the indicator never promise a landing `handleMove` would reject. Shares
-   * `gapFor` with `handleMove`, so all three describe one gap.
+   * The landing slot a hover over `overId` would commit, or `undefined` where a drop there would be
+   * refused (a card's own Stage included) — so the narration and the indicator never promise a
+   * landing `handleMove` would reject. Shares `landingFor` and `dropVerdict` with the drop.
    */
   const hoverTarget = useCallback((projectId: string, overId: string) => {
     if (dragDisabled) return undefined;
@@ -532,16 +478,12 @@ export function ProjectKanbanBoard2({
     if (!project) return undefined;
     const overStageKey = Object.keys(columns).find((key) => key === overId || (columns[key] ?? []).some((item) => item.id === overId));
     if (!overStageKey) return undefined;
-    const siblings = columns[overStageKey] ?? [];
-    // Mirrors the primitive's own `overIndex` (`reui/kanban.tsx` `handleDragEnd`).
-    const overIndex = overId === overStageKey ? siblings.length : siblings.findIndex((item) => item.id === overId);
-    const target = gapFor(projectId, overStageKey, overIndex);
-    const sameStage = semanticStageKey(overStageKey as ProjectStageKey) === semanticStageKey(project.stageKey as ProjectStageKey);
-    // A gap the drop would refuse — including the card's own current slot — is not offered at all.
-    if (dropVerdict(project, target.gap, sameStage) !== "ok") return undefined;
+    if (dropVerdict(project, overStageKey) !== "ok") return undefined;
+    const target = landingFor(projectId, overStageKey);
+    if (!target) return undefined;
     const stageLabel = activeStages.find((item) => item.key === overStageKey)?.label ?? "";
     return { project, stageLabel, ...target };
-  }, [activeStages, columns, dragDisabled, dropVerdict, gapFor, projects]);
+  }, [activeStages, columns, dragDisabled, dropVerdict, landingFor, projects]);
 
   /**
    * Draws the drop indicator (#99), through the vendored `onDragOver` pass-through — the only hover
@@ -549,7 +491,7 @@ export function ProjectKanbanBoard2({
    * would never fire there). Only the indicator changes on hover; the rendered column arrays never
    * do, because rewriting them mid-hover re-measures every droppable and loops.
    *
-   * Bails out on an unchanged gap, because dragOver fires on every collision update.
+   * Bails out on an unchanged slot, because dragOver fires on every collision update.
    */
   const handleDragOver = useCallback((event: DragOverEvent) => {
     if (unmountedRef.current) return;
@@ -597,11 +539,10 @@ export function ProjectKanbanBoard2({
           count: siblings.length,
         }, { terminal });
       },
-      // The hover narration. It describes the SAME gap `handleMove` would commit, via the same
-      // `gapFor`, so what is spoken is where the card lands: "over-card" with its position for a
-      // card hit, "over-end" for a column hit. De-duplicated by semantic gap, not by container — a
-      // stationary hover fires this repeatedly and a live region would read it every time, but
-      // moving from one card to the next within a Stage is a new position and must be spoken.
+      // The hover narration. It describes the SAME slot the drop would land in, via the same
+      // `landingFor`. De-duplicated by slot, not by container — a stationary hover fires this
+      // repeatedly and a live region would read it every time — and the slot does not depend on
+      // which card is hovered, so moving between cards of one Stage stays silent.
       onDragOver: ({ active, over }: { active: { id: string | number }; over: { id: string | number } | null }) => {
         const target = over ? hoverTarget(String(active.id), String(over.id)) : undefined;
         // Leaving for a refused gap forgets the last one, so coming back to it is spoken again — the
@@ -615,7 +556,7 @@ export function ProjectKanbanBoard2({
         if (gapKey === lastAnnouncedGapRef.current) return undefined;
         lastAnnouncedGapRef.current = gapKey;
         return announce({
-          type: gap.successor === "end" ? "over-end" : "over-card",
+          type: "over-stage",
           street: project.street,
           stageLabel,
           position,
@@ -669,7 +610,7 @@ export function ProjectKanbanBoard2({
           className="min-h-0 w-full flex-1 focus-visible:!outline-none"
         >
           <ScrollAreaPrimitive.Content data-slot="scroll-area-content" className="h-full w-max min-w-full">
-            <FlipScope orderKey={orderKey} sort={effectiveKanbanSort} enabled={!dragActive} animate={!reducedMotion} rootRef={boardRef} onMoved={starClickGuard.onCardsMoved}>
+            <FlipScope orderKey={orderKey} enabled={!dragActive} animate={!reducedMotion} rootRef={boardRef} onMoved={starClickGuard.onCardsMoved}>
               <div
                 ref={boardRef}
                 {...starClickGuard.boardHandlers}
@@ -736,7 +677,7 @@ export function ProjectKanbanBoard2({
                     // `focusDescriptorFor` or `canonicalStageKey`), so a presentation spelling — an Editor
                     // sees `editing` for `editing_autohdr` — would never match, and tier 2 would fall
                     // through to the Board root. The Board this replaced keyed its headings the same way.
-                    <KanbanColumn key={stage.key} id={columnId} value={stage.key} disabled className="w-[17.5rem] shrink-0 bg-[var(--paper-050)] min-h-0 min-w-0 border border-[length:var(--border-width-hair)] border-border opacity-100" data-testid="board-column">
+                    <KanbanColumn key={stage.key} id={columnId} value={stage.key} disabled className={`w-[17.5rem] shrink-0 bg-[var(--paper-050)] min-h-0 min-w-0 border border-[length:var(--border-width-hair)] border-border opacity-100 ${shownProposal?.targetStageKey === stageKey ? "border-[var(--ink-900)]" : ""}`} data-testid="board-column">
                       <div className="flex shrink-0 flex-col gap-[var(--space-2)] p-[var(--space-4)] border-b border-b-border bg-[var(--bg-canvas)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${stageKey}`} tabIndex={-1}>
                         <div className="flex min-w-0 items-center gap-[var(--space-3)]" data-testid="board-column-title-row">
                           <span className="flex-none [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] tabular-nums text-foreground-secondary" aria-hidden="true">{String(stageIndex + 1).padStart(2, "0")}</span>
@@ -751,9 +692,9 @@ export function ProjectKanbanBoard2({
                         </div>
                       </div>
                       <ScrollArea className="min-h-0 flex-1">
-                        <KanbanColumnContent value={stage.key} className="relative flex flex-col gap-[var(--space-3)] p-[var(--space-3)] min-h-[120px]">
+                        <KanbanColumnContent value={stage.key} strategy={boardNoShiftStrategy} className="relative flex flex-col gap-[var(--space-3)] p-[var(--space-3)] min-h-[120px]">
                           {stageProjects.length === 0 && <div className="py-[var(--space-5)] [font-family:var(--font-display)] text-lg text-center text-foreground-secondary">—</div>}
-                          {stageProjects.map((project, index) => (
+                          {stageProjects.map((project) => (
                             // Same `opacity-50` defect as the column above, but now on every OTHER card too
                             // once the pending-write lock (above) disables movement board-wide during a
                             // single write. `data-[disabled=true]:opacity-100` is a variant selector, higher
@@ -774,7 +715,7 @@ export function ProjectKanbanBoard2({
                                   onPriorityChange={starClickGuard.handlePriorityChange}
                                   now={now}
                                   handleRef={registerHandle}
-                                  menu={menuFor(project, stageProjects, index)}
+                                  menu={menuFor(project)}
                                 />
                               </div>
                             </KanbanItem>

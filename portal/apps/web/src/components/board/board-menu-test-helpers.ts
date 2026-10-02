@@ -1,7 +1,7 @@
 import { act } from "react";
 
 /**
- * Shared DOM-test helpers for the Board card's ⋯ menu, right-click menu and Move to… dialog (#432).
+ * Shared DOM-test helpers for the Board card's ⋯ menu, right-click menu and Move to submenu (#470).
  * Queries go by role, accessible name and test id — never by vendor `data-slot` (test-seam F), and
  * with literal selectors only (guard B), so each finder filters rather than building a selector.
  */
@@ -56,27 +56,42 @@ export async function chooseMenuItem(label: string): Promise<void> {
   await flushTimers();
 }
 
-/** Opens a card's ⋯ menu, picks "Move to…", and waits for the dialog the closing menu hands off to. */
+/** The "Move to" submenu trigger (a menuitem with a popup), whichever menu is open. */
+export function moveToTrigger(): HTMLElement | null {
+  return menuItems().find((node) => node.textContent === "Move to") ?? null;
+}
+
+/** The Stage choices of the open Move to submenu, in order. */
+export function stageRadios(): HTMLElement[] {
+  return [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
+}
+
+export function stageRadio(label: string): HTMLElement | null {
+  return stageRadios().find((node) => node.textContent === label) ?? null;
+}
+
+/** Opens the Move to submenu of the menu that is already open, and waits for its Stage choices. */
+export async function openMoveToSubmenu(): Promise<void> {
+  const trigger = moveToTrigger();
+  if (!trigger) throw new Error("Missing the Move to submenu trigger");
+  await act(async () => { trigger.click(); await Promise.resolve(); await Promise.resolve(); });
+  for (let attempt = 0; attempt < 20 && stageRadios().length === 0; attempt += 1) await flushTimers();
+  if (stageRadios().length === 0) throw new Error("The Move to submenu did not open");
+}
+
+/** Opens a card's ⋯ menu, then its Move to submenu. */
 export async function openMoveTo(scope: ParentNode, projectId: string): Promise<void> {
   await openCardMenu(scope, projectId);
-  await finishMoveTo();
+  await openMoveToSubmenu();
 }
 
-export async function openMoveToFrom(trigger: HTMLElement): Promise<void> {
-  await openMenuFrom(trigger);
-  await finishMoveTo();
-}
-
-/** Opens a card's ⋯ menu, picks one item, and lets the menu finish closing. */
-export async function pressMenuItem(scope: ParentNode, projectId: string, label: string): Promise<void> {
-  await openCardMenu(scope, projectId);
-  await chooseMenuItem(label);
-}
-
-async function finishMoveTo(): Promise<void> {
-  await chooseMenuItem("Move to…");
-  for (let attempt = 0; attempt < 20 && !document.querySelector('[role="dialog"]'); attempt += 1) await flushTimers();
-  if (!document.querySelector('[role="dialog"]')) throw new Error("Move to… did not open its dialog");
+/** Opens a card's ⋯ menu, opens Move to, and picks a Stage. */
+export async function moveToStage(scope: ParentNode, projectId: string, label: string): Promise<void> {
+  await openMoveTo(scope, projectId);
+  const radio = stageRadio(label);
+  if (!radio) throw new Error(`Missing Stage choice ${label}`);
+  await act(async () => { radio.click(); await Promise.resolve(); await Promise.resolve(); });
+  await flushTimers();
 }
 
 /** Escapes whatever menu is open and waits for it to unmount, so the next render starts clean. */
@@ -86,4 +101,10 @@ export async function closeMenus(): Promise<void> {
     await Promise.resolve();
   });
   for (let attempt = 0; attempt < 20 && document.querySelector('[role="menu"]'); attempt += 1) await flushTimers();
+}
+
+/** Opens the menu from an explicit ⋯ trigger, then its Move to submenu. */
+export async function openMoveToFrom(trigger: HTMLElement): Promise<void> {
+  await openMenuFrom(trigger);
+  await openMoveToSubmenu();
 }

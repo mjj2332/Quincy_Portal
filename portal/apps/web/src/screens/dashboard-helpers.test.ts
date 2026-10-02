@@ -118,17 +118,20 @@ describe("Calendar initial state", () => {
 });
 
 describe("Kanban sort preferences", () => {
-  it("keeps supported sort modes and migrates missing and invalid values to board", () => {
-    expect(normalizeKanbanSortMode("shootDate-asc")).toBe("shootDate-asc");
-    expect(normalizeKanbanSortMode("shootDate-desc")).toBe("shootDate-desc");
-    expect(normalizeKanbanSortMode(null)).toBe("board");
-    expect(normalizeKanbanSortMode("other")).toBe("board");
+  it("maps every stored value, including the retired Board order, to the one fixed Board rule (#470)", () => {
+    for (const stored of ["board", "priority", "shootDate-asc", "shootDate-desc", "other", "", null]) {
+      expect(normalizeKanbanSortMode(stored)).toBe("priority-shoot-date");
+    }
   });
 
-  it("keeps a valid saved sort preference when the migration write is rejected", () => {
-    const write = vi.fn(() => { throw new Error("storage is read-only"); });
-    expect(initializeKanbanSortMode({ read: () => "shootDate-desc", write })).toBe("shootDate-desc");
-    expect(write).toHaveBeenCalledWith("shootDate-desc");
+  it("rewrites a retired stored sort as the fixed rule, and still answers when the write is rejected", () => {
+    const write = vi.fn();
+    expect(initializeKanbanSortMode({ read: () => "board", write })).toBe("priority-shoot-date");
+    expect(write).toHaveBeenCalledWith("priority-shoot-date");
+    const rejecting = vi.fn(() => { throw new Error("storage is read-only"); });
+    expect(initializeKanbanSortMode({ read: () => "shootDate-desc", write: rejecting })).toBe("priority-shoot-date");
+    expect(rejecting).toHaveBeenCalledWith("priority-shoot-date");
+    expect(initializeKanbanSortMode({ read: () => { throw new Error("denied"); }, write })).toBe("priority-shoot-date");
   });
 });
 

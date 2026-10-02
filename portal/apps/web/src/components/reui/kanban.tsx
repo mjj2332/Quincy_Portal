@@ -3,6 +3,9 @@
 //   #99  `onDragOver` pass-through prop.
 //   #432 `keyboardCodes` prop, forwarded to the `KeyboardSensor` options, so the Board can make
 //        Space the only pick-up key and let Enter open the card.
+//   #470 `KanbanColumnContent` `strategy` prop, forwarded to its `SortableContext`, so the Board can
+//        pass a no-transform strategy: a Stage column is sorted by data, so a card hovering over
+//        one must not shift the cards that are already in it.
 import * as React from "react"
 import type { CSSProperties, ReactNode } from "react"
 import {
@@ -48,6 +51,7 @@ import {
   useSortable,
   verticalListSortingStrategy,
   type AnimateLayoutChanges,
+  type SortingStrategy,
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
 import { createPortal } from "react-dom"
@@ -908,10 +912,13 @@ function KanbanItemHandle({
 
 export interface KanbanColumnContentProps extends useRender.ComponentProps<"div"> {
   value: string
+  /** QUINCY ADDITION (#470): the column's `SortableContext` sorting strategy; defaults to vertical-list. */
+  strategy?: SortingStrategy
 }
 
 function KanbanColumnContent({
   value,
+  strategy = verticalListSortingStrategy,
   className,
   render,
   ...props
@@ -936,7 +943,7 @@ function KanbanColumnContent({
   }
 
   return (
-    <SortableContext items={itemIds} strategy={verticalListSortingStrategy}>
+    <SortableContext items={itemIds} strategy={strategy}>
       {useRender({
         defaultTagName: "div",
         render,

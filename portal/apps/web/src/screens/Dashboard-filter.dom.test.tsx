@@ -308,16 +308,14 @@ describe("Dashboard shared Filter (#428)", () => {
     await waitFor(() => expect(optionNames()).toEqual(["Stage", "People", "Shoot date", "Deadline", "My tasks"]));
   });
 
-  it("disables Board moves and reordering while the Priority or Archived filter narrows the Board", async () => {
+  it("disables Board moves while the Priority or Archived filter narrows the Board", async () => {
     await renderAt("/?view=board");
     expect(boardProps.value?.movementDisabled).toBe(false);
     expect(boardProps.value?.canMoveStages).toBe(true);
-    expect(boardProps.value?.sameStageReorderEnabled).toBe(true);
 
     await renderAt("/?view=board&priority=5");
     expect(boardProps.value?.movementDisabled).toBe(true);
     expect(boardProps.value?.canMoveStages).toBe(false);
-    expect(boardProps.value?.sameStageReorderEnabled).toBe(false);
 
     await renderAt("/?view=board&archived=include");
     expect(boardProps.value?.movementDisabled).toBe(true);
