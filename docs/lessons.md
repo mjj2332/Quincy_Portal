@@ -4976,3 +4976,16 @@ remove the legacy readers) still applies.
   `max-w-` still caps it. Matching the variant (`data-[chips=true]:min-w-...`) would tie the fix to a vendor attribute, and a
   `min-w` floor beats `max-w` on small screens. The DOM test pins the merged class string only; the browser pass proves pixels.
 - The chips input is `w-[12ch]` (was 6ch, too narrow for "Add…"); it does not grow on focus because the box is the popup's anchor.
+
+## Calendar sheets: the vendored close collides with the header (#462)
+
+- **Why the vendored close was replaced.** `reui/sheet`'s `showCloseButton` pins a 28px close at top/right 12px over the header, so the
+  Schedule editor's long street and the rail sheet's title ran under it, and on phones the target was far below 44px. Both calendar
+  sheets pass `showCloseButton={false}` and render `quincy/SheetCloseButton` (`SheetClose` + `reui/button`, 28px desktop / 44px at
+  <=721px) with `SHEET_CLOSE_CLEARANCE` reserving the header's end padding (48px / 64px). Desktop schedule-editor header end padding
+  went 32px -> 48px on purpose. No vendor edit.
+- **The close must be the LAST child of `SheetContent`.** Base UI's default initial focus is the first tabbable in the popup; a close
+  rendered first takes focus on open instead of the form.
+- **Phone rail header height uses the allowlisted `min-h-[44px]` on the title**, not a `min-h-[calc(...px...)]` on the header:
+  `dashboard-fill.guard` rejects px heights in `ProductionEventCalendar.tsx`. Header `py-[var(--space-3)]` + 44px title = 68px.
+- Pinned before the change: one click and one Escape each fire `onCancel` once; the new tests assert the same.
