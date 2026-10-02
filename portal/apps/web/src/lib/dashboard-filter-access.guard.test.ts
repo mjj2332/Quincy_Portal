@@ -3,8 +3,9 @@
  * that draw from it must ask the shared tree helpers (`dashboardFilterStageScope`,
  * `dashboardFilterHasNonStageLeaf`, `dashboardFilterArchivedMode`, `isEmptyDashboardFilterTree`, ...) and
  * never read a flat field straight off a filter: a flat read answers "nothing" for a tree and silently
- * ignores its rules. `production-gantt-filters.ts` is excluded on purpose: it is the transport mapper
- * (route <-> facet <-> request) and must name every flat field to carry it.
+ * ignores its rules. `production-gantt-filters.ts` is guarded too: the route <-> facet transport lives in
+ * `production-gantt-facet.ts`, so what remains there (the Delivered pair, pairing notice, empty-state
+ * recovery) is semantic and must read the filter through the tree helpers.
  *
  * Per `docs/lessons.md` ("a grep gate that cannot fail is not a gate") the detector is a pure function
  * proven against planted fixtures, beside the real scan.
@@ -15,7 +16,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const srcDir = join(dirname(fileURLToPath(import.meta.url)), "..");
-const GUARDED = ["screens/Dashboard.tsx", "screens/DashboardFilter.tsx", "components/ProductionEventCalendar.tsx", "components/ProductionGantt.tsx"];
+const GUARDED = ["screens/Dashboard.tsx", "screens/DashboardFilter.tsx", "components/ProductionEventCalendar.tsx", "components/ProductionGantt.tsx", "lib/production-gantt-filters.ts"];
 
 const FLAT_READ = /\.(?:stageKeys|priorities|editorIds|includeUnassigned|shootRange|deadlineRange|overdueOnly|myTasks)\b|\b(?:filter|filters|calendar|calendarState)\.archived\b/u;
 
