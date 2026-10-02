@@ -9,7 +9,7 @@
 // until this file existed. Routing is read-only history (`lib/staff-history.ts`) —
 // `useNavigate`/`<Link>` do nothing — so, like every other Dashboard DOM test, this sets the URL
 // directly with `window.history.replaceState` before render and restores it afterward.
-import { openMoveTo, pressMenuItem } from "../components/board/board-menu-test-helpers";
+import { openMoveTo, stageRadio } from "../components/board/board-menu-test-helpers";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -203,23 +203,21 @@ describe("Dashboard Board seam (#98)", () => {
         confirmation: { reasons: ["backward"] },
       }));
 
-      // #99: the card was dropped ON kb2-target, so it lands before it — and the confirmed retry must
-      // resend that exact placement, not fall back to an append once the modal has intervened.
-      const exact = { kind: "between", before: null, after: { projectId: "kb2-target", boardRevision: 0 } };
-      expect(apiPostMock.mock.calls[0]![1]).toHaveProperty("placement", exact);
-      expect(apiPostMock.mock.calls[1]![1]).toHaveProperty("placement", exact);
+      // #470: a drop names a Stage and nothing else, so both the first request and the confirmed retry are appends.
+      expect(apiPostMock.mock.calls[0]![1]).toHaveProperty("placement", { kind: "append" });
+      expect(apiPostMock.mock.calls[1]![1]).toHaveProperty("placement", { kind: "append" });
     });
 
-    // #99 at the seam that reaches the server: a drop on a MIDDLE card resolves to both real
-    // neighbours, so neither an append nor a "first" placement can satisfy it.
-    it("sends the exact neighbours of a middle-card drop to /stage", async () => {
+    // #470 at the seam that reaches the server: a drop on a MIDDLE card names no neighbours — the Board is
+    // sorted by data, so the request is an append whichever card the pointer was over.
+    it("sends an append, with no neighbours, for a middle-card drop", async () => {
       apiGetMock.mockReset();
       apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
         projects: [
           projectFixture("kb2-source", { boardMapPresent: true }),
-          projectFixture("kb2-t1", { stageKey: "raw_review", boardPosition: 1, boardRevision: 3, boardMapPresent: true }),
-          projectFixture("kb2-t2", { stageKey: "raw_review", boardPosition: 2, boardRevision: 5, boardMapPresent: true }),
-          projectFixture("kb2-t3", { stageKey: "raw_review", boardPosition: 3, boardRevision: 7, boardMapPresent: true }),
+          projectFixture("kb2-t1", { stageKey: "raw_review", boardRevision: 3, boardMapPresent: true }),
+          projectFixture("kb2-t2", { stageKey: "raw_review", boardRevision: 5, boardMapPresent: true }),
+          projectFixture("kb2-t3", { stageKey: "raw_review", boardRevision: 7, boardMapPresent: true }),
         ],
         board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-source"], raw_review: ["kb2-t1", "kb2-t2", "kb2-t3"] } },
       }) : Promise.resolve({ stages: [] }));
@@ -232,23 +230,23 @@ describe("Dashboard Board seam (#98)", () => {
       await act(async () => { handler!({ active: { id: "kb2-source" }, over: { id: "kb2-t2" } }); await Promise.resolve(); });
       await vi.waitFor(() => expect(apiPostMock, "the drop never reached the server — nothing below is proved").toHaveBeenCalledTimes(1));
 
-      expect(apiPostMock).toHaveBeenCalledWith("/api/projects/kb2-source/stage", expect.objectContaining({
+      expect(apiPostMock).toHaveBeenCalledWith("/api/projects/kb2-source/stage", {
+        expected: { stageKey: "awaiting_raw", boardRevision: 0 },
         targetStageKey: "raw_review",
-        placement: { kind: "between", before: { projectId: "kb2-t1", boardRevision: 3 }, after: { projectId: "kb2-t2", boardRevision: 5 } },
-      }));
+        placement: { kind: "append" },
+      });
     });
   });
 
-  // #99. A same-column drop is a Board-position command, never a Stage command: it must reach
-  // `/board-position` with exact neighbours and no confirmation — that branch forbids one.
-  describe("same-column reordering", () => {
-    it("sends an upward reorder to /board-position with exact neighbours and no confirmation", async () => {
+  // #470. A column's order is data: a same-column drop is refused locally and reaches no endpoint at all.
+  describe("same-column drops", () => {
+    it("sends nothing to either endpoint", async () => {
       apiGetMock.mockReset();
       apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
         projects: [
-          projectFixture("kb2-a", { boardPosition: 0, boardRevision: 2, boardMapPresent: true }),
-          projectFixture("kb2-b", { boardPosition: 1, boardRevision: 4, boardMapPresent: true }),
-          projectFixture("kb2-c", { boardPosition: 2, boardRevision: 6, boardMapPresent: true }),
+          projectFixture("kb2-a", { boardRevision: 2, boardMapPresent: true }),
+          projectFixture("kb2-b", { boardRevision: 4, boardMapPresent: true }),
+          projectFixture("kb2-c", { boardRevision: 6, boardMapPresent: true }),
         ],
         board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-a", "kb2-b", "kb2-c"] } },
       }) : Promise.resolve({ stages: [] }));
@@ -259,52 +257,19 @@ describe("Dashboard Board seam (#98)", () => {
       const handler = dnd.handlers.at(-1)?.onDragEnd;
       expect(handler, "no drag-end handler captured — the Board did not mount a DndContext").not.toBeUndefined();
       await act(async () => { handler!({ active: { id: "kb2-c" }, over: { id: "kb2-b" } }); await Promise.resolve(); });
-      await vi.waitFor(() => expect(apiPostMock, "the reorder never reached the server — nothing below is proved").toHaveBeenCalledTimes(1));
-
-      const [path, body] = apiPostMock.mock.calls[0]!;
-      expect(path).toBe("/api/projects/kb2-c/board-position");
-      expect(body).toHaveProperty("placement", { kind: "between", before: { projectId: "kb2-a", boardRevision: 2 }, after: { projectId: "kb2-b", boardRevision: 4 } });
-      expect(body).not.toHaveProperty("confirmation");
-    });
-
-    // The menu's Move up / Move down reach the same `/board-position` orchestrator as a drag, one slot at a time, and the
-    // focus comes back to the ⋯ trigger that opened the menu.
-    it("sends a Move up pick to /board-position one slot up, and refocuses the ⋯ trigger", async () => {
-      apiGetMock.mockReset();
-      apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
-        projects: [
-          projectFixture("kb2-a", { boardPosition: 0, boardRevision: 2, boardMapPresent: true }),
-          projectFixture("kb2-b", { boardPosition: 1, boardRevision: 4, boardMapPresent: true }),
-          projectFixture("kb2-c", { boardPosition: 2, boardRevision: 6, boardMapPresent: true }),
-        ],
-        board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-a", "kb2-b", "kb2-c"] } },
-      }) : Promise.resolve({ stages: [] }));
-      apiPostMock.mockReset().mockResolvedValue({
-        changed: true,
-        project: { projectId: "kb2-c", stageKey: "awaiting_raw", boardRevision: 7 },
-        board: { sourceStageKey: "awaiting_raw", targetStageKey: "awaiting_raw", orderedVisibleProjectIds: ["kb2-a", "kb2-c", "kb2-b"] },
-      });
-      await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
-      await vi.waitFor(() => expect(document.querySelector('[data-focus-key="card-menu:kb2-c"]'), "no ⋯ menu rendered — nothing below is proved").not.toBeNull());
-
-      await pressMenuItem(document, "kb2-c", "Move up");
-      await vi.waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1));
-
-      const [path, body] = apiPostMock.mock.calls[0]!;
-      expect(path).toBe("/api/projects/kb2-c/board-position");
-      expect(body).toHaveProperty("placement", { kind: "between", before: { projectId: "kb2-a", boardRevision: 2 }, after: { projectId: "kb2-b", boardRevision: 4 } });
-      expect(body).not.toHaveProperty("confirmation");
-      await vi.waitFor(() => expect(document.activeElement?.getAttribute("data-focus-key")).toBe("card-menu:kb2-c"));
+      await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
+      expect(apiPostMock).not.toHaveBeenCalled();
+      expect(document.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toBe("kb2-c Street stays in Awaiting RAW. Columns are sorted by priority and shoot date.");
     });
   });
 
-  // #99's non-drag path at the seam that reaches the server. The chooser does no confirming of its
-  // own: a cross-Stage submit must go through the same 409 modal round trip as a drop.
-  describe("Move-to chooser", () => {
+  // #470's non-drag path at the seam that reaches the server. The submenu does no confirming of its
+  // own: a Stage pick must go through the same 409 modal round trip as a drop.
+  describe("Move to submenu", () => {
     const twoStages = () => ({
       projects: [
         projectFixture("kb2-source", { boardMapPresent: true }),
-        projectFixture("kb2-target", { stageKey: "raw_review", boardPosition: 1, boardRevision: 5, boardMapPresent: true }),
+        projectFixture("kb2-target", { stageKey: "raw_review", boardRevision: 5, boardMapPresent: true }),
       ],
       board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-source"], raw_review: ["kb2-target"] } },
     });
@@ -312,18 +277,9 @@ describe("Dashboard Board seam (#98)", () => {
       if (!element) throw new Error(`Missing ${what}`);
       await act(async () => { element.click(); await Promise.resolve(); });
     };
-    // Literal selectors only (test-seam guard B), so one finder per role rather than a shared one.
-    const radio = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((node) => node.textContent?.startsWith(text));
-    const option = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((node) => node.textContent?.startsWith(text));
-    const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent?.startsWith(text));
     const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
-    async function chooseBeforeTarget() {
-      await openMoveTo(document, "kb2-source");
-      await click(radio("RAW review"), "RAW review Stage");
-      await click(option("Before kb2-target Street"), "Before kb2-target position");
-    }
 
-    it("sends the chosen position, confirms through the 409 modal, and gives the trigger back", async () => {
+    it("sends an append, confirms through the 409 modal, and gives the trigger back", async () => {
       apiGetMock.mockReset();
       apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve(twoStages()) : Promise.resolve({ stages: [] }));
       apiPostMock.mockReset()
@@ -336,54 +292,20 @@ describe("Dashboard Board seam (#98)", () => {
       await act(async () => { root!.render(<><Dashboard currentUserId="admin-1" /><ConfirmModalHost /></>); await Promise.resolve(); await Promise.resolve(); });
       await vi.waitFor(() => expect(document.querySelector('[data-focus-key="card-menu:kb2-source"]')).not.toBeNull());
 
-      await chooseBeforeTarget();
-      await click(document.querySelector('[data-testid="board-move-to-submit"]'), "submit");
-      await vi.waitFor(() => expect(apiPostMock, "the Move-to submit never reached the server").toHaveBeenCalledTimes(1));
+      await openMoveTo(document, "kb2-source");
+      await click(stageRadio("RAW review"), "RAW review Stage");
+      await vi.waitFor(() => expect(apiPostMock, "the Stage pick never reached the server").toHaveBeenCalledTimes(1));
 
-      const exact = { kind: "between", before: null, after: { projectId: "kb2-target", boardRevision: 5 } };
       expect(apiPostMock.mock.calls[0]![0]).toBe("/api/projects/kb2-source/stage");
-      expect(apiPostMock.mock.calls[0]![1]).toHaveProperty("placement", exact);
+      expect(apiPostMock.mock.calls[0]![1]).toHaveProperty("placement", { kind: "append" });
       expect(apiPostMock.mock.calls[0]![1]).not.toHaveProperty("confirmation");
 
       await click(document.querySelector('[data-testid="confirm-modal-confirm"]'), "confirm modal — the 409 was dropped or silently retried");
       await vi.waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(2));
-      expect(apiPostMock.mock.calls[1]![1]).toEqual(expect.objectContaining({ placement: exact, confirmation: { reasons: ["backward"] } }));
+      expect(apiPostMock.mock.calls[1]![1]).toEqual(expect.objectContaining({ placement: { kind: "append" }, confirmation: { reasons: ["backward"] } }));
 
       await flush(); await flush();
       await vi.waitFor(() => expect(document.activeElement?.getAttribute("data-focus-key")).toBe("card-menu:kb2-source"));
-    });
-
-    // Ported from the default-view scenario in `Dashboard-stage-interactions.dom.test.tsx`: the chosen
-    // neighbour disappears between choosing and submitting, so the move must abort locally — no
-    // request, no guess at a new position — refetch once, and hand the trigger back.
-    it("aborts a stale position locally, refetches, and restores its trigger", async () => {
-      let projectFetches = 0;
-      const stale = { ...twoStages(), projects: [projectFixture("kb2-source", { boardMapPresent: true })], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["kb2-source"] } } };
-      apiGetMock.mockReset();
-      apiGetMock.mockImplementation((path) => path === "/api/projects"
-        ? Promise.resolve(projectFetches++ === 0 ? twoStages() : stale)
-        : Promise.resolve({ stages: [] }));
-      apiPostMock.mockReset();
-      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-      const runtime = new ProjectQueryRuntime(queryClient, "board-move-to-stale-test");
-      await act(async () => {
-        root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><Dashboard currentUserId="admin-1" /></QueryClientProvider></ProjectQueryRuntimeProvider>);
-        await Promise.resolve();
-      });
-      await vi.waitFor(() => expect(document.querySelector('[data-focus-key="card-menu:kb2-source"]')).not.toBeNull());
-
-      await chooseBeforeTarget();
-      runtime.markProjectRemoved("kb2-target");
-      await flush();
-      await click(document.querySelector('[data-testid="board-move-to-submit"]'), "submit");
-      await flush(); await flush();
-
-      expect(apiPostMock).not.toHaveBeenCalled();
-      expect(document.querySelector('[data-testid="dashboard-live-region"]')?.textContent).toContain("That position changed");
-      expect(projectFetches).toBe(2);
-      expect(document.activeElement?.getAttribute("data-focus-key")).toBe("card-menu:kb2-source");
-      runtime.dispose();
-      queryClient.clear();
     });
   });
 

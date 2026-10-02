@@ -3869,7 +3869,7 @@ describe("staff app API", () => {
   // by a hair and failed as a timeout rather than an assertion.
   }, 30_000);
 
-  it("denies same-Stage placement changes to internal and External Editors without mutation", async () => {
+  it("answers a same-Stage placement from an Editor or External Editor as an unchanged no-op, without mutation (#470)", async () => {
     const adminCookie = await sessionCookie(adminToken);
     const projectIds: string[] = [];
     for (const label of ["first", "second", "third"]) {
@@ -3902,12 +3902,8 @@ describe("staff app API", () => {
     const beforeFootprint = await footprint();
     for (const cookie of [await sessionCookie(editorToken), await sessionCookie(externalEditorToken)]) {
       const response = await jsonRequest(`/api/projects/${target}/stage`, cookie, "POST", placementBody);
-      expect(response.status).toBe(403);
-      await expect(response.json()).resolves.toEqual({
-        error: "Forbidden: manual Board reorder requires prioritizeProjects.",
-        code: "project_board_reorder_forbidden",
-        capability: "prioritizeProjects",
-      });
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({ changed: false, project: { projectId: target, boardRevision: 0 } });
       expect(await footprint()).toEqual(beforeFootprint);
     }
   });

@@ -5028,6 +5028,19 @@ remove the legacy readers) still applies.
   and source order decides. Values are coupled to the close offset/size in `ProjectSheet.tsx`; `overflow-wrap: anywhere` lets an
   unbroken title wrap inside the reduced width. Pinned by CSS-text assertions in `styles/app-railed.test.ts`.
 
+## Board order is derived, not stored (#470)
+
+- **One comparator, two sides.** `compareBoardCards` (shared, `board-order.ts`) orders a column: Priority 5 to 1 then unset, oldest
+  Shoot date, street, id. The server builds `board.orderedProjectIdsByStage` with it per role (Priority is withheld from External
+  Editors, so their tier is flat) and the client re-sorts optimistic moves with the same function. Do not fork either copy.
+- **A move is a Stage move and always an append.** `placement` is `{ kind: "append" }` for every drop and every Move to; the server
+  ignores neighbours. `/board-position` is retired; a same-column drop is refused client-side with an announcement and no request.
+- **Focus follows the card to its sorted slot.** The optimistic overlay remounts the card in another column before the menu's own
+  `finalFocus` runs, so the card menu keeps a `pendingMove` ref (`returnFocus: () => !pendingMove.current`) and the Dashboard's
+  restore falls back to the Stage heading when `card-menu:<id>` is absent (collapsed rail), scrolling the target into view.
+- **Moving out of Awaiting RAW can fill the Shoot date server-side**, so the client's slot may differ from the refetched order for a
+  moment. Tests must not assert client slot equals server array for that move.
+
 ## Calendar and Timeline item menu (#463)
 
 - **One controlled host, not a context menu.** The vendor chip and bar are `<button>`s the vendor renders, so nothing can wrap
