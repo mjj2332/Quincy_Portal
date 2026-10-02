@@ -731,13 +731,17 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     capturedFocusLocationRef.current = currentLocation;
     focusTokenRef.current += 1;
     setFocusNotice(null);
+    // Clear, then set at the outcome: an identical landing is announced again.
+    setAnnouncement("");
     setFocusRequest({ projectId: routeFocus, view: routeFocusView, token: focusTokenRef.current });
   }, [currentLocation, focusViewMounted, isBackdrop, routeFocus, routeFocusView]);
-  // The request goes only to the view it names; leaving that view drops it (and any notice).
+  // The request goes only to the view it names; leaving that view drops it (and any notice). A
+  // location that no longer carries the request's focus (Back, a filter or Display change) drops it too.
   useEffect(() => {
+    if (focusRequest && routeFocus !== focusRequest.projectId) setFocusRequest((current) => (current && current.token === focusRequest.token ? null : current));
     if (focusRequest && !(focusRequest.view === "calendar" ? isCalendarView : isGanttView)) setFocusRequest(null);
     if (focusNotice && !(focusNotice.view === "calendar" ? isCalendarView : isGanttView)) setFocusNotice(null);
-  }, [focusNotice, focusRequest, isCalendarView, isGanttView]);
+  }, [focusNotice, focusRequest, isCalendarView, isGanttView, routeFocus]);
 
   const handleFocusSettled = useCallback((view: FocusView, token: number, outcome: ProductionGanttFocusOutcome | ProductionEventCalendarFocusOutcome) => {
     const request = focusRequest;

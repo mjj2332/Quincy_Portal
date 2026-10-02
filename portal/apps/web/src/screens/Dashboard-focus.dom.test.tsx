@@ -135,6 +135,27 @@ describe("Dashboard focus orchestration (#464)", () => {
     expect(live()).toContain("stages=editing");
   });
 
+  it("drops a pending request when the location no longer carries its focus (Back / filter change)", async () => {
+    await mountAt(`/?view=timeline&focus=${PROJECT}`);
+    const pending = ganttProps().focus!;
+    await act(async () => { locationStore().push("/?view=timeline&stages=editing"); await Promise.resolve(); });
+    expect(ganttProps().focus ?? null).toBeNull();
+    await settle("gantt", pending.token, { kind: "hidden" });
+    expect(notice()).toBeNull();
+    expect(live()).toBe("/?view=timeline&stages=editing");
+  });
+
+  it("re-announces an identical landing: the live region clears when the new request starts", async () => {
+    await mountAt(`/?view=timeline&focus=${PROJECT}`);
+    await settle("gantt", ganttProps().focus!.token, { kind: "found", street: "12 Smith St" });
+    expect(liveRegionText()).toContain("Showing 12 Smith St in Timeline.");
+    await act(async () => { locationStore().push(`/?view=timeline&focus=${PROJECT}`); await Promise.resolve(); });
+    expect(ganttProps().focus).toMatchObject({ projectId: PROJECT });
+    expect(liveRegionText()).not.toContain("Showing");
+    await settle("gantt", ganttProps().focus!.token, { kind: "found", street: "12 Smith St" });
+    expect(liveRegionText()).toContain("Showing 12 Smith St in Timeline.");
+  });
+
   it("a stale token's outcome is ignored and does not touch a newer focus", async () => {
     await mountAt(`/?view=timeline&focus=${PROJECT}`);
     const first = ganttProps().focus!;
