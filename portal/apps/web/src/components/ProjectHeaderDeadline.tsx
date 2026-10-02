@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type Ref } from "react";
 import { ChevronDown } from "lucide-react";
 import type { ProjectDeadlineSchedule } from "@quincy/shared";
 import { Popover, PopoverTrigger } from "@/components/reui/popover";
@@ -7,7 +7,8 @@ import { DateTimePopoverContent } from "./quincy/DateTimeField";
 import { StatusPill } from "./quincy/StatusPill";
 import { dueIn } from "../lib/deadline-due-in";
 import { cn } from "../lib/utils";
-import { DASHED_TRIGGER, HEADER_KV_VALUE, TRIGGER_CHEVRON } from "./project-header-popover";
+import { DASHED_TRIGGER, HEADER_KV_VALUE, HEADER_READONLY_VALUE, READONLY_GROUP_FOCUS, TRIGGER_CHEVRON } from "./project-header-popover";
+import { ARCHIVED_HEADER_NOTICE_CLASS } from "./archived-notice";
 
 /**
  * #205 — the header's Deadline control (then a block in the rail's Production section, since #213 a
@@ -50,12 +51,30 @@ export function deadlineTriggerText(localCivil: string): string {
   return `${weekday} ${Number(day)} ${MONTHS[Number(month) - 1]} · ${hours}:${minutes}`;
 }
 
-export function ProjectHeaderDeadline({ projectId, schedule, canEdit }: {
+const ARCHIVED_DEADLINE_NOTICE = "Read-only while archived. Restore the project before changing the deadline.";
+
+export function ProjectHeaderDeadline({ projectId, schedule, canEdit, archived = false, archivedNotice = false, readOnlyRef, onArchivedRefusal }: {
   projectId: string;
   schedule: ProjectDeadlineSchedule;
   canEdit: boolean;
+  /** #455: the Project is archived (from the loaded detail, or latched by the header after a refusal). The cell is a plain value, with no trigger or popover. */
+  archived?: boolean;
+  /** #455: show the "read-only while archived" notice (this cell's own write was refused). */
+  archivedNotice?: boolean;
+  /** #455: the read-only group, so the header can move focus to it after a refusal. */
+  readOnlyRef?: Ref<HTMLDivElement>;
+  /** #455: a write was refused as archived; `focusWasInside` is whether focus was in this cell (trigger or popup) when the request started. */
+  onArchivedRefusal?: (focusWasInside: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const noticeId = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
+  const focusAtRequest = useRef(false);
+  // The popup is portalled, so the trigger's own subtree misses focus inside it.
+  const focusInCell = () => { const active = document.activeElement; return Boolean(active && (triggerRef.current?.contains(active) || popupRef.current?.contains(active))); };
+  // An archived Project has no editor: close the popover on the read-only edge, else it would reopen (with focus on Restore) when the Project comes back.
+  useLayoutEffect(() => { if (archived) setOpen(false); }, [archived]);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -71,8 +90,28 @@ export function ProjectHeaderDeadline({ projectId, schedule, canEdit }: {
   const due = dueIn(schedule, now);
   const ariaLabel = `Deadline: ${triggerText}${due ? `, ${due.label}` : ""}`;
 
+  if (archived) {
+    // #455: plain value, same text as the trigger without the countdown or chevron. A labelled group (like the Team's) so a refusal can focus it.
+    return <div className="grid gap-[var(--space-3)]">
+      <div
+        ref={readOnlyRef}
+        role="group"
+        aria-label="Deadline"
+        tabIndex={-1}
+        aria-describedby={archivedNotice ? noticeId : undefined}
+        className={cn(HEADER_READONLY_VALUE, READONLY_GROUP_FOCUS)}
+      >
+        {schedule.deadline
+          ? <time dateTime={schedule.deadline.instant}>{triggerText}</time>
+          : <><span aria-hidden="true">—</span><span className="sr-only">No deadline set</span></>}
+      </div>
+      {archivedNotice && <p id={noticeId} role="status" className={ARCHIVED_HEADER_NOTICE_CLASS}>{ARCHIVED_DEADLINE_NOTICE}</p>}
+    </div>;
+  }
+
   return <Popover open={open} onOpenChange={setOpen}>
     <PopoverTrigger
+      ref={triggerRef}
       type="button"
       data-testid="project-deadline-trigger"
       aria-label={ariaLabel}
@@ -84,8 +123,10 @@ export function ProjectHeaderDeadline({ projectId, schedule, canEdit }: {
     </PopoverTrigger>
     {/* #422: the popup is the date-time form of the shared date/time field (`quincy/DateTimeField`);
         its own footer is pinned (#325), so the content needs no scroll padding of its own. */}
-    <DateTimePopoverContent label="Deadline">
-      <ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} onClose={() => setOpen(false)} />
+    <DateTimePopoverContent label="Deadline" ref={popupRef}>
+      <ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} onClose={() => setOpen(false)}
+        onRequestStart={() => { focusAtRequest.current = focusInCell(); }}
+        onArchivedRefusal={() => onArchivedRefusal?.(focusAtRequest.current)} />
     </DateTimePopoverContent>
   </Popover>;
 }
