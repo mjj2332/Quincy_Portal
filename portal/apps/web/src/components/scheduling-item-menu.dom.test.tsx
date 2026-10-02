@@ -133,6 +133,26 @@ describe("the scheduling item menu host (#463)", () => {
     expect(chip().getAttribute("aria-expanded")).toBe("true");
   });
 
+  it("a pointer open focuses the menu popup, not its first row", async () => {
+    await mount();
+    await pointerDown(chip(), { x: 4, y: 4 });
+    await pointerClick(chip(), 4, 4);
+    await flush(80);
+    expect(menu()).not.toBeNull();
+    expect(items()).toContain(item("Open project"));
+    expect(items().includes(document.activeElement as HTMLElement)).toBe(false);
+    expect(menu()!.contains(document.activeElement)).toBe(true);
+  });
+
+  it("separates the header from the rows and clamps a long label to two lines with the full text in a title", async () => {
+    await mount();
+    await keyboardOpen();
+    expect(menu()!.querySelector('[role="separator"]')).not.toBeNull();
+    const label = [...menu()!.querySelectorAll<HTMLElement>("[title]")].find((node) => node.textContent?.includes("Deadline · 12 Smith St"));
+    expect(label).toBeTruthy();
+    expect(label!.getAttribute("title")).toBe("Deadline · 12 Smith St");
+  });
+
   it("opens from a pointer click and from a right-click, and a right-click's native menu is prevented", async () => {
     await mount();
     await pointerDown(chip(), { x: 4, y: 4 });

@@ -11,6 +11,7 @@ describe("overlay stacking contract", () => {
   it("orders popover < menu < dialog < toast", () => {
     expect(z(tokens, "menu")).toBeGreaterThan(z(tokens, "popover"));
     expect(z(tokens, "menu")).toBeLessThan(z(tokens, "dialog"));
+    expect(z(tokens, "dialog")).toBeLessThan(z(tokens, "toast"));
   });
   it("the dropdown-menu positioner and popup use the menu token, not a magic number", () => {
     const src = read("../components/reui/dropdown-menu.tsx");

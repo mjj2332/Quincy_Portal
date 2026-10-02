@@ -31,7 +31,7 @@
  *   stops knowing it, or `closeKey` changes (the controller's reset key, a lost access).
  *
  * Reuse ledger: menu — `reui/dropdown-menu` (`DropdownMenu`, `DropdownMenuContent` + its `anchor`,
- * `DropdownMenuGroup`, `DropdownMenuLabel`, `DropdownMenuItem`), surface class `quincy/menu-surface.ts`
+ * `DropdownMenuGroup`, `DropdownMenuLabel`, `DropdownMenuSeparator`, `DropdownMenuItem`), surface class `quincy/menu-surface.ts`
  * shared with the Board card's menu. `reui/context-menu` / `c-context-menu-1` / the `gantt-1` and
  * `gantt-2` `renderEventMenu` blocks / `quincy/menu.tsx` were searched and do not fit: each needs a
  * trigger element or a per-bar root (above).
@@ -39,7 +39,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type TouchEvent as ReactTouchEvent } from "react";
 import type { SchedulingItemAction, SchedulingItemActionId } from "../lib/scheduling-item-actions";
 import { MENU_SURFACE_CLASS } from "./quincy/menu-surface";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel } from "./reui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from "./reui/dropdown-menu";
 
 /** What the menu shows for one item: the strip's old context line, an optional caution, and the rows. */
 export type SchedulingMenuContent = {
@@ -248,15 +248,16 @@ export function useSchedulingItemMenu({ describe, resolveElement, onAction, fall
     <DropdownMenu
       open={open && content !== null}
       onOpenChange={(next) => { if (!next) setOpen(false); }}
-      onOpenChangeComplete={(isOpen) => { if (isOpen) focusFirstRow(); else afterClose(); }}
+      onOpenChangeComplete={(isOpen) => { if (!isOpen) afterClose(); else if (stateRef.current?.mode === "keyboard") focusFirstRow(); }}
     >
       {state && content && (
         <DropdownMenuContent ref={popupRef} anchor={anchor} side="bottom" align="start" className={MENU_SURFACE_CLASS} finalFocus={finalFocus}>
           <DropdownMenuGroup>
             <DropdownMenuLabel className="break-words">
-              {content.label}
+              <span className="line-clamp-2" title={content.label}>{content.label}</span>
               {content.caution && <span className="block text-signal-caution-text">{content.caution}</span>}
             </DropdownMenuLabel>
+            <DropdownMenuSeparator />
             {content.actions.map((action) => (
               <DropdownMenuItem key={action.id} disabled={action.disabled} className={ROW_CLASS} onClick={() => { pendingRef.current = { id: action.id, key: state.key, ran: false }; }}>
                 {action.label}
