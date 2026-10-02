@@ -97,6 +97,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Skeleton } from "./reui/skeleton";
 import { EmptyState } from "./quincy/EmptyState";
 import { Eyebrow } from "./quincy/Eyebrow";
+import { SheetCloseButton, SHEET_CLOSE_CLEARANCE } from "./quincy/SheetCloseButton";
 import { AvatarStack } from "./quincy/AvatarStack";
 import { Notice } from "./quincy/Notice";
 import { schedulingItemActions, type SchedulingItemActionId } from "../lib/scheduling-item-actions";
@@ -544,6 +545,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
             <Sheet open={railOpen} onOpenChange={setRailOpen}>
               <SheetContent
                 side="left"
+                showCloseButton={false}
                 className="z-[var(--z-dialog)] w-[320px] max-w-[90vw] gap-0 p-0"
                 data-testid="event-calendar-rail-sheet"
                 overlayProps={{
@@ -554,11 +556,13 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
                   className: "z-[var(--z-dialog)] bg-[var(--scrim-overlay)] backdrop-blur-[3px]",
                 }}
               >
-                <SheetHeader className="border-b border-border">
-                  <SheetTitle>Calendar</SheetTitle>
+                <SheetHeader className={cn("border-b border-border max-[721px]:py-[var(--space-3)]", SHEET_CLOSE_CLEARANCE)} data-testid="event-calendar-rail-header">
+                  {/* 44px touch target: the phone header is 12 + 44 + 12 around the close, and the title centres on it. */}
+                  <SheetTitle className="max-[721px]:flex max-[721px]:min-h-[44px] max-[721px]:items-center">Calendar</SheetTitle>
                   <SheetDescription className="sr-only">Mini month and up next.</SheetDescription>
                 </SheetHeader>
                 {rail}
+                <SheetCloseButton label="Close calendar" data-testid="event-calendar-rail-sheet-close" />
               </SheetContent>
             </Sheet>
           )}

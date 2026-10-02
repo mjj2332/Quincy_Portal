@@ -47,6 +47,8 @@ import {
 import { ProductionGanttDeadlineDialog, type ProductionGanttDeadlineConfirmState } from "./ProductionGanttDeadlineDialog";
 import { DateTimeField } from "./quincy/DateTimeField";
 import { Eyebrow } from "./quincy/Eyebrow";
+import { SheetCloseButton, SHEET_CLOSE_CLEARANCE } from "./quincy/SheetCloseButton";
+import { cn } from "@/lib/utils";
 import { Button } from "./reui/button";
 import { FieldLegend, FieldSet } from "./reui/field";
 import {
@@ -230,6 +232,7 @@ export function ProductionEventCalendarScheduleEditorSheet({ open, event, onSubm
     <Sheet open={open} onOpenChange={(next) => { if (!next) onCancel(); }}>
       <SheetContent
         side="right"
+        showCloseButton={false}
         data-testid="event-calendar-schedule-editor"
         // Quincy's dialog ladder: `--z-dialog`, paper surface, the Modal "wide" rung (560px).
         className="z-[var(--z-dialog)] gap-0 bg-background p-0 data-[side=right]:w-full data-[side=right]:max-w-[560px]"
@@ -241,9 +244,9 @@ export function ProductionEventCalendarScheduleEditorSheet({ open, event, onSubm
           className: "z-[var(--z-dialog)] bg-[var(--scrim-overlay)] backdrop-blur-[3px]",
         }}
       >
-        <SheetHeader className="gap-[var(--space-2)] p-[var(--space-6)] pb-[var(--space-4)]">
-          <Eyebrow aria-hidden="true">{event.project.street}</Eyebrow>
-          <SheetTitle className="m-0 [font:var(--type-h3)] tracking-[var(--tracking-tight)]">Schedule checklist item</SheetTitle>
+        <SheetHeader className={cn("min-w-0 gap-[var(--space-2)] p-[var(--space-6)] pb-[var(--space-4)]", SHEET_CLOSE_CLEARANCE)} data-testid="event-calendar-schedule-header">
+          <Eyebrow aria-hidden="true" className="[overflow-wrap:anywhere]">{event.project.street}</Eyebrow>
+          <SheetTitle className="m-0 [font:var(--type-h3)] tracking-[var(--tracking-tight)] [overflow-wrap:anywhere]">Schedule checklist item</SheetTitle>
           <SheetDescription className="sr-only">{event.project.street}</SheetDescription>
         </SheetHeader>
         <div className="min-h-0 flex-1 overflow-auto px-[var(--space-6)] pb-[var(--space-6)]">
@@ -253,6 +256,7 @@ export function ProductionEventCalendarScheduleEditorSheet({ open, event, onSubm
           <Button type="button" variant="outline" data-testid="event-calendar-schedule-cancel" onClick={onCancel}>Cancel</Button>
           <Button type="button" data-testid="event-calendar-schedule-submit" onClick={state.submit}>Save schedule</Button>
         </SheetFooter>
+        <SheetCloseButton label="Close schedule editor" data-testid="event-calendar-schedule-editor-close" />
       </SheetContent>
     </Sheet>
   );

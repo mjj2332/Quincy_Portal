@@ -324,6 +324,43 @@ describe("ProductionEventCalendarScheduleEditorSheet (sheet shell)", () => {
     });
   });
 
+  describe("close control (#462)", () => {
+    function closeButtons(): HTMLButtonElement[] {
+      return [...byTestId("event-calendar-schedule-editor")!.querySelectorAll<HTMLButtonElement>("button")].filter((b) => b.getAttribute("aria-label") === "Close schedule editor" || b.textContent === "Close");
+    }
+
+    it("has exactly one close control, named for the editor, after the Save control in document order", async () => {
+      await renderSheet();
+      const sheet = byTestId("event-calendar-schedule-editor")!;
+      expect(closeButtons()).toHaveLength(1);
+      const close = sheet.querySelector<HTMLButtonElement>('button[aria-label="Close schedule editor"]')!;
+      expect(close).not.toBeNull();
+      expect(byTestId("event-calendar-schedule-editor-close")).toBe(close);
+      expect(byTestId("event-calendar-schedule-submit")!.compareDocumentPosition(close) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it("cancels once on click and never submits", async () => {
+      const onCancel = vi.fn();
+      const onSubmit = await renderSheet({ onCancel });
+      await click(byTestId("event-calendar-schedule-editor-close")!);
+      expect(onCancel).toHaveBeenCalledTimes(1);
+      expect(onSubmit).not.toHaveBeenCalled();
+    });
+
+    it("still cancels once on Escape", async () => {
+      const onCancel = vi.fn();
+      await renderSheet({ onCancel });
+      await act(async () => { byTestId("event-calendar-schedule-editor")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
+      expect(onCancel).toHaveBeenCalledTimes(1);
+    });
+
+    it("renders a long unbroken street in full", async () => {
+      const street = "Supercalifragilisticexpialidocious".repeat(4) + " Street";
+      await renderSheet({ event: { ...dueEvent, project: { ...project, street } } });
+      expect(byTestId("event-calendar-schedule-editor")!.textContent).toContain(street);
+    });
+  });
+
   it("reports a nonexistent spring-forward time in the popup and blocks Apply", async () => {
     await renderSheet();
     const popup = await openFieldPopup("Schedule");
