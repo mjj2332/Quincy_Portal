@@ -548,7 +548,7 @@ function WorkspaceBody(props: WorkspaceChromeProps) {
     <section className="workmain" data-testid="workspace-main">
       {collection !== null && <CollectionTabBody key={collection} {...props} collection={collection} hasRawFolder={hasRawFolder} autohdrBlocked={autohdrBlocked} />}
       <div role="tabpanel" id="project-workspace-panel-collaboration" aria-labelledby="project-workspace-tab-collaboration" hidden={activeTab !== "collaboration"} className="workgrid">
-        {props.collaborationUnavailable ? <CollaborationUnavailableSection /> : <ProjectCollaborationPanel projectId={project.id} presented={activeTab === "collaboration"} jobs={props.canAdminBackend ? props.jobs : undefined} onRetryJob={props.onRetryAutoHdr} view={props.collaborationView} onViewChange={props.onCollaborationViewChange} showUnreadBadge={false} onUnreadCountChange={setCollaborationUnread} onAccessFailure={props.onAccessFailure} embedded />}
+        {props.collaborationUnavailable ? <CollaborationUnavailableSection /> : <ProjectCollaborationPanel projectId={project.id} archived={Boolean(project.archivedAt)} presented={activeTab === "collaboration"} jobs={props.canAdminBackend ? props.jobs : undefined} onRetryJob={props.onRetryAutoHdr} view={props.collaborationView} onViewChange={props.onCollaborationViewChange} showUnreadBadge={false} onUnreadCountChange={setCollaborationUnread} onAccessFailure={props.onAccessFailure} embedded />}
       </div>
     </section>
   </main>;

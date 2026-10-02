@@ -4892,3 +4892,20 @@ remove the legacy readers) still applies.
 - **A truncated title in a `w-auto` popover needs `contain: inline-size`.** The popover sizes to its widest content, so a long
   label widens the popup rather than truncating. `[contain:inline-size]` on `FrameTitle` removes the title from that
   calculation; `min-w-0` plus a `block truncate` eyebrow then clips it. The full text stays in the DOM and in the `aria-label`.
+
+## #450 Checklist rail is read-only on an archived Project
+
+- **The rail knows it is archived from a prop, and from a latch after a 409.** `ProjectWorkspace` passes
+  `archived={Boolean(project.archivedAt)}` down; a write refused with 409 `subtask_project_archived` (#448) latches the rail
+  read-only at once and refetches `detail`, `subtasks` and `activity` (with dashboard, calendar and gantt) so the header and the
+  other surfaces catch up. The latch clears when the prop goes true to false (Restore). Two gaps, both failing safe: the
+  collaboration-only view has no `archivedAt` in its summary DTO, so its rail turns read-only on the first refusal rather than on
+  load; and a refetch that comes back un-archived (archived and restored inside one window) leaves the latch on until remount.
+- **Lost focus is "body or disabled", not `section.contains(activeElement)`.** The schedule popover and assignee combobox render
+  in portals, so `contains()` misses them. Chrome also resolves a focused checkbox that becomes `disabled` to `<body>` a frame
+  later, not in the layout phase, so the check is `activeElement` is body or `:disabled`. It runs in a `useLayoutEffect`: a
+  `setTimeout` loses to the Project sheet's focus manager. The target is the always-mounted collapse button, and only on a
+  409-driven flip, never on load.
+- **The reorder handler's bare 409 branch would otherwise win.** `isArchivedRefusal` is checked first in all four catch blocks
+  (update, add, remove, reorder); a reorder refusal also skips `scheduleReorderFocus`, whose fallback target
+  (`subtask-add-<id>`) no longer exists.
