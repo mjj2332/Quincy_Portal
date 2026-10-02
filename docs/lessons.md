@@ -4987,3 +4987,12 @@ remove the legacy readers) still applies.
 - **Details link:** an archived Project shows "Restore or delete" to an Admin with backend access and nothing to anyone else, since `EditProject` is the only UI path to Archive / Restore / Delete.
 - **`EditProject` on an archived Project hides the form and Save** behind a `Notice tone="caution"`, keeps the Danger zone, and reads "Archived project". A Save refused as archived latches the same view, re-reads the Project (so Restore appears), invalidates the surfaces and shows no error. Focus goes to the heading only if it was in the form at Save. The "inside the form" check uses `closest("#edit-project-form")`: in jsdom `form.contains(ownControl)` answers false (the form wrapper is a Proxy whose identity differs between lookups), which a DOM test cannot tell from a real focus loss.
 - **The ui-primitive ratchet matches a literal `role="listbox"`.** The Stage capture needed "focus is in the Select's portalled popup" without writing that attribute, so it reads the trigger's `aria-controls` and checks the element it names.
+
+## Project sheet title ran under the close button (#460)
+
+- The sheet's close x is `position: absolute` (right `--space-4`, 44px) over the body, and `.project-header__identity > h2` had
+  no inline-end clearance, so a long title slid beneath it. The fix is `padding-inline-end` on the h2 scoped to
+  `.project-sheet__body`, mirroring the `.worktools` reservation; the header's own side padding is subtracted so the gap is
+  exact. The phone value sits in a `max-width: 720px` block placed AFTER the base rule, because both have equal specificity
+  and source order decides. Values are coupled to the close offset/size in `ProjectSheet.tsx`; `overflow-wrap: anywhere` lets an
+  unbroken title wrap inside the reduced width. Pinned by CSS-text assertions in `styles/app-railed.test.ts`.
