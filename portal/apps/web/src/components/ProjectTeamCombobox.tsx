@@ -501,7 +501,12 @@ export function ProjectTeamCombobox({ projectId, members, canEdit, archived = fa
           </ComboboxGroup>}
         </ComboboxList>
       </ComboboxContent>
-    </Combobox> : <div role="group" aria-label="Team" tabIndex={-1} ref={readOnlyRef} aria-describedby={latched ? noticeId : undefined} className="flex flex-wrap items-center gap-1.5 outline-none">
+    </Combobox> : <div
+      // Only an archived (or latched) Team gets the named group: the focus target, and the anchor for the notice. A live read-only Team keeps its plain row.
+      {...(readOnly ? { role: "group", "aria-label": "Team", tabIndex: -1, "aria-describedby": latched ? noticeId : undefined } : {})}
+      ref={readOnlyRef}
+      className="flex flex-wrap items-center gap-1.5 outline-none"
+    >
       {displayed.length ? <>
         {visible.map((option) => {
           const { dataState, messageId, name, roleTag } = chipProps(option);
