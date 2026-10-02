@@ -161,6 +161,8 @@ describe("Dashboard Calendar routing", () => {
     const filterTrigger = host.querySelector<HTMLButtonElement>('[data-testid="dashboard-filter-trigger"]');
     expect(filterTrigger, "no Filter trigger rendered").not.toBeNull();
     await click(filterTrigger!);
+    // #461: the Filter is a popover; its Add filter opens the field picker.
+    await click([...document.querySelectorAll<HTMLElement>('[role="group"][aria-label="Filter"] button')].find((button) => button.textContent?.trim() === "Add filter")!);
     await click(option("People"));
     await click(option("is any of"));
     await click(option("Unassigned"));
@@ -511,9 +513,11 @@ describe("Dashboard Calendar routing", () => {
 
     it("keeps the Calendar's Stage, Overdue and My tasks reachable through the shared Filter", async () => {
       await mountAt(COLD);
-      const chips = host.querySelector('[role="toolbar"]');
-      expect(chips, "no Filter chip row").not.toBeNull();
-      const text = chips!.textContent ?? "";
+      // #461: the rules live in the Filter popover, behind its trigger.
+      await act(async () => { host.querySelector<HTMLElement>('[data-testid="dashboard-filter-trigger"]')!.click(); await new Promise((resolve) => setTimeout(resolve, 50)); });
+      const panel = document.querySelector('[role="group"][aria-label="Filter"]');
+      expect(panel, "no Filter panel").not.toBeNull();
+      const text = panel!.textContent ?? "";
       expect(text).toContain("Stage");
       expect(text).toContain("is overdue");
       expect(text).toContain("My tasks");
@@ -621,8 +625,8 @@ describe("Dashboard Calendar routing", () => {
     await render({ calendar: routeCalendar });
     expect(window.location.search).not.toContain(editorId);
     expect(window.location.search).toContain("view=calendar");
-    // No announcement: the only live region with text is the Filter chips' own count (always mounted, #428).
-    const announcements = [...host.querySelectorAll('[aria-live]')].filter((region) => !region.closest('[data-testid="dashboard-filter-chips"]')).map((region) => region.textContent ?? "");
+    // No announcement (#461: the Filter's own live region exists only while its popover is open).
+    const announcements = [...host.querySelectorAll('[aria-live]')].map((region) => region.textContent ?? "");
     expect(announcements.join("")).toBe("");
   });
 

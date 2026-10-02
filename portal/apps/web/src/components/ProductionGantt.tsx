@@ -197,6 +197,8 @@ import { decodeChecklistMutationResponse } from "../lib/production-calendar-quer
 import { scheduleWarningText } from "../lib/schedule-bounds";
 import {
   fetchGanttChildPage,
+  ganttChildFilterOf,
+  ganttRequestFilters,
   mergeGanttChildPage,
   productionGanttKey,
   useProductionGanttProjects,
@@ -213,8 +215,7 @@ import {
 import {
   DEFAULT_GANTT_FACET_FILTERS,
   ganttShowDeliveredRecovery,
-  ganttFacetFor,
-  ganttFacetKey,
+  ganttFacetIsDefault,
   ganttLegendEntries,
   productionStageFilterOptions,
   type GanttLegendEntry,
@@ -857,21 +858,20 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // through the existing lifecycle exactly as a `q` change always has.
   // Keyed by value (`ganttFacetKey`: stages, delivered, completed; plus the editor ids, which that
   // key does not carry), so a fresh facet object with the same filters keeps the same request.
-  const { editorIds, stageKeys, priorities, archived, delivered, completed, includeUnassigned, myTasks, overdueOnly, shootRange, deadlineRange } = facetFilters;
-  // #428: a continuation page of an archived Project's checklist is readable only under the Archived mode
-  // that listed the Project; read at fetch time (the chain restarts on any filter change anyway).
-  const archivedModeRef = useRef(archived);
-  archivedModeRef.current = archived;
-  // #429: and the People / My tasks filter, which a child-page continuation must repeat (its cursor carries a fingerprint of it).
-  const childPeopleRef = useRef({ editorIds, includeUnassigned, myTasks });
-  childPeopleRef.current = { editorIds, includeUnassigned, myTasks };
-  const facetKey = ganttFacetKey(facetFilters);
-  const editorIdsKey = editorIds.join(",");
+  // #461: the request's filters are the facet itself (flat facets or the filter tree, `delivered`, `completed`) and the
+  // search, minus the URL-only `order`: this surface never reads a facet field to decide anything.
+  // Keyed by value, so a fresh facet object with the same filters keeps the same request.
+  const facetKey = JSON.stringify(facetFilters);
   const filters = useMemo<ProductionGanttFilters>(
-    () => ({ q, editorIds, stageKeys, priorities, archived, delivered, completed, includeUnassigned, myTasks, overdueOnly, shootRange, deadlineRange }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- the arrays are read from the facet; its value keys stand in for them
-    [q, facetKey, editorIdsKey],
+    () => ganttRequestFilters(facetFilters, q),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `facetKey` is the value key of `facetFilters`
+    [q, facetKey],
   );
+  // #428 / #429 / #461: a continuation page of a Project's checklist is readable only under the Archived mode and the
+  // People / My tasks filter (or the whole filter tree) that listed the Project (its cursor carries a fingerprint of it);
+  // read at fetch time (the chain restarts on any filter change anyway).
+  const childFilterRef = useRef(ganttChildFilterOf(filters));
+  childFilterRef.current = ganttChildFilterOf(filters);
   const legendEntries = useMemo(() => ganttLegendEntries({ stageOptions, filters }), [stageOptions, filters]);
   // #255: the empty state's Clear filters button unmounts with the empty state, which would drop
   // focus to <body>. Focus moves to the Dashboard's always-mounted Filter trigger instead (#430; the
@@ -1026,7 +1026,8 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
       let cursor: string | null = seedCursor;
       try {
         while (cursor) {
-          const page = await fetchGanttChildPage(projectId, cursor, undefined, controller.signal, archivedModeRef.current, childPeopleRef.current);
+          const child = childFilterRef.current;
+          const page = await fetchGanttChildPage(projectId, cursor, undefined, controller.signal, child.archived, child.people, child.tree);
           // fix-220-sol1b: `controller.signal.aborted` is checked alongside the generation guard —
           // a same-generation re-seed (this file's own reconciliation effect below) aborts THIS
           // controller without bumping `generationRef`, and a mocked/real fetch whose response had
@@ -2065,7 +2066,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     // chart is blank instead of drawing an empty grid. `projects` is the same flattened list the
     // chart is built from.
     const showEmpty = projects.length === 0 && !hasNextPage;
-    const facetFiltersDefault = editorIds.length === 0 && ganttFacetFor(facetFilters) === undefined;
+    const facetFiltersDefault = ganttFacetIsDefault(facetFilters);
     const showDeliveredRecovery = ganttShowDeliveredRecovery(facetFilters);
     body = (
       <div className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)]" data-testid="production-gantt">

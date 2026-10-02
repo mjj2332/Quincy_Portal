@@ -21,6 +21,7 @@
 import {
   CANONICAL_LOWERCASE_UUID_REGEX,
   canonicalizeDashboardFilterTree,
+  clampDashboardFilterForRole,
   coerceDashboardFilterTree,
   DASHBOARD_ARCHIVED_MODES,
   DASHBOARD_FILTER_MAX_STAGE_KEYS,
@@ -28,7 +29,10 @@ import {
   DASHBOARD_FILTER_TREE_MAX_PEOPLE_IDS,
   DASHBOARD_FILTER_TREE_MAX_RULES,
   DASHBOARD_PRIORITY_FILTER_VALUES,
+  dashboardFilterArchivedMode,
+  dashboardFilterRuleCount,
   dashboardFilterTreeOf,
+  emptyDashboardFilterTree,
   formatDashboardFilterTree,
   normalizeDashboardFilter,
   parseDashboardDateRange,
@@ -283,7 +287,35 @@ export function canAddDashboardFilterGroup(query: FilterQuery<unknown>, parentId
   return depth !== null && ruleCountOf(query) < DASHBOARD_FILTER_TREE_MAX_RULES && depth + 1 <= DASHBOARD_FILTER_TREE_MAX_DEPTH - 1;
 }
 
-/** Transitional (removed with the Dashboard's move to the tree helpers in this PR). */
-export function dashboardFilterNarrowCount(filter: DashboardFilter): number {
-  return dashboardFilterTreeOf(filter).children.length;
+/* ------------------------------------------------------------------ whole-filter helpers (the Dashboard reads a filter only through these and the shared tree helpers) */
+
+/** `filter` for a role: Priority rules removed for an External Editor, Archived rules for a non-Admin. A stale pasted link reads "as default". */
+export function clampDashboardFilter(filter: DashboardFilter, allowed: { archived: boolean; priority: boolean }): DashboardFilter {
+  return normalizeDashboardFilter({ tree: clampDashboardFilterForRole(dashboardFilterTreeOf(filter), allowed) });
+}
+
+/** The Archived scope the filter implies: `hide` with no Archived rule (the shared helper's rules). */
+export function dashboardArchivedModeOf(filter: DashboardFilter): DashboardArchivedMode {
+  return dashboardFilterArchivedMode(dashboardFilterTreeOf(filter));
+}
+
+/** The filter with everything cleared but the Archived scope it already implied (a sheet that broadened Archived keeps it). */
+export function dashboardFilterKeepingArchived(filter: DashboardFilter): DashboardFilter {
+  const mode = dashboardArchivedModeOf(filter);
+  return mode === "hide" ? normalizeDashboardFilter(undefined) : normalizeDashboardFilter({ tree: { ...emptyDashboardFilterTree(), children: [{ kind: "leaf", field: "archived", mode }] } });
+}
+
+/**
+ * `base` with `filter` written over it, as ONE filter: whatever tree or order `base` carried is dropped
+ * first, so a flat `filter` cannot be shadowed by a stale tree (`{ ...base, ...filter }` would keep it:
+ * a flat filter has no `tree` key to overwrite it with).
+ */
+export function applyDashboardFilter<T extends object>(base: T, filter: DashboardFilter): Omit<T, "tree" | "order"> & DashboardFilter {
+  const { tree: _tree, order: _order, ...rest } = base as T & { tree?: unknown; order?: unknown };
+  return { ...rest, ...filter } as Omit<T, "tree" | "order"> & DashboardFilter;
+}
+
+/** How many rules the filter applies (the Filter button's badge). */
+export function dashboardFilterAppliedCount(filter: DashboardFilter): number {
+  return dashboardFilterRuleCount(dashboardFilterTreeOf(filter));
 }

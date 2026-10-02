@@ -144,8 +144,30 @@ describe("Dashboard shared Filter (#428)", () => {
 
   const tab = (label: string) => [...host.querySelectorAll<HTMLElement>('[aria-label="Dashboard view"] [role="tab"]')].find((candidate) => candidate.textContent === label);
   const trigger = () => host.querySelector<HTMLButtonElement>('[data-testid="dashboard-filter-trigger"]');
-  const chipRegion = () => host.querySelector<HTMLElement>('[data-testid="dashboard-filter-chips"]')!;
-  const chipNames = () => [...chipRegion().querySelectorAll<HTMLElement>('[role="group"]')].map((chip) => chip.getAttribute("aria-label") ?? "");
+  const panel = () => document.querySelector<HTMLElement>('[role="group"][aria-label="Filter"]');
+  /** #461: the rules live in the Filter popover, so reading them opens it (a no-op when open). */
+  const rowNames = () => [...(panel()?.querySelectorAll<HTMLElement>('[data-filter-cell="field"]') ?? [])].map((field) => {
+    const row = field.closest<HTMLElement>('[role="group"]')!;
+    const cell = (name: string) => row.querySelector<HTMLElement>(`[data-filter-cell="${name}"]`);
+    return [field.getAttribute("aria-label"), cell("operator")?.getAttribute("title"), cell("value")?.getAttribute("aria-label")].filter(Boolean).join(" ");
+  });
+  async function openPanel() {
+    if (!panel()) await click(trigger()!);
+    await waitFor(() => expect(panel()).not.toBeNull());
+  }
+  /** Opens the panel to read the rules, then closes it again if this call opened it. */
+  async function chipNames() {
+    const wasOpen = panel() !== null;
+    await openPanel();
+    const names = rowNames();
+    if (!wasOpen) await escape();
+    return names;
+  }
+  /** Opens the panel and its Add filter field picker. */
+  async function openPicker() {
+    await openPanel();
+    await click([...panel()!.querySelectorAll<HTMLElement>("button")].find((button) => button.textContent?.trim() === "Add filter")!);
+  }
   const options = () => [...document.querySelectorAll<HTMLElement>('[role="option"]')];
   const optionNames = () => options().map((candidate) => candidate.textContent?.trim());
   const option = (name: string) => {
@@ -163,7 +185,7 @@ describe("Dashboard shared Filter (#428)", () => {
 
   /** Opens the picker, picks a field, its one condition, then the named values; leaves the menu open. */
   async function addFilter(field: string, condition: string, values: string[]) {
-    await click(trigger()!);
+    await openPicker();
     await waitFor(() => expect(optionNames()).toContain(field));
     await click(option(field));
     await waitFor(() => expect(optionNames()).toEqual([condition]));
@@ -185,7 +207,7 @@ describe("Dashboard shared Filter (#428)", () => {
 
   it("seeds the chips from the URL: Stage, Priority and Archived", async () => {
     await renderAt("/?view=table&stages=raw_review&priority=5%2Cnone&archived=only");
-    expect(chipNames()).toEqual(["Stage is any of RAW review", "Priority is any of 2 selected", "Archived is Only archived"]);
+    expect(await chipNames()).toEqual(["Stage is any of RAW review", "Priority is any of 2 selected", "Archived is Only archived"]);
     // The request carries all three, in the canonical spelling.
     expect(lastProjectRequest()).toBe("/api/projects?stages=raw_review&priority=5%2Cnone&archived=only");
     expect(host.textContent).toContain("9 Archived Street");
@@ -207,13 +229,13 @@ describe("Dashboard shared Filter (#428)", () => {
 
   it("a chip edit pushes the URL (one history entry) and changes the request, and Back re-seeds the chips", async () => {
     await renderAt("/?view=table");
-    expect(chipNames()).toEqual([]);
+    expect(await chipNames()).toEqual([]);
     const before = window.history.length;
 
     await addFilter("Priority", "is any of", ["5 stars"]);
     await escape();
     expect(url()).toBe("/?view=table&priority=5");
-    expect(chipNames()).toEqual(["Priority is any of 5 stars"]);
+    expect(await chipNames()).toEqual(["Priority is any of 5 stars"]);
     expect(lastProjectRequest()).toBe("/api/projects?priority=5");
     expect(window.history.length).toBe(before + 1);
 
@@ -224,7 +246,7 @@ describe("Dashboard shared Filter (#428)", () => {
     });
     await tick(60);
     expect(url()).toBe("/?view=table");
-    expect(chipNames()).toEqual([]);
+    expect(await chipNames()).toEqual([]);
   });
 
   it("survives every tab switch: the URL, the chips and each view's own request carry it", async () => {
@@ -233,13 +255,13 @@ describe("Dashboard shared Filter (#428)", () => {
     await act(async () => { tab("Board")!.click(); await Promise.resolve(); });
     await tick();
     expect(url()).toBe("/?view=board&stages=raw_review&priority=5");
-    expect(chipNames()).toEqual(["Stage is any of RAW review", "Priority is any of 5 stars"]);
+    expect(await chipNames()).toEqual(["Stage is any of RAW review", "Priority is any of 5 stars"]);
     expect(lastProjectRequest()).toBe("/api/projects?stages=raw_review&priority=5");
 
     await act(async () => { tab("Timeline")!.click(); await Promise.resolve(); });
     await tick();
     expect(url()).toBe("/?view=timeline&stages=raw_review&priority=5");
-    expect(chipNames()).toEqual(["Stage is any of RAW review", "Priority is any of 5 stars"]);
+    expect(await chipNames()).toEqual(["Stage is any of RAW review", "Priority is any of 5 stars"]);
     expect(ganttProps.value?.filters).toMatchObject({ stageKeys: ["raw_review"], priorities: ["5"], archived: "hide" });
 
     await act(async () => { tab("Calendar")!.click(); await Promise.resolve(); });
@@ -247,13 +269,13 @@ describe("Dashboard shared Filter (#428)", () => {
     expect(url()).toContain("view=calendar");
     expect(url()).toContain("stages=raw_review");
     expect(url()).toContain("priority=5");
-    expect(chipNames()).toEqual(["Stage is any of RAW review", "Priority is any of 5 stars"]);
+    expect(await chipNames()).toEqual(["Stage is any of RAW review", "Priority is any of 5 stars"]);
     expect(calendarProps.value?.calendar).toMatchObject({ stageKeys: ["raw_review"], priorities: ["5"], archived: "hide" });
 
     await act(async () => { tab("Table")!.click(); await Promise.resolve(); });
     await tick();
     expect(url()).toBe("/?view=table&stages=raw_review&priority=5");
-    expect(chipNames()).toEqual(["Stage is any of RAW review", "Priority is any of 5 stars"]);
+    expect(await chipNames()).toEqual(["Stage is any of RAW review", "Priority is any of 5 stars"]);
   });
 
   it("an Admin's Archived: Only reaches all four views", async () => {
@@ -265,7 +287,7 @@ describe("Dashboard shared Filter (#428)", () => {
     await tick();
     expect(url()).toBe("/?view=board&archived=only");
     expect(lastProjectRequest()).toBe("/api/projects?archived=only");
-    expect(chipNames()).toEqual(["Archived is Only archived"]);
+    expect(await chipNames()).toEqual(["Archived is Only archived"]);
 
     await act(async () => { tab("Timeline")!.click(); await Promise.resolve(); });
     await tick();
@@ -276,12 +298,12 @@ describe("Dashboard shared Filter (#428)", () => {
     await tick();
     expect(url()).toContain("archived=only");
     expect(calendarProps.value?.calendar).toMatchObject({ archived: "only" });
-    expect(chipNames()).toEqual(["Archived is Only archived"]);
+    expect(await chipNames()).toEqual(["Archived is Only archived"]);
   });
 
   it("offers Archived (Hidden / Included / Only archived) to an Admin, and writes the mode", async () => {
     await renderAt("/?view=table");
-    await click(trigger()!);
+    await openPicker();
     await waitFor(() => expect(optionNames()).toEqual(["Stage", "Priority", "Archived", "People", "Shoot date", "Deadline", "My tasks"]));
     await click(option("Archived"));
     await waitFor(() => expect(optionNames()).toEqual(["is"]));
@@ -294,17 +316,20 @@ describe("Dashboard shared Filter (#428)", () => {
 
   it("never offers Archived to a non-Admin, and never sends it even from a pasted URL", async () => {
     await renderAt("/?view=table&archived=only&stages=raw_review", "editor");
-    await click(trigger()!);
+    await openPicker();
     await waitFor(() => expect(optionNames()).toEqual(["Stage", "Priority", "People", "Shoot date", "Deadline", "My tasks"]));
     await escape();
-    expect(chipNames()).toEqual(["Stage is any of RAW review"]);
+    // Opening the picker leaves an unfinished row behind: the pasted Archived rule must be absent, the Stage rule kept.
+    const names = await chipNames();
+    expect(names).toContain("Stage is any of RAW review");
+    expect(names.join(" ")).not.toContain("Archived");
     expect(projectRequests().length).toBeGreaterThan(0);
     for (const path of projectRequests()) expect(path).not.toContain("archived");
   });
 
   it("an External Editor is offered Stage only (no Priority, no Archived)", async () => {
     await renderAt("/?view=table", "external_editor");
-    await click(trigger()!);
+    await openPicker();
     await waitFor(() => expect(optionNames()).toEqual(["Stage", "People", "Shoot date", "Deadline", "My tasks"]));
   });
 
@@ -341,7 +366,7 @@ describe("Dashboard shared Filter (#428)", () => {
 
     it("offers People with Unassigned first, then the listed people with their initials", async () => {
       await renderAt("/?view=table");
-      await click(trigger()!);
+      await openPicker();
       await waitFor(() => expect(optionNames()).toContain("People"));
       await click(option("People"));
       await waitFor(() => option("is any of"));
@@ -359,18 +384,18 @@ describe("Dashboard shared Filter (#428)", () => {
       await escape();
       expect(url()).toBe("/?view=table&unassigned=1");
       expect(lastProjectRequest()).toBe("/api/projects?unassigned=1");
-      expect(chipNames()).toEqual(["People is any of Unassigned"]);
+      expect(await chipNames()).toEqual(["People is any of Unassigned"]);
     });
 
     it("seeds the chips from a cold URL and keeps a person the server does not list as an unknown chip", async () => {
       await renderAt(`/?view=table&editors=${BEA}%2C${STALE}&unassigned=1&mine=1`);
-      expect(chipNames()).toEqual(["People is any of 3 selected", "My tasks only"]);
+      expect(await chipNames()).toEqual(["People is any of 3 selected", "My tasks only"]);
       expect(lastProjectRequest()).toBe(`/api/projects?editors=${BEA}%2C${STALE}&unassigned=1&mine=1`);
     });
 
     it("commits My tasks with no value step and writes mine=1", async () => {
       await renderAt("/?view=table");
-      await click(trigger()!);
+      await openPicker();
       await waitFor(() => expect(optionNames()).toContain("My tasks"));
       await click(option("My tasks"));
       await waitFor(() => expect(optionNames()).toEqual(["only"]));
@@ -382,14 +407,14 @@ describe("Dashboard shared Filter (#428)", () => {
 
     it("commits Deadline 'is overdue' with no value, and Deadline cannot hold a range and Overdue at once", async () => {
       await renderAt("/?view=table");
-      await click(trigger()!);
+      await openPicker();
       await waitFor(() => expect(optionNames()).toContain("Deadline"));
       await click(option("Deadline"));
       await waitFor(() => expect(optionNames()).toEqual(["is between", "is overdue"]));
       await click(option("is overdue"));
       await waitFor(() => expect(url()).toBe("/?view=table&overdue=1"));
       await escape();
-      expect(chipNames()).toEqual(["Deadline is overdue"]);
+      expect(await chipNames()).toEqual(["Deadline is overdue"]);
       // A pasted URL naming both is not one the Filter can express: neither facet is applied.
       await renderAt("/?view=table&deadline=2026-08-01..2026-08-31&overdue=1");
       expect(lastProjectRequest()).not.toContain("deadline=");
@@ -397,7 +422,7 @@ describe("Dashboard shared Filter (#428)", () => {
 
     it("seeds the Shoot date and Deadline range chips from the URL and requests them", async () => {
       await renderAt("/?view=table&shoot=2026-08-01..2026-08-31&deadline=2026-09-01..2026-09-30");
-      expect(chipNames()).toEqual(["Shoot date is between Sat 1 Aug 2026 – Mon 31 Aug 2026", "Deadline is between Tue 1 Sep 2026 – Wed 30 Sep 2026"]);
+      expect(await chipNames()).toEqual(["Shoot date is between Sat 1 Aug 2026 – Mon 31 Aug 2026", "Deadline is between Tue 1 Sep 2026 – Wed 30 Sep 2026"]);
       expect(lastProjectRequest()).toBe("/api/projects?shoot=2026-08-01..2026-08-31&deadline=2026-09-01..2026-09-30");
     });
 
@@ -437,31 +462,16 @@ describe("Dashboard shared Filter (#428)", () => {
     expect(trigger()?.disabled).toBe(false);
   });
 
-  describe("focus after a chip is removed from its menu", () => {
-    const chipByField = (field: string) => [...chipRegion().querySelectorAll<HTMLElement>('[role="group"]')].find((chip) => chip.getAttribute("aria-label")?.startsWith(`${field} `))!;
-    async function removeFromMenu(field: string) {
-      await click(chipByField(field).querySelector<HTMLElement>(`button[aria-label="${field} filter options"]`)!);
-      await waitFor(() => expect([...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent?.trim())).toEqual(["Remove"]));
-      await click([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')][0]!);
-      await tick(60);
-    }
-    const focusedChip = () => (document.activeElement as HTMLElement | null)?.closest<HTMLElement>('[role="group"]')?.getAttribute("aria-label") ?? null;
-
-    it("moves focus to the next chip, else the previous, else the Filter trigger", async () => {
-      await renderAt("/?view=table&stages=raw_review&priority=5&archived=only");
-      expect(chipNames()).toEqual(["Stage is any of RAW review", "Priority is any of 5 stars", "Archived is Only archived"]);
-
-      await removeFromMenu("Priority");
-      expect(chipNames()).toEqual(["Stage is any of RAW review", "Archived is Only archived"]);
-      await waitFor(() => expect(focusedChip()).toBe("Archived is Only archived"));
-
-      await removeFromMenu("Archived");
-      expect(chipNames()).toEqual(["Stage is any of RAW review"]);
-      await waitFor(() => expect(focusedChip()).toBe("Stage is any of RAW review"));
-
-      await removeFromMenu("Stage");
-      expect(chipNames()).toEqual([]);
-      await waitFor(() => expect(document.activeElement).toBe(trigger()));
+  describe("removing a rule from its menu", () => {
+    it("drops it from the URL and keeps the panel open on the rest", async () => {
+      await renderAt("/?view=table&stages=raw_review&priority=5");
+      await openPanel();
+      const menu = panel()!.querySelector<HTMLElement>('button[aria-label="Priority filter options"]')!;
+      await click(menu);
+      await waitFor(() => expect([...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent?.trim())).toContain("Remove"));
+      await click([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent?.trim() === "Remove")!);
+      await waitFor(() => expect(url()).toBe("/?view=table&stages=raw_review"));
+      expect(panel()).not.toBeNull();
     });
   });
 
@@ -482,7 +492,7 @@ describe("Dashboard shared Filter (#428)", () => {
     expect(clear).toBeDefined();
     await click(clear);
     await waitFor(() => expect(url()).toBe(`/?view=${view}`));
-    expect(chipNames()).toEqual([]);
+    expect(await chipNames()).toEqual([]);
   });
 });
 

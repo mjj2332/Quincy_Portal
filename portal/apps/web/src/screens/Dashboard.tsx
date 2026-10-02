@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { DEFAULT_DASHBOARD_FILTER, dashboardFilterOf, dashboardFocusOf, withoutDashboardFocus, dashboardSearchOf, formatSydneyCivil, roleHasCapability, withDashboardFilter, type DashboardCalendarState, type DashboardFilter, type DashboardRoute, type DashboardTimelineRoute, type DashboardViewRoute as SharedDashboardViewRoute, type MoveProjectStageRequest, type MoveProjectStageResponse, type ProductionCalendarFilters, type StageKey } from "@quincy/shared";
+import { DEFAULT_DASHBOARD_FILTER, STAGE_PRESENTATION_KEYS, dashboardFilterHasNonStageLeaf, dashboardFilterStageScope, dashboardFilterTreeOf, dashboardFilterOf, isEmptyDashboardFilterTree, dashboardFocusOf, withoutDashboardFocus, dashboardSearchOf, formatSydneyCivil, roleHasCapability, withDashboardFilter, type DashboardCalendarState, type DashboardFilter, type DashboardRoute, type DashboardTimelineRoute, type DashboardViewRoute as SharedDashboardViewRoute, type MoveProjectStageRequest, type MoveProjectStageResponse, type ProductionCalendarFilters, type StageKey } from "@quincy/shared";
 import { QueryClient, QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError, apiPost } from "../lib/api";
 import { confirmStore } from "../lib/confirm";
@@ -18,7 +18,7 @@ import { DashboardTable } from "../components/DashboardTable";
 import { hideableColumnsFor } from "../lib/dashboard-table-model";
 import { useBoardCollapse } from "../lib/use-board-collapse";
 import { useDashboardTablePrefs } from "../lib/use-dashboard-table-prefs";
-import { DashboardFilterChips, DashboardFilterProvider, DashboardFilterTrigger } from "./DashboardFilter";
+import { DashboardFilter as DashboardFilterControl } from "./DashboardFilter";
 import { dashboardSummary } from "../lib/dashboard-summary";
 import { useNow } from "../lib/use-now";
 import { Skeleton } from "../components/reui/skeleton";
@@ -75,8 +75,8 @@ import {
   takeDashboardSearchForNavigation,
 } from "../lib/dashboard-search-store";
 import type { CalendarSettleState } from "../lib/production-calendar-interaction";
-import { DEFAULT_GANTT_FACET_FILTERS, ganttFacetForWrite, ganttFiltersFromRoute, ganttPairingNotice, ganttRouteFor, productionStageFilterOptions, type ProductionGanttFacetFilters } from "../lib/production-gantt-filters";
-import { dashboardFilterKey, dashboardFilterNarrowCount } from "../lib/dashboard-filter-query";
+import { DEFAULT_GANTT_FACET_FILTERS, ganttDeliveredShown, ganttFacetForWrite, ganttFiltersFromRoute, ganttPairingNotice, ganttRouteFor, productionStageFilterOptions, type ProductionGanttFacetFilters } from "../lib/production-gantt-filters";
+import { applyDashboardFilter, clampDashboardFilter, dashboardArchivedModeOf, dashboardFilterKeepingArchived, dashboardFilterKey } from "../lib/dashboard-filter-query";
 import { useDashboardPeople } from "../lib/dashboard-people";
 
 /** A lazy Dashboard view's loading box (#363): fills the view region instead of a fixed floor. */
@@ -242,13 +242,18 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const canFilterPriority = role !== "external_editor";
   const urlFilter = dashboardFilterOf(parsedRoute);
   const filterKey = dashboardFilterKey(urlFilter);
-  const filter = useMemo<DashboardFilter>(() => ({
-    ...urlFilter,
-    priorities: canFilterPriority ? urlFilter.priorities : [],
-    archived: canFilterArchived ? urlFilter.archived : "hide",
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- `filterKey` is the value key of `urlFilter`
-  }), [filterKey, canFilterArchived, canFilterPriority]);
-  const ganttFilters = useMemo<ProductionGanttFacetFilters>(() => ({ ...ganttFiltersFromRoute(routeGantt), ...filter }), [routeGantt, filter]);
+  // #461: the clamp is the shared one, over the filter's tree (a flat filter is a flat AND of leaves): under AND it widens, under OR it narrows.
+  const filter = useMemo<DashboardFilter>(
+    () => clampDashboardFilter(urlFilter, { archived: canFilterArchived, priority: canFilterPriority }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `filterKey` is the value key of `urlFilter`
+    [filterKey, canFilterArchived, canFilterPriority],
+  );
+  // The filter and the tree helpers are all this file reads of it (`dashboard-filter-access.guard.test.ts`).
+  const filterTree = useMemo(() => dashboardFilterTreeOf(filter), [filter]);
+  const archivedMode = dashboardArchivedModeOf(filter);
+  // #461: `applyDashboardFilter` so a tree the route carried cannot shadow a flat filter (a flat filter has no `tree` key to overwrite it).
+  // A Stage rule naming Delivered shows delivered Projects even when Display has them hidden (`ganttDeliveredShown`).
+  const ganttFilters = useMemo<ProductionGanttFacetFilters>(() => ganttDeliveredShown(applyDashboardFilter(ganttFiltersFromRoute(routeGantt), filter)), [routeGantt, filter]);
   const stageFilterOptions = useMemo(() => productionStageFilterOptions(stages, canViewArchived), [stages, canViewArchived]);
   const calendarStorage = {
     read: (key: string) => window.localStorage.getItem(key),
@@ -371,7 +376,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   useEffect(() => { if (firstDataReady) markDashboardData(view); }, [firstDataReady, view]);
   const searchCountsQuery = useDashboardProjectSearch(filter, identity, committedQuery);
   // #429: after the Projects request, so a harness that serves its first reply to the first request still serves the list.
-  const { people: dashboardPeople } = useDashboardPeople(identity, filter.archived);
+  const { people: dashboardPeople } = useDashboardPeople(identity, archivedMode);
   // #260: the projects the Gantt / Calendar actually draws under its own filters (the chip's "shown").
   const [viewShownProjects, setViewShownProjects] = useState<number | null>(null);
   // #230: widened to carry `committedQuery` as the fifth argument -- ONE q-aware key, not a second
@@ -459,8 +464,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // a column. The same gate the search had, on the three places it was read (`canMoveStages`,
   // `movementDisabled`/`sameStageReorderEnabled`, `runBoardMovement`).
   // #429: People, Unassigned, Shoot date, Deadline, Overdue and My tasks narrow within a column too.
-  const boardNarrowed = searchActive || dashboardFilterNarrowCount({ ...filter, stageKeys: [] }) > 0;
-  const filterActive = dashboardFilterNarrowCount(filter) > 0;
+  // #461: any rule beyond Stage narrows within a column (a Stage-only tree, OR included, only decides which columns draw).
+  const boardNarrowed = searchActive || dashboardFilterHasNonStageLeaf(filterTree);
+  const filterActive = !isEmptyDashboardFilterTree(filterTree);
   // #306: the UI lock is NOT the data barrier. `movementInteractionActive` locks the view switcher
   // and the sort; `interactionBlocked` is that plus a pending priority save, and is the barrier that
   // defers accepting refetched data (a refetch must not land mid-save). A priority save is per-card:
@@ -787,12 +793,14 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     if (!notice || calendarInteractionBlocked) return;
     setFocusNotice(null);
     if (notice.view === "timeline") {
-      const cleared: ProductionGanttFacetFilters = { ...DEFAULT_GANTT_FACET_FILTERS, archived: ganttFilters.archived, delivered: ganttFilters.delivered, completed: ganttFilters.completed };
+      // What the sheet already broadened (the Archived scope, Delivered, Completed) stays; the Delivered the URL itself carries, not one a rule forced on.
+      const urlGantt = ganttFiltersFromRoute(routeGantt);
+      const cleared: ProductionGanttFacetFilters = { ...applyDashboardFilter(DEFAULT_GANTT_FACET_FILTERS, dashboardFilterKeepingArchived(filter)), delivered: urlGantt.delivered, completed: urlGantt.completed };
       history.push(staffPathFor({ ...ganttRouteFor(cleared), focus: notice.projectId }));
       return;
     }
     if (!calendarState) return;
-    const cleared: DashboardCalendarState = { ...calendarState, ...DEFAULT_DASHBOARD_FILTER, stageKeys: [], priorities: [], editorIds: [], archived: calendarState.archived, includeUnassigned: false, shootRange: null, deadlineRange: null, overdueOnly: false, myTasks: false, search: "", view: "calendar" };
+    const cleared: DashboardCalendarState = { ...applyDashboardFilter(calendarState, dashboardFilterKeepingArchived(calendarState)), search: "", view: "calendar" };
     setCalendarState(cleared);
     history.push(staffPathFor({ kind: "dashboard", calendar: cleared, focus: notice.projectId }));
   }
@@ -1104,9 +1112,11 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // #428: a Stage filter shows only the columns it names. A column the filter excludes would read
   // "0" and mislead (the projects are not gone, they are filtered out). Moves stay locked or not
   // exactly as `boardNarrowed` says; this only changes which columns are drawn.
-  const boardStages = filter.stageKeys.length === 0
+  // #461: the stages the filter tree can still match (three-valued over its Stage rules, exact with negation and OR).
+  const stageScope = dashboardFilterStageScope(filterTree);
+  const boardStages = stageScope.length === STAGE_PRESENTATION_KEYS.length
     ? activeStages
-    : activeStages.filter((stage) => filter.stageKeys.some((key) => canonicalStageKey(key) === canonicalStageKey(stage.key)));
+    : activeStages.filter((stage) => stageScope.some((key) => canonicalStageKey(key) === canonicalStageKey(stage.key)));
   const handleCalendarAccessLoss = useCallback(() => {
     setCalendarInteractionBlocked(false);
     setCalendarSettle({ pending: false, recoveryReason: null });
@@ -1159,7 +1169,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       // but keeps `nextCalendar`'s own shape.
       // #428: entering Calendar carries the live shared Filter. `nextCalendar` comes from the Calendar's
       // own remembered state, which would otherwise bring back its stale facets over the URL's.
-      navigateCalendar({ ...nextCalendar, ...filter, view: "calendar" });
+      navigateCalendar({ ...applyDashboardFilter(nextCalendar, filter), view: "calendar" });
       return;
     }
     const alreadyAtView = routeDashboardView === next;
@@ -1188,11 +1198,11 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   function writeFilter(next: DashboardFilter) {
     if (movementInteractionActive || calendarInteractionBlocked) return;
     if (isCalendarView && calendarState) {
-      writeCalendarState(next);
+      writeCalendarState({}, next);
       return;
     }
     if (isGanttView) {
-      writeGanttFacet(next);
+      writeGanttFacet({}, next);
       return;
     }
     const currentSearch = takeDashboardSearchForNavigation(currentUserId);
@@ -1201,9 +1211,11 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
 
   // The Timeline's writes, shared by the Filter (`writeFilter`) and Display (`writeTimelineDisplay`).
   // The Delivered pair: Stage = Delivered draws nothing while delivered projects are hidden.
-  function writeGanttFacet(changes: Partial<ProductionGanttFacetFilters>) {
-    const written = ganttFacetForWrite(ganttFilters, { ...ganttFilters, ...changes });
-    announcePairing(ganttPairingNotice({ ...ganttFilters, ...changes }, written));
+  // `filter`, when given, is the Filter's whole new filter: written over the facet as ONE filter (a stale tree must not shadow it).
+  function writeGanttFacet(changes: Partial<ProductionGanttFacetFilters>, filter?: DashboardFilter) {
+    const edit = { ...(filter ? applyDashboardFilter(ganttFilters, filter) : ganttFilters), ...changes };
+    const written = ganttFacetForWrite(ganttFilters, edit);
+    announcePairing(ganttPairingNotice(edit, written));
     navigateGantt(written);
   }
 
@@ -1221,13 +1233,15 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
 
   // #430: the Calendar's counterpart to `writeGanttFacet`. The pair is Stage and `showDeliveredProjects`
   // (the Timeline's `delivered`), through the same rule; the write is still one `navigateCalendar`.
-  function writeCalendarState(changes: Partial<DashboardCalendarState>) {
+  function writeCalendarState(changes: Partial<DashboardCalendarState>, filter?: DashboardFilter) {
     if (!calendarState) return;
-    const edit = { ...calendarState, ...changes };
-    const pairEdit = { stageKeys: edit.stageKeys, delivered: edit.showDeliveredProjects };
-    const paired = ganttFacetForWrite({ stageKeys: calendarState.stageKeys, delivered: calendarState.showDeliveredProjects }, pairEdit);
+    const edit = { ...(filter ? applyDashboardFilter(calendarState, filter) : calendarState), ...changes };
+    const pairEdit = { ...edit, delivered: edit.showDeliveredProjects };
+    const paired = ganttFacetForWrite({ ...calendarState, delivered: calendarState.showDeliveredProjects }, pairEdit);
     announcePairing(ganttPairingNotice(pairEdit, paired));
-    navigateCalendar({ ...edit, stageKeys: paired.stageKeys, showDeliveredProjects: paired.delivered, view: "calendar" });
+    // `paired` is the edit with the pair settled (its filter and `delivered`); the rest of the state stays the edit's.
+    const { delivered, ...settled } = paired;
+    navigateCalendar({ ...settled, showDeliveredProjects: delivered, view: "calendar" });
   }
 
   // #430: the old filters bar cleared its pair notice on any navigation it did not write (Back/Forward,
@@ -1583,7 +1597,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const now = useNow();
   const summary = dashboardSummary({
     projects: isLoading || error ? null : projects,
-    archived: filter.archived,
+    archived: archivedMode,
     searchActive,
     filterActive,
     searchTotal: searchCountsQuery.data?.total ?? null,
@@ -1596,16 +1610,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     <main className="page page--full page--fill [overflow-x:clip]">
       <DashboardHeader summary={summary} busy={projectsQuery.isPlaceholderData} canCreateProject={canCreateProject} />
 
-      {/* #428: one Filter root for the trigger (in the view bar) and the chips (under its rule). */}
-      <DashboardFilterProvider
-        filter={filter}
-        onFilterChange={writeFilter}
-        stageOptions={stageFilterOptions}
-        canFilterPriority={canFilterPriority}
-        canFilterArchived={canFilterArchived}
-        people={dashboardPeople}
-        disabled={movementInteractionActive || calendarInteractionBlocked}
-      >
+      {/* #461: the Filter is one popover in the view bar's `filterTrigger` slot (the chips row is gone). */}
+      <>
         <DashboardViewBar
           renderedView={renderedView}
           canViewProductionCalendar={canViewProductionCalendar}
@@ -1635,10 +1641,20 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
                 : renderedView === "timeline"
                   ? <TimelineDisplayContent delivered={ganttFilters.delivered} completed={ganttFilters.completed} onChange={writeTimelineDisplay} />
                   : undefined}
-          filterTrigger={<DashboardFilterTrigger />}
+          filterTrigger={
+            <DashboardFilterControl
+              filter={filter}
+              onFilterChange={writeFilter}
+              stageOptions={stageFilterOptions}
+              canFilterPriority={canFilterPriority}
+              canFilterArchived={canFilterArchived}
+              people={dashboardPeople}
+              disabled={movementInteractionActive || calendarInteractionBlocked}
+              onAnnounce={setAnnouncement}
+            />
+          }
         />
-        <DashboardFilterChips />
-      </DashboardFilterProvider>
+      </>
 
       {boardUnavailableMessage && !isCalendarView && !isGanttView && (
         <Notice tone="caution" role="status" data-testid="board-unavailable-notice" className="flex shrink-0 items-baseline gap-[var(--space-3)] mb-[var(--space-4)] px-[var(--space-4)] py-[var(--space-3)] before:content-['Board'] before:shrink-0 before:[font:var(--type-eyebrow)] before:uppercase before:tracking-[var(--tracking-widest)] before:text-signal-caution-text text-foreground">{boardUnavailableMessage}</Notice>
@@ -1660,7 +1676,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
             <Suspense fallback={<div className={cn("empty", VIEW_STATE_BOX)} role="status">Loading calendar…</div>}>
               <ProductionEventCalendar
                 identity={identity}
-                calendar={calendarState && { ...calendarState, ...filter, search: committedQuery }}
+                calendar={calendarState && { ...applyDashboardFilter(calendarState, filter), search: committedQuery }}
                 onNavigate={(next) => navigateCalendar(next)}
                 onAppliedFilters={reconcileAppliedCalendarFilters}
                 onAcceptGateChange={setCalendarInteractionBlocked}
@@ -1706,7 +1722,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
 
         {!isCalendarView && !isGanttView && isLoading && (
           <div role="status" className="relative flex min-h-0 flex-1 flex-col border-solid border-[length:var(--border-width-hair)] border-border bg-card motion-safe:animate-[fade_var(--dur-slow)_var(--ease-entrance)]">
-            <span className="absolute size-px overflow-hidden [clip-path:inset(50%)] whitespace-nowrap">{`Loading ${filter.archived === "only" ? "archived " : ""}projects. Preparing the production desk.`}</span>
+            <span className="absolute size-px overflow-hidden [clip-path:inset(50%)] whitespace-nowrap">{`Loading ${archivedMode === "only" ? "archived " : ""}projects. Preparing the production desk.`}</span>
             {[0, 1, 2, 3, 4].map((row) => (
               <div key={row} className="[display:grid] grid-cols-[72px_minmax(0,1fr)_96px] gap-[var(--space-4)] items-center px-[var(--space-5)] py-[var(--space-3)] [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border first:border-t-0" aria-hidden="true">
                 <Skeleton className="h-[var(--space-7)]" />
@@ -1718,7 +1734,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         )}
 
         {!isCalendarView && !isGanttView && !isLoading && error && (
-          <EmptyState tone="error" role="alert" title={`${filter.archived === "only" ? "Archived projects" : "Projects"} are unavailable.`} className="border-solid border-[length:var(--border-width-hair)] border-border bg-card [border-left-style:solid] border-l-[length:var(--border-width-rule)] border-l-destructive">
+          <EmptyState tone="error" role="alert" title={`${archivedMode === "only" ? "Archived projects" : "Projects"} are unavailable.`} className="border-solid border-[length:var(--border-width-hair)] border-border bg-card [border-left-style:solid] border-l-[length:var(--border-width-rule)] border-l-destructive">
             {error}
             <div><Button type="button" variant="secondary" className="mt-[var(--space-4)]" onClick={() => void projectsQuery.refetch()}>Try again</Button></div>
           </EmptyState>

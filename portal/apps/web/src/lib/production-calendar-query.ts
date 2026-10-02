@@ -44,6 +44,8 @@ export function productionCalendarFiltersFor(calendar: DashboardCalendarState): 
     overdueOnly: calendar.overdueOnly,
     search: normalizeDashboardCalendarSearch(calendar.search),
     myTasks: calendar.myTasks,
+    // #461: last, and only when present, as the schema's own key order has it.
+    ...(calendar.tree ? { tree: calendar.tree } : {}),
   };
 }
 
@@ -81,6 +83,8 @@ export function buildProductionCalendarQuery(
   const params = new URLSearchParams(route.slice(question + 1));
   if (params.get("view") !== "calendar") throw new RangeError("Calendar route did not contain the Calendar view marker.");
   params.delete("view");
+  // #461: `forder` (the flat facets' display order) is a URL-only name; the API never reads it.
+  params.delete("forder");
   if (normalizedSearch) params.set("q", normalizedSearch); else params.delete("q");
   params.set("start", window.start);
   params.set("end", window.end);

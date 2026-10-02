@@ -6,82 +6,41 @@
  * - the request (`ProductionGanttFilters`, `lib/production-gantt-query.ts`).
  *
  * (The #255 filters bar and its `FilterQuery` mapping were removed in #430: the Dashboard's shared
- * Filter and Display drive the Timeline now.)
+ * Filter and Display drive the Timeline now. #461: the URL <-> request mappers moved to
+ * `production-gantt-facet.ts`; what is left here interprets a filter and reads it only through the shared
+ * tree helpers.)
  *
- * `editorIds` (#274) are sorted canonical lowercase UUIDs. Any UUID-shaped value is readable here,
- * including one the server no longer knows: whether an id is a real, visible editor is the
- * server's call (`appliedFilters.editorIds`), and the surface decides what to render for it.
- *
- * Also the one role-aware stage-option derivation the shared Filter uses (`productionStageFilterOptions`), and the Gantt legend built from it (#254).
+ * The one role-aware stage-option derivation the shared Filter uses (`productionStageFilterOptions`), and the Gantt legend built from it (#254).
  */
 import {
-  canonicalDashboardPriorities,
-  isDefaultGanttFacet,
-  STAGE_PRESENTATION_KEYS,
-  type DashboardGanttFacet,
-  type DashboardTimelineRoute,
+  dashboardFilterMentionsDeliveredStage,
+  dashboardFilterStageScope,
+  dashboardFilterTreeOf,
+  emptyDashboardFilterTree,
+  normalizeDashboardFilter,
+  type DashboardFilter,
+  type DashboardFilterNode,
   type StagePresentationKey,
+  STAGE_PRESENTATION_KEYS,
 } from "@quincy/shared";
-import type { ProductionGanttFilters } from "./production-gantt-query";
 import { stageColorFor, stagePatternFor, type StagePattern } from "./stage-colors";
 import { presentationStages, type PipelineStage } from "./stages";
 
-/** The Gantt facets the Dashboard hands the surface — everything but the search, which the
- * Dashboard's shared search box owns. */
-export type ProductionGanttFacetFilters = Omit<ProductionGanttFilters, "q" | "limit">;
+// The URL <-> request mappers (they copy every flat facet, so they live apart: this file only INTERPRETS a filter, through the shared tree helpers — `dashboard-filter-access.guard.test.ts`).
+export {
+  DEFAULT_GANTT_FACET_FILTERS,
+  ganttFacetFor,
+  ganttFacetIsDefault,
+  ganttFacetKey,
+  ganttFiltersFromRoute,
+  ganttRouteFor,
+  type ProductionGanttFacetFilters,
+} from "./production-gantt-facet";
 
 export type StageFilterOption = { key: StagePresentationKey; label: string };
 
 /** `pattern` (#257): the stage's secondary cue beside its colour — `"hatch"` for Edited review, else `null`. */
 export type GanttLegendEntry = StageFilterOption & { color: string; pattern: StagePattern | null };
-
-export const DEFAULT_GANTT_FACET_FILTERS: ProductionGanttFacetFilters = { editorIds: [], stageKeys: [], priorities: [], archived: "hide", delivered: false, completed: false, includeUnassigned: false, myTasks: false, overdueOnly: false, shootRange: null, deadlineRange: null };
-
-/** URL -> the Gantt facets. A route with no `gantt` facet (the bare `/?view=timeline`, or no Gantt
- * route at all) reads as the defaults. The route's `search` is not read here: the Dashboard's
- * shared search box owns it. */
-export function ganttFiltersFromRoute(route: Pick<DashboardTimelineRoute, "gantt"> | null | undefined): ProductionGanttFacetFilters {
-  const facet = route?.gantt;
-  return {
-    editorIds: facet ? [...facet.editorIds] : [],
-    includeUnassigned: facet?.includeUnassigned ?? false,
-    myTasks: facet?.myTasks ?? false,
-    overdueOnly: facet?.overdueOnly ?? false,
-    shootRange: facet?.shootRange ? { ...facet.shootRange } : null,
-    deadlineRange: facet?.deadlineRange ? { ...facet.deadlineRange } : null,
-    stageKeys: facet ? [...facet.stageKeys] : [],
-    priorities: facet ? [...facet.priorities] : [],
-    archived: facet?.archived ?? "hide",
-    delivered: facet?.delivered ?? false,
-    completed: facet?.completed ?? false,
-  };
-}
-
-/** Request -> URL facet: `undefined` when every facet is default, so the route serialises to the
- * bare `/?view=gantt` (the same `isDefaultGanttFacet` rule the parser and serializer use). */
-export function ganttFacetFor(filters: ProductionGanttFacetFilters): DashboardGanttFacet | undefined {
-  const selected = new Set(filters.stageKeys);
-  const facet: DashboardGanttFacet = {
-    stageKeys: STAGE_PRESENTATION_KEYS.filter((key) => selected.has(key)),
-    priorities: canonicalDashboardPriorities(filters.priorities),
-    archived: filters.archived,
-    delivered: filters.delivered,
-    completed: filters.completed,
-    editorIds: [...new Set(filters.editorIds)].sort(),
-    includeUnassigned: filters.includeUnassigned,
-    shootRange: filters.shootRange,
-    deadlineRange: filters.deadlineRange,
-    overdueOnly: filters.deadlineRange ? false : filters.overdueOnly,
-    myTasks: filters.myTasks,
-  };
-  return isDefaultGanttFacet(facet) ? undefined : facet;
-}
-
-/** Request -> the full Gantt route, carrying `search` when there is one. */
-export function ganttRouteFor(filters: ProductionGanttFacetFilters, search?: string): DashboardTimelineRoute {
-  const gantt = ganttFacetFor(filters);
-  return { kind: "dashboard", dashboardView: "timeline", ...(search ? { search } : {}), ...(gantt ? { gantt } : {}) };
-}
 
 // ---------------------------------------------------------------------------
 // The Delivered pair and the empty-state recovery. The Timeline's Display (#430) and the shared
@@ -89,10 +48,30 @@ export function ganttRouteFor(filters: ProductionGanttFacetFilters, search?: str
 // ---------------------------------------------------------------------------
 
 /**
- * The two fields the Delivered pair reads. The Timeline's facet and the Calendar's state (#430, which
- * keeps `delivered` as `showDeliveredProjects`) both project to it, so one rule serves both.
+ * What the Delivered pair reads: a filter (flat or tree) and whether delivered projects are shown. The
+ * Timeline's facet and the Calendar's state (#430, which keeps `delivered` as `showDeliveredProjects`) both
+ * project to it, so one rule serves both.
  */
-export type DeliveredPair = Pick<ProductionGanttFacetFilters, "stageKeys" | "delivered">;
+export type DeliveredPair = Partial<DashboardFilter> & { delivered: boolean };
+
+/** Does a NON-negated Stage rule of the filter name Delivered? (The shared helper, over the flat or tree filter alike.) */
+const namesDelivered = (pair: Partial<DashboardFilter>): boolean => dashboardFilterMentionsDeliveredStage(dashboardFilterTreeOf(normalizeDashboardFilter(pair)));
+
+/** `pair` with Delivered taken out of every non-negated Stage rule (an emptied rule goes with it), as one filter. */
+function withoutDeliveredStage<T extends DeliveredPair>(pair: T): T {
+  const strip = (node: DashboardFilterNode): DashboardFilterNode | null => {
+    if (node.kind === "group") {
+      const children = node.children.map(strip).filter((child): child is DashboardFilterNode => child !== null);
+      return children.length === 0 ? null : { ...node, children };
+    }
+    if (node.field !== "stages" || node.negated) return node;
+    const values = node.values.filter((key) => key !== "delivered");
+    return values.length === 0 ? null : { ...node, values };
+  };
+  const tree = strip(dashboardFilterTreeOf(normalizeDashboardFilter(pair)));
+  const { tree: _tree, order: _order, ...rest } = pair;
+  return { ...rest, ...normalizeDashboardFilter({ tree: (tree as typeof tree & { kind: "group" }) ?? emptyDashboardFilterTree() }) } as T;
+}
 
 /**
  * The Delivered pair (#255, owner decision): Stage = Delivered only draws anything while delivered
@@ -105,12 +84,15 @@ export type DeliveredPair = Pick<ProductionGanttFacetFilters, "stageKeys" | "del
  * - otherwise the edit selected Delivered as a stage (or edited beside an inconsistent pair a URL
  *   carried in), so delivered projects are switched on.
  *
- * Any other facet is returned as is. Only the user's own edits (Filter or Display) go through this: a URL that already
+ * #461: a filter TREE has no stage list to take it out of (the rule may sit inside an OR, a group), so for
+ * a tree the second branch is the only one: delivered projects stay on while a rule names Delivered
+ * (turning Show off is answered with the same "Also showing delivered Projects."). Any other facet is
+ * returned as is. Only the user's own edits (Filter or Display) go through this: a URL that already
  * holds the inconsistent pair is never rewritten on load.
  */
 export function ganttFacetForWrite<T extends DeliveredPair>(previous: DeliveredPair, next: T): T {
-  if (next.delivered || !next.stageKeys.includes("delivered")) return next;
-  if (previous.delivered) return { ...next, stageKeys: next.stageKeys.filter((key) => key !== "delivered") };
+  if (next.delivered || !namesDelivered(next)) return next;
+  if (previous.delivered && next.tree === undefined) return withoutDeliveredStage(next);
   return { ...next, delivered: true };
 }
 
@@ -122,7 +104,7 @@ export function ganttFacetForWrite<T extends DeliveredPair>(previous: DeliveredP
  */
 export function ganttPairingNotice(edit: DeliveredPair, written: DeliveredPair): string | null {
   if (written.delivered && !edit.delivered) return "Also showing delivered Projects.";
-  if (edit.stageKeys.includes("delivered") && !written.stageKeys.includes("delivered")) return "Removed Delivered from Stage.";
+  if (namesDelivered(edit) && !namesDelivered(written)) return "Removed Delivered from Stage.";
   return null;
 }
 
@@ -133,13 +115,17 @@ export function ganttPairingNotice(edit: DeliveredPair, written: DeliveredPair):
  * `null` when the facet is not in that state.
  */
 export function ganttShowDeliveredRecovery<T extends DeliveredPair>(facet: T): T | null {
-  if (facet.delivered || !facet.stageKeys.includes("delivered")) return null;
+  if (facet.delivered || !namesDelivered(facet)) return null;
   return { ...facet, delivered: true };
 }
 
-/** A canonical string for a facet, so two facets compare by value, never by object identity. */
-export function ganttFacetKey(facet: ProductionGanttFacetFilters): string {
-  return JSON.stringify(ganttFacetFor(facet) ?? null);
+/**
+ * #461: the facet as the surface should draw it: a rule that names Delivered shows delivered projects even
+ * when Display has them hidden (a cold link is never rewritten, but it must not draw nothing for a known
+ * reason). A flat filter keeps its own recovery (`ganttShowDeliveredRecovery`), as before.
+ */
+export function ganttDeliveredShown<T extends DeliveredPair>(facet: T): T {
+  return facet.tree !== undefined && !facet.delivered && namesDelivered(facet) ? { ...facet, delivered: true } : facet;
 }
 
 /**
@@ -165,11 +151,12 @@ export function productionStageFilterOptions(stages: readonly PipelineStage[], c
  * otherwise). Never built from the colour map itself: that map carries both `editing` and
  * `editing_autohdr`, only one of which a given role ever sees.
  */
-export function ganttLegendEntries({ stageOptions, filters }: { stageOptions: readonly StageFilterOption[]; filters: Pick<ProductionGanttFacetFilters, "stageKeys" | "delivered"> }): GanttLegendEntry[] {
-  const selected = new Set(filters.stageKeys);
+export function ganttLegendEntries({ stageOptions, filters }: { stageOptions: readonly StageFilterOption[]; filters: DeliveredPair }): GanttLegendEntry[] {
+  // The stages the filter can still match (every stage when no Stage rule narrows it): exact for a flat filter and a tree alike.
+  const scope = new Set<StagePresentationKey>(dashboardFilterStageScope(dashboardFilterTreeOf(normalizeDashboardFilter(filters))));
   return stageOptionsWithColor(
     stageOptions
-      .filter((option) => selected.size === 0 || selected.has(option.key))
+      .filter((option) => scope.has(option.key))
       .filter((option) => option.key !== "delivered" || filters.delivered),
   );
 }

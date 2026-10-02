@@ -9,6 +9,11 @@ import {
 } from "@quincy/shared";
 import type { FilterNode, FilterQuery } from "../components/reui/filters/filters-types";
 import {
+  applyDashboardFilter,
+  clampDashboardFilter,
+  dashboardArchivedModeOf,
+  dashboardFilterAppliedCount,
+  dashboardFilterKeepingArchived,
   canAddDashboardFilterGroup,
   canAddDashboardFilterRule,
   dashboardFilterKey,
@@ -163,5 +168,47 @@ describe("tree filters", () => {
   it("reads a tree as the same tree the shared accessor gives", () => {
     const filter = treeFilter(orTree);
     expect(dashboardFilterTreeOf(filter)).toEqual(orTree);
+  });
+});
+
+describe("whole-filter helpers", () => {
+  const orTree: DashboardFilterTree = { kind: "group", op: "or", children: [{ kind: "leaf", field: "priority", values: ["5"] }, { kind: "leaf", field: "archived", mode: "only" }, { kind: "leaf", field: "stages", values: ["editing"] }] };
+
+  it("clamps by role: AND widens (flat in, flat out), OR narrows, and a tree that becomes flat is flat", () => {
+    const flat = filterOf({ stageKeys: ["editing"], priorities: ["5"], archived: "only" });
+    expect(clampDashboardFilter(flat, { archived: false, priority: false })).toEqual(filterOf({ stageKeys: ["editing"] }));
+    expect(clampDashboardFilter(flat, { archived: true, priority: true })).toEqual(flat);
+    const clamped = clampDashboardFilter(treeFilter(orTree), { archived: false, priority: false });
+    expect(clamped).toEqual(filterOf({ stageKeys: ["editing"] }));
+    expect(clampDashboardFilter(treeFilter(orTree), { archived: true, priority: false }).tree?.children).toHaveLength(2);
+    // The flat order survives a clamp that removes another facet.
+    expect(clampDashboardFilter(filterOf({ stageKeys: ["editing"], priorities: ["5"], archived: "only", order: ["archived", "priority", "stages"] }), { archived: true, priority: false })).toEqual(filterOf({ stageKeys: ["editing"], archived: "only", order: ["archived", "stages"] }));
+  });
+
+  it("reads the archived scope from the tree helper", () => {
+    expect(dashboardArchivedModeOf(filterOf({ archived: "only" }))).toBe("only");
+    expect(dashboardArchivedModeOf(filterOf())).toBe("hide");
+    expect(dashboardArchivedModeOf(treeFilter(orTree))).toBe("include");
+  });
+
+  it("keeps only the Archived scope when clearing", () => {
+    expect(dashboardFilterKeepingArchived(filterOf({ stageKeys: ["editing"], archived: "include" }))).toEqual(filterOf({ archived: "include" }));
+    expect(dashboardFilterKeepingArchived(filterOf({ stageKeys: ["editing"] }))).toEqual(filterOf());
+    expect(dashboardFilterKeepingArchived(treeFilter(orTree))).toEqual(filterOf({ archived: "include" }));
+  });
+
+  it("writes a filter over a base without letting a stale tree survive", () => {
+    const base = { view: "calendar", ...treeFilter(orTree) };
+    const next = applyDashboardFilter(base, filterOf({ myTasks: true }));
+    expect(next.tree).toBeUndefined();
+    expect(next).toMatchObject({ view: "calendar", myTasks: true });
+    expect(applyDashboardFilter({ view: "x", ...filterOf({ stageKeys: ["editing"], priorities: ["5"], order: ["priority", "stages"] }) }, filterOf({ stageKeys: ["editing"] })).order).toBeUndefined();
+    expect(applyDashboardFilter({ view: "x" }, treeFilter(orTree)).tree).toEqual(orTree);
+  });
+
+  it("counts the applied rules, groups' leaves included", () => {
+    expect(dashboardFilterAppliedCount(filterOf())).toBe(0);
+    expect(dashboardFilterAppliedCount(filterOf({ editorIds: [E1], includeUnassigned: true, overdueOnly: true, myTasks: true }))).toBe(3);
+    expect(dashboardFilterAppliedCount(treeFilter(orTree))).toBe(3);
   });
 });
