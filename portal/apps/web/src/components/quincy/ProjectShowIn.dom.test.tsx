@@ -58,6 +58,16 @@ describe("ProjectShowIn (#464)", () => {
     expect(links[1]!.getAttribute("href")).toBe(`/?view=timeline&focus=${ID}`);
   });
 
+  it("keeps a 44px touch target at phone width, enabled or disabled", async () => {
+    await mount(project({ deadlineSchedule: withDeadline }));
+    for (const id of ["Show in Calendar", "Show in Timeline"]) {
+      expect(host.querySelector(`[aria-label="${id}"]`)!.className).toContain("max-[721px]:min-h-[44px]");
+    }
+    await mount(project({ shootDate: null }));
+    expect(host.querySelector<HTMLButtonElement>('[aria-label="Show in Calendar"]')!.disabled).toBe(true);
+    expect(host.querySelector('[aria-label="Show in Calendar"]')!.className).toContain("max-[721px]:min-h-[44px]");
+  });
+
   it("a plain click pushes through the location store; a modified click is left to the browser", async () => {
     const push = vi.spyOn(locationStore(), "push").mockImplementation(() => undefined);
     await mount(project({ deadlineSchedule: withDeadline }));

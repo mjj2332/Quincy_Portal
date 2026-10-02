@@ -51,12 +51,13 @@ function rememberedCalendarState() {
 function ShowInButton({ label, icon, destination, testId, describedBy }: { label: "Calendar" | "Timeline"; icon: React.ReactNode; destination: ShowInDestination; testId: string; describedBy?: string }) {
   const name = `Show in ${label}`;
   if (!destination.available) {
-    return <Button type="button" variant="outline" size="sm" disabled data-testid={testId} aria-label={name} aria-describedby={describedBy}>{icon}{label}</Button>;
+    return <Button type="button" variant="outline" size="sm" className="max-[721px]:min-h-[44px]" disabled data-testid={testId} aria-label={name} aria-describedby={describedBy}>{icon}{label}</Button>;
   }
   return (
     <Button
       variant="outline"
       size="sm"
+      className="max-[721px]:min-h-[44px]"
       nativeButton={false}
       data-testid={testId}
       aria-label={name}
