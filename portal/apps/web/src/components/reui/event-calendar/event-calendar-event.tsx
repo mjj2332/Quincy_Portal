@@ -72,6 +72,8 @@
  *    entry 5; pinned by `event-calendar-item-popup.dom.test.tsx`.
  *    QUINCY ADDITION (#463 fix round): a touch-origin contextmenu is `preventDefault`ed before the
  *    drag guard returns (a long-press starts the drag; its native menu must not open over it).
+ *    Also `data-event-id` on the chip button (the consumer-facing twin of `data-ec-event-id`), so a
+ *    consumer can find an Agenda row, which has no consumer-rendered content, after a re-key.
  */
 import {
   createContext,
@@ -571,6 +573,9 @@ function EventCalendarEvent<TData = unknown>({
     // QUINCY (#240): how the Adjust session finds this event's chip again after a commit moves
     // it to another cell or column (a different element). Vendored-tree-only, per Detector 9.
     "data-ec-event-id": String(event.id),
+    // QUINCY ADDITION (#463 fix round): the consumer-facing twin of the tag above. An Agenda row renders no
+    // consumer content (`renderEvent` is for grid chips), so this is how the consumer finds a replaced row.
+    "data-event-id": String(event.id),
     "data-adjusting": isAdjusting || undefined,
     "aria-keyshortcuts": adjustable ? "Space" : undefined,
     onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => {

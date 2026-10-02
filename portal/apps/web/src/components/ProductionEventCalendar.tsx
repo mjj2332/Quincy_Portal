@@ -171,13 +171,14 @@ function calendarResetKey(calendar: DashboardCalendarState): string {
 /**
  * The chip for an event, wherever it is drawn (a grid cell or the "+N more" popover): the vendor tags the
  * chip CONTENT with `data-event-id` (`ChipContent`), and the focusable element is the `<button>` around it.
- * The agenda's rows render the vendor's own content, which carries no such tag, so they are found by the
- * vendor button's own `data-ec-event-id` (a re-keyed row is a new element; this is how it is found again).
+ * The agenda's rows render the vendor's own content, which carries no such tag, so the vendor tags the chip
+ * BUTTON itself with the same `data-event-id` (a re-keyed row is a new element; this is how it is found again).
  */
 function findChip(id: string): HTMLElement | null {
-  const content = [...document.querySelectorAll<HTMLElement>("[data-event-id]")].find((element) => element.getAttribute("data-event-id") === id);
-  if (content) return content.matches("button, [tabindex]") ? content : content.closest<HTMLElement>("button") ?? content;
-  return [...document.querySelectorAll<HTMLElement>("[data-ec-event-id]")].find((element) => element.getAttribute("data-ec-event-id") === id && !element.hasAttribute("data-preview")) ?? null;
+  const tagged = [...document.querySelectorAll<HTMLElement>("[data-event-id]")].filter((element) => element.getAttribute("data-event-id") === id);
+  const content = tagged.find((element) => !element.closest("[data-preview]")) ?? tagged[0];
+  if (!content) return null;
+  return content.matches("button, [tabindex]") ? content : content.closest<HTMLElement>("button") ?? content;
 }
 
 /**
