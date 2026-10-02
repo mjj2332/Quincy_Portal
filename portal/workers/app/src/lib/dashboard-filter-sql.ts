@@ -138,6 +138,17 @@ export type CompileDashboardFilterOptions = {
   context: DashboardFilterLeafContext;
   /** The viewer's People universe intersected with the request's ids (what `validPeopleIds` returns). Only the `values` bind reads it. */
   validIds: ReadonlySet<string>;
+  /**
+   * Treat every People and My tasks rule as NOT applied (dropped from its group, as an all-unknown People rule is). The
+   * Calendar's Project facet is "the editor-unfiltered candidate set narrowed by everything else", which for the flat
+   * facets (an AND of rules) is exactly this.
+   */
+  dropPeopleRules?: boolean;
+  /**
+   * The flat `overdue=1` facet's historical Calendar candidate rule: a Project with NO Deadline is still a candidate (it
+   * emits no event, but counts toward the density ceiling). Never set for a tree, whose Overdue rule is strict.
+   */
+  overdueIncludesNoDeadline?: boolean;
 };
 
 function leafValue(leaf: DashboardFilterLeaf, validIds: ReadonlySet<string>): Record<string, unknown> {
@@ -170,7 +181,7 @@ function balanced(terms: string[], op: "AND" | "OR"): string {
 /** `sql` is `1` (and `values` `[]`) when the tree has no rule: nothing to apply. */
 export function compileDashboardFilterSql(tree: DashboardFilterTree, options: CompileDashboardFilterOptions): CompiledDashboardFilter {
   const leaves = dashboardFilterLeaves(tree);
-  const { jsonRef: F, context: ctx, validIds } = options;
+  const { jsonRef: F, context: ctx, validIds, dropPeopleRules = false, overdueIncludesNoDeadline = false } = options;
   const values = dashboardFilterBindValues(tree, validIds);
   if (leaves.length === 0) return { sql: "1", values };
   let index = 0;
@@ -186,9 +197,17 @@ export function compileDashboardFilterSql(tree: DashboardFilterTree, options: Co
       case "archived": match = `CASE WHEN ${at(".m")} = 'include' OR (${at(".m")} = 'hide' AND NOT (${ctx.archived})) OR (${at(".m")} = 'only' AND (${ctx.archived})) THEN 1 ELSE 0 END`; break;
       case "shoot": match = `CASE WHEN ${validShootDateSql(ctx.shootDate)} AND ${ctx.shootDate} BETWEEN ${at(".from")} AND ${at(".to")} THEN 1 ELSE 0 END`; break;
       case "deadline": match = `CASE WHEN ${ctx.deadlineAt} IS NOT NULL AND substr(${ctx.deadlineCivil}, 1, 10) BETWEEN ${at(".from")} AND ${at(".to")} THEN 1 ELSE 0 END`; break;
-      case "overdue": match = `CASE WHEN ${deadlineOverdueSql({ deadlineAt: ctx.deadlineAt, notDelivered: ctx.notDelivered, notArchived: ctx.notArchived }, ctx.now)} THEN 1 ELSE 0 END`; break;
-      case "mine": match = `CASE WHEN ${ctx.mine()} THEN 1 ELSE 0 END`; break;
+      case "overdue": {
+        const overdue = deadlineOverdueSql({ deadlineAt: ctx.deadlineAt, notDelivered: ctx.notDelivered, notArchived: ctx.notArchived }, ctx.now);
+        match = `CASE WHEN ${overdueIncludesNoDeadline ? `${ctx.deadlineAt} IS NULL OR ` : ""}${overdue} THEN 1 ELSE 0 END`;
+        break;
+      }
+      case "mine":
+        if (dropPeopleRules) return { applied: "(0)", match: "1" };
+        match = `CASE WHEN ${ctx.mine()} THEN 1 ELSE 0 END`;
+        break;
       case "people": {
+        if (dropPeopleRules) return { applied: "(0)", match: "1" };
         applied = `(${at(".a")} = 1)`;
         match = `CASE WHEN ${ctx.people(set(".ids"), at(".u"))} THEN 1 ELSE 0 END`;
         break;
