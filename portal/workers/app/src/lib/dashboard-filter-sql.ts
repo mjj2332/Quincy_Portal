@@ -150,6 +150,11 @@ function leafValue(leaf: DashboardFilterLeaf, source: DashboardFilterPeopleSourc
   }
 }
 
+/** The ONE JSON bind for a tree: one entry per rule, depth first (what `compileDashboardFilterSql(...).values` returns). */
+export function dashboardFilterBindValues(tree: DashboardFilterTree, peopleSource: DashboardFilterPeopleSource): string {
+  return JSON.stringify(dashboardFilterLeaves(tree).map((leaf) => leafValue(leaf, peopleSource)));
+}
+
 /** `sql` is `1` (and `values` `[]`) when the tree has no rule: nothing to apply. */
 export function compileDashboardFilterSql(tree: DashboardFilterTree, options: CompileDashboardFilterOptions): CompiledDashboardFilter {
   const leaves = dashboardFilterLeaves(tree);
