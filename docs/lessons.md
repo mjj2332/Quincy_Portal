@@ -4989,3 +4989,12 @@ remove the legacy readers) still applies.
   (`switch`, `field`, `item`, `scroll-area`, cascader x4) sit on a shrink-only exception list; they are not fixed here.
 - **Header height.** `ProjectTeamCombobox`'s `readOnlyClassName` became `rowClassName` and applies to the editable box too; the header
   passes `min-h-[44px]`, the Gantt popover passes nothing and stays compact.
+
+## Project sheet title ran under the close button (#460)
+
+- The sheet's close x is `position: absolute` (right `--space-4`, 44px) over the body, and `.project-header__identity > h2` had
+  no inline-end clearance, so a long title slid beneath it. The fix is `padding-inline-end` on the h2 scoped to
+  `.project-sheet__body`, mirroring the `.worktools` reservation; the header's own side padding is subtracted so the gap is
+  exact. The phone value sits in a `max-width: 720px` block placed AFTER the base rule, because both have equal specificity
+  and source order decides. Values are coupled to the close offset/size in `ProjectSheet.tsx`; `overflow-wrap: anywhere` lets an
+  unbroken title wrap inside the reduced width. Pinned by CSS-text assertions in `styles/app-railed.test.ts`.

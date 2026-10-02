@@ -498,4 +498,17 @@ describe("header-relative offsets derive from --shell-header-height (#113)", () 
     expect(mediaRule("720px", ".project-header__identity")).toMatch(/margin-inline:\s*calc\(-1 \* var\(--space-4\)\)/);
     expect(mediaRule("720px", ".project-header__identity")).toMatch(/padding-inline:\s*var\(--space-4\)/);
   });
+  // #460: the Project sheet's close x is absolute (right space-4, 44px, top space-3 on phones) and the
+  // title h2 had no inline-end clearance, so a long title ran under it. The rules must sit AFTER the
+  // sheet's `.worktools` reservation so the phone override wins on source order.
+  it("reserves the sheet close button's width on the Project title's inline end (#460)", () => {
+    const sel = ".project-sheet__body .project-header__identity > h2";
+    const base = ruleBody(appCss, sel) ?? "";
+    expect(base).toMatch(/padding-inline-end:\s*calc\(var\(--space-4\) \+ 44px \+ var\(--space-2\) - var\(--space-6\)\)/);
+    expect(base).toMatch(/overflow-wrap:\s*anywhere/);
+    const phone = mediaRule("720px", sel) ?? "";
+    expect(phone).toMatch(/padding-inline-end:\s*calc\(var\(--space-4\) \+ 44px \+ var\(--space-2\) - var\(--space-4\)\)/);
+    expect(appCss.indexOf(`${sel} {`)).toBeGreaterThan(appCss.indexOf(".project-sheet__body .worktools {"));
+    expect(appCss.indexOf(`@media (max-width: 720px) {\n  ${sel}`)).toBeGreaterThan(appCss.indexOf(`${sel} {`));
+  });
 });
