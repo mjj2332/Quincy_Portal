@@ -39,17 +39,18 @@ function sha256(value: string): string {
 // compiler (one JSON tree bind, `request_people`, the Stage scope as the only base filter). Every digest changed for that.
 // RE-PINNED in the #461 fix round (characterisation, not a guard): the People universe is resolved once by the handler and rides
 // the JSON bind, so `valid_request_people` and the per-rule universe re-derivation left the statement text.
+// RE-PINNED again (characterisation, not a guard): the dead `request_people` CTE and its `?8` bind were removed and the later binds renumbered (15 binds).
 const PRE_REFACTOR_RANGE_SQL_SHA256: Record<(typeof ROLES)[number], string> = {
-  admin: "cfb2f7dad084a978b7f366aedddb5d964630310ff32055931d9a186d96943deb",
-  editor: "d021515eb8f3fb13711fd6340312cb6e3e8f0cb0c298e5ac49ed3a95d4e83c81",
-  photographer: "d747d4609cfd3f6d1bb5326ecd8f1d81f150ea1bc080f80d1a7cba00a514eacb",
-  external_editor: "0f4ba7ddce2c6cb03737eae6e7234c2a9aa89448d6d61b8549693d6a8ae4b710",
+  admin: "b37738dbe1476d705d3d84a1212e1ae55b51bb0c54ceb32c26575a44d2d45243",
+  editor: "afe9e116a7099976d6b511b42baf46abf790ce4a02efa32e2c88fa5c4daa9b4b",
+  photographer: "a056ba239771be553ff5f6be566277981becc051c408bade4c065088602b1c83",
+  external_editor: "2f63d6ed445d4f8f80bf9f35f1c7f640832879c04a67026a7304574983345a04",
 };
 const PRE_REFACTOR_FACETS_SQL_SHA256: Record<(typeof ROLES)[number], string> = {
-  admin: "c65214fb24420bf50abd70d8cde0c9710b5e7fe6864fe13fbb7e99f17da14a4d",
-  editor: "873b97adf6ac19248303ceec60b72f75eb288cd1eff81c6335ba23fd8b31a37f",
-  photographer: "4f81582bd63283ce93d6848b6ec5fcb5afee289e88c355d1e28cc19667017c92",
-  external_editor: "10a916df032d9be82f2b7ec95aea626059afdf65e8dc0a5de7a77b9cac1ce115",
+  admin: "dd3d168e7f5b4ad4afbe0d05943e18d199265f05e26647e2d4ba48755ae95688",
+  editor: "3afb718f94f3698d050169e20cd1eb5a73cd92bb370abe60657c1f7e5623692f",
+  photographer: "d6f835b7ae47b76855eab8b5eab29f288574ab51570ce89265161c960f2d67f9",
+  external_editor: "8d0789900a0beb40ad8c56169f53deb7a48337570b05a1e079032b262f20543d",
 };
 
 describe("project-search", () => {

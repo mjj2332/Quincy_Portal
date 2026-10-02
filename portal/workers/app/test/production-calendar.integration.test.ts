@@ -360,8 +360,12 @@ describe("TB5C production Calendar range endpoint", () => {
     const accepted = await request(`/api/production-calendar?${range}&editors=${fifty}&q=${encodeURIComponent(unicodeSearch)}`, tokens.admin);
     expect(accepted.status).toBe(200);
     adminProductionCalendarRangeResponseSchema.parse(await accepted.json());
-    expect(productionCalendarRangeSql("admin").match(/json_each\(\?8\)/g)).toHaveLength(1);
-    expect(productionCalendarRangeSql("admin").match(/json_each\(\?9\)/g)).toHaveLength(1);
+    // The Stage scope is one JSON bind (?8), the whole tree incl. every People id is one more (?15): the statement has exactly 15
+    // binds, however many ids the request names, and only the Stage scope is expanded with json_each(?N).
+    const rangeSql = productionCalendarRangeSql("admin");
+    expect(rangeSql.match(/json_each\(\?8\)/g)).toHaveLength(1);
+    expect(rangeSql.match(/json_each\(\?\d+\)/g)).toHaveLength(1);
+    expect(Math.max(...[...rangeSql.matchAll(/\?(\d+)/g)].map((m) => Number(m[1])))).toBe(15);
     expect(productionCalendarRangeSql("admin")).not.toMatch(/\bLIKE\b|IN\s*\(\s*\?|valid_schedule_shapes|ROW_NUMBER\s*\(/iu);
     expect(productionCalendarFacetsSql("external_editor")).not.toMatch(/\bLIKE\b|IN\s*\(\s*\?|valid_schedule_shapes|ROW_NUMBER\s*\(/iu);
   });

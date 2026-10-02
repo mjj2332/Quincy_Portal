@@ -326,14 +326,12 @@ function calendarCtes(role: CalendarRole, tree: DashboardFilterTree = emptyDashb
   return `WITH
 request AS (
   SELECT ?1 AS me, ?2 AS start_instant, ?3 AS end_instant, ?4 AS start_date,
-    ?5 AS end_date, ?6 AS now, ?7 AS today_date, ?10 AS search,
-    ?11 AS show_completed, ?12 AS show_delivered, ?13 AS project_layer,
-    ?14 AS checklist_layer, ?15 AS archived_mode, ?16 AS filter_tree
+    ?5 AS end_date, ?6 AS now, ?7 AS today_date, ?9 AS search,
+    ?10 AS show_completed, ?11 AS show_delivered, ?12 AS project_layer,
+    ?13 AS checklist_layer, ?14 AS archived_mode, ?15 AS filter_tree
 ),
--- ?8: the request's People ids that are in the viewer's universe, resolved once by the handler (the tree's JSON bind
--- carries the same ids per rule; this is the statement's one declaration of the set). ?9: the Stage scope the tree implies.
-request_people AS (SELECT value AS person_id FROM json_each(?8)),
-request_stages AS (SELECT value AS stage_key FROM json_each(?9)),
+-- ?8: the Stage scope the tree implies, as ONE JSON bind. The People ids travel only inside the tree's JSON bind (?15).
+request_stages AS (SELECT value AS stage_key FROM json_each(?8)),
 ${authorizedProjectsBaseCte(role, { includeDeliveredColumn: "r.show_delivered", archivedModeColumn: "r.archived_mode", searchPredicate: authorizedProjectsSearch, extraColumns: "p.priority, p.shoot_date" })},
 project_candidate_universe AS (
   SELECT ap.*
@@ -571,7 +569,6 @@ function bindValues(parsed: ParsedCalendarRequest, validIds: ReadonlySet<string>
     query.end,
     parsed.now,
     parsed.todayDate,
-    JSON.stringify([...validIds].sort()),
     JSON.stringify(stages),
     filters.search,
     filters.showCompletedChecklist ? 1 : 0,
