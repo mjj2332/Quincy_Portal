@@ -75,10 +75,10 @@ function focusRingWidths(files: Map<string, string>): string[] {
         else if (c === "]") depth -= 1;
         else if (c === ":" && depth === 0) { parts.push(token.slice(start, i)); start = i + 1; }
       }
-      const utility = token.slice(start).replace(/^!/, "");
+      const utility = token.slice(start).replace(/^!/, "").replace(/!$/, "");
       // A `data-[focused=true]` attribute variant (the calendar's day cell) is app state, not keyboard focus.
       if (!parts.some((variant) => /focus/.test(variant.replace(/data-\[[^\]]*\]/g, "")))) continue;
-      if (/^ring(?:-(?!0$)\d+)?$/.test(utility) || /^ring-\[(?:length:)?[\d.]+(?:px|rem)?\]$/.test(utility)) found.push(`${name}: ${token}`);
+      if (/^ring(?:-(?!0$)\d+)?$/.test(utility) || /^ring-\[(?:length:[^\]]+|[\d.]+(?:px|rem)?)\]$/.test(utility)) found.push(`${name}: ${token}`);
     }
   }
   return found.sort();
@@ -118,10 +118,14 @@ describe("detectors (planted fixtures)", () => {
 
   it("finds a ring width under a focus variant, but not a colour, ring-0 or an unfocused ring", () => {
     const planted = new Map([
-      ["planted.tsx", stripComments('cn("focus-within:ring-3 focus-visible:ring-2 has-[>[data-slot=field]]:has-[:focus-visible]:ring-3 group-focus:ring peer-focus-visible:ring-[3px]")')],
-      ["clean.tsx", stripComments('cn("group-data-[focused=true]/day:ring-[3px] data-[focused=true]:ring-2 ring-0 focus-visible:ring-0 focus-visible:ring-ring/50 aria-invalid:ring-3 has-aria-invalid:ring-3 ring-1 ring-foreground/10 focus-visible:border-ring")\n// focus-within:ring-3\n/* focus:ring-2 */')],
+      ["planted.tsx", stripComments('cn("focus-within:ring-3 focus-visible:ring-2 has-[>[data-slot=field]]:has-[:focus-visible]:ring-3 group-focus:ring peer-focus-visible:ring-[3px] focus-visible:ring-3! focus:!ring-2 focus-visible:ring-[length:var(--border-width-bold)] focus:ring-[3px]!")')],
+      ["clean.tsx", stripComments('cn("focus-visible:ring-[color:var(--ring)] focus-visible:ring-[var(--ring)] focus-visible:ring-ring/50! focus-visible:ring-0! group-data-[focused=true]/day:ring-[3px] data-[focused=true]:ring-2 ring-0 focus-visible:ring-0 focus-visible:ring-ring/50 aria-invalid:ring-3 has-aria-invalid:ring-3 ring-1 ring-foreground/10 focus-visible:border-ring")\n// focus-within:ring-3\n/* focus:ring-2 */')],
     ]);
     expect(focusRingWidths(planted)).toEqual([
+      "planted.tsx: focus:!ring-2",
+      "planted.tsx: focus-visible:ring-3!",
+      "planted.tsx: focus-visible:ring-[length:var(--border-width-bold)]",
+      "planted.tsx: focus:ring-[3px]!",
       "planted.tsx: focus-within:ring-3",
       "planted.tsx: focus-visible:ring-2",
       "planted.tsx: group-focus:ring",
