@@ -3,6 +3,7 @@ import { SYDNEY_TIME_ZONE, isSydneyCalendarDate } from "./sydney-civil-time";
 import { STAGE_KEYS, type StageKey } from "./stages";
 import { STAGE_PRESENTATION_KEYS, type StagePresentationKey, type StageTransportKey } from "./stage-move";
 import { CANONICAL_LOWERCASE_UUID_REGEX } from "./staff-routes";
+import { dashboardFilterTreeSchema, type DashboardFilterTree } from "./dashboard-filter-tree";
 import {
   PRODUCTION_CALENDAR_MAX_EDITOR_IDS,
   PRODUCTION_CALENDAR_MAX_ENCODED_QUERY_BYTES,
@@ -117,7 +118,8 @@ export const ganttChildCursorSchema = z.object({
   position: z.number().int(),
   id: z.string().regex(CANONICAL_LOWERCASE_UUID_REGEX),
   completed: z.boolean(),
-  people: z.string().regex(/^[0-9a-f]{8}$/u).optional(),
+  // 8 hex: the legacy People / My tasks fingerprint; `t:` + 14 hex: a filter tree's (#461).
+  people: z.string().regex(/^(?:[0-9a-f]{8}|t:[0-9a-f]{14})$/u).optional(),
 }).strict();
 
 /**
@@ -300,7 +302,9 @@ export type GanttChecklistRowDto = {
 export type ProductionGanttResponse<TStage extends StageTransportKey = StageTransportKey> = {
   scope: "active";
   zone: typeof PRODUCTION_GANTT_ZONE;
-  appliedFilters: { q: string; editorIds: string[]; stageKeys: StagePresentationKey[]; priorities: DashboardPriorityFilterValue[]; archived: DashboardArchivedMode; includeDelivered: boolean; includeCompletedChecklist: boolean };
+  appliedFilters: { q: string; editorIds: string[]; stageKeys: StagePresentationKey[]; priorities: DashboardPriorityFilterValue[]; archived: DashboardArchivedMode; includeDelivered: boolean; includeCompletedChecklist: boolean;
+    /** #461: the filter tree, present only for a filter the flat facets above cannot spell (it also then carries its own Stage / Priority / Archived rules, so those flat echoes are the tree's scope: empty / default). */
+    tree?: DashboardFilterTree };
   projects: GanttProjectRowDto<TStage>[];
   page: { limit: number; returned: number; nextCursor: string | null };
   density: { matchedProjects: number; matchedRows: number; drawCap: number; tooManyToDraw: boolean };
@@ -411,6 +415,7 @@ const ganttAppliedFiltersSchema = z.object({
   archived: z.enum(DASHBOARD_ARCHIVED_MODES),
   includeDelivered: z.boolean(),
   includeCompletedChecklist: z.boolean(),
+  tree: dashboardFilterTreeSchema.optional(),
 }).strict();
 
 export function productionGanttResponseSchemaFor<TStage extends StageTransportKey>(stageSchema: z.ZodType<TStage>): z.ZodType<ProductionGanttResponse<TStage>> {

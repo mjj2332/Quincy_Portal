@@ -1,6 +1,17 @@
 import { z } from "zod";
 import { STAGE_PRESENTATION_KEYS, type StagePresentationKey } from "./stage-move";
 import { isSydneyCalendarDate } from "./sydney-civil-time";
+import {
+  canonicalizeDashboardFilterTree,
+  dashboardFlatFacets,
+  dashboardFlatFromTree,
+  formatDashboardFilterTree,
+  isEmptyDashboardFilterTree,
+  isLegacyExpressible,
+  parseDashboardFilterTree,
+  type DashboardFilterFacet,
+  type DashboardFilterTree,
+} from "./dashboard-filter-tree";
 
 /**
  * The Dashboard's shared Filter (#428): the facets every Dashboard view reads from one place.
@@ -53,6 +64,15 @@ export type DashboardFilter = {
   deadlineRange: DashboardDateRange | null;
   overdueOnly: boolean;
   myTasks: boolean;
+  /**
+   * #461: a filter the flat facets above cannot spell (OR, groups, a repeated field, negation, an explicit
+   * Archived=Hide rule). When present every flat field is at its default and `order` is absent;
+   * `normalizeDashboardFilter` is the only place that guarantees it, and converts a tree the flat facets CAN
+   * spell back to them.
+   */
+  tree?: DashboardFilterTree;
+  /** #461: URL-only. The order the flat facets were built in when it is not the canonical one. */
+  order?: DashboardFilterFacet[];
 };
 
 export const DEFAULT_DASHBOARD_FILTER: Readonly<DashboardFilter> = Object.freeze({
@@ -61,7 +81,7 @@ export const DEFAULT_DASHBOARD_FILTER: Readonly<DashboardFilter> = Object.freeze
 
 export function isDefaultDashboardFilter(filter: DashboardFilter | undefined): boolean {
   return filter === undefined || (
-    filter.stageKeys.length === 0 && filter.priorities.length === 0 && filter.archived === "hide"
+    filter.tree === undefined && filter.stageKeys.length === 0 && filter.priorities.length === 0 && filter.archived === "hide"
     && filter.editorIds.length === 0 && !filter.includeUnassigned && filter.shootRange === null && filter.deadlineRange === null && !filter.overdueOnly && !filter.myTasks
   );
 }
@@ -97,10 +117,17 @@ export function canonicalDashboardStages(values: readonly string[]): StagePresen
   return STAGE_PRESENTATION_KEYS.filter((value) => selected.has(value));
 }
 
-/** A fresh, canonical copy. */
+/** A fresh, canonical copy. The ONLY canonicaliser: tree XOR flat, and an `order` only where it means something. */
 export function normalizeDashboardFilter(filter: Partial<DashboardFilter> | undefined): DashboardFilter {
+  const tree = filter?.tree;
+  if (tree !== undefined) {
+    const canonical = canonicalizeDashboardFilterTree(tree);
+    if (!isLegacyExpressible(canonical)) return { ...normalizeDashboardFilter(undefined), tree: canonical };
+    const { flat, order } = dashboardFlatFromTree(canonical);
+    return { ...normalizeDashboardFilter(flat), ...(order ? { order } : {}) };
+  }
   const deadlineRange = filter?.deadlineRange ?? null;
-  return {
+  const flat: DashboardFilter = {
     stageKeys: canonicalDashboardStages(filter?.stageKeys ?? []),
     priorities: canonicalDashboardPriorities(filter?.priorities ?? []),
     archived: filter?.archived ?? "hide",
@@ -112,13 +139,22 @@ export function normalizeDashboardFilter(filter: Partial<DashboardFilter> | unde
     overdueOnly: deadlineRange ? false : filter?.overdueOnly ?? false,
     myTasks: filter?.myTasks ?? false,
   };
+  if (filter?.order) {
+    const facets = dashboardFlatFacets(flat, filter.order);
+    const canonical = dashboardFlatFacets(flat);
+    if (facets.some((facet, index) => facet !== canonical[index])) return { ...flat, order: facets };
+  }
+  return flat;
 }
 
 const rangesEqual = (left: DashboardDateRange | null, right: DashboardDateRange | null) =>
   left === right || (left !== null && right !== null && left.from === right.from && left.to === right.to);
 
+const treeKey = (filter: DashboardFilter) => (filter.tree ? formatDashboardFilterTree(canonicalizeDashboardFilterTree(filter.tree)) : "");
+const orderKey = (filter: DashboardFilter) => (filter.order ?? []).join(",");
+
 export function dashboardFiltersEqual(left: DashboardFilter, right: DashboardFilter): boolean {
-  return left.archived === right.archived
+  return treeKey(left) === treeKey(right) && orderKey(left) === orderKey(right) && left.archived === right.archived
     && left.stageKeys.length === right.stageKeys.length && left.stageKeys.every((key, index) => key === right.stageKeys[index])
     && left.priorities.length === right.priorities.length && left.priorities.every((value, index) => value === right.priorities[index])
     && left.editorIds.length === right.editorIds.length && left.editorIds.every((id, index) => id === right.editorIds[index])
@@ -173,7 +209,10 @@ const rangeParam = z.string().transform((raw, context) => {
  * are `1` or absent; `deadline` and `overdue` together are invalid (one Deadline rule). Unknown keys are
  * not this schema's business: the caller passes only the ones it owns (`DASHBOARD_PROJECTS_FILTER_QUERY_NAMES`).
  */
-export const DASHBOARD_PROJECTS_FILTER_QUERY_NAMES = ["stages", "priority", "archived", "editors", "unassigned", "shoot", "deadline", "overdue", "mine"] as const;
+export const DASHBOARD_PROJECTS_FILTER_QUERY_NAMES = ["stages", "priority", "archived", "editors", "unassigned", "shoot", "deadline", "overdue", "mine", "f"] as const;
+
+/** The nine legacy facet names, which `f` is exclusive with (and `forder` is never an API name at all). */
+export const DASHBOARD_LEGACY_FILTER_QUERY_NAMES = ["stages", "priority", "archived", "editors", "unassigned", "shoot", "deadline", "overdue", "mine"] as const;
 
 export const dashboardProjectsFilterQuerySchema = z.object({
   stages: commaList(STAGE_PRESENTATION_KEYS, DASHBOARD_FILTER_MAX_STAGE_KEYS).optional(),
@@ -185,7 +224,16 @@ export const dashboardProjectsFilterQuerySchema = z.object({
   deadline: rangeParam.optional(),
   overdue: z.literal("1").optional(),
   mine: z.literal("1").optional(),
-}).strict().refine((query) => !(query.deadline !== undefined && query.overdue !== undefined), { message: "deadline and overdue are exclusive." }).transform((query): DashboardFilter => ({
+  /** #461: the filter tree (`1:and(...)`), exclusive with every legacy facet; the one parser is shared. */
+  f: z.string().transform((raw, context) => {
+    const parsed = parseDashboardFilterTree(raw);
+    if ("error" in parsed) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: parsed.error === "too_large" ? "Filter tree exceeds a cap." : "Expected a canonical filter tree.", params: { tooLarge: parsed.error === "too_large" } });
+      return z.NEVER;
+    }
+    return parsed.tree;
+  }).optional(),
+}).strict().refine((query) => query.f === undefined || DASHBOARD_LEGACY_FILTER_QUERY_NAMES.every((name) => query[name] === undefined), { message: "f is exclusive with the legacy filter parameters." }).refine((query) => !(query.deadline !== undefined && query.overdue !== undefined), { message: "deadline and overdue are exclusive." }).transform((query): DashboardFilter => query.f !== undefined ? normalizeDashboardFilter({ tree: query.f }) : ({
   stageKeys: canonicalDashboardStages(query.stages ?? []),
   priorities: canonicalDashboardPriorities(query.priority ?? []),
   archived: query.archived === undefined ? "hide" : query.archived === "1" ? "only" : query.archived,
@@ -202,6 +250,8 @@ export type DashboardProjectsFilterQueryInput = z.input<typeof dashboardProjects
 /** Serialises a filter to the Projects-list request spelling (defaults omitted). */
 export function dashboardProjectsFilterQueryParams(filter: DashboardFilter): Array<[string, string]> {
   const params: Array<[string, string]> = [];
+  // #461: a tree the flat facets cannot spell travels as `f` alone (`order` is URL-only, never sent).
+  if (filter.tree && !isEmptyDashboardFilterTree(filter.tree)) return [["f", formatDashboardFilterTree(canonicalizeDashboardFilterTree(filter.tree))]];
   if (filter.editorIds.length > 0) params.push(["editors", canonicalDashboardEditorIds(filter.editorIds).join(",")]);
   if (filter.includeUnassigned) params.push(["unassigned", "1"]);
   if (filter.stageKeys.length > 0) params.push(["stages", canonicalDashboardStages(filter.stageKeys).join(",")]);
