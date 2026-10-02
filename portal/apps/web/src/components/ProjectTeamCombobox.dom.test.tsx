@@ -641,10 +641,12 @@ describe("ProjectTeamCombobox on an archived Project (#452)", () => {
     expect(document.activeElement).not.toBe(group(host));
   });
 
-  it("archived and empty shows nothing visible, only a screen-reader 'No team assigned'", async () => {
+  it("archived and empty shows a dash, with a screen-reader 'No team assigned'", async () => {
     const host = await mountCombobox({ members: [], archived: true });
-    expect(host.textContent).toBe("No team assigned");
+    // The sr-only name is read with the visible dash, which is hidden from assistive tech.
+    expect(host.textContent).toBe("No team assigned—");
     expect(host.textContent).not.toContain("Not assigned");
+    expect([...host.querySelectorAll("span")].find((element) => element.textContent === "—")?.getAttribute("aria-hidden")).toBe("true");
     const label = [...host.querySelectorAll("span")].find((element) => element.textContent === "No team assigned")!;
     expect(label.className).toContain("sr-only");
   });
@@ -656,7 +658,7 @@ describe("ProjectTeamCombobox on an archived Project (#452)", () => {
     await addAri(host);
 
     expect(host.querySelector('[aria-label="Add team member"]')).toBeNull();
-    expect(status(host)?.textContent).toBe("This project was archived. Restore it to change the team.");
+    expect(status(host)?.textContent).toBe("Read-only while archived. Restore the project before changing the team.");
     expect(group(host)?.getAttribute("aria-describedby")).toBe(status(host)?.id);
     expect([...host.querySelectorAll("button")].some((button) => button.textContent === "Retry")).toBe(false);
     expect(host.querySelector('[role="alert"]')).toBeNull();
@@ -675,7 +677,7 @@ describe("ProjectTeamCombobox on an archived Project (#452)", () => {
     expect(apiDeleteMock).toHaveBeenCalledOnce();
     expect(confirmMock).not.toHaveBeenCalled();
     expect(host.querySelector('[data-testid="project-member-remove"]')).toBeNull();
-    expect(status(host)?.textContent).toBe("This project was archived. Restore it to change the team.");
+    expect(status(host)?.textContent).toBe("Read-only while archived. Restore the project before changing the team.");
     expect([...host.querySelectorAll("button")].some((button) => button.textContent === "Retry")).toBe(false);
     expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.detail(projectId), exact: true }));
     expect(document.activeElement).toBe(group(host));

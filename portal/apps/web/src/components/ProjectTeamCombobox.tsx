@@ -6,6 +6,7 @@ import { ApiError, apiDeleteWithBody, apiPutWithStatus } from "../lib/api";
 import { confirm } from "../lib/confirm";
 import { buttonClasses } from "./quincy/Button";
 import { cn } from "../lib/utils";
+import { ARCHIVED_NOTICE_CLASS } from "./archived-notice";
 import {
   beginProjectMembershipMutation,
   invalidateProjectSurfaces,
@@ -111,8 +112,9 @@ function teamChipStateClasses(dataState: TeamChipDataState) {
 
 /** #452: the server refuses every membership write on an archived Project with this 409 (it supersedes #446's removal code). */
 function isMembershipArchivedRefusal(error: unknown) { return error instanceof ApiError && error.status === 409 && details(error)?.code === "membership_project_archived"; }
-const ARCHIVED_TEAM_NOTICE = "This project was archived. Restore it to change the team.";
-const ARCHIVED_TEAM_NOTICE_CLASS = "m-0 [font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary";
+const ARCHIVED_TEAM_NOTICE = "Read-only while archived. Restore the project before changing the team.";
+/** Capped so a long notice wraps inside the Team column instead of widening it and shifting its neighbours. */
+const ARCHIVED_TEAM_NOTICE_CLASS = cn(ARCHIVED_NOTICE_CLASS, "max-w-[28ch]");
 
 function cellKey(roleOnProject: ProjectMemberRole, userId: string) { return `${roleOnProject}:${userId}`; }
 function roleLabel(roleOnProject: ProjectMemberRole) { return roleOnProject === "photographer" ? "Photographer" : "Editor"; }
@@ -285,7 +287,7 @@ function TeamMoreToggle({ hiddenCount, expanded, onToggle }: { hiddenCount: numb
   </button>;
 }
 
-export function ProjectTeamCombobox({ projectId, members, canEdit, archived = false, inputRef }: { projectId: string; members: ProjectMember[]; canEdit: boolean; /** #452: an archived Project's Team is read-only. Also latched on from a 409 `membership_project_archived`, until this goes true to false (Restore). */ archived?: boolean; /** #365: lets a hosting popover focus the input (the first chip × is a Tab stop and would otherwise take initial focus). */ inputRef?: Ref<HTMLInputElement> }) {
+export function ProjectTeamCombobox({ projectId, members, canEdit, archived = false, readOnlyClassName, inputRef }: { projectId: string; members: ProjectMember[]; canEdit: boolean; /** #452: an archived Project's Team is read-only. Also latched on from a 409 `membership_project_archived`, until this goes true to false (Restore). */ archived?: boolean; /** The read-only row only (an archived or live read-only Team); the header sizes it to its 44px controls. */ readOnlyClassName?: string; /** #365: lets a hosting popover focus the input (the first chip × is a Tab stop and would otherwise take initial focus). */ inputRef?: Ref<HTMLInputElement> }) {
   const anchor = useComboboxAnchor();
   const [latched, setLatched] = useState(false);
   const readOnly = archived || latched;
@@ -505,7 +507,7 @@ export function ProjectTeamCombobox({ projectId, members, canEdit, archived = fa
       // Only an archived (or latched) Team gets the named group: the focus target, and the anchor for the notice. A live read-only Team keeps its plain row.
       {...(readOnly ? { role: "group", "aria-label": "Team", tabIndex: -1, "aria-describedby": latched ? noticeId : undefined } : {})}
       ref={readOnlyRef}
-      className="flex flex-wrap items-center gap-1.5 outline-none"
+      className={cn("flex flex-wrap items-center gap-1.5 outline-none focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-2", readOnlyClassName)}
     >
       {displayed.length ? <>
         {visible.map((option) => {
@@ -516,15 +518,15 @@ export function ProjectTeamCombobox({ projectId, members, canEdit, archived = fa
             data-state={dataState}
             aria-describedby={messageId}
             title={`${name} · ${roleLabel(option.role)}`}
-            className={cn(TEAM_CHIP, teamChipStateClasses(dataState))}
+            className={cn(TEAM_CHIP, teamChipStateClasses(dataState), readOnly && "max-[721px]:min-h-0")}
           >
             <TeamChipContent option={option} dataState={dataState} roleTag={roleTag} />
           </span>;
         })}
         <TeamMoreToggle hiddenCount={hiddenCount} expanded={effectiveExpanded} onToggle={() => setExpanded(!effectiveExpanded)} />
       </> : readOnly
-        // #452: an archived Project shows nothing visible for an empty Team (no placeholder, as #450's rail); the group still has a name for assistive tech.
-        ? <span className="sr-only">No team assigned</span>
+        // #452: an empty read-only Team shows a dash, like the header's Client; the visible mark is hidden from assistive tech, which reads the sr-only name.
+        ? <><span className="sr-only">No team assigned</span><span aria-hidden="true" className="[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground">—</span></>
         : <p className="m-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">Not assigned</p>}
     </div>}
     {latched && <p id={noticeId} role="status" className={ARCHIVED_TEAM_NOTICE_CLASS}>{ARCHIVED_TEAM_NOTICE}</p>}

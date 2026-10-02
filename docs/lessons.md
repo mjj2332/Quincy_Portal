@@ -4927,6 +4927,10 @@ remove the legacy readers) still applies.
   timestamp statements that depend on the row write nothing), plus a trailing `SELECT archived_at` snapshot as the last statement.
   Never reorder or drop batch statements: results are read by position. Classification is archived first (over stale, ineligible,
   unchanged and `confirmation_required`), so a repeated PUT of an existing member on an archived Project is also a 409.
+- **Tonomo's photographer insert is fenced too.** `assignPhotographers` (`workers/background/src/tonomo/process.ts`) runs on the update
+  path after `findProject` has read the Project live, so an archive can land in between. Its insert is now
+  `INSERT ... SELECT ... WHERE EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)`, and the audit row lists only
+  photographers who are actually members. The test archives from the `getMetadata` dependency, which runs in exactly that window.
 - **Left out of the fence on purpose:** initial members at `POST /projects`, Tonomo default-editor adds (create-time only), and
   hard delete (a Project deletion, not a membership change). Restore adds nobody and a test pins it.
 - **Accepted consequence: role changes get harder.** `users.ts` blocks a role change while the user holds an incompatible
@@ -4943,10 +4947,15 @@ remove the legacy readers) still applies.
   In a layout effect keyed on the latch, focus moves there only when the capture was true and the active element is `<body>`,
   `:disabled`, disconnected or outside both. Never on load. Base UI focuses the input on a chip-remove press and an option press,
   so a "focus elsewhere at request start" case cannot be driven through the real UI in a DOM test.
-- **Read-only empty Team shows nothing visible** (an sr-only "No team assigned"), as #450's rail; live Projects keep "Not assigned"
+- **Read-only empty Team shows a "—"** (aria-hidden, header value tokens) beside an sr-only "No team assigned"; live Projects keep "Not assigned"
   for non-editors. Same gap as #450: a Project archived and restored inside one refetch window keeps the latch until remount.
 - **Gantt Team popover race is accepted:** after the refusal the Gantt refetch turns `canEditTeam` false, the popover unmounts and
-  focus falls to `<body>`.
+  focus falls to `<body>`. The popover also passes `archived={Boolean(detail.archivedAt)}` from the loaded detail, so a Project
+  archived since the row was drawn opens read-only rather than waiting for a 409 (no DOM test: the Gantt suites do not drive the
+  Team popover).
+- **Header read-only Team is sized by the header, not the control:** `ProjectHeader` passes `readOnlyClassName="min-h-[44px]"` so the
+  chip row lines up with the 44px triggers beside it; the Gantt popover keeps the compact row. The notice is capped at `28ch` so it
+  wraps rather than widening the column. The notice class is shared with the Checklist line (`archived-notice.ts`).
 - **Header Stage on an archived Project** (and for any role that cannot move Stage) renders through `StageOption` instead of
   `StatusBadge`, whose label is hard-wired to the `.ey` eyebrow class (uppercase, wide tracking). Same text, value styling.
 - **Out of scope, worth a follow-up:** the header's "Edit details" link and Deadline trigger still render for an Admin on an
