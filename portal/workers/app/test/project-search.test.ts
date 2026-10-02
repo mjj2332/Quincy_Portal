@@ -37,17 +37,19 @@ function sha256(value: string): string {
 // the shared Overdue facet gates checklist rows by their Project's Deadline rule. Every digest changed for that.
 // RE-PINNED in #461 (characterisation, not a guard): the Calendar's flat facets now compile through the shared filter-tree
 // compiler (one JSON tree bind, `request_people`, the Stage scope as the only base filter). Every digest changed for that.
+// RE-PINNED in the #461 fix round (characterisation, not a guard): the People universe is resolved once by the handler and rides
+// the JSON bind, so `valid_request_people` and the per-rule universe re-derivation left the statement text.
 const PRE_REFACTOR_RANGE_SQL_SHA256: Record<(typeof ROLES)[number], string> = {
-  admin: "da78c060d9f5d882f4b3dec351dac6364b4c726327a3ee975bb1b4a8056f7175",
-  editor: "64dec62615ddf8d7095afaae1b6cdd2a02bd6972a81ba7bb5b600f52b0879a79",
-  photographer: "e622be062215ada45299e8cc9881811c244f984815e3a13e4b4f2ce531fd2b69",
-  external_editor: "b42bf73c195e0d0d6ebe93237c858163d14ad1d38831948fa768f818f169cdb0",
+  admin: "cfb2f7dad084a978b7f366aedddb5d964630310ff32055931d9a186d96943deb",
+  editor: "d021515eb8f3fb13711fd6340312cb6e3e8f0cb0c298e5ac49ed3a95d4e83c81",
+  photographer: "d747d4609cfd3f6d1bb5326ecd8f1d81f150ea1bc080f80d1a7cba00a514eacb",
+  external_editor: "0f4ba7ddce2c6cb03737eae6e7234c2a9aa89448d6d61b8549693d6a8ae4b710",
 };
 const PRE_REFACTOR_FACETS_SQL_SHA256: Record<(typeof ROLES)[number], string> = {
-  admin: "3179ef28eddc0f801f49e847a62ea75005724c2d016435b057ff40ee9304958a",
-  editor: "0a8238a62edc3622de7a6f6e91bb68a3bfb279aef40cc5a13891c18742306285",
-  photographer: "af93598b7c1508c59018932cd5114d618066a59044a30701db9a3f0395502fa1",
-  external_editor: "763da5483607949d082e83122eb6d3938804a68b408b0c0ddd3ece778723330a",
+  admin: "c65214fb24420bf50abd70d8cde0c9710b5e7fe6864fe13fbb7e99f17da14a4d",
+  editor: "873b97adf6ac19248303ceec60b72f75eb288cd1eff81c6335ba23fd8b31a37f",
+  photographer: "4f81582bd63283ce93d6848b6ec5fcb5afee289e88c355d1e28cc19667017c92",
+  external_editor: "10a916df032d9be82f2b7ec95aea626059afdf65e8dc0a5de7a77b9cac1ce115",
 };
 
 describe("project-search", () => {

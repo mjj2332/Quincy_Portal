@@ -40,7 +40,7 @@ export async function projectsMatchingDashboardFilter(
 
   const matches = new Set<string>();
   if (authorizedIds.length === 0) return matches;
-  const compiled = compileDashboardFilterSql(residual, { jsonRef: "r.ftree", context: projectsListContext(viewer.role, "p", "r.now", "r.me"), peopleSource: { mode: "resolved", validIds: valid } });
+  const compiled = compileDashboardFilterSql(residual, { jsonRef: "r.ftree", context: projectsListContext(viewer.role, "p", "r.now", "r.me"), validIds: valid });
   const sql = `WITH request AS (SELECT ?1 AS me, ?2 AS now, ?3 AS ftree)
 SELECT p.id AS id
 FROM projects p
@@ -54,8 +54,11 @@ WHERE p.id IN (SELECT value FROM json_each(?4))
   return matches;
 }
 
-/** The requested ids that are in the viewer's People universe under the tree's Archived scope. */
-async function validPeopleIds(database: D1Database, viewer: { id: string; role: Role }, ids: string[], archivedMode: string): Promise<string[]> {
+/**
+ * The requested ids that are in the viewer's People universe under the tree's Archived scope (`dashboardPeopleCte`).
+ * Every surface resolves this ONCE per request and hands the answer to the compiler (`validIds`); no statement derives it.
+ */
+export async function validPeopleIds(database: D1Database, viewer: { id: string; role: Role }, ids: string[], archivedMode: string): Promise<string[]> {
   const result = await database.prepare(`WITH request AS (SELECT ?1 AS me, ?2 AS archived_mode),
 ${dashboardPeopleCte(viewer.role, "r.archived_mode")}
 SELECT person_id FROM dashboard_people WHERE person_id IN (SELECT value FROM json_each(?3))`).bind(viewer.id, archivedMode, JSON.stringify(ids)).all<{ person_id: string }>();

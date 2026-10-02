@@ -20,9 +20,12 @@ import { deadlineOverdueSql, validShootDateSql } from "./production-scope-sql";
  * - Values never appear in the SQL text. All of them travel in ONE JSON bind (`values`, one entry per rule,
  *   depth first), read with `json_extract` / `json_each`, so the text is a function of the tree's SHAPE (field,
  *   operator, negation, rule index) alone and the number of bound parameters does not grow with the tree.
- * - The People universe is `dashboard_people` in the caller's `WITH` chain (`peopleSource: universe`), or, where
- *   the caller already resolved the valid ids (the Projects list, a Timeline child page), the ids in `values` are
- *   pre-filtered (`resolved`) and no universe is read.
+ * - The People universe is resolved ONCE per request by the caller (`validPeopleIds`), never inside the statement:
+ *   each People rule's ids in `values` are pre-filtered to it and carry `a`, a precomputed 0/1 "applied" (a valid id is
+ *   named, or Unassigned is on). So a statement re-reads no universe, the group-level `applied` is a small
+ *   `json_extract` chain whatever the nesting, and only the rule's own `match` expands the ids.
+ * - Chains of AND / OR terms are parenthesised as a BALANCED binary tree: SQLite refuses an expression deeper than 100,
+ *   and a left-leaning chain of 20 terms nested under a 3-deep tree reaches it.
  */
 
 /** How a rule reads one candidate row. Each member is already-valid SQL over the caller's row. */
@@ -45,9 +48,6 @@ export type DashboardFilterLeafContext = {
   mine: () => string;
 };
 
-/** `validPeopleTable`: a CTE of `person_id` already restricted to the viewer's People universe (default `dashboard_people`). */
-export type DashboardFilterPeopleSource = { mode: "universe"; validPeopleTable?: string } | { mode: "resolved"; validIds: ReadonlySet<string> };
-
 export type CompiledDashboardFilter = {
   /** A boolean SQL expression, `1` when the tree applies nothing. */
   sql: string;
@@ -55,7 +55,8 @@ export type CompiledDashboardFilter = {
   values: string;
 };
 
-type Applied = string | null; // null = always applied
+/** `null` = always applied (every rule but People). */
+type Applied = string | null;
 type Compiled = { applied: Applied; match: string };
 
 const storedStage = (stage: string) => (stage === "editing" ? "editing_autohdr" : stage);
@@ -135,15 +136,19 @@ export type CompileDashboardFilterOptions = {
   /** SQL for the JSON text, resolvable inside correlated subqueries (e.g. `r.filter_tree`). */
   jsonRef: string;
   context: DashboardFilterLeafContext;
-  peopleSource: DashboardFilterPeopleSource;
+  /** The viewer's People universe intersected with the request's ids (what `validPeopleIds` returns). Only the `values` bind reads it. */
+  validIds: ReadonlySet<string>;
 };
 
-function leafValue(leaf: DashboardFilterLeaf, source: DashboardFilterPeopleSource): Record<string, unknown> {
+function leafValue(leaf: DashboardFilterLeaf, validIds: ReadonlySet<string>): Record<string, unknown> {
   switch (leaf.field) {
     case "stages": return { v: leaf.values.map(storedStage) };
     case "priority": return { v: leaf.values };
     case "archived": return { m: leaf.mode };
-    case "people": return { ids: source.mode === "resolved" ? leaf.ids.filter((id) => source.validIds.has(id)) : leaf.ids, u: leaf.unassigned ? 1 : 0 };
+    case "people": {
+      const ids = leaf.ids.filter((id) => validIds.has(id));
+      return { ids, u: leaf.unassigned ? 1 : 0, a: ids.length > 0 || leaf.unassigned ? 1 : 0 };
+    }
     case "shoot":
     case "deadline": return { from: leaf.range.from, to: leaf.range.to };
     default: return {};
@@ -151,15 +156,22 @@ function leafValue(leaf: DashboardFilterLeaf, source: DashboardFilterPeopleSourc
 }
 
 /** The ONE JSON bind for a tree: one entry per rule, depth first (what `compileDashboardFilterSql(...).values` returns). */
-export function dashboardFilterBindValues(tree: DashboardFilterTree, peopleSource: DashboardFilterPeopleSource): string {
-  return JSON.stringify(dashboardFilterLeaves(tree).map((leaf) => leafValue(leaf, peopleSource)));
+export function dashboardFilterBindValues(tree: DashboardFilterTree, validIds: ReadonlySet<string>): string {
+  return JSON.stringify(dashboardFilterLeaves(tree).map((leaf) => leafValue(leaf, validIds)));
+}
+
+/** `a OP b OP c ...` as a balanced parenthesised binary tree: depth log2(n), not n (SQLite's expression depth limit is 100). */
+function balanced(terms: string[], op: "AND" | "OR"): string {
+  if (terms.length === 1) return `(${terms[0]})`;
+  const middle = Math.ceil(terms.length / 2);
+  return `(${balanced(terms.slice(0, middle), op)} ${op} ${balanced(terms.slice(middle), op)})`;
 }
 
 /** `sql` is `1` (and `values` `[]`) when the tree has no rule: nothing to apply. */
 export function compileDashboardFilterSql(tree: DashboardFilterTree, options: CompileDashboardFilterOptions): CompiledDashboardFilter {
   const leaves = dashboardFilterLeaves(tree);
-  const { jsonRef: F, context: ctx, peopleSource } = options;
-  const values = JSON.stringify(leaves.map((leaf) => leafValue(leaf, peopleSource)));
+  const { jsonRef: F, context: ctx, validIds } = options;
+  const values = dashboardFilterBindValues(tree, validIds);
   if (leaves.length === 0) return { sql: "1", values };
   let index = 0;
 
@@ -177,11 +189,8 @@ export function compileDashboardFilterSql(tree: DashboardFilterTree, options: Co
       case "overdue": match = `CASE WHEN ${deadlineOverdueSql({ deadlineAt: ctx.deadlineAt, notDelivered: ctx.notDelivered, notArchived: ctx.notArchived }, ctx.now)} THEN 1 ELSE 0 END`; break;
       case "mine": match = `CASE WHEN ${ctx.mine()} THEN 1 ELSE 0 END`; break;
       case "people": {
-        const named = peopleSource.mode === "universe"
-          ? `SELECT je.value FROM json_each(${F}, '$[${i}].ids') je WHERE je.value IN (SELECT person_id FROM ${peopleSource.validPeopleTable ?? "dashboard_people"})`
-          : set(".ids");
-        applied = `(EXISTS (${named}) OR ${at(".u")} = 1)`;
-        match = `CASE WHEN ${ctx.people(named, at(".u"))} THEN 1 ELSE 0 END`;
+        applied = `(${at(".a")} = 1)`;
+        match = `CASE WHEN ${ctx.people(set(".ids"), at(".u"))} THEN 1 ELSE 0 END`;
         break;
       }
     }
@@ -192,11 +201,11 @@ export function compileDashboardFilterSql(tree: DashboardFilterTree, options: Co
     if (node.kind === "leaf") return leafSql(node, index++);
     if (node.children.length === 0) return { applied: "0", match: "1" };
     const children = node.children.map(nodeSql);
-    const applied: Applied = children.some((child) => child.applied === null) ? null : `(${children.map((child) => child.applied).join(" OR ")})`;
+    const applied: Applied = children.some((child) => child.applied === null) ? null : balanced(children.map((child) => child.applied as string), "OR");
     const terms = node.op === "and"
       ? children.map((child) => (child.applied === null ? child.match : `(NOT ${child.applied} OR ${child.match})`))
       : children.map((child) => (child.applied === null ? child.match : `(${child.applied} AND ${child.match})`));
-    return { applied, match: `(${terms.join(node.op === "and" ? " AND " : " OR ")})` };
+    return { applied, match: balanced(terms, node.op === "and" ? "AND" : "OR") };
   };
 
   const root = nodeSql(tree);

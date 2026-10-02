@@ -47,8 +47,9 @@ import {
 import { requireCapability } from "../middleware/capability";
 import { terminalRoute } from "../lib/terminal-route";
 import { projectSearchSql } from "../lib/project-search";
+import { validPeopleIds } from "../lib/project-relation-filter";
 import { authorizedProjectsBaseCte, dashboardPeopleCte, parseReminderOffsets } from "../lib/production-scope-sql";
-import { assigneeContext, baseProjectColumns, compileDashboardFilterSql, editorsContext } from "../lib/dashboard-filter-sql";
+import { assigneeContext, baseProjectColumns, compileDashboardFilterSql, dashboardFilterBindValues, editorsContext } from "../lib/dashboard-filter-sql";
 import { serializeSubtaskSchedule } from "../lib/subtask-schedule";
 import { readSubtaskReminders } from "../lib/project-subtasks";
 import { assigneesForViewer, parseAssigneesJson, subtaskAssigneesJsonSql } from "../lib/subtask-assignees";
@@ -293,10 +294,13 @@ function withChecklistLayerBypass(clause: string): string {
  * Delivered, the Archived scope and the Stage scope as a NECESSARY condition (the tree implies it), which keeps the
  * early narrowing identical to before for every legacy URL.
  */
+/** The statement TEXT never depends on the People ids (they ride in the JSON bind), so it is compiled against none. */
+const NO_IDS: ReadonlySet<string> = new Set();
+
 function calendarCtes(role: CalendarRole, tree: DashboardFilterTree = emptyDashboardFilterTree()): string {
   // The tree's SHAPE (not its values) is in the SQL text, so the statements are compiled from the request's tree.
-  const deadlineFilter = compileDashboardFilterSql(tree, { jsonRef: "r.filter_tree", context: editorsContext(baseProjectColumns("ap"), "ap.project_id", "r.now", "r.me"), peopleSource: { mode: "universe", validPeopleTable: "valid_request_people" } });
-  const subtaskFilter = compileDashboardFilterSql(tree, { jsonRef: "r.filter_tree", context: assigneeContext(role, baseProjectColumns("c"), "c.project_id", "c.subtask_id", "r.now", "r.me"), peopleSource: { mode: "universe", validPeopleTable: "valid_request_people" } });
+  const deadlineFilter = compileDashboardFilterSql(tree, { jsonRef: "r.filter_tree", context: editorsContext(baseProjectColumns("ap"), "ap.project_id", "r.now", "r.me"), validIds: NO_IDS });
+  const subtaskFilter = compileDashboardFilterSql(tree, { jsonRef: "r.filter_tree", context: assigneeContext(role, baseProjectColumns("c"), "c.project_id", "c.subtask_id", "r.now", "r.me"), validIds: NO_IDS });
   const authorizedProjectsSearch = withChecklistLayerBypass(projectSearchSql("r.search", {
     street: "p.street",
     suburb: "p.suburb",
@@ -323,7 +327,8 @@ request AS (
     ?11 AS show_completed, ?12 AS show_delivered, ?13 AS project_layer,
     ?14 AS checklist_layer, ?15 AS archived_mode, ?16 AS filter_tree
 ),
--- ?8: every People id the tree names (one flat JSON array); ?9: the Stage scope the tree implies.
+-- ?8: the request's People ids that are in the viewer's universe, resolved once by the handler (the tree's JSON bind
+-- carries the same ids per rule; this is the statement's one declaration of the set). ?9: the Stage scope the tree implies.
 request_people AS (SELECT value AS person_id FROM json_each(?8)),
 request_stages AS (SELECT value AS stage_key FROM json_each(?9)),
 ${authorizedProjectsBaseCte(role, { includeDeliveredColumn: "r.show_delivered", archivedModeColumn: "r.archived_mode", searchPredicate: authorizedProjectsSearch, extraColumns: "p.priority, p.shoot_date" })},
@@ -396,9 +401,6 @@ authorized_candidate_projects AS (
   SELECT project_id FROM range_candidate_subtasks
 ),
 ${dashboardPeopleCte(role, "r.archived_mode")},
-valid_request_people AS (
-  SELECT person_id FROM request_people WHERE person_id IN (SELECT person_id FROM dashboard_people)
-),
 project_filtered_candidates AS (
   SELECT ap.*
   FROM project_candidate_universe ap
@@ -538,7 +540,7 @@ facet_rows AS (
 SELECT * FROM facet_rows`;
 }
 
-function bindValues(parsed: ParsedCalendarRequest): unknown[] {
+function bindValues(parsed: ParsedCalendarRequest, validIds: ReadonlySet<string>): unknown[] {
   const { query } = parsed;
   const filters = query.filters;
   const tree = dashboardFilterTreeOf(filters);
@@ -553,7 +555,7 @@ function bindValues(parsed: ParsedCalendarRequest): unknown[] {
     query.end,
     parsed.now,
     parsed.todayDate,
-    JSON.stringify(dashboardFilterPeopleIds(tree)),
+    JSON.stringify([...validIds].sort()),
     JSON.stringify(stages),
     filters.search,
     filters.showCompletedChecklist ? 1 : 0,
@@ -561,8 +563,8 @@ function bindValues(parsed: ParsedCalendarRequest): unknown[] {
     filters.layers.includes("project") ? 1 : 0,
     filters.layers.includes("checklist") ? 1 : 0,
     dashboardFilterArchivedMode(tree),
-    // ONE JSON bind: every rule's values, depth first; see `compileDashboardFilterSql`.
-    compileDashboardFilterSql(tree, { jsonRef: "r.filter_tree", context: editorsContext(baseProjectColumns("ap"), "ap.project_id", "r.now", "r.me"), peopleSource: { mode: "universe", validPeopleTable: "valid_request_people" } }).values,
+    // ONE JSON bind: every rule's values (People ids pre-resolved against the viewer's universe), depth first; see `compileDashboardFilterSql`.
+    dashboardFilterBindValues(tree, validIds),
   ];
 }
 
@@ -742,7 +744,10 @@ async function productionCalendarHandlerImpl(c: Context<AppEnv>): Promise<Respon
   const requestTree = dashboardFilterTreeOf(parsed.query.filters);
   if (dashboardFilterHasArchivedLeaf(requestTree) && !roleHasCapability(role, "adminBackend")) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   if (dashboardFilterHasPriorityLeaf(requestTree) && role === "external_editor") return c.json({ error: "Project priority is not available to this role.", code: "calendar_query_invalid" }, 400);
-  const params = bindValues(parsed);
+  // The People universe is resolved once here, never inside a statement (three statements share these binds).
+  const requestedPeople = dashboardFilterPeopleIds(requestTree);
+  const validIds = new Set(requestedPeople.length === 0 ? [] : await validPeopleIds(c.env.DB, { id: user.id, role }, requestedPeople, dashboardFilterArchivedMode(requestTree)));
+  const params = bindValues(parsed, validIds);
   params[0] = user.id;
   const first = await c.env.DB.prepare(productionCalendarRangeSql(role, requestTree)).bind(...params).all<CalendarSqlRow>();
   const rows = first.results ?? [];

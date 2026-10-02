@@ -30,10 +30,9 @@ for (const stage of ["editing_autohdr", "delivered"]) for (const priority of [nu
   ROWS.push({ stage, priority, archived, shoot, deadline, civil: deadline === null ? null : "2026-05-31T10:00", person, me });
 }
 
-async function sqlMatches(raw: string, rows: Row[], validIds: ReadonlySet<string> | null): Promise<boolean[]> {
-  const compiled = compileDashboardFilterSql(tree(raw), { jsonRef: "r.ftree", context, peopleSource: validIds ? { mode: "resolved", validIds } : { mode: "universe" } });
-  const universe = validIds ? "" : `, dashboard_people AS (SELECT 'unused' AS person_id)`;
-  const statement = `WITH request AS (SELECT ?1 AS ftree, ?2 AS now)${universe}
+async function sqlMatches(raw: string, rows: Row[], validIds: ReadonlySet<string>): Promise<boolean[]> {
+  const compiled = compileDashboardFilterSql(tree(raw), { jsonRef: "r.ftree", context, validIds });
+  const statement = `WITH request AS (SELECT ?1 AS ftree, ?2 AS now)
 SELECT json_extract(p.n, '$.i') AS n, (${compiled.sql}) AS m FROM (SELECT value AS n, json_extract(value, '$.stage') AS stage_key, json_extract(value, '$.priority') AS priority,
   CASE WHEN json_extract(value, '$.archived') = 1 THEN 1 END AS archived_at, json_extract(value, '$.shoot') AS shoot_date,
   json_extract(value, '$.deadline') AS deadline_at, json_extract(value, '$.civil') AS deadline_local_civil,
@@ -79,9 +78,8 @@ describe("compileDashboardFilterSql (#461)", () => {
   it.each(TREES)("matches the evaluator spec, People resolved: %s", async (raw) => {
     expect(await sqlMatches(raw, ROWS, valid)).toEqual(specMatches(raw, ROWS, valid));
   });
-  it.each(TREES)("matches the evaluator spec, People from the universe: %s", async (raw) => {
-    // the universe stub is `SELECT 'unused'`, so no id is valid there: an all-not-applied rule must drop
-    expect(await sqlMatches(raw, ROWS, null)).toEqual(specMatches(raw, ROWS, new Set()));
+  it.each(TREES)("matches the evaluator spec, no id in the universe (every People rule dropped): %s", async (raw) => {
+    expect(await sqlMatches(raw, ROWS, new Set())).toEqual(specMatches(raw, ROWS, new Set()));
   });
 
   it("strict 0/1: a Project with no shoot date matches the negated rule and the OR", async () => {
@@ -93,7 +91,7 @@ describe("compileDashboardFilterSql (#461)", () => {
   });
 
   it("never puts a bound value in the SQL text, and the text depends on the shape alone", () => {
-    const compile = (raw: string) => compileDashboardFilterSql(tree(raw), { jsonRef: "r.ftree", context, peopleSource: { mode: "universe" } });
+    const compile = (raw: string) => compileDashboardFilterSql(tree(raw), { jsonRef: "r.ftree", context, validIds: new Set() });
     const one = compile(`1:or(and(stages=editing;people=${A});shoot=2026-02-01..2026-02-28)`);
     const two = compile(`1:or(and(stages=editing,delivered;people=unassigned,${GHOST});shoot=2027-01-01..2027-01-31)`);
     expect(one.sql).toBe(two.sql);
@@ -103,11 +101,11 @@ describe("compileDashboardFilterSql (#461)", () => {
   });
 
   it("applies nothing for an empty tree", () => {
-    expect(compileDashboardFilterSql({ kind: "group", op: "and", children: [] }, { jsonRef: "r.ftree", context, peopleSource: { mode: "universe" } })).toEqual({ sql: "1", values: "[]" });
+    expect(compileDashboardFilterSql({ kind: "group", op: "and", children: [] }, { jsonRef: "r.ftree", context, validIds: new Set() })).toEqual({ sql: "1", values: "[]" });
   });
 
   it("keeps the worst-case predicate far inside D1's 100,000-byte statement limit on every surface", () => {
-    // 20 People rules (the rule cap), three deep, in both People sources: the largest text the caps allow.
+    // 20 People rules (the rule cap), three deep, the largest text the caps allow.
     const people = (n: number) => `people=unassigned,${A}`.replace(A, `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`);
     const raw = `1:or(and(or(${[1, 2, 3, 4, 5, 6].map(people).join(";")});${[8, 9, 10, 11, 12].map(people).join(";")});and(${[14, 15, 16, 17, 18, 19, 20].map(people).join(";")};or(mine;overdue)))`;
     const worst = tree(raw.replace(/or\(mine;overdue\)/u, "or(mine;overdue)"));
@@ -116,8 +114,8 @@ describe("compileDashboardFilterSql (#461)", () => {
       editorsContext(baseProjectColumns("ap"), "ap.project_id", "r.now", "r.me"),
       assigneeContext("external_editor", baseProjectColumns("c"), "c.project_id", "c.subtask_id", "r.now", "r.me"),
     ];
-    for (const ctx of contexts) for (const mode of [{ mode: "universe" }, { mode: "resolved", validIds: new Set<string>() }] as const) {
-      const bytes = new TextEncoder().encode(compileDashboardFilterSql(worst, { jsonRef: "r.ftree", context: ctx, peopleSource: mode }).sql).byteLength;
+    for (const ctx of contexts) {
+      const bytes = new TextEncoder().encode(compileDashboardFilterSql(worst, { jsonRef: "r.ftree", context: ctx, validIds: new Set() }).sql).byteLength;
       expect(bytes).toBeLessThan(40_000);
     }
   });
