@@ -232,7 +232,19 @@ const DEADLINE_INVERSE_ROLES = "[--muted-foreground:var(--greige-300)]";
  */
 export const DEADLINE_AGENDA_DOT = "[&_[data-slot=event-calendar-agenda-dot]]:invisible";
 
-export function productionEventCalendarEventClassName(data: ProductionEventCalendarData | undefined): string | undefined {
+/**
+ * #464: the mark a Show-in landing puts on every chip of the Project it landed on. An OUTLINE, because
+ * every chip already spends its inset ring and shadow on its own rest/selected treatment; the outline
+ * sits outside the chip and touches none of them. It names no `data-selected:` variant.
+ */
+const LANDED_HIGHLIGHT = "outline-2 outline-offset-1 outline-(--ink-900)";
+
+export function productionEventCalendarEventClassName(data: ProductionEventCalendarData | undefined, highlighted = false): string | undefined {
+  const base = baseEventClassName(data);
+  return highlighted && base ? `${base} ${LANDED_HIGHLIGHT}` : base;
+}
+
+function baseEventClassName(data: ProductionEventCalendarData | undefined): string | undefined {
   if (!data) return undefined;
   if (data.shape === "deadline") return `bg-(--ink-900) hover:bg-(--ink-700) text-(--paper-050) inset-ring-(--ink-900) ${DEADLINE_SELECTED} ${DEADLINE_AGENDA_HOVER} ${DEADLINE_INVERSE_ROLES} ${DEADLINE_AGENDA_DOT}`;
   if (data.done) return `bg-border/25 hover:bg-border/35 inset-ring-border/25 text-foreground-secondary ${CHECKLIST_SELECTED}`;

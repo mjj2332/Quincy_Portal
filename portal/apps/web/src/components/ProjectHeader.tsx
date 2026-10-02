@@ -5,6 +5,7 @@ import { StageDot } from "./atoms";
 import { InternalLink } from "./InternalLink";
 import { useDashboardReturnLink, useInProjectSheet } from "./quincy/ProjectSheet";
 import { CopyProjectLinkButton } from "./quincy/CopyProjectLinkButton";
+import { ProjectShowIn } from "./quincy/ProjectShowIn";
 import { ProjectTeamCombobox } from "./ProjectTeamCombobox";
 import { ProjectHeaderDeadline } from "./ProjectHeaderDeadline";
 import { ProjectHeaderDropbox } from "./ProjectHeaderDropbox";
@@ -278,6 +279,7 @@ export function ProjectHeader({
         {/* #455: an archived Project's details are read-only, so the link leads to Restore / Delete (Admin) and is not offered to anyone else. */}
         {canEdit && (!archived || canAdminBackend) && <InternalLink className={EDIT_DETAILS_LINK} to={`/projects/${encodeURIComponent(project.id)}/edit`}>{archived ? "Restore or delete" : "Edit details"}</InternalLink>}
         <CopyProjectLinkButton projectId={project.id} tab={activeTab} className={COPY_LINK_IN_HEADER} />
+        <ProjectShowIn project={project} />
       </div>
       {project.productionNotes && <p className={cn("project-header__notes", "m-0 [white-space:pre-wrap]",
                     "[font:var(--weight-regular)_var(--text-sm)/var(--leading-relaxed)_var(--font-body-serif)]",

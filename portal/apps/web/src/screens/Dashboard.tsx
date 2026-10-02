@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { DEFAULT_DASHBOARD_FILTER, dashboardFilterOf, dashboardSearchOf, formatSydneyCivil, roleHasCapability, withDashboardFilter, type DashboardCalendarState, type DashboardFilter, type DashboardRoute, type DashboardTimelineRoute, type DashboardViewRoute as SharedDashboardViewRoute, type MoveProjectStageRequest, type MoveProjectStageResponse, type ProductionCalendarFilters, type StageKey } from "@quincy/shared";
+import { DEFAULT_DASHBOARD_FILTER, dashboardFilterOf, dashboardFocusOf, withoutDashboardFocus, dashboardSearchOf, formatSydneyCivil, roleHasCapability, withDashboardFilter, type DashboardCalendarState, type DashboardFilter, type DashboardRoute, type DashboardTimelineRoute, type DashboardViewRoute as SharedDashboardViewRoute, type MoveProjectStageRequest, type MoveProjectStageResponse, type ProductionCalendarFilters, type StageKey } from "@quincy/shared";
 import { QueryClient, QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError, apiPost } from "../lib/api";
 import { confirmStore } from "../lib/confirm";
@@ -26,7 +26,7 @@ import { EmptyState } from "../components/quincy/EmptyState";
 import { Notice } from "../components/quincy/Notice";
 import { ViewLoadBoundary } from "../components/ViewLoadBoundary";
 import { cn } from "../lib/utils";
-import { invalidateProjectSurfaces, useOptionalProjectQueryClient } from "../lib/project-data";
+import { invalidateProjectSurfaces, projectDataKeys, useOptionalProjectQueryClient, type ProjectDetail, type ProjectSubtask } from "../lib/project-data";
 import { createDashboardBoardInvalidatedMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
 import { markDashboardData } from "../lib/boot-timing";
 import { dashboardProjectsKey, dashboardProjectsKeyPrefix, isDashboardProjectsQueryFor, isFilteredDashboardProjectsQuery, useDashboardProjectSearch, useDashboardProjects } from "../lib/dashboard-projects";
@@ -62,6 +62,8 @@ const ProductionGantt = lazy(() => import("../components/ProductionGantt").then(
 // screen or a Photographer dashboard. Same code-split shape and the same literal `import(...)` as the Gantt above:
 // `ProductionEventCalendar.tsx` is the ONLY app file allowed to import
 // `components/reui/event-calendar/`, and this lazy import is that tree's one production entry.
+import type { ProductionGanttFocusOutcome } from "../components/ProductionGantt";
+import type { ProductionEventCalendarFocusOutcome } from "../components/ProductionEventCalendar";
 const ProductionEventCalendar = lazy(() => import("../components/ProductionEventCalendar").then((module) => ({ default: module.ProductionEventCalendar })));
 import { parseStaffLocation, staffPathFor } from "../lib/router";
 import { useDashboardLocationSource } from "../lib/dashboard-location";
@@ -73,7 +75,7 @@ import {
   takeDashboardSearchForNavigation,
 } from "../lib/dashboard-search-store";
 import type { CalendarSettleState } from "../lib/production-calendar-interaction";
-import { ganttFacetForWrite, ganttFiltersFromRoute, ganttPairingNotice, ganttRouteFor, productionStageFilterOptions, type ProductionGanttFacetFilters } from "../lib/production-gantt-filters";
+import { DEFAULT_GANTT_FACET_FILTERS, ganttFacetForWrite, ganttFiltersFromRoute, ganttPairingNotice, ganttRouteFor, productionStageFilterOptions, type ProductionGanttFacetFilters } from "../lib/production-gantt-filters";
 import { dashboardFilterKey, dashboardFilterNarrowCount } from "../lib/dashboard-filter-query";
 import { useDashboardPeople } from "../lib/dashboard-people";
 
@@ -188,6 +190,14 @@ function isDashboardTimelineRoute(route: DashboardRouteArm): route is DashboardT
 function ganttRouteOfLocation(location: string): DashboardTimelineRoute | null {
   const route = parseStaffLocation(location);
   return route.kind === "dashboard" && isDashboardTimelineRoute(route) ? route : null;
+}
+
+/** "2026-08-27" -> "Thu 27 Aug", for the Calendar landing's announcement. */
+function formatFocusDate(civilDate: string): string {
+  const date = new Date(`${civilDate}T12:00:00Z`);
+  if (Number.isNaN(date.getTime())) return civilDate;
+  const part = (options: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("en-AU", { ...options, timeZone: "UTC" }).format(date);
+  return `${part({ weekday: "short" })} ${part({ day: "numeric" })} ${part({ month: "short" })}`;
 }
 
 function DashboardContent({ currentUserId, role = "photographer", authorizationEpoch = 0, calendar: routeCalendar = null, searchFocusSignal = null, onSearchFocusHandled }: DashboardProps) {
@@ -696,6 +706,102 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     if (replace) history.replace(built); else history.push(built);
   }, [canViewProductionCalendar, currentUserId, history]);
 
+  // ---------------------------------------------------------------------------------------------
+  // #464: "Show in Calendar / Timeline". A location carrying `focus` becomes a one-shot request (with
+  // a token) handed to the matching view; the view lands, reports ONE outcome, and the Dashboard
+  // announces it and replaces the live location without `focus`. The request is Dashboard state, so
+  // that replace (and the Calendar's filter-reconcile replace) cannot cancel a landing in flight.
+  // ---------------------------------------------------------------------------------------------
+  type FocusView = "calendar" | "timeline";
+  type FocusRequest = { projectId: string; view: FocusView; token: number };
+  type FocusNotice = { projectId: string; view: FocusView; street: string | null; at: number };
+  const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
+  const [focusNotice, setFocusNotice] = useState<FocusNotice | null>(null);
+  const focusTokenRef = useRef(0);
+  const capturedFocusLocationRef = useRef<string | null>(null);
+  const routeFocus = dashboardFocusOf(parsedRoute);
+  const routeFocusView: FocusView | null = currentDashboardRoute && routeFocus ? (isDashboardCalendarRoute(currentDashboardRoute) ? "calendar" : isDashboardTimelineRoute(currentDashboardRoute) ? "timeline" : null) : null;
+  const focusViewMounted = routeFocusView === "calendar" ? isCalendarView : routeFocusView === "timeline" ? isGanttView : false;
+  useEffect(() => {
+    if (!routeFocus || !routeFocusView) { capturedFocusLocationRef.current = null; return; }
+    // The sheet floating over this Dashboard is not a landing: wait for the real location.
+    if (isBackdrop || !focusViewMounted) return;
+    if (capturedFocusLocationRef.current === currentLocation) return;
+    capturedFocusLocationRef.current = currentLocation;
+    focusTokenRef.current += 1;
+    setFocusNotice(null);
+    // Clear, then set at the outcome: an identical landing is announced again.
+    setAnnouncement("");
+    setFocusRequest({ projectId: routeFocus, view: routeFocusView, token: focusTokenRef.current });
+  }, [currentLocation, focusViewMounted, isBackdrop, routeFocus, routeFocusView]);
+  // The request goes only to the view it names; leaving that view drops it (and any notice). A
+  // location that no longer carries the request's focus (Back, a filter or Display change) drops it too.
+  useEffect(() => {
+    if (focusRequest && routeFocus !== focusRequest.projectId) setFocusRequest((current) => (current && current.token === focusRequest.token ? null : current));
+    if (focusRequest && !(focusRequest.view === "calendar" ? isCalendarView : isGanttView)) setFocusRequest(null);
+    if (focusNotice && !(focusNotice.view === "calendar" ? isCalendarView : isGanttView)) setFocusNotice(null);
+  }, [focusNotice, focusRequest, isCalendarView, isGanttView, routeFocus]);
+
+  const handleFocusSettled = useCallback((view: FocusView, token: number, outcome: ProductionGanttFocusOutcome | ProductionEventCalendarFocusOutcome) => {
+    const request = focusRequest;
+    if (!request || request.token !== token || request.view !== view) return;
+    setFocusRequest(null);
+    const viewLabel = view === "calendar" ? "Calendar" : "Timeline";
+    if (outcome.kind === "cancelled") return;
+    // Remove `focus` from the live location, but only if it still names this Project.
+    const liveRoute = parseStaffLocation(history.getLocation());
+    if (liveRoute.kind === "dashboard" && dashboardFocusOf(liveRoute) === request.projectId) history.replace(staffPathFor(withoutDashboardFocus(liveRoute)));
+    if (outcome.kind === "found") {
+      if ("target" in outcome) {
+        const date = formatFocusDate(outcome.civilDate);
+        setAnnouncement(`Showing ${outcome.target === "deadline" ? "the Deadline" : outcome.label} for ${outcome.street}, ${date}.${outcome.folded ? " It is folded under +N more." : ""}`);
+      } else {
+        setAnnouncement(`Showing ${outcome.street} in ${viewLabel}.`);
+      }
+      return;
+    }
+    if (outcome.kind === "error") {
+      setAnnouncement(`Could not show that Project in ${viewLabel}.`);
+      return;
+    }
+    // hidden / too-many: the Project is not among what these filters draw. The street comes from the
+    // cache, read without an observer (no fetch, no subscription).
+    const detail = queryClient?.getQueryData<ProjectDetail>(projectDataKeys.detail(request.projectId));
+    // A Project with no Deadline and no scheduled task is shown by its shoot date, which has no chip:
+    // that is the plan's announcement, not "hidden by filters" (Clear filters could never fix it).
+    if (view === "calendar" && detail && !detail.deadlineSchedule?.deadline && detail.shootDate && detail.shootDate === calendarState?.date
+      && !(queryClient?.getQueryData<ProjectSubtask[]>(projectDataKeys.subtasks(request.projectId)) ?? []).some((task) => task.schedule?.start?.localCivil)) {
+      setAnnouncement("No Deadline or scheduled tasks; showing the shoot date.");
+      return;
+    }
+    const street = detail?.street ?? null;
+    setFocusNotice({ projectId: request.projectId, view, street, at: token });
+  }, [calendarState?.date, focusRequest, history, queryClient]);
+  const handleGanttFocusSettled = useCallback((token: number, outcome: ProductionGanttFocusOutcome) => handleFocusSettled("timeline", token, outcome), [handleFocusSettled]);
+  const handleCalendarFocusSettled = useCallback((token: number, outcome: ProductionEventCalendarFocusOutcome) => handleFocusSettled("calendar", token, outcome), [handleFocusSettled]);
+
+  // Clear filters: the same view with the facets reset and `q` cleared, `focus` kept so it re-lands.
+  // What the sheet already broadened (Archived, Delivered, Completed) and the Calendar's layers stay.
+  function clearFocusNoticeFilters() {
+    const notice = focusNotice;
+    if (!notice || calendarInteractionBlocked) return;
+    setFocusNotice(null);
+    if (notice.view === "timeline") {
+      const cleared: ProductionGanttFacetFilters = { ...DEFAULT_GANTT_FACET_FILTERS, archived: ganttFilters.archived, delivered: ganttFilters.delivered, completed: ganttFilters.completed };
+      history.push(staffPathFor({ ...ganttRouteFor(cleared), focus: notice.projectId }));
+      return;
+    }
+    if (!calendarState) return;
+    const cleared: DashboardCalendarState = { ...calendarState, ...DEFAULT_DASHBOARD_FILTER, stageKeys: [], priorities: [], editorIds: [], archived: calendarState.archived, includeUnassigned: false, shootRange: null, deadlineRange: null, overdueOnly: false, myTasks: false, search: "", view: "calendar" };
+    setCalendarState(cleared);
+    history.push(staffPathFor({ kind: "dashboard", calendar: cleared, focus: notice.projectId }));
+  }
+  useEffect(() => {
+    if (!focusNotice) return;
+    const frame = window.setTimeout(() => document.querySelector<HTMLElement>('[data-testid="dashboard-focus-notice-clear"]')?.focus({ preventScroll: true }), 0);
+    return () => window.clearTimeout(frame);
+  }, [focusNotice]);
+
   // #217: the single store's own debounce timer replaces this effect's bespoke one. Registers the
   // URL write the store calls once a debounced (or Enter-committed) query settles -- Calendar
   // replaces its own facet URL (never floods history while typing, same as the effect this
@@ -757,7 +863,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     const currentSearch = takeDashboardSearchForNavigation(currentUserId);
     const next: DashboardCalendarState = { ...calendarState, ...filters, search: currentSearch, view: "calendar" };
     if (JSON.stringify(next) === JSON.stringify(calendarState)) return;
-    const built = staffPathFor({ kind: "dashboard", calendar: next });
+    // #464: a landing still pending keeps its `focus` through this normalising write.
+    const pendingFocus = dashboardFocusOf(parseStaffLocation(history.getLocation()));
+    const built = staffPathFor({ kind: "dashboard", calendar: next, ...(pendingFocus ? { focus: pendingFocus } : {}) });
     setCalendarState(next);
     history.replace(built);
   }, [calendarInteractionBlocked, calendarState, canViewProductionCalendar, history]);
@@ -1536,6 +1644,14 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         <Notice tone="caution" role="status" data-testid="board-unavailable-notice" className="flex shrink-0 items-baseline gap-[var(--space-3)] mb-[var(--space-4)] px-[var(--space-4)] py-[var(--space-3)] before:content-['Board'] before:shrink-0 before:[font:var(--type-eyebrow)] before:uppercase before:tracking-[var(--tracking-widest)] before:text-signal-caution-text text-foreground">{boardUnavailableMessage}</Notice>
       )}
 
+      {focusNotice && (
+        <Notice tone="caution" role="status" data-testid="dashboard-focus-notice" className="mb-[var(--space-4)] flex shrink-0 flex-wrap items-center gap-[var(--space-3)] px-[var(--space-4)] py-[var(--space-3)]">
+          <span className="min-w-0 flex-1">{focusNotice.street ?? "That Project"} isn't shown with the current filters.</span>
+          <Button type="button" variant="text" data-testid="dashboard-focus-notice-clear" onClick={clearFocusNoticeFilters}>Clear filters</Button>
+          <Button type="button" variant="text" data-testid="dashboard-focus-notice-dismiss" onClick={() => setFocusNotice(null)}>Dismiss</Button>
+        </Notice>
+      )}
+
       <div data-testid="dashboard-view-region" role="tabpanel" id={VIEW_PANEL_ID} aria-labelledby={renderedView === "none" ? undefined : VIEW_TAB_ID(renderedView)} className="flex min-h-[20rem] min-w-0 flex-1 flex-col">
         {/* #292: a boundary around each lazy view, outside its Suspense, so a stale chunk after a
             deploy stays inside the view region instead of replacing the whole shell. */}
@@ -1554,6 +1670,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
                 onShowDeliveredProjects={() => writeCalendarDisplay({ showDeliveredProjects: true })}
                 projectHrefFor={projectHrefFor}
                 onOpenProject={openCalendarProject}
+                focus={focusRequest?.view === "calendar" ? focusRequest : null}
+                onFocusSettled={handleCalendarFocusSettled}
               />
             </Suspense>
           </ViewLoadBoundary>
@@ -1579,6 +1697,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
                 onShownProjectsChange={setViewShownProjects}
                 projectHrefFor={projectHrefFor}
                 onOpenProject={openCalendarProject}
+                focus={focusRequest?.view === "timeline" ? focusRequest : null}
+                onFocusSettled={handleGanttFocusSettled}
               />
             </Suspense>
           </ViewLoadBoundary>

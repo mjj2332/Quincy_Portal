@@ -90,6 +90,8 @@ vi.mock("./screens/ProjectWorkspace", async () => {
           <button type="button" ref={trigger} data-testid="ws-tab-trigger">Collaboration</button>
           <span data-testid="ws-street">{street}</span>
           <InternalLink data-testid="ws-edit-link" to={`/projects/${projectId}/edit`}>Edit details</InternalLink>
+          {/* #464: stands in for ProjectShowIn's Timeline link (the real control has its own DOM test). */}
+          <InternalLink data-testid="ws-show-in-timeline" to={`/?view=timeline&q=smith&focus=${projectId}`}>Show in Timeline</InternalLink>
           <ToastViewport />
         </main>
       );
@@ -895,5 +897,57 @@ describe("permanent delete from the edit form (#374, E4)", () => {
       expect(sheet()).toBeNull();
       expect(host.querySelector('[data-testid="dashboard-toast-viewport"]')?.textContent).toContain("Project permanently deleted.");
     } finally { vi.unstubAllGlobals(); }
+  });
+});
+
+describe("Show in Timeline from the sheet (#464)", () => {
+  it("closes the sheet by pushing the focus URL, leaves focus for the landing (not the opener), and Back reopens the sheet", async () => {
+    // From the Timeline itself, so the opener stays mounted: without the fix focus would return to it.
+    const host = await renderDashboardAt("timeline");
+    const opener = (await openerFor(host, "timeline")) as HTMLElement;
+    await click(opener);
+    expect(sheet()).not.toBeNull();
+    const sheetUrl = currentUrl();
+    const sheetState = window.history.state;
+    expect(sheetUrl).toBe(PROJECT_PATH);
+
+    const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
+    const push = vi.spyOn(window.history, "pushState");
+    await click(document.querySelector('[data-testid="ws-show-in-timeline"]')!);
+    expect(go).not.toHaveBeenCalled();
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(push.mock.calls[0]![0]).toBeNull();
+    expect(sheet()).toBeNull();
+    expect(currentUrl()).toContain("view=timeline");
+    expect(opener.isConnected).toBe(true);
+    expect(document.activeElement).not.toBe(opener);
+
+    // Back is a traversal onto the sheet entry, over the Timeline it was opened from.
+    await traverseTo(sheetUrl, sheetState);
+    expect(sheet()).not.toBeNull();
+    expect(currentUrl()).toBe(PROJECT_PATH);
+    expect(host.querySelector('[data-testid="dashboard-gantt-surface"]')).not.toBeNull();
+  });
+
+  it("does not hand focus to a project link in the Dashboard when the landing has already stripped focus from the URL", async () => {
+    // The view lands and removes `focus` from the URL while the sheet is still closing; the sheet's
+    // final focus must remember it was closed by a Show in, not re-read the (now focus-less) URL and
+    // fall back to the project's link in the Dashboard (the Calendar's selection strip carries one).
+    const host = await renderDashboardAt("timeline");
+    const opener = (await openerFor(host, "timeline")) as HTMLElement;
+    await click(opener);
+    const decoy = document.createElement("a");
+    decoy.href = PROJECT_PATH;
+    decoy.textContent = "strip link";
+    host.querySelector("main")!.append(decoy);
+    const unsubscribe = locationStore().subscribe(() => {
+      if (currentUrl().includes("focus=")) { unsubscribe(); locationStore().replace("/?view=timeline&q=smith"); }
+    });
+    await click(document.querySelector('[data-testid="ws-show-in-timeline"]')!);
+    await settle();
+    expect(sheet()).toBeNull();
+    expect(currentUrl()).not.toContain("focus=");
+    expect(document.activeElement).not.toBe(decoy);
+    expect(document.activeElement).not.toBe(opener);
   });
 });

@@ -348,4 +348,35 @@ describe("Project sheet entry state (#366)", () => {
     adapter.push("/admin");
     expect(writes[2]!.state).toBeNull();
   });
+
+  // #464: Show in Calendar / Timeline pushes a Dashboard URL carrying `focus` from a sheet. It must
+  // carry no sheet state (so Back returns to the sheet entry), and the adapter must not collapse it to `/`.
+  it("a push from a sheet to a focus URL writes that URL with null state, and Back is a traversal", () => {
+    const { adapter, writes, gos } = fakeHistory(null, "/?view=board");
+    adapter.push(project);
+    const timeline = `/?view=timeline&focus=${projectId}`;
+    adapter.push(timeline);
+    expect(writes[1]).toEqual({ kind: "push", path: timeline, state: null });
+    expect(adapter.getLocation()).toBe(timeline);
+    adapter.go(-1);
+    expect(gos).toEqual([-1]);
+  });
+});
+
+describe("Dashboard focus parameter (#464)", () => {
+  const timeline = `/?view=timeline&focus=${projectId}`;
+  const calendar = `/?view=calendar&date=2026-08-30&sub=month&layers=project&focus=${projectId}`;
+
+  it("a focus link is intercepted as an SPA navigation", () => {
+    for (const href of [timeline, calendar]) {
+      expect(shouldInterceptInternalLink({ button: 0, detail: 1, defaultPrevented: false, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, currentTarget: { href: `https://portal.test${href}`, target: "", download: "" } }, "https://portal.test"), href).toBe(true);
+    }
+  });
+
+  it("safeStaffDestination keeps focus, and sign-out search stripping keeps it too", () => {
+    expect(safeStaffDestination(timeline)).toBe(timeline);
+    expect(safeStaffDestination(calendar)).toBe(calendar);
+    expect(stripDashboardSearchFromLocation(`${calendar.replace("&focus", "&q=smith&focus")}`)).toBe(calendar);
+    expect(stripDashboardSearchFromLocation(`/?view=timeline&q=smith&focus=${projectId}`)).toBe(timeline);
+  });
 });

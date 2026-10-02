@@ -134,6 +134,9 @@ export type DashboardTimelineRoute = {
   dashboardView: "timeline";
   search?: string;
   gantt?: DashboardGanttFacet;
+  /** #464: the Project the Timeline should land on (`focus=<uuid>`, written last). One-shot: the
+   * Dashboard removes it once the view has reported an outcome. */
+  focus?: string;
 };
 
 /**
@@ -166,6 +169,9 @@ export type DashboardViewRoute = DashboardTableBoardRoute | DashboardTimelineRou
 export type DashboardCalendarFacetRoute = {
   kind: "dashboard";
   calendar: DashboardCalendarState;
+  /** #464: the Project the Calendar should land on. Deliberately BESIDE `calendar`, not inside
+   * `DashboardCalendarState`, so `calendarPathFor` and the Calendar's reset key never see it. */
+  focus?: string;
 };
 
 export type DashboardRoute =
@@ -205,10 +211,10 @@ const PROJECT_ARRIVAL_BY_QUERY: ReadonlyMap<string, WorkspaceTab> = new Map(
   WORKSPACE_TABS.map((tab) => [projectArrivalQuery(tab), tab]),
 );
 const calendarParameterNames = new Set([
-  "view", "date", "sub", "layers", "editors", "unassigned", "stages", "priority", "archived", "shoot", "deadline", "completed", "delivered", "overdue", "mine", "q", "f", "forder",
+  "view", "date", "sub", "layers", "editors", "unassigned", "stages", "priority", "archived", "shoot", "deadline", "completed", "delivered", "overdue", "mine", "q", "f", "forder", "focus",
 ]);
 const dashboardTableBoardParameterNames = new Set(["view", "q", "editors", "unassigned", "stages", "priority", "archived", "shoot", "deadline", "overdue", "mine", "f", "forder"]);
-const dashboardTimelineParameterNames = new Set(["view", "q", "editors", "unassigned", "stages", "priority", "archived", "shoot", "deadline", "delivered", "completed", "overdue", "mine", "f", "forder"]);
+const dashboardTimelineParameterNames = new Set(["view", "q", "editors", "unassigned", "stages", "priority", "archived", "shoot", "deadline", "delivered", "completed", "overdue", "mine", "f", "forder", "focus"]);
 const calendarFilterDefaults = productionCalendarFiltersSchema.parse({});
 
 /** Shared with the Calendar facet's own `q` (`calendarPathFor`'s `normalizeDashboardSearchText`
@@ -374,6 +380,13 @@ function parseCalendarList(value: string | null): string[] | null {
 function parseCalendarFlag(params: URLSearchParams, name: string): boolean | null {
   if (!params.has(name)) return false;
   return params.get(name) === "1" ? true : null;
+}
+
+/** #464: `undefined` = no `focus`; `null` = reject (not a canonical lowercase UUID, or empty). */
+function parseFocusParam(params: URLSearchParams): string | undefined | null {
+  if (!params.has("focus")) return undefined;
+  const value = params.get("focus");
+  return value !== null && UUID.test(value) ? value : null;
 }
 
 function parseCalendarLocation(params: URLSearchParams): DashboardCalendarState | null {
@@ -582,8 +595,10 @@ function parseDashboardTimelineLocation(params: URLSearchParams): DashboardTimel
   if (filter === null || delivered === null || completed === null) return null;
   const search = parseDashboardSearch(params);
   if (search === null) return null;
+  const focus = parseFocusParam(params);
+  if (focus === null) return null;
   const gantt: DashboardGanttFacet = { ...filter, delivered, completed };
-  return { kind: "dashboard", dashboardView: "timeline", ...(search ? { search } : {}), ...(isDefaultGanttFacet(gantt) ? {} : { gantt }) };
+  return { kind: "dashboard", dashboardView: "timeline", ...(search ? { search } : {}), ...(isDefaultGanttFacet(gantt) ? {} : { gantt }), ...(focus ? { focus } : {}) };
 }
 
 /** Parse the complete, canonical relative staff location. Queries stay closed except for
@@ -641,14 +656,16 @@ export function parseStaffLocation(location: string): StaffRoute {
     // are already rejected by `parseDashboardQuery` above, so this arm inherits all of that and
     // only has to count and name the keys.
     const keys = [...params.keys()];
-    if (keys.length === 1 || (keys.length === 2 && params.has("q"))) {
+    if (!params.has("focus") && (keys.length === 1 || (keys.length === 2 && params.has("q")))) {
       const search = parseDashboardSearch(params);
       if (search === null) return { kind: "not-found" };
       return { kind: "dashboard", dashboardView: "calendar", ...(search ? { search } : {}) };
     }
     const calendar = parseCalendarLocation(params);
     if (calendar === null) return { kind: "not-found" };
-    return { kind: "dashboard", calendar };
+    const focus = parseFocusParam(params);
+    if (focus === null) return { kind: "not-found" };
+    return { kind: "dashboard", calendar, ...(focus ? { focus } : {}) };
   }
   return { kind: "not-found" };
 }
@@ -736,6 +753,19 @@ export function withDashboardFilter<TRoute extends Extract<StaffRoute, { kind: "
   return route;
 }
 
+/** #464: the Project a Dashboard route asks the Timeline / Calendar to land on, if any. */
+export function dashboardFocusOf(route: StaffRoute): string | undefined {
+  if (route.kind !== "dashboard") return undefined;
+  return "focus" in route ? route.focus : undefined;
+}
+
+/** #464: `route` without its `focus`. Every other field is left as it was. */
+export function withoutDashboardFocus<TRoute extends StaffRoute>(route: TRoute): TRoute {
+  if (route.kind !== "dashboard" || !("focus" in route)) return route;
+  const { focus: _focus, ...rest } = route;
+  return rest as TRoute;
+}
+
 /** True when `route` has a place to carry the shared Filter (the table/board, Timeline and Calendar facet arms). */
 export function dashboardRouteCarriesFilter(route: StaffRoute): boolean {
   if (route.kind !== "dashboard") return false;
@@ -820,7 +850,7 @@ function calendarPathFor(calendar: DashboardCalendarState): string {
 export function staffPathFor(route: Exclude<StaffRoute, { kind: "not-found" } | { kind: "reserved" }>): string {
   switch (route.kind) {
     case "dashboard": {
-      if ("calendar" in route) return calendarPathFor(route.calendar);
+      if ("calendar" in route) return `${calendarPathFor(route.calendar)}${route.focus ? `&focus=${route.focus}` : ""}`;
       const params = new URLSearchParams();
       let orderSource: DashboardFilter | DashboardGanttFacet | undefined;
       // `search` exists on every arm here now (#217 fix round 4, item 1 gave the Calendar INTENT
@@ -847,6 +877,8 @@ export function staffPathFor(route: Exclude<StaffRoute, { kind: "not-found" } | 
         if (safeSearch !== "") params.set("q", safeSearch);
       }
       if (orderSource) setDashboardFilterOrderParam(params, orderSource);
+      // #464: always last, after `q` and `forder`, so every pre-#464 URL serialises byte-identically.
+      if ("focus" in route && route.focus) params.set("focus", route.focus);
       const qs = params.toString();
       return qs ? `/?${qs}` : "/";
     }

@@ -247,4 +247,11 @@ describe("production event-calendar adapter: DTO → vendor event (#222)", () =>
     expect(failures).toContain('the vendored chip no longer sets "data-view": view');
     expect(stripTsComments(fixture)).toContain('"https://example.test/a//b"');
   });
+
+  it("#464: a landed highlight appends one outline and leaves the base class untouched", () => {
+    const deadline = toProductionEventCalendarEvent(deadlineEvent("2026-08-27T09:00"))!;
+    const base = productionEventCalendarEventClassName(deadline.data)!;
+    expect(productionEventCalendarEventClassName(deadline.data, false)).toBe(base);
+    expect(productionEventCalendarEventClassName(deadline.data, true)).toBe(`${base} outline-2 outline-offset-1 outline-(--ink-900)`);
+  });
 });

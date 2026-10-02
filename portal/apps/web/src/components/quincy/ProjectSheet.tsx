@@ -38,7 +38,8 @@ export type ProjectSheetProps = {
   backdropHref: string;
   onRequestClose: () => void;
   impersonating?: boolean;
-  finalFocus?: () => HTMLElement | true;
+  /** `false` leaves focus alone (#464: a Show-in landing owns it). */
+  finalFocus?: () => HTMLElement | boolean;
   children: ReactNode;
 };
 

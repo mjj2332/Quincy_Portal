@@ -20,7 +20,7 @@ import { vi } from "vitest";
 import type { DashboardCalendarState, ProductionCalendarRangeResponse } from "@quincy/shared";
 import type { CalendarSettleState } from "../lib/production-calendar-interaction";
 import { ProjectQueryRuntimeProvider, type ProjectQueryRuntime } from "../lib/project-query-sync";
-import { ProductionEventCalendar } from "../components/ProductionEventCalendar";
+import { ProductionEventCalendar, type ProductionEventCalendarFocus, type ProductionEventCalendarFocusOutcome } from "../components/ProductionEventCalendar";
 import { PROJECT_ID } from "./production-calendar-fixtures";
 import { eventCalendarFake } from "./event-calendar-fake";
 
@@ -81,6 +81,9 @@ export type SurfaceProps = {
   projectHrefFor?: (projectId: string) => string | undefined;
   onOpenProject?: (projectId: string) => void;
   onShownProjectsChange?: (count: number | null) => void;
+  /** #464: the Show in Calendar landing request and its one-per-token outcome. */
+  focus?: ProductionEventCalendarFocus | null;
+  onFocusSettled?: (token: number, outcome: ProductionEventCalendarFocusOutcome) => void;
   /** Wraps the surface in a `ProjectQueryRuntimeProvider` (cross-tab invalidation tests). */
   runtime?: ProjectQueryRuntime;
 };
@@ -128,6 +131,8 @@ export function createHarness(): Harness {
         projectHrefFor={props.projectHrefFor}
         onOpenProject={props.onOpenProject}
         onShownProjectsChange={props.onShownProjectsChange}
+        focus={props.focus}
+        onFocusSettled={props.onFocusSettled}
       />
     </QueryClientProvider>
     );
