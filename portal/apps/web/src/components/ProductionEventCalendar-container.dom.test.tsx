@@ -312,6 +312,44 @@ describe("ProductionEventCalendar container", () => {
     expect(document.querySelector('[data-testid="event-calendar-rail-sheet"]')!.textContent).not.toMatch(/filters/i);
   });
 
+  describe("rail sheet close control (#462)", () => {
+    const sheetEl = () => document.querySelector<HTMLElement>('[data-testid="event-calendar-rail-sheet"]');
+    const toggleEl = () => host.querySelector<HTMLButtonElement>('[data-testid="event-calendar-rail-toggle"]')!;
+    async function openRail() {
+      stubMedia(["(max-width: 1100px)"]);
+      await renderCalendar(calendar(), adminProductionCalendarRangeResponseSchema.parse(rawResponse("editing_autohdr")));
+      await act(async () => { toggleEl().click(); await Promise.resolve(); });
+    }
+
+    it("has exactly one Close calendar control, after the rail in document order", async () => {
+      await openRail();
+      const closes = sheetEl()!.querySelectorAll<HTMLButtonElement>('button[aria-label="Close calendar"]');
+      expect(closes).toHaveLength(1);
+      expect(sheetEl()!.querySelector('[data-testid="event-calendar-rail"]')!.compareDocumentPosition(closes[0]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect([...sheetEl()!.querySelectorAll("button")].filter((b) => b.textContent === "Close")).toHaveLength(0);
+    });
+
+    it("closes on click and reopens", async () => {
+      await openRail();
+      expect(toggleEl().getAttribute("aria-expanded")).toBe("true");
+      await act(async () => { sheetEl()!.querySelector<HTMLButtonElement>('[data-testid="event-calendar-rail-sheet-close"]')!.click(); await Promise.resolve(); });
+      expect(toggleEl().getAttribute("aria-expanded")).toBe("false");
+      await act(async () => { toggleEl().click(); await Promise.resolve(); });
+      expect(toggleEl().getAttribute("aria-expanded")).toBe("true");
+    });
+
+    it("closes on Escape", async () => {
+      await openRail();
+      await act(async () => { sheetEl()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
+      expect(toggleEl().getAttribute("aria-expanded")).toBe("false");
+    });
+
+    it("renders no sheet at the wide layout", async () => {
+      await renderCalendar(calendar(), adminProductionCalendarRangeResponseSchema.parse(rawResponse("editing_autohdr")));
+      expect(sheetEl()).toBeNull();
+    });
+  });
+
   it("Up next runs a second read-only agenda query from today, with the same filters", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-08-20T01:00:00.000Z"));
