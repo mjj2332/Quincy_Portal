@@ -571,6 +571,10 @@ projectsRoutes.post("/projects/:id/board-position", terminalRoute("/projects/:id
   }
   return c.json(result.response);
 }));
+/** #455. An archived Project's details are read-only; Restore first. */
+const DETAILS_ARCHIVED_BODY = { error: "Archived projects are read-only; restore the project to edit its details.", code: "details_project_archived" } as const;
+/** #455. Sync is refused on an archived Project (the consumer is fenced too). */
+const DROPBOX_SYNC_ARCHIVED_BODY = { error: "Archived projects can't sync from Dropbox. Restore the project first.", code: "dropbox_sync_project_archived" } as const;
 projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
@@ -581,6 +585,7 @@ projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) =
   // Explicit variant selection prevents a 0036 deployment from preparing board_revision.
   const existingProject = await db.select(projectColumnsForVariant(variant)).from(schema.projects).where(eq(schema.projects.id, id)).get();
   if (!existingProject) return c.json({ error: "Project not found" }, 404);
+  if (existingProject.archivedAt) return c.json(DETAILS_ARCHIVED_BODY, 409);
   const { orderedServices, ...projectUpdates } = data;
   const existing = await db.select({ id: schema.collections.id, kind: schema.collections.kind, receivedCount: schema.collections.receivedCount }).from(schema.collections).where(eq(schema.collections.projectId, id)).all();
   const desiredServices = orderedServices === undefined ? null : new Set<CollectionKind>(["raw", ...orderedServices]);
@@ -647,6 +652,7 @@ projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) =
   const result = await c.env.DB.batch(statements);
   if (!rowsFromD1<{ id: string }>(result[0]).length) {
     const currentProject = await db.select(projectColumnsForVariant(variant)).from(schema.projects).where(eq(schema.projects.id, id)).get();
+    if (currentProject?.archivedAt != null) return c.json(DETAILS_ARCHIVED_BODY, 409);
     const currentCollections = await db.select({ kind: schema.collections.kind }).from(schema.collections).where(eq(schema.collections.projectId, id)).all();
     const projectMatches = currentProject?.archivedAt === null && Object.entries(projectUpdates).every(([key, value]) => (currentProject as unknown as Record<string, unknown>)[key] === (value ?? null));
     const servicesMatch = orderedServices === undefined || (currentCollections.length === desiredServices!.size && currentCollections.every((collection) => desiredServices!.has(collection.kind as CollectionKind)));
@@ -763,7 +769,7 @@ projectsRoutes.post("/projects/:id/sync-dropbox", terminalRoute("/projects/:id/s
   const project = await db.select({ rawFolderPath: schema.projects.rawFolderPath, rawFolderLink: schema.projects.rawFolderLink, archivedAt: schema.projects.archivedAt })
     .from(schema.projects).where(eq(schema.projects.id, id)).get();
   if (!project) return c.json({ error: "Project not found" }, 404);
-  if (project.archivedAt) return c.json({ error: "Project is archived" }, 409);
+  if (project.archivedAt) return c.json(DROPBOX_SYNC_ARCHIVED_BODY, 409);
 
   const editorFolders = await editorFolderAvailability(c.env, id);
   const hasRawFolder = Boolean(editorFolders?.inputReady || project.rawFolderPath || project.rawFolderLink);

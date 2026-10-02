@@ -6,7 +6,7 @@ import { ApiError, apiDeleteWithBody, apiPutWithStatus } from "../lib/api";
 import { confirm } from "../lib/confirm";
 import { buttonClasses } from "./quincy/Button";
 import { cn } from "../lib/utils";
-import { ARCHIVED_NOTICE_CLASS } from "./archived-notice";
+import { ARCHIVED_HEADER_NOTICE_CLASS } from "./archived-notice";
 import {
   beginProjectMembershipMutation,
   invalidateProjectSurfaces,
@@ -114,7 +114,6 @@ function teamChipStateClasses(dataState: TeamChipDataState) {
 function isMembershipArchivedRefusal(error: unknown) { return error instanceof ApiError && error.status === 409 && details(error)?.code === "membership_project_archived"; }
 const ARCHIVED_TEAM_NOTICE = "Read-only while archived. Restore the project before changing the team.";
 /** Capped so a long notice wraps inside the Team column instead of widening it and shifting its neighbours. */
-const ARCHIVED_TEAM_NOTICE_CLASS = cn(ARCHIVED_NOTICE_CLASS, "max-w-[28ch]");
 
 function cellKey(roleOnProject: ProjectMemberRole, userId: string) { return `${roleOnProject}:${userId}`; }
 function roleLabel(roleOnProject: ProjectMemberRole) { return roleOnProject === "photographer" ? "Photographer" : "Editor"; }
@@ -534,7 +533,7 @@ export function ProjectTeamCombobox({ projectId, members, canEdit, archived = fa
         ? <><span className="sr-only">No team assigned</span><span aria-hidden="true" className="[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground">—</span></>
         : <p className="m-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">Not assigned</p>}
     </div>}
-    {latched && <p id={noticeId} role="status" className={ARCHIVED_TEAM_NOTICE_CLASS}>{ARCHIVED_TEAM_NOTICE}</p>}
+    {latched && <p id={noticeId} role="status" className={ARCHIVED_HEADER_NOTICE_CLASS}>{ARCHIVED_TEAM_NOTICE}</p>}
 
     {Object.entries(mutationStates).filter(([, state]) => state.kind !== "pending").map(([key, state]) => {
       if (state.kind === "pending") return null;

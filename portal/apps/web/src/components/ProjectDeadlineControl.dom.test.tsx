@@ -613,3 +613,65 @@ describe("ProjectDeadlineControl", () => {
     expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${projectId}/deadline`, { expectedVersion: 1, deadline: { localCivil: "2027-01-22T09:00" }, reminderOffsetsMinutes: [1440] });
   });
 });
+
+describe("ProjectDeadlineControl on a Project archived mid-edit (#455)", () => {
+  const archivedRefusal = () => new ApiError("Archived projects are read-only.", 409, { code: "deadline_project_archived" });
+  const onArchivedRefusal = vi.fn();
+  const onRequestStart = vi.fn();
+
+  async function mountWithCallbacks(schedule: ProjectDeadlineSchedule) {
+    const host = document.createElement("div"); document.body.appendChild(host);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const projectRuntime = new ProjectQueryRuntime(client);
+    queryClient = client; runtime = projectRuntime; root = createRoot(host);
+    const { ProjectDeadlineControl } = await import("./ProjectDeadlineControl");
+    await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={projectRuntime}><QueryClientProvider client={client}><ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit onClose={onClose} onRequestStart={onRequestStart} onArchivedRefusal={onArchivedRefusal} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
+    return host;
+  }
+
+  beforeEach(() => { onArchivedRefusal.mockReset(); onRequestStart.mockReset(); });
+
+  it("an Apply refused as archived shows no alert, flips read-only with the archived note, reports once, and releases the owner before invalidating the detail", async () => {
+    apiPutMock.mockRejectedValueOnce(archivedRefusal());
+    const host = await mountWithCallbacks(emptySchedule);
+    expect(mountedRuntime().isOwned(projectDataKeys.detail(projectId))).toBe(true);
+    const ownedAtInvalidation: boolean[] = [];
+    const invalidate = vi.spyOn(mountedQueryClient(), "invalidateQueries").mockImplementation(async (filters) => {
+      if (JSON.stringify((filters as { queryKey?: unknown })?.queryKey) === JSON.stringify(projectDataKeys.detail(projectId))) ownedAtInvalidation.push(mountedRuntime().isOwned(projectDataKeys.detail(projectId)));
+    });
+    await pickPopupDateTime(host, "2027-01-15T09:00");
+    await applyPopup(host);
+    await flush();
+    expect(onRequestStart).toHaveBeenCalledTimes(1);
+    expect(onArchivedRefusal).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(host.textContent).toContain("Reminders inactive while archived. Restore the project before changing or resuming them.");
+    expect(mountedRuntime().isOwned(projectDataKeys.detail(projectId))).toBe(false);
+    expect(ownedAtInvalidation.length).toBeGreaterThan(0);
+    expect(ownedAtInvalidation.every((owned) => !owned)).toBe(true);
+    invalidate.mockRestore();
+  });
+
+  it("a Resume refused as archived behaves the same", async () => {
+    apiPutMock.mockRejectedValueOnce(archivedRefusal());
+    const host = await mountWithCallbacks({ ...activeSchedule, canResume: true, state: "scheduled" });
+    await pressInPopup(host, "Resume reminders");
+    await flush();
+    expect(onRequestStart).toHaveBeenCalledTimes(1);
+    expect(onArchivedRefusal).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(host.textContent).toContain("Reminders inactive while archived.");
+    expect(mountedRuntime().isOwned(projectDataKeys.detail(projectId))).toBe(false);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("a version conflict is unchanged: it still shows Deadline changed elsewhere and does not report archived", async () => {
+    apiPutMock.mockRejectedValueOnce(new ApiError("Project deadline changed; reload before saving.", 409, { current: { ...activeSchedule, version: 2 } }));
+    const host = await mountWithCallbacks(emptySchedule);
+    await pickPopupDateTime(host, "2027-01-15T09:00");
+    await applyPopup(host);
+    await flush();
+    expect(host.textContent).toContain("Deadline changed elsewhere.");
+    expect(onArchivedRefusal).not.toHaveBeenCalled();
+  });
+});
