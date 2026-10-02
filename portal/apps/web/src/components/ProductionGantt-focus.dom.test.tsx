@@ -223,10 +223,12 @@ describe("ProductionGantt — landing on a named Project (#464)", () => {
     const link = [...host.querySelectorAll("a")].find((a) => a.textContent === streetOf(5));
     expect(link).toBeDefined();
     const classes = (link as HTMLElement).className.split(/\s+/);
-    expect(classes).toContain("focus-visible:-outline-offset-2");
+    expect(classes).toContain("focus-visible:!-outline-offset-2");
     expect(classes).toContain("focus-visible:outline-ring");
     expect(classes).toContain("focus-visible:outline-[length:var(--border-width-bold)]");
-    expect(classes).not.toContain("focus-visible:outline-offset-2");
+    // The anchor base keeps its plain `focus-visible:outline-offset-2` (twMerge no longer merges it away
+    // against the important form), so the `!` utility is what must win, and it does in the built CSS.
+    expect(classes).not.toContain("focus-visible:-outline-offset-2");
     expect(classes).not.toContain("focus-visible:outline-current");
   });
 

@@ -5058,6 +5058,7 @@ remove the legacy readers) still applies.
   disabled "Nothing scheduled" reason for the external fixture (no shoot date) but not for admin (has one): a fixture difference,
   not a leak. The fix was to give the external fixture a shoot date and re-freeze both literals (only Show in entries moved),
   not to loosen the "never anything an admin lacks" assertion.
+- **A utility can't beat the unlayered `:focus-visible` rule in `base.css` without `!`.** The Timeline row link's `focus-visible:-outline-offset-2` computed to +2px in a real browser, so the ring stayed clipped by the street cell's `overflow: hidden`; it is `focus-visible:!-outline-offset-2` (the repo's leading-`!` form, as in `SubtaskChecklist`).
 
 ## Filter tree: OR, groups, negation across Projects, Calendar and Timeline (#461, PR A)
 
