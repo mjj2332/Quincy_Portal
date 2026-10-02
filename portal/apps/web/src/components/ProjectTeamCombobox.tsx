@@ -322,7 +322,7 @@ export function ProjectTeamCombobox({ projectId, members, canEdit, archived = fa
     const active = document.activeElement;
     // Focus is lost when it sits on <body>, a disabled or disconnected node, or an ancestor that contains the Team control (a focus manager
     // reclaiming it). Another connected, enabled control the user moved to while the request was pending is theirs: leave it.
-    const reclaimed = active !== document.body && (active.contains(rootRef.current) || active.contains(readOnlyRef.current) || active.contains(contentRef.current));
+    const reclaimed = !!active && active !== document.body && (active.contains(rootRef.current) || active.contains(readOnlyRef.current) || active.contains(contentRef.current));
     if (!active || active === document.body || !active.isConnected || active.matches(":disabled") || (reclaimed && active !== readOnlyRef.current)) readOnlyRef.current?.focus();
   }, [latched]);
   const [pendingRemoveSnapshots, setPendingRemoveSnapshots] = useState<Record<string, ProjectMember>>({});
