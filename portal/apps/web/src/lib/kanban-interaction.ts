@@ -1,17 +1,15 @@
 import {
   STAGE_KEYS,
   authorizedBoardRank,
-  compareByStreetThenId,
+  compareBoardCards,
   parseStageTransportKey,
   stageMoveConfirmationReasons,
   stageTransportKeyForRole,
-  type ExpectedBoardProject,
   type MoveProjectStageRequest,
   type MoveProjectStageResponse,
   type Role,
   type StageKey,
   type StageMoveConfirmationReason,
-  type StageMovePlacement,
   type StageTransportKey,
 } from "@quincy/shared";
 import type { PipelineStage } from "./stages";
@@ -61,22 +59,22 @@ export interface ProjectSummary {
   editors?: { id: string; name: string }[];
 }
 
-/** Kept as a local type to avoid making this dependency-free module import a screen helper. */
-export type KanbanSortMode = "board" | "priority" | "shootDate-asc" | "shootDate-desc";
-
 export type DroppableData =
   | { kind: "card"; stageKey: StageKey; projectId: string }
   | { kind: "column"; stageKey: StageKey };
 
-/** A revision-free intent. Neighbour revisions are resolved only at activation time. */
+/**
+ * Where a card WILL land in a Stage column (#470): the card it sorts before, or `"end"`. Derived
+ * from the fixed Board order for the indicator and the narration; it is never sent to the server.
+ */
 export type SemanticGap = { targetStageKey: StageKey; successor: string | "end" };
 
-export type BoardInteractionOrigin = "pointer" | "touch" | "keyboard" | "move-to" | "arrow" | "rail";
+export type BoardInteractionOrigin = "pointer" | "touch" | "keyboard" | "move-to" | "rail";
 
 export type FocusDescriptor = {
   path: BoardInteractionOrigin;
   projectId: string;
-  control: "handle" | "move-to" | "arrow-up" | "arrow-down" | "rail-stage";
+  control: "handle" | "move-to" | "rail-stage";
   sourceStageKey: StageKey;
   sourceIndex: number;
 };
@@ -89,25 +87,6 @@ export type BoardModel = {
 };
 
 export type MovementBaseline = BoardModel;
-
-export type OptimisticOverlay = {
-  model: BoardModel;
-  movingProjectId: string;
-  gap: SemanticGap;
-};
-
-export type BoardDragStartSnapshot = {
-  model: BoardModel;
-  movingProjectId: string;
-  sort?: KanbanSortMode;
-  /** Display order is a transient presentation input, not a wire placement. */
-  displayOrderByStage?: Record<string, string[]>;
-};
-
-export type BoardProposal = {
-  orders: Record<string, string[]>;
-  gap: SemanticGap;
-};
 
 export type BoardInteractionState = {
   activeId: string | undefined;
@@ -128,16 +107,14 @@ export type ProjectKanbanBoardProps = {
    * refresh or a 503, instead of letting it vanish (#432).
    */
   menuCapable?: boolean;
-  sameStageReorderEnabled?: boolean;
-  effectiveKanbanSort: KanbanSortMode;
   pendingMoves: ReadonlySet<string>;
   pendingOrdering: ReadonlySet<string>;
   terminal: boolean;
-  onBoardMove?: (projectId: string, gap: SemanticGap, kind: "cross" | "same", focusDescriptor: FocusDescriptor) => void;
-  onBoardPosition: (project: ProjectSummary, direction: "up" | "down") => void;
+  /** A drop into another column (#470). A same-column drop never reaches this: the Board refuses it. */
+  onBoardMove?: (projectId: string, targetStageKey: StageKey, focusDescriptor: FocusDescriptor) => void;
   onPriorityChange: (project: ProjectSummary, priority: number | null) => void;
-  onMoveStage: (project: ProjectSummary, gap: SemanticGap, kind: "cross" | "same", focusDescriptor: FocusDescriptor) => void;
-  onMoveToProposalChange?: (proposal: SemanticGap | null) => void;
+  /** Move to ▸ a Stage, from the card's menu. Always an append; the Board sorts it into place. */
+  onMoveStage: (project: ProjectSummary, targetStageKey: StageKey, focusDescriptor: FocusDescriptor) => void;
   onInteractionStateChange?: (state: BoardInteractionState) => void;
   onAnnounce?: (message: string | undefined) => void;
   projectHrefFor?: (project: ProjectSummary) => string | undefined;
@@ -159,141 +136,40 @@ function projectStageKey(project: ProjectSummary): CanonicalStageKey | null {
   return canonicalStageKey(project.stageKey);
 }
 
-function daysInMonth(year: number, month: number): number {
-  if (month === 2) return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28;
-  return [4, 6, 9, 11].includes(month) ? 30 : 31;
+/**
+ * The one Board column order (#470): priority 5 down to 1 then unset, then the oldest Shoot date
+ * (missing or invalid last), then street and id. The server builds its authorised map with the same
+ * comparator (`compareBoardCards`), so a fetched Board and a locally re-sorted one agree.
+ *
+ * Priority is always "visible" here: an External Editor's summaries carry `priority: null` for every
+ * card, so the tier is simply flat for them, exactly as the server's priority-free map for that role.
+ */
+export function sortKanbanProjects(projects: ProjectSummary[]): ProjectSummary[] {
+  return [...projects].sort((left, right) => compareBoardCards(left, right, { priorityVisible: true }));
 }
 
-function isCanonicalShootDate(value: string | null): value is string {
-  if (value === null) return false;
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!match) return false;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  return month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth(year, month);
-}
-
-export function sortKanbanProjectsByShootDate(
+/**
+ * Where `projectId` would land in `targetStageKey`: its sorted position among that column's cards
+ * once it is there. `position` / `count` are 1-based and include the mover.
+ */
+export function boardLandingSlot(
   projects: ProjectSummary[],
-  mode: "shootDate-asc" | "shootDate-desc",
-): ProjectSummary[] {
-  const direction = mode === "shootDate-asc" ? 1 : -1;
-  return [...projects].sort((left, right) => {
-    const leftDate = isCanonicalShootDate(left.shootDate) ? left.shootDate : null;
-    const rightDate = isCanonicalShootDate(right.shootDate) ? right.shootDate : null;
-    if (leftDate === null || rightDate === null) {
-      if (leftDate === rightDate) return compareByStreetThenId(left, right);
-      return leftDate === null ? 1 : -1;
-    }
-    if (leftDate !== rightDate) return direction * (leftDate < rightDate ? -1 : 1);
-    return compareByStreetThenId(left, right);
-  });
-}
-
-export function sortKanbanProjects(projects: ProjectSummary[], sort: KanbanSortMode = "board"): ProjectSummary[] {
-  const boardRank = (project: ProjectSummary): number => {
-    const canonical = canonicalStageKey(project.stageKey);
-    const order = canonical
-      ? project.authorizedBoardOrder?.[canonical] ?? project.authorizedBoardOrder?.[project.stageKey]
-      : project.authorizedBoardOrder?.[project.stageKey];
-    if (order !== undefined) {
-      const rank = order.indexOf(project.id);
-      return rank < 0 ? Number.POSITIVE_INFINITY : rank;
-    }
-    return project.boardRank ?? Number.POSITIVE_INFINITY;
+  projectId: string,
+  targetStageKey: StageKey | "editing",
+): { gap: SemanticGap; position: number; count: number } | null {
+  const target = canonicalStageKey(targetStageKey);
+  const mover = projects.find((project) => project.id === projectId);
+  if (!target || !mover) return null;
+  const column = sortKanbanProjects([
+    ...projects.filter((project) => project.id !== projectId && projectStageKey(project) === target),
+    mover,
+  ]);
+  const index = column.findIndex((project) => project.id === projectId);
+  return {
+    gap: { targetStageKey: target, successor: column[index + 1]?.id ?? "end" },
+    position: index + 1,
+    count: column.length,
   };
-  // 5 stars is the highest Priority and sorts first; unset Priority stays last (owner decision).
-  if (sort === "priority") return [...projects].sort((left, right) =>
-    (left.priority === null ? 1 : 0) - (right.priority === null ? 1 : 0)
-    || (right.priority ?? 0) - (left.priority ?? 0)
-    || boardRank(left) - boardRank(right)
-    || left.id.localeCompare(right.id));
-  if (sort !== "board") return sortKanbanProjectsByShootDate(projects, sort);
-  const hasAuthorizedMap = projects.some((project) => project.boardMapPresent === true
-    || project.boardRank !== undefined
-    || project.authorizedBoardOrder?.[canonicalStageKey(project.stageKey) ?? project.stageKey] !== undefined
-    || project.authorizedBoardOrder?.[project.stageKey] !== undefined);
-  if (hasAuthorizedMap) {
-    return [...projects].sort((left, right) => boardRank(left) - boardRank(right) || left.id.localeCompare(right.id));
-  }
-  // Pre-contract servers do not provide a board map. Their list order is the only
-  // authoritative order available; never infer render order from the private position field.
-  return [...projects];
-}
-
-function projectById(projects: ProjectSummary[]): Map<string, ProjectSummary> {
-  return new Map(projects.map((project) => [project.id, project]));
-}
-
-export function authorizedOrderForStage(projects: ProjectSummary[], stageKey: StageKey): string[] | undefined;
-export function authorizedOrderForStage(projects: ProjectSummary[], stageKey: string): string[] | undefined;
-export function authorizedOrderForStage(projects: ProjectSummary[], stageKey: string): string[] | undefined {
-  return projects.find((project) => project.authorizedBoardOrder?.[stageKey] !== undefined)?.authorizedBoardOrder?.[stageKey];
-}
-
-function expectedNeighbour(projectId: string, projects: Map<string, ProjectSummary>): ExpectedBoardProject | null {
-  const project = projects.get(projectId);
-  return project ? { projectId, boardRevision: project.boardRevision } : null;
-}
-
-/** Build the exact visible neighbour tuple from the authorized map, never from boardPosition. */
-export function cardDropPlacement(
-  movingProjectId: string,
-  targetProjectId: string,
-  targetStageKey: string,
-  edge: "before" | "after",
-  projects: ProjectSummary[],
-): StageMovePlacement | null {
-  const order = authorizedOrderForStage(projects, targetStageKey);
-  if (!order) return null;
-  const withoutMoving = order.filter((projectId) => projectId !== movingProjectId);
-  const targetIndex = withoutMoving.indexOf(targetProjectId);
-  if (targetIndex < 0) return null;
-  const insertionIndex = edge === "before" ? targetIndex : targetIndex + 1;
-  if (insertionIndex >= withoutMoving.length) return { kind: "append" };
-  const byId = projectById(projects);
-  const before = insertionIndex > 0 ? expectedNeighbour(withoutMoving[insertionIndex - 1]!, byId) : null;
-  const after = expectedNeighbour(withoutMoving[insertionIndex]!, byId);
-  if (insertionIndex > 0 && !before) return null;
-  if (!after) return null;
-  return { kind: "between", before, after };
-}
-
-/** Build the exact adjacent placement used by the arrow/keyboard controls. */
-export function adjacentBoardPlacement(
-  movingProjectId: string,
-  targetStageKey: string,
-  direction: "up" | "down",
-  projects: ProjectSummary[],
-): StageMovePlacement | null {
-  const gap = adjacentBoardGap(movingProjectId, targetStageKey, direction, projects);
-  if (!gap) return null;
-  const moving = projects.find((project) => project.id === movingProjectId);
-  const authorizedBoardOrder = projects.find((project) => project.authorizedBoardOrder !== undefined)?.authorizedBoardOrder;
-  if (!moving || !authorizedBoardOrder) return null;
-  const resolved = resolveSemanticGap(gap, { projects, authorizedBoardOrder }, movingProjectId);
-  return "stale" in resolved ? null : resolved.placement;
-}
-
-/** Returns the revision-free gap used by an adjacent Board arrow. */
-export function adjacentBoardGap(
-  movingProjectId: string,
-  targetStageKey: string,
-  direction: "up" | "down",
-  projects: ProjectSummary[],
-): SemanticGap | null {
-  const order = authorizedOrderForStage(projects, targetStageKey);
-  if (!order) return null;
-  const movingIndex = order.indexOf(movingProjectId);
-  const withoutMoving = order.filter((projectId) => projectId !== movingProjectId);
-  if (movingIndex < 0) return null;
-  const currentIndex = withoutMoving.slice(0, movingIndex).length;
-  const desiredIndex = direction === "up"
-    ? Math.max(0, currentIndex - 1)
-    : Math.min(withoutMoving.length, currentIndex + 1);
-  if (desiredIndex === currentIndex) return null;
-  return { targetStageKey: canonicalStageKey(targetStageKey) ?? targetStageKey as StageKey, successor: withoutMoving[desiredIndex] ?? "end" };
 }
 
 function cloneOrders(orders: Record<string, readonly string[]>): Record<string, string[]> {
@@ -314,8 +190,7 @@ function modelOrders(model: BoardModel): Record<string, string[]> {
     ?? model.projects.find((project) => project.authorizedBoardOrder !== undefined)?.authorizedBoardOrder;
   const orders = fromModel ? canonicalOrders(fromModel) : {};
   // A complete authorized map normally contains every visible Stage. Keeping a defensive
-  // visible fallback makes transient proposals useful for fixtures and pre-contract snapshots;
-  // wire placement uses authorizedModelOrders below and fails closed without that map.
+  // visible fallback makes the settled map useful for fixtures and pre-contract snapshots.
   for (const project of model.projects) {
     const stageKey = projectStageKey(project);
     if (!stageKey || orders[stageKey]) continue;
@@ -324,16 +199,6 @@ function modelOrders(model: BoardModel): Record<string, string[]> {
       .map((candidate) => candidate.id);
   }
   return orders;
-}
-
-function authorizedModelOrders(model: BoardModel): Record<string, string[]> | undefined {
-  const fromModel = model.authorizedBoardOrder
-    ?? model.projects.find((project) => project.authorizedBoardOrder !== undefined)?.authorizedBoardOrder;
-  return fromModel ? canonicalOrders(fromModel) : undefined;
-}
-
-function orderForCanonicalStage(orders: Record<string, string[]>, stageKey: StageKey): string[] | undefined {
-  return orders[stageKey];
 }
 
 function attachOrders(model: BoardModel, orders: Record<string, string[]>): BoardModel {
@@ -353,309 +218,67 @@ function attachOrders(model: BoardModel, orders: Record<string, string[]>): Boar
   return { ...model, projects, authorizedBoardOrder: attachedOrders };
 }
 
-function visibleDisplayOrders(snapshot: BoardDragStartSnapshot): Record<string, string[]> {
-  if (snapshot.displayOrderByStage) return canonicalOrders(snapshot.displayOrderByStage);
-  const orders = modelOrders(snapshot.model);
-  if (!snapshot.sort || snapshot.sort === "board") return orders;
-  const result: Record<string, string[]> = {};
-  for (const stageKey of Object.keys(orders)) {
-    const stageProjects = snapshot.model.projects.filter((project) => projectStageKey(project) === stageKey);
-    result[stageKey] = sortKanbanProjects(stageProjects, snapshot.sort).map((project) => project.id);
-  }
-  return result;
-}
-
-function normalizeSnapshot(
-  snapshotOrModel: BoardDragStartSnapshot | BoardModel,
-  movingProjectIdOrHovered: string | DroppableData,
-  maybeHovered?: DroppableData,
-  sort?: KanbanSortMode,
-): BoardDragStartSnapshot | null {
-  if ("movingProjectId" in snapshotOrModel) return snapshotOrModel;
-  if (typeof movingProjectIdOrHovered !== "string" || !maybeHovered) return null;
-  return { model: snapshotOrModel, movingProjectId: movingProjectIdOrHovered, sort };
-}
-
 /**
- * Computes a transient multi-container proposal. A card hit means the visual gap immediately
- * before that card; a column hit means the end of that column. The return contains no revisions.
+ * The request for a Stage move: always an append (#470). The Board is sorted by data, so a move
+ * names a Stage and nothing else; the server accepts any placement but plans an append regardless.
  */
-export function proposeMultiContainerDrop(
-  snapshot: BoardDragStartSnapshot,
-  hovered: DroppableData,
-): BoardProposal | null;
-export function proposeMultiContainerDrop(
-  model: BoardModel,
-  movingProjectId: string,
-  hovered: DroppableData,
-  sort?: KanbanSortMode,
-): BoardProposal | null;
-export function proposeMultiContainerDrop(
-  snapshotOrModel: BoardDragStartSnapshot | BoardModel,
-  movingProjectIdOrHovered: string | DroppableData,
-  maybeHovered?: DroppableData,
-  sort?: KanbanSortMode,
-): BoardProposal | null {
-  const snapshot = normalizeSnapshot(snapshotOrModel, movingProjectIdOrHovered, maybeHovered, sort);
-  if (!snapshot) return null;
-  const mover = snapshot.model.projects.find((project) => project.id === snapshot.movingProjectId);
-  if (!mover) return null;
-  if (hoveredIsMover(movingProjectIdOrHovered, maybeHovered, snapshot.movingProjectId)) return null;
-  const hovered = "movingProjectId" in snapshotOrModel ? movingProjectIdOrHovered as DroppableData : maybeHovered!;
-  const orders = visibleDisplayOrders(snapshot);
-  const withoutMover = Object.fromEntries(Object.entries(orders).map(([stageKey, ids]) => [
-    stageKey,
-    ids.filter((projectId) => projectId !== snapshot.movingProjectId),
-  ]));
-  const targetOrder = withoutMover[hovered.stageKey] ? [...withoutMover[hovered.stageKey]!] : [];
-  const gap: SemanticGap = hovered.kind === "column"
-    ? { targetStageKey: hovered.stageKey, successor: "end" }
-    : { targetStageKey: hovered.stageKey, successor: hovered.projectId };
-  const insertionIndex = gap.successor === "end" ? targetOrder.length : targetOrder.indexOf(gap.successor);
-  if (gap.successor !== "end" && insertionIndex < 0) return null;
-  targetOrder.splice(insertionIndex, 0, snapshot.movingProjectId);
-  withoutMover[hovered.stageKey] = targetOrder;
-  return { orders: withoutMover, gap };
-}
-
-function hoveredIsMover(
-  movingProjectIdOrHovered: string | DroppableData,
-  maybeHovered: DroppableData | undefined,
-  movingProjectId: string,
-): boolean {
-  const hovered = typeof movingProjectIdOrHovered === "string" ? maybeHovered : movingProjectIdOrHovered;
-  return hovered?.kind === "card" && hovered.projectId === movingProjectId;
-}
-
-export function proposedOrdersForHover(
-  snapshot: BoardDragStartSnapshot,
-  hovered: DroppableData,
-): Record<string, string[]> | null;
-export function proposedOrdersForHover(
-  model: BoardModel,
-  movingProjectId: string,
-  hovered: DroppableData,
-  sort?: KanbanSortMode,
-): Record<string, string[]> | null;
-export function proposedOrdersForHover(
-  snapshotOrModel: BoardDragStartSnapshot | BoardModel,
-  movingProjectIdOrHovered: string | DroppableData,
-  maybeHovered?: DroppableData,
-  sort?: KanbanSortMode,
-): Record<string, string[]> | null {
-  const proposal = typeof movingProjectIdOrHovered === "string"
-    ? proposeMultiContainerDrop(snapshotOrModel as BoardModel, movingProjectIdOrHovered, maybeHovered!, sort)
-    : proposeMultiContainerDrop(snapshotOrModel as BoardDragStartSnapshot, movingProjectIdOrHovered);
-  return proposal?.orders ?? null;
-}
-
-/** Alias named for the Board's presentation-level vocabulary. */
-export const proposeBoardDrop = proposeMultiContainerDrop;
-
-export function resolveSemanticGap(
-  gap: SemanticGap,
-  model: BoardModel,
-  movingProjectId: string,
-): { placement: StageMovePlacement } | { stale: true } {
-  const mover = model.projects.find((project) => project.id === movingProjectId);
-  if (!mover) return { stale: true };
-  const orders = authorizedModelOrders(model);
-  if (!orders) return { stale: true };
-  const targetOrder = orderForCanonicalStage(orders, gap.targetStageKey) ?? [];
-  const targetIds = targetOrder.filter((projectId) => projectId !== movingProjectId);
-  if (gap.successor === "end") return { placement: { kind: "append" } };
-  if (gap.successor === movingProjectId || !projectById(model.projects).has(gap.successor)) return { stale: true };
-  const successorIndex = targetIds.indexOf(gap.successor);
-  if (successorIndex < 0) return { stale: true };
-  const byId = projectById(model.projects);
-  const before = successorIndex > 0 ? expectedNeighbour(targetIds[successorIndex - 1]!, byId) : null;
-  const after = expectedNeighbour(targetIds[successorIndex]!, byId);
-  if ((successorIndex > 0 && !before) || !after) return { stale: true };
-  const targetStage = projectStageKey(byId.get(gap.successor)!);
-  if (targetStage !== gap.targetStageKey) return { stale: true };
-  return { placement: { kind: "between", before, after } };
-}
-
-/** Same-Stage movement is a Board-position command, never a Stage command. */
-export function isSameStagePlacementChange(
-  input: { gap: SemanticGap; movingProject: ProjectSummary },
-): boolean {
-  const movingStage = projectStageKey(input.movingProject);
-  return movingStage !== null
-    && movingStage === canonicalStageKey(input.gap.targetStageKey)
-    && input.gap.successor !== input.movingProject.id;
-}
-
-/** Resolves a same-Stage gap to the exact neighbour revisions required by /board-position. */
-export function reorderIntentFromGap(
-  gap: SemanticGap,
-  model: BoardModel,
-  movingProjectId: string,
-  role: Role,
-): { targetStageKey: StageTransportKey; placement: StageMovePlacement } | { stale: true } {
-  const movingProject = model.projects.find((project) => project.id === movingProjectId);
-  if (!movingProject || !isSameStagePlacementChange({ gap, movingProject })) return { stale: true };
-  const currentStageKey = projectStageKey(movingProject);
-  if (!currentStageKey) return { stale: true };
-  const resolved = resolveSemanticGap(gap, model, movingProjectId);
-  if ("stale" in resolved) return resolved;
-  return {
-    targetStageKey: stageTransportKeyForRole(currentStageKey, role),
-    placement: resolved.placement,
-  };
-}
-
-/** Detects a same-Stage gap which leaves the canonical Board order unchanged. */
-export function boardGapChangesOrder(
-  gap: SemanticGap,
-  model: BoardModel,
-  movingProjectId: string,
-): boolean {
-  const moving = model.projects.find((project) => project.id === movingProjectId);
-  if (!moving || projectStageKey(moving) !== canonicalStageKey(gap.targetStageKey)) return true;
-  const order = modelOrders(model)[canonicalStageKey(gap.targetStageKey) ?? gap.targetStageKey] ?? [];
-  const withoutMoving = order.filter((projectId) => projectId !== movingProjectId);
-  const currentIndex = order.indexOf(movingProjectId);
-  if (gap.successor === movingProjectId) return false;
-  const targetIndex = gap.successor === "end" ? withoutMoving.length : withoutMoving.indexOf(gap.successor);
-  return currentIndex < 0 || targetIndex < 0 || targetIndex !== withoutMoving.slice(0, currentIndex).length;
-}
-
 export function buildMoveRequest(
   model: BoardModel,
   movingProjectId: string,
-  gap: SemanticGap,
+  targetStageKey: StageKey,
   role: Role,
 ): MoveProjectStageRequest | { stale: true } {
   const moving = model.projects.find((project) => project.id === movingProjectId);
   if (!moving) return { stale: true };
-  const resolved = resolveSemanticGap(gap, model, movingProjectId);
-  if ("stale" in resolved) return resolved;
   return {
     expected: {
       stageKey: moving.stageKey as StageTransportKey,
       boardRevision: moving.boardRevision,
     },
-    targetStageKey: stageTransportKeyForRole(gap.targetStageKey, role),
-    placement: resolved.placement,
+    targetStageKey: stageTransportKeyForRole(targetStageKey, role),
+    placement: { kind: "append" },
   };
 }
 
 export type EligibleTargetCapabilities = {
   canMoveProjectStage: boolean;
-  canPrioritize: boolean;
-  sort: KanbanSortMode;
   activeStageKeys: readonly StageKey[];
 };
 
-export type MoveToPositionOption = {
-  label: string;
-  successor: string | "end";
-};
-
-export type MoveToPositionCapabilities = EligibleTargetCapabilities & {
-  stageLabel?: string;
-  stageLabels?: Readonly<Record<string, string>>;
-};
-
-function fallbackStageLabel(stageKey: StageKey): string {
-  if (stageKey === "editing_autohdr") return "Editing";
-  return stageKey.split("_").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
-}
-
-/**
- * Returns the complete, role-safe position menu for the non-drag Move-to action.
- * The authorized order is only a source of candidate IDs; the visible project map
- * is the allow-list that prevents hidden projects leaking into the menu.
- */
-export function moveToPositionOptions(
-  model: BoardModel,
-  movingProjectId: string,
-  targetStageKey: StageKey,
-  role: Role,
-  caps: MoveToPositionCapabilities,
-): MoveToPositionOption[] {
-  const moving = model.projects.find((project) => project.id === movingProjectId);
-  const target = canonicalStageKey(targetStageKey);
-  if (!moving || !target || !caps.activeStageKeys.some((key) => canonicalStageKey(key) === target)) return [];
-  const source = projectStageKey(moving);
-  if (!source) return [];
-  const sameStage = source === target;
-  if (sameStage && !(role === "admin" && caps.canPrioritize && caps.sort === "board")) return [];
-  if (!sameStage && !caps.canMoveProjectStage) return [];
-
-  const order = authorizedModelOrders(model)?.[target] ?? [];
-  const visibleById = projectById(model.projects);
-  const authorizedSuccessors = order.filter((projectId) => {
-    if (projectId === movingProjectId) return false;
-    const candidate = visibleById.get(projectId);
-    return candidate !== undefined && projectStageKey(candidate) === target;
-  });
-  // #83: under a non-board sort the column is DISPLAYED in sorted order, so the options have to be
-  // listed in that same order — otherwise "Before X — position 1" names the card the user sees
-  // third. The old Board listed the visual successor (its own test: "uses the visual successor when
-  // Priority sorting changes the canonical Board order"), and the cutover must not lose that.
-  //
-  // Only the ORDER of the list changes. The successor ids are untouched, so placement stays
-  // semantic and `resolveSemanticGap` still resolves each one against the authorized map. Sorting a
-  // set already filtered to authorized ids also keeps the fail-closed property: with no authorized
-  // map there are no positions to offer, whatever the sort.
-  const authorized = new Set(authorizedSuccessors);
-  const visibleSuccessors = caps.sort !== undefined && caps.sort !== "board"
-    ? sortKanbanProjects(model.projects.filter((project) => authorized.has(project.id)), caps.sort).map((project) => project.id)
-    : authorizedSuccessors;
-  const label = caps.stageLabels?.[target] ?? caps.stageLabel ?? fallbackStageLabel(target);
-  return [
-    { label: `End of ${label}`, successor: "end" },
-    ...visibleSuccessors.map((successor, index) => ({
-      label: `Before ${visibleById.get(successor)!.street} — position ${index + 1}`,
-      successor,
-    })),
-  ];
-}
-
+/** A move is eligible only into a DIFFERENT, active Stage: a Stage column's order is not the user's to change. */
 export function eligibleTarget(
-  gap: SemanticGap,
+  targetStageKey: StageKey,
   model: BoardModel,
   movingProjectId: string,
   caps: EligibleTargetCapabilities,
 ): boolean {
   const mover = model.projects.find((project) => project.id === movingProjectId);
-  const targetStage = canonicalStageKey(gap.targetStageKey);
-  if (!mover || !targetStage || gap.successor === movingProjectId || !caps.activeStageKeys.some((key) => canonicalStageKey(key) === targetStage)) return false;
+  const targetStage = canonicalStageKey(targetStageKey);
+  if (!mover || !targetStage || !caps.activeStageKeys.some((key) => canonicalStageKey(key) === targetStage)) return false;
   const sourceStage = projectStageKey(mover);
-  if (!sourceStage) return false;
-  if (sourceStage === targetStage) return caps.canPrioritize && caps.sort === "board";
+  if (!sourceStage || sourceStage === targetStage) return false;
   return caps.canMoveProjectStage;
 }
 
 /**
- * Applies the five-step optimistic overlay to accepted data. The caller retains `baseline`;
- * this function never changes the input and deliberately leaves every boardRevision untouched.
+ * Optimistic overlay: only the mover's Stage changes (#470). The card renders at its sorted slot in
+ * the target column, which is where the server will put it; no position is invented. The caller
+ * retains `baseline`; this never changes the input and leaves every boardRevision untouched.
  */
 export function applyOptimisticOverlay(
   baseline: MovementBaseline,
   movingProjectId: string,
-  gap: SemanticGap,
+  targetStageKey: StageKey,
   role: Role,
 ): BoardModel {
   const moving = baseline.projects.find((project) => project.id === movingProjectId);
-  if (!moving) return rollbackToBaseline(baseline);
-  const orders = modelOrders(baseline);
-  const sourceStage = projectStageKey(moving);
-  if (!sourceStage) return rollbackToBaseline(baseline);
-  for (const stageKey of Object.keys(orders)) orders[stageKey] = orders[stageKey]!.filter((projectId) => projectId !== movingProjectId);
-  const target = orders[gap.targetStageKey] ?? [];
-  const insertionIndex = gap.successor === "end" ? target.length : target.indexOf(gap.successor);
-  if (gap.successor !== "end" && insertionIndex < 0) return rollbackToBaseline(baseline);
-  target.splice(insertionIndex, 0, movingProjectId);
-  orders[gap.targetStageKey] = target;
-  const nextProjects = baseline.projects.map((project) => {
-    if (project.id !== movingProjectId) return { ...project };
-    const roleSafeStage: ProjectSummary["stageKey"] = stageTransportKeyForRole(gap.targetStageKey, role);
-    return { ...project, stageKey: roleSafeStage };
-  });
-  return attachOrders({ ...baseline, projects: nextProjects, provisionalSourceStageKey: undefined }, orders);
+  if (!moving || !projectStageKey(moving)) return rollbackToBaseline(baseline);
+  const roleSafeStage: ProjectSummary["stageKey"] = stageTransportKeyForRole(targetStageKey, role);
+  return {
+    ...rollbackToBaseline(baseline),
+    projects: baseline.projects.map((project) => project.id === movingProjectId ? { ...project, stageKey: roleSafeStage } : { ...project }),
+    provisionalSourceStageKey: undefined,
+  };
 }
 
 export function reconcileAuthoritativeResponse(
@@ -710,9 +333,7 @@ export function optimismSafeBeforeResponse(
   fromStageKey: StageTransportKey | string,
   toStageKey: StageTransportKey | string,
   role: Role,
-  isSameStage: boolean,
 ): boolean {
-  if (isSameStage) return true;
   const from = normalizeStageTransport(fromStageKey, role);
   const to = normalizeStageTransport(toStageKey, role);
   if (!from || !to) return false;
@@ -791,15 +412,13 @@ export function focusDescriptorFor(
   control?: FocusDescriptor["control"],
 ): FocusDescriptor {
   const sourceStageKey = projectStageKey(project) ?? "awaiting_raw";
-  const order = orderForCanonicalStage(modelOrders(model), sourceStageKey);
-  const sourceIndex = order?.indexOf(project.id) ?? -1;
+  const sourceIndex = sortKanbanProjects(model.projects.filter((candidate) => projectStageKey(candidate) === sourceStageKey))
+    .findIndex((candidate) => candidate.id === project.id);
   const resolvedControl = control ?? (origin === "move-to"
     ? "move-to"
     : origin === "rail"
       ? "rail-stage"
-      : origin === "arrow"
-        ? "arrow-up"
-        : "handle");
+      : "handle");
   return { path: origin, projectId: project.id, control: resolvedControl, sourceStageKey, sourceIndex };
 }
 
@@ -826,18 +445,16 @@ export function focusTargetAfter(
 
 export type BoardAnnouncementEventType =
   | "start"
-  | "over-card"
-  | "over-end"
+  | "over-stage"
   | "valid-drop"
   | "dnd-cancel"
   | "drop-outside"
-  | "unchanged-gap"
+  | "same-stage-refused"
   | "invalid-keyboard-target"
   | "stale-move-to"
   | "confirmation-required"
   | "modal-cancel"
   | "cross-stage-success"
-  | "same-stage-success"
   | "no-change"
   | "post-success-refetch-failure"
   | "conflict"
@@ -876,18 +493,16 @@ export function announce(event: BoardAnnouncementEvent, ctx: BoardAnnouncementCo
   const { street, stageLabel, sourceStageLabel, position, count } = announcementValue(event, ctx);
   switch (event.type) {
     case "start": return `Picked up ${street}. Current Stage: ${stageLabel}. Position ${position} of ${count}.`;
-    case "over-card": return `${street} is over ${stageLabel}, position ${position} of ${count}.`;
-    case "over-end": return `${street} is over the end of ${stageLabel}, position ${position} of ${count}.`;
+    case "over-stage": return `${street} is over ${stageLabel}; it will land at position ${position} of ${count}.`;
     case "valid-drop": return `Dropped ${street} in ${stageLabel}, position ${position} of ${count}. Saving.`;
     case "dnd-cancel":
     case "drop-outside":
-    case "unchanged-gap":
     case "invalid-keyboard-target": return `Cancelled moving ${street}. It remains in ${sourceStageLabel}.`;
+    case "same-stage-refused": return `${street} stays in ${sourceStageLabel}. Columns are sorted by priority and shoot date.`;
     case "stale-move-to": return "That position changed. Reloading the latest Board; no move was made.";
     case "confirmation-required": return `Move needs confirmation. ${street} remains in ${sourceStageLabel}.`;
     case "modal-cancel": return `Stage move cancelled. ${street} remains in ${sourceStageLabel}.`;
     case "cross-stage-success": return `Moved ${street} to ${stageLabel}, position ${position} of ${count}.`;
-    case "same-stage-success": return `Reordered ${street} in ${stageLabel}, position ${position} of ${count}.`;
     case "no-change": return `${street} is already in ${stageLabel}, position ${position} of ${count}.`;
     case "post-success-refetch-failure": return "The move was saved, but the latest Board could not be loaded. Refresh to continue.";
     case "conflict": return "Could not move "
@@ -896,12 +511,6 @@ export function announce(event: BoardAnnouncementEvent, ctx: BoardAnnouncementCo
     case "maintenance": return "Board interactions are temporarily unavailable while the Board is being updated.";
   }
 }
-
-export function semanticGapChanged(previous: SemanticGap | null | undefined, next: SemanticGap): boolean {
-  return previous?.targetStageKey !== next.targetStageKey || previous.successor !== next.successor;
-}
-
-export const shouldAnnounceSemanticGap = semanticGapChanged;
 
 /**
  * Quincy Guarded Direct Manipulation Policy is deliberately engine-neutral. TB5C consumes this
