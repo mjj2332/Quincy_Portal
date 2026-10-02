@@ -97,6 +97,7 @@ import { AvatarStack } from "./quincy/AvatarStack";
 import { Notice } from "./quincy/Notice";
 import { checklistScheduleEditorButtonLabel } from "./ProductionCalendarScheduleEditorFields";
 import { ProjectCalendarAnchor } from "./ProjectCalendarAnchor";
+import { focusLanding } from "../lib/landing-focus";
 import { ProductionEventCalendarDialogs, type ProductionEventCalendarDeadlineConfirm } from "./ProductionEventCalendarDialogs";
 import { ProductionEventCalendarRail, type ProductionEventCalendarUpNext } from "./ProductionEventCalendarRail";
 
@@ -420,17 +421,21 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
     // Same chip lookup as the scheduling controller's focus return: the vendor tags the chip CONTENT;
     // the focusable element is the `<button>` around it. A chip folded under "+N more" has no element,
     // so focus goes to that day's control instead.
-    const content = [...document.querySelectorAll<HTMLElement>("[data-event-id]")].find((element) => element.getAttribute("data-event-id") === target.id);
-    const chip = content ? (content.matches("button, [tabindex]") ? content : content.closest<HTMLElement>("button") ?? content) : null;
-    const more = chip ? null : [...document.querySelectorAll<HTMLElement>("[data-more-event-ids]")].find((element) => (element.getAttribute("data-more-event-ids") ?? "").split(" ").includes(target.id))?.closest<HTMLElement>("button") ?? null;
-    (chip ?? more ?? document.querySelector<HTMLElement>('[data-focus-key="calendar-safe-fallback"]'))?.focus({ focusVisible: true } as FocusOptions);
+    const lookup = () => {
+      const content = [...document.querySelectorAll<HTMLElement>("[data-event-id]")].find((element) => element.getAttribute("data-event-id") === target.id);
+      const chip = content ? (content.matches("button, [tabindex]") ? content : content.closest<HTMLElement>("button") ?? content) : null;
+      const more = chip ? null : [...document.querySelectorAll<HTMLElement>("[data-more-event-ids]")].find((element) => (element.getAttribute("data-more-event-ids") ?? "").split(" ").includes(target.id))?.closest<HTMLElement>("button") ?? null;
+      return { chip, element: chip ?? more ?? document.querySelector<HTMLElement>('[data-focus-key="calendar-safe-fallback"]') };
+    };
+    const folded = lookup().chip === null;
+    focusLanding(() => lookup().element);
     settle({
       kind: "found",
       target: target.kind === "project_deadline" ? "deadline" : "task",
       label: target.kind === "project_deadline" ? "Deadline" : target.title,
       street: target.project.street,
       civilDate: eventCivilDate(target),
-      folded: chip === null,
+      folded,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-checked whenever the drawn data or the arming changes
   }, [focusTick, landingReady, landingErrored, displayEvents, calendar.date]);

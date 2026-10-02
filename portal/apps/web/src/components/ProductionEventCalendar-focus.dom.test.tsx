@@ -73,6 +73,27 @@ describe("ProductionEventCalendar focus landing (#464)", () => {
     focus.mockRestore();
   });
 
+  describe.each([["plain", {}], ["Delivered", { delivered: true }], ["Archived", { archived: true }]] as const)("a %s Project while the Project sheet is still closing", (_name, flags) => {
+    it("waits for the sheet's popup to leave the DOM, then focuses the chip (the closing sheet's trap would take it back)", async () => {
+      const popup = document.createElement("div");
+      popup.setAttribute("data-testid", "project-sheet");
+      popup.tabIndex = -1;
+      document.body.append(popup);
+      // The closing popup's focus trap: focus that leaves it while it is mounted comes straight back.
+      const trap = (event: FocusEvent) => { if (popup.isConnected && event.target !== popup) popup.focus(); };
+      document.addEventListener("focusin", trap);
+      try {
+        const base = deadlineEvent("2026-08-27T09:00");
+        const event = { ...base, project: { ...base.project, ...flags } } as CalendarEventDto;
+        const { outcomes } = await mount([event], { projectId: PROJECT_ID, token: 1 });
+        expect(outcomes[0]?.[1]).toMatchObject({ kind: "found", target: "deadline" });
+        await act(async () => { popup.remove(); await Promise.resolve(); });
+        await flush(5);
+        expect(document.activeElement).toBe(chipOf(DEADLINE_ID)?.closest("button"));
+      } finally { document.removeEventListener("focusin", trap); popup.remove(); }
+    });
+  });
+
   it("with no Deadline prefers the checklist item on the route date over an earlier one", async () => {
     const { outcomes } = await mount([task(`checklist:${EARLY_ITEM}`, "2026-08-03"), task(TASK_ON_DATE, "2026-08-12")], { projectId: PROJECT_ID, token: 1 });
     expect(outcomes[0]?.[1]).toMatchObject({ kind: "found", target: "task", label: "Select hero images", civilDate: "2026-08-12", folded: false });

@@ -218,6 +218,7 @@ import { ProductionEventCalendarDialogs } from "./ProductionEventCalendarDialogs
 import { GanttDeadlineCell, GanttTeamCell } from "./ProductionGanttProjectCells";
 import { GanttSubtaskDueCell, scheduleErrorFromEditor, stopRowGesture } from "./ProductionGanttSubtaskCells";
 import { ProjectCalendarAnchor } from "./ProjectCalendarAnchor";
+import { focusLanding } from "../lib/landing-focus";
 import { type ProductionGanttDeadlineConfirmState } from "./ProductionGanttDeadlineDialog";
 import { Button as QuincyButton, buttonClasses } from "./quincy/Button";
 import { EmptyState } from "./quincy/EmptyState";
@@ -1729,11 +1730,10 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
         })();
         if (!Number.isNaN(anchor.getTime())) setDate(anchor);
         setHighlightedRowId(rowId);
-        // The row link lives in the tree pane; `preventScroll` because the landing owns the scroll.
-        const link = Array.from(container.querySelectorAll<HTMLElement>("[data-gantt-row-id]"))
+        // The row link lives in the tree pane; the landing owns the scroll, and waits for a closing sheet.
+        focusLanding(() => Array.from(container.querySelectorAll<HTMLElement>("[data-gantt-row-id]"))
           .find((row) => row.getAttribute("data-gantt-row-id") === rowId && row.querySelector('[data-testid="gantt-project-link"]'))
-          ?.querySelector<HTMLElement>('[data-testid="gantt-project-link"]');
-        link?.focus({ preventScroll: true, focusVisible: true } as FocusOptions);
+          ?.querySelector<HTMLElement>('[data-testid="gantt-project-link"]') ?? null, { preventScroll: true });
         settle({ kind: "found", street: target.street });
         return;
       }
