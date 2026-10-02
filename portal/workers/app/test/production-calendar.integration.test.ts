@@ -370,6 +370,55 @@ describe("TB5C production Calendar range endpoint", () => {
     expect(productionCalendarFacetsSql("external_editor")).not.toMatch(/\bLIKE\b|IN\s*\(\s*\?|valid_schedule_shapes|ROW_NUMBER\s*\(/iu);
   });
 
+  it("People ids travel in ONE JSON bind per statement, never per-id placeholders, and the bind count is fixed", async () => {
+    type Captured = { sql: string; values: unknown[] };
+    const capture = async (query: string): Promise<Captured[]> => {
+      const captured: Captured[] = [];
+      const realDb = database.DB;
+      const db = { prepare(sql: string) { return { bind(...values: unknown[]) { captured.push({ sql, values }); return realDb.prepare(sql).bind(...values); } }; } } as unknown as D1Database;
+      const url = `https://portal.test/api/production-calendar?${query}`;
+      const context = {
+        req: { url, query: () => Object.fromEntries(new URL(url).searchParams.entries()) },
+        env: { DB: db },
+        get: (key: string) => key === "user" ? { id: adminId, role: "admin", active: true } : undefined,
+        json: (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }),
+      } as unknown as Context<AppEnv>;
+      const response = await productionCalendarHandler(context);
+      expect(response.status).toBe(200);
+      return captured;
+    };
+    const placeholderCount = (sql: string) => Math.max(...[...sql.matchAll(/\?(\d+)/g)].map((match) => Number(match[1])));
+    const people = [editorId, externalId].sort();
+    const baseline = (await capture(range)).filter((entry) => entry.sql.includes("authorized_projects_base"));
+    expect(baseline).toHaveLength(2);
+    const requests = {
+      legacy: `${range}&editors=${people.join(",")}`,
+      tree: `${range}&f=${encodeURIComponent(`1:or(people=${people.join(",")};shoot=2026-08-01..2026-08-31)`)}`,
+    };
+    for (const [label, query] of Object.entries(requests)) {
+      const all = await capture(query);
+      // the People universe is resolved ONCE per request, by one statement with one JSON bind of the requested ids
+      const resolvers = all.filter(({ sql }) => sql.includes("FROM dashboard_people WHERE person_id IN (SELECT value FROM json_each(?3))"));
+      expect(resolvers, label).toHaveLength(1);
+      expect(resolvers[0]?.values, label).toHaveLength(3);
+      expect(JSON.parse(resolvers[0]?.values[2] as string).sort(), label).toEqual(people);
+      const captured = all.filter((entry) => entry.sql.includes("authorized_projects_base"));
+      expect(captured, label).toHaveLength(2);
+      for (const [index, { sql, values }] of captured.entries()) {
+        const where = `${label} statement ${index}`;
+        // the bind count is the same as with no People at all, and matches the statement's own highest placeholder
+        expect(values.length, where).toBe(baseline[index]?.values.length);
+        expect(values.length, where).toBe(placeholderCount(sql));
+        // no `IN (?, ?, ...)` list and no per-id placeholder: ids are read with json_each from the one JSON bind
+        expect(sql, where).not.toMatch(/IN\s*\(\s*\?/iu);
+        const carrying = values.filter((value) => typeof value === "string" && people.some((person) => value.includes(person)));
+        expect(carrying, where).toHaveLength(1);
+        const json = JSON.parse(carrying[0] as string) as Array<{ ids?: string[] }>;
+        expect(json.flatMap((rule) => rule.ids ?? []).sort(), where).toEqual(people);
+      }
+    }
+  });
+
   it("keeps the External DTO a strict privacy boundary", async () => {
     const body = externalCalendarRangeSchema.parse(await (await request(`/api/production-calendar?${range}`, tokens.external)).json());
     const event = body.events[0];
