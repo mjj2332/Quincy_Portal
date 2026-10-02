@@ -91,6 +91,19 @@ function memberDiagnostic(db: D1Database, projectId: string, userId: string, rol
   `).bind(projectId, userId, roleOnProject);
 }
 
+/**
+ * An archived Project's Team is read-only (#452): every membership add and remove is refused, whatever else is true of it
+ * (ineligible, already a member, stale, would clear assignments). The route answers 409 `membership_project_archived`.
+ * This supersedes #446's `subtask_project_archived` on the removal path. Role changes (`users.ts`) still count archived
+ * memberships as blockers, so an Admin who must clear one restores the Project, removes the member and re-archives it.
+ */
+export class ProjectMembershipArchivedError extends Error {
+  constructor() {
+    super("Archived projects are read-only; the team can't be changed.");
+    this.name = "ProjectMembershipArchivedError";
+  }
+}
+
 export class ProjectMemberIneligibleError extends Error {
   constructor(public readonly roleOnProject: ProjectMemberRole) {
     super("User is not eligible for this project role");
@@ -125,9 +138,10 @@ export async function addProjectMemberWithAssignmentIntent(
     INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at)
     SELECT ?, ?, ?, ?, ? FROM user
     WHERE user.id = ? AND user.active = 1 AND user.role IN (${rolePlaceholders})
+      AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)
     ON CONFLICT(project_id, user_id, role_on_project) DO NOTHING
     RETURNING id, user_id AS userId, role_on_project AS roleOnProject
-  `).bind(membershipCycle, input.projectId, input.userId, input.roleOnProject, now, input.userId, ...eligibleRoles);
+  `).bind(membershipCycle, input.projectId, input.userId, input.roleOnProject, now, input.userId, ...eligibleRoles, input.projectId);
   const diagnostic = db.prepare(`
     SELECT pm.id, pm.user_id AS userId, pm.role_on_project AS roleOnProject,
       u.name, u.email, u.role AS globalRole, u.active, ${assignedSubtaskCountSql("?", "u.id")} AS assignedSubtaskCount,
@@ -163,8 +177,12 @@ export async function addProjectMemberWithAssignmentIntent(
     excludeRecipientId: input.userId,
     createdAt: now,
   });
-  const result = await db.batch([insert, diagnostic, audit, outbox, ...ledgers, timestamp, ...activityStatements.statements]);
+  // Last, so every positional read below is unchanged. An archive that lands before the batch fences the insert (and so every
+  // statement that depends on the new row); this snapshot tells that loss apart from "ineligible" and "already a member".
+  const archivedSnapshot = db.prepare("SELECT archived_at FROM projects WHERE id = ?").bind(input.projectId);
+  const result = await db.batch([insert, diagnostic, audit, outbox, ...ledgers, timestamp, ...activityStatements.statements, archivedSnapshot]);
   const inserted = first<{ id: string }>(result[0] as D1Rows<{ id: string }>);
+  if (!inserted?.id && first<{ archived_at: number | null }>(result[result.length - 1] as D1Rows<{ archived_at: number | null }>)?.archived_at != null) throw new ProjectMembershipArchivedError();
   const canonical = first<MemberDtoRow>(result[1] as D1Rows<MemberDtoRow>);
   if (!canonical?.id) throw new ProjectMemberIneligibleError(input.roleOnProject);
   const broadIds = rows<{ id: string }>(result[7 + activityStatements.broadOutboxIndex] as D1Rows<{ id: string }>).map((row) => row.id);
@@ -199,7 +217,7 @@ export async function removeProjectMemberCycle(
 ): Promise<
   | { outcome: "removed"; subtaskAssignmentsCleared: number; notificationOutboxIds: string[] }
   | { outcome: "stale"; currentMembership: ProjectMembershipDto | null }
-  /** The removal would clear Subtask assignments on an archived Project, whose Checklist is read-only (#446). */
+  /** The Project is archived, so its Team is read-only (#452; #446's narrower Checklist-only refusal is subsumed). Wins over stale and confirmation_required. */
   | { outcome: "project_archived" }
   | { outcome: "confirmation_required"; assignmentCount: number; accessWillBeLost: boolean; currentMembership: ProjectMembershipDto }
 > {
@@ -233,20 +251,15 @@ export async function removeProjectMemberCycle(
           AND NOT EXISTS (SELECT 1 FROM project_members remaining JOIN user target ON target.id = remaining.user_id WHERE ${remaining.sql})
         )
       )
-      AND (
-        -- An archived Project's Checklist is read-only (#446): a removal that would clear assignments (this user holds some, keeps no
-        -- eligible role and is not an active Admin) loses here, so the audit, clear and activity statements, all fenced on it, write nothing.
-        EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)
-        OR EXISTS (SELECT 1 FROM user WHERE id = ? AND role = 'admin' AND active = 1)
-        OR EXISTS (SELECT 1 FROM project_members remaining JOIN user target ON target.id = remaining.user_id WHERE ${remaining.sql})
-        OR NOT EXISTS (SELECT 1 FROM project_subtask_assignees sa INNER JOIN project_subtasks st ON st.id = sa.subtask_id WHERE st.project_id = ? AND sa.user_id = ?)
-      )
+      -- An archived Project's Team is read-only (#452): the removal loses here, so the audit, clear, timestamp, activity and relation
+      -- statements, all fenced on the audit row, write nothing.
+      AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)
     RETURNING id
   `).bind(input.membershipCycle, input.projectId, input.userId, input.roleOnProject, input.userId, ...remaining.bindings,
     input.clearSubtaskAssignments ? 1 : 0, input.projectId, input.userId,
     input.clearSubtaskAssignments ? 1 : 0, input.projectId, input.userId, input.confirmedAssignmentCount,
     input.confirmAccessLoss ? 1 : 0, input.userId, ...remaining.bindings,
-    input.projectId, input.userId, ...remaining.bindings, input.projectId, input.userId);
+    input.projectId);
   const archivedSnapshot = db.prepare("SELECT archived_at FROM projects WHERE id = ?").bind(input.projectId);
   const audit = db.prepare(`
     INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
@@ -276,11 +289,10 @@ export async function removeProjectMemberCycle(
   const count = Number(first<{ assignmentCount: number }>(result[4] as D1Rows<{ assignmentCount: number }>)?.assignmentCount ?? 0);
   const accessWillBeLost = currentRow?.globalRole === "external_editor" && !first(result[2] as D1Rows<{ 1: number }>);
   const deleted = first<{ id: string }>(result[5] as D1Rows<{ id: string }>);
-  if (!exactRow) return { outcome: "stale", currentMembership };
   if (!deleted) {
-    const archived = first<{ archived_at: number | null }>(result[result.length - 1] as D1Rows<{ archived_at: number | null }>)?.archived_at != null;
-    const wouldClear = count > 0 && !first(result[2] as D1Rows<{ 1: number }>) && !first(result[3] as D1Rows<{ 1: number }>);
-    if (archived && wouldClear) return { outcome: "project_archived" };
+    // Archived first: it wins over stale and over the confirmation prompt, which could never succeed on an archived Project.
+    if (first<{ archived_at: number | null }>(result[result.length - 1] as D1Rows<{ archived_at: number | null }>)?.archived_at != null) return { outcome: "project_archived" };
+    if (!exactRow) return { outcome: "stale", currentMembership };
     if (!currentMembership) throw new Error("Project membership diagnostic disappeared during removal");
     return { outcome: "confirmation_required", assignmentCount: count, accessWillBeLost, currentMembership };
   }
