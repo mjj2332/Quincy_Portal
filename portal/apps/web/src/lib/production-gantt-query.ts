@@ -4,6 +4,9 @@ import {
   formatDashboardDateRange,
   type DashboardArchivedMode,
   type DashboardDateRange,
+  type DashboardFilterFacet,
+  type DashboardFilterTree,
+  formatDashboardFilterTree,
   type DashboardPriorityFilterValue,
   editorProductionGanttResponseSchema,
   externalProductionGanttSchema,
@@ -36,8 +39,26 @@ export type ProductionGanttFilters = {
   overdueOnly: boolean;
   shootRange: DashboardDateRange | null;
   deadlineRange: DashboardDateRange | null;
+  /**
+   * #461: a filter the flat facets cannot spell (OR, groups, a repeated field, negation). When present it IS the
+   * filter (every flat facet above is at its default) and travels as the one `f` parameter. `order` is the URL's
+   * only (the flat facets' display order): the facet carries it, the request never does.
+   */
+  tree?: DashboardFilterTree;
+  order?: DashboardFilterFacet[];
   limit?: number;
 };
+
+/** What a child-page continuation must repeat of the filter the Project list was cut under (its cursor carries a fingerprint of it). */
+export function ganttChildFilterOf(filters: ProductionGanttFilters): { archived: DashboardArchivedMode; people: Pick<ProductionGanttFilters, "editorIds" | "includeUnassigned" | "myTasks">; tree: DashboardFilterTree | undefined } {
+  return { archived: filters.archived, people: { editorIds: filters.editorIds, includeUnassigned: filters.includeUnassigned, myTasks: filters.myTasks }, tree: filters.tree };
+}
+
+/** The request's filters: the facet and the search, without the URL-only `order`, so a reorder is not a different request. */
+export function ganttRequestFilters(facet: Omit<ProductionGanttFilters, "q" | "limit">, q: string): ProductionGanttFilters {
+  const { order: _order, ...rest } = facet;
+  return { ...rest, q };
+}
 
 const DEFAULT_FILTERS: ProductionGanttFilters = { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide", delivered: false, completed: false, includeUnassigned: false, myTasks: false, overdueOnly: false, shootRange: null, deadlineRange: null };
 
@@ -53,17 +74,24 @@ export function buildGanttPageQuery(filters: ProductionGanttFilters, cursor: str
   // #429: ask for `deadlineInScope`, so a Project listed only as the parent of a matching checklist row
   // never draws a Deadline bar the filter did not select.
   params.set("dm", "1");
-  if (filters.editorIds.length > 0) params.set("editors", filters.editorIds.join(","));
-  if (filters.includeUnassigned) params.set("unassigned", "1");
-  if (filters.stageKeys.length > 0) params.set("stages", filters.stageKeys.join(","));
-  if (filters.priorities.length > 0) params.set("priority", canonicalDashboardPriorities(filters.priorities).join(","));
-  if (filters.archived !== "hide") params.set("archived", filters.archived);
+  // #461: a tree IS the filter (every flat facet is then at its default), spelt as the one `f`.
+  if (filters.tree) {
+    params.set("f", formatDashboardFilterTree(filters.tree));
+  } else {
+    if (filters.editorIds.length > 0) params.set("editors", filters.editorIds.join(","));
+    if (filters.includeUnassigned) params.set("unassigned", "1");
+    if (filters.stageKeys.length > 0) params.set("stages", filters.stageKeys.join(","));
+    if (filters.priorities.length > 0) params.set("priority", canonicalDashboardPriorities(filters.priorities).join(","));
+    if (filters.archived !== "hide") params.set("archived", filters.archived);
+  }
   if (filters.delivered) params.set("delivered", "1");
   if (filters.completed) params.set("completed", "1");
-  if (filters.shootRange) params.set("shoot", formatDashboardDateRange(filters.shootRange));
-  if (filters.deadlineRange) params.set("deadline", formatDashboardDateRange(filters.deadlineRange));
-  else if (filters.overdueOnly) params.set("overdue", "1");
-  if (filters.myTasks) params.set("mine", "1");
+  if (!filters.tree) {
+    if (filters.shootRange) params.set("shoot", formatDashboardDateRange(filters.shootRange));
+    if (filters.deadlineRange) params.set("deadline", formatDashboardDateRange(filters.deadlineRange));
+    else if (filters.overdueOnly) params.set("overdue", "1");
+    if (filters.myTasks) params.set("mine", "1");
+  }
   if (filters.limit) params.set("limit", String(filters.limit));
   if (cursor) params.set("cursor", cursor);
   return params.toString();
@@ -325,13 +353,19 @@ export async function fetchGanttChildPage(
   archived: DashboardArchivedMode = "hide",
   // #429: the People / My tasks filter the Project list was cut under; the cursor carries its fingerprint, so a continuation must repeat it.
   people: Pick<ProductionGanttFilters, "editorIds" | "includeUnassigned" | "myTasks"> = { editorIds: [], includeUnassigned: false, myTasks: false },
+  // #461: the filter tree the Project list was cut under. The cursor then carries the TREE's fingerprint, so the whole tree is repeated and `archived` / `people` (its own rules) are not sent.
+  tree?: DashboardFilterTree,
 ): Promise<ProductionGanttChildPageResponse> {
   const params = new URLSearchParams({ scope: "active", childrenOf: projectId });
-  // #428: the Archived mode that listed the Project (Admin only); the default sends nothing.
-  if (archived !== "hide") params.set("archived", archived);
-  if (people.editorIds.length > 0) params.set("editors", [...new Set(people.editorIds)].sort().join(","));
-  if (people.includeUnassigned) params.set("unassigned", "1");
-  if (people.myTasks) params.set("mine", "1");
+  if (tree) {
+    params.set("f", formatDashboardFilterTree(tree));
+  } else {
+    // #428: the Archived mode that listed the Project (Admin only); the default sends nothing.
+    if (archived !== "hide") params.set("archived", archived);
+    if (people.editorIds.length > 0) params.set("editors", [...new Set(people.editorIds)].sort().join(","));
+    if (people.includeUnassigned) params.set("unassigned", "1");
+    if (people.myTasks) params.set("mine", "1");
+  }
   if (childCursor) params.set("childCursor", childCursor);
   else if (completed) params.set("completed", "1");
   const path = `/api/production-gantt?${params.toString()}`;

@@ -19,6 +19,8 @@
  *
  * File-specific edits:
  * - `noUncheckedIndexedAccess`: the row's roving column falls back to `columns[0] ?? null`; Ctrl+Home/End narrow `rows[0]`/`rows[rows.length - 1]` before `ownCells`.
+ * - QUINCY ADDITION (#461), additive: `canAddRule?(query, parentId)` / `canAddGroup?(query, parentId)` (root props on `Filters`, `filters.tsx`) threaded root prop -> actions context -> the advanced panel footer's Add filter / Add group and each group footer's Add filter (`filters-advanced.tsx`), so a consumer can cap the query (rule count, depth). Upstream disables them only for a disabled bar. Omitted, every one is enabled exactly as upstream. A consumer that must also refuse Duplicate / Convert / Move still vetoes them in `onBeforeQueryChange`.
+ * - QUINCY ADDITION (#461), phone stacking: below the `@max-[26rem]/track` breakpoint a row wraps onto two lines (combinator column + handle/menu on line one, the cells at full width on line two) via `ROW_BAND_CLASS` / `CONTENT_BAND_CLASS` and `flex-wrap` on the content band and, on the cells, field and operator at explicit half-line bases with the value on its own full line (`PHONE_LABEL_CELL_CLASS`, `VALUE_CELL_CLASS`; never `basis-auto`, since the cells are `@container/cell` size containers and an auto basis collapses them); a group card gets `pe-2` there to match its `ps-2`; the group combinator wrapper left-aligns (`GROUP_COMBINATOR_WRAP_CLASS`); the popup's `max-w` is `100vw - 2 * --space-4` with `collisionPadding={16}` so both side gutters match.
  */
 import * as React from "react"
 import { FilterFieldPicker } from "@/components/reui/filters/filters-builder"
@@ -229,9 +231,9 @@ const COMBINATOR_TEXT_CLASS = cn(
 /** A row is TWO BANDS. The trailing pair of every row at every depth shares one
  * vertical axis - 0.00px of spread from 1104px to 240px, eight styles, depth
  * three - and only because the content band may shrink to nothing. */
-const ROW_BAND_CLASS = "flex min-w-0 items-center gap-1.5"
+const ROW_BAND_CLASS = "flex min-w-0 items-center gap-1.5 @max-[26rem]/track:flex-wrap"
 
-const CONTENT_BAND_CLASS = "flex min-w-0 flex-1 items-center gap-1.5"
+const CONTENT_BAND_CLASS = "flex min-w-0 flex-1 items-center gap-1.5 @max-[26rem]/track:order-last @max-[26rem]/track:basis-full @max-[26rem]/track:flex-wrap"
 
 /** FLEX and not a block: a `Button` is `inline-flex`, so a block wrapper builds
  * a line box as tall as its font's strut - 28px buttons in 28.141px wrappers. */
@@ -245,9 +247,14 @@ const CELL_BOX_CLASS = "@container/cell flex min-w-0 shrink grow-0"
  *   <FiltersAdvancedPanel className="[--filter-operator-width:7rem]" />
  *   <Card className="[--filter-value-width:16rem]"><Filters … /></Card>
  *   [data-slot="filters-advanced"] { --filter-field-width: 14rem } */
-const FIELD_CELL_CLASS = "basis-[var(--filter-field-width,11rem)]"
-const OPERATOR_CELL_CLASS = "basis-[var(--filter-operator-width,9rem)]"
-const VALUE_CELL_CLASS = "basis-[var(--filter-value-width,12rem)]"
+/** On the phone stack (#461) field and operator split line two in HALVES and the value takes line three. Explicit bases, not
+ * `basis-auto`: each cell is an `@container/cell` size container, so its content size resolves to ~0 and an auto basis collapses
+ * the cell to its padding. The half is `50%` less half the band's `gap-1.5`. The combinator box shares CELL_BOX_CLASS and must not. */
+const PHONE_LABEL_CELL_CLASS = "@max-[26rem]/track:basis-[calc(50%-0.1875rem)] @max-[26rem]/track:shrink-0"
+const FIELD_CELL_CLASS = cn("basis-[var(--filter-field-width,11rem)]", PHONE_LABEL_CELL_CLASS)
+const OPERATOR_CELL_CLASS = cn("basis-[var(--filter-operator-width,9rem)]", PHONE_LABEL_CELL_CLASS)
+/** On the phone stack the value cell takes its own full line (it may still truncate a long value). */
+const VALUE_CELL_CLASS = "basis-[var(--filter-value-width,12rem)] @max-[26rem]/track:basis-full"
 
 /** The trailing band. `pe-1` is on the BAND and not the gutter, since a group
  * card is `pe-0`; the footer and `DROP_SLOT_INDICATOR` restate the same four. */
@@ -295,7 +302,8 @@ const PANEL_CLASS = "flex w-full min-w-0 flex-col gap-2 py-(--filter-panel-pad)"
 const GROUP_CARD_CLASS = cn(
   "bg-muted/40 min-w-0 flex-1 rounded-md",
   "inset-ring inset-ring-border",
-  "ps-2 pe-0",
+  // QUINCY ADDITION (#461): on the phone stack the cells span the full line, so a zero end pad sets them flush on the ring.
+  "ps-2 pe-0 @max-[26rem]/track:pe-2",
   "data-invalid:inset-ring-destructive/50",
   // The DESTINATION of a drop into this group, told apart from the insertion
   // slot by STYLE and not size: dashed is not there yet, solid exists.
@@ -312,7 +320,7 @@ const TRACK_CONTAINER_CLASS = "@container/track"
  * was wrong both ways: at 380px the depth-three row painted zero pixels of
  * field, operator and value and fanned the kebab column out by up to 119px.
  * 26rem is what a row MEASURES: 134px of fixed cost plus about 200px of cells. */
-const GROUP_COMBINATOR_WRAP_CLASS = "@max-[26rem]/track:w-full"
+const GROUP_COMBINATOR_WRAP_CLASS = "@max-[26rem]/track:w-full @max-[26rem]/track:justify-start"
 
 /** The combinator itself, once its wrapper has a whole line. Pinned to the
  * same 4rem the gutter track is, so it is the same control at every width. */
@@ -1292,7 +1300,9 @@ function FilterAdvancedGroup<V, O>({
               "overflow-hidden",
               CELL_INVALID_CLASS
             )}
-            disabled={actions.disabled}
+            disabled={
+              actions.disabled || !actions.canAddRule(query, group.id)
+            }
             {...filterReadOnlyProps(actions)}
             {...cellProps("add", active)}
             /* An EMPTY group is flagged on the control that fills it. */
@@ -1945,7 +1955,9 @@ export function FiltersAdvancedPanel<V, O>({
           variant="outline"
           size={sizes.button}
           className="shrink-0 font-normal"
-          disabled={actions.disabled}
+          disabled={
+            actions.disabled || !actions.canAddRule(query, query.id)
+          }
           {...filterReadOnlyProps(actions)}
           onClick={addRow}
         >
@@ -1958,7 +1970,9 @@ export function FiltersAdvancedPanel<V, O>({
           variant="outline"
           size={sizes.button}
           className="shrink-0 font-normal"
-          disabled={actions.disabled}
+          disabled={
+            actions.disabled || !actions.canAddGroup(query, query.id)
+          }
           {...filterReadOnlyProps(actions)}
           onClick={addGroup}
         >
@@ -2093,7 +2107,9 @@ export function FiltersAdvanced<V, O>({
         /* THE POPUP'S OWN NAME: it is a `role="dialog"`, and the panel's is
            one level in, on its `role="group"`. */
         aria-label={actions.labels.advancedFilter}
-        className={cn("w-[42rem] max-w-[95vw] p-0", className)}
+        /* 16 = --space-4 (PopoverContent forwards a px number; no token path). Keeps both side gutters equal. */
+        collisionPadding={16}
+        className={cn("w-[42rem] max-w-[calc(100vw-2*var(--space-4))] p-0", className)}
       >
         {/* `mode` defaults to "popover", which keeps the panel's padding. */}
         <FiltersAdvancedPanel<V, O> reorderable={reorderable} />

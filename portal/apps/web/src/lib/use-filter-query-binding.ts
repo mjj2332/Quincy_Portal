@@ -1,6 +1,6 @@
 /**
  * The state machine every Quincy filter bar shares (#255, extracted for the Dashboard's Filter in
- * #428): a ReUI `Filters` chip row bound to a URL-held facet.
+ * #428): a ReUI `Filters` bar bound to a URL-held facet.
  *
  * The bar holds its own `FilterQuery`, because an unfinished chip (a field picked, no condition or
  * value yet) has no URL spelling and must survive the URL echo of an unrelated edit. On every change
@@ -14,11 +14,10 @@
  * Callers supply the pure mapping (`toQuery` / `toFacet` / `facetKey`) and, optionally, a write
  * adjustment (`forWrite`, the Gantt's Delivered pair) with the one-line reason for it (`noticeFor`)
  * and the query reconciliation that keeps chip ids when the write changed more than the edit
- * (`reconcile`). `toFacet` returning `null` vetoes the edit (an `or`, a group, a negated rule, a
- * second rule on one field).
+ * (`reconcile`). `toFacet` returning `null` vetoes the edit (a value or field the facet cannot hold, a cap).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { countFilterRules, flattenFilterRules, type FilterChangeDetails, type FilterQuery } from "../components/reui/filters/filters";
+import type { FilterQuery } from "../components/reui/filters/filters";
 
 export type FilterBindingSpec<TFacet, TValue> = {
   /** The facet the URL holds right now. */
@@ -34,26 +33,13 @@ export type FilterBindingSpec<TFacet, TValue> = {
   reconcile?: (edited: FilterQuery<TValue>, written: TFacet) => FilterQuery<TValue>;
   /** Pushes a new facet to the URL; it arrives back through `facet`. */
   onFacetChange: (next: TFacet) => void;
-  /** The last chip was removed or Clear emptied the bar (focus belongs on the trigger). */
-  onEmptied?: () => void;
-  /** A chip was removed and others remain: the id of the neighbour that takes focus (the next chip,
-   * else the previous one), since the control that had focus unmounted with the removed chip. */
-  onSurvivor?: (ruleId: string) => void;
 };
-
-/** Focuses the chip of rule `id` inside `root`, after the frame in which the removed chip unmounted. */
-export function focusFilterChip(root: ParentNode | null, id: string): void {
-  requestAnimationFrame(() => {
-    const chip = Array.from(root?.querySelectorAll<HTMLElement>("[data-rule-id]") ?? []).find((element) => element.dataset.ruleId === id);
-    chip?.focus({ preventScroll: true });
-  });
-}
 
 export type FilterBinding<TValue> = {
   query: FilterQuery<TValue>;
   /** Why the bar's last write changed more than the user's edit, or "". */
   notice: string;
-  onQueryChange: (edited: FilterQuery<TValue>, details: FilterChangeDetails<TValue>) => void;
+  onQueryChange: (edited: FilterQuery<TValue>) => void;
   onBeforeQueryChange: (next: FilterQuery<TValue>) => boolean;
 };
 
@@ -89,13 +75,12 @@ export function useFilterQueryBinding<TFacet, TValue>(spec: FilterBindingSpec<TF
     latest.current = { urlKey, pending, query, spec };
   });
 
-  const onQueryChange = useCallback((edited: FilterQuery<TValue>, details: FilterChangeDetails<TValue>) => {
+  const onQueryChange = useCallback((edited: FilterQuery<TValue>) => {
     const current = latest.current;
     const { spec: live } = current;
     let next = edited;
     const edit = live.toFacet(edited);
     const previous = live.toFacet(current.query);
-    const previousRules = flattenFilterRules(current.query);
     // A write adjustment (the Delivered pair): the chips follow, keeping their ids, so the write's
     // own echo finds nothing to re-seed.
     const facetToWrite = edit && previous && live.forWrite ? live.forWrite(previous, edit) : edit;
@@ -113,14 +98,6 @@ export function useFilterQueryBinding<TFacet, TValue>(spec: FilterBindingSpec<TF
         setPending(current.pending);
         live.onFacetChange(facetToWrite);
       }
-    }
-    if ((details.reason === "remove" || details.reason === "clear") && countFilterRules(next) === 0) live.onEmptied?.();
-    else if (details.reason === "remove" && details.rule) {
-      // The removed chip's neighbour: the next one, else the previous.
-      const remaining = new Set(flattenFilterRules(next).map((rule) => rule.id));
-      const at = previousRules.findIndex((rule) => rule.id === details.rule!.id);
-      const survivor = [previousRules[at + 1], previousRules[at - 1]].find((rule) => at >= 0 && rule && remaining.has(rule.id));
-      if (survivor) live.onSurvivor?.(survivor.id);
     }
   }, []);
 

@@ -1,8 +1,8 @@
-import { createContext, useCallback, useContext, useMemo, useRef, type ReactNode, type RefObject } from "react";
-import { Filter as FilterIcon, Star } from "lucide-react";
-import type { DashboardFilter as DashboardFilterValueOf, DashboardPerson } from "@quincy/shared";
-import { Filters, FiltersRow, useFilterState, type FilterField, type FilterLabels } from "../components/reui/filters/filters";
-import { FiltersBuilder } from "../components/reui/filters/filters-builder";
+import { useCallback, useMemo } from "react";
+import { Archive, CalendarClock, Camera, Filter as FilterIcon, Layers, Star, UserCheck, Users } from "lucide-react";
+import { dashboardFilterRuleCount, dashboardFilterTreeOf, type DashboardFilter as DashboardFilterValueOf, type DashboardPerson } from "@quincy/shared";
+import { Filters, type FilterField, type FilterLabels } from "../components/reui/filters/filters";
+import { Badge } from "../components/reui/badge";
 import { Button } from "../components/quincy/Button";
 import { StageSwatch } from "../components/quincy/StageSwatch";
 import { InitialsAvatar } from "../components/quincy/InitialsAvatar";
@@ -10,6 +10,8 @@ import { EmptyAssigneeGlyph } from "../components/quincy/EmptyAssigneeGlyph";
 import { DateRangeFilterEditor } from "../components/quincy/date-time-field/DateRangeFilterEditor";
 import { formatCivilDay } from "../lib/date-format";
 import {
+  canAddDashboardFilterGroup,
+  canAddDashboardFilterRule,
   DASHBOARD_ARCHIVED_OPERATORS,
   DASHBOARD_ARCHIVED_OPTIONS,
   DASHBOARD_DEADLINE_OPERATORS,
@@ -24,44 +26,51 @@ import {
   dashboardFilterKey,
   dashboardFilterToQuery,
   queryToDashboardFilter,
+  queryToDashboardFilterResult,
   type DashboardFilterQuery,
   type DashboardFilterValue,
 } from "../lib/dashboard-filter-query";
 import { stageOptionsWithColor, type StageFilterOption } from "../lib/production-gantt-filters";
-import { focusFilterChip, useFilterQueryBinding } from "../lib/use-filter-query-binding";
+import { useFilterQueryBinding } from "../lib/use-filter-query-binding";
 import { cn } from "../lib/utils";
 import { CONTROL_HEIGHT } from "./DashboardViewBar";
 
 /**
- * The Dashboard's shared Filter (#428): Stage, Project priority and (Admin only) Archived
- * Hide / Include / Only, over every view. A Quincy-owned composition of the vendored ReUI `Filters`
- * (`components/reui/filters/`, #255): the vendored primitive draws the chips, the field picker and
- * the value menus; this file owns the three fields, the URL mapping (`lib/dashboard-filter-query.ts`)
- * and where each piece sits.
+ * The Dashboard's shared Filter (#428, rebuilt on the filter tree in #461): Stage, Project priority,
+ * Archived (Admin only), People, Shoot date, Deadline and My tasks, over every view. A Quincy-owned
+ * composition of the vendored ReUI `Filters` (`components/reui/filters/`, #255) in the way
+ * `@reui/solution-crm-7`'s view bar uses it: `variant="advanced"`, `advancedMode="popover"`, every
+ * rule inside the popover, no chip row on the page. This file owns the fields, the URL mapping
+ * (`lib/dashboard-filter-query.ts`) and the trigger.
  *
- * ## Two places, one state
- * The trigger lives in the view bar, between the search and Display (`DashboardViewBar`); the chips
- * live under the bar's rule (`DashboardFilterChips`). `DashboardFilterProvider` is the single
- * `Filters` root both read, wrapping the two. The filter itself is the URL's: `filter` arrives from
- * `dashboardFilterOf(route)` at render, and a chip edit calls `onFilterChange`, which pushes the URL.
- * `useFilterQueryBinding` (the Dashboard's Filter is its only caller since #430) keeps an unfinished chip alive across the
+ * ## One state
+ * The filter is the URL's: `filter` arrives from `dashboardFilterOf(route)` at render, and an edit calls
+ * `onFilterChange`, which pushes the URL. `useFilterQueryBinding` keeps an unfinished row alive across the
  * URL echo and re-seeds only on an outside navigation (Back/Forward, a reload).
  *
- * ## Fields
- * - Stage, "is any of": the role-aware stage options with their legend swatches.
- * - Priority, "is any of": 5 stars ... 1 star, No priority. Not offered to an External Editor (the
- *   server withholds Project priority from them).
- * - Archived, "is": Hidden, Included, Only archived. Offered only when `canFilterArchived` (an Admin): the other
- *   roles never see the field, and a URL that names it is not honoured for them.
- * One rule per field; no negation, duplication, `or` or groups (`queryToDashboardFilter` vetoes them).
+ * ## Rules
+ * AND / OR, groups, repeats of a field, negation ("is not"), Duplicate and drag / keyboard reordering are
+ * all on; `queryToDashboardFilter` maps back to the legacy flat spelling whenever it can. No field is ever
+ * `disabled`: with groups and OR a field twice is meaningful, and a picker that disabled the row's OWN field
+ * once the row existed made the first pick impossible (#461 bug 7). The limits are the shared tree's: at
+ * most 20 rules and 3 levels. Add filter / Add group go disabled there (`canAddRule` / `canAddGroup`);
+ * Duplicate, Convert and Move over a cap are vetoed and announced.
+ *
+ * ## Trigger
+ * The Quincy `Button` (secondary, the bar's control height) in place of crm-7's outline `Button`; label
+ * "Filter" and a count badge of the APPLIED rules (the URL's leaves, never an unfinished row), icon-only
+ * at <=721px with the same accessible name.
  */
 
-type FocusContextValue = { triggerRef: RefObject<HTMLButtonElement | null>; chipsRef: RefObject<HTMLDivElement | null> };
-const TriggerFocusContext = createContext<FocusContextValue | null>(null);
-
-const LABELS: Partial<FilterLabels> = { filtersLabel: "Dashboard filters" };
-const RULE_MENU = { duplicate: false, negate: false } as const;
+/** `negated` reads "is not any of", not the upstream "not is any of" (ungrammatical, and truncated at 1280). */
+const LABELS: Partial<FilterLabels> = {
+  filtersLabel: "Dashboard filters",
+  advancedFilter: "Filter",
+  negated: (label) => (label.startsWith("is ") ? `is not ${label.slice(3)}` : `not ${label}`),
+};
+const RULE_MENU = { duplicate: true, negate: true } as const;
 const VALUE_MENU_CLASS = "w-60";
+const CAP_NOTICE = "Filters are limited to 20 rules and 3 levels.";
 
 /** "Mon 1 Jun 2026 – Wed 3 Jun 2026" for a `[from, to]` value. */
 export function rangeText(values: unknown[]): string {
@@ -69,8 +78,22 @@ export function rangeText(values: unknown[]): string {
   return typeof from === "string" && typeof to === "string" ? `${formatCivilDay(from)} – ${formatCivilDay(to)}` : "Select dates";
 }
 
-export type DashboardFilterProviderProps = {
-  /** The URL's filter, from `dashboardFilterOf(route)`. */
+/** Every People id a query names that the server does not list, in written order. */
+function unknownPeopleIds(query: DashboardFilterQuery, known: ReadonlySet<string>): string[] {
+  const ids: string[] = [];
+  const walk = (group: DashboardFilterQuery) => {
+    for (const node of group.rules) {
+      if (node.type === "group") { walk(node); continue; }
+      if (node.path[0] !== DASHBOARD_FILTER_FIELD.people || !Array.isArray(node.value)) continue;
+      for (const value of node.value) if (typeof value === "string" && value !== DASHBOARD_UNASSIGNED_OPTION && !known.has(value)) ids.push(value);
+    }
+  };
+  walk(query);
+  return ids;
+}
+
+export type DashboardFilterProps = {
+  /** The URL's filter, from `dashboardFilterOf(route)` (already clamped for the role). */
   filter: DashboardFilterValueOf;
   /** Pushes a new filter to the URL; it arrives back through `filter`. */
   onFilterChange: (next: DashboardFilterValueOf) => void;
@@ -84,54 +107,38 @@ export type DashboardFilterProviderProps = {
   people: readonly DashboardPerson[];
   /** A board move or a calendar write is in flight: every control locks. */
   disabled?: boolean;
-  children: ReactNode;
+  /** The Dashboard's live region: says why an edit over a limit was refused. */
+  onAnnounce?: (message: string) => void;
+  className?: string;
 };
 
-export function DashboardFilterProvider({ filter, onFilterChange, stageOptions, canFilterPriority, canFilterArchived, people, disabled = false, children }: DashboardFilterProviderProps) {
-  const triggerRef = useRef<HTMLButtonElement | null>(null);
-  const focusTrigger = useCallback(() => {
-    // After the frame in which the control that had focus (the last chip, or Clear) unmounted.
-    requestAnimationFrame(() => triggerRef.current?.focus({ preventScroll: true }));
-  }, []);
-  const chipsRef = useRef<HTMLDivElement | null>(null);
-  const focusSurvivor = useCallback((ruleId: string) => focusFilterChip(chipsRef.current, ruleId), []);
+export function DashboardFilter({ filter, onFilterChange, stageOptions, canFilterPriority, canFilterArchived, people, disabled = false, onAnnounce, className }: DashboardFilterProps) {
   const toFacet = useCallback((next: DashboardFilterQuery) => queryToDashboardFilter(next, { archivedAllowed: canFilterArchived, priorityAllowed: canFilterPriority }), [canFilterArchived, canFilterPriority]);
-  const { query, onQueryChange, onBeforeQueryChange } = useFilterQueryBinding<DashboardFilterValueOf, DashboardFilterValue>({
+  const { query, onQueryChange } = useFilterQueryBinding<DashboardFilterValueOf, DashboardFilterValue>({
     facet: filter,
     facetKey: dashboardFilterKey,
     toQuery: dashboardFilterToQuery,
     toFacet,
     onFacetChange: onFilterChange,
-    onEmptied: focusTrigger,
-    onSurvivor: focusSurvivor,
   });
+  // The one veto point: an edit the URL cannot say is refused, and one over a limit says so.
+  const onBeforeQueryChange = useCallback((next: DashboardFilterQuery) => {
+    const result = queryToDashboardFilterResult(next, { archivedAllowed: canFilterArchived, priorityAllowed: canFilterPriority });
+    if ("filter" in result) return true;
+    if (result.veto === "cap") onAnnounce?.(CAP_NOTICE);
+    return false;
+  }, [canFilterArchived, canFilterPriority, onAnnounce]);
 
-  const rules = query.rules;
-  const stageUsed = rules.some((rule) => rule.type === "rule" && rule.path[0] === DASHBOARD_FILTER_FIELD.stage);
-  const priorityUsed = rules.some((rule) => rule.type === "rule" && rule.path[0] === DASHBOARD_FILTER_FIELD.priority);
-  const archivedUsed = rules.some((rule) => rule.type === "rule" && rule.path[0] === DASHBOARD_FILTER_FIELD.archived);
-  const peopleUsed = rules.some((rule) => rule.type === "rule" && rule.path[0] === DASHBOARD_FILTER_FIELD.people);
-  const shootUsed = rules.some((rule) => rule.type === "rule" && rule.path[0] === DASHBOARD_FILTER_FIELD.shoot);
-  const deadlineUsed = rules.some((rule) => rule.type === "rule" && rule.path[0] === DASHBOARD_FILTER_FIELD.deadline);
-  const mineUsed = rules.some((rule) => rule.type === "rule" && rule.path[0] === DASHBOARD_FILTER_FIELD.mine);
-  // A URL id the server does not list (a stale link, an out-of-scope person) is kept as a chip the server ignores.
-  const unknownIds = useMemo(() => {
-    const known = new Set(people.map((person) => person.id));
-    const ids: string[] = [];
-    for (const rule of rules) {
-      if (rule.type !== "rule" || rule.path[0] !== DASHBOARD_FILTER_FIELD.people || !Array.isArray(rule.value)) continue;
-      for (const value of rule.value) if (typeof value === "string" && value !== DASHBOARD_UNASSIGNED_OPTION && !known.has(value)) ids.push(value);
-    }
-    return ids;
-  }, [people, rules]);
+  // A URL id the server does not list (a stale link, an out-of-scope person) is kept as a row the server ignores.
+  const unknownIds = useMemo(() => unknownPeopleIds(query, new Set(people.map((person) => person.id))), [people, query]);
   const fields = useMemo<FilterField<DashboardFilterValue>[]>(
     () => [
       {
         id: DASHBOARD_FILTER_FIELD.stage,
         label: "Stage",
+        icon: <Layers aria-hidden="true" />,
         type: "multiselect",
         operators: DASHBOARD_STAGE_OPERATORS,
-        disabled: stageUsed,
         className: VALUE_MENU_CLASS,
         options: stageOptionsWithColor(stageOptions).map((option) => ({
           value: option.key,
@@ -144,11 +151,11 @@ export function DashboardFilterProvider({ filter, onFilterChange, stageOptions, 
             {
               id: DASHBOARD_FILTER_FIELD.priority,
               label: "Priority",
+              icon: <Star aria-hidden="true" />,
               type: "multiselect" as const,
               operators: DASHBOARD_PRIORITY_OPERATORS,
               // Six fixed rows, all on screen: a search box would only be a distraction.
               searchable: false,
-              disabled: priorityUsed,
               className: VALUE_MENU_CLASS,
               options: DASHBOARD_PRIORITY_OPTIONS.map((option) => ({
                 value: option.value,
@@ -163,11 +170,11 @@ export function DashboardFilterProvider({ filter, onFilterChange, stageOptions, 
             {
               id: DASHBOARD_FILTER_FIELD.archived,
               label: "Archived",
+              icon: <Archive aria-hidden="true" />,
               type: "select" as const,
               operators: DASHBOARD_ARCHIVED_OPERATORS,
               // Three fixed rows.
               searchable: false,
-              disabled: archivedUsed,
               className: VALUE_MENU_CLASS,
               options: DASHBOARD_ARCHIVED_OPTIONS.map((option) => ({ value: option.value, label: option.label })),
             },
@@ -176,9 +183,9 @@ export function DashboardFilterProvider({ filter, onFilterChange, stageOptions, 
       {
         id: DASHBOARD_FILTER_FIELD.people,
         label: "People",
+        icon: <Users aria-hidden="true" />,
         type: "multiselect",
         operators: DASHBOARD_PEOPLE_OPERATORS,
-        disabled: peopleUsed,
         className: VALUE_MENU_CLASS,
         options: [
           { value: DASHBOARD_UNASSIGNED_OPTION, label: "Unassigned", icon: <EmptyAssigneeGlyph /> },
@@ -194,10 +201,10 @@ export function DashboardFilterProvider({ filter, onFilterChange, stageOptions, 
       {
         id: DASHBOARD_FILTER_FIELD.shoot,
         label: "Shoot date",
+        icon: <Camera aria-hidden="true" />,
         type: "text",
         operators: DASHBOARD_SHOOT_OPERATORS,
         defaultOperator: "between",
-        disabled: shootUsed,
         editor: DateRangeFilterEditor,
         renderValue: ({ values }) => rangeText(values),
         valueText: ({ values }) => rangeText(values),
@@ -205,10 +212,10 @@ export function DashboardFilterProvider({ filter, onFilterChange, stageOptions, 
       {
         id: DASHBOARD_FILTER_FIELD.deadline,
         label: "Deadline",
+        icon: <CalendarClock aria-hidden="true" />,
         type: "text",
         operators: DASHBOARD_DEADLINE_OPERATORS,
         defaultOperator: "between",
-        disabled: deadlineUsed,
         editor: DateRangeFilterEditor,
         renderValue: ({ values }) => rangeText(values),
         valueText: ({ values }) => rangeText(values),
@@ -216,71 +223,49 @@ export function DashboardFilterProvider({ filter, onFilterChange, stageOptions, 
       {
         id: DASHBOARD_FILTER_FIELD.mine,
         label: "My tasks",
+        icon: <UserCheck aria-hidden="true" />,
         type: "boolean",
         operators: DASHBOARD_MINE_OPERATORS,
         defaultOperator: "only",
-        disabled: mineUsed,
       },
     ],
-    [archivedUsed, canFilterArchived, canFilterPriority, deadlineUsed, mineUsed, people, peopleUsed, priorityUsed, shootUsed, stageOptions, stageUsed, unknownIds],
+    [canFilterArchived, canFilterPriority, people, stageOptions, unknownIds],
   );
-  const focus = useMemo(() => ({ triggerRef, chipsRef }), []);
+
+  // The badge counts the rules the URL applies: an unfinished row narrows nothing and is not counted.
+  const applied = dashboardFilterRuleCount(dashboardFilterTreeOf(filter));
 
   return (
-    <TriggerFocusContext.Provider value={focus}>
-      <Filters<DashboardFilterValue>
-        fields={fields}
-        query={query}
-        onQueryChange={onQueryChange}
-        onBeforeQueryChange={onBeforeQueryChange}
-        labels={LABELS}
-        ruleMenu={RULE_MENU}
-        disabled={disabled}
-      >
-        {children}
-      </Filters>
-    </TriggerFocusContext.Provider>
-  );
-}
-
-/**
- * The Filter button, for the view bar. Labelled "Filter" with the funnel glyph; at <=721px it is
- * icon-only (44 x 44) and keeps the same accessible name. Its height is the bar's control height.
- */
-export function DashboardFilterTrigger({ className }: { className?: string }) {
-  const focus = useContext(TriggerFocusContext);
-  return (
-    <FiltersBuilder<DashboardFilterValue, unknown>
-      // The trigger sits at the bar's right edge: the field menu opens inward, not off the page.
-      align="end"
+    <Filters<DashboardFilterValue>
+      variant="advanced"
+      advancedMode="popover"
+      // The trigger sits at the bar's right edge: the panel opens inward, not off the page.
+      advancedAlign="end"
+      reorderable
+      size="default"
+      fields={fields}
+      query={query}
+      onQueryChange={onQueryChange}
+      onBeforeQueryChange={onBeforeQueryChange}
+      canAddRule={canAddDashboardFilterRule}
+      canAddGroup={canAddDashboardFilterGroup}
+      labels={LABELS}
+      ruleMenu={RULE_MENU}
+      disabled={disabled}
+      className="[--filter-field-width:8.5rem] [--filter-operator-width:10rem] [--filter-value-width:8.5rem]"
       trigger={
         <Button
-          ref={focus?.triggerRef}
           type="button"
           variant="secondary"
-          aria-label="Filter"
+          aria-label={applied > 0 ? `Filter, ${applied} ${applied === 1 ? "rule" : "rules"}` : "Filter"}
           data-testid="dashboard-filter-trigger"
-          className={cn("shrink-0 scroll-mt-[calc(var(--shell-header-height)+var(--space-4))]", CONTROL_HEIGHT, "max-[721px]:w-[44px] max-[721px]:min-w-[44px] max-[721px]:px-0", className)}
+          className={cn("shrink-0 scroll-mt-[calc(var(--shell-header-height)+var(--space-4))]", CONTROL_HEIGHT, "max-[721px]:min-w-[44px] max-[721px]:px-2", className)}
         >
           <FilterIcon aria-hidden="true" />
           <span className="max-[721px]:hidden">Filter</span>
+          {applied > 0 ? <Badge variant="primary-light" radius="full" className="tabular-nums">{applied}</Badge> : null}
         </Button>
       }
     />
-  );
-}
-
-/**
- * The chips, for under the view bar's rule. The row stays mounted with no chip (its status region
- * announces the count when the last one goes) but takes no space then: the margin below it exists only
- * while a chip does.
- */
-export function DashboardFilterChips({ className }: { className?: string }) {
-  const { ruleCount } = useFilterState();
-  const focus = useContext(TriggerFocusContext);
-  return (
-    <div ref={focus?.chipsRef} data-testid="dashboard-filter-chips" className={cn(ruleCount > 0 && "mb-[var(--space-4)]", className)}>
-      <FiltersRow builder={false} showClear />
-    </div>
   );
 }

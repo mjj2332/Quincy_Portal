@@ -1,4 +1,4 @@
-import { authorizedBoardRank, canonicalDashboardEditorIds, canonicalDashboardPriorities, canonicalDashboardStages, dashboardProjectsFilterQueryParams, normalizeDashboardFilter, type DashboardFilter, type ExternalProjectSummaryDto, type Role } from "@quincy/shared";
+import { authorizedBoardRank, canonicalDashboardEditorIds, canonicalDashboardPriorities, canonicalDashboardStages, dashboardFilterArchivedMode, dashboardFilterFingerprint, dashboardProjectsFilterQueryParams, normalizeDashboardFilter, type DashboardFilter, type ExternalProjectSummaryDto, type Role } from "@quincy/shared";
 import { keepPreviousData, skipToken, useQuery, type Query, type UseQueryResult } from "@tanstack/react-query";
 import { apiGet } from "./api";
 import { externalApiGet, externalProjectSummaryToDashboard } from "./external-api-response";
@@ -51,14 +51,21 @@ export type DashboardProjectsKeyScope = {
   deadline?: DashboardFilter["deadlineRange"];
   overdue?: true;
   mine?: true;
+  /** #461: a filter tree's fingerprint, present only when the filter is a tree (a flat filter's key is unchanged). */
+  tree?: string;
 };
+
+/** The Archived scope of a Projects-list filter: the flat field, or the mode the tree implies (#461). */
+function archivedModeOf(filter: DashboardProjectsKeyFilter): DashboardFilter["archived"] {
+  return filter.tree ? dashboardFilterArchivedMode(filter.tree) : filter.archived;
+}
 
 function dashboardProjectsKeyScope(filter: DashboardProjectsKeyFilter, q: string): DashboardProjectsKeyScope {
   const stages = canonicalDashboardStages(filter.stageKeys ?? []);
   const priority = canonicalDashboardPriorities(filter.priorities ?? []);
   const editors = canonicalDashboardEditorIds(filter.editorIds ?? []);
   return {
-    archived: filter.archived,
+    archived: archivedModeOf(filter),
     ...(q ? { q } : {}),
     ...(stages.length > 0 ? { stages } : {}),
     ...(priority.length > 0 ? { priority } : {}),
@@ -69,6 +76,7 @@ function dashboardProjectsKeyScope(filter: DashboardProjectsKeyFilter, q: string
     // A Deadline range and Overdue are one rule: the range wins (the shared normaliser drops the other).
     ...(filter.overdueOnly && !filter.deadlineRange ? { overdue: true as const } : {}),
     ...(filter.myTasks ? { mine: true as const } : {}),
+    ...(filter.tree ? { tree: dashboardFilterFingerprint(filter.tree) } : {}),
   };
 }
 
@@ -88,7 +96,7 @@ export function dashboardProjectsKey(principalId: string, role: Role, authorizat
  * below is its only writer, via `client.setQueryData`.
  */
 export function dashboardProjectSearchKey(principalId: string, role: Role, authorizationEpoch: number, filter: DashboardProjectsKeyFilter, q: string = "") {
-  return ["dashboard-project-search", principalId, role, authorizationEpoch, { archived: filter.archived, q, ...omitScope(dashboardProjectsKeyScope(filter, "")) }] as const;
+  return ["dashboard-project-search", principalId, role, authorizationEpoch, { archived: archivedModeOf(filter), q, ...omitScope(dashboardProjectsKeyScope(filter, "")) }] as const;
 }
 
 function dashboardProjectsPath(filter: DashboardProjectsKeyFilter, q: string): string {
@@ -105,7 +113,7 @@ export function useDashboardProjects(filter: DashboardProjectsKeyFilter, identit
   return useQuery<ProjectSummary[], Error>({
     queryKey: dashboardProjectsKey(principalId, role, authorizationEpoch, filter, q),
     // An External Editor never has archived Projects (the server refuses the request): never send it.
-    enabled: !external || filter.archived === "hide",
+    enabled: !external || archivedModeOf(filter) === "hide",
     queryFn: async ({ signal, client }) => {
       const runtime = getProjectQueryRuntime(client);
       const searchKey = dashboardProjectSearchKey(principalId, role, authorizationEpoch, filter, q);
@@ -147,7 +155,7 @@ export function useDashboardProjects(filter: DashboardProjectsKeyFilter, identit
     // keeps the previous rows as placeholder, like a search keystroke does.
     placeholderData: (previousData, previousQuery) => {
       const previousArchived = (previousQuery?.queryKey[4] as DashboardProjectsKeyScope | undefined)?.archived;
-      return previousArchived === filter.archived ? keepPreviousData(previousData) : undefined;
+      return previousArchived === archivedModeOf(filter) ? keepPreviousData(previousData) : undefined;
     },
   });
 }

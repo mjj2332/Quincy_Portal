@@ -19,6 +19,7 @@
  *
  * File-specific edits:
  * - QUINCY ADDITION (#255), additive: a `ruleMenu?: { duplicate?: boolean; negate?: boolean }` option (`FilterRuleMenuOptions`, `filters-context.tsx`) threaded root prop -> actions context -> `FilterRuleMenuItems`, so a consumer can hide the rule menu's Duplicate and Negate rows. Upstream has no option for it. Omitted, both rows render exactly as upstream.
+ * - QUINCY ADDITION (#461), additive: `canAddRule?(query, parentId)` / `canAddGroup?(query, parentId)` (root props on `Filters`, `filters.tsx`) threaded root prop -> actions context -> the advanced panel footer's Add filter / Add group and each group footer's Add filter (`filters-advanced.tsx`), so a consumer can cap the query (rule count, depth). Upstream disables them only for a disabled bar. Omitted, every one is enabled exactly as upstream. A consumer that must also refuse Duplicate / Convert / Move still vetoes them in `onBeforeQueryChange`.
  */
 import * as React from "react"
 import type { FilterDraftAction } from "@/components/reui/filters/filters-draft"
@@ -120,6 +121,13 @@ export interface FilterActionsContextValue<V = unknown, O = unknown> {
   ) => FilterEditor<V, O> | undefined
   /** Value-to-label store shared by every `useFilterOptions` under the root. */
   resolution: FilterResolutionStore
+
+  /** QUINCY ADDITION (#461): may a rule / group be added under `parentId`
+   *  (the root's id for the panel footer)? Asked with the CURRENT query at
+   *  render time, so the answer follows every edit. Both are `true` unless the
+   *  consumer passed `canAddRule` / `canAddGroup` on the root. */
+  canAddRule: (query: FilterQuery<V>, parentId: string) => boolean
+  canAddGroup: (query: FilterQuery<V>, parentId: string) => boolean
 
   /** Appends a rule. Defaults to the ROOT group. The parent is a parameter
    *  rather than always the root because a nested group's add button is the

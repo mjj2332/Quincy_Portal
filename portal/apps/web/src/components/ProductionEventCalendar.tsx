@@ -50,7 +50,9 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
 import {
+  canonicalizeDashboardFilterTree,
   deriveProductionCalendarWindow,
+  formatDashboardFilterTree,
   formatSydneyCivilMinute,
   type CalendarEventDto,
   type DashboardCalendarState,
@@ -173,8 +175,10 @@ function errorDetail(error: unknown, key: "code" | "refinement"): string | undef
   return typeof value === "string" ? value : undefined;
 }
 
+/** By value. #461: the filter tree compares by its canonical spelling, not by key order, so a server echo of the tree is never read as a change (which would `replace` the URL on every response). */
 function sameFilters(left: ProductionCalendarFilters, right: ProductionCalendarFilters): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  const key = (filters: ProductionCalendarFilters) => JSON.stringify({ ...filters, tree: undefined }) + (filters.tree ? formatDashboardFilterTree(canonicalizeDashboardFilterTree(filters.tree)) : "");
+  return key(left) === key(right);
 }
 
 function sydneyCivilDate(instant: Date): string {
@@ -527,7 +531,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
   const showGrid = everLoaded && !commands.accessLost && !(query.error && !source && !query.isFetching);
   const empty = source !== null && source.events.length === 0;
   // #430: the Timeline's recovery, same rule: Stage = Delivered while delivered Projects are hidden draws nothing for a known reason.
-  const showDeliveredRecovery = empty && onShowDeliveredProjects && ganttShowDeliveredRecovery({ stageKeys: calendar.stageKeys, delivered: calendar.showDeliveredProjects }) !== null;
+  const showDeliveredRecovery = empty && onShowDeliveredProjects && ganttShowDeliveredRecovery({ ...calendar, delivered: calendar.showDeliveredProjects }) !== null;
   const showDeliveredButton = showDeliveredRecovery ? (
     <QuincyButton variant="text" type="button" data-testid="event-calendar-show-delivered" onClick={() => {
       onShowDeliveredProjects?.();
