@@ -755,7 +755,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     if (outcome.kind === "found") {
       if ("target" in outcome) {
         const date = formatFocusDate(outcome.civilDate);
-        setAnnouncement(`Showing ${outcome.street}'s ${outcome.label}, ${date}.${outcome.folded ? " It is folded under +N more." : ""}`);
+        setAnnouncement(`Showing ${outcome.target === "deadline" ? "the Deadline" : outcome.label} for ${outcome.street}, ${date}.${outcome.folded ? " It is folded under +N more." : ""}`);
       } else {
         setAnnouncement(`Showing ${outcome.street} in ${viewLabel}.`);
       }

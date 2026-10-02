@@ -116,7 +116,7 @@ describe("Dashboard focus orchestration (#464)", () => {
     const request = calendarProps().focus;
     expect(request).toMatchObject({ projectId: PROJECT });
     await settle("calendar", request!.token, { kind: "found", target: "deadline", label: "Deadline", street: "1 Calendar Street", civilDate: "2026-08-27", folded: false });
-    expect(liveRegionText()).toContain("Showing 1 Calendar Street's Deadline, Thu 27 Aug.");
+    expect(liveRegionText()).toContain("Showing the Deadline for 1 Calendar Street, Thu 27 Aug.");
     expect(live()).toBe(staffPathFor({ kind: "dashboard", calendar: calendarState }));
     expect(calendarProps().focus).toBeNull();
   });
@@ -124,7 +124,7 @@ describe("Dashboard focus orchestration (#464)", () => {
   it("announces a folded Calendar chip as folded", async () => {
     await mountAt(staffPathFor({ kind: "dashboard", calendar: calendarState, focus: PROJECT }));
     await settle("calendar", calendarProps().focus!.token, { kind: "found", target: "task", label: "Select hero images", street: "1 Calendar Street", civilDate: "2026-08-12", folded: true });
-    expect(liveRegionText()).toContain("Showing 1 Calendar Street's Select hero images, Wed 12 Aug. It is folded under +N more.");
+    expect(liveRegionText()).toContain("Showing Select hero images for 1 Calendar Street, Wed 12 Aug. It is folded under +N more.");
   });
 
   it("a URL with no focus hands neither view a request", async () => {
