@@ -28,34 +28,11 @@ async function executeSql(sql: string) { for (const chunk of sql.split("--> stat
 async function cookie(token: string) { const context = await createAuth(baseEnv).$context; return `${context.authCookies.sessionToken.name}=${token}.${await makeSignature(token, authSecret)}`; }
 
 /** Runs the real app. `racingArchive` swaps in a D1 whose first multi-statement batch archives that Project, then runs the real batch. */
-async function call(who: Who, method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown, racingArchive?: string, archiveAfterVisibility?: string) {
+async function call(who: Who, method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown, racingArchive?: string) {
   const waits: Promise<unknown>[] = [];
   const executionContext = { waitUntil: (promise: Promise<unknown>) => { waits.push(promise); }, passThroughOnException: () => undefined, props: undefined } as unknown as ExecutionContext;
   const race = { flipped: 0 };
-  let visibilityReads = 0;
-  const wrap = (stmt: D1PreparedStatement, before: () => Promise<void>): D1PreparedStatement => new Proxy(stmt, {
-    get(t, p) {
-      if (p === "bind") return (...a: unknown[]) => wrap(t.bind(...a), before);
-      if (p === "all" || p === "raw" || p === "first" || p === "run") return async (...a: unknown[]) => { await before(); return (t as never as Record<string, (...x: unknown[]) => unknown>)[p as string]!(...a); };
-      const v = Reflect.get(t, p, t); return typeof v === "function" ? v.bind(t) : v;
-    },
-  });
-  // The Project is archived at the second visibility read: after the route's own check, before the command's collaboration check.
-  const visibilityRace = archiveAfterVisibility ? new Proxy(database.DB, {
-    get(target, property) {
-      if (property === "prepare") {
-        return (sql: string) => {
-          const stmt = target.prepare(sql);
-          if (!/left join "project_members"/i.test(sql) || !/from "projects"/i.test(sql)) return stmt;
-          visibilityReads += 1;
-          return visibilityReads === 2 ? wrap(stmt, async () => { race.flipped += 1; await target.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), archiveAfterVisibility).run(); }) : stmt;
-        };
-      }
-      const value = Reflect.get(target, property, target);
-      return typeof value === "function" ? value.bind(target) : value;
-    },
-  }) as D1Database : null;
-  const db = visibilityRace ?? (racingArchive ? new Proxy(database.DB, {
+  const db = racingArchive ? new Proxy(database.DB, {
     get(target, property) {
       if (property === "batch") {
         return async (statements: D1PreparedStatement[]) => {
@@ -69,7 +46,7 @@ async function call(who: Who, method: "GET" | "POST" | "PATCH" | "DELETE", path:
       const value = Reflect.get(target, property, target);
       return typeof value === "function" ? value.bind(target) : value;
     },
-  }) as D1Database : database.DB);
+  }) as D1Database : database.DB;
   const headers = new Headers({ cookie: await cookie(tokens[who]) });
   if (body !== undefined) headers.set("content-type", "application/json");
   if (method !== "GET") headers.set("origin", baseEnv.APP_ORIGIN);
@@ -112,6 +89,9 @@ async function footprint(projectId: string) {
     project: await all("SELECT updated_at, archived_at FROM projects WHERE id = ?", projectId),
   };
 }
+
+/** The archive itself flips `archived_at`; everything else on the Project row (notably `updated_at`) must be untouched. */
+const withoutArchivedAt = (state: Awaited<ReturnType<typeof footprint>>) => ({ ...state, project: state.project.map((row) => ({ updated_at: (row as { updated_at: unknown }).updated_at })) });
 
 beforeAll(async () => {
   await executeSql(__PORTAL_MIGRATION_SQL__); await executeSql(__PORTAL_SEED_SQL__); const now = Date.now();
@@ -177,7 +157,7 @@ describe("an Admin changing an archived Project's Team (#452)", () => {
       expect(response.status).toBe(409);
       expect(await response.json()).toEqual(ARCHIVED_BODY);
       const after = await footprint(f.projectId);
-      expect({ ...after, project: undefined }).toEqual({ ...before, project: undefined });
+      expect(withoutArchivedAt(after)).toEqual(withoutArchivedAt(before));
     });
     it("a remove is 409 and writes nothing", async () => {
       const f = await seedProject(false);
@@ -187,7 +167,7 @@ describe("an Admin changing an archived Project's Team (#452)", () => {
       expect(response.status).toBe(409);
       expect(await response.json()).toEqual(ARCHIVED_BODY);
       const after = await footprint(f.projectId);
-      expect({ ...after, project: undefined }).toEqual({ ...before, project: undefined });
+      expect(withoutArchivedAt(after)).toEqual(withoutArchivedAt(before));
     });
     it("a no-assignment remove is 409 too (the fence is the archive, not the assignments)", async () => {
       const f = await seedProject(false);
@@ -196,20 +176,25 @@ describe("an Admin changing an archived Project's Team (#452)", () => {
       expect(flipped).toBe(1);
       expect(response.status).toBe(409);
       expect(await response.json()).toEqual(ARCHIVED_BODY);
-      expect({ ...(await footprint(f.projectId)), project: undefined }).toEqual({ ...before, project: undefined });
+      expect(withoutArchivedAt(await footprint(f.projectId))).toEqual(withoutArchivedAt(before));
     });
   });
 
   it("restoring adds nobody, and the Team can be changed again afterwards", async () => {
+    const flag = await database.DB.prepare("SELECT enabled FROM feature_flags WHERE key = 'tb5a_board_contract_enabled'").first<{ enabled: number }>();
     await database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'").run();
-    const f = await seedProject(true);
-    const before = await footprint(f.projectId);
-    expect((await call("admin", "POST", `/api/projects/${f.projectId}/restore`)).response.status).toBe(200);
-    expect((await footprint(f.projectId)).members).toEqual(before.members);
-    const added = await add("admin", f, "photographer", freshPhotographerId);
-    expect(added.response.status).toBe(201);
-    const removed = await remove("admin", f, freshPhotographerId, "photographer", await cycleOf(f, freshPhotographerId));
-    expect(removed.response.status).toBe(200);
-    expect(await removed.response.json()).toMatchObject({ outcome: "removed" });
+    try {
+      const f = await seedProject(true);
+      const before = await footprint(f.projectId);
+      expect((await call("admin", "POST", `/api/projects/${f.projectId}/restore`)).response.status).toBe(200);
+      expect((await footprint(f.projectId)).members).toEqual(before.members);
+      const added = await add("admin", f, "photographer", freshPhotographerId);
+      expect(added.response.status).toBe(201);
+      const removed = await remove("admin", f, freshPhotographerId, "photographer", await cycleOf(f, freshPhotographerId));
+      expect(removed.response.status).toBe(200);
+      expect(await removed.response.json()).toMatchObject({ outcome: "removed" });
+    } finally {
+      await database.DB.prepare("UPDATE feature_flags SET enabled = ? WHERE key = 'tb5a_board_contract_enabled'").bind(flag?.enabled ?? 0).run();
+    }
   });
 });
