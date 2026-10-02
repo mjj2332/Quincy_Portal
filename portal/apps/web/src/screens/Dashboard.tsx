@@ -341,6 +341,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const [calendarSettle, setCalendarSettle] = useState<CalendarSettleState>({ pending: false, recoveryReason: null });
   const [recoveryReason, setRecoveryReason] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
+  // A repeated identical sentence only reaches a screen reader if the live region's text node is replaced, so the filter's refusals bump a key.
+  const [announcementSeq, setAnnouncementSeq] = useState(0);
+  const announceFilter = useCallback((message: string) => { setAnnouncement(message); setAnnouncementSeq((seq) => seq + 1); }, []);
   // #430: the Delivered pair's notice is one-shot. `pairWriteInFlightRef` marks the notice's own write
   // (set until its URL lands); a Timeline URL change from anywhere else clears it.
   const pairNoticeLiveRef = useRef(false);
@@ -517,6 +520,13 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // (nothing resets it on a role change short of a remount), so without this a Staff member who
   // loses the capability mid-session would still be shown Calendar content for one commit before
   // the reconciliation effect below moves `view` off it.
+  // The Calendar's request and cache key read the same Delivered rule as the Timeline (a tree naming Delivered shows delivered Projects while Display hides them); the URL and the Display chips keep the stored flag.
+  const calendarRequestState = useMemo(() => {
+    if (!calendarState) return null;
+    const filtered = applyDashboardFilter(calendarState, filter);
+    const shown = ganttDeliveredShown({ ...filtered, delivered: filtered.showDeliveredProjects });
+    return { ...filtered, showDeliveredProjects: shown.delivered, search: committedQuery };
+  }, [calendarState, filter, committedQuery]);
   const isCalendarView = view === "calendar" && calendarState !== null && canViewProductionCalendar;
   // #220: Gantt is gated the same way Calendar is above (`canViewProductionCalendar` — Gantt reads
   // the same production schedule, see `lib/staff-navigation.ts`'s `CAPABILITY_GATED_VIEWS`), minus
@@ -1650,7 +1660,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
               canFilterArchived={canFilterArchived}
               people={dashboardPeople}
               disabled={movementInteractionActive || calendarInteractionBlocked}
-              onAnnounce={setAnnouncement}
+              onAnnounce={announceFilter}
             />
           }
         />
@@ -1676,7 +1686,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
             <Suspense fallback={<div className={cn("empty", VIEW_STATE_BOX)} role="status">Loading calendar…</div>}>
               <ProductionEventCalendar
                 identity={identity}
-                calendar={calendarState && { ...applyDashboardFilter(calendarState, filter), search: committedQuery }}
+                calendar={calendarRequestState}
                 onNavigate={(next) => navigateCalendar(next)}
                 onAppliedFilters={reconcileAppliedCalendarFilters}
                 onAcceptGateChange={setCalendarInteractionBlocked}
@@ -1793,7 +1803,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           />
         )}
       </div>
-      <div className="sr-only" data-testid="dashboard-live-region" aria-live="polite" aria-atomic="true">{announcement}</div>
+      <div className="sr-only" data-testid="dashboard-live-region" aria-live="polite" aria-atomic="true"><span key={announcementSeq}>{announcement}</span></div>
       {/* #366: exactly one live viewport per route. Under the Project sheet the modal dialog
           aria-hides this subtree, so a viewport here would paint but never announce — the
           Workspace's own viewport, inside the sheet, takes over. */}

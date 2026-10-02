@@ -473,6 +473,38 @@ describe("Dashboard shared Filter (#428)", () => {
       await waitFor(() => expect(url()).toBe("/?view=table&stages=raw_review"));
       expect(panel()).not.toBeNull();
     });
+
+    async function removeFirstRule() {
+      await click(panel()!.querySelector<HTMLElement>('button[aria-label$="filter options"]')!);
+      await waitFor(() => expect([...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent?.trim())).toContain("Remove"));
+      await click([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent?.trim() === "Remove")!);
+      await tick(60);
+    }
+
+    it("leaves focus inside the popover after removing a rule, not stranded on the page body", async () => {
+      await renderAt("/?view=table&stages=raw_review&priority=5");
+      await openPanel();
+      await removeFirstRule();
+      await waitFor(() => expect(url()).toBe("/?view=table&priority=5"));
+      expect(document.activeElement).not.toBe(document.body);
+      expect(panel()?.closest('[role="dialog"]')?.contains(document.activeElement)).toBe(true);
+    });
+
+    it("moves focus somewhere real after removing the final rule", async () => {
+      await renderAt("/?view=table&priority=5");
+      await openPanel();
+      await removeFirstRule();
+      await waitFor(() => expect(url()).toBe("/?view=table"));
+      expect(document.activeElement).not.toBe(document.body);
+    });
+
+    it("returns focus to the Filter trigger when Escape closes the popover", async () => {
+      await renderAt("/?view=table&priority=5");
+      await openPanel();
+      await escape();
+      await waitFor(() => expect(panel()).toBeNull());
+      expect(document.activeElement).toBe(trigger());
+    });
   });
 
   it("draws only the Board columns a Stage filter names (an excluded column would read 0), and all of them without one", async () => {
@@ -556,6 +588,46 @@ describe("Dashboard shared Filter (#428)", () => {
       // A tree shows them; a flat `stages=delivered` keeps its own empty-state recovery (#270).
       await renderAt(treeUrl("timeline", { kind: "group", op: "or", children: [{ kind: "leaf", field: "stages", values: ["delivered"] }, { kind: "leaf", field: "priority", values: ["5"] }] }));
       expect(ganttProps.value?.filters.delivered).toBe(true);
+    });
+
+    it("the Calendar's request shows delivered Projects for a tree naming Delivered, without rewriting the URL", async () => {
+      const deliveredTree: DashboardFilterTree = { kind: "group", op: "or", children: [{ kind: "leaf", field: "stages", values: ["delivered"] }, { kind: "leaf", field: "priority", values: ["5"] }] };
+      await renderAt(treeUrl("calendar", deliveredTree));
+      expect(calendarProps.value?.calendar.showDeliveredProjects).toBe(true);
+      expect(url()).not.toContain("delivered=1");
+      expect(url()).toContain("f=");
+    });
+
+    it("announces every refused edit over the cap, including the same refusal twice in a row", async () => {
+      const leaves = Array.from({ length: 20 }, () => ({ kind: "leaf" as const, field: "priority" as const, values: ["5"] }));
+      await renderAt(treeUrl("table", { kind: "group", op: "or", children: leaves }));
+      await openPanel();
+      const live = host.querySelector<HTMLElement>('[data-testid="dashboard-live-region"]')!;
+      let mutations = 0;
+      const observer = new MutationObserver((records) => { mutations += records.length; });
+      observer.observe(live, { childList: true, characterData: true, subtree: true });
+      const duplicate = async () => {
+        await click(panel()!.querySelector<HTMLElement>('button[aria-label="Priority filter options"]')!);
+        await waitFor(() => expect([...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent?.trim())).toContain("Duplicate"));
+        await click([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent?.trim() === "Duplicate")!);
+        await tick(60);
+      };
+      await duplicate();
+      expect(live.textContent).toContain("limited to 20 rules");
+      const afterFirst = mutations;
+      expect(afterFirst).toBeGreaterThan(0);
+      await duplicate();
+      expect(mutations).toBeGreaterThan(afterFirst);
+      observer.disconnect();
+    });
+
+    it.each(["table", "board", "calendar", "timeline"])("draws no filter rule rows outside the popover in the %s view", async (view) => {
+      await renderAt(treeUrl(view));
+      expect(host.querySelectorAll('[role="group"][aria-label="Filter"]')).toHaveLength(0);
+      expect(host.querySelector('button[aria-label$="filter options"]')).toBeNull();
+      await openPanel();
+      expect(panel()!.closest('[role="dialog"]')).not.toBeNull();
+      expect(host.contains(panel())).toBe(false);
     });
   });
 });
