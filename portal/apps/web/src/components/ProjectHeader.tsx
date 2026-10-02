@@ -252,7 +252,7 @@ export function ProjectHeader({
 
       <div className="project-header__control">
         <span className={HEADER_KV_KEY}>Team</span>
-        <ProjectTeamCombobox projectId={project.id} members={project.members} canEdit={canEdit} archived={Boolean(project.archivedAt)} readOnlyClassName="min-h-[44px]" />
+        <ProjectTeamCombobox projectId={project.id} members={project.members} canEdit={canEdit} archived={Boolean(project.archivedAt)} rowClassName="min-h-[44px]" />
       </div>
 
       <div className="project-header__control">

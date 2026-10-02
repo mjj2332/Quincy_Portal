@@ -757,3 +757,65 @@ describe("ProjectTeamCombobox on an archived Project (#452)", () => {
     expect(status(host)).toBeNull();
   });
 });
+
+describe("ProjectTeamCombobox focus indicator (#458)", () => {
+  const four: ProjectMember[] = [1, 2, 3, 4].map((n) => ({
+    ...members[0]!, id: `4444444${n}-4444-4444-8444-444444444444`, userId: `5555555${n}-5555-4555-8555-555555555555`, name: `Member ${n}`, email: `m${n}@example.test`, active: true,
+  }));
+  const tokens = (el: Element) => (el.getAttribute("class") ?? "").split(/\s+/).filter(Boolean);
+
+  async function mountDirect(props: { members?: ProjectMember[]; rowClassName?: string }) {
+    host = document.createElement("div"); document.body.appendChild(host);
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    runtime = new ProjectQueryRuntime(queryClient);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}>
+        <ProjectTeamCombobox projectId={projectId} members={props.members ?? four} canEdit rowClassName={props.rowClassName} />
+      </QueryClientProvider></ProjectQueryRuntimeProvider>);
+      await Promise.resolve();
+    });
+    await flush();
+    return host;
+  }
+
+  it("paints one indicator: the pill outlines on the input's focus-visible, the input paints none of its own", async () => {
+    await mountDirect({});
+    const input = chipsInput(host);
+    const box = input.parentElement!;
+    const inputTokens = tokens(input);
+    expect(inputTokens).toContain("focus-visible:!outline-none");
+    expect(inputTokens).not.toContain("outline-none");
+    const boxTokens = tokens(box);
+    for (const token of [
+      "has-[input:focus-visible]:border-ring",
+      "has-[input:focus-visible]:outline-[length:var(--border-width-bold)]",
+      "has-[input:focus-visible]:outline-solid",
+      "has-[input:focus-visible]:outline-ring",
+      "has-[input:focus-visible]:outline-offset-2",
+    ]) expect(boxTokens).toContain(token);
+    expect(boxTokens.some((token) => token.startsWith("focus-within:"))).toBe(false);
+  });
+
+  it("leaves the chip × and the +N toggle without an outline suppressor (their own focus-visible outline is the one indicator)", async () => {
+    await mountDirect({});
+    const remove = host.querySelector<HTMLElement>('[data-testid="project-member-remove"]')!;
+    const toggle = host.querySelector<HTMLElement>('button[aria-label^="Show "]')!;
+    expect(remove).not.toBeNull();
+    expect(toggle).not.toBeNull();
+    for (const el of [remove, toggle]) expect(tokens(el).some((token) => /outline-none|outline-hidden/.test(token))).toBe(false);
+  });
+
+  it("sizes the editable box from rowClassName, and stays compact without it", async () => {
+    await mountDirect({ rowClassName: "min-h-[44px]" });
+    let boxTokens = tokens(chipsInput(host).parentElement!);
+    expect(boxTokens).toContain("min-h-[44px]");
+    expect(boxTokens).not.toContain("min-h-8");
+    await act(async () => { root!.unmount(); await Promise.resolve(); });
+    root = null; runtime.dispose(); queryClient.clear(); document.body.replaceChildren();
+    await mountDirect({});
+    boxTokens = tokens(chipsInput(host).parentElement!);
+    expect(boxTokens).toContain("min-h-8");
+    expect(boxTokens).not.toContain("min-h-[44px]");
+  });
+});
