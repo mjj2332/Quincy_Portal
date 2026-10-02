@@ -4977,6 +4977,19 @@ remove the legacy readers) still applies.
   `min-w` floor beats `max-w` on small screens. The DOM test pins the merged class string only; the browser pass proves pixels.
 - The chips input is `w-[12ch]` (was 6ch, too narrow for "Add…"); it does not grow on focus because the box is the popup's anchor.
 
+## Team picker drew two focus indicators (#458)
+
+- **A layered `outline-none` cannot beat the unlayered base rule.** `tokens/base.css:25-28` sets `:focus-visible { outline }` outside any
+  layer, so `ComboboxChipsInput`'s `outline-none` lost and the input painted a square outline inside the `ComboboxChips` pill, which
+  also painted its own `focus-within:ring-3`. Two shapes, one focus. The fix: the pill draws the one indicator (token outline, on
+  `has-[input:focus-visible]`, so a focused chip x or "+N" keeps its own outline and the pill stays quiet), and the input
+  uses `focus-visible:!outline-none` (precedent `InputGroupInput`). Vendor divergence 7 in `reui/combobox.tsx`, tagged `QUINCY ADDITION (#458)`.
+- **`reui-skin.guard.test.ts` now fails on a ring WIDTH under any focus variant** (`focus:`, `focus-visible:`, `focus-within:`, `has-[..focus..]`,
+  `group-`/`peer-` forms). A `data-[focused=...]` attribute variant is app state, not focus, and passes. Known latent double indicators
+  (`switch`, `field`, `item`, `scroll-area`, cascader x4) sit on a shrink-only exception list; they are not fixed here.
+- **Header height.** `ProjectTeamCombobox`'s `readOnlyClassName` became `rowClassName` and applies to the editable box too; the header
+  passes `min-h-[44px]`, the Gantt popover passes nothing and stays compact.
+
 ## Project sheet title ran under the close button (#460)
 
 - The sheet's close x is `position: absolute` (right `--space-4`, 44px) over the body, and `.project-header__identity > h2` had
