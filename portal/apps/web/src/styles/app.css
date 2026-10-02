@@ -307,6 +307,13 @@ button { font-family: var(--font-sans); }
 [data-testid="project-sheet"][data-impersonating] .viewer { inset: var(--impersonation-banner-height) 0 0; }
 /* Reserve the sheet's close button (right space-4 + 44px + space-2 gap) on the pinned bar. */
 .project-sheet__body .worktools { padding-inline-end: calc(var(--space-4) + 44px + var(--space-2)); }
+/* #460: keep the Project title clear of the sheet's close button. Values are coupled to the close offset/size in
+   ProjectSheet.tsx (right space-4, 44px, +space-2 gap); the header already pads --space-6 (--space-4 on phones), so
+   subtract that. Placed after the 720px header block so the phone rule wins on source order. */
+.project-sheet__body .project-header__identity > h2 { padding-inline-end: calc(var(--space-4) + 44px + var(--space-2) - var(--space-6)); overflow-wrap: anywhere; }
+@media (max-width: 720px) {
+  .project-sheet__body .project-header__identity > h2 { padding-inline-end: calc(var(--space-4) + 44px + var(--space-2) - var(--space-4)); }
+}
 
 /* selection action bar */
 
