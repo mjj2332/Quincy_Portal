@@ -52,15 +52,6 @@ export function archivedModeSql(archivedAtColumn: string, modeRef: string): stri
 }
 
 /**
- * #428: the Project priority predicate. `request_priorities` is a CTE of one row per requested
- * priority (column `priority`, `'5'`..`'1'` or `'none'`); `none` is a NULL priority. No rows means
- * unrestricted.
- */
-export function priorityFilterSql(priorityColumn: string): string {
-  return `(NOT EXISTS (SELECT 1 FROM request_priorities) OR EXISTS (SELECT 1 FROM request_priorities rp WHERE rp.priority = COALESCE(CAST(${priorityColumn} AS TEXT), 'none')))`;
-}
-
-/**
  * #429: the Project's stored shoot date is a real Sydney calendar day. `GLOB` alone only checks the
  * `YYYY-MM-DD` shape (a Tonomo free-text `2026-02-30` passes it); `date(x) = x` is SQLite's own
  * calendar-validity check, since `date()` rolls an impossible day forward. This is the ONE spelling:
@@ -174,7 +165,7 @@ export type AuthorizedProjectsBaseOptions = {
  * SQL for the Calendar's own call), parameterised only by which extra columns it selects, which
  * request column gates delivered projects, and the search predicate. Assumes the caller's own
  * `WITH` chain already defines `request` (with a `search` column referenced by `searchPredicate`)
- * `request_stages` (one row per requested stage key, column `stage_key`) and `request_priorities` (one row per requested priority, column `priority`) ahead of this
+ * `request_stages` (#461: the Stage SCOPE the filter tree implies, one row per stage key, column `stage_key`; empty = no narrowing) ahead of this
  * fragment — every caller of this helper must shape its own request CTEs to match.
  */
 export function authorizedProjectsBaseCte(role: Role, options: AuthorizedProjectsBaseOptions): string {
@@ -197,7 +188,6 @@ export function authorizedProjectsBaseCte(role: Role, options: AuthorizedProject
   WHERE ${archivedModeSql("p.archived_at", options.archivedModeColumn)}
     AND (${options.includeDeliveredColumn} = 1 OR p.stage_key <> 'delivered')
     AND (NOT EXISTS (SELECT 1 FROM request_stages) OR EXISTS (SELECT 1 FROM request_stages rs WHERE rs.stage_key = p.stage_key))
-    AND ${priorityFilterSql("p.priority")}
     AND ${options.searchPredicate}${(options.extraPredicates ?? []).map((predicate) => `\n    AND ${predicate}`).join("")}
 )`;
 }

@@ -5027,3 +5027,38 @@ remove the legacy readers) still applies.
   exact. The phone value sits in a `max-width: 720px` block placed AFTER the base rule, because both have equal specificity
   and source order decides. Values are coupled to the close offset/size in `ProjectSheet.tsx`; `overflow-wrap: anywhere` lets an
   unbroken title wrap inside the reduced width. Pinned by CSS-text assertions in `styles/app-railed.test.ts`.
+
+## Filter tree: OR, groups, negation across Projects, Calendar and Timeline (#461, PR A)
+
+- **One compiler, an executable spec, and SQL that is a function of the tree's shape.** `evaluateDashboardFilterTree` (shared) is the
+  spec; `workers/app/src/lib/dashboard-filter-sql.ts` is its only SQL form. Values never enter the text: every rule's values ride in ONE
+  JSON bind read with `json_extract` / `json_each`, so the statement is stable per shape and the bound-parameter count does not grow
+  with the tree. D1 allows 100 bound parameters, a 100,000-byte statement and a 2,000,000-byte value, so the JSON is what scales.
+- **Strict 0/1 per rule, then NOT.** Every leaf compiles to `CASE WHEN <inner fragment> THEN 1 ELSE 0 END`. Wrapping a nullable
+  fragment (a NULL shoot date, an unset priority) in NOT or OR without that turns "unknown" into TRUE or drops the row. Use the inner
+  fragments, never `shootRangeSql` / `deadlineRangeSql` with their `'' OR` wrappers (an empty bound there means "no filter").
+- **A not-applied People rule is dropped, not TRUE.** `or(people=<unknown>;stages=X)` must equal `stages=X`. Each compiled node is an
+  `{applied, match}` pair; AND uses `NOT applied OR match`, OR uses `applied AND match`.
+- **Moving a predicate from the base to a per-event-kind filter changes nothing observable only if the base keeps the necessary part.**
+  Calendar and Timeline keep authorisation, search, Delivered, the Archived scope (`dashboardFilterArchivedMode`) and the Stage scope
+  (`dashboardFilterStageScope`, three-valued, exact under negation) in `authorized_projects_base`; the tree itself is then evaluated on
+  Deadline events with People = Editors, and on Subtask events with People = that Subtask's assignees. The Stage scope is bound as `[]`
+  when there is no Stage rule, never as "every presentation key" (stored keys outside the presentation set would drop).
+- **Gantt child cursors.** A request without `f` keeps `ganttPeopleFingerprint` and the people-only child context byte for byte (a page
+  carrying stages/shoot/etc. still mints a child cursor over People only). With `f` the cursor binds to `dashboardFilterFingerprint(tree)`
+  (`t:` + 14 hex; the cursor schema accepts both) and the child request names the whole tree. `child_matches` is not even emitted when the
+  tree has no People / My tasks rule: the Subtask context is then the Project's own.
+- **Tests that read "now" are not tree tests.** A fixture Deadline in August 2026 is overdue today, so an `overdue` rule matches it; pin
+  tree semantics with Shoot dates and People, and keep Overdue to the legacy fixtures that fix their own windows.
+- **`project-search.test.ts` SHA digests were re-pinned (characterisation, not a guard)** in the Calendar commit; the one other
+  assertion that mentions bind slots was later rewritten for the 15-bind layout (see the fix round). Writer order `editors` before `stages` (#428) is untouched.
+
+### #461 PR A fix round
+
+- **A tree at the caps is a test, not an assumption.** 20 rules / depth 3 / 50 ids ran fine as one shape and died as another: `SQLITE_NOMEM` (20 People rules flat, Gantt page; nested People groups, Calendar) and "Expression tree is too large (maximum depth 100)". Cause: every People rule re-derived the People universe inside the statement, in `applied` and again in `match`, repeated per ancestor, and the Gantt page compiles the tree three times. `dashboard-filter-max-cap.test.ts` runs three shapes as Admin and External Editor through every statement on every surface; add a shape there before trusting a compiler change.
+- **Resolve the universe once, in the handler.** `validPeopleIds` answers the request's valid ids; the ONE JSON bind carries each People rule's pre-filtered `ids` and a precomputed `a` (applied, 0/1). The compiler has no "universe" mode any more. AND / OR chains are balanced binary trees (depth log2 n).
+- **`production-calendar.integration.test.ts` pins the Calendar's bind layout**: 15 binds, the Stage scope as the one `json_each(?8)`, People ids only inside the tree's JSON bind (`?15`). An earlier layout kept a dead `request_people` CTE at `?8` only to satisfy a `json_each(?8)` / `json_each(?9)` pin; the dead CTE and bind were removed and the pin rewritten to protect the same property (ids ride in JSON binds, never per-id placeholders; bounded bind count).
+- **A standalone `childrenOf=` request never ran the page's parent check.** With no People / My tasks rule `childFilterSql` was the constant `1`, so an excluded parent still returned children. Embedded children keep the shortcut; a standalone request evaluates the tree on the parent. Role gates (Priority 400, Archived 403) run for every Gantt mode.
+- **Legacy parity is a test against `origin/main`, not a reading.** Moving Priority / Shoot / Deadline / Overdue out of the Calendar base widened `filterFacets.projects` and dropped a no-Deadline Project from the density count under `overdue=1`. `production-calendar-legacy-parity.test.ts` passes unchanged on main's code; keep it that way. The Project facet applies the tree with People / My tasks dropped (`dropPeopleRules`); the flat Overdue facet keeps its candidate quirk (`overdueIncludesNoDeadline`, never for a tree).
+- **A Stage / Priority-only list stays in memory.** Anything that routes it through D1 pays ceil(N/500) sequential statements for nothing.
+
