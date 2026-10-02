@@ -100,6 +100,28 @@ import { ProjectCalendarAnchor } from "./ProjectCalendarAnchor";
 import { ProductionEventCalendarDialogs, type ProductionEventCalendarDeadlineConfirm } from "./ProductionEventCalendarDialogs";
 import { ProductionEventCalendarRail, type ProductionEventCalendarUpNext } from "./ProductionEventCalendarRail";
 
+/** #464: the Project Show in Calendar asks the Calendar to land on. `token` is the Dashboard's one-shot request id. */
+export type ProductionEventCalendarFocus = { projectId: string; token: number };
+
+/** #464: what became of a focus request. Reported once per token through `onFocusSettled`. */
+export type ProductionEventCalendarFocusOutcome =
+  | {
+      kind: "found";
+      target: "deadline" | "task";
+      /** "Deadline", or the task's title. */
+      label: string;
+      street: string;
+      /** The target's Sydney civil date. */
+      civilDate: string;
+      /** The chip is folded under a day's "+N more": focus is on that control, not the chip. */
+      folded: boolean;
+    }
+  /** The Project has no event in the range these filters draw. */
+  | { kind: "hidden" }
+  /** The user navigated before the landing could happen. */
+  | { kind: "cancelled" }
+  | { kind: "error" };
+
 export type ProductionEventCalendarProps = {
   identity: DashboardIdentity;
   calendar: DashboardCalendarState;
@@ -118,6 +140,9 @@ export type ProductionEventCalendarProps = {
   onShownProjectsChange?: (count: number | null) => void;
   /** #430: the empty state's "Show delivered Projects" (Stage = Delivered with delivered Projects hidden). */
   onShowDeliveredProjects?: () => void;
+  /** #464: land on this Project (select and ring its events, focus its chip) and report the outcome. */
+  focus?: ProductionEventCalendarFocus | null;
+  onFocusSettled?: (token: number, outcome: ProductionEventCalendarFocusOutcome) => void;
 };
 
 /** Below this width the rail leaves the grid's side and moves into a sheet. */
@@ -190,7 +215,7 @@ function ChipContent({ id, data, title }: { id: string; data: ProductionEventCal
   );
 }
 
-export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppliedFilters, onAcceptGateChange, onSettleStateChange, onAccessLoss, projectHrefFor, onOpenProject, onShownProjectsChange, onShowDeliveredProjects }: ProductionEventCalendarProps): JSX.Element {
+export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppliedFilters, onAcceptGateChange, onSettleStateChange, onAccessLoss, projectHrefFor, onOpenProject, onShownProjectsChange, onShowDeliveredProjects, focus = null, onFocusSettled }: ProductionEventCalendarProps): JSX.Element {
   const query = useProductionCalendarRange({ identity, calendar, enabled: true, bounds: true });
 
   // Up next: a second, read-only agenda range from today (Sydney), same filters, outside any gate.
@@ -277,8 +302,33 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
     onAppliedFilters?.(applied);
   }, [calendar, onAppliedFilters, query.data?.range.appliedFilters]);
 
+  // #464: the request lives in refs that survive `resetKey` (the Dashboard's filter-reconcile write
+  // must not cancel it); only the user's own navigation ends it.
+  const focusRequestRef = useRef<ProductionEventCalendarFocus | null>(null);
+  const focusArmedTokenRef = useRef<number | null>(null);
+  const onFocusSettledRef = useRef(onFocusSettled);
+  onFocusSettledRef.current = onFocusSettled;
+  const [focusTick, setFocusTick] = useState(0);
+  const [landedProjectId, setLandedProjectId] = useState<string | null>(null);
+  const focusToken = focus?.token ?? null;
+  useEffect(() => {
+    if (!focus || focusArmedTokenRef.current === focus.token) return;
+    focusArmedTokenRef.current = focus.token;
+    focusRequestRef.current = focus;
+    setLandedProjectId(null);
+    setFocusTick((tick) => tick + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- armed once per token
+  }, [focusToken]);
+
   const navigate = useCallback((changes: Partial<DashboardCalendarState>) => {
     if (commands.interactionBlocked) return;
+    // The user is moving on: a landing still waiting for its data is withdrawn, and the ring goes.
+    const withdrawn = focusRequestRef.current;
+    if (withdrawn) {
+      focusRequestRef.current = null;
+      onFocusSettledRef.current?.(withdrawn.token, { kind: "cancelled" });
+    }
+    setLandedProjectId(null);
     commands.clearSettleOnNavigation();
     onNavigate({ ...calendar, ...changes, view: "calendar" });
   }, [calendar, commands, onNavigate]);
@@ -341,6 +391,47 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
     if (!selected.permissions.canOpenScheduleEditor) return null;
     return { label: `${checklistScheduleEditorButtonLabel()}…`, run: () => commands.openChecklistScheduleEditor(selected) };
   })();
+
+  // ---------------------------------------------------------------------------------------------
+  // #464: landing on a Project (Show in Calendar).
+  // ---------------------------------------------------------------------------------------------
+
+  const landingReady = everLoaded && !commands.accessLost && source !== null && !blocked && !settling && !query.isFetching && query.data?.range.date === calendar.date;
+  const landingErrored = Boolean(query.error) && !query.data && !query.isFetching;
+  useEffect(() => {
+    const request = focusRequestRef.current;
+    if (!request) return;
+    const settle = (outcome: ProductionEventCalendarFocusOutcome) => {
+      focusRequestRef.current = null;
+      onFocusSettledRef.current?.(request.token, outcome);
+    };
+    if (landingErrored) { settle({ kind: "error" }); return; }
+    if (!landingReady) return;
+    const own = displayEvents.filter((event) => event.project.id === request.projectId);
+    if (own.length === 0) { settle({ kind: "hidden" }); return; }
+    const byStart = (a: CalendarEventDto, b: CalendarEventDto) => (a.timing.start < b.timing.start ? -1 : a.timing.start > b.timing.start ? 1 : a.id < b.id ? -1 : 1);
+    const target = own.find((event) => event.kind === "project_deadline")
+      ?? own.filter((event) => eventCivilDate(event) === calendar.date).sort(byStart)[0]
+      ?? own.slice().sort(byStart)[0]!;
+    setLandedProjectId(request.projectId);
+    setSelectedId(target.id);
+    // Same chip lookup as the scheduling controller's focus return: the vendor tags the chip CONTENT;
+    // the focusable element is the `<button>` around it. A chip folded under "+N more" has no element,
+    // so focus goes to that day's control instead.
+    const content = [...document.querySelectorAll<HTMLElement>("[data-event-id]")].find((element) => element.getAttribute("data-event-id") === target.id);
+    const chip = content ? (content.matches("button, [tabindex]") ? content : content.closest<HTMLElement>("button") ?? content) : null;
+    const more = chip ? null : [...document.querySelectorAll<HTMLElement>("[data-more-event-ids]")].find((element) => (element.getAttribute("data-more-event-ids") ?? "").split(" ").includes(target.id))?.closest<HTMLElement>("button") ?? null;
+    (chip ?? more ?? document.querySelector<HTMLElement>('[data-focus-key="calendar-safe-fallback"]'))?.focus();
+    settle({
+      kind: "found",
+      target: target.kind === "project_deadline" ? "deadline" : "task",
+      label: target.kind === "project_deadline" ? "Deadline" : target.title,
+      street: target.project.street,
+      civilDate: eventCivilDate(target),
+      folded: chip === null,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-checked whenever the drawn data or the arming changes
+  }, [focusTick, landingReady, landingErrored, displayEvents, calendar.date]);
 
   // ---------------------------------------------------------------------------------------------
   // Render.
@@ -422,7 +513,8 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
           onDateChange={(next) => { const civil = sydneyCivilDate(next); if (civil !== calendar.date) navigate({ date: civil }); }}
           onViewChange={(view) => { const subview = calendarViewToSubview(view); if (subview && subview !== calendar.subview) navigate({ subview }); }}
           onSlotClick={(slot) => { if (slot.view === "month") navigate({ subview: "day", date: sydneyCivilDate(slot.date) }); }}
-          eventClassName={(occurrence) => productionEventCalendarEventClassName(occurrence.event.data)}
+          eventClassName={(occurrence) => productionEventCalendarEventClassName(occurrence.event.data, landedProjectId !== null && occurrence.event.data?.dto.project.id === landedProjectId)}
+          renderMoreIndicator={({ count, segments }) => <span data-more-event-ids={segments.map((segment) => String(segment.occurrence.event.id)).join(" ")}>{`+${count} more`}</span>}
           renderEvent={({ occurrence }) => <ChipContent id={String(occurrence.event.id)} data={occurrence.event.data} title={occurrence.event.title} />}
         >
           {/* The body is a flexed item of a definite-height column (#363), so its `minmax(0,1fr)` row is

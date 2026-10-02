@@ -33,6 +33,7 @@ type FakeCalendarProps = {
   events?: FakeEvent[];
   view?: string;
   date?: Date;
+  renderMoreIndicator?: (props: { day: Date; count: number; segments: Array<{ occurrence: FakeOccurrence }> }) => ReactNode;
   renderEvent?: (props: { occurrence: FakeOccurrence; segment: unknown; view: string; isDragging: boolean; isSelected: boolean }) => ReactNode;
   eventClassName?: (occurrence: FakeOccurrence) => string | undefined;
   onEventUpdate?: (update: unknown) => unknown;
@@ -51,6 +52,8 @@ export type FakeUpdateInput = {
 type FakeState = {
   lastProps: FakeCalendarProps | null;
   updateResults: unknown[];
+  /** #464: ids drawn folded under a day's "+N more" (no chip in the DOM), as a dense month day does. */
+  foldedIds: Set<string>;
   reset: () => void;
   event: (id: string) => FakeEvent | undefined;
   update: (id: string, input: FakeUpdateInput) => unknown;
@@ -60,9 +63,11 @@ type FakeState = {
 export const eventCalendarFake: FakeState = {
   lastProps: null,
   updateResults: [],
+  foldedIds: new Set(),
   reset() {
     this.lastProps = null;
     this.updateResults = [];
+    this.foldedIds = new Set();
   },
   event(id) {
     return this.lastProps?.events?.find((candidate) => candidate.id === id);
@@ -94,11 +99,19 @@ export const eventCalendarFake: FakeState = {
 function FakeEventCalendar(props: FakeCalendarProps) {
   eventCalendarFake.lastProps = props;
   const view = props.view ?? "month";
+  const foldedEvents = (props.events ?? []).filter((event) => eventCalendarFake.foldedIds.has(event.id));
   return (
     <div data-testid="event-calendar-fake" data-view={view} data-date={props.date?.toISOString()}>
       {props.children}
       <ul data-testid="event-calendar-fake-events">
-        {(props.events ?? []).map((event) => {
+        {foldedEvents.length > 0 && (
+          <li data-testid="event-calendar-fake-more">
+            <button type="button" data-testid="event-calendar-fake-more-trigger">
+              {props.renderMoreIndicator?.({ day: foldedEvents[0]!.start, count: foldedEvents.length, segments: foldedEvents.map((event) => ({ occurrence: { key: event.id, event } })) }) ?? `+${foldedEvents.length} more`}
+            </button>
+          </li>
+        )}
+        {(props.events ?? []).filter((event) => !eventCalendarFake.foldedIds.has(event.id)).map((event) => {
           const occurrence = { key: event.id, event };
           return (
             <li key={event.id} data-testid="event-calendar-fake-event" data-event-start={event.start.toISOString()} data-draggable={String(event.draggable ?? true)} className={props.eventClassName?.(occurrence)}>
