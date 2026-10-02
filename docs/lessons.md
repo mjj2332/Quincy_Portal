@@ -4916,3 +4916,8 @@ remove the legacy readers) still applies.
 - **The reorder handler's bare 409 branch would otherwise win.** `isArchivedRefusal` is checked first in all four catch blocks
   (update, add, remove, reorder); a reorder refusal also skips `scheduleReorderFocus`, whose fallback target
   (`subtask-add-<id>`) no longer exists.
+- **Entering read-only clears the assignee picker's own edit state, without its committing close.** The read-only branch removes the
+  Combobox but `open`, `draftRef` and `baselineRef` are local, so a popup left open with picks would reopen on Restore and commit
+  them. `SubtaskAssigneePicker` closes and resets the draft to baseline in an effect on `readOnly`, and sends no write.
+- **The post-409 focus fallback only fires when focus was lost.** `body`, `:disabled`, disconnected, or an ancestor containing the rail
+  (the sheet's focus manager); a connected, enabled control outside the rail (the comment editor) the user moved to keeps focus.
