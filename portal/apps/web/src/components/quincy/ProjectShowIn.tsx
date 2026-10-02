@@ -24,6 +24,8 @@ import { initializeDashboardCalendarState } from "../../screens/dashboard-helper
  */
 const GROUP_ROW = "inline-flex flex-wrap items-center gap-x-[var(--space-3)] gap-y-[var(--space-1)] max-[721px]:basis-full";
 const GROUP_LABEL = "[font:var(--weight-regular)_var(--text-2xs)/1.2_var(--font-sans)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary";
+// #367 precedent (ProjectHeader COPY_LINK_IN_HEADER): the button base is uppercase + wide tracking; the labels read as sentence case.
+const SHOW_IN_BUTTON = "normal-case tracking-[var(--tracking-normal)] max-[721px]:min-h-[44px]";
 const REASON_TEXT = "[font:var(--weight-regular)_var(--text-2xs)/1.2_var(--font-sans)] text-foreground-secondary";
 
 function subtasksFromCache(client: QueryClient | null, projectId: string): ProjectSubtask[] | undefined {
@@ -51,13 +53,13 @@ function rememberedCalendarState() {
 function ShowInButton({ label, icon, destination, testId, describedBy }: { label: "Calendar" | "Timeline"; icon: React.ReactNode; destination: ShowInDestination; testId: string; describedBy?: string }) {
   const name = `Show in ${label}`;
   if (!destination.available) {
-    return <Button type="button" variant="outline" size="sm" className="max-[721px]:min-h-[44px]" disabled data-testid={testId} aria-label={name} aria-describedby={describedBy}>{icon}{label}</Button>;
+    return <Button type="button" variant="outline" size="sm" className={SHOW_IN_BUTTON} disabled data-testid={testId} aria-label={name} aria-describedby={describedBy}>{icon}{label}</Button>;
   }
   return (
     <Button
       variant="outline"
       size="sm"
-      className="max-[721px]:min-h-[44px]"
+      className={SHOW_IN_BUTTON}
       nativeButton={false}
       data-testid={testId}
       aria-label={name}
