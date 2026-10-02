@@ -2,8 +2,8 @@
  * #463 — the item menu on the Production Calendar, through the REAL vendored event calendar (no
  * `vi.mock` of the tree): a chip click, Enter, or a right-click opens a menu with Open project and
  * Reschedule… / Edit schedule…; a drag never does; Space still starts keyboard Adjust (ADR 0009).
- * The selection strip it replaced is gone. The controller-owned follow-ups (focus return after a
- * dialog, not-live) live in `ProductionEventCalendar-item-menu-controller.dom.test.tsx`, on the shared fake.
+ * The selection strip it replaced is gone. Not-live and the controller's other follow-ups are pinned in
+ * `ProductionEventCalendar-reconciliation.dom.test.tsx`, on the shared fake.
  *
  * Guard F: chips are found by their accessible name, the menu by role, dialogs by Quincy test ids.
  */
