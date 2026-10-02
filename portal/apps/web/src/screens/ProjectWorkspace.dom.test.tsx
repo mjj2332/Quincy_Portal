@@ -1145,6 +1145,80 @@ describe("ProjectWorkspace collaboration relocation", () => {
     expect(host.textContent).toContain("Call client"); expect(host.textContent).not.toContain("Add an item");
   });
 
+  describe("cover control on an archived Project (#459)", () => {
+    const ARCHIVED_AT = "2026-09-01T00:00:00.000Z";
+    const NOTICE = "Read-only while archived. Restore the project before changing the cover.";
+    const archivedRefusal = () => new ApiError("Archived projects are read-only; restore the project to change its cover.", 409, { code: "cover_project_archived" });
+    const coverButton = () => host.querySelector<HTMLButtonElement>('button[title="Use as project cover"], button[title^="Remove as cover"]');
+    function mockProject(state: { archivedAt: string | null }) {
+      apiGetMock.mockImplementation((path: string) => {
+        if (path === "/api/projects/p1") return Promise.resolve({ ...projectFixture(), archivedAt: state.archivedAt });
+        if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1")] });
+        if (path.includes("/assets?collection=edited")) return Promise.resolve({ assets: [workspaceAsset("edited-1", { collectionId: "c-edited" })] });
+        if (path.includes("ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+        if (path.includes("comments")) return Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [] });
+        if (path.includes("annotations")) return Promise.resolve({ annotations: [] });
+        if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
+        if (path.includes("mentionable-users")) return Promise.resolve({ users: [] });
+        return Promise.resolve({});
+      });
+    }
+    const notice = () => [...host.querySelectorAll<HTMLElement>('[role="status"]')].find((node) => node.textContent === NOTICE);
+
+    it("shows no cover control on RAW or Edited when the Project loads archived", async () => {
+      authState.role = "admin"; mockProject({ archivedAt: ARCHIVED_AT });
+      await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+      await openTab(host, "RAW"); await flush(10);
+      expect(host.querySelector('[data-testid="photo-grid-tile"]')).not.toBeNull();
+      expect(coverButton()).toBeNull();
+      await openTab(host, "Edited"); await flush(10);
+      expect(host.querySelector('[data-testid="photo-grid-tile"]')).not.toBeNull();
+      expect(coverButton()).toBeNull();
+    });
+
+    it("a 409 cover_project_archived latches read-only: no toast or alert, a status notice, the control gone, detail refetched, focus on the tile", async () => {
+      authState.role = "admin"; const state = { archivedAt: null as string | null }; mockProject(state);
+      await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+      await openTab(host, "RAW"); await flush(10);
+      expect(notice()).toBeUndefined();
+      apiPostMock.mockImplementationOnce(() => { state.archivedAt = ARCHIVED_AT; return Promise.reject(archivedRefusal()); });
+      apiGetMock.mockClear();
+      coverButton()!.focus();
+      await click(coverButton()!); await flush(20);
+      expect(host.textContent).not.toContain("restore the project to change its cover");
+      expect(host.querySelector('[role="alert"]')).toBeNull();
+      expect(notice()).toBeDefined();
+      expect(coverButton()).toBeNull();
+      expect(apiGetMock).toHaveBeenCalledWith("/api/projects/p1", expect.anything());
+      expect(document.activeElement).toBe(host.querySelector('[data-testid="photo-grid-tile"]'));
+    });
+
+    it("a 409 without the cover code is an ordinary error: toast, no latch", async () => {
+      authState.role = "admin"; mockProject({ archivedAt: null });
+      await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+      await openTab(host, "RAW"); await flush(10);
+      apiPostMock.mockRejectedValueOnce(new ApiError("Something else conflicted", 409, { code: "other" }));
+      await click(coverButton()!); await flush(20);
+      expect(host.textContent).toContain("Something else conflicted");
+      expect(notice()).toBeUndefined();
+      expect(coverButton()).not.toBeNull();
+    });
+
+    it("restoring brings the control back and clears the notice", async () => {
+      authState.role = "admin"; const state = { archivedAt: null as string | null }; mockProject(state);
+      let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+      await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
+      await openTab(host, "RAW"); await flush(10);
+      apiPostMock.mockImplementationOnce(() => { state.archivedAt = ARCHIVED_AT; return Promise.reject(archivedRefusal()); });
+      await click(coverButton()!); await flush(20);
+      expect(coverButton()).toBeNull(); expect(notice()).toBeDefined();
+      state.archivedAt = null;
+      await queryClient!.invalidateQueries({ queryKey: projectDataKeys.detail("p1"), exact: true, refetchType: "active" }); await flush(20);
+      expect(coverButton()).not.toBeNull();
+      expect(notice()).toBeUndefined();
+    });
+  });
+
   it("lands a collaboration=open arrival on the Collaboration tab with Discussion shown, the tab focused and the signal acknowledged", async () => {
     mockOpenProject();
     const consumed: number[] = [];

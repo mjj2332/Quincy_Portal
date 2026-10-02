@@ -35,17 +35,22 @@ function sha256(value: string): string {
 // RE-PINNED again in the #429 review round (a characterization fixture, not a guard): an External Editor's
 // People / Unassigned / My tasks match on a Subtask now requires the assignee to be on that Project's team, and
 // the shared Overdue facet gates checklist rows by their Project's Deadline rule. Every digest changed for that.
+// RE-PINNED in #461 (characterisation, not a guard): the Calendar's flat facets now compile through the shared filter-tree
+// compiler (one JSON tree bind, `request_people`, the Stage scope as the only base filter). Every digest changed for that.
+// RE-PINNED in the #461 fix round (characterisation, not a guard): the People universe is resolved once by the handler and rides
+// the JSON bind, so `valid_request_people` and the per-rule universe re-derivation left the statement text.
+// RE-PINNED again (characterisation, not a guard): the dead `request_people` CTE and its `?8` bind were removed and the later binds renumbered (15 binds).
 const PRE_REFACTOR_RANGE_SQL_SHA256: Record<(typeof ROLES)[number], string> = {
-  admin: "0eacb623a214aae56140bba7233450b6e012d6b9474e31db4c5219d1dc835392",
-  editor: "c8601900967303773c646a1e5a15457e4a13e4ba3ec2a8b502d9fbea321535f9",
-  photographer: "05bbbad478cff6ef4d6bc9267b752c9bb5d7d30dfd9f4874f5d2b445d4985b6b",
-  external_editor: "6bfe7d74dbd91bbea4dfa30697febedcf3ac29240a21af68a85778d217fa3a28",
+  admin: "b37738dbe1476d705d3d84a1212e1ae55b51bb0c54ceb32c26575a44d2d45243",
+  editor: "afe9e116a7099976d6b511b42baf46abf790ce4a02efa32e2c88fa5c4daa9b4b",
+  photographer: "a056ba239771be553ff5f6be566277981becc051c408bade4c065088602b1c83",
+  external_editor: "2f63d6ed445d4f8f80bf9f35f1c7f640832879c04a67026a7304574983345a04",
 };
 const PRE_REFACTOR_FACETS_SQL_SHA256: Record<(typeof ROLES)[number], string> = {
-  admin: "ebb5177c0a093e410349947762a36f1bebd59496a00fef18775e5437893ef94e",
-  editor: "e3c9779b5245e100f3b497ed2637c1c01cb1b66c0a0d52f25e23a0c359666763",
-  photographer: "4946d5efae17d1ea0c5170fcefc26e841de6078f69d705900700d7ed1678ceeb",
-  external_editor: "61097f23464a076b0c1246e358bb1ef8ad9cb13aa7bc950e0af7e2694eed5040",
+  admin: "dd3d168e7f5b4ad4afbe0d05943e18d199265f05e26647e2d4ba48755ae95688",
+  editor: "3afb718f94f3698d050169e20cd1eb5a73cd92bb370abe60657c1f7e5623692f",
+  photographer: "d6f835b7ae47b76855eab8b5eab29f288574ab51570ce89265161c960f2d67f9",
+  external_editor: "8d0789900a0beb40ad8c56169f53deb7a48337570b05a1e079032b262f20543d",
 };
 
 describe("project-search", () => {
