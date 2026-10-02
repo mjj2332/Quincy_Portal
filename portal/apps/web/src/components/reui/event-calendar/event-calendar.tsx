@@ -62,6 +62,11 @@
  *    `boolean | "deferred"`, answering the literal `"deferred"` BEFORE any `setField` when
  *    `onEventUpdate` defers — the Gantt's #221 PR A shape. Callers must test for it before their
  *    truthiness checks (the string is truthy). See `event-calendar-dnd.tsx` entry 7.
+ * 5. 2026-10-02, #463 — ADDED, additive (unset changes nothing): the `onEventContextMenu` callback
+ *    and the `eventPopup` view-config key. Both are LISTED in the runtime allow-lists
+ *    (`OPTION_KEYS`, `VIEW_CONFIG_KEYS`) — a key declared on the interface and missing there is
+ *    silently dropped. The chip side is `event-calendar-event.tsx` entry 6. Pinned by
+ *    `event-calendar-item-popup.dom.test.tsx`.
  */
 import {
   createContext,
@@ -168,6 +173,16 @@ interface EventCalendarCallbacks<TData = unknown> {
     e: React.MouseEvent
   ) => void
   onEventDoubleClick?: (
+    occurrence: EventCalendarOccurrence<TData>,
+    e: React.MouseEvent
+  ) => void
+  /**
+   * QUINCY ADDITION (#463): a right-click (the browser's `contextmenu`) on an event chip. The
+   * vendor never prevents the native menu itself: a consumer that opens its own menu calls
+   * `e.preventDefault()`. Not fired for an inert preview chip, during a live drag (a keyboard
+   * Adjust session is one) or right after a drag ended. Unset, nothing changes.
+   */
+  onEventContextMenu?: (
     occurrence: EventCalendarOccurrence<TData>,
     e: React.MouseEvent
   ) => void
@@ -1544,6 +1559,14 @@ interface EventCalendarViewConfig<TData = unknown> {
    */
   eventClassName?: (occurrence: EventCalendarOccurrence<TData>) => string | undefined
   /**
+   * QUINCY ADDITION (#463): the consumer opens a menu from an interactive chip. When set, the chip
+   * is exposed as a menu button (`aria-haspopup="menu"`, `aria-expanded` from `isOpen`) instead of a
+   * pressed toggle (`aria-pressed` is dropped): the chip's click opens a menu rather than selecting
+   * it. Previews and agenda rows follow the same `interactive` rule the toggle did. Unset, the chip
+   * keeps `aria-pressed`.
+   */
+  eventPopup?: { isOpen: (occurrence: EventCalendarOccurrence<TData>) => boolean }
+  /**
    * Extra classes for the CURRENT day, appended after the built-in highlight
    * (primary-tinted background + accent top border) on month cells, time-grid
    * day columns, and day headers.
@@ -1768,6 +1791,8 @@ const VIEW_CONFIG_KEYS: Array<keyof EventCalendarViewConfig> = [
   // dropped before it reaches a view. `eventClassName` was added to the interface and to the chip
   // in the same change and still rendered nothing until it was listed here.
   "eventClassName",
+  // QUINCY ADDITION (#463): runtime allow-list, as `eventClassName` above.
+  "eventPopup",
   "todayClassName",
   "showDayAddButton",
   "scrollbars",
@@ -1861,6 +1886,8 @@ const OPTION_KEYS: Array<keyof UseEventCalendarStateOptions> = [
   "activation",
   "onEventClick",
   "onEventDoubleClick",
+  // QUINCY ADDITION (#463): a callback is only forwarded when listed here.
+  "onEventContextMenu",
   "onEventUpdate",
   "canDropEvent",
   "onDragBlocked",

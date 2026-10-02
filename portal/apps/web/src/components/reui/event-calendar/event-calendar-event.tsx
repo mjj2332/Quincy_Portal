@@ -63,6 +63,13 @@
  * 5. 2026-09-28 — `isSelected` is also false in the agenda view, not only for previews. The
  *    agenda is read-only (a click never selects there, `aria-pressed` is already undefined), but a
  *    chip selected in a grid view kept `data-selected` on its agenda row after a view switch.
+ * 6. 2026-10-02, #463 — ADDED, additive (both unset: nothing changes). An `onContextMenu` on the
+ *    chip that reports through `settings.onEventContextMenu`, except for a preview, a live drag (a
+ *    keyboard Adjust session is one) or right after a drag ended (`wasRecentDrag()`). And, when
+ *    `viewConfig.eventPopup` is set, an interactive chip carries `aria-haspopup="menu"` and
+ *    `aria-expanded={eventPopup.isOpen(occurrence)}` INSTEAD of `aria-pressed`: its click opens the
+ *    consumer's menu, so announcing it as a pressed toggle would be wrong. See `event-calendar.tsx`
+ *    entry 5; pinned by `event-calendar-item-popup.dom.test.tsx`.
  */
 import {
   createContext,
@@ -549,7 +556,11 @@ function EventCalendarEvent<TData = unknown>({
       }`,
     // A background tint alone conveys selection, so the chip is a real toggle
     // wherever it is interactive (agenda rows never select, previews are inert).
-    "aria-pressed": interactive ? isSelected : undefined,
+    // QUINCY (#463): with `viewConfig.eventPopup` the chip opens a consumer menu instead, so it is a
+    // menu button (`aria-haspopup` + `aria-expanded`), not a pressed toggle.
+    "aria-pressed": interactive && !viewConfig.eventPopup ? isSelected : undefined,
+    "aria-haspopup": interactive && viewConfig.eventPopup ? ("menu" as const) : undefined,
+    "aria-expanded": interactive && viewConfig.eventPopup ? viewConfig.eventPopup.isOpen(occurrence) : undefined,
     "aria-hidden": preview || undefined,
     tabIndex: preview ? -1 : undefined,
     // QUINCY (#240): how the Adjust session finds this event's chip again after a commit moves
@@ -587,6 +598,11 @@ function EventCalendarEvent<TData = unknown>({
     onDoubleClick: (e: React.MouseEvent) => {
       e.stopPropagation()
       settings.onEventDoubleClick?.(occurrence, e)
+    },
+    // QUINCY ADDITION (#463): never during a drag, and not right after one ended.
+    onContextMenu: (e: React.MouseEvent) => {
+      if (preview || wasRecentDrag() || instance.getState().drag) return
+      settings.onEventContextMenu?.(occurrence, e)
     },
     className: cn(
       "group/ec-event text-foreground relative flex w-full min-w-0 cursor-pointer touch-none items-center overflow-hidden text-start select-none",
