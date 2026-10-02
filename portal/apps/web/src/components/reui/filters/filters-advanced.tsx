@@ -20,7 +20,7 @@
  * File-specific edits:
  * - `noUncheckedIndexedAccess`: the row's roving column falls back to `columns[0] ?? null`; Ctrl+Home/End narrow `rows[0]`/`rows[rows.length - 1]` before `ownCells`.
  * - QUINCY ADDITION (#461), additive: `canAddRule?(query, parentId)` / `canAddGroup?(query, parentId)` (root props on `Filters`, `filters.tsx`) threaded root prop -> actions context -> the advanced panel footer's Add filter / Add group and each group footer's Add filter (`filters-advanced.tsx`), so a consumer can cap the query (rule count, depth). Upstream disables them only for a disabled bar. Omitted, every one is enabled exactly as upstream. A consumer that must also refuse Duplicate / Convert / Move still vetoes them in `onBeforeQueryChange`.
- * - QUINCY ADDITION (#461), phone stacking: below the `@max-[26rem]/track` breakpoint a row wraps onto two lines (combinator column + handle/menu on line one, the cells at full width on line two) via `ROW_BAND_CLASS` / `CONTENT_BAND_CLASS` and `grow` on the three cell classes; the group combinator wrapper left-aligns (`GROUP_COMBINATOR_WRAP_CLASS`); the popup's `max-w` is `100vw - 2 * --space-4` with `collisionPadding={16}` so both side gutters match.
+ * - QUINCY ADDITION (#461), phone stacking: below the `@max-[26rem]/track` breakpoint a row wraps onto two lines (combinator column + handle/menu on line one, the cells at full width on line two) via `ROW_BAND_CLASS` / `CONTENT_BAND_CLASS` and `flex-wrap` on the content band and, on the cells, content-sized `basis-auto` field/operator (value keeps its basis), all `grow` / `shrink-0` / `max-w-full`; the group combinator wrapper left-aligns (`GROUP_COMBINATOR_WRAP_CLASS`); the popup's `max-w` is `100vw - 2 * --space-4` with `collisionPadding={16}` so both side gutters match.
  */
 import * as React from "react"
 import { FilterFieldPicker } from "@/components/reui/filters/filters-builder"
@@ -233,7 +233,7 @@ const COMBINATOR_TEXT_CLASS = cn(
  * three - and only because the content band may shrink to nothing. */
 const ROW_BAND_CLASS = "flex min-w-0 items-center gap-1.5 @max-[26rem]/track:flex-wrap"
 
-const CONTENT_BAND_CLASS = "flex min-w-0 flex-1 items-center gap-1.5 @max-[26rem]/track:order-last @max-[26rem]/track:basis-full"
+const CONTENT_BAND_CLASS = "flex min-w-0 flex-1 items-center gap-1.5 @max-[26rem]/track:order-last @max-[26rem]/track:basis-full @max-[26rem]/track:flex-wrap"
 
 /** FLEX and not a block: a `Button` is `inline-flex`, so a block wrapper builds
  * a line box as tall as its font's strut - 28px buttons in 28.141px wrappers. */
@@ -248,9 +248,12 @@ const CELL_BOX_CLASS = "@container/cell flex min-w-0 shrink grow-0"
  *   <Card className="[--filter-value-width:16rem]"><Filters … /></Card>
  *   [data-slot="filters-advanced"] { --filter-field-width: 14rem } */
 /** On the phone stack the three cells share line two, so they GROW into it (the combinator box shares CELL_BOX_CLASS and must not). */
-const FIELD_CELL_CLASS = "basis-[var(--filter-field-width,11rem)] @max-[26rem]/track:grow"
-const OPERATOR_CELL_CLASS = "basis-[var(--filter-operator-width,9rem)] @max-[26rem]/track:grow"
-const VALUE_CELL_CLASS = "basis-[var(--filter-value-width,12rem)] @max-[26rem]/track:grow"
+const PHONE_LABEL_CELL_CLASS =
+  "@max-[26rem]/track:basis-auto @max-[26rem]/track:shrink-0 @max-[26rem]/track:grow @max-[26rem]/track:max-w-full"
+const FIELD_CELL_CLASS = cn("basis-[var(--filter-field-width,11rem)]", PHONE_LABEL_CELL_CLASS)
+const OPERATOR_CELL_CLASS = cn("basis-[var(--filter-operator-width,9rem)]", PHONE_LABEL_CELL_CLASS)
+/** The value cell keeps its width on the phone (it may truncate); it grows, and drops to its own line if it does not fit beside the others. */
+const VALUE_CELL_CLASS = "basis-[var(--filter-value-width,12rem)] @max-[26rem]/track:shrink-0 @max-[26rem]/track:grow @max-[26rem]/track:max-w-full"
 
 /** The trailing band. `pe-1` is on the BAND and not the gutter, since a group
  * card is `pe-0`; the footer and `DROP_SLOT_INDICATOR` restate the same four. */
