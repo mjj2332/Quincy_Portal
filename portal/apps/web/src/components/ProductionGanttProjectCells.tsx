@@ -102,7 +102,7 @@ export function GanttTeamCell({ projectId, street, team, canEdit, disabled, role
       >
         <PopoverTitle className="!font-medium">Team</PopoverTitle>
         <ProjectDetailGate projectId={projectId} role={role} testIdPrefix="gantt">
-          {(detail) => <ProjectTeamCombobox projectId={projectId} members={detail.members} canEdit inputRef={attachInput} />}
+          {(detail) => <ProjectTeamCombobox projectId={projectId} members={detail.members} canEdit archived={Boolean(detail.archivedAt)} inputRef={attachInput} />}
         </ProjectDetailGate>
       </PopoverContent>
     </Popover>

@@ -11,7 +11,7 @@ import type { AppEnv } from "../env";
 import { hasProjectAccess, hasProjectAccessForUser, requireCapability } from "../middleware/capability";
 import { audit, auditMeta } from "../lib/audit";
 import { newId } from "../lib/ids";
-import { addProjectMemberWithAssignmentIntent, buildInitialProjectMemberStatementTuples, ProjectMemberIneligibleError, removeProjectMemberCycle, type InitialProjectMemberSlot } from "../lib/project-members";
+import { addProjectMemberWithAssignmentIntent, buildInitialProjectMemberStatementTuples, ProjectMemberIneligibleError, ProjectMembershipArchivedError, removeProjectMemberCycle, type InitialProjectMemberSlot } from "../lib/project-members";
 import { createZipStream } from "../lib/zip-stream";
 import { jsonInput } from "./helpers";
 import { projectStageForRole } from "./stages";
@@ -663,6 +663,9 @@ projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) =
   return c.json(await details(db, c.env.DB, id, c.get("user").role, variant, await boardContractEnabled(c.env.DB, variant), false, c.env));
 }));
 
+/** #452. An archived Project's Team is read-only. Role changes (users.ts) still count archived memberships as blockers: restore, remove the member, re-archive. */
+const MEMBERSHIP_ARCHIVED_BODY = { error: "Archived projects are read-only; the team can't be changed.", code: "membership_project_archived" } as const;
+
 function projectMembershipRoute(roleOnProject: ProjectMemberRole, method: "put" | "delete") {
   const path = {
     photographer: "/projects/:projectId/photographers/:userId",
@@ -693,6 +696,7 @@ function projectMembershipRoute(roleOnProject: ProjectMemberRole, method: "put" 
         if (roleOnProject === "photographer" && (c.env.DROPBOX_EDITOR_AUTOMATION_ENABLED === "1" || c.env.DROPBOX_EDITOR_AUTOMATION_ENABLED === true)) c.executionCtx.waitUntil(c.env.BACKGROUND.ensureEditorFolder(projectId).catch((error) => console.error("Editor scaffold trigger failed", { projectId, error })));
         return c.json({ outcome: result.created ? "created" : "unchanged", membership: result.membership }, result.created ? 201 : 200);
       } catch (error) {
+        if (error instanceof ProjectMembershipArchivedError) return c.json(MEMBERSHIP_ARCHIVED_BODY, 409);
         if (error instanceof ProjectMemberIneligibleError) return c.json({ error: "User is not eligible for this project role", code: "ineligible_project_member", roleOnProject }, 422);
         throw error;
       }
@@ -700,7 +704,7 @@ function projectMembershipRoute(roleOnProject: ProjectMemberRole, method: "put" 
 
     const result = await removeProjectMemberCycle(c.env.DB, { projectId, userId, roleOnProject, membershipCycle: body!.membershipCycle, clearSubtaskAssignments: body!.clearSubtaskAssignments, confirmedAssignmentCount: body!.confirmedAssignmentCount, confirmAccessLoss: body!.confirmAccessLoss, actorId: principal.id, auditPrincipal: principal });
     if (result.outcome === "stale") return c.json({ error: "Project membership changed; refreshed current assignment", code: "membership_cycle_changed", requestedMembershipCycle: body!.membershipCycle, currentMembership: result.currentMembership }, 409);
-    if (result.outcome === "project_archived") return c.json({ error: "Archived projects are read-only; the checklist can't be changed.", code: "subtask_project_archived" }, 409);
+    if (result.outcome === "project_archived") return c.json(MEMBERSHIP_ARCHIVED_BODY, 409);
     if (result.outcome === "confirmation_required") return c.json({ error: "Project access will be lost immediately; confirm final-role removal again", code: "subtask_assignment_confirmation_required", assignmentCount: result.assignmentCount, accessWillBeLost: result.accessWillBeLost, message: `Project access will be lost immediately. ${result.assignmentCount} checklist assignments will be cleared.`, currentMembership: result.currentMembership }, 422);
     if (result.notificationOutboxIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
     return c.json({ outcome: "removed", removed: { membershipCycle: body!.membershipCycle, userId, roleOnProject }, subtaskAssignmentsCleared: result.subtaskAssignmentsCleared }, 200);

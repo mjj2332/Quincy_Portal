@@ -598,3 +598,149 @@ describe("ProjectTeamCombobox inputRef (#365)", () => {
     expect(inputRef.current).toBe(chipsInput(host));
   });
 });
+
+describe("ProjectTeamCombobox on an archived Project (#452)", () => {
+  const archivedBody = { error: "Archived projects are read-only; the team can't be changed.", code: "membership_project_archived" };
+  const group = (container: ParentNode) => container.querySelector<HTMLElement>('[role="group"][aria-label="Team"]');
+  const status = (container: ParentNode) => container.querySelector<HTMLElement>('[role="status"]');
+
+  async function mountCombobox(props: { members?: ProjectMember[]; archived?: boolean } = {}) {
+    host = document.createElement("div"); document.body.appendChild(host);
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    runtime = new ProjectQueryRuntime(queryClient);
+    root = createRoot(host);
+    await rerenderCombobox(props);
+    return host;
+  }
+  async function rerenderCombobox(props: { members?: ProjectMember[]; archived?: boolean }) {
+    await act(async () => {
+      root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}>
+        <ProjectTeamCombobox projectId={projectId} members={props.members ?? members} canEdit archived={props.archived} />
+      </QueryClientProvider></ProjectQueryRuntimeProvider>);
+      await Promise.resolve();
+    });
+    await flush();
+  }
+  async function addAri(container: HTMLElement) {
+    const input = await openPicker(container);
+    await typeQuery(input, "ari");
+    await waitFor(() => expect(options().some((option) => option.textContent?.includes("Ari Photographer"))).toBe(true));
+    await act(async () => { options().find((option) => option.textContent?.includes("Ari Photographer"))!.click(); await Promise.resolve(); });
+    await flush(4);
+  }
+
+  it("on load shows the chips and names read-only: no input, no ×, no candidates request, no status line", async () => {
+    const host = await mountCombobox({ archived: true });
+    expect(host.querySelector('[aria-label="Add team member"]')).toBeNull();
+    expect(host.querySelector('[data-testid="project-member-remove"]')).toBeNull();
+    expect(host.textContent).toContain("Inactive");
+    expect(chipTestIds(host)).toHaveLength(1);
+    expect(group(host)).not.toBeNull();
+    expect(apiGetMock).not.toHaveBeenCalled();
+    expect(status(host)).toBeNull();
+    expect(document.activeElement).not.toBe(group(host));
+  });
+
+  it("archived and empty shows a dash, with a screen-reader 'No team assigned'", async () => {
+    const host = await mountCombobox({ members: [], archived: true });
+    // The sr-only name is read with the visible dash, which is hidden from assistive tech.
+    expect(host.textContent).toBe("No team assigned—");
+    expect(host.textContent).not.toContain("Not assigned");
+    expect([...host.querySelectorAll("span")].find((element) => element.textContent === "—")?.getAttribute("aria-hidden")).toBe("true");
+    const label = [...host.querySelectorAll("span")].find((element) => element.textContent === "No team assigned")!;
+    expect(label.className).toContain("sr-only");
+  });
+
+  it("an add refused with 409 membership_project_archived goes read-only, with a status message, no Retry, a detail refetch, and focus on the Team group", async () => {
+    apiPutMock.mockRejectedValueOnce(new ApiError("archived", 409, archivedBody));
+    const host = await mountCombobox();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    await addAri(host);
+
+    expect(host.querySelector('[aria-label="Add team member"]')).toBeNull();
+    expect(status(host)?.textContent).toBe("Read-only while archived. Restore the project before changing the team.");
+    expect(group(host)?.getAttribute("aria-describedby")).toBe(status(host)?.id);
+    expect([...host.querySelectorAll("button")].some((button) => button.textContent === "Retry")).toBe(false);
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.detail(projectId), exact: true }));
+    expect(document.activeElement).toBe(group(host));
+  });
+
+  it("a remove refused with 409 membership_project_archived does the same, and does not loop into a confirmation", async () => {
+    apiDeleteMock.mockRejectedValueOnce(new ApiError("archived", 409, archivedBody));
+    const host = await mountCombobox();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const remove = host.querySelector<HTMLButtonElement>('[data-testid="project-member-remove"]')!;
+    await act(async () => { remove.focus(); remove.click(); await Promise.resolve(); });
+    await flush(4);
+
+    expect(apiDeleteMock).toHaveBeenCalledOnce();
+    expect(confirmMock).not.toHaveBeenCalled();
+    expect(host.querySelector('[data-testid="project-member-remove"]')).toBeNull();
+    expect(status(host)?.textContent).toBe("Read-only while archived. Restore the project before changing the team.");
+    expect([...host.querySelectorAll("button")].some((button) => button.textContent === "Retry")).toBe(false);
+    expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.detail(projectId), exact: true }));
+    expect(document.activeElement).toBe(group(host));
+  });
+
+  it("a refusal leaves focus alone when the user moved it to another enabled control while the request was pending", async () => {
+    let rejectDelete!: (error: unknown) => void;
+    apiDeleteMock.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectDelete = reject; }));
+    const host = await mountCombobox();
+    const elsewhere = document.createElement("button");
+    elsewhere.textContent = "Elsewhere";
+    document.body.appendChild(elsewhere);
+    try {
+      const remove = host.querySelector<HTMLButtonElement>('[data-testid="project-member-remove"]')!;
+      await act(async () => { remove.focus(); remove.click(); await Promise.resolve(); });
+      await act(async () => { elsewhere.focus(); await Promise.resolve(); });
+      expect(document.activeElement).toBe(elsewhere);
+      await act(async () => { rejectDelete(new ApiError("archived", 409, archivedBody)); await Promise.resolve(); });
+      await flush(4);
+
+      expect(host.querySelector('[data-testid="project-member-remove"]')).toBeNull();
+      expect(status(host)?.textContent).toBe("Read-only while archived. Restore the project before changing the team.");
+      expect(document.activeElement).toBe(elsewhere);
+      expect(document.activeElement).not.toBe(group(host));
+    } finally { elsewhere.remove(); }
+  });
+
+  it("clears an earlier error state and its Retry when the refusal flips it read-only", async () => {
+    apiDeleteMock.mockRejectedValueOnce(new Error("No network"));
+    apiPutMock.mockRejectedValueOnce(new ApiError("archived", 409, archivedBody));
+    const host = await mountCombobox();
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="project-member-remove"]')!.click(); await Promise.resolve(); });
+    await flush(4);
+    expect([...host.querySelectorAll("button")].some((button) => button.textContent === "Retry")).toBe(true);
+
+    await addAri(host);
+    expect([...host.querySelectorAll("button")].some((button) => button.textContent === "Retry")).toBe(false);
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(host.querySelector(`[data-testid="project-member-message-editor:${members[0]!.userId}"]`)).toBeNull();
+    expect(host.querySelector(`[data-testid="project-member-editor:${members[0]!.userId}"]`)?.getAttribute("data-state")).toBe("idle");
+  });
+
+  it("clears an earlier error state when the archived prop flips true, with no 409", async () => {
+    apiDeleteMock.mockRejectedValueOnce(new Error("No network"));
+    const host = await mountCombobox();
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="project-member-remove"]')!.click(); await Promise.resolve(); });
+    await flush(4);
+    expect([...host.querySelectorAll("button")].some((button) => button.textContent === "Retry")).toBe(true);
+    await rerenderCombobox({ archived: true });
+    expect([...host.querySelectorAll("button")].some((button) => button.textContent === "Retry")).toBe(false);
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    // Flipped by prop, not by a refusal: no status line and no focus move.
+    expect(status(host)).toBeNull();
+  });
+
+  it("brings the input back when archived goes true to false (Restore), after the latch too", async () => {
+    apiPutMock.mockRejectedValueOnce(new ApiError("archived", 409, archivedBody));
+    const host = await mountCombobox();
+    await addAri(host);
+    expect(host.querySelector('[aria-label="Add team member"]')).toBeNull();
+    await rerenderCombobox({ archived: true });
+    await rerenderCombobox({ archived: false });
+    expect(host.querySelector('[aria-label="Add team member"]')).not.toBeNull();
+    expect(status(host)).toBeNull();
+  });
+});

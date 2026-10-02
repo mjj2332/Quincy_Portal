@@ -4916,6 +4916,52 @@ remove the legacy readers) still applies.
 - **The reorder handler's bare 409 branch would otherwise win.** `isArchivedRefusal` is checked first in all four catch blocks
   (update, add, remove, reorder); a reorder refusal also skips `scheduleReorderFocus`, whose fallback target
   (`subtask-add-<id>`) no longer exists.
+
+## #452 Archived Projects get a read-only TEAM field, and the header Stage reads as a value
+
+- **One refusal code for every membership write: 409 `membership_project_archived`.** Both add routes and both remove routes
+  (`/photographers/:userId`, `/editors/:userId`) refuse on an archived Project, whatever else is true of the request. It supersedes
+  #446's `subtask_project_archived` on the removal path: the refusal is about the Project, not the Checklist, and two codes would
+  make the answer depend on whether the member happened to hold assignments. The fence is inside the D1 batch (an
+  `EXISTS (... archived_at IS NULL)` on the add INSERT and on the remove DELETE, so the audit, outbox, ledger, activity and
+  timestamp statements that depend on the row write nothing), plus a trailing `SELECT archived_at` snapshot as the last statement.
+  Never reorder or drop batch statements: results are read by position. Classification is archived first (over stale, ineligible,
+  unchanged and `confirmation_required`), so a repeated PUT of an existing member on an archived Project is also a 409.
+- **Tonomo's photographer insert is fenced too.** `assignPhotographers` (`workers/background/src/tonomo/process.ts`) runs on the update
+  path after `findProject` has read the Project live, so an archive can land in between. Its insert is now
+  `INSERT ... SELECT ... WHERE EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)`, and the audit row lists only
+  photographers who are actually members. The test archives from the `getMetadata` dependency, which runs in exactly that window.
+- **Left out of the fence on purpose:** initial members at `POST /projects`, Tonomo default-editor adds (create-time only), and
+  hard delete (a Project deletion, not a membership change). Restore adds nobody and a test pins it.
+- **Accepted consequence: role changes get harder.** `users.ts` blocks a role change while the user holds an incompatible
+  membership, and that check includes archived Projects. An Admin who must clear such a blocker now has to restore the Project,
+  remove the member, and archive it again. Excluding archived memberships from that blocker is a separate change.
+- **External Editors are unchanged.** `hasProjectAccess` hides archived Projects from them, so the membership routes answer 403
+  before any archived logic runs (and they lack `editProject` anyway). The "404" in the #452 issue text is the Subtask routes'.
+- **The web latch refetches `detail` explicitly after `fail()`.** A `fail()` with nothing committed does not refresh the detail
+  (`project-data.ts` `settle`), so without the explicit `invalidateProjectSurfaces` the header would keep showing an editable
+  Team. Order matters: `fail()` first, then the invalidation. The 409 branch is checked before the confirmation loop and the
+  generic error branch in both `add()` and `remove()`, and shows no Retry (and none while read-only), since a retry could only 409.
+- **Focus goes to a `role="group" aria-label="Team"` wrapper (`tabIndex={-1}`), decided from a capture at request start.** The
+  capture covers the chips root and the portalled `ComboboxContent` (give it a ref; `root.contains()` alone misses the portal).
+  In a layout effect keyed on the latch, focus moves there only when the capture was true and the active element is `<body>`,
+  `:disabled`, disconnected or outside both. Never on load. Base UI focuses the input on a chip-remove press and an option press,
+  so a "focus elsewhere at request start" case cannot be driven through the real UI in a DOM test.
+- **The post-409 focus move fires only on genuinely lost focus** (`<body>`, disabled, disconnected, or an ancestor containing the Team control or its portal). Focus the user moved to another connected, enabled control while the request was pending is left alone; an "outside the control" test alone yanked it back.
+- **Read-only empty Team shows a "—"** (aria-hidden, header value tokens) beside an sr-only "No team assigned"; live Projects keep "Not assigned"
+  for non-editors. Same gap as #450: a Project archived and restored inside one refetch window keeps the latch until remount.
+- **Gantt Team popover race is accepted:** after the refusal the Gantt refetch turns `canEditTeam` false, the popover unmounts and
+  focus falls to `<body>`. The popover also passes `archived={Boolean(detail.archivedAt)}` from the loaded detail, so a Project
+  archived since the row was drawn opens read-only rather than waiting for a 409 (no DOM test: the Gantt suites do not drive the
+  Team popover).
+- **Header read-only Team is sized by the header, not the control:** `ProjectHeader` passes `readOnlyClassName="min-h-[44px]"` so the
+  chip row lines up with the 44px triggers beside it; the Gantt popover keeps the compact row. The notice is capped at `28ch` so it
+  wraps rather than widening the column. The notice class is shared with the Checklist line (`archived-notice.ts`).
+- **Header Stage on an archived Project** (and for any role that cannot move Stage) renders through `StageOption` instead of
+  `StatusBadge`, whose label is hard-wired to the `.ey` eyebrow class (uppercase, wide tracking). Same text, value styling.
+- **Out of scope, worth a follow-up:** the header's "Edit details" link and Deadline trigger still render for an Admin on an
+  archived Project.
+
 - **Entering read-only clears the assignee picker's own edit state, without its committing close.** The read-only branch removes the
   Combobox but `open`, `draftRef` and `baselineRef` are local, so a popup left open with picks would reopen on Restore and commit
   them. `SubtaskAssigneePicker` closes and resets the draft to baseline in an effect on `readOnly`, and sends no write.

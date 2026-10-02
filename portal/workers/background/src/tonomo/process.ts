@@ -2,7 +2,7 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { boardSchemaVariant, projectColumnsForVariant, type BoardSchemaVariant, type Database } from "@quincy/db";
 import { COLLECTION_RECEIVED_COUNT_SQL, appendToStageBottomExpr, collectionReceivedCountBindings, selectEffectiveDefaultEditorIds } from "@quincy/db";
 import { COLLECTION_KINDS, isCanonicalCalendarDate, isVerifiedTonomoShootDateSource, normaliseAddressKey, normalisePath, parseTonomoOrder, publishNotificationOutbox, TonomoParseError, type CollectionKind, type TonomoOrder } from "@quincy/shared";
-import { auditLog, collectionLinks, collections, projectMembers, projects, tonomoOrderTombstones, user, webhookEvents } from "@quincy/db/schema";
+import { auditLog, collectionLinks, collections, projects, tonomoOrderTombstones, user, webhookEvents } from "@quincy/db/schema";
 
 import type { Env } from "../env";
 import { dbFor, errorMessage } from "../lib/db";
@@ -309,10 +309,16 @@ async function assignPhotographers(env: Env, projectId: string, emails: string[]
       unmatched.push(email);
       continue;
     }
-    userIds.push(matched.id);
-    await db.insert(projectMembers).values({
-      id: crypto.randomUUID(), projectId, userId: matched.id, roleOnProject: "photographer", createdAt: new Date(),
-    }).onConflictDoNothing();
+    // #452: fenced on the Project still being live. An archive can land between findProject's read and this
+    // insert, and the membership writers all refuse an archived Project.
+    await env.DB.prepare(`
+      INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at)
+      SELECT ?, ?, ?, 'photographer', ?
+      WHERE EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)
+      ON CONFLICT(project_id, user_id, role_on_project) DO NOTHING
+    `).bind(crypto.randomUUID(), projectId, matched.id, Date.now(), projectId).run();
+    const member = await env.DB.prepare("SELECT 1 AS present FROM project_members WHERE project_id = ? AND user_id = ? AND role_on_project = 'photographer'").bind(projectId, matched.id).first();
+    if (member) userIds.push(matched.id);
   }
   return { userIds, warning: unmatched.length ? `No active user matches photographers: ${unmatched.join(", ")}` : null };
 }

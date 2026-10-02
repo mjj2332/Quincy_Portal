@@ -1,4 +1,4 @@
-import { useCallback, useState, type Ref } from "react";
+import { useCallback, useId, useLayoutEffect, useRef, useState, type Ref } from "react";
 import type { Combobox as ComboboxPrimitive } from "@base-ui/react";
 import { AlertCircle, AlertTriangle, Loader2 } from "lucide-react";
 import type { ProjectMemberRole } from "@quincy/shared";
@@ -6,6 +6,7 @@ import { ApiError, apiDeleteWithBody, apiPutWithStatus } from "../lib/api";
 import { confirm } from "../lib/confirm";
 import { buttonClasses } from "./quincy/Button";
 import { cn } from "../lib/utils";
+import { ARCHIVED_NOTICE_CLASS } from "./archived-notice";
 import {
   beginProjectMembershipMutation,
   invalidateProjectSurfaces,
@@ -109,6 +110,12 @@ function teamChipStateClasses(dataState: TeamChipDataState) {
   }
 }
 
+/** #452: the server refuses every membership write on an archived Project with this 409 (it supersedes #446's removal code). */
+function isMembershipArchivedRefusal(error: unknown) { return error instanceof ApiError && error.status === 409 && details(error)?.code === "membership_project_archived"; }
+const ARCHIVED_TEAM_NOTICE = "Read-only while archived. Restore the project before changing the team.";
+/** Capped so a long notice wraps inside the Team column instead of widening it and shifting its neighbours. */
+const ARCHIVED_TEAM_NOTICE_CLASS = cn(ARCHIVED_NOTICE_CLASS, "max-w-[28ch]");
+
 function cellKey(roleOnProject: ProjectMemberRole, userId: string) { return `${roleOnProject}:${userId}`; }
 function roleLabel(roleOnProject: ProjectMemberRole) { return roleOnProject === "photographer" ? "Photographer" : "Editor"; }
 function shortRoleTag(roleOnProject: ProjectMemberRole) { return roleOnProject === "photographer" ? "Photo" : "Edit"; }
@@ -133,7 +140,7 @@ function memberOption(member: ProjectMember): TeamOption {
 }
 
 /** Moved verbatim from `ProjectTeamControl.tsx` — see the file header for what changed and why. */
-function useTeamMutations(projectId: string) {
+function useTeamMutations(projectId: string, hooks: { onRequestStart: () => void; onArchivedRefusal: () => void }) {
   const queryClient = useOptionalProjectQueryClient();
   const terminateOnUnauthorized = useProjectAccessTermination();
   const [mutationStates, setMutationStates] = useState<Record<string, PersonMutationState>>({});
@@ -143,9 +150,25 @@ function useTeamMutations(projectId: string) {
     setMutationStates((current) => { const next = { ...current }; if (state) next[key] = state; else delete next[key]; return next; });
   }
 
+  /** Settled (error / conflict) states go when the Team turns read-only: a Retry there could only 409 again. */
+  const clearSettled = useCallback(() => setMutationStates((current) => {
+    const entries = Object.entries(current).filter(([, state]) => state.kind === "pending");
+    return entries.length === Object.keys(current).length ? current : Object.fromEntries(entries);
+  }), []);
+
+  /** The Project was archived under this write. `fail()` rolls the optimistic overlay back but, with nothing committed, does not
+   *  refresh the detail, so the refetch is explicit and comes after it. */
+  async function archivedRefusal(key: string, mutation: Awaited<ReturnType<typeof beginProjectMembershipMutation>> | undefined) {
+    await mutation?.fail();
+    setState(key, null);
+    hooks.onArchivedRefusal();
+    if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "collaboration-summary" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true });
+  }
+
   async function add(roleOnProject: ProjectMemberRole, candidate: ProjectAssignmentCandidate) {
     const key = cellKey(roleOnProject, candidate.id);
     if (pending.has(key) || !queryClient) return;
+    hooks.onRequestStart();
     setState(key, { kind: "pending", intent: "add" });
     const optimistic: ProjectMember = { id: `optimistic-${key}`, userId: candidate.id, roleOnProject, name: candidate.name, email: candidate.email, globalRole: candidate.globalRole, active: true, assignedSubtaskCount: 0 };
     let mutation: Awaited<ReturnType<typeof beginProjectMembershipMutation>> | undefined;
@@ -156,13 +179,16 @@ function useTeamMutations(projectId: string) {
       await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "activity" }], dashboard: true, calendar: true, gantt: true, people: true });
       setState(key, null);
     } catch (error) {
-      await mutation?.fail(); terminateOnUnauthorized(error); setState(key, { kind: "error", retry: "add", role: roleOnProject, candidate, message: error instanceof Error ? error.message : "Assignment could not be added." });
+      terminateOnUnauthorized(error);
+      if (isMembershipArchivedRefusal(error)) { await archivedRefusal(key, mutation); return; }
+      await mutation?.fail(); setState(key, { kind: "error", retry: "add", role: roleOnProject, candidate, message: error instanceof Error ? error.message : "Assignment could not be added." });
     }
   }
 
   async function remove(member: ProjectMember) {
     const key = cellKey(member.roleOnProject, member.userId);
     if (pending.has(key) || !queryClient) return;
+    hooks.onRequestStart();
     let confirmedCount: number | null = null;
     while (true) {
       setState(key, { kind: "pending", intent: "remove" });
@@ -180,6 +206,7 @@ function useTeamMutations(projectId: string) {
         return;
       } catch (error) {
         const payload = details(error);
+        if (isMembershipArchivedRefusal(error)) { await archivedRefusal(key, mutation); return; }
         if (error instanceof ApiError && error.status === 422 && payload?.code === "subtask_assignment_confirmation_required") {
           await mutation?.fail();
           if (typeof payload.assignmentCount !== "number") {
@@ -206,7 +233,7 @@ function useTeamMutations(projectId: string) {
     }
   }
 
-  return { mutationStates, pending, add, remove };
+  return { mutationStates, pending, add, remove, clearSettled };
 }
 
 /** Small icon + sr-only label per non-idle mutation state, on both the real chip and the
@@ -260,10 +287,44 @@ function TeamMoreToggle({ hiddenCount, expanded, onToggle }: { hiddenCount: numb
   </button>;
 }
 
-export function ProjectTeamCombobox({ projectId, members, canEdit, inputRef }: { projectId: string; members: ProjectMember[]; canEdit: boolean; /** #365: lets a hosting popover focus the input (the first chip × is a Tab stop and would otherwise take initial focus). */ inputRef?: Ref<HTMLInputElement> }) {
+export function ProjectTeamCombobox({ projectId, members, canEdit, archived = false, readOnlyClassName, inputRef }: { projectId: string; members: ProjectMember[]; canEdit: boolean; /** #452: an archived Project's Team is read-only. Also latched on from a 409 `membership_project_archived`, until this goes true to false (Restore). */ archived?: boolean; /** The read-only row only (an archived or live read-only Team); the header sizes it to its 44px controls. */ readOnlyClassName?: string; /** #365: lets a hosting popover focus the input (the first chip × is a Tab stop and would otherwise take initial focus). */ inputRef?: Ref<HTMLInputElement> }) {
   const anchor = useComboboxAnchor();
-  const candidatesQuery = useProjectAssignmentCandidatesQuery(canEdit);
-  const { mutationStates, pending, add, remove } = useTeamMutations(projectId);
+  const [latched, setLatched] = useState(false);
+  const readOnly = archived || latched;
+  const editable = canEdit && !readOnly;
+  const candidatesQuery = useProjectAssignmentCandidatesQuery(editable);
+  const noticeId = useId();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const readOnlyRef = useRef<HTMLDivElement>(null);
+  const priorArchived = useRef(archived);
+  const priorReadOnly = useRef(readOnly);
+  const focusAtRequest = useRef(false);
+  const focusAfterFlip = useRef<{ inControl: boolean } | null>(null);
+  // The picker's list is portalled, so `root.contains()` alone misses focus that is inside it.
+  const focusInControl = () => { const active = document.activeElement; return Boolean(active && (rootRef.current?.contains(active) || contentRef.current?.contains(active))); };
+  const { mutationStates, pending, add, remove, clearSettled } = useTeamMutations(projectId, {
+    onRequestStart: () => { focusAtRequest.current = focusInControl(); },
+    onArchivedRefusal: () => { focusAfterFlip.current = { inControl: focusAtRequest.current }; setLatched(true); },
+  });
+
+  // Restore: the prop goes true to false and the latch with it. (A Project archived and restored inside one refetch window keeps the latch until remount.)
+  useLayoutEffect(() => { const was = priorArchived.current; priorArchived.current = archived; if (was && !archived) setLatched(false); }, [archived]);
+  // Whatever turned the Team read-only (a refusal, or the prop arriving through a refetch), an earlier error's Retry could only 409 again.
+  useLayoutEffect(() => { const was = priorReadOnly.current; priorReadOnly.current = readOnly; if (!was && readOnly) clearSettled(); }, [readOnly, clearSettled]);
+  // Lost focus is decided from the capture taken when the request started, only on a refusal-driven flip, never on load: the controls
+  // unmount in the flip commit, leaving focus on <body> (or a disabled control) unless it is moved to the always-mounted group.
+  useLayoutEffect(() => {
+    const flip = focusAfterFlip.current;
+    if (!latched || !flip) return;
+    focusAfterFlip.current = null;
+    if (!flip.inControl) return;
+    const active = document.activeElement;
+    // Focus is lost when it sits on <body>, a disabled or disconnected node, or an ancestor that contains the Team control (a focus manager
+    // reclaiming it). Another connected, enabled control the user moved to while the request was pending is theirs: leave it.
+    const reclaimed = !!active && active !== document.body && (active.contains(rootRef.current) || active.contains(readOnlyRef.current) || active.contains(contentRef.current));
+    if (!active || active === document.body || !active.isConnected || active.matches(":disabled") || (reclaimed && active !== readOnlyRef.current)) readOnlyRef.current?.focus();
+  }, [latched]);
   const [pendingRemoveSnapshots, setPendingRemoveSnapshots] = useState<Record<string, ProjectMember>>({});
   const [expanded, setExpanded] = useState(false);
 
@@ -353,10 +414,10 @@ export function ProjectTeamCombobox({ projectId, members, canEdit, inputRef }: {
     return { dataState, isPending, messageId, name, roleTag };
   }
 
-  return <div className="grid gap-[var(--space-3)]" data-testid="project-team-control">
-    {canEdit && candidatesQuery.isError && <p className={PROJECT_TEAM_MESSAGE} role="alert">Candidates could not be loaded. {candidatesQuery.error instanceof Error ? candidatesQuery.error.message : "Try again shortly."}</p>}
+  return <div ref={rootRef} className="grid gap-[var(--space-3)]" data-testid="project-team-control">
+    {editable && candidatesQuery.isError && <p className={PROJECT_TEAM_MESSAGE} role="alert">Candidates could not be loaded. {candidatesQuery.error instanceof Error ? candidatesQuery.error.message : "Try again shortly."}</p>}
 
-    {canEdit ? <Combobox
+    {editable ? <Combobox
       multiple
       items={groups}
       value={value}
@@ -423,7 +484,7 @@ export function ProjectTeamCombobox({ projectId, members, canEdit, inputRef }: {
       {/* #213 follow-up: the chips box is now content-sized, so the list no longer copies its width —
        *  a one-member box would give an unusably narrow list. Prototype 2a's list is 300px; it
        *  still never runs narrower than its anchor or wider than the viewport. */}
-      <ComboboxContent anchor={anchor} className="min-w-[max(var(--anchor-width),300px)] max-w-[calc(100vw-2*var(--space-4))]">
+      <ComboboxContent ref={contentRef} anchor={anchor} className="min-w-[max(var(--anchor-width),300px)] max-w-[calc(100vw-2*var(--space-4))]">
         <ComboboxEmpty>No eligible people match.</ComboboxEmpty>
         <ComboboxList aria-label="Team candidates">
           {(group: (typeof groups)[number]) => <ComboboxGroup key={group.value} items={group.items}>
@@ -444,7 +505,12 @@ export function ProjectTeamCombobox({ projectId, members, canEdit, inputRef }: {
           </ComboboxGroup>}
         </ComboboxList>
       </ComboboxContent>
-    </Combobox> : <div className="flex flex-wrap items-center gap-1.5">
+    </Combobox> : <div
+      // Only an archived (or latched) Team gets the named group: the focus target, and the anchor for the notice. A live read-only Team keeps its plain row.
+      {...(readOnly ? { role: "group", "aria-label": "Team", tabIndex: -1, "aria-describedby": latched ? noticeId : undefined } : {})}
+      ref={readOnlyRef}
+      className={cn("flex flex-wrap items-center gap-1.5 outline-none focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-2", readOnlyClassName)}
+    >
       {displayed.length ? <>
         {visible.map((option) => {
           const { dataState, messageId, name, roleTag } = chipProps(option);
@@ -454,21 +520,25 @@ export function ProjectTeamCombobox({ projectId, members, canEdit, inputRef }: {
             data-state={dataState}
             aria-describedby={messageId}
             title={`${name} · ${roleLabel(option.role)}`}
-            className={cn(TEAM_CHIP, teamChipStateClasses(dataState))}
+            className={cn(TEAM_CHIP, teamChipStateClasses(dataState), readOnly && "max-[721px]:min-h-0")}
           >
             <TeamChipContent option={option} dataState={dataState} roleTag={roleTag} />
           </span>;
         })}
         <TeamMoreToggle hiddenCount={hiddenCount} expanded={effectiveExpanded} onToggle={() => setExpanded(!effectiveExpanded)} />
-      </> : <p className="m-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">Not assigned</p>}
+      </> : readOnly
+        // #452: an empty read-only Team shows a dash, like the header's Client; the visible mark is hidden from assistive tech, which reads the sr-only name.
+        ? <><span className="sr-only">No team assigned</span><span aria-hidden="true" className="[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground">—</span></>
+        : <p className="m-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">Not assigned</p>}
     </div>}
+    {latched && <p id={noticeId} role="status" className={ARCHIVED_TEAM_NOTICE_CLASS}>{ARCHIVED_TEAM_NOTICE}</p>}
 
     {Object.entries(mutationStates).filter(([, state]) => state.kind !== "pending").map(([key, state]) => {
       if (state.kind === "pending") return null;
       const name = state.retry === "add" ? displayName(state.candidate.name, state.candidate.email) : displayName(state.member.name, state.member.email);
       return <div key={key} id={`project-member-message-${key}`} data-testid={`project-member-message-${key}`} role="alert" className={PROJECT_TEAM_MESSAGE}>
         {name}: {state.message}
-        {state.kind === "error" && <button type="button" className={buttonClasses("text", { className: "ml-[var(--space-2)] min-h-[44px]" })} onClick={() => state.retry === "add" ? void add(state.role, state.candidate) : void removeWithSnapshot(state.member)}>Retry</button>}
+        {state.kind === "error" && !readOnly && <button type="button" className={buttonClasses("text", { className: "ml-[var(--space-2)] min-h-[44px]" })} onClick={() => state.retry === "add" ? void add(state.role, state.candidate) : void removeWithSnapshot(state.member)}>Retry</button>}
       </div>;
     })}
   </div>;

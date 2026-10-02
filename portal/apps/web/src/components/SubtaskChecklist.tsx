@@ -13,6 +13,7 @@ import { checklistScheduleToDto, normalizeChecklistSchedule, SUBTASK_REMINDER_DE
 import { reorderNeighbors } from "../lib/reorder-neighbors";
 import { confirm } from "../lib/confirm";
 import { cn } from "../lib/utils";
+import { ARCHIVED_NOTICE_CLASS } from "./archived-notice";
 import { Eyebrow } from "./quincy/Eyebrow";
 import { EmptyState } from "./quincy/EmptyState";
 import { Input } from "./reui/input";
@@ -246,7 +247,7 @@ export function SubtaskChecklist({ projectId, onAccessFailure, layout = "rail", 
         <CollapsibleTrigger ref={collapseTriggerRef} data-disclosure="" render={<IconButton aria-label={open ? "Collapse checklist" : "Expand checklist"} />}>{open ? "−" : "+"}</CollapsibleTrigger>
       </header>
       <Progress value={doneCount} max={Math.max(total, 1)} aria-label="Checklist progress" getAriaValueText={() => `${doneCount} of ${total} complete`} className="gap-0" />
-      <div className="min-h-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)]" aria-live="polite">{readOnly && <p className="m-0 [font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">{ARCHIVED_COPY}</p>}{notice && <span className="text-destructive">{notice}</span>}</div>
+      <div className="min-h-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)]" aria-live="polite">{readOnly && <p className={ARCHIVED_NOTICE_CLASS}>{ARCHIVED_COPY}</p>}{notice && <span className="text-destructive">{notice}</span>}</div>
       <CollapsibleContent keepMounted className="grid gap-[var(--space-3)]">{loading ? <EmptyState aria-live="polite" size="compact" title="Loading checklist…" /> : <>
         <DndContext sensors={sensors} onDragStart={() => { setDragging(true); setActivePopover(null); }} onDragEnd={(event) => void onDragEnd(event)}>
           <SortableContext items={openItems.map((item) => item.id)} strategy={verticalListSortingStrategy}><div>{openItems.map((item) => rowFor(item, !readOnly))}</div></SortableContext>
