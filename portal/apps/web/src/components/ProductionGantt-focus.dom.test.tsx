@@ -218,6 +218,18 @@ describe("ProductionGantt — landing on a named Project (#464)", () => {
     expect(settled).toHaveLength(1);
   });
 
+  it("1b. the focused row link draws its ring inset on the tokens, so the street cell's overflow cannot clip it", async () => {
+    await mount({ projectId: pid(5), token: 1 });
+    const link = [...host.querySelectorAll("a")].find((a) => a.textContent === streetOf(5));
+    expect(link).toBeDefined();
+    const classes = (link as HTMLElement).className.split(/\s+/);
+    expect(classes).toContain("focus-visible:-outline-offset-2");
+    expect(classes).toContain("focus-visible:outline-ring");
+    expect(classes).toContain("focus-visible:outline-[length:var(--border-width-bold)]");
+    expect(classes).not.toContain("focus-visible:outline-offset-2");
+    expect(classes).not.toContain("focus-visible:outline-current");
+  });
+
   it("2. without a focus request nothing is highlighted and the #415 landing is unchanged", async () => {
     await mount(null);
     expect(scrollTops(host)).toEqual([offsetOfIndex(2), offsetOfIndex(2)]);

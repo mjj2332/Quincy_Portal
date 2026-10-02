@@ -316,6 +316,9 @@ const NEAR_BOTTOM_THRESHOLD_PX = 240;
 /** A real 44px hit area on coarse pointers and phones, compact on desktop. */
 const COARSE_TAP_TARGET = "pointer-coarse:min-w-[44px] pointer-coarse:min-h-[44px] max-[720px]:min-w-[44px]";
 
+/** #464: the street cell's \`truncate\` (overflow:hidden) clips an outset ring, so the row link's focus ring is drawn inset. */
+const GANTT_ROW_LINK = "truncate focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring focus-visible:-outline-offset-2";
+
 const NO_LOADED_PROJECTS: readonly GanttProjectRowDto[] = [];
 const NO_SELECTED_ROWS: string[] = [];
 
@@ -537,7 +540,7 @@ function GanttResourceLabel({
         {projectHrefFor && resource.id.startsWith("project:") ? (
           <ProjectCalendarAnchor
             testId="gantt-project-link"
-            className="truncate"
+            className={GANTT_ROW_LINK}
             href={projectHrefFor(resource.id.slice("project:".length))}
             onOpenProject={() => onOpenProject?.(resource.id.slice("project:".length))}
           >{resource.title}</ProjectCalendarAnchor>
