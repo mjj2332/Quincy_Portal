@@ -9,7 +9,9 @@ import { act, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { staffPathFor, type DashboardCalendarState } from "@quincy/shared";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Dashboard } from "./Dashboard";
+import { projectDataKeys } from "../lib/project-data";
 import { locationStore } from "../lib/router";
 import { confirmStore } from "../lib/confirm";
 import { __resetDashboardSearchStoreForTest } from "../lib/dashboard-search-store";
@@ -50,10 +52,12 @@ const liveRegionText = () => [...document.querySelectorAll('[data-testid="dashbo
 const notice = () => document.querySelector<HTMLElement>('[data-testid="dashboard-focus-notice"]');
 const noticeButton = (name: string) => [...(notice()?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((button) => button.textContent === name);
 
+let testClient: QueryClient | null = null;
 function Harness() {
   const history = locationStore();
   useSyncExternalStore(history.subscribe, history.getLocation, () => "/");
-  return <Dashboard currentUserId="user-1" role={authRole.value} authorizationEpoch={0} />;
+  const dashboard = <Dashboard currentUserId="user-1" role={authRole.value} authorizationEpoch={0} />;
+  return testClient ? <QueryClientProvider client={testClient}>{dashboard}</QueryClientProvider> : dashboard;
 }
 
 describe("Dashboard focus orchestration (#464)", () => {
@@ -61,6 +65,7 @@ describe("Dashboard focus orchestration (#464)", () => {
   let root: Root;
 
   beforeEach(async () => {
+    testClient = null;
     authRole.value = "admin";
     surfaces.gantt = null;
     surfaces.calendar = null;
@@ -154,6 +159,24 @@ describe("Dashboard focus orchestration (#464)", () => {
     expect(liveRegionText()).not.toContain("Showing");
     await settle("gantt", ganttProps().focus!.token, { kind: "found", street: "12 Smith St" });
     expect(liveRegionText()).toContain("Showing 12 Smith St in Timeline.");
+  });
+
+  it("a Calendar landing with only a shoot date is an announcement, not the filters notice", async () => {
+    testClient = new QueryClient();
+    testClient.setQueryData(projectDataKeys.detail(PROJECT), { street: "1 Calendar Street", shootDate: "2026-08-12", deadlineSchedule: { deadline: null } });
+    await mountAt(staffPathFor({ kind: "dashboard", calendar: calendarState, focus: PROJECT }));
+    await settle("calendar", calendarProps().focus!.token, { kind: "hidden" });
+    expect(liveRegionText()).toContain("No Deadline or scheduled tasks; showing the shoot date.");
+    expect(notice()).toBeNull();
+    expect(live()).toBe(staffPathFor({ kind: "dashboard", calendar: calendarState }));
+  });
+
+  it("a Calendar landing hidden by filters still gets the notice when the Project has a Deadline", async () => {
+    testClient = new QueryClient();
+    testClient.setQueryData(projectDataKeys.detail(PROJECT), { street: "1 Calendar Street", shootDate: "2026-08-12", deadlineSchedule: { deadline: { localCivil: "2026-08-12T09:00" } } });
+    await mountAt(staffPathFor({ kind: "dashboard", calendar: calendarState, focus: PROJECT }));
+    await settle("calendar", calendarProps().focus!.token, { kind: "hidden" });
+    expect(notice()?.textContent).toContain("1 Calendar Street");
   });
 
   it("a stale token's outcome is ignored and does not touch a newer focus", async () => {

@@ -26,7 +26,7 @@ import { EmptyState } from "../components/quincy/EmptyState";
 import { Notice } from "../components/quincy/Notice";
 import { ViewLoadBoundary } from "../components/ViewLoadBoundary";
 import { cn } from "../lib/utils";
-import { invalidateProjectSurfaces, projectDataKeys, useOptionalProjectQueryClient, type ProjectDetail } from "../lib/project-data";
+import { invalidateProjectSurfaces, projectDataKeys, useOptionalProjectQueryClient, type ProjectDetail, type ProjectSubtask } from "../lib/project-data";
 import { createDashboardBoardInvalidatedMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
 import { markDashboardData } from "../lib/boot-timing";
 import { dashboardProjectsKey, dashboardProjectsKeyPrefix, isDashboardProjectsQueryFor, isFilteredDashboardProjectsQuery, useDashboardProjectSearch, useDashboardProjects } from "../lib/dashboard-projects";
@@ -767,9 +767,17 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     }
     // hidden / too-many: the Project is not among what these filters draw. The street comes from the
     // cache, read without an observer (no fetch, no subscription).
-    const street = queryClient?.getQueryData<ProjectDetail>(projectDataKeys.detail(request.projectId))?.street ?? null;
+    const detail = queryClient?.getQueryData<ProjectDetail>(projectDataKeys.detail(request.projectId));
+    // A Project with no Deadline and no scheduled task is shown by its shoot date, which has no chip:
+    // that is the plan's announcement, not "hidden by filters" (Clear filters could never fix it).
+    if (view === "calendar" && detail && !detail.deadlineSchedule?.deadline && detail.shootDate && detail.shootDate === calendarState?.date
+      && !(queryClient?.getQueryData<ProjectSubtask[]>(projectDataKeys.subtasks(request.projectId)) ?? []).some((task) => task.schedule?.start?.localCivil)) {
+      setAnnouncement("No Deadline or scheduled tasks; showing the shoot date.");
+      return;
+    }
+    const street = detail?.street ?? null;
     setFocusNotice({ projectId: request.projectId, view, street, at: token });
-  }, [focusRequest, history, queryClient]);
+  }, [calendarState?.date, focusRequest, history, queryClient]);
   const handleGanttFocusSettled = useCallback((token: number, outcome: ProductionGanttFocusOutcome) => handleFocusSettled("timeline", token, outcome), [handleFocusSettled]);
   const handleCalendarFocusSettled = useCallback((token: number, outcome: ProductionEventCalendarFocusOutcome) => handleFocusSettled("calendar", token, outcome), [handleFocusSettled]);
 
