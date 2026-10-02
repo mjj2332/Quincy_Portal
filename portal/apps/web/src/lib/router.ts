@@ -1,6 +1,6 @@
-import { canonicalLegacyDashboardLocation, dashboardSearchOf, parseStaffLocation, parseStaffPathname, projectNotificationRoute, safeStaffDestination, staffPathFor, type DashboardCalendarFacetRoute, type DashboardViewRoute, type DashboardRoute, type StaffRoute } from "@quincy/shared";
+import { canonicalLegacyDashboardLocation, dashboardFocusOf, dashboardSearchOf, parseStaffLocation, parseStaffPathname, projectNotificationRoute, safeStaffDestination, staffPathFor, withoutDashboardFocus, type DashboardCalendarFacetRoute, type DashboardViewRoute, type DashboardRoute, type StaffRoute } from "@quincy/shared";
 
-export { canonicalLegacyDashboardLocation, dashboardSearchOf, parseStaffLocation, parseStaffPathname, projectNotificationRoute, safeStaffDestination, staffPathFor, type DashboardCalendarFacetRoute, type DashboardViewRoute, type DashboardRoute, type StaffRoute };
+export { canonicalLegacyDashboardLocation, dashboardFocusOf, dashboardSearchOf, parseStaffLocation, parseStaffPathname, projectNotificationRoute, safeStaffDestination, staffPathFor, withoutDashboardFocus, type DashboardCalendarFacetRoute, type DashboardViewRoute, type DashboardRoute, type StaffRoute };
 
 export type HistorySource = {
   location: Pick<Location, "pathname" | "search">;
@@ -136,7 +136,7 @@ export function stripDashboardSearchFromLocation(location: string): string {
   // this only skips a redundant round trip, it does not change what gets returned.
   if ("calendar" in route) {
     if (dashboardSearchOf(route) === "") return location;
-    return staffPathFor({ kind: "dashboard", calendar: { ...route.calendar, search: "" } });
+    return staffPathFor({ ...route, calendar: { ...route.calendar, search: "" } });
   }
   // #217 fix round 6, item 2 (Sol re-review, NIT). Always re-serialises from the PARSED route,
   // never the raw input string — a whitespace-only `q` (`/?q=+++`) normalises to NO search at
