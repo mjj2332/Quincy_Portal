@@ -54,12 +54,21 @@ type ProjectDeadlineControlProps = {
   onClose?: () => void;
   /** Move focus into the popup when it mounts (the Timeline cell mounts it after the detail loads). */
   focusOnMount?: boolean;
+  /** #455: a write is about to be sent (Apply, Clear or Resume). The header captures where focus is, so it can tell later whether the refusal's flip lost it. */
+  onRequestStart?: () => void;
+  /** #455: the server refused a write with 409 `deadline_project_archived`. Reported once per refusal; the header latches its read-only state on it. */
+  onArchivedRefusal?: () => void;
 };
 
 type SaveResponse = { changed: boolean; current: ProjectDeadlineSchedule; eventIntent: unknown; publicationIds: string[] };
 
 /** What a rejected Apply attempted, kept so a conflict can offer it back: a set, or a clear. */
 type Attempt = { localCivil: string | null; disambiguation?: "earlier" | "later"; offsets: number[] };
+
+/** #455: 409 `deadline_project_archived` (lib/project-deadline.ts). A version conflict is also a 409 and is not this. */
+function isDeadlineArchivedRefusal(reason: unknown): boolean {
+  return reason instanceof ApiError && reason.status === 409 && Boolean(reason.details) && typeof reason.details === "object" && (reason.details as { code?: unknown }).code === "deadline_project_archived";
+}
 
 /** Clear's confirm was declined: the popup stays open with no message. */
 class ApplyDeclined extends Error {}
@@ -74,7 +83,7 @@ function scheduleText(schedule: ProjectDeadlineSchedule): string {
   return `${schedule.deadline.localCivil.replace("T", " ")} · ${schedule.reminderOffsetsMinutes.length ? schedule.reminderOffsetsMinutes.slice(0, 8).map(deadlineOffsetLabel).join(", ") : "no advance reminders"}`;
 }
 
-export function ProjectDeadlineControl({ projectId, schedule, canEdit, onClose, focusOnMount }: ProjectDeadlineControlProps) {
+export function ProjectDeadlineControl({ projectId, schedule, canEdit, onClose, focusOnMount, onRequestStart, onArchivedRefusal }: ProjectDeadlineControlProps) {
   const queryClient = useOptionalProjectQueryClient();
   const runtime = useProjectQueryRuntime();
   const [visibleSchedule, setVisibleSchedule] = useState(schedule);
@@ -89,7 +98,9 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onClose, 
   // second request started while one is in flight would lose its conflict and draft.
   const inFlight = useRef(false);
 
-  const inactive = visibleSchedule.state === "inactive_delivered" || visibleSchedule.state === "inactive_archived";
+  // #455: a refusal as archived flips this editor read-only in place, for a caller with no header to do it (the Gantt cell).
+  const [refusedArchived, setRefusedArchived] = useState(false);
+  const inactive = refusedArchived || visibleSchedule.state === "inactive_delivered" || visibleSchedule.state === "inactive_archived";
   const canWrite = canEdit && !inactive;
 
   // The draft is only seeded when the popup mounts: a background refresh updates the facts shown,
@@ -127,6 +138,17 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onClose, 
     cycleOwner();
   }
 
+  /**
+   * #455: the Project was archived under this editor. Report it, flip read-only, and release the query owner BEFORE invalidating the
+   * detail: the invalidation is deferred while an owner holds the key, and the header would keep showing the live Deadline.
+   */
+  async function refusedAsArchived() {
+    setRefusedArchived(true);
+    onArchivedRefusal?.();
+    ownerRelease.current?.(); ownerRelease.current = null;
+    if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true });
+  }
+
   function conflictFrom(reason: unknown): ProjectDeadlineSchedule | null {
     return reason instanceof ApiError && reason.status === 409 && reason.details && typeof reason.details === "object" && "current" in reason.details
       ? (reason.details as { current: ProjectDeadlineSchedule }).current
@@ -136,9 +158,11 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onClose, 
   async function save(body: SaveProjectDeadlineRequest, attempted: Attempt) {
     setError(null);
     try {
+      onRequestStart?.();
       const response = await apiPut<SaveResponse, SaveProjectDeadlineRequest>(`/api/projects/${encodeURIComponent(projectId)}/deadline`, body);
       await commit(response.current);
     } catch (reason) {
+      if (isDeadlineArchivedRefusal(reason)) { await refusedAsArchived(); throw new ApplyDeclined(); }
       const latest = conflictFrom(reason);
       if (latest) { setConflict(latest); setAttempt(attempted); }
       setError(reason instanceof Error ? reason.message : "Deadline could not be saved.");
@@ -179,6 +203,7 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onClose, 
   async function resumeNow(deadline: NonNullable<ProjectDeadlineSchedule["deadline"]>) {
     setError(null);
     try {
+      onRequestStart?.();
       const response = await apiPut<SaveResponse, SaveProjectDeadlineRequest>(`/api/projects/${encodeURIComponent(projectId)}/deadline`, {
         expectedVersion: visibleSchedule.version,
         deadline: { localCivil: deadline.localCivil, disambiguation: deadline.fold === 1 ? "later" : "earlier" },
@@ -188,6 +213,7 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onClose, 
       await commit(response.current);
       if (mounted.current) onClose?.();
     } catch (reason) {
+      if (isDeadlineArchivedRefusal(reason)) { await refusedAsArchived(); return; }
       const latest = conflictFrom(reason);
       if (latest) setConflict(latest);
       setError(reason instanceof Error ? reason.message : "Reminders could not be resumed.");
