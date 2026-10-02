@@ -116,7 +116,7 @@ function externalDetailFixture() {
   return {
     id: PROJECT_ID,
     address: { street: "12 Example St", suburb: "Suburbia", postcode: "2000" },
-    agencyDisplayName: null, agentDisplayName: null, shootDate: null, timeWindow: null,
+    agencyDisplayName: null, agentDisplayName: null, shootDate: "2026-07-20", timeWindow: null,
     stageKey: "raw_review", boardRevision: 0, deadline: null, productionNotes: null,
     services: COLLECTIONS, cover: null, contractEnabled: true, editedUploadAvailable: true,
     collections: COLLECTIONS, members: [], editorFolderAttention: null,
@@ -446,6 +446,14 @@ describe("external-editor visibility inventory", () => {
 // `"rich-text-field": 1` (that group's test hook). Nothing else moved.
 // ---------------------------------------------------------------------------
 
+// Re-frozen, deliberately, for #464: the Project header gains the "Show in Calendar / Timeline" button
+// group (`quincy/ProjectShowIn.tsx`) on every tab, for both roles (both hold `viewProductionCalendar`).
+// Both literals gain `project-show-in`, `project-show-in-calendar`, `project-show-in-timeline`, the two
+// links' accessible names and the `link` (and, for the group itself, `group`) role. The external fixture's
+// `shootDate` is now set, as the admin fixture's is: with none the control correctly shows the disabled
+// "Nothing scheduled" state and its reason, which the admin fixture never shows, and the "never anything an
+// admin lacks" check would read that fixture difference as a leak. Nothing else in either literal moved.
+//
 const FROZEN_EXTERNAL_EDITOR = {
   "RAW": {
     "testids": {
@@ -455,6 +463,9 @@ const FROZEN_EXTERNAL_EDITOR = {
       "project-deadline-trigger": 1,
       "project-header": 1,
       "project-overview-tab": 6,
+      "project-show-in": 1,
+      "project-show-in-calendar": 1,
+      "project-show-in-timeline": 1,
       "project-team-control": 1,
       "project-workspace": 1,
       "toast-viewport": 1,
@@ -463,6 +474,8 @@ const FROZEN_EXTERNAL_EDITOR = {
     "roles": [
       "button",
       "combobox",
+      "group",
+      "link",
       "status",
       "tab",
       "tablist",
@@ -485,9 +498,11 @@ const FROZEN_EXTERNAL_EDITOR = {
       "Select all",
       "Select raw-1.jpg",
       "Select raw-2.jpg",
+      "Show in Calendar",
+      "Show in Timeline",
       "Video0",
       "[input]",
-      "\u2190 Dashboard"
+      "← Dashboard"
     ]
   },
   "Edited": {
@@ -498,6 +513,9 @@ const FROZEN_EXTERNAL_EDITOR = {
       "project-deadline-trigger": 1,
       "project-header": 1,
       "project-overview-tab": 6,
+      "project-show-in": 1,
+      "project-show-in-calendar": 1,
+      "project-show-in-timeline": 1,
       "project-team-control": 1,
       "project-workspace": 1,
       "toast-viewport": 1,
@@ -506,6 +524,8 @@ const FROZEN_EXTERNAL_EDITOR = {
     "roles": [
       "button",
       "combobox",
+      "group",
+      "link",
       "status",
       "tab",
       "tablist",
@@ -528,10 +548,12 @@ const FROZEN_EXTERNAL_EDITOR = {
       "Rated0",
       "Select all",
       "Select edited-1.jpg",
+      "Show in Calendar",
+      "Show in Timeline",
       "Video0",
       "[input:file]",
       "[input]",
-      "\u2190 Dashboard"
+      "← Dashboard"
     ]
   },
   "Video": {
@@ -541,6 +563,9 @@ const FROZEN_EXTERNAL_EDITOR = {
       "project-deadline-trigger": 1,
       "project-header": 1,
       "project-overview-tab": 6,
+      "project-show-in": 1,
+      "project-show-in-calendar": 1,
+      "project-show-in-timeline": 1,
       "project-team-control": 1,
       "project-workspace": 1,
       "toast-viewport": 1,
@@ -548,6 +573,8 @@ const FROZEN_EXTERNAL_EDITOR = {
     },
     "roles": [
       "combobox",
+      "group",
+      "link",
       "tab",
       "tablist",
       "tabpanel"
@@ -562,11 +589,13 @@ const FROZEN_EXTERNAL_EDITOR = {
       "Floorplan0",
       "Move project Stage",
       "RAW2",
+      "Show in Calendar",
+      "Show in Timeline",
       "Video0",
       "[input]",
       "[placeholder] Final walkthrough",
-      "[placeholder] https://vimeo.com/\u2026",
-      "\u2190 Dashboard"
+      "[placeholder] https://vimeo.com/…",
+      "← Dashboard"
     ]
   },
   "Floorplan": {
@@ -575,6 +604,9 @@ const FROZEN_EXTERNAL_EDITOR = {
       "project-deadline-trigger": 1,
       "project-header": 1,
       "project-overview-tab": 6,
+      "project-show-in": 1,
+      "project-show-in-calendar": 1,
+      "project-show-in-timeline": 1,
       "project-team-control": 1,
       "project-workspace": 1,
       "toast-viewport": 1,
@@ -582,6 +614,8 @@ const FROZEN_EXTERNAL_EDITOR = {
     },
     "roles": [
       "combobox",
+      "group",
+      "link",
       "tab",
       "tablist",
       "tabpanel"
@@ -595,11 +629,13 @@ const FROZEN_EXTERNAL_EDITOR = {
       "Floorplan0",
       "Move project Stage",
       "RAW2",
+      "Show in Calendar",
+      "Show in Timeline",
       "Upload floorplan",
       "Video0",
       "[input:file]",
       "[input]",
-      "\u2190 Dashboard"
+      "← Dashboard"
     ]
   },
   "Copy": {
@@ -608,6 +644,9 @@ const FROZEN_EXTERNAL_EDITOR = {
       "project-deadline-trigger": 1,
       "project-header": 1,
       "project-overview-tab": 6,
+      "project-show-in": 1,
+      "project-show-in-calendar": 1,
+      "project-show-in-timeline": 1,
       "project-team-control": 1,
       "project-workspace": 1,
       "toast-viewport": 1,
@@ -615,6 +654,8 @@ const FROZEN_EXTERNAL_EDITOR = {
     },
     "roles": [
       "combobox",
+      "group",
+      "link",
       "tab",
       "tablist",
       "tabpanel"
@@ -628,11 +669,13 @@ const FROZEN_EXTERNAL_EDITOR = {
       "Floorplan0",
       "Move project Stage",
       "RAW2",
+      "Show in Calendar",
+      "Show in Timeline",
       "Upload copy",
       "Video0",
       "[input:file]",
       "[input]",
-      "\u2190 Dashboard"
+      "← Dashboard"
     ]
   },
   "Collaboration": {
@@ -646,6 +689,9 @@ const FROZEN_EXTERNAL_EDITOR = {
       "project-deadline-trigger": 1,
       "project-header": 1,
       "project-overview-tab": 6,
+      "project-show-in": 1,
+      "project-show-in-calendar": 1,
+      "project-show-in-timeline": 1,
       "project-team-control": 1,
       "project-workspace": 1,
       "rich-text-field": 1,
@@ -656,6 +702,7 @@ const FROZEN_EXTERNAL_EDITOR = {
     "roles": [
       "combobox",
       "group",
+      "link",
       "presentation",
       "progressbar",
       "status",
@@ -686,13 +733,15 @@ const FROZEN_EXTERNAL_EDITOR = {
       "Post",
       "RAW2",
       "Redo",
+      "Show in Calendar",
+      "Show in Timeline",
       "Strikethrough",
       "Underline",
       "Undo",
       "Video0",
       "[div]",
       "[input]",
-      "\u2190 Dashboard"
+      "← Dashboard"
     ]
   }
 } as const satisfies TabInventories;
@@ -708,6 +757,9 @@ const FROZEN_ADMIN = {
       "project-dropbox-trigger": 1,
       "project-header": 1,
       "project-overview-tab": 6,
+      "project-show-in": 1,
+      "project-show-in-calendar": 1,
+      "project-show-in-timeline": 1,
       "project-team-control": 1,
       "project-workspace": 1,
       "toast-viewport": 1,
@@ -716,6 +768,8 @@ const FROZEN_ADMIN = {
     "roles": [
       "button",
       "combobox",
+      "group",
+      "link",
       "status",
       "tab",
       "tablist",
@@ -750,11 +804,13 @@ const FROZEN_ADMIN = {
       "Select raw-1.jpg",
       "Select raw-2.jpg",
       "Send 0 selected to AutoHDR",
+      "Show in Calendar",
+      "Show in Timeline",
       "Use as project cover",
       "Video0",
       "[input:file]",
       "[input]",
-      "\u2190 Dashboard"
+      "← Dashboard"
     ]
   },
   "Edited": {
@@ -766,6 +822,9 @@ const FROZEN_ADMIN = {
       "project-dropbox-trigger": 1,
       "project-header": 1,
       "project-overview-tab": 6,
+      "project-show-in": 1,
+      "project-show-in-calendar": 1,
+      "project-show-in-timeline": 1,
       "project-team-control": 1,
       "project-workspace": 1,
       "toast-viewport": 1,
@@ -774,6 +833,8 @@ const FROZEN_ADMIN = {
     "roles": [
       "button",
       "combobox",
+      "group",
+      "link",
       "status",
       "tab",
       "tablist",
@@ -800,11 +861,13 @@ const FROZEN_ADMIN = {
       "Rated0",
       "Select all",
       "Select edited-1.jpg",
+      "Show in Calendar",
+      "Show in Timeline",
       "Use as project cover",
       "Video0",
       "[input:file]",
       "[input]",
-      "\u2190 Dashboard"
+      "← Dashboard"
     ]
   },
   "Video": {
@@ -815,6 +878,9 @@ const FROZEN_ADMIN = {
       "project-dropbox-trigger": 1,
       "project-header": 1,
       "project-overview-tab": 6,
+      "project-show-in": 1,
+      "project-show-in-calendar": 1,
+      "project-show-in-timeline": 1,
       "project-team-control": 1,
       "project-workspace": 1,
       "toast-viewport": 1,
@@ -822,6 +888,8 @@ const FROZEN_ADMIN = {
     },
     "roles": [
       "combobox",
+      "group",
+      "link",
       "tab",
       "tablist",
       "tabpanel"
@@ -839,11 +907,13 @@ const FROZEN_ADMIN = {
       "Floorplan0",
       "Move project Stage",
       "RAW2",
+      "Show in Calendar",
+      "Show in Timeline",
       "Video0",
       "[input]",
       "[placeholder] Final walkthrough",
-      "[placeholder] https://vimeo.com/\u2026",
-      "\u2190 Dashboard"
+      "[placeholder] https://vimeo.com/…",
+      "← Dashboard"
     ]
   },
   "Floorplan": {
@@ -853,6 +923,9 @@ const FROZEN_ADMIN = {
       "project-dropbox-trigger": 1,
       "project-header": 1,
       "project-overview-tab": 6,
+      "project-show-in": 1,
+      "project-show-in-calendar": 1,
+      "project-show-in-timeline": 1,
       "project-team-control": 1,
       "project-workspace": 1,
       "toast-viewport": 1,
@@ -860,6 +933,8 @@ const FROZEN_ADMIN = {
     },
     "roles": [
       "combobox",
+      "group",
+      "link",
       "tab",
       "tablist",
       "tabpanel"
@@ -876,11 +951,13 @@ const FROZEN_ADMIN = {
       "Floorplan0",
       "Move project Stage",
       "RAW2",
+      "Show in Calendar",
+      "Show in Timeline",
       "Upload floorplan",
       "Video0",
       "[input:file]",
       "[input]",
-      "\u2190 Dashboard"
+      "← Dashboard"
     ]
   },
   "Copy": {
@@ -890,6 +967,9 @@ const FROZEN_ADMIN = {
       "project-dropbox-trigger": 1,
       "project-header": 1,
       "project-overview-tab": 6,
+      "project-show-in": 1,
+      "project-show-in-calendar": 1,
+      "project-show-in-timeline": 1,
       "project-team-control": 1,
       "project-workspace": 1,
       "toast-viewport": 1,
@@ -897,6 +977,8 @@ const FROZEN_ADMIN = {
     },
     "roles": [
       "combobox",
+      "group",
+      "link",
       "tab",
       "tablist",
       "tabpanel"
@@ -913,11 +995,13 @@ const FROZEN_ADMIN = {
       "Floorplan0",
       "Move project Stage",
       "RAW2",
+      "Show in Calendar",
+      "Show in Timeline",
       "Upload copy",
       "Video0",
       "[input:file]",
       "[input]",
-      "\u2190 Dashboard"
+      "← Dashboard"
     ]
   },
   "Collaboration": {
@@ -932,6 +1016,9 @@ const FROZEN_ADMIN = {
       "project-dropbox-trigger": 1,
       "project-header": 1,
       "project-overview-tab": 6,
+      "project-show-in": 1,
+      "project-show-in-calendar": 1,
+      "project-show-in-timeline": 1,
       "project-team-control": 1,
       "project-workspace": 1,
       "rich-text-field": 1,
@@ -942,6 +1029,7 @@ const FROZEN_ADMIN = {
     "roles": [
       "combobox",
       "group",
+      "link",
       "presentation",
       "progressbar",
       "status",
@@ -976,6 +1064,8 @@ const FROZEN_ADMIN = {
       "Project",
       "RAW2",
       "Redo",
+      "Show in Calendar",
+      "Show in Timeline",
       "Strikethrough",
       "System",
       "Underline",
@@ -983,7 +1073,7 @@ const FROZEN_ADMIN = {
       "Video0",
       "[div]",
       "[input]",
-      "\u2190 Dashboard"
+      "← Dashboard"
     ]
   }
 } as const satisfies TabInventories;
