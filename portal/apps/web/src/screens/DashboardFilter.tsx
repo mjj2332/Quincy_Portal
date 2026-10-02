@@ -62,7 +62,12 @@ import { CONTROL_HEIGHT } from "./DashboardViewBar";
  * at <=721px with the same accessible name.
  */
 
-const LABELS: Partial<FilterLabels> = { filtersLabel: "Dashboard filters", advancedFilter: "Filter" };
+/** `negated` reads "is not any of", not the upstream "not is any of" (ungrammatical, and truncated at 1280). */
+const LABELS: Partial<FilterLabels> = {
+  filtersLabel: "Dashboard filters",
+  advancedFilter: "Filter",
+  negated: (label) => (label.startsWith("is ") ? `is not ${label.slice(3)}` : `not ${label}`),
+};
 const RULE_MENU = { duplicate: true, negate: true } as const;
 const VALUE_MENU_CLASS = "w-60";
 const CAP_NOTICE = "Filters are limited to 20 rules and 3 levels.";
@@ -247,18 +252,18 @@ export function DashboardFilter({ filter, onFilterChange, stageOptions, canFilte
       labels={LABELS}
       ruleMenu={RULE_MENU}
       disabled={disabled}
-      className="[--filter-field-width:9rem] [--filter-operator-width:6.5rem] [--filter-value-width:10.5rem]"
+      className="[--filter-field-width:9rem] [--filter-operator-width:7.5rem] [--filter-value-width:10.5rem]"
       trigger={
         <Button
           type="button"
           variant="secondary"
           aria-label={applied > 0 ? `Filter, ${applied} ${applied === 1 ? "rule" : "rules"}` : "Filter"}
           data-testid="dashboard-filter-trigger"
-          className={cn("shrink-0 scroll-mt-[calc(var(--shell-header-height)+var(--space-4))]", CONTROL_HEIGHT, "max-[721px]:w-[44px] max-[721px]:min-w-[44px] max-[721px]:px-0", className)}
+          className={cn("shrink-0 scroll-mt-[calc(var(--shell-header-height)+var(--space-4))]", CONTROL_HEIGHT, "max-[721px]:min-w-[44px] max-[721px]:px-2", className)}
         >
           <FilterIcon aria-hidden="true" />
           <span className="max-[721px]:hidden">Filter</span>
-          {applied > 0 ? <Badge variant="primary-light" radius="full" className="tabular-nums max-[721px]:hidden">{applied}</Badge> : null}
+          {applied > 0 ? <Badge variant="primary-light" radius="full" className="tabular-nums">{applied}</Badge> : null}
         </Button>
       }
     />

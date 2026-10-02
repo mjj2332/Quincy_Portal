@@ -446,4 +446,13 @@ describe("the file scan itself", () => {
     expect(onDisk(filtersDir)).toEqual([...FILTERS_FILES].sort());
     expect(onDisk(cascaderDir)).toEqual([...CASCADER_FILES].sort());
   });
+
+  it("phone stacking (#461): the row bands wrap and the cells grow below the track breakpoint", () => {
+    const text = readFileSync(join(filtersDir, "filters-advanced.tsx"), "utf8");
+    expect(text).toContain('ROW_BAND_CLASS = "flex min-w-0 items-center gap-1.5 @max-[26rem]/track:flex-wrap"');
+    expect(text).toContain("@max-[26rem]/track:order-last @max-[26rem]/track:basis-full");
+    for (const cell of ["FIELD", "OPERATOR", "VALUE"]) expect(text).toMatch(new RegExp(`${cell}_CELL_CLASS = "[^"]*@max-\\[26rem\\]/track:grow"`));
+    expect(text).toContain("@max-[26rem]/track:justify-start");
+    expect(text).toContain("max-w-[calc(100vw-2*var(--space-4))]");
+  });
 });

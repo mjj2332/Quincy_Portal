@@ -541,6 +541,24 @@ describe("Dashboard shared Filter (#428)", () => {
       expect(lastProjectRequest()).toContain("f=");
     });
 
+    it("keeps the count badge on the phone trigger (only the word Filter hides)", async () => {
+      await renderAt(treeUrl("table"));
+      const button = trigger()!;
+      const badge = [...button.querySelectorAll<HTMLElement>("span")].find((node) => node.textContent === "2")!;
+      expect(badge).toBeDefined();
+      expect(badge.className).not.toContain("max-[721px]:hidden");
+      const word = [...button.querySelectorAll<HTMLElement>("span")].find((node) => node.textContent === "Filter")!;
+      expect(word.className).toContain("max-[721px]:hidden");
+    });
+
+    it("reads a negated rule as \"is not any of\", not \"not is any of\"", async () => {
+      const negated: DashboardFilterTree = { kind: "group", op: "and", children: [{ kind: "leaf", field: "priority", values: ["5"], negated: true }, { kind: "leaf", field: "stages", values: ["raw_review"] }] };
+      await renderAt(treeUrl("table", negated));
+      const names = await chipNames();
+      expect(names).toContain("Priority is not any of 5 stars");
+      expect(names.join(" ")).not.toMatch(/not is /i);
+    });
+
     it("carries the tree to the Calendar's and Timeline's requests", async () => {
       await renderAt(treeUrl("calendar"));
       expect(calendarProps.value?.calendar.tree).toEqual(orTree);
