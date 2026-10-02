@@ -177,7 +177,3 @@ export function ProductionCalendarScheduleEditorFields({ state, projectDefault =
     {error && <div className={EDITOR_ERROR} role="alert">{errorText(error)}</div>}
   </div>;
 }
-
-export function checklistScheduleEditorButtonLabel(): string {
-  return "Reschedule";
-}

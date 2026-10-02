@@ -24,10 +24,14 @@
  *   back. A local `pending` range holds the dropped chip where it landed until the controller's
  *   overlay replaces it or the command settles / cancels (a Deadline has no overlay before its
  *   confirmation, so `pending` is what holds it; Cancel's revert restores the original position).
- * - "Reschedule…": the vendor chip is itself a `<button>`, so the action cannot live inside it. A
- *   chip click (`onEventClick`) selects the event; the selection strip under the nav carries the
- *   `data-focus-key="calendar-move:<id>"` action that opens the move dialog (Deadline) or the
- *   schedule editor sheet (checklist).
+ * - The item menu (#463): the vendor chip is itself a `<button>`, so no action can live inside it. A
+ *   chip click, Enter or right-click opens a menu anchored to the chip (`scheduling-item-menu.tsx`,
+ *   shared with the Timeline): Open project (`onOpenProject`, the Dashboard's existing sheet path),
+ *   and Reschedule… (a Deadline: the move dialog) or Edit schedule… (a checklist item: the sheet),
+ *   with the strip's exact gates. A drag never opens it; Space still starts keyboard Adjust (ADR 0009).
+ *   This retired the selection strip that carried the same actions. `onEventClick` calls
+ *   `e.preventDefault()` to opt out of the vendor's own selection; the `selectedId` state below is
+ *   kept, unwritten here, as the seam a Project landing (#464) selects through.
  *
  * The grid draws from the controller's ACCEPTED response (falling back to the live query only while
  * no interaction holds the gate), and once anything has loaded it stays mounted across a new range
@@ -96,8 +100,8 @@ import { Eyebrow } from "./quincy/Eyebrow";
 import { SheetCloseButton, SHEET_CLOSE_CLEARANCE } from "./quincy/SheetCloseButton";
 import { AvatarStack } from "./quincy/AvatarStack";
 import { Notice } from "./quincy/Notice";
-import { checklistScheduleEditorButtonLabel } from "./ProductionCalendarScheduleEditorFields";
-import { ProjectCalendarAnchor } from "./ProjectCalendarAnchor";
+import { schedulingItemActions, type SchedulingItemActionId } from "../lib/scheduling-item-actions";
+import { useSchedulingItemMenu, type SchedulingMenuContent } from "./scheduling-item-menu";
 import { ProductionEventCalendarDialogs, type ProductionEventCalendarDeadlineConfirm } from "./ProductionEventCalendarDialogs";
 import { ProductionEventCalendarRail, type ProductionEventCalendarUpNext } from "./ProductionEventCalendarRail";
 
@@ -162,6 +166,28 @@ function eventCivilDate(event: CalendarEventDto): string {
  */
 function calendarResetKey(calendar: DashboardCalendarState): string {
   return staffPathFor({ kind: "dashboard", calendar });
+}
+
+/**
+ * The chip for an event, wherever it is drawn (a grid cell or the "+N more" popover): the vendor tags the
+ * chip CONTENT with `data-event-id` (`ChipContent`), and the focusable element is the `<button>` around it.
+ * The agenda's rows render the vendor's own content, which carries no such tag, so the vendor tags the chip
+ * BUTTON itself with the same `data-event-id` (a re-keyed row is a new element; this is how it is found again).
+ */
+function findChip(id: string): HTMLElement | null {
+  const tagged = [...document.querySelectorAll<HTMLElement>("[data-event-id]")].filter((element) => element.getAttribute("data-event-id") === id);
+  const content = tagged.find((element) => !element.closest("[data-preview]")) ?? tagged[0];
+  if (!content) return null;
+  return content.matches("button, [tabindex]") ? content : content.closest<HTMLElement>("button") ?? content;
+}
+
+/**
+ * Where focus goes when a chip inside the month "+N more" popover is gone: a pick closes the popover and
+ * unmounts its chips, so the day's open "+N more" button (still `aria-expanded` when the menu opens) stands in.
+ */
+function findOverflowTrigger(chip: HTMLElement): HTMLElement | null {
+  if (!chip.closest('[data-slot="event-calendar-more-popover"]')) return null;
+  return document.querySelector<HTMLElement>('[data-slot="event-calendar-more"][aria-expanded="true"]');
 }
 
 function ChipContent({ id, data, title }: { id: string; data: ProductionEventCalendarData | undefined; title: string }): JSX.Element {
@@ -329,19 +355,51 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
   }, [calendar.subview, commands, dtoById, gated]);
 
   // ---------------------------------------------------------------------------------------------
-  // Selection → "Reschedule…".
+  // The item menu (#463) — and the selection seam it left behind.
   // ---------------------------------------------------------------------------------------------
 
+  // Nothing here writes `selectedId` since the strip was retired (a chip click opens the menu, and
+  // `onEventClick` opts out of the vendor's selection). It stays, with its reset, as the seam #464's
+  // Project landing selects a chip through.
   const [selectedId, setSelectedId] = useState<string | null>(null);
   useEffect(() => { setSelectedId(null); }, [resetKey, identity.principalId, identity.role, identity.authorizationEpoch]);
   const selected = selectedId ? dtoById.get(selectedId) ?? null : null;
-  const selectedHref = selected ? projectHrefFor?.(selected.project.id) : undefined;
-  const selectedAction = (() => {
-    if (!selected || !live) return null;
-    if (selected.kind === "project_deadline") return selected.permissions.canDrag ? { label: "Reschedule…", run: () => commands.openMoveDialog(selected) } : null;
-    if (!selected.permissions.canOpenScheduleEditor) return null;
-    return { label: `${checklistScheduleEditorButtonLabel()}…`, run: () => commands.openChecklistScheduleEditor(selected) };
-  })();
+
+  // What the menu shows for an item, live: the strip's old context line and caution, and the strip's
+  // exact gates (the EFFECTIVE permissions, which already narrow while the surface is not live).
+  const describeItem = (key: string): SchedulingMenuContent | null => {
+    const dto = dtoById.get(key);
+    if (!dto) return null;
+    const isDeadline = dto.kind === "project_deadline";
+    return {
+      label: `${isDeadline ? "Deadline" : dto.title} · ${dto.project.street}`,
+      caution: dto.kind === "checklist" && dto.status.sameAssigneeOverlap === true ? OVERLAP : null,
+      actions: schedulingItemActions({
+        kind: isDeadline ? "deadline" : "checklist",
+        canOpenProject: onOpenProject !== undefined,
+        canReschedule: isDeadline && dto.permissions.canDrag,
+        canEditSchedule: dto.kind === "checklist" && dto.permissions.canOpenScheduleEditor,
+        live,
+      }),
+    };
+  };
+  const runItemAction = (id: SchedulingItemActionId, key: string) => {
+    const dto = dtoById.get(key);
+    if (!dto) return;
+    if (id === "open-project") onOpenProject?.(dto.project.id);
+    else if (id === "reschedule" && dto.kind === "project_deadline") commands.openMoveDialog(dto);
+    else if (id === "edit-schedule" && dto.kind === "checklist") commands.openChecklistScheduleEditor(dto);
+  };
+  const itemMenu = useSchedulingItemMenu({
+    describe: describeItem,
+    resolveElement: findChip,
+    fallbackFor: findOverflowTrigger,
+    onAction: runItemAction,
+    followOnOpen: commands.moveDialog !== null || commands.scheduleEditor !== null,
+    closeKey: `${resetKey}|${identity.principalId}|${identity.role}|${identity.authorizationEpoch}|${commands.accessLost}`,
+  });
+  const { isOpenFor } = itemMenu;
+  const eventPopup = useMemo(() => ({ isOpen: (occurrence: { event: { id: string | number } }) => isOpenFor(String(occurrence.event.id)) }), [isOpenFor]);
 
   // ---------------------------------------------------------------------------------------------
   // Render.
@@ -385,7 +443,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
   const zoneLabel = useMemo(() => productionCalendarZoneLabel(deriveProductionCalendarWindow(calendar.date, calendar.subview)), [calendar.date, calendar.subview]);
 
   return (
-    <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label="Production Calendar" tabIndex={-1} data-focus-key="calendar-safe-fallback" data-testid="event-calendar-screen">
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label="Production Calendar" tabIndex={-1} data-focus-key="calendar-safe-fallback" data-testid="event-calendar-screen" {...itemMenu.wrapperProps}>
       {commands.settle.recoveryReason && (
         <Notice tone="caution" role="alert" className="mb-[var(--space-4)] flex shrink-0 items-center justify-between gap-[var(--space-4)]" data-testid="calendar-recovery-notice">
           <span>{commands.settle.recoveryReason}</span>
@@ -419,7 +477,13 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
           loading={!source}
           interactions={interactions}
           onEventUpdate={handleEventUpdate}
-          onEventClick={(occurrence) => setSelectedId(String(occurrence.event.id))}
+          onEventClick={(occurrence, e) => {
+            // Opt out of the vendor's own selection: the chip opens the menu instead.
+            e.preventDefault();
+            itemMenu.openFromClick(e, String(occurrence.event.id));
+          }}
+          onEventContextMenu={(occurrence, e) => itemMenu.openFromContextMenu(e, String(occurrence.event.id))}
+          eventPopup={eventPopup}
           onDateChange={(next) => { const civil = sydneyCivilDate(next); if (civil !== calendar.date) navigate({ date: civil }); }}
           onViewChange={(view) => { const subview = calendarViewToSubview(view); if (subview && subview !== calendar.subview) navigate({ subview }); }}
           onSlotClick={(slot) => { if (slot.view === "month") navigate({ subview: "day", date: sydneyCivilDate(slot.date) }); }}
@@ -485,22 +549,6 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
                 )}
               </div>
               )}
-              {selected && (
-                <div className="flex min-w-0 flex-wrap items-center gap-[var(--space-2)] border-b border-border px-[var(--space-2)] py-[var(--space-2)] text-[length:var(--text-xs)]" data-testid="event-calendar-selected">
-                  <span className="min-w-0 flex-1 truncate text-foreground">
-                    {selected.kind === "project_deadline" ? "Deadline" : selected.title}
-                    {" · "}
-                    {selectedHref ? <ProjectCalendarAnchor href={selectedHref} onOpenProject={() => onOpenProject?.(selected.project.id)}>{selected.project.street}</ProjectCalendarAnchor> : selected.project.street}
-                  </span>
-                  {selected.kind === "checklist" && selected.status.sameAssigneeOverlap === true && <span className="text-signal-caution-text">{OVERLAP}</span>}
-                  {selectedAction && (
-                    <Button type="button" variant="outline" size="sm" className="max-[721px]:min-h-[44px]" data-focus-key={`calendar-move:${selected.id}`} onClick={selectedAction.run}>
-                      {selectedAction.label}
-                    </Button>
-                  )}
-                  <Button type="button" variant="ghost" size="sm" className="max-[721px]:min-h-[44px]" data-testid="event-calendar-selected-clear" onClick={() => setSelectedId(null)}>Close</Button>
-                </div>
-              )}
               <EventCalendarContent className="min-h-0 flex-1" />
             </div>
           </div>
@@ -534,6 +582,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
 
       <div className="sr-only" data-testid="dashboard-live-region" aria-live="polite" aria-atomic="true">{commands.announcement}</div>
       <ProductionEventCalendarDialogs commands={commands} deadlineConfirm={deadlineConfirm} projectDefaultFor={(projectId) => projectDefaults.get(projectId) ?? null} />
+      {itemMenu.menu}
     </section>
   );
 }

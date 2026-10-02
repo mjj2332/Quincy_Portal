@@ -285,6 +285,16 @@
  * `border-(--gantt-event-color)` (the /20 wash measured 1.23-1.43:1, under WCAG 1.4.11's 3:1),
  * and a completed bar's border moves from `border-border` (1.58:1) to `border-muted-foreground`
  * (3.37:1). Fill alphas unchanged. Covered by `gantt-skin.guard.test.ts` Detector 9.
+ *
+ * 2026-10-02, #463 — ADDED, additive (both unset: nothing changes). An `onContextMenu` on the bar
+ * that reports through `settings.onEventContextMenu`, except during a live drag or Adjust session
+ * and whenever `viewConfig.renderEventMenu` is set (its ContextMenu owns the right-click). And, when
+ * `viewConfig.eventPopup` is set, a bar that is not in Adjust carries `aria-haspopup="menu"` and
+ * `aria-expanded={eventPopup.isOpen(occurrence)}` INSTEAD of `aria-pressed`: its click opens the
+ * consumer's menu. Adjust keeps `role="application"` and neither. See `gantt.tsx`'s #463 entry;
+ * covered by `gantt-item-popup.dom.test.tsx`.
+ * QUINCY ADDITION (#463 fix round): a touch-origin contextmenu is `preventDefault`ed before the drag
+ * and Adjust guard returns (a long-press starts the drag; its native menu must not open over it).
  */
 
 import {
@@ -460,6 +470,8 @@ function GanttBar<TData = unknown>({
   // a different key) leaves a real pending claim untouched - `consumeKeyboardFocus` only clears on
   // an exact match.
   const barRef = useRef<HTMLButtonElement>(null)
+  // QUINCY ADDITION (#463): the last pointer type pressed on this bar, to recognise a touch long-press's contextmenu.
+  const lastPointerType = useRef("")
   // Quincy fix (#219 PR A, Sol re-review round 2, MEDIUM #6): `useLayoutEffect`, not `useEffect` -
   // the reclaim must land, and the token must be consumed (nulled), synchronously in the SAME
   // commit that mounts this bar under its new key, before the browser paints and before any LATER
@@ -778,7 +790,11 @@ function GanttBar<TData = unknown>({
     // adjusting - neither supports `aria-selected` either). `aria-pressed` is the state ARIA
     // defines for a toggleable button, and matches every other plain `type="button"` toggle in
     // this app (`RichTextEditor.tsx`, `ProjectDeadlineControl.tsx`, `Lightbox.tsx`, …).
-    "aria-pressed": isSelected,
+    // QUINCY (#463): with `viewConfig.eventPopup` the bar opens a consumer menu instead, so it is a
+    // menu button, not a pressed toggle; Adjust's `role="application"` carries none of the three.
+    "aria-pressed": viewConfig.eventPopup ? undefined : isSelected,
+    "aria-haspopup": viewConfig.eventPopup && !adjusting ? ("menu" as const) : undefined,
+    "aria-expanded": viewConfig.eventPopup && !adjusting ? viewConfig.eventPopup.isOpen(occurrence) : undefined,
     "data-dragging": isDragging || undefined,
     "data-drag-kind": dragKind ?? undefined,
     // #219 PR A fix (dr-219a HIGH #4): drives the `data-[drag-kind=move]:data-[drag-source=…]`
@@ -815,6 +831,7 @@ function GanttBar<TData = unknown>({
       // Quincy fix (#219 PR A, Sol review, sol1 item 6): a pointer interaction is one of the
       // explicit clear triggers for a stale keyboard-focus claim.
       instance.internals.clearKeyboardFocus()
+      lastPointerType.current = e.pointerType
       // #219 PR A fix (Sol re-review round 2, HIGH #4): see the resize grips' own comment above -
       // the "cancel Adjust first" check moved to `gantt-dnd.tsx`'s `beginGesture`.
       gestures.beginMove(e, segment)
@@ -828,6 +845,15 @@ function GanttBar<TData = unknown>({
     onDoubleClick: (e: React.MouseEvent) => {
       e.stopPropagation()
       settings.onEventDoubleClick?.(occurrence, e)
+    },
+    // QUINCY ADDITION (#463): the bar's `renderEventMenu` ContextMenu owns the right-click when it
+    // exists; never during a drag or an Adjust session.
+    onContextMenu: (e: React.MouseEvent) => {
+      // A touch long-press is the drag, never a menu: swallow its native menu BEFORE the drag guard
+      // returns, or it opens over the drag the same long-press just started.
+      if (!viewConfig.renderEventMenu && ((e.nativeEvent as { pointerType?: string }).pointerType === "touch" || lastPointerType.current === "touch")) e.preventDefault()
+      if (viewConfig.renderEventMenu || adjusting || wasRecentDrag() || instance.getState().drag) return
+      settings.onEventContextMenu?.(occurrence, e)
     },
     // #219 PR A (Adjust mode) - Blur is one of the two CANCEL triggers (the other is a pointer-down
     // elsewhere, in the effect above). Re-reads live state rather than the `adjusting` closure - see

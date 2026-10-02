@@ -284,8 +284,10 @@ async function openerFor(host: HTMLElement, view: string): Promise<Element> {
   if (view === "table") return host.querySelector('[data-testid="project-table-row-link"]')!;
   if (view === "board") return host.querySelector('[data-testid="board-card"]')!;
   if (view === "timeline") return host.querySelector('[data-testid="gantt-project-link"]')!;
-  await act(async () => { eventCalendarFake.click("project-deadline:one"); await Promise.resolve(); });
-  return host.querySelector('[data-testid="calendar-project-link"]')!;
+  // #463: a chip click opens the item menu; its "Open project" row is the opener.
+  await act(async () => { eventCalendarFake.click("project-deadline:one"); await Promise.resolve(); await Promise.resolve(); });
+  await settle();
+  return [...document.querySelectorAll('[role="menuitem"]')].find((node) => node.textContent === "Open project")!;
 }
 
 /** Simulates the browser having walked to `url` with `state`, which happy-dom's `go()` does not do. */
@@ -506,6 +508,23 @@ describe("focus (#366)", () => {
     await click(document.querySelector('[data-testid="project-sheet-close"]')!);
     await traverseTo("/?view=table&q=smith", null);
     expect(document.activeElement).toBe(opener);
+  });
+});
+
+describe("focus from the Calendar item menu (#463)", () => {
+  it("Open project from a chip's menu opens the sheet over the Calendar, and closing it returns focus to the chip", async () => {
+    const host = await renderDashboardAt("calendar");
+    const from = currentUrl();
+    const chip = host.querySelector<HTMLElement>('[data-testid="event-calendar-fake-chip"]')!;
+    const open = await openerFor(host, "calendar");
+    await click(open);
+    expect(currentUrl()).toBe(PROJECT_PATH);
+    expect(sheet()!.contains(document.activeElement)).toBe(true);
+    vi.spyOn(window.history, "go").mockImplementation(() => undefined);
+    await click(document.querySelector('[data-testid="project-sheet-close"]')!);
+    await traverseTo(from, null);
+    expect(sheet()).toBeNull();
+    expect(document.activeElement).toBe(chip);
   });
 });
 

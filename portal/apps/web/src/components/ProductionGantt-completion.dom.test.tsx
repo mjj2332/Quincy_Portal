@@ -229,7 +229,7 @@ describe("ProductionGantt — completion reaches the DOM (fix-220-sol1 #4)", () 
     expect(bar.querySelector('[data-testid="gantt-done-mark"]')).toBeNull();
   });
 
-  it("selecting an inverted-Deadline Project bar adds the reproduced selected ring to its diamond", async () => {
+  it("selecting an inverted-Deadline Project bar adds the reproduced selected ring to its diamond (a menu button since #463)", async () => {
     const project = makeProject({
       id: INVERTED_PROJECT_ID,
       street: INVERTED_STREET,
@@ -248,7 +248,10 @@ describe("ProductionGantt — completion reaches the DOM (fix-220-sol1 #4)", () 
       await Promise.resolve();
     });
 
-    expect(bar.getAttribute("aria-pressed")).toBe("true");
+    // #463: the click also opens the item menu, so the bar is a menu button (`aria-expanded`), no longer a
+    // pressed toggle; the vendor's selection (and so the ring) is unchanged.
+    expect(bar.getAttribute("aria-expanded")).toBe("true");
+    expect(bar.hasAttribute("aria-pressed")).toBe(false);
     expect(marker!.className).toMatch(/ring-ring\/50/);
     expect(marker!.className).toMatch(/ring-2/);
   });
