@@ -13,7 +13,7 @@ describe("overlay stacking contract", () => {
     expect(z(tokens, "menu")).toBeLessThan(z(tokens, "dialog"));
   });
   it("the dropdown-menu positioner and popup use the menu token, not a magic number", () => {
-    const src = read("../src/components/reui/dropdown-menu.tsx");
+    const src = read("../components/reui/dropdown-menu.tsx");
     const content = src.slice(src.indexOf("function DropdownMenuContent"), src.indexOf("function DropdownMenuGroup"));
     expect(content).toContain("z-[var(--z-menu)]");
     expect(content).not.toMatch(/\bz-50\b/);

@@ -21,6 +21,7 @@ import { TZDate } from "@date-fns/tz";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 import { EventCalendar, EventCalendarViewContext } from "./event-calendar";
+import { resetGestureEndedForTests } from "./event-calendar-dnd";
 import { EventCalendarContent } from "./event-calendar-content";
 import { EventCalendarEvent } from "./event-calendar-event";
 import type { CalendarEvent, EventCalendarOccurrence, EventCalendarSegment } from "./event-calendar-types";
@@ -182,7 +183,7 @@ describe("selection (#463)", () => {
   // vendor rule — the agenda is read-only and never draws a row selected — lost its only surface-level pin.
   it("a chip selected in a grid view is not drawn selected once the view switches to the read-only agenda", async () => {
     // The vendor ignores a click within 250ms of a drag ending (a module flag an earlier test here sets).
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
+    resetGestureEndedForTests();
     await mount();
     await act(async () => { chip().click(); await Promise.resolve(); });
     expect(chip().hasAttribute("data-selected"), "the grid click did not select the chip").toBe(true);
