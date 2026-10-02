@@ -105,13 +105,15 @@ describe("buildShowInCalendar (#464)", () => {
     expect(stateOf(href(buildShowInCalendar(args({ tasks })))).calendar.date).toBe("2026-10-03");
   });
 
-  it("prefers an open task over an earlier done one, and falls back to the done one", () => {
+  it("targets the earliest scheduled start, done or not, enabling Completed when that task is done", () => {
     const tasks = [
       { id: TASK_A, position: 0, done: true, startCivil: "2026-10-01T09:00" },
       { id: TASK_B, position: 1, done: false, startCivil: "2026-10-05T09:00" },
     ];
     const open = stateOf(href(buildShowInCalendar(args({ tasks }))));
-    expect(open.calendar).toMatchObject({ date: "2026-10-05", showCompletedChecklist: false });
+    const laterOpen = stateOf(href(buildShowInCalendar(args({ tasks: [{ ...tasks[0]!, startCivil: "2026-10-09T09:00" }, tasks[1]!] }))));
+    expect(laterOpen.calendar).toMatchObject({ date: "2026-10-05", showCompletedChecklist: false });
+    expect(open.calendar).toMatchObject({ date: "2026-10-01", showCompletedChecklist: true });
     const done = stateOf(href(buildShowInCalendar(args({ tasks: [tasks[0]!] }))));
     expect(done.calendar).toMatchObject({ date: "2026-10-01", showCompletedChecklist: true });
   });

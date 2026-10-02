@@ -67,11 +67,9 @@ function broadenedFilter(backdrop: StaffRoute, project: ShowInProject): Dashboar
 }
 
 function earliestTask(tasks: readonly ShowInTask[]): ShowInTask | null {
-  // Open tasks first: a done task only becomes the target when nothing open is scheduled (and then
-  // the Calendar's Completed toggle is broadened so its chip is drawn).
-  const scheduled = tasks.filter((task) => task.startCivil.length >= 10);
-  const open = scheduled.filter((task) => !task.done);
-  const pool = open.length > 0 ? open : scheduled;
+  // The earliest scheduled start, done or not: when that task is done the Calendar's Completed
+  // toggle is broadened so its chip is drawn.
+  const pool = tasks.filter((task) => task.startCivil.length >= 10);
   pool.sort((a, b) => (a.startCivil < b.startCivil ? -1 : a.startCivil > b.startCivil ? 1 : a.position - b.position || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)));
   return pool[0] ?? null;
 }
