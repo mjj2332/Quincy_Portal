@@ -5,7 +5,7 @@ import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
 import { boardContractEnabled, boardSchemaVariant, buildDeadlineSuppressionBundle, buildProjectActivityStatements, buildSubtaskReminderMaterialization, buildSubtaskReminderSuppression, createDb, selectEffectiveDefaultEditorIds, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
 import { and, asc, desc, eq, exists, gt, inArray, isNotNull, isNull, lte, notExists, sql } from "drizzle-orm";
-import { capDashboardSearchText, COLLECTION_KINDS, DASHBOARD_PROJECTS_FILTER_QUERY_NAMES, dashboardPriorityFilterValueOf, dashboardProjectsFilterQuerySchema, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchemaForProject, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, roleHasCapability, stripUnsafeText, type CollectionKind, type DashboardFilter, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
+import { capDashboardSearchText, compareBoardCards, COLLECTION_KINDS, DASHBOARD_PROJECTS_FILTER_QUERY_NAMES, dashboardPriorityFilterValueOf, dashboardProjectsFilterQuerySchema, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchemaForProject, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, roleHasCapability, stripUnsafeText, type CollectionKind, type DashboardFilter, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, hasProjectAccessForUser, requireCapability } from "../middleware/capability";
@@ -22,7 +22,7 @@ import { listExternalProjects, readExternalProjectDetail } from "../lib/external
 import { activeEditorRefsByProject } from "../lib/project-editors";
 import { boardContractDisabled, boardSchemaMaintenance } from "../lib/board-schema-maintenance";
 import { moveProjectStage } from "../lib/project-stage";
-import { compareBoardOrder, moveProjectBoardOrder } from "../lib/project-board-order";
+import { boardCardOrderOptionsFor } from "../lib/project-board-order";
 import { classifyProjectArchiveLoser, type ProjectArchiveSource } from "../lib/project-archive";
 import { chunked, coverMaps } from "../lib/project-covers";
 import { matchingProjectIds, normalizeProjectSearch } from "../lib/project-search";
@@ -188,8 +188,8 @@ async function details(db: ReturnType<typeof createDb>, d1: D1Database, projectI
   }, role);
 }
 
-function authorizedInternalBoardOrder(rows: Array<{ project: { id: string; stageKey: string; boardPosition: number } }>, role: Role): Partial<Record<StageTransportKey, string[]>> {
-  const groups = new Map<StageTransportKey, Array<{ id: string; boardPosition: number }>>();
+function authorizedInternalBoardOrder(rows: Array<{ project: { id: string; stageKey: string; street: string; priority: number | null; shootDate: string | null } }>, role: Role): Partial<Record<StageTransportKey, string[]>> {
+  const groups = new Map<StageTransportKey, Array<{ id: string; street: string; priority: number | null; shootDate: string | null }>>();
   for (const { project } of rows) {
     const stageKey = projectStageForRole(project, role).stageKey as StageTransportKey;
     const group = groups.get(stageKey) ?? [];
@@ -197,8 +197,9 @@ function authorizedInternalBoardOrder(rows: Array<{ project: { id: string; stage
     groups.set(stageKey, group);
   }
   const orderedProjectIdsByStage: Partial<Record<StageTransportKey, string[]>> = {};
+  const options = boardCardOrderOptionsFor(role);
   for (const [stageKey, group] of groups) {
-    group.sort(compareBoardOrder);
+    group.sort((left, right) => compareBoardCards(left, right, options));
     orderedProjectIdsByStage[stageKey] = group.map((project) => project.id);
   }
   return orderedProjectIdsByStage;
@@ -556,20 +557,14 @@ projectsRoutes.post("/projects/:id/priority", terminalRoute("/projects/:id/prior
   return c.json(updated);
 }));
 
+// Retired by #470: the Board sorts by data, so there is no manual position to write. A stale tab
+// (or a script) that still posts here gets the same reload-required conflict as the legacy Stage
+// body, and nothing is written. The capability check stays ahead of it so a role that never held
+// the command keeps its constant denial.
 projectsRoutes.post("/projects/:id/board-position", terminalRoute("/projects/:id/board-position", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
-  const data = await jsonInput(c, moveProjectStageRequestSchemaForProject(id)); if (data instanceof Response) return data;
-  const result = await moveProjectBoardOrder({ env: c.env, principal: c.get("user"), projectId: id, request: data });
-  if (result.kind === "schema_maintenance") return boardSchemaMaintenance(c);
-  if (result.kind === "disabled") return boardContractDisabled(c);
-  if (result.kind === "forbidden") return c.json({ error: "Forbidden", capability: result.capability }, 403);
-  if (result.kind === "not_found") return c.json({ error: "Project not found" }, 404);
-  if (result.kind === "conflict") return c.json({ error: "Project changed while board position was being updated", code: "project_stage_conflict", current: result.current }, 409);
-  if (result.kind === "moved") {
-    if (result.finalizer.publicationIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, result.finalizer.publicationIds));
-    return c.json(result.response);
-  }
-  return c.json(result.response);
+  if (!roleHasCapability(c.get("user").role, "prioritizeProjects")) return c.json({ error: "Forbidden", capability: "prioritizeProjects" }, 403);
+  return c.json({ error: "Reload the application before moving this project.", code: "stage_contract_reload_required" }, 409);
 }));
 projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) => {
   const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
@@ -1275,7 +1270,6 @@ const stageHandler = async (c: Context<AppEnv>) => {
   }
   if (result.kind === "no_change") return c.json(result.response);
   if (result.kind === "forbidden") return c.json({ error: "Forbidden", capability: result.capability }, 403);
-  if (result.kind === "reorder_forbidden") return c.json({ error: "Forbidden: manual Board reorder requires prioritizeProjects.", code: result.code, capability: result.capability }, 403);
   if (result.kind === "not_found") return c.json({ error: "Project not found" }, 404);
   if (result.kind === "archived") return c.json({ error: "Project is archived and read-only.", code: "project_archived_read_only", current: result.current }, 409);
   if (result.kind === "inactive_destination") return c.json({ error: "Destination Stage is inactive.", code: "inactive_destination", current: result.current }, 409);
