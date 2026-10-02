@@ -3,6 +3,7 @@ import { QueryClientContext, type QueryClient } from "@tanstack/react-query";
 import { CalendarDaysIcon, ChartGanttIcon } from "lucide-react";
 import { Button } from "@/components/reui/button";
 import { ButtonGroup } from "@/components/reui/button-group";
+import { HEADER_KV_KEY } from "../project-header-popover";
 import { InternalLink } from "../InternalLink";
 import { useDashboardReturnLink } from "./ProjectSheet";
 import { useCapabilities } from "../../lib/capabilities";
@@ -23,7 +24,6 @@ import { initializeDashboardCalendarState } from "../../screens/dashboard-helper
  * query cache's own subscription and never an observer (#423: an observer here would own the key).
  */
 const GROUP_ROW = "inline-flex flex-wrap items-center gap-x-[var(--space-3)] gap-y-[var(--space-1)] max-[721px]:basis-full";
-const GROUP_LABEL = "[font:var(--weight-regular)_var(--text-2xs)/1.2_var(--font-sans)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary";
 // #367 precedent (ProjectHeader COPY_LINK_IN_HEADER): the button base is uppercase + wide tracking; the labels read as sentence case.
 const SHOW_IN_BUTTON = "normal-case tracking-[var(--tracking-normal)] max-[721px]:min-h-[44px]";
 const REASON_TEXT = "[font:var(--weight-regular)_var(--text-2xs)/1.2_var(--font-sans)] text-foreground-secondary";
@@ -96,7 +96,7 @@ function ProjectShowInControl({ project, isAdmin }: { project: ProjectDetail; is
 
   return (
     <div className={GROUP_ROW} data-testid="project-show-in">
-      <span className={GROUP_LABEL} aria-hidden="true">Show in</span>
+      <span className={HEADER_KV_KEY} aria-hidden="true">Show in</span>
       <ButtonGroup aria-label="Show in">
         <ShowInButton label="Calendar" icon={<CalendarDaysIcon aria-hidden="true" data-icon="inline-start" />} destination={calendar} testId="project-show-in-calendar" describedBy={reason ? reasonId : undefined} />
         <ShowInButton label="Timeline" icon={<ChartGanttIcon aria-hidden="true" data-icon="inline-start" />} destination={timeline} testId="project-show-in-timeline" describedBy={reason ? reasonId : undefined} />
