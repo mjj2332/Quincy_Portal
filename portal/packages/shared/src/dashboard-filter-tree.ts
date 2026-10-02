@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { STAGE_PRESENTATION_KEYS, type StagePresentationKey } from "./stage-move";
 import { isSydneyCalendarDate } from "./sydney-civil-time";
 import type { DashboardArchivedMode, DashboardDateRange, DashboardFilter, DashboardPriorityFilterValue } from "./dashboard-filter";
@@ -212,6 +213,22 @@ export function parseDashboardFilterTree(raw: string): DashboardFilterTreeParse 
   if (formatNode(canonicalizeDashboardFilterTree(root)) !== text || isLegacyExpressible(root)) return { error: "invalid" };
   return { tree: root };
 }
+
+/**
+ * The tree behind an untrusted object (a DTO or a request body): the strictly canonical tree it spells, or `null`.
+ * Never throws. It formats the value as given and runs the ONE parser over the text, so a DTO and a URL accept
+ * exactly the same trees.
+ */
+export function coerceDashboardFilterTree(value: unknown): DashboardFilterTree | null {
+  if (typeof value !== "object" || value === null) return null;
+  let text: string;
+  try { text = formatDashboardFilterTree(value as DashboardFilterTree); } catch { return null; }
+  const parsed = parseDashboardFilterTree(text);
+  return "tree" in parsed ? parsed.tree : null;
+}
+
+/** Zod: a DTO / request-body filter tree (canonical, within every cap, not legacy-expressible). */
+export const dashboardFilterTreeSchema = z.custom<DashboardFilterTree>((value) => coerceDashboardFilterTree(value) !== null, "Expected a canonical filter tree.");
 
 /* ------------------------------------------------------------------ inspection */
 

@@ -1,7 +1,18 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import {
+  DASHBOARD_LEGACY_FILTER_QUERY_NAMES,
   DASHBOARD_PRIORITY_FILTER_VALUES,
+  dashboardFilterArchivedMode,
+  dashboardFilterHasArchivedLeaf,
+  dashboardFilterHasPriorityLeaf,
+  dashboardFilterLeaves,
+  dashboardFilterPeopleIds,
+  dashboardFilterStageScope,
+  dashboardFilterTreeOf,
+  emptyDashboardFilterTree,
+  parseDashboardFilterTree,
+  type DashboardFilterTree,
   EXTERNAL_API_RESPONSE_SCHEMAS,
   PRODUCTION_CALENDAR_MAX_EDITOR_IDS,
   PRODUCTION_CALENDAR_MAX_ENCODED_QUERY_BYTES,
@@ -36,7 +47,8 @@ import {
 import { requireCapability } from "../middleware/capability";
 import { terminalRoute } from "../lib/terminal-route";
 import { projectSearchSql } from "../lib/project-search";
-import { authorizedProjectsBaseCte, dashboardPeopleCte, deadlineOverdueSql, deadlineRangeSql, parseReminderOffsets, shootRangeSql } from "../lib/production-scope-sql";
+import { authorizedProjectsBaseCte, dashboardPeopleCte, parseReminderOffsets } from "../lib/production-scope-sql";
+import { assigneeContext, baseProjectColumns, compileDashboardFilterSql, editorsContext } from "../lib/dashboard-filter-sql";
 import { serializeSubtaskSchedule } from "../lib/subtask-schedule";
 import { readSubtaskReminders } from "../lib/project-subtasks";
 import { assigneesForViewer, parseAssigneesJson, subtaskAssigneesJsonSql } from "../lib/subtask-assignees";
@@ -125,6 +137,8 @@ const QUERY_NAMES = new Set([
   "priority", "archived",
   // #429: the shared Filter's Shoot date and Deadline ranges, `YYYY-MM-DD..YYYY-MM-DD`.
   "shoot", "deadline",
+  // #461: the filter tree (`f=1:<tree>`), exclusive with every legacy facet; `forder` is URL-only, never an API name.
+  "f",
   // #222: request-gated project bounds — see `productionCalendarBoundsSql`.
   "bounds",
 ]);
@@ -196,6 +210,14 @@ function parseCalendarQuery(c: Context<AppEnv>): ParsedCalendarRequest | ParseFa
   const rawStages = splitList(valueFor("stages") ?? null);
   const rawPriorities = splitList(valueFor("priority") ?? null);
   const rawArchived = valueFor("archived");
+  const rawTree = valueFor("f");
+  let tree: DashboardFilterTree | undefined;
+  if (rawTree !== undefined) {
+    if (DASHBOARD_LEGACY_FILTER_QUERY_NAMES.some((name) => params.has(name))) return parseFailure("Calendar query is invalid.", "calendar_query_invalid");
+    const parsedTree = parseDashboardFilterTree(rawTree);
+    if ("error" in parsedTree) return parsedTree.error === "too_large" ? parseFailure("Calendar query exceeds the filter tree limit.", "calendar_query_too_large") : parseFailure("Calendar query is invalid.", "calendar_query_invalid");
+    tree = parsedTree.tree;
+  }
   const rawShoot = valueFor("shoot");
   const rawDeadline = valueFor("deadline");
   const shootRange = rawShoot === undefined ? null : parseDashboardDateRange(rawShoot);
@@ -233,6 +255,7 @@ function parseCalendarQuery(c: Context<AppEnv>): ParsedCalendarRequest | ParseFa
       overdueOnly: flagValue(params, "overdue") ?? false,
       search: valueFor("q") ?? "",
       myTasks: flagValue(params, "mine") ?? false,
+      ...(tree ? { tree } : {}),
     },
   };
   const querySchema = c.get("user").role === "external_editor" ? externalProductionCalendarRangeQuerySchema : productionCalendarRangeQuerySchema;
@@ -263,17 +286,17 @@ function withChecklistLayerBypass(clause: string): string {
 }
 
 /**
- * #429: "a Subtask's assignee" for SQL purposes. An External Editor only ever sees (and so only ever
- * matches) an assignee who is on the Project's team, the rule `assigneesForViewer` applies elsewhere and the
- * Timeline applies in `subtaskAssigneeExists`; for every other role every assignee counts. Without it,
- * selecting a person visible on Project A would surface their hidden assignment on Project B's Subtask.
+ * #461: the Calendar's shared CTE chain. The filter tree is evaluated per EVENT KIND after the request-bounded
+ * candidate sets are built: a Deadline event reads the tree with People = the Project's Editors
+ * (`project_filtered_candidates`), a Subtask event with People = that Subtask's assignees
+ * (`checklist_filtered_candidates`); every other rule reads the event's Project. The base keeps authorisation, search,
+ * Delivered, the Archived scope and the Stage scope as a NECESSARY condition (the tree implies it), which keeps the
+ * early narrowing identical to before for every legacy URL.
  */
-function subtaskAssigneeExists(role: CalendarRole, projectRef: string, subtaskRef: string, extra = ""): string {
-  const team = role === "external_editor" ? ` AND EXISTS (SELECT 1 FROM project_members tm WHERE tm.project_id = ${projectRef} AND tm.user_id = sa.user_id)` : "";
-  return `EXISTS (SELECT 1 FROM project_subtask_assignees sa WHERE sa.subtask_id = ${subtaskRef}${team}${extra})`;
-}
-
-function calendarCtes(role: CalendarRole): string {
+function calendarCtes(role: CalendarRole, tree: DashboardFilterTree = emptyDashboardFilterTree()): string {
+  // The tree's SHAPE (not its values) is in the SQL text, so the statements are compiled from the request's tree.
+  const deadlineFilter = compileDashboardFilterSql(tree, { jsonRef: "r.filter_tree", context: editorsContext(baseProjectColumns("ap"), "ap.project_id", "r.now", "r.me"), peopleSource: { mode: "universe", validPeopleTable: "valid_request_people" } });
+  const subtaskFilter = compileDashboardFilterSql(tree, { jsonRef: "r.filter_tree", context: assigneeContext(role, baseProjectColumns("c"), "c.project_id", "c.subtask_id", "r.now", "r.me"), peopleSource: { mode: "universe", validPeopleTable: "valid_request_people" } });
   const authorizedProjectsSearch = withChecklistLayerBypass(projectSearchSql("r.search", {
     street: "p.street",
     suburb: "p.suburb",
@@ -297,26 +320,20 @@ function calendarCtes(role: CalendarRole): string {
 request AS (
   SELECT ?1 AS me, ?2 AS start_instant, ?3 AS end_instant, ?4 AS start_date,
     ?5 AS end_date, ?6 AS now, ?7 AS today_date, ?10 AS search,
-    ?11 AS include_unassigned, ?12 AS my_tasks, ?13 AS show_completed,
-    ?14 AS show_delivered, ?15 AS overdue_only, ?16 AS project_layer,
-    ?17 AS checklist_layer, ?19 AS archived_mode,
-    ?20 AS shoot_from, ?21 AS shoot_to, ?22 AS deadline_from, ?23 AS deadline_to
+    ?11 AS show_completed, ?12 AS show_delivered, ?13 AS project_layer,
+    ?14 AS checklist_layer, ?15 AS archived_mode, ?16 AS filter_tree
 ),
-request_editors AS (SELECT value AS person_id FROM json_each(?8)),
+-- ?8: every People id the tree names (one flat JSON array); ?9: the Stage scope the tree implies.
+request_people AS (SELECT value AS person_id FROM json_each(?8)),
 request_stages AS (SELECT value AS stage_key FROM json_each(?9)),
-request_priorities AS (SELECT value AS priority FROM json_each(?18)),
-${authorizedProjectsBaseCte(role, { includeDeliveredColumn: "r.show_delivered", archivedModeColumn: "r.archived_mode", searchPredicate: authorizedProjectsSearch, extraPredicates: [
-  shootRangeSql("p.shoot_date", "r.shoot_from", "r.shoot_to"),
-  deadlineRangeSql("p.deadline_at", "p.deadline_local_civil", "r.deadline_from", "r.deadline_to"),
-] })},
+${authorizedProjectsBaseCte(role, { includeDeliveredColumn: "r.show_delivered", archivedModeColumn: "r.archived_mode", searchPredicate: authorizedProjectsSearch, extraColumns: "p.priority, p.shoot_date" })},
 project_candidate_universe AS (
   SELECT ap.*
   FROM authorized_projects_base ap
   CROSS JOIN request r
   WHERE r.project_layer = 1
     AND ${projectCandidateSearch}
-    AND (ap.deadline_at IS NULL OR (ap.deadline_at >= r.start_instant AND ap.deadline_at < r.end_instant
-      AND (r.overdue_only = 0 OR (ap.deadline_at < r.now AND ap.delivered = 0 AND ap.archived = 0))))
+    AND (ap.deadline_at IS NULL OR (ap.deadline_at >= r.start_instant AND ap.deadline_at < r.end_instant))
 ),
 checklist_counts AS (
   SELECT subtasks.project_id, SUM(CASE WHEN subtasks.done = 1 THEN 1 ELSE 0 END) AS completed, COUNT(*) AS total
@@ -331,7 +348,7 @@ candidate_subtasks_raw AS (
     s.schedule_start_utc_offset_minutes, s.schedule_start_fold, s.schedule_end_kind,
     s.schedule_end_at, s.schedule_end_utc_offset_minutes, s.schedule_end_fold,
     s.schedule_zone, s.schedule_version,
-    vp.project_id, vp.street, vp.stage_key, vp.delivered, vp.archived,
+    vp.project_id, vp.street, vp.stage_key, vp.delivered, vp.archived, vp.priority, vp.shoot_date,
     COALESCE(cc.completed, 0) AS checklist_completed, COALESCE(cc.total, 0) AS checklist_total,
     vp.can_collaborate, vp.agency_display_name, vp.agent_display_name,
     vp.deadline_at, vp.deadline_local_civil, vp.deadline_version, vp.deadline_reminder_offsets_json,
@@ -356,9 +373,6 @@ candidate_subtasks_raw AS (
   CROSS JOIN request r
   WHERE r.checklist_layer = 1
     AND (r.show_completed = 1 OR s.done = 0)
-    -- #429: the shared Overdue facet is the PROJECT Deadline rule (deadline set and passed, project not
-    -- delivered, not archived), so it gates a checklist row by its Project, never by the row's own end.
-    AND (r.overdue_only = 0 OR ${deadlineOverdueSql({ deadlineAt: "vp.deadline_at", notDelivered: "vp.delivered = 0", notArchived: "vp.archived = 0" }, "r.now")})
     AND ${checklistCandidateSearch}
 ),
 candidate_subtasks_unfiltered AS (
@@ -382,41 +396,24 @@ authorized_candidate_projects AS (
   SELECT project_id FROM range_candidate_subtasks
 ),
 ${dashboardPeopleCte(role, "r.archived_mode")},
-valid_selected_editors AS (
-  SELECT re.person_id
-  FROM request_editors re
-  WHERE EXISTS (SELECT 1 FROM dashboard_people ap WHERE ap.person_id = re.person_id)
-),
-selected_editor_state AS (
-  SELECT (SELECT COUNT(*) FROM request_editors) AS requested,
-    (SELECT COUNT(*) FROM valid_selected_editors) AS valid
+valid_request_people AS (
+  SELECT person_id FROM request_people WHERE person_id IN (SELECT person_id FROM dashboard_people)
 ),
 project_filtered_candidates AS (
   SELECT ap.*
   FROM project_candidate_universe ap
   CROSS JOIN request r
-  CROSS JOIN selected_editor_state selected
-  -- #429: the People filter is active when a known person is named OR Unassigned is on (so
-  -- Unassigned alone narrows); named-but-all-unknown with no Unassigned is not applied.
-  WHERE (selected.valid = 0 AND r.include_unassigned = 0
-    OR EXISTS (SELECT 1 FROM project_members editor_filter WHERE editor_filter.project_id = ap.project_id
-      AND editor_filter.role_on_project = 'editor'
-      AND EXISTS (SELECT 1 FROM valid_selected_editors v WHERE v.person_id = editor_filter.user_id))
-    OR (r.include_unassigned = 1 AND NOT EXISTS (SELECT 1 FROM project_members no_editor
-      WHERE no_editor.project_id = ap.project_id AND no_editor.role_on_project = 'editor')))
-    -- My tasks = People is me: on a Project's Deadline, I am an Editor of it.
-    AND (r.my_tasks = 0 OR EXISTS (SELECT 1 FROM project_members me_editor WHERE me_editor.project_id = ap.project_id
-      AND me_editor.role_on_project = 'editor' AND me_editor.user_id = r.me))
+  -- #461: the filter tree on a Deadline: People / My tasks = an Editor of the Project (#429), Overdue = the Project's
+  -- own Deadline rule, never the row's. A Project with no Deadline is still a candidate (it counts toward density).
+  WHERE ${deadlineFilter.sql}
 ),
 checklist_filtered_candidates AS (
   SELECT c.*
   FROM candidate_subtasks_unfiltered c
   CROSS JOIN request r
-  CROSS JOIN selected_editor_state selected
-  WHERE (selected.valid = 0 AND r.include_unassigned = 0
-    OR ${subtaskAssigneeExists(role, "c.project_id", "c.subtask_id", " AND sa.user_id IN (SELECT person_id FROM valid_selected_editors)")}
-    OR (r.include_unassigned = 1 AND NOT ${subtaskAssigneeExists(role, "c.project_id", "c.subtask_id")}))
-    AND (r.my_tasks = 0 OR ${subtaskAssigneeExists(role, "c.project_id", "c.subtask_id", " AND sa.user_id = r.me")})
+  -- #461: the same tree on a Subtask: People / My tasks = an assignee of THAT Subtask (team-scoped for an External
+  -- Editor), every other rule reads its Project.
+  WHERE ${subtaskFilter.sql}
 ),
 project_event_candidates AS (
   SELECT * FROM project_filtered_candidates WHERE deadline_at IS NOT NULL
@@ -441,8 +438,8 @@ density AS (
 }
 
 /** Statement 1 returns all bounded checklist candidates; JS owns schedule state, caps, and order. */
-export function productionCalendarRangeSql(role: CalendarRole): string {
-  return calendarCtes(role) + `,
+export function productionCalendarRangeSql(role: CalendarRole, tree?: DashboardFilterTree): string {
+  return calendarCtes(role, tree) + `,
 candidate_rows AS (
   SELECT 'project' AS row_kind, d.scheduled_total, NULL AS unscheduled_rank, NULL AS unscheduled_matched,
     p.project_id, p.street, p.stage_key, p.delivered, p.archived, COALESCE(cc.completed, 0) AS checklist_completed,
@@ -483,8 +480,8 @@ WHERE d.scheduled_total > ${PRODUCTION_CALENDAR_MAX_SCHEDULED_EVENTS}`;
  * access-scoped by `authorized_projects_base` exactly like the other two, over the editor-unfiltered
  * candidate universe; the handler keeps only projects the response actually references.
  */
-export function productionCalendarBoundsSql(role: CalendarRole): string {
-  return calendarCtes(role) + `,
+export function productionCalendarBoundsSql(role: CalendarRole, tree?: DashboardFilterTree): string {
+  return calendarCtes(role, tree) + `,
 bounds_projects AS (
   SELECT project_id FROM project_candidate_universe
   UNION
@@ -516,8 +513,8 @@ function projectBoundsFor(response: ProductionCalendarRangeResponse, rows: Calen
 }
 
 /** Statement 2 uses the same request-bounded, editor-unfiltered candidate universe for facets. */
-export function productionCalendarFacetsSql(role: CalendarRole): string {
-  return calendarCtes(role) + `,
+export function productionCalendarFacetsSql(role: CalendarRole, tree?: DashboardFilterTree): string {
+  return calendarCtes(role, tree) + `,
 facet_projects AS (
   SELECT project_id, street FROM project_candidate_universe
   UNION
@@ -544,7 +541,10 @@ SELECT * FROM facet_rows`;
 function bindValues(parsed: ParsedCalendarRequest): unknown[] {
   const { query } = parsed;
   const filters = query.filters;
-  const stages = filters.stageKeys.map((stage) => stage === "editing" ? "editing_autohdr" : stage);
+  const tree = dashboardFilterTreeOf(filters);
+  // The Stage scope the tree implies (a necessary condition in the base); empty when no Stage rule narrows it.
+  const hasStageLeaf = dashboardFilterLeaves(tree).some((leaf) => leaf.field === "stages");
+  const stages = hasStageLeaf ? dashboardFilterStageScope(tree).map((stage) => stage === "editing" ? "editing_autohdr" : stage) : [];
   return [
     "", // replaced by the handler for the principal ID
     parsed.startInstant,
@@ -553,22 +553,16 @@ function bindValues(parsed: ParsedCalendarRequest): unknown[] {
     query.end,
     parsed.now,
     parsed.todayDate,
-    JSON.stringify(filters.editorIds),
+    JSON.stringify(dashboardFilterPeopleIds(tree)),
     JSON.stringify(stages),
     filters.search,
-    filters.includeUnassigned ? 1 : 0,
-    filters.myTasks ? 1 : 0,
     filters.showCompletedChecklist ? 1 : 0,
     filters.showDeliveredProjects ? 1 : 0,
-    filters.overdueOnly ? 1 : 0,
     filters.layers.includes("project") ? 1 : 0,
     filters.layers.includes("checklist") ? 1 : 0,
-    JSON.stringify(filters.priorities),
-    filters.archived,
-    filters.shootRange?.from ?? "",
-    filters.shootRange?.to ?? "",
-    filters.deadlineRange?.from ?? "",
-    filters.deadlineRange?.to ?? "",
+    dashboardFilterArchivedMode(tree),
+    // ONE JSON bind: every rule's values, depth first; see `compileDashboardFilterSql`.
+    compileDashboardFilterSql(tree, { jsonRef: "r.filter_tree", context: editorsContext(baseProjectColumns("ap"), "ap.project_id", "r.now", "r.me"), peopleSource: { mode: "universe", validPeopleTable: "valid_request_people" } }).values,
   ];
 }
 
@@ -745,20 +739,21 @@ async function productionCalendarHandlerImpl(c: Context<AppEnv>): Promise<Respon
   const user = c.get("user");
   const role = user.role;
   // #428: Archived Include/Only is Admin only, and Project priority is withheld from an External Editor.
-  if (parsed.query.filters.archived !== "hide" && !roleHasCapability(role, "adminBackend")) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
-  if (parsed.query.filters.priorities.length > 0 && role === "external_editor") return c.json({ error: "Project priority is not available to this role.", code: "calendar_query_invalid" }, 400);
+  const requestTree = dashboardFilterTreeOf(parsed.query.filters);
+  if (dashboardFilterHasArchivedLeaf(requestTree) && !roleHasCapability(role, "adminBackend")) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
+  if (dashboardFilterHasPriorityLeaf(requestTree) && role === "external_editor") return c.json({ error: "Project priority is not available to this role.", code: "calendar_query_invalid" }, 400);
   const params = bindValues(parsed);
   params[0] = user.id;
-  const first = await c.env.DB.prepare(productionCalendarRangeSql(role)).bind(...params).all<CalendarSqlRow>();
+  const first = await c.env.DB.prepare(productionCalendarRangeSql(role, requestTree)).bind(...params).all<CalendarSqlRow>();
   const rows = first.results ?? [];
   const density = rows.find((row) => row.row_kind === "density");
   if (density) return c.json({ error: "This Calendar view spans too many projects and checklist items to load; narrow the filters.", code: "calendar_range_too_dense", count: Number(density.scheduled_total), max: PRODUCTION_CALENDAR_MAX_SCHEDULED_EVENTS, refinement: "Refine the date range, Stage, Editor, layer, or search filters." }, 422);
-  const second = await c.env.DB.prepare(productionCalendarFacetsSql(role)).bind(...params).all<CalendarFacetRow>();
+  const second = await c.env.DB.prepare(productionCalendarFacetsSql(role, requestTree)).bind(...params).all<CalendarFacetRow>();
   const remindersBySubtask = await readSubtaskReminders(c.env.DB, rows.filter((row) => row.row_kind === "checklist_candidate" && row.subtask_id !== null).map((row) => row.subtask_id!), parsed.now);
   const assembled = responseFromRows(role, parsed, rows, second.results ?? [], remindersBySubtask);
   // #222: the key exists ONLY when requested — an absent param must never serialize it, even as null.
   const response: ProductionCalendarRangeResponse = parsed.includeBounds
-    ? { ...assembled, projectBounds: projectBoundsFor(assembled, (await c.env.DB.prepare(productionCalendarBoundsSql(role)).bind(...params).all<CalendarBoundsRow>()).results ?? []) }
+    ? { ...assembled, projectBounds: projectBoundsFor(assembled, (await c.env.DB.prepare(productionCalendarBoundsSql(role, requestTree)).bind(...params).all<CalendarBoundsRow>()).results ?? []) }
     : assembled;
   if (role === "external_editor") return c.json(EXTERNAL_API_RESPONSE_SCHEMAS.calendar.parse(response));
   if (role === "admin") return c.json(adminProductionCalendarRangeResponseSchema.parse(response));

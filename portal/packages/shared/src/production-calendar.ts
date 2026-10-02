@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { dashboardFilterTreeSchema, type DashboardFilterTree } from "./dashboard-filter-tree";
 import { subtaskRemindersDtoSchema, type SubtaskRemindersDto } from "./subtask-reminders";
 import {
   normalizeChecklistSchedule,
@@ -70,6 +71,12 @@ export type ProductionCalendarFilters = {
   overdueOnly: boolean;
   search: string;
   myTasks: boolean;
+  /**
+   * #461: a filter the flat facets above cannot spell (OR, groups, a repeated field, negation). Present only
+   * then, with every flat facet at its default; the request, the response's `appliedFilters` echo and the
+   * strict DTO decoder all carry it verbatim.
+   */
+  tree?: DashboardFilterTree;
 };
 
 export type ProductionCalendarFiltersInput = {
@@ -86,6 +93,7 @@ export type ProductionCalendarFiltersInput = {
   overdueOnly?: boolean;
   search?: string;
   myTasks?: boolean;
+  tree?: DashboardFilterTree;
 };
 
 export type ProductionCalendarRangeQuery = {
@@ -131,6 +139,7 @@ const productionCalendarFiltersInputSchema = z.object({
   overdueOnly: z.boolean().optional(),
   search: searchSchema.optional(),
   myTasks: z.boolean().optional(),
+  tree: dashboardFilterTreeSchema.optional(),
 }).strict();
 
 function canonicalize<T extends string>(values: readonly T[] | undefined, order: readonly T[], defaultValue: readonly T[] = []): T[] {
@@ -163,6 +172,7 @@ function normalizeFilters(input: ProductionCalendarFiltersInput): ProductionCale
     overdueOnly: input.overdueOnly ?? false,
     search: normalizeSearch(input.search),
     myTasks: input.myTasks ?? false,
+    ...(input.tree ? { tree: input.tree } : {}),
   };
 }
 
@@ -171,6 +181,8 @@ function validateNormalizedFilters(filters: ProductionCalendarFilters, context: 
   if (filters.editorIds.length > PRODUCTION_CALENDAR_MAX_EDITOR_IDS) context.addIssue({ code: z.ZodIssueCode.too_big, type: "array", maximum: PRODUCTION_CALENDAR_MAX_EDITOR_IDS, inclusive: true, path: ["editorIds"], message: "Too many Editor filters." });
   if (filters.stageKeys.length > PRODUCTION_CALENDAR_MAX_STAGE_KEYS) context.addIssue({ code: z.ZodIssueCode.too_big, type: "array", maximum: PRODUCTION_CALENDAR_MAX_STAGE_KEYS, inclusive: true, path: ["stageKeys"], message: "Too many Stage filters." });
   if (filters.deadlineRange !== null && filters.overdueOnly) context.addIssue({ code: z.ZodIssueCode.custom, path: ["deadlineRange"], message: "A Deadline range and Overdue are exclusive." });
+  // #461: a tree IS the filter; a flat facet beside it is a second spelling of the same thing.
+  if (filters.tree && (filters.stageKeys.length > 0 || filters.priorities.length > 0 || filters.archived !== "hide" || filters.editorIds.length > 0 || filters.includeUnassigned || filters.shootRange !== null || filters.deadlineRange !== null || filters.overdueOnly || filters.myTasks)) context.addIssue({ code: z.ZodIssueCode.custom, path: ["tree"], message: "A filter tree is exclusive with the flat filter facets." });
   if ([...filters.search].length > 200) context.addIssue({ code: z.ZodIssueCode.too_big, type: "string", maximum: 200, inclusive: true, path: ["search"], message: "Search is too long." });
 }
 
@@ -543,6 +555,7 @@ const dtoFiltersSchema: z.ZodType<ProductionCalendarFilters> = z.object({
   shootRange: dateRangeSchema.nullable(), deadlineRange: dateRangeSchema.nullable(),
   showCompletedChecklist: z.boolean(), showDeliveredProjects: z.boolean(),
   overdueOnly: z.boolean(), search: z.string().max(200), myTasks: z.boolean(),
+  tree: dashboardFilterTreeSchema.optional(),
 }).strict();
 
 const projectBoundsSchema: z.ZodType<ProductionCalendarProjectBounds> = z.object({

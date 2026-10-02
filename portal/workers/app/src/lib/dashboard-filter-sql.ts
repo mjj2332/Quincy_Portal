@@ -45,7 +45,8 @@ export type DashboardFilterLeafContext = {
   mine: () => string;
 };
 
-export type DashboardFilterPeopleSource = { mode: "universe" } | { mode: "resolved"; validIds: ReadonlySet<string> };
+/** `validPeopleTable`: a CTE of `person_id` already restricted to the viewer's People universe (default `dashboard_people`). */
+export type DashboardFilterPeopleSource = { mode: "universe"; validPeopleTable?: string } | { mode: "resolved"; validIds: ReadonlySet<string> };
 
 export type CompiledDashboardFilter = {
   /** A boolean SQL expression, `1` when the tree applies nothing. */
@@ -172,7 +173,7 @@ export function compileDashboardFilterSql(tree: DashboardFilterTree, options: Co
       case "mine": match = `CASE WHEN ${ctx.mine()} THEN 1 ELSE 0 END`; break;
       case "people": {
         const named = peopleSource.mode === "universe"
-          ? `SELECT je.value FROM json_each(${F}, '$[${i}].ids') je WHERE je.value IN (SELECT person_id FROM dashboard_people)`
+          ? `SELECT je.value FROM json_each(${F}, '$[${i}].ids') je WHERE je.value IN (SELECT person_id FROM ${peopleSource.validPeopleTable ?? "dashboard_people"})`
           : set(".ids");
         applied = `(EXISTS (${named}) OR ${at(".u")} = 1)`;
         match = `CASE WHEN ${ctx.people(named, at(".u"))} THEN 1 ELSE 0 END`;

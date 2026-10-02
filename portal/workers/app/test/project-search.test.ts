@@ -35,17 +35,19 @@ function sha256(value: string): string {
 // RE-PINNED again in the #429 review round (a characterization fixture, not a guard): an External Editor's
 // People / Unassigned / My tasks match on a Subtask now requires the assignee to be on that Project's team, and
 // the shared Overdue facet gates checklist rows by their Project's Deadline rule. Every digest changed for that.
+// RE-PINNED in #461 (characterisation, not a guard): the Calendar's flat facets now compile through the shared filter-tree
+// compiler (one JSON tree bind, `request_people`, the Stage scope as the only base filter). Every digest changed for that.
 const PRE_REFACTOR_RANGE_SQL_SHA256: Record<(typeof ROLES)[number], string> = {
-  admin: "0eacb623a214aae56140bba7233450b6e012d6b9474e31db4c5219d1dc835392",
-  editor: "c8601900967303773c646a1e5a15457e4a13e4ba3ec2a8b502d9fbea321535f9",
-  photographer: "05bbbad478cff6ef4d6bc9267b752c9bb5d7d30dfd9f4874f5d2b445d4985b6b",
-  external_editor: "6bfe7d74dbd91bbea4dfa30697febedcf3ac29240a21af68a85778d217fa3a28",
+  admin: "da78c060d9f5d882f4b3dec351dac6364b4c726327a3ee975bb1b4a8056f7175",
+  editor: "64dec62615ddf8d7095afaae1b6cdd2a02bd6972a81ba7bb5b600f52b0879a79",
+  photographer: "e622be062215ada45299e8cc9881811c244f984815e3a13e4b4f2ce531fd2b69",
+  external_editor: "b42bf73c195e0d0d6ebe93237c858163d14ad1d38831948fa768f818f169cdb0",
 };
 const PRE_REFACTOR_FACETS_SQL_SHA256: Record<(typeof ROLES)[number], string> = {
-  admin: "ebb5177c0a093e410349947762a36f1bebd59496a00fef18775e5437893ef94e",
-  editor: "e3c9779b5245e100f3b497ed2637c1c01cb1b66c0a0d52f25e23a0c359666763",
-  photographer: "4946d5efae17d1ea0c5170fcefc26e841de6078f69d705900700d7ed1678ceeb",
-  external_editor: "61097f23464a076b0c1246e358bb1ef8ad9cb13aa7bc950e0af7e2694eed5040",
+  admin: "3179ef28eddc0f801f49e847a62ea75005724c2d016435b057ff40ee9304958a",
+  editor: "0a8238a62edc3622de7a6f6e91bb68a3bfb279aef40cc5a13891c18742306285",
+  photographer: "af93598b7c1508c59018932cd5114d618066a59044a30701db9a3f0395502fa1",
+  external_editor: "763da5483607949d082e83122eb6d3938804a68b408b0c0ddd3ece778723330a",
 };
 
 describe("project-search", () => {
