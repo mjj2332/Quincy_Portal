@@ -276,4 +276,18 @@ describe("SubtaskAssigneePicker", () => {
     expect(host.textContent).toBe("Unassigned");
     expect(host.firstElementChild!.classList.contains("sr-only")).toBe(true);
   });
+  it("entering readOnly mid-edit drops the draft: Restore does not reopen the popup or commit it (#450)", async () => {
+    await mount({ selected: [person("nora", "Nora Jones")], version: 3 });
+    await open();
+    await pick("Ben Ortiz");
+    await rerender({ selected: [person("nora", "Nora Jones")], version: 3, readOnly: true });
+    expect(document.querySelector('[role="listbox"]')).toBeNull();
+    await rerender({ selected: [person("nora", "Nora Jones")], version: 3, readOnly: false });
+    expect(document.querySelector('[role="listbox"]')).toBeNull();
+    expect(onCommit).not.toHaveBeenCalled();
+    await open();
+    const picked = options().filter((option) => option.getAttribute("aria-selected") === "true").map(nameOf);
+    expect(picked).toEqual(["Nora Jones"]);
+    expect(onCommit).not.toHaveBeenCalled();
+  });
 });

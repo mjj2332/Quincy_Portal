@@ -100,6 +100,14 @@ export function SubtaskAssigneePicker({ projectId, role, label, selected, versio
     void Promise.resolve(onCommit(final, people, baseline)).finally(() => setCommitting(null));
   }
 
+  // Entering read-only mid-edit (a refetch flips the Project to archived) drops the draft without the committing close handler, so Restore
+  // neither reopens the popup nor writes pre-archive picks (#450).
+  useEffect(() => {
+    if (!readOnly) return;
+    setOpen(false);
+    draftRef.current = baselineRef.current.ids; setDraft(baselineRef.current.ids);
+  }, [readOnly]);
+
   function handleValueChange(next: Option[]) {
     const nextIds = next.map((option) => option.id);
     draftRef.current = nextIds; setDraft(nextIds);
