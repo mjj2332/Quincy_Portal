@@ -517,10 +517,12 @@ function projectBoundsFor(response: ProductionCalendarRangeResponse, rows: Calen
 
 /** Statement 2 uses the same request-bounded, editor-unfiltered candidate universe for facets. */
 export function productionCalendarFacetsSql(role: CalendarRole, tree: DashboardFilterTree = emptyDashboardFilterTree(), flat = false): string {
-  // The Project facet is the editor-unfiltered candidate set narrowed by every NON-People rule: the tree with People /
-  // My tasks rules dropped. For the flat facets (an AND) that is exactly main's base narrowing (Priority, Shoot date,
-  // Deadline range, Overdue); for a tree it is the same predicate over the Project. A Project with no Deadline passes the
-  // flat Overdue facet as a candidate (`flat`), a Subtask row never does (it is gated by its Project's Deadline rule).
+  // The Project facet is the editor-unfiltered candidate set narrowed by every NON-People rule, three-valued: a People /
+  // My tasks rule is UNKNOWN here (not false, not dropped), and a Project is in the set when the tree is not definitely
+  // false for it. For the flat facets (an AND) that is exactly main's base narrowing (Priority, Shoot date, Deadline range,
+  // Overdue); under an OR an unknown leaf keeps the Project, so the facet never omits one a matching event came from. A
+  // Project with no Deadline passes the flat Overdue facet as a candidate (`flat`), a Subtask row never does (it is gated
+  // by its Project's Deadline rule).
   const narrows = dashboardFilterLeaves(tree).some((leaf) => leaf.field !== "people" && leaf.field !== "mine");
   const scope = (alias: string, noDeadline: boolean) => compileDashboardFilterSql(tree, { jsonRef: "r.filter_tree", context: editorsContext(baseProjectColumns(alias), `${alias}.project_id`, "r.now", "r.me"), validIds: NO_IDS, dropPeopleRules: true, overdueIncludesNoDeadline: noDeadline }).sql;
   const facetProjects = narrows

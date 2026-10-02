@@ -90,15 +90,17 @@ describe("legacy Calendar facets.projects is narrowed by every flat facet, as on
   });
 });
 
-describe("a tree's Project facet applies the tree's non-People rules and ignores People", () => {
+describe("a tree's Project facet applies the tree's non-People rules; a People rule is unknown, never dropped", () => {
   it("or(Shoot range; Priority 3) lists the Projects either rule keeps", async () => {
     const { status, body } = await calendar(`${past}&f=${encodeURIComponent("1:or(shoot=2026-08-01..2026-08-15;priority=3)")}`);
     expect(status).toBe(200);
     expect(facetIds(body)).toEqual([A, B, D].sort());
   });
-  it("a People rule never narrows the Project facet", async () => {
-    const { body } = await calendar(`${past}&f=${encodeURIComponent(`1:or(people=${adminId};shoot=2026-08-01..2026-08-15)`)}`);
-    expect(facetIds(body)).toEqual([A, D].sort());
+  it("a People rule never narrows the Project facet: an unknown OR leaf keeps every Project, an unknown AND leaf narrows nothing", async () => {
+    const or = await calendar(`${past}&f=${encodeURIComponent(`1:or(people=${adminId};shoot=2026-08-01..2026-08-15)`)}`);
+    expect(facetIds(or.body)).toEqual([A, B, C, D].sort());
+    const and = await calendar(`${past}&f=${encodeURIComponent(`1:and(shoot=2026-08-01..2026-08-15;or(people=${adminId};mine))`)}`);
+    expect(facetIds(and.body)).toEqual([A, D].sort());
   });
 });
 

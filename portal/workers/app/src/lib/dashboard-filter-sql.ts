@@ -139,9 +139,11 @@ export type CompileDashboardFilterOptions = {
   /** The viewer's People universe intersected with the request's ids (what `validPeopleIds` returns). Only the `values` bind reads it. */
   validIds: ReadonlySet<string>;
   /**
-   * Treat every People and My tasks rule as NOT applied (dropped from its group, as an all-unknown People rule is). The
-   * Calendar's Project facet is "the editor-unfiltered candidate set narrowed by everything else", which for the flat
-   * facets (an AND of rules) is exactly this.
+   * Treat every People and My tasks rule as UNKNOWN (three-valued, as `dashboardFilterStageScope` does for non-Stage rules):
+   * neither true nor false, and NOT unknown is still unknown. `sql` then answers "the tree is not definitely false", so
+   * the Calendar's Project facet ("the editor-unfiltered candidate set narrowed by everything else") never excludes a
+   * Project a People / My tasks rule could still keep: under an AND an unknown rule narrows nothing (as dropping it did),
+   * and under an OR it can no longer be dropped to narrow the group.
    */
   dropPeopleRules?: boolean;
   /**
@@ -203,11 +205,9 @@ export function compileDashboardFilterSql(tree: DashboardFilterTree, options: Co
         break;
       }
       case "mine":
-        if (dropPeopleRules) return { applied: "(0)", match: "1" };
         match = `CASE WHEN ${ctx.mine()} THEN 1 ELSE 0 END`;
         break;
       case "people": {
-        if (dropPeopleRules) return { applied: "(0)", match: "1" };
         applied = `(${at(".a")} = 1)`;
         match = `CASE WHEN ${ctx.people(set(".ids"), at(".u"))} THEN 1 ELSE 0 END`;
         break;
@@ -226,6 +226,24 @@ export function compileDashboardFilterSql(tree: DashboardFilterTree, options: Co
       : children.map((child) => (child.applied === null ? child.match : `(${child.applied} AND ${child.match})`));
     return { applied, match: balanced(terms, node.op === "and" ? "AND" : "OR") };
   };
+
+  if (dropPeopleRules) {
+    // Kleene logic as a pair of SQL predicates per node: `pt` = possibly true, `pf` = possibly false.
+    type Possible = { pt: string; pf: string };
+    const possibleLeaf = (leaf: DashboardFilterLeaf, i: number): Possible => {
+      if (leaf.field === "people" || leaf.field === "mine") return { pt: "1", pf: "1" };
+      const { match } = leafSql(leaf, i);
+      return { pt: `(${match})`, pf: `(NOT (${match}))` };
+    };
+    const possibleNode = (node: DashboardFilterNode): Possible => {
+      if (node.kind === "leaf") return possibleLeaf(node, index++);
+      if (node.children.length === 0) return { pt: "1", pf: "0" };
+      const children = node.children.map(possibleNode);
+      const [all, any] = node.op === "and" ? (["AND", "OR"] as const) : (["OR", "AND"] as const);
+      return { pt: balanced(children.map((child) => child.pt), all), pf: balanced(children.map((child) => child.pf), any) };
+    };
+    return { sql: possibleNode(tree).pt, values };
+  }
 
   const root = nodeSql(tree);
   return { sql: root.applied === null ? root.match : `(NOT ${root.applied} OR ${root.match})`, values };
