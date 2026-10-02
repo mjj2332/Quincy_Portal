@@ -416,8 +416,11 @@ const hasPeopleOrMine = (tree: DashboardFilterTree) => dashboardFilterLeaves(tre
  * deadline context (the parent already passed the tree), so the predicate is the constant `1`, never a per-row cost.
  * `values` is the `?`/column that holds the tree's JSON values; `resolved` pre-validated ids (or the universe CTE).
  */
-function childFilterSql(role: GanttRole, tree: DashboardFilterTree, subtask: string, projectColumnsAlias: string, peopleSource: Parameters<typeof compileDashboardFilterSql>[1]["peopleSource"]): string {
-  if (!hasPeopleOrMine(tree)) return "1";
+function childFilterSql(role: GanttRole, tree: DashboardFilterTree, subtask: string, projectColumnsAlias: string, peopleSource: Parameters<typeof compileDashboardFilterSql>[1]["peopleSource"], standalone = false): string {
+  // An EMBEDDED child list belongs to a parent the page statement already passed through the tree, so a tree with no
+  // People / My tasks rule narrows nothing per row. A STANDALONE child request (`childrenOf=`) never ran that check:
+  // the tree is evaluated on the Project itself (no rule reads a Subtask), so an excluded parent returns no rows.
+  if (!standalone && !hasPeopleOrMine(tree)) return "1";
   return compileDashboardFilterSql(tree, { jsonRef: "r.filter_tree", context: assigneeContext(role, baseProjectColumns(projectColumnsAlias), `${subtask}.project_id`, `${subtask}.id`, "r.now", "r.me"), peopleSource }).sql;
 }
 
@@ -705,7 +708,7 @@ function ganttChildrenForPageBindValues(userId: string, projectIds: string[], in
  */
 export function productionGanttChildPageSql(role: GanttRole, tree: DashboardFilterTree = dashboardFilterTreeOf(undefined)): string {
   const branch = productionRoleSql(role);
-  const childFilter = childFilterSql(role, tree, "s", "sp", { mode: "universe" });
+  const childFilter = childFilterSql(role, tree, "s", "sp", { mode: "universe" }, true);
   return `WITH
 request AS (SELECT ?1 AS me, ?7 AS archived_mode, ?8 AS filter_tree, ?9 AS now),
 ${dashboardPeopleCte(role, "r.archived_mode")},
@@ -749,7 +752,7 @@ SELECT * FROM page`;
  */
 export function productionGanttChildPageTotalSql(role: GanttRole, tree: DashboardFilterTree = dashboardFilterTreeOf(undefined)): string {
   const branch = productionRoleSql(role);
-  const childFilter = childFilterSql(role, tree, "s", "sp", { mode: "universe" });
+  const childFilter = childFilterSql(role, tree, "s", "sp", { mode: "universe" }, true);
   return `WITH
 request AS (SELECT ?1 AS me, ?4 AS archived_mode, ?5 AS filter_tree, ?6 AS now),
 ${dashboardPeopleCte(role, "r.archived_mode")},
@@ -1093,7 +1096,7 @@ async function productionGanttHandlerImpl(c: Context<AppEnv>): Promise<Response>
   // #428: Archived Include/Only is Admin only, refused (not silently narrowed) for every other role.
   const requestTree = ganttFilterTree(parsed);
   if ((parsed.tree ? dashboardFilterHasArchivedLeaf(requestTree) : parsed.archived !== "hide") && !roleHasCapability(c.get("user").role, "adminBackend")) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
-  if (parsed.mode === "page" && dashboardFilterHasPriorityLeaf(requestTree) && c.get("user").role === "external_editor") return c.json({ error: "Project priority is not available to this role.", code: "gantt_query_invalid" }, 400);
+  if (dashboardFilterHasPriorityLeaf(requestTree) && c.get("user").role === "external_editor") return c.json({ error: "Project priority is not available to this role.", code: "gantt_query_invalid" }, 400);
   if (parsed.mode === "children") return handleChildren(c, parsed);
   return handlePage(c, parsed);
 }
