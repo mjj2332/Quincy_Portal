@@ -21,7 +21,8 @@ vi.mock("../lib/stages", () => ({
     return { stages: stages.map((stage) => stage.key === "edited_review" && roleState.inactive ? { ...stage, active: false } : stage), presentationStageKey: (key: string) => !admin && key === "editing_autohdr" ? "editing" : key };
   },
 }));
-vi.mock("./ProjectTeamCombobox", () => ({ ProjectTeamCombobox: () => <div /> }));
+const teamProps = vi.hoisted(() => ({ latest: null as { archived?: boolean } | null }));
+vi.mock("./ProjectTeamCombobox", () => ({ ProjectTeamCombobox: (props: { archived?: boolean }) => { teamProps.latest = props; return <div />; } }));
 vi.mock("./ProjectDeadlineControl", () => ({ ProjectDeadlineControl: () => <div /> }));
 
 function project(overrides: Partial<ProjectDetail> = {}): ProjectDetail {
@@ -121,6 +122,25 @@ describe("Project header Stage control", () => {
     expect(rawReviewOption).not.toBeNull();
     await clickOption(rawReviewOption);
     expect(onStageMove).toHaveBeenCalledWith("raw_review");
+  });
+
+  it("an archived Project shows its read-only Stage as a plain value, not an uppercase eyebrow, and tells the Team it is archived (#452)", () => {
+    act(() => { roleState.role = "admin"; });
+    render(<ProjectHeader {...baseProps(project({ stageKey: "raw_review", archivedAt: Date.now() }))} />);
+    expect(stageTrigger()).toBeNull();
+    const value = [...host.querySelectorAll("span")].find((element) => element.textContent === "RAW review" && element.children.length === 0)!;
+    expect(value).toBeDefined();
+    const classes = (element: Element | null) => (element?.getAttribute("class") ?? "").split(/\s+/);
+    for (let element: Element | null = value; element && element !== host; element = element.parentElement) {
+      expect(classes(element)).not.toContain("ey");
+      expect(classes(element)).not.toContain("uppercase");
+    }
+    expect(teamProps.latest?.archived).toBe(true);
+  });
+
+  it("passes archived=false to the Team on a live Project (#452)", () => {
+    render(<ProjectHeader {...baseProps(project())} />);
+    expect(teamProps.latest?.archived).toBe(false);
   });
 
   it("disables quietly when the contract is off and hides for archive or missing capability", async () => {

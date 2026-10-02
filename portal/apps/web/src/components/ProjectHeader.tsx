@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { CollectionKind } from "@quincy/shared";
 import type { WorkspaceTab } from "../lib/workspace-tab";
-import { StageDot, StatusBadge } from "./atoms";
+import { StageDot } from "./atoms";
 import { InternalLink } from "./InternalLink";
 import { useDashboardReturnLink, useInProjectSheet } from "./quincy/ProjectSheet";
 import { CopyProjectLinkButton } from "./quincy/CopyProjectLinkButton";
@@ -247,12 +247,12 @@ export function ProjectHeader({
     <div className="project-header__controls">
       <div className="project-header__control">
         <span className={HEADER_KV_KEY}>Stage</span>
-        {canMoveStage ? <StageControl project={project} currentStageKey={currentStageKey} stages={stages} contractEnabled={project.contractEnabled} pending={stageMovePending} disabledReason={stageMoveDisabledReason} onMove={onStageMove} /> : <span className={cn(HEADER_KV_VALUE, "py-[var(--space-2)]")}><StatusBadge stageKey={project.stageKey} /></span>}
+        {canMoveStage ? <StageControl project={project} currentStageKey={currentStageKey} stages={stages} contractEnabled={project.contractEnabled} pending={stageMovePending} disabledReason={stageMoveDisabledReason} onMove={onStageMove} /> : <span className={cn(HEADER_KV_VALUE, "py-[var(--space-2)]")}><StageOption stageKey={currentStageKey} label={stages.find((stage) => stage.key === currentStageKey)?.label ?? currentStageKey} /></span>}
       </div>
 
       <div className="project-header__control">
         <span className={HEADER_KV_KEY}>Team</span>
-        <ProjectTeamCombobox projectId={project.id} members={project.members} canEdit={canEdit} />
+        <ProjectTeamCombobox projectId={project.id} members={project.members} canEdit={canEdit} archived={Boolean(project.archivedAt)} />
       </div>
 
       <div className="project-header__control">
