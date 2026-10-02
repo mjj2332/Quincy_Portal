@@ -13,6 +13,13 @@ import { ChevronRightIcon, CheckIcon } from "lucide-react"
  * installed). Plus one Quincy adaptation (#427 review, D4): the popup wears the Portal menus' paint
  * (`quincy/menu.tsx`) — `border-border rounded-none shadow-[var(--shadow-md)]` — instead of the
  * registry's `rounded-lg ring-1 ring-foreground/10`, so the Display menu matches the others.
+ *
+ * QUINCY ADDITION (#463): `DropdownMenuContent` forwards `anchor` to the Positioner. A menu opened
+ * from a Calendar chip or Timeline bar has no Trigger (the vendor renders the chip itself), so it
+ * positions against an element (a keyboard open) or a virtual element at the pointer (a click or
+ * right-click). Unset, the Positioner anchors to the Trigger exactly as before. The popup's default
+ * `w-(--anchor-width)` is ~0 for a virtual anchor, so such a consumer passes its own width class.
+ * Pinned by `dropdown-menu-anchor.dom.test.tsx`.
  */
 function DropdownMenu({ ...props }: MenuPrimitive.Root.Props) {
   return <MenuPrimitive.Root data-slot="dropdown-menu" {...props} />
@@ -31,12 +38,13 @@ function DropdownMenuContent({
   alignOffset = 0,
   side = "bottom",
   sideOffset = 4,
+  anchor,
   className,
   ...props
 }: MenuPrimitive.Popup.Props &
   Pick<
     MenuPrimitive.Positioner.Props,
-    "align" | "alignOffset" | "side" | "sideOffset"
+    "align" | "alignOffset" | "side" | "sideOffset" | "anchor"
   >) {
   return (
     <MenuPrimitive.Portal>
@@ -46,6 +54,7 @@ function DropdownMenuContent({
         alignOffset={alignOffset}
         side={side}
         sideOffset={sideOffset}
+        anchor={anchor}
       >
         <MenuPrimitive.Popup
           data-slot="dropdown-menu-content"
