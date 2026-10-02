@@ -1,11 +1,12 @@
-import { useRef, useState } from "react";
+import { useId, useLayoutEffect, useRef, useState, type Ref } from "react";
 import { ChevronDown, RefreshCw } from "lucide-react";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@/components/reui/popover";
 import { buttonClasses } from "./quincy/Button";
 import { StatusPill } from "./quincy/StatusPill";
 import { cn } from "../lib/utils";
 import type { ProjectDetail } from "../lib/project-data";
-import { DASHED_TRIGGER, HEADER_KV_KEY, HEADER_KV_VALUE, POPOVER_CONTENT, TRIGGER_CHEVRON } from "./project-header-popover";
+import { DASHED_TRIGGER, HEADER_KV_KEY, HEADER_KV_VALUE, HEADER_TEXT_LINK, POPOVER_CONTENT, READONLY_GROUP_FOCUS, TRIGGER_CHEVRON } from "./project-header-popover";
+import { ARCHIVED_HEADER_NOTICE_CLASS } from "./archived-notice";
 
 /**
  * #205 — the header's Dropbox control (then a `<section>` in the rail, since #213 a cell in the flat
@@ -29,18 +30,61 @@ function dropboxState(project: ProjectDetail, autohdrBlocked: boolean): { tone: 
   return { tone: "neutral", label: "Not monitored" };
 }
 
-export function ProjectHeaderDropbox({ project, isSyncing, autohdrBlocked, onSyncDropbox }: {
+const ARCHIVED_DROPBOX_NOTICE = "Read-only while archived. Restore the project before syncing from Dropbox.";
+
+export function ProjectHeaderDropbox({ project, isSyncing, autohdrBlocked, onSyncDropbox, archived = false, archivedNotice = false, readOnlyRef, onArchivedRefusal }: {
   project: ProjectDetail;
   isSyncing: boolean;
   autohdrBlocked: boolean;
-  onSyncDropbox: () => void;
+  /** Resolves "archived" when the server refused the sync because the Project is archived (#455). */
+  onSyncDropbox: () => void | Promise<"archived" | void>;
+  /** #455: the Project is archived (from the loaded detail, or latched by the header). The cell is a plain value, with no popover and no Sync. */
+  archived?: boolean;
+  /** #455: show the "read-only while archived" notice (this cell's own sync was refused). */
+  archivedNotice?: boolean;
+  /** #455: the read-only group, so the header can move focus to it after a refusal. */
+  readOnlyRef?: Ref<HTMLDivElement>;
+  /** #455: the sync was refused as archived; `focusWasInside` is whether focus was in this cell (trigger or popup) when it was pressed. */
+  onArchivedRefusal?: (focusWasInside: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
   const popupRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const noticeId = useId();
   const state = dropboxState(project, autohdrBlocked);
+  // An archived Project has no popover: close it on the read-only edge, else it would reopen when the Project comes back.
+  useLayoutEffect(() => { if (archived) setOpen(false); }, [archived]);
+
+  async function sync() {
+    // Captured before the await: the popup (portalled) or the trigger held focus when Sync was pressed.
+    const active = document.activeElement;
+    const inside = Boolean(active && (triggerRef.current?.contains(active) || popupRef.current?.contains(active)));
+    const result = await onSyncDropbox();
+    if (result === "archived") onArchivedRefusal?.(inside);
+  }
+
+  if (archived) {
+    // #455: the Project is not monitored while archived (the monitor skips it), whatever the folder facts say. Viewing the folder stays possible.
+    const webUrl = project.monitoredRawFolder?.webUrl;
+    return <div className="grid gap-[var(--space-3)]">
+      <div
+        ref={readOnlyRef}
+        role="group"
+        aria-label="Dropbox"
+        tabIndex={-1}
+        aria-describedby={archivedNotice ? noticeId : undefined}
+        className={cn("flex flex-wrap items-center gap-[var(--space-3)] min-h-[44px]", READONLY_GROUP_FOCUS)}
+      >
+        <StatusPill tone="neutral">Not monitored</StatusPill>
+        {webUrl ? <a href={webUrl} target="_blank" rel="noreferrer" className={HEADER_TEXT_LINK}>Open in Dropbox</a> : null}
+      </div>
+      {archivedNotice && <p id={noticeId} role="status" className={ARCHIVED_HEADER_NOTICE_CLASS}>{ARCHIVED_DROPBOX_NOTICE}</p>}
+    </div>;
+  }
 
   return <Popover open={open} onOpenChange={setOpen}>
     <PopoverTrigger
+      ref={triggerRef}
       type="button"
       data-testid="project-dropbox-trigger"
       aria-label={`Dropbox: ${state.label}`}
@@ -98,7 +142,7 @@ export function ProjectHeaderDropbox({ project, isSyncing, autohdrBlocked, onSyn
         <button
           type="button" disabled={isSyncing} aria-busy={isSyncing || undefined} data-testid="dropbox-sync"
           className={buttonClasses("primary", { className: "min-h-[44px]" })}
-          onClick={onSyncDropbox}
+          onClick={() => void sync()}
         >
           <RefreshCw aria-hidden="true" className="size-[var(--space-4)] shrink-0 stroke-[1.5]" />
           <span>{isSyncing ? "Syncing Dropbox…" : "Sync from Dropbox"}</span>

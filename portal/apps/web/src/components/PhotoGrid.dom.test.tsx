@@ -329,3 +329,55 @@ describe("PhotoGrid download selection", () => {
     expect(tooLarge.disabled).toBe(true);
   });
 });
+
+describe("PhotoGrid cover control on an archived Project (#459)", () => {
+  let host: HTMLElement;
+  beforeEach(() => { host = mount(); });
+  afterEach(async () => { await unmount(); host.remove(); });
+
+  const coverButton = () => host.querySelector<HTMLButtonElement>('button[title="Use as project cover"]');
+  const tile = () => host.querySelector<HTMLElement>('[data-testid="photo-grid-tile"]')!;
+  const deferred = () => { let resolve!: (value: "archived" | void) => void; const promise = new Promise<"archived" | void>((r) => { resolve = r; }); return { promise, resolve }; };
+
+  it("shows no cover control when canSetCover is false", async () => {
+    await render(<PhotoGrid {...baseProps} canSetCover={false} assets={[asset("a")]} />);
+    expect(coverButton()).toBeNull();
+  });
+
+  it("moves focus to the tile once the refusal has flipped canSetCover off, not before", async () => {
+    const pending = deferred();
+    const props = { ...baseProps, assets: [asset("a")], onSetCover: () => pending.promise };
+    await render(<PhotoGrid {...props} canSetCover />);
+    coverButton()!.focus();
+    await click(coverButton()!);
+    await act(async () => { pending.resolve("archived"); await Promise.resolve(); });
+    await flush();
+    expect(document.activeElement).toBe(coverButton());
+    await render(<PhotoGrid {...props} canSetCover={false} />);
+    expect(coverButton()).toBeNull();
+    expect(document.activeElement).toBe(tile());
+  });
+
+  it("leaves focus alone when the user moved it to another control while the request was pending", async () => {
+    const pending = deferred();
+    const props = { ...baseProps, assets: [asset("a")], onSetCover: () => pending.promise };
+    await render(<PhotoGrid {...props} canSetCover />);
+    coverButton()!.focus();
+    await click(coverButton()!);
+    selBox(host, "a").focus();
+    await act(async () => { pending.resolve("archived"); await Promise.resolve(); });
+    await render(<PhotoGrid {...props} canSetCover={false} />);
+    expect(document.activeElement).toBe(selBox(host, "a"));
+  });
+
+  it("does not move focus when the request resolves without a refusal", async () => {
+    const pending = deferred();
+    const props = { ...baseProps, assets: [asset("a")], onSetCover: () => pending.promise };
+    await render(<PhotoGrid {...props} canSetCover />);
+    coverButton()!.focus();
+    await click(coverButton()!);
+    await act(async () => { pending.resolve(undefined); await Promise.resolve(); });
+    await render(<PhotoGrid {...props} canSetCover={false} />);
+    expect(document.activeElement).not.toBe(tile());
+  });
+});

@@ -12,6 +12,23 @@ export const HEADER_KV_VALUE =
   "vv [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] " +
   "text-foreground [overflow-wrap:anywhere]";
 
+/** #455: a read-only header value (Stage, Deadline) sized to the 44px triggers beside it, so an archived row lines up. */
+export const HEADER_READONLY_VALUE =
+  HEADER_KV_VALUE + " flex items-center gap-[var(--space-2)] min-h-[44px]"; // WCAG 2.5.5 Enhanced target height, not a spacing token
+
+/** #455: the focus ring a read-only group (`tabIndex={-1}`, focused after a refusal) draws; copied from the Team group. */
+export const READONLY_GROUP_FOCUS =
+  "outline-none focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-2";
+
+/** The header's underlined text link ("Edit details", "Restore or delete", "Open in Dropbox" on an archived Project). */
+export const HEADER_TEXT_LINK =
+  "inline-flex items-center min-h-[44px] " /* WCAG 2.5.5 Enhanced target, not a spacing token */ +
+  "underline [text-underline-offset:3px] decoration-border hover:decoration-foreground " +
+  "[font:var(--weight-regular)_var(--text-xs)/1.2_var(--font-sans)] text-foreground " +
+  "transition-[text-decoration-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] " +
+  "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
+  "focus-visible:outline-ring focus-visible:outline-offset-2";
+
 // A dashed-border trigger idiom, carried over from STAGE_SELECT (ProjectHeader.tsx) with a solid
 // border swapped for a dashed one — this control opens an editor, it does not host one directly.
 // #213: content-sized and single-line like the prototype's `.sel.dashed` (value · pill · chevron

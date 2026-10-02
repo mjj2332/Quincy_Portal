@@ -762,6 +762,100 @@ afterEach(async () => {
     expect(host.textContent).toContain("Stage movement forbidden");
   });
 
+  describe("an archive that lands mid-session (#455)", () => {
+    let archivedAt: number | null;
+    const detailFetches = () => apiGetMock.mock.calls.filter(([path]) => path === "/api/projects/p1").length;
+    beforeEach(() => {
+      archivedAt = null;
+      authState.role = "admin";
+      apiGetMock.mockImplementation((path: string) => {
+        if (path === "/api/projects/p1") return Promise.resolve({ ...projectFixture(), stageKey: "raw_review", boardRevision: 7, contractEnabled: true, rawFolderPath: "/dropbox/raw", archivedAt });
+        if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: rawAssets });
+        if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+        if (path.endsWith("/jobs")) return Promise.resolve({ jobs: [] });
+        if (path.includes("/autohdr-status")) return Promise.resolve({ handoff: null });
+        return Promise.resolve({});
+      });
+    });
+    const group = (name: string) => host.querySelector<HTMLElement>(`[role="group"][aria-label="${name}"]`);
+
+    it("a Dropbox sync refused as archived shows no toast, refetches the detail and turns the header Dropbox read-only", async () => {
+      apiPostMock.mockImplementationOnce(async () => { archivedAt = Date.now(); throw new ApiError("Archived projects can't sync from Dropbox. Restore the project first.", 409, { code: "dropbox_sync_project_archived" }); });
+      await render(<ProjectWorkspace projectId="p1" />); await flush();
+      const before = detailFetches();
+      const dropboxDialog = await openDropboxDialog(host);
+      await click(dropboxDialog.querySelector<HTMLButtonElement>('[data-testid="dropbox-sync"]')!);
+      await flush(20);
+      expect(apiPostMock).toHaveBeenCalledWith("/api/projects/p1/sync-dropbox", {});
+      expect(host.textContent).not.toContain("can't sync from Dropbox");
+      expect(host.querySelector('[role="alert"]')).toBeNull();
+      expect(detailFetches()).toBeGreaterThan(before);
+      expect(group("Dropbox")?.textContent).toContain("Not monitored");
+      expect(host.querySelector('[data-testid="dropbox-sync"]')).toBeNull();
+    });
+
+    it("a 409 that is not the archive refusal still toasts its message", async () => {
+      apiPostMock.mockRejectedValueOnce(new ApiError("Nothing to sync", 409, {}));
+      await render(<ProjectWorkspace projectId="p1" />); await flush();
+      const dropboxDialog = await openDropboxDialog(host);
+      await click(dropboxDialog.querySelector<HTMLButtonElement>('[data-testid="dropbox-sync"]')!);
+      await flush(20);
+      expect(host.textContent).toContain("Nothing to sync");
+      expect(group("Dropbox")).toBeNull();
+    });
+
+    it("a Stage move refused as archived shows no toast, refetches the detail and turns the header Stage read-only", async () => {
+      apiPostMock.mockImplementationOnce(async () => { archivedAt = Date.now(); throw new ApiError("Project is archived and read-only.", 409, { code: "project_archived_read_only" }); });
+      await render(<ProjectWorkspace projectId="p1" />); await flush();
+      const before = detailFetches();
+      const trigger = host.querySelector<HTMLButtonElement>('[data-focus-key="rail-stage:p1"]')!;
+      await chooseStage(trigger, "Awaiting RAW"); await flush(20);
+      expect(host.textContent).not.toContain("archived and read-only");
+      expect(host.querySelector('[role="alert"]')).toBeNull();
+      expect(detailFetches()).toBeGreaterThan(before);
+      expect(group("Stage")?.textContent).toContain("RAW review");
+      expect(host.querySelector('[data-focus-key="rail-stage:p1"]')).toBeNull();
+    });
+
+    // The refusal is the proof of the archive: the header turns read-only at once, however long the follow-up detail read takes.
+    const stallDetailReads = () => {
+      const stalled = apiGetMock.getMockImplementation()!;
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      apiGetMock.mockImplementation((path: string, init?: unknown) => path === "/api/projects/p1" ? gate.then(() => stalled(path, init)) : stalled(path, init));
+      return release;
+    };
+    const expectHeaderReadOnly = () => {
+      expect(group("Deadline")).not.toBeNull();
+      expect(group("Team")).not.toBeNull();
+      expect(host.textContent).not.toContain("Edit details");
+      expect(host.textContent).toContain("Restore or delete");
+    };
+
+    it("a Dropbox sync refused as archived turns Edit details, Deadline and Team read-only before the detail refetch resolves", async () => {
+      apiPostMock.mockImplementationOnce(async () => { archivedAt = Date.now(); throw new ApiError("Archived projects can't sync from Dropbox. Restore the project first.", 409, { code: "dropbox_sync_project_archived" }); });
+      await render(<ProjectWorkspace projectId="p1" />); await flush();
+      expect(host.textContent).toContain("Edit details");
+      const dropboxDialog = await openDropboxDialog(host);
+      const release = stallDetailReads();
+      await click(dropboxDialog.querySelector<HTMLButtonElement>('[data-testid="dropbox-sync"]')!);
+      await flush(20);
+      expectHeaderReadOnly();
+      release(); await flush(20);
+    });
+
+    it("a Stage move refused as archived turns Edit details, Deadline and Team read-only before the detail refetch resolves", async () => {
+      apiPostMock.mockImplementationOnce(async () => { archivedAt = Date.now(); throw new ApiError("Project is archived and read-only.", 409, { code: "project_archived_read_only" }); });
+      await render(<ProjectWorkspace projectId="p1" />); await flush();
+      expect(host.textContent).toContain("Edit details");
+      const trigger = host.querySelector<HTMLButtonElement>('[data-focus-key="rail-stage:p1"]')!;
+      const release = stallDetailReads();
+      await chooseStage(trigger, "Awaiting RAW"); await flush(20);
+      expectHeaderReadOnly();
+      release(); await flush(20);
+    });
+  });
+
   it("keeps a PhotoGrid filter through a background refetch", async () => {
     let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
     rawAssets = [workspaceAsset("rated", { review: { stars: 5, colorLabel: null, decision: null, recommended: false } }), workspaceAsset("unrated")];
@@ -1049,6 +1143,80 @@ describe("ProjectWorkspace collaboration relocation", () => {
     await render(<ProjectWorkspace projectId="p1" />); await flush(20);
     expect(host.textContent).toContain("Read-only while archived. Restore the project before changing the checklist.");
     expect(host.textContent).toContain("Call client"); expect(host.textContent).not.toContain("Add an item");
+  });
+
+  describe("cover control on an archived Project (#459)", () => {
+    const ARCHIVED_AT = "2026-09-01T00:00:00.000Z";
+    const NOTICE = "Read-only while archived. Restore the project before changing the cover.";
+    const archivedRefusal = () => new ApiError("Archived projects are read-only; restore the project to change its cover.", 409, { code: "cover_project_archived" });
+    const coverButton = () => host.querySelector<HTMLButtonElement>('button[title="Use as project cover"], button[title^="Remove as cover"]');
+    function mockProject(state: { archivedAt: string | null }) {
+      apiGetMock.mockImplementation((path: string) => {
+        if (path === "/api/projects/p1") return Promise.resolve({ ...projectFixture(), archivedAt: state.archivedAt });
+        if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1")] });
+        if (path.includes("/assets?collection=edited")) return Promise.resolve({ assets: [workspaceAsset("edited-1", { collectionId: "c-edited" })] });
+        if (path.includes("ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+        if (path.includes("comments")) return Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [] });
+        if (path.includes("annotations")) return Promise.resolve({ annotations: [] });
+        if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
+        if (path.includes("mentionable-users")) return Promise.resolve({ users: [] });
+        return Promise.resolve({});
+      });
+    }
+    const notice = () => [...host.querySelectorAll<HTMLElement>('[role="status"]')].find((node) => node.textContent === NOTICE);
+
+    it("shows no cover control on RAW or Edited when the Project loads archived", async () => {
+      authState.role = "admin"; mockProject({ archivedAt: ARCHIVED_AT });
+      await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+      await openTab(host, "RAW"); await flush(10);
+      expect(host.querySelector('[data-testid="photo-grid-tile"]')).not.toBeNull();
+      expect(coverButton()).toBeNull();
+      await openTab(host, "Edited"); await flush(10);
+      expect(host.querySelector('[data-testid="photo-grid-tile"]')).not.toBeNull();
+      expect(coverButton()).toBeNull();
+    });
+
+    it("a 409 cover_project_archived latches read-only: no toast or alert, a status notice, the control gone, detail refetched, focus on the tile", async () => {
+      authState.role = "admin"; const state = { archivedAt: null as string | null }; mockProject(state);
+      await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+      await openTab(host, "RAW"); await flush(10);
+      expect(notice()).toBeUndefined();
+      apiPostMock.mockImplementationOnce(() => { state.archivedAt = ARCHIVED_AT; return Promise.reject(archivedRefusal()); });
+      apiGetMock.mockClear();
+      coverButton()!.focus();
+      await click(coverButton()!); await flush(20);
+      expect(host.textContent).not.toContain("restore the project to change its cover");
+      expect(host.querySelector('[role="alert"]')).toBeNull();
+      expect(notice()).toBeDefined();
+      expect(coverButton()).toBeNull();
+      expect(apiGetMock).toHaveBeenCalledWith("/api/projects/p1", expect.anything());
+      expect(document.activeElement).toBe(host.querySelector('[data-testid="photo-grid-tile"]'));
+    });
+
+    it("a 409 without the cover code is an ordinary error: toast, no latch", async () => {
+      authState.role = "admin"; mockProject({ archivedAt: null });
+      await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+      await openTab(host, "RAW"); await flush(10);
+      apiPostMock.mockRejectedValueOnce(new ApiError("Something else conflicted", 409, { code: "other" }));
+      await click(coverButton()!); await flush(20);
+      expect(host.textContent).toContain("Something else conflicted");
+      expect(notice()).toBeUndefined();
+      expect(coverButton()).not.toBeNull();
+    });
+
+    it("restoring brings the control back and clears the notice", async () => {
+      authState.role = "admin"; const state = { archivedAt: null as string | null }; mockProject(state);
+      let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+      await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
+      await openTab(host, "RAW"); await flush(10);
+      apiPostMock.mockImplementationOnce(() => { state.archivedAt = ARCHIVED_AT; return Promise.reject(archivedRefusal()); });
+      await click(coverButton()!); await flush(20);
+      expect(coverButton()).toBeNull(); expect(notice()).toBeDefined();
+      state.archivedAt = null;
+      await queryClient!.invalidateQueries({ queryKey: projectDataKeys.detail("p1"), exact: true, refetchType: "active" }); await flush(20);
+      expect(coverButton()).not.toBeNull();
+      expect(notice()).toBeUndefined();
+    });
   });
 
   it("lands a collaboration=open arrival on the Collaboration tab with Discussion shown, the tab focused and the signal acknowledged", async () => {

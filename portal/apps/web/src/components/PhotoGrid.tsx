@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES } from "@quincy/shared";
 import { LabelDot, Stars } from "./atoms";
 import { LazyImage } from "./LazyImage";
@@ -24,7 +24,8 @@ interface PhotoGridProps {
   coverAssetId: string | null;
   /** Explicitly stored cover — its tile's button clears instead of sets. */
   storedCoverAssetId: string | null;
-  onSetCover: (assetId: string | null) => Promise<void>;
+  /** Resolves "archived" when the server refused because the Project is archived (#459): the grid then restores focus once `canSetCover` has gone false. */
+  onSetCover: (assetId: string | null) => Promise<"archived" | void>;
   onOpen: (asset: WorkspaceAsset, orderedAssets: WorkspaceAsset[]) => void;
   onReview: (assetId: string, patch: ReviewPatch) => Promise<void>;
   onSelection: (assetId: string, selected: boolean) => Promise<void>;
@@ -80,6 +81,22 @@ export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSe
   const [thumbnailRetries, setThumbnailRetries] = useState<Record<string, number>>({});
   const [isPreparingDownload, setIsPreparingDownload] = useState(false);
   const lastSelected = useRef<string | null>(null);
+  // #459: a refused cover write unmounts the ◈ button that held focus. Capture at click time whether focus was inside the tile, and act in a
+  // layout effect once the parent has flipped `canSetCover` off (the refusal and the flip are separate renders). Never on load.
+  const tileRefs = useRef(new Map<string, HTMLElement>());
+  const pendingRefusal = useRef<{ assetId: string; focusInside: boolean } | null>(null);
+  const [refusalTick, setRefusalTick] = useState(0);
+  useLayoutEffect(() => {
+    const pending = pendingRefusal.current;
+    if (!pending || canSetCover) return;
+    pendingRefusal.current = null;
+    if (!pending.focusInside) return;
+    const tile = tileRefs.current.get(pending.assetId);
+    if (!tile || !tile.isConnected) return;
+    const active = document.activeElement;
+    const lost = !active || active === document.body || !active.isConnected || active.matches(":disabled") || (active !== tile && active.contains(tile));
+    if (lost) tile.focus();
+  }, [refusalTick, canSetCover]);
   useEffect(() => {
     const ids = new Set(assets.map((asset) => asset.id));
     setMulti((current) => {
@@ -170,7 +187,7 @@ export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSe
       const state = review?.decision;
       const previewPending = asset.renditionStatus === "processing";
       const activate = () => previewPending ? undefined : failedThumbnails.has(asset.id) ? retryThumbnail(asset.id) : onOpen(asset, displayOrder);
-      return <div className={`tile ${marked ? "is-selected" : ""} ${state ? `st-${state}` : ""} ${rating(asset) ? "has-rating" : ""} ${asset.selected ? "has-state" : ""}`} data-testid="photo-grid-tile" data-multi-selected={marked ? "true" : undefined} key={asset.id} role="button" tabIndex={previewPending ? -1 : 0} aria-disabled={previewPending || undefined} aria-label={previewPending ? `${asset.originalFilename} is processing` : failedThumbnails.has(asset.id) ? `Retry thumbnail for ${asset.originalFilename}` : undefined} onClick={activate} onKeyDown={(event) => { if (!previewPending && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); activate(); } }}>
+      return <div className={`tile ${marked ? "is-selected" : ""} ${state ? `st-${state}` : ""} ${rating(asset) ? "has-rating" : ""} ${asset.selected ? "has-state" : ""}`} data-testid="photo-grid-tile" data-multi-selected={marked ? "true" : undefined} key={asset.id} ref={(node) => { if (node) tileRefs.current.set(asset.id, node); else tileRefs.current.delete(asset.id); }} role="button" tabIndex={previewPending ? -1 : 0} aria-disabled={previewPending || undefined} aria-label={previewPending ? `${asset.originalFilename} is processing` : failedThumbnails.has(asset.id) ? `Retry thumbnail for ${asset.originalFilename}` : undefined} onClick={activate} onKeyDown={(event) => { if (!previewPending && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); activate(); } }}>
         {previewPending ? <div className="project-cover-placeholder lazy-image-placeholder" role="status" aria-label={`Processing preview for ${asset.originalFilename}`}><span>Processing preview…</span></div> : <LazyImage preload="background" assetId={asset.id} alt={asset.originalFilename} retryToken={thumbnailRetries[asset.id]} onFailedChange={(failed) => setFailedThumbnails((current) => updateFailedThumbnailState(current, asset.id, failed))} />}<div className="tile__scrim" />
         <button className="selbox" type="button" aria-label={`Select ${asset.originalFilename}`} onClick={(event) => { event.stopPropagation(); toggleMulti(asset, event.shiftKey); }}>✓</button>
         <span className="tile__num">{asset.originalFilename}</span>
@@ -179,7 +196,7 @@ export function PhotoGrid({ assets, showSections, canReview, canRecommend, canSe
           {canReview && <><button className="icbtn icbtn--ondark" type="button" title="Approve" onClick={(event) => { event.stopPropagation(); void onReview(asset.id, { decision: state === "approved" ? null : "approved" }); }}>✓</button><button className="icbtn icbtn--ondark" type="button" title="Flag" onClick={(event) => { event.stopPropagation(); void onReview(asset.id, { decision: state === "flagged" ? null : "flagged" }); }}>⚑</button></>}
           {canRecommend && <button className="icbtn icbtn--ondark" type="button" title="Recommend" onClick={(event) => { event.stopPropagation(); void onReview(asset.id, { recommended: !review?.recommended }); }}>★</button>}
           {canSelect && <button className="icbtn icbtn--ondark" type="button" title="Select for editing" onClick={(event) => { event.stopPropagation(); void onSelection(asset.id, !asset.selected); }}>↗</button>}
-          {canSetCover && <button className="icbtn icbtn--ondark" type="button" title={storedCoverAssetId === asset.id ? "Remove as cover (use first RAW frame)" : "Use as project cover"} onClick={(event) => { event.stopPropagation(); void onSetCover(storedCoverAssetId === asset.id ? null : asset.id); }}>◈</button>}
+          {canSetCover && <button className="icbtn icbtn--ondark" type="button" title={storedCoverAssetId === asset.id ? "Remove as cover (use first RAW frame)" : "Use as project cover"} onClick={(event) => { event.stopPropagation(); const focusInside = Boolean(tileRefs.current.get(asset.id)?.contains(document.activeElement)); void onSetCover(storedCoverAssetId === asset.id ? null : asset.id).then((outcome) => { if (outcome === "archived") { pendingRefusal.current = { assetId: asset.id, focusInside }; setRefusalTick((tick) => tick + 1); } }, () => undefined); }}>◈</button>}
           {canDelete && onDelete && <button className="icbtn icbtn--ondark" type="button" title="Delete asset" aria-label={`Delete ${asset.originalFilename}`} onClick={(event) => { event.stopPropagation(); void deleteOne(asset).catch(() => undefined); }}>×</button>}
         </div>
         <div className="statetags">
