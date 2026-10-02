@@ -1687,6 +1687,36 @@ describe("KanbanCard2 — ⋯ and right-click menus (#432)", () => {
     expect(isMenuItemDisabled(moveToTrigger()!)).toBe(true);
   });
 
+  // #306: a priority save locks only the saving card. Another card's pending write must not lock a
+  // card's Move to, and its own must - from the ⋯ menu and from the right-click menu alike.
+  describe("Move to under a pending priority write (#306)", () => {
+    it("stays enabled on a card while ANOTHER card's priority write is pending, from the ⋯ and right-click menus", async () => {
+      await renderBoard({ projects: column(), role: "admin", canMoveStages: true, pendingOrdering: new Set(["top"]) });
+      expect(cardMenuTrigger(host, "mid"), "no ⋯ trigger rendered").not.toBeNull();
+      expect(cardMenuTrigger(host, "mid")!.disabled).toBe(false);
+      await openCardMenu(host, "mid");
+      expect(moveToTrigger(), "no Move to rendered").not.toBeNull();
+      expect(isMenuItemDisabled(moveToTrigger()!)).toBe(false);
+      await openMoveToSubmenu();
+      expect(isMenuItemDisabled(stageRadio("RAW review")!)).toBe(false);
+      await closeMenus();
+      await openContextMenu(wrap("mid")!);
+      expect(moveToTrigger(), "no Move to rendered").not.toBeNull();
+      expect(isMenuItemDisabled(moveToTrigger()!)).toBe(false);
+      await closeMenus();
+    });
+
+    it("is unavailable on a card while its OWN priority write is pending, from the ⋯ and right-click menus", async () => {
+      await renderBoard({ projects: column(), role: "admin", canMoveStages: true, pendingOrdering: new Set(["mid"]) });
+      expect(cardMenuTrigger(host, "mid"), "no ⋯ trigger rendered").not.toBeNull();
+      expect(cardMenuTrigger(host, "mid")!.disabled).toBe(true);
+      await openContextMenu(wrap("mid")!);
+      expect(moveToTrigger(), "no Move to rendered").not.toBeNull();
+      expect(isMenuItemDisabled(moveToTrigger()!)).toBe(true);
+      await closeMenus();
+    });
+  });
+
   it("renders no ⋯ and no right-click menu for a principal with nothing to offer", async () => {
     await renderBoard({ projects: column(), canMoveStages: false });
     expect(cardMenuTrigger(host, "mid")).toBeNull();
