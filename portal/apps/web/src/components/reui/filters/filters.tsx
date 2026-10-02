@@ -21,6 +21,7 @@
  * - QUINCY (#255 browser pass G): `useControllableQuery` also returns `writtenRef` (the root's own last write), and the root announces `countAnnouncement` when a controlled `query` changes to anything else. Upstream announced only edits made through the bar, so an outside re-seed left a stale count in the live status.
  * - QUINCY ADDITION (#429): the chip toolbar carries `max-w-full min-w-0`, so it is bounded by the bar at 390px and a chip's own `max-w-full` resolves against the row.
  * - QUINCY ADDITION (#255), additive: a `ruleMenu?: { duplicate?: boolean; negate?: boolean }` option (`FilterRuleMenuOptions`, `filters-context.tsx`) threaded root prop -> actions context -> `FilterRuleMenuItems`, so a consumer can hide the rule menu's Duplicate and Negate rows. Upstream has no option for it. Omitted, both rows render exactly as upstream.
+ * - QUINCY ADDITION (#461), additive: `canAddRule?(query, parentId)` / `canAddGroup?(query, parentId)` (root props on `Filters`, `filters.tsx`) threaded root prop -> actions context -> the advanced panel footer's Add filter / Add group and each group footer's Add filter (`filters-advanced.tsx`), so a consumer can cap the query (rule count, depth). Upstream disables them only for a disabled bar. Omitted, every one is enabled exactly as upstream. A consumer that must also refuse Duplicate / Convert / Move still vetoes them in `onBeforeQueryChange`.
  */
 import * as React from "react"
 import { FiltersAdvanced } from "@/components/reui/filters/filters-advanced"
@@ -254,6 +255,18 @@ export interface FiltersProps<V = unknown, O = unknown> {
   ruleMenu?: FilterRuleMenuOptions
 
   /**
+   * QUINCY ADDITION (#461): refuse an ADD at the control, before it is
+   * pressed. Asked with the current query and the parent the node would join.
+   * `false` disables the panel footer's Add filter / Add group (parent: the
+   * root) and a group footer's Add filter (parent: that group). Upstream
+   * checks only `disabled`. Not a veto: Duplicate, Convert to group and Move
+   * can still exceed what these allow, so a consumer holding a cap also
+   * refuses those in `onBeforeQueryChange`.
+   */
+  canAddRule?: (query: FilterQuery<V>, parentId: string) => boolean
+  canAddGroup?: (query: FilterQuery<V>, parentId: string) => boolean
+
+  /**
    * Classes for the dropdown MENUS and the field PICKER panel, one prop each
    * rather than one per mount point. Merged after the default, so `w-*` wins.
    */
@@ -307,6 +320,8 @@ export function Filters<V = unknown, O = unknown>({
   onBeforeQueryChange,
   onConvertToAdvanced,
   ruleMenu: ruleMenuProp,
+  canAddRule: canAddRuleProp,
+  canAddGroup: canAddGroupProp,
   menuClassName,
   fieldPickerClassName,
   pathCollapse = "none",
@@ -426,6 +441,8 @@ export function Filters<V = unknown, O = unknown>({
     disabled,
     readOnly,
     onBeforeQueryChange,
+    canAddRule: canAddRuleProp,
+    canAddGroup: canAddGroupProp,
   })
   React.useEffect(() => {
     latest.current = {
@@ -440,6 +457,8 @@ export function Filters<V = unknown, O = unknown>({
       disabled,
       readOnly,
       onBeforeQueryChange,
+      canAddRule: canAddRuleProp,
+      canAddGroup: canAddGroupProp,
     }
   })
 
@@ -499,6 +518,18 @@ export function Filters<V = unknown, O = unknown>({
     if (!id || findFilterNode(query, id)) return
     focusStore.set({ id: null, segment: null, autoOpen: false })
   }, [query, focusStore])
+
+  // QUINCY ADDITION (#461): stable wrappers over the latest consumer predicates.
+  const canAddRule = React.useCallback(
+    (current: FilterQuery<V>, parentId: string) =>
+      latest.current.canAddRule?.(current, parentId) ?? true,
+    []
+  )
+  const canAddGroup = React.useCallback(
+    (current: FilterQuery<V>, parentId: string) =>
+      latest.current.canAddGroup?.(current, parentId) ?? true,
+    []
+  )
 
   const addRule = React.useCallback(
     (rule: FilterRule<V>, parentId?: string) => {
@@ -921,6 +952,8 @@ export function Filters<V = unknown, O = unknown>({
           | FilterEditor<V, O>
           | undefined,
       resolution: resolutionStore,
+      canAddRule,
+      canAddGroup,
       addRule,
       addGroup,
       updateRule,
@@ -963,6 +996,8 @@ export function Filters<V = unknown, O = unknown>({
       maxPathSegments,
       resolveOperators,
       resolutionStore,
+      canAddRule,
+      canAddGroup,
       addRule,
       addGroup,
       updateRule,

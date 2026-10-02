@@ -19,6 +19,7 @@
  *
  * File-specific edits:
  * - `noUncheckedIndexedAccess`: the row's roving column falls back to `columns[0] ?? null`; Ctrl+Home/End narrow `rows[0]`/`rows[rows.length - 1]` before `ownCells`.
+ * - QUINCY ADDITION (#461), additive: `canAddRule?(query, parentId)` / `canAddGroup?(query, parentId)` (root props on `Filters`, `filters.tsx`) threaded root prop -> actions context -> the advanced panel footer's Add filter / Add group and each group footer's Add filter (`filters-advanced.tsx`), so a consumer can cap the query (rule count, depth). Upstream disables them only for a disabled bar. Omitted, every one is enabled exactly as upstream. A consumer that must also refuse Duplicate / Convert / Move still vetoes them in `onBeforeQueryChange`.
  */
 import * as React from "react"
 import { FilterFieldPicker } from "@/components/reui/filters/filters-builder"
@@ -1292,7 +1293,9 @@ function FilterAdvancedGroup<V, O>({
               "overflow-hidden",
               CELL_INVALID_CLASS
             )}
-            disabled={actions.disabled}
+            disabled={
+              actions.disabled || !actions.canAddRule(query, group.id)
+            }
             {...filterReadOnlyProps(actions)}
             {...cellProps("add", active)}
             /* An EMPTY group is flagged on the control that fills it. */
@@ -1945,7 +1948,9 @@ export function FiltersAdvancedPanel<V, O>({
           variant="outline"
           size={sizes.button}
           className="shrink-0 font-normal"
-          disabled={actions.disabled}
+          disabled={
+            actions.disabled || !actions.canAddRule(query, query.id)
+          }
           {...filterReadOnlyProps(actions)}
           onClick={addRow}
         >
@@ -1958,7 +1963,9 @@ export function FiltersAdvancedPanel<V, O>({
           variant="outline"
           size={sizes.button}
           className="shrink-0 font-normal"
-          disabled={actions.disabled}
+          disabled={
+            actions.disabled || !actions.canAddGroup(query, query.id)
+          }
           {...filterReadOnlyProps(actions)}
           onClick={addGroup}
         >
