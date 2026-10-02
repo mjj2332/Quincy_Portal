@@ -743,6 +743,18 @@ describe("SubtaskChecklist on an archived Project (#450)", () => {
     await waitFor(() => expect(liveRegion(host)).toBeDefined());
     expect(document.activeElement).toBe(collapseButton(host));
   });
+  it("a refusal that lands after focus moved to another enabled control outside the rail leaves focus there", async () => {
+    const host = await renderCase();
+    let reject!: (error: unknown) => void;
+    apiPatchMock.mockImplementationOnce(() => new Promise((_resolve, rej) => { reject = rej; }));
+    const box = checkbox(host); box.focus(); await click(box);
+    const outside = document.createElement("button"); outside.textContent = "Comment"; document.body.append(outside); outside.focus();
+    expect(document.activeElement).toBe(outside);
+    await act(async () => { reject(refusal()); await Promise.resolve(); });
+    await waitFor(() => expect(liveRegion(host)).toBeDefined());
+    expect(document.activeElement).toBe(outside);
+    outside.remove();
+  });
   it("an ordinary 409 is not mistaken for an archived refusal", async () => {
     const host = await renderCase();
     apiPostMock.mockRejectedValueOnce(new ApiError("Order changed", 409, { code: "subtask_order_conflict" }));
