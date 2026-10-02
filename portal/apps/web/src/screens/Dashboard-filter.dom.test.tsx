@@ -599,7 +599,7 @@ describe("Dashboard shared Filter (#428)", () => {
     });
 
     it("announces every refused edit over the cap, including the same refusal twice in a row", async () => {
-      const leaves = Array.from({ length: 20 }, () => ({ kind: "leaf" as const, field: "priority" as const, values: ["5"] }));
+      const leaves = Array.from({ length: 20 }, () => ({ kind: "leaf" as const, field: "priority" as const, values: ["5" as const] }));
       await renderAt(treeUrl("table", { kind: "group", op: "or", children: leaves }));
       await openPanel();
       const live = host.querySelector<HTMLElement>('[data-testid="dashboard-live-region"]')!;

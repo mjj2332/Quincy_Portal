@@ -521,12 +521,10 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // loses the capability mid-session would still be shown Calendar content for one commit before
   // the reconciliation effect below moves `view` off it.
   // The Calendar's request and cache key read the same Delivered rule as the Timeline (a tree naming Delivered shows delivered Projects while Display hides them); the URL and the Display chips keep the stored flag.
-  const calendarRequestState = useMemo(() => {
-    if (!calendarState) return null;
-    const filtered = applyDashboardFilter(calendarState, filter);
-    const shown = ganttDeliveredShown({ ...filtered, delivered: filtered.showDeliveredProjects });
-    return { ...filtered, showDeliveredProjects: shown.delivered, search: committedQuery };
-  }, [calendarState, filter, committedQuery]);
+  const calendarRequestFor = (state: DashboardCalendarState): DashboardCalendarState => {
+    const filtered = applyDashboardFilter(state, filter);
+    return { ...filtered, showDeliveredProjects: ganttDeliveredShown({ ...filtered, delivered: filtered.showDeliveredProjects }).delivered, search: committedQuery };
+  };
   const isCalendarView = view === "calendar" && calendarState !== null && canViewProductionCalendar;
   // #220: Gantt is gated the same way Calendar is above (`canViewProductionCalendar` — Gantt reads
   // the same production schedule, see `lib/staff-navigation.ts`'s `CAPABILITY_GATED_VIEWS`), minus
@@ -1686,7 +1684,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
             <Suspense fallback={<div className={cn("empty", VIEW_STATE_BOX)} role="status">Loading calendar…</div>}>
               <ProductionEventCalendar
                 identity={identity}
-                calendar={calendarRequestState}
+                calendar={calendarState && calendarRequestFor(calendarState)}
                 onNavigate={(next) => navigateCalendar(next)}
                 onAppliedFilters={reconcileAppliedCalendarFilters}
                 onAcceptGateChange={setCalendarInteractionBlocked}
