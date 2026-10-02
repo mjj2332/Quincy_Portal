@@ -286,7 +286,7 @@ function TeamMoreToggle({ hiddenCount, expanded, onToggle }: { hiddenCount: numb
   </button>;
 }
 
-export function ProjectTeamCombobox({ projectId, members, canEdit, archived = false, readOnlyClassName, inputRef }: { projectId: string; members: ProjectMember[]; canEdit: boolean; /** #452: an archived Project's Team is read-only. Also latched on from a 409 `membership_project_archived`, until this goes true to false (Restore). */ archived?: boolean; /** The read-only row only (an archived or live read-only Team); the header sizes it to its 44px controls. */ readOnlyClassName?: string; /** #365: lets a hosting popover focus the input (the first chip × is a Tab stop and would otherwise take initial focus). */ inputRef?: Ref<HTMLInputElement> }) {
+export function ProjectTeamCombobox({ projectId, members, canEdit, archived = false, rowClassName, inputRef }: { projectId: string; members: ProjectMember[]; canEdit: boolean; /** #452: an archived Project's Team is read-only. Also latched on from a 409 `membership_project_archived`, until this goes true to false (Restore). */ archived?: boolean; /** Sizes the Team row, read-only or editable (#458); the header passes its 44px control height. */ rowClassName?: string; /** #365: lets a hosting popover focus the input (the first chip × is a Tab stop and would otherwise take initial focus). */ inputRef?: Ref<HTMLInputElement> }) {
   const anchor = useComboboxAnchor();
   const [latched, setLatched] = useState(false);
   const readOnly = archived || latched;
@@ -436,7 +436,7 @@ export function ProjectTeamCombobox({ projectId, members, canEdit, archived = fa
       {/* #213 follow-up: content-sized like prototype 2a's Team `.sel` (chips · Add… · chevron), not a
        *  box stretched to its cell — `w-fit` sizes to the chips and `max-w-full` still wraps them
        *  inside the cell. */}
-      <ComboboxChips ref={anchor} className="w-fit max-w-full rounded-[var(--radius-pill)] max-[721px]:min-h-[44px]">
+      <ComboboxChips ref={anchor} className={cn("w-fit max-w-full rounded-[var(--radius-pill)] max-[721px]:min-h-[44px]", rowClassName)}>
         <ComboboxValue>
           {() => visible.map((option) => {
             const { dataState, isPending, messageId, name, roleTag } = chipProps(option);
@@ -511,7 +511,7 @@ export function ProjectTeamCombobox({ projectId, members, canEdit, archived = fa
       // Only an archived (or latched) Team gets the named group: the focus target, and the anchor for the notice. A live read-only Team keeps its plain row.
       {...(readOnly ? { role: "group", "aria-label": "Team", tabIndex: -1, "aria-describedby": latched ? noticeId : undefined } : {})}
       ref={readOnlyRef}
-      className={cn("flex flex-wrap items-center gap-1.5 outline-none focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-2", readOnlyClassName)}
+      className={cn("flex flex-wrap items-center gap-1.5 outline-none focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-2", rowClassName)}
     >
       {displayed.length ? <>
         {visible.map((option) => {
