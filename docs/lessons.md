@@ -5012,3 +5012,12 @@ remove the legacy readers) still applies.
   assertion that mentions bind slots (`json_each(?8)`, `?9`) still holds because `?8` is the request's People ids and `?9` the Stage
   scope. Writer order `editors` before `stages` (#428) is untouched.
 
+### #461 PR A fix round
+
+- **A tree at the caps is a test, not an assumption.** 20 rules / depth 3 / 50 ids ran fine as one shape and died as another: `SQLITE_NOMEM` (20 People rules flat, Gantt page; nested People groups, Calendar) and "Expression tree is too large (maximum depth 100)". Cause: every People rule re-derived the People universe inside the statement, in `applied` and again in `match`, repeated per ancestor, and the Gantt page compiles the tree three times. `dashboard-filter-max-cap.test.ts` runs three shapes as Admin and External Editor through every statement on every surface; add a shape there before trusting a compiler change.
+- **Resolve the universe once, in the handler.** `validPeopleIds` answers the request's valid ids; the ONE JSON bind carries each People rule's pre-filtered `ids` and a precomputed `a` (applied, 0/1). The compiler has no "universe" mode any more. AND / OR chains are balanced binary trees (depth log2 n).
+- **`production-calendar.integration.test.ts` pins `json_each(?8)` once and `json_each(?9)` once**, so the Calendar keeps `?8` as the (already resolved) People ids in a `request_people` CTE the filter itself does not read. Do not renumber the binds to "tidy" it.
+- **A standalone `childrenOf=` request never ran the page's parent check.** With no People / My tasks rule `childFilterSql` was the constant `1`, so an excluded parent still returned children. Embedded children keep the shortcut; a standalone request evaluates the tree on the parent. Role gates (Priority 400, Archived 403) run for every Gantt mode.
+- **Legacy parity is a test against `origin/main`, not a reading.** Moving Priority / Shoot / Deadline / Overdue out of the Calendar base widened `filterFacets.projects` and dropped a no-Deadline Project from the density count under `overdue=1`. `production-calendar-legacy-parity.test.ts` passes unchanged on main's code; keep it that way. The Project facet applies the tree with People / My tasks dropped (`dropPeopleRules`); the flat Overdue facet keeps its candidate quirk (`overdueIncludesNoDeadline`, never for a tree).
+- **A Stage / Priority-only list stays in memory.** Anything that routes it through D1 pays ceil(N/500) sequential statements for nothing.
+
