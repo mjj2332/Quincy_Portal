@@ -909,4 +909,26 @@ describe("Show in Timeline from the sheet (#464)", () => {
     expect(currentUrl()).toBe(PROJECT_PATH);
     expect(host.querySelector('[data-testid="dashboard-gantt-surface"]')).not.toBeNull();
   });
+
+  it("does not hand focus to a project link in the Dashboard when the landing has already stripped focus from the URL", async () => {
+    // The view lands and removes `focus` from the URL while the sheet is still closing; the sheet's
+    // final focus must remember it was closed by a Show in, not re-read the (now focus-less) URL and
+    // fall back to the project's link in the Dashboard (the Calendar's selection strip carries one).
+    const host = await renderDashboardAt("timeline");
+    const opener = (await openerFor(host, "timeline")) as HTMLElement;
+    await click(opener);
+    const decoy = document.createElement("a");
+    decoy.href = PROJECT_PATH;
+    decoy.textContent = "strip link";
+    host.querySelector("main")!.append(decoy);
+    const unsubscribe = locationStore().subscribe(() => {
+      if (currentUrl().includes("focus=")) { unsubscribe(); locationStore().replace("/?view=timeline&q=smith"); }
+    });
+    await click(document.querySelector('[data-testid="ws-show-in-timeline"]')!);
+    await settle();
+    expect(sheet()).toBeNull();
+    expect(currentUrl()).not.toContain("focus=");
+    expect(document.activeElement).not.toBe(decoy);
+    expect(document.activeElement).not.toBe(opener);
+  });
 });

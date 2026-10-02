@@ -472,12 +472,20 @@ function DashboardLayer() {
   // synchronously inside the activated link's click, so `document.activeElement` is still that link.
   const openerRef = useRef<HTMLElement | null>(null);
   const projectIdRef = useRef<string | null>(null);
+  // #464: set when the sheet is left for a Dashboard URL carrying `focus` (Show in ...). Remembered
+  // at that moment: the landing strips `focus` from the URL before the sheet finishes closing.
+  const leftForLandingRef = useRef(false);
   if (route.kind === "project" || route.kind === "edit-project") projectIdRef.current = route.projectId;
   useEffect(() => {
     const adapter = locationStore();
     let wasSheet = isSheetLocation(adapter.getLocation());
     return adapter.subscribe(() => {
       const isSheet = isSheetLocation(adapter.getLocation());
+      if (isSheet) leftForLandingRef.current = false;
+      else if (wasSheet) {
+        const next = parseStaffLocation(adapter.getLocation());
+        leftForLandingRef.current = next.kind === "dashboard" && dashboardFocusOf(next) !== undefined;
+      }
       if (isSheet && !wasSheet) {
         const active = document.activeElement;
         openerRef.current = active instanceof HTMLElement && active !== document.body ? active : null;
@@ -489,8 +497,7 @@ function DashboardLayer() {
     // #464: Show in Calendar / Timeline closes the sheet by pushing a Dashboard URL carrying `focus`.
     // The view lands on the Project and moves focus itself; returning it to the opener first would
     // fight that (and the opener is usually the very row the view is about to scroll).
-    const live = parseStaffLocation(locationStore().getLocation());
-    if (live.kind === "dashboard" && dashboardFocusOf(live) !== undefined) return false;
+    if (leftForLandingRef.current) return false;
     const opener = openerRef.current;
     if (opener?.isConnected) return opener;
     // Safari does not focus a clicked link: fall back to the opener's row in the Dashboard.
