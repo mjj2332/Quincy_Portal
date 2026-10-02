@@ -1041,6 +1041,16 @@ describe("ProjectWorkspace collaboration relocation", () => {
     expect(host.querySelector<HTMLElement>("#project-workspace-panel-collaboration")!.hidden).toBe(true);
   });
 
+  it("an archived Project's checklist rail is read-only (#450)", async () => {
+    const subtask = { reminders: { offsetsMinutes: [], nextOccurrence: null }, id: "task-1", title: "Call client", done: false, position: 1024, assignees: [], assignmentVersion: 0, dueDate: null, schedule: null, createdBy: "user", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-17T00:00:00.000Z" };
+    mockOpenProject();
+    const base = apiGetMock.getMockImplementation()!;
+    apiGetMock.mockImplementation((path: string, init?: unknown) => path === "/api/projects/p1" ? Promise.resolve({ ...projectFixture(), archivedAt: "2026-09-01T00:00:00.000Z" }) : path.includes("/subtasks") ? Promise.resolve({ subtasks: [subtask] }) : base(path, init));
+    await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+    expect(host.textContent).toContain("Read-only while archived. Restore the project before changing the checklist.");
+    expect(host.textContent).toContain("Call client"); expect(host.textContent).not.toContain("Add an item");
+  });
+
   it("lands a collaboration=open arrival on the Collaboration tab with Discussion shown, the tab focused and the signal acknowledged", async () => {
     mockOpenProject();
     const consumed: number[] = [];

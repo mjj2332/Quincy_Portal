@@ -260,4 +260,20 @@ describe("SubtaskAssigneePicker", () => {
     await act(async () => { reject(new ApiError("boom", 400)); await Promise.resolve(); });
     await waitFor(() => expect(document.body.textContent).toContain("People could not be loaded."));
   });
+
+  it("readOnly (#450) renders the avatars and the title with no trigger, no combobox and no request", async () => {
+    await mount({ selected: [person("nora", "Nora Jones"), person("ada", "Ada Smith")], hiddenCount: 1, readOnly: true });
+    expect(host.querySelector("button")).toBeNull();
+    expect(host.querySelector('[role="combobox"]')).toBeNull();
+    const labels = [...host.querySelectorAll('[role="img"]')].map((element) => element.getAttribute("aria-label"));
+    expect(labels).toEqual(expect.arrayContaining(["Nora Jones", "Ada Smith"]));
+    expect(host.querySelector('[title="Nora Jones, Ada Smith and 1 other"]')).not.toBeNull();
+    expect(apiGetMock).not.toHaveBeenCalled();
+  });
+  it("readOnly with nobody assigned renders no empty avatar placeholder, only an sr-only Unassigned", async () => {
+    await mount({ selected: [], readOnly: true });
+    expect(host.querySelector('[role="img"]')).toBeNull();
+    expect(host.textContent).toBe("Unassigned");
+    expect(host.firstElementChild!.classList.contains("sr-only")).toBe(true);
+  });
 });

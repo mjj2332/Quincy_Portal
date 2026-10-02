@@ -31,6 +31,8 @@ export type SubtaskAssigneePickerProps = {
   busy?: boolean;
   /** The composer's bordered arm of the trigger. */
   compact?: boolean;
+  /** The avatars only, with no trigger and no list: an archived Project's Checklist (#450). */
+  readOnly?: boolean;
   /** Called once when the list closes with a different set: the final ids, and those people (id and name) for a caller that keeps the selection itself. */
   onCommit: (nextIds: string[], people: AssigneePickerPerson[], baseline: AssigneePickerBaseline) => void | Promise<void>;
 };
@@ -51,7 +53,7 @@ function sameSet(a: string[], b: string[]) {
  * Picking only edits a local draft; the one write happens on close, so a burst of picks is a single versioned request
  * rather than several that would race their own `expectedVersion`.
  */
-export function SubtaskAssigneePicker({ projectId, role, label, selected, version, hiddenCount = 0, disabled = false, busy = false, compact = false, onCommit }: SubtaskAssigneePickerProps) {
+export function SubtaskAssigneePicker({ projectId, role, label, selected, version, hiddenCount = 0, disabled = false, busy = false, compact = false, readOnly = false, onCommit }: SubtaskAssigneePickerProps) {
   const [open, setOpen] = useState(false);
   const [hasOpened, setHasOpened] = useState(false);
   const [draft, setDraft] = useState<string[]>([]);
@@ -112,6 +114,10 @@ export function SubtaskAssigneePicker({ projectId, role, label, selected, versio
 
   const triggerPeople = open ? draftOptions : shownPeople;
   const triggerHidden = open ? 0 : hiddenCount;
+
+  // Nobody to show: no placeholder circle (it reads as a control), just the label, as the Board's card does when it has no editors.
+  if (readOnly && shownPeople.length === 0 && hiddenCount <= 0) return <span className="sr-only">Unassigned</span>;
+  if (readOnly) return <span title={triggerTitle} className="inline-flex shrink-0 items-center"><AvatarStack people={shownPeople} hiddenCount={hiddenCount} personNoun="Assignee" emptyLabel="Unassigned" /></span>;
 
   const emptyMessage = options.isError ? "People could not be loaded." : options.isPending ? "Loading people…" : "No matching people";
 

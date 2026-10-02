@@ -19,6 +19,12 @@ const floating = vi.hoisted(() => ({ modalValues: [] as Array<boolean | undefine
 // capability-derived branches keep the coverage they had. A test needing a role sets one here.
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: null, isPending: false }) }));
 vi.mock("../lib/confirm", () => ({ confirm: confirmMock }));
+// Records what the rail asks the Project surfaces to refetch (#450), delegating to the real thing.
+const surfaces = vi.hoisted(() => ({ calls: [] as Array<{ projectId: string; resources: Array<{ kind: string }>; dashboard: boolean; calendar: boolean; gantt: boolean }> }));
+vi.mock("../lib/project-data", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/project-data")>();
+  return { ...actual, invalidateProjectSurfaces: (client: Parameters<typeof actual.invalidateProjectSurfaces>[0], input: Parameters<typeof actual.invalidateProjectSurfaces>[1]) => { surfaces.calls.push(input as never); return actual.invalidateProjectSurfaces(client, input); } };
+});
 // Records the latest `onDragEnd` (delegating to the real DndContext) so a test can drop one row onto another without layout (#377).
 const dnd = vi.hoisted(() => ({ onDragEnd: null as null | ((event: unknown) => void) }));
 vi.mock("@dnd-kit/core", async (importOriginal) => {
@@ -568,5 +574,180 @@ describe("formatSchedule", () => {
   it("keeps a multi-day range as two full moments", () => {
     expect(formatSchedule(momentScheduleDto("2026-10-08T09:00", "2026-10-10T17:00"))).toBe("Thu 8 Oct 09:00 → Sat 10 Oct 17:00");
     expect(formatSchedule(momentScheduleDto("2026-10-08T13:00", "2026-10-09T09:00"))).toBe("Thu 8 Oct 13:00 → Fri 9 Oct 09:00");
+  });
+});
+
+describe("SubtaskChecklist on an archived Project (#450)", () => {
+  const COPY = "Read-only while archived. Restore the project before changing the checklist.";
+  const refusal = () => new ApiError("Archived projects are read-only; the checklist can't be changed.", 409, { code: "subtask_project_archived" });
+  let client: QueryClient; let runtime: ProjectQueryRuntime;
+  type Props = Partial<Parameters<typeof SubtaskChecklist>[0]>;
+  const tree = (props: Props) => <ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={client}><SubtaskChecklist projectId={projectId} {...props} /></QueryClientProvider></ProjectQueryRuntimeProvider>;
+  async function renderCase(props: Props = {}) {
+    client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); runtime = new ProjectQueryRuntime(client, "archived-rail-test");
+    const host = mount();
+    await act(async () => { root!.render(tree(props)); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    for (let attempt = 0; attempt < 50 && document.body.textContent?.includes("Loading checklist…"); attempt += 1) await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 5)); });
+    return host;
+  }
+  async function rerenderCase(props: Props) { await act(async () => { root!.render(tree(props)); await Promise.resolve(); await Promise.resolve(); }); }
+  const checkbox = (host: HTMLElement, title = "Call client") => item(host, title).querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+  const collapseButton = (host: HTMLElement) => host.querySelector<HTMLButtonElement>('button[aria-label="Collapse checklist"]')!;
+  const liveRegion = (host: HTMLElement) => [...host.querySelectorAll<HTMLElement>('[aria-live="polite"]')].find((element) => element.textContent?.includes(COPY));
+  const controlsGone = (host: HTMLElement) => { expect(document.getElementById(`subtask-add-${projectId}`)).toBeNull(); expect(host.querySelector('[aria-label^="Reorder "]')).toBeNull(); expect(host.querySelector('[aria-label^="Actions for "]')).toBeNull(); };
+  beforeEach(() => { surfaces.calls.length = 0; });
+
+  it("with archived: hides every writing control, keeps state visible, and says why", async () => {
+    apiGetMock.mockImplementation((path) => Promise.resolve(path.includes("subtask-assignee-options") ? optionsResponse : { subtasks: [task, { ...second, done: true }] }));
+    const host = await renderCase({ archived: true });
+    const row = item(host, "Call client");
+    controlsGone(host);
+    const title = row.querySelector<HTMLElement>('[data-testid="subtask-checklist-title"]')!;
+    expect(title.tagName).not.toBe("BUTTON"); expect(title.textContent).toBe("Call client");
+    expect(checkbox(host).disabled).toBe(true); expect(checkbox(host).checked).toBe(false);
+    expect(row.querySelector('[aria-label="Schedule for Call client"]')).toBeNull(); expect(row.textContent).toContain(formatSchedule(task.schedule));
+    expect(row.querySelector('[aria-label="Assignees for Call client"]')).toBeNull(); expect(stackLabels(row)).toContain("Nora Jones");
+    expect(liveRegion(host)).toBeDefined();
+    await click([...host.querySelectorAll("button")].find((button) => button.textContent?.startsWith("Completed"))!);
+    const done = checkbox(host, "Prepare files"); expect(done.checked).toBe(true); expect(done.disabled).toBe(true);
+  });
+  it("with archived and an empty checklist: the empty state does not invite a write", async () => {
+    apiGetMock.mockImplementation(() => Promise.resolve({ subtasks: [] }));
+    const host = await renderCase({ archived: true });
+    expect(host.textContent).toContain("No checklist items."); expect(host.textContent).not.toContain("Break the shoot");
+  });
+  it("with archived: the disclosures still work, and the line stays visible while stacked and collapsed", async () => {
+    const host = await renderCase({ archived: true, layout: "stacked" });
+    expect(liveRegion(host)).toBeDefined();
+    const toggle = host.querySelector<HTMLButtonElement>('button[aria-label="Expand checklist"]')!; await click(toggle);
+    expect(host.querySelector('button[aria-label="Collapse checklist"]')).not.toBeNull(); expect(host.textContent).toContain("Call client");
+    await click(host.querySelector('button[aria-label="Collapse checklist"]')!); expect(host.querySelector('button[aria-label="Expand checklist"]')).not.toBeNull(); expect(liveRegion(host)).toBeDefined();
+  });
+  it("with archived on load: no focus moves", async () => {
+    const outside = document.createElement("button"); document.body.append(outside); outside.focus();
+    await renderCase({ archived: true });
+    expect(document.activeElement).toBe(outside);
+  });
+  it("a reorder refused as archived shows the line, not the order-changed notice", async () => {
+    const host = await renderCase();
+    apiPostMock.mockRejectedValueOnce(refusal());
+    await act(async () => { await dnd.onDragEnd!({ active: { id: "task-1" }, over: { id: "task-2" } }); });
+    await waitFor(() => expect(liveRegion(host)).toBeDefined());
+    expect(host.textContent).not.toContain("Subtask order changed"); controlsGone(host);
+    await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 40)); });
+    expect(document.activeElement).toBe(collapseButton(host));
+  });
+  it("a Done refused as archived: state unchanged, controls gone, no red error, surfaces refetched, focus on the collapse button", async () => {
+    const host = await renderCase();
+    apiPatchMock.mockRejectedValueOnce(refusal());
+    const box = checkbox(host); box.focus(); await click(box);
+    await waitFor(() => expect(liveRegion(host)).toBeDefined());
+    expect(checkbox(host).checked).toBe(false); controlsGone(host);
+    expect(liveRegion(host)!.textContent).toBe(COPY);
+    const call = surfaces.calls.find((entry) => entry.resources.some((resource) => resource.kind === "detail"));
+    expect(call).toBeDefined();
+    expect(call!.resources.map((resource) => resource.kind).sort()).toEqual(["activity", "detail", "subtasks"]);
+    expect([call!.dashboard, call!.calendar, call!.gantt]).toEqual([true, true, true]);
+    expect(document.activeElement).toBe(collapseButton(host));
+  });
+  it("a Delete refused as archived from the menu: the row stays and focus lands on the collapse button", async () => {
+    const host = await renderCase();
+    apiDeleteMock.mockRejectedValueOnce(refusal());
+    await click(item(host, "Call client").querySelector('[aria-label="Actions for Call client"]')!);
+    await click([...portal("subtask-popover-task-1-actions").querySelectorAll("button")].find((button) => button.textContent === "Delete")!);
+    await waitFor(() => expect(liveRegion(host)).toBeDefined());
+    expect(item(host, "Call client")).toBeDefined(); controlsGone(host);
+    expect(document.activeElement).toBe(collapseButton(host));
+  });
+  it("an Add refused as archived closes the composer and shows the line", async () => {
+    const host = await renderCase();
+    apiPostMock.mockRejectedValueOnce(refusal());
+    await click(document.getElementById(`subtask-add-${projectId}`)!);
+    await typeInto(host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!, "Schedule staging");
+    await click([...host.querySelectorAll("button")].find((button) => button.textContent === "Add")!);
+    await waitFor(() => expect(liveRegion(host)).toBeDefined());
+    expect(host.querySelector(`#subtask-composer-${projectId}`)).toBeNull(); controlsGone(host);
+    expect(document.activeElement).toBe(collapseButton(host));
+  });
+  it("a title edit refused as archived shows the server's title with no draft", async () => {
+    const host = await renderCase();
+    apiPatchMock.mockRejectedValueOnce(refusal());
+    await click(item(host, "Call client").querySelector('[data-testid="subtask-checklist-title"]')!);
+    const input = item(host, "Call client").querySelector<HTMLInputElement>('[aria-label="Subtask title"]')!; await typeInto(input, "Renamed");
+    await keydown(input, "Enter"); input.blur(); await flush();
+    await waitFor(() => expect(liveRegion(host)).toBeDefined());
+    expect(host.querySelector('[aria-label="Subtask title"]')).toBeNull();
+    expect(item(host, "Call client").querySelector('[data-testid="subtask-checklist-title"]')!.textContent).toBe("Call client");
+  });
+  it("an assignee change refused as archived reverts the shown avatars", async () => {
+    const host = await renderCase();
+    apiPatchMock.mockRejectedValueOnce(refusal());
+    await openAssignees(assigneeTrigger(host)); await pickAssignee("Dee Park"); await closeAssignees();
+    await waitFor(() => expect(liveRegion(host)).toBeDefined());
+    expect(stackLabels(item(host, "Call client"))).toEqual(["Nora Jones"]);
+  });
+  it("a schedule save refused as archived closes the popup with no conflict notice", async () => {
+    const host = await renderCase();
+    apiPatchMock.mockRejectedValueOnce(refusal());
+    const popup = await openSchedule(host, "Call client"); await draftDay(popup, `${year}-06-15`);
+    await waitFor(() => expect(liveRegion(host)).toBeDefined());
+    expect(dateTimePopup("Schedule for Call client")).toBeNull();
+    expect(host.textContent).not.toContain("changed elsewhere"); expect(host.querySelector('[role="alert"]')).toBeNull();
+  });
+  it("Restore turns editing back on: the latch clears when the prop goes archived then not archived", async () => {
+    const host = await renderCase();
+    apiPatchMock.mockRejectedValueOnce(refusal());
+    await click(checkbox(host)); await waitFor(() => expect(liveRegion(host)).toBeDefined()); controlsGone(host);
+    await rerenderCase({ archived: true }); expect(liveRegion(host)).toBeDefined();
+    await rerenderCase({ archived: false });
+    expect(liveRegion(host)).toBeUndefined();
+    expect(document.getElementById(`subtask-add-${projectId}`)).not.toBeNull(); expect(item(host, "Call client").querySelector('[aria-label="Actions for Call client"]')).not.toBeNull();
+  });
+  it("archived arriving with no 409 (a refetch) closes an open composer and drops its draft, and Restore does not reopen it or steal focus", async () => {
+    const host = await renderCase();
+    await click(document.getElementById(`subtask-add-${projectId}`)!);
+    await typeInto(host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!, "Schedule staging");
+    await rerenderCase({ archived: true });
+    expect(host.querySelector(`#subtask-composer-${projectId}`)).toBeNull();
+    await rerenderCase({ archived: false });
+    expect(host.querySelector(`#subtask-composer-${projectId}`)).toBeNull();
+    expect(host.contains(document.activeElement) && document.activeElement !== document.body).toBe(false);
+    await click(document.getElementById(`subtask-add-${projectId}`)!);
+    expect(host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!.value).toBe("");
+  });
+  it("archived arriving with no 409 closes an open schedule popover, and Restore does not reopen it", async () => {
+    const host = await renderCase();
+    await openSchedule(host, "Call client");
+    expect(dateTimePopup("Schedule for Call client")).not.toBeNull();
+    await rerenderCase({ archived: true });
+    expect(dateTimePopup("Schedule for Call client")).toBeNull();
+    await rerenderCase({ archived: false });
+    expect(dateTimePopup("Schedule for Call client")).toBeNull();
+  });
+  it("archived arriving with no 409 ends a title edit and drops its draft", async () => {
+    const host = await renderCase();
+    await click(item(host, "Call client").querySelector('[data-testid="subtask-checklist-title"]')!);
+    await typeInto(item(host, "Call client").querySelector<HTMLInputElement>('[aria-label="Subtask title"]')!, "Renamed");
+    await rerenderCase({ archived: true });
+    await rerenderCase({ archived: false });
+    expect(host.querySelector('[aria-label="Subtask title"]')).toBeNull();
+    expect(item(host, "Call client").querySelector('[data-testid="subtask-checklist-title"]')!.textContent).toBe("Call client");
+  });
+  it("a refusal that lands after focus moved to an ancestor of the rail puts focus on the collapse button", async () => {
+    const host = await renderCase();
+    let reject!: (error: unknown) => void;
+    apiPatchMock.mockImplementationOnce(() => new Promise((_resolve, rej) => { reject = rej; }));
+    const box = checkbox(host); box.focus(); await click(box);
+    host.tabIndex = -1; host.focus(); expect(document.activeElement).toBe(host);
+    await act(async () => { reject(refusal()); await Promise.resolve(); });
+    await waitFor(() => expect(liveRegion(host)).toBeDefined());
+    expect(document.activeElement).toBe(collapseButton(host));
+  });
+  it("an ordinary 409 is not mistaken for an archived refusal", async () => {
+    const host = await renderCase();
+    apiPostMock.mockRejectedValueOnce(new ApiError("Order changed", 409, { code: "subtask_order_conflict" }));
+    await act(async () => { await dnd.onDragEnd!({ active: { id: "task-1" }, over: { id: "task-2" } }); });
+    await waitFor(() => expect(host.textContent).toContain("Subtask order changed"));
+    expect(liveRegion(host)).toBeUndefined(); expect(document.getElementById(`subtask-add-${projectId}`)).not.toBeNull();
   });
 });

@@ -145,4 +145,16 @@ describe("SubtaskScheduleControl (#372, #423)", () => {
     await pressInPopup(popover()!, "Use latest item (discard draft)");
     expect(onUseLatestItem).toHaveBeenCalledWith(summary);
   });
+
+  it("readOnly (#450) shows the schedule as a pill with no trigger button and no popup", async () => {
+    await mount({ readOnly: true });
+    expect(host.querySelector("button")).toBeNull();
+    expect(host.textContent).toContain("Thu 8 Oct");
+    expect(host.textContent).toContain("Sat 10 Oct");
+    expect(popover()).toBeNull();
+  });
+  it("readOnly renders nothing when there is no schedule and no default label", async () => {
+    await mount({ readOnly: true, value: null });
+    expect(host.textContent).toBe("");
+  });
 });
