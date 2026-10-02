@@ -214,9 +214,15 @@ describe("the Adjust commit (#463)", () => {
     act(() => chip().focus());
     await press(" ");
     await press("ArrowDown");
-    await press("Enter");
+    // A real browser clicks a focused <button> on Enter's keydown default (happy-dom does not), so the
+    // observable contract is that the commit CANCELS that default: assert the Enter was prevented.
+    const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    await act(async () => {
+      (document.activeElement ?? document.body).dispatchEvent(enter);
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    });
     expect(onEventUpdate).toHaveBeenCalledTimes(1);
-    // A real browser clicks a focused <button> on Enter's keydown default; the commit prevents it.
+    expect(enter.defaultPrevented, "the committing Enter's native click is cancelled").toBe(true);
     expect(onEventClick).not.toHaveBeenCalled();
   });
 });
