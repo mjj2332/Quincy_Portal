@@ -90,6 +90,20 @@ describe("onEventContextMenu (#463)", () => {
     expect(event.defaultPrevented).toBe(false);
   });
 
+  it("swallows a touch-origin contextmenu even while a drag or Adjust guard returns early, and leaves a mouse one alone", async () => {
+    const onEventContextMenu = vi.fn();
+    await mount({ onEventContextMenu });
+    act(() => bar().focus());
+    await keydown(bar(), " ");
+    expect(bar().getAttribute("data-adjusting")).toBe("true");
+    const touch = new PointerEvent("contextmenu", { bubbles: true, cancelable: true, pointerType: "touch" });
+    await act(async () => { bar().dispatchEvent(touch); await Promise.resolve(); });
+    expect(touch.defaultPrevented, "the touch long-press's native menu is prevented").toBe(true);
+    const mouse = await contextmenu(bar());
+    expect(mouse.defaultPrevented).toBe(false);
+    expect(onEventContextMenu).not.toHaveBeenCalled();
+  });
+
   it("does not report during a live keyboard Adjust session", async () => {
     const onEventContextMenu = vi.fn();
     await mount({ onEventContextMenu });

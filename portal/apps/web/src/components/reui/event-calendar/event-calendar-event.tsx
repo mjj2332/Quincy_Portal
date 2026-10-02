@@ -70,11 +70,14 @@
  *    `aria-expanded={eventPopup.isOpen(occurrence)}` INSTEAD of `aria-pressed`: its click opens the
  *    consumer's menu, so announcing it as a pressed toggle would be wrong. See `event-calendar.tsx`
  *    entry 5; pinned by `event-calendar-item-popup.dom.test.tsx`.
+ *    QUINCY ADDITION (#463 fix round): a touch-origin contextmenu is `preventDefault`ed before the
+ *    drag guard returns (a long-press starts the drag; its native menu must not open over it).
  */
 import {
   createContext,
   useContext,
   useMemo,
+  useRef,
   type CSSProperties,
   type ReactNode,
 } from "react"
@@ -276,6 +279,8 @@ function EventCalendarEvent<TData = unknown>({
   const inTimeGrid =
     view === "week" || view === "day" || view === "days" || view === "resource"
   const interactive = view !== "agenda" && !preview
+  // QUINCY ADDITION (#463): the last pointer type pressed on this chip, to recognise a touch long-press's contextmenu.
+  const lastPointerType = useRef("")
   // QUINCY (#240): the same gates the pointer path uses; drives `aria-keyshortcuts` and Space
   const adjustable =
     interactive &&
@@ -584,6 +589,7 @@ function EventCalendarEvent<TData = unknown>({
       e.stopPropagation()
       // suppress the trailing slot-create click when this press yields no drag
       markChipPress()
+      lastPointerType.current = e.pointerType
       if (interactive) gestures.beginMove(e, segment)
     },
     onClick: (e: React.MouseEvent) => {
@@ -601,6 +607,9 @@ function EventCalendarEvent<TData = unknown>({
     },
     // QUINCY ADDITION (#463): never during a drag, and not right after one ended.
     onContextMenu: (e: React.MouseEvent) => {
+      // A touch long-press is the drag, never a menu: swallow its native menu BEFORE the drag guard
+      // returns, or it opens over the drag the same long-press just started.
+      if (!preview && ((e.nativeEvent as { pointerType?: string }).pointerType === "touch" || lastPointerType.current === "touch")) e.preventDefault()
       if (preview || wasRecentDrag() || instance.getState().drag) return
       settings.onEventContextMenu?.(occurrence, e)
     },

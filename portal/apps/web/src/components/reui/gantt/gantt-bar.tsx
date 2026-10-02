@@ -293,6 +293,8 @@
  * `aria-expanded={eventPopup.isOpen(occurrence)}` INSTEAD of `aria-pressed`: its click opens the
  * consumer's menu. Adjust keeps `role="application"` and neither. See `gantt.tsx`'s #463 entry;
  * covered by `gantt-item-popup.dom.test.tsx`.
+ * QUINCY ADDITION (#463 fix round): a touch-origin contextmenu is `preventDefault`ed before the drag
+ * and Adjust guard returns (a long-press starts the drag; its native menu must not open over it).
  */
 
 import {
@@ -468,6 +470,8 @@ function GanttBar<TData = unknown>({
   // a different key) leaves a real pending claim untouched - `consumeKeyboardFocus` only clears on
   // an exact match.
   const barRef = useRef<HTMLButtonElement>(null)
+  // QUINCY ADDITION (#463): the last pointer type pressed on this bar, to recognise a touch long-press's contextmenu.
+  const lastPointerType = useRef("")
   // Quincy fix (#219 PR A, Sol re-review round 2, MEDIUM #6): `useLayoutEffect`, not `useEffect` -
   // the reclaim must land, and the token must be consumed (nulled), synchronously in the SAME
   // commit that mounts this bar under its new key, before the browser paints and before any LATER
@@ -827,6 +831,7 @@ function GanttBar<TData = unknown>({
       // Quincy fix (#219 PR A, Sol review, sol1 item 6): a pointer interaction is one of the
       // explicit clear triggers for a stale keyboard-focus claim.
       instance.internals.clearKeyboardFocus()
+      lastPointerType.current = e.pointerType
       // #219 PR A fix (Sol re-review round 2, HIGH #4): see the resize grips' own comment above -
       // the "cancel Adjust first" check moved to `gantt-dnd.tsx`'s `beginGesture`.
       gestures.beginMove(e, segment)
@@ -844,6 +849,9 @@ function GanttBar<TData = unknown>({
     // QUINCY ADDITION (#463): the bar's `renderEventMenu` ContextMenu owns the right-click when it
     // exists; never during a drag or an Adjust session.
     onContextMenu: (e: React.MouseEvent) => {
+      // A touch long-press is the drag, never a menu: swallow its native menu BEFORE the drag guard
+      // returns, or it opens over the drag the same long-press just started.
+      if (!viewConfig.renderEventMenu && ((e.nativeEvent as { pointerType?: string }).pointerType === "touch" || lastPointerType.current === "touch")) e.preventDefault()
       if (viewConfig.renderEventMenu || adjusting || wasRecentDrag() || instance.getState().drag) return
       settings.onEventContextMenu?.(occurrence, e)
     },
