@@ -1,7 +1,7 @@
 import { env, SELF } from "cloudflare:test";
 import { makeSignature } from "better-auth/crypto";
 import { beforeAll, describe, expect, it } from "vitest";
-import { formatDashboardFilterTree, canonicalizeDashboardFilterTree, parseDashboardFilterTree, type DashboardFilterNode, type DashboardFilterTree } from "@quincy/shared";
+import { DASHBOARD_FILTER_TREE_MAX_DEPTH, DASHBOARD_FILTER_TREE_MAX_PEOPLE_IDS, DASHBOARD_FILTER_TREE_MAX_RULES, formatDashboardFilterTree, canonicalizeDashboardFilterTree, dashboardFilterLeaves, dashboardFilterPeopleIds, parseDashboardFilterTree, type DashboardFilterNode, type DashboardFilterTree } from "@quincy/shared";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
 
@@ -84,10 +84,10 @@ beforeAll(async () => {
 
 const leaf = (field: string, extra: object = {}, negated = false): DashboardFilterNode => ({ kind: "leaf", ...(negated ? { negated: true } : {}), field, ...extra } as DashboardFilterNode);
 
-/** 4 AND groups under one OR root, each: a People rule (11 ids), a negated People rule (1 id), a Stage rule, and an inner OR of a Shoot range and My tasks. 20 rules, 48 ids, depth 3. */
+/** 4 AND groups under one OR root, each: a People rule (12, 12, 11, 11 ids), a negated People rule (1 id), a Stage rule, and an inner OR of a Shoot range and My tasks. 20 rules, 50 ids, depth 3. */
 function maxCapTree(options: { priority: boolean }): DashboardFilterTree {
   const group = (index: number): DashboardFilterNode => {
-    const ids = [index === 0 ? alexId : person(index * 100), ...Array.from({ length: 10 }, (_, n) => person(index * 100 + n + 1))];
+    const ids = [index === 0 ? alexId : person(index * 100), ...Array.from({ length: index < 2 ? 11 : 10 }, (_, n) => person(index * 100 + n + 1))];
     return {
       kind: "group",
       op: "and",
@@ -103,19 +103,19 @@ function maxCapTree(options: { priority: boolean }): DashboardFilterTree {
   return canonicalizeDashboardFilterTree(tree);
 }
 
-/** 20 People rules (2 ids each) flat under one OR: the widest tree, every rule a People rule. */
+/** 20 People rules (3 ids in the first ten, 2 in the rest = 50) flat under one OR: the widest tree, every rule a People rule. */
 function flatPeopleTree(): DashboardFilterTree {
-  const rules = Array.from({ length: 20 }, (_, n) => leaf("people", { ids: [n === 0 ? alexId : n === 1 ? externalId : person(n * 2), person(n * 2 + 1)], unassigned: n % 5 === 0 }, n % 7 === 3));
+  const rules = Array.from({ length: 20 }, (_, n) => leaf("people", { ids: [n === 0 ? alexId : n === 1 ? externalId : person(n * 3), person(n * 3 + 1), ...(n < 10 ? [person(n * 3 + 2)] : [])], unassigned: n % 5 === 0 }, n % 7 === 3));
   return canonicalizeDashboardFilterTree({ kind: "group", op: "or", children: rules });
 }
 
-/** 3 groups x (a nested OR group of People rules) at depth 3, 20 People rules in all. */
+/** 3 groups x (a nested group of People rules) at depth 3: 20 People rules in all, 50 ids (3 in the first ten rules, 2 in the rest). */
 function deepPeopleTree(): DashboardFilterTree {
   let n = 0;
-  const rule = () => { n += 1; return leaf("people", { ids: [n === 1 ? alexId : person(n * 2), person(n * 2 + 1)], unassigned: false }, n % 4 === 0); };
+  const rule = () => { n += 1; return leaf("people", { ids: [n === 1 ? alexId : person(n * 3), person(n * 3 + 1), ...(n <= 10 ? [person(n * 3 + 2)] : [])], unassigned: false }, n % 4 === 0); };
   const inner = (count: number): DashboardFilterNode => ({ kind: "group", op: n % 2 === 0 ? "or" : "and", children: Array.from({ length: count }, rule) });
   const outer = (counts: number[]): DashboardFilterNode => ({ kind: "group", op: "and", children: counts.map(inner) });
-  return canonicalizeDashboardFilterTree({ kind: "group", op: "or", children: [outer([4, 3]), outer([4, 3]), outer([3])] });
+  return canonicalizeDashboardFilterTree({ kind: "group", op: "or", children: [outer([4, 3]), outer([4, 3]), outer([3, 3])] });
 }
 
 const shapes: Array<[string, (priority: boolean) => DashboardFilterTree]> = [
@@ -132,7 +132,15 @@ describe("every statement at every cap", () => {
     const label = `${shape}, ${role}`;
 
     it(`${label}: the fixture really is at the caps and parses`, () => {
-      expect("tree" in parseDashboardFilterTree(value)).toBe(true);
+      const parsed = parseDashboardFilterTree(value);
+      expect("tree" in parsed).toBe(true);
+      const depthOf = (node: DashboardFilterNode): number => node.kind === "leaf" ? 0 : 1 + Math.max(0, ...node.children.map(depthOf));
+      const idOccurrences = dashboardFilterLeaves(tree).reduce((total, rule) => total + (rule.field === "people" ? rule.ids.length : 0), 0);
+      // pinned to the constants, so a fixture edit that drifts below a cap fails here instead of passing quietly
+      expect(dashboardFilterLeaves(tree)).toHaveLength(DASHBOARD_FILTER_TREE_MAX_RULES);
+      expect(idOccurrences).toBe(DASHBOARD_FILTER_TREE_MAX_PEOPLE_IDS);
+      expect(dashboardFilterPeopleIds(tree)).toHaveLength(DASHBOARD_FILTER_TREE_MAX_PEOPLE_IDS);
+      expect(depthOf(tree)).toBe(shape === "20 flat People rules" ? 1 : DASHBOARD_FILTER_TREE_MAX_DEPTH);
     });
 
     it(`${label}: Projects list / External list`, async () => {
