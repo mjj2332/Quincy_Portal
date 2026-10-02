@@ -4985,3 +4985,34 @@ remove the legacy readers) still applies.
   exact. The phone value sits in a `max-width: 720px` block placed AFTER the base rule, because both have equal specificity
   and source order decides. Values are coupled to the close offset/size in `ProjectSheet.tsx`; `overflow-wrap: anywhere` lets an
   unbroken title wrap inside the reduced width. Pinned by CSS-text assertions in `styles/app-railed.test.ts`.
+
+## Show in Calendar / Timeline from the Project sheet (#464)
+
+- **`focus=<project id>` is a one-shot request, not view state.** It rides on the Timeline and Calendar-facet routes only (written last,
+  after `q`; beside `calendar`, not inside `DashboardCalendarState`), so every pre-#464 URL stays byte-identical. The Dashboard
+  captures it into a token-carrying request when its location gains `focus`, hands it to the matching view only, and `replace`s the
+  location without `focus` once the view reports its ONE outcome (and only if the live location still names that Project). Keeping
+  it in the URL would make "open the same Project's sheet and choose the same item again" a no-op (identical URL, no location
+  change) and make Forward re-land. Because the request lives in Dashboard state, the Calendar's filter-reconcile `replace`
+  (which carries a still-pending `focus`) and the strip itself cannot cancel a landing in flight; user writes drop it.
+- **The router is read-only, so the control is an `InternalLink`, never `useNavigate`.** The control is the ReUI `c-button-group-1`
+  composition (`reui/button-group` + `reui/button` rendering `InternalLink`), NOT a dropdown: the installed `reui/dropdown-menu`
+  portals to `body` under the sheet. A plain click is an SPA push through `locationStore()` (Back returns to the sheet); Cmd-click
+  and "open in new tab" are native. The sheet's `DashboardLayer.finalFocus` returns `false` while the live location is a Dashboard
+  route carrying `focus`, so the opener does not steal focus the landing is about to place.
+- **Broaden filters only where the Project's own data makes the hide certain** (Delivered stage, archived for an Admin, a completed
+  target task). Anything else a filter hides is the Dashboard's "isn't shown with the current filters" notice (`role="status"`,
+  Clear filters focused, Dismiss). Clear filters also clears `q`, keeps what the sheet already broadened and the Calendar's layers,
+  and pushes the same view WITH `focus`, so it re-lands. The street comes from the query cache read with `getQueryData` (no
+  observer, #423), falling back to "That Project" on a cold link.
+- **Calendar landing**: Deadline, else the checklist item on the route date, else the earliest in range. The request ref survives
+  `resetKey`; only the user's own navigation ends it (and clears the highlight). A chip folded under "+N more" has no DOM
+  element, so focus goes to that day's control (the surface tags its `renderMoreIndicator` with `data-more-event-ids`) and the
+  announcement says it is folded. The highlight is an OUTLINE: every chip already spends its inset ring and shadow on its
+  rest/selected treatment, so a second inset ring would fight them.
+- **Timeline landing** walks pages through the existing scroll-paging latch until the Project is found, the walk completes
+  (`hidden`) or the draw cap stops it (`too-many`); a user filter change mid-walk reports `cancelled`.
+- **A frozen visibility inventory flagged the new control, correctly.** `ProjectWorkspace.external-visibility` rendered Show in's
+  disabled "Nothing scheduled" reason for the external fixture (no shoot date) but not for admin (has one): a fixture difference,
+  not a leak. The fix was to give the external fixture a shoot date and re-freeze both literals (only Show in entries moved),
+  not to loosen the "never anything an admin lacks" assertion.
