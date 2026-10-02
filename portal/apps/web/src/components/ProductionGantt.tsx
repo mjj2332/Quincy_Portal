@@ -1733,7 +1733,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
         const link = Array.from(container.querySelectorAll<HTMLElement>("[data-gantt-row-id]"))
           .find((row) => row.getAttribute("data-gantt-row-id") === rowId && row.querySelector('[data-testid="gantt-project-link"]'))
           ?.querySelector<HTMLElement>('[data-testid="gantt-project-link"]');
-        link?.focus({ preventScroll: true });
+        link?.focus({ preventScroll: true, focusVisible: true } as FocusOptions);
         settle({ kind: "found", street: target.street });
         return;
       }

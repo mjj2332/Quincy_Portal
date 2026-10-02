@@ -64,6 +64,15 @@ describe("ProductionEventCalendar focus landing (#464)", () => {
     expect(ringed(`checklist:${OTHER_ITEM}`)).toBe(false);
   });
 
+  it("asks for a visible focus ring even when the landing follows a pointer click", async () => {
+    const focus = vi.spyOn(HTMLElement.prototype, "focus");
+    await mount([deadlineEvent("2026-08-27T09:00")], { projectId: PROJECT_ID, token: 1 });
+    const landed = focus.mock.instances.findIndex((el) => el === chipOf(DEADLINE_ID)?.closest("button"));
+    expect(landed).toBeGreaterThanOrEqual(0);
+    expect(focus.mock.calls[landed]?.[0]).toMatchObject({ focusVisible: true });
+    focus.mockRestore();
+  });
+
   it("with no Deadline prefers the checklist item on the route date over an earlier one", async () => {
     const { outcomes } = await mount([task(`checklist:${EARLY_ITEM}`, "2026-08-03"), task(TASK_ON_DATE, "2026-08-12")], { projectId: PROJECT_ID, token: 1 });
     expect(outcomes[0]?.[1]).toMatchObject({ kind: "found", target: "task", label: "Select hero images", civilDate: "2026-08-12", folded: false });
