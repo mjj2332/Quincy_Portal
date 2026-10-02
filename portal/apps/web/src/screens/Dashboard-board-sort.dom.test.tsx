@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard } from "./Dashboard";
-import { checkedSortLabel, chooseSort, closeDisplay, displayMenu, displayTrigger, groupByRadios, openDisplay, sortRadioLabels, sortRadios } from "./dashboard-display-test-helpers";
+import { closeDisplay, displayMenu, displayTrigger, groupByRadios, openDisplay, sortRadios } from "./dashboard-display-test-helpers";
 
 // happy-dom lacks `Element.getAnimations()`, which Base UI's ScrollArea (the Board's horizontal
 // scroll, `board/board.tsx`) calls on a timer after mount. The no-op stub means "no active
@@ -70,46 +70,36 @@ describe("Dashboard Kanban sort control", () => {
     vi.useRealTimers();
   });
 
-  it("hides only the reorder items when shoot-date sorting is selected", async () => {
+  it("offers the card's menu Move to and nothing else, for an Admin who holds Priority", async () => {
     await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
     await vi.waitFor(() => expect(document.querySelector('[data-testid="board-card"]')).not.toBeNull());
-    // Move up / Move down are items in the card's ⋯ menu now (#432), not buttons on the card.
-    const offered = async () => {
-      const trigger = document.querySelector<HTMLButtonElement>('[aria-label="Actions for 1 Test Street"]');
-      if (!trigger) return null;
-      await act(async () => { trigger.click(); await Promise.resolve(); await Promise.resolve(); });
-      const labels = [...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent);
-      await act(async () => { document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await vi.advanceTimersByTimeAsync(50); });
-      return labels;
-    };
-    expect(await offered()).toEqual(["Move to…", "Move up", "Move down"]);
-    const priority = document.querySelector('[aria-label="Priority for 1 Test Street"]');
-    expect(priority).not.toBeNull();
-
-    await chooseSort("Shoot date, earliest first");
-
-    expect(await offered()).toEqual(["Move to…"]);
-    expect(document.querySelector('[aria-label="Priority for 1 Test Street"]')).toBe(priority);
+    const trigger = document.querySelector<HTMLButtonElement>('[aria-label="Actions for 1 Test Street"]');
+    expect(trigger, "no ⋯ trigger").not.toBeNull();
+    await act(async () => { trigger!.click(); await Promise.resolve(); await Promise.resolve(); });
+    expect([...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent)).toEqual(["Move to"]);
+    await act(async () => { document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await vi.advanceTimersByTimeAsync(50); });
+    expect(document.querySelector('[aria-label="Priority for 1 Test Street"]'), "the Priority stars are untouched").not.toBeNull();
   });
 
-  it("S2: a stored Priority sort without the Board map falls back to Board order in the menu AND on the cards", async () => {
+  it("orders a column by priority even without the Board map, ignoring the response's own order", async () => {
     const mk = (id: string, street: string, priority: number, boardPosition: number) => ({
       id, street, suburb: null, postcode: null, agencyName: null, agentName: null,
       stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0,
       expectedCount: null, priority, boardPosition, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null, boardRevision: 0,
     });
-    // No `board` map in the response: an authorized principal, but Priority is not available.
+    // No `board` map in the response, and Alpha comes first in it: the order is the data's, not the server's.
     apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({ projects: [mk("a", "1 Alpha Street", 1, 1), mk("b", "2 Bravo Street", 5, 0)] }) : Promise.resolve({ stages: [] }));
-    window.localStorage.setItem("quincy:dashboard:kanbanSort", "priority");
     await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
     await vi.waitFor(() => expect(document.querySelector('[data-testid="board-card"]')).not.toBeNull());
     const order = () => [...document.querySelectorAll('[data-testid="board-card"]')].map((card) => card.textContent?.includes("Alpha") ? "alpha" : "bravo");
-    await openDisplay();
-    const menuSort = checkedSortLabel();
-    await closeDisplay();
-    // Priority would put Bravo (priority 5) first; Board order keeps the response order.
-    expect(menuSort).toBe("Board order");
-    expect(order()).toEqual(["alpha", "bravo"]);
+    expect(order()).toEqual(["bravo", "alpha"]);
+  });
+
+  it.each(["board", "priority", "shootDate-asc", "shootDate-desc", "garbage"])("rewrites a stored retired sort %s as the fixed rule, once, on mount", async (stored) => {
+    window.localStorage.setItem("quincy:dashboard:kanbanSort", stored);
+    await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="board-card"]')).not.toBeNull());
+    expect(window.localStorage.getItem("quincy:dashboard:kanbanSort")).toBe("priority-shoot-date");
   });
 
   async function tabRefocusedByRestore(focusVisible: boolean) {
@@ -190,13 +180,13 @@ describe("Dashboard Kanban sort control", () => {
       expect(displayMenu()).toBeNull();
     });
 
-    it("2. the menu is a labelled group of radio items, one checked (the current sort)", async () => {
+    it("2. the menu explains the one fixed Sort rule and offers no sort choice", async () => {
       await renderBoard();
       await openDisplay();
-      expect(sortRadioLabels()).toEqual(["Board order", "Priority", "Shoot date, earliest first", "Shoot date, latest first"]);
-      expect(sortRadios().filter((radio) => radio.getAttribute("aria-checked") === "true")).toHaveLength(1);
-      expect(checkedSortLabel()).toBe("Board order");
+      expect(sortRadios()).toHaveLength(0);
       expect(document.querySelector('[role="menu"]')!.textContent).toContain("Sort");
+      expect(document.querySelector('[role="menu"]')!.textContent).toContain("Sorted by priority, then shoot date");
+      expect(document.querySelector('[role="menu"]')!.textContent).not.toContain("Board order");
     });
 
     it("3. ArrowDown on the focused trigger opens the menu", async () => {
@@ -206,28 +196,20 @@ describe("Dashboard Kanban sort control", () => {
       expect(displayMenu()).not.toBeNull();
     });
 
-    it("4. choosing an option commits it and checks it", async () => {
-      await renderBoard();
-      await chooseSort("Shoot date, latest first");
-      expect(window.localStorage.getItem("quincy:dashboard:kanbanSort")).toBe("shootDate-desc");
-      await openDisplay();
-      expect(checkedSortLabel()).toBe("Shoot date, latest first");
-    });
-
-    it("5. Escape closes the menu without selecting a new value", async () => {
+    it("5. Escape closes the menu and leaves the stored rule alone", async () => {
       await renderBoard();
       await openDisplay();
       await act(async () => { displayMenu()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); await Promise.resolve(); });
       expect(displayMenu()).toBeNull();
-      expect(window.localStorage.getItem("quincy:dashboard:kanbanSort")).toBe("board");
+      expect(window.localStorage.getItem("quincy:dashboard:kanbanSort")).toBe("priority-shoot-date");
     });
 
-    it("6. outside click dismisses without selecting", async () => {
+    it("6. outside click dismisses and leaves the stored rule alone", async () => {
       await renderBoard();
       await openDisplay();
       await act(async () => { document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); document.body.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })); document.body.dispatchEvent(new MouseEvent("click", { bubbles: true })); await Promise.resolve(); await Promise.resolve(); });
       expect(displayMenu()).toBeNull();
-      expect(window.localStorage.getItem("quincy:dashboard:kanbanSort")).toBe("board");
+      expect(window.localStorage.getItem("quincy:dashboard:kanbanSort")).toBe("priority-shoot-date");
     });
 
     it("7. disabled blocks opening entirely", async () => {
@@ -237,21 +219,6 @@ describe("Dashboard Kanban sort control", () => {
       trigger().disabled = true;
       await act(async () => { trigger().click(); await Promise.resolve(); await Promise.resolve(); });
       expect(displayMenu()).toBeNull();
-    });
-
-    it("8. Priority gate, presence half: offered when authorized", async () => {
-      // The absence half is Dashboard-kanban-sort-priority-render-gate.dom.test.tsx; the handler
-      // half is Dashboard-kanban-sort-priority-guard.dom.test.tsx.
-      await renderBoard();
-      await openDisplay();
-      expect(sortRadioLabels()).toContain("Priority");
-    });
-
-    it("9. the selected value is exposed as the checked radio", async () => {
-      await renderBoard();
-      await chooseSort("Priority");
-      await openDisplay();
-      expect(checkedSortLabel()).toBe("Priority");
     });
 
     it("10. touch target geometry — the trigger carries the 44px minimum-target class at phone width", async () => {
@@ -267,7 +234,7 @@ describe("Dashboard Kanban sort control", () => {
       expect(displayTrigger()).not.toBeNull();
       expect(displayTrigger()!.disabled).toBe(false);
       await openDisplay();
-      expect(sortRadioLabels().length).toBeGreaterThan(0);
+      expect(document.querySelector('[role="menu"]')!.textContent).toContain("Sorted by priority, then shoot date");
       await closeDisplay();
       const tabs = [...document.querySelectorAll<HTMLElement>('[aria-label="Dashboard view"] [role="tab"]')];
       await act(async () => { tabs.find((tab) => tab.textContent === "Table")!.click(); await Promise.resolve(); await Promise.resolve(); });
@@ -280,11 +247,6 @@ describe("Dashboard Kanban sort control", () => {
       // The disabled-with-a-reason state (Calendar, Timeline) is pinned in DashboardDisplay.dom.test.tsx.
     });
 
-    it("12. the radio items are exactly the sort modes the Board understands", async () => {
-      await renderBoard();
-      await openDisplay();
-      expect(sortRadios()).toHaveLength(4);
-    });
   });
 
 
