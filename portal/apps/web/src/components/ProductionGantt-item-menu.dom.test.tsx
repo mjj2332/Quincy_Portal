@@ -17,6 +17,7 @@ import { adminProductionGanttResponseSchema, PRODUCTION_GANTT_ZONE } from "@quin
 import type { DashboardIdentity } from "../lib/dashboard-projects";
 import { DEFAULT_GANTT_FACET_FILTERS } from "../lib/production-gantt-filters";
 import { ProductionGantt } from "./ProductionGantt";
+import { dateTimePopup, popupButton } from "@/testing/date-time-popup";
 import { endMoment, startMoment, subtaskReminders } from "@/testing/subtask-schedule";
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
@@ -207,6 +208,18 @@ describe("ProductionGantt item menu (#463)", () => {
     await act(async () => { byTestId("event-calendar-schedule-cancel")!.click(); await Promise.resolve(); });
     await flush(30);
     expect(document.activeElement).toBe(taskBar());
+  });
+
+  it("Edit schedule… gives the sheet the Project default shortcut", async () => {
+    await mount();
+    await activate(taskBar());
+    await pick("Edit schedule…");
+    const sheet = byTestId("event-calendar-schedule-editor")!;
+    const trigger = [...sheet.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.getAttribute("aria-haspopup") === "dialog");
+    expect(trigger, "the sheet's Schedule field").toBeDefined();
+    await act(async () => { trigger!.click(); await Promise.resolve(); await Promise.resolve(); });
+    await flush(30);
+    expect(popupButton(dateTimePopup("Schedule")!, "Project default"), "the Project default shortcut").toBeDefined();
   });
 
   it("Escape closes the menu and returns focus to the bar", async () => {
