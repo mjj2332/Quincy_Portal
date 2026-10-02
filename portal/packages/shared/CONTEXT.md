@@ -74,6 +74,21 @@ only an Admin can include them, or show nothing else, through the Archived filte
 Include / Only), in any Dashboard view. On the Board an Archived Project is shown but never moved.
 _Avoid_: Status, deleted, closed
 
+**Filter tree** (#461):
+The Dashboard filter when the flat facets cannot spell it: a root `and` / `or` group of groups and rules, each rule one
+of Stage, Priority, Archived, People, Shoot date, Deadline (a range or Overdue) or My tasks, optionally negated. It is
+written `f=1:<tree>` (the `1:` is the grammar version) and never beside a legacy facet parameter; a filter the flat
+parameters CAN spell is always written flat (with `forder` to keep the facet order), so an `f` holding one is rejected.
+An empty root means no filter. A People rule naming only people outside the viewer's People universe is **not applied**:
+it is dropped from its group (never TRUE inside an OR). Caps: 4096 encoded bytes, depth 3, 20 rules, 50 People ids.
+_Avoid_: Query, expression, advanced filter
+
+**Filter tree context**:
+What People and My tasks mean for a rule, per surface. Projects list: a Project's Editor or the assignee of one of its
+open Subtasks. Calendar Deadline events: the Project's Editors; Subtask events: that Subtask's assignees. Timeline: a
+Project matches through its own Deadline context OR a visible Subtask matching in the Subtask context. Every other rule
+reads the Project.
+
 **Board**:
 The Dashboard view that groups Projects into columns by Stage. One column per Stage. It was
 called Kanban until the Dashboard took its Table / Board / Calendar / Timeline tabs; as when
