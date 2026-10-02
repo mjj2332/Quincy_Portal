@@ -274,7 +274,17 @@ describe("ProductionGantt item menu (#463)", () => {
     fixture.taskCanDrag = false;
     await mount();
     const bar = taskBar();
-    await activate(bar);
+    await act(async () => { bar.focus(); await Promise.resolve(); });
+    // Press Space for real: the bar must not consume it (a consumed Space cancels the browser's native
+    // click), and nothing opens on the keydown itself.
+    const space = new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true });
+    await act(async () => { bar.dispatchEvent(space); await Promise.resolve(); });
+    expect(space.defaultPrevented, "Space is left to the browser").toBe(false);
+    expect(bar.getAttribute("data-adjusting")).toBeNull();
+    expect(menu()).toBeNull();
+    // The browser's native activation (what happens when Space is not prevented) is a keyboard click.
+    await act(async () => { bar.click(); await Promise.resolve(); await Promise.resolve(); });
+    await flush(30);
     expect(menu()).not.toBeNull();
   });
 });
