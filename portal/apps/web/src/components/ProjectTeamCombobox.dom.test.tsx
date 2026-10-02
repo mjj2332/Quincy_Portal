@@ -683,6 +683,28 @@ describe("ProjectTeamCombobox on an archived Project (#452)", () => {
     expect(document.activeElement).toBe(group(host));
   });
 
+  it("a refusal leaves focus alone when the user moved it to another enabled control while the request was pending", async () => {
+    let rejectDelete!: (error: unknown) => void;
+    apiDeleteMock.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectDelete = reject; }));
+    const host = await mountCombobox();
+    const elsewhere = document.createElement("button");
+    elsewhere.textContent = "Elsewhere";
+    document.body.appendChild(elsewhere);
+    try {
+      const remove = host.querySelector<HTMLButtonElement>('[data-testid="project-member-remove"]')!;
+      await act(async () => { remove.focus(); remove.click(); await Promise.resolve(); });
+      await act(async () => { elsewhere.focus(); await Promise.resolve(); });
+      expect(document.activeElement).toBe(elsewhere);
+      await act(async () => { rejectDelete(new ApiError("archived", 409, archivedBody)); await Promise.resolve(); });
+      await flush(4);
+
+      expect(host.querySelector('[data-testid="project-member-remove"]')).toBeNull();
+      expect(status(host)?.textContent).toBe("Read-only while archived. Restore the project before changing the team.");
+      expect(document.activeElement).toBe(elsewhere);
+      expect(document.activeElement).not.toBe(group(host));
+    } finally { elsewhere.remove(); }
+  });
+
   it("clears an earlier error state and its Retry when the refusal flips it read-only", async () => {
     apiDeleteMock.mockRejectedValueOnce(new Error("No network"));
     apiPutMock.mockRejectedValueOnce(new ApiError("archived", 409, archivedBody));

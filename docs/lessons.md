@@ -4947,6 +4947,7 @@ remove the legacy readers) still applies.
   In a layout effect keyed on the latch, focus moves there only when the capture was true and the active element is `<body>`,
   `:disabled`, disconnected or outside both. Never on load. Base UI focuses the input on a chip-remove press and an option press,
   so a "focus elsewhere at request start" case cannot be driven through the real UI in a DOM test.
+- **The post-409 focus move fires only on genuinely lost focus** (`<body>`, disabled, disconnected, or an ancestor containing the Team control or its portal). Focus the user moved to another connected, enabled control while the request was pending is left alone; an "outside the control" test alone yanked it back.
 - **Read-only empty Team shows a "—"** (aria-hidden, header value tokens) beside an sr-only "No team assigned"; live Projects keep "Not assigned"
   for non-editors. Same gap as #450: a Project archived and restored inside one refetch window keeps the latch until remount.
 - **Gantt Team popover race is accepted:** after the refusal the Gantt refetch turns `canEditTeam` false, the popover unmounts and
