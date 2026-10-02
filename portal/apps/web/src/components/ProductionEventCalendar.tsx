@@ -171,13 +171,22 @@ function calendarResetKey(calendar: DashboardCalendarState): string {
 /**
  * The chip for an event, wherever it is drawn (a grid cell or the "+N more" popover): the vendor tags the
  * chip CONTENT with `data-event-id` (`ChipContent`), and the focusable element is the `<button>` around it.
- * The agenda's rows render the vendor's own content and carry no tag, so the menu falls back to the element
- * it opened from there.
+ * The agenda's rows render the vendor's own content, which carries no such tag, so they are found by the
+ * vendor button's own `data-ec-event-id` (a re-keyed row is a new element; this is how it is found again).
  */
 function findChip(id: string): HTMLElement | null {
   const content = [...document.querySelectorAll<HTMLElement>("[data-event-id]")].find((element) => element.getAttribute("data-event-id") === id);
-  if (!content) return null;
-  return content.matches("button, [tabindex]") ? content : content.closest<HTMLElement>("button") ?? content;
+  if (content) return content.matches("button, [tabindex]") ? content : content.closest<HTMLElement>("button") ?? content;
+  return [...document.querySelectorAll<HTMLElement>("[data-ec-event-id]")].find((element) => element.getAttribute("data-ec-event-id") === id && !element.hasAttribute("data-preview")) ?? null;
+}
+
+/**
+ * Where focus goes when a chip inside the month "+N more" popover is gone: a pick closes the popover and
+ * unmounts its chips, so the day's open "+N more" button (still `aria-expanded` when the menu opens) stands in.
+ */
+function findOverflowTrigger(chip: HTMLElement): HTMLElement | null {
+  if (!chip.closest('[data-slot="event-calendar-more-popover"]')) return null;
+  return document.querySelector<HTMLElement>('[data-slot="event-calendar-more"][aria-expanded="true"]');
 }
 
 function ChipContent({ id, data, title }: { id: string; data: ProductionEventCalendarData | undefined; title: string }): JSX.Element {
@@ -383,6 +392,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
   const itemMenu = useSchedulingItemMenu({
     describe: describeItem,
     resolveElement: findChip,
+    fallbackFor: findOverflowTrigger,
     onAction: runItemAction,
     followOnOpen: commands.moveDialog !== null || commands.scheduleEditor !== null,
     closeKey: `${resetKey}|${identity.principalId}|${identity.role}|${identity.authorizationEpoch}|${commands.accessLost}`,

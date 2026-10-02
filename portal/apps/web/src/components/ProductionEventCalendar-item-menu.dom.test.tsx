@@ -14,7 +14,7 @@ import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CalendarEventDto, ProductionCalendarSubview } from "@quincy/shared";
 import { dated, deadlineEvent, oneDayEvent, PROJECT_ID, PROJECT_STREET, rangeResponse, type FixtureRole } from "../testing/production-calendar-fixtures";
-import { calendarState, createHarness, flush, stubCalendarFetch, type Harness } from "../testing/production-event-calendar-harness";
+import { calendarState, createHarness, flush, json, stubCalendarFetch, type Harness } from "../testing/production-event-calendar-harness";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -189,6 +189,28 @@ describe("ProductionEventCalendar item menu (#463)", () => {
   });
 });
 
+describe("ProductionEventCalendar item menu focus after an Agenda row is replaced (#463)", () => {
+  it("returns focus to the replacement row when the edited item's start moved and the sheet closes", async () => {
+    let events = [task()];
+    stubCalendarFetch({ range: () => json(rangeResponse({ events, subview: "agenda" })) });
+    await h.render(calendarState("agenda"), { onOpenProject: () => undefined, projectHrefFor: (id) => `/projects/${id}` });
+    const before = chip(TASK_TITLE);
+    await activate(before);
+    await pick("Edit schedule…");
+    expect(byTestId("event-calendar-schedule-editor")).not.toBeNull();
+    // The save moved the item to another day in range: a new occurrence key, so a new row element.
+    events = [oneDayEvent(dated("2026-08-14"))];
+    await act(async () => { await h.client.invalidateQueries({ queryKey: ["production-calendar"] }); });
+    await flush(60);
+    await act(async () => { byTestId("event-calendar-schedule-editor-close")!.click(); await Promise.resolve(); });
+    await flush(700);
+    const after = chip(TASK_TITLE);
+    expect(after.isConnected).toBe(true);
+    expect(after, "the item's row was replaced").not.toBe(before);
+    expect(document.activeElement).toBe(after);
+  });
+});
+
 describe("ProductionEventCalendar item menu in the month '+N more' popover (#463, owner decision 4)", () => {
   const many = (): CalendarEventDto[] => Array.from({ length: 8 }, (_, index) => task({ id: `checklist:00000000-0000-4000-8000-00000000000${index}` }) as CalendarEventDto)
     .map((event, index) => ({ ...event, title: `Crowded task ${index}` }) as CalendarEventDto);
@@ -208,5 +230,18 @@ describe("ProductionEventCalendar item menu in the month '+N more' popover (#463
     await flush(60);
     expect(menu()).toBeNull();
     expect([...document.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.getAttribute("aria-label")?.startsWith("Crowded task") && button.closest('[role="dialog"]'))).toBe(true);
+  });
+
+  it("an action picked on an overflow-only chip runs with the day's '+N more' button focused, since the popover closes first", async () => {
+    let focusedAtAction: Element | null = null;
+    await mount("month", many(), { onOpenProject: () => { focusedAtAction = document.activeElement; } });
+    const trigger = more()!;
+    await act(async () => { trigger.click(); await Promise.resolve(); await Promise.resolve(); });
+    await flush(30);
+    const inPopover = [...document.querySelectorAll<HTMLButtonElement>("button")].filter((button) => button.getAttribute("aria-label")?.startsWith("Crowded task") && button.closest('[role="dialog"]'));
+    await activate(inPopover[inPopover.length - 1]!);
+    await pick("Open project");
+    expect(focusedAtAction, "the action ran with a focus target").not.toBeNull();
+    expect(focusedAtAction).toBe(more());
   });
 });

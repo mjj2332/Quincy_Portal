@@ -54,6 +54,12 @@ export type UseSchedulingItemMenuOptions = {
   describe: (key: string) => SchedulingMenuContent | null;
   /** Finds the item's element now (the chip or bar), or `null` if it is not drawn. */
   resolveElement: (key: string) => HTMLElement | null;
+  /**
+   * What to focus when the item itself is gone by the time focus is handed back, read when the menu opens
+   * (the "+N more" popover closes as a pick is made and takes its chips with it; the day's "+N more"
+   * button is where focus belongs then). Optional; without one the item is all there is.
+   */
+  fallbackFor?: (element: HTMLElement) => HTMLElement | null;
   /** Runs a picked row, after the menu has closed and focus is on the item. */
   onAction: (id: SchedulingItemActionId, key: string) => void;
   /** True while a dialog or sheet the menu handed off to is open. Its closing triggers the focus restore. */
@@ -75,7 +81,7 @@ export type SchedulingItemMenu = {
   menu: JSX.Element;
 };
 
-type OpenState = { key: string; element: HTMLElement; mode: "keyboard" | "pointer"; offsetX: number };
+type OpenState = { key: string; element: HTMLElement; fallback: HTMLElement | null; mode: "keyboard" | "pointer"; offsetX: number };
 type Pending = { id: SchedulingItemActionId; key: string; ran: boolean };
 
 /** `ProjectCalendarAnchor`'s threshold: any gesture a drag could recognise must never also open the menu. */
@@ -95,13 +101,13 @@ function focusLost(): boolean {
   return active instanceof HTMLElement && active.matches(":disabled");
 }
 
-export function useSchedulingItemMenu({ describe, resolveElement, onAction, followOnOpen = false, closeKey }: UseSchedulingItemMenuOptions): SchedulingItemMenu {
+export function useSchedulingItemMenu({ describe, resolveElement, onAction, fallbackFor, followOnOpen = false, closeKey }: UseSchedulingItemMenuOptions): SchedulingItemMenu {
   const [state, setState] = useState<OpenState | null>(null);
   const [open, setOpen] = useState(false);
 
   // Always the latest closures: the completion callback runs after renders the click handler never saw.
-  const latest = useRef({ describe, resolveElement, onAction });
-  latest.current = { describe, resolveElement, onAction };
+  const latest = useRef({ describe, resolveElement, onAction, fallbackFor });
+  latest.current = { describe, resolveElement, onAction, fallbackFor };
   const stateRef = useRef<OpenState | null>(null);
   stateRef.current = state;
 
@@ -110,7 +116,7 @@ export function useSchedulingItemMenu({ describe, resolveElement, onAction, foll
   const touchAtRef = useRef(0);
   const lastPointerTypeRef = useRef<string>("");
   const popupRef = useRef<HTMLDivElement | null>(null);
-  const restoreRef = useRef<{ armed: boolean; sawFollowOn: boolean; key: string | null }>({ armed: false, sawFollowOn: false, key: null });
+  const restoreRef = useRef<{ armed: boolean; sawFollowOn: boolean; key: string | null; fallback: HTMLElement | null }>({ armed: false, sawFollowOn: false, key: null, fallback: null });
   const restoreTimers = useRef<number[]>([]);
 
   const clearRestoreTimers = useCallback(() => {
@@ -119,10 +125,12 @@ export function useSchedulingItemMenu({ describe, resolveElement, onAction, foll
   }, []);
   useEffect(() => clearRestoreTimers, [clearRestoreTimers]);
 
-  /** The item's element now: the one the menu opened from while it is drawn, else a fresh lookup. */
-  const liveElement = useCallback((key: string, element: HTMLElement | null): HTMLElement | null => {
+  /** The item's element now: the one the menu opened from while it is drawn, else a fresh lookup, else its fallback. */
+  const liveElement = useCallback((key: string, element: HTMLElement | null, fallback: HTMLElement | null = null): HTMLElement | null => {
     if (element?.isConnected) return element;
-    return latest.current.resolveElement(key);
+    const found = latest.current.resolveElement(key);
+    if (found) return found;
+    return fallback?.isConnected ? fallback : null;
   }, []);
 
   const begin = useCallback((event: ReactMouseEvent, key: string, mode: "keyboard" | "pointer") => {
@@ -130,9 +138,9 @@ export function useSchedulingItemMenu({ describe, resolveElement, onAction, foll
     const rect = element.getBoundingClientRect();
     const offsetX = mode === "pointer" ? Math.min(Math.max(event.clientX - rect.left, 0), rect.width) : 0;
     pendingRef.current = null;
-    restoreRef.current = { armed: false, sawFollowOn: false, key: null };
+    restoreRef.current = { armed: false, sawFollowOn: false, key: null, fallback: null };
     clearRestoreTimers();
-    setState({ key, element, mode, offsetX });
+    setState({ key, element, fallback: latest.current.fallbackFor?.(element) ?? null, mode, offsetX });
     setOpen(true);
   }, [clearRestoreTimers]);
 
@@ -181,9 +189,9 @@ export function useSchedulingItemMenu({ describe, resolveElement, onAction, foll
     restore.sawFollowOn = false;
     clearRestoreTimers();
     restoreTimers.current = RESTORE_CHECK_DELAYS_MS.map((delay) => window.setTimeout(() => {
-      if (focusLost()) latest.current.resolveElement(key)?.focus({ preventScroll: true });
+      if (focusLost()) liveElement(key, null, restore.fallback)?.focus({ preventScroll: true });
     }, delay));
-  }, [followOnOpen, clearRestoreTimers]);
+  }, [followOnOpen, clearRestoreTimers, liveElement]);
 
   const focusFirstRow = useCallback(() => {
     const popup = popupRef.current;
@@ -201,7 +209,7 @@ export function useSchedulingItemMenu({ describe, resolveElement, onAction, foll
   const finalFocus = useCallback(() => {
     if (pendingRef.current) return false;
     const current = stateRef.current;
-    return current ? liveElement(current.key, current.element) ?? false : false;
+    return current ? liveElement(current.key, current.element, current.fallback) ?? false : false;
   }, [liveElement]);
 
   const afterClose = useCallback(() => {
@@ -210,8 +218,8 @@ export function useSchedulingItemMenu({ describe, resolveElement, onAction, foll
     if (current && pending && !pending.ran) {
       pending.ran = true;
       // The item holds focus when the action runs: the router and the dialogs capture it as their opener.
-      liveElement(current.key, current.element)?.focus({ preventScroll: true });
-      if (pending.id !== "open-project") restoreRef.current = { armed: true, sawFollowOn: false, key: current.key };
+      liveElement(current.key, current.element, current.fallback)?.focus({ preventScroll: true });
+      if (pending.id !== "open-project") restoreRef.current = { armed: true, sawFollowOn: false, key: current.key, fallback: current.fallback };
       latest.current.onAction(pending.id, pending.key);
     }
     // `state` is deliberately kept: `finalFocus` is decided as the popup unmounts, AFTER this runs
