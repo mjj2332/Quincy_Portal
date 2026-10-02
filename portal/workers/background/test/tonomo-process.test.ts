@@ -324,6 +324,27 @@ describe("processTonomoEvent RAW folder path update", () => {
     expect(JSON.parse(declined!.meta_json)).toMatchObject({ reason: "Tonomo path is not a folder in Dropbox; keeping stored path" });
   });
 
+  it("writes no photographer membership when the Project is archived between the pre-read and the insert (#452)", async () => {
+    const { projectId, orderId } = await seedProject({ rawFolderPath: STORED_RAW_FOLDER_PATH });
+    const photographerId = crypto.randomUUID(); const email = `photographer-${photographerId}@example.test`; const now = Date.now();
+    await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Race Photographer', ?, 1, 'photographer', 1, ?, ?)").bind(photographerId, email, now, now).run();
+    // getMetadata runs after findProject's read of the live Project and before assignPhotographers: the archive lands in that window.
+    const getMetadata = async (): Promise<DropboxFile | DropboxFolder> => {
+      await database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), projectId).run();
+      throw new Error("Dropbox request failed (503)", { cause: new Error("upstream unavailable") });
+    };
+    await processEvent(orderId, { rawFolderPath: NEWER_RAW_FOLDER_PATH, photographers: [{ email }] }, { getMetadata });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM project_members WHERE project_id = ?").bind(projectId).first()).toEqual({ count: 0 });
+  });
+
+  it("still assigns a photographer to a live Project", async () => {
+    const { projectId, orderId } = await seedProject({ rawFolderPath: STORED_RAW_FOLDER_PATH });
+    const photographerId = crypto.randomUUID(); const email = `photographer-${photographerId}@example.test`; const now = Date.now();
+    await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Live Photographer', ?, 1, 'photographer', 1, ?, ?)").bind(photographerId, email, now, now).run();
+    await processEvent(orderId, { photographers: [{ email }] });
+    expect(await database.DB.prepare("SELECT user_id AS userId, role_on_project AS role FROM project_members WHERE project_id = ?").bind(projectId).all().then((r) => r.results)).toEqual([{ userId: photographerId, role: "photographer" }]);
+  });
+
   it("completes the event without mutation when Dropbox fails for a reason other than not_found", async () => {
     const { projectId, orderId } = await seedProject({ rawFolderPath: STORED_RAW_FOLDER_PATH });
     const getMetadata = async (): Promise<DropboxFile | DropboxFolder> => {
