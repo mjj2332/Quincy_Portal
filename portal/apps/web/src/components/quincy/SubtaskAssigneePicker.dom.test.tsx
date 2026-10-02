@@ -270,8 +270,10 @@ describe("SubtaskAssigneePicker", () => {
     expect(host.querySelector('[title="Nora Jones, Ada Smith and 1 other"]')).not.toBeNull();
     expect(apiGetMock).not.toHaveBeenCalled();
   });
-  it("readOnly with nobody assigned shows the Unassigned glyph", async () => {
+  it("readOnly with nobody assigned renders no empty avatar placeholder, only an sr-only Unassigned", async () => {
     await mount({ selected: [], readOnly: true });
-    expect(host.querySelector('[role="img"][aria-label="Unassigned"]')).not.toBeNull();
+    expect(host.querySelector('[role="img"]')).toBeNull();
+    expect(host.textContent).toBe("Unassigned");
+    expect(host.firstElementChild!.classList.contains("sr-only")).toBe(true);
   });
 });

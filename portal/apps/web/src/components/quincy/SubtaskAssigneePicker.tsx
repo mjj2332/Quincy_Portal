@@ -115,6 +115,8 @@ export function SubtaskAssigneePicker({ projectId, role, label, selected, versio
   const triggerPeople = open ? draftOptions : shownPeople;
   const triggerHidden = open ? 0 : hiddenCount;
 
+  // Nobody to show: no placeholder circle (it reads as a control), just the label, as the Board's card does when it has no editors.
+  if (readOnly && shownPeople.length === 0 && hiddenCount <= 0) return <span className="sr-only">Unassigned</span>;
   if (readOnly) return <span title={triggerTitle} className="inline-flex shrink-0 items-center"><AvatarStack people={shownPeople} hiddenCount={hiddenCount} personNoun="Assignee" emptyLabel="Unassigned" /></span>;
 
   const emptyMessage = options.isError ? "People could not be loaded." : options.isPending ? "Loading people…" : "No matching people";

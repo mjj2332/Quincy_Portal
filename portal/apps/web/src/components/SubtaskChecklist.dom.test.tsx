@@ -703,6 +703,46 @@ describe("SubtaskChecklist on an archived Project (#450)", () => {
     expect(liveRegion(host)).toBeUndefined();
     expect(document.getElementById(`subtask-add-${projectId}`)).not.toBeNull(); expect(item(host, "Call client").querySelector('[aria-label="Actions for Call client"]')).not.toBeNull();
   });
+  it("archived arriving with no 409 (a refetch) closes an open composer and drops its draft, and Restore does not reopen it or steal focus", async () => {
+    const host = await renderCase();
+    await click(document.getElementById(`subtask-add-${projectId}`)!);
+    await typeInto(host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!, "Schedule staging");
+    await rerenderCase({ archived: true });
+    expect(host.querySelector(`#subtask-composer-${projectId}`)).toBeNull();
+    await rerenderCase({ archived: false });
+    expect(host.querySelector(`#subtask-composer-${projectId}`)).toBeNull();
+    expect(host.contains(document.activeElement) && document.activeElement !== document.body).toBe(false);
+    await click(document.getElementById(`subtask-add-${projectId}`)!);
+    expect(host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!.value).toBe("");
+  });
+  it("archived arriving with no 409 closes an open schedule popover, and Restore does not reopen it", async () => {
+    const host = await renderCase();
+    await openSchedule(host, "Call client");
+    expect(dateTimePopup("Schedule for Call client")).not.toBeNull();
+    await rerenderCase({ archived: true });
+    expect(dateTimePopup("Schedule for Call client")).toBeNull();
+    await rerenderCase({ archived: false });
+    expect(dateTimePopup("Schedule for Call client")).toBeNull();
+  });
+  it("archived arriving with no 409 ends a title edit and drops its draft", async () => {
+    const host = await renderCase();
+    await click(item(host, "Call client").querySelector('[data-testid="subtask-checklist-title"]')!);
+    await typeInto(item(host, "Call client").querySelector<HTMLInputElement>('[aria-label="Subtask title"]')!, "Renamed");
+    await rerenderCase({ archived: true });
+    await rerenderCase({ archived: false });
+    expect(host.querySelector('[aria-label="Subtask title"]')).toBeNull();
+    expect(item(host, "Call client").querySelector('[data-testid="subtask-checklist-title"]')!.textContent).toBe("Call client");
+  });
+  it("a refusal that lands after focus moved to an ancestor of the rail puts focus on the collapse button", async () => {
+    const host = await renderCase();
+    let reject!: (error: unknown) => void;
+    apiPatchMock.mockImplementationOnce(() => new Promise((_resolve, rej) => { reject = rej; }));
+    const box = checkbox(host); box.focus(); await click(box);
+    host.tabIndex = -1; host.focus(); expect(document.activeElement).toBe(host);
+    await act(async () => { reject(refusal()); await Promise.resolve(); });
+    await waitFor(() => expect(liveRegion(host)).toBeDefined());
+    expect(document.activeElement).toBe(collapseButton(host));
+  });
   it("an ordinary 409 is not mistaken for an archived refusal", async () => {
     const host = await renderCase();
     apiPostMock.mockRejectedValueOnce(new ApiError("Order changed", 409, { code: "subtask_order_conflict" }));

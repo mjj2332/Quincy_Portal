@@ -4901,11 +4901,18 @@ remove the legacy readers) still applies.
   other surfaces catch up. The latch clears when the prop goes true to false (Restore). Two gaps, both failing safe: the
   collaboration-only view has no `archivedAt` in its summary DTO, so its rail turns read-only on the first refusal rather than on
   load; and a refetch that comes back un-archived (archived and restored inside one window) leaves the latch on until remount.
-- **Lost focus is "body or disabled", not `section.contains(activeElement)`.** The schedule popover and assignee combobox render
-  in portals, so `contains()` misses them. Chrome also resolves a focused checkbox that becomes `disabled` to `<body>` a frame
-  later, not in the layout phase, so the check is `activeElement` is body or `:disabled`. It runs in a `useLayoutEffect`: a
-  `setTimeout` loses to the Project sheet's focus manager. The target is the always-mounted collapse button, and only on a
-  409-driven flip, never on load.
+- **Lost focus is decided in a layout effect, from a capture taken when the request starts.** `disabled={busy}` applies when the
+  request starts, but the refusal lands later and the controls unmount in the flip commit (a title input already unmounted at
+  blur), after which the Project sheet's `FloatingFocusManager` can take focus to the sheet popup, an ancestor that contains the
+  rail. So each write records whether focus was inside the rail at request start, and on a 409 flip focus goes to the always-mounted
+  collapse button when that was true and focus is no longer on a connected element inside the rail, or when it is `<body>` or
+  `:disabled` (Chrome resolves a focused control that becomes disabled to `<body>` a frame later). `section.contains()` is not
+  used alone because the schedule popover and assignee combobox render in portals. It runs in a `useLayoutEffect`: a
+  `setTimeout` loses to the sheet's focus manager. Only on a 409-driven flip, never on load.
+- **Clearing the rail's in-progress state is keyed on `readOnly` going false to true, not on the 409.** The detail query refetches
+  every 30 seconds and on focus, so `archived` usually arrives with no 409. An open composer, title edit, drafts, schedule errors
+  and schedule popover are cleared on that edge (a held schedule popover also keeps the subtasks poll off and would reopen with
+  focus on Restore). Only setting the latch, the invalidation and the focus fallback stay 409-only.
 - **The reorder handler's bare 409 branch would otherwise win.** `isArchivedRefusal` is checked first in all four catch blocks
   (update, add, remove, reorder); a reorder refusal also skips `scheduleReorderFocus`, whose fallback target
   (`subtask-add-<id>`) no longer exists.
