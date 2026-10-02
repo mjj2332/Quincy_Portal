@@ -452,7 +452,7 @@ projectsRoutes.get("/projects", terminalRoute("/projects", async (c) => {
   // #429, #461: the whole filter tree (Stage, Priority, Archived, People, Unassigned, My tasks, Overdue, the date
   // ranges; AND / OR / groups / negation) as one id-set question over the authorised ids. It narrows
   // `matchedRows` only, so Stage and Priority still never move the order or `total`.
-  const relationIds = await projectsMatchingDashboardFilter(c.env.DB, { id: user.id, role: user.role }, orderedRows.map(({ project }) => project.id), tree, Date.now());
+  const relationIds = await projectsMatchingDashboardFilter(c.env.DB, { id: user.id, role: user.role }, orderedRows.map(({ project }) => ({ id: project.id, stageKey: project.stageKey, priority: project.priority })), tree, Date.now());
   const facetNarrows = relationIds !== null;
   const matchedRows = orderedRows.filter(({ project }) =>
     (matchingIds === null || matchingIds.has(project.id))

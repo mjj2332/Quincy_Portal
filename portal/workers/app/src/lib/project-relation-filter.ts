@@ -1,4 +1,4 @@
-import { dashboardFilterArchivedMode, dashboardFilterBeyondArchivedScope, dashboardFilterPeopleIds, isEmptyDashboardFilterTree, pruneDashboardFilterTree, type DashboardFilterTree, type Role } from "@quincy/shared";
+import { dashboardFilterArchivedMode, dashboardFilterBeyondArchivedScope, dashboardFilterLeaves, dashboardFilterPeopleIds, dashboardPriorityFilterValueOf, evaluateDashboardFilterTree, isEmptyDashboardFilterTree, pruneDashboardFilterTree, type DashboardFilterTree, type Role } from "@quincy/shared";
 import { chunked } from "./project-covers";
 import { compileDashboardFilterSql, projectsListContext } from "./dashboard-filter-sql";
 import { dashboardPeopleCte } from "./production-scope-sql";
@@ -12,6 +12,9 @@ import { dashboardPeopleCte } from "./production-scope-sql";
  */
 export const PROJECT_FILTER_ID_CHUNK = 500;
 
+/** What the in-memory Stage / Priority path reads of an authorised Project: its STORED stage key (`editing_autohdr`, never `editing`) and priority. */
+export type ProjectFilterFacts = { id: string; stageKey: string; priority: number | null };
+
 /**
  * #429, #461: the Projects-list's whole Dashboard filter (Stage, Priority, Archived, People, Unassigned, My tasks,
  * Overdue, the Shoot date and Deadline ranges, and OR / groups / negation) as ONE id-set question put to D1 over the
@@ -23,12 +26,15 @@ export const PROJECT_FILTER_ID_CHUNK = 500;
  * OR) is the shared evaluator's spec. The Archived rule that already chose the base query's scope
  * (`dashboardFilterArchivedMode`) is not asked again.
  *
+ * A tree of Stage and Priority rules alone (the legacy `stages=` / `priority=` list) is answered in memory from the facts
+ * the handler already holds, exactly as before the tree: no statement at all, instead of ceil(N / 500) of them.
+ *
  * Returns `null` when the effective tree narrows nothing (the caller then keeps every row), else the matching ids.
  */
 export async function projectsMatchingDashboardFilter(
   database: D1Database,
   viewer: { id: string; role: Role },
-  authorizedIds: string[],
+  authorized: readonly ProjectFilterFacts[],
   tree: DashboardFilterTree,
   now: number,
 ): Promise<Set<string> | null> {
@@ -39,7 +45,20 @@ export async function projectsMatchingDashboardFilter(
   if (isEmptyDashboardFilterTree(pruneDashboardFilterTree(residual, valid))) return null;
 
   const matches = new Set<string>();
-  if (authorizedIds.length === 0) return matches;
+  if (authorized.length === 0) return matches;
+  if (dashboardFilterLeaves(residual).every((leaf) => leaf.field === "stages" || leaf.field === "priority")) {
+    for (const project of authorized) {
+      const priority = dashboardPriorityFilterValueOf(project.priority);
+      const keep = evaluateDashboardFilterTree(residual, (leaf) => {
+        if (leaf.field === "stages") return leaf.values.some((stage) => (stage === "editing" ? "editing_autohdr" : stage) === project.stageKey);
+        if (leaf.field === "priority") return leaf.values.includes(priority);
+        return false;
+      });
+      if (keep) matches.add(project.id);
+    }
+    return matches;
+  }
+  const authorizedIds = authorized.map((project) => project.id);
   const compiled = compileDashboardFilterSql(residual, { jsonRef: "r.ftree", context: projectsListContext(viewer.role, "p", "r.now", "r.me"), validIds: valid });
   const sql = `WITH request AS (SELECT ?1 AS me, ?2 AS now, ?3 AS ftree)
 SELECT p.id AS id

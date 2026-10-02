@@ -219,7 +219,7 @@ export async function listExternalProjects(env: Env, userId: string, role: Role,
   // envelope and `total` below never move with it. An assignee counts only if on the Project's team; an id outside
   // the viewer's own People universe is dropped. Priority is not offered to this role (the DTO withholds it) and an
   // External Editor is never Admin, so the route refuses both before this point.
-  const relationIds = filter === undefined ? null : await projectsMatchingDashboardFilter(env.DB, { id: userId, role }, [...grouped.keys()], dashboardFilterTreeOf(filter), Date.now());
+  const relationIds = filter === undefined ? null : await projectsMatchingDashboardFilter(env.DB, { id: userId, role }, [...grouped.values()].map(({ project }) => ({ id: project.id, stageKey: project.stageKey, priority: project.priority })), dashboardFilterTreeOf(filter), Date.now());
   const searched = search === "" ? allProjects : allProjects.filter((project) => externalProjectMatchesSearch(project, needle) || checklistMatchingIds.has(project.id));
   const projects = relationIds === null ? searched : searched.filter((project) => relationIds.has(project.id));
   return externalProjectListResponseSchema.parse({
