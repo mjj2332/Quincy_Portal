@@ -457,6 +457,20 @@ describe("ProductionEventCalendarDialogs (wired to the scheduling controller's d
     expect(byTestId("calendar-move-confirmation")!.textContent).toContain("No reminders are set.");
   });
 
+  // #463: the Timeline's "inline" presentation draws only the Due cell's own sessions; its menu's
+  // Edit schedule… opens a non-inline session, which is the sheet at every width.
+  it("under the inline presentation, a non-inline schedule session renders the sheet and an inline one does not (#463)", async () => {
+    await render(<ProductionEventCalendarDialogs commands={commands({ scheduleEditor: { ...editorState, inline: true } })} deadlineConfirm={null} scheduleEditorPresentation="inline" />);
+    expect(byTestId("event-calendar-schedule-editor")).toBeNull();
+    await render(<ProductionEventCalendarDialogs commands={commands({ scheduleEditor: editorState })} deadlineConfirm={null} scheduleEditorPresentation="inline" />);
+    expect(byTestId("event-calendar-schedule-editor")).not.toBeNull();
+  });
+
+  it("under the sheet presentation, an inline session still renders the sheet, as before (#463)", async () => {
+    await render(<ProductionEventCalendarDialogs commands={commands({ scheduleEditor: { ...editorState, inline: true } })} deadlineConfirm={null} />);
+    expect(byTestId("event-calendar-schedule-editor")).not.toBeNull();
+  });
+
   // docs/lessons.md "Sibling retained dialogs must namespace their open-token keys": every
   // retained sibling reaches token 1 on its first open; un-prefixed, React drops one of them.
   it("keeps sibling retained dialogs apart once each has opened (prefixed open-token keys)", async () => {
