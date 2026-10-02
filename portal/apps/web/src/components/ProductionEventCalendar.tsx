@@ -396,7 +396,8 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
   // #464: landing on a Project (Show in Calendar).
   // ---------------------------------------------------------------------------------------------
 
-  const landingReady = everLoaded && !commands.accessLost && source !== null && !blocked && !settling && !query.isFetching && query.data?.range.date === calendar.date;
+  // The drawn window covers the target date: the query key is the window, so a same-window Show in is served from cache with the old anchor `range.date`.
+  const landingReady = everLoaded && !commands.accessLost && source !== null && !blocked && !settling && !query.isFetching && query.data !== undefined && query.data.range.start <= calendar.date && calendar.date <= query.data.range.end;
   const landingErrored = Boolean(query.error) && !query.data && !query.isFetching;
   useEffect(() => {
     const request = focusRequestRef.current;

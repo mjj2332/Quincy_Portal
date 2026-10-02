@@ -76,6 +76,15 @@ describe("ProductionEventCalendar focus landing (#464)", () => {
     expect(document.activeElement).toBe(chipOf(`checklist:${EARLY_ITEM}`)?.closest("button"));
   });
 
+  it("lands in the same window without waiting for a refetch: the cached range covers the new anchor date", async () => {
+    const { outcomes, onFocusSettled } = await mount([deadlineEvent("2026-08-27T09:00")], null);
+    expect(outcomes).toHaveLength(0);
+    await h.rerender({ ...calendarState(), date: "2026-08-27" }, { focus: { projectId: PROJECT_ID, token: 1 }, onFocusSettled });
+    await flush(10);
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]?.[1]).toMatchObject({ kind: "found", target: "deadline", civilDate: "2026-08-27" });
+  });
+
   it("reports hidden when the Project has no event in the drawn range", async () => {
     const { outcomes } = await mount([task(`checklist:${OTHER_ITEM}`, "2026-08-12", { project: OTHER_PROJECT })], { projectId: PROJECT_ID, token: 1 });
     expect(outcomes).toEqual([[1, { kind: "hidden" }]]);
