@@ -4984,6 +4984,18 @@ remove the legacy readers) still applies.
 - **`assets.ts` (cover cleared when its asset is deleted) is deliberately unfenced.** Deleting an asset is not a cover edit, and clearing a dangling reference on an archived Project is housekeeping that must not fail.
 - **Web follows #450/#452.** `CollectionTabView` latches on a 409 with the code (checked first in `updateCover`, no toast), refetches detail and activity, and drops the latch when `archivedAt` goes set to unset. `canSetCover` is false while archived, so an archived-on-load Project never shows the control. The status notice appears only while latched. `PhotoGrid.onSetCover` resolves `"archived"`; the grid captures at click time whether focus was inside the tile, and a layout effect keyed on `canSetCover` going false moves focus to the tile only if focus was lost (`<body>`, disabled, disconnected, or an ancestor containing the tile). Never on load.
 - **`POST /projects/:id/dropbox-sync` was removed** (web stopped calling it in 85e15fe1), with its manifest entry and probe line. `/sync-dropbox` is the live route.
+## Calendar sheets: the vendored close collides with the header (#462)
+
+- **Why the vendored close was replaced.** `reui/sheet`'s `showCloseButton` pins a 28px close at top/right 12px over the header, so the
+  Schedule editor's long street and the rail sheet's title ran under it, and on phones the target was far below 44px. Both calendar
+  sheets pass `showCloseButton={false}` and render `quincy/SheetCloseButton` (`SheetClose` + `reui/button`, 28px desktop / 44px at
+  <=721px) with `SHEET_CLOSE_CLEARANCE` reserving the header's end padding (48px / 64px). Desktop schedule-editor header end padding
+  went 32px -> 48px on purpose. No vendor edit.
+- **The close must be the LAST child of `SheetContent`.** Base UI's default initial focus is the first tabbable in the popup; a close
+  rendered first takes focus on open instead of the form.
+- **Phone rail header height uses the allowlisted `min-h-[44px]` on the title**, not a `min-h-[calc(...px...)]` on the header:
+  `dashboard-fill.guard` rejects px heights in `ProductionEventCalendar.tsx`. Header `py-[var(--space-3)]` + 44px title = 68px.
+- Pinned before the change: one click and one Escape each fire `onCancel` once; the new tests assert the same.
 ## Team picker drew two focus indicators (#458)
 
 - **A layered `outline-none` cannot beat the unlayered base rule.** `tokens/base.css:25-28` sets `:focus-visible { outline }` outside any
