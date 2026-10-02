@@ -13,6 +13,7 @@ export * from "./dashboard-filter";
 export * from "./dropbox-paths";
 export * from "./autohdr";
 export * from "./dashboard-order";
+export * from "./board-order";
 export * from "./rich-text";
 export * from "./email-text";
 export * from "./notification-outbox";
