@@ -30,6 +30,8 @@ import {
   stubCalendarFetch,
   type Harness,
   type SurfaceProps,
+  closeItemMenu,
+  openItemMenuRow,
 } from "../testing/production-event-calendar-harness";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -121,16 +123,16 @@ describe("ProductionEventCalendar reconciliation", () => {
     await flush(50);
     expect(settle.some((state) => state.pending && state.recoveryReason === "The latest Calendar could not be loaded.")).toBe(true);
     expect(h.host.querySelector('button[data-focus-key="calendar-recovery"]')).not.toBeNull();
-    await act(async () => { eventCalendarFake.click(ID); await Promise.resolve(); });
-    expect(h.host.querySelector(`[data-focus-key="calendar-move:${ID}"]`)).toBeNull();
+    expect(await openItemMenuRow(ID)).toBeNull();
+    await closeItemMenu();
 
     await act(async () => { await h.client.refetchQueries({ queryKey: mainRangeQuery(h.client).queryKey }); await new Promise((resolve) => setTimeout(resolve, 20)); await Promise.resolve(); });
     await flush(10);
     expect(fetch.rangeGets()).toHaveLength(3);
     expect(h.host.querySelector('button[data-focus-key="calendar-recovery"]')).toBeNull();
     expect(settle.at(-1)).toEqual({ pending: false, recoveryReason: null });
-    await act(async () => { eventCalendarFake.click(ID); await Promise.resolve(); });
-    expect(h.host.querySelector(`[data-focus-key="calendar-move:${ID}"]`)).not.toBeNull();
+    expect((await openItemMenuRow(ID))?.hasAttribute("aria-disabled")).toBe(false);
+    await closeItemMenu();
   });
 
   it("preserves an active confirmation across a semantically equal Calendar rerender but resets on a real route change", async () => {
@@ -216,7 +218,7 @@ describe("ProductionEventCalendar reconciliation", () => {
     runtime.dispose(); sender.dispose();
   });
 
-  it("hides the Reschedule action while a command settles", async () => {
+  it("offers no Reschedule row while a command settles", async () => {
     let release!: () => void;
     stub((n) => n === 1 ? json(response()) : new Promise<Response>((resolve) => { release = () => resolve(json(response("2026-08-20T09:00"))); }));
     await render();
@@ -226,8 +228,8 @@ describe("ProductionEventCalendar reconciliation", () => {
     await drop();
     await clickTestId("gantt-deadline-confirm-action");
     await flush(10);
-    await act(async () => { eventCalendarFake.click(ID); await Promise.resolve(); });
-    expect(h.host.querySelector(`[data-focus-key="calendar-move:${ID}"]`)).toBeNull();
+    expect(await openItemMenuRow(ID)).toBeNull();
+    await closeItemMenu();
     release();
     await flush(20);
   });

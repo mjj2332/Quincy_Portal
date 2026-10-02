@@ -27,6 +27,8 @@ import {
   mainRangeQuery,
   openReschedule,
   proposeUpdate,
+  closeItemMenu,
+  openItemMenuRow,
   setValue,
   stubCalendarFetch,
   type Harness,
@@ -419,8 +421,8 @@ describe("ProductionEventCalendar Project Deadline writes", () => {
       // Both roles read an Editor-shaped response (the External schema carries no Deadlines), as the old suite did.
       const fetch = await mount({ role, range: rangeResponse({ events: [deadlineEvent("2026-08-12T09:00", { canDrag: false, version: 3, offsets: OFFSETS, stageKey: "editing" })], role: "editor" }) });
       expect(eventCalendarFake.event(ID)?.draggable).toBe(false);
-      await act(async () => { eventCalendarFake.click(ID); await Promise.resolve(); });
-      expect(h.host.querySelector(`[data-focus-key="calendar-move:${ID}"]`)).toBeNull();
+      expect(await openItemMenuRow(ID)).toBeNull();
+      await closeItemMenu();
       expect(await monthDrag()).toBe(false);
       expect(fetch.puts()).toHaveLength(0);
       await h.unmount();

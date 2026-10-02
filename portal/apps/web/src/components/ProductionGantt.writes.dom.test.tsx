@@ -300,6 +300,7 @@ let client: QueryClient;
 let onAcceptGateChange: ReturnType<typeof vi.fn<(blocked: boolean) => void>>;
 let onSettleStateChange: ReturnType<typeof vi.fn<(state: CalendarSettleState) => void>>;
 let onAccessLoss: ReturnType<typeof vi.fn<() => void>>;
+let onOpenProjectProp: ((projectId: string) => void) | undefined;
 
 function view(show = true): ReactNode {
   return (
@@ -313,6 +314,7 @@ function view(show = true): ReactNode {
           onAcceptGateChange={onAcceptGateChange}
           onSettleStateChange={onSettleStateChange}
           onAccessLoss={onAccessLoss}
+          onOpenProject={onOpenProjectProp}
         />
       )}
       <ToastViewport />
@@ -1261,6 +1263,7 @@ describe("ProductionGantt — Add task row (#344)", () => {
     runtime = new ProjectQueryRuntime(client, "gantt-create-tab");
   });
   afterEach(() => {
+    onOpenProjectProp = undefined;
     runtime.dispose();
   });
 
@@ -1457,6 +1460,25 @@ describe("ProductionGantt — Add task row (#344)", () => {
     await flush(6);
     expect(hasBar(CREATED_TITLE)).toBe(false);
     expect(toastTexts().filter((text) => text.includes("Created — hidden by current filters"))).toHaveLength(1);
+  });
+
+  it("a pinned created bar (not yet returned by the refetch) still opens the item menu, with Open project only (#463)", async () => {
+    const opened = vi.fn<(projectId: string) => void>();
+    onOpenProjectProp = opened;
+    createReply = (body, projectId) => {
+      const reply = echoCreate(body, projectId);
+      omittedFromGet.add(CREATED_ID);
+      return reply;
+    };
+    await render();
+    await open();
+    await submit(CREATED_TITLE);
+    await click(findBar(CREATED_TITLE));
+    const labels = [...document.querySelectorAll<HTMLElement>("[role=menuitem]")].map((node) => node.textContent);
+    // read-only pin: no Edit schedule…, but the Project is still reachable
+    expect(labels).toEqual(["Open project"]);
+    await click([...document.querySelectorAll<HTMLElement>("[role=menuitem]")][0]!);
+    expect(opened).toHaveBeenCalledWith(PROJECT_ID);
   });
 
   it("does not raise the hidden toast when the row simply comes back on the refetch", async () => {

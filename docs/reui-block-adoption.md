@@ -282,3 +282,22 @@ What was new:
   anchored to the card's ⋯ trigger from a menu hand-off and must give focus back to it, and publishes a live
   drop-indicator proposal while open; a modal dialog is not anchored and a popover's focus return would land on top
   of the closing menu. The raw rows stay on the `ui-primitive-ratchet` allowlist with their ledger line.
+
+## Addendum: a menu on a vendor `<button>` (Calendar chip, Timeline bar, #463)
+
+Not a block adoption, but the same family of trap: the vendored event-calendar and Gantt render their chips and bars as `<button>`s,
+so the shadcn/ReUI menus built around a Trigger or a wrapper do not fit.
+
+- **Use a controlled `reui/dropdown-menu` with no Trigger** (`components/scheduling-item-menu.tsx`, one host shared by both
+  surfaces), not `reui/context-menu` / `c-context-menu-1` or the `gantt-1`/`gantt-2` `renderEventMenu` blocks: those need a per-item
+  root, and Base UI's 500ms touch long-press opens over the 250ms touch drag (the #432 Board trap).
+- **It cost two additive vendor seams per tree** (`onEventContextMenu`, `eventPopup` for `aria-haspopup`/`aria-expanded`) and one
+  `anchor` passthrough on `DropdownMenuContent`, each marked QUINCY ADDITION in its file header and a no-op when unset.
+- **Traps, in the order they bite:** a programmatic open focuses the popup, not the first row; a virtual anchor is about 1px wide,
+  so the popup needs an explicit width; `finalFocus` is decided as the popup unmounts, after `onOpenChangeComplete`; a re-keyed
+  bar is a new element, so focus must be re-resolved after a follow-on dialog; the Gantt vendor selects on click regardless of
+  `preventDefault`. See `docs/lessons.md` (#463).
+- **Reuse ledger:** menu, group label, rows: `reui/dropdown-menu`. Surface class: `quincy/menu-surface.ts`, shared with the Board card
+  menu. Searched and rejected: `reui/context-menu`, `c-context-menu-1`, `gantt-1`/`gantt-2` `renderEventMenu`, `quincy/menu.tsx` (each needs
+  a trigger element or a per-bar root).
+

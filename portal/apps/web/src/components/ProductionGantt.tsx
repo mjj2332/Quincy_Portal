@@ -54,6 +54,13 @@
  * the move dialog and the checklist fold choice — `ProductionEventCalendarDialogs` (the Calendar's
  * `reui/alert-dialog` shells, rendered whole; #224 retired the old Modal presentations).
  *
+ * ## #463 — the item menu
+ * A bar click, Enter or right-click opens the shared menu host (`scheduling-item-menu.tsx`): Open project and Reschedule…
+ * on a Project bar (`canEditDeadline`), Open project and Edit schedule… on a checklist bar. Edit schedule… opens the
+ * controller's SHEET at every width (not the inline Due popover). `renderEventMenu` is never passed (the import-boundary
+ * guard pins it). Reuse ledger: menu — `reui/dropdown-menu` through `scheduling-item-menu.tsx`; `reui/context-menu` and the
+ * `gantt-1`/`gantt-2` `renderEventMenu` blocks were searched and fail on the touch long-press and the per-bar root.
+ *
  * ## #344 — "+ Add task"
  * Each expanded Project whose `permissions.canEditChildren` holds ends with a "+ Add task" row (the
  * vendored tree owns the row and input; `onCreateGroupTask` / `canCreateTask` here own the write and the
@@ -184,6 +191,8 @@ import {
   type GanttEdit,
 } from "../lib/production-gantt-scheduling";
 import { adoptGanttChecklistRow, adoptGanttChildRows, adoptGanttChildSchedule, ganttEditWarnings, useGanttSchedulingPort } from "../lib/production-gantt-port";
+import { schedulingItemActions, type SchedulingItemActionId } from "../lib/scheduling-item-actions";
+import { useSchedulingItemMenu, type SchedulingMenuContent } from "./scheduling-item-menu";
 import { decodeChecklistMutationResponse } from "../lib/production-calendar-query";
 import { scheduleWarningText } from "../lib/schedule-bounds";
 import {
@@ -435,7 +444,7 @@ function GanttChildLoadErrorBadge({ onRetry }: { onRetry: () => void }) {
  */
 /**
  * #372: a Subtask row's assignee cell: the row itself (overlaid with any newer adopted assignees) and its Project.
- * Only rows the chart draws from `displayProjects` get one, so a pinned created row (display-only) has none.
+ * Only rows the chart draws from `displayProjects` get one, so a pinned created row (display-only) gets Open project only (#463, `findTaskTarget`).
  */
 type GanttAssigneeCell = { projectId: string; row: GanttChecklistRowDto };
 
@@ -1673,6 +1682,82 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   const [date, setDate] = useState<Date>(() => new Date());
   const [scale, setScale] = useState<GanttScale>("month");
 
+  // ---------------------------------------------------------------------------------------------
+  // The item menu (#463): a bar click, Enter or right-click opens Open project and Reschedule… (a
+  // Project bar) or Edit schedule… (a checklist bar). The bar is a vendor `<button>`, so the menu is a
+  // controlled host anchored to it (`scheduling-item-menu.tsx`), never the vendor's `renderEventMenu`.
+  // Edit schedule… opens the controller's SHEET at every width (not the inline Due popover).
+  // ---------------------------------------------------------------------------------------------
+  // A drawn checklist row, or a #344 pinned created row the refetch has not returned yet (read-only, so
+  // only Open project is offered on it; `ganttChecklistSource` / its permissions veto the rest).
+  const findTaskTarget = (taskId: string): { project: (typeof displayProjects)[number]; row: (typeof displayProjects)[number]["children"]["rows"][number] } | null => {
+    for (const project of displayProjects) {
+      const row = project.children.rows.find((candidate) => candidate.id === taskId);
+      if (row) return { project, row };
+    }
+    const pin = pins.find((candidate) => candidate.row.id === taskId && candidate.generationKey === generationKey);
+    const project = pin ? projectById.get(pin.row.projectId) : undefined;
+    return pin && project ? { project, row: pin.row } : null;
+  };
+  const describeItem = (key: string): SchedulingMenuContent | null => {
+    if (key.startsWith("project-bar:")) {
+      const project = projectById.get(key.slice("project-bar:".length));
+      if (!project) return null;
+      return {
+        label: `Deadline · ${project.street}`,
+        actions: schedulingItemActions({
+          kind: "deadline",
+          canOpenProject: onOpenProject !== undefined,
+          canReschedule: project.permissions.canEditDeadline && ganttDeadlineEvent(project) !== null,
+          canEditSchedule: false,
+          live,
+        }),
+      };
+    }
+    if (key.startsWith("task:")) {
+      const target = findTaskTarget(key.slice("task:".length));
+      if (!target) return null;
+      const { project, row } = target;
+      return {
+        label: `${row.title} · ${project.street}`,
+        actions: schedulingItemActions({
+          kind: "checklist",
+          canOpenProject: onOpenProject !== undefined,
+          canReschedule: false,
+          canEditSchedule: row.permissions.canOpenScheduleEditor && ganttChecklistSource(project, row) !== null,
+          live,
+        }),
+      };
+    }
+    return null;
+  };
+  const findBar = (key: string): HTMLElement | null => {
+    const resourceId = CSS.escape(key.startsWith("project-bar:") ? `project:${key.slice("project-bar:".length)}` : key);
+    return containerRef.current?.querySelector<HTMLElement>(`[data-gantt-resource="${resourceId}"] [data-slot="gantt-bar"]`) ?? null;
+  };
+  const runItemAction = (id: SchedulingItemActionId, key: string) => {
+    if (key.startsWith("project-bar:")) {
+      const project = projectById.get(key.slice("project-bar:".length));
+      if (!project) return;
+      if (id === "open-project") onOpenProject?.(project.id);
+      else if (id === "reschedule") { const event = ganttDeadlineEvent(project); if (event) commands.openMoveDialog(event); }
+      return;
+    }
+    const target = findTaskTarget(key.slice("task:".length));
+    if (!target) return;
+    if (id === "open-project") onOpenProject?.(target.project.id);
+    else if (id === "edit-schedule") { const source = ganttChecklistSource(target.project, target.row); if (source) commands.openChecklistScheduleEditor(source); }
+  };
+  const itemMenu = useSchedulingItemMenu({
+    describe: describeItem,
+    resolveElement: findBar,
+    onAction: runItemAction,
+    followOnOpen: commands.moveDialog !== null || (commands.scheduleEditor !== null && !commands.scheduleEditor.inline),
+    closeKey: `${generationKey}|${identity.principalId}|${identity.role}|${identity.authorizationEpoch}|${commands.accessLost}`,
+  });
+  const { isOpenFor: isItemMenuOpenFor } = itemMenu;
+  const eventPopup = useMemo(() => ({ isOpen: (occurrence: { event: { id: string | number } }) => isItemMenuOpenFor(String(occurrence.event.id)) }), [isItemMenuOpenFor]);
+
   // #221: the vendor's proposal → the grab-time checklist source and a `GanttEdit`. `null` for
   // anything that is not a scheduled task this user may change (project bars go through
   // `deadlineEditFor` below; the adapter already vetoes the rest per row permissions).
@@ -1908,6 +1993,12 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             columns={columns}
             interactions={interactions}
             onEventUpdate={handleEventUpdate}
+            onEventClick={(occurrence, e) => {
+              // The vendor still selects the bar (its ring); the click also opens the menu.
+              itemMenu.openFromClick(e, String(occurrence.event.id));
+            }}
+            onEventContextMenu={(occurrence, e) => itemMenu.openFromContextMenu(e, String(occurrence.event.id))}
+            eventPopup={eventPopup}
             dropWarning={dropWarning}
             parentScheduling={false}
             summaryBars={false}
@@ -1935,7 +2026,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   }
 
   return (
-    <div ref={containerRef} className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)]" data-testid="production-gantt-root">
+    <div ref={containerRef} className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)]" data-testid="production-gantt-root" {...itemMenu.wrapperProps}>
       <GanttLegend entries={legendEntries} />
       {commands.settle.recoveryReason && (
         <Notice role="alert" data-testid="production-gantt-recovery-notice" className="flex items-center justify-between gap-[var(--space-4)]">
@@ -1947,7 +2038,8 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
       )}
       {body}
       <div className="sr-only" data-testid="production-gantt-live-region" aria-live="polite" aria-atomic="true">{commands.announcement}</div>
-      <ProductionEventCalendarDialogs commands={commands} deadlineConfirm={deadlineConfirm} scheduleEditorPresentation="inline" />
+      <ProductionEventCalendarDialogs commands={commands} deadlineConfirm={deadlineConfirm} scheduleEditorPresentation="inline" projectDefaultFor={(projectId) => projectDefaultById.get(projectId) ?? null} />
+      {itemMenu.menu}
     </div>
   );
 }

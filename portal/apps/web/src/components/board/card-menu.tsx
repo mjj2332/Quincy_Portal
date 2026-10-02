@@ -23,6 +23,7 @@ import {
 import { StageSwatch } from "../quincy/StageSwatch";
 import { stageColorFor, stagePatternFor } from "../../lib/stage-colors";
 import type { MoveToChoice } from "./card-actions";
+import { MENU_SURFACE_CLASS } from "../quincy/menu-surface";
 
 /**
  * What the Board hands a card to build its two menus from (#470). The card has no menu when this is
@@ -52,12 +53,8 @@ export type CardMenuBinding = {
   onChoose: (stageKey: StageKey) => void;
 };
 
-/**
- * One surface for both menus. The ReUI dropdown's own defaults are already the Quincy surface
- * (square, hairline border, `--shadow-md`); the context menu's defaults are the rounded ring one, so
- * this string is what makes the two read as the same menu. Applied to both so neither drifts.
- */
-const CARD_MENU_CONTENT_CLASS = "w-48 rounded-none border border-border shadow-[var(--shadow-md)] ring-0";
+/** One surface for both menus (and, since #463, the Calendar's and Timeline's item menu): `quincy/menu-surface.ts`. */
+const CARD_MENU_CONTENT_CLASS = MENU_SURFACE_CLASS;
 const SUB_CONTENT_CLASS = "min-w-48 w-max max-w-[min(18rem,calc(100vw-2rem))]";
 /** 44px rows at ≤641px and on a coarse pointer: the Stage radios and the Move to sub-triggers share it. */
 export const TOUCH_ROW_CLASS = "max-[641px]:min-h-11 pointer-coarse:min-h-11";
