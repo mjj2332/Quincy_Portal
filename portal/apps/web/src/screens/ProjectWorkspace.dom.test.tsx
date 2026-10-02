@@ -816,6 +816,44 @@ afterEach(async () => {
       expect(group("Stage")?.textContent).toContain("RAW review");
       expect(host.querySelector('[data-focus-key="rail-stage:p1"]')).toBeNull();
     });
+
+    // The refusal is the proof of the archive: the header turns read-only at once, however long the follow-up detail read takes.
+    const stallDetailReads = () => {
+      const stalled = apiGetMock.getMockImplementation()!;
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      apiGetMock.mockImplementation((path: string, init?: unknown) => path === "/api/projects/p1" ? gate.then(() => stalled(path, init)) : stalled(path, init));
+      return release;
+    };
+    const expectHeaderReadOnly = () => {
+      expect(group("Deadline")).not.toBeNull();
+      expect(group("Team")).not.toBeNull();
+      expect(host.textContent).not.toContain("Edit details");
+      expect(host.textContent).toContain("Restore or delete");
+    };
+
+    it("a Dropbox sync refused as archived turns Edit details, Deadline and Team read-only before the detail refetch resolves", async () => {
+      apiPostMock.mockImplementationOnce(async () => { archivedAt = Date.now(); throw new ApiError("Archived projects can't sync from Dropbox. Restore the project first.", 409, { code: "dropbox_sync_project_archived" }); });
+      await render(<ProjectWorkspace projectId="p1" />); await flush();
+      expect(host.textContent).toContain("Edit details");
+      const dropboxDialog = await openDropboxDialog(host);
+      const release = stallDetailReads();
+      await click(dropboxDialog.querySelector<HTMLButtonElement>('[data-testid="dropbox-sync"]')!);
+      await flush(20);
+      expectHeaderReadOnly();
+      release(); await flush(20);
+    });
+
+    it("a Stage move refused as archived turns Edit details, Deadline and Team read-only before the detail refetch resolves", async () => {
+      apiPostMock.mockImplementationOnce(async () => { archivedAt = Date.now(); throw new ApiError("Project is archived and read-only.", 409, { code: "project_archived_read_only" }); });
+      await render(<ProjectWorkspace projectId="p1" />); await flush();
+      expect(host.textContent).toContain("Edit details");
+      const trigger = host.querySelector<HTMLButtonElement>('[data-focus-key="rail-stage:p1"]')!;
+      const release = stallDetailReads();
+      await chooseStage(trigger, "Awaiting RAW"); await flush(20);
+      expectHeaderReadOnly();
+      release(); await flush(20);
+    });
   });
 
   it("keeps a PhotoGrid filter through a background refetch", async () => {

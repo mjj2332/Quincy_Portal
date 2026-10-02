@@ -336,7 +336,8 @@ function ProjectWorkspaceView(props: ProjectWorkspaceProps) {
     }
     catch (reason) {
       if (reason instanceof ApiError && reason.status === 409 && reason.details && typeof reason.details === "object" && (reason.details as { code?: unknown }).code === "dropbox_sync_project_archived") {
-        await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true }).catch(() => undefined);
+        // The refusal is the proof: report it now so the header latches read-only, and refresh without waiting on the detail read.
+        void invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true }).catch(() => undefined);
         return "archived";
       }
       if (!(reason instanceof Error && reason.name === "AbortError")) { terminateOnUnauthorized(reason); toast(reason instanceof Error ? reason.message : "Dropbox sync could not be started.", "error"); }
@@ -539,7 +540,8 @@ function WorkspaceBody(props: WorkspaceChromeProps) {
         setStageMoveDisabledReason("Stage movement is temporarily unavailable while the Board is being updated.");
       } else if (reason instanceof ApiError && reason.status === 409 && code === "project_archived_read_only") {
         // #455: archived under the open header. No toast; the refetch brings archivedAt and the header latches its Stage read-only.
-        await props.onRefreshDetail().catch(() => undefined);
+        // Report the refusal now so the header latches read-only; the refetch is not awaited.
+        void props.onRefreshDetail().catch(() => undefined);
         return "archived";
       } else if (reason instanceof ApiError && reason.status === 409 && code === "project_stage_conflict") {
         await props.onRefreshDetail().catch(() => undefined);
