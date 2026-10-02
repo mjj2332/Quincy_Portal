@@ -64,7 +64,7 @@ describe("durable RAW stage commit", () => {
       advance(projectId, "direct_upload"),
     ]);
     expect(attempts.filter(Boolean)).toHaveLength(1);
-    const row = await database.DB.prepare("SELECT stage_key, board_position, board_revision FROM projects WHERE id = ?").bind(projectId).first();
+    const row = await database.DB.prepare("SELECT stage_key, board_revision FROM projects WHERE id = ?").bind(projectId).first();
     expect(row).toMatchObject({ stage_key: "raw_review", board_revision: 1 });
     const audits = await database.DB.prepare("SELECT actor_id, action, meta_json FROM audit_log WHERE target_id = ? AND action = 'stage.auto_advance'").bind(projectId).all();
     expect(audits.results).toHaveLength(1);
@@ -72,6 +72,24 @@ describe("durable RAW stage commit", () => {
     // The undated Project's Shoot date is filled by exactly one of the two concurrent attempts.
     expect(await fillAudits(projectId)).toHaveLength(1);
     expect(await shootDateOf(projectId)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("reports a winner with its finalizer and fill, and two different Projects advancing together into one Stage both win (#475)", async () => {
+    const neighbour = await project("raw_review");
+    const first = await project();
+    const second = await project();
+    const [a, b] = await Promise.all([advanceOutcome(first, "dropbox_delta"), advanceOutcome(second, "direct_upload")]);
+    // Reported outcome and follow-ups, not only DB state: a winner whose finalizer is derived and whose
+    // undated Shoot date fill is reported. Under the whole-column fence the second one lost.
+    for (const outcome of [a, b]) {
+      expect(outcome).toMatchObject({ kind: "winner", shootDateFilled: true, finalizer: { publicationIds: expect.any(Array) } });
+    }
+    for (const id of [first, second]) {
+      expect(await database.DB.prepare("SELECT stage_key, board_revision FROM projects WHERE id = ?").bind(id).first()).toEqual({ stage_key: "raw_review", board_revision: 1 });
+      expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'stage.auto_advance'").bind(id).first()).toEqual({ count: 1 });
+      expect(await fillAudits(id)).toHaveLength(1);
+    }
+    expect(await database.DB.prepare("SELECT stage_key, board_revision FROM projects WHERE id = ?").bind(neighbour).first()).toEqual({ stage_key: "raw_review", board_revision: 0 });
   });
 
   describe("Shoot date fill", () => {

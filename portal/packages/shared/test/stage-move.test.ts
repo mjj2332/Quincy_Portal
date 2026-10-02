@@ -5,7 +5,6 @@ import {
   STAGE_SEQUENCE,
   moveProjectStageConflictResponseSchema,
   moveProjectStageRequestSchema,
-  moveProjectStageRequestSchemaForProject,
   moveProjectStageResponseSchema,
   parseStageTransportKey,
   projectStageDtoForRole,
@@ -15,16 +14,11 @@ import {
 
 const targetProjectId = "11111111-1111-4111-8111-111111111111";
 const beforeProjectId = "22222222-2222-4222-8222-222222222222";
-const afterProjectId = "33333333-3333-4333-8333-333333333333";
 
 const validRequest = {
   expected: { stageKey: "raw_review", boardRevision: 2 },
   targetStageKey: "editing",
-  placement: {
-    kind: "between" as const,
-    before: { projectId: beforeProjectId, boardRevision: 4 },
-    after: { projectId: afterProjectId, boardRevision: 7 },
-  },
+  placement: { kind: "append" as const },
   confirmation: { reasons: ["editing_boundary" as const] },
 };
 
@@ -69,29 +63,25 @@ describe("TB5A Stage confirmation classification", () => {
 });
 
 describe("TB5A strict Stage move request and response schemas", () => {
-  it("accepts the contract, normalizes a both-null between placement, and rejects strict extras", () => {
+  it("accepts the append contract and rejects strict extras", () => {
     expect(moveProjectStageRequestSchema.parse(validRequest)).toEqual(validRequest);
-    expect(moveProjectStageRequestSchema.parse({
-      ...validRequest,
-      placement: { kind: "between", before: null, after: null },
-    }).placement).toEqual({ kind: "append" });
     expect(moveProjectStageRequestSchema.safeParse({ ...validRequest, extra: true }).success).toBe(false);
+    expect(moveProjectStageRequestSchema.safeParse({ ...validRequest, placement: { kind: "append", extra: true } }).success).toBe(false);
   });
 
-  it("rejects invalid UUIDs, unsafe revisions, duplicate reasons, and repeated neighbours", () => {
+  it("rejects the retired between placement, even a both-null one (the route answers it 409 before parsing)", () => {
+    for (const placement of [
+      { kind: "between", before: null, after: null },
+      { kind: "between", before: { projectId: beforeProjectId, boardRevision: 4 }, after: null },
+    ]) {
+      expect(moveProjectStageRequestSchema.safeParse({ ...validRequest, placement }).success).toBe(false);
+    }
+  });
+
+  it("rejects unsafe revisions and duplicate reasons", () => {
     expect(moveProjectStageRequestSchema.safeParse({ ...validRequest, expected: { ...validRequest.expected, boardRevision: -1 } }).success).toBe(false);
     expect(moveProjectStageRequestSchema.safeParse({ ...validRequest, expected: { ...validRequest.expected, boardRevision: Number.MAX_SAFE_INTEGER + 1 } }).success).toBe(false);
-    expect(moveProjectStageRequestSchema.safeParse({ ...validRequest, placement: { ...validRequest.placement, before: { ...validRequest.placement.before!, projectId: "not-a-uuid" } } }).success).toBe(false);
     expect(moveProjectStageRequestSchema.safeParse({ ...validRequest, confirmation: { reasons: ["editing_boundary", "editing_boundary"] } }).success).toBe(false);
-    expect(moveProjectStageRequestSchema.safeParse({ ...validRequest, placement: { ...validRequest.placement, after: { ...validRequest.placement.before! } } }).success).toBe(false);
-  });
-
-  it("rejects a neighbour equal to the route target through the target-aware schema", () => {
-    expect(moveProjectStageRequestSchemaForProject(targetProjectId).safeParse({
-      ...validRequest,
-      placement: { ...validRequest.placement, before: { projectId: targetProjectId, boardRevision: 1 } },
-    }).success).toBe(false);
-    expect(moveProjectStageRequestSchemaForProject(targetProjectId).safeParse(validRequest).success).toBe(true);
   });
 
   it("validates the success and 409 conflict response contracts", () => {
@@ -101,6 +91,8 @@ describe("TB5A strict Stage move request and response schemas", () => {
       board: { sourceStageKey: "raw_review", targetStageKey: "editing", orderedVisibleProjectIds: [targetProjectId, beforeProjectId] },
     };
     expect(moveProjectStageResponseSchema.safeParse(response).success).toBe(true);
+    // The ordered ids are deprecated (#475, removed in #476): a response without them still parses.
+    expect(moveProjectStageResponseSchema.safeParse({ ...response, board: { sourceStageKey: "raw_review", targetStageKey: "editing" } }).success).toBe(true);
     expect(moveProjectStageConflictResponseSchema.safeParse({ error: "Conflict", code: "project_stage_conflict", current: response.project }).success).toBe(true);
     expect(moveProjectStageConflictResponseSchema.safeParse({ error: "Conflict", code: "project_stage_conflict", current: { ...response.project, projectId: "not-a-uuid" } }).success).toBe(false);
   });
