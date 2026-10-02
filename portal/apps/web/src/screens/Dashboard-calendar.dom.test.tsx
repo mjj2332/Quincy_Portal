@@ -696,7 +696,6 @@ describe("Dashboard Calendar routing", () => {
       movementDisabled: boardBefore!.movementDisabled,
       canMoveStages: boardBefore!.canMoveStages,
       boardMutationEnabled: boardBefore!.boardMutationEnabled,
-      sameStageReorderEnabled: boardBefore!.sameStageReorderEnabled,
     });
     expect(boardPropsState.value?.pendingMoves).toEqual(boardBefore!.pendingMoves);
     expect(boardPropsState.value?.pendingOrdering).toEqual(boardBefore!.pendingOrdering);

@@ -13,8 +13,8 @@ import { ApiError } from "../lib/api";
 const apiGetMock = vi.hoisted(() => vi.fn());
 const apiPostMock = vi.hoisted(() => vi.fn());
 vi.mock("../lib/api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../lib/api")>()), apiGet: (path: string) => apiGetMock(path), apiPost: (path: string, body: unknown) => apiPostMock(path, body) }));
-vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ can: (capability: string) => capability === "prioritizeProjects" || capability === "adminBackend" }) }));
-vi.mock("../lib/stages", () => ({ presentationStages: (stages: readonly unknown[]) => stages, useStages: () => ({ stages: [{ key: "awaiting_raw", label: "Awaiting RAW", active: true }], presentationStageKey: (key: string) => key }) }));
+vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ can: (capability: string) => capability === "prioritizeProjects" || capability === "adminBackend" || capability === "moveProjectStage" }) }));
+vi.mock("../lib/stages", () => ({ presentationStages: (stages: readonly unknown[]) => stages, useStages: () => ({ stages: [{ key: "awaiting_raw", label: "Awaiting RAW", active: true }, { key: "raw_review", label: "RAW review", active: true }], presentationStageKey: (key: string) => key }) }));
 vi.mock("../components/NoticeBoard", () => ({ NoticeBoard: () => null }));
 vi.mock("../components/board/board", () => ({
   // `<option value="3">` exists only so a value the (l) test's Beta fixture carries (priority 3,
@@ -26,13 +26,13 @@ vi.mock("../components/board/board", () => ({
   // one Board gesture the priority-lock tests below need; the select still drives project-1 only.
   // `move-first` moves project-1 ahead of the other card (#306 test (c): a card moved after its own
   // priority confirmed).
-  ProjectKanbanBoard2: ({ projects, onPriorityChange, onBoardMove }: { projects: Array<{ id: string; priority: number | null }>; onPriorityChange: (project: { id: string; priority: number | null }, priority: number | null) => void; onBoardMove?: (projectId: string, gap: { targetStageKey: string; successor: string }, kind: "same", focus: { path: "pointer"; projectId: string; control: "handle"; sourceStageKey: string; sourceIndex: number }) => void }) => {
+  ProjectKanbanBoard2: ({ projects, onPriorityChange, onBoardMove }: { projects: Array<{ id: string; priority: number | null }>; onPriorityChange: (project: { id: string; priority: number | null }, priority: number | null) => void; onBoardMove?: (projectId: string, targetStageKey: string, focus: { path: "pointer"; projectId: string; control: "handle"; sourceStageKey: string; sourceIndex: number }) => void }) => {
     const first = projects.find((item) => item.id === "project-1") ?? projects[0]!;
     const second = projects.find((item) => item.id !== first.id);
     return <>
       <select aria-label="Priority" value={first.priority ?? ""} onChange={(event) => onPriorityChange(first, Number(event.target.value))}><option value="1">1</option><option value="2">2</option><option value="3">3</option></select>
-      {second && <button type="button" data-testid="move-second" onClick={() => onBoardMove?.(second.id, { targetStageKey: "awaiting_raw", successor: first.id }, "same", { path: "pointer", projectId: second.id, control: "handle", sourceStageKey: "awaiting_raw", sourceIndex: 1 })}>Move second</button>}
-      {second && <button type="button" data-testid="move-first" onClick={() => onBoardMove?.(first.id, { targetStageKey: "awaiting_raw", successor: second.id }, "same", { path: "pointer", projectId: first.id, control: "handle", sourceStageKey: "awaiting_raw", sourceIndex: 1 })}>Move first</button>}
+      {second && <button type="button" data-testid="move-second" onClick={() => onBoardMove?.(second.id, "raw_review", { path: "pointer", projectId: second.id, control: "handle", sourceStageKey: "awaiting_raw", sourceIndex: 1 })}>Move second</button>}
+      {second && <button type="button" data-testid="move-first" onClick={() => onBoardMove?.(first.id, "raw_review", { path: "pointer", projectId: first.id, control: "handle", sourceStageKey: "awaiting_raw", sourceIndex: 1 })}>Move first</button>}
     </>;
   },
 }));
@@ -1172,7 +1172,7 @@ describe("a priority save locks only its own card (#306)", () => {
     expect(select().value).toBe("2");
     await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="move-first"]')!.click(); await Promise.resolve(); });
     await flush();
-    expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${project.id}/board-position`, expect.anything());
+    expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${project.id}/stage`, expect.anything());
     expect(select().value).toBe("2");
   });
 
