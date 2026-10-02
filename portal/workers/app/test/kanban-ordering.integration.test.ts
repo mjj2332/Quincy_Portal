@@ -2,7 +2,8 @@ import { env, SELF as workerSelf } from "cloudflare:test";
 import { makeSignature } from "better-auth/crypto";
 import { beforeAll, describe, expect, it } from "vitest";
 import { createAuth } from "../src/auth";
-import type { Env } from "../src/env";
+import type { Env, SessionUser } from "../src/env";
+import { moveProjectStage } from "../src/lib/project-stage";
 
 const database = env as unknown as { DB: D1Database };
 const appEnv = env as unknown as Env;
@@ -146,6 +147,72 @@ describe("Kanban priority and Board commands", () => {
     expect(await database.DB.prepare("SELECT board_position, board_revision FROM projects WHERE id = ?").bind(neighbour).first()).toEqual({ board_position: 5120, board_revision: 0 });
     expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'stage.set'").bind(mover).first()).toEqual({ count: 1 });
     expect(await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ? AND event_type = 'project.stage.changed'").bind(mover).first()).toEqual({ count: 1 });
+  });
+
+  it("keeps orderedVisibleProjectIds on the move and no-change responses, derived by the comparator (priority, oldest shoot date, street) and not by stored position (#475, until #476)", async () => {
+    const stage = "edited_review";
+    await database.DB.prepare("UPDATE projects SET archived_at = ? WHERE stage_key = ? AND archived_at IS NULL").bind(Date.now(), stage).run();
+    const p5 = crypto.randomUUID(); const p1 = crypto.randomUUID(); const mover = crypto.randomUUID();
+    // Stored positions deliberately disagree with the comparator order.
+    await seedProject(p5, stage, 9000, 5, "2026-03-01"); await seedProject(p1, stage, 1000, 1, "2026-01-01");
+    await seedProject(mover, "raw_review", 5000, 3, "2026-02-01");
+    const moved = await request(`/api/projects/${mover}/stage`, adminToken, { method: "POST", body: JSON.stringify({
+      expected: { stageKey: "raw_review", boardRevision: 0 }, targetStageKey: stage, placement: { kind: "append" }, confirmation: { reasons: ["skipped_forward"] },
+    }) });
+    expect(moved.status).toBe(200);
+    const movedBody = await moved.json() as { changed: boolean; board?: { sourceStageKey: string; targetStageKey: string; orderedVisibleProjectIds?: string[] } };
+    expect(movedBody.changed).toBe(true);
+    expect(movedBody.board).toMatchObject({ sourceStageKey: "raw_review", targetStageKey: stage });
+    expect(movedBody.board?.orderedVisibleProjectIds).toEqual([p5, mover, p1]);
+
+    const unchanged = await request(`/api/projects/${mover}/stage`, adminToken, { method: "POST", body: JSON.stringify({
+      expected: { stageKey: stage, boardRevision: 1 }, targetStageKey: stage, placement: { kind: "append" },
+    }) });
+    expect(unchanged.status).toBe(200);
+    const unchangedBody = await unchanged.json() as { changed: boolean; board?: { orderedVisibleProjectIds?: string[] } };
+    expect(unchangedBody.changed).toBe(false);
+    expect(unchangedBody.board?.orderedVisibleProjectIds).toEqual([p5, mover, p1]);
+  });
+
+  it("answers a user move 200 changed with its audit, and an unrelated Project entering the destination Stage at the same time no longer causes a 409 (#475)", async () => {
+    const stage = "edited_review";
+    const first = crypto.randomUUID(); const second = crypto.randomUUID();
+    await seedProject(first, "raw_review", 10, 1, "2026-01-01"); await seedProject(second, "raw_review", 20, 2, "2026-01-02");
+    const send = (id: string) => request(`/api/projects/${id}/stage`, adminToken, { method: "POST", body: JSON.stringify({
+      expected: { stageKey: "raw_review", boardRevision: 0 }, targetStageKey: stage, placement: { kind: "append" }, confirmation: { reasons: ["skipped_forward"] },
+    }) });
+    const responses = await Promise.all([send(first), send(second)]);
+    expect(responses.map((response) => response.status)).toEqual([200, 200]);
+    for (const [index, id] of [first, second].entries()) {
+      expect(await responses[index]!.json()).toMatchObject({ changed: true, project: { projectId: id, stageKey: stage, boardRevision: 1 } });
+      expect(await database.DB.prepare("SELECT stage_key, board_revision FROM projects WHERE id = ?").bind(id).first()).toEqual({ stage_key: stage, board_revision: 1 });
+      expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'stage.set'").bind(id).first()).toEqual({ count: 1 });
+      expect(await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ? AND event_type = 'project.stage.changed'").bind(id).first()).toEqual({ count: 1 });
+    }
+  });
+
+  it("moveProjectStage reports a moved result whose finalizer carries the committed publication ids, and fills the Shoot date follow-up flag only for an undated Awaiting RAW exit (#475)", async () => {
+    const principal: SessionUser = { id: adminId, email: `${adminId}@example.test`, name: "Kanban Admin", role: "admin", active: true, authorizationEpoch: 0, impersonatedBy: null };
+    const dated = crypto.randomUUID(); const undated = crypto.randomUUID();
+    await seedProject(dated, "raw_review", 1, null, "2026-01-01"); await seedProject(undated, "awaiting_raw", 2, null, null);
+    // An assigned External Editor receives the safe Stage activity, so the finalizer has something to publish.
+    const joinedAt = Date.now();
+    await database.DB.batch([dated, undated].map((id) => database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), id, externalEditorId, joinedAt)));
+    const datedResult = await moveProjectStage({ env: appEnv, principal, projectId: dated, request: {
+      expected: { stageKey: "raw_review", boardRevision: 0 }, targetStageKey: "edited_review", placement: { kind: "append" }, confirmation: { reasons: ["skipped_forward"] },
+    } as never });
+    expect(datedResult).toMatchObject({ kind: "moved", shootDateFilled: false, finalizer: { publicationIds: expect.any(Array) } });
+    const undatedResult = await moveProjectStage({ env: appEnv, principal, projectId: undated, request: {
+      expected: { stageKey: "awaiting_raw", boardRevision: 0 }, targetStageKey: "raw_review", placement: { kind: "append" }, confirmation: { reasons: [] },
+    } as never });
+    expect(undatedResult).toMatchObject({ kind: "moved", shootDateFilled: true, finalizer: { publicationIds: expect.any(Array) } });
+    for (const result of [datedResult, undatedResult]) {
+      if (result.kind !== "moved") throw new Error("expected moved");
+      expect(result.finalizer.publicationIds.length).toBeGreaterThan(0);
+      for (const id of result.finalizer.publicationIds) {
+        expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE id = ?").bind(id).first()).toEqual({ count: 1 });
+      }
+    }
   });
 
   it("fills an undated Shoot date and reports the move as a success when a Project leaves Awaiting RAW (#475)", async () => {

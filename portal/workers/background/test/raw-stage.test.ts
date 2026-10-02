@@ -28,7 +28,7 @@ async function project(stage = "awaiting_raw", archived = false, shootDate: stri
   return id;
 }
 
-async function advanceOutcome(projectId: string, trigger: string, options: { from?: "awaiting_raw" | "raw_review"; to?: "raw_review" | "editing_autohdr"; shootDate?: string | null; now?: number } = {}) {
+async function advanceOutcome(projectId: string, trigger: string, options: { from?: "awaiting_raw" | "raw_review"; to?: "raw_review" | "editing_autohdr"; shootDate?: string | null; now?: number; legacyWorkflowNotification?: "raw_ready" } = {}) {
   return commitAutomaticStage({
     env: { DB: database.DB },
     projectId,
@@ -41,6 +41,7 @@ async function advanceOutcome(projectId: string, trigger: string, options: { fro
       ? { kind: "raw_reconciliation", projectId, claimId: null, claimStates: ["running"], shootDate: options.shootDate ?? null }
       : { kind: "none" },
     alreadyAtDestination: { allowed: true, effect: { kind: "none" } },
+    ...(options.legacyWorkflowNotification ? { legacyWorkflowNotification: options.legacyWorkflowNotification } : {}),
   });
 }
 
@@ -90,6 +91,29 @@ describe("durable RAW stage commit", () => {
       expect(await fillAudits(id)).toHaveLength(1);
     }
     expect(await database.DB.prepare("SELECT stage_key, board_revision FROM projects WHERE id = ?").bind(neighbour).first()).toEqual({ stage_key: "raw_review", board_revision: 0 });
+  });
+
+  it("carries the raw_ready notification on the automatic RAW advance winner and omits it when none is supplied (#475)", async () => {
+    const withNotification = await advanceOutcome(await project(), "dropbox_delta", { legacyWorkflowNotification: "raw_ready" });
+    expect(withNotification).toMatchObject({ kind: "winner", finalizer: { legacyWorkflowNotification: "raw_ready" } });
+    const without = await advanceOutcome(await project(), "dropbox_delta");
+    expect(without.kind).toBe("winner");
+    if (without.kind === "winner") expect(without.finalizer).not.toHaveProperty("legacyWorkflowNotification");
+  });
+
+  it("two different Projects advancing automatically into the same Stage both win with their own audit and finalizer, whatever else sits in the column (#475)", async () => {
+    await project("raw_review"); await project("raw_review");
+    const first = await project("raw_review"); const second = await project("raw_review");
+    const [a, b] = await Promise.all([
+      advanceOutcome(first, "autohdr", { from: "raw_review", to: "editing_autohdr" }),
+      advanceOutcome(second, "autohdr", { from: "raw_review", to: "editing_autohdr" }),
+    ]);
+    expect(a).toMatchObject({ kind: "winner", finalizer: { publicationIds: expect.any(Array) } });
+    expect(b).toMatchObject({ kind: "winner", finalizer: { publicationIds: expect.any(Array) } });
+    for (const id of [first, second]) {
+      expect(await database.DB.prepare("SELECT stage_key, board_revision FROM projects WHERE id = ?").bind(id).first()).toEqual({ stage_key: "editing_autohdr", board_revision: 1 });
+      expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'stage.auto_advance'").bind(id).first()).toEqual({ count: 1 });
+    }
   });
 
   describe("Shoot date fill", () => {
