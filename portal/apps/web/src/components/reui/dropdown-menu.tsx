@@ -20,6 +20,10 @@ import { ChevronRightIcon, CheckIcon } from "lucide-react"
  * right-click). Unset, the Positioner anchors to the Trigger exactly as before. The popup's default
  * `w-(--anchor-width)` is ~0 for a virtual anchor, so such a consumer passes its own width class.
  * Pinned by `dropdown-menu-anchor.dom.test.tsx`.
+ *
+ * QUINCY ADAPTATION (#463): Positioner and Popup `z-50` → `z-[var(--z-menu)]` (92: above `--z-popover` 90,
+ * below `--z-dialog` 95) so the item menu clears the Calendar's "+N more" popover. Pinned by
+ * `styles/overlay-stacking.guard.test.ts`.
  */
 function DropdownMenu({ ...props }: MenuPrimitive.Root.Props) {
   return <MenuPrimitive.Root data-slot="dropdown-menu" {...props} />
@@ -49,7 +53,7 @@ function DropdownMenuContent({
   return (
     <MenuPrimitive.Portal>
       <MenuPrimitive.Positioner
-        className="isolate z-50 outline-none"
+        className="isolate z-[var(--z-menu)] outline-none"
         align={align}
         alignOffset={alignOffset}
         side={side}
@@ -58,7 +62,7 @@ function DropdownMenuContent({
       >
         <MenuPrimitive.Popup
           data-slot="dropdown-menu-content"
-          className={cn("z-50 max-h-(--available-height) w-(--anchor-width) min-w-32 origin-(--transform-origin) overflow-x-hidden overflow-y-auto rounded-none border border-border bg-popover p-1 text-popover-foreground shadow-[var(--shadow-md)] duration-100 outline-none data-[side=bottom]:slide-in-from-top-2 data-[side=inline-end]:slide-in-from-left-2 data-[side=inline-start]:slide-in-from-right-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:overflow-hidden data-closed:fade-out-0 data-closed:zoom-out-95", className )}
+          className={cn("z-[var(--z-menu)] max-h-(--available-height) w-(--anchor-width) min-w-32 origin-(--transform-origin) overflow-x-hidden overflow-y-auto rounded-none border border-border bg-popover p-1 text-popover-foreground shadow-[var(--shadow-md)] duration-100 outline-none data-[side=bottom]:slide-in-from-top-2 data-[side=inline-end]:slide-in-from-left-2 data-[side=inline-start]:slide-in-from-right-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:overflow-hidden data-closed:fade-out-0 data-closed:zoom-out-95", className )}
           {...props}
         />
       </MenuPrimitive.Positioner>
