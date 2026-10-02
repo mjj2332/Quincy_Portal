@@ -1,21 +1,14 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  APPEND_STAGE_BOTTOM_SQL,
   NORMATIVE_AUDIT_MARKER_SQL,
-  NORMATIVE_COMPACTING_SQL,
   NORMATIVE_HANDOFF_EDITING_ENTRY_TOKEN_SQL,
   NORMATIVE_JOB_EDITING_ENTRY_TOKEN_SQL,
-  NORMATIVE_NON_COMPACTING_APPEND_SQL,
-  NORMATIVE_NON_COMPACTING_EXACT_SQL,
   NORMATIVE_OWNERSHIP_ASSERTION_SQL,
+  NORMATIVE_STAGE_MOVE_SQL,
   NORMATIVE_TERMINAL_ASSERTION_SQL,
-  buildCompactingStageWinner,
-  buildNonCompactingStageWinner,
+  buildStageWinner,
   rollbackBoardOrder0037PreEnable,
-  type ChangedCompactionRow,
-  type ExpectedTargetCompactionRow,
-  type ExpectedTargetPlacementRow,
 } from "../src";
 import {
   BREAKPOINT,
@@ -53,23 +46,6 @@ function stageRows(db: SqliteDatabase, stageKey: string): SqliteRow[] {
 
 function journalTail(db: SqliteDatabase): SqliteRow {
   return db.prepare("SELECT id, name FROM d1_migrations ORDER BY id DESC LIMIT 1").get() as SqliteRow;
-}
-
-function validCompactionFixture(db: SqliteDatabase): { expected: ExpectedTargetCompactionRow[]; changed: ChangedCompactionRow[] } {
-  seedContractProject(db, { id: "target", stageKey: "raw_review", boardPosition: 7, boardRevision: 5 });
-  seedContractProject(db, { id: "sibling-a", stageKey: "edited_review", boardPosition: 0, boardRevision: 2 });
-  seedContractProject(db, { id: "sibling-b", stageKey: "edited_review", boardPosition: 1024, boardRevision: 3 });
-  return {
-    expected: [
-      { projectId: "sibling-a", stageKey: "edited_review", boardPosition: 0, boardRevision: 2, newBoardPosition: 1024 },
-      { projectId: "sibling-b", stageKey: "edited_review", boardPosition: 1024, boardRevision: 3, newBoardPosition: 2048 },
-    ],
-    changed: [
-      { projectId: "target", oldStageKey: "raw_review", oldBoardPosition: 7, oldBoardRevision: 5, newBoardPosition: 0, isTarget: 1 },
-      { projectId: "sibling-a", oldStageKey: "edited_review", oldBoardPosition: 0, oldBoardRevision: 2, newBoardPosition: 1024, isTarget: 0 },
-      { projectId: "sibling-b", oldStageKey: "edited_review", oldBoardPosition: 1024, oldBoardRevision: 3, newBoardPosition: 2048, isTarget: 0 },
-    ],
-  };
 }
 
 function stageInput(db: D1Database) {
@@ -154,20 +130,15 @@ describe("TB5A Slice 8 consolidated migration and SQL proof", { timeout: 30_000 
     expect(source).not.toMatch(/\bEND\b(?=[^\s;])/i);
 
     const blocks = fenceReworkSqlBlocks();
-    const appendBottomBlock = blocks.find((block) => block.startsWith("SELECT COALESCE(MAX(board_position) + 1024, 0)"));
-    const exactBlock = blocks.find((block) => block.startsWith("WITH\n") && block.includes("board_position = ?8") && !block.includes("changed_plan AS"));
-    const appendWinnerBlock = blocks.find((block) => block.startsWith("WITH\n") && block.includes("board_position = (\n    SELECT COALESCE(MAX(board_position) + 1024, 0)"));
-    const compactingBlock = blocks.find((block) => block.startsWith("WITH\n") && block.includes("changed_plan AS"));
+    const stageMoveBlock = blocks.find((block) => block.startsWith("WITH\n") && block.includes("workflow_premise AS MATERIALIZED") && block.includes("UPDATE projects AS p") && !block.includes("expected_target"));
     const auditBlock = blocks.find((block) => block.startsWith("INSERT INTO audit_log (\n") && block.includes("WHERE changes() = ?7"));
     const handoffTokenBlock = blocks.find((block) => block.startsWith("UPDATE autohdr_handoffs\n") && block.includes("editing_entry_board_revision = ("));
     const jobTokenBlock = blocks.find((block) => block.startsWith("UPDATE jobs\n") && block.includes("stage_entry_board_revision = ("));
     const terminalBlock = blocks.find((block) => block.startsWith("WITH assertion_input AS MATERIALIZED (\n") && block.includes("stage.auto_advance.bundle_assertion"));
     const ownershipBlock = blocks.find((block) => block.startsWith("WITH assertion_input AS MATERIALIZED (\n") && block.includes("automatic.closed_bundle_assertion"));
 
-    expect(APPEND_STAGE_BOTTOM_SQL).toBe(appendBottomBlock);
-    expect(NORMATIVE_NON_COMPACTING_EXACT_SQL).toBe(exactBlock);
-    expect(NORMATIVE_NON_COMPACTING_APPEND_SQL).toBe(appendWinnerBlock);
-    expect(NORMATIVE_COMPACTING_SQL).toBe(compactingBlock);
+    expect(stageMoveBlock).toBeDefined();
+    expect(NORMATIVE_STAGE_MOVE_SQL).toBe(stageMoveBlock);
     expect(NORMATIVE_AUDIT_MARKER_SQL).toBe(auditBlock);
     expect(NORMATIVE_HANDOFF_EDITING_ENTRY_TOKEN_SQL).toBe(handoffTokenBlock);
     expect(NORMATIVE_JOB_EDITING_ENTRY_TOKEN_SQL).toBe(jobTokenBlock);
@@ -328,87 +299,27 @@ describe("TB5A Slice 8 consolidated migration and SQL proof", { timeout: 30_000 
     }
   });
 
-  it("executes both winner forms, pins fence materialization, and rejects every malformed compacting plan", async () => {
+  it("executes the mover-only winner on the migrated chain and pins fence materialization", async () => {
     const db = localSqlite();
     try {
       db.exec("PRAGMA foreign_keys = ON");
       applyAllMigrations(db);
       enableBoardContract(db);
-      seedContractProject(db, { id: "target", stageKey: "raw_review", boardRevision: 5 });
+      seedContractProject(db, { id: "target", stageKey: "raw_review", boardPosition: 7, boardRevision: 5 });
+      seedContractProject(db, { id: "sibling", stageKey: "edited_review", boardPosition: 1024, boardRevision: 3 });
       const d1 = localD1(db);
-      const append = buildNonCompactingStageWinner({ ...stageInput(d1), placement: "append", expectedTarget: [], expectedTargetRowCount: 0 });
-      const appendResults = await executeBundle(d1, append.statements);
-      expect(appendResults[append.indexes.winner]!.results).toMatchObject([{ id: "target", stage_key: "edited_review", board_position: 0, board_revision: 6 }]);
-      expect(appendResults[append.indexes.auditMarker]!.results).toEqual([{ id: "audit-stage" }]);
+      const winner = buildStageWinner(stageInput(d1));
+      const results = await executeBundle(d1, winner.statements);
+      expect(results[winner.indexes.winner]!.results).toEqual([{ id: "target", stage_key: "edited_review", board_revision: 6 }]);
+      expect(results[winner.indexes.auditMarker]!.results).toEqual([{ id: "audit-stage" }]);
+      expect(db.prepare("SELECT id, board_position, board_revision FROM projects ORDER BY id").all()).toEqual([
+        { id: "sibling", board_position: 1024, board_revision: 3 },
+        { id: "target", board_position: 7, board_revision: 6 },
+      ]);
+      const plan = db.prepare(`EXPLAIN QUERY PLAN ${NORMATIVE_STAGE_MOVE_SQL}`).all("tb5a_board_contract_enabled", "edited_review", "target", "raw_review", 5, FIXTURE_NOW, '{"kind":"none"}') as SqliteRow[];
+      expect(plan.some((row) => String(row.detail).includes("MATERIALIZE fence"))).toBe(true);
     } finally {
       db.close();
-    }
-
-    const compactPlanDb = localSqlite();
-    try {
-      compactPlanDb.exec("PRAGMA foreign_keys = ON");
-      applyAllMigrations(compactPlanDb);
-      enableBoardContract(compactPlanDb);
-      const fixture = validCompactionFixture(compactPlanDb);
-      const d1 = localD1(compactPlanDb);
-      const compact = buildCompactingStageWinner({ ...stageInput(d1), expectedTarget: fixture.expected, changedPlan: fixture.changed, expectedTargetRowCount: 2, expectedChangedRowCount: 3 });
-      const compactResults = await executeBundle(d1, compact.statements);
-      expect(compactResults[compact.indexes.winner]!.results).toHaveLength(3);
-      expect(compactResults[compact.indexes.auditMarker]!.results).toEqual([{ id: "audit-stage" }]);
-      expect(compactPlanDb.prepare("SELECT id, board_position, board_revision FROM projects ORDER BY board_position, id").all()).toEqual([
-        { id: "target", board_position: 0, board_revision: 6 },
-        { id: "sibling-a", board_position: 1024, board_revision: 3 },
-        { id: "sibling-b", board_position: 2048, board_revision: 4 },
-      ]);
-
-      const exactPlan = compactPlanDb.prepare(`EXPLAIN QUERY PLAN ${NORMATIVE_NON_COMPACTING_EXACT_SQL}`).all("[]", "tb5a_board_contract_enabled", 0, "edited_review", "target", "raw_review", 5, 0, FIXTURE_NOW) as SqliteRow[];
-      const queryPlan = compactPlanDb.prepare(`EXPLAIN QUERY PLAN ${NORMATIVE_COMPACTING_SQL}`).all(JSON.stringify(fixture.expected), JSON.stringify(fixture.changed), "tb5a_board_contract_enabled", 3, 2, "edited_review", "target", "raw_review", 5, FIXTURE_NOW) as SqliteRow[];
-      expect(exactPlan.some((row) => String(row.detail).includes("MATERIALIZE fence"))).toBe(true);
-      expect(queryPlan.some((row) => String(row.detail).includes("MATERIALIZE fence"))).toBe(true);
-    } finally {
-      compactPlanDb.close();
-    }
-
-    const malformedCases = [
-      "duplicate expected ID",
-      "duplicate changed-plan ID",
-      "sibling as target",
-      "stale tuple",
-      "missing changed row",
-      "extra changed row",
-      "wrong count",
-    ] as const;
-    for (const caseName of malformedCases) {
-      const malformedDb = localSqlite();
-      try {
-        malformedDb.exec("PRAGMA foreign_keys = ON");
-        applyAllMigrations(malformedDb);
-        enableBoardContract(malformedDb);
-        const fixture = validCompactionFixture(malformedDb);
-        let expected = fixture.expected;
-        let changed = fixture.changed;
-        let expectedCount = 2;
-        let changedCount = 3;
-        if (caseName === "duplicate expected ID") expected = [fixture.expected[0]!, fixture.expected[0]!];
-        if (caseName === "duplicate changed-plan ID") changed = [fixture.changed[0]!, fixture.changed[0]!, fixture.changed[2]!];
-        if (caseName === "sibling as target") changed = fixture.changed.map((row, index) => index === 1 ? { ...row, isTarget: 1 as const } : row);
-        if (caseName === "stale tuple") changed = fixture.changed.map((row, index) => index === 1 ? { ...row, oldBoardRevision: 999 } : row);
-        if (caseName === "missing changed row") { changed = fixture.changed.slice(0, 2); changedCount = 2; }
-        if (caseName === "extra changed row") {
-          changed = [...fixture.changed, { projectId: "ghost", oldStageKey: "edited_review", oldBoardPosition: 4096, oldBoardRevision: 0, newBoardPosition: 3072, isTarget: 0 }];
-          changedCount = 4;
-        }
-        if (caseName === "wrong count") changedCount = 2;
-        const before = malformedDb.prepare("SELECT id, stage_key, board_position, board_revision FROM projects ORDER BY id").all();
-        const d1 = localD1(malformedDb);
-        const bundle = buildCompactingStageWinner({ ...stageInput(d1), expectedTarget: expected, changedPlan: changed, expectedTargetRowCount: expectedCount, expectedChangedRowCount: changedCount });
-        const results = await executeBundle(d1, bundle.statements);
-        expect(results[bundle.indexes.winner]!.results, caseName).toEqual([]);
-        expect(results[bundle.indexes.auditMarker]!.results, caseName).toEqual([]);
-        expect(malformedDb.prepare("SELECT id, stage_key, board_position, board_revision FROM projects ORDER BY id").all(), caseName).toEqual(before);
-      } finally {
-        malformedDb.close();
-      }
     }
   });
 

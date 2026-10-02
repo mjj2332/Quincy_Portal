@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  buildNonCompactingStageWinner,
+  buildStageWinner,
   buildShootDateFillBundle,
   buildStageShootDateFill,
   buildStageActivityBundle,
@@ -227,7 +227,7 @@ describe("Shoot date fill SQL", () => {
 describe("composeStageBundle shootDateFill slot", () => {
   it("appends the fill last, after the terminal slot, and leaves every other index unchanged when absent", () => {
     const db = { prepare() { return { bind: (...values: unknown[]) => ({ values }) }; } } as unknown as D1Database;
-    const stage = buildNonCompactingStageWinner({ db, projectId: "p1", sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", oldBoardRevision: 0, expectedTarget: [], placement: "append", auditId: "winner-1", actorId: "u", auditAction: "stage.set", auditMetaJson: "{}", now: NOW });
+    const stage = buildStageWinner({ db, projectId: "p1", sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", oldBoardRevision: 0, auditId: "winner-1", actorId: "u", auditAction: "stage.set", auditMetaJson: "{}", now: NOW });
     const activity = buildStageActivityBundle({ db, projectId: "p1", activityId: "a0000000-0000-4000-8000-0000000000ff", actorId: "u", winnerAuditId: "winner-1" });
     const workflow = buildWorkflowTail({ db, auditId: "winner-1", kind: "none" }, "none");
     const terminal = { statements: [{} as D1PreparedStatement], indexes: { terminalAssertion: 0 } };

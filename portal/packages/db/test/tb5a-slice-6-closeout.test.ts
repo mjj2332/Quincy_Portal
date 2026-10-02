@@ -26,8 +26,9 @@ describe("TB5A Slice 6 writer closeout", () => {
     }
   });
 
-  it("keeps the Tonomo insert's initial position and revision together", () => {
+  it("sets the Tonomo insert's initial board revision and names no board position", () => {
     const tonomo = readFileSync(`${portalRoot}/workers/background/src/tonomo/process.ts`, "utf8");
-    expect(tonomo).toMatch(/stageKey:\s*"awaiting_raw"[\s\S]{0,180}boardPosition:[\s\S]{0,180}boardRevision:\s*0/);
+    expect(tonomo).toMatch(/stageKey:\s*"awaiting_raw"[\s\S]{0,180}boardRevision:\s*0/);
+    expect(tonomo).not.toMatch(/boardPosition|board_position|appendToStageBottom/);
   });
 });
