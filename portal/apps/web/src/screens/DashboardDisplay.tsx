@@ -16,7 +16,6 @@ import {
   type TableGroupBy,
 } from "../lib/dashboard-table-model";
 import { useMediaQuery } from "../lib/use-media-query";
-import type { KanbanSortMode } from "./dashboard-helpers";
 
 /**
  * What each view puts in the Dashboard's Display menu (#431). `DashboardViewBar` owns the trigger
@@ -31,24 +30,17 @@ import type { KanbanSortMode } from "./dashboard-helpers";
  * Group by and several columns in one visit.
  */
 
-const SORT_LABELS: Record<KanbanSortMode, string> = {
-  board: "Board order",
-  priority: "Priority",
-  "shootDate-asc": "Shoot date, earliest first",
-  "shootDate-desc": "Shoot date, latest first",
-};
-
-/** The Board's Sort group, moved here unchanged from the view bar (#427). "Priority" only when authorized. */
-export function BoardDisplayContent({ sort, canSortByPriority, onSortChange }: { sort: KanbanSortMode; canSortByPriority: boolean; onSortChange: (next: KanbanSortMode) => void }) {
-  const options = (Object.keys(SORT_LABELS) as KanbanSortMode[]).filter((mode) => mode !== "priority" || canSortByPriority);
+/**
+ * The Board's Sort group (#470): one fixed order, explained rather than chosen. An External Editor's
+ * summaries carry no priority, so their order is by shoot date alone and the line says so.
+ */
+export function BoardDisplayContent({ priorityVisible }: { priorityVisible: boolean }) {
   return (
     <DropdownMenuGroup>
       <DropdownMenuLabel>Sort</DropdownMenuLabel>
-      <DropdownMenuRadioGroup value={sort} onValueChange={(next) => onSortChange(next as KanbanSortMode)}>
-        {options.map((mode) => (
-          <DropdownMenuRadioItem key={mode} value={mode}>{SORT_LABELS[mode]}</DropdownMenuRadioItem>
-        ))}
-      </DropdownMenuRadioGroup>
+      <p className="m-0 px-[var(--space-2)] pb-[var(--space-2)] text-[length:var(--text-xs)] text-foreground-secondary">
+        {priorityVisible ? "Sorted by priority, then shoot date" : "Sorted by shoot date"}
+      </p>
     </DropdownMenuGroup>
   );
 }

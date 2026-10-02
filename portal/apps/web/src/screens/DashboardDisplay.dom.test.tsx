@@ -3,7 +3,7 @@
  * `DashboardViewBar` owns the trigger and popup; the view passes its content through the `display`
  * slot. Queried by role and accessible name only (test-seam F).
  */
-import { act, useState } from "react";
+import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DashboardViewBar } from "./DashboardViewBar";
@@ -34,12 +34,11 @@ function installStorage() {
 
 function Bar({ principalId, role = "admin", view = "table" }: { principalId: string; role?: "admin" | "external_editor"; view?: "table" | "board" | "calendar" }) {
   const { prefs, update } = useDashboardTablePrefs(principalId);
-  const [sort, setSort] = useState<"board" | "priority" | "shootDate-asc" | "shootDate-desc">("board");
   const hideable = hideableColumnsFor(role);
   const display = view === "table"
     ? <TableDisplayContent groupBy={prefs.groupBy} onGroupByChange={(groupBy: TableGroupBy) => update({ groupBy })} hiddenColumns={prefs.hiddenColumns} hideableColumns={hideable}
         onColumnVisibilityChange={(column: HideableColumnId, visible) => update({ hiddenColumns: visible ? prefs.hiddenColumns.filter((id) => id !== column) : [...prefs.hiddenColumns, column] })} />
-    : view === "board" ? <BoardDisplayContent sort={sort} canSortByPriority={false} onSortChange={setSort} /> : undefined;
+    : view === "board" ? <BoardDisplayContent priorityVisible={role !== "external_editor"} /> : undefined;
   return (
     <div>
       <DashboardViewBar renderedView={view} canViewProductionCalendar disabled={false} onSelectView={() => undefined} principalId={principalId} searchFocusRequest={null} onSearchFocusHandled={() => undefined} display={display} />
@@ -129,10 +128,19 @@ describe("Display menu content and Table preferences (#431)", () => {
     expect(prefsText().groupBy).toBe("stage");
   });
 
-  it("the Board slot holds the sort radios and no Group by, and a view with no slot disables Display", async () => {
+  it("explains a shoot-date-only sort for a viewer without priority, since priority is not in an External Editor's order (#470)", async () => {
+    await render(<Bar principalId="u2" role="external_editor" view="board" />);
+    await openDisplay();
+    expect(displayMenu()?.textContent).toContain("Sorted by shoot date");
+    expect(displayMenu()?.textContent).not.toContain("priority");
+  });
+
+  it("the Board slot explains the one fixed sort and offers no sort choices or Group by, and a view with no slot disables Display (#470)", async () => {
     await render(<Bar principalId="u1" view="board" />);
     await openDisplay();
-    expect(sortRadioLabels()).toEqual(["Board order", "Shoot date, earliest first", "Shoot date, latest first"]);
+    expect(sortRadioLabels()).toEqual([]);
+    expect(displayMenu()?.textContent).toContain("Sorted by priority, then shoot date");
+    expect(displayMenu()?.textContent).not.toContain("Board order");
     expect(groupByRadios()).toHaveLength(0);
     await render(<DashboardViewBar renderedView="none" canViewProductionCalendar disabled={false} onSelectView={() => undefined} principalId="u1" searchFocusRequest={null} onSearchFocusHandled={() => undefined} />);
     expect(displayTrigger()!.disabled).toBe(true);

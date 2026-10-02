@@ -20,7 +20,11 @@ import {
  * `normalizeDashboardView` below reads them as their new equivalents.
  */
 export type DashboardView = "table" | "board" | "calendar" | "timeline";
-export type KanbanSortMode = "board" | "priority" | "shootDate-asc" | "shootDate-desc";
+/**
+ * The Board has ONE fixed order (#470): priority, then shoot date. Retired spellings ("board",
+ * "priority", "shootDate-asc", "shootDate-desc") may still sit in a viewer's storage; every one maps here.
+ */
+export type KanbanSortMode = "priority-shoot-date";
 
 export const DASHBOARD_CALENDAR_SUBVIEW_KEY = "quincy:dashboard:calendar:subview";
 export const DASHBOARD_CALENDAR_LAST_DATE_KEY = "quincy:dashboard:calendar:last-date";
@@ -125,16 +129,17 @@ export function initializeDashboardView(storage: DashboardPreferenceStorage): Da
   return view;
 }
 
-export function normalizeKanbanSortMode(value: string | null): KanbanSortMode {
-  return value === "priority" || value === "shootDate-asc" || value === "shootDate-desc" ? value : "board";
+export function normalizeKanbanSortMode(_value: string | null): KanbanSortMode {
+  return "priority-shoot-date";
 }
 
+/** Rewrites a retired stored sort as the fixed rule; a failed read or write changes nothing the viewer sees. */
 export function initializeKanbanSortMode(storage: KanbanSortPreferenceStorage): KanbanSortMode {
-  let mode: KanbanSortMode;
+  let mode: KanbanSortMode = "priority-shoot-date";
   try {
     mode = normalizeKanbanSortMode(storage.read());
   } catch {
-    return "board";
+    return mode;
   }
   try {
     storage.write(mode);
