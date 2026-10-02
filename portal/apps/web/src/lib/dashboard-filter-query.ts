@@ -1,39 +1,53 @@
 /**
- * #428: the Dashboard's shared Filter (Stage, Project priority, Archived Hide/Include/Only) as pure
- * functions between its three spellings:
+ * #428 / #461: the Dashboard's shared Filter as pure functions between its three spellings:
  *
  * - the URL (`DashboardFilter`, `@quincy/shared` — read and written only through
  *   `dashboardFilterOf` / `withDashboardFilter`),
  * - the request (`dashboardProjectsFilterQueryParams` and friends), and
- * - the Filter's chip row (`screens/DashboardFilter.tsx`, a ReUI `Filters`): a `FilterQuery` with one
- *   rule per non-default facet. `dashboardFilterToQuery` / `queryToDashboardFilter` are the pair,
- *   shaped like the Timeline's (`lib/production-gantt-filters.ts`).
+ * - the Filter popover (`screens/DashboardFilter.tsx`, a ReUI `Filters`, `variant="advanced"`): a
+ *   `FilterQuery` tree. `dashboardFilterToQuery` / `queryToDashboardFilter` are the pair.
  *
- * One operator per field, no negation, one rule per field. An edit the URL cannot say (an `or`, a
- * group, a negated rule, a second rule on one field, an unknown value) maps to `null` and the bar
- * vetoes it.
+ * The shared filter TREE (`dashboard-filter-tree.ts`) is what the popover draws: a flat filter is read
+ * through `dashboardFilterTreeOf` (an AND of leaves in its `order`), a tree as itself. Going back,
+ * `normalizeDashboardFilter({ tree })` gives the flat spelling whenever the legacy parameters can say it,
+ * so every state the old chip row could produce still writes the URL it always wrote.
+ *
+ * What maps to `null` (the popover vetoes the edit): an unknown field / operator / value, a nested
+ * path, a field the role may not use, and the shared caps (20 rules, depth 3, 50 People ids, the encoded
+ * length). Unfinished rows (no operator or no value yet) and empty groups are dropped: they have no URL
+ * spelling and narrow nothing. OR, groups, repeats, negation and a Deadline range beside Overdue are all
+ * accepted.
  */
 import {
   CANONICAL_LOWERCASE_UUID_REGEX,
-  canonicalDashboardEditorIds,
-  canonicalDashboardPriorities,
-  canonicalDashboardStages,
+  canonicalizeDashboardFilterTree,
+  coerceDashboardFilterTree,
   DASHBOARD_ARCHIVED_MODES,
+  DASHBOARD_FILTER_MAX_STAGE_KEYS,
+  DASHBOARD_FILTER_TREE_MAX_DEPTH,
+  DASHBOARD_FILTER_TREE_MAX_PEOPLE_IDS,
+  DASHBOARD_FILTER_TREE_MAX_RULES,
   DASHBOARD_PRIORITY_FILTER_VALUES,
-  DEFAULT_DASHBOARD_FILTER,
-    normalizeDashboardFilter,
+  dashboardFilterTreeOf,
+  formatDashboardFilterTree,
+  normalizeDashboardFilter,
   parseDashboardDateRange,
   STAGE_PRESENTATION_KEYS,
   type DashboardArchivedMode,
   type DashboardDateRange,
   type DashboardFilter,
+  type DashboardFilterLeaf,
+  type DashboardFilterNode,
+  type DashboardFilterTree,
+  type DashboardPriorityFilterValue,
+  type StagePresentationKey,
 } from "@quincy/shared";
-import type { FilterOperator, FilterQuery, FilterRule } from "../components/reui/filters/filters-types";
+import type { FilterGroupNode, FilterNode, FilterOperator, FilterQuery, FilterRule } from "../components/reui/filters/filters-types";
 
 /** The fields. Their ids are the rule `path` segments the mapping reads. */
 export const DASHBOARD_FILTER_FIELD = { stage: "stage", priority: "priority", archived: "archived", people: "people", shoot: "shoot", deadline: "deadline", mine: "mine" } as const;
 
-/** Stable rule ids, so a URL re-seed hands the bar the same chip identities it already had. */
+/** Stable rule ids of a FLAT filter, so a URL re-seed hands the bar the same row identities it already had. A tree's nodes get positional ids (`dashboardTreeNodeId`). */
 export const DASHBOARD_FILTER_RULE_ID = {
   stage: "dashboard-stage",
   priority: "dashboard-priority",
@@ -87,26 +101,47 @@ const PRIORITY_VALUES = new Set<string>(DASHBOARD_PRIORITY_FILTER_VALUES);
 const FIELD_SET: Record<string, true> = Object.fromEntries(Object.values(DASHBOARD_FILTER_FIELD).map((field) => [field, true as const]));
 const ARCHIVED_VALUES = new Set<string>(DASHBOARD_ARCHIVED_MODES);
 
-/** A canonical string for a filter, so two filters compare by value, never by object identity. */
+const ID_PREFIX = "dashboard-t";
+/** A tree node's id: its position, `dashboard-t<i>` for the root's i-th child, `dashboard-t<i>-<j>` below that. */
+const dashboardTreeNodeId = (path: readonly number[]) => `${ID_PREFIX}${path.join("-")}`;
+
+/** A canonical string for a filter, so two filters compare by value, never by object identity. Includes the tree and the flat facets' order: a reorder is a different URL. */
 export function dashboardFilterKey(filter: DashboardFilter): string {
   const next = normalizeDashboardFilter(filter);
-  return JSON.stringify([next.stageKeys, next.priorities, next.archived, next.editorIds, next.includeUnassigned, next.shootRange, next.deadlineRange, next.overdueOnly, next.myTasks]);
+  return JSON.stringify([next.stageKeys, next.priorities, next.archived, next.editorIds, next.includeUnassigned, next.shootRange, next.deadlineRange, next.overdueOnly, next.myTasks, next.tree ? formatDashboardFilterTree(next.tree) : null, next.order ?? null]);
 }
 
-/** Filter -> the bar's query: a flat `and` root holding a rule only for each non-default facet. */
+const FIELD_OF_LEAF: Record<DashboardFilterLeaf["field"], string> = { stages: "stage", priority: "priority", archived: "archived", people: "people", shoot: "shoot", deadline: "deadline", overdue: "deadline", mine: "mine" };
+const RULE_ID_OF_LEAF: Record<DashboardFilterLeaf["field"], string> = {
+  stages: DASHBOARD_FILTER_RULE_ID.stage, priority: DASHBOARD_FILTER_RULE_ID.priority, archived: DASHBOARD_FILTER_RULE_ID.archived, people: DASHBOARD_FILTER_RULE_ID.people,
+  shoot: DASHBOARD_FILTER_RULE_ID.shoot, deadline: DASHBOARD_FILTER_RULE_ID.deadline, overdue: DASHBOARD_FILTER_RULE_ID.deadline, mine: DASHBOARD_FILTER_RULE_ID.mine,
+};
+
+function ruleOfLeaf(leaf: DashboardFilterLeaf, id: string): FilterRule<DashboardFilterValue> {
+  const base = { id, type: "rule" as const, path: [FIELD_OF_LEAF[leaf.field]], ...(leaf.negated ? { negated: true } : {}) };
+  switch (leaf.field) {
+    case "stages": return { ...base, operator: ANY_OF, value: [...leaf.values] };
+    case "priority": return { ...base, operator: ANY_OF, value: [...leaf.values] };
+    case "archived": return { ...base, operator: IS, value: leaf.mode };
+    case "people": return { ...base, operator: ANY_OF, value: [...(leaf.unassigned ? [DASHBOARD_UNASSIGNED_OPTION] : []), ...leaf.ids] };
+    case "shoot": return { ...base, operator: BETWEEN, value: [leaf.range.from, leaf.range.to] };
+    case "deadline": return { ...base, operator: BETWEEN, value: [leaf.range.from, leaf.range.to] };
+    case "overdue": return { ...base, operator: OVERDUE, value: undefined };
+    case "mine": return { ...base, operator: ONLY, value: undefined };
+  }
+}
+
+/** Filter -> the popover's query: the filter's tree, drawn as an `and` / `or` root of rules and groups. */
 export function dashboardFilterToQuery(filter: DashboardFilter): DashboardFilterQuery {
   const next = normalizeDashboardFilter(filter);
-  const rules: FilterRule<DashboardFilterValue>[] = [];
-  if (next.stageKeys.length > 0) rules.push({ id: DASHBOARD_FILTER_RULE_ID.stage, type: "rule", path: [DASHBOARD_FILTER_FIELD.stage], operator: ANY_OF, value: [...next.stageKeys] });
-  if (next.priorities.length > 0) rules.push({ id: DASHBOARD_FILTER_RULE_ID.priority, type: "rule", path: [DASHBOARD_FILTER_FIELD.priority], operator: ANY_OF, value: [...next.priorities] });
-  if (next.archived !== "hide") rules.push({ id: DASHBOARD_FILTER_RULE_ID.archived, type: "rule", path: [DASHBOARD_FILTER_FIELD.archived], operator: IS, value: next.archived });
-  const people = [...(next.includeUnassigned ? [DASHBOARD_UNASSIGNED_OPTION] : []), ...next.editorIds];
-  if (people.length > 0) rules.push({ id: DASHBOARD_FILTER_RULE_ID.people, type: "rule", path: [DASHBOARD_FILTER_FIELD.people], operator: ANY_OF, value: people });
-  if (next.shootRange) rules.push({ id: DASHBOARD_FILTER_RULE_ID.shoot, type: "rule", path: [DASHBOARD_FILTER_FIELD.shoot], operator: BETWEEN, value: [next.shootRange.from, next.shootRange.to] });
-  if (next.deadlineRange) rules.push({ id: DASHBOARD_FILTER_RULE_ID.deadline, type: "rule", path: [DASHBOARD_FILTER_FIELD.deadline], operator: BETWEEN, value: [next.deadlineRange.from, next.deadlineRange.to] });
-  else if (next.overdueOnly) rules.push({ id: DASHBOARD_FILTER_RULE_ID.deadline, type: "rule", path: [DASHBOARD_FILTER_FIELD.deadline], operator: OVERDUE, value: undefined });
-  if (next.myTasks) rules.push({ id: DASHBOARD_FILTER_RULE_ID.mine, type: "rule", path: [DASHBOARD_FILTER_FIELD.mine], operator: ONLY, value: undefined });
-  return { id: DASHBOARD_FILTER_ROOT_ID, type: "group", combinator: "and", rules };
+  const tree = dashboardFilterTreeOf(next);
+  // A flat filter keeps the stable per-field ids; a tree's nodes are identified by position.
+  const stable = next.tree === undefined;
+  const draw = (node: DashboardFilterNode, path: readonly number[]): FilterNode<DashboardFilterValue> =>
+    node.kind === "leaf"
+      ? ruleOfLeaf(node, stable ? RULE_ID_OF_LEAF[node.field] : dashboardTreeNodeId(path))
+      : { id: dashboardTreeNodeId(path), type: "group", combinator: node.op, rules: node.children.map((child, index) => draw(child, [...path, index])) };
+  return { id: DASHBOARD_FILTER_ROOT_ID, type: "group", combinator: tree.op, rules: tree.children.map((child, index) => draw(child, [index])) };
 }
 
 function rangeOf(value: unknown): DashboardDateRange | null | undefined {
@@ -115,99 +150,140 @@ function rangeOf(value: unknown): DashboardDateRange | null | undefined {
   return parseDashboardDateRange(`${value[0]}..${value[1]}`);
 }
 
-/**
- * The bar's query -> filter, or `null` when the query holds something the URL cannot express: a
- * nested group, an `or` root, a negated rule, an unknown field / operator / value, a nested path, a
- * value of the wrong shape, or a second rule on a field already used (finished or not). Unfinished
- * rules (no operator yet) and rules with no value read as the default — though a value an unfinished
- * rule retains is still checked, and an unknown one returns `null`. `archivedAllowed` is false for a
- * role that may not read archived Projects: its Archived rule reads as unreadable.
- */
-export function queryToDashboardFilter(query: FilterQuery<unknown>, options: { archivedAllowed?: boolean; priorityAllowed?: boolean } = {}): DashboardFilter | null {
-  const archivedAllowed = options.archivedAllowed ?? true;
-  const priorityAllowed = options.priorityAllowed ?? true;
-  if (query.type !== "group" || query.combinator !== "and") return null;
-  const seen = new Set<string>();
-  let stageKeys: string[] = [];
-  let priorities: string[] = [];
-  let archived: DashboardArchivedMode = DEFAULT_DASHBOARD_FILTER.archived;
-  let editorIds: string[] = [];
-  let includeUnassigned = false;
-  let shootRange: DashboardDateRange | null = null;
-  let deadlineRange: DashboardDateRange | null = null;
-  let overdueOnly = false;
-  let myTasks = false;
-  for (const node of query.rules) {
-    if (node.type !== "rule" || node.negated) return null;
-    const [field, ...rest] = node.path;
-    if (field === undefined || rest.length > 0) return null;
-    if (!(field in FIELD_SET)) return null;
-    if (field === DASHBOARD_FILTER_FIELD.archived && !archivedAllowed) return null;
-    if (field === DASHBOARD_FILTER_FIELD.priority && !priorityAllowed) return null;
-    if (seen.has(field)) return null;
-    seen.add(field);
-    const unfinished = node.operator === "";
-    if (field === DASHBOARD_FILTER_FIELD.people) {
-      if (!unfinished && node.operator !== ANY_OF) return null;
-      if (node.value === undefined) continue;
-      if (!Array.isArray(node.value)) return null;
-      for (const value of node.value) if (typeof value !== "string" || (value !== DASHBOARD_UNASSIGNED_OPTION && !CANONICAL_LOWERCASE_UUID_REGEX.test(value))) return null;
-      if (unfinished) continue;
-      includeUnassigned = node.value.includes(DASHBOARD_UNASSIGNED_OPTION);
-      editorIds = (node.value as string[]).filter((value) => value !== DASHBOARD_UNASSIGNED_OPTION);
-      continue;
-    }
-    if (field === DASHBOARD_FILTER_FIELD.shoot || field === DASHBOARD_FILTER_FIELD.deadline) {
-      if (!unfinished && node.operator !== BETWEEN && !(field === DASHBOARD_FILTER_FIELD.deadline && node.operator === OVERDUE)) return null;
-      if (!unfinished && node.operator === OVERDUE) { overdueOnly = true; continue; }
-      const range = rangeOf(node.value);
-      if (range === undefined) continue;
-      if (range === null) return null;
-      if (unfinished) continue;
-      if (field === DASHBOARD_FILTER_FIELD.shoot) shootRange = range;
-      else deadlineRange = range;
-      continue;
-    }
-    if (field === DASHBOARD_FILTER_FIELD.mine) {
-      if (!unfinished && node.operator !== ONLY) return null;
-      if (!unfinished) myTasks = true;
-      continue;
-    }
-    const expectedOperator = field === DASHBOARD_FILTER_FIELD.archived ? IS : ANY_OF;
-    if (!unfinished && node.operator !== expectedOperator) return null;
-    if (node.value === undefined) continue;
-    if (field === DASHBOARD_FILTER_FIELD.archived) {
-      const value = Array.isArray(node.value) ? (node.value.length === 1 ? node.value[0] : undefined) : node.value;
-      if (typeof value !== "string" || !ARCHIVED_VALUES.has(value)) {
-        // An emptied selection on an unfinished rule is just unfinished.
-        if (Array.isArray(node.value) && node.value.length === 0) continue;
-        return null;
+type QueryOptions = { archivedAllowed?: boolean; priorityAllowed?: boolean };
+/** `veto: "cap"` is a limit the user hit (worth saying so); `"invalid"` is something the UI never produces. */
+export type DashboardFilterQueryResult = { filter: DashboardFilter } | { veto: "cap" | "invalid" };
+
+/** The caps the panel and the URL share, measured on the QUERY: every rule counts, finished or not, so a row the user is still building cannot slip past the cap. */
+function queryExceedsCaps(query: FilterQuery<unknown>): boolean {
+  let rules = 0;
+  let peopleIds = 0;
+  let exceeded = false;
+  const walk = (group: FilterGroupNode<unknown>, depth: number) => {
+    for (const node of group.rules) {
+      if (node.type === "group") {
+        // A group at depth 3 could hold no rule (its rules would be depth 4).
+        if (depth + 1 > DASHBOARD_FILTER_TREE_MAX_DEPTH - 1) exceeded = true;
+        walk(node, depth + 1);
+        continue;
       }
-      if (!unfinished) archived = value as DashboardArchivedMode;
-      continue;
+      rules += 1;
+      if (depth + 1 > DASHBOARD_FILTER_TREE_MAX_DEPTH) exceeded = true;
+      if (node.path[0] === DASHBOARD_FILTER_FIELD.people && Array.isArray(node.value)) peopleIds += node.value.filter((value) => value !== DASHBOARD_UNASSIGNED_OPTION).length;
     }
-    if (!Array.isArray(node.value)) return null;
-    const allowed = field === DASHBOARD_FILTER_FIELD.stage ? STAGE_VALUES : PRIORITY_VALUES;
-    for (const value of node.value) if (typeof value !== "string" || !allowed.has(value)) return null;
-    if (unfinished) continue;
-    if (field === DASHBOARD_FILTER_FIELD.stage) stageKeys = node.value as string[];
-    else priorities = node.value as string[];
-  }
-  return normalizeDashboardFilter({
-    stageKeys: canonicalDashboardStages(stageKeys),
-    priorities: canonicalDashboardPriorities(priorities),
-    archived,
-    editorIds: canonicalDashboardEditorIds(editorIds),
-    includeUnassigned,
-    shootRange,
-    deadlineRange,
-    overdueOnly,
-    myTasks,
-  });
+  };
+  walk(query, 0);
+  return exceeded || rules > DASHBOARD_FILTER_TREE_MAX_RULES || peopleIds > DASHBOARD_FILTER_TREE_MAX_PEOPLE_IDS;
 }
 
-/** How many facets of `filter` narrow (the Filter trigger's badge and the empty state's wording). */
+const INVALID = Symbol("invalid");
+type Converted = DashboardFilterNode | null | typeof INVALID;
+
+/** One finished rule -> its leaf; `null` when unfinished (it narrows nothing yet); `INVALID` for something the URL cannot say. */
+function leafOfRule(rule: FilterRule<unknown>, options: Required<QueryOptions>): DashboardFilterLeaf | null | typeof INVALID {
+  const [field, ...rest] = rule.path;
+  if (field === undefined || rest.length > 0 || !(field in FIELD_SET)) return INVALID;
+  if (field === DASHBOARD_FILTER_FIELD.archived && !options.archivedAllowed) return INVALID;
+  if (field === DASHBOARD_FILTER_FIELD.priority && !options.priorityAllowed) return INVALID;
+  if (rule.operator === "") return null;
+  const bang = rule.negated ? { negated: true as const } : {};
+  const { value } = rule;
+  if (field === DASHBOARD_FILTER_FIELD.mine) return rule.operator === ONLY ? { kind: "leaf", ...bang, field: "mine" } : INVALID;
+  if (field === DASHBOARD_FILTER_FIELD.shoot || field === DASHBOARD_FILTER_FIELD.deadline) {
+    if (rule.operator === OVERDUE && field === DASHBOARD_FILTER_FIELD.deadline) return { kind: "leaf", ...bang, field: "overdue" };
+    if (rule.operator !== BETWEEN) return INVALID;
+    const range = rangeOf(value);
+    if (range === undefined) return null;
+    if (range === null) return INVALID;
+    return { kind: "leaf", ...bang, field: field === DASHBOARD_FILTER_FIELD.shoot ? "shoot" : "deadline", range };
+  }
+  if (field === DASHBOARD_FILTER_FIELD.archived) {
+    if (rule.operator !== IS) return INVALID;
+    if (value === undefined || (Array.isArray(value) && value.length === 0)) return null;
+    const mode = Array.isArray(value) ? (value.length === 1 ? value[0] : undefined) : value;
+    return typeof mode === "string" && ARCHIVED_VALUES.has(mode) ? { kind: "leaf", ...bang, field: "archived", mode: mode as DashboardArchivedMode } : INVALID;
+  }
+  if (rule.operator !== ANY_OF) return INVALID;
+  if (value === undefined) return null;
+  if (!Array.isArray(value)) return INVALID;
+  if (field === DASHBOARD_FILTER_FIELD.people) {
+    for (const item of value) if (typeof item !== "string" || (item !== DASHBOARD_UNASSIGNED_OPTION && !CANONICAL_LOWERCASE_UUID_REGEX.test(item))) return INVALID;
+    if (value.length === 0) return null;
+    return { kind: "leaf", ...bang, field: "people", ids: (value as string[]).filter((item) => item !== DASHBOARD_UNASSIGNED_OPTION), unassigned: value.includes(DASHBOARD_UNASSIGNED_OPTION) };
+  }
+  const allowed = field === DASHBOARD_FILTER_FIELD.stage ? STAGE_VALUES : PRIORITY_VALUES;
+  for (const item of value) if (typeof item !== "string" || !allowed.has(item)) return INVALID;
+  if (value.length === 0) return null;
+  if (field === DASHBOARD_FILTER_FIELD.stage) return value.length > DASHBOARD_FILTER_MAX_STAGE_KEYS ? INVALID : { kind: "leaf", ...bang, field: "stages", values: value as StagePresentationKey[] };
+  return { kind: "leaf", ...bang, field: "priority", values: value as DashboardPriorityFilterValue[] };
+}
+
+/**
+ * The popover's query -> filter. Unfinished rules and empty groups are dropped; a filter the legacy
+ * parameters can spell comes out flat. `{ veto }` when the query holds something the URL cannot say.
+ */
+export function queryToDashboardFilterResult(query: FilterQuery<unknown>, options: QueryOptions = {}): DashboardFilterQueryResult {
+  const resolved = { archivedAllowed: options.archivedAllowed ?? true, priorityAllowed: options.priorityAllowed ?? true };
+  if (query.type !== "group") return { veto: "invalid" };
+  if (queryExceedsCaps(query)) return { veto: "cap" };
+  const convert = (node: FilterNode<unknown>): Converted => {
+    if (node.type === "rule") return leafOfRule(node, resolved);
+    if (node.combinator !== "and" && node.combinator !== "or") return INVALID;
+    const children: DashboardFilterNode[] = [];
+    for (const child of node.rules) {
+      const converted = convert(child);
+      if (converted === INVALID) return INVALID;
+      if (converted !== null) children.push(converted);
+    }
+    return children.length === 0 ? null : { kind: "group", op: node.combinator, children };
+  };
+  const root = convert(query);
+  if (root === INVALID) return { veto: "invalid" };
+  if (root === null) return { filter: normalizeDashboardFilter(undefined) };
+  const filter = normalizeDashboardFilter({ tree: canonicalizeDashboardFilterTree(root as DashboardFilterTree) });
+  // Whatever stays a tree must be one the URL and the server accept: canonical, within the encoded-length cap.
+  if (filter.tree && coerceDashboardFilterTree(filter.tree) === null) return { veto: "cap" };
+  return { filter };
+}
+
+/** `queryToDashboardFilterResult` as the binding's `toFacet`: the filter, or `null` for a veto. */
+export function queryToDashboardFilter(query: FilterQuery<unknown>, options: QueryOptions = {}): DashboardFilter | null {
+  const result = queryToDashboardFilterResult(query, options);
+  return "filter" in result ? result.filter : null;
+}
+
+function depthOf(query: FilterQuery<unknown>, id: string | undefined): number | null {
+  if (id === undefined || id === query.id) return 0;
+  const walk = (group: FilterGroupNode<unknown>, depth: number): number | null => {
+    for (const node of group.rules) {
+      if (node.type !== "group") continue;
+      if (node.id === id) return depth + 1;
+      const found = walk(node, depth + 1);
+      if (found !== null) return found;
+    }
+    return null;
+  };
+  return walk(query, 0);
+}
+
+function ruleCountOf(query: FilterQuery<unknown>): number {
+  const walk = (group: FilterGroupNode<unknown>): number => group.rules.reduce((sum, node) => sum + (node.type === "group" ? walk(node) : 1), 0);
+  return walk(query);
+}
+
+/** May a rule be added under `parentId` (the root when omitted)? False at the rule cap or below the depth cap. */
+export function canAddDashboardFilterRule(query: FilterQuery<unknown>, parentId?: string): boolean {
+  const depth = depthOf(query, parentId);
+  return depth !== null && ruleCountOf(query) < DASHBOARD_FILTER_TREE_MAX_RULES && depth + 1 <= DASHBOARD_FILTER_TREE_MAX_DEPTH;
+}
+
+/** May a group be added under `parentId`? False at the rule cap, and where it could hold no rule (its rules would be deeper than the cap). */
+export function canAddDashboardFilterGroup(query: FilterQuery<unknown>, parentId?: string): boolean {
+  const depth = depthOf(query, parentId);
+  return depth !== null && ruleCountOf(query) < DASHBOARD_FILTER_TREE_MAX_RULES && depth + 1 <= DASHBOARD_FILTER_TREE_MAX_DEPTH - 1;
+}
+
+/** Transitional (removed with the Dashboard's move to the tree helpers in this PR). */
 export function dashboardFilterNarrowCount(filter: DashboardFilter): number {
-  return (filter.stageKeys.length > 0 ? 1 : 0) + (filter.priorities.length > 0 ? 1 : 0) + (filter.archived !== "hide" ? 1 : 0)
-    + (filter.editorIds.length > 0 || filter.includeUnassigned ? 1 : 0) + (filter.shootRange ? 1 : 0) + (filter.deadlineRange || filter.overdueOnly ? 1 : 0) + (filter.myTasks ? 1 : 0);
+  return dashboardFilterTreeOf(filter).children.length;
 }
