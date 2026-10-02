@@ -6,7 +6,7 @@ import { ApiError, apiDeleteWithBody, apiPutWithStatus } from "../lib/api";
 import { confirm } from "../lib/confirm";
 import { buttonClasses } from "./quincy/Button";
 import { cn } from "../lib/utils";
-import { ARCHIVED_NOTICE_CLASS } from "./archived-notice";
+import { ARCHIVED_HEADER_NOTICE_CLASS } from "./archived-notice";
 import {
   beginProjectMembershipMutation,
   invalidateProjectSurfaces,
@@ -114,7 +114,6 @@ function teamChipStateClasses(dataState: TeamChipDataState) {
 function isMembershipArchivedRefusal(error: unknown) { return error instanceof ApiError && error.status === 409 && details(error)?.code === "membership_project_archived"; }
 const ARCHIVED_TEAM_NOTICE = "Read-only while archived. Restore the project before changing the team.";
 /** Capped so a long notice wraps inside the Team column instead of widening it and shifting its neighbours. */
-const ARCHIVED_TEAM_NOTICE_CLASS = cn(ARCHIVED_NOTICE_CLASS, "max-w-[28ch]");
 
 function cellKey(roleOnProject: ProjectMemberRole, userId: string) { return `${roleOnProject}:${userId}`; }
 function roleLabel(roleOnProject: ProjectMemberRole) { return roleOnProject === "photographer" ? "Photographer" : "Editor"; }
@@ -287,7 +286,7 @@ function TeamMoreToggle({ hiddenCount, expanded, onToggle }: { hiddenCount: numb
   </button>;
 }
 
-export function ProjectTeamCombobox({ projectId, members, canEdit, archived = false, readOnlyClassName, inputRef }: { projectId: string; members: ProjectMember[]; canEdit: boolean; /** #452: an archived Project's Team is read-only. Also latched on from a 409 `membership_project_archived`, until this goes true to false (Restore). */ archived?: boolean; /** The read-only row only (an archived or live read-only Team); the header sizes it to its 44px controls. */ readOnlyClassName?: string; /** #365: lets a hosting popover focus the input (the first chip × is a Tab stop and would otherwise take initial focus). */ inputRef?: Ref<HTMLInputElement> }) {
+export function ProjectTeamCombobox({ projectId, members, canEdit, archived = false, rowClassName, inputRef }: { projectId: string; members: ProjectMember[]; canEdit: boolean; /** #452: an archived Project's Team is read-only. Also latched on from a 409 `membership_project_archived`, until this goes true to false (Restore). */ archived?: boolean; /** Sizes the Team row, read-only or editable (#458); the header passes its 44px control height. */ rowClassName?: string; /** #365: lets a hosting popover focus the input (the first chip × is a Tab stop and would otherwise take initial focus). */ inputRef?: Ref<HTMLInputElement> }) {
   const anchor = useComboboxAnchor();
   const [latched, setLatched] = useState(false);
   const readOnly = archived || latched;
@@ -437,7 +436,7 @@ export function ProjectTeamCombobox({ projectId, members, canEdit, archived = fa
       {/* #213 follow-up: content-sized like prototype 2a's Team `.sel` (chips · Add… · chevron), not a
        *  box stretched to its cell — `w-fit` sizes to the chips and `max-w-full` still wraps them
        *  inside the cell. */}
-      <ComboboxChips ref={anchor} className="w-fit max-w-full rounded-[var(--radius-pill)] max-[721px]:min-h-[44px]">
+      <ComboboxChips ref={anchor} className={cn("w-fit max-w-full rounded-[var(--radius-pill)] max-[721px]:min-h-[44px]", rowClassName)}>
         <ComboboxValue>
           {() => visible.map((option) => {
             const { dataState, isPending, messageId, name, roleTag } = chipProps(option);
@@ -512,7 +511,7 @@ export function ProjectTeamCombobox({ projectId, members, canEdit, archived = fa
       // Only an archived (or latched) Team gets the named group: the focus target, and the anchor for the notice. A live read-only Team keeps its plain row.
       {...(readOnly ? { role: "group", "aria-label": "Team", tabIndex: -1, "aria-describedby": latched ? noticeId : undefined } : {})}
       ref={readOnlyRef}
-      className={cn("flex flex-wrap items-center gap-1.5 outline-none focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-2", readOnlyClassName)}
+      className={cn("flex flex-wrap items-center gap-1.5 outline-none focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-2", rowClassName)}
     >
       {displayed.length ? <>
         {visible.map((option) => {
@@ -534,7 +533,7 @@ export function ProjectTeamCombobox({ projectId, members, canEdit, archived = fa
         ? <><span className="sr-only">No team assigned</span><span aria-hidden="true" className="[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground">—</span></>
         : <p className="m-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">Not assigned</p>}
     </div>}
-    {latched && <p id={noticeId} role="status" className={ARCHIVED_TEAM_NOTICE_CLASS}>{ARCHIVED_TEAM_NOTICE}</p>}
+    {latched && <p id={noticeId} role="status" className={ARCHIVED_HEADER_NOTICE_CLASS}>{ARCHIVED_TEAM_NOTICE}</p>}
 
     {Object.entries(mutationStates).filter(([, state]) => state.kind !== "pending").map(([key, state]) => {
       if (state.kind === "pending") return null;

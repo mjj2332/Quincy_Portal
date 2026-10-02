@@ -39,6 +39,13 @@ import {
  *    way to reach the remove button itself — no `aria-label`, no `data-testid`, no `disabled`,
  *    no larger hit-area styling. `ProjectTeamCombobox.tsx` (#204) needs all four per chip. Added
  *    for #204, not present in the base-nova registry version.
+ * 7. **One focus indicator on the chips input (#458).** `ComboboxChipsInput`'s layered
+ *    `outline-none` loses to the unlayered `:focus-visible { outline }` (`tokens/base.css:25-28`),
+ *    so the input painted a square outline INSIDE `ComboboxChips`' own `focus-within` ring pill.
+ *    `ComboboxChips` now draws the one indicator (the token outline, `has-[input:focus-visible]` so
+ *    a focused chip × or "+N" keeps its own outline and the pill stays quiet), and the input
+ *    suppresses its own with `focus-visible:!outline-none` (precedent: `InputGroupInput`).
+ *    Literal tag at each edit: `QUINCY ADDITION (#458)`.
  */
 
 const Combobox = ComboboxPrimitive.Root
@@ -252,8 +259,9 @@ function ComboboxChips({
   return (
     <ComboboxPrimitive.Chips
       data-slot="combobox-chips"
+      // QUINCY ADDITION (#458): the focus ring is the token outline, on the input's focus-visible only.
       className={cn(
-        "flex min-h-8 flex-wrap items-center gap-1 rounded-lg border border-input bg-transparent bg-clip-padding px-2.5 py-1 text-sm transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50 has-aria-invalid:border-destructive has-aria-invalid:ring-3 has-aria-invalid:ring-destructive/20 has-data-[slot=combobox-chip]:px-1",
+        "flex min-h-8 flex-wrap items-center gap-1 rounded-lg border border-input bg-transparent bg-clip-padding px-2.5 py-1 text-sm transition-colors has-[input:focus-visible]:border-ring has-[input:focus-visible]:outline-[length:var(--border-width-bold)] has-[input:focus-visible]:outline-solid has-[input:focus-visible]:outline-ring has-[input:focus-visible]:outline-offset-2 has-aria-invalid:border-destructive has-aria-invalid:ring-3 has-aria-invalid:ring-destructive/20 has-data-[slot=combobox-chip]:px-1",
         className
       )}
       {...props}
@@ -306,7 +314,8 @@ function ComboboxChipsInput({
   return (
     <ComboboxPrimitive.Input
       data-slot="combobox-chip-input"
-      className={cn("min-w-16 flex-1 outline-none", className)}
+      // QUINCY ADDITION (#458): the chips box paints the indicator; the input paints none.
+      className={cn("min-w-16 flex-1 focus-visible:!outline-none", className)}
       {...props}
     />
   )

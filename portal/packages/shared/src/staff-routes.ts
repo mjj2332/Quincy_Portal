@@ -9,6 +9,7 @@ import {
 } from "./production-calendar";
 import {
   canonicalDashboardPriorities,
+  DASHBOARD_LEGACY_FILTER_QUERY_NAMES,
   DASHBOARD_PRIORITY_FILTER_VALUES,
   formatDashboardDateRange,
   isDefaultDashboardFilter,
@@ -20,6 +21,15 @@ import {
   type DashboardFilter,
   type DashboardPriorityFilterValue,
 } from "./dashboard-filter";
+import {
+  dashboardFlatFacets,
+  formatDashboardFilterTree,
+  isEmptyDashboardFilterTree,
+  parseDashboardFilterOrder,
+  parseDashboardFilterTree,
+  type DashboardFilterFacet,
+  type DashboardFilterTree,
+} from "./dashboard-filter-tree";
 import { isSydneyCalendarDate } from "./sydney-civil-time";
 import { STAGE_PRESENTATION_KEYS, type StagePresentationKey } from "./stage-move";
 import { notificationWorkspaceTab } from "./notification-types";
@@ -49,6 +59,9 @@ export type DashboardCalendarState = {
   overdueOnly: boolean;
   search: string;
   myTasks: boolean;
+  /** #461: the filter tree (`f=`) and the flat facets' non-canonical order (`forder=`). Absent unless set. */
+  tree?: DashboardFilterTree;
+  order?: DashboardFilterFacet[];
 };
 
 /**
@@ -102,6 +115,9 @@ export type DashboardGanttFacet = {
   deadlineRange: DashboardDateRange | null;
   overdueOnly: boolean;
   myTasks: boolean;
+  /** #461: see `DashboardCalendarState`. */
+  tree?: DashboardFilterTree;
+  order?: DashboardFilterFacet[];
 };
 
 /**
@@ -195,10 +211,10 @@ const PROJECT_ARRIVAL_BY_QUERY: ReadonlyMap<string, WorkspaceTab> = new Map(
   WORKSPACE_TABS.map((tab) => [projectArrivalQuery(tab), tab]),
 );
 const calendarParameterNames = new Set([
-  "view", "date", "sub", "layers", "editors", "unassigned", "stages", "priority", "archived", "shoot", "deadline", "completed", "delivered", "overdue", "mine", "q", "focus",
+  "view", "date", "sub", "layers", "editors", "unassigned", "stages", "priority", "archived", "shoot", "deadline", "completed", "delivered", "overdue", "mine", "q", "f", "forder", "focus",
 ]);
-const dashboardTableBoardParameterNames = new Set(["view", "q", "editors", "unassigned", "stages", "priority", "archived", "shoot", "deadline", "overdue", "mine"]);
-const dashboardTimelineParameterNames = new Set(["view", "q", "editors", "unassigned", "stages", "priority", "archived", "shoot", "deadline", "delivered", "completed", "overdue", "mine", "focus"]);
+const dashboardTableBoardParameterNames = new Set(["view", "q", "editors", "unassigned", "stages", "priority", "archived", "shoot", "deadline", "overdue", "mine", "f", "forder"]);
+const dashboardTimelineParameterNames = new Set(["view", "q", "editors", "unassigned", "stages", "priority", "archived", "shoot", "deadline", "delivered", "completed", "overdue", "mine", "f", "forder", "focus"]);
 const calendarFilterDefaults = productionCalendarFiltersSchema.parse({});
 
 /** Shared with the Calendar facet's own `q` (`calendarPathFor`'s `normalizeDashboardSearchText`
@@ -420,6 +436,8 @@ function parseCalendarLocation(params: URLSearchParams): DashboardCalendarState 
     overdueOnly: filter.overdueOnly,
     search,
     myTasks: filter.myTasks,
+    ...(filter.tree ? { tree: filter.tree } : {}),
+    ...(filter.order ? { order: filter.order } : {}),
   };
 }
 
@@ -532,6 +550,25 @@ function parseRangeParam(params: URLSearchParams, name: string): DashboardDateRa
  * reads exactly as before. `deadline` and `overdue` together are rejected (one Deadline rule).
  */
 function parseDashboardFilterParams(params: URLSearchParams): DashboardFilter | null {
+  // #461: `f` (a tree the legacy parameters cannot spell) is exclusive with every legacy facet and `forder`.
+  const rawTree = params.get("f");
+  if (rawTree !== null) {
+    if (params.has("forder") || DASHBOARD_LEGACY_FILTER_QUERY_NAMES.some((name) => params.has(name))) return null;
+    const parsed = parseDashboardFilterTree(rawTree);
+    return "error" in parsed ? null : normalizeDashboardFilter({ tree: parsed.tree });
+  }
+  const flat = parseLegacyDashboardFilterParams(params);
+  if (flat === null) return null;
+  const rawOrder = params.get("forder");
+  if (rawOrder === null) return flat;
+  // `forder` is a non-canonical permutation of exactly the facets present.
+  const order = parseDashboardFilterOrder(rawOrder);
+  const present = dashboardFlatFacets(flat);
+  if (order === null || order.length !== present.length || !order.every((facet) => present.includes(facet))) return null;
+  return { ...flat, order };
+}
+
+function parseLegacyDashboardFilterParams(params: URLSearchParams): DashboardFilter | null {
   const editorIds = parseEditorIdsParam(params);
   const includeUnassigned = parseCalendarFlag(params, "unassigned");
   const stageKeys = parseStageKeysParam(params);
@@ -698,9 +735,13 @@ export function dashboardFilterOf(route: StaffRoute): DashboardFilter {
  */
 export function withDashboardFilter<TRoute extends Extract<StaffRoute, { kind: "dashboard" }>>(route: TRoute, filter: DashboardFilter): TRoute {
   const next = normalizeDashboardFilter(filter);
-  if ("calendar" in route) return { ...route, calendar: { ...route.calendar, ...next } };
+  if ("calendar" in route) {
+    // #461: the previous tree / order must not survive a write that carries none.
+    const { tree: _tree, order: _order, ...calendar } = route.calendar;
+    return { ...route, calendar: { ...calendar, ...next } };
+  }
   if ("dashboardView" in route && route.dashboardView === "timeline") {
-    const base = route.gantt ?? { ...normalizeDashboardFilter(undefined), delivered: false, completed: false };
+    const { tree: _tree, order: _order, ...base } = route.gantt ?? { ...normalizeDashboardFilter(undefined), delivered: false, completed: false };
     const { gantt: _previous, ...rest } = route;
     const gantt: DashboardGanttFacet = { ...base, ...next };
     return { ...rest, ...(isDefaultGanttFacet(gantt) ? {} : { gantt }) } as TRoute;
@@ -752,7 +793,12 @@ function serializedList(values: readonly string[], order: readonly string[]): st
  * `delivered`: `setDashboardFlagParams`). Every arm that carries the filter writes it through here,
  * right after the arm's own leading params, so a URL an earlier build wrote (which has none of the
  * newer ones) serialises byte-identically. */
-function setDashboardFilterParams(params: URLSearchParams, filter: Pick<DashboardFilter, "stageKeys" | "priorities" | "archived" | "editorIds" | "includeUnassigned" | "shootRange" | "deadlineRange">): void {
+function setDashboardFilterParams(params: URLSearchParams, filter: Pick<DashboardFilter, "stageKeys" | "priorities" | "archived" | "editorIds" | "includeUnassigned" | "shootRange" | "deadlineRange"> & Pick<Partial<DashboardFilter>, "tree">): void {
+  // #461: a tree the flat facets cannot spell is written as `f` alone (its flat facets are all default).
+  if (filter.tree && !isEmptyDashboardFilterTree(filter.tree)) {
+    params.set("f", formatDashboardFilterTree(filter.tree));
+    return;
+  }
   if (filter.editorIds.length > 0) params.set("editors", serializedList(filter.editorIds, []));
   if (filter.includeUnassigned) params.set("unassigned", "1");
   if (filter.stageKeys.length > 0) params.set("stages", serializedList(filter.stageKeys, STAGE_PRESENTATION_KEYS));
@@ -771,10 +817,16 @@ function setDashboardFlagParams(params: URLSearchParams, filter: Pick<DashboardF
 
 /** Writes the filter params and then `completed=1` / `delivered=1`, which the Calendar and Gantt
  * arms share, in that order and only when non-default. */
-function setStageAndFlagParams(params: URLSearchParams, facet: Pick<DashboardFilter, "stageKeys" | "priorities" | "archived" | "editorIds" | "includeUnassigned" | "shootRange" | "deadlineRange"> & { completed: boolean; delivered: boolean }): void {
+function setStageAndFlagParams(params: URLSearchParams, facet: Pick<DashboardFilter, "stageKeys" | "priorities" | "archived" | "editorIds" | "includeUnassigned" | "shootRange" | "deadlineRange"> & Pick<Partial<DashboardFilter>, "tree"> & { completed: boolean; delivered: boolean }): void {
   setDashboardFilterParams(params, facet);
   if (facet.completed) params.set("completed", "1");
   if (facet.delivered) params.set("delivered", "1");
+}
+
+/** #461: `forder=` goes after the arm's last existing parameter, so every pre-#461 URL stays byte-identical. */
+function setDashboardFilterOrderParam(params: URLSearchParams, filter: Parameters<typeof normalizeDashboardFilter>[0]): void {
+  const normalized = normalizeDashboardFilter(filter);
+  if (normalized.order) params.set("forder", normalized.order.join(","));
 }
 
 function calendarPathFor(calendar: DashboardCalendarState): string {
@@ -791,6 +843,7 @@ function calendarPathFor(calendar: DashboardCalendarState): string {
   // URL write would put there.
   const safeSearch = normalizeDashboardSearchText(calendar.search);
   if (safeSearch !== calendarFilterDefaults.search) params.set("q", safeSearch);
+  setDashboardFilterOrderParam(params, calendar);
   return `/?${params.toString()}`;
 }
 
@@ -799,6 +852,7 @@ export function staffPathFor(route: Exclude<StaffRoute, { kind: "not-found" } | 
     case "dashboard": {
       if ("calendar" in route) return `${calendarPathFor(route.calendar)}${route.focus ? `&focus=${route.focus}` : ""}`;
       const params = new URLSearchParams();
+      let orderSource: DashboardFilter | DashboardGanttFacet | undefined;
       // `search` exists on every arm here now (#217 fix round 4, item 1 gave the Calendar INTENT
       // arm one too), so it is read from `route` uniformly.
       if ("dashboardView" in route) params.set("view", route.dashboardView);
@@ -806,6 +860,7 @@ export function staffPathFor(route: Exclude<StaffRoute, { kind: "not-found" } | 
       if ("filter" in route && route.filter) {
         setDashboardFilterParams(params, route.filter);
         setDashboardFlagParams(params, route.filter);
+        orderSource = route.filter;
       }
       // #255: the Gantt arm's own facets, through the same writer the Calendar arm uses for its
       // `stages`/`completed`/`delivered` — only non-default values, so an all-default facet
@@ -814,13 +869,15 @@ export function staffPathFor(route: Exclude<StaffRoute, { kind: "not-found" } | 
         // #274: `editors` before `stages`, the Calendar arm's order (now the shared writer's).
         setStageAndFlagParams(params, { ...route.gantt, completed: route.gantt.completed, delivered: route.gantt.delivered });
         setDashboardFlagParams(params, route.gantt);
+        orderSource = route.gantt;
       }
       const search = route.search;
       if (search !== undefined) {
         const safeSearch = normalizeDashboardSearchText(search);
         if (safeSearch !== "") params.set("q", safeSearch);
       }
-      // #464: always last, after `q`, so every pre-#464 URL serialises byte-identically.
+      if (orderSource) setDashboardFilterOrderParam(params, orderSource);
+      // #464: always last, after `q` and `forder`, so every pre-#464 URL serialises byte-identically.
       if ("focus" in route && route.focus) params.set("focus", route.focus);
       const qs = params.toString();
       return qs ? `/?${qs}` : "/";

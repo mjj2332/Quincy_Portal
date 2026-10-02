@@ -166,7 +166,6 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "POST", path: "/api/projects/:id/documents", class: "withheld" },
   { method: "GET", path: "/api/projects/:id/download-selection/:ticket/archive.zip", class: "withheld" },
   { method: "POST", path: "/api/projects/:id/download-selection", class: "withheld" },
-  { method: "POST", path: "/api/projects/:id/dropbox-sync", class: "withheld" },
   { method: "POST", path: "/api/projects/:id/fetch-edited", class: "withheld" },
   { method: "GET", path: "/api/projects/:id/ingest-status", class: "scoped", externalSurface: "ingest-status" },
   { method: "GET", path: "/api/projects/:id/jobs", class: "withheld" },

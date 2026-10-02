@@ -4954,7 +4954,7 @@ remove the legacy readers) still applies.
   focus falls to `<body>`. The popover also passes `archived={Boolean(detail.archivedAt)}` from the loaded detail, so a Project
   archived since the row was drawn opens read-only rather than waiting for a 409 (no DOM test: the Gantt suites do not drive the
   Team popover).
-- **Header read-only Team is sized by the header, not the control:** `ProjectHeader` passes `readOnlyClassName="min-h-[44px]"` so the
+- **Header read-only Team is sized by the header, not the control:** `ProjectHeader` passes `rowClassName="min-h-[44px]"` (named `readOnlyClassName` until #458) so the
   chip row lines up with the 44px triggers beside it; the Gantt popover keeps the compact row. The notice is capped at `28ch` so it
   wraps rather than widening the column. The notice class is shared with the Checklist line (`archived-notice.ts`).
 - **Header Stage on an archived Project** (and for any role that cannot move Stage) renders through `StageOption` instead of
@@ -4976,6 +4976,48 @@ remove the legacy readers) still applies.
   `max-w-` still caps it. Matching the variant (`data-[chips=true]:min-w-...`) would tie the fix to a vendor attribute, and a
   `min-w` floor beats `max-w` on small screens. The DOM test pins the merged class string only; the browser pass proves pixels.
 - The chips input is `w-[12ch]` (was 6ch, too narrow for "Add…"); it does not grow on focus because the box is the popup's anchor.
+
+## #459 An archived Project's cover is read-only, and the legacy dropbox-sync route is gone
+
+- **One refusal: 409 `cover_project_archived` on `POST /projects/:id/cover`, for a set and a clear alike.** Order: 400 bad id, 403 access, 403 capability, 400 input, 404 Project, then archived (which wins over the asset 404), then the asset check. The write is one `DB.batch` read by position: `[0]` the `UPDATE ... WHERE archived_at IS NULL RETURNING id`, `[1]` the audit INSERT fenced on `changes() = 1` (same `project.cover.set` action, `auditMeta` keeps `impersonatedBy`), `[2]` a trailing `SELECT archived_at` snapshot. Never reorder them. If `[0]` returned no row, the snapshot classifies it: archived is 409, row gone is 404, and a row that is present and not archived is a retryable 409 `cover_conflict` (archived then restored inside the write; the real batch is atomic, so the test re-takes the snapshot after the restore to reach it).
+- **An unknown Project id is 403, not 404, for an Admin.** `hasProjectAccess` resolves a visible Project first, so the 404 branch only fires on a Project deleted between that check and the batch. The #459 plan said 404; the code says 403 and the test pins it.
+- **`assets.ts` (cover cleared when its asset is deleted) is deliberately unfenced.** Deleting an asset is not a cover edit, and clearing a dangling reference on an archived Project is housekeeping that must not fail.
+- **Web follows #450/#452.** `CollectionTabView` latches on a 409 with the code (checked first in `updateCover`, no toast), refetches detail and activity, and drops the latch when `archivedAt` goes set to unset. `canSetCover` is false while archived, so an archived-on-load Project never shows the control. The status notice appears only while latched. `PhotoGrid.onSetCover` resolves `"archived"`; the grid captures at click time whether focus was inside the tile, and a layout effect keyed on `canSetCover` going false moves focus to the tile only if focus was lost (`<body>`, disabled, disconnected, or an ancestor containing the tile). Never on load.
+- **`POST /projects/:id/dropbox-sync` was removed** (web stopped calling it in 85e15fe1), with its manifest entry and probe line. `/sync-dropbox` is the live route.
+## #455 Archived Projects get a fully read-only header
+
+- **Two new refusal codes, both 409.** `PATCH /projects/:id` answers `details_project_archived` (checked right after the 404, before the services-blocked 409, and again in the batch-loser branch right after the re-read, before the match/services classification, so an archive that lands inside the batch is not reported as "changed while saving"). `POST /projects/:id/sync-dropbox` answers `dropbox_sync_project_archived` (the old precheck 409 had no code; the "nothing to sync" 409 is unaffected). Batch positions did not move. A missing id answers 403 for an Admin too (`hasProjectAccess` runs before the 404), so a "missing id is 404" test is wrong for this route. Deadline needed nothing: `deadline_project_archived` already existed.
+- **The header owns one latch: `null | "stage" | "deadline" | "dropbox"`.** `archived = Boolean(project.archivedAt) || latch !== null` flips the whole row (Stage, Team, Deadline, Dropbox, the details link) at once instead of one control per refusal. It clears when `archivedAt` goes truthy to falsy and when the Project id changes. Focus follows the #450/#452 rule: from a capture at request start (including a portalled popup), moved to the source's `role="group"` only if it was lost (`<body>`, disabled, disconnected, or an ancestor that contains the group); never on load.
+- **Order matters in `ProjectDeadlineControl`'s refusal path.** Report (`onArchivedRefusal`), flip read-only (`refusedArchived` also flips a header-less caller, the Gantt cell, in place), release the query owner, and only then invalidate the detail. `runtime.acquireOwner` defers an invalidation while an owner holds the key, so invalidating first leaves the header showing the live Deadline. Apply then throws `ApplyDeclined` (no message); Resume returns. A version 409 is still "Deadline changed elsewhere."
+- **A header popover must be closed on the read-only edge.** `ProjectHeaderDeadline` and `ProjectHeaderDropbox` reset `open` in a layout effect when `archived` becomes true, else Restore reopens the popover (with focus on the control) because `open` is local state.
+- **Dropbox archived reads "Not monitored" whatever the folder facts say** (the monitor skips archived Projects), with an inline "Open in Dropbox" link kept for viewing. The sync callback resolves `"archived"` instead of toasting, after invalidating the surfaces; the header latches on that value only.
+- **Details link:** an archived Project shows "Restore or delete" to an Admin with backend access and nothing to anyone else, since `EditProject` is the only UI path to Archive / Restore / Delete.
+- **`EditProject` on an archived Project hides the form and Save** behind a `Notice tone="caution"`, keeps the Danger zone, and reads "Archived project". A Save refused as archived latches the same view, re-reads the Project (so Restore appears), invalidates the surfaces and shows no error. Focus goes to the heading only if it was in the form at Save. The "inside the form" check uses `closest("#edit-project-form")`: in jsdom `form.contains(ownControl)` answers false (the form wrapper is a Proxy whose identity differs between lookups), which a DOM test cannot tell from a real focus loss.
+- **The ui-primitive ratchet matches a literal `role="listbox"`.** The Stage capture needed "focus is in the Select's portalled popup" without writing that attribute, so it reads the trigger's `aria-controls` and checks the element it names.
+## Calendar sheets: the vendored close collides with the header (#462)
+
+- **Why the vendored close was replaced.** `reui/sheet`'s `showCloseButton` pins a 28px close at top/right 12px over the header, so the
+  Schedule editor's long street and the rail sheet's title ran under it, and on phones the target was far below 44px. Both calendar
+  sheets pass `showCloseButton={false}` and render `quincy/SheetCloseButton` (`SheetClose` + `reui/button`, 28px desktop / 44px at
+  <=721px) with `SHEET_CLOSE_CLEARANCE` reserving the header's end padding (48px / 64px). Desktop schedule-editor header end padding
+  went 32px -> 48px on purpose. No vendor edit.
+- **The close must be the LAST child of `SheetContent`.** Base UI's default initial focus is the first tabbable in the popup; a close
+  rendered first takes focus on open instead of the form.
+- **Phone rail header height uses the allowlisted `min-h-[44px]` on the title**, not a `min-h-[calc(...px...)]` on the header:
+  `dashboard-fill.guard` rejects px heights in `ProductionEventCalendar.tsx`. Header `py-[var(--space-3)]` + 44px title = 68px.
+- Pinned before the change: one click and one Escape each fire `onCancel` once; the new tests assert the same.
+## Team picker drew two focus indicators (#458)
+
+- **A layered `outline-none` cannot beat the unlayered base rule.** `tokens/base.css:25-28` sets `:focus-visible { outline }` outside any
+  layer, so `ComboboxChipsInput`'s `outline-none` lost and the input painted a square outline inside the `ComboboxChips` pill, which
+  also painted its own `focus-within:ring-3`. Two shapes, one focus. The fix: the pill draws the one indicator (token outline, on
+  `has-[input:focus-visible]`, so a focused chip x or "+N" keeps its own outline and the pill stays quiet), and the input
+  uses `focus-visible:!outline-none` (precedent `InputGroupInput`). Vendor divergence 7 in `reui/combobox.tsx`, tagged `QUINCY ADDITION (#458)`.
+- **`reui-skin.guard.test.ts` now fails on a ring WIDTH under any focus variant** (`focus:`, `focus-visible:`, `focus-within:`, `has-[..focus..]`,
+  `group-`/`peer-` forms). A `data-[focused=...]` attribute variant is app state, not focus, and passes. Known latent double indicators
+  (`switch`, `field`, `item`, `scroll-area`, cascader x4) sit on a shrink-only exception list; they are not fixed here.
+- **Header height.** `ProjectTeamCombobox`'s `readOnlyClassName` became `rowClassName` and applies to the editable box too; the header
+  passes `min-h-[44px]`, the Gantt popover passes nothing and stays compact.
 
 ## Project sheet title ran under the close button (#460)
 
@@ -5016,3 +5058,38 @@ remove the legacy readers) still applies.
   disabled "Nothing scheduled" reason for the external fixture (no shoot date) but not for admin (has one): a fixture difference,
   not a leak. The fix was to give the external fixture a shoot date and re-freeze both literals (only Show in entries moved),
   not to loosen the "never anything an admin lacks" assertion.
+
+## Filter tree: OR, groups, negation across Projects, Calendar and Timeline (#461, PR A)
+
+- **One compiler, an executable spec, and SQL that is a function of the tree's shape.** `evaluateDashboardFilterTree` (shared) is the
+  spec; `workers/app/src/lib/dashboard-filter-sql.ts` is its only SQL form. Values never enter the text: every rule's values ride in ONE
+  JSON bind read with `json_extract` / `json_each`, so the statement is stable per shape and the bound-parameter count does not grow
+  with the tree. D1 allows 100 bound parameters, a 100,000-byte statement and a 2,000,000-byte value, so the JSON is what scales.
+- **Strict 0/1 per rule, then NOT.** Every leaf compiles to `CASE WHEN <inner fragment> THEN 1 ELSE 0 END`. Wrapping a nullable
+  fragment (a NULL shoot date, an unset priority) in NOT or OR without that turns "unknown" into TRUE or drops the row. Use the inner
+  fragments, never `shootRangeSql` / `deadlineRangeSql` with their `'' OR` wrappers (an empty bound there means "no filter").
+- **A not-applied People rule is dropped, not TRUE.** `or(people=<unknown>;stages=X)` must equal `stages=X`. Each compiled node is an
+  `{applied, match}` pair; AND uses `NOT applied OR match`, OR uses `applied AND match`.
+- **Moving a predicate from the base to a per-event-kind filter changes nothing observable only if the base keeps the necessary part.**
+  Calendar and Timeline keep authorisation, search, Delivered, the Archived scope (`dashboardFilterArchivedMode`) and the Stage scope
+  (`dashboardFilterStageScope`, three-valued, exact under negation) in `authorized_projects_base`; the tree itself is then evaluated on
+  Deadline events with People = Editors, and on Subtask events with People = that Subtask's assignees. The Stage scope is bound as `[]`
+  when there is no Stage rule, never as "every presentation key" (stored keys outside the presentation set would drop).
+- **Gantt child cursors.** A request without `f` keeps `ganttPeopleFingerprint` and the people-only child context byte for byte (a page
+  carrying stages/shoot/etc. still mints a child cursor over People only). With `f` the cursor binds to `dashboardFilterFingerprint(tree)`
+  (`t:` + 14 hex; the cursor schema accepts both) and the child request names the whole tree. `child_matches` is not even emitted when the
+  tree has no People / My tasks rule: the Subtask context is then the Project's own.
+- **Tests that read "now" are not tree tests.** A fixture Deadline in August 2026 is overdue today, so an `overdue` rule matches it; pin
+  tree semantics with Shoot dates and People, and keep Overdue to the legacy fixtures that fix their own windows.
+- **`project-search.test.ts` SHA digests were re-pinned (characterisation, not a guard)** in the Calendar commit; the one other
+  assertion that mentions bind slots was later rewritten for the 15-bind layout (see the fix round). Writer order `editors` before `stages` (#428) is untouched.
+
+### #461 PR A fix round
+
+- **A tree at the caps is a test, not an assumption.** 20 rules / depth 3 / 50 ids ran fine as one shape and died as another: `SQLITE_NOMEM` (20 People rules flat, Gantt page; nested People groups, Calendar) and "Expression tree is too large (maximum depth 100)". Cause: every People rule re-derived the People universe inside the statement, in `applied` and again in `match`, repeated per ancestor, and the Gantt page compiles the tree three times. `dashboard-filter-max-cap.test.ts` runs three shapes as Admin and External Editor through every statement on every surface; add a shape there before trusting a compiler change.
+- **Resolve the universe once, in the handler.** `validPeopleIds` answers the request's valid ids; the ONE JSON bind carries each People rule's pre-filtered `ids` and a precomputed `a` (applied, 0/1). The compiler has no "universe" mode any more. AND / OR chains are balanced binary trees (depth log2 n).
+- **`production-calendar.integration.test.ts` pins the Calendar's bind layout**: 15 binds, the Stage scope as the one `json_each(?8)`, People ids only inside the tree's JSON bind (`?15`). An earlier layout kept a dead `request_people` CTE at `?8` only to satisfy a `json_each(?8)` / `json_each(?9)` pin; the dead CTE and bind were removed and the pin rewritten to protect the same property (ids ride in JSON binds, never per-id placeholders; bounded bind count).
+- **A standalone `childrenOf=` request never ran the page's parent check.** With no People / My tasks rule `childFilterSql` was the constant `1`, so an excluded parent still returned children. Embedded children keep the shortcut; a standalone request evaluates the tree on the parent. Role gates (Priority 400, Archived 403) run for every Gantt mode.
+- **Legacy parity is a test against `origin/main`, not a reading.** Moving Priority / Shoot / Deadline / Overdue out of the Calendar base widened `filterFacets.projects` and dropped a no-Deadline Project from the density count under `overdue=1`. `production-calendar-legacy-parity.test.ts` passes unchanged on main's code; keep it that way. The Project facet applies the tree with People / My tasks dropped (`dropPeopleRules`); the flat Overdue facet keeps its candidate quirk (`overdueIncludesNoDeadline`, never for a tree).
+- **A Stage / Priority-only list stays in memory.** Anything that routes it through D1 pays ceil(N/500) sequential statements for nothing.
+
