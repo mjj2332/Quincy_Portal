@@ -126,9 +126,16 @@ describe("Dashboard Calendar routing", () => {
   // neither `render()` nor `DashboardRouteHarness` mount the rail. Drives the shared store
   // directly, exactly as `ShellSearch`'s own `onChange` would.
   /** The route fixture's one Deadline, selected so the rail shows its project anchor. */
-  async function selectedProjectAnchor(): Promise<HTMLAnchorElement> {
-    await act(async () => { eventCalendarFake.click("project-deadline:one"); await Promise.resolve(); });
-    return host.querySelector<HTMLAnchorElement>('a[data-testid="calendar-project-link"]')!;
+  /** #463: a chip click opens the item menu; "Open project" is its first row. */
+  async function openProjectRow(): Promise<HTMLElement> {
+    await act(async () => { eventCalendarFake.click("project-deadline:one"); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    return [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((node) => node.textContent === "Open project")!;
+  }
+  async function pickOpenProject() {
+    const row = await openProjectRow();
+    await act(async () => { row.click(); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 60)); });
   }
 
   /** A Month drag of the Deadline to 2026-08-20 (it keeps its 09:00 Sydney wall time); opens the confirm. */
@@ -254,28 +261,13 @@ describe("Dashboard Calendar routing", () => {
     expect([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] [role="tab"]')].find((button) => button.textContent === "Table")?.getAttribute("aria-selected")).toBe("true");
   });
 
-  it("opens scheduled Calendar project anchors on the Full Workspace", async () => {
+  it("opens a scheduled Calendar chip's project on the Full Workspace from its item menu (#463)", async () => {
     await render({ calendar: routeCalendar });
-    const anchor = await selectedProjectAnchor();
-    expect(anchor.getAttribute("href")).toBe("/projects/" + projectId);
-    await act(async () => { anchor.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 })); await Promise.resolve(); });
+    await pickOpenProject();
     expect(`${window.location.pathname}${window.location.search}`).toBe("/projects/" + projectId);
   });
 
-  it("leaves a modified Calendar project click to native navigation", async () => {
-    await render({ calendar: routeCalendar });
-    const anchor = await selectedProjectAnchor();
-    await act(async () => { anchor.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1, metaKey: true })); await Promise.resolve(); });
-    expect(`${window.location.pathname}${window.location.search}`).toBe("/projects/" + projectId);
-  });
-
-  it("opens a keyboard-activated (Enter) Calendar anchor on the Full Workspace", async () => {
-    window.history.replaceState(null, "", "/?view=calendar&date=" + routeCalendar.date + "&sub=month&layers=project%2Cchecklist&editors=" + editorId);
-    await render({ calendar: routeCalendar });
-    const anchor = await selectedProjectAnchor();
-    await act(async () => { anchor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); await Promise.resolve(); });
-    expect(`${window.location.pathname}${window.location.search}`).toBe("/projects/" + projectId);
-  });
+  // #463: the selection strip's anchor is gone, and with it Cmd/Ctrl-click Open project on the Calendar (accepted by the owner).
 
   it("restores a remembered Calendar view by replacing the bare root with its canonical URL", async () => {
     window.localStorage.setItem("quincy:dashboard:view", "calendar");

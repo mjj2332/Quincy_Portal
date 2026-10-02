@@ -189,7 +189,7 @@ export function useSchedulingItemMenu({ describe, resolveElement, onAction, foll
     const popup = popupRef.current;
     if (!popup) return;
     if (document.activeElement !== popup && popup.contains(document.activeElement)) return;
-    popup.querySelector<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])')?.focus({ preventScroll: true });
+    popup.querySelector<HTMLElement>('[role=menuitem]:not([aria-disabled=true])')?.focus({ preventScroll: true });
   }, []);
   // A programmatic open focuses the popup, not its first row; Enter-to-open needs the first row.
   useEffect(() => {
