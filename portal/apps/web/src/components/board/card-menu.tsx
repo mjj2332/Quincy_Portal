@@ -58,8 +58,9 @@ export type CardMenuBinding = {
  * this string is what makes the two read as the same menu. Applied to both so neither drifts.
  */
 const CARD_MENU_CONTENT_CLASS = "w-48 rounded-none border border-border shadow-[var(--shadow-md)] ring-0";
-const SUB_CONTENT_CLASS = "w-48";
-const RADIO_ITEM_CLASS = "max-[641px]:min-h-11 pointer-coarse:min-h-11";
+const SUB_CONTENT_CLASS = "min-w-48 w-max max-w-[min(18rem,calc(100vw-2rem))]";
+/** 44px rows at ≤641px and on a coarse pointer: the Stage radios and the Move to sub-triggers share it. */
+export const TOUCH_ROW_CLASS = "max-[641px]:min-h-11 pointer-coarse:min-h-11";
 
 function Swatch({ stageKey }: { stageKey: StageKey }) {
   return <StageSwatch color={stageColorFor(stageKey)} pattern={stagePatternFor(stageKey)} />;
@@ -92,7 +93,7 @@ export function CardActionsMenu({ projectId, street, binding }: { projectId: str
       </DropdownMenuTrigger>
       <DropdownMenuContent side="bottom" align="end" className={CARD_MENU_CONTENT_CLASS} finalFocus={binding.returnFocus}>
         <DropdownMenuSub>
-          <DropdownMenuSubTrigger disabled={menu.moveToDisabled}>
+          <DropdownMenuSubTrigger disabled={menu.moveToDisabled} className={TOUCH_ROW_CLASS}>
             <ArrowRightLeft aria-hidden="true" />
             Move to
           </DropdownMenuSubTrigger>
@@ -105,7 +106,7 @@ export function CardActionsMenu({ projectId, street, binding }: { projectId: str
                   value={choice.stageKey}
                   disabled={choice.disabled}
                   closeOnClick
-                  className={RADIO_ITEM_CLASS}
+                  className={TOUCH_ROW_CLASS}
                   onClick={() => binding.onChoose(choice.stageKey)}
                 >
                   <Swatch stageKey={choice.stageKey} />
@@ -126,7 +127,7 @@ export function CardContextMenuContent({ binding, ...props }: { binding: CardMen
   return (
     <ContextMenuContent align="start" side="right" className={CARD_MENU_CONTENT_CLASS} finalFocus={binding.returnFocus} {...props}>
       <ContextMenuSub>
-        <ContextMenuSubTrigger disabled={menu.moveToDisabled}>
+        <ContextMenuSubTrigger disabled={menu.moveToDisabled} className={TOUCH_ROW_CLASS}>
           <ArrowRightLeft aria-hidden="true" />
           Move to
         </ContextMenuSubTrigger>
@@ -138,7 +139,7 @@ export function CardContextMenuContent({ binding, ...props }: { binding: CardMen
                 value={choice.stageKey}
                 disabled={choice.disabled}
                 closeOnClick
-                className={RADIO_ITEM_CLASS}
+                className={TOUCH_ROW_CLASS}
                 onClick={() => binding.onChoose(choice.stageKey)}
               >
                 <Swatch stageKey={choice.stageKey} />

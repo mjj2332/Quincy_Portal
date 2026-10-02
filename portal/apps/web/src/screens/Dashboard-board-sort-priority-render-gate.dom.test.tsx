@@ -74,7 +74,7 @@ describe("Dashboard Kanban sort control — Priority gate (render-gate absence h
     await vi.waitFor(() => expect(document.querySelector('[data-testid="board-card"]')).not.toBeNull());
     await openDisplay();
     expect(sortRadios()).toHaveLength(0);
-    expect(displayMenu()!.textContent).toContain("Sorted by priority, then shoot date");
+    expect(displayMenu()!.textContent).toContain("Sorted by priority, then shoot date, then street");
     expect(displayMenu()!.textContent).not.toContain("Board order");
   });
 });

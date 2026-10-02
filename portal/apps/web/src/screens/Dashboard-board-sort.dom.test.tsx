@@ -185,7 +185,7 @@ describe("Dashboard Kanban sort control", () => {
       await openDisplay();
       expect(sortRadios()).toHaveLength(0);
       expect(document.querySelector('[role="menu"]')!.textContent).toContain("Sort");
-      expect(document.querySelector('[role="menu"]')!.textContent).toContain("Sorted by priority, then shoot date");
+      expect(document.querySelector('[role="menu"]')!.textContent).toContain("Sorted by priority, then shoot date, then street");
       expect(document.querySelector('[role="menu"]')!.textContent).not.toContain("Board order");
     });
 
@@ -234,7 +234,7 @@ describe("Dashboard Kanban sort control", () => {
       expect(displayTrigger()).not.toBeNull();
       expect(displayTrigger()!.disabled).toBe(false);
       await openDisplay();
-      expect(document.querySelector('[role="menu"]')!.textContent).toContain("Sorted by priority, then shoot date");
+      expect(document.querySelector('[role="menu"]')!.textContent).toContain("Sorted by priority, then shoot date, then street");
       await closeDisplay();
       const tabs = [...document.querySelectorAll<HTMLElement>('[aria-label="Dashboard view"] [role="tab"]')];
       await act(async () => { tabs.find((tab) => tab.textContent === "Table")!.click(); await Promise.resolve(); await Promise.resolve(); });

@@ -39,7 +39,7 @@ export function BoardDisplayContent({ priorityVisible }: { priorityVisible: bool
     <DropdownMenuGroup>
       <DropdownMenuLabel>Sort</DropdownMenuLabel>
       <p className="m-0 px-[var(--space-2)] pb-[var(--space-2)] text-[length:var(--text-xs)] text-foreground-secondary">
-        {priorityVisible ? "Sorted by priority, then shoot date" : "Sorted by shoot date"}
+        {priorityVisible ? "Sorted by priority, then shoot date, then street" : "Sorted by shoot date, then street"}
       </p>
     </DropdownMenuGroup>
   );

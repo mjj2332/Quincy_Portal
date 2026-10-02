@@ -131,7 +131,7 @@ describe("Display menu content and Table preferences (#431)", () => {
   it("explains a shoot-date-only sort for a viewer without priority, since priority is not in an External Editor's order (#470)", async () => {
     await render(<Bar principalId="u2" role="external_editor" view="board" />);
     await openDisplay();
-    expect(displayMenu()?.textContent).toContain("Sorted by shoot date");
+    expect(displayMenu()?.textContent).toContain("Sorted by shoot date, then street");
     expect(displayMenu()?.textContent).not.toContain("priority");
   });
 
@@ -139,7 +139,7 @@ describe("Display menu content and Table preferences (#431)", () => {
     await render(<Bar principalId="u1" view="board" />);
     await openDisplay();
     expect(sortRadioLabels()).toEqual([]);
-    expect(displayMenu()?.textContent).toContain("Sorted by priority, then shoot date");
+    expect(displayMenu()?.textContent).toContain("Sorted by priority, then shoot date, then street");
     expect(displayMenu()?.textContent).not.toContain("Board order");
     expect(groupByRadios()).toHaveLength(0);
     await render(<DashboardViewBar renderedView="none" canViewProductionCalendar disabled={false} onSelectView={() => undefined} principalId="u1" searchFocusRequest={null} onSearchFocusHandled={() => undefined} />);

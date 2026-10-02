@@ -1687,6 +1687,17 @@ describe("KanbanCard2 — ⋯ and right-click menus (#432)", () => {
     expect(isMenuItemDisabled(moveToTrigger()!)).toBe(true);
   });
 
+  it("gives both Move to sub-triggers the 44px touch-row classes the Stage radios carry", async () => {
+    await renderBoard({ projects: column(), role: "admin", canMoveStages: true });
+    const touchClasses = ["max-[641px]:min-h-11", "pointer-coarse:min-h-11"];
+    await openCardMenu(host, "mid");
+    for (const cls of touchClasses) expect(moveToTrigger()!.classList.contains(cls), `⋯ Move to lacks ${cls}`).toBe(true);
+    await closeMenus();
+    await openContextMenu(wrap("mid")!);
+    for (const cls of touchClasses) expect(moveToTrigger()!.classList.contains(cls), `right-click Move to lacks ${cls}`).toBe(true);
+    await closeMenus();
+  });
+
   // #306: a priority save locks only the saving card. Another card's pending write must not lock a
   // card's Move to, and its own must - from the ⋯ menu and from the right-click menu alike.
   describe("Move to under a pending priority write (#306)", () => {
