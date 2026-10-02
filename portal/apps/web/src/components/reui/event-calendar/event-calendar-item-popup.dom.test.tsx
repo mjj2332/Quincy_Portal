@@ -52,7 +52,7 @@ afterEach(() => {
 async function mount(props: Record<string, unknown> = {}, events: CalendarEvent[] = [shoot()], view = "week") {
   await act(async () => {
     root.render(
-      <EventCalendar defaultEvents={events} defaultView={view as "week"} defaultDate={MONDAY_NOON} timeZone={TZ} {...props}>
+      <EventCalendar defaultEvents={events} view={view as "week"} date={MONDAY_NOON} timeZone={TZ} {...props}>
         <EventCalendarContent />
       </EventCalendar>,
     );
@@ -174,6 +174,20 @@ describe("eventPopup (#463)", () => {
   it("exposes no popup on an agenda row when the setting is unset", async () => {
     await mount({}, [shoot()], "agenda");
     expect(chip().hasAttribute("aria-haspopup")).toBe(false);
+  });
+});
+
+describe("selection (#463)", () => {
+  // The Production Calendar opts out of the vendor's selection now (its click opens a menu), so this
+  // vendor rule — the agenda is read-only and never draws a row selected — lost its only surface-level pin.
+  it("a chip selected in a grid view is not drawn selected once the view switches to the read-only agenda", async () => {
+    // The vendor ignores a click within 250ms of a drag ending (a module flag an earlier test here sets).
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
+    await mount();
+    await act(async () => { chip().click(); await Promise.resolve(); });
+    expect(chip().hasAttribute("data-selected"), "the grid click did not select the chip").toBe(true);
+    await mount({}, [shoot()], "agenda");
+    expect(chip().hasAttribute("data-selected"), "an agenda row carries data-selected").toBe(false);
   });
 });
 
