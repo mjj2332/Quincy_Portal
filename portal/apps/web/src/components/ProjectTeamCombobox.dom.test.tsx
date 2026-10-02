@@ -142,6 +142,19 @@ function chipTestIds(container: HTMLElement) {
 }
 
 describe("ProjectTeamCombobox — step 0 spike", () => {
+  it("#456: the popup width is set by w-[max(anchor,300px)], not by a min-w the vendor chips variant overrides", async () => {
+    apiGetMock.mockResolvedValue({ photographers: [photographer], editors: [editor] });
+    const host = await mount([]);
+    await openPicker(host);
+    const popup = document.querySelector('[role="listbox"]')!.closest("[data-chips]") as HTMLElement | null;
+    expect(popup).not.toBeNull();
+    expect(popup!.getAttribute("data-chips")).toBe("true");
+    const tokens = popup!.className.split(/\s+/);
+    // Pins the twMerge result only; whether the pixels follow is the browser pass's job (docs/lessons.md, #456).
+    expect(tokens).toContain("w-[max(var(--anchor-width),300px)]");
+    expect(tokens).not.toContain("w-(--anchor-width)");
+  });
+
   it("opens by typing, selects an option (PUT, popup stays open), and removes a chip (DELETE)", async () => {
     const host = await mount();
     const input = chipsInput(host);

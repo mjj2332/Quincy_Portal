@@ -476,15 +476,18 @@ export function ProjectTeamCombobox({ projectId, members, canEdit, archived = fa
           })}
         </ComboboxValue>
         <TeamMoreToggle hiddenCount={hiddenCount} expanded={effectiveExpanded} onToggle={() => setExpanded(!effectiveExpanded)} />
-        {/* `flex-none w-[6ch]`, not the vendor's `min-w-16 flex-1`: the input is the "Add…" affordance,
+        {/* `flex-none w-[12ch]`, not the vendor's `min-w-16 flex-1`: the input is the "Add…" affordance,
          *  and a flexing input is what claimed the rest of the line as white space. No focus growth:
          *  this box is the popup's anchor, so a width change on focus would jump the open list. */}
-        <ComboboxChipsInput ref={inputRef} aria-label="Add team member" placeholder="Add…" className="flex-none min-w-0 w-[6ch]" disabled={candidatesQuery.isError} aria-invalid={candidatesQuery.isError ? true : undefined} />
+        <ComboboxChipsInput ref={inputRef} aria-label="Add team member" placeholder="Add…" className="flex-none min-w-0 w-[12ch]" disabled={candidatesQuery.isError} aria-invalid={candidatesQuery.isError ? true : undefined} />
       </ComboboxChips>
       {/* #213 follow-up: the chips box is now content-sized, so the list no longer copies its width —
        *  a one-member box would give an unusably narrow list. Prototype 2a's list is 300px; it
-       *  still never runs narrower than its anchor or wider than the viewport. */}
-      <ComboboxContent ref={contentRef} anchor={anchor} className="min-w-[max(var(--anchor-width),300px)] max-w-[calc(100vw-2*var(--space-4))]">
+       *  still never runs narrower than its anchor or wider than the viewport.
+       *  `w-`, not `min-w-` (#456): the vendor's `data-[chips=true]:min-w-(--anchor-width)` variant wins a
+       *  `min-w-` on specificity, pinning the popup to the content-sized anchor. Overriding `w-` makes
+       *  twMerge drop the vendor `w-(--anchor-width)`, and `max-w-` still caps it on small screens. */}
+      <ComboboxContent ref={contentRef} anchor={anchor} className="w-[max(var(--anchor-width),300px)] max-w-[calc(100vw-2*var(--space-4))]">
         <ComboboxEmpty>No eligible people match.</ComboboxEmpty>
         <ComboboxList aria-label="Team candidates">
           {(group: (typeof groups)[number]) => <ComboboxGroup key={group.value} items={group.items}>

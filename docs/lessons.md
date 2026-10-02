@@ -4967,3 +4967,12 @@ remove the legacy readers) still applies.
   them. `SubtaskAssigneePicker` closes and resets the draft to baseline in an effect on `readOnly`, and sends no write.
 - **The post-409 focus fallback only fires when focus was lost.** `body`, `:disabled`, disconnected, or an ancestor containing the rail
   (the sheet's focus manager); a connected, enabled control outside the rail (the comment editor) the user moved to keeps focus.
+
+## Team picker list clipped by the vendor chips `min-w` variant (#456)
+
+- **Override the plain property, not the variant.** `reui/combobox.tsx` floors the popup with `data-[chips=true]:min-w-(--anchor-width)`.
+  twMerge keeps it next to a consumer `min-w-[...]` (different variant), and it wins on specificity (0,2,0 vs 0,1,0), so the popup
+  stayed as narrow as its content-sized chips anchor. Override `w-` instead: twMerge drops the vendor `w-(--anchor-width)`, and
+  `max-w-` still caps it. Matching the variant (`data-[chips=true]:min-w-...`) would tie the fix to a vendor attribute, and a
+  `min-w` floor beats `max-w` on small screens. The DOM test pins the merged class string only; the browser pass proves pixels.
+- The chips input is `w-[12ch]` (was 6ch, too narrow for "Add…"); it does not grow on focus because the box is the popup's anchor.
