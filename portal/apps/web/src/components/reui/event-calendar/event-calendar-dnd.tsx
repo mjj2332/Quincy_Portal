@@ -208,6 +208,10 @@ interface Surface {
 
 /** Module flag so chip onClick can ignore the click that ends a drag. */
 let lastGestureEndedAt = 0
+/** QUINCY ADDITION (#463): test seam — clears the module flag so a test is not at the mercy of an earlier test's drag. */
+export function resetGestureEndedForTests(): void {
+  lastGestureEndedAt = 0
+}
 function wasRecentDrag(): boolean {
   return performance.now() - lastGestureEndedAt < 250
 }

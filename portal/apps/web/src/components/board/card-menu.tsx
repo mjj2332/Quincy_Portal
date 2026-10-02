@@ -3,6 +3,7 @@ import { Ellipsis } from "lucide-react";
 import { Button } from "../reui/button";
 import { ContextMenuContent, ContextMenuItem } from "../reui/context-menu";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../reui/dropdown-menu";
+import { MENU_SURFACE_CLASS } from "../quincy/menu-surface";
 import type { CardAction, CardActionId } from "./card-actions";
 import type { MoveToDialogProps } from "./move-to-control";
 
@@ -35,12 +36,8 @@ export type CardMenuBinding = {
   triggerRef: (element: HTMLButtonElement | null) => void;
 };
 
-/**
- * One surface for both menus. The ReUI dropdown's own defaults are already the Quincy surface
- * (square, hairline border, `--shadow-md`); the context menu's defaults are the rounded ring one, so
- * this string is what makes the two read as the same menu. Applied to both so neither drifts.
- */
-const CARD_MENU_CONTENT_CLASS = "w-48 rounded-none border border-border shadow-[var(--shadow-md)] ring-0";
+/** One surface for both menus (and, since #463, the Calendar's and Timeline's item menu): `quincy/menu-surface.ts`. */
+const CARD_MENU_CONTENT_CLASS = MENU_SURFACE_CLASS;
 
 /**
  * The ⋯ trigger and its menu. A SIBLING of the card's link (the drag handle), raised above its

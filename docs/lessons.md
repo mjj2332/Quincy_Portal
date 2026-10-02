@@ -5060,6 +5060,43 @@ remove the legacy readers) still applies.
   not to loosen the "never anything an admin lacks" assertion.
 - **A utility can't beat the unlayered `:focus-visible` rule in `base.css` without `!`.** The Timeline row link's `focus-visible:-outline-offset-2` computed to +2px in a real browser, so the ring stayed clipped by the street cell's `overflow: hidden`; it is `focus-visible:!-outline-offset-2` (the repo's leading-`!` form, as in `SubtaskChecklist`).
 
+
+## Calendar and Timeline item menu (#463)
+
+- **One controlled host, not a context menu.** The vendor chip and bar are `<button>`s the vendor renders, so nothing can wrap
+  or nest in them, and `renderEventMenu` (the Gantt's per-bar ContextMenu) would open on Base UI's 500ms touch long-press over
+  the 250ms touch drag, the trap #432 hit on Board cards. `components/scheduling-item-menu.tsx` is one open-state host over
+  `reui/dropdown-menu` with no Trigger, shared by `ProductionEventCalendar` and `ProductionGantt`; the Gantt import-boundary
+  guard now fails a `renderEventMenu` prop. Click, Enter and right-click open it; a drag never does.
+- **`anchor` is a QUINCY ADDITION on `DropdownMenuContent`** (a passthrough to the Positioner), because a triggerless menu needs
+  somewhere to sit. A pointer open anchors to a VirtualElement re-read live from the item (follows scroll); a keyboard open
+  anchors to the item. A virtual anchor is about 1px wide and the popup is `w-(--anchor-width)`, so the menu sets an explicit width.
+- **A programmatic open focuses the popup, not the first row.** Enter (a native click) must focus the first enabled row itself.
+- **A picked row is a hand-off.** The row only records the pick; once the menu has finished closing the host focuses the item and
+  THEN runs the action, so the app router (Open project) and the dialogs capture the item as their opener and return focus to it.
+  `finalFocus` is `false` while a hand-off is pending, and that flag is cleared on the NEXT open, never in `onOpenChangeComplete`
+  (#432: the `finalFocus` decision runs as the popup unmounts, after the completion callback). Safari does not focus a clicked
+  button, so Escape and outside press resolve the item live rather than trusting Base UI's default return.
+- **Restore if lost.** A saved start re-keys a Timeline bar (a new element), so after a follow-on dialog closes the host re-checks
+  focus (`body`, disconnected or `:disabled` count as lost, #450/#452) and focuses the re-resolved item.
+- **Do not tag Timeline bars with `data-event-id`.** The controller's `"event"` focus fires a bare `.focus()` after every pointer
+  drop; tagging would start yanking the Timeline's scroll after drags. The Gantt resolves bars by the existing
+  `[data-gantt-resource=...] [data-slot="gantt-bar"]` query.
+- **Touch.** A tap opens the menu; there is no long-press menu (long-press is the drag, and iOS fires no `contextmenu`). A
+  touch-origin `contextmenu` is swallowed as `board/card.tsx` does. A 4px pointer-travel guard (`ProjectCalendarAnchor`'s
+  threshold) covers a read-only Timeline bar, which has no gesture to swallow its click. The click guard needs `detail > 0`.
+- **Keyboard.** Enter opens; Space keeps keyboard Adjust (ADR 0009); the Enter that commits Adjust fires no `onEventClick` on either
+  tree; on an item nothing can adjust, Space falls through to a native click and opens the menu. The vendors gained
+  `onEventContextMenu` and `eventPopup` (a bar or chip becomes `aria-haspopup="menu"` + `aria-expanded`, losing `aria-pressed`).
+- **The Calendar opts out of vendor selection (`preventDefault`); the Gantt cannot.** `gantt-bar.tsx` calls `selectEvent` before
+  the callback, so a clicked Timeline bar keeps its selected ring while its menu is open.
+- **The selection strip is gone.** Its context line and overlap caution are the menu's label; its gates became
+  `lib/scheduling-item-actions.ts` (not live: Deadline and checklist rows hide because the effective permissions narrow, Open
+  project disables). `checklistScheduleEditorButtonLabel` and the `calendar-move:` focus key are deleted. Cmd/Ctrl-click Open
+  project on the Calendar is accepted lost. The Timeline's Edit schedule… opens the sheet at every width (D7:
+  `scheduleEditorPresentation` now says how INLINE sessions draw).
+- **Test trap:** the vendor calendar ignores a click within 250ms of a drag end (a module flag an earlier test in the same file may
+  set); wait it out before a grid click.
 ## Filter tree: OR, groups, negation across Projects, Calendar and Timeline (#461, PR A)
 
 - **One compiler, an executable spec, and SQL that is a function of the tree's shape.** `evaluateDashboardFilterTree` (shared) is the

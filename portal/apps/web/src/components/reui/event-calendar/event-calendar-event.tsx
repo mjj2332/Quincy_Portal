@@ -63,11 +63,23 @@
  * 5. 2026-09-28 — `isSelected` is also false in the agenda view, not only for previews. The
  *    agenda is read-only (a click never selects there, `aria-pressed` is already undefined), but a
  *    chip selected in a grid view kept `data-selected` on its agenda row after a view switch.
+ * 6. 2026-10-02, #463 — ADDED, additive (both unset: nothing changes). An `onContextMenu` on the
+ *    chip that reports through `settings.onEventContextMenu`, except for a preview, a live drag (a
+ *    keyboard Adjust session is one) or right after a drag ended (`wasRecentDrag()`). And, when
+ *    `viewConfig.eventPopup` is set, an interactive chip carries `aria-haspopup="menu"` and
+ *    `aria-expanded={eventPopup.isOpen(occurrence)}` INSTEAD of `aria-pressed`: its click opens the
+ *    consumer's menu, so announcing it as a pressed toggle would be wrong. See `event-calendar.tsx`
+ *    entry 5; pinned by `event-calendar-item-popup.dom.test.tsx`.
+ *    QUINCY ADDITION (#463 fix round): a touch-origin contextmenu is `preventDefault`ed before the
+ *    drag guard returns (a long-press starts the drag; its native menu must not open over it).
+ *    Also `data-event-id` on the chip button (the consumer-facing twin of `data-ec-event-id`), so a
+ *    consumer can find an Agenda row, which has no consumer-rendered content, after a re-key.
  */
 import {
   createContext,
   useContext,
   useMemo,
+  useRef,
   type CSSProperties,
   type ReactNode,
 } from "react"
@@ -269,6 +281,8 @@ function EventCalendarEvent<TData = unknown>({
   const inTimeGrid =
     view === "week" || view === "day" || view === "days" || view === "resource"
   const interactive = view !== "agenda" && !preview
+  // QUINCY ADDITION (#463): the last pointer type pressed on this chip, to recognise a touch long-press's contextmenu.
+  const lastPointerType = useRef("")
   // QUINCY (#240): the same gates the pointer path uses; drives `aria-keyshortcuts` and Space
   const adjustable =
     interactive &&
@@ -549,12 +563,19 @@ function EventCalendarEvent<TData = unknown>({
       }`,
     // A background tint alone conveys selection, so the chip is a real toggle
     // wherever it is interactive (agenda rows never select, previews are inert).
-    "aria-pressed": interactive ? isSelected : undefined,
+    // QUINCY (#463): with `viewConfig.eventPopup` the chip opens a consumer menu instead, so it is a
+    // menu button (`aria-haspopup` + `aria-expanded`), not a pressed toggle.
+    "aria-pressed": interactive && !viewConfig.eventPopup ? isSelected : undefined,
+    "aria-haspopup": interactive && viewConfig.eventPopup ? ("menu" as const) : undefined,
+    "aria-expanded": interactive && viewConfig.eventPopup ? viewConfig.eventPopup.isOpen(occurrence) : undefined,
     "aria-hidden": preview || undefined,
     tabIndex: preview ? -1 : undefined,
     // QUINCY (#240): how the Adjust session finds this event's chip again after a commit moves
     // it to another cell or column (a different element). Vendored-tree-only, per Detector 9.
     "data-ec-event-id": String(event.id),
+    // QUINCY ADDITION (#463 fix round): the consumer-facing twin of the tag above. An Agenda row renders no
+    // consumer content (`renderEvent` is for grid chips), so this is how the consumer finds a replaced row.
+    "data-event-id": String(event.id),
     "data-adjusting": isAdjusting || undefined,
     "aria-keyshortcuts": adjustable ? "Space" : undefined,
     onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => {
@@ -573,6 +594,7 @@ function EventCalendarEvent<TData = unknown>({
       e.stopPropagation()
       // suppress the trailing slot-create click when this press yields no drag
       markChipPress()
+      lastPointerType.current = e.pointerType
       if (interactive) gestures.beginMove(e, segment)
     },
     onClick: (e: React.MouseEvent) => {
@@ -587,6 +609,14 @@ function EventCalendarEvent<TData = unknown>({
     onDoubleClick: (e: React.MouseEvent) => {
       e.stopPropagation()
       settings.onEventDoubleClick?.(occurrence, e)
+    },
+    // QUINCY ADDITION (#463): never during a drag, and not right after one ended.
+    onContextMenu: (e: React.MouseEvent) => {
+      // A touch long-press is the drag, never a menu: swallow its native menu BEFORE the drag guard
+      // returns, or it opens over the drag the same long-press just started.
+      if (!preview && ((e.nativeEvent as { pointerType?: string }).pointerType === "touch" || lastPointerType.current === "touch")) e.preventDefault()
+      if (preview || wasRecentDrag() || instance.getState().drag) return
+      settings.onEventContextMenu?.(occurrence, e)
     },
     className: cn(
       "group/ec-event text-foreground relative flex w-full min-w-0 cursor-pointer touch-none items-center overflow-hidden text-start select-none",

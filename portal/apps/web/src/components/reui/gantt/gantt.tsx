@@ -118,6 +118,12 @@
  * existing `canCreateTask({ parentId })`) and `GanttViewConfig.createTaskMaxLength`; `canCreateTask`
  * and `onCreateGroupTask` joined `SETTINGS_KEYS` so a change re-renders the view. Rendered by
  * `gantt-view.tsx`; covered by `gantt-create-task.dom.test.tsx`. See ADR 0009's #344 addendum.
+ *
+ * 2026-10-02, #463 — ADDED, additive (both unset: nothing changes): the `onEventContextMenu`
+ * callback (`GanttCallbacks`) and the `eventPopup` view-config key. Both are LISTED in the runtime
+ * allow-lists (`SETTINGS_KEYS`-style `OPTION_KEYS`, `VIEW_CONFIG_KEYS`) — a key declared on the
+ * interface and missing there is silently dropped. The bar side is `gantt-bar.tsx`'s #463 entry;
+ * covered by `gantt-item-popup.dom.test.tsx`.
  */
 
 import {
@@ -227,6 +233,16 @@ interface GanttCallbacks<TData = unknown> {
     e: React.MouseEvent
   ) => void
   onEventDoubleClick?: (
+    occurrence: GanttOccurrence<TData>,
+    e: React.MouseEvent
+  ) => void
+  /**
+   * QUINCY ADDITION (#463): a right-click (the browser's `contextmenu`) on a bar. The vendor never
+   * prevents the native menu itself: a consumer that opens its own menu calls `e.preventDefault()`.
+   * Not fired during a live drag or Adjust session, and not when `renderEventMenu` is set (that
+   * ContextMenu owns the right-click). Unset, nothing changes.
+   */
+  onEventContextMenu?: (
     occurrence: GanttOccurrence<TData>,
     e: React.MouseEvent
   ) => void
@@ -2485,6 +2501,13 @@ interface GanttViewConfig<TData = unknown> {
    */
   renderEventMenu?: (props: GanttRenderEventProps<TData>) => ReactNode
   /**
+   * QUINCY ADDITION (#463): the consumer opens a menu from a bar. When set, the bar is exposed as a
+   * menu button (`aria-haspopup="menu"`, `aria-expanded` from `isOpen`) instead of a pressed toggle
+   * (`aria-pressed` is dropped), except while keyboard Adjust owns it (`role="application"`).
+   * Unset, the bar keeps `aria-pressed`.
+   */
+  eventPopup?: { isOpen: (occurrence: GanttOccurrence<TData>) => boolean }
+  /**
    * Tree-node label. Receives the resource with its tree position; return
    * any rich content (icons, badges). Default is the plain title.
    */
@@ -2619,6 +2642,8 @@ const VIEW_CONFIG_KEYS: Array<keyof GanttViewConfig> = [
   "classNames",
   "renderEvent",
   "renderEventMenu",
+  // QUINCY ADDITION (#463): runtime allow-list, as the rest of this list.
+  "eventPopup",
   "renderResourceLabel",
   "renderResourceMenu",
   "renderNoResources",
@@ -2672,6 +2697,8 @@ const OPTION_KEYS: Array<keyof UseGanttStateOptions> = [
   "getOccurrences",
   "onEventClick",
   "onEventDoubleClick",
+  // QUINCY ADDITION (#463): a callback is only forwarded when listed here.
+  "onEventContextMenu",
   "onEventUpdate",
   "canDropEvent",
   "dropWarning",

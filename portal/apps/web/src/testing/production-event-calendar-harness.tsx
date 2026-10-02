@@ -185,10 +185,31 @@ export async function clickFocusKey(key: string): Promise<void> {
   await act(async () => { element.click(); await Promise.resolve(); await Promise.resolve(); });
 }
 
-/** Selects an event (the vendor's `onEventClick`), then clicks its "Reschedule…" action. */
+/**
+ * Opens an event's item menu (a chip click through the fake vendor) and picks its Deadline action
+ * ("Reschedule…") or checklist action ("Edit schedule…"), then lets the menu finish closing: the
+ * action runs from the menu's close, after the item has been focused (#463).
+ */
 export async function openReschedule(eventId: string): Promise<void> {
-  await act(async () => { eventCalendarFake.click(eventId); await Promise.resolve(); });
-  await clickFocusKey(`calendar-move:${eventId}`);
+  await act(async () => { eventCalendarFake.click(eventId); await Promise.resolve(); await Promise.resolve(); });
+  await flush(30);
+  const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((node) => node.textContent === "Reschedule…" || node.textContent === "Edit schedule…");
+  if (!item) throw new Error(`no Reschedule… / Edit schedule… row for ${eventId}`);
+  await act(async () => { item.click(); await Promise.resolve(); await Promise.resolve(); });
+  await flush(60);
+}
+
+/** Opens an event's item menu and returns its "Reschedule…" / "Edit schedule…" row (null when absent), then leaves the menu open. */
+export async function openItemMenuRow(eventId: string): Promise<HTMLElement | null> {
+  await act(async () => { eventCalendarFake.click(eventId); await Promise.resolve(); await Promise.resolve(); });
+  await flush(30);
+  return [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((node) => node.textContent === "Reschedule…" || node.textContent === "Edit schedule…") ?? null;
+}
+
+/** Closes an open item menu with Escape and lets it finish unmounting. */
+export async function closeItemMenu(): Promise<void> {
+  await act(async () => { document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
+  await flush(30);
 }
 
 export async function setValue(element: HTMLInputElement | HTMLSelectElement | null, value: string): Promise<void> {

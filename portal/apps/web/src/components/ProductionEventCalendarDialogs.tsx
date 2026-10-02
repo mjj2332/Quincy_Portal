@@ -287,9 +287,11 @@ export type ProductionEventCalendarDialogsProps = {
   commands: ProductionEventCalendarDialogCommands;
   deadlineConfirm: ProductionEventCalendarDeadlineConfirm | null;
   /**
-   * How the controller's schedule editor is presented. `"sheet"` (the default, the Calendar's) renders the right-hand
-   * sheet; `"inline"` (#372, the Gantt) renders nothing here because the surface draws the Checklist's own picker from
-   * `commands.scheduleEditor` itself. Move, fold and Deadline dialogs are unaffected.
+   * How the controller's INLINE schedule sessions are presented. `"sheet"` (the default, the Calendar's) renders every
+   * session as the right-hand sheet; `"inline"` (#372, the Gantt) renders an inline session (`inline: true`, the Due
+   * cell's) as nothing here because the surface draws the Checklist's own picker from `commands.scheduleEditor` itself.
+   * #463: a session that is NOT inline (the Timeline menu's "Edit schedule…") is the sheet under either presentation, at
+   * every width. Move, fold and Deadline dialogs are unaffected.
    */
   scheduleEditorPresentation?: "sheet" | "inline";
   /** #423: a Project's default Subtask range, for the sheet's "Project default" shortcut. */
@@ -342,7 +344,7 @@ export function ProductionEventCalendarDialogs({ commands, deadlineConfirm, sche
           onCancel={commands.cancelChecklistFold}
         />
       )}
-      {editor && scheduleEditorPresentation === "sheet" && (
+      {editor && (scheduleEditorPresentation === "sheet" || !editor.inline) && (
         // The old calendar's composite key: a failed save re-seeds the SAME open session with a new
         // `initialSchedule`, which must remount the draft (as the retired `ProductionCalendar.tsx` did).
         <ProductionEventCalendarScheduleEditorSheet

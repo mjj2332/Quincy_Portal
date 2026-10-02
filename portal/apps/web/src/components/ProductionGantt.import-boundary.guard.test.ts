@@ -42,7 +42,7 @@ function stripComments(text: string): string {
     .replace(/^[ \t]*\/\/.*$/gm, "");
 }
 
-const FORBIDDEN_GANTT_PROPS = ["canDropEvent", "enforceCanDrop", "onEventsChange"] as const;
+const FORBIDDEN_GANTT_PROPS = ["canDropEvent", "enforceCanDrop", "onEventsChange", "renderEventMenu"] as const;
 
 /** Which forbidden `<Gantt>` settings the source's code (not its comments) mentions, sorted. */
 export function findForbiddenGanttProps(source: string): string[] {
@@ -55,6 +55,8 @@ describe("guard: ProductionGantt.tsx keeps the #221 write boundary", () => {
     expect(findForbiddenGanttProps("<Gantt onEventsChange={setEvents} />")).toEqual(["onEventsChange"]);
     expect(findForbiddenGanttProps("<Gantt canDropEvent={(u) => ok(u)} />")).toEqual(["canDropEvent"]);
     expect(findForbiddenGanttProps("<Gantt enforceCanDrop />")).toEqual(["enforceCanDrop"]);
+    // #463: the item menu is the shared controlled host; the vendor's per-bar ContextMenu would open on a touch long-press over the drag.
+    expect(findForbiddenGanttProps("<Gantt renderEventMenu={() => <Menu />} />")).toEqual(["renderEventMenu"]);
     expect(findForbiddenGanttProps("<Gantt enforceCanDrop={true} canDropEvent={f} onEventsChange={g} />")).toEqual(["canDropEvent", "enforceCanDrop", "onEventsChange"]);
   });
 
@@ -78,7 +80,7 @@ describe("guard: ProductionGantt.tsx keeps the #221 write boundary", () => {
     expect(stripComments(productionGanttSource())).toMatch(/\bonEventUpdate=\{/);
   });
 
-  it("ProductionGantt.tsx never passes onEventsChange, canDropEvent or enforceCanDrop", () => {
+  it("ProductionGantt.tsx never passes onEventsChange, canDropEvent, enforceCanDrop or renderEventMenu", () => {
     const offenders = findForbiddenGanttProps(productionGanttSource());
     expect(
       offenders,
@@ -87,6 +89,7 @@ describe("guard: ProductionGantt.tsx keeps the #221 write boundary", () => {
         "  - onEventsChange would let the vendor commit a range the server may refuse; every write is",
         "    \"deferred\" to the scheduling controller instead.",
         "  - canDropEvent / enforceCanDrop would block drops; production only warns (dropWarning).",
+        "  - renderEventMenu mounts a per-bar ContextMenu whose touch long-press opens over the drag; the item menu is the shared host (#463).",
         ...offenders.map((name) => `  ${name}`),
       ].join("\n"),
     ).toEqual([]);

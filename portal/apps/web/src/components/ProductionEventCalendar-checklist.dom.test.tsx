@@ -51,6 +51,8 @@ import {
   setValue,
   stubCalendarFetch,
   type Harness,
+  closeItemMenu,
+  openItemMenuRow,
 } from "../testing/production-event-calendar-harness";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -337,8 +339,8 @@ describe("ProductionEventCalendar checklist writes", () => {
     const event = oneDayEvent(dated("2026-08-12"));
     const fetch = await mount([event], { subview: "agenda" });
     expect(eventCalendarFake.event(ID)?.draggable).toBe(false);
-    await act(async () => { eventCalendarFake.click(ID); await Promise.resolve(); });
-    expect(h.host.querySelector(`[data-focus-key="calendar-move:${ID}"]`)).not.toBeNull();
+    expect(await openItemMenuRow(ID)).not.toBeNull();
+    await closeItemMenu();
     expect(await proposeUpdate(ID, { start: day("2026-08-13"), allDay: true })).toBe(false);
     expect(fetch.patches()).toHaveLength(0);
   });

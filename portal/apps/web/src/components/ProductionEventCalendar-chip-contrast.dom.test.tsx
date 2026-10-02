@@ -448,11 +448,11 @@ describe("Production chip contrast through the real vendored calendar", () => {
     }
   });
 
-  it("a chip selected in week is not drawn selected once the view switches to the read-only agenda", async () => {
+  it("a chip click opens the item menu instead of selecting the chip, in week and in the agenda (#463)", async () => {
     await renderView("week");
     const [weekChip] = chipsFor("project-deadline:project", "week");
     await act(async () => { weekChip!.click(); await Promise.resolve(); });
-    expect(chipsFor("project-deadline:project", "week")[0]!.hasAttribute("data-selected"), "the week click did not select the chip").toBe(true);
+    expect(chipsFor("project-deadline:project", "week")[0]!.hasAttribute("data-selected"), "the week click selected the chip").toBe(false);
     await renderView("agenda");
     const rows = chipsFor("project-deadline:project", "agenda");
     expect(rows.length).toBeGreaterThan(0);

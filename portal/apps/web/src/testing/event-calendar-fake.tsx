@@ -22,9 +22,11 @@
  *   `onEventUpdate` with the CURRENT rendered event as `update.event` (the scheduling module reads
  *   the original instants from it), records and returns the result (`false` = the vendor would snap
  *   back; `"deferred"` = the consumer owns it).
- * - `eventCalendarFake.click(id)` calls `onEventClick` with that event's occurrence.
+ * - `eventCalendarFake.click(id)` clicks that event's rendered chip button, so `onEventClick` receives a real
+ *   React click event (#463: the surface calls `e.preventDefault()` on it and anchors its menu to the chip).
+ *   The chip also reports a right-click through `onEventContextMenu` and carries the `eventPopup` ARIA state.
  */
-import type { ReactNode } from "react";
+import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 
 type FakeEvent = { id: string; title: string; start: Date; end: Date; allDay?: boolean; data?: unknown; draggable?: boolean; resizable?: boolean; resizableEdges?: { start?: boolean; end?: boolean } };
 type FakeOccurrence = { key: string; event: FakeEvent };
@@ -37,7 +39,9 @@ type FakeCalendarProps = {
   renderEvent?: (props: { occurrence: FakeOccurrence; segment: unknown; view: string; isDragging: boolean; isSelected: boolean }) => ReactNode;
   eventClassName?: (occurrence: FakeOccurrence) => string | undefined;
   onEventUpdate?: (update: unknown) => unknown;
-  onEventClick?: (occurrence: FakeOccurrence, e: unknown) => void;
+  onEventClick?: (occurrence: FakeOccurrence, e: ReactMouseEvent) => void;
+  onEventContextMenu?: (occurrence: FakeOccurrence, e: ReactMouseEvent) => void;
+  eventPopup?: { isOpen: (occurrence: FakeOccurrence) => boolean };
   [key: string]: unknown;
 };
 
@@ -92,7 +96,9 @@ export const eventCalendarFake: FakeState = {
   click(id) {
     const event = this.event(id);
     if (!event) throw new Error(`fake event calendar: no rendered event ${id}`);
-    this.lastProps?.onEventClick?.({ key: event.id, event }, {});
+    const chip = [...document.querySelectorAll<HTMLElement>("[data-event-id]")].find((element) => element.getAttribute("data-event-id") === id)?.closest("button");
+    if (!chip) throw new Error(`fake event calendar: no rendered chip for ${id}`);
+    chip.click();
   },
 };
 
@@ -115,7 +121,14 @@ function FakeEventCalendar(props: FakeCalendarProps) {
           const occurrence = { key: event.id, event };
           return (
             <li key={event.id} data-testid="event-calendar-fake-event" data-event-start={event.start.toISOString()} data-draggable={String(event.draggable ?? true)} className={props.eventClassName?.(occurrence)}>
-              <button type="button" data-testid="event-calendar-fake-chip" onClick={(e) => props.onEventClick?.(occurrence, e)}>
+              <button
+                type="button"
+                data-testid="event-calendar-fake-chip"
+                aria-haspopup={props.eventPopup ? "menu" : undefined}
+                aria-expanded={props.eventPopup ? props.eventPopup.isOpen(occurrence) : undefined}
+                onClick={(e) => props.onEventClick?.(occurrence, e)}
+                onContextMenu={(e) => props.onEventContextMenu?.(occurrence, e)}
+              >
                 {props.renderEvent ? props.renderEvent({ occurrence, segment: {}, view, isDragging: false, isSelected: false }) : event.title}
               </button>
             </li>
