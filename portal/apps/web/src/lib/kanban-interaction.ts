@@ -241,7 +241,7 @@ export function reconcileAuthoritativeResponse(
     ? { ...project, stageKey: responseStage, boardRevision: response.project.boardRevision }
     : { ...project });
   // The column order is derived from the data (`sortKanbanProjects`) at render; the response's deprecated
-  // `orderedVisibleProjectIds` is never read (#475).
+  // The server's deprecated order maps are never read (#475).
   const model: BoardModel = {
     ...baseline,
     projects: nextProjects,

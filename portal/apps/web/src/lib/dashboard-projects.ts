@@ -10,8 +10,8 @@ export type DashboardProjectSearchCounts = { query: string; matching: number; to
 
 type ProjectsResponse = {
   projects: ProjectSummary[];
-  /** `orderedProjectIdsByStage` is deprecated (#475, removed in #476) and never read: the order is derived from the data. */
-  board?: { contractEnabled: boolean; orderedProjectIdsByStage?: Record<string, string[]> };
+  /** Only the flag is read; the server's deprecated order maps are ignored (#475): the order is derived from the data. */
+  board?: { contractEnabled: boolean };
   search?: DashboardProjectSearchCounts;
 };
 export type DashboardIdentity = { principalId: string; role: Role; authorizationEpoch: number };
@@ -111,7 +111,7 @@ function dashboardProjectsPath(filter: DashboardProjectsKeyFilter, q: string): s
 /**
  * The internal list response as Dashboard summaries. Only `board.contractEnabled` is read from the envelope
  * (a missing envelope is an old deployed server; an explicit false is the post-migration flag-off state and must
- * hide Board mutation controls). The deprecated `orderedProjectIdsByStage` is never read: the Board order is
+ * hide Board mutation controls). The server's deprecated order maps are never read: the Board order is
  * derived from the data (#470, #475).
  */
 export function mapInternalProjects(response: Pick<ProjectsResponse, "projects" | "board">): ProjectSummary[] {

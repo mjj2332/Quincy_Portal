@@ -148,7 +148,9 @@ describe("mapInternalProjects (#475)", () => {
   });
 
   it("ignores the deprecated map when a stale server still sends it", () => {
-    const mapped = mapInternalProjects({ projects: [project("a")], board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a"] } } });
+    // The type no longer names the key; a stale server still sends it on the wire.
+    const stale = { projects: [project("a")], board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a"] } } };
+    const mapped = mapInternalProjects(stale);
     expect(mapped[0]).not.toHaveProperty("authorizedBoardOrder");
     expect(mapped[0]).not.toHaveProperty("boardRank");
   });
