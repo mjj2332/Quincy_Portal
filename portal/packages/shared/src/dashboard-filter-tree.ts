@@ -286,6 +286,20 @@ export function evaluateDashboardFilterTree(tree: DashboardFilterTree, leaf: (ru
   return result === "dropped" ? true : result;
 }
 
+/**
+ * The tree with every not-applied People rule (no id in `validIds`, Unassigned off) dropped, then every group left
+ * empty: what `evaluateDashboardFilterTree` and the SQL compiler treat the tree as. Its emptiness is "this filter
+ * narrows nothing".
+ */
+export function pruneDashboardFilterTree(tree: DashboardFilterTree, validIds: ReadonlySet<string>): DashboardFilterTree {
+  const node = (input: DashboardFilterNode): DashboardFilterNode | null => {
+    if (input.kind === "leaf") return input.field === "people" && !input.unassigned && !input.ids.some((id) => validIds.has(id)) ? null : input;
+    const children = input.children.map(node).filter((child): child is DashboardFilterNode => child !== null);
+    return children.length === 0 ? null : { ...input, children };
+  };
+  return (node(tree) as DashboardFilterTree | null) ?? emptyDashboardFilterTree();
+}
+
 type Kleene = true | false | "unknown";
 /**
  * The presentation Stages for which the tree is not FALSE when only Stage rules are known (every other rule

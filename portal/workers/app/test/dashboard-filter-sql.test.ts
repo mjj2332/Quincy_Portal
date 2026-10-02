@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { evaluateDashboardFilterTree, parseDashboardFilterTree, type DashboardFilterLeaf, type DashboardFilterTree } from "@quincy/shared";
 import { describe, expect, it } from "vitest";
-import { compileDashboardFilterSql, projectsTableColumns, type DashboardFilterLeafContext } from "../src/lib/dashboard-filter-sql";
+import { assigneeContext, baseProjectColumns, compileDashboardFilterSql, editorsContext, projectsListContext, projectsTableColumns, type DashboardFilterLeafContext } from "../src/lib/dashboard-filter-sql";
 
 /**
  * #461: the compiler follows the shared evaluator spec. A candidate row is a one-row subquery, so every
@@ -104,5 +104,21 @@ describe("compileDashboardFilterSql (#461)", () => {
 
   it("applies nothing for an empty tree", () => {
     expect(compileDashboardFilterSql({ kind: "group", op: "and", children: [] }, { jsonRef: "r.ftree", context, peopleSource: { mode: "universe" } })).toEqual({ sql: "1", values: "[]" });
+  });
+
+  it("keeps the worst-case predicate far inside D1's 100,000-byte statement limit on every surface", () => {
+    // 20 People rules (the rule cap), three deep, in both People sources: the largest text the caps allow.
+    const people = (n: number) => `people=unassigned,${A}`.replace(A, `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`);
+    const raw = `1:or(and(or(${[1, 2, 3, 4, 5, 6].map(people).join(";")});${[8, 9, 10, 11, 12].map(people).join(";")});and(${[14, 15, 16, 17, 18, 19, 20].map(people).join(";")};or(mine;overdue)))`;
+    const worst = tree(raw.replace(/or\(mine;overdue\)/u, "or(mine;overdue)"));
+    const contexts = [
+      projectsListContext("external_editor", "p", "r.now", "r.me"),
+      editorsContext(baseProjectColumns("ap"), "ap.project_id", "r.now", "r.me"),
+      assigneeContext("external_editor", baseProjectColumns("c"), "c.project_id", "c.subtask_id", "r.now", "r.me"),
+    ];
+    for (const ctx of contexts) for (const mode of [{ mode: "universe" }, { mode: "resolved", validIds: new Set<string>() }] as const) {
+      const bytes = new TextEncoder().encode(compileDashboardFilterSql(worst, { jsonRef: "r.ftree", context: ctx, peopleSource: mode }).sql).byteLength;
+      expect(bytes).toBeLessThan(40_000);
+    }
   });
 });
