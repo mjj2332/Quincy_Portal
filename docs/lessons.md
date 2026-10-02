@@ -4984,6 +4984,18 @@ remove the legacy readers) still applies.
 - **`assets.ts` (cover cleared when its asset is deleted) is deliberately unfenced.** Deleting an asset is not a cover edit, and clearing a dangling reference on an archived Project is housekeeping that must not fail.
 - **Web follows #450/#452.** `CollectionTabView` latches on a 409 with the code (checked first in `updateCover`, no toast), refetches detail and activity, and drops the latch when `archivedAt` goes set to unset. `canSetCover` is false while archived, so an archived-on-load Project never shows the control. The status notice appears only while latched. `PhotoGrid.onSetCover` resolves `"archived"`; the grid captures at click time whether focus was inside the tile, and a layout effect keyed on `canSetCover` going false moves focus to the tile only if focus was lost (`<body>`, disabled, disconnected, or an ancestor containing the tile). Never on load.
 - **`POST /projects/:id/dropbox-sync` was removed** (web stopped calling it in 85e15fe1), with its manifest entry and probe line. `/sync-dropbox` is the live route.
+## Team picker drew two focus indicators (#458)
+
+- **A layered `outline-none` cannot beat the unlayered base rule.** `tokens/base.css:25-28` sets `:focus-visible { outline }` outside any
+  layer, so `ComboboxChipsInput`'s `outline-none` lost and the input painted a square outline inside the `ComboboxChips` pill, which
+  also painted its own `focus-within:ring-3`. Two shapes, one focus. The fix: the pill draws the one indicator (token outline, on
+  `has-[input:focus-visible]`, so a focused chip x or "+N" keeps its own outline and the pill stays quiet), and the input
+  uses `focus-visible:!outline-none` (precedent `InputGroupInput`). Vendor divergence 7 in `reui/combobox.tsx`, tagged `QUINCY ADDITION (#458)`.
+- **`reui-skin.guard.test.ts` now fails on a ring WIDTH under any focus variant** (`focus:`, `focus-visible:`, `focus-within:`, `has-[..focus..]`,
+  `group-`/`peer-` forms). A `data-[focused=...]` attribute variant is app state, not focus, and passes. Known latent double indicators
+  (`switch`, `field`, `item`, `scroll-area`, cascader x4) sit on a shrink-only exception list; they are not fixed here.
+- **Header height.** `ProjectTeamCombobox`'s `readOnlyClassName` became `rowClassName` and applies to the editable box too; the header
+  passes `min-h-[44px]`, the Gantt popover passes nothing and stays compact.
 
 ## Project sheet title ran under the close button (#460)
 
