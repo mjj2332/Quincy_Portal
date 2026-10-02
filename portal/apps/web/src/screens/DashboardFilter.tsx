@@ -252,7 +252,7 @@ export function DashboardFilter({ filter, onFilterChange, stageOptions, canFilte
       labels={LABELS}
       ruleMenu={RULE_MENU}
       disabled={disabled}
-      className="[--filter-field-width:9rem] [--filter-operator-width:7.5rem] [--filter-value-width:10.5rem]"
+      className="[--filter-field-width:8.5rem] [--filter-operator-width:10rem] [--filter-value-width:8.5rem]"
       trigger={
         <Button
           type="button"

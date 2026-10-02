@@ -452,11 +452,14 @@ describe("the file scan itself", () => {
     expect(text).toContain('ROW_BAND_CLASS = "flex min-w-0 items-center gap-1.5 @max-[26rem]/track:flex-wrap"');
     expect(text).toContain("@max-[26rem]/track:order-last @max-[26rem]/track:basis-full");
     expect(text).toContain("@max-[26rem]/track:basis-full @max-[26rem]/track:flex-wrap");
-    expect(text).toMatch(/PHONE_LABEL_CELL_CLASS =\s*"@max-\[26rem\]\/track:basis-auto @max-\[26rem\]\/track:shrink-0 @max-\[26rem\]\/track:grow @max-\[26rem\]\/track:max-w-full"/);
+    // Explicit halves, never basis-auto: the cells are size containers, so an auto basis collapses them (#461).
+    expect(text).toContain('PHONE_LABEL_CELL_CLASS = "@max-[26rem]/track:basis-[calc(50%-0.1875rem)] @max-[26rem]/track:shrink-0"');
+    expect(text).not.toContain("@max-[26rem]/track:basis-auto");
     expect(text).toMatch(/FIELD_CELL_CLASS = cn\(.*PHONE_LABEL_CELL_CLASS\)/);
     expect(text).toMatch(/OPERATOR_CELL_CLASS = cn\(.*PHONE_LABEL_CELL_CLASS\)/);
-    expect(text).toMatch(/VALUE_CELL_CLASS = "[^"]*@max-\[26rem\]\/track:shrink-0 @max-\[26rem\]\/track:grow/);
+    expect(text).toContain('VALUE_CELL_CLASS = "basis-[var(--filter-value-width,12rem)] @max-[26rem]/track:basis-full"');
     expect(text).toContain("@max-[26rem]/track:justify-start");
+    expect(text).toContain('"ps-2 pe-0 @max-[26rem]/track:pe-2"');
     expect(text).toContain("max-w-[calc(100vw-2*var(--space-4))]");
   });
 });
