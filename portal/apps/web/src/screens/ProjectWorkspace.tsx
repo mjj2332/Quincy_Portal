@@ -313,7 +313,8 @@ function ProjectWorkspaceView(props: ProjectWorkspaceProps) {
     void poll(); return () => { mounted = false; if (legacyTimerRef.current) window.clearTimeout(legacyTimerRef.current); legacyTimerRef.current = undefined; };
   }, [canAdminBackend, canViewEdited, forceDetailRead, isCurrent, jobs, projectId, refreshAutohdrStatus, refreshCollectionAssets, refreshJobs, stageKeyForManual, workspaceReady]);
 
-  async function syncDropbox() {
+  /** Resolves "archived" when the server refused because the Project is archived (#455): no toast, the header turns read-only. */
+  async function syncDropbox(): Promise<"archived" | void> {
     const owner = manualOwnerRef.current; if (!owner || !isCurrent()) return; setIsSyncing(true);
     try {
       const response = await apiPost<DropboxSyncResponse, Record<string, never>>(`/api/projects/${encodeURIComponent(projectId)}/sync-dropbox`, {});
@@ -333,7 +334,13 @@ function ProjectWorkspaceView(props: ProjectWorkspaceProps) {
       }
       const queued = [response.raw, response.edited].filter((source) => "jobId" in source).length; const needsAttention = [response.raw, response.edited].some((source) => "blocked" in source || ("skipped" in source && source.skipped === "error")); toast(needsAttention ? "Dropbox check complete — some sources need attention." : queued ? `Dropbox check complete — ${queued} source${queued === 1 ? "" : "s"} queued.` : "Dropbox check complete.", needsAttention ? "error" : "success");
     }
-    catch (reason) { if (!(reason instanceof Error && reason.name === "AbortError")) { terminateOnUnauthorized(reason); toast(reason instanceof Error ? reason.message : "Dropbox sync could not be started.", "error"); } } finally { if (isCurrent()) setIsSyncing(false); }
+    catch (reason) {
+      if (reason instanceof ApiError && reason.status === 409 && reason.details && typeof reason.details === "object" && (reason.details as { code?: unknown }).code === "dropbox_sync_project_archived") {
+        await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true }).catch(() => undefined);
+        return "archived";
+      }
+      if (!(reason instanceof Error && reason.name === "AbortError")) { terminateOnUnauthorized(reason); toast(reason instanceof Error ? reason.message : "Dropbox sync could not be started.", "error"); }
+    } finally { if (isCurrent()) setIsSyncing(false); }
   }
   async function sendToAutoHdr() { if (!projectId || !canAdminBackend || !isCurrent()) return; setIsSending(true); try { const response = await apiPost<{ jobId: string }, Record<string, never>>(`/api/projects/${encodeURIComponent(projectId)}/send-to-autohdr`, {}); await Promise.all([refreshJobs(), invalidate([{ kind: "detail" }])]); toast(`Sending selected frames to AutoHDR (${response.jobId.slice(0, 8)}).`); } catch (reason) { terminateOnUnauthorized(reason); toast(reason instanceof Error ? reason.message : "The selected photos could not be sent to AutoHDR.", "error"); } finally { if (isCurrent()) setIsSending(false); } }
   async function retryAutoHdr(jobId: string) { if (!canAdminBackend || !isCurrent()) return; try { await apiPost<{ jobId: string }, Record<string, never>>(`/api/jobs/${encodeURIComponent(jobId)}/retry`, {}); await Promise.all([refreshJobs(), invalidate([{ kind: "detail" }])]); toast("Background job retry started."); } catch (reason) { terminateOnUnauthorized(reason); toast(reason instanceof Error ? reason.message : "Background job retry could not be started.", "error"); } }
@@ -395,7 +402,7 @@ function ProjectWorkspaceView(props: ProjectWorkspaceProps) {
       setStageKeyForManual(stageKey);
       setDetailReadyFor(ownerRun);
       startCompanionBatch(ownerRun);
-    }} onDetailStage={(ownerRun, stageKey) => { if (ownerRun !== runRef.current) return; setStageKeyForManual(stageKey); }} onAccessFailure={accessFailure} onCollectionDenied={(kind) => { setCollectionDenied((current) => current.has(kind) ? current : new Set(current).add(kind)); if (activeTab === kind) selectWorkspaceTab("collaboration"); }} activeTabChange={selectWorkspaceTab} openAssetId={openAssetId} setOpenAssetId={setOpenAssetId} lightboxOrderIds={lightboxOrderIds} setLightboxOrderIds={setLightboxOrderIds} ingest={ingest} jobs={jobs} autohdrStatus={autohdrStatus} isSyncing={isSyncing} isSending={isSending} onSyncDropbox={() => void syncDropbox()} onSendToAutoHdr={() => void sendToAutoHdr()} onRetryAutoHdr={(jobId) => void retryAutoHdr(jobId)} onUploadComplete={onUploadComplete} onDocumentsChanged={onDocumentsChanged} onLinksChanged={onLinksChanged} onInvalidate={invalidate} onRefreshDetail={forceDetailRead} canReadCollection={canReadCollection} />
+    }} onDetailStage={(ownerRun, stageKey) => { if (ownerRun !== runRef.current) return; setStageKeyForManual(stageKey); }} onAccessFailure={accessFailure} onCollectionDenied={(kind) => { setCollectionDenied((current) => current.has(kind) ? current : new Set(current).add(kind)); if (activeTab === kind) selectWorkspaceTab("collaboration"); }} activeTabChange={selectWorkspaceTab} openAssetId={openAssetId} setOpenAssetId={setOpenAssetId} lightboxOrderIds={lightboxOrderIds} setLightboxOrderIds={setLightboxOrderIds} ingest={ingest} jobs={jobs} autohdrStatus={autohdrStatus} isSyncing={isSyncing} isSending={isSending} onSyncDropbox={() => syncDropbox()} onSendToAutoHdr={() => void sendToAutoHdr()} onRetryAutoHdr={(jobId) => void retryAutoHdr(jobId)} onUploadComplete={onUploadComplete} onDocumentsChanged={onDocumentsChanged} onLinksChanged={onLinksChanged} onInvalidate={invalidate} onRefreshDetail={forceDetailRead} canReadCollection={canReadCollection} />
   </>;
 }
 
@@ -439,7 +446,7 @@ function UnavailableProject({ message }: { message: string }) { const dashboardR
 type QueryOwnerProps = {
   projectId: string; role: Role; run: number; activeTab: WorkspaceTab; collectionDenied: Set<CollectionKind>; workspaceReady: boolean; collaborationView: CollaborationView; onCollaborationViewChange: (view: CollaborationView) => void; workspaceTabRefs: React.RefObject<Map<WorkspaceTab, HTMLButtonElement>>; collaborationUnavailable: boolean; canViewEdited: boolean; canAdminBackend: boolean;
   onDetailReady: (run: number, stageKey: ProjectStageKey) => void; onDetailStage: (run: number, stageKey: ProjectStageKey) => void; onAccessFailure: (error: unknown, resource: AccessFailureResource, kind?: CollectionKind, initial?: boolean) => void; onCollectionDenied: (kind: CollectionKind) => void; activeTabChange: (tab: WorkspaceTab) => void;
-  openAssetId: string | null; setOpenAssetId: (id: string | null) => void; lightboxOrderIds: string[] | null; setLightboxOrderIds: (ids: string[] | null) => void; ingest: IngestStatus | null; jobs: Job[]; autohdrStatus: AutoHdrStatusResponse["handoff"]; isSyncing: boolean; isSending: boolean; onSyncDropbox: () => void; onSendToAutoHdr: () => void; onRetryAutoHdr: (jobId: string) => void; onUploadComplete: (kind: "raw" | "edited") => Promise<void>; onDocumentsChanged: (kind: "floorplan" | "copy") => Promise<void>; onLinksChanged: () => Promise<void>; onInvalidate: (resources: ProjectDataResource[]) => Promise<void>; onRefreshDetail: () => Promise<ProjectDetail | undefined>; canReadCollection: (kind: CollectionKind) => boolean;
+  openAssetId: string | null; setOpenAssetId: (id: string | null) => void; lightboxOrderIds: string[] | null; setLightboxOrderIds: (ids: string[] | null) => void; ingest: IngestStatus | null; jobs: Job[]; autohdrStatus: AutoHdrStatusResponse["handoff"]; isSyncing: boolean; isSending: boolean; onSyncDropbox: () => void | Promise<"archived" | void>; onSendToAutoHdr: () => void; onRetryAutoHdr: (jobId: string) => void; onUploadComplete: (kind: "raw" | "edited") => Promise<void>; onDocumentsChanged: (kind: "floorplan" | "copy") => Promise<void>; onLinksChanged: () => Promise<void>; onInvalidate: (resources: ProjectDataResource[]) => Promise<void>; onRefreshDetail: () => Promise<ProjectDetail | undefined>; canReadCollection: (kind: CollectionKind) => boolean;
 };
 
 function ProjectWorkspaceQueryOwner(props: QueryOwnerProps) {
@@ -487,7 +494,7 @@ function WorkspaceBody(props: WorkspaceChromeProps) {
   }, [project.id, project.stageKey, stageMovePending]);
   const hasRawFolder = project.editedUploadAvailable ?? Boolean(project.rawFolderPath || project.rawFolderLink);
   const autohdrTerminal = props.autohdrStatus?.state === "retired" || props.autohdrStatus?.state === "failed"; const autohdrBlocked = !autohdrTerminal && (props.autohdrStatus?.state === "blocked" || props.autohdrStatus?.mappingState === "blocked_collision");
-  const moveStage = useCallback(async (targetStageKey: ProjectStageKey) => {
+  const moveStage = useCallback(async (targetStageKey: ProjectStageKey): Promise<"archived" | void> => {
     if (stageMovePending || !can("moveProjectStage") || project.archivedAt || !project.contractEnabled) return;
     restoreStageFocusRef.current = true;
     setStageMovePending(true);
@@ -530,6 +537,10 @@ function WorkspaceBody(props: WorkspaceChromeProps) {
         setStageMoveDisabledReason("Stage movement is temporarily unavailable while the Board contract is disabled.");
       } else if (reason instanceof ApiError && reason.status === 503 && code === "board_schema_maintenance") {
         setStageMoveDisabledReason("Stage movement is temporarily unavailable while the Board is being updated.");
+      } else if (reason instanceof ApiError && reason.status === 409 && code === "project_archived_read_only") {
+        // #455: archived under the open header. No toast; the refetch brings archivedAt and the header latches its Stage read-only.
+        await props.onRefreshDetail().catch(() => undefined);
+        return "archived";
       } else if (reason instanceof ApiError && reason.status === 409 && code === "project_stage_conflict") {
         await props.onRefreshDetail().catch(() => undefined);
         toast("The project changed elsewhere; the Stage was refreshed.", "error");
@@ -544,7 +555,7 @@ function WorkspaceBody(props: WorkspaceChromeProps) {
     }
   }, [can, project, props, stageMovePending, stages, terminateOnUnauthorized]);
   return <main className="work" data-testid="project-workspace">
-    <ProjectHeader project={project} activeTab={activeTab} availableTabs={availableTabs} canUpload={canUpload} canAdminBackend={props.canAdminBackend} canEdit={canEdit} hasRawFolder={hasRawFolder} autohdrBlocked={autohdrBlocked} isSyncing={props.isSyncing} onSyncDropbox={props.onSyncDropbox} onActiveTabChange={props.activeTabChange} collaborationUnread={props.collaborationUnavailable ? 0 : collaborationUnread} workspaceTabRefs={props.workspaceTabRefs} onStageMove={(targetStageKey) => { void moveStage(targetStageKey); }} stageMovePending={stageMovePending} stageMoveDisabledReason={stageMoveDisabledReason} />
+    <ProjectHeader project={project} activeTab={activeTab} availableTabs={availableTabs} canUpload={canUpload} canAdminBackend={props.canAdminBackend} canEdit={canEdit} hasRawFolder={hasRawFolder} autohdrBlocked={autohdrBlocked} isSyncing={props.isSyncing} onSyncDropbox={props.onSyncDropbox} onActiveTabChange={props.activeTabChange} collaborationUnread={props.collaborationUnavailable ? 0 : collaborationUnread} workspaceTabRefs={props.workspaceTabRefs} onStageMove={(targetStageKey) => moveStage(targetStageKey)} stageMovePending={stageMovePending} stageMoveDisabledReason={stageMoveDisabledReason} />
     <section className="workmain" data-testid="workspace-main">
       {collection !== null && <CollectionTabBody key={collection} {...props} collection={collection} hasRawFolder={hasRawFolder} autohdrBlocked={autohdrBlocked} />}
       <div role="tabpanel" id="project-workspace-panel-collaboration" aria-labelledby="project-workspace-tab-collaboration" hidden={activeTab !== "collaboration"} className="workgrid">

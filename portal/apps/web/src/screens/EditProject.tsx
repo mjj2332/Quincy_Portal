@@ -1,7 +1,7 @@
-import { useEffect, useState, type FormEvent, type MouseEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import type { CollectionKind, MonitoredRawFolder } from "@quincy/shared";
 import { FIELD_GRID_PROPERTY, ProjectFields, emptyProjectForm, type ProjectFieldError, type ProjectForm, type ProjectTextField, validateProjectFields } from "../components/ProjectFields";
-import { apiGet, apiPatch, apiPost } from "../lib/api";
+import { ApiError, apiGet, apiPatch, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
 import { InternalLink } from "../components/InternalLink";
 import { shouldInterceptInternalLink } from "../lib/router";
@@ -24,6 +24,7 @@ type ProjectResponse = {
 };
 type FormErrors = Partial<Record<"street" | ProjectFieldError, string>>;
 
+const EDIT_FORM_ID = "edit-project-form";
 const DANGER_ROW = "pt-[var(--space-5)] [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-signal-critical/28 grid gap-[var(--space-5)] items-end grid-cols-1 max-[721px]:items-stretch";
 const DANGER_LABEL = "block [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground";
 // `!mt`: `tokens/base.css` is imported outside any `@layer`, so its `p { margin: 0 }` beats a
@@ -66,6 +67,22 @@ export function EditProject({ projectId, onReturnToWorkspace, onDeleted }: { pro
   const [dangerError, setDangerError] = useState<string>();
   const [dangerNotice, setDangerNotice] = useState<string>();
   const [isDangerAction, setIsDangerAction] = useState(false);
+  // #455: a Save refused as archived latches the read-only view even before the refetch lands. Cleared when the Project is restored or another is opened.
+  const [latched, setLatched] = useState(false);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const focusAfterFlip = useRef(false);
+  const archived = Boolean(project?.archivedAt) || latched;
+  const priorArchivedAt = useRef(project?.archivedAt ?? null);
+  useLayoutEffect(() => { const was = priorArchivedAt.current; priorArchivedAt.current = project?.archivedAt ?? null; if (was && !project?.archivedAt) setLatched(false); }, [project?.archivedAt]);
+  useEffect(() => { setLatched(false); }, [projectId]);
+  // Lost focus is decided from the capture taken when Save started, only on a refusal-driven flip, never on load: the form unmounts in the flip
+  // commit, leaving focus on <body> (or the disabled Save) unless it moves to the always-mounted heading.
+  useLayoutEffect(() => {
+    if (!latched || !focusAfterFlip.current) return;
+    focusAfterFlip.current = false;
+    const active = document.activeElement;
+    if (!active || active === document.body || !active.isConnected || active.matches(":disabled") || (active !== headingRef.current && active.contains(headingRef.current))) headingRef.current?.focus();
+  }, [latched]);
 
   useEffect(() => {
     if (!canEditProject) return;
@@ -87,6 +104,9 @@ export function EditProject({ projectId, onReturnToWorkspace, onDeleted }: { pro
     setErrors(nextErrors); setSubmitError(undefined);
     if (Object.values(nextErrors).some(Boolean)) return;
     setIsSubmitting(true);
+    const active = document.activeElement;
+    // closest(), not form.contains(): jsdom's form wrapper is a Proxy whose identity differs between lookups, so contains() answers false for its own control.
+    const focusWasInForm = Boolean(active?.closest(`#${EDIT_FORM_ID}`));
     try {
       const response = await apiPatch<ProjectResponse, Record<string, unknown>>(`/api/projects/${projectId}`, editProjectPayload(form));
       if (queryClient) {
@@ -95,7 +115,13 @@ export function EditProject({ projectId, onReturnToWorkspace, onDeleted }: { pro
       }
       onReturnToWorkspace("Shoot details saved.");
     } catch (reason) {
-      setSubmitError(reason instanceof Error ? reason.message : "The shoot details could not be saved.");
+      if (reason instanceof ApiError && reason.status === 409 && reason.details && typeof reason.details === "object" && (reason.details as { code?: unknown }).code === "details_project_archived") {
+        // #455: archived under this form. No error: the form gives way to the read-only notice, the Project is read again (Restore appears), the other surfaces catch up.
+        focusAfterFlip.current = focusWasInForm;
+        setLatched(true);
+        void apiGet<ProjectResponse>(`/api/projects/${projectId}`).then((response) => setProject(response)).catch(() => undefined);
+        if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true }).catch(() => undefined);
+      } else setSubmitError(reason instanceof Error ? reason.message : "The shoot details could not be saved.");
     }
     finally { setIsSubmitting(false); }
   }
@@ -135,19 +161,18 @@ export function EditProject({ projectId, onReturnToWorkspace, onDeleted }: { pro
       if (shouldInterceptInternalLink(event, window.location.origin)) { event.preventDefault(); onReturnToWorkspace(); }
     },
   };
-  const archived = Boolean(project?.archivedAt);
   const deleteMatchesStreet = deleteConfirmation.trim().toLocaleLowerCase() === project?.street.trim().toLocaleLowerCase();
 
   return <main className="page !max-w-[1080px]">
     <header className="flex flex-wrap items-end justify-between gap-[var(--space-6)] mb-[var(--space-6)]">
       <div>
         <Eyebrow className="block mb-[var(--space-3)]">Production desk</Eyebrow>
-        <h1 tabIndex={-1} data-sheet-initial-focus className="[font:var(--type-h1)] tracking-[var(--tracking-tight)]">Edit shoot</h1>
+        <h1 ref={headingRef} tabIndex={-1} data-sheet-initial-focus className="[font:var(--type-h1)] tracking-[var(--tracking-tight)]">{archived ? "Archived project" : "Edit shoot"}</h1>
         {archived && <StatusPill tone="caution" role="status" className="mt-[var(--space-3)]">Archived — hidden from the dashboard</StatusPill>}
       </div>
       <InternalLink className={buttonClasses("secondary", {})} {...cancelProps}>Cancel</InternalLink>
     </header>
-    {canEditProject && (project ? <form data-testid="edit-project-form" className="flex flex-col gap-[var(--space-8)]" onSubmit={(event) => void submit(event)} noValidate>
+    {canEditProject && (project ? archived ? <Notice tone="caution" role="status">Archived projects are read-only. Restore the project to edit its details.</Notice> : <form id={EDIT_FORM_ID} data-testid="edit-project-form" className="flex flex-col gap-[var(--space-8)]" onSubmit={(event) => void submit(event)} noValidate>
       {submitError && <Notice role="alert">{submitError}</Notice>}
       <section className="create-project__section" aria-labelledby="property-heading">
         <SectionHead eyebrow="Property" id="property-heading">Where is the shoot?</SectionHead>
