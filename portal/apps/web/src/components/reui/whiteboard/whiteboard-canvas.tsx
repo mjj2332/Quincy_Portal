@@ -70,7 +70,7 @@ import type {
   UIOptions,
 } from "@excalidraw/excalidraw/types"
 import { cn } from "@/lib/utils"
-import { pasteIsUnsupported } from "@/lib/whiteboard-saver"
+import { pasteIsUnsupported, withoutUnsupported } from "@/lib/whiteboard-saver"
 
 import "@excalidraw/excalidraw/index.css"
 
@@ -1603,6 +1603,9 @@ export function WhiteboardCanvas({
   const { markDirty, scheduleChange } = useAutosave(api, latest)
   const history = useHistoryMirror(rootRef, api)
 
+  const imageToolRef = useRef(imageTool)
+  imageToolRef.current = imageTool
+
   // Quincy (#498): the image tool is off, but a paste from another scene carries image elements the
   // server refuses; refuse the paste here, before they are inserted.
   const handlePaste = useCallback(
@@ -1620,6 +1623,19 @@ export function WhiteboardCanvas({
   // onChange also fires on pointer moves; only a new element hash counts.
   const handleChange = useCallback(
     (elements: readonly OrderedExcalidrawElement[], appState: AppState) => {
+      // Quincy (#498): images that arrived by file open, library insert or drag-drop (paste is refused
+      // earlier) are swept out before they show or are reported, with the same toast.
+      if (!imageToolRef.current) {
+        const { kept, removed } = withoutUnsupported(elements)
+        if (removed > 0) {
+          apiRef.current?.updateScene({
+            elements: kept as never,
+            captureUpdate: CaptureUpdateAction.NEVER,
+          })
+          latest.current.onToast?.("Images on the whiteboard arrive in a later update")
+          return
+        }
+      }
       latest.current.onElements?.(elements)
       // Written straight to the layer: panning never re-renders React.
       placeGrid(gridRef.current, appState)

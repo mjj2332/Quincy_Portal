@@ -16,6 +16,17 @@ const ENVELOPE_BYTES = 256;
 export const isUnsupportedElement = (element: { type?: unknown }) => element.type === "image";
 /** A paste carrying an element the whiteboard cannot store is refused whole, before it reaches the scene. */
 export const pasteIsUnsupported = (data: { elements?: readonly { type?: unknown }[] }) => data.elements?.some(isUnsupportedElement) === true;
+/**
+ * Whatever route an unsupported element took onto the board (file open, library insert, drag-drop,
+ * paste, scene replace), it ends up in the scene. Returns the scene without those elements (the same
+ * array when there are none), so a post-insert sweep can remove them and the board never shows
+ * something that silently would not save.
+ */
+export function withoutUnsupported<T extends { type?: unknown; isDeleted?: boolean }>(elements: readonly T[]): { kept: readonly T[]; removed: number } {
+  const kept = elements.filter((element) => !isUnsupportedElement(element));
+  const removed = elements.filter((element) => isUnsupportedElement(element) && !element.isDeleted).length;
+  return { kept: removed === 0 ? elements : kept, removed };
+}
 const encoder = new TextEncoder();
 const keyOf = (element: SavedElement) => `${element.version}:${element.versionNonce}`;
 
