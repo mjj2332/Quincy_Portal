@@ -260,7 +260,9 @@ describe("ProjectCollaborationPanel", () => {
     const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
     const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
     await typeIntoEditor(editor, "Comment subsection");
-    await selectOption(host.querySelector<HTMLSelectElement>('[aria-label="Heading"]')!, "3");
+    // #491: the composer's heading control is a dropdown menu, not a native select; same document outcome.
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Heading"]')!);
+    await click([...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find((item) => item.textContent === "Subsection")!);
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post")!);
     await flush();
     expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, { content });

@@ -444,6 +444,11 @@ describe("external-editor visibility inventory", () => {
 // `"Post comment"` for `"Post"` (the primary button is now just "Post"), and `roles` gains `"group"`
 // (`InputGroup` is `role="group"`, holding the composer's toolbar and editor), and `testids` gains
 // `"rich-text-field": 1` (that group's test hook). Nothing else moved.
+//
+// Re-frozen, deliberately, for #491: the Discussion composer is now `QuincyRichTextEditor`. Only the
+// "Collaboration" entry moves, identically for both roles: `roles` gains `"separator"` (the toolbar's
+// group dividers) and `testids` gains `"rich-text-heading-menu": 1` (the heading menu's Quincy hook).
+// Every control keeps its accessible name, so `controls` is unchanged.
 // ---------------------------------------------------------------------------
 
 // Re-frozen, deliberately, for #464: the Project header gains the "Show in Calendar / Timeline" button
@@ -695,6 +700,7 @@ const FROZEN_EXTERNAL_EDITOR = {
       "project-team-control": 1,
       "project-workspace": 1,
       "rich-text-field": 1,
+      "rich-text-heading-menu": 1,
       "subtask-checklist-count": 1,
       "toast-viewport": 1,
       "workspace-main": 1
@@ -705,6 +711,7 @@ const FROZEN_EXTERNAL_EDITOR = {
       "link",
       "presentation",
       "progressbar",
+      "separator",
       "status",
       "tab",
       "tablist",
@@ -1022,6 +1029,7 @@ const FROZEN_ADMIN = {
       "project-team-control": 1,
       "project-workspace": 1,
       "rich-text-field": 1,
+      "rich-text-heading-menu": 1,
       "subtask-checklist-count": 1,
       "toast-viewport": 1,
       "workspace-main": 1
@@ -1032,6 +1040,7 @@ const FROZEN_ADMIN = {
       "link",
       "presentation",
       "progressbar",
+      "separator",
       "status",
       "tab",
       "tablist",

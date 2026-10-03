@@ -1,9 +1,11 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Editor } from "@tiptap/core";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseRichTextDoc, type RichTextDoc, type RichTextInline, type RichTextTaskItem, type RichTextTaskList } from "@quincy/shared";
-import { createRichTextEditorExtensions, RichTextEditor, shouldBlockListIndent } from "./RichTextEditor";
+import StarterKit from "@tiptap/starter-kit";
+import { createRichTextEditorExtensions, RichTextEditor, shouldBlockListIndent, tiptapToRichTextDoc } from "./RichTextEditor";
+import { QuincyRichTextEditor } from "./QuincyRichTextEditor";
 import { RichTextContent } from "./RichTextContent";
 
 let root: Root | null = null;
@@ -44,9 +46,23 @@ function mount() {
   return host;
 }
 
+// #491: every stored-document assertion below runs against BOTH editors. `legacy` is the stacked
+// `RichTextEditor` (the Notice board still uses it until #492); `composer` is the
+// `QuincyRichTextEditor` that now serves Project discussion. Tests whose STEPS differ (the link
+// dialog vs the link popover, the heading `<select>` vs the heading menu) go through the
+// `openLink`/`chooseHeading`-style helpers below and keep their document assertions unchanged.
+const VARIANTS = ["legacy", "composer"] as const;
+type Variant = (typeof VARIANTS)[number];
+let variant: Variant = "legacy";
+const composer = () => variant === "composer";
+
+function EditorUnderTest(props: Omit<React.ComponentProps<typeof RichTextEditor>, "variant">) {
+  return composer() ? <QuincyRichTextEditor preset="composer" {...props} /> : <RichTextEditor {...props} />;
+}
+
 async function render(host: HTMLElement, value: RichTextDoc, onChange = vi.fn(), onSubmit = vi.fn(), limit = 2_000) {
   await act(async () => {
-    root!.render(<RichTextEditor value={value} onChange={onChange} onSubmit={onSubmit} limit={limit} loadMentionables={mentionables} />);
+    root!.render(<EditorUnderTest value={value} onChange={onChange} onSubmit={onSubmit} limit={limit} loadMentionables={mentionables} />);
     await Promise.resolve(); await Promise.resolve();
   });
   return { editor: host.querySelector<HTMLElement>('[contenteditable="true"]')!, onChange, onSubmit };
@@ -167,12 +183,48 @@ async function waitForClose() {
   await act(async () => { await new Promise<void>((resolve) => window.setTimeout(resolve, 150)); });
 }
 
+
+// --- Step translators (#491). Same document assertions, different controls. ---
+// Legacy: the heading control is a native <select>, the link UI a `Modal` dialog.
+// Composer: the heading control is a dropdown menu, the link UI a non-modal popover.
+const headingControl = (host: HTMLElement) => host.querySelector<HTMLElement & { disabled: boolean }>('[aria-label="Heading"]')!;
+const HEADING_LEVEL_LABEL: Record<string, string> = { "": "Paragraph", "2": "Section", "3": "Subsection" };
+async function chooseHeading(host: HTMLElement, level: "" | "2" | "3") {
+  const control = headingControl(host);
+  if (!composer()) { await selectOption(control as unknown as HTMLSelectElement, level); return; }
+  await click(control);
+  const item = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find((entry) => entry.textContent === HEADING_LEVEL_LABEL[level]);
+  if (item) await click(item);
+}
+async function headingOptions(host: HTMLElement): Promise<string[]> {
+  const control = headingControl(host);
+  if (!composer()) return [...(control as unknown as HTMLSelectElement).options].map((option) => option.text);
+  await click(control);
+  const labels = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].map((entry) => entry.textContent ?? "");
+  await keydown(document.activeElement as HTMLElement, "Escape");
+  await waitForClose();
+  return labels;
+}
+function headingValue(host: HTMLElement): string {
+  const control = headingControl(host);
+  if (!composer()) return (control as unknown as HTMLSelectElement).value;
+  return Object.entries(HEADING_LEVEL_LABEL).find(([, label]) => label === control.textContent)![0];
+}
+const linkDialog = () => composer() ? document.querySelector<HTMLElement>('[data-testid="rich-text-link-popover"]') : document.querySelector<HTMLElement>('[role="dialog"]');
+const linkInput = () => linkDialog()!.querySelector<HTMLInputElement>("input")!;
+const linkAction = (name: "Apply link" | "Remove link" | "Cancel") => composer()
+  ? linkDialog()!.querySelector<HTMLButtonElement>(`[aria-label="${name}"]`)!
+  : [...linkDialog()!.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === name)!;
+
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); await Promise.resolve(); });
   root = null;
   document.body.replaceChildren();
   mentionables.mockClear();
 });
+
+describe.each(VARIANTS)("RichTextEditor (%s)", (name) => {
+beforeEach(() => { variant = name; });
 
 describe("RichTextEditor hard breaks", () => {
   it("inserts a hard break at the start of a list item", async () => {
@@ -337,7 +389,7 @@ describe("RichTextEditor hard breaks", () => {
     const rendered = await render(host, initial, onChange);
     onChange.mockClear();
     await act(async () => {
-      root!.render(<RichTextEditor value={replacement} onChange={onChange} onSubmit={rendered.onSubmit} limit={2_000} loadMentionables={mentionables} />);
+      root!.render(<EditorUnderTest value={replacement} onChange={onChange} onSubmit={rendered.onSubmit} limit={2_000} loadMentionables={mentionables} />);
       await Promise.resolve(); await Promise.resolve();
     });
     expect(rendered.editor.textContent).toContain("Shallow");
@@ -409,11 +461,10 @@ describe("RichTextEditor hard breaks", () => {
       { type: "heading", attrs: { level: 3 }, content: [{ type: "text", text: "Subsection" }] },
     ] };
     const host = mount(); const onChange = vi.fn(); const { editor } = await render(host, value, onChange);
-    const heading = host.querySelector<HTMLSelectElement>('[aria-label="Heading"]')!;
-    expect([...heading.options].map((option) => option.text)).toEqual(["Paragraph", "Section", "Subsection"]);
+    expect(await headingOptions(host)).toEqual(["Paragraph", "Section", "Subsection"]);
     expect(editor.querySelector("h2")?.textContent).toBe("Section"); expect(editor.querySelector("h3")?.textContent).toBe("Subsection");
     await moveCaret(editor, editor.querySelector("h2")!.firstChild!);
-    expect(heading.value).toBe("2");
+    expect(headingValue(host)).toBe("2");
     onChange.mockClear(); await act(async () => {
       editor.querySelector("h2")!.append(document.createTextNode("!"));
       editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "!" }));
@@ -426,7 +477,7 @@ describe("RichTextEditor hard breaks", () => {
 
     await act(async () => { root!.unmount(); await Promise.resolve(); }); root = null; host.remove();
     const plainHost = mount(); const change = vi.fn(); await render(plainHost, text("Convert me"), change);
-    await selectOption(plainHost.querySelector<HTMLSelectElement>('[aria-label="Heading"]')!, "3");
+    await chooseHeading(plainHost, "3");
     expect(change).toHaveBeenLastCalledWith({ type: "doc", content: [{ type: "heading", attrs: { level: 3 }, content: [{ type: "text", text: "Convert me" }] }] });
     await act(async () => { root!.unmount(); await Promise.resolve(); }); root = null; plainHost.remove();
   });
@@ -457,10 +508,9 @@ describe("RichTextEditor hard breaks", () => {
     const host = mount(); const onChange = vi.fn(); const value = list([{ type: "text", text: "List item" }]);
     const { editor } = await render(host, value, onChange);
     await moveCaret(editor, editor.querySelector("li p")!.firstChild!);
-    const heading = host.querySelector<HTMLSelectElement>('[aria-label="Heading"]')!;
-    expect(heading.disabled).toBe(true);
+    expect(headingControl(host).disabled).toBe(true);
     onChange.mockClear();
-    await selectOption(heading, "2");
+    await chooseHeading(host, "2");
     expect(onChange).not.toHaveBeenCalled();
   });
 
@@ -525,36 +575,48 @@ describe("RichTextEditor hard breaks", () => {
     await click(linkButton());
     // The dialog is `Modal` (§6.7), portaled to `document.body` — a sibling of `host`, not
     // inside it. Its footer buttons are `Button` components (Tailwind classes), not `.button`.
-    let input = document.querySelector<HTMLInputElement>('[role="dialog"] input')!;
+    let input = linkInput();
     expect(document.activeElement).toBe(input);
     expect(input.value).toBe("");
-    await click([...document.querySelectorAll<HTMLButtonElement>("[role=dialog] button")].find((button) => button.textContent === "Apply link")!);
+    await click(linkAction("Apply link"));
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("HTTP(S)");
     await setInput(input, "mailto:editor@example.test");
-    await click([...document.querySelectorAll<HTMLButtonElement>("[role=dialog] button")].find((button) => button.textContent === "Apply link")!);
+    await click(linkAction("Apply link"));
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("HTTP(S)");
     await setInput(input, "https://example.test/created");
-    await click([...document.querySelectorAll<HTMLButtonElement>("[role=dialog] button")].find((button) => button.textContent === "Apply link")!);
+    await click(linkAction("Apply link"));
     expect(onChange).toHaveBeenLastCalledWith({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Link me", marks: [{ type: "link", href: "https://example.test/created" }] }] }] });
     await waitForClose();
-    expect(document.querySelector('[role="dialog"]')).toBeNull(); expect(document.activeElement).toBe(editor);
+    expect(linkDialog()).toBeNull(); expect(document.activeElement).toBe(editor);
 
     await moveCaret(editor, editor.querySelector("a")!.firstChild!, 2);
     await click(linkButton());
-    input = document.querySelector<HTMLInputElement>('[role="dialog"] input')!;
+    input = linkInput();
     expect(input.value).toBe("https://example.test/created");
     await setInput(input, "https://example.test/updated");
-    await click([...document.querySelectorAll<HTMLButtonElement>("[role=dialog] button")].find((button) => button.textContent === "Apply link")!);
+    await click(linkAction("Apply link"));
     expect(onChange).toHaveBeenLastCalledWith({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Link me", marks: [{ type: "link", href: "https://example.test/updated" }] }] }] });
     await waitForClose();
     expect(document.activeElement).toBe(editor);
 
     await moveCaret(editor, editor.querySelector("a")!.firstChild!, 2);
     await click(linkButton());
-    await click([...document.querySelectorAll<HTMLButtonElement>("[role=dialog] button")].find((button) => button.textContent === "Remove link")!);
+    await click(linkAction("Remove link"));
     expect(onChange).toHaveBeenLastCalledWith(text("Link me"));
     await waitForClose();
-    expect(document.querySelector('[role="dialog"]')).toBeNull(); expect(document.activeElement).toBe(editor);
+    expect(linkDialog()).toBeNull(); expect(document.activeElement).toBe(editor);
+  });
+
+  it("removes a link only from the selected part when the selection is non-empty", async () => {
+    const value: RichTextDoc = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Link me", marks: [{ type: "link", href: "https://example.test/part" }] }] }] };
+    const host = mount(); const onChange = vi.fn(); const { editor } = await render(host, value, onChange);
+    await selectText(editor, editor.querySelector("a")!.firstChild!, 5, 7);
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Link"]')!);
+    await click(linkAction("Remove link"));
+    expect(onChange).toHaveBeenLastCalledWith({ type: "doc", content: [{ type: "paragraph", content: [
+      { type: "text", text: "Link ", marks: [{ type: "link", href: "https://example.test/part" }] },
+      { type: "text", text: "me" },
+    ] }] });
   });
 
   it("keeps a collapsed linked cursor focused in the editor for immediate typing", async () => {
@@ -562,9 +624,9 @@ describe("RichTextEditor hard breaks", () => {
     const linkButton = host.querySelector<HTMLButtonElement>('[aria-label="Link"]')!;
     await moveCaret(editor, editor.querySelector("p")!.firstChild!, "Before".length);
     await click(linkButton);
-    const input = document.querySelector<HTMLInputElement>('[role="dialog"] input')!;
+    const input = linkInput();
     await setInput(input, "https://example.test/new-link");
-    await click([...document.querySelectorAll<HTMLButtonElement>("[role=dialog] button")].find((button) => button.textContent === "Apply link")!);
+    await click(linkAction("Apply link"));
     await waitForClose();
     expect(document.activeElement).toBe(editor);
     await typeIntoFocusedEditor("x");
@@ -579,7 +641,7 @@ describe("RichTextEditor hard breaks", () => {
     const linkButton = host.querySelector<HTMLButtonElement>('[aria-label="Link"]')!;
     await selectText(editor, editor.querySelector("p")!.firstChild!, 0, "Link me".length);
     await click(linkButton);
-    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    const dialog = linkDialog()!;
     const input = dialog.querySelector<HTMLInputElement>("input")!;
     expect(document.activeElement).toBe(input);
     // Real Tab/Shift-Tab wraparound is a browser-native focus-traversal behavior jsdom does not
@@ -589,15 +651,30 @@ describe("RichTextEditor hard breaks", () => {
     // browser in manual QA (criterion 15) rather than faked with an assertion that can't fail.
     await keydown(input, "Escape");
     await waitForClose();
-    expect(document.querySelector('[role="dialog"]')).toBeNull(); expect(document.activeElement).toBe(linkButton);
+    expect(linkDialog()).toBeNull(); expect(document.activeElement).toBe(linkButton);
   });
 
   it("intercepts a press-and-release on the scrim without closing or reaching the page behind it", async () => {
+    // Translated, not ported (#491): the composer's link UI is a non-modal popover with no scrim, so
+    // the equivalent guarantee is "an outside press closes it" (a non-modal popover lets the press
+    // through by design, so there is no "does not reach the page" half).
     const host = mount(); const { editor } = await render(host, text("Link me"));
     const pageBehind = document.createElement("button"); const pageBehindClick = vi.fn();
     pageBehind.addEventListener("click", pageBehindClick); document.body.prepend(pageBehind);
     await selectText(editor, editor.querySelector("p")!.firstChild!, 0, "Link me".length);
     await click(host.querySelector<HTMLButtonElement>('[aria-label="Link"]')!);
+    if (composer()) {
+      expect(linkDialog()).not.toBeNull();
+      await act(async () => {
+        for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
+          pageBehind.dispatchEvent(type.startsWith("pointer") ? new PointerEvent(type, { bubbles: true, cancelable: true, pointerType: "mouse" }) : new MouseEvent(type, { bubbles: true, cancelable: true }));
+        }
+        await Promise.resolve(); await Promise.resolve();
+      });
+      await waitForClose();
+      expect(linkDialog()).toBeNull();
+      return;
+    }
     // The RTE dialog is `Modal` now (§6.7) — its scrim is the shared `modal-scrim` testid, and dismissal is
     // press-contained (defect F, §6.1 item 2): a press that began inside the panel and is
     // released past its edge must not dismiss. A bare click with no preceding pointerdown on the
@@ -616,9 +693,10 @@ describe("RichTextEditor hard breaks", () => {
     const linkButton = host.querySelector<HTMLButtonElement>('[aria-label="Link"]')!;
     await selectText(editor, editor.querySelector("p")!.firstChild!, 0, "Link me".length);
     await click(linkButton);
-    await click([...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((button) => button.textContent === "Cancel")!);
+    // Translated (#491): the popover has no Cancel button; Escape is its cancel.
+    if (composer()) await keydown(linkInput(), "Escape"); else await click(linkAction("Cancel"));
     await waitForClose();
-    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(linkDialog()).toBeNull();
     expect(document.activeElement).toBe(linkButton);
   });
 
@@ -688,7 +766,7 @@ describe("RichTextEditor hard breaks", () => {
     expect(onChange).toHaveBeenLastCalledWith({ type: "doc", content: [{ type: "taskList", content: [{ type: "taskItem", attrs: { checked: false }, content: [{ type: "paragraph", content: [{ type: "text", text: "Checklist item" }] }] }] }] });
     expect(editor.querySelector('ul[data-type="taskList"]')).not.toBeNull();
     await moveCaret(editor, editor.querySelector("li p")!.firstChild!);
-    expect(host.querySelector<HTMLSelectElement>('[aria-label="Heading"]')!.disabled).toBe(true);
+    expect(headingControl(host).disabled).toBe(true);
     const tiptap = new Editor({ extensions: createRichTextEditorExtensions(), content: taskList() });
     try {
       expect(tiptap.schema.nodes.taskItem?.spec.content).toBe("paragraph (paragraph|bulletList|orderedList|taskList)*");
@@ -801,7 +879,7 @@ describe("RichTextEditor counter and field variant (#376)", () => {
   async function renderWith(value: RichTextDoc, extra: Partial<React.ComponentProps<typeof RichTextEditor>> = {}) {
     const host = mount();
     await act(async () => {
-      root!.render(<RichTextEditor value={value} onChange={vi.fn()} limit={LIMIT} loadMentionables={mentionables} {...extra} />);
+      root!.render(composer() ? <QuincyRichTextEditor preset="composer" value={value} onChange={vi.fn()} limit={LIMIT} loadMentionables={mentionables} disabled={extra.disabled ?? false} /> : <RichTextEditor value={value} onChange={vi.fn()} limit={LIMIT} loadMentionables={mentionables} {...extra} />);
       await Promise.resolve(); await Promise.resolve();
     });
     return host;
@@ -833,7 +911,8 @@ describe("RichTextEditor counter and field variant (#376)", () => {
     expect(host.querySelector('[aria-live="polite"]')).not.toBeNull();
   });
 
-  it("stacked (the default) keeps today's two stacked boxes: bordered toolbar, no InputGroup", async () => {
+  // Legacy-only: the composer has no stacked layout (it is always one `InputGroup` field).
+  it.skipIf(name === "composer")("stacked (the default) keeps today's two stacked boxes: bordered toolbar, no InputGroup", async () => {
     const host = await renderWith(empty());
     expect(host.querySelector('[data-testid="rich-text-field"]')).toBeNull();
     expect(host.querySelector('[role="toolbar"]')!.className).toContain("border-border");
@@ -856,7 +935,10 @@ describe("RichTextEditor counter and field variant (#376)", () => {
       const tokens = button.className.split(/\s+/);
       expect(tokens).toContain("disabled:bg-transparent");
       expect(tokens).not.toContain("disabled:bg-surface-sunken");
-      expect(button.className).not.toMatch(/opacity-/);
+      // Translated for the composer (#491): `reui/button`'s base carries `disabled:opacity-50`, which
+      // the vendored `RichTextButton` overrides with `disabled:opacity-100` (no dimming; colour carries
+      // the state). So the composer asserts "no opacity multiplier below 100", the legacy "no opacity".
+      expect(button.className).not.toMatch(composer() ? /opacity-(?!100\b)/ : /opacity-/);
     }
   });
 
@@ -871,5 +953,66 @@ describe("RichTextEditor counter and field variant (#376)", () => {
     const group = host.querySelector<HTMLElement>('[data-testid="rich-text-field"]')!;
     expect(group.hasAttribute("data-disabled")).toBe(true);
     expect(group.className).toContain("data-[disabled]:bg-surface-sunken");
+  });
+});
+});
+
+describe("QuincyRichTextEditor composer (#491)", () => {
+  beforeEach(() => { variant = "composer"; });
+
+  it("never autolinks a typed email or bare domain: the schema keeps StarterKit's autolink and linkOnPaste off", () => {
+    // `insertContent` does not drive Tiptap's autolink (it needs a typed-space transaction happy-dom
+    // cannot produce), so the contract is pinned on the Link extension's resolved options instead.
+    // Control: a stock StarterKit resolves `autolink: true`, so this assertion can fail.
+    const linkOptions = (extensions: ReturnType<typeof createRichTextEditorExtensions> | [typeof StarterKit]) => {
+      const tiptap = new Editor({ extensions, content: { type: "doc", content: [{ type: "paragraph" }] } });
+      try { return tiptap.extensionManager.extensions.find((extension) => extension.name === "link")!.options as { autolink: boolean; linkOnPaste: boolean }; }
+      finally { tiptap.destroy(); }
+    };
+    expect(linkOptions([StarterKit]).autolink).toBe(true);
+    expect(linkOptions(createRichTextEditorExtensions())).toMatchObject({ autolink: false, linkOnPaste: false });
+  });
+
+  it("rejects a mailto: link in the popover and stores nothing", async () => {
+    const host = mount(); const onChange = vi.fn(); const { editor } = await render(host, text("Mail me"), onChange);
+    await selectText(editor, editor.querySelector("p")!.firstChild!, 0, 4);
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Link"]')!);
+    await setInput(linkInput(), "mailto:editor@example.test");
+    await click(linkAction("Apply link"));
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe("Enter a non-empty absolute HTTP(S) URL.");
+    expect(onChange).not.toHaveBeenCalled();
+    expect(linkDialog()).not.toBeNull();
+  });
+
+  it("is one toolbar tab stop; arrow keys, Home and End move through it", async () => {
+    const host = mount(); await render(host, text("Toolbar"));
+    const toolbar = host.querySelector<HTMLElement>('[role="toolbar"]')!;
+    const items = () => [...toolbar.querySelectorAll<HTMLElement>("[data-toolbar-item]")];
+    expect(items().filter((item) => item.tabIndex === 0)).toHaveLength(1);
+    const enabled = items().filter((item) => !item.hasAttribute("disabled"));
+    await act(async () => { enabled[0]!.focus(); await Promise.resolve(); });
+    await keydown(enabled[0]!, "ArrowRight");
+    expect(document.activeElement).toBe(enabled[1]);
+    await keydown(document.activeElement as HTMLElement, "End");
+    expect(document.activeElement).toBe(enabled[enabled.length - 1]);
+    await keydown(document.activeElement as HTMLElement, "Home");
+    expect(document.activeElement).toBe(enabled[0]);
+    expect(items().filter((item) => item.tabIndex === 0)).toHaveLength(1);
+  });
+
+  it("opens the link popover on Mod-K from the editor", async () => {
+    const host = mount(); const { editor } = await render(host, text("Link me"));
+    await selectText(editor, editor.querySelector("p")!.firstChild!, 0, 4);
+    await keydown(editor, "k", { metaKey: true });
+    expect(linkDialog()).not.toBeNull();
+    expect(document.activeElement).toBe(linkInput());
+  });
+
+  it("exposes the Quincy test ids, never a vendor data-slot", async () => {
+    const host = mount(); await render(host, text("x".repeat(1_900)));
+    for (const id of ["rich-text-field", "rich-text-counter", "rich-text-heading-menu"]) expect(host.querySelector(`[data-testid="${id}"]`), id).not.toBeNull();
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Link"]')!);
+    // Disabled on a collapsed-empty selection? The link trigger is enabled on any caret; the popover opens.
+    expect(document.querySelector('[data-testid="rich-text-link-popover"]')).not.toBeNull();
   });
 });
