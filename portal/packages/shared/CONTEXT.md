@@ -52,6 +52,12 @@ The Dashboard view that lists Projects as sortable rows, one Project per row, un
 the viewer groups them.
 _Avoid_: List, grid
 
+**Project whiteboard**:
+A Project's own shared canvas, edited live by everyone who can open it, with images and
+videos placed on it. One per Project. It replaces the Project sheet's body while it is open,
+and has its own link. Its media lives and dies with the Project.
+_Avoid_: Canvas, board (the Board is a Dashboard view), sketch
+
 **Project sheet**:
 The Project workspace presented floating over the Dashboard, covering the whole window.
 Dismissing it returns to the same Dashboard view underneath. A Project's own link opens the
@@ -66,6 +72,9 @@ _Avoid_: Announcements, news feed
 **Stage**:
 The pipeline step a Project currently occupies. Keys are fixed in code; labels, active
 state and display order are admin configuration.
+A Project before Edited review moves there on its own once Edited media, from the Editor's
+Output folder or uploaded in the Portal, has stopped arriving for 15 minutes. It never moves
+back from Edited review or Delivered this way, and an Archived Project never moves.
 _Avoid_: Status, state, column, phase
 
 **Archived Project**:
@@ -94,8 +103,18 @@ filled; one already held, even as unparsed Tonomo text, is never replaced this w
 _Avoid_: Shoot time, appointment
 
 **Deadline**:
-The civil-time commitment for a Project's delivery, held in the studio's timezone.
+The civil-time commitment for a Project's delivery, held in the studio's timezone. A Project
+whose Deadline is empty when it gains a shoot date is given an Automatic Deadline.
 _Avoid_: Due date, ETA
+
+**Automatic Deadline**:
+A Deadline the system filled in: the first weekday (Monday to Friday) after the shoot date, at
+17:00; public holidays are not skipped. It follows the shoot
+date when that moves, for as long as it still holds the value the system gave it. Once
+anyone sets the Deadline by hand, it is an ordinary Deadline and is never moved again. A
+Deadline already held is never replaced by an Automatic one. It carries the same reminders
+as any Deadline.
+_Avoid_: Default deadline, due date
 
 **Subtask**:
 One unit of work inside a Project's collaboration, with any number of Subtask assignees and a
@@ -217,6 +236,26 @@ _Avoid_: Target, receiver, subscriber
 The thing a Notification is about — the Asset a comment names, the subtask assigned, the
 comment that mentions someone. Not every Notification has one.
 _Avoid_: Object, entity, item
+
+**Email digest**:
+One email that gathers a Recipient's pending Notifications, including Project activity that is
+never emailed on its own (each Recipient may leave it out), and goes out at their
+chosen cadence (Immediately, Hourly, Twice daily or Daily; Twice daily by default). Subtask
+reminders and Deadline reminders never wait for it. The notification centre is never delayed
+by it; only email is gathered.
+_Avoid_: Summary, newsletter, batch
+
+**Link preview**:
+The card a post shows for a link inside it: the linked page's title, description and image,
+fetched once when the post is saved. Only the post's author may remove one. At most three per
+post.
+_Avoid_: Unfurl, embed, OG card
+
+**Embedded media**:
+An image or video placed inside a post (a Project discussion comment or a Notice board post) or
+on a Project whiteboard. Belongs to what holds it: deleted with its post, with its Project, or
+a week after it is removed or left unposted. Not an Asset: it is never delivered.
+_Avoid_: Attachment, upload, Asset
 
 **Day bucket**:
 The grouping unit of the notification centre: one calendar day in the studio's timezone,
