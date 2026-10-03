@@ -35,6 +35,17 @@
       { "binding": "NOTIFICATION_QUEUE", "queue": "quincy-notifications" }
     ]
   },
+  // #498 (ADR 0017): one Durable Object per Project holds its whiteboard. Migration tags are per
+  // Worker; `wrangler deploy` applies this one. See docs/Guides/CI-Deploy.md: Cloudflare cannot roll
+  // back across a Durable Object migration, so the first version with this class is the rollback floor.
+  "durable_objects": {
+    "bindings": [
+      { "name": "PROJECT_WHITEBOARD", "class_name": "ProjectWhiteboardDO" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ProjectWhiteboardDO"] }
+  ],
   "services": [
     { "binding": "BACKGROUND", "service": "quincy-portal-background" }
   ],

@@ -26,6 +26,9 @@ const OPEN_LIST_HOST = '[data-open]:has([role="listbox"], [role="menu"])';
 /** The rich-text editor's mention list is open while its combobox reports `aria-expanded`. */
 const OPEN_MENTION_LIST = '[role="combobox"][aria-expanded="true"]';
 
+/** #498: the Project whiteboard owns Esc (it cancels a tool or a selection), so Esc inside it never closes the sheet. */
+const OPEN_WHITEBOARD = "[data-quincy-whiteboard]";
+
 export function hasOpenInnerLayer(popup: HTMLElement | null, slot: HTMLElement | null, doc: Document): boolean {
   if (!popup) return false;
   // In-place modal: the Lightbox lives inside the popup DOM. `querySelector` searches
@@ -45,5 +48,6 @@ export function hasOpenInnerLayer(popup: HTMLElement | null, slot: HTMLElement |
   // Scoped to the overlay slot: the sheet's own popup is `data-open` and contains everything.
   if (slot?.querySelector(OPEN_LIST_HOST)) return true;
   if (popup.querySelector(OPEN_MENTION_LIST)) return true;
+  if (popup.querySelector(OPEN_WHITEBOARD)) return true;
   return false;
 }

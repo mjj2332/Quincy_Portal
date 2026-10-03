@@ -64,6 +64,11 @@ describe("hasOpenInnerLayer (#366)", () => {
       expect(hasOpenInnerLayer(tooltip.popup, tooltip.slot, document)).toBe(false);
     });
 
+    it("is true while the Project whiteboard is open inside the sheet (#498: Esc belongs to the board)", () => {
+      const { popup, slot } = wrap(`<section data-quincy-whiteboard></section>`);
+      expect(hasOpenInnerLayer(popup, slot, document)).toBe(true);
+    });
+
     it("is true while the mention list is expanded on the editor's combobox", () => {
       const { popup, slot } = wrap(`<div role="combobox" aria-expanded="true"></div>`);
       expect(hasOpenInnerLayer(popup, slot, document)).toBe(true);

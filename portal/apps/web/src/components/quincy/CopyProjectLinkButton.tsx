@@ -14,13 +14,13 @@ const COPIED_MS = 2000;
  * The link is built from the `tab` prop, not `window.location`, so it is right even before the
  * URL's own `replace` has landed. The outcome is announced through the shared toast live region.
  */
-export function CopyProjectLinkButton({ projectId, tab, className }: { projectId: string; tab: WorkspaceTab; className?: string }) {
+export function CopyProjectLinkButton({ projectId, tab, className, whiteboard = false }: { projectId: string; tab: WorkspaceTab; className?: string; /** #498: copy the Project whiteboard's link (`?whiteboard=open`) instead of a tab's. */ whiteboard?: boolean }) {
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(timerRef.current), []);
 
   function copy() {
-    const href = new URL(staffPathFor({ kind: "project", projectId, arrivalTab: tab }), window.location.origin).href;
+    const href = new URL(staffPathFor(whiteboard ? { kind: "project", projectId, whiteboard: true } : { kind: "project", projectId, arrivalTab: tab }), window.location.origin).href;
     if (!navigator.clipboard?.writeText) { pushToast("Couldn't copy the link.", "error"); return; }
     navigator.clipboard.writeText(href).then(
       () => {

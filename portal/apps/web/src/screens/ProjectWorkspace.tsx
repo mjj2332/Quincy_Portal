@@ -15,6 +15,8 @@ import { InternalLink } from "../components/InternalLink";
 import { ARCHIVED_NOTICE_CLASS } from "../components/archived-notice";
 import { useDashboardReturnLink } from "../components/quincy/ProjectSheet";
 import { CopyProjectLinkButton } from "../components/quincy/CopyProjectLinkButton";
+import { ProjectWhiteboard } from "../components/ProjectWhiteboard";
+import { WhiteboardButton } from "../components/ProjectHeader";
 import { ProjectCollaborationPanel, type CollaborationView } from "../components/ProjectCollaborationPanel";
 import { ProjectHeader } from "../components/ProjectHeader";
 import { buttonClasses } from "../components/quincy/Button";
@@ -70,12 +72,12 @@ function LoadingProject() { return <main className={FULL_PAGE}><div className="e
  * `arrivalTab` once (Collaboration when absent), then `onArrivalConsumed` acknowledges it. The tab in
  * the URL is persistent (#367): `urlTab` is the tab the URL names now, and `onTabShown` reports the
  * tab actually shown so the shell can make the URL follow it (by `replace`). */
-type ProjectWorkspaceProps = { projectId: string; notice?: string | null; onNoticeShown?: () => void; arrivalSignal?: number; arrivalTab?: WorkspaceTab; onArrivalConsumed?: (signal: number) => void; urlTab?: WorkspaceTab; onTabShown?: (tab: WorkspaceTab) => void };
+type ProjectWorkspaceProps = { projectId: string; notice?: string | null; onNoticeShown?: () => void; arrivalSignal?: number; arrivalTab?: WorkspaceTab; onArrivalConsumed?: (signal: number) => void; urlTab?: WorkspaceTab; onTabShown?: (tab: WorkspaceTab) => void; whiteboardOpen?: boolean; onOpenWhiteboard?: () => void; onCloseWhiteboard?: (tab: WorkspaceTab) => void };
 type TerminalState = { projectId: string; scope: "principal" | "project"; message: string };
 type AccessFailureResource = "detail" | "activity" | "assets" | "comments" | "comment-read-marker" | "nested-comment" | "collaboration-summary";
 
 function ProjectWorkspaceView(props: ProjectWorkspaceProps) {
-  const { projectId, notice, onNoticeShown, arrivalSignal, arrivalTab, onArrivalConsumed, urlTab, onTabShown } = props;
+  const { projectId, notice, onNoticeShown, arrivalSignal, arrivalTab, onArrivalConsumed, urlTab, onTabShown, whiteboardOpen = false, onOpenWhiteboard, onCloseWhiteboard } = props;
   const queryClient = useQueryClient();
   const runtime = useProjectQueryRuntime();
   const runtimeVersion = useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot);
@@ -392,10 +394,11 @@ function ProjectWorkspaceView(props: ProjectWorkspaceProps) {
     if (shownTab === null) return; // loading / unavailable views never touch the URL
     if (arrivalSignal !== undefined && arrivalSignal !== consumedSignalRef.current) return; // arrival pending
     if (awaitingTabRef.current !== null) { if (activeTab !== awaitingTabRef.current) return; awaitingTabRef.current = null; }
+    if (whiteboardOpen) return; // #498: the board owns the URL; the Workspace must not rewrite it back to a tab
     if (urlTab !== shownTab) onTabShownRef.current?.(shownTab);
-  }, [shownTab, urlTab, arrivalSignal, activeTab]);
+  }, [shownTab, urlTab, arrivalSignal, activeTab, whiteboardOpen]);
   if (!projectId || viewState === "unavailable") return <UnavailableProject message={currentTerminal?.message ?? "Project unavailable."} />;
-  if (viewState === "collaboration-only") return <CollaborationOnlyView projectId={projectId} onAccessFailure={accessFailure} />;
+  if (viewState === "collaboration-only") return <CollaborationOnlyView projectId={projectId} onAccessFailure={accessFailure} whiteboardOpen={whiteboardOpen} onOpenWhiteboard={onOpenWhiteboard} onCloseWhiteboard={() => onCloseWhiteboard?.("collaboration")} />;
   if (viewState === "collaboration-unavailable") return <CollaborationOnlyUnavailable />;
   if (initialDetailProbe) return <LoadingProject />;
   return <>
@@ -404,7 +407,7 @@ function ProjectWorkspaceView(props: ProjectWorkspaceProps) {
       setStageKeyForManual(stageKey);
       setDetailReadyFor(ownerRun);
       startCompanionBatch(ownerRun);
-    }} onDetailStage={(ownerRun, stageKey) => { if (ownerRun !== runRef.current) return; setStageKeyForManual(stageKey); }} onAccessFailure={accessFailure} onCollectionDenied={(kind) => { setCollectionDenied((current) => current.has(kind) ? current : new Set(current).add(kind)); if (activeTab === kind) selectWorkspaceTab("collaboration"); }} activeTabChange={selectWorkspaceTab} openAssetId={openAssetId} setOpenAssetId={setOpenAssetId} lightboxOrderIds={lightboxOrderIds} setLightboxOrderIds={setLightboxOrderIds} ingest={ingest} jobs={jobs} autohdrStatus={autohdrStatus} isSyncing={isSyncing} isSending={isSending} onSyncDropbox={() => syncDropbox()} onSendToAutoHdr={() => void sendToAutoHdr()} onRetryAutoHdr={(jobId) => void retryAutoHdr(jobId)} onUploadComplete={onUploadComplete} onDocumentsChanged={onDocumentsChanged} onLinksChanged={onLinksChanged} onInvalidate={invalidate} onRefreshDetail={forceDetailRead} canReadCollection={canReadCollection} />
+    }} onDetailStage={(ownerRun, stageKey) => { if (ownerRun !== runRef.current) return; setStageKeyForManual(stageKey); }} onAccessFailure={accessFailure} onCollectionDenied={(kind) => { setCollectionDenied((current) => current.has(kind) ? current : new Set(current).add(kind)); if (activeTab === kind) selectWorkspaceTab("collaboration"); }} activeTabChange={selectWorkspaceTab} whiteboardOpen={whiteboardOpen} onOpenWhiteboard={onOpenWhiteboard} onCloseWhiteboard={onCloseWhiteboard} openAssetId={openAssetId} setOpenAssetId={setOpenAssetId} lightboxOrderIds={lightboxOrderIds} setLightboxOrderIds={setLightboxOrderIds} ingest={ingest} jobs={jobs} autohdrStatus={autohdrStatus} isSyncing={isSyncing} isSending={isSending} onSyncDropbox={() => syncDropbox()} onSendToAutoHdr={() => void sendToAutoHdr()} onRetryAutoHdr={(jobId) => void retryAutoHdr(jobId)} onUploadComplete={onUploadComplete} onDocumentsChanged={onDocumentsChanged} onLinksChanged={onLinksChanged} onInvalidate={invalidate} onRefreshDetail={forceDetailRead} canReadCollection={canReadCollection} />
   </>;
 }
 
@@ -415,7 +418,7 @@ export function ProjectWorkspace(props: ProjectWorkspaceProps) {
   return <><ProjectWorkspaceView {...props} /><ToastViewport /></>;
 }
 
-function CollaborationOnlyView({ projectId, onAccessFailure }: { projectId: string; onAccessFailure: (error: unknown, resource: AccessFailureResource, kind?: CollectionKind, initial?: boolean) => void }) {
+function CollaborationOnlyView({ projectId, onAccessFailure, whiteboardOpen, onOpenWhiteboard, onCloseWhiteboard }: { projectId: string; whiteboardOpen: boolean; onOpenWhiteboard?: () => void; onCloseWhiteboard: () => void; onAccessFailure: (error: unknown, resource: AccessFailureResource, kind?: CollectionKind, initial?: boolean) => void }) {
   const dashboardReturn = useDashboardReturnLink();
   const summary = useProjectCollaborationSummaryQuery(projectId, true);
   const commentsQuery = useProjectCommentsCacheQuery(projectId);
@@ -423,9 +426,10 @@ function CollaborationOnlyView({ projectId, onAccessFailure }: { projectId: stri
   useEffect(() => { if (summary.error) onAccessFailure(summary.error, "collaboration-summary"); }, [onAccessFailure, summary.error]);
   if (summary.error) return <CollaborationOnlyUnavailable />;
   const street = summary.data?.project.street ?? commentsQuery.data?.pages[0]?.project.street ?? "Project collaboration";
+  if (whiteboardOpen) return <main className="page" data-testid="project-collaboration-only"><ProjectWhiteboard projectId={projectId} street={street} onClose={onCloseWhiteboard} onAccessFailure={(error) => onAccessFailure(error, "collaboration-summary")} /></main>;
   const stage = summary.data && stages.find((item) => item.key === presentationStageKey(summary.data.project.stageKey));
   return <main className="page grid gap-[var(--space-5)]" data-testid="project-collaboration-only">
-    <div className="pagehead"><div><Eyebrow>Collaboration</Eyebrow><h1 className="serif">{street}</h1></div><div className="flex flex-wrap items-center gap-[var(--space-2)]"><CopyProjectLinkButton projectId={projectId} tab="collaboration" /><InternalLink className={buttonClasses("secondary")} {...dashboardReturn}>Back to dashboard</InternalLink></div></div>
+    <div className="pagehead"><div><Eyebrow>Collaboration</Eyebrow><h1 className="serif">{street}</h1></div><div className="flex flex-wrap items-center gap-[var(--space-2)]"><CopyProjectLinkButton projectId={projectId} tab="collaboration" />{onOpenWhiteboard && <WhiteboardButton onOpen={onOpenWhiteboard} />}<InternalLink className={buttonClasses("secondary")} {...dashboardReturn}>Back to dashboard</InternalLink></div></div>
     {summary.isPending && !summary.data && <EmptyState role="status" title="Loading collaboration.">Preparing the project summary.</EmptyState>}
     {summary.data && <section className="grid gap-[var(--space-3)] p-[var(--space-5)] bg-card [border-style:solid] border-[length:var(--border-width-hair)] border-border" aria-labelledby="collaboration-summary-heading"><Eyebrow>Read-only summary</Eyebrow><h2 className="serif [font:var(--type-h3)]" id="collaboration-summary-heading">Project overview</h2><div className="grid gap-[var(--space-3)]"><div className="kv"><span className="k">Stage</span><span className="vv">{stage?.label ?? summary.data.project.stageKey}</span></div><div className="kv"><span className="k">Deadline</span><span className="vv">Not scheduled</span></div><div className="kv"><span className="k">Next reminder</span><span className="vv">None</span></div></div><div className="grid gap-[var(--space-3)] grid-cols-2 max-[721px]:grid-cols-1 pt-[var(--space-3)] [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border"><div><Eyebrow>Photographers</Eyebrow>{summary.data.members.filter((member) => member.roleOnProject === "photographer").map((member) => <div className="py-[5px] [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" key={member.id}>{member.name}{!member.active && <em className="ms-[6px] not-italic text-signal-caution-text">Inactive</em>}</div>)}</div><div><Eyebrow>Editors</Eyebrow>{summary.data.members.filter((member) => member.roleOnProject === "editor").map((member) => <div className="py-[5px] [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" key={member.id}>{member.name}{!member.active && <em className="ms-[6px] not-italic text-signal-caution-text">Inactive</em>}</div>)}</div></div></section>}
     <ProjectCollaborationPanel projectId={projectId} onAccessFailure={onAccessFailure} />
@@ -447,7 +451,7 @@ function UnavailableProject({ message }: { message: string }) { const dashboardR
 
 type QueryOwnerProps = {
   projectId: string; role: Role; run: number; activeTab: WorkspaceTab; collectionDenied: Set<CollectionKind>; workspaceReady: boolean; collaborationView: CollaborationView; onCollaborationViewChange: (view: CollaborationView) => void; workspaceTabRefs: React.RefObject<Map<WorkspaceTab, HTMLButtonElement>>; collaborationUnavailable: boolean; canViewEdited: boolean; canAdminBackend: boolean;
-  onDetailReady: (run: number, stageKey: ProjectStageKey) => void; onDetailStage: (run: number, stageKey: ProjectStageKey) => void; onAccessFailure: (error: unknown, resource: AccessFailureResource, kind?: CollectionKind, initial?: boolean) => void; onCollectionDenied: (kind: CollectionKind) => void; activeTabChange: (tab: WorkspaceTab) => void;
+  onDetailReady: (run: number, stageKey: ProjectStageKey) => void; onDetailStage: (run: number, stageKey: ProjectStageKey) => void; onAccessFailure: (error: unknown, resource: AccessFailureResource, kind?: CollectionKind, initial?: boolean) => void; onCollectionDenied: (kind: CollectionKind) => void; activeTabChange: (tab: WorkspaceTab) => void; whiteboardOpen: boolean; onOpenWhiteboard?: () => void; onCloseWhiteboard?: (tab: WorkspaceTab) => void;
   openAssetId: string | null; setOpenAssetId: (id: string | null) => void; lightboxOrderIds: string[] | null; setLightboxOrderIds: (ids: string[] | null) => void; ingest: IngestStatus | null; jobs: Job[]; autohdrStatus: AutoHdrStatusResponse["handoff"]; isSyncing: boolean; isSending: boolean; onSyncDropbox: () => void | Promise<"archived" | void>; onSendToAutoHdr: () => void; onRetryAutoHdr: (jobId: string) => void; onUploadComplete: (kind: "raw" | "edited") => Promise<void>; onDocumentsChanged: (kind: "floorplan" | "copy") => Promise<void>; onLinksChanged: () => Promise<void>; onInvalidate: (resources: ProjectDataResource[]) => Promise<void>; onRefreshDetail: () => Promise<ProjectDetail | undefined>; canReadCollection: (kind: CollectionKind) => boolean;
 };
 
@@ -558,13 +562,17 @@ function WorkspaceBody(props: WorkspaceChromeProps) {
     }
   }, [can, project, props, stageMovePending, stages, terminateOnUnauthorized]);
   return <main className="work" data-testid="project-workspace">
-    <ProjectHeader project={project} activeTab={activeTab} availableTabs={availableTabs} canUpload={canUpload} canAdminBackend={props.canAdminBackend} canEdit={canEdit} hasRawFolder={hasRawFolder} autohdrBlocked={autohdrBlocked} isSyncing={props.isSyncing} onSyncDropbox={props.onSyncDropbox} onActiveTabChange={props.activeTabChange} collaborationUnread={props.collaborationUnavailable ? 0 : collaborationUnread} workspaceTabRefs={props.workspaceTabRefs} onStageMove={(targetStageKey) => moveStage(targetStageKey)} stageMovePending={stageMovePending} stageMoveDisabledReason={stageMoveDisabledReason} />
+    {props.whiteboardOpen && <ProjectWhiteboard projectId={project.id} street={project.street} archivedHint={Boolean(project.archivedAt)} onClose={() => props.onCloseWhiteboard?.(activeTab)} onAccessFailure={(error) => props.onAccessFailure(error, "collaboration-summary")} />}
+    {/* The Workspace stays mounted under the board (drafts, sub-tab, read state); only its visibility changes. */}
+    <div className={props.whiteboardOpen ? "hidden" : "contents"} data-whiteboard-hidden={String(props.whiteboardOpen)}>
+    <ProjectHeader onOpenWhiteboard={props.collaborationUnavailable ? undefined : props.onOpenWhiteboard} project={project} activeTab={activeTab} availableTabs={availableTabs} canUpload={canUpload} canAdminBackend={props.canAdminBackend} canEdit={canEdit} hasRawFolder={hasRawFolder} autohdrBlocked={autohdrBlocked} isSyncing={props.isSyncing} onSyncDropbox={props.onSyncDropbox} onActiveTabChange={props.activeTabChange} collaborationUnread={props.collaborationUnavailable ? 0 : collaborationUnread} workspaceTabRefs={props.workspaceTabRefs} onStageMove={(targetStageKey) => moveStage(targetStageKey)} stageMovePending={stageMovePending} stageMoveDisabledReason={stageMoveDisabledReason} />
     <section className="workmain" data-testid="workspace-main">
       {collection !== null && <CollectionTabBody key={collection} {...props} collection={collection} hasRawFolder={hasRawFolder} autohdrBlocked={autohdrBlocked} />}
       <div role="tabpanel" id="project-workspace-panel-collaboration" aria-labelledby="project-workspace-tab-collaboration" hidden={activeTab !== "collaboration"} className="workgrid">
         {props.collaborationUnavailable ? <CollaborationUnavailableSection /> : <ProjectCollaborationPanel projectId={project.id} archived={Boolean(project.archivedAt)} presented={activeTab === "collaboration"} jobs={props.canAdminBackend ? props.jobs : undefined} onRetryJob={props.onRetryAutoHdr} view={props.collaborationView} onViewChange={props.onCollaborationViewChange} showUnreadBadge={false} onUnreadCountChange={setCollaborationUnread} onAccessFailure={props.onAccessFailure} embedded />}
       </div>
     </section>
+    </div>
   </main>;
 }
 

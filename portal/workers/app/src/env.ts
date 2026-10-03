@@ -1,4 +1,5 @@
 import type { NotificationOutboxMessage, Role } from "@quincy/shared";
+import type { ProjectWhiteboardDO } from "./whiteboard/project-whiteboard-do";
 import type { QuincyBackground } from "../../background/src/rpc-types";
 
 export interface Env {
@@ -11,6 +12,8 @@ export interface Env {
   RENDITION_QUEUE?: Queue<{ type: "generate_renditions"; assetId: string }>;
   BACKGROUND: Service<QuincyBackground>;
   ASSETS: Fetcher;
+  /** #498: one Project whiteboard Durable Object per Project, named by the Project id. */
+  PROJECT_WHITEBOARD: DurableObjectNamespace<ProjectWhiteboardDO>;
   APP_ENV: string;
   APP_ORIGIN: string;
   BETTER_AUTH_SECRET?: string;
