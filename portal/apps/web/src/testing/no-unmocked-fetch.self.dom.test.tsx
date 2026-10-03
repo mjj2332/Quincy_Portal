@@ -36,4 +36,9 @@ describe("DOM suite network guard", () => {
     await expect(fetch("/api/self-test")).rejects.toThrow(/Unmocked fetch/);
     expect(drainAttemptsForSelfTest()).toEqual(["GET /api/self-test"]);
   });
+
+  it("refuses a WebSocket and records it (#498)", () => {
+    expect(() => new WebSocket("ws://localhost:3000/api/projects/p/whiteboard/socket")).toThrow(/Unmocked WebSocket/);
+    expect(drainAttemptsForSelfTest()).toEqual(["WebSocket ws://localhost:3000/api/projects/p/whiteboard/socket"]);
+  });
 });

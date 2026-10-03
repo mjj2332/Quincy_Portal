@@ -1,0 +1,246 @@
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import type { ReactNode } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { focusManager } from "@tanstack/react-query";
+import { nearestScrollContainer } from "../lib/scroll-container";
+import { ProjectWorkspace } from "./ProjectWorkspace";
+import { ProjectSheet } from "../components/quincy/ProjectSheet";
+import { ConfirmModalHost } from "../components/ConfirmDialog";
+import { confirm, confirmStore } from "../lib/confirm";
+import { QuincyQueryProvider } from "../lib/query-client";
+import type { WorkspaceAsset } from "../components/PhotoGrid";
+import type { Role } from "@quincy/shared";
+import { stubRailMedia } from "../testing/rail-media";
+import type { WhiteboardMode } from "@quincy/shared";
+
+// jsdom has no matchMedia: without it the checklist reads as stacked (collapsed) (#377).
+stubRailMedia(true);
+
+/**
+ * #366 — the REAL Workspace inside a `ProjectSheet`, with the layers that share Escape and outside
+ * presses: the Lightbox (rendered in place, inside the sheet popup) and a confirm (portalled to
+ * body). `App-project-sheet.dom.test.tsx` covers the layering with a stub Workspace; this file is
+ * the seam where Base UI's document-level dismissal meets the Lightbox's window listener.
+ * Harness lifted from `ProjectWorkspace.dom.test.tsx`.
+ */
+const authState = vi.hoisted(() => ({ role: "editor" }));
+vi.mock("../lib/auth", () => ({
+  useSession: () => ({ data: { user: { id: "user-1", role: authState.role } }, isPending: false }),
+}));
+
+const apiGetMock = vi.fn<(path: string, init?: unknown) => Promise<unknown>>();
+const apiPatchMock = vi.fn<(path: string, body?: unknown) => Promise<unknown>>();
+vi.mock("../lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/api")>();
+  return { ...actual, apiGet: (path: string, init?: unknown) => apiGetMock(path, init), apiPost: vi.fn(() => Promise.resolve({})), apiPatch: (path: string, body?: unknown) => apiPatchMock(path, body), apiDelete: vi.fn(() => Promise.resolve({})) };
+});
+
+if (!Element.prototype.getAnimations) Element.prototype.getAnimations = () => [];
+
+function workspaceAsset(id: string): WorkspaceAsset {
+  return { id, section: null, collectionId: "collection", kind: "photo", originalFilename: `${id}.jpg`, bytes: 1, width: null, height: null, ratingFromMetadata: null, renditionStatus: "ready", createdAt: "2026-07-21T00:00:00.000Z", sourceRawAssetId: null, version: 1, versionGroupId: null, supersedesAssetId: null, review: null, selected: false };
+}
+
+function projectFixture() {
+  return {
+    id: "p1", street: "12 Example St", suburb: "Suburbia", postcode: "2000",
+    agencyName: null, agentName: null, shootDate: null, stageKey: "raw_review",
+    rawFolderPath: null, rawFolderLink: null, coverAssetId: null, effectiveCoverAssetId: null,
+    collections: [
+      { id: "c-raw", kind: "raw", status: "active", expectedCount: null, receivedCount: 2 },
+      { id: "c-edited", kind: "edited", status: "active", expectedCount: null, receivedCount: 1 },
+    ],
+    members: [],
+    deadlineSchedule: { version: 0, deadline: null, reminderOffsetsMinutes: [], state: "unset", nextOccurrence: null, canResume: false },
+  };
+}
+
+let root: Root | null = null;
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+async function flush(times = 10) {
+  for (let i = 0; i < times; i += 1) await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
+}
+async function flushUntil(predicate: () => boolean, label: string, timeoutMs = 3_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
+    if (predicate()) break;
+    if (Date.now() > deadline) throw new Error(`flushUntil timed out after ${timeoutMs}ms waiting for: ${label}`);
+  }
+  await flush(5);
+}
+const click = (el: Element) => act(async () => { el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await Promise.resolve(); });
+const escape = (target: EventTarget) => act(async () => { target.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
+const tab = (name: string) => [...document.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].find((item) => item.textContent?.trim().startsWith(name));
+const lightbox = () => document.querySelector('[role="dialog"][aria-label="Photo viewer"]');
+
+/**
+ * A keyboard Tab as a browser performs it: dispatch the keydown, and unless something prevented it,
+ * move focus to the next/previous tabbable in document order (focus guards included, which is how
+ * Floating UI's modal manager wraps focus). happy-dom does not move focus on Tab by itself.
+ */
+const pressTab = (shift = false) => act(async () => {
+  const from = (document.activeElement ?? document.body) as HTMLElement;
+  const event = new KeyboardEvent("keydown", { key: "Tab", shiftKey: shift, bubbles: true, cancelable: true });
+  from.dispatchEvent(event);
+  if (!event.defaultPrevented) {
+    const order = [...document.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]')].filter((el) => el.getAttribute("tabindex") !== "-1");
+    const at = order.indexOf(from);
+    const next = order[(at + (shift ? -1 : 1) + order.length) % order.length];
+    next?.focus();
+  }
+  await Promise.resolve();
+});
+const confirmFocusables = (modal: HTMLElement) => [...modal.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]')].filter((el) => el.getAttribute("tabindex") !== "-1" && !el.hasAttribute("data-floating-ui-focus-guard"));
+
+
+const board = vi.hoisted(() => ({ mode: "edit" as WhiteboardMode, props: null as null | { readOnly?: boolean; imageTool?: boolean; theme?: string; onSave?: () => Promise<void> }, scene: [] as Array<Record<string, unknown>>, send: null as null | ((batch: readonly unknown[]) => Promise<void>), handlers: null as null | { onInit: (init: { mode: WhiteboardMode; elements: unknown[] }, reconnect: boolean) => void } }));
+vi.mock("../lib/whiteboard-socket", () => ({
+  openWhiteboardSocket: (_projectId: string, handlers: { onInit: (init: { mode: WhiteboardMode; elements: unknown[] }, reconnect: boolean) => void; onConnection: (state: string) => void }) => {
+    board.handlers = handlers;
+    queueMicrotask(() => { handlers.onConnection("open"); handlers.onInit({ mode: board.mode, elements: [] }, false); });
+    return { send: (batch: readonly unknown[]) => (board.send ? board.send(batch) : Promise.resolve()), close: () => undefined };
+  },
+}));
+vi.mock("../components/reui/whiteboard/whiteboard", () => ({
+  Whiteboard: (props: { readOnly?: boolean; imageTool?: boolean; theme?: string; onSave?: () => Promise<void>; onReady?: (controller: unknown) => void }) => { board.props = props; props.onReady?.({ api: { getSceneElementsIncludingDeleted: () => board.scene } }); return <div data-testid="whiteboard-stand-in" tabIndex={0}>board</div>; },
+}));
+
+const onRequestClose = vi.fn();
+const onOpenWhiteboard = vi.fn();
+const onCloseWhiteboard = vi.fn();
+
+async function renderSheet(props: { whiteboardOpen?: boolean } = {}) {
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  const ui: ReactNode = (
+    <QuincyQueryProvider key="test" principalId="test-user" role={authState.role as Role}>
+      <ProjectSheet open kind="project" sheetKey="project:p1" backdropHref="/" onRequestClose={onRequestClose}>
+        <ProjectWorkspace projectId="p1" onArrivalConsumed={() => undefined} whiteboardOpen={props.whiteboardOpen} onOpenWhiteboard={onOpenWhiteboard} onCloseWhiteboard={onCloseWhiteboard} />
+      </ProjectSheet>
+      <ConfirmModalHost />
+    </QuincyQueryProvider>
+  );
+  await act(async () => { root!.render(ui); await Promise.resolve(); });
+  await flushUntil(() => tab("Collaboration") !== undefined, "the Workspace tabs inside the sheet");
+  return host;
+}
+
+let archived = false;
+beforeEach(() => {
+  authState.role = "editor";
+  archived = false;
+  board.mode = "edit"; board.props = null; board.scene = []; board.send = null; board.handlers = null;
+  onRequestClose.mockReset(); onOpenWhiteboard.mockReset(); onCloseWhiteboard.mockReset();
+  apiGetMock.mockReset();
+  apiPatchMock.mockReset().mockResolvedValue({});
+  apiGetMock.mockImplementation((path: string) => {
+    if (path === "/api/projects/p1") return Promise.resolve({ ...projectFixture(), archivedAt: archived ? "2026-07-01T00:00:00.000Z" : null });
+    if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1")] });
+    if (path.includes("/assets?collection=edited")) return Promise.resolve({ assets: [] });
+    if (path.includes("ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+    if (path.includes("comment-read-marker")) return Promise.resolve({ projectId: "p1", marker: null, latest: null, unreadCount: 0 });
+    if (path.includes("comments")) return Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [] });
+    if (path.includes("annotations")) return Promise.resolve({ annotations: [] });
+    if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
+    if (path.includes("mentionable-users")) return Promise.resolve({ users: [] });
+    return Promise.resolve({});
+  });
+});
+
+afterEach(async () => {
+  if (root) await act(async () => { root!.unmount(); await Promise.resolve(); });
+  root = null;
+  document.body.replaceChildren();
+});
+
+const openButton = () => document.querySelector<HTMLButtonElement>('[data-testid="project-whiteboard-open"]');
+const boardRoot = () => document.querySelector<HTMLElement>('[data-testid="project-whiteboard"]');
+
+describe("the whiteboard entry button (#498)", () => {
+  it("sits right after the Collaboration tab, outside the tablist, and opens the board through the shell", async () => {
+    await renderSheet();
+    const button = openButton()!;
+    expect(button).not.toBeNull();
+    expect(button.getAttribute("aria-label")).toBe("Open whiteboard");
+    expect(button.closest('[role="tablist"]')).toBeNull();
+    expect(button.previousElementSibling!.contains(tab("Collaboration")!)).toBe(true);
+    await click(button);
+    expect(onOpenWhiteboard).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the open whiteboard (#498)", () => {
+  it("replaces the sheet's body, keeps the Workspace mounted beneath it, and Close returns the tab it was on", async () => {
+    await renderSheet({ whiteboardOpen: true });
+    await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
+    expect(boardRoot()).not.toBeNull();
+    expect(board.props).toMatchObject({ readOnly: false, imageTool: false, theme: "light" });
+    // The Workspace chrome is hidden, not unmounted: drafts and the sub-tab survive.
+    expect(document.querySelector('[role="tabpanel"]')).not.toBeNull();
+    expect(tab("Collaboration")!.closest("[data-whiteboard-hidden]")?.getAttribute("data-whiteboard-hidden")).toBe("true");
+    await click(document.querySelector('[data-testid="project-whiteboard-close"]')!);
+    expect(onCloseWhiteboard).toHaveBeenCalledWith("collaboration");
+  });
+
+  it("Close flushes the final state through the live socket and waits for its ack before closing", async () => {
+    let ack!: () => void; const sent: unknown[][] = [];
+    board.send = (batch) => { sent.push([...batch]); return new Promise<void>((resolve) => { ack = resolve; }); };
+    board.scene = [{ id: "a", version: 2, versionNonce: 5 }];
+    await renderSheet({ whiteboardOpen: true });
+    await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
+    await click(document.querySelector('[data-testid="project-whiteboard-close"]')!);
+    expect(sent).toHaveLength(1);
+    expect(onCloseWhiteboard).not.toHaveBeenCalled();     // still waiting for the ack
+    await act(async () => { ack(); await Promise.resolve(); });
+    await flush(3);
+    expect(onCloseWhiteboard).toHaveBeenCalledWith("collaboration");
+  });
+
+  it("retries unacknowledged changes once the socket reconnects", async () => {
+    const sent: unknown[][] = [];
+    board.send = (batch) => { sent.push([...batch]); return sent.length === 1 ? Promise.reject(new Error("dropped")) : Promise.resolve(); };
+    await renderSheet({ whiteboardOpen: true });
+    await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
+    board.scene = [{ id: "a", version: 2, versionNonce: 5 }];
+    await act(async () => { await board.props!.onSave!().catch(() => undefined); });
+    expect(sent).toHaveLength(1);
+    await act(async () => { board.handlers!.onInit({ mode: "edit", elements: [] }, true); await Promise.resolve(); });
+    await flush(3);
+    expect(sent).toHaveLength(2);
+  });
+
+  it("Close stays open with a visible error when the final save fails, and a second Close leaves", async () => {
+    board.send = () => Promise.reject(new Error("The whiteboard did not confirm the save."));
+    board.scene = [{ id: "a", version: 2, versionNonce: 5 }];
+    await renderSheet({ whiteboardOpen: true });
+    await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
+    const close = document.querySelector('[data-testid="project-whiteboard-close"]')!;
+    await click(close); await flush(3);
+    expect(onCloseWhiteboard).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-testid="project-whiteboard-status"]')?.textContent).toBe("Not saved");
+    await click(close); await flush(3);
+    expect(onCloseWhiteboard).toHaveBeenCalledWith("collaboration");
+  });
+
+  it("an archived Project's board is view-only, and says so", async () => {
+    archived = true; board.mode = "view";
+    await renderSheet({ whiteboardOpen: true });
+    await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
+    expect(board.props?.readOnly).toBe(true);
+    expect(document.querySelector('[data-testid="project-whiteboard-view-only"]')?.textContent).toBe("View only");
+  });
+
+  it("Esc inside the board never closes the sheet", async () => {
+    await renderSheet({ whiteboardOpen: true });
+    await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
+    const inside = document.querySelector<HTMLElement>('[data-testid="whiteboard-stand-in"]')!;
+    inside.focus();
+    await escape(inside);
+    expect(onRequestClose).not.toHaveBeenCalled();
+    expect(boardRoot()).not.toBeNull();
+  });
+});
