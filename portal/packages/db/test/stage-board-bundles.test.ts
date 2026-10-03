@@ -743,11 +743,15 @@ describe("TB5A Slice 3 stage-board bundles", () => {
       applyAllMigrations(db);
       seedFeatureFlag(db);
       const d1 = localD1(db);
-      const attempt = async (arrival: number | null, archived = false, overrides: Partial<typeof premise> = {}) => {
+      const attempt = async (arrival: number | null, archived = false, overrides: Partial<typeof premise> = {}, publishStatus: string | null = "ready") => {
         db.prepare("DELETE FROM projects").run();
         db.prepare("DELETE FROM audit_log").run();
         seedProject(db, { id: "target", stageKey: "raw_review", boardRevision: 5 });
         db.prepare("UPDATE projects SET edited_arrived_at = ?, archived_at = ? WHERE id = 'target'").run(arrival, archived ? 1 : null);
+        db.prepare("DELETE FROM assets").run();
+        db.prepare("DELETE FROM collections").run();
+        db.prepare("INSERT INTO collections (id, project_id, kind, status, created_at, updated_at) VALUES ('c1', 'target', 'edited', 'received', 1, 1)").run();
+        if (publishStatus) db.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, source, publish_status, created_at, updated_at) VALUES ('a1', 'c1', 'photo', 'k', 'f.jpg', 1, 'upload', ?, 1, 1)").run(publishStatus);
         const bundle = buildNonCompactingStageWinner({ ...baseStageInput(d1), placement: "append", expectedTarget: [], expectedTargetRowCount: 0, workflowPremise: { ...premise, ...overrides } });
         const results = await executeBundle(d1, bundle);
         return { winner: (results[bundle.indexes.winner]!.results as SqliteRow[]).length, stage: (db.prepare("SELECT stage_key FROM projects WHERE id = 'target'").get() as SqliteRow).stage_key };
@@ -759,6 +763,8 @@ describe("TB5A Slice 3 stage-board bundles", () => {
       expect(await attempt(3_000, false, { latestArrivalAt: 3_000 })).toEqual({ winner: 0, stage: "raw_review" });
       expect(await attempt(null)).toEqual({ winner: 0, stage: "raw_review" });
       expect(await attempt(1_000, true)).toEqual({ winner: 0, stage: "raw_review" });
+      // No ready current Edited asset at commit time: deleted, still pending, or failed to publish.
+      for (const status of [null, "pending", "failed"]) expect(await attempt(1_000, false, {}, status)).toEqual({ winner: 0, stage: "raw_review" });
     } finally {
       db.close();
     }

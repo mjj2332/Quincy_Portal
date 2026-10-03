@@ -17,6 +17,6 @@ export function buildEditedArrivalRecord(
   input: { projectId: string; now: number; gateSql: string; gateBindings: readonly unknown[] },
 ): D1PreparedStatement {
   return db.prepare(
-    `UPDATE projects SET edited_arrived_at = MAX(COALESCE(edited_arrived_at, 0), ?) WHERE id = ? AND archived_at IS NULL AND stage_key IN (${SOURCE_STAGES_SQL}) AND ${input.gateSql}`,
+    `UPDATE projects SET edited_arrived_at = MAX(COALESCE(edited_arrived_at, 0), ?), edited_arrival_attempts = 0, edited_arrival_retry_at = NULL WHERE id = ? AND archived_at IS NULL AND stage_key IN (${SOURCE_STAGES_SQL}) AND ${input.gateSql}`,
   ).bind(input.now, input.projectId, ...input.gateBindings);
 }

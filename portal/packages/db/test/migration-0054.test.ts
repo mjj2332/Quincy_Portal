@@ -40,6 +40,16 @@ describe("migration 0054 records the latest Edited arrival (#486)", () => {
     db.close();
   });
 
+  it("adds the retry bookkeeping with a zero default and rejects bad values", () => {
+    const db = localSqlite();
+    applyThrough(db, 54);
+    seedProject(db, "p1");
+    expect(db.prepare("SELECT edited_arrival_attempts AS a, edited_arrival_retry_at AS r FROM projects WHERE id = 'p1'").get()).toEqual({ a: 0, r: null });
+    expect(() => db.prepare("UPDATE projects SET edited_arrival_attempts = -1 WHERE id = 'p1'").run()).toThrow(CHECK_FAILED);
+    expect(() => db.prepare("UPDATE projects SET edited_arrival_retry_at = 'x' WHERE id = 'p1'").run()).toThrow(CHECK_FAILED);
+    db.close();
+  });
+
   it("accepts epoch milliseconds and rejects a non-integer value", () => {
     const db = localSqlite();
     applyThrough(db, 54);

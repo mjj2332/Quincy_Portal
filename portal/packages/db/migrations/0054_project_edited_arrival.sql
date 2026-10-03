@@ -8,5 +8,13 @@
 ALTER TABLE projects ADD COLUMN edited_arrived_at integer
   CHECK (edited_arrived_at IS NULL OR typeof(edited_arrived_at) = 'integer');
 --> statement-breakpoint
+-- A failing candidate is never abandoned: the pass counts attempts and backs off with edited_arrival_retry_at, so a
+-- transient error cannot drop a valid arrival and a persistently failing row cannot hold a page slot (#194).
+ALTER TABLE projects ADD COLUMN edited_arrival_attempts integer NOT NULL DEFAULT 0
+  CHECK (typeof(edited_arrival_attempts) = 'integer' AND edited_arrival_attempts >= 0);
+--> statement-breakpoint
+ALTER TABLE projects ADD COLUMN edited_arrival_retry_at integer
+  CHECK (edited_arrival_retry_at IS NULL OR typeof(edited_arrival_retry_at) = 'integer');
+--> statement-breakpoint
 -- Partial index so the scan reads only Projects with a pending arrival.
 CREATE INDEX projects_edited_arrival_pending_idx ON projects (edited_arrived_at) WHERE edited_arrived_at IS NOT NULL;

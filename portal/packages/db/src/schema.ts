@@ -183,6 +183,9 @@ export const projects = sqliteTable(
     archivedAt: integer("archived_at", { mode: "timestamp_ms" }),
     /** Latest Edited-media arrival (epoch ms) awaiting the 15-minute quiet-period move to Edited review; NULL when none is pending. */
     editedArrivedAt: integer("edited_arrived_at"),
+    /** Failed move attempts for the pending arrival, and when the pass may try again (backoff). Reset by every new arrival. */
+    editedArrivalAttempts: integer("edited_arrival_attempts").notNull().default(0),
+    editedArrivalRetryAt: integer("edited_arrival_retry_at"),
     archivedBy: text("archived_by").references(() => user.id),
     deadlineLocalCivil: text("deadline_local_civil"),
     deadlineZone: text("deadline_zone", { enum: ["Australia/Sydney"] }),

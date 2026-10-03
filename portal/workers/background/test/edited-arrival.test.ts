@@ -118,6 +118,7 @@ async function cron(atMs: number, flag = "1"): Promise<void> {
 const project = (id: string) => bindings.DB.prepare("SELECT stage_key AS stage, shoot_date AS shootDate, edited_arrived_at AS arrived FROM projects WHERE id = ?").bind(id).first<{ stage: string; shootDate: string | null; arrived: number | null }>();
 const count = async (sql: string, ...values: unknown[]) => (await bindings.DB.prepare(sql).bind(...values).first<{ n: number }>())!.n;
 const advances = (id: string) => count("SELECT count(*) n FROM audit_log WHERE action = 'stage.auto_advance' AND target_type = 'project' AND target_id = ?", id);
+const backoff = (id: string) => bindings.DB.prepare("SELECT edited_arrival_attempts AS attempts, edited_arrival_retry_at AS retry FROM projects WHERE id = ?").bind(id).first<{ attempts: number; retry: number | null }>().then((row) => row!);
 const landed = (id: string) => count("SELECT count(*) n FROM notifications WHERE project_id = ? AND type = 'edited_landed'", id);
 
 describe("an automatic Stage commit straight to Edited review (#486)", () => {
@@ -267,6 +268,8 @@ describe("the pass itself (#486)", () => {
     const ids: string[] = [];
     for (let index = 0; index < EDITED_ARRIVAL_PAGE_SIZE + 5; index += 1) ids.push(await dueProject());
     const poisoned = ids[0]!;
+    // Oldest arrival, so it is first on the page whatever the random ids are.
+    await bindings.DB.prepare("UPDATE projects SET edited_arrived_at = ? WHERE id = ?").bind(T0 - 1, poisoned).run();
     const realCommit = commitAutomaticStage;
     const commit = (async (input: Parameters<typeof commitAutomaticStage>[0]) => {
       if (input.projectId === poisoned) throw new Error("boom");
@@ -277,10 +280,56 @@ describe("the pass itself (#486)", () => {
     expect(first.scanned).toBe(EDITED_ARRIVAL_PAGE_SIZE);
     expect(first.failures).toBe(1);
     expect(first.moved).toBe(EDITED_ARRIVAL_PAGE_SIZE - 1);
-    expect((await project(poisoned))?.arrived).toBeNull();
-    const second = await reconcileEditedArrivals(localEnv(), T0 + 16 * MINUTE, { commit });
+    // The arrival is kept, with a backoff, so the failing row neither holds the page nor is lost.
+    expect((await project(poisoned))?.arrived).toBe(T0 - 1);
+    expect(await backoff(poisoned)).toEqual({ attempts: 1, retry: T0 + 16 * MINUTE });
+    const second = await reconcileEditedArrivals(localEnv(), T0 + 15 * MINUTE + 30_000, { commit });
     expect(second.moved).toBe(5);
     for (const id of ids.slice(1)) expect((await project(id))?.stage).toBe("edited_review");
+    expect((await project(poisoned))?.stage).toBe("editing_autohdr");
+    // A transient failure recovers: once the error clears and the backoff passes, the Project moves.
+    const third = await reconcileEditedArrivals(localEnv(), T0 + 16 * MINUTE);
+    expect(third.moved).toBe(1);
+    expect((await project(poisoned))?.stage).toBe("edited_review");
+  });
+
+  it("keeps the arrival through two lost commits and a transient D1 error, then moves", async () => {
+    const id = await dueProject();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const lose = (async () => ({ kind: "loser" })) as never;
+    await reconcileEditedArrivals(localEnv(), T0 + 15 * MINUTE, { commit: lose });
+    expect((await project(id))?.arrived).toBe(T0);
+    await reconcileEditedArrivals(localEnv(), T0 + 16 * MINUTE, { commit: (async () => { throw new Error("D1 unavailable"); }) as never });
+    expect((await project(id))?.arrived).toBe(T0);
+    expect((await backoff(id)).attempts).toBe(2);
+    expect((await reconcileEditedArrivals(localEnv(), T0 + 17 * MINUTE)).moved).toBe(0);
+    expect((await reconcileEditedArrivals(localEnv(), T0 + 18 * MINUTE)).moved).toBe(1);
+    expect((await project(id))?.stage).toBe("edited_review");
+  });
+
+  it("waits for a ready Edited asset: a pending or failed publish keeps the arrival and moves nothing", async () => {
+    const id = await dueProject();
+    await bindings.DB.prepare("UPDATE assets SET publish_status = 'failed' WHERE collection_id IN (SELECT id FROM collections WHERE project_id = ?)").bind(id).run();
+    expect((await reconcileEditedArrivals(localEnv(), T0 + 15 * MINUTE)).moved).toBe(0);
+    expect((await project(id))?.arrived).toBe(T0);
+    expect(await landed(id)).toBe(0);
+    await bindings.DB.prepare("UPDATE assets SET publish_status = 'ready' WHERE collection_id IN (SELECT id FROM collections WHERE project_id = ?)").bind(id).run();
+    expect((await reconcileEditedArrivals(localEnv(), T0 + 16 * MINUTE)).moved).toBe(1);
+    expect(await landed(id)).toBe(1);
+  });
+
+  it("does not move when the ready asset is deleted between the scan and the commit", async () => {
+    const id = await dueProject();
+    const realCommit = commitAutomaticStage;
+    const commit = (async (input: Parameters<typeof commitAutomaticStage>[0]) => {
+      await bindings.DB.prepare("DELETE FROM assets WHERE collection_id IN (SELECT id FROM collections WHERE project_id = ?)").bind(id).run();
+      return realCommit(input);
+    }) as typeof commitAutomaticStage;
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await reconcileEditedArrivals(localEnv(), T0 + 15 * MINUTE, { commit });
+    expect((await project(id))?.stage).toBe("editing_autohdr");
+    expect(await advances(id)).toBe(0);
+    expect(await landed(id)).toBe(0);
   });
 
   it("leaves a Project in place when its Edited set is gone", async () => {

@@ -17,7 +17,7 @@ import { notifyProject } from "./notifications";
 // email to every active admin and the Project's members, so the page stays small.
 export const EDITED_ARRIVAL_PAGE_SIZE = 25;
 
-type Candidate = { id: string; stageKey: StageKey; boardRevision: number; editedArrivedAt: number };
+type Candidate = { id: string; stageKey: StageKey; boardRevision: number; editedArrivedAt: number; attempts: number };
 export type EditedArrivalSummary = { scanned: number; moved: number; kept: number; cleared: number; failures: number };
 export type EditedArrivalDependencies = { commit?: typeof commitAutomaticStage };
 
@@ -26,18 +26,32 @@ const CURRENT_EDITED_ASSET_SQL = `EXISTS (
   SELECT 1 FROM assets a INNER JOIN collections c ON c.id = a.collection_id
   WHERE c.project_id = p.id AND c.kind = 'edited' AND a.superseded_at IS NULL
 )`;
+// "Landed" means a reviewer can see it: a pending or failed Dropbox publish does not count. Such a
+// Project keeps its arrival and is picked up once a current asset is ready (publish_status is the
+// existing signal, set 'ready' by the publish Workflow and by every import).
+const READY_EDITED_ASSET_SQL = `EXISTS (
+  SELECT 1 FROM assets a INNER JOIN collections c ON c.id = a.collection_id
+  WHERE c.project_id = p.id AND c.kind = 'edited' AND a.superseded_at IS NULL AND a.publish_status = 'ready'
+)`;
 
-// ORDER BY arrival then id is fair: a row that cannot move is taken off the page by its own
-// outcome below (#194), so it cannot hold a slot and hide the Projects behind it. A Project with
-// no current Edited asset is excluded here, so a deleted set never produces an "edits landed" move.
+/** Minutes to wait after the Nth consecutive failure: 1, 2, 4 ... capped at one hour. */
+export function editedArrivalBackoffMs(attempts: number): number {
+  return Math.min(2 ** Math.max(0, attempts - 1), 60) * 60_000;
+}
+
+// ORDER BY arrival then id, and a failing row is pushed out by its own backoff (edited_arrival_retry_at,
+// #194), so it cannot hold a slot and hide the Projects behind it, yet its arrival is never abandoned.
+// A Project with no READY current Edited asset is excluded, so a deleted set or an unpublished upload
+// never produces an "edits landed" move; it stays pending until one is ready.
 export const EDITED_ARRIVAL_SCAN_SQL = `
-  SELECT p.id AS id, p.stage_key AS stageKey, p.board_revision AS boardRevision, p.edited_arrived_at AS editedArrivedAt
+  SELECT p.id AS id, p.stage_key AS stageKey, p.board_revision AS boardRevision, p.edited_arrived_at AS editedArrivedAt, p.edited_arrival_attempts AS attempts
   FROM projects p
   WHERE p.edited_arrived_at IS NOT NULL
     AND p.edited_arrived_at <= ?
     AND p.archived_at IS NULL
     AND p.stage_key IN (${SOURCE_STAGES_SQL})
-    AND ${CURRENT_EDITED_ASSET_SQL}
+    AND (p.edited_arrival_retry_at IS NULL OR p.edited_arrival_retry_at <= ?)
+    AND ${READY_EDITED_ASSET_SQL}
   ORDER BY p.edited_arrived_at ASC, p.id ASC
   LIMIT ?
 `;
@@ -45,7 +59,7 @@ export const EDITED_ARRIVAL_SCAN_SQL = `
 /** A marker that can no longer produce a move is dropped so it never holds a slot or re-fires later. */
 async function housekeeping(database: D1Database, cutoffAt: number): Promise<number> {
   const result = await database.prepare(`
-    UPDATE projects AS p SET edited_arrived_at = NULL
+    UPDATE projects AS p SET edited_arrived_at = NULL, edited_arrival_attempts = 0, edited_arrival_retry_at = NULL
     WHERE p.edited_arrived_at IS NOT NULL
       AND (
         p.archived_at IS NOT NULL
@@ -57,9 +71,16 @@ async function housekeeping(database: D1Database, cutoffAt: number): Promise<num
 }
 
 async function clearMarker(database: D1Database, candidate: Candidate): Promise<boolean> {
-  const result = await database.prepare("UPDATE projects SET edited_arrived_at = NULL WHERE id = ? AND edited_arrived_at = ?")
+  const result = await database.prepare("UPDATE projects SET edited_arrived_at = NULL, edited_arrival_attempts = 0, edited_arrival_retry_at = NULL WHERE id = ? AND edited_arrived_at = ?")
     .bind(candidate.id, candidate.editedArrivedAt).run();
   return (result.meta.changes ?? 0) > 0;
+}
+
+/** Counts the failure and delays the next try, guarded on the scanned arrival so a newer one is untouched. */
+async function backOff(database: D1Database, candidate: Candidate, scheduledTime: number): Promise<void> {
+  const attempts = candidate.attempts + 1;
+  await database.prepare("UPDATE projects SET edited_arrival_attempts = ?, edited_arrival_retry_at = ? WHERE id = ? AND edited_arrived_at = ?")
+    .bind(attempts, scheduledTime + editedArrivalBackoffMs(attempts), candidate.id, candidate.editedArrivedAt).run();
 }
 
 /** True when the Project is exactly as the scan saw it, so a failed commit is not a race. */
@@ -85,7 +106,7 @@ export async function reconcileEditedArrivals(
   const commit = dependencies.commit ?? commitAutomaticStage;
   const cutoffAt = scheduledTime - EDITED_ARRIVAL_QUIET_MS;
   summary.cleared += await housekeeping(env.DB, cutoffAt);
-  const page = await env.DB.prepare(EDITED_ARRIVAL_SCAN_SQL).bind(cutoffAt, EDITED_ARRIVAL_PAGE_SIZE).all<Candidate>();
+  const page = await env.DB.prepare(EDITED_ARRIVAL_SCAN_SQL).bind(cutoffAt, scheduledTime, EDITED_ARRIVAL_PAGE_SIZE).all<Candidate>();
   summary.scanned = page.results.length;
 
   for (const candidate of page.results) {
@@ -104,9 +125,9 @@ export async function reconcileEditedArrivals(
       } else if (outcome.kind === "already_at_destination" || outcome.kind === "deferred") {
         summary.kept += 1;
       } else if (await unchangedSinceScan(env.DB, candidate)) {
-        // The same Project, the same arrival, and still no move: nothing a retry would change.
-        console.error("Edited arrival move failed with the Project unchanged; clearing its arrival", { projectId: candidate.id, outcome: outcome.kind });
-        if (await clearMarker(env.DB, candidate)) summary.cleared += 1;
+        // Same Project, same arrival, still no move. Keep the arrival and back off: never abandon one.
+        console.error("Edited arrival move failed with the Project unchanged; backing off", { projectId: candidate.id, outcome: outcome.kind });
+        await backOff(env.DB, candidate, scheduledTime);
         summary.failures += 1;
       } else {
         // The Project moved, was archived or received a newer arrival meanwhile: the next pass re-evaluates it.
@@ -116,9 +137,9 @@ export async function reconcileEditedArrivals(
       summary.failures += 1;
       console.error("Edited arrival candidate failed", { projectId: candidate.id, error: error instanceof Error ? error.message : String(error) });
       try {
-        if (await unchangedSinceScan(env.DB, candidate) && await clearMarker(env.DB, candidate)) summary.cleared += 1;
+        await backOff(env.DB, candidate, scheduledTime);
       } catch (cleanupError) {
-        console.error("Edited arrival marker cleanup failed", { projectId: candidate.id, error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError) });
+        console.error("Edited arrival backoff failed", { projectId: candidate.id, error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError) });
       }
     }
   }

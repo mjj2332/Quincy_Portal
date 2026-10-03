@@ -315,6 +315,10 @@ AND (
     AND p.archived_at IS NULL
     AND p.edited_arrived_at = ${json(premiseParam, "latestArrivalAt")}
     AND p.edited_arrived_at <= ${json(premiseParam, "cutoffAt")}
+    AND EXISTS (
+      SELECT 1 FROM assets a INNER JOIN collections c ON c.id = a.collection_id
+      WHERE c.project_id = p.id AND c.kind = 'edited' AND a.superseded_at IS NULL AND a.publish_status = 'ready'
+    )
 )`; }
   if (input.kind === "autohdr_handoff") { return String.raw`EXISTS (
   SELECT 1
@@ -571,6 +575,10 @@ AND (
   WHERE p.id = ?1
     AND p.edited_arrived_at = ${json(param, "latestArrivalAt")}
     AND p.edited_arrived_at <= ${json(param, "cutoffAt")}
+    AND EXISTS (
+      SELECT 1 FROM assets a INNER JOIN collections c ON c.id = a.collection_id
+      WHERE c.project_id = p.id AND c.kind = 'edited' AND a.superseded_at IS NULL AND a.publish_status = 'ready'
+    )
 )`; }
   if (premise.kind === "autohdr_handoff") { return String.raw`EXISTS (
   SELECT 1
