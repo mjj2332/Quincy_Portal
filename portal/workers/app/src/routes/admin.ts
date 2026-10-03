@@ -304,6 +304,19 @@ adminRoutes.post("/admin/notification-deliveries/:outboxId/replay", terminalRout
       SELECT ?, ?, 'notification.delivery.replay', 'notification_outbox', ?, ?, ?
       WHERE changes() >= 1
     `).bind(newId(), c.get("user").id, outboxId, auditMeta(c.get("user"), { channels, acknowledgeDuplicateEmail: acknowledgement }), now),
+    // #489: a replayed email that had been digested must be digestible again. Its digest item is UNIQUE on the
+    // notification, so the consumer's insert would be a no-op and the item would stay failed/unknown. Reset it
+    // to pending and unclaimed. Runs after the audit insert (which reads changes()) and only for ledger rows
+    // this very batch just reset (pending, stamped `now`), so an unacknowledged `unknown` never reaches it.
+    c.env.DB.prepare(`
+      UPDATE notification_digest_items
+      SET state = 'pending', outcome_code = NULL, digest_id = NULL, updated_at = ?
+      WHERE state IN ('failed', 'unknown')
+        AND ledger_id IN (
+          SELECT id FROM notification_delivery_ledger
+          WHERE outbox_id = ? AND channel = 'email' AND status = 'pending' AND updated_at = ?
+        )
+    `).bind(now, outboxId, now),
   ]);
   if ((results[0]?.meta.changes ?? 0) === 0 || (results[1]?.meta.changes ?? 0) === 0) return c.json({ error: "Notification delivery is no longer replayable", code: "delivery_changed" }, 409);
   c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, [outboxId]));

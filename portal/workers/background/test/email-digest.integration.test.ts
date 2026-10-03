@@ -299,6 +299,64 @@ describe("runEmailDigests: who gets an email, when, with what", () => {
     expect(await ledgerStatus(item.ledgerId)).toEqual({ status: "suppressed", messageId: null, code: "recipient_inactive" });
   });
 
+  /** An env whose DB runs `mutate` once, right after the digest has composed its rows and before it is admitted to sending. */
+  function envMutatingMidCompose(send: ReturnType<typeof vi.fn>, mutate: () => Promise<void>): Env {
+    let done = false;
+    const wrapStatement = (statement: D1PreparedStatement, sql: string): D1PreparedStatement => new Proxy(statement, {
+      get(target, property) {
+        const value = Reflect.get(target, property) as unknown;
+        if (property === "bind") return (...args: unknown[]) => wrapStatement((value as (...a: unknown[]) => D1PreparedStatement).apply(target, args), sql);
+        if (property === "all" && sql.includes("i.project_id AS projectId")) {
+          return async (...args: unknown[]) => {
+            const result = await (value as (...a: unknown[]) => Promise<unknown>).apply(target, args);
+            if (!done) { done = true; await mutate(); }
+            return result;
+          };
+        }
+        return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+      },
+    });
+    const db = new Proxy(database.DB, {
+      get(target, property) {
+        const value = Reflect.get(target, property) as unknown;
+        if (property === "prepare") return (sql: string) => wrapStatement(target.prepare(sql), sql);
+        return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+      },
+    });
+    return { ...digestEnv(send), DB: db } as unknown as Env;
+  }
+
+  it("does not send when the recipient is deactivated while the digest is being composed, and rebuilds the slot later", async () => {
+    const user = await addUser({ cadence: "hourly" });
+    const project = await addProject("Race Street");
+    const item = await addItem(user.id, { projectId: project });
+    const send = vi.fn().mockResolvedValue({ messageId: "m" });
+    await runEmailDigests(envMutatingMidCompose(send, async () => { await database.DB.prepare("UPDATE user SET active = 0 WHERE id = ?").bind(user.id).run(); }), EIGHT_AM);
+    expect(sentTo(send, user.email)).toHaveLength(0);
+    expect((await digests(user.id)).map((d) => d.status)).toEqual(["released"]);
+    expect(await states(user.id)).toEqual([{ state: "pending", outcome: null }]);
+    expect(await ledgerStatus(item.ledgerId)).toMatchObject({ status: "deferred" });
+    // The next slot sees the deactivation and suppresses instead of sending.
+    await runEmailDigests(digestEnv(send), NINE_AM);
+    expect(sentTo(send, user.email)).toHaveLength(0);
+    expect(await states(user.id)).toEqual([{ state: "suppressed", outcome: "recipient_inactive" }]);
+  });
+
+  it("does not send staff copy when the recipient becomes an External editor while the digest is being composed", async () => {
+    const user = await addUser({ cadence: "hourly" });
+    const project = await addProject("Role Change Street");
+    await addItem(user.id, { projectId: project, title: "Confidential staff title", body: "Confidential staff body" });
+    const send = vi.fn().mockResolvedValue({ messageId: "m" });
+    await runEmailDigests(envMutatingMidCompose(send, async () => { await database.DB.prepare("UPDATE user SET role = 'external_editor' WHERE id = ?").bind(user.id).run(); }), EIGHT_AM);
+    expect(sentTo(send, user.email)).toHaveLength(0);
+    expect((await digests(user.id)).map((d) => d.status)).toEqual(["released"]);
+    expect(await states(user.id)).toEqual([{ state: "pending", outcome: null }]);
+    // Next slot applies External visibility to the same item and holds it back.
+    await runEmailDigests(digestEnv(send), NINE_AM);
+    expect(sentTo(send, user.email)).toHaveLength(0);
+    expect(await states(user.id)).toEqual([{ state: "suppressed", outcome: "external_policy_suppressed" }]);
+  });
+
   it("holds back an External editor's items that the notification centre would not show", async () => {
     const external = await addUser({ cadence: "hourly", role: "external_editor" });
     const project = await addProject("External Street");
