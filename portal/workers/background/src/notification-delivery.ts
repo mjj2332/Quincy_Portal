@@ -2019,6 +2019,16 @@ async function recipientDigestCadence(env: Env, recipientId: string): Promise<st
   return row?.cadence ?? DEFAULT_EMAIL_DIGEST_CADENCE;
 }
 
+/** #489: a digest item for this occurrence's notification means the digest owns its email, whatever the cadence is now. */
+async function digestOwnsEmail(env: Env, outboxId: string): Promise<boolean> {
+  const row = await env.DB.prepare(`
+    SELECT 1 AS owned FROM notification_delivery_ledger l
+    JOIN notification_digest_items i ON i.notification_id = l.notification_id
+    WHERE l.outbox_id = ? AND l.channel = 'in_app' LIMIT 1
+  `).bind(outboxId).first();
+  return row !== null;
+}
+
 async function finishEmail(env: Env, outbox: OutboxRow, token: string, now: number, messageAttempts: number, emailReachedProcessing: { value: boolean }): Promise<"done" | "retry"> {
   const reauthorized = await resolveRecipient(env, outbox);
   if (!reauthorized.ok) {
@@ -2031,7 +2041,7 @@ async function finishEmail(env: Env, outbox: OutboxRow, token: string, now: numb
     await suppressEmailChannel(env, outbox, token, "external_email_not_allowed", now);
     return "done";
   }
-  if (!isDigestExemptType(reauthorized.delivery.notificationType) && await recipientDigestCadence(env, outbox.recipient_id) !== "immediate") {
+  if (!isDigestExemptType(reauthorized.delivery.notificationType) && (await recipientDigestCadence(env, outbox.recipient_id) !== "immediate" || await digestOwnsEmail(env, outbox.id))) {
     if (!await deferEmailToDigest(env, outbox, token, now, reauthorized)) {
       // Same recovery as a lost admission in `beginChannel`: the latest authorization decides.
       const latest = await resolveRecipient(env, outbox);
