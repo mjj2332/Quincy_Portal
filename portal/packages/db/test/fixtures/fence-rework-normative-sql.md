@@ -74,6 +74,17 @@ AND (
 )
 )
 OR (
+  json_extract(?10, '$.kind') = 'edited_arrival_quiet'
+  AND EXISTS (
+  SELECT 1
+  FROM projects p
+  WHERE p.id = ?5
+    AND p.archived_at IS NULL
+    AND p.edited_arrived_at = json_extract(?10, '$.latestArrivalAt')
+    AND p.edited_arrived_at <= json_extract(?10, '$.cutoffAt')
+)
+)
+OR (
   json_extract(?10, '$.kind') = 'autohdr_handoff'
   AND EXISTS (
   SELECT 1
@@ -346,6 +357,17 @@ AND (
         FROM json_each(json_extract(?10, '$.claimStates'))
       )
   )
+)
+)
+OR (
+  json_extract(?10, '$.kind') = 'edited_arrival_quiet'
+  AND EXISTS (
+  SELECT 1
+  FROM projects p
+  WHERE p.id = ?5
+    AND p.archived_at IS NULL
+    AND p.edited_arrived_at = json_extract(?10, '$.latestArrivalAt')
+    AND p.edited_arrived_at <= json_extract(?10, '$.cutoffAt')
 )
 )
 OR (
@@ -671,6 +693,17 @@ AND (
         FROM json_each(json_extract(?11, '$.claimStates'))
       )
   )
+)
+)
+OR (
+  json_extract(?11, '$.kind') = 'edited_arrival_quiet'
+  AND EXISTS (
+  SELECT 1
+  FROM projects p
+  WHERE p.id = ?7
+    AND p.archived_at IS NULL
+    AND p.edited_arrived_at = json_extract(?11, '$.latestArrivalAt')
+    AND p.edited_arrived_at <= json_extract(?11, '$.cutoffAt')
 )
 )
 OR (

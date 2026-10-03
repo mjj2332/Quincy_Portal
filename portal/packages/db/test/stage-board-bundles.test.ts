@@ -731,6 +731,39 @@ describe("TB5A Slice 3 stage-board bundles", () => {
     }
   });
 
+  it("compiles the closed edited_arrival_quiet premise and fences the winner on the unchanged, quiet arrival (#486)", async () => {
+    const premise = { kind: "edited_arrival_quiet" as const, projectId: "target", latestArrivalAt: 1_000, cutoffAt: 2_000 };
+    expect(JSON.parse(compileGuardedTransitionPrerequisite(premise))).toEqual(premise);
+    expect(() => compileGuardedTransitionPrerequisite({ ...premise, latestArrivalAt: -1 })).toThrow(/latestArrivalAt/);
+    expect(() => compileGuardedTransitionPrerequisite({ kind: "edited_arrival_quiet", projectId: "target", latestArrivalAt: 1 } as never)).toThrow(/key mismatch/);
+
+    const db = localSqlite();
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      applyAllMigrations(db);
+      seedFeatureFlag(db);
+      const d1 = localD1(db);
+      const attempt = async (arrival: number | null, archived = false, overrides: Partial<typeof premise> = {}) => {
+        db.prepare("DELETE FROM projects").run();
+        db.prepare("DELETE FROM audit_log").run();
+        seedProject(db, { id: "target", stageKey: "raw_review", boardRevision: 5 });
+        db.prepare("UPDATE projects SET edited_arrived_at = ?, archived_at = ? WHERE id = 'target'").run(arrival, archived ? 1 : null);
+        const bundle = buildNonCompactingStageWinner({ ...baseStageInput(d1), placement: "append", expectedTarget: [], expectedTargetRowCount: 0, workflowPremise: { ...premise, ...overrides } });
+        const results = await executeBundle(d1, bundle);
+        return { winner: (results[bundle.indexes.winner]!.results as SqliteRow[]).length, stage: (db.prepare("SELECT stage_key FROM projects WHERE id = 'target'").get() as SqliteRow).stage_key };
+      };
+      expect(await attempt(1_000)).toEqual({ winner: 1, stage: "edited_review" });
+      // The arrival moved after the scan: no revision bump, so only the premise stops the move.
+      expect(await attempt(1_500)).toEqual({ winner: 0, stage: "raw_review" });
+      // A newer arrival that is still inside the quiet window.
+      expect(await attempt(3_000, false, { latestArrivalAt: 3_000 })).toEqual({ winner: 0, stage: "raw_review" });
+      expect(await attempt(null)).toEqual({ winner: 0, stage: "raw_review" });
+      expect(await attempt(1_000, true)).toEqual({ winner: 0, stage: "raw_review" });
+    } finally {
+      db.close();
+    }
+  });
+
   it("composes every optional bundle group with exact named offsets", () => {
     const prepares: Array<{ source: string; values: unknown[] }> = [];
     const db = {
@@ -744,6 +777,7 @@ describe("TB5A Slice 3 stage-board bundles", () => {
     const workflowKinds = [
       "none",
       "raw_reconciliation",
+      "edited_arrival_quiet",
       "autohdr_handoff_entry",
       "autohdr_mapping_entry",
       "autohdr_final_completion",
@@ -753,6 +787,7 @@ describe("TB5A Slice 3 stage-board bundles", () => {
     const prerequisites = [
       { kind: "none" as const },
       { kind: "raw_reconciliation" as const, projectId: "target", claimId: "claim", claimStates: ["running"] as ["running"], shootDate: "2026-08-29" },
+      { kind: "edited_arrival_quiet" as const, projectId: "target", latestArrivalAt: 1_000, cutoffAt: 2_000 },
       { kind: "autohdr_handoff" as const, projectId: "target", handoffId: "handoff", jobId: null, generation: 1, connectionId: "connection", expectedStates: ["starting", "started"] as ["starting", "started"], expectedPriorToken: null },
       { kind: "autohdr_mapping" as const, projectId: "target", mappingId: "mapping", handoffId: "handoff", generation: 1, connectionId: "connection", mappingStates: ["active"] as ["active"], handoffStates: ["starting", "started"] as ["starting", "started"], expectedPriorToken: null },
       { kind: "autohdr_final_claim" as const, projectId: "target", collectionId: "collection", sourcePathKey: "/autohdr/final/capture.jpg", currentAssetId: "asset", handoffId: "handoff", mappingId: "mapping", fetchClaimId: "fetch-claim", fetchJobId: "fetch-job", generation: 1, connectionId: "connection", mappingStates: ["active"] as ["active"], handoffStates: ["started"] as ["started"], fetchStates: ["starting", "running"] as ["starting", "running"], manifestVersion: 1, finalPathKey: "/autohdr/final", expectedPriorToken: 5 },
