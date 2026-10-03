@@ -173,3 +173,27 @@ describe("default editors — users route (#135)", () => {
     expect(row).toEqual({ defaultEditor: 0, active: 0 });
   });
 });
+
+describe("default editors — assignment candidates (#487)", () => {
+  const flaggedId = "96666666-6666-4666-8666-666666666666";
+  const unflaggedId = "97777777-7777-4777-8777-777777777777";
+  const deactivatedId = "98888888-8888-4888-8888-888888888888";
+
+  it("flags only active Default editors on the editors list, and leaves photographers unflagged", async () => {
+    await insertUser(flaggedId, "TB487 Flagged Editor", "tb487-flagged@example.test", "editor");
+    await insertUser(unflaggedId, "TB487 Plain Editor", "tb487-plain@example.test", "editor");
+    await insertUser(deactivatedId, "TB487 Deactivated Editor", "tb487-deactivated@example.test", "editor");
+    const adminCookie = await sessionCookie(adminToken);
+    expect((await patchDefaultEditor(flaggedId, adminCookie, true)).status).toBe(200);
+    expect((await patchDefaultEditor(deactivatedId, adminCookie, true)).status).toBe(200);
+    expect((await request(`/api/users/${deactivatedId}`, adminCookie, "PATCH", { active: false })).status).toBe(200);
+
+    const response = await request("/api/project-assignment-candidates", adminCookie);
+    expect(response.status).toBe(200);
+    const body = await response.json() as { photographers: Array<Record<string, unknown>>; editors: Array<{ id: string; defaultEditor: boolean }> };
+    expect(body.editors.find((candidate) => candidate.id === flaggedId)?.defaultEditor).toBe(true);
+    expect(body.editors.find((candidate) => candidate.id === unflaggedId)?.defaultEditor).toBe(false);
+    expect(body.editors.map((candidate) => candidate.id)).not.toContain(deactivatedId);
+    for (const candidate of body.photographers) expect(candidate).not.toHaveProperty("defaultEditor");
+  });
+});

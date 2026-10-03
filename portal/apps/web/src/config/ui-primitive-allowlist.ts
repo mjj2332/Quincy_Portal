@@ -30,7 +30,7 @@ export const UI_PRIMITIVE_ALLOWLIST: Record<string, UiPrimitiveAllowance> = {
   "components/ProductionGantt.tsx": { count: 4, ledger: "baseline (#262)" },
   "components/ProjectActivityView.tsx": { count: 2, ledger: "#378: the Project | System segment — quincy/segment SEGMENT_GROUP + SEGMENT_BUTTON on two raw <button>, the Dashboard Active/Archived scope switcher was the precedent until #428 retired it (Archived is now a field of the shared Filter). base-nova toggle-group is not installed and would add a second segment style; quincy/TabStrip is rejected (a tablist nested in the Discussion/Activity tablist); quincy/Checkbox reads as a setting, not a view." },
   "components/ProjectCollaborationPanel.tsx": { count: 5, ledger: "baseline (#262)" },
-  "components/ProjectFields.tsx": { count: 5, ledger: "baseline (#262)" },
+  "components/ProjectFields.tsx": { count: 2, ledger: "baseline (#262); #487 removed the team checklist checkboxes and Try again button" },
   "components/ProjectHeaderDropbox.tsx": { count: 1, ledger: "baseline (#262)" },
   "components/ProjectTeamCombobox.tsx": { count: 2, ledger: "baseline (#262)" },
   "components/RichTextEditor.tsx": { count: 3, ledger: "baseline (#262)" },
