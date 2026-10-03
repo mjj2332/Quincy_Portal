@@ -1,4 +1,5 @@
 import { sydneyBusinessDate, type StageKey } from "@quincy/shared";
+import { buildAutomaticDeadlineBundle } from "./automatic-deadline";
 import type { PreparedStatementBundle } from "./stage-board-bundles";
 
 /**
@@ -14,7 +15,16 @@ import type { PreparedStatementBundle } from "./stage-board-bundles";
  * The audit deliberately carries no `eventReceivedAt`, so a later verified Tonomo appointment is
  * not fenced out by it (see commitShootDateChange).
  */
-export type ShootDateFillIndexes = { update: number; audit: number };
+export type ShootDateFillIndexes = {
+  update: number;
+  audit: number;
+  /**
+   * The Automatic Deadline UPDATE (#484), present only on a stage-move fill: leaving Awaiting RAW
+   * gives the Shoot date it just filled an Automatic Deadline when the Deadline is empty, gated on
+   * this fill's own audit row so it lands exactly when the fill did.
+   */
+  automaticDeadline?: number;
+};
 export type ShootDateFillReason = "stage_move" | "deadline_set";
 export type ShootDateFillTrigger =
   | { kind: "stage_move"; destinationStage: StageKey; winnerAuditId: string; winnerAuditAction: "stage.set" | "stage.auto_advance" }
@@ -62,7 +72,12 @@ export function buildShootDateFillBundle(input: {
     ? input.db.prepare(STAGE_FILL_UPDATE_SQL).bind(shootDate, input.now, input.projectId, input.trigger.winnerAuditId, input.trigger.winnerAuditAction, input.trigger.destinationStage)
     : input.db.prepare(DEADLINE_FILL_UPDATE_SQL).bind(shootDate, input.now, input.projectId, input.trigger.winnerAuditId, DEADLINE_SAVED_AUDIT_ACTION);
   const audit = input.db.prepare(FILL_AUDIT_SQL).bind(input.fillAuditId, input.actorId, input.projectId, JSON.stringify(meta), input.now);
-  return { statements: [update, audit], indexes: { update: 0, audit: 1 } };
+  // A `deadline_set` fill never qualifies: that Project already holds a Deadline by definition.
+  const automaticDeadline = input.trigger.kind === "stage_move"
+    ? buildAutomaticDeadlineBundle({ db: input.db, projectId: input.projectId, shootDate, gate: { kind: "audit", auditId: input.fillAuditId }, auditId: crypto.randomUUID(), reason: "shoot_date_fill", now: input.now })
+    : undefined;
+  if (!automaticDeadline) return { statements: [update, audit], indexes: { update: 0, audit: 1 } };
+  return { statements: [update, audit, ...automaticDeadline.statements], indexes: { update: 0, audit: 1, automaticDeadline: 2 + automaticDeadline.indexes.update } };
 }
 
 /**

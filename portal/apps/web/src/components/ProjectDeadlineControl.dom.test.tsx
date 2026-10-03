@@ -20,10 +20,10 @@ vi.mock("../lib/confirm", () => ({ confirm: confirmMock }));
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const deadline = { localCivil: "2027-01-15T09:00", zone: "Australia/Sydney" as const, utcOffsetMinutes: 600, fold: 0 as const, instant: "2027-01-14T22:00:00.000Z" };
-const emptySchedule: ProjectDeadlineSchedule = { version: 0, deadline: null, reminderOffsetsMinutes: [], state: "unset", nextOccurrence: null, canResume: false };
-const activeSchedule: ProjectDeadlineSchedule = { version: 1, deadline, reminderOffsetsMinutes: [1440], state: "scheduled", nextOccurrence: { kind: "advance", offsetMinutes: 1440, firesAt: "2027-01-13T22:00:00.000Z" }, canResume: false };
-const authorityAfterConflict: ProjectDeadlineSchedule = { version: 2, deadline: { localCivil: "2027-02-20T10:00", zone: "Australia/Sydney", utcOffsetMinutes: 660, fold: 0, instant: "2027-02-19T23:00:00.000Z" }, reminderOffsetsMinutes: [240], state: "scheduled", nextOccurrence: { kind: "advance", offsetMinutes: 240, firesAt: "2027-02-19T19:00:00.000Z" }, canResume: false };
-const savedDraftSchedule: ProjectDeadlineSchedule = { version: 3, deadline: { localCivil: "2026-04-05T02:30", zone: "Australia/Sydney", utcOffsetMinutes: 600, fold: 1, instant: "2026-04-04T16:30:00.000Z" }, reminderOffsetsMinutes: [1440], state: "scheduled", nextOccurrence: { kind: "advance", offsetMinutes: 1440, firesAt: "2026-04-03T16:30:00.000Z" }, canResume: false };
+const emptySchedule: ProjectDeadlineSchedule = { version: 0, source: null, deadline: null, reminderOffsetsMinutes: [], state: "unset", nextOccurrence: null, canResume: false };
+const activeSchedule: ProjectDeadlineSchedule = { version: 1, source: "manual", deadline, reminderOffsetsMinutes: [1440], state: "scheduled", nextOccurrence: { kind: "advance", offsetMinutes: 1440, firesAt: "2027-01-13T22:00:00.000Z" }, canResume: false };
+const authorityAfterConflict: ProjectDeadlineSchedule = { version: 2, source: "manual", deadline: { localCivil: "2027-02-20T10:00", zone: "Australia/Sydney", utcOffsetMinutes: 660, fold: 0, instant: "2027-02-19T23:00:00.000Z" }, reminderOffsetsMinutes: [240], state: "scheduled", nextOccurrence: { kind: "advance", offsetMinutes: 240, firesAt: "2027-02-19T19:00:00.000Z" }, canResume: false };
+const savedDraftSchedule: ProjectDeadlineSchedule = { version: 3, source: "manual", deadline: { localCivil: "2026-04-05T02:30", zone: "Australia/Sydney", utcOffsetMinutes: 600, fold: 1, instant: "2026-04-04T16:30:00.000Z" }, reminderOffsetsMinutes: [1440], state: "scheduled", nextOccurrence: { kind: "advance", offsetMinutes: 1440, firesAt: "2026-04-03T16:30:00.000Z" }, canResume: false };
 const summarySchedule: ProjectDeadlineSchedule = { ...activeSchedule, reminderOffsetsMinutes: [1440, 240, 60], skippedReminderOffsetsMinutes: [1440, 240] };
 
 // Detects whether any class token on a control suppresses the focus outline. Three earlier

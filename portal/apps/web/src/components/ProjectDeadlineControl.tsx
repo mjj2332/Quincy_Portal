@@ -301,6 +301,7 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onClose, 
     facts={facts}
     feedback={feedback}
     busy={saving}
+    applyUntouched={visibleSchedule.source === "automatic"}
     focusOnMount={focusOnMount}
     onApply={apply}
     onClose={() => onClose?.()}

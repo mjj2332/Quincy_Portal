@@ -1,6 +1,6 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { boardSchemaVariant, projectColumnsForVariant, type BoardSchemaVariant, type Database } from "@quincy/db";
-import { COLLECTION_RECEIVED_COUNT_SQL, appendToStageBottomExpr, collectionReceivedCountBindings, selectEffectiveDefaultEditorIds } from "@quincy/db";
+import { buildAutomaticDeadlineBundle, COLLECTION_RECEIVED_COUNT_SQL, appendToStageBottomExpr, collectionReceivedCountBindings, selectEffectiveDefaultEditorIds } from "@quincy/db";
 import { COLLECTION_KINDS, isCanonicalCalendarDate, isVerifiedTonomoShootDateSource, normaliseAddressKey, normalisePath, parseTonomoOrder, publishNotificationOutbox, TonomoParseError, type CollectionKind, type TonomoOrder } from "@quincy/shared";
 import { auditLog, collectionLinks, collections, projects, tonomoOrderTombstones, user, webhookEvents } from "@quincy/db/schema";
 
@@ -152,7 +152,12 @@ async function createProject(env: Env, order: TonomoOrder): Promise<string> {
   }).toSQL();
   const projectInsert = env.DB.prepare(insert.sql).bind(...insert.params);
   const assignments = buildDefaultEditorAssignmentStatements(env.DB, { projectId: id, orderId: order.orderId, userIds: defaultEditorIds, now });
-  const result = await env.DB.batch([projectInsert, ...assignments.statements]);
+  // #484: a Project created with a canonical shoot date gets its Automatic Deadline in this same batch. Appended last so the
+  // assignment result offsets above stay valid. Tonomo create writes no audit row, so the UPDATE's own predicates are the gate.
+  const automaticDeadline = typeof order.shootDate === "string"
+    ? buildAutomaticDeadlineBundle({ db: env.DB, projectId: id, shootDate: order.shootDate, gate: { kind: "none" }, auditId: crypto.randomUUID(), reason: "tonomo_create", now })
+    : undefined;
+  const result = await env.DB.batch([projectInsert, ...assignments.statements, ...(automaticDeadline?.statements ?? [])]);
   const outboxIds = assignments.outboxResultOffsets
     .map((offset) => (result[1 + offset]?.results as Array<{ id: string }> | undefined)?.[0]?.id)
     .filter((outboxId): outboxId is string => Boolean(outboxId));
@@ -271,7 +276,18 @@ async function updateProject(env: Env, project: Project, linkedByAddress: boolea
     verified = await verifiedRawFolderPathChange(env, project, order, dependencies);
   }
 
-  await db.update(projects).set(changes).where(eq(projects.id, project.id));
+  // #484: gaining a canonical shoot date (it was empty, or unparsed text) gives an empty Deadline its Automatic Deadline in the same
+  // atomic write. A canonical date moving to another one is a reschedule (#485), written through commitShootDateChange below.
+  const gainedShootDate = changes.shootDate !== undefined && (project.shootDate === null || !isCanonicalCalendarDate(project.shootDate));
+  const automaticDeadline = gainedShootDate
+    ? buildAutomaticDeadlineBundle({ db: env.DB, projectId: project.id, shootDate: changes.shootDate!, gate: { kind: "none" }, auditId: crypto.randomUUID(), reason: "tonomo_update", now: Date.now() })
+    : undefined;
+  if (automaticDeadline) {
+    const update = db.update(projects).set(changes).where(eq(projects.id, project.id)).toSQL();
+    await env.DB.batch([env.DB.prepare(update.sql).bind(...update.params), ...automaticDeadline.statements]);
+  } else {
+    await db.update(projects).set(changes).where(eq(projects.id, project.id));
+  }
   const moved = verified && storedPath
     ? await commitRawFolderPathChange(env, {
       projectId: project.id, previousPath: storedPath, previousLink: project.rawFolderLink,

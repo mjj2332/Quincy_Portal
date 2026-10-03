@@ -25,11 +25,12 @@ vi.mock("../lib/api", async (importOriginal) => {
 });
 
 const projectId = "11111111-1111-4111-8111-111111111111";
-const emptySchedule: ProjectDeadlineSchedule = { version: 0, deadline: null, reminderOffsetsMinutes: [], state: "unset", nextOccurrence: null, canResume: false };
+const emptySchedule: ProjectDeadlineSchedule = { version: 0, source: null, deadline: null, reminderOffsetsMinutes: [], state: "unset", nextOccurrence: null, canResume: false };
 
 function scheduleAt(instant: string, overrides: Partial<ProjectDeadlineSchedule> = {}): ProjectDeadlineSchedule {
   return {
     version: 1,
+    source: "manual",
     deadline: { localCivil: "2027-01-15T09:00", zone: "Australia/Sydney", utcOffsetMinutes: 660, fold: 0, instant },
     reminderOffsetsMinutes: [1440],
     state: "scheduled",
@@ -156,6 +157,39 @@ describe("ProjectHeaderDeadline", () => {
     expect(trigger.textContent).not.toContain("Overdue");
     expect(trigger.textContent).not.toContain("Due in");
     expect(trigger.getAttribute("aria-label")).toBe("Deadline: Set deadline");
+  });
+
+  // #484: an Automatic Deadline is labelled, in the visible text and in the accessible name (Label in Name).
+  it("labels an automatic Deadline with an Automatic pill and names it in the accessible name, and leaves a manual one unlabelled", async () => {
+    const host = await mount(scheduleAt("2027-01-14T22:00:00.000Z", { source: "automatic" }));
+    const trigger = host.querySelector('[data-testid="project-deadline-trigger"]')!;
+    expect(trigger.textContent).toContain("Automatic");
+    expect(trigger.getAttribute("aria-label")).toMatch(/^Deadline: Fri 15 Jan · 09:00, Automatic/);
+    await rerenderSchedule(scheduleAt("2027-01-14T22:00:00.000Z", { source: "manual" }));
+    expect(trigger.textContent).not.toContain("Automatic");
+    expect(trigger.getAttribute("aria-label")).not.toContain("Automatic");
+  });
+
+  // #484: Apply on an untouched Automatic Deadline still submits, so a person can confirm it (recorded manual).
+  it("submits an untouched Apply on an automatic Deadline, and the Automatic pill goes once the server records it manual", async () => {
+    const automatic = scheduleAt("2027-01-14T22:00:00.000Z", { source: "automatic", reminderOffsetsMinutes: [1440, 240, 60] });
+    apiPutMock.mockResolvedValueOnce({ changed: true, current: { ...automatic, source: "manual" }, eventIntent: null, publicationIds: [] });
+    const host = await mount(automatic);
+    const dialog = await openTrigger(host);
+    await applyPopup(dialog);
+    expect(apiPutMock).toHaveBeenCalledTimes(1);
+    expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${projectId}/deadline`, { expectedVersion: 1, deadline: { localCivil: "2027-01-15T09:00" }, reminderOffsetsMinutes: [1440, 240, 60] });
+    await rerenderSchedule({ ...automatic, source: "manual" });
+    const trigger = host.querySelector('[data-testid="project-deadline-trigger"]')!;
+    expect(trigger.textContent).not.toContain("Automatic");
+    expect(trigger.getAttribute("aria-label")).not.toContain("Automatic");
+  });
+
+  it("still closes without a request when Apply is pressed untouched on a manual Deadline", async () => {
+    const host = await mount(scheduleAt("2027-01-14T22:00:00.000Z", { source: "manual" }));
+    const dialog = await openTrigger(host);
+    await applyPopup(dialog);
+    expect(apiPutMock).not.toHaveBeenCalled();
   });
 
   // #213: prototype 2a prints the scheduled Deadline as "Thu 18 Sep · 17:00" — weekday, day,

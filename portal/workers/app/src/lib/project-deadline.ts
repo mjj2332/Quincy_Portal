@@ -1,6 +1,6 @@
 import {
-  deadlineFireAt,
   normalizeReminderOffsets,
+  planDeadlineOccurrences,
   PROJECT_DEADLINE_ZONE,
   resolveSydneyCivilTime,
   staffPathFor,
@@ -36,6 +36,7 @@ type ProjectDeadlineProjectRow = {
   deadlineAt: number | null;
   deadlineReminderOffsetsJson: string | null;
   deadlineVersion: number;
+  deadlineSource: string;
 };
 
 type ProjectDeadlineOccurrenceRow = {
@@ -83,7 +84,7 @@ async function readProject(db: D1Database, projectId: string): Promise<ProjectDe
       deadline_local_civil AS deadlineLocalCivil, deadline_zone AS deadlineZone,
       deadline_utc_offset_minutes AS deadlineUtcOffsetMinutes, deadline_fold AS deadlineFold,
       deadline_at AS deadlineAt, deadline_reminder_offsets_json AS deadlineReminderOffsetsJson,
-      deadline_version AS deadlineVersion
+      deadline_version AS deadlineVersion, deadline_source AS deadlineSource
     FROM projects WHERE id = ?
   `).bind(projectId).first<ProjectDeadlineProjectRow>();
 }
@@ -139,6 +140,9 @@ export async function readProjectDeadlineSchedule(db: D1Database, projectId: str
   const hasPendingOccurrence = next !== undefined;
   return {
     version: project.deadlineVersion,
+    // Provenance is stored, never inferred from the value. A held Deadline that is not marked
+    // automatic reads as manual, which also covers fixtures that insert deadline_at directly.
+    source: deadline === null ? null : project.deadlineSource === "automatic" ? "automatic" : "manual",
     deadline,
     reminderOffsetsMinutes: parseOffsets(project.deadlineReminderOffsetsJson),
     state,
@@ -193,6 +197,48 @@ function parseRequest(request: SaveProjectDeadlineRequest): { expectedVersion: n
   return { expectedVersion: request.expectedVersion, deadlineAt: resolved.value.epochMs, localCivil: resolved.value.localCivil, offset: resolved.value.utcOffsetMinutes, fold: resolved.value.fold, offsets, operation: "set" };
 }
 
+/**
+ * A person saving an Automatic Deadline at exactly its automatic value confirms it (#484): only provenance changes.
+ * The reminder schedule is untouched, so the version, the occurrences and every delivery in flight are left exactly
+ * as they are. It is one compare-and-set on the version, the automatic source and the stored value, plus the audit
+ * row. Setting `manual` is what stops #485's reschedule rule from ever moving it: that rule must CAS on
+ * `deadline_source = 'automatic'` and the version, so a concurrent confirm and reschedule serialise.
+ */
+async function confirmAutomaticDeadline(
+  db: D1Database,
+  input: SaveProjectDeadlineScheduleInput,
+  before: ProjectDeadlineProjectRow,
+  request: ReturnType<typeof parseRequest>,
+  now: number,
+): Promise<ProjectDeadlineSaveResult> {
+  if (before.archivedAt !== null) throw new ProjectDeadlineError("Archived projects cannot change Deadline reminders.", 409, "deadline_project_archived");
+  if (before.stageKey === "delivered") throw new ProjectDeadlineError("Delivered projects cannot change Deadline reminders.", 409, "deadline_project_delivered");
+  const auditId = crypto.randomUUID();
+  const results = await db.batch([
+    db.prepare(`
+      UPDATE projects SET deadline_source = 'manual', updated_at = ?
+      WHERE id = ? AND deadline_version = ? AND deadline_source = 'automatic'
+        AND deadline_at = ? AND deadline_local_civil = ? AND archived_at IS NULL AND stage_key <> 'delivered'
+      RETURNING id
+    `).bind(now, input.projectId, request.expectedVersion, request.deadlineAt, request.localCivil),
+    db.prepare(`
+      INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+      SELECT ?, ?, 'project.deadline.schedule_saved', 'project', ?, ?, ?
+      WHERE changes() = 1 RETURNING id
+    `).bind(auditId, input.principal.id, input.projectId, auditMeta(input.principal, { version: request.expectedVersion, operation: "confirm" }), now),
+  ]);
+  const marker = results[1]?.results?.[0] as { id?: string } | undefined;
+  const current = await readProjectDeadlineSchedule(db, input.projectId, now);
+  if (!current) throw new ProjectDeadlineError("Project not found", 404, "project_not_found");
+  if (!marker || marker.id !== auditId) {
+    const authoritative = await readProject(db, input.projectId);
+    if (authoritative?.archivedAt != null) throw new ProjectDeadlineError("Archived projects cannot change Deadline reminders.", 409, "deadline_project_archived");
+    if (authoritative?.stageKey === "delivered") throw new ProjectDeadlineError("Delivered projects cannot change Deadline reminders.", 409, "deadline_project_delivered");
+    throw conflictCurrent(current);
+  }
+  return { changed: true, current, eventIntent: null, publicationIds: [], shootDateFilled: false };
+}
+
 /** The shared, non-Hono Deadline command used by the rail today and Calendar later. */
 export async function saveProjectDeadlineSchedule(db: D1Database, input: SaveProjectDeadlineScheduleInput): Promise<ProjectDeadlineSaveResult> {
   const now = input.now ?? Date.now();
@@ -204,6 +250,9 @@ export async function saveProjectDeadlineSchedule(db: D1Database, input: SavePro
   if (!beforeSchedule) throw new ProjectDeadlineError("Project not found", 404, "project_not_found");
   const resume = input.request.deadline !== null && input.request.resume === true;
   const exact = sameSchedule(before, request.deadlineAt, request.localCivil, request.offset, request.fold, request.offsets);
+  // A person saving an Automatic Deadline, even at exactly its automatic value, makes it manual:
+  // "I confirmed this" is recorded, so it is a real write (version bump) and never a no-op.
+  const confirmsAutomatic = !resume && exact && request.operation === "set" && before.deadlineSource === "automatic";
   // The UI hides all write controls for inactive projects, but keep the server rule strict for
   // every set/edit/clear/Resume request, including a request that happens to repeat the stored
   // values. A no-op is only harmless while the project is an active, non-Delivered project.
@@ -212,6 +261,8 @@ export async function saveProjectDeadlineSchedule(db: D1Database, input: SavePro
     if (before.stageKey === "delivered") throw new ProjectDeadlineError("Delivered projects cannot change Deadline reminders.", 409, "deadline_project_delivered");
     if (!beforeSchedule.canResume) throw new ProjectDeadlineError("This Deadline does not have inactive reminders to resume.", 409, "deadline_resume_not_available");
     if (!exact) throw new ProjectDeadlineError("Review the retained Deadline before resuming reminders.", 409, "deadline_resume_schedule_changed", { current: beforeSchedule });
+  } else if (confirmsAutomatic) {
+    return confirmAutomaticDeadline(db, input, before, request, now);
   } else if (exact) {
     if (before.archivedAt !== null) throw new ProjectDeadlineError("Archived projects cannot change Deadline reminders.", 409, "deadline_project_archived");
     if (before.stageKey === "delivered") throw new ProjectDeadlineError("Delivered projects cannot change Deadline reminders.", 409, "deadline_project_delivered");
@@ -224,20 +275,15 @@ export async function saveProjectDeadlineSchedule(db: D1Database, input: SavePro
   // TB4B already owns this semantic intent. Construct it once and let TB4C persist the
   // exact same object after the existing schedule-save winner marker.
   const eventIntent = scheduleEventIntent(input.projectId, actorId, newVersion, resume ? "resume" : request.operation, now);
-  const occurrences: Array<{ id: string; kind: "advance" | "due_now"; offset: number; fireAt: number; status: "pending" | "skipped"; reason: string | null }> = [];
-  if (request.operation === "set") {
-    for (const offset of request.offsets) {
-      const fireAt = deadlineFireAt(request.deadlineAt!, offset);
-      occurrences.push({ id: crypto.randomUUID(), kind: "advance", offset, fireAt, status: fireAt <= now ? "skipped" : "pending", reason: fireAt <= now ? "elapsed_at_save" : null });
-    }
-    occurrences.push({ id: crypto.randomUUID(), kind: "due_now", offset: 0, fireAt: request.deadlineAt!, status: "pending", reason: null });
-  }
+  const occurrences = request.operation === "set"
+    ? planDeadlineOccurrences(request.deadlineAt!, request.offsets, now).map((planned) => ({ id: crypto.randomUUID(), kind: planned.kind, offset: planned.offsetMinutes, fireAt: planned.fireAt, status: planned.status, reason: planned.terminalReason }))
+    : [];
   const update = request.operation === "clear"
     ? db.prepare(`
       UPDATE projects SET deadline_local_civil = NULL, deadline_zone = NULL,
         deadline_utc_offset_minutes = NULL, deadline_fold = NULL, deadline_at = NULL,
         deadline_reminder_offsets_json = NULL, deadline_version = deadline_version + 1,
-        updated_at = ?
+        deadline_source = 'none', updated_at = ?
       WHERE id = ? AND deadline_version = ? AND archived_at IS NULL AND stage_key <> 'delivered'
       RETURNING id, deadline_version
     `).bind(now, input.projectId, request.expectedVersion)
@@ -245,10 +291,10 @@ export async function saveProjectDeadlineSchedule(db: D1Database, input: SavePro
       UPDATE projects SET deadline_local_civil = ?, deadline_zone = ?,
         deadline_utc_offset_minutes = ?, deadline_fold = ?, deadline_at = ?,
         deadline_reminder_offsets_json = ?, deadline_version = deadline_version + 1,
-        updated_at = ?
+        deadline_source = CASE WHEN ? = 1 THEN deadline_source ELSE 'manual' END, updated_at = ?
       WHERE id = ? AND deadline_version = ? AND archived_at IS NULL AND stage_key <> 'delivered'
       RETURNING id, deadline_version
-    `).bind(request.localCivil, PROJECT_DEADLINE_ZONE, request.offset, request.fold, request.deadlineAt, JSON.stringify(request.offsets), now, input.projectId, request.expectedVersion);
+    `).bind(request.localCivil, PROJECT_DEADLINE_ZONE, request.offset, request.fold, request.deadlineAt, JSON.stringify(request.offsets), resume ? 1 : 0, now, input.projectId, request.expectedVersion);
   const statements: D1PreparedStatement[] = [
     update,
     db.prepare(`
