@@ -607,6 +607,18 @@ describe("RichTextEditor hard breaks", () => {
     expect(linkDialog()).toBeNull(); expect(document.activeElement).toBe(editor);
   });
 
+  it("removes a link only from the selected part when the selection is non-empty", async () => {
+    const value: RichTextDoc = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Link me", marks: [{ type: "link", href: "https://example.test/part" }] }] }] };
+    const host = mount(); const onChange = vi.fn(); const { editor } = await render(host, value, onChange);
+    await selectText(editor, editor.querySelector("a")!.firstChild!, 5, 7);
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Link"]')!);
+    await click(linkAction("Remove link"));
+    expect(onChange).toHaveBeenLastCalledWith({ type: "doc", content: [{ type: "paragraph", content: [
+      { type: "text", text: "Link ", marks: [{ type: "link", href: "https://example.test/part" }] },
+      { type: "text", text: "me" },
+    ] }] });
+  });
+
   it("keeps a collapsed linked cursor focused in the editor for immediate typing", async () => {
     const host = mount(); const onChange = vi.fn(); const { editor } = await render(host, text("Before"), onChange);
     const linkButton = host.querySelector<HTMLButtonElement>('[aria-label="Link"]')!;

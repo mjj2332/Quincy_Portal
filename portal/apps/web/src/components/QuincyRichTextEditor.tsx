@@ -246,7 +246,7 @@ export function QuincyRichTextEditor({
           <RichTextToolbarGroup label="Blocks">
             <DropdownMenu>
               <DropdownMenuTrigger
-                render={<Button variant="ghost" size="sm" aria-label="Heading" disabled={off(state.canHeading)} data-toolbar-item="" data-testid="rich-text-heading-menu" className="min-w-[112px] justify-between" />}
+                render={<Button variant="ghost" size="sm" aria-label="Heading" disabled={off(state.canHeading)} data-toolbar-item="" data-testid="rich-text-heading-menu" className="min-w-[112px] justify-between max-[721px]:h-11" />}
               >
                 {HEADING_LABEL[state.blockType]}
                 <ChevronDownIcon aria-hidden="true" />
@@ -259,7 +259,7 @@ export function QuincyRichTextEditor({
                 </DropdownMenuRadioGroup>
               </DropdownMenuContent>
             </DropdownMenu>
-            <RichTextLinkPopover editor={editor} state={state} disabled={disabled} open={linkOpen} onOpenChange={setLinkOpen} />
+            <RichTextLinkPopover editor={editor} state={state} disabled={disabled} testId="rich-text-link-popover" open={linkOpen} onOpenChange={setLinkOpen} />
             <RichTextToggle label="Bullet list" pressed={state.bulletList} disabled={off(state.canBulletList) || state.atListNestingLimit} onToggle={() => editor.chain().focus().toggleBulletList().run()}><ListIcon aria-hidden="true" /></RichTextToggle>
             <RichTextToggle label="Ordered list" pressed={state.orderedList} disabled={off(state.canOrderedList) || state.atListNestingLimit} onToggle={() => editor.chain().focus().toggleOrderedList().run()}><ListOrderedIcon aria-hidden="true" /></RichTextToggle>
             <RichTextToggle label="Checklist" pressed={state.taskList} disabled={off(state.canTaskList) || state.atListNestingLimit} onToggle={() => editor.chain().focus().toggleTaskList().run()}><ListChecksIcon aria-hidden="true" /></RichTextToggle>

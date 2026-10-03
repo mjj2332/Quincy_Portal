@@ -8,10 +8,12 @@
 // 3. Apply no longer inserts the typed address as text on a collapsed caret, and Enter/Apply on an
 //    empty field shows the error rather than being a silent no-op: both are legacy behaviour the
 //    editor tests assert (a collapsed caret keeps a stored mark; empty Apply errors).
-// 4. `extendMarkRange("link")` only when the field opened on an existing link (legacy parity).
+// 4. Remove no longer calls `extendMarkRange` (a non-empty selection unlinks only itself, as legacy; `unsetLink`
+//    already expands a collapsed caret). `extendMarkRange("link")` on Apply only when the field opened on an existing link (legacy parity).
 // 5. `finalFocus` depends on the close reason: Apply/Remove -> the editor, everything else -> the
 //    trigger. The popover is named "Add link"/"Edit link" (the legacy dialog title) so it does not
 //    share the trigger's `aria-label="Link"`.
+// 7. The popover's test id is a `testId` prop, passed by `QuincyRichTextEditor` (Quincy-owned hooks).
 // 6. Pressed link trigger reads `bg-primary` like the other toolbar toggles.
 import { useId, useRef, useState, type FormEvent, type RefObject } from "react"
 import { type Editor } from "@tiptap/react"
@@ -46,7 +48,7 @@ export function normalizeHref(value: string) {
 }
 
 function removeLink(editor: Editor | null) {
-  editor?.chain().focus().extendMarkRange("link").unsetLink().run()
+  editor?.chain().focus().unsetLink().run()
 }
 
 interface LinkFormProps {
@@ -141,6 +143,8 @@ interface RichTextLinkPopoverProps {
   open: boolean
   /** The owner's own disabled state, which the snapshot may lag. */
   disabled?: boolean
+  /** Quincy-owned test hook for the popover; the vendor file does not name one. */
+  testId?: string
   onOpenChange: (open: boolean) => void
 }
 
@@ -149,6 +153,7 @@ export function RichTextLinkPopover({
   state,
   open,
   disabled = false,
+  testId,
   onOpenChange,
 }: RichTextLinkPopoverProps) {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -192,7 +197,7 @@ export function RichTextLinkPopover({
         align="start"
         aria-label={state.link === null ? "Add link" : "Edit link"}
         className="w-80"
-        data-testid="rich-text-link-popover"
+        data-testid={testId}
         initialFocus={inputRef}
         finalFocus={() => (appliedRef.current ? (editor?.view.dom ?? true) : true)}
       >
