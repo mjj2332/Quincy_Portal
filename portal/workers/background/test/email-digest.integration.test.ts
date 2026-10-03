@@ -386,6 +386,49 @@ describe("runEmailDigests: who gets an email, when, with what", () => {
     expect(await states(user.id)).toEqual([{ state: "sent", outcome: null }]);
   });
 
+  it("does not send cached content for a Project deleted while the digest was being composed", async () => {
+    const user = await addUser({ cadence: "hourly" });
+    const doomed = await addProject("Doomed Street");
+    const kept = await addProject("Kept Street");
+    await addItem(user.id, { projectId: doomed, title: "Doomed item" });
+    await addItem(user.id, { projectId: kept, title: "Kept item" });
+    const send = vi.fn().mockResolvedValue({ messageId: "m" });
+    await runEmailDigests(envMutatingMidCompose(send, async () => { await database.DB.prepare("DELETE FROM projects WHERE id = ?").bind(doomed).run(); }), EIGHT_AM);
+    expect(sentTo(send, user.email)).toHaveLength(0);
+    expect((await digests(user.id)).map((d) => d.status)).toEqual(["released"]);
+    // The next slot rebuilds from what still exists.
+    await runEmailDigests(digestEnv(send), NINE_AM);
+    const emails = sentTo(send, user.email);
+    expect(emails).toHaveLength(1);
+    expect(emails[0]!.text).toContain("Kept item");
+    expect(emails[0]!.text).not.toContain("Doomed item");
+  });
+
+  it("settles a pending item whose email ledger row went terminal after a replay, instead of leaving it pending forever", async () => {
+    const user = await addUser({ cadence: "hourly" });
+    const project = await addProject("Reconcile Street");
+    const cases = [
+      { ledger: "suppressed", state: "suppressed" },
+      { ledger: "discarded", state: "failed" },
+      { ledger: "failed", state: "failed" },
+      { ledger: "sent", state: "sent" },
+      { ledger: "unknown", state: "unknown" },
+    ] as const;
+    const items = [];
+    for (const entry of cases) {
+      const item = await addItem(user.id, { projectId: project, title: `Terminal ${entry.ledger}` });
+      await database.DB.prepare("UPDATE notification_delivery_ledger SET status = ? WHERE id = ?").bind(entry.ledger, item.ledgerId).run();
+      items.push(item);
+    }
+    const send = vi.fn().mockResolvedValue({ messageId: "m" });
+    await runEmailDigests(digestEnv(send), EIGHT_AM);
+    expect(sentTo(send, user.email)).toHaveLength(0);
+    for (const [index, entry] of cases.entries()) {
+      const row = await database.DB.prepare("SELECT state FROM notification_digest_items WHERE id = ?").bind(items[index]!.itemId).first<{ state: string }>();
+      expect(row?.state, entry.ledger).toBe(entry.state);
+    }
+  });
+
   it("does not send staff copy when the recipient becomes an External editor while the digest is being composed", async () => {
     const user = await addUser({ cadence: "hourly" });
     const project = await addProject("Role Change Street");

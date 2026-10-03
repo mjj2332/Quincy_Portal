@@ -123,6 +123,24 @@ async function suppressInactiveRecipients(env: Env, now: number): Promise<void> 
   ]);
 }
 
+/**
+ * A replayed item goes back to pending, but its email ledger row can later be suppressed, discarded, failed or
+ * sent by another path. Left alone the item would wait for a digest forever, so an unclaimed pending item whose
+ * ledger row is terminal takes the matching terminal state.
+ */
+async function reconcileTerminalLedgerItems(env: Env, now: number): Promise<void> {
+  await env.DB.prepare(`
+    UPDATE notification_digest_items
+    SET state = CASE (SELECT l.status FROM notification_delivery_ledger l WHERE l.id = notification_digest_items.ledger_id)
+          WHEN 'sent' THEN 'sent' WHEN 'suppressed' THEN 'suppressed' WHEN 'unknown' THEN 'unknown' ELSE 'failed' END,
+        outcome_code = COALESCE((SELECT l.last_error_code FROM notification_delivery_ledger l WHERE l.id = notification_digest_items.ledger_id), 'ledger_terminal'),
+        updated_at = ?
+    WHERE state = 'pending' AND digest_id IS NULL AND ledger_id IN (
+      SELECT id FROM notification_delivery_ledger WHERE status IN ('sent', 'suppressed', 'failed', 'discarded', 'unknown')
+    )
+  `).bind(now).run();
+}
+
 async function dueRecipientPage(env: Env, cadences: readonly EmailDigestCadence[], slotAt: number, after: string): Promise<DueRecipient[]> {
   const placeholders = cadences.map(() => "?").join(", ");
   const result = await env.DB.prepare(`
@@ -251,6 +269,7 @@ async function sendDigestForRecipient(env: Env, recipient: DueRecipient, slotAt:
     UPDATE notification_digests SET status = 'sending', item_count = ?, project_count = ?, updated_at = ?
     WHERE id = ? AND status = 'claimed'
       AND EXISTS (SELECT 1 FROM user u WHERE u.id = ? AND u.active = 1 AND u.role = ? AND u.authorization_epoch = ?)
+      AND (SELECT COUNT(*) FROM notification_digest_items i WHERE i.digest_id = notification_digests.id AND i.state = 'pending') = ?
       AND NOT EXISTS (
         SELECT 1 FROM notification_digest_items i
         WHERE i.digest_id = notification_digests.id AND i.state = 'pending'
@@ -262,7 +281,7 @@ async function sendDigestForRecipient(env: Env, recipient: DueRecipient, slotAt:
         WHERE i.digest_id = notification_digests.id AND i.state = 'pending'
           AND (i.notification_id IS NULL OR i.notification_id NOT IN (SELECT id FROM external_visible_notifications))
       )` : ""}
-  `).bind(...(visible ? visible.bindings : []), totals.total, totals.projects, now, digestId, recipient.recipientId, current!.role, current!.epoch).run();
+  `).bind(...(visible ? visible.bindings : []), totals.total, totals.projects, now, digestId, recipient.recipientId, current!.role, current!.epoch, totals.total).run();
   if ((fenced.meta.changes ?? 0) !== 1) {
     // Lost the admission: release the slot (items back to pending) so the next run rebuilds it from current state.
     await env.DB.batch([
@@ -328,6 +347,7 @@ export async function runEmailDigests(env: Env, scheduledTime: number): Promise<
   const now = scheduledTime;
   await sweepStaleDigests(env, now);
   await suppressInactiveRecipients(env, now);
+  await reconcileTerminalLedgerItems(env, now);
   if (!env.EMAIL || !env.NOTIFICATIONS_FROM_ADDRESS) {
     // Nothing is claimed without a transport: the items stay pending until email is configured.
     console.warn("Email digest run skipped: email delivery is not configured");
