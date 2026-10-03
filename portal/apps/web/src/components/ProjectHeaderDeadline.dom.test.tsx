@@ -170,6 +170,28 @@ describe("ProjectHeaderDeadline", () => {
     expect(trigger.getAttribute("aria-label")).not.toContain("Automatic");
   });
 
+  // #484: Apply on an untouched Automatic Deadline still submits, so a person can confirm it (recorded manual).
+  it("submits an untouched Apply on an automatic Deadline, and the Automatic pill goes once the server records it manual", async () => {
+    const automatic = scheduleAt("2027-01-14T22:00:00.000Z", { source: "automatic", reminderOffsetsMinutes: [1440, 240, 60] });
+    apiPutMock.mockResolvedValueOnce({ changed: true, current: { ...automatic, version: 2, source: "manual" }, eventIntent: null, publicationIds: [] });
+    const host = await mount(automatic);
+    const dialog = await openTrigger(host);
+    await applyPopup(dialog);
+    expect(apiPutMock).toHaveBeenCalledTimes(1);
+    expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${projectId}/deadline`, { expectedVersion: 1, deadline: { localCivil: "2027-01-15T09:00" }, reminderOffsetsMinutes: [1440, 240, 60] });
+    await rerenderSchedule({ ...automatic, version: 2, source: "manual" });
+    const trigger = host.querySelector('[data-testid="project-deadline-trigger"]')!;
+    expect(trigger.textContent).not.toContain("Automatic");
+    expect(trigger.getAttribute("aria-label")).not.toContain("Automatic");
+  });
+
+  it("still closes without a request when Apply is pressed untouched on a manual Deadline", async () => {
+    const host = await mount(scheduleAt("2027-01-14T22:00:00.000Z", { source: "manual" }));
+    const dialog = await openTrigger(host);
+    await applyPopup(dialog);
+    expect(apiPutMock).not.toHaveBeenCalled();
+  });
+
   // #213: prototype 2a prints the scheduled Deadline as "Thu 18 Sep · 17:00" — weekday, day,
   // three-letter month, no year, then the civil time. Built from `localCivil`, never from the
   // instant, so the viewer's own zone cannot shift the date. September is the trap: recent ICU

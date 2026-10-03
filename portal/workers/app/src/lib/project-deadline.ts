@@ -232,7 +232,7 @@ export async function saveProjectDeadlineSchedule(db: D1Database, input: SavePro
   // exact same object after the existing schedule-save winner marker.
   const eventIntent = scheduleEventIntent(input.projectId, actorId, newVersion, resume ? "resume" : request.operation, now);
   const occurrences = request.operation === "set"
-    ? planDeadlineOccurrences(request.deadlineAt!, request.offsets, now, { skipElapsedDueNow: confirmsAutomatic }).map((planned) => ({ id: crypto.randomUUID(), kind: planned.kind, offset: planned.offsetMinutes, fireAt: planned.fireAt, status: planned.status, reason: planned.terminalReason }))
+    ? planDeadlineOccurrences(request.deadlineAt!, request.offsets, now).map((planned) => ({ id: crypto.randomUUID(), kind: planned.kind, offset: planned.offsetMinutes, fireAt: planned.fireAt, status: planned.status, reason: planned.terminalReason }))
     : [];
   const update = request.operation === "clear"
     ? db.prepare(`
@@ -258,6 +258,25 @@ export async function saveProjectDeadlineSchedule(db: D1Database, input: SavePro
       SELECT ?, ?, 'project.deadline.schedule_saved', 'project', ?, ?, ?
       WHERE changes() = 1 RETURNING id
     `).bind(auditId, actorId, input.projectId, auditMeta(input.principal, { version: newVersion, operation: resume ? "resume" : request.operation }), now),
+  ];
+  if (confirmsAutomatic) {
+    // An equal-value confirmation only changes provenance. Every occurrence (pending, fired, skipped) and every reminder
+    // delivery still in flight moves to the new version unchanged, so no reminder is dropped and none re-fires.
+    statements.push(
+      db.prepare(`
+        UPDATE project_deadline_occurrences SET schedule_version = ?, updated_at = ?
+        WHERE project_id = ? AND schedule_version = ? AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
+      `).bind(newVersion, now, input.projectId, before.deadlineVersion, auditId),
+      db.prepare(`
+        UPDATE notification_outbox SET payload_json = json_set(payload_json, '$.reminder.scheduleVersion', ?), updated_at = ?
+        WHERE project_id = ? AND event_type = 'project.deadline.reminder'
+          AND status IN ('pending', 'queued', 'processing', 'failed')
+          AND json_extract(payload_json, '$.reminder.scheduleVersion') = ?
+          AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
+      `).bind(newVersion, now, input.projectId, before.deadlineVersion, auditId),
+    );
+  } else {
+    statements.push(
     db.prepare(`
       UPDATE project_deadline_occurrences
       SET status = 'superseded', terminal_reason = ?, fired_at = NULL, updated_at = ?
@@ -287,8 +306,9 @@ export async function saveProjectDeadlineSchedule(db: D1Database, input: SavePro
         AND NOT EXISTS (SELECT 1 FROM notification_delivery_ledger WHERE outbox_id = notification_outbox.id AND status IN ('pending', 'processing'))
         AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
     `).bind(now, now, input.projectId, auditId),
-  ];
-  for (const occurrence of occurrences) {
+    );
+  }
+  for (const occurrence of confirmsAutomatic ? [] : occurrences) {
     statements.push(db.prepare(`
       INSERT INTO project_deadline_occurrences
         (id, project_id, schedule_version, kind, reminder_offset_minutes, fire_at, deadline_at,
