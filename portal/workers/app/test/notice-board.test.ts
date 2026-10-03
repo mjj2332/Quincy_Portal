@@ -263,6 +263,7 @@ describe("notice board API", () => {
     expect(await database.DB.prepare("SELECT type, source_key, project_id FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 1").bind(adminId).first()).toMatchObject({ type: "mentioned", project_id: null });
     const mention = (await database.DB.prepare("SELECT id, mentioned_user_id FROM notice_board_post_mentions WHERE post_id = ?").bind(post.id).first<{ id: string; mentioned_user_id: string }>())!;
     await database.DB.prepare("DELETE FROM notifications WHERE source_key = ?").bind(mention.id).run();
+    await database.DB.prepare("INSERT INTO notification_preferences (user_id, email_digest_cadence, updated_at) SELECT id, 'immediate', ? FROM user WHERE true ON CONFLICT(user_id) DO UPDATE SET email_digest_cadence = 'immediate'").bind(Date.now()).run();
     const send = vi.fn().mockResolvedValue({ messageId: "mention-email" });
     await notifyNoticeBoardMentions({ DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test", APP_ORIGIN: "https://portal.test" } as unknown as Env, {
       actorId: editorId, authorName: "Notice Editor", body: "Hello Notice Admin", mentions: [{ id: mention.id, mentionedUserId: mention.mentioned_user_id }],

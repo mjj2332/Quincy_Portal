@@ -2,6 +2,7 @@ import { drizzle } from "drizzle-orm/d1";
 import * as schema from "./schema";
 
 export * as schema from "./schema";
+export { externalVisibleNotificationWhere, externalVisibleNotificationCte } from "./external-notification-visibility";
 export { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings } from "./collection-count";
 export { RAW_CLAIM_LEASE_MS } from "./raw-reconciliation-claims";
 export { effectiveDefaultEditorSql, selectEffectiveDefaultEditorIds } from "./default-editors";
