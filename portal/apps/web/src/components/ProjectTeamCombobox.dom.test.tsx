@@ -932,7 +932,7 @@ describe("ProjectTeamCollectCombobox (#487)", () => {
   it("keeps each list row to one line, with the full description in a title", async () => {
     const host = await mountCollect();
     await openPicker(host);
-    const description = options().find((option) => option.textContent?.includes("Ari Photographer"))!.querySelector<HTMLElement>('[data-slot="item-description"]')!;
+    const description = [...options().find((option) => option.textContent?.includes("Ari Photographer"))!.querySelectorAll<HTMLElement>("[title]")].find((element) => element.title.startsWith("ari@example.test"))!;
     expect(description.className).toContain("truncate");
     expect(description.getAttribute("title")).toBe("ari@example.test · Photographer");
   });
