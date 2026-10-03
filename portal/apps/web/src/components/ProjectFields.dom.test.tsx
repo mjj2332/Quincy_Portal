@@ -134,6 +134,13 @@ describe("ProjectFields Team (create mode combobox, #487)", () => {
     expect(chip.querySelector('[data-testid="project-member-remove"]')).toBeNull();
   });
 
+  it("labels the control Team members, and the label names the search input", async () => {
+    apiGetMock.mockResolvedValue({ photographers: [], editors: [] });
+    await render(<ProjectFields form={form} errors={{}} onChange={() => undefined} onToggle={() => undefined} />);
+    const label = [...host.querySelectorAll<HTMLLabelElement>("label")].find((element) => element.textContent === "Team members")!;
+    expect(label.control).toBe(host.querySelector('[aria-label="Add team member"]'));
+  });
+
   it("renders no Team section in edit mode and does not ask for candidates", async () => {
     await render(<ProjectFields form={form} errors={{}} mode="edit" onChange={() => undefined} onToggle={() => undefined} />);
     expect(host.querySelector("#team-heading")).toBeNull();

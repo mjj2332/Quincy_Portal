@@ -923,6 +923,37 @@ describe("ProjectTeamCollectCombobox (#487)", () => {
     expect(host.querySelector('[aria-label^="Show "]')).toBeNull();
   });
 
+  it("always shows each chip's role tag, not only for a dual-role person", async () => {
+    const host = await mountCollect({ photographerUserIds: [photographer.id], editorUserIds: [plainEditor.id] });
+    expect(host.querySelector(`[data-testid="project-member-photographer:${photographer.id}"]`)!.textContent).toContain("Photo");
+    expect(host.querySelector(`[data-testid="project-member-editor:${plainEditor.id}"]`)!.textContent).toContain("Edit");
+  });
+
+  it("keeps each list row to one line, with the full description in a title", async () => {
+    const host = await mountCollect();
+    await openPicker(host);
+    const description = options().find((option) => option.textContent?.includes("Ari Photographer"))!.querySelector<HTMLElement>('[data-slot="item-description"]')!;
+    expect(description.className).toContain("truncate");
+    expect(description.getAttribute("title")).toBe("ari@example.test · Photographer");
+  });
+
+  it("says it is loading while candidates load", async () => {
+    apiGetMock.mockReset().mockReturnValue(new Promise(() => undefined));
+    const host = await mountCollect();
+    expect(host.querySelector('[role="status"]')?.textContent).toContain("Loading available team members");
+  });
+
+  it("shows the failure with a Retry that fetches the candidates again", async () => {
+    apiGetMock.mockReset().mockRejectedValueOnce(new ApiError("Candidates unavailable", 400)).mockResolvedValue({ photographers: [photographer], editors: [] });
+    const host = await mountCollect();
+    await waitFor(() => expect(host.querySelector('[role="alert"]')).not.toBeNull());
+    expect(host.querySelector('[role="alert"]')!.textContent).toContain("Candidates could not be loaded");
+    const retry = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Retry")!;
+    await act(async () => { retry.click(); await Promise.resolve(); });
+    await waitFor(() => expect(host.querySelector('[role="alert"]')).toBeNull());
+    expect(apiGetMock).toHaveBeenCalledTimes(2);
+  });
+
   it("never lists a Default editor in the explicit selection", async () => {
     await mountCollect({ photographerUserIds: [], editorUserIds: [plainEditor.id] });
     expect(selection.editorUserIds).toEqual([plainEditor.id]);

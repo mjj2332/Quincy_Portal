@@ -4,7 +4,7 @@ import { AlertCircle, AlertTriangle, Loader2 } from "lucide-react";
 import type { ProjectMemberRole } from "@quincy/shared";
 import { ApiError, apiDeleteWithBody, apiPutWithStatus } from "../lib/api";
 import { confirm } from "../lib/confirm";
-import { buttonClasses } from "./quincy/Button";
+import { Button, buttonClasses } from "./quincy/Button";
 import { cn } from "../lib/utils";
 import { ARCHIVED_HEADER_NOTICE_CLASS } from "./archived-notice";
 import {
@@ -79,8 +79,10 @@ const PROJECT_TEAM_MESSAGE =
 export const TEAM_CHIP_REMOVE_HIT_AREA =
   // 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token. The visible icon-xs
   // button is 24px (`size-6`); a transparent pseudo-element extends the hit area to 44px
-  // (24 + 10 + 10) without growing the chip itself.
-  "relative before:absolute before:content-[''] before:-inset-[10px]";
+  // without growing the chip itself. An absolute inset is measured from the *padding* box, and
+  // the Button has a 1px transparent border, so the inset is 11px, not 10: 22 + 11 + 11 = 44
+  // (10px measured 42×42 in the browser, #487).
+  "relative before:absolute before:content-[''] before:-inset-[11px]";
 
 /** The chip's base look, identical for the real `ComboboxChip` (merged over its own vendor
  *  defaults via `cn`/`twMerge`) and the read-only `<span>`, which has no vendor component to fall
@@ -296,7 +298,7 @@ type TeamChipView = { dataState: TeamChipDataState; isPending: boolean; messageI
  *  (collect mode, #487). Presentation only: callers own the value, the mutations and the chip
  *  state. `lockedKeys` chips (New shoot's Default editors) render without a remove control and
  *  with a visible "Default editor" tag; their list items are disabled. */
-function TeamComboboxView({ groups, value, onValueChange, visible, hiddenCount, expanded, onToggleExpanded, chipProps, pending, lockedKeys, inputRef, inputDisabled, rowClassName, contentRef, blockEnterSubmit = false }: {
+function TeamComboboxView({ groups, value, onValueChange, visible, hiddenCount, expanded, onToggleExpanded, chipProps, pending, lockedKeys, inputRef, inputDisabled, rowClassName, contentRef, blockEnterSubmit = false, truncateDescriptions = false, inputId }: {
   groups: TeamGroup[];
   value: TeamOption[];
   onValueChange: (next: TeamOption[], eventDetails: ComboboxPrimitive.Root.ChangeEventDetails) => void;
@@ -313,6 +315,10 @@ function TeamComboboxView({ groups, value, onValueChange, visible, hiddenCount, 
   contentRef?: Ref<HTMLDivElement>;
   /** Inside a `<form>` (New shoot) Enter in the search box would otherwise submit it; Base UI deliberately lets it through when no item is highlighted. */
   blockEnterSubmit?: boolean;
+  /** Keeps each list row to one line when the list is the 300px minimum (New shoot's content-sized anchor); the full text stays in `title`. */
+  truncateDescriptions?: boolean;
+  /** Lets an outside `<label for>` name the search input. */
+  inputId?: string;
 }) {
   const anchor = useComboboxAnchor();
   return (
@@ -379,7 +385,7 @@ function TeamComboboxView({ groups, value, onValueChange, visible, hiddenCount, 
       {/* `flex-none w-[12ch]`, not the vendor's `min-w-16 flex-1`: the input is the "Add…" affordance,
        *  and a flexing input is what claimed the rest of the line as white space. No focus growth:
        *  this box is the popup's anchor, so a width change on focus would jump the open list. */}
-      <ComboboxChipsInput ref={inputRef} aria-label="Add team member" placeholder="Add…" className="flex-none min-w-0 w-[12ch]" disabled={inputDisabled} aria-invalid={inputDisabled ? true : undefined}
+      <ComboboxChipsInput ref={inputRef} id={inputId} aria-label="Add team member" placeholder="Add…" className="flex-none min-w-0 w-[12ch]" disabled={inputDisabled} aria-invalid={inputDisabled ? true : undefined}
         onKeyDown={blockEnterSubmit ? (event) => { if (event.key === "Enter") event.preventDefault(); } : undefined} />
     </ComboboxChips>
     {/* #213 follow-up: the chips box is now content-sized, so the list no longer copies its width —
@@ -401,7 +407,7 @@ function TeamComboboxView({ groups, value, onValueChange, visible, hiddenCount, 
                 </Avatar>
                 <ItemContent>
                   <ItemTitle className="whitespace-nowrap">{displayName(option.name, option.email)}</ItemTitle>
-                  <ItemDescription>{option.email} · {globalRoleLabel(option.globalRole)}</ItemDescription>
+                  <ItemDescription className={truncateDescriptions ? "truncate" : undefined} title={truncateDescriptions ? `${option.email} · ${globalRoleLabel(option.globalRole)}` : undefined}>{option.email} · {globalRoleLabel(option.globalRole)}</ItemDescription>
                 </ItemContent>
               </Item>
             </ComboboxItem>}
@@ -606,12 +612,13 @@ type TeamSelectionField = "photographerUserIds" | "editorUserIds";
  *  `editorUserIds`: sending them would turn a Default editor deactivated between page load and
  *  submit into a 422, which the server rule deliberately never raises. Removing one is done from
  *  the Project header after creation. */
-export function ProjectTeamCollectCombobox({ photographerUserIds, editorUserIds, onToggle, rowClassName, inputRef }: {
+export function ProjectTeamCollectCombobox({ photographerUserIds, editorUserIds, onToggle, rowClassName, inputRef, inputId }: {
   photographerUserIds: string[];
   editorUserIds: string[];
   onToggle: (field: TeamSelectionField, userId: string) => void;
   rowClassName?: string;
   inputRef?: Ref<HTMLInputElement>;
+  inputId?: string;
 }) {
   const candidatesQuery = useProjectAssignmentCandidatesQuery(true);
   // A picked person who later drops out of the candidates (deactivated while the form is open) must keep their chip, so the last
@@ -660,17 +667,17 @@ export function ProjectTeamCollectCombobox({ photographerUserIds, editorUserIds,
     if (removed.length === 1 && added.length === 0 && (eventDetails.reason === "item-press" || eventDetails.reason === "chip-remove-press")) toggle(removed[0]!);
   }
 
-  const dualRoleUserIds = new Set<string>();
-  const countByUser = new Map<string, number>();
-  for (const option of value) countByUser.set(option.userId, (countByUser.get(option.userId) ?? 0) + 1);
-  for (const [userId, count] of countByUser) if (count > 1) dualRoleUserIds.add(userId);
-
+  // Collect mode always tags a chip with its role (Photo / Edit): the team is reviewed here before Create, with no header context.
   function chipProps(option: TeamOption): TeamChipView {
-    return { dataState: "idle", isPending: false, messageId: undefined, name: displayName(option.name, option.email), roleTag: dualRoleUserIds.has(option.userId) ? shortRoleTag(option.role) : undefined };
+    return { dataState: "idle", isPending: false, messageId: undefined, name: displayName(option.name, option.email), roleTag: shortRoleTag(option.role) };
   }
 
   return <div className="grid gap-[var(--space-3)]" data-testid="project-team-collect">
-    {candidatesQuery.isError && <p className={PROJECT_TEAM_MESSAGE} role="alert">Candidates could not be loaded. {candidatesQuery.error instanceof Error ? candidatesQuery.error.message : "Try again shortly."}</p>}
+    {candidatesQuery.isPending && <p role="status" className="m-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">Loading available team members…</p>}
+    {candidatesQuery.isError && <p className={PROJECT_TEAM_MESSAGE} role="alert">
+      Candidates could not be loaded. {candidatesQuery.error instanceof Error ? candidatesQuery.error.message : "Try again shortly."}
+      <Button variant="text" className="ml-[var(--space-2)] max-[721px]:min-h-[44px]" onClick={() => void candidatesQuery.refetch()}>Retry</Button>
+    </p>}
     <TeamComboboxView
       groups={groups}
       value={value}
@@ -687,6 +694,8 @@ export function ProjectTeamCollectCombobox({ photographerUserIds, editorUserIds,
       inputDisabled={candidatesQuery.isError}
       rowClassName={rowClassName}
       blockEnterSubmit
+      truncateDescriptions
+      inputId={inputId}
     />
   </div>;
 }
