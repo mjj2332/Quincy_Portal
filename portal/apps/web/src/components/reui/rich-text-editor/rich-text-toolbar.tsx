@@ -9,7 +9,9 @@
 //    state, rather than nova's `bg-muted` (which the hover state shares).
 // 4. `RichTextButton` (Undo/Redo) overrides `reui/button`'s `disabled:opacity-50` with transparent +
 //    muted text and `disabled:opacity-100`: disabled is colour, never dimming (the #376 rule).
-// 5. Roving tabindex is kept as-is: the toolbar is ONE tab stop (the legacy bar had ~12) and arrow
+// 5. The scroller carries `p-[var(--space-1)]` so the overflow clip does not cut the controls' focus
+//    outlines (3px ring + 2px offset); Undo/Redo are 44px at <=721px.
+// 6. Roving tabindex is kept as-is: the toolbar is ONE tab stop (the legacy bar had ~12) and arrow
 //    keys / Home / End walk it. Intended; flagged to design-review.
 import {
   useLayoutEffect,
@@ -159,7 +161,7 @@ export function RichTextToolbar({
       onFocus={handleFocus}
       onKeyDown={handleKeyDown}
       className={cn(
-        "flex items-center gap-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden max-[721px]:[mask-image:linear-gradient(to_right,black_85%,transparent)]",
+        "flex items-center gap-1 p-[var(--space-1)] overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden max-[721px]:[mask-image:linear-gradient(to_right,black_85%,transparent)]",
         className
       )}
       {...props}
@@ -273,7 +275,7 @@ export function RichTextButton({
             disabled={disabled}
             onClick={onClick}
             onMouseDown={keepEditorFocus}
-            className="disabled:bg-transparent disabled:text-muted-foreground disabled:opacity-100"
+            className="max-[721px]:size-11 disabled:bg-transparent disabled:text-muted-foreground disabled:opacity-100"
             data-toolbar-item=""
           />
         }
