@@ -23,6 +23,14 @@ export {
   type ShootDateFillReason,
   type ShootDateFillTrigger,
 } from "./shoot-date-fill";
+export {
+  AUTOMATIC_DEADLINE_AUDIT_ACTION,
+  automaticDeadlineLanded,
+  buildAutomaticDeadlineBundle,
+  type AutomaticDeadlineGate,
+  type AutomaticDeadlineIndexes,
+  type AutomaticDeadlineReason,
+} from "./automatic-deadline";
 export { projectColumnsForVariant, projectColumnsPre0037 } from "./project-projections";
 export { emitExternalSafeLegacyNotification, emitExternalSubtaskNotification, emitExternalSubtaskNotifications, emitStaffSubtaskAssignedNotification, type ExternalSafeLegacyInput, type ExternalSubtaskNotificationInput, type StaffSubtaskAssignedInput } from "./external-notifications";
 export {

@@ -88,6 +88,30 @@ describe("durable RAW stage commit", () => {
       expect(meta).not.toHaveProperty("eventReceivedAt");
     });
 
+    it("gives the filled date its Automatic Deadline once, with a system audit and default reminders (#484)", async () => {
+      const projectId = await project();
+      const outcome = await advanceOutcome(projectId, "dropbox_delta", { now: Date.parse("2026-10-01T14:30:00Z") });
+      expect(outcome).toMatchObject({ kind: "winner", shootDateFilled: true });
+      // Sydney Fri 2 Oct shoot: due Mon 5 Oct 17:00 at +11:00 (06:00Z), after the clocks go forward on Sun 4 Oct.
+      expect(await database.DB.prepare("SELECT deadline_at, deadline_local_civil, deadline_source, deadline_version FROM projects WHERE id = ?").bind(projectId).first())
+        .toEqual({ deadline_at: Date.parse("2026-10-05T06:00:00.000Z"), deadline_local_civil: "2026-10-05T17:00", deadline_source: "automatic", deadline_version: 1 });
+      const audits = (await database.DB.prepare("SELECT actor_id, meta_json FROM audit_log WHERE target_id = ? AND action = 'project.deadline.automatic_set'").bind(projectId).all<{ actor_id: string | null; meta_json: string }>()).results;
+      expect(audits).toHaveLength(1);
+      expect(audits[0]!.actor_id).toBeNull();
+      expect(JSON.parse(audits[0]!.meta_json)).toMatchObject({ actor: "system", reason: "shoot_date_fill", shootDate: "2026-10-02" });
+      expect(await database.DB.prepare("SELECT count(*) AS n FROM project_deadline_occurrences WHERE project_id = ? AND status = 'pending'").bind(projectId).first()).toEqual({ n: 4 });
+    });
+
+    it("leaves a held Deadline alone when the fill lands (#484)", async () => {
+      const projectId = await project();
+      const held = Date.parse("2026-11-20T06:00:00.000Z");
+      await database.DB.prepare("UPDATE projects SET deadline_at = ?, deadline_local_civil = '2026-11-20T17:00', deadline_zone = 'Australia/Sydney', deadline_utc_offset_minutes = 660, deadline_fold = 0, deadline_source = 'manual', deadline_version = 2 WHERE id = ?").bind(held, projectId).run();
+      await advanceOutcome(projectId, "dropbox_delta", { now: Date.parse("2026-10-01T14:30:00Z") });
+      expect(await shootDateOf(projectId)).toBe("2026-10-02");
+      expect(await database.DB.prepare("SELECT deadline_at, deadline_source, deadline_version FROM projects WHERE id = ?").bind(projectId).first()).toEqual({ deadline_at: held, deadline_source: "manual", deadline_version: 2 });
+      expect(await database.DB.prepare("SELECT count(*) AS n FROM audit_log WHERE target_id = ? AND action = 'project.deadline.automatic_set'").bind(projectId).first()).toEqual({ n: 0 });
+    });
+
     it("uses the Sydney day, not the UTC day, just before Sydney midnight", async () => {
       const projectId = await project();
       await advance(projectId, "dropbox_delta", { now: Date.parse("2026-10-01T13:30:00Z") });

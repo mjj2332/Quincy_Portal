@@ -7,6 +7,7 @@ const NOW = Date.parse("2027-01-01T00:00:00.000Z");
 function schedule(overrides: Partial<ProjectDeadlineSchedule> = {}): ProjectDeadlineSchedule {
   return {
     version: 0,
+    source: null,
     deadline: null,
     reminderOffsetsMinutes: [],
     state: "unset",
