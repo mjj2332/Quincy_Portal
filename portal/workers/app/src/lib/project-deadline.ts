@@ -197,6 +197,48 @@ function parseRequest(request: SaveProjectDeadlineRequest): { expectedVersion: n
   return { expectedVersion: request.expectedVersion, deadlineAt: resolved.value.epochMs, localCivil: resolved.value.localCivil, offset: resolved.value.utcOffsetMinutes, fold: resolved.value.fold, offsets, operation: "set" };
 }
 
+/**
+ * A person saving an Automatic Deadline at exactly its automatic value confirms it (#484): only provenance changes.
+ * The reminder schedule is untouched, so the version, the occurrences and every delivery in flight are left exactly
+ * as they are. It is one compare-and-set on the version, the automatic source and the stored value, plus the audit
+ * row. Setting `manual` is what stops #485's reschedule rule from ever moving it: that rule must CAS on
+ * `deadline_source = 'automatic'` and the version, so a concurrent confirm and reschedule serialise.
+ */
+async function confirmAutomaticDeadline(
+  db: D1Database,
+  input: SaveProjectDeadlineScheduleInput,
+  before: ProjectDeadlineProjectRow,
+  request: ReturnType<typeof parseRequest>,
+  now: number,
+): Promise<ProjectDeadlineSaveResult> {
+  if (before.archivedAt !== null) throw new ProjectDeadlineError("Archived projects cannot change Deadline reminders.", 409, "deadline_project_archived");
+  if (before.stageKey === "delivered") throw new ProjectDeadlineError("Delivered projects cannot change Deadline reminders.", 409, "deadline_project_delivered");
+  const auditId = crypto.randomUUID();
+  const results = await db.batch([
+    db.prepare(`
+      UPDATE projects SET deadline_source = 'manual', updated_at = ?
+      WHERE id = ? AND deadline_version = ? AND deadline_source = 'automatic'
+        AND deadline_at = ? AND deadline_local_civil = ? AND archived_at IS NULL AND stage_key <> 'delivered'
+      RETURNING id
+    `).bind(now, input.projectId, request.expectedVersion, request.deadlineAt, request.localCivil),
+    db.prepare(`
+      INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+      SELECT ?, ?, 'project.deadline.schedule_saved', 'project', ?, ?, ?
+      WHERE changes() = 1 RETURNING id
+    `).bind(auditId, input.principal.id, input.projectId, auditMeta(input.principal, { version: request.expectedVersion, operation: "confirm" }), now),
+  ]);
+  const marker = results[1]?.results?.[0] as { id?: string } | undefined;
+  const current = await readProjectDeadlineSchedule(db, input.projectId, now);
+  if (!current) throw new ProjectDeadlineError("Project not found", 404, "project_not_found");
+  if (!marker || marker.id !== auditId) {
+    const authoritative = await readProject(db, input.projectId);
+    if (authoritative?.archivedAt != null) throw new ProjectDeadlineError("Archived projects cannot change Deadline reminders.", 409, "deadline_project_archived");
+    if (authoritative?.stageKey === "delivered") throw new ProjectDeadlineError("Delivered projects cannot change Deadline reminders.", 409, "deadline_project_delivered");
+    throw conflictCurrent(current);
+  }
+  return { changed: true, current, eventIntent: null, publicationIds: [], shootDateFilled: false };
+}
+
 /** The shared, non-Hono Deadline command used by the rail today and Calendar later. */
 export async function saveProjectDeadlineSchedule(db: D1Database, input: SaveProjectDeadlineScheduleInput): Promise<ProjectDeadlineSaveResult> {
   const now = input.now ?? Date.now();
@@ -219,7 +261,9 @@ export async function saveProjectDeadlineSchedule(db: D1Database, input: SavePro
     if (before.stageKey === "delivered") throw new ProjectDeadlineError("Delivered projects cannot change Deadline reminders.", 409, "deadline_project_delivered");
     if (!beforeSchedule.canResume) throw new ProjectDeadlineError("This Deadline does not have inactive reminders to resume.", 409, "deadline_resume_not_available");
     if (!exact) throw new ProjectDeadlineError("Review the retained Deadline before resuming reminders.", 409, "deadline_resume_schedule_changed", { current: beforeSchedule });
-  } else if (exact && !confirmsAutomatic) {
+  } else if (confirmsAutomatic) {
+    return confirmAutomaticDeadline(db, input, before, request, now);
+  } else if (exact) {
     if (before.archivedAt !== null) throw new ProjectDeadlineError("Archived projects cannot change Deadline reminders.", 409, "deadline_project_archived");
     if (before.stageKey === "delivered") throw new ProjectDeadlineError("Delivered projects cannot change Deadline reminders.", 409, "deadline_project_delivered");
     if (before.deadlineVersion !== request.expectedVersion) throw conflictCurrent(beforeSchedule);
@@ -258,25 +302,6 @@ export async function saveProjectDeadlineSchedule(db: D1Database, input: SavePro
       SELECT ?, ?, 'project.deadline.schedule_saved', 'project', ?, ?, ?
       WHERE changes() = 1 RETURNING id
     `).bind(auditId, actorId, input.projectId, auditMeta(input.principal, { version: newVersion, operation: resume ? "resume" : request.operation }), now),
-  ];
-  if (confirmsAutomatic) {
-    // An equal-value confirmation only changes provenance. Every occurrence (pending, fired, skipped) and every reminder
-    // delivery still in flight moves to the new version unchanged, so no reminder is dropped and none re-fires.
-    statements.push(
-      db.prepare(`
-        UPDATE project_deadline_occurrences SET schedule_version = ?, updated_at = ?
-        WHERE project_id = ? AND schedule_version = ? AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
-      `).bind(newVersion, now, input.projectId, before.deadlineVersion, auditId),
-      db.prepare(`
-        UPDATE notification_outbox SET payload_json = json_set(payload_json, '$.reminder.scheduleVersion', ?), updated_at = ?
-        WHERE project_id = ? AND event_type = 'project.deadline.reminder'
-          AND status IN ('pending', 'queued', 'processing', 'failed')
-          AND json_extract(payload_json, '$.reminder.scheduleVersion') = ?
-          AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
-      `).bind(newVersion, now, input.projectId, before.deadlineVersion, auditId),
-    );
-  } else {
-    statements.push(
     db.prepare(`
       UPDATE project_deadline_occurrences
       SET status = 'superseded', terminal_reason = ?, fired_at = NULL, updated_at = ?
@@ -306,9 +331,8 @@ export async function saveProjectDeadlineSchedule(db: D1Database, input: SavePro
         AND NOT EXISTS (SELECT 1 FROM notification_delivery_ledger WHERE outbox_id = notification_outbox.id AND status IN ('pending', 'processing'))
         AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
     `).bind(now, now, input.projectId, auditId),
-    );
-  }
-  for (const occurrence of confirmsAutomatic ? [] : occurrences) {
+  ];
+  for (const occurrence of occurrences) {
     statements.push(db.prepare(`
       INSERT INTO project_deadline_occurrences
         (id, project_id, schedule_version, kind, reminder_offset_minutes, fire_at, deadline_at,

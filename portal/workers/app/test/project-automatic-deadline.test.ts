@@ -162,34 +162,30 @@ describe("Automatic Deadline on Edit details (#484)", () => {
 describe("a person's save and the Automatic Deadline (#484)", () => {
   const putDeadline = (projectId: string, body: unknown) => request(`/api/projects/${projectId}/deadline`, "PUT", body);
 
-  it("records manual even when the person saves exactly the automatic value, and bumps the version", async () => {
+  it("confirming the automatic value flips the source to manual and nothing else: same version, same reminder rows", async () => {
     const projectId = await createProject({ shootDate: "2026-10-02" });
+    const rows = () => database.DB.prepare("SELECT id, kind, status, schedule_version AS version, fire_at FROM project_deadline_occurrences WHERE project_id = ? ORDER BY reminder_offset_minutes DESC").bind(projectId).all();
+    const before = (await rows()).results;
+    // The 1-day reminder has been sent and its delivery is still in flight.
+    await database.DB.prepare("UPDATE project_deadline_occurrences SET status = 'fired', fired_at = ? WHERE id = ?").bind(Date.now(), (before[0] as { id: string }).id).run();
+    const fired = (await rows()).results;
     const response = await putDeadline(projectId, { expectedVersion: 1, deadline: { localCivil: AUTOMATIC_MONDAY.civil }, reminderOffsetsMinutes: [1440, 240, 60] });
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ changed: true, current: { version: 2, source: "manual" } });
-    expect(await deadlineOf(projectId)).toMatchObject({ deadline_source: "manual", deadline_version: 2, deadline_at: AUTOMATIC_MONDAY.at });
-    const live = (await occurrencesOf(projectId)).filter((row) => row.version === 2);
-    expect(live.map((row) => [row.kind, row.offset, row.status])).toEqual([["advance", 1440, "pending"], ["advance", 240, "pending"], ["advance", 60, "pending"], ["due_now", 0, "pending"]]);
-    // A second identical save is the ordinary no-op.
-    expect(await (await putDeadline(projectId, { expectedVersion: 2, deadline: { localCivil: AUTOMATIC_MONDAY.civil }, reminderOffsetsMinutes: [1440, 240, 60] })).json()).toMatchObject({ changed: false, current: { version: 2, source: "manual" } });
+    expect(await response.json()).toMatchObject({ changed: true, current: { version: 1, source: "manual" } });
+    expect(await deadlineOf(projectId)).toMatchObject({ deadline_source: "manual", deadline_version: 1, deadline_at: AUTOMATIC_MONDAY.at });
+    expect((await rows()).results).toEqual(fired);
+    expect(await database.DB.prepare("SELECT count(*) AS n FROM audit_log WHERE target_id = ? AND action = 'project.deadline.schedule_saved'").bind(projectId).first()).toEqual({ n: 1 });
+    // Confirming an already-manual Deadline is the ordinary exact no-op.
+    expect(await (await putDeadline(projectId, { expectedVersion: 1, deadline: { localCivil: AUTOMATIC_MONDAY.civil }, reminderOffsetsMinutes: [1440, 240, 60] })).json()).toMatchObject({ changed: false, current: { version: 1, source: "manual" } });
+    expect(await database.DB.prepare("SELECT count(*) AS n FROM audit_log WHERE target_id = ? AND action = 'project.deadline.schedule_saved'").bind(projectId).first()).toEqual({ n: 1 });
   });
 
-  it("carries unsent and sent reminders forward unchanged when a person confirms the automatic value", async () => {
+  it("rejects a stale confirmation as a conflict and leaves the Deadline automatic", async () => {
     const projectId = await createProject({ shootDate: "2026-10-02" });
-    const before = (await database.DB.prepare("SELECT id, kind, status FROM project_deadline_occurrences WHERE project_id = ? ORDER BY reminder_offset_minutes DESC").bind(projectId).all<{ id: string; kind: string; status: string }>()).results;
-    // The 1-day reminder has been sent and its delivery is still in flight.
-    const sent = before[0]!;
-    await database.DB.prepare("UPDATE project_deadline_occurrences SET status = 'fired', fired_at = ? WHERE id = ?").bind(Date.now(), sent.id).run();
-    const outboxId = crypto.randomUUID();
-    await database.DB.prepare("INSERT INTO notification_outbox (id, schema_version, event_type, source_key, project_id, actor_id, recipient_id, payload_json, status, available_at, created_at, updated_at) VALUES (?, 1, 'project.deadline.reminder', ?, ?, ?, ?, ?, 'pending', ?, ?, ?)")
-      .bind(outboxId, sent.id, projectId, SYSTEM_ACTOR, userId, JSON.stringify({ reminder: { occurrenceId: sent.id, scheduleVersion: 1 } }), Date.now(), Date.now(), Date.now()).run();
-    const response = await request(`/api/projects/${projectId}/deadline`, "PUT", { expectedVersion: 1, deadline: { localCivil: AUTOMATIC_MONDAY.civil }, reminderOffsetsMinutes: [1440, 240, 60] });
-    expect(await response.json()).toMatchObject({ changed: true, current: { version: 2, source: "manual" } });
-    const after = (await database.DB.prepare("SELECT id, kind, status, schedule_version AS version FROM project_deadline_occurrences WHERE project_id = ? ORDER BY reminder_offset_minutes DESC").bind(projectId).all<{ id: string; kind: string; status: string; version: number }>()).results;
-    expect(after.map((row) => [row.id, row.status, row.version])).toEqual(before.map((row, index) => [row.id, index === 0 ? "fired" : "pending", 2]));
-    const outbox = await database.DB.prepare("SELECT status, payload_json FROM notification_outbox WHERE id = ?").bind(outboxId).first<{ status: string; payload_json: string }>();
-    expect(outbox!.status).toBe("pending");
-    expect(JSON.parse(outbox!.payload_json).reminder.scheduleVersion).toBe(2);
+    const response = await putDeadline(projectId, { expectedVersion: 0, deadline: { localCivil: AUTOMATIC_MONDAY.civil }, reminderOffsetsMinutes: [1440, 240, 60] });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "deadline_version_conflict", current: { version: 1, source: "automatic" } });
+    expect(await deadlineOf(projectId)).toMatchObject({ deadline_source: "automatic", deadline_version: 1 });
   });
 
   it("records manual for any different value, and clearing leaves no source", async () => {
