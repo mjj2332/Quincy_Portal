@@ -61,6 +61,13 @@ export function composeDigestEmail(input: { groups: DigestGroup[]; totalItems: n
   return { subject, text: textParts.join("\n").trimEnd(), html: htmlParts.join("") };
 }
 
+/**
+ * An item is claimable only while its email ledger row is `deferred` (the digest owns it), or it has no ledger
+ * row at all (the legacy emitNotifications path). A replayed item whose ledger row is still `pending` waits for
+ * the queue consumer to defer it again, so a send's outcome is never recorded against a row it cannot update.
+ */
+const CLAIMABLE_ITEM = "(ledger_id IS NULL OR ledger_id IN (SELECT id FROM notification_delivery_ledger WHERE status = 'deferred'))";
+
 type DueRecipient = { recipientId: string; email: string; role: string; cadence: string };
 
 export type EmailDigestRunSummary = { recipients: number; sent: number; empty: number; released: number; failed: number; unknown: number; skipped: number };
@@ -124,7 +131,7 @@ async function dueRecipientPage(env: Env, cadences: readonly EmailDigestCadence[
     LEFT JOIN notification_preferences p ON p.user_id = u.id
     WHERE u.active = 1 AND u.id > ?
       AND COALESCE(p.email_digest_cadence, ?) IN (${placeholders})
-      AND EXISTS (SELECT 1 FROM notification_digest_items i WHERE i.recipient_id = u.id AND i.state = 'pending' AND i.digest_id IS NULL)
+      AND EXISTS (SELECT 1 FROM notification_digest_items i WHERE i.recipient_id = u.id AND i.state = 'pending' AND i.digest_id IS NULL AND (i.ledger_id IS NULL OR i.ledger_id IN (SELECT id FROM notification_delivery_ledger WHERE status = 'deferred')))
       AND NOT EXISTS (SELECT 1 FROM notification_digests d WHERE d.recipient_id = u.id AND d.slot_at = ?)
     ORDER BY u.id LIMIT ${RECIPIENT_PAGE_SIZE}
   `).bind(DEFAULT_EMAIL_DIGEST_CADENCE, after, DEFAULT_EMAIL_DIGEST_CADENCE, ...cadences, slotAt).all<DueRecipient>();
@@ -150,7 +157,7 @@ async function sendDigestForRecipient(env: Env, recipient: DueRecipient, slotAt:
   // Attach a fixed item set. Anything deferred after this point waits for the next slot.
   await env.DB.prepare(`
     UPDATE notification_digest_items SET digest_id = ?, updated_at = ?
-    WHERE recipient_id = ? AND state = 'pending' AND digest_id IS NULL
+    WHERE recipient_id = ? AND state = 'pending' AND digest_id IS NULL AND ${CLAIMABLE_ITEM}
   `).bind(digestId, now, recipient.recipientId).run();
 
   // Re-check at the last moment: still active, then read items, then (External editors) visibility.
@@ -244,6 +251,12 @@ async function sendDigestForRecipient(env: Env, recipient: DueRecipient, slotAt:
     UPDATE notification_digests SET status = 'sending', item_count = ?, project_count = ?, updated_at = ?
     WHERE id = ? AND status = 'claimed'
       AND EXISTS (SELECT 1 FROM user u WHERE u.id = ? AND u.active = 1 AND u.role = ? AND u.authorization_epoch = ?)
+      AND NOT EXISTS (
+        SELECT 1 FROM notification_digest_items i
+        WHERE i.digest_id = notification_digests.id AND i.state = 'pending'
+          AND (i.notification_id IS NULL OR i.notification_id IN (SELECT id FROM notifications WHERE read_at IS NOT NULL)
+               OR i.notification_id NOT IN (SELECT id FROM notifications))
+      )
       ${visible ? `AND NOT EXISTS (
         SELECT 1 FROM notification_digest_items i
         WHERE i.digest_id = notification_digests.id AND i.state = 'pending'
@@ -254,7 +267,7 @@ async function sendDigestForRecipient(env: Env, recipient: DueRecipient, slotAt:
     // Lost the admission: release the slot (items back to pending) so the next run rebuilds it from current state.
     await env.DB.batch([
       env.DB.prepare("UPDATE notification_digest_items SET digest_id = NULL, updated_at = ? WHERE digest_id = ? AND state = 'pending'").bind(now, digestId),
-      env.DB.prepare("UPDATE notification_digests SET status = 'released', last_error_code = 'digest_reauthorization_changed', last_error = 'Recipient authorization changed while composing.', updated_at = ? WHERE id = ? AND status = 'claimed'").bind(now, digestId),
+      env.DB.prepare("UPDATE notification_digests SET status = 'released', last_error_code = 'digest_reauthorization_changed', last_error = 'Recipient authorization or item read state changed while composing.', updated_at = ? WHERE id = ? AND status = 'claimed'").bind(now, digestId),
     ]);
     return "released";
   }

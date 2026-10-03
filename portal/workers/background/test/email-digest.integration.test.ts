@@ -342,6 +342,50 @@ describe("runEmailDigests: who gets an email, when, with what", () => {
     expect(await states(user.id)).toEqual([{ state: "suppressed", outcome: "recipient_inactive" }]);
   });
 
+  it("does not send an item that was read while the digest was being composed, and drops it at the next slot", async () => {
+    const user = await addUser({ cadence: "hourly" });
+    const project = await addProject("Read Race Street");
+    const item = await addItem(user.id, { projectId: project, title: "Read mid-compose" });
+    const send = vi.fn().mockResolvedValue({ messageId: "m" });
+    await runEmailDigests(envMutatingMidCompose(send, async () => { await database.DB.prepare("UPDATE notifications SET read_at = ? WHERE id = ?").bind(Date.now(), item.notificationId).run(); }), EIGHT_AM);
+    expect(sentTo(send, user.email)).toHaveLength(0);
+    expect((await digests(user.id)).map((d) => d.status)).toEqual(["released"]);
+    expect(await states(user.id)).toEqual([{ state: "pending", outcome: null }]);
+    await runEmailDigests(digestEnv(send), NINE_AM);
+    expect(sentTo(send, user.email)).toHaveLength(0);
+    expect(await states(user.id)).toEqual([{ state: "dropped_read", outcome: "digest_dropped_read" }]);
+    expect((await digests(user.id)).map((d) => d.status)).toEqual(["released", "empty"]);
+  });
+
+  it("does not send an item deleted while the digest was being composed", async () => {
+    const user = await addUser({ cadence: "hourly" });
+    const project = await addProject("Delete Race Street");
+    const item = await addItem(user.id, { projectId: project });
+    const send = vi.fn().mockResolvedValue({ messageId: "m" });
+    await runEmailDigests(envMutatingMidCompose(send, async () => { await database.DB.prepare("DELETE FROM notifications WHERE id = ?").bind(item.notificationId).run(); }), EIGHT_AM);
+    expect(sentTo(send, user.email)).toHaveLength(0);
+    expect((await digests(user.id)).map((d) => d.status)).toEqual(["released"]);
+  });
+
+  it("leaves a replayed item alone while its email ledger is still pending, then sends it with the outcome recorded once the consumer defers it again", async () => {
+    const user = await addUser({ cadence: "hourly" });
+    const project = await addProject("Replay Order Street");
+    const item = await addItem(user.id, { projectId: project, title: "Replayed item" });
+    // The admin replay resets the ledger row to pending and the item to pending/unclaimed; the queue consumer has not run yet.
+    await database.DB.prepare("UPDATE notification_delivery_ledger SET status = 'pending' WHERE id = ?").bind(item.ledgerId).run();
+    const send = vi.fn().mockResolvedValue({ messageId: "replayed-1" });
+    expect(await runEmailDigests(digestEnv(send), EIGHT_AM)).toMatchObject({ recipients: 0, sent: 0 });
+    expect(sentTo(send, user.email)).toHaveLength(0);
+    expect(await states(user.id)).toEqual([{ state: "pending", outcome: null }]);
+    expect(await digests(user.id)).toEqual([]);
+    // The consumer defers it again.
+    await database.DB.prepare("UPDATE notification_delivery_ledger SET status = 'deferred' WHERE id = ?").bind(item.ledgerId).run();
+    await runEmailDigests(digestEnv(send), NINE_AM);
+    expect(sentTo(send, user.email)).toHaveLength(1);
+    expect(await ledgerStatus(item.ledgerId)).toMatchObject({ status: "sent", messageId: "replayed-1" });
+    expect(await states(user.id)).toEqual([{ state: "sent", outcome: null }]);
+  });
+
   it("does not send staff copy when the recipient becomes an External editor while the digest is being composed", async () => {
     const user = await addUser({ cadence: "hourly" });
     const project = await addProject("Role Change Street");
