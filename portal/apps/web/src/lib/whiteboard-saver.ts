@@ -12,6 +12,10 @@ export type WhiteboardSaver = {
 
 // Room for the `{"type":"elements","seq":N,"elements":[]}` envelope around the batch.
 const ENVELOPE_BYTES = 256;
+/** Element types the server refuses (until images ship). Tombstones count: the whole batch is rejected. */
+export const isUnsupportedElement = (element: { type?: unknown }) => element.type === "image";
+/** A paste carrying an element the whiteboard cannot store is refused whole, before it reaches the scene. */
+export const pasteIsUnsupported = (data: { elements?: readonly { type?: unknown }[] }) => data.elements?.some(isUnsupportedElement) === true;
 const encoder = new TextEncoder();
 const keyOf = (element: SavedElement) => `${element.version}:${element.versionNonce}`;
 
@@ -26,7 +30,7 @@ export function createWhiteboardSaver({ getElements, send }: {
   send: (batch: readonly SavedElement[]) => Promise<void>;
 }): WhiteboardSaver {
   const stored = new Map<string, string>();
-  const inflight = new Map<string, string>();
+  const inflight = new Map<string, { key: string; promise: Promise<void> }>();
 
   const batchesOf = (changed: readonly SavedElement[]): SavedElement[][] => {
     const batches: SavedElement[][] = [];
@@ -43,22 +47,31 @@ export function createWhiteboardSaver({ getElements, send }: {
   return {
     seed(elements) { for (const element of elements) stored.set(element.id, keyOf(element)); },
     flush() {
-      const changed = getElements().filter((element) => {
+      // Image elements (tombstones too) are never sent: the server refuses the whole batch.
+      const candidates = getElements().filter((element) => !isUnsupportedElement(element));
+      const waits: Promise<void>[] = [];
+      const changed = candidates.filter((element) => {
         const key = keyOf(element);
-        return stored.get(element.id) !== key && inflight.get(element.id) !== key;
+        if (stored.get(element.id) === key) return false;
+        const flying = inflight.get(element.id);
+        if (flying?.key === key) { waits.push(flying.promise); return false; }  // join it: its failure is ours
+        return true;
       });
       // Capture what is transmitted now; the scene objects may be mutated by later edits.
-      const sends = batchesOf(changed.map((element) => ({ ...element }))).map(async (batch) => {
+      const sends = batchesOf(changed.map((element) => ({ ...element }))).map((batch) => {
         const sentKeys = batch.map((element) => [element.id, keyOf(element)] as const);
-        for (const [id, key] of sentKeys) inflight.set(id, key);
-        try {
-          await send(batch);
-          for (const [id, key] of sentKeys) stored.set(id, key);
-        } finally {
-          for (const [id, key] of sentKeys) if (inflight.get(id) === key) inflight.delete(id);
-        }
+        const promise = (async () => {
+          try {
+            await send(batch);
+            for (const [id, key] of sentKeys) stored.set(id, key);
+          } finally {
+            for (const [id, key] of sentKeys) if (inflight.get(id)?.key === key) inflight.delete(id);
+          }
+        })();
+        for (const [id, key] of sentKeys) inflight.set(id, { key, promise });
+        return promise;
       });
-      return Promise.all(sends).then(() => undefined);
+      return Promise.all([...waits, ...sends]).then(() => undefined);
     },
   };
 }

@@ -96,7 +96,7 @@ const pressTab = (shift = false) => act(async () => {
 const confirmFocusables = (modal: HTMLElement) => [...modal.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]')].filter((el) => el.getAttribute("tabindex") !== "-1" && !el.hasAttribute("data-floating-ui-focus-guard"));
 
 
-const board = vi.hoisted(() => ({ mode: "edit" as WhiteboardMode, props: null as null | { readOnly?: boolean; imageTool?: boolean; theme?: string; onSave?: () => Promise<void> }, scene: [] as Array<Record<string, unknown>>, send: null as null | ((batch: readonly unknown[]) => Promise<void>), handlers: null as null | { onInit: (init: { mode: WhiteboardMode; elements: unknown[] }, reconnect: boolean) => void } }));
+const board = vi.hoisted(() => ({ mode: "edit" as WhiteboardMode, props: null as null | { onElements?: (e: unknown[]) => void; readOnly?: boolean; imageTool?: boolean; theme?: string; onSave?: () => Promise<void> }, scene: [] as Array<Record<string, unknown>>, send: null as null | ((batch: readonly unknown[]) => Promise<void>), handlers: null as null | { onInit: (init: { mode: WhiteboardMode; elements: unknown[] }, reconnect: boolean) => void } }));
 vi.mock("../lib/whiteboard-socket", () => ({
   openWhiteboardSocket: (_projectId: string, handlers: { onInit: (init: { mode: WhiteboardMode; elements: unknown[] }, reconnect: boolean) => void; onConnection: (state: string) => void }) => {
     board.handlers = handlers;
@@ -105,7 +105,7 @@ vi.mock("../lib/whiteboard-socket", () => ({
   },
 }));
 vi.mock("../components/reui/whiteboard/whiteboard", () => ({
-  Whiteboard: (props: { readOnly?: boolean; imageTool?: boolean; theme?: string; onSave?: () => Promise<void>; onReady?: (controller: unknown) => void }) => { board.props = props; props.onReady?.({ api: { getSceneElementsIncludingDeleted: () => board.scene } }); return <div data-testid="whiteboard-stand-in" tabIndex={0}>board</div>; },
+  Whiteboard: (props: { readOnly?: boolean; imageTool?: boolean; theme?: string; onSave?: () => Promise<void>; onReady?: (controller: unknown) => void; onElements?: (e: unknown[]) => void }) => { board.props = props; props.onElements?.(board.scene); props.onReady?.({ api: { getSceneElementsIncludingDeleted: () => board.scene } }); return <div data-testid="whiteboard-stand-in" tabIndex={0}>board</div>; },
 }));
 
 const onRequestClose = vi.fn();
@@ -206,11 +206,39 @@ describe("the open whiteboard (#498)", () => {
     await renderSheet({ whiteboardOpen: true });
     await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
     board.scene = [{ id: "a", version: 2, versionNonce: 5 }];
+    board.props!.onElements!(board.scene);
     await act(async () => { await board.props!.onSave!().catch(() => undefined); });
     expect(sent).toHaveLength(1);
     await act(async () => { board.handlers!.onInit({ mode: "edit", elements: [] }, true); await Promise.resolve(); });
     await flush(3);
     expect(sent).toHaveLength(2);
+  });
+
+  it("Close during an autosave that then fails stays open with the error", async () => {
+    let fail!: (e: Error) => void; const sent: unknown[][] = [];
+    board.send = (batch) => { sent.push([...batch]); return new Promise<void>((_, reject) => { fail = reject; }); };
+    board.scene = [{ id: "a", version: 2, versionNonce: 5 }];
+    await renderSheet({ whiteboardOpen: true });
+    await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
+    void board.props!.onSave!().catch(() => undefined);   // the autosave, in flight
+    await click(document.querySelector('[data-testid="project-whiteboard-close"]')!);
+    expect(sent).toHaveLength(1);                         // Close joined it rather than skipping
+    await act(async () => { fail(new Error("dropped")); await Promise.resolve(); });
+    await flush(3);
+    expect(onCloseWhiteboard).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-testid="project-whiteboard-status"]')?.textContent).toBe("Not saved");
+  });
+
+  it("unmounting with a pending edit still sends it, from the last reported snapshot", async () => {
+    const sent: unknown[][] = [];
+    board.send = (batch) => { sent.push([...batch]); return Promise.resolve(); };
+    await renderSheet({ whiteboardOpen: true });
+    await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
+    board.props!.onElements!([{ id: "a", version: 3, versionNonce: 9 }]);
+    board.scene = [];   // the live editor API is empty by teardown
+    await act(async () => { root!.unmount(); await Promise.resolve(); });
+    root = null;
+    expect(sent.flat()).toEqual([{ id: "a", version: 3, versionNonce: 9 }]);
   });
 
   it("Close stays open with a visible error when the final save fails, and a second Close leaves", async () => {

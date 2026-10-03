@@ -70,6 +70,7 @@ import type {
   UIOptions,
 } from "@excalidraw/excalidraw/types"
 import { cn } from "@/lib/utils"
+import { pasteIsUnsupported } from "@/lib/whiteboard-saver"
 
 import "@excalidraw/excalidraw/index.css"
 
@@ -1494,6 +1495,7 @@ export function WhiteboardCanvas({
   onSave,
   autosaveDelay = 1500,
   onSaveStatusChange,
+  onElements,
   onReady,
   readOnly = false,
   onReadOnlyChange,
@@ -1545,6 +1547,7 @@ export function WhiteboardCanvas({
     onChange,
     onSave,
     onSaveStatusChange,
+    onElements,
     onReady,
     changeDelay,
     autosaveDelay,
@@ -1562,6 +1565,7 @@ export function WhiteboardCanvas({
       onChange,
       onSave,
       onSaveStatusChange,
+      onElements,
       onReady,
       changeDelay,
       autosaveDelay,
@@ -1599,9 +1603,24 @@ export function WhiteboardCanvas({
   const { markDirty, scheduleChange } = useAutosave(api, latest)
   const history = useHistoryMirror(rootRef, api)
 
+  // Quincy (#498): the image tool is off, but a paste from another scene carries image elements the
+  // server refuses; refuse the paste here, before they are inserted.
+  const handlePaste = useCallback(
+    (data: { elements?: readonly { type?: unknown }[] }) => {
+      if (imageTool) return true
+      if (pasteIsUnsupported(data)) {
+        latest.current.onToast?.("Images on the whiteboard arrive in a later update")
+        return false
+      }
+      return true
+    },
+    [imageTool]
+  )
+
   // onChange also fires on pointer moves; only a new element hash counts.
   const handleChange = useCallback(
     (elements: readonly OrderedExcalidrawElement[], appState: AppState) => {
+      latest.current.onElements?.(elements)
       // Written straight to the layer: panning never re-renders React.
       placeGrid(gridRef.current, appState)
       // Any path left to Excalidraw's own Help swaps it for the kit's dialog
@@ -2154,6 +2173,7 @@ export function WhiteboardCanvas({
         excalidrawAPI={handleApi}
         initialData={loadInitialData}
         onChange={handleChange}
+        onPaste={handlePaste}
         onLinkOpen={handleLinkOpen}
         onLibraryChange={handleLibraryChange}
         theme={theme}

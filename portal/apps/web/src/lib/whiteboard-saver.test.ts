@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { WHITEBOARD_MAX_ELEMENTS_PER_MESSAGE, WHITEBOARD_MAX_MESSAGE_BYTES } from "@quincy/shared";
-import { createWhiteboardSaver, type SavedElement } from "./whiteboard-saver";
+import { createWhiteboardSaver, pasteIsUnsupported, type SavedElement } from "./whiteboard-saver";
 
 const el = (id: string, version: number, extra: Record<string, unknown> = {}): SavedElement => ({ id, version, versionNonce: version * 7, ...extra });
 const deferred = () => { let resolve!: () => void; let reject!: (e: Error) => void; const promise = new Promise<void>((res, rej) => { resolve = res; reject = rej; }); return { promise, resolve, reject }; };
@@ -64,5 +64,32 @@ describe("whiteboard saver", () => {
     await saver.flush();
     expect(bytes.length).toBeGreaterThan(1);
     for (const size of bytes) expect(size).toBeLessThanOrEqual(WHITEBOARD_MAX_MESSAGE_BYTES);
+  });
+
+  it("flush waits for a save already in flight and rejects if that save fails", async () => {
+    const scene = [el("a", 2)]; const d = deferred(); let calls = 0;
+    const saver = createWhiteboardSaver({ getElements: () => scene, send: () => { calls += 1; return d.promise; } });
+    const autosave = saver.flush(); autosave.catch(() => undefined);
+    let settled = "pending";
+    const close = saver.flush().then(() => { settled = "ok"; }, () => { settled = "failed"; });
+    await Promise.resolve();
+    expect(settled).toBe("pending");       // not skipped: it waits on the in-flight save
+    d.reject(new Error("dropped")); await close;
+    expect(settled).toBe("failed");
+    expect(calls).toBe(1);
+  });
+
+  it("never sends an image element, tombstones included", async () => {
+    const scene = [el("a", 1), el("img", 1, { type: "image", isDeleted: true })];
+    const sent: SavedElement[][] = [];
+    const saver = createWhiteboardSaver({ getElements: () => scene, send: async (batch) => { sent.push([...batch]); } });
+    await saver.flush();
+    expect(sent.flat().map((e) => e.id)).toEqual(["a"]);
+  });
+
+  it("refuses a paste that carries an image", () => {
+    expect(pasteIsUnsupported({ elements: [{ type: "rectangle" }, { type: "image" }] })).toBe(true);
+    expect(pasteIsUnsupported({ elements: [{ type: "rectangle" }] })).toBe(false);
+    expect(pasteIsUnsupported({})).toBe(false);
   });
 });

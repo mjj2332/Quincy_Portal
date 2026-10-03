@@ -36,13 +36,15 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
   const socketRef = useRef<WhiteboardSocket | null>(null);
   const controllerRef = useRef<WhiteboardController | null>(null);
   const saverRef = useRef<WhiteboardSaver | null>(null);
+  // The editor's own API is empty by the time the board unmounts; the last change it reported is not.
+  const elementsRef = useRef<ReadonlyArray<SavedElement>>([]);
   const closeFailed = useRef(false);
   const accessFailureRef = useRef(onAccessFailure);
   accessFailureRef.current = onAccessFailure;
 
   useEffect(() => {
     const saver = createWhiteboardSaver({
-      getElements: () => (controllerRef.current?.api.getSceneElementsIncludingDeleted() ?? []) as unknown as ReadonlyArray<SavedElement>,
+      getElements: () => elementsRef.current,
       send: (batch) => socketRef.current?.send(batch) ?? Promise.reject(new Error("The whiteboard is not connected.")),
     });
     saverRef.current = saver;
@@ -50,7 +52,7 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
       onInit: (next, reconnect) => {
         // A reconnect keeps the board the user is looking at (#499 reconciles it live); only the mode moves.
         setInit((current) => (reconnect && current ? { ...current, mode: next.mode } : next));
-        if (!reconnect) saver.seed(next.elements as unknown as SavedElement[]);
+        if (!reconnect) { saver.seed(next.elements as unknown as SavedElement[]); elementsRef.current = next.elements as unknown as SavedElement[]; }
         // Anything that was not acknowledged before the drop goes out again now.
         else if (next.mode === "edit") saver.flush().catch(() => setSaveStatus("error"));
       },
@@ -114,6 +116,7 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
                     imageTool={false}
                     background="grid"
                     onReady={(controller) => { controllerRef.current = controller; }}
+                    onElements={(elements) => { elementsRef.current = elements as ReadonlyArray<SavedElement>; }}
                     onSave={save}
                     onSaveStatusChange={setSaveStatus}
                     onToast={pushToast}

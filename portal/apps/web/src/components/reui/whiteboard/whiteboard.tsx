@@ -239,6 +239,9 @@ export type WhiteboardProps = {
   /** Fires once the scene loads, then after edits settle (Grid and Snap included), never per pointer
    * move or scroll; mirror the scene here. A font re-wrap right after load can fire it once more. */
   onChange?: (scene: WhiteboardScene) => void
+  /** Every editor change, synchronously, with ALL elements (deleted tombstones included). Quincy: lets a host
+   * keep a snapshot that survives the editor tearing down. */
+  onElements?: (elements: readonly unknown[]) => void
   /** Milliseconds edits settle before onChange; default 300. */
   changeDelay?: number
   /** Autosave: store the scene as JSON and pass it back as initialData. Called after edits idle,
