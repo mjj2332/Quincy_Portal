@@ -110,6 +110,8 @@ describe("TB8-07 — retired classes that are still load-bearing", () => {
     // inside the composer while leaving them correct in the posted comment — the exact
     // two-renderer divergence the retained CSS block exists to prevent.
     expect(read("./RichTextEditor.tsx")).toContain('class: "rich-text__editor-content "');
+    // #491: the composer builds on the same class, for the same reason.
+    expect(read("./QuincyRichTextEditor.tsx")).toContain('class: "rich-text__editor-content "');
     expect(read("../styles/app.css")).toContain(".rich-text__editor-content ul[data-type=\"taskList\"]");
   });
 });
@@ -118,10 +120,12 @@ describe("TB8-07 — ARIA that was deliberately NOT changed", () => {
   it("keeps the rich-text validation region polite, never an alert", () => {
     // `FieldError` would have been the tidy substitution, but it injects `role="alert"`, turning
     // a polite live region into an assertive one that interrupts a screen-reader user mid-typing.
-    const source = read("./RichTextEditor.tsx");
-    const validation = source.slice(source.indexOf("min-h-[1.2em]"));
-    expect(validation.slice(0, 200)).toContain('aria-live="polite"');
-    expect(validation.slice(0, 200)).not.toContain('role="alert"');
+    for (const file of ["./RichTextEditor.tsx", "./QuincyRichTextEditor.tsx"]) {
+      const source = read(file);
+      const validation = source.slice(source.indexOf("min-h-[1.2em]"));
+      expect(validation.slice(0, 200), file).toContain('aria-live="polite"');
+      expect(validation.slice(0, 200), file).not.toContain('role="alert"');
+    }
   });
 
   it("keeps <time dateTime> as a real time element in both ledgers", () => {
