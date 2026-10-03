@@ -362,6 +362,19 @@ describe("AutoHDR finals racing the Edited arrival move (#486)", () => {
     expect(await landed(context.projectId)).toBe(await admins());
   });
 
+  it("does not move again after AutoHDR wins and a human moves the Project back to Editing", async () => {
+    const context = await arrivedFixture();
+    await expect(writeAutoHdrFinal(bindings as never, context, file("race-moveback"), deps)).resolves.toMatchObject({ stageAdvanced: true });
+    // The AutoHDR winner itself cleared the arrival, in the same batch.
+    await expect(bindings.DB.prepare("SELECT edited_arrived_at AS a FROM projects WHERE id = ?").bind(context.projectId).first()).resolves.toEqual({ a: null });
+    await bindings.DB.prepare("UPDATE projects SET stage_key = 'editing_autohdr' WHERE id = ?").bind(context.projectId).run();
+    const before = await landed(context.projectId);
+    await runPass();
+    expect((await bindings.DB.prepare("SELECT stage_key FROM projects WHERE id = ?").bind(context.projectId).first<{ stage_key: string }>())?.stage_key).toBe("editing_autohdr");
+    expect(await advances(context.projectId)).toBe(1);
+    expect(await landed(context.projectId)).toBe(before);
+  });
+
   it("yields one move and one notification when the final commits between the scan and the commit", async () => {
     const context = await arrivedFixture();
     const { commitAutomaticStage } = await import("../src/lib/automatic-stage");

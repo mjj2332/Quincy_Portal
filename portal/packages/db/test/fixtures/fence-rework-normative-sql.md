@@ -308,6 +308,9 @@ SET
   stage_key = ?4,
   board_position = ?8,
   board_revision = p.board_revision + 1,
+  edited_arrived_at = CASE WHEN ?4 IN ('edited_review', 'delivered') THEN NULL ELSE p.edited_arrived_at END,
+  edited_arrival_attempts = CASE WHEN ?4 IN ('edited_review', 'delivered') THEN 0 ELSE p.edited_arrival_attempts END,
+  edited_arrival_retry_at = CASE WHEN ?4 IN ('edited_review', 'delivered') THEN NULL ELSE p.edited_arrival_retry_at END,
   updated_at = ?9
 FROM fence
 WHERE p.id = ?5
@@ -604,6 +607,9 @@ SET
       AND id <> ?5
   ),
   board_revision = p.board_revision + 1,
+  edited_arrived_at = CASE WHEN ?4 IN ('edited_review', 'delivered') THEN NULL ELSE p.edited_arrived_at END,
+  edited_arrival_attempts = CASE WHEN ?4 IN ('edited_review', 'delivered') THEN 0 ELSE p.edited_arrival_attempts END,
+  edited_arrival_retry_at = CASE WHEN ?4 IN ('edited_review', 'delivered') THEN NULL ELSE p.edited_arrival_retry_at END,
   updated_at = ?9
 FROM fence
 WHERE p.id = ?5
@@ -1030,6 +1036,9 @@ SET
   END,
   board_position = c.new_board_position,
   board_revision = p.board_revision + 1,
+  edited_arrived_at = CASE WHEN c.is_target = 1 AND ?6 IN ('edited_review', 'delivered') THEN NULL ELSE p.edited_arrived_at END,
+  edited_arrival_attempts = CASE WHEN c.is_target = 1 AND ?6 IN ('edited_review', 'delivered') THEN 0 ELSE p.edited_arrival_attempts END,
+  edited_arrival_retry_at = CASE WHEN c.is_target = 1 AND ?6 IN ('edited_review', 'delivered') THEN NULL ELSE p.edited_arrival_retry_at END,
   updated_at = ?10
 FROM changed_plan c, fence
 WHERE p.id = c.project_id
@@ -1200,6 +1209,10 @@ WHERE
             AND p.stage_key = i.destination_stage
             AND p.board_revision = i.old_board_revision + 1
             AND p.archived_at IS NULL
+            AND (
+              i.destination_stage NOT IN ('edited_review', 'delivered')
+              OR (p.edited_arrived_at IS NULL AND p.edited_arrival_attempts = 0 AND p.edited_arrival_retry_at IS NULL)
+            )
         )
         OR NOT COALESCE((1), 0)
         OR NOT COALESCE((1), 0)

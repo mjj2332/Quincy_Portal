@@ -770,6 +770,34 @@ describe("TB5A Slice 3 stage-board bundles", () => {
     }
   });
 
+  it("every Stage winner entering Edited review or Delivered clears the pending Edited arrival, and no other (#486)", async () => {
+    const db = localSqlite();
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      applyAllMigrations(db);
+      seedFeatureFlag(db);
+      const d1 = localD1(db);
+      const marker = () => db.prepare("SELECT edited_arrived_at AS a, edited_arrival_attempts AS n, edited_arrival_retry_at AS r FROM projects WHERE id = 'target'").get();
+      for (const [to, cleared] of [["edited_review", true], ["delivered", true], ["editing_autohdr", false]] as const) {
+        for (const form of ["append", "exact", "compacting"] as const) {
+          db.prepare("DELETE FROM audit_log").run();
+          db.prepare("DELETE FROM projects").run();
+          seedProject(db, { id: "target", stageKey: "raw_review", boardRevision: 5, boardPosition: 4 });
+          db.prepare("UPDATE projects SET edited_arrived_at = 1000, edited_arrival_attempts = 2, edited_arrival_retry_at = 5000 WHERE id = 'target'").run();
+          const input = { ...baseStageInput(d1), to };
+          const bundle = form === "compacting"
+            ? buildCompactingStageWinner({ ...input, expectedTargetJson: "[]", changedPlanJson: changedJson([{ projectId: "target", oldStageKey: "raw_review", oldBoardPosition: 4, oldBoardRevision: 5, newBoardPosition: 0, isTarget: 1 }]), expectedTargetRowCount: 0, expectedChangedRowCount: 1 })
+            : buildNonCompactingStageWinner({ ...input, placement: form, boardPosition: 0, expectedTarget: [], expectedTargetRowCount: 0 });
+          await executeBundle(d1, bundle);
+          expect(db.prepare("SELECT stage_key FROM projects WHERE id = 'target'").get(), `${form} ${to}`).toEqual({ stage_key: to });
+          expect(marker(), `${form} ${to}`).toEqual(cleared ? { a: null, n: 0, r: null } : { a: 1000, n: 2, r: 5000 });
+        }
+      }
+    } finally {
+      db.close();
+    }
+  });
+
   it("composes every optional bundle group with exact named offsets", () => {
     const prepares: Array<{ source: string; values: unknown[] }> = [];
     const db = {

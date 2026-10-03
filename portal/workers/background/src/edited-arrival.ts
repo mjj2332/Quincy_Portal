@@ -70,12 +70,6 @@ async function housekeeping(database: D1Database, cutoffAt: number): Promise<num
   return result.meta.changes ?? 0;
 }
 
-async function clearMarker(database: D1Database, candidate: Candidate): Promise<boolean> {
-  const result = await database.prepare("UPDATE projects SET edited_arrived_at = NULL, edited_arrival_attempts = 0, edited_arrival_retry_at = NULL WHERE id = ? AND edited_arrived_at = ?")
-    .bind(candidate.id, candidate.editedArrivedAt).run();
-  return (result.meta.changes ?? 0) > 0;
-}
-
 /** Counts the failure and delays the next try, guarded on the scanned arrival so a newer one is untouched. */
 async function backOff(database: D1Database, candidate: Candidate, scheduledTime: number): Promise<void> {
   const attempts = candidate.attempts + 1;
@@ -117,10 +111,8 @@ export async function reconcileEditedArrivals(
       if (outcome.kind === "loser" && await unchangedSinceScan(env.DB, candidate)) outcome = await attempt(env, commit, candidate, cutoffAt);
       if (outcome.kind === "winner") {
         summary.moved += 1;
-        // The Stage has left the source set. Drop the marker now so a later human move back to
-        // an earlier Stage can never be undone by an arrival that was already acted on.
-        await clearMarker(env.DB, candidate).catch((error) =>
-          console.error("Edited arrival marker cleanup failed", { projectId: candidate.id, error: error instanceof Error ? error.message : String(error) }));
+        // The Stage winner itself cleared the arrival (every winner entering Edited review does), so
+        // no later move-back can be undone by an arrival that was already acted on.
         await afterMove(env, candidate.id, outcome.auditId, outcome.shootDateFilled === true);
       } else if (outcome.kind === "already_at_destination" || outcome.kind === "deferred") {
         summary.kept += 1;
