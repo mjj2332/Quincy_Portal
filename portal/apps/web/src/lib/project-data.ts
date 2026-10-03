@@ -306,7 +306,8 @@ export type ProjectCollaborationSummary = {
   members: Array<Pick<ProjectMember, "id" | "userId" | "roleOnProject" | "name" | "active">>;
 };
 export type ProjectAssignmentCandidate = { id: string; name: string; email: string; globalRole: "admin" | "photographer" | "editor" | "external_editor"; active: true };
-export type ProjectAssignmentCandidates = { photographers: ProjectAssignmentCandidate[]; editors: ProjectAssignmentCandidate[] };
+/** `defaultEditor` is sent on the editors list only (#487). */
+export type ProjectAssignmentCandidates = { photographers: ProjectAssignmentCandidate[]; editors: Array<ProjectAssignmentCandidate & { defaultEditor?: boolean }> };
 
 function isProjectCollaborationSummary(value: unknown, projectId: string): value is ProjectCollaborationSummary {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;

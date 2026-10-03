@@ -1505,11 +1505,15 @@ describe("staff app API", () => {
     expect(candidateResponse.status).toBe(200);
     const candidates = await candidateResponse.json() as { photographers: Array<Record<string, unknown>>; editors: Array<Record<string, unknown>> };
     expect(Object.keys(candidates).sort()).toEqual(["editors", "photographers"]);
-    for (const list of [candidates.photographers, candidates.editors]) {
-      for (const candidate of list) {
-        expect(Object.keys(candidate).sort()).toEqual(["active", "email", "globalRole", "id", "name"]);
-        expect(candidate.active).toBe(true);
-      }
+    for (const candidate of candidates.photographers) {
+      expect(Object.keys(candidate).sort()).toEqual(["active", "email", "globalRole", "id", "name"]);
+      expect(candidate.active).toBe(true);
+    }
+    // #487: editors also say whether they are a Default editor, so New shoot can show them as locked chips.
+    for (const candidate of candidates.editors) {
+      expect(Object.keys(candidate).sort()).toEqual(["active", "defaultEditor", "email", "globalRole", "id", "name"]);
+      expect(candidate.active).toBe(true);
+      expect(typeof candidate.defaultEditor).toBe("boolean");
     }
     expect(candidates.photographers.map((candidate) => candidate.id)).toContain(editorId);
     expect(candidates.editors.map((candidate) => candidate.id)).toContain(editorId);

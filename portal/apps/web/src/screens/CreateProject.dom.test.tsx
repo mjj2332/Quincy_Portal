@@ -29,8 +29,11 @@ function mount() {
   root = createRoot(host);
 }
 
+// The Team combobox reads candidates through react-query, which needs a client (the app root provides one).
 async function render() {
-  await act(async () => { root!.render(<CreateProject onNavigate={() => undefined} />); await Promise.resolve(); await Promise.resolve(); });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  await act(async () => { root!.render(<QueryClientProvider client={client}><CreateProject onNavigate={() => undefined} /></QueryClientProvider>); await Promise.resolve(); await Promise.resolve(); });
+  await flush();
 }
 
 async function flush() {
@@ -52,6 +55,23 @@ async function submit() {
   await flush();
 }
 
+const photographer = { id: "22222222-2222-4222-8222-222222222222", name: "Ari Photographer", email: "ari@example.test", globalRole: "photographer", active: true };
+const editor = { id: "33333333-3333-4333-8333-333333333333", name: "Eli Editor", email: "eli@example.test", globalRole: "editor", active: true, defaultEditor: false };
+const defaultEditor = { id: "77777777-7777-4777-8777-777777777777", name: "Dee Default", email: "dee@example.test", globalRole: "editor", active: true, defaultEditor: true };
+const dualRole = { id: "88888888-8888-4888-8888-888888888888", name: "Dana Dual", email: "dana@example.test", globalRole: "editor", active: true, defaultEditor: false };
+
+async function pickTeamMember(query: string, name: string, group: "Photographers" | "Editors") {
+  const input = host.querySelector<HTMLInputElement>('[aria-label="Add team member"]')!;
+  await act(async () => { input.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); input.focus(); await Promise.resolve(); });
+  await typeInto(input, query);
+  const find = () => [...document.querySelectorAll<HTMLElement>('[role="group"]')].find((element) => element.textContent?.startsWith(group))
+    ?.querySelectorAll<HTMLElement>('[role="option"]');
+  for (let attempt = 0; attempt < 50 && ![...(find() ?? [])].some((option) => option.textContent?.includes(name)); attempt += 1) await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 20)); });
+  const option = [...(find() ?? [])].find((candidate) => candidate.textContent?.includes(name))!;
+  await act(async () => { option.click(); await Promise.resolve(); });
+  await flush();
+}
+
 function clientInput(id: string): HTMLInputElement {
   const input = host.querySelector<HTMLInputElement>(`#${id}`);
   if (!input) throw new Error(`Missing Client input ${id}`);
@@ -61,7 +81,7 @@ function clientInput(id: string): HTMLInputElement {
 beforeEach(() => {
   mount();
   apiGetMock.mockReset().mockImplementation(async (path) => {
-    if (path === "/api/project-assignment-candidates") return { photographers: [], editors: [] };
+    if (path === "/api/project-assignment-candidates") return { photographers: [photographer, dualRole], editors: [editor, defaultEditor, dualRole] };
     throw new Error(`Unexpected apiGet path: ${path}`);
   });
   apiPostMock.mockReset().mockResolvedValue({ id: "project-created", collections: [], members: [] });
@@ -141,5 +161,52 @@ describe("CreateProject Client payload", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("CreateProject Team (#487)", () => {
+  it("sends the picked photographer and editor in the create request", async () => {
+    await render();
+    await typeInto(host.querySelector<HTMLInputElement>('input[placeholder="12 Kings Road, Vaucluse"]')!, "12 Team Street");
+    await pickTeamMember("ari", "Ari Photographer", "Photographers");
+    await pickTeamMember("eli", "Eli Editor", "Editors");
+    await submit();
+    expect(apiPostMock).toHaveBeenCalledWith("/api/projects", expect.objectContaining({ photographerUserIds: [photographer.id], editorUserIds: [editor.id] }));
+  });
+
+  it("shows the Default editor as a chip but never submits it in editorUserIds", async () => {
+    await render();
+    for (let attempt = 0; attempt < 50 && !host.querySelector(`[data-testid="project-member-editor:${defaultEditor.id}"]`); attempt += 1) await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 20)); });
+    const chip = host.querySelector(`[data-testid="project-member-editor:${defaultEditor.id}"]`)!;
+    expect(chip.textContent).toContain("Default editor");
+    expect(chip.querySelector('[data-testid="project-member-remove"]')).toBeNull();
+    await typeInto(host.querySelector<HTMLInputElement>('input[placeholder="12 Kings Road, Vaucluse"]')!, "12 Default Street");
+    await submit();
+    expect(apiPostMock).toHaveBeenCalledWith("/api/projects", expect.objectContaining({ photographerUserIds: [], editorUserIds: [] }));
+  });
+
+  it("keeps the picked team when validation blocks the submit, then sends it once fixed", async () => {
+    await render();
+    await typeInto(host.querySelector<HTMLInputElement>('input[placeholder="12 Kings Road, Vaucluse"]')!, "12 Keep Street");
+    await typeInto(clientInput("project-agent-email"), "not-an-email");
+    await pickTeamMember("ari", "Ari Photographer", "Photographers");
+    await submit();
+    expect(apiPostMock).not.toHaveBeenCalled();
+    expect(host.querySelector(`[data-testid="project-member-photographer:${photographer.id}"]`)).not.toBeNull();
+    await typeInto(clientInput("project-agent-email"), "agent@example.test");
+    await submit();
+    expect(apiPostMock).toHaveBeenCalledWith("/api/projects", expect.objectContaining({ photographerUserIds: [photographer.id] }));
+  });
+
+  it("does not submit the form when Enter is pressed in the team search input", async () => {
+    await render();
+    await typeInto(host.querySelector<HTMLInputElement>('input[placeholder="12 Kings Road, Vaucluse"]')!, "12 Enter Street");
+    const input = host.querySelector<HTMLInputElement>('[aria-label="Add team member"]')!;
+    const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    await act(async () => { input.focus(); input.dispatchEvent(enter); await Promise.resolve(); });
+    await flush();
+    // A synthetic key event never triggers implicit submission itself, so the default being cancelled is what stops a real one.
+    expect(enter.defaultPrevented).toBe(true);
+    expect(apiPostMock).not.toHaveBeenCalled();
   });
 });

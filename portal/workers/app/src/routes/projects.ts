@@ -250,14 +250,16 @@ async function matchingInternalProjectIds(database: D1Database, authorizedIds: s
 }
 
 type AssignmentCandidate = { id: string; name: string; email: string; globalRole: Role; active: true };
-type ProjectAssignmentCandidatesResponse = { photographers: AssignmentCandidate[]; editors: AssignmentCandidate[] };
+/** #487: editors also carry `defaultEditor`. The list is already active + editor-eligible, so the stored flag is the effective Default editor rule. */
+type EditorAssignmentCandidate = AssignmentCandidate & { defaultEditor: boolean };
+type ProjectAssignmentCandidatesResponse = { photographers: AssignmentCandidate[]; editors: EditorAssignmentCandidate[] };
 
 async function assignmentCandidates(db: ReturnType<typeof createDb>): Promise<ProjectAssignmentCandidatesResponse> {
   const [photographers, editors] = await Promise.all([
     db.select({ id: schema.user.id, name: schema.user.name, email: schema.user.email, globalRole: schema.user.role, active: schema.user.active })
       .from(schema.user).where(and(eq(schema.user.active, true), inArray(schema.user.role, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.photographer)))
       .orderBy(sql`lower(${schema.user.name})`, sql`lower(${schema.user.email})`, schema.user.id).all(),
-    db.select({ id: schema.user.id, name: schema.user.name, email: schema.user.email, globalRole: schema.user.role, active: schema.user.active })
+    db.select({ id: schema.user.id, name: schema.user.name, email: schema.user.email, globalRole: schema.user.role, active: schema.user.active, defaultEditor: schema.user.defaultEditor })
       .from(schema.user).where(and(eq(schema.user.active, true), inArray(schema.user.role, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.editor)))
       .orderBy(sql`lower(${schema.user.name})`, sql`lower(${schema.user.email})`, schema.user.id).all(),
   ]);

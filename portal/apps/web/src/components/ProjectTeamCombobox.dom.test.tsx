@@ -6,7 +6,8 @@ import type { CollectionKind } from "@quincy/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError } from "../lib/api";
 import { ProjectHeader } from "./ProjectHeader";
-import { ProjectTeamCombobox } from "./ProjectTeamCombobox";
+import { ProjectTeamCombobox, ProjectTeamCollectCombobox } from "./ProjectTeamCombobox";
+import { useState } from "react";
 import { createRef } from "react";
 import { projectDataKeys, type ProjectDetail, type ProjectMember } from "../lib/project-data";
 import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project-query-sync";
@@ -817,5 +818,144 @@ describe("ProjectTeamCombobox focus indicator (#458)", () => {
     boxTokens = tokens(chipsInput(host).parentElement!);
     expect(boxTokens).toContain("min-h-8");
     expect(boxTokens).not.toContain("min-h-[44px]");
+  });
+});
+
+describe("ProjectTeamCollectCombobox (#487)", () => {
+  const defaultEditor = { ...editor, id: "77777777-7777-4777-8777-777777777777", name: "Dee Default", email: "dee@example.test", defaultEditor: true };
+  const plainEditor = { ...editor, defaultEditor: false };
+  const dualRole = { id: "88888888-8888-4888-8888-888888888888", name: "Dana Dual", email: "dana@example.test", globalRole: "editor" as const, active: true as const };
+  const toggles: Array<[string, string]> = [];
+  let selection: { photographerUserIds: string[]; editorUserIds: string[] };
+
+  function Harness({ initial }: { initial?: { photographerUserIds: string[]; editorUserIds: string[] } }) {
+    const [form, setForm] = useState(initial ?? { photographerUserIds: [], editorUserIds: [] });
+    selection = form;
+    return <ProjectTeamCollectCombobox
+      photographerUserIds={form.photographerUserIds}
+      editorUserIds={form.editorUserIds}
+      onToggle={(field, id) => {
+        toggles.push([field, id]);
+        setForm((current) => ({ ...current, [field]: current[field].includes(id) ? current[field].filter((value) => value !== id) : [...current[field], id] }));
+      }}
+    />;
+  }
+
+  async function mountCollect(initial?: { photographerUserIds: string[]; editorUserIds: string[] }) {
+    host = document.createElement("div"); document.body.appendChild(host);
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    root = createRoot(host);
+    await act(async () => { root!.render(<QueryClientProvider client={queryClient}><Harness initial={initial} /></QueryClientProvider>); await Promise.resolve(); });
+    await flush(2);
+    return host;
+  }
+
+  beforeEach(() => {
+    toggles.length = 0;
+    apiGetMock.mockReset().mockResolvedValue({ photographers: [photographer, dualRole], editors: [plainEditor, defaultEditor, dualRole] });
+  });
+
+  async function pick(host: HTMLElement, query: string, name: string, group?: "Photographers" | "Editors") {
+    const input = await openPicker(host);
+    await typeQuery(input, query);
+    await waitFor(() => expect(options().some((option) => option.textContent?.includes(name))).toBe(true));
+    const candidates = options().filter((option) => option.textContent?.includes(name));
+    const target = group ? candidates.find((option) => option.closest('[role="group"]')?.textContent?.startsWith(group)) ?? candidates[0]! : candidates[0]!;
+    await act(async () => { target.click(); await Promise.resolve(); });
+    await flush(1);
+  }
+
+  it("picking a photographer and an editor only reports the toggle; nothing is saved", async () => {
+    const host = await mountCollect();
+    await pick(host, "ari", "Ari Photographer");
+    await pick(host, "eli", "Eli Editor");
+    expect(toggles).toEqual([["photographerUserIds", photographer.id], ["editorUserIds", editor.id]]);
+    expect(apiPutMock).not.toHaveBeenCalled();
+    expect(apiDeleteMock).not.toHaveBeenCalled();
+    expect(host.textContent).toContain("Ari");
+    expect(host.textContent).toContain("Eli");
+  });
+
+  it("a chip x reports the toggle, but Backspace in the empty input does not remove", async () => {
+    const host = await mountCollect({ photographerUserIds: [photographer.id], editorUserIds: [] });
+    const input = chipsInput(host);
+    await act(async () => { input.focus(); input.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true })); await Promise.resolve(); });
+    await flush(1);
+    expect(toggles).toEqual([]);
+    const remove = host.querySelector<HTMLButtonElement>('[data-testid="project-member-remove"]')!;
+    await act(async () => { remove.click(); await Promise.resolve(); });
+    await flush(1);
+    expect(toggles).toEqual([["photographerUserIds", photographer.id]]);
+    expect(apiDeleteMock).not.toHaveBeenCalled();
+  });
+
+  it("shows a Default editor as a locked chip with the tag, no x, and a disabled list item", async () => {
+    const host = await mountCollect();
+    const chip = host.querySelector<HTMLElement>(`[data-testid="project-member-editor:${defaultEditor.id}"]`)!;
+    expect(chip).not.toBeNull();
+    expect(chip.textContent).toContain("Default editor");
+    expect(chip.querySelector('[data-testid="project-member-remove"]')).toBeNull();
+    // Only plain chips get an x.
+    await openPicker(host);
+    const item = options().find((option) => option.textContent?.includes("Dee Default"))!;
+    expect(item.getAttribute("aria-disabled")).toBe("true");
+    await act(async () => { item.click(); await Promise.resolve(); });
+    expect(toggles).toEqual([]);
+  });
+
+  it("offers a photographer-only person under Photographers but not Editors", async () => {
+    const host = await mountCollect();
+    await openPicker(host);
+    const groups = [...document.querySelectorAll<HTMLElement>('[role="group"]')];
+    const photographers = groups.find((group) => group.textContent?.startsWith("Photographers"))!;
+    const editors = groups.find((group) => group.textContent?.startsWith("Editors"))!;
+    expect(photographers.textContent).toContain("Ari Photographer");
+    expect(editors.textContent).not.toContain("Ari Photographer");
+  });
+
+  it("tags both chips of a dual-role pick and shows every chip with no +N toggle", async () => {
+    const host = await mountCollect({ photographerUserIds: [photographer.id, dualRole.id], editorUserIds: [dualRole.id, plainEditor.id] });
+    const text = host.textContent ?? "";
+    expect(text).toContain("Photo");
+    expect(text).toContain("Edit");
+    // 4 explicit chips + the locked default editor, more than the header's three.
+    expect(chipTestIds(host)).toHaveLength(5);
+    expect(host.querySelector('[aria-label^="Show "]')).toBeNull();
+  });
+
+  it("always shows each chip's role tag, not only for a dual-role person", async () => {
+    const host = await mountCollect({ photographerUserIds: [photographer.id], editorUserIds: [plainEditor.id] });
+    expect(host.querySelector(`[data-testid="project-member-photographer:${photographer.id}"]`)!.textContent).toContain("Photo");
+    expect(host.querySelector(`[data-testid="project-member-editor:${plainEditor.id}"]`)!.textContent).toContain("Edit");
+  });
+
+  it("keeps each list row to one line, with the full description in a title", async () => {
+    const host = await mountCollect();
+    await openPicker(host);
+    const description = [...options().find((option) => option.textContent?.includes("Ari Photographer"))!.querySelectorAll<HTMLElement>("[title]")].find((element) => element.title.startsWith("ari@example.test"))!;
+    expect(description.className).toContain("truncate");
+    expect(description.getAttribute("title")).toBe("ari@example.test · Photographer");
+  });
+
+  it("says it is loading while candidates load", async () => {
+    apiGetMock.mockReset().mockReturnValue(new Promise(() => undefined));
+    const host = await mountCollect();
+    expect(host.querySelector('[role="status"]')?.textContent).toContain("Loading available team members");
+  });
+
+  it("shows the failure with a Retry that fetches the candidates again", async () => {
+    apiGetMock.mockReset().mockRejectedValueOnce(new ApiError("Candidates unavailable", 400)).mockResolvedValue({ photographers: [photographer], editors: [] });
+    const host = await mountCollect();
+    await waitFor(() => expect(host.querySelector('[role="alert"]')).not.toBeNull());
+    expect(host.querySelector('[role="alert"]')!.textContent).toContain("Candidates could not be loaded");
+    const retry = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Retry")!;
+    await act(async () => { retry.click(); await Promise.resolve(); });
+    await waitFor(() => expect(host.querySelector('[role="alert"]')).toBeNull());
+    expect(apiGetMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("never lists a Default editor in the explicit selection", async () => {
+    await mountCollect({ photographerUserIds: [], editorUserIds: [plainEditor.id] });
+    expect(selection.editorUserIds).toEqual([plainEditor.id]);
   });
 });
