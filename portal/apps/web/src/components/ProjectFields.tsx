@@ -1,6 +1,6 @@
 import type { CollectionKind, MonitoredRawFolder } from "@quincy/shared";
 import { cn } from "@/lib/utils";
-import { FieldGroup } from "@/components/reui/field";
+import { FieldGroup, FieldLabel } from "@/components/reui/field";
 import { DateTimeField } from "@/components/quincy/DateTimeField";
 import { QuincyField } from "@/components/quincy/QuincyField";
 import { QuincyTextareaField } from "@/components/quincy/QuincyTextareaField";
@@ -162,7 +162,10 @@ export function ProjectFields({ form, errors, existingCollections = [], mode = "
     </section>
     {mode === "create" && <section className="create-project__section" aria-labelledby="team-heading">
       <SectionHead eyebrow="Team" id="team-heading">Who is assigned?</SectionHead>
-      <ProjectTeamCollectCombobox photographerUserIds={form.photographerUserIds} editorUserIds={form.editorUserIds} onToggle={onToggle} rowClassName="min-h-[var(--space-7)]" />
+      <div className="grid gap-[var(--space-2)]">
+        <FieldLabel htmlFor="project-team-input">Team members</FieldLabel>
+        <ProjectTeamCollectCombobox photographerUserIds={form.photographerUserIds} editorUserIds={form.editorUserIds} onToggle={onToggle} inputId="project-team-input" />
+      </div>
     </section>}
     <section className="create-project__section" aria-labelledby="notes-heading">
       <SectionHead eyebrow="Notes" id="notes-heading">Anything the team should know?</SectionHead>
