@@ -1,5 +1,6 @@
 import {
   boardContractEnabled,
+  buildEditedArrivalRecord,
   COLLECTION_RECEIVED_COUNT_SQL,
   collectionReceivedCountBindings,
   composeStageBundle,
@@ -132,7 +133,15 @@ export async function finalizeExternalEditedUpload(env: Env, input: FinalizeExte
         WHERE s.id = ? AND s.status = 'completing' AND s.completion_lease_token = ? AND s.expires_at > ?
       )
   `).bind(now, now, now, input.sessionId, input.leaseToken, now, input.assetId, input.collectionId, input.key, input.bytes, input.sessionId, input.leaseToken, now);
-  const results = await env.DB.batch([assetInsert, audit, collectionCount, complete]);
+  // Recorded as the 5th statement so the positional reads above and below are unchanged. Fenced on
+  // THIS completion (status 'completed' at this exact instant), so a lost lease records nothing (#486).
+  const recordArrival = buildEditedArrivalRecord(env.DB, {
+    projectId: input.projectId,
+    now,
+    gateSql: "EXISTS (SELECT 1 FROM external_edited_upload_sessions WHERE id = ? AND status = 'completed' AND completed_at = ?)",
+    gateBindings: [input.sessionId, now],
+  });
+  const results = await env.DB.batch([assetInsert, audit, collectionCount, complete, recordArrival]);
   if ((results[3]?.meta.changes ?? 0) !== 1) throw new ExternalEditedUploadCompletionRejectedError();
 }
 
@@ -189,6 +198,17 @@ export async function finalizeIngest(
   statements.push(env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(targetCollection.id, now.getTime())));
   if (input.manifestId) {
     statements.push(env.DB.prepare("UPDATE upload_manifests SET status = 'complete' WHERE id = ? AND status = 'active' AND expected_count = (SELECT count(*) FROM assets WHERE manifest_id = ?)").bind(input.manifestId, input.manifestId));
+  }
+  if (collectionKind === "edited") {
+    // Appended last so every earlier statement keeps its position and changes() adjacency. Fenced on
+    // the asset this call created (same id, same created_at), so a duplicate completion that hit
+    // ON CONFLICT DO NOTHING never restarts the 15-minute quiet period (#486).
+    statements.push(buildEditedArrivalRecord(env.DB, {
+      projectId: input.projectId,
+      now: now.getTime(),
+      gateSql: "EXISTS (SELECT 1 FROM assets WHERE id = ? AND collection_id = ? AND created_at = ?)",
+      gateBindings: [input.assetId, targetCollection.id, now.getTime()],
+    }));
   }
   let results: D1Result<unknown>[] | undefined;
   let effectiveAssetId = input.assetId;
