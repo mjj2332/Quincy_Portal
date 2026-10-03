@@ -154,6 +154,39 @@ describe("TB4 Admin delivery operations", () => {
     expect(await database.DB.prepare("SELECT status FROM notification_delivery_ledger WHERE outbox_id = ? AND channel = 'email'").bind(unknown.outboxId).first()).toEqual({ status: "pending" });
   });
 
+  async function seedDigestItem(fixture: { outboxId: string; projectId: string; recipientId: string }, state: "failed" | "unknown") {
+    const now = Date.now();
+    const notificationId = crypto.randomUUID();
+    const digestId = crypto.randomUUID();
+    const ledger = await database.DB.prepare("SELECT id FROM notification_delivery_ledger WHERE outbox_id = ? AND channel = 'email'").bind(fixture.outboxId).first<{ id: string }>();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO notifications (id, user_id, project_id, type, title, body, source_key, created_at) VALUES (?, ?, ?, 'mentioned', 't', 'b', ?, ?)").bind(notificationId, fixture.recipientId, fixture.projectId, crypto.randomUUID(), now),
+      database.DB.prepare("INSERT INTO notification_digests (id, recipient_id, slot_at, cadence, status, created_at, updated_at) VALUES (?, ?, ?, 'hourly', ?, ?, ?)").bind(digestId, fixture.recipientId, now, state, now, now),
+      database.DB.prepare("INSERT INTO notification_digest_items (id, recipient_id, notification_id, ledger_id, project_id, notification_type, state, outcome_code, digest_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'mentioned', ?, 'E_X', ?, ?, ?)").bind(crypto.randomUUID(), fixture.recipientId, notificationId, ledger!.id, fixture.projectId, state, digestId, now, now),
+    ]);
+    return notificationId;
+  }
+  const itemFor = (notificationId: string) => database.DB.prepare("SELECT state, outcome_code AS outcome, digest_id AS digestId FROM notification_digest_items WHERE notification_id = ?").bind(notificationId).first();
+
+  it("resets a failed digest item to pending and unclaimed when the operator replays its email", async () => {
+    const fixture = await seedFixture({ outboxStatus: "completed", inAppStatus: "sent", emailStatus: "failed", errorCode: "E_X", errorMessage: "rejected" });
+    const notificationId = await seedDigestItem(fixture, "failed");
+    const replay = await request(`/api/admin/notification-deliveries/${fixture.outboxId}/replay`, adminToken, "POST", { channels: ["email"] });
+    expect(replay.status).toBe(200);
+    expect(await itemFor(notificationId)).toEqual({ state: "pending", outcome: null, digestId: null });
+  });
+
+  it("resets an unknown digest item only with the exact duplicate acknowledgement", async () => {
+    const fixture = await seedFixture({ outboxStatus: "completed", inAppStatus: "sent", emailStatus: "unknown" });
+    const notificationId = await seedDigestItem(fixture, "unknown");
+    const refused = await request(`/api/admin/notification-deliveries/${fixture.outboxId}/replay`, adminToken, "POST", { channels: ["email"] });
+    expect(refused.status).toBe(409);
+    expect(await itemFor(notificationId)).toMatchObject({ state: "unknown" });
+    const acknowledged = await request(`/api/admin/notification-deliveries/${fixture.outboxId}/replay`, adminToken, "POST", { channels: ["email"], acknowledgeDuplicateEmail: true });
+    expect(acknowledged.status).toBe(200);
+    expect(await itemFor(notificationId)).toEqual({ state: "pending", outcome: null, digestId: null });
+  });
+
   it("lets exactly one concurrent operator discard win", async () => {
     const fixture = await seedFixture({ outboxStatus: "processing", inAppStatus: "pending", emailStatus: "pending", leaseAgeMs: -60_000 });
     const responses = await Promise.all([

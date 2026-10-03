@@ -154,7 +154,7 @@ async function sendDigestForRecipient(env: Env, recipient: DueRecipient, slotAt:
   `).bind(digestId, now, recipient.recipientId).run();
 
   // Re-check at the last moment: still active, then read items, then (External editors) visibility.
-  const current = await env.DB.prepare("SELECT email, role, active FROM user WHERE id = ?").bind(recipient.recipientId).first<{ email: string; role: string; active: number }>();
+  const current = await env.DB.prepare("SELECT email, role, active, authorization_epoch AS epoch FROM user WHERE id = ?").bind(recipient.recipientId).first<{ email: string; role: string; active: number; epoch: number }>();
   const dropRules: Array<{ state: "suppressed" | "dropped_read"; code: string; message: string; condition: string }> = [];
   if (!current || current.active !== 1) {
     dropRules.push({ state: "suppressed", code: "recipient_inactive", message: "Recipient is inactive.", condition: "1 = 1" });
@@ -234,9 +234,30 @@ async function sendDigestForRecipient(env: Env, recipient: DueRecipient, slotAt:
   const groups = [...groupsByKey.values()].sort((a, b) => Number(a.projectId === null) - Number(b.projectId === null));
   const composed = composeDigestEmail({ groups, totalItems: totals.total, projectCount: totals.projects, moreUrl: `${origin}${staffPathFor({ kind: "notifications" })}` });
 
-  const fenced = await env.DB.prepare("UPDATE notification_digests SET status = 'sending', item_count = ?, project_count = ?, updated_at = ? WHERE id = ? AND status = 'claimed'")
-    .bind(totals.total, totals.projects, now, digestId).run();
-  if ((fenced.meta.changes ?? 0) !== 1) return "skipped";
+  // The admission to `sending` re-checks, in the same statement, everything the composition relied on: the
+  // recipient is still active with the same role and authorization epoch, and (External editors) every
+  // composed item is still visible to them. Any drift means the copy may be stale or unauthorised.
+  const isExternal = current!.role === "external_editor";
+  const visible = isExternal ? externalVisibleNotificationWhere(recipient.recipientId, "n") : null;
+  const fenced = await env.DB.prepare(`
+    ${visible ? `WITH external_visible_notifications AS (SELECT n.id FROM notifications n WHERE ${visible.sql})` : ""}
+    UPDATE notification_digests SET status = 'sending', item_count = ?, project_count = ?, updated_at = ?
+    WHERE id = ? AND status = 'claimed'
+      AND EXISTS (SELECT 1 FROM user u WHERE u.id = ? AND u.active = 1 AND u.role = ? AND u.authorization_epoch = ?)
+      ${visible ? `AND NOT EXISTS (
+        SELECT 1 FROM notification_digest_items i
+        WHERE i.digest_id = notification_digests.id AND i.state = 'pending'
+          AND (i.notification_id IS NULL OR i.notification_id NOT IN (SELECT id FROM external_visible_notifications))
+      )` : ""}
+  `).bind(...(visible ? visible.bindings : []), totals.total, totals.projects, now, digestId, recipient.recipientId, current!.role, current!.epoch).run();
+  if ((fenced.meta.changes ?? 0) !== 1) {
+    // Lost the admission: release the slot (items back to pending) so the next run rebuilds it from current state.
+    await env.DB.batch([
+      env.DB.prepare("UPDATE notification_digest_items SET digest_id = NULL, updated_at = ? WHERE digest_id = ? AND state = 'pending'").bind(now, digestId),
+      env.DB.prepare("UPDATE notification_digests SET status = 'released', last_error_code = 'digest_reauthorization_changed', last_error = 'Recipient authorization changed while composing.', updated_at = ? WHERE id = ? AND status = 'claimed'").bind(now, digestId),
+    ]);
+    return "released";
+  }
 
   try {
     const result = await env.EMAIL!.send({ from: env.NOTIFICATIONS_FROM_ADDRESS!, to: current!.email, subject: composed.subject, text: composed.text, html: composed.html });
