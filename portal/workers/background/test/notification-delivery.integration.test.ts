@@ -1159,4 +1159,28 @@ describe("#489 email digest deferral through the durable consumer", () => {
     expect(after.outbox).toEqual({ status: "completed" });
     expect(after.items).toHaveLength(1);
   });
+
+  it("sends exactly once when a failed digest item is replayed after the user switched to Immediately", async () => {
+    const fixture = await seedDelivery();
+    await setCadence(fixture.recipientId, "twice_daily");
+    const send = vi.fn().mockResolvedValue({ messageId: "direct" });
+    await processNotificationMessage(deliveryEnv(send), message(fixture.outboxId));
+    // The digest run failed permanently: item and email ledger are failed, as the digest leaves them.
+    await database.DB.batch([
+      database.DB.prepare("UPDATE notification_digest_items SET state = 'failed', outcome_code = 'E_X' WHERE ledger_id IN (SELECT id FROM notification_delivery_ledger WHERE outbox_id = ?)").bind(fixture.outboxId),
+      database.DB.prepare("UPDATE notification_delivery_ledger SET status = 'failed' WHERE outbox_id = ? AND channel = 'email'").bind(fixture.outboxId),
+    ]);
+    await setCadence(fixture.recipientId, "immediate");
+    // The operator replay (admin route) resets the email ledger, the item and the outbox.
+    await database.DB.batch([
+      database.DB.prepare("UPDATE notification_delivery_ledger SET status = 'pending' WHERE outbox_id = ? AND channel = 'email'").bind(fixture.outboxId),
+      database.DB.prepare("UPDATE notification_digest_items SET state = 'pending', outcome_code = NULL, digest_id = NULL WHERE ledger_id IN (SELECT id FROM notification_delivery_ledger WHERE outbox_id = ?)").bind(fixture.outboxId),
+      database.DB.prepare("UPDATE notification_outbox SET status = 'pending', completed_at = NULL, lease_token = NULL, lease_expires_at = NULL WHERE id = ?").bind(fixture.outboxId),
+    ]);
+    await processNotificationMessage(deliveryEnv(send), message(fixture.outboxId));
+    expect(send).not.toHaveBeenCalled();
+    const found = await digestState(fixture.outboxId);
+    expect(found.ledgers).toEqual([{ channel: "email", status: "deferred" }, { channel: "in_app", status: "sent" }]);
+    expect(found.items).toEqual([expect.objectContaining({ state: "pending" })]);
+  });
 });
