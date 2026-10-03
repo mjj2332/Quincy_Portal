@@ -145,6 +145,10 @@ describe("components/reui/ (#239)", () => {
   it("reads the whole tree, subdirectories included", () => {
     expect(files.has("badge.tsx")).toBe(true);
     expect(files.has("gantt/gantt-view.tsx")).toBe(true);
+    // #491: the vendored rich-text-editor-2 subset is inside every detector below (each one is shown
+    // to fail on a planted `dark:` / `shadow-md` / `bg-black/10` in this tree).
+    expect(files.has("rich-text-editor/rich-text-link.tsx")).toBe(true);
+    expect(files.has("rich-text-editor/rich-text-toolbar.tsx")).toBe(true);
     expect([...files.keys()].some((name) => name.includes(".test."))).toBe(false);
   });
 

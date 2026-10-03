@@ -46,8 +46,8 @@ vi.mock("../lib/project-comments", () => ({
   useProjectCommentsQuery: () => state.commentsQuery,
 }));
 vi.mock("./RichTextContent", () => ({ RichTextContent: ({ content }: { content: { content?: Array<{ content?: Array<{ text?: string }> }> } }) => <div data-testid="rich-content">{content.content?.flatMap((block) => block.content ?? []).map((item) => item.text ?? "").join("")}</div> }));
-vi.mock("./RichTextEditor", () => ({
-  RichTextEditor: (props: Record<string, any>) => {
+vi.mock("./QuincyRichTextEditor", () => ({
+  QuincyRichTextEditor: (props: Record<string, any>) => {
     state.editors = state.editors.filter((editor) => editor.id !== props.id);
     state.editors.push(props);
     return <div data-testid={`editor-${props.id ?? "composer"}`}><button type="button" data-testid={`mention-${props.id ?? "composer"}`} onClick={() => { props.loadMentionables("Nor").catch(() => undefined); }}>Mention</button><button type="button" data-testid={`submit-${props.id ?? "composer"}`} disabled={props.disabled || props.limit < 0} onClick={props.onSubmit}>Submit</button><span data-testid={`editor-value-${props.id ?? "composer"}`}>{JSON.stringify(props.value)}</span><div role="textbox" aria-label="Editor surface" contentEditable="true" suppressContentEditableWarning tabIndex={0} /></div>;
