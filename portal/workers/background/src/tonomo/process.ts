@@ -1,6 +1,6 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { boardSchemaVariant, projectColumnsForVariant, type BoardSchemaVariant, type Database } from "@quincy/db";
-import { COLLECTION_RECEIVED_COUNT_SQL, appendToStageBottomExpr, collectionReceivedCountBindings, selectEffectiveDefaultEditorIds } from "@quincy/db";
+import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings, selectEffectiveDefaultEditorIds } from "@quincy/db";
 import { COLLECTION_KINDS, isCanonicalCalendarDate, isVerifiedTonomoShootDateSource, normaliseAddressKey, normalisePath, parseTonomoOrder, publishNotificationOutbox, TonomoParseError, type CollectionKind, type TonomoOrder } from "@quincy/shared";
 import { auditLog, collectionLinks, collections, projects, tonomoOrderTombstones, user, webhookEvents } from "@quincy/db/schema";
 
@@ -148,7 +148,7 @@ async function createProject(env: Env, order: TonomoOrder): Promise<string> {
     shootDate: order.shootDate, timeWindow: order.timeWindow, orderNo: order.orderNo, orderId: order.orderId,
     invoiceAmount: order.invoiceAmount, paymentStatus: order.paymentStatus, notes: order.notes,
     rawFolderLink: order.rawFolderLink, rawFolderPath: order.rawFolderPath,
-    stageKey: "awaiting_raw", boardPosition: appendToStageBottomExpr("awaiting_raw", id), boardRevision: 0, createdAt: new Date(now), updatedAt: new Date(now),
+    stageKey: "awaiting_raw", boardRevision: 0, createdAt: new Date(now), updatedAt: new Date(now),
   }).toSQL();
   const projectInsert = env.DB.prepare(insert.sql).bind(...insert.params);
   const assignments = buildDefaultEditorAssignmentStatements(env.DB, { projectId: id, orderId: order.orderId, userIds: defaultEditorIds, now });

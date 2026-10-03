@@ -4,12 +4,12 @@
  */
 import { describe, expect, it } from "vitest";
 import { hashKey, QueryClient } from "@tanstack/react-query";
-import { dashboardProjectSearchKey, dashboardProjectsKey, dashboardProjectsKeyPrefix, isDashboardProjectsQueryFor, removeProjectFromDashboardQueries } from "./dashboard-projects";
+import { dashboardProjectSearchKey, dashboardProjectsKey, dashboardProjectsKeyPrefix, isDashboardProjectsQueryFor, mapInternalProjects, removeProjectFromDashboardQueries } from "./dashboard-projects";
 import type { ProjectSummary } from "./kanban-interaction";
 
 function client() { return new QueryClient({ defaultOptions: { queries: { retry: false } } }); }
 function project(id: string): ProjectSummary {
-  return { id, street: id, suburb: null, postcode: null, agencyName: null, agentName: null, stageKey: "raw_review", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: null, editors: [], boardRank: undefined, boardMapPresent: false, authorizedBoardOrder: undefined, boardContractEnabled: true, boardRevision: 0, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null } as unknown as ProjectSummary;
+  return { id, street: id, suburb: null, postcode: null, agencyName: null, agentName: null, stageKey: "raw_review", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: null, editors: [], boardContractEnabled: true, boardRevision: 0, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null } as unknown as ProjectSummary;
 }
 
 describe("dashboardProjectsKey / dashboardProjectSearchKey (#217)", () => {
@@ -135,5 +135,23 @@ describe("dashboardProjectsKeyPrefix / isDashboardProjectsQueryFor (#230)", () =
 
     const matches = isDashboardProjectsQueryFor("principal");
     expect(queryClient.getQueryCache().getAll().filter(matches).map((query) => query.queryKey)).toEqual([keyA]);
+  });
+});
+
+describe("mapInternalProjects (#475)", () => {
+  it("maps an envelope that carries no per-Stage order without throwing, reading only contractEnabled", () => {
+    const rows = [project("a"), project("b")];
+    expect(mapInternalProjects({ projects: rows, board: { contractEnabled: true } }).map((row) => row.id)).toEqual(["a", "b"]);
+    expect(mapInternalProjects({ projects: rows, board: { contractEnabled: false } }).every((row) => row.boardContractEnabled === false)).toBe(true);
+    // A missing envelope is an old deployed server: Board mutation stays available.
+    expect(mapInternalProjects({ projects: rows }).every((row) => row.boardContractEnabled === true)).toBe(true);
+  });
+
+  it("ignores the deprecated map when a stale server still sends it", () => {
+    // The type no longer names the key; a stale server still sends it on the wire.
+    const stale = { projects: [project("a")], board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a"] } } };
+    const mapped = mapInternalProjects(stale);
+    expect(mapped[0]).not.toHaveProperty("authorizedBoardOrder");
+    expect(mapped[0]).not.toHaveProperty("boardRank");
   });
 });

@@ -79,6 +79,9 @@ describe("TB4E external policy and DTO boundaries", () => {
       board: { contractEnabled: false, orderedProjectIdsByStage: { edited_review: [summary.id] } },
     };
     expect(externalProjectListResponseSchema.safeParse(list).success).toBe(true);
+    // The per-Stage order is deprecated (#475, removed in #476): both skews parse.
+    expect(externalProjectListResponseSchema.safeParse({ ...list, board: { contractEnabled: false } }).success).toBe(true);
+    expect(externalProjectListResponseSchema.safeParse({ ...list, board: { contractEnabled: false, extra: [] } }).success).toBe(false);
 
     // These probes represent fields that are useful internally but must never cross the
     // external boundary, even if a route accidentally spreads a wider project row.

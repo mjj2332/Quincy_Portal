@@ -75,38 +75,9 @@ export function stageMoveConfirmationReasons(from: StageKey, to: StageKey): Stag
 
 const uuidSchema = z.string().uuid();
 export const boardRevisionSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-const expectedBoardProjectSchema = z.object({
-  projectId: uuidSchema,
-  boardRevision: boardRevisionSchema,
-}).strict();
+export type StageMovePlacement = { kind: "append" };
 
-export type ExpectedBoardProject = {
-  projectId: string;
-  boardRevision: number;
-};
-
-export type StageMovePlacement =
-  | { kind: "append" }
-  | {
-      kind: "between";
-      before: ExpectedBoardProject | null;
-      after: ExpectedBoardProject | null;
-    };
-
-const stageMoveBetweenPlacementSchema = z.object({
-  kind: z.literal("between"),
-  before: expectedBoardProjectSchema.nullable(),
-  after: expectedBoardProjectSchema.nullable(),
-}).strict().superRefine((placement, context) => {
-  if (placement.before && placement.after && placement.before.projectId === placement.after.projectId) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ["after", "projectId"], message: "Neighbour projects must be distinct" });
-  }
-}).transform((placement) => placement.before === null && placement.after === null ? { kind: "append" as const } : placement);
-
-const stageMovePlacementSchema = z.union([
-  z.object({ kind: z.literal("append") }).strict(),
-  stageMoveBetweenPlacementSchema,
-]);
+const stageMovePlacementSchema = z.object({ kind: z.literal("append") }).strict();
 
 const confirmationReasonsSchema = z.array(z.enum(STAGE_MOVE_CONFIRMATION_REASONS))
   .max(STAGE_MOVE_CONFIRMATION_REASONS.length)
@@ -136,19 +107,6 @@ export const moveProjectStageRequestSchema = z.object({
   confirmation: confirmationSchema.optional(),
 }).strict();
 
-/** Adds the route-parameter check that a placement neighbour cannot be the moving project itself. */
-export function moveProjectStageRequestSchemaForProject(projectId: string) {
-  return moveProjectStageRequestSchema.superRefine((request, context) => {
-    if (request.placement.kind !== "between") return;
-    if (request.placement.before?.projectId === projectId) {
-      context.addIssue({ code: z.ZodIssueCode.custom, path: ["placement", "before", "projectId"], message: "A project cannot be its own neighbour" });
-    }
-    if (request.placement.after?.projectId === projectId) {
-      context.addIssue({ code: z.ZodIssueCode.custom, path: ["placement", "after", "projectId"], message: "A project cannot be its own neighbour" });
-    }
-  });
-}
-
 export type StageMoveProjectState = {
   projectId: string;
   stageKey: StageTransportKey;
@@ -158,7 +116,8 @@ export type StageMoveProjectState = {
 export type StageMoveBoardState = {
   sourceStageKey: StageTransportKey;
   targetStageKey: StageTransportKey;
-  orderedVisibleProjectIds: string[];
+  /** Deprecated (#475): the web derives the order itself. Still sent for stale tabs until #476 removes it. */
+  orderedVisibleProjectIds?: string[];
 };
 
 export type MoveProjectStageResponse = {
@@ -176,7 +135,7 @@ export const stageMoveProjectStateSchema = z.object({
 export const stageMoveBoardStateSchema = z.object({
   sourceStageKey: stageTransportKeySchema,
   targetStageKey: stageTransportKeySchema,
-  orderedVisibleProjectIds: z.array(uuidSchema),
+  orderedVisibleProjectIds: z.array(uuidSchema).optional(),
 }).strict();
 
 export const moveProjectStageResponseSchema = z.object({

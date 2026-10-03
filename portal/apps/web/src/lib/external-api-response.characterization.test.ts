@@ -27,12 +27,20 @@ describe("TB5A Slice 4 External Board adapter", () => {
 		const z = summary("00000000-0000-4000-8000-000000000002");
 		const a = summary("00000000-0000-4000-8000-000000000001");
 		const mapped: ProjectSummary[] = [z, a]
-			.map((project) => externalProjectSummaryToDashboard(project, { awaiting_raw: [a.id, z.id] }, false))
+			.map((project) => externalProjectSummaryToDashboard(project, false))
 			.map((project) => ({ ...project, stageKey: "awaiting_raw" as const }));
 
-		expect(mapped.every((project) => project.boardPosition === undefined)).toBe(true);
+		expect(mapped.every((project) => (project as unknown as Record<string, unknown>).boardPosition === undefined)).toBe(true);
 		expect(mapped.every((project) => project.priority === null)).toBe(true);
 		expect(sortKanbanProjects(mapped).map((project) => project.id)).toEqual([a.id, z.id]);
+	});
+
+	it("decodes the project-list envelope with and without the deprecated per-Stage order (both directions of skew, #475)", () => {
+		const project = summary("00000000-0000-4000-8000-000000000005");
+		const withMap = { projects: [project], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [project.id] } } };
+		const withoutMap = { projects: [project], board: { contractEnabled: true } };
+		expect(() => decodeExternalResponse("project-list", withMap)).not.toThrow();
+		expect(() => decodeExternalResponse("project-list", withoutMap)).not.toThrow();
 	});
 
 	it("carries assigned Editors from the external summary into the dashboard adapter", () => {
@@ -40,7 +48,7 @@ describe("TB5A Slice 4 External Board adapter", () => {
 			...summary("00000000-0000-4000-8000-000000000004"),
 			editors: [{ id: "00000000-0000-4000-8000-000000000099", name: "Internal Staff Editor" }],
 		};
-		const mapped = externalProjectSummaryToDashboard(withEditor, {}, false);
+		const mapped = externalProjectSummaryToDashboard(withEditor, false);
 		expect(mapped.editors).toEqual([{ id: "00000000-0000-4000-8000-000000000099", name: "Internal Staff Editor" }]);
 	});
 

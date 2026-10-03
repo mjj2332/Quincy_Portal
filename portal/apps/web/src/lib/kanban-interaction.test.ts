@@ -43,16 +43,8 @@ function project(id: string, stageKey: ProjectSummary["stageKey"] = "awaiting_ra
   };
 }
 
-function board(
-  projects: ProjectSummary[],
-  authorizedBoardOrder: Record<string, string[]> = {},
-): BoardModel {
-  const withOrder = projects.map((item) => ({
-    ...item,
-    authorizedBoardOrder,
-    boardMapPresent: true,
-  }));
-  return { projects: withOrder, authorizedBoardOrder };
+function board(projects: ProjectSummary[]): BoardModel {
+  return { projects: projects.map((item) => ({ ...item })) };
 }
 
 function movementBoard(): BoardModel {
@@ -61,19 +53,16 @@ function movementBoard(): BoardModel {
     project("first", "raw_review", { boardRevision: 8 }),
     project("middle", "raw_review", { boardRevision: 9 }),
     project("last", "raw_review", { boardRevision: 10 }),
-  ], {
-    awaiting_raw: ["source"],
-    raw_review: ["first", "middle", "last"],
-  });
+  ]);
 }
 
 describe("Kanban interaction model", () => {
-  it("sorts by priority 5 to 1 then unset, then oldest shoot date, ignoring the stored Board rank and position (#470)", () => {
+  it("sorts by priority 5 to 1 then unset, then oldest shoot date (#470, #475)", () => {
     const rows = [
-      project("none-early", "awaiting_raw", { shootDate: "2026-01-01", boardRank: 0, boardPosition: -5, boardMapPresent: true }),
-      project("p1", "awaiting_raw", { priority: 1, shootDate: "2026-01-02", boardRank: 1, boardPosition: 999, boardMapPresent: true }),
-      project("p5-late", "awaiting_raw", { priority: 5, shootDate: "2026-12-31", boardRank: 2, boardPosition: 999, boardMapPresent: true }),
-      project("p5-early", "awaiting_raw", { priority: 5, shootDate: "2026-02-01", boardRank: 3, boardPosition: 999, boardMapPresent: true }),
+      project("none-early", "awaiting_raw", { shootDate: "2026-01-01",  }),
+      project("p1", "awaiting_raw", { priority: 1, shootDate: "2026-01-02",  }),
+      project("p5-late", "awaiting_raw", { priority: 5, shootDate: "2026-12-31",  }),
+      project("p5-early", "awaiting_raw", { priority: 5, shootDate: "2026-02-01",  }),
     ];
     expect(sortKanbanProjects(rows).map((row) => row.id)).toEqual(["p5-early", "p5-late", "p1", "none-early"]);
   });
@@ -104,7 +93,7 @@ describe("Kanban interaction model", () => {
       project("p5", "raw_review", { priority: 5 }),
       project("p3-early", "raw_review", { priority: 3, shootDate: "2026-01-01" }),
       project("p1", "raw_review", { priority: 1 }),
-    ], { awaiting_raw: ["mover"], raw_review: ["p5", "p3-early", "p1"] });
+    ]);
     // The mover has no shoot date, so it sorts after the dated p3 and before p1.
     expect(boardLandingSlot(model.projects, "mover", "raw_review")).toEqual({
       gap: { targetStageKey: "raw_review", successor: "p1" }, position: 3, count: 4,
@@ -164,20 +153,25 @@ describe("Kanban interaction model", () => {
     expect(applyOptimisticOverlay(baseline, "vanished", "raw_review", "admin")).toEqual(rollbackToBaseline(baseline));
   });
 
-  it("uses the authoritative target array and provisional source on a settled move", () => {
+  it("a settled move sets the mover's Stage and revision from the response and reports the provisional source; the column order comes from the data, not from orderedVisibleProjectIds", () => {
     const baseline = movementBoard();
     const response: MoveProjectStageResponse = {
       changed: true,
       project: { projectId: "source", stageKey: "raw_review", boardRevision: 11 },
-      board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["first", "last", "middle", "source"] },
+      // A deprecated field a stale server still sends. It disagrees with the data on purpose and must not reorder the column.
+      board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["source", "last", "middle", "first"] },
     };
     const settled = reconcileAuthoritativeResponse(baseline, "source", response);
     expect(settled.sourceProvisional).toBe(true);
-    expect(settled.model.authorizedBoardOrder?.raw_review).toEqual(["first", "last", "middle", "source"]);
-    expect(settled.model.authorizedBoardOrder?.awaiting_raw).toEqual([]);
     expect(settled.model.projects.find((item) => item.id === "source")).toMatchObject({ stageKey: "raw_review", boardRevision: 11 });
+    expect(settled.model.projects.find((item) => item.id === "first")?.boardRevision).toBe(8);
+    expect(sortKanbanProjects(settled.model.projects.filter((item) => item.stageKey === "raw_review")).map((item) => item.id)).toEqual(["first", "last", "middle", "source"]);
+    // The response omits the deprecated field entirely: the same settle.
+    const bare = reconcileAuthoritativeResponse(baseline, "source", { ...response, board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review" } });
+    expect(bare.sourceProvisional).toBe(true);
+    expect(bare.model.projects.find((item) => item.id === "source")).toMatchObject({ stageKey: "raw_review", boardRevision: 11 });
     const unchanged = reconcileAuthoritativeResponse(baseline, "source", { ...response, changed: false });
-    expect(unchanged.model.authorizedBoardOrder?.raw_review).toEqual(["first", "last", "middle", "source"]);
+    expect(unchanged.model.projects.find((item) => item.id === "source")).toMatchObject({ stageKey: "raw_review" });
   });
 
   it("carries the widened summary's assigned Editors through a Stage move untouched", () => {
@@ -185,7 +179,7 @@ describe("Kanban interaction model", () => {
     const baseline = board([
       project("source", "awaiting_raw", { boardRevision: 3, editors }),
       project("first", "raw_review", { boardRevision: 8 }),
-    ], { awaiting_raw: ["source"], raw_review: ["first"] });
+    ]);
     const overlay = applyOptimisticOverlay(baseline, "source", "raw_review", "admin");
     expect(overlay.projects.find((item) => item.id === "source")?.editors).toEqual(editors);
 

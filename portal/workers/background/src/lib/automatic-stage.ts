@@ -1,7 +1,6 @@
-import { buildHandoffStartTail, buildOwnershipAssertionBundle, buildNonCompactingStageWinner, buildStageShootDateFill, buildTerminalAssertionBundle, shootDateFillLanded, buildWorkflowTail, buildEditingEntryTokenTail, compileClosedAutomaticCoupling, composeStageBundle,
+import { buildHandoffStartTail, buildOwnershipAssertionBundle, buildStageShootDateFill, buildTerminalAssertionBundle, shootDateFillLanded, buildWorkflowTail, buildEditingEntryTokenTail, buildStageWinner, compileClosedAutomaticCoupling, composeStageBundle,
   deriveStageFinalizerIntent,
   type ClosedAutomaticCoupling, type ClosedOwnershipBundle, type CommittedStageFinalizerIntent,
-  type ExpectedTargetPlacementRow,
   type GuardedTransitionPrerequisite,
   type HandoffStartBundle,
   type JobEntryProvenanceBundle, type StageFinalizerWinnerResult, type WorkflowTailIndexes,
@@ -20,22 +19,17 @@ export type AutomaticStageOutcome = { kind: "winner"; finalizer: CommittedStageF
   | { kind: "deferred"; }
   | { kind: "conflict"; } | { kind: "invariant_failure"; };
 
-type StageSnapshot = { stageKey: StageKey; oldBoardRevision: number;
-  expectedTarget: ExpectedTargetPlacementRow[]; archivedAt: number | null; };
+type StageSnapshot = { stageKey: StageKey; oldBoardRevision: number; archivedAt: number | null; };
 type JobEntryProvenancePrefixBundle = Pick<JobEntryProvenanceBundle, "statements" | "kind" | "coupling"> & { indexes: { payloadUpdate: number; }; };
 
 async function stageSnapshot(
   database: D1Database,
-  projectId: string,
-  sourceStageKey: StageKey,
-  targetStageKey: StageKey): Promise<StageSnapshot | null> {
+  projectId: string): Promise<StageSnapshot | null> {
   const source = await database.prepare("SELECT stage_key AS stageKey, board_revision AS boardRevision, archived_at AS archivedAt FROM projects WHERE id = ?").bind(projectId).first<{ stageKey: StageKey; boardRevision: number; archivedAt: number | null; }>();
   if (!source) return null;
-  const target = await database.prepare(
-    "SELECT id AS projectId, stage_key AS stageKey, board_position AS boardPosition, board_revision AS boardRevision FROM projects WHERE stage_key = ? AND archived_at IS NULL AND id <> ? ORDER BY board_position, id").bind(targetStageKey, projectId).all<ExpectedTargetPlacementRow>();
   return {
     stageKey: source.stageKey,
-    oldBoardRevision: Number(source.boardRevision), expectedTarget: target.results,
+    oldBoardRevision: Number(source.boardRevision),
     archivedAt: source.archivedAt
   };
 }
@@ -53,12 +47,11 @@ function stageWinnerRow(
   expected: { projectId: string; stageKey: StageKey; boardRevision: number; }): Extract<StageFinalizerWinnerResult, { kind: "winner"; }> | null {
   const row = exactOne(result);
   if (!row || typeof row.id !== "string" || typeof row.stage_key !== "string" || row.id !== expected.projectId || row.stage_key !== expected.stageKey) return null;
-  const boardPosition = typeof row.board_position === "number" ? row.board_position : Number(row.board_position);
   const boardRevision = typeof row.board_revision === "number" ? row.board_revision : Number(row.board_revision);
-  if (!Number.isFinite(boardPosition) || !Number.isInteger(boardRevision) || boardRevision !== expected.boardRevision) return null;
+  if (!Number.isInteger(boardRevision) || boardRevision !== expected.boardRevision) return null;
   return {
     kind: "winner",
-    row: { projectId: row.id, stageKey: row.stage_key as StageKey, boardPosition, boardRevision },
+    row: { projectId: row.id, stageKey: row.stage_key as StageKey, boardRevision },
     auditId: ""
   };
 }
@@ -243,7 +236,7 @@ export async function commitAutomaticStage(input: {
   if (!(await automaticBoardWritesEnabled(input.env))) return { kind: "deferred" };
   validateClosedComposition(input);
   const now = input.now ?? Date.now();
-  const snapshot = await stageSnapshot(input.env.DB, input.projectId, input.from, input.to);
+  const snapshot = await stageSnapshot(input.env.DB, input.projectId);
   if (!snapshot || snapshot.archivedAt !== null) return { kind: "conflict" };
   if (snapshot.stageKey === input.to) {
     if (!input.alreadyAtDestination.allowed) return { kind: "conflict" };
@@ -284,15 +277,12 @@ export async function commitAutomaticStage(input: {
   if (snapshot.stageKey !== input.from) return { kind: "conflict" };
   const oldBoardRevision = input.oldBoardRevision ?? snapshot.oldBoardRevision;
   const workflowKind = workflowTailKindFor(input.workflow);
-  const stage = buildNonCompactingStageWinner({
+  const stage = buildStageWinner({
     db: input.env.DB,
     projectId: input.projectId,
     sourceStageKey: input.from,
     targetStageKey: input.to,
     oldBoardRevision,
-    expectedTarget: snapshot.expectedTarget,
-    expectedTargetRowCount: snapshot.expectedTarget.length,
-    placement: "append",
     auditId: input.auditId,
     actorId: input.auditActorId,
     auditAction: "stage.auto_advance",

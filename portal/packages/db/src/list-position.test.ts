@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeInsertPosition } from "./board-position";
+import { computeInsertPosition } from "./list-position";
 
 describe("computeInsertPosition", () => {
   it.each([

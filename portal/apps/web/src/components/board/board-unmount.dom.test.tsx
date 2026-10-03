@@ -78,8 +78,6 @@ function project(id: string, stageKey: ProjectSummary["stageKey"]): ProjectSumma
     deadlineAt: null,
     deadlineLocalCivil: null,
     deadlineZone: null,
-    boardMapPresent: true,
-    boardRank: 0,
   };
 }
 

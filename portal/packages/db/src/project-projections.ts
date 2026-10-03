@@ -20,7 +20,6 @@ export const projectColumnsPre0037 = {
   timeWindow: schema.projects.timeWindow,
   stageKey: schema.projects.stageKey,
   priority: schema.projects.priority,
-  boardPosition: schema.projects.boardPosition,
   orderNo: schema.projects.orderNo,
   orderId: schema.projects.orderId,
   invoiceAmount: schema.projects.invoiceAmount,
