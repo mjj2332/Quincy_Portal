@@ -17,9 +17,10 @@ import type { Env } from "../env";
  * caller. The route builds a fresh Request, so a browser can never inject these. */
 export const WHITEBOARD_USER_HEADER = "x-wb-user";
 export const WHITEBOARD_MODE_HEADER = "x-wb-mode";
+export const WHITEBOARD_PROJECT_HEADER = "x-wb-project";
 
 /** What each hibernatable socket remembers (the attachment is limited to 2 KB). */
-type Attachment = { userId: string; mode: WhiteboardMode };
+type Attachment = { userId: string; mode: WhiteboardMode; projectId: string };
 
 type ElementRow = { json: string };
 
@@ -66,10 +67,13 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
     const userId = request.headers.get(WHITEBOARD_USER_HEADER);
     const mode = whiteboardModeSchema.safeParse(request.headers.get(WHITEBOARD_MODE_HEADER));
     if (!userId || !mode.success) return new Response("Missing connection identity", { status: 400 });
+    const projectId = request.headers.get(WHITEBOARD_PROJECT_HEADER);
+    if (!projectId) return new Response("Missing connection identity", { status: 400 });
+    this.ensureSchema();
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
     this.ctx.acceptWebSocket(server);
-    server.serializeAttachment({ userId, mode: mode.data } satisfies Attachment);
+    server.serializeAttachment({ userId, mode: mode.data, projectId } satisfies Attachment);
     this.send(server, { type: "init", mode: mode.data, elements: this.readElements() });
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -85,10 +89,14 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
     const { seq } = envelope.data;
     const attachment = ws.deserializeAttachment() as Attachment | null;
     if (attachment?.mode !== "edit") return this.send(ws, { type: "rejected", seq, reason: "view-only" });
+    // The mode was decided at connect time; the Project may have been archived since, so the
+    // current archived state is re-read on every write batch. (#499 adds the live UI switch.)
+    if (!await this.isEditable(attachment.projectId)) return this.send(ws, { type: "rejected", seq, reason: "view-only" });
     const elements = z.array(whiteboardElementSchema).safeParse(envelope.data.elements);
     if (!elements.success) return this.send(ws, { type: "rejected", seq, reason: "invalid" });
     const serialised = elements.data.map((element) => JSON.stringify(element));
     if (serialised.some((text) => encoder.encode(text).byteLength > WHITEBOARD_MAX_ELEMENT_BYTES)) return this.send(ws, { type: "rejected", seq, reason: "invalid" });
+    this.ensureSchema();
     this.reconcile(elements.data, serialised);
     this.send(ws, { type: "ack", seq });
   }
@@ -103,9 +111,16 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
     for (const socket of this.ctx.getWebSockets()) {
       try { socket.close(WHITEBOARD_CLOSE.deleted, "Project deleted"); } catch { /* already closed */ }
     }
+    this.ensureSchema();
     this.ctx.storage.sql.exec("DELETE FROM elements");
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
+  }
+
+  /** True while the Project exists and is not archived. A missing row counts as not editable. */
+  private async isEditable(projectId: string): Promise<boolean> {
+    const row = await this.env.DB.prepare("SELECT archived_at AS archivedAt FROM projects WHERE id = ?").bind(projectId).first<{ archivedAt: number | null }>();
+    return row !== null && row.archivedAt === null;
   }
 
   private reject(ws: WebSocket): void {
@@ -116,8 +131,17 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
     ws.send(JSON.stringify(message));
   }
 
+  /** Back-to-front in Excalidraw's fractional `index` order (plain code-unit comparison, as its own
+   * ordering uses), ties by id; a missing or non-string index sorts last. */
   private readElements(): Array<Record<string, unknown>> {
-    return this.ctx.storage.sql.exec<ElementRow>("SELECT json FROM elements ORDER BY rowid").toArray().map((row) => JSON.parse(row.json) as Record<string, unknown>);
+    this.ensureSchema();
+    const elements = this.ctx.storage.sql.exec<ElementRow>("SELECT json FROM elements").toArray().map((row) => JSON.parse(row.json) as Record<string, unknown>);
+    const key = (element: Record<string, unknown>) => (typeof element.index === "string" && element.index !== "" ? element.index : null);
+    return elements.sort((left, right) => {
+      const a = key(left); const b = key(right);
+      if (a !== b) { if (a === null) return 1; if (b === null) return -1; return a < b ? -1 : 1; }
+      return String(left.id) < String(right.id) ? -1 : 1;
+    });
   }
 
   /** Writes each incoming element that beats its stored row, all in one transaction. */

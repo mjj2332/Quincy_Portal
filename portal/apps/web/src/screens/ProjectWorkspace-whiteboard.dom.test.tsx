@@ -96,15 +96,16 @@ const pressTab = (shift = false) => act(async () => {
 const confirmFocusables = (modal: HTMLElement) => [...modal.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]')].filter((el) => el.getAttribute("tabindex") !== "-1" && !el.hasAttribute("data-floating-ui-focus-guard"));
 
 
-const board = vi.hoisted(() => ({ mode: "edit" as WhiteboardMode, props: null as null | { readOnly?: boolean; imageTool?: boolean; theme?: string } }));
+const board = vi.hoisted(() => ({ mode: "edit" as WhiteboardMode, props: null as null | { readOnly?: boolean; imageTool?: boolean; theme?: string; onSave?: () => Promise<void> }, scene: [] as Array<Record<string, unknown>>, send: null as null | ((batch: readonly unknown[]) => Promise<void>), handlers: null as null | { onInit: (init: { mode: WhiteboardMode; elements: unknown[] }, reconnect: boolean) => void } }));
 vi.mock("../lib/whiteboard-socket", () => ({
   openWhiteboardSocket: (_projectId: string, handlers: { onInit: (init: { mode: WhiteboardMode; elements: unknown[] }, reconnect: boolean) => void; onConnection: (state: string) => void }) => {
+    board.handlers = handlers;
     queueMicrotask(() => { handlers.onConnection("open"); handlers.onInit({ mode: board.mode, elements: [] }, false); });
-    return { send: () => Promise.resolve(), close: () => undefined };
+    return { send: (batch: readonly unknown[]) => (board.send ? board.send(batch) : Promise.resolve()), close: () => undefined };
   },
 }));
 vi.mock("../components/reui/whiteboard/whiteboard", () => ({
-  Whiteboard: (props: { readOnly?: boolean; imageTool?: boolean; theme?: string }) => { board.props = props; return <div data-testid="whiteboard-stand-in" tabIndex={0}>board</div>; },
+  Whiteboard: (props: { readOnly?: boolean; imageTool?: boolean; theme?: string; onSave?: () => Promise<void>; onReady?: (controller: unknown) => void }) => { board.props = props; props.onReady?.({ api: { getSceneElementsIncludingDeleted: () => board.scene } }); return <div data-testid="whiteboard-stand-in" tabIndex={0}>board</div>; },
 }));
 
 const onRequestClose = vi.fn();
@@ -132,7 +133,7 @@ let archived = false;
 beforeEach(() => {
   authState.role = "editor";
   archived = false;
-  board.mode = "edit"; board.props = null;
+  board.mode = "edit"; board.props = null; board.scene = []; board.send = null; board.handlers = null;
   onRequestClose.mockReset(); onOpenWhiteboard.mockReset(); onCloseWhiteboard.mockReset();
   apiGetMock.mockReset();
   apiPatchMock.mockReset().mockResolvedValue({});
@@ -182,6 +183,46 @@ describe("the open whiteboard (#498)", () => {
     expect(document.querySelector('[role="tabpanel"]')).not.toBeNull();
     expect(tab("Collaboration")!.closest("[data-whiteboard-hidden]")?.getAttribute("data-whiteboard-hidden")).toBe("true");
     await click(document.querySelector('[data-testid="project-whiteboard-close"]')!);
+    expect(onCloseWhiteboard).toHaveBeenCalledWith("collaboration");
+  });
+
+  it("Close flushes the final state through the live socket and waits for its ack before closing", async () => {
+    let ack!: () => void; const sent: unknown[][] = [];
+    board.send = (batch) => { sent.push([...batch]); return new Promise<void>((resolve) => { ack = resolve; }); };
+    board.scene = [{ id: "a", version: 2, versionNonce: 5 }];
+    await renderSheet({ whiteboardOpen: true });
+    await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
+    await click(document.querySelector('[data-testid="project-whiteboard-close"]')!);
+    expect(sent).toHaveLength(1);
+    expect(onCloseWhiteboard).not.toHaveBeenCalled();     // still waiting for the ack
+    await act(async () => { ack(); await Promise.resolve(); });
+    await flush(3);
+    expect(onCloseWhiteboard).toHaveBeenCalledWith("collaboration");
+  });
+
+  it("retries unacknowledged changes once the socket reconnects", async () => {
+    const sent: unknown[][] = [];
+    board.send = (batch) => { sent.push([...batch]); return sent.length === 1 ? Promise.reject(new Error("dropped")) : Promise.resolve(); };
+    await renderSheet({ whiteboardOpen: true });
+    await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
+    board.scene = [{ id: "a", version: 2, versionNonce: 5 }];
+    await act(async () => { await board.props!.onSave!().catch(() => undefined); });
+    expect(sent).toHaveLength(1);
+    await act(async () => { board.handlers!.onInit({ mode: "edit", elements: [] }, true); await Promise.resolve(); });
+    await flush(3);
+    expect(sent).toHaveLength(2);
+  });
+
+  it("Close stays open with a visible error when the final save fails, and a second Close leaves", async () => {
+    board.send = () => Promise.reject(new Error("The whiteboard did not confirm the save."));
+    board.scene = [{ id: "a", version: 2, versionNonce: 5 }];
+    await renderSheet({ whiteboardOpen: true });
+    await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
+    const close = document.querySelector('[data-testid="project-whiteboard-close"]')!;
+    await click(close); await flush(3);
+    expect(onCloseWhiteboard).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-testid="project-whiteboard-status"]')?.textContent).toBe("Not saved");
+    await click(close); await flush(3);
     expect(onCloseWhiteboard).toHaveBeenCalledWith("collaboration");
   });
 

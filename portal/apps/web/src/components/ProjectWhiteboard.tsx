@@ -7,13 +7,13 @@ import type { WhiteboardController, WhiteboardSaveStatus } from "./reui/whiteboa
 import { CopyProjectLinkButton } from "./quincy/CopyProjectLinkButton";
 import { ViewLoadBoundary } from "./ViewLoadBoundary";
 import { openWhiteboardSocket, type WhiteboardConnection, type WhiteboardInit, type WhiteboardSocket } from "../lib/whiteboard-socket";
+import { createWhiteboardSaver, type SavedElement, type WhiteboardSaver } from "../lib/whiteboard-saver";
 import { pushToast } from "../lib/toast-store";
 
 // The ReUI block lazy-loads Excalidraw itself (`whiteboard.tsx` imports `whiteboard-canvas` on demand); this
 // second `lazy` keeps even the block's own chunk out of the Workspace until the board opens (#498).
 const Whiteboard = lazy(() => import("./reui/whiteboard/whiteboard").then((module) => ({ default: module.Whiteboard })));
 
-type SceneElement = { id: string; version: number; versionNonce: number };
 
 /**
  * #498: the Project whiteboard (ADR 0017), composed on ReUI `whiteboard-1`. The Portal's own parts are the
@@ -35,16 +35,24 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
   const [deleted, setDeleted] = useState(false);
   const socketRef = useRef<WhiteboardSocket | null>(null);
   const controllerRef = useRef<WhiteboardController | null>(null);
-  const sentVersions = useRef(new Map<string, { version: number; versionNonce: number }>());
+  const saverRef = useRef<WhiteboardSaver | null>(null);
+  const closeFailed = useRef(false);
   const accessFailureRef = useRef(onAccessFailure);
   accessFailureRef.current = onAccessFailure;
 
   useEffect(() => {
+    const saver = createWhiteboardSaver({
+      getElements: () => (controllerRef.current?.api.getSceneElementsIncludingDeleted() ?? []) as unknown as ReadonlyArray<SavedElement>,
+      send: (batch) => socketRef.current?.send(batch) ?? Promise.reject(new Error("The whiteboard is not connected.")),
+    });
+    saverRef.current = saver;
     const socket = openWhiteboardSocket(projectId, {
       onInit: (next, reconnect) => {
         // A reconnect keeps the board the user is looking at (#499 reconciles it live); only the mode moves.
         setInit((current) => (reconnect && current ? { ...current, mode: next.mode } : next));
-        if (!reconnect) for (const element of next.elements as SceneElement[]) sentVersions.current.set(element.id, { version: element.version, versionNonce: element.versionNonce });
+        if (!reconnect) saver.seed(next.elements as unknown as SavedElement[]);
+        // Anything that was not acknowledged before the drop goes out again now.
+        else if (next.mode === "edit") saver.flush().catch(() => setSaveStatus("error"));
       },
       onConnection: setConnection,
       onDeleted: () => { setDeleted(true); pushToast("This project's whiteboard was deleted.", "error"); },
@@ -52,34 +60,38 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
     });
     socketRef.current = socket;
     return () => {
-      // The board's unmount save is sent just before this cleanup runs; the socket waits briefly for its ack.
+      // Best effort for closes that bypass the Close button (Esc, tab switch, navigation): send what is
+      // left, then let the socket wait briefly for the acks. The Close button itself waits and reports.
+      saver.flush().catch(() => undefined);
       socket.close();
       socketRef.current = null;
     };
   }, [projectId]);
 
-  const save = useCallback(async () => {
-    const controller = controllerRef.current;
-    const socket = socketRef.current;
-    if (!controller || !socket) return;
-    const all = controller.api.getSceneElementsIncludingDeleted() as unknown as ReadonlyArray<SceneElement>;
-    const changed = all.filter((element) => {
-      const sent = sentVersions.current.get(element.id);
-      return !sent || sent.version !== element.version || sent.versionNonce !== element.versionNonce;
-    });
-    if (changed.length === 0) return;
-    await socket.send(changed);
-    for (const element of changed) sentVersions.current.set(element.id, { version: element.version, versionNonce: element.versionNonce });
-  }, []);
+  const save = useCallback(async () => { await saverRef.current?.flush(); }, []);
 
   const mode: WhiteboardMode = init?.mode ?? (archivedHint ? "view" : "edit");
+
+  const requestClose = useCallback(async () => {
+    // Flush the final state through the live socket and wait for its ack before the board unmounts.
+    if (mode === "edit" && !closeFailed.current) {
+      try { await saverRef.current?.flush(); }
+      catch {
+        closeFailed.current = true;
+        setSaveStatus("error");
+        pushToast("Your latest changes could not be saved. Close again to leave without saving them.", "error");
+        return;
+      }
+    }
+    onClose();
+  }, [mode, onClose]);
   const initialData = useMemo(() => (init ? { elements: init.elements as never } : undefined), [init]);
   const statusLabel = connection === "reconnecting" ? "Reconnecting" : saveStatus === "saving" ? "Saving" : saveStatus === "error" ? "Not saved" : saveStatus === "unsaved" ? "Unsaved changes" : "Saved";
 
   return (
     <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-[var(--space-3)] h-[calc(100dvh-var(--space-8))] min-h-[28rem]" data-testid="project-whiteboard" data-quincy-whiteboard aria-label={`Whiteboard for ${street}`}>
       <div className="flex flex-wrap items-center gap-[var(--space-2)]">
-        <Button type="button" variant="ghost" onClick={onClose} data-testid="project-whiteboard-close"><ArrowLeftIcon className="size-3.5" aria-hidden="true" data-icon="inline-start" />Close whiteboard</Button>
+        <Button type="button" variant="ghost" onClick={() => void requestClose()} data-testid="project-whiteboard-close"><ArrowLeftIcon className="size-3.5" aria-hidden="true" data-icon="inline-start" />Close whiteboard</Button>
         <h2 className="serif [font:var(--type-h3)] me-auto min-w-0 truncate">{street}</h2>
         {mode === "view" && <Badge variant="primary-light" data-testid="project-whiteboard-view-only">View only</Badge>}
         <span className="[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" role="status" data-testid="project-whiteboard-status">{deleted ? "Deleted" : statusLabel}</span>

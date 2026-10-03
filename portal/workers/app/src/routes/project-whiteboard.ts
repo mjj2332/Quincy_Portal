@@ -6,7 +6,7 @@ import type { WhiteboardMode } from "@quincy/shared";
 import type { AppEnv } from "../env";
 import { hasProjectCollaborationAccess } from "../middleware/capability";
 import { terminalRoute } from "../lib/terminal-route";
-import { WHITEBOARD_MODE_HEADER, WHITEBOARD_USER_HEADER } from "../whiteboard/project-whiteboard-do";
+import { WHITEBOARD_MODE_HEADER, WHITEBOARD_PROJECT_HEADER, WHITEBOARD_USER_HEADER } from "../whiteboard/project-whiteboard-do";
 
 const projectIdSchema = z.string().uuid();
 
@@ -39,6 +39,6 @@ projectWhiteboardRoutes.get("/projects/:projectId/whiteboard/socket", terminalRo
   const mode: WhiteboardMode = project.archivedAt ? "view" : "edit";
   const stub = c.env.PROJECT_WHITEBOARD.get(c.env.PROJECT_WHITEBOARD.idFromName(projectId));
   return stub.fetch(new Request("https://whiteboard.internal/socket", {
-    headers: { Upgrade: "websocket", [WHITEBOARD_USER_HEADER]: user.id, [WHITEBOARD_MODE_HEADER]: mode },
+    headers: { Upgrade: "websocket", [WHITEBOARD_USER_HEADER]: user.id, [WHITEBOARD_MODE_HEADER]: mode, [WHITEBOARD_PROJECT_HEADER]: projectId },
   }));
 }));

@@ -26,6 +26,8 @@ const otherProject = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const archivedProject = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const deleteProject = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const hiddenProject = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+const archiveLater = "99999999-9999-4999-8999-999999999999";
+const orderProject = "88888888-8888-4888-8888-888888888888";
 const missingProject = "ffffffff-ffff-4fff-8fff-ffffffffffff";
 const tokens = { admin: "wb-admin-token", member: "wb-member-token", outsider: "wb-outsider-token", external: "wb-external-token" } as const;
 
@@ -70,9 +72,9 @@ beforeAll(async () => {
   await executeSql(__PORTAL_MIGRATION_SQL__); await executeSql(__PORTAL_SEED_SQL__); const now = Date.now();
   for (const [id, role] of [[adminId, "admin"], [memberId, "editor"], [outsiderId, "editor"], [externalId, "external_editor"]]) await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, authorization_epoch, created_at, updated_at) VALUES (?, ?, ?, 1, ?, 1, 0, ?, ?)").bind(id, `${role} ${id.slice(0, 4)}`, `${id}@example.test`, role, now, now).run();
   for (const [who, userId] of [["admin", adminId], ["member", memberId], ["outsider", outsiderId], ["external", externalId]] as const) await database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").bind(`wb-${who}`, now + 3_600_000, tokens[who], userId, now, now).run();
-  for (const [id, street] of [[liveProject, "Whiteboard Street"], [otherProject, "Other Street"], [archivedProject, "Archived Street"], [deleteProject, "Delete Street"], [hiddenProject, "Hidden Street"]]) await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, ?, 'editing_autohdr', 0, ?, ?)").bind(id, street, now, now).run();
+  for (const [id, street] of [[liveProject, "Whiteboard Street"], [otherProject, "Other Street"], [archivedProject, "Archived Street"], [deleteProject, "Delete Street"], [hiddenProject, "Hidden Street"], [archiveLater, "Archive Later Street"], [orderProject, "Order Street"]]) await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, ?, 'editing_autohdr', 0, ?, ?)").bind(id, street, now, now).run();
   await database.DB.prepare("UPDATE projects SET archived_at = ?, archived_by = ? WHERE id IN (?, ?)").bind(now, adminId, archivedProject, deleteProject).run();
-  for (const [userId, project, role] of [[memberId, liveProject, "editor"], [memberId, otherProject, "editor"], [memberId, archivedProject, "editor"], [memberId, deleteProject, "editor"], [externalId, liveProject, "editor"]] as const) await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), project, userId, role, now).run();
+  for (const [userId, project, role] of [[memberId, liveProject, "editor"], [memberId, otherProject, "editor"], [memberId, archivedProject, "editor"], [memberId, deleteProject, "editor"], [memberId, archiveLater, "editor"], [memberId, orderProject, "editor"], [externalId, liveProject, "editor"]] as const) await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), project, userId, role, now).run();
 });
 
 describe("project whiteboard WebSocket route", () => {
@@ -160,6 +162,42 @@ describe("project whiteboard WebSocket route", () => {
     big.send(batch(1, element("big", 1, 1, { text: "x".repeat(1024 * 1024 + 1) })));
     expect((await big.closed).code).toBe(4400);
     expect(byId(await initOf(liveProject))["big"]).toBeUndefined();
+  });
+});
+
+describe("server-side write guards", () => {
+  it("refuses a write on a socket opened before the Project was archived, and again once restored", async () => {
+    const client = await connect(archiveLater, { who: "member" });
+    expect(await client.next()).toMatchObject({ type: "init", mode: "edit" });
+    await save(client, 1, element("before", 1, 1));
+    await database.DB.prepare("UPDATE projects SET archived_at = ?, archived_by = ? WHERE id = ?").bind(Date.now(), adminId, archiveLater).run();
+    client.send(batch(2, element("after", 1, 1)));
+    expect(await client.next()).toEqual({ type: "rejected", seq: 2, reason: "view-only" });
+    await database.DB.prepare("UPDATE projects SET archived_at = NULL, archived_by = NULL WHERE id = ?").bind(archiveLater).run();
+    await save(client, 3, element("restored", 1, 1));
+    client.ws.close(1000);
+    const stored = byId(await initOf(archiveLater));
+    expect(stored["before"]).toBeDefined(); expect(stored["restored"]).toBeDefined(); expect(stored["after"]).toBeUndefined();
+  });
+
+  it("returns elements in Excalidraw's fractional index order, so send-to-back survives a reload", async () => {
+    const client = await connect(orderProject, { who: "member" });
+    await client.next();
+    await save(client, 1, element("a", 1, 1, { index: "a1" }), element("b", 1, 2, { index: "a2" }), element("c", 1, 3, { index: "a3" }), element("noindex", 1, 4), element("bad", 1, 5, { index: 7 }));
+    await save(client, 2, element("c", 2, 9, { index: "Zz" })); // sent to back
+    client.ws.close(1000);
+    expect((await initOf(orderProject)).elements.map((entry) => entry.id)).toEqual(["c", "a", "b", "bad", "noindex"]);
+  });
+
+  it("purges twice without error and still serves an empty board afterwards", async () => {
+    const stub = stubFor(missingProject);
+    await stub.purge(); await stub.purge();
+    await runInDurableObject(stub, async (instance) => {
+      await (instance as unknown as { purge(): Promise<void> }).purge();
+    });
+    const client = await connect(liveProject, { who: "member" });
+    expect(await client.next()).toMatchObject({ type: "init", mode: "edit" });
+    client.ws.close(1000);
   });
 });
 
