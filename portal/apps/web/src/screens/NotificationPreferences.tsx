@@ -68,7 +68,7 @@ const VALUE = "flex items-center gap-[var(--space-2)] " +
 // The footnote under the ledger.
 const FOOT = "mt-[var(--space-4)] mb-0 " +
   "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] " +
-  "text-muted-foreground";
+  "text-foreground-secondary";
 
 type EmailRowProps = { ariaLabel: string; checked: boolean; loading: boolean; unavailable: boolean; saving: boolean; disabled: boolean; onChange: (next: boolean) => void };
 
