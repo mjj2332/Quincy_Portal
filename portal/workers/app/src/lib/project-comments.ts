@@ -1,6 +1,6 @@
 import { and, desc, eq, lt, or } from "drizzle-orm";
 import { buildProjectActivityStatements, createDb, schema } from "@quincy/db";
-import { NOTIFICATION_OUTBOX_EVENT_TYPE, ROLE_LABELS, staffPathFor, type RichTextDoc, type Role } from "@quincy/shared";
+import { EMBEDDED_MEDIA_MAX_PER_POST, EMBEDDED_MEDIA_RETENTION_MS, NOTIFICATION_OUTBOX_EVENT_TYPE, ROLE_LABELS, staffPathFor, type RichTextDoc, type Role } from "@quincy/shared";
 import type { ProjectActivityIntent } from "@quincy/shared";
 import { newId } from "./ids";
 import { auditMeta, type AuditPrincipal } from "./audit";
@@ -37,6 +37,10 @@ export type ProjectCommentReadState = {
   unreadCount: number;
 };
 
+/** What a comment's save does to its embedded media (#493), computed by `resolveCommentMedia` before the batch. */
+export type CommentMediaChanges = { attach: string[]; reattach: string[]; detach: string[] };
+const NO_MEDIA_CHANGES: CommentMediaChanges = { attach: [], reattach: [], detach: [] };
+
 export type CreateProjectCommentInput = {
   id: string;
   projectId: string;
@@ -47,6 +51,7 @@ export type CreateProjectCommentInput = {
   wallClockMs: number;
   occurredAt: Date;
   auditPrincipal?: AuditPrincipal;
+  media?: CommentMediaChanges;
 };
 
 export type EditProjectCommentInput = {
@@ -62,6 +67,7 @@ export type EditProjectCommentInput = {
   editedAt: Date;
   occurredAt: Date;
   auditPrincipal?: AuditPrincipal;
+  media?: CommentMediaChanges;
 };
 
 export type DeleteProjectCommentInput = {
@@ -301,6 +307,50 @@ function mentionOutboxStatements(
   return { statements, outboxIds };
 }
 
+
+type OwnedMediaRow = { id: string; state: "pending" | "attached" | "detached" | "uploading"; owner_id: string | null; uploader_id: string; project_id: string | null; owner_kind: string; created_at: number; detached_at: number | null };
+
+/**
+ * Checks a comment's desired images against the rows before the batch (#493) and works out what to
+ * change. An image is acceptable when it is the author's own finished upload in this Project that has
+ * not expired, or it already belongs to this comment (still attached, or edited out less than seven days
+ * ago). Anything else, or more than ten, is refused as a whole: `null`.
+ */
+export async function resolveCommentMedia(db: D1Database, input: { projectId: string; authorId: string; commentId: string; mediaIds: string[]; now?: number }): Promise<CommentMediaChanges | null> {
+  const now = input.now ?? Date.now();
+  if (input.mediaIds.length > EMBEDDED_MEDIA_MAX_PER_POST || new Set(input.mediaIds).size !== input.mediaIds.length) return null;
+  const owned = (await db.prepare("SELECT id, state, owner_id, uploader_id, project_id, owner_kind, created_at, detached_at FROM embedded_media WHERE owner_kind = 'project_comment' AND owner_id = ?").bind(input.commentId).all<OwnedMediaRow>()).results;
+  const ownedById = new Map(owned.map((row) => [row.id, row]));
+  const changes: CommentMediaChanges = { attach: [], reattach: [], detach: [] };
+  if (input.mediaIds.length) {
+    const placeholders = input.mediaIds.map(() => "?").join(", ");
+    const found = (await db.prepare(`SELECT id, state, owner_id, uploader_id, project_id, owner_kind, created_at, detached_at FROM embedded_media WHERE id IN (${placeholders})`).bind(...input.mediaIds).all<OwnedMediaRow>()).results;
+    const byId = new Map(found.map((row) => [row.id, row]));
+    const cutoff = now - EMBEDDED_MEDIA_RETENTION_MS;
+    for (const id of input.mediaIds) {
+      const row = byId.get(id);
+      if (!row || row.project_id !== input.projectId || row.owner_kind !== "project_comment") return null;
+      if (row.state === "pending" && row.owner_id === null && row.uploader_id === input.authorId && Number(row.created_at) > cutoff) changes.attach.push(id);
+      else if (row.state === "detached" && row.owner_id === input.commentId && Number(row.detached_at) > cutoff) changes.reattach.push(id);
+      else if (!(row.state === "attached" && row.owner_id === input.commentId)) return null;
+    }
+  }
+  const wanted = new Set(input.mediaIds);
+  for (const row of owned) if (row.state === "attached" && !wanted.has(row.id)) changes.detach.push(row.id);
+  return changes;
+}
+
+/** The media statements of a save. Appended after every other statement so positional results stay valid, and fenced on the winner's audit row (lessons #364). */
+function mediaStatements(db: D1Database, commentId: string, changes: CommentMediaChanges, now: number, auditId: string): D1PreparedStatement[] {
+  const fence = "EXISTS (SELECT 1 FROM audit_log WHERE id = ?)";
+  const cutoff = now - EMBEDDED_MEDIA_RETENTION_MS;
+  return [
+    ...changes.attach.map((id) => db.prepare(`UPDATE embedded_media SET state = 'attached', owner_id = ?, updated_at = ? WHERE id = ? AND owner_kind = 'project_comment' AND state = 'pending' AND owner_id IS NULL AND created_at > ? AND ${fence}`).bind(commentId, now, id, cutoff, auditId)),
+    ...changes.reattach.map((id) => db.prepare(`UPDATE embedded_media SET state = 'attached', detached_at = NULL, updated_at = ? WHERE id = ? AND owner_kind = 'project_comment' AND owner_id = ? AND state = 'detached' AND detached_at > ? AND ${fence}`).bind(now, id, commentId, cutoff, auditId)),
+    ...changes.detach.map((id) => db.prepare(`UPDATE embedded_media SET state = 'detached', detached_at = ?, updated_at = ? WHERE id = ? AND owner_kind = 'project_comment' AND owner_id = ? AND state = 'attached' AND ${fence}`).bind(now, now, id, commentId, auditId)),
+  ];
+}
+
 export async function listProjectComments(db: CommentDb, projectId: string, input: { limit: number; before?: ProjectCommentCursor | null }) {
   const before = input.before ?? null;
   const rows = await db.select({ comment: schema.projectComments, authorId: schema.user.id, authorName: schema.user.name, authorRole: schema.user.role, authorActive: schema.user.active })
@@ -350,7 +400,8 @@ export async function createProjectComment(db: D1Database, input: CreateProjectC
   const outbox = mentionOutboxStatements(db, input.projectId, input.authorId, activity, input.mentions, snapshots, input.occurredAt.getTime(), auditId);
   const activityStatements = buildProjectActivityStatements({ db, intent: activity, winnerAuditId: auditId, createdAt: input.occurredAt.getTime() });
   const activityStatementStart = 1 + mentions.length + 2 + outbox.statements.length;
-  const results = await db.batch([insert, ...mentions, marker, audit, ...outbox.statements, ...activityStatements.statements]);
+  const media = mediaStatements(db, input.id, input.media ?? NO_MEDIA_CHANGES, input.occurredAt.getTime(), auditId);
+  const results = await db.batch([insert, ...mentions, marker, audit, ...outbox.statements, ...activityStatements.statements, ...media]);
   const comment = await findProjectComment(createDb(db), input.projectId, input.id);
   if (!comment) throw new Error("Comment could not be created");
   const broad = rows<{ id: string }>(results[activityStatementStart + activityStatements.broadOutboxIndex] as D1Result<{ id: string }>).map((row) => row.id);
@@ -395,7 +446,8 @@ export async function editProjectComment(db: D1Database, input: EditProjectComme
   const outbox = mentionOutboxStatements(db, input.projectId, input.actorId, activity, input.addMentions, snapshots, input.occurredAt.getTime(), auditId);
   const activityStatements = buildProjectActivityStatements({ db, intent: activity, winnerAuditId: auditId, createdAt: input.occurredAt.getTime() });
   const activityStatementStart = statements.length + outbox.statements.length;
-  const results = await db.batch([...statements, ...outbox.statements, ...activityStatements.statements]);
+  const media = mediaStatements(db, input.commentId, input.media ?? NO_MEDIA_CHANGES, input.editedAt.getTime(), auditId);
+  const results = await db.batch([...statements, ...outbox.statements, ...activityStatements.statements, ...media]);
   if ((results[0]?.meta.changes ?? 0) !== 1) {
     // A rebuilt request whose complete canonical body/content/mention state is still current is
     // the bounded retry identity for this command. It is a successful no-op: no new audit,
@@ -421,7 +473,10 @@ export async function deleteProjectComment(db: D1Database, input: DeleteProjectC
   `).bind(auditId, input.auditPrincipal?.id ?? input.actorId, input.commentId, auditMeta(input.auditPrincipal ?? { id: input.actorId, impersonatedBy: null }), input.occurredAt.getTime());
   const activityStatements = buildProjectActivityStatements({ db, intent: activity, winnerAuditId: auditId, createdAt: input.occurredAt.getTime() });
   const activityStatementStart = 2;
-  const results = await db.batch([deletion, audit, ...activityStatements.statements]);
+  // The comment's media is detached and due now in the same batch (no trigger carries the delete across, a polymorphic
+  // owner has no foreign key). The route then deletes the objects and rows, and the daily sweep is the backstop.
+  const media = db.prepare("UPDATE embedded_media SET state = 'detached', detached_at = 0, updated_at = ? WHERE owner_kind = 'project_comment' AND owner_id = ? AND state IN ('attached', 'detached') AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)").bind(input.occurredAt.getTime(), input.commentId, auditId);
+  const results = await db.batch([deletion, audit, ...activityStatements.statements, media]);
   // The JS-level .meta.changes on the DELETE includes cascade-deleted
   // project_comment_mentions rows (ON DELETE CASCADE), so the outer check must accept any
   // positive value. The SQL-level changes() function used by the audit guard excludes those

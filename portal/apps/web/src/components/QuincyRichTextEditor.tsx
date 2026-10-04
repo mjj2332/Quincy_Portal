@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
-import { ChevronDownIcon, ListChecksIcon, ListIcon, ListOrderedIcon, Redo2Icon, TableIcon, Undo2Icon } from "lucide-react";
-import { RICH_TEXT_JSON_MAX_BYTES, richTextDocByteLength, richTextPlainText, type RichTextDoc } from "@quincy/shared";
+import { ChevronDownIcon, ImageIcon, ListChecksIcon, ListIcon, ListOrderedIcon, Redo2Icon, TableIcon, Undo2Icon } from "lucide-react";
+import { RICH_TEXT_JSON_MAX_BYTES, richTextDocByteLength, richTextMediaIds, richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { cn } from "../lib/utils";
+import { EMBEDDED_IMAGE_ACCEPT, EMBEDDED_MEDIA_MAX_PER_POST, embeddedImageProblem, uploadEmbeddedImage } from "../lib/embedded-media";
 import {
   createRichTextEditorExtensions,
   type RichTextEditorPreset,
@@ -14,6 +15,8 @@ import {
 } from "../lib/rich-text-tiptap";
 import { MentionAutocomplete, type MentionAutocompleteHandle, type MentionableUser } from "./MentionAutocomplete";
 import { Button } from "./reui/button";
+import { Progress } from "./reui/progress";
+import { Notice } from "./quincy/Notice";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -100,7 +103,13 @@ export type QuincyRichTextEditorProps = {
   placeholder?: string;
   id?: string;
   onSubmit?: () => void;
+  /** Turns on embedded images (#493): the toolbar button, paste and drop upload into this Project. */
+  media?: { projectId: string };
+  /** Reports whether an image is still uploading, so the host can hold Post / Save until it lands. */
+  onUploadingChange?: (uploading: boolean) => void;
 };
+
+type UploadingImage = { key: number; name: string; percent: number };
 
 export function QuincyRichTextEditor({
   preset,
@@ -113,6 +122,8 @@ export function QuincyRichTextEditor({
   placeholder = "Write a message…",
   id,
   onSubmit,
+  media,
+  onUploadingChange,
 }: QuincyRichTextEditorProps) {
   const valueRef = useRef(JSON.stringify(value));
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
@@ -134,6 +145,14 @@ export function QuincyRichTextEditor({
   const [nestingBlocked, setNestingBlocked] = useState(false);
   const [deleteTableOpen, setDeleteTableOpen] = useState(false);
   const pageRef = useRef<HTMLDivElement>(null);
+  const [uploads, setUploads] = useState<UploadingImage[]>([]);
+  const [uploadErrors, setUploadErrors] = useState<string[]>([]);
+  const uploadSeq = useRef(0);
+  const inFlight = useRef(0);
+  const mountedRef = useRef(true);
+  const mediaRef = useRef(media); mediaRef.current = media;
+  const onUploadingChangeRef = useRef(onUploadingChange); onUploadingChangeRef.current = onUploadingChange;
+  const addImagesRef = useRef<(files: File[]) => void>(() => {});
   const extensions = useMemo(() => [
     ...createRichTextEditorExtensions(preset),
     ...(preset === "document" ? [RichTextSlashCommand.configure({ items: [...RICH_TEXT_BASIC_SLASH_ITEMS, RICH_TEXT_TABLE_SLASH_ITEM] })] : []),
@@ -147,6 +166,21 @@ export function QuincyRichTextEditor({
     editable: !disabled,
     editorProps: {
       attributes: { class: "rich-text__editor-content " + EDITOR_CONTENT_UTILITIES + (preset === "document" ? DOCUMENT_CONTENT_UTILITIES : ""), "data-placeholder": placeholder, ...(id ? { id } : {}) },
+      // A file dropped or pasted into the editor is ours to handle: letting the browser have it would
+      // navigate away from the page (and the unsaved comment) or paste a foreign <img>.
+      handlePaste: (_view, event) => {
+        if (!mediaRef.current || disabledRef.current) return false;
+        const files = Array.from(event.clipboardData?.files ?? []);
+        if (!files.length) return false;
+        event.preventDefault(); addImagesRef.current(files); return true;
+      },
+      handleDrop: (_view, event) => {
+        const files = Array.from(event.dataTransfer?.files ?? []);
+        if (!files.length) return false;
+        event.preventDefault();
+        if (mediaRef.current && !disabledRef.current) addImagesRef.current(files);
+        return true;
+      },
       handleKeyDown: (view, event) => {
         if (menu.current?.handleKeyDown(event)) return true;
         if (shouldBlockListIndent(event, itemContainerDepth(view.state.selection.$from))) {
@@ -192,6 +226,33 @@ export function QuincyRichTextEditor({
   const activeHeading = useRichTextActiveHeading(isDocument ? editor : null, pageRef, outline);
 
   useEffect(() => { if (editor) editor.setEditable(!disabled); }, [disabled, editor]);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
+  // Each file uploads on its own; its node enters the document only once the server has accepted it, so
+  // a failed or abandoned upload leaves nothing behind. An upload still running when the editor unmounts is lost.
+  addImagesRef.current = (files: File[]) => {
+    const projectId = mediaRef.current?.projectId;
+    if (!projectId || !editorRef.current) return;
+    const problems: string[] = [];
+    let slots = EMBEDDED_MEDIA_MAX_PER_POST - richTextMediaIds(tiptapToRichTextDoc(editorRef.current.getJSON())).length - inFlight.current;
+    for (const file of files) {
+      const problem = embeddedImageProblem(file) ?? (slots <= 0 ? `A post can hold ${EMBEDDED_MEDIA_MAX_PER_POST} images at most.` : null);
+      if (problem) { problems.push(problem); continue; }
+      slots -= 1;
+      const key = ++uploadSeq.current;
+      inFlight.current += 1; onUploadingChangeRef.current?.(true);
+      setUploads((current) => [...current, { key, name: file.name || "Image", percent: 0 }]);
+      void uploadEmbeddedImage(projectId, file, (percent) => { if (mountedRef.current) setUploads((current) => current.map((entry) => entry.key === key ? { ...entry, percent } : entry)); })
+        .then((mediaId) => { if (mountedRef.current) editorRef.current?.chain().focus().insertContent({ type: "image", attrs: { mediaId } }).run(); })
+        .catch((reason) => { if (mountedRef.current) setUploadErrors((current) => [...current, `${file.name || "Image"} could not be uploaded${reason instanceof Error && reason.message ? `: ${reason.message}` : "."}`]); })
+        .finally(() => {
+          inFlight.current -= 1;
+          if (inFlight.current === 0) onUploadingChangeRef.current?.(false);
+          if (mountedRef.current) setUploads((current) => current.filter((entry) => entry.key !== key));
+        });
+    }
+    setUploadErrors(problems);
+  };
+  useEffect(() => () => { if (inFlight.current > 0) onUploadingChangeRef.current?.(false); }, []);
   useEffect(() => {
     if (query === null) return;
     // Bubble phase on purpose: the Project sheet snapshots "is a layer open" at window-capture,
@@ -251,6 +312,14 @@ export function QuincyRichTextEditor({
     if (next === "2" || next === "3") editor.chain().focus().toggleHeading({ level: Number(next) as 2 | 3 }).run();
     else editor.chain().focus().setParagraph().run();
   };
+  // The native picker is created on demand rather than kept in the tree: a standing file input would be a
+  // second upload control on every Project surface that renders the composer.
+  const chooseImages = () => {
+    const picker = document.createElement("input");
+    picker.type = "file"; picker.multiple = true; picker.accept = EMBEDDED_IMAGE_ACCEPT;
+    picker.addEventListener("change", () => { const files = Array.from(picker.files ?? []); if (files.length) addImagesRef.current(files); });
+    picker.click();
+  };
   const off = (can: boolean) => disabled || !can;
 
   return <div ref={wrapperRef} className="group grid gap-[var(--space-2)]" data-disabled={disabled || undefined}>
@@ -293,6 +362,12 @@ export function QuincyRichTextEditor({
               <RichTextButton label="Insert table" disabled={off(state.canInsertTable)} onClick={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}><TableIcon aria-hidden="true" /></RichTextButton>
             </RichTextToolbarGroup>
           </>}
+          {media && <>
+            <RichTextToolbarSeparator />
+            <RichTextToolbarGroup label="Media">
+              <RichTextButton label="Insert image" disabled={disabled} onClick={chooseImages}><ImageIcon aria-hidden="true" /></RichTextButton>
+            </RichTextToolbarGroup>
+          </>}
           <RichTextToolbarSeparator />
           <RichTextToolbarGroup label="History">
             <RichTextButton label="Undo" shortcut={["mod", "Z"]} disabled={off(state.canUndo)} onClick={() => editor.chain().focus().undo().run()}><Undo2Icon aria-hidden="true" /></RichTextButton>
@@ -309,6 +384,10 @@ export function QuincyRichTextEditor({
       <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} />
       <DeleteTableDialog editor={editor} open={deleteTableOpen} onOpenChange={setDeleteTableOpen} />
     </>}
+    {(uploads.length > 0 || uploadErrors.length > 0) && <div data-testid="rich-text-upload-tray" className="grid gap-[var(--space-2)]">
+      {uploads.map((entry) => <Progress key={entry.key} value={entry.percent} aria-label={`Uploading ${entry.name}`} className="grid gap-[var(--space-1)]"><span className="[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary [overflow-wrap:anywhere]">Uploading {entry.name}…</span></Progress>)}
+      {uploadErrors.map((message, index) => <Notice key={index} tone="critical" role="alert">{message}</Notice>)}
+    </div>}
     <MentionAutocomplete ref={menu} query={query} loadMentionables={loadMentionables} onSelect={selectMention} onDismiss={() => setMentionDismissed(true)} onAccessibilityChange={setMentionA11y} />
     {plainText.length >= limit * COUNTER_THRESHOLD && <div data-testid="rich-text-counter" className={cn("text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", plainText.length > limit && "!text-destructive")}>{plainText.length}/{limit}</div>}
     <div className="min-h-[1.2em] [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive" aria-live="polite">{overBytes ? "This formatting is too large to save; remove list items or formatting." : nestingBlocked ? "Maximum list nesting is four levels" : ""}</div>

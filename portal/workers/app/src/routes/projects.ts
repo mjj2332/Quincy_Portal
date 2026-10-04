@@ -1245,6 +1245,10 @@ projectsRoutes.delete("/projects/:id", terminalRoute("/projects/:id", async (c) 
     await abortActiveDocumentSessions(c, id);
     return c.json({ error: "Active document uploads were aborted. Confirm deletion again after the sessions are terminal.", activeDocuments }, 409);
   }
+  // Abort any embedded-media upload that was started but never completed, so no orphan multipart upload
+  // outlives the Project. Best effort: R2 lifecycle aborts the rest. The rows go with the cascade, the objects with the prefix purge.
+  const startedUploads = (await c.env.DB.prepare("SELECT original_key, upload_id FROM embedded_media WHERE project_id = ? AND state = 'uploading' AND upload_id IS NOT NULL").bind(id).all<{ original_key: string; upload_id: string }>()).results;
+  await Promise.all(startedUploads.map((row) => abortMultipart(c.env, row.original_key, row.upload_id).catch(() => undefined)));
   const r2Prefix = `projects/${id}/`;
   const assetIds = (await db.select({ id: schema.assets.id }).from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).where(eq(schema.collections.projectId, id)).all()).map((asset) => asset.id);
   const assetCount = assetIds.length;

@@ -5191,3 +5191,10 @@ An Editor Output import and a Portal Edited upload only record `projects.edited_
 - **A vendored `<form>` inside a portalled popover still bubbles synthetic submit through the editor's React ancestors.** `stopPropagation` in the form's own handler.
 - **`no-scrollbar` / `scroll-fade-x` are not utilities in this Tailwind**: the vendor toolbar scrolled with visible scrollbars and no fade until they were replaced with the legacy phone mask.
 - **Run the editor tests against both editors (`describe.each`) until the legacy one is retired (#492).** Steps that differ (link dialog vs popover, `<select>` vs menu) go through translator helpers; the translated cases are listed in the PR.
+
+## 2026-10-04 — Embedded images in Project discussion (#493)
+
+- An embedded image is a stored-document node that names media by id (`{type:"image",attrs:{mediaId}}`); the editor's Tiptap `EmbeddedImage` has no `parseHTML`, so a pasted `<img>` or `data:` URL never becomes a node, and both `toTiptap` and `tiptapToRichTextDoc` need an explicit image branch or the attr is dropped.
+- A comment's media statements are appended LAST in the batch and fenced on the winner's audit row, so positional batch results stay valid and a lost race attaches nothing. Delete marks the media detached with `detached_at = 0` (due now) in the same batch; the route then deletes objects and rows best-effort and the daily sweep is the backstop.
+- Do not keep a standing `<input type="file">` in the composer: the Workspace tests (and the external inventory) treat any file input as an upload control. The picker is created on click.
+- jsdom has no layout: ProseMirror's `handleDrop` never runs unless `document.elementFromPoint` / `caretPositionFromPoint` are stubbed.

@@ -88,7 +88,7 @@ export function scannedAuditTargetTypes(): string[] {
 /** Target types whose target is a row UNDER a project — each gets an audit row per planted project,
  * targeting the planted (or registered) row of that type. */
 export const PROJECT_DESCENDANT_AUDIT_TYPES = [
-  "annotation", "asset", "autohdr_mapping", "collection_link", "document_upload", "job", "notification",
+  "annotation", "asset", "autohdr_mapping", "collection_link", "document_upload", "embedded_media", "job", "notification",
   "notification_outbox", "project", "project_comment", "project_deadline_occurrence", "project_member",
   "project_subtask", "project_subtask_reminder_occurrence", "raw_reconciliation_claim", "rendition_dlq_event", "upload_manifest",
 ] as const;
@@ -151,7 +151,7 @@ export function appRows(ctx: PlantContext, groups?: readonly AppRowGroup[]): Pla
   const id = (name: string) => plantId(`${ctx.tag}:${name}`);
   const want = (group: AppRowGroup) => !groups || groups.includes(group);
   const ids = {
-    member: id("member"), comment: id("comment"), reply: id("reply"), mention: id("mention"), activity: id("activity"),
+    member: id("member"), comment: id("comment"), embeddedMedia: id("embedded-media"), reply: id("reply"), mention: id("mention"), activity: id("activity"),
     job: id("job"), handoff: id("handoff"), mapping: id("mapping"), assetV1: id("asset-v1"), assetV2: id("asset-v2"), assetV3: id("asset-v3"),
     rendition: id("rendition"), dlq: id("dlq"), claim: id("claim"), outbox: id("outbox"), notification: id("notification"), ledger: id("ledger"),
     annotation: id("annotation"), link: id("link"), manifest: id("manifest"), rawClaim: id("raw-claim"), subtaskOcc: id("subtask-reminder-occurrence"), document: id("document"), documentAudit: id("document-audit"),
@@ -166,6 +166,7 @@ export function appRows(ctx: PlantContext, groups?: readonly AppRowGroup[]): Pla
   if (want("comments") || want("activity") || want("audit")) {
     rows.push(
       { table: "project_comments", values: { id: ids.comment, project_id: ctx.projectId, author_id: ctx.userId, body: "First", content_json: "{}", created_at: T0 } },
+      { table: "embedded_media", values: { id: ids.embeddedMedia, owner_kind: "project_comment", owner_id: ids.comment, project_id: ctx.projectId, uploader_id: ctx.userId, kind: "image", content_type: "image/png", bytes: 64, original_key: `projects/${ctx.projectId}/embedded-media/${ids.embeddedMedia}/original`, state: "attached", created_at: T0, updated_at: T0 } },
       { table: "project_comments", values: { id: ids.reply, project_id: ctx.projectId, author_id: ctx.userId, body: "Reply", content_json: "{}", created_at: T0 + 1 } },
     );
   }
@@ -263,7 +264,7 @@ export function appRows(ctx: PlantContext, groups?: readonly AppRowGroup[]): Pla
       status: "pending", created_by: ctx.userId, created_at: T0, updated_at: T0,
     } });
     const targetFor: Record<(typeof PROJECT_DESCENDANT_AUDIT_TYPES)[number], string> = {
-      annotation: ids.annotation, asset: ids.assetV1, autohdr_mapping: ids.mapping, collection_link: ids.link, document_upload: ids.document, job: ids.job,
+      annotation: ids.annotation, asset: ids.assetV1, autohdr_mapping: ids.mapping, collection_link: ids.link, document_upload: ids.document, embedded_media: ids.embeddedMedia, job: ids.job,
       notification: ids.notification, notification_outbox: ids.outbox, project: ctx.projectId, project_comment: ids.comment,
       project_deadline_occurrence: ctx.occurrenceId, project_member: ids.member, project_subtask: ctx.subtaskId, project_subtask_reminder_occurrence: ids.subtaskOcc, raw_reconciliation_claim: ids.rawClaim,
       rendition_dlq_event: ids.dlq, upload_manifest: ids.manifest,

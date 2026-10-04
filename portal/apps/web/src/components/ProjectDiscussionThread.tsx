@@ -65,6 +65,7 @@ type CommentItemProps = {
   saving: boolean;
   editing: RichTextDoc | undefined;
   editingOverBytes: boolean;
+  projectId: string;
   loadMentionables: (query: string) => Promise<MentionableUser[]>;
   onEditStart: (comment: Comment) => void;
   onEditChange: (value: RichTextDoc) => void;
@@ -80,7 +81,7 @@ type CommentItemProps = {
  * Edit / Delete are author-only exactly as before — `isOwn` is derived from the effective session
  * user by the caller (the impersonated user while an Admin impersonates), and the server enforces it.
  */
-function CommentItem({ comment, isOwn, now, saving, editing, editingOverBytes, loadMentionables, onEditStart, onEditChange, onEditCancel, onEditSave, onDelete }: CommentItemProps) {
+function CommentItem({ comment, isOwn, now, saving, editing, editingOverBytes, projectId, loadMentionables, onEditStart, onEditChange, onEditCancel, onEditSave, onDelete }: CommentItemProps) {
   const articleRef = useRef<HTMLElement>(null);
   const focusActions = useCallback(() => { articleRef.current?.querySelector<HTMLElement>('[data-testid="comment-actions"]')?.focus(); }, []);
   // Set when Edit is chosen from the "⋯" menu: the menu's close would otherwise return focus to the
@@ -96,6 +97,7 @@ function CommentItem({ comment, isOwn, now, saving, editing, editingOverBytes, l
     if (selection) { const range = document.createRange(); range.selectNodeContents(surface); range.collapse(false); selection.removeAllRanges(); selection.addRange(range); }
     return surface;
   }, []);
+  const [editUploading, setEditUploading] = useState(false);
   const isEditing = editing !== undefined;
   const wasEditing = useRef(false);
   useEffect(() => {
@@ -118,8 +120,8 @@ function CommentItem({ comment, isOwn, now, saving, editing, editingOverBytes, l
     </Menu> : <span aria-hidden="true" />}
     <div className="col-start-2 col-span-2 max-[721px]:col-start-1 max-[721px]:col-span-3 grid gap-[var(--space-2)] min-w-0">
       {editing ? <>
-        <QuincyRichTextEditor preset="composer" value={editing} onChange={onEditChange} limit={COMMENT_LIMIT} disabled={saving} loadMentionables={loadMentionables} placeholder="Edit comment…" onSubmit={onEditSave} />
-        <div className="flex justify-end gap-[var(--space-3)]"><Button variant="secondary" type="button" disabled={saving} onClick={onEditCancel}>Cancel</Button><Button type="button" disabled={saving || editingOverBytes} onClick={onEditSave}>Save</Button></div>
+        <QuincyRichTextEditor preset="composer" value={editing} onChange={onEditChange} limit={COMMENT_LIMIT} disabled={saving} loadMentionables={loadMentionables} placeholder="Edit comment…" onSubmit={onEditSave} media={{ projectId }} onUploadingChange={setEditUploading} />
+        <div className="flex justify-end gap-[var(--space-3)]"><Button variant="secondary" type="button" disabled={saving} onClick={onEditCancel}>Cancel</Button><Button type="button" disabled={saving || editingOverBytes || editUploading} onClick={onEditSave}>Save</Button></div>
       </> : <RichTextContent className="rich-text--body" content={comment.content} />}
     </div>
   </article>;
@@ -155,6 +157,7 @@ export function ProjectDiscussionThread({
   const now = useNow();
   const [content, setContent, clearDraftIfSubmitted] = useProjectCommentDraft(projectId);
   const [saving, setSaving] = useState(false);
+  const [composerUploading, setComposerUploading] = useState(false);
   const [editing, setEditing] = useState<{ id: string; content: RichTextDoc }>();
   const [mutationError, setMutationError] = useState<string>();
   const [discussionDeniedFor, setDiscussionDeniedFor] = useState<string>();
@@ -230,7 +233,7 @@ export function ProjectDiscussionThread({
   // Post is disabled for an empty or over-limit comment (previously it posted and the server
   // rejected it with a 400); keyboard submit already refused the same cases.
   const postingPlainText = richTextPlainText(content);
-  const canPost = !saving && !postingOverBytes && postingPlainText.trim() !== "" && postingPlainText.length <= COMMENT_LIMIT;
+  const canPost = !saving && !composerUploading && !postingOverBytes && postingPlainText.trim() !== "" && postingPlainText.length <= COMMENT_LIMIT;
 
   async function submit() {
     if (!canPost) return;
@@ -300,7 +303,7 @@ export function ProjectDiscussionThread({
     {typeof viewerName === "string" && viewerName !== "" && <InitialsAvatar name={viewerName} className="mt-[var(--space-1)] max-[721px]:hidden" />}
     <div className="grid gap-[var(--space-2)] min-w-0 flex-1">
       <label className="sr-only" htmlFor={`project-comment-${projectId}`}>Write a comment</label>
-      <QuincyRichTextEditor preset="composer" id={`project-comment-${projectId}`} value={content} onChange={setContent} limit={COMMENT_LIMIT} disabled={saving} loadMentionables={loadMentionables} placeholder="Write a project comment…" onSubmit={() => void submit()} />
+      <QuincyRichTextEditor preset="composer" id={`project-comment-${projectId}`} value={content} onChange={setContent} limit={COMMENT_LIMIT} disabled={saving} loadMentionables={loadMentionables} placeholder="Write a project comment…" onSubmit={() => void submit()} media={{ projectId }} onUploadingChange={setComposerUploading} />
       <div className="flex flex-wrap items-center justify-between gap-[var(--space-3)]"><span className={cn(META_TEXT, "!normal-case")}>Use @ to mention project participants</span><Button type="submit" className="ml-auto" disabled={!canPost}>{saving ? "Posting…" : "Post"}</Button></div>
     </div>
   </form>;
@@ -319,6 +322,7 @@ export function ProjectDiscussionThread({
         saving={saving}
         editing={editing?.id === comment.id ? editing.content : undefined}
         editingOverBytes={editingOverBytes}
+        projectId={projectId}
         loadMentionables={loadMentionables}
         onEditStart={(target) => setEditing({ id: target.id, content: target.content })}
         onEditChange={(value) => setEditing({ id: comment.id, content: value })}
