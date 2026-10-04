@@ -2,7 +2,6 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RichTextDoc } from "@quincy/shared";
-import { RichTextEditor } from "./RichTextEditor";
 import { QuincyRichTextEditor } from "./QuincyRichTextEditor";
 
 /**
@@ -10,9 +9,9 @@ import { QuincyRichTextEditor } from "./QuincyRichTextEditor";
  * layer gate treats an expanded editor combobox as an open layer: a list that Esc cannot close would
  * make the sheet impossible to close while the caret sits after `@foo`.
  */
-// #491: every case runs against the legacy editor AND the composer (`QuincyRichTextEditor`).
-const VARIANTS = ["legacy", "composer"] as const;
-let variant: (typeof VARIANTS)[number] = "legacy";
+// #492: every case runs against both presets of `QuincyRichTextEditor` (the legacy editor is retired).
+const VARIANTS = ["composer", "document"] as const;
+let variant: (typeof VARIANTS)[number] = "composer";
 let root: Root | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -24,7 +23,7 @@ async function mount(loader: (query: string) => Promise<typeof NORA[]>) {
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(<div>{variant === "composer" ? <QuincyRichTextEditor preset="composer" value={empty()} onChange={() => undefined} limit={2_000} loadMentionables={loader} /> : <RichTextEditor value={empty()} onChange={() => undefined} limit={2_000} loadMentionables={loader} />}<button type="button" data-testid="elsewhere">elsewhere</button></div>);
+    root!.render(<div><QuincyRichTextEditor preset={variant} value={empty()} onChange={() => undefined} limit={2_000} loadMentionables={loader} /><button type="button" data-testid="elsewhere">elsewhere</button></div>);
     await Promise.resolve(); await Promise.resolve();
   });
   return host.querySelector<HTMLElement>('[contenteditable="true"]')!;

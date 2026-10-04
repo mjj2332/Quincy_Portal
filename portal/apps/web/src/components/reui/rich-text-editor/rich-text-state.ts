@@ -5,11 +5,16 @@
 //   is always false with levels [2, 3]: `canHeading` asks for level 2.
 // - code, blockquote, codeBlock, align, highlight and the word/character count
 //   (`storage.characterCount` is undefined here) are dropped; the 90% counter stays Quincy's.
+// #492 (document preset): alignment, highlight and table fields return. Each `can()` call is guarded by
+// the schema (`editor.schema.marks.highlight`, `.nodes.table`, the TextAlign attribute): the composer
+// has none of these extensions, so `can().setHighlight` / `setTextAlign` / `insertTable` would throw
+// exactly as `toggleCode` did in #491. The composer's snapshot reports them as false.
 // Added: per-command `can*` flags (the legacy toolbar disabled each control on its own `can()`),
 // and `atListNestingLimit` (four item containers, the server's depth cap).
 import { useEditorState, type Editor } from "@tiptap/react";
 import { RICH_TEXT_MAX_ITEM_CONTAINER_LEVELS, itemContainerDepth } from "@/lib/rich-text-tiptap";
 
+export type RichTextAlign = "left" | "center" | "right" | "justify";
 export type RichTextBlockType = "paragraph" | "heading-2" | "heading-3";
 
 export interface RichTextSnapshot {
@@ -23,6 +28,14 @@ export interface RichTextSnapshot {
   orderedList: boolean;
   taskList: boolean;
   link: string | null;
+  /** The highlight colour id under the selection, or null. Document preset only. */
+  highlight: string | null;
+  align: RichTextAlign;
+  /** True in a table cell. */
+  inTable: boolean;
+  canHighlight: boolean;
+  canAlign: boolean;
+  canInsertTable: boolean;
   canBold: boolean;
   canItalic: boolean;
   canUnderline: boolean;
@@ -50,6 +63,12 @@ const IDLE_SNAPSHOT: RichTextSnapshot = {
   orderedList: false,
   taskList: false,
   link: null,
+  highlight: null,
+  align: "left",
+  inTable: false,
+  canHighlight: false,
+  canAlign: false,
+  canInsertTable: false,
   canBold: false,
   canItalic: false,
   canUnderline: false,
@@ -70,9 +89,20 @@ function readBlockType(editor: Editor): RichTextBlockType {
   return "paragraph";
 }
 
+function readAlign(editor: Editor): RichTextAlign {
+  for (const align of ["center", "right", "justify"] as const) {
+    if (editor.isActive({ textAlign: align })) return align;
+  }
+  return "left";
+}
+
 function readSnapshot(editor: Editor | null): RichTextSnapshot {
   if (!editor) return IDLE_SNAPSHOT;
   const editable = editor.isEditable;
+  const hasHighlight = "highlight" in editor.schema.marks;
+  const hasTable = "table" in editor.schema.nodes;
+  const hasAlign = editor.extensionManager.extensions.some((extension) => extension.name === "textAlign");
+  const highlight = hasHighlight && editor.isActive("highlight") ? (editor.getAttributes("highlight").color as unknown) : null;
   const href = editor.isActive("link") ? (editor.getAttributes("link").href as unknown) : null;
   return {
     editable,
@@ -85,6 +115,12 @@ function readSnapshot(editor: Editor | null): RichTextSnapshot {
     orderedList: editor.isActive("orderedList"),
     taskList: editor.isActive("taskList"),
     link: typeof href === "string" ? href : null,
+    highlight: typeof highlight === "string" ? highlight : hasHighlight && editor.isActive("highlight") ? "yellow" : null,
+    align: hasAlign ? readAlign(editor) : "left",
+    inTable: hasTable && editor.isActive("table"),
+    canHighlight: hasHighlight && editable && editor.can().setHighlight({ color: "yellow" }),
+    canAlign: hasAlign && editable && editor.can().setTextAlign("center"),
+    canInsertTable: hasTable && editable && !editor.isActive("table") && editor.can().insertTable({ rows: 3, cols: 3, withHeaderRow: true }),
     canBold: editable && editor.can().toggleBold(),
     canItalic: editable && editor.can().toggleItalic(),
     canUnderline: editable && editor.can().toggleUnderline(),
