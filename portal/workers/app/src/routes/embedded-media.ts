@@ -154,9 +154,15 @@ embeddedMediaRoutes.put("/projects/:projectId/embedded-media/:mediaId/poster", t
       c.env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ? AND queued_at = ? AND claimed_until IS NULL AND (SELECT poster_key FROM embedded_media WHERE id = ?) = ?").bind(posterKey, queuedAt, mediaId, posterKey),
     ]);
   } catch (error) {
-    // A throw can still follow a commit: if the row already references the object, it is live and stays.
-    const committed = await getEmbeddedMedia(c.env.DB, mediaId).then((current) => current?.posterKey === posterKey, () => false);
-    if (committed) return c.body(null, 204);
+    // A throw can still follow a commit, so decide from the row, in three outcomes: adopted (the row references the key: it is live, keep it),
+    // confirmed not adopted (discard), or unknown (the read threw too). Unknown deletes nothing and queues nothing: a delete or a queue entry
+    // could destroy a live poster. The object stays, an unadopted entry (if any) is still the sweep's to reclaim, and the key is logged.
+    const verdict = await getEmbeddedMedia(c.env.DB, mediaId).then((current) => (current?.posterKey === posterKey ? "adopted" : "not_adopted") as "adopted" | "not_adopted", () => "unknown" as const);
+    if (verdict === "adopted") return c.body(null, 204);
+    if (verdict === "unknown") {
+      console.error("Embedded poster adoption outcome UNKNOWN: the batch threw and the verification read failed, the object was kept (a leak is possible, accepted gap #549)", { key: posterKey, mediaId, projectId, error: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }
     await discardPoster(c.env, posterKey, projectId); throw error;
   }
   if ((results[0]!.meta.changes ?? 0) === 1) return c.body(null, 204);
