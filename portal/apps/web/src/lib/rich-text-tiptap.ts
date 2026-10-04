@@ -1,4 +1,4 @@
-import { Extension } from "@tiptap/core";
+import { Extension, Node as TiptapNode, mergeAttributes } from "@tiptap/core";
 import { setBlockType } from "@tiptap/pm/commands";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { Plugin } from "@tiptap/pm/state";
@@ -11,6 +11,7 @@ import { ListItem, TaskItem, TaskList } from "@tiptap/extension-list";
 import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table";
 import { TableMap } from "@tiptap/pm/tables";
 import { TextAlign } from "@tiptap/extension-text-align";
+import { embeddedMediaUrl } from "./embedded-media";
 import { RICH_TEXT_HIGHLIGHT_COLORS, RICH_TEXT_MAX_NESTING, RICH_TEXT_TABLE_MAX_COLUMNS, RICH_TEXT_TABLE_MAX_ROWS, type RichTextDoc } from "@quincy/shared";
 
 // The Tiptap <-> stored RichTextDoc contract for `QuincyRichTextEditor`, in its two presets:
@@ -43,6 +44,7 @@ export function toTiptap(doc: RichTextDoc): Record<string, unknown> {
       }) } : {}),
     };
     if (valueNode.type === "mention") return { type: "mention", attrs: { ...(valueNode.attrs as Record<string, unknown>) } };
+    if (valueNode.type === "image") return { type: "image", attrs: { mediaId: (valueNode.attrs as Record<string, unknown> | undefined)?.mediaId } };
     if (valueNode.type === "heading" || valueNode.type === "taskItem") return { type: valueNode.type, attrs: { ...(valueNode.attrs as Record<string, unknown>) }, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
     if (valueNode.type === "paragraph" && valueNode.attrs) return { type: "paragraph", attrs: tiptapTextAlign(valueNode.attrs as Record<string, unknown>), ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
     if (valueNode.type === "tableCell" || valueNode.type === "tableHeader") {
@@ -158,6 +160,25 @@ export const RichTextHighlight = Highlight.extend({
 // editor build a list in a cell that the server then rejects.
 const CELL_CONTENT = "paragraph+";
 
+/**
+ * An embedded image (#493): an atom that names stored media by id. It deliberately has no `parseHTML`
+ * rule, so pasted or dropped HTML (a foreign `<img>`, a base64 `data:` URL) never becomes a node; the
+ * only way in is the editor's own upload, which inserts one after the server accepts the file.
+ */
+export const EmbeddedImage = TiptapNode.create({
+  name: "image",
+  group: "block",
+  atom: true,
+  draggable: true,
+  selectable: true,
+  addAttributes() { return { mediaId: { default: null } }; },
+  parseHTML() { return []; },
+  renderHTML({ node, HTMLAttributes }) {
+    const mediaId = String(node.attrs.mediaId ?? "");
+    return ["img", mergeAttributes(HTMLAttributes, { src: embeddedMediaUrl(mediaId), alt: "Embedded image", "data-media-id": mediaId, class: "rich-text__embedded-image" })];
+  },
+});
+
 /** Rows x columns of a table node, spans included (what the server's limits count). */
 export function tableDimensions(table: ProseMirrorNode): { rows: number; columns: number } {
   const map = TableMap.get(table);
@@ -227,6 +248,7 @@ export function createRichTextEditorExtensions(preset: RichTextEditorPreset = "c
     Mention.configure({ HTMLAttributes: { class: "rich-text__mention" }, suggestion: { items: () => [] } }),
     ListItemHeadingCommandBoundary,
     ListNestingBoundary,
+    ...(preset === "composer" ? [EmbeddedImage] : []),
     ...(preset === "document" ? documentExtensions() : []),
   ];
 }
@@ -251,6 +273,10 @@ export function tiptapToRichTextDoc(value: unknown): RichTextDoc {
     if (valueNode.type === "mention") {
       const attrs = valueNode.attrs as Record<string, unknown> | undefined;
       return { type: "mention", attrs: { id: attrs?.id, label: attrs?.label } };
+    }
+    if (valueNode.type === "image") {
+      const attrs = valueNode.attrs as Record<string, unknown> | undefined;
+      return { type: "image", attrs: { mediaId: attrs?.mediaId } };
     }
     if (valueNode.type === "heading") {
       const attrs = valueNode.attrs as Record<string, unknown> | undefined;

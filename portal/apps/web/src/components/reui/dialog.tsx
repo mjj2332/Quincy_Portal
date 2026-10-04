@@ -15,6 +15,16 @@ import { XIcon } from "lucide-react"
  * `reui/alert-dialog.tsx`'s header). No `"use client"` directive was present to drop. No other
  * change.
  *
+ * Divergence (#493): the overlay and the content use `z-[var(--z-dialog)]` instead of the registry's
+ * `z-50`, like `reui/alert-dialog.tsx`. The Project sheet sits at `--z-dialog`, so a bare `z-50` dialog
+ * opened from inside a sheet rendered underneath it, invisible. Equal z stacks the later-portalled
+ * dialog on top. `overlay-stacking.guard.test.ts` keeps it that way.
+ *
+ * Divergence (#493): the overlay passes `forceRender`, like `reui/alert-dialog.tsx` (#221). Every
+ * Portal page sits inside RailedShell's `Sheet` Root (and the Project sheet is another), so Base UI
+ * treats this dialog as nested and renders its Backdrop only when `forceRender || !nested`. Without
+ * it the scrim never appeared and the sheet stayed at full brightness behind the dialog.
+ *
  * NOTE: this repo already has a `components/reui/sheet.tsx` (base-nova's `sheet`, #56) that
  * covers most of the Portal's existing overlay needs. `dialog` is vendored separately here
  * because it is a `registryDependencies` entry of `@reui/gantt` (task/dependency editing
@@ -44,8 +54,10 @@ function DialogOverlay({
   return (
     <DialogPrimitive.Backdrop
       data-slot="dialog-overlay"
+      // Nested under a sheet Root, Base UI would skip the Backdrop (`forceRender || !nested`). See header.
+      forceRender
       className={cn(
-        "fixed inset-0 isolate z-50 bg-[var(--scrim-overlay)] duration-100 supports-backdrop-filter:backdrop-blur-[3px] data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        "fixed inset-0 isolate z-[var(--z-dialog)] bg-[var(--scrim-overlay)] duration-100 supports-backdrop-filter:backdrop-blur-[3px] data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
         className
       )}
       {...props}
@@ -67,7 +79,7 @@ function DialogContent({
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "fixed top-1/2 left-1/2 z-[var(--z-dialog)] grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className
         )}
         {...props}

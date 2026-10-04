@@ -49,6 +49,7 @@ import { scanProjectDeadlineOccurrences } from "./project-deadline";
 import { reconcileSubtaskReminderOccurrences, scanSubtaskReminderOccurrences } from "./subtask-reminders";
 import { runEmailDigests } from "./email-digest";
 import { sweepExternalEditedUploads } from "./external-upload-sweep";
+import { sweepEmbeddedMedia } from "./embedded-media-sweep";
 import { processExternalRoleCachePurges } from "./external-role-cache-purge";
 import { sweepStuckManualPublishes } from "./manual-publish-recovery";
 import { isBoardSchemaMaintenanceError, requireBoardSchemaReady } from "./lib/board-schema";
@@ -56,6 +57,8 @@ import { isBoardSchemaMaintenanceError, requireBoardSchemaReady } from "./lib/bo
 export { AutoHdrApiSend, AutoHdrFetch, AutoHdrSend, ManualEditedPublish, DropboxSyncDO, TonomoProcessorDO };
 
 const INGEST_QUEUE_MAX_ATTEMPTS = 4;
+/** 03:00 in Malaysia (UTC+8). */
+const EMBEDDED_MEDIA_SWEEP_UTC_HOUR = 19;
 export type RenditionBackfillInput = { dryRun?: boolean; cursor?: string; limit?: number; confirmProduction?: boolean };
 export type RenditionBackfillResult = { scanned: number; wouldEnqueue: number; enqueued: number; skipped: number; nextCursor: string | null; dryRun: boolean };
 
@@ -219,6 +222,15 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       console.log("Notification pruning complete");
     } catch (error) {
       console.error("Notification pruning failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+    }
+    // Daily, on the hourly trigger at 03:00 Malaysia time (19:00 UTC) rather than a new cron trigger (#493).
+    if (new Date(controller.scheduledTime).getUTCHours() === EMBEDDED_MEDIA_SWEEP_UTC_HOUR) {
+      try {
+        const swept = await sweepEmbeddedMedia(this.env, controller.scheduledTime);
+        console.log("Embedded media sweep complete", swept);
+      } catch (error) {
+        console.error("Embedded media sweep failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+      }
     }
   }
 

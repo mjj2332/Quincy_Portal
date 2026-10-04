@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   NOTICE_BODY_MAX_LENGTH,
   NOTICE_RICH_TEXT_JSON_MAX_BYTES,
+  COMMENT_MEDIA_RICH_TEXT_PROFILE,
   NOTICE_RICH_TEXT_PROFILE,
   RICH_TEXT_JSON_MAX_BYTES,
   RICH_TEXT_MAX_NESTING,
@@ -11,6 +12,7 @@ import {
   normalizeRichTextMentionLabels,
   parseRichTextDoc,
   richTextDocByteLength,
+  richTextMediaIds,
   richTextMentionIds,
   richTextPlainText,
 } from "../src/rich-text";
@@ -356,5 +358,62 @@ describe("document profile (#492)", () => {
   it("still parses every comment-profile document under the notice profile", () => {
     expect(parseRichTextDoc(valid, NOTICE_RICH_TEXT_PROFILE)).toEqual(parseRichTextDoc(valid));
     expect(parseRichTextDoc(taskListDoc(3, true), NOTICE_RICH_TEXT_PROFILE)).toEqual(parseRichTextDoc(taskListDoc(3, true)));
+  });
+});
+
+
+describe("image node (#493)", () => {
+  const mediaA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const mediaB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const image = (mediaId: unknown, extra: Record<string, unknown> = {}) => ({ type: "image", attrs: { mediaId, ...extra } });
+  const withImages = (...nodes: unknown[]) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Look" }] }, ...nodes] });
+
+  it("is rejected by default and by the notice profile, so the Notice board still 400s on an image", () => {
+    expect(() => parseRichTextDoc(withImages(image(mediaA)))).toThrow(RichTextValidationError);
+    expect(() => parseRichTextDoc(withImages(image(mediaA)), NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+  });
+
+  it("is accepted under the comment media profile, referenced by id only, and read back in document order", () => {
+    const input = withImages(image(mediaB), image(mediaA));
+    const doc = parseRichTextDoc(input, COMMENT_MEDIA_RICH_TEXT_PROFILE);
+    expect(doc).toEqual(input);
+    expect(richTextMediaIds(doc)).toEqual([mediaB, mediaA]);
+    expect(richTextMediaIds(parseRichTextDoc(valid))).toEqual([]);
+  });
+
+  it("is strict: only a UUID mediaId, no extra attributes or keys, and only at the top level", () => {
+    const profile = COMMENT_MEDIA_RICH_TEXT_PROFILE;
+    const bad = [
+      withImages(image("not-a-uuid")),
+      withImages(image(undefined)),
+      withImages(image(mediaA, { src: "https://evil.test/x.png" })),
+      withImages(image(mediaA, { src: "data:image/png;base64,AAAA" })),
+      withImages({ type: "image" }),
+      withImages({ type: "image", attrs: { mediaId: mediaA }, content: [] }),
+      withImages({ type: "image", attrs: { mediaId: mediaA }, src: "x" }),
+      { type: "doc", content: [{ type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "x" }] }, image(mediaA)] }] }] },
+      { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "x" }, image(mediaA)] }] },
+    ];
+    for (const value of bad) expect(() => parseRichTextDoc(value, profile), JSON.stringify(value)).toThrow(RichTextValidationError);
+  });
+
+  it("rejects a duplicated media id", () => {
+    expect(() => parseRichTextDoc(withImages(image(mediaA), image(mediaA)), COMMENT_MEDIA_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+  });
+
+  it("reads as [image] in plain text, so an image-only post is valid and a notification body has a placeholder", () => {
+    const only = parseRichTextDoc({ type: "doc", content: [image(mediaA)] }, COMMENT_MEDIA_RICH_TEXT_PROFILE);
+    expect(richTextPlainText(only)).toBe("[image]");
+    expect(richTextPlainText(parseRichTextDoc(withImages(image(mediaA), image(mediaB)), COMMENT_MEDIA_RICH_TEXT_PROFILE))).toBe("Look\n[image]\n[image]");
+  });
+
+  it("survives mention-label normalisation untouched", () => {
+    const doc = parseRichTextDoc(withImages(image(mediaA)), COMMENT_MEDIA_RICH_TEXT_PROFILE);
+    expect(normalizeRichTextMentionLabels(doc, new Map())).toEqual(doc);
+  });
+
+  it("keeps the comment media profile identical to the comment profile otherwise", () => {
+    expect(() => parseRichTextDoc({ type: "doc", content: [{ type: "table", content: [] }] }, COMMENT_MEDIA_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+    expect(parseRichTextDoc(valid, COMMENT_MEDIA_RICH_TEXT_PROFILE)).toEqual(parseRichTextDoc(valid));
   });
 });

@@ -338,6 +338,65 @@ export const projectComments = sqliteTable(
   (t) => [index("project_comments_project_created_idx").on(t.projectId, t.createdAt, t.id)],
 );
 
+/**
+ * Embedded media (#493): an image or video placed inside a post. `ownerKind` / `ownerId` name what holds
+ * it. `ownerId` is polymorphic and has no foreign key, so a post and its media move together inside one
+ * batch in application code (no triggers). `projectId` cascades: a Project hard delete purges the objects
+ * by prefix first, then the rows go with it.
+ */
+export const embeddedMedia = sqliteTable(
+  "embedded_media",
+  {
+    id: id(),
+    ownerKind: text("owner_kind", { enum: ["project_comment", "notice_post", "whiteboard"] as const }).notNull(),
+    ownerId: text("owner_id"),
+    projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+    uploaderId: text("uploader_id").notNull().references(() => user.id),
+    kind: text("kind", { enum: ["image", "video", "preview_image"] as const }).notNull(),
+    contentType: text("content_type").notNull(),
+    bytes: integer("bytes").notNull(),
+    originalKey: text("original_key").notNull(),
+    displayKey: text("display_key"),
+    posterKey: text("poster_key"),
+    uploadId: text("upload_id"),
+    state: text("state", { enum: ["uploading", "pending", "attached", "detached"] as const }).notNull().default("uploading"),
+    detachedAt: integer("detached_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("embedded_media_original_key_unique").on(t.originalKey),
+    index("embedded_media_owner_idx").on(t.ownerKind, t.ownerId),
+    index("embedded_media_state_detached_idx").on(t.state, t.detachedAt),
+    index("embedded_media_state_created_idx").on(t.state, t.createdAt),
+    index("embedded_media_project_idx").on(t.projectId),
+    check("embedded_media_owner_kind_check", sql`${t.ownerKind} IN ('project_comment','notice_post','whiteboard')`),
+    check("embedded_media_kind_check", sql`${t.kind} IN ('image','video','preview_image')`),
+    check("embedded_media_bytes_check", sql`${t.bytes} > 0`),
+    check("embedded_media_state_check", sql`${t.state} IN ('uploading','pending','attached','detached')`),
+    check("embedded_media_owner_state_check", sql`(${t.state} IN ('uploading','pending')) = (${t.ownerId} IS NULL)`),
+    check("embedded_media_detached_check", sql`(${t.state} = 'detached') = (${t.detachedAt} IS NOT NULL)`),
+    check("embedded_media_project_check", sql`(${t.ownerKind} = 'notice_post') = (${t.projectId} IS NULL)`),
+  ],
+);
+
+/**
+ * Durable cleanup queue for embedded-media R2 objects and multipart uploads that no `embedded_media` row owns
+ * any more (#493). `projectId` deliberately has no foreign key: the Project is usually already gone. A row
+ * leaves only after its object is deleted (and its multipart upload is terminal).
+ */
+export const embeddedMediaCleanup = sqliteTable(
+  "embedded_media_cleanup",
+  {
+    storageKey: text("storage_key").primaryKey(),
+    uploadId: text("upload_id"),
+    projectId: text("project_id"),
+    queuedAt: integer("queued_at").notNull(),
+    attempts: integer("attempts").notNull().default(0),
+  },
+  (t) => [index("embedded_media_cleanup_queued_idx").on(t.queuedAt)],
+);
+
 export const projectCommentMentions = sqliteTable(
   "project_comment_mentions",
   {

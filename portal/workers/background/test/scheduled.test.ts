@@ -10,8 +10,10 @@ const scheduledJobs = vi.hoisted(() => ({
   subtaskScan: vi.fn().mockResolvedValue({ scanned: 0, fired: 0, published: 0 }),
   subtasks: vi.fn().mockResolvedValue({ inserted: 0 }),
   prune: vi.fn().mockResolvedValue(undefined),
+  embeddedMedia: vi.fn().mockResolvedValue({ scanned: 0, reclaimed: 0, failed: 0 }),
   digest: vi.fn().mockResolvedValue({ recipients: 0, sent: 0, empty: 0, released: 0, failed: 0, unknown: 0, skipped: 0 }),
 }));
+vi.mock("../src/embedded-media-sweep", () => ({ sweepEmbeddedMedia: scheduledJobs.embeddedMedia }));
 
 vi.mock("../src/subtask-reminders", () => ({
   scanSubtaskReminderOccurrences: scheduledJobs.subtaskScan,
@@ -53,6 +55,7 @@ beforeEach(() => {
   scheduledJobs.manualPublish.mockResolvedValue({ scanned: 0, recovered: 0, skipped: 0 });
   scheduledJobs.raw.mockResolvedValue({ attempted: 0, advanced: 0, skipped: 0, failures: 0 });
   scheduledJobs.editedArrival.mockResolvedValue({ scanned: 0, moved: 0, kept: 0, cleared: 0, failures: 0 });
+  scheduledJobs.embeddedMedia.mockResolvedValue({ scanned: 0, reclaimed: 0, failed: 0 });
   scheduledJobs.digest.mockResolvedValue({ recipients: 0, sent: 0, empty: 0, released: 0, failed: 0, unknown: 0, skipped: 0 });
   consoleError.mockClear();
   consoleWarn.mockClear();
@@ -123,6 +126,23 @@ describe("background scheduled Cron dispatch", () => {
   it("runs the Edited arrival pass with the scheduled instant, and with Editor automation off", async () => {
     await worker().scheduled(controller("* * * * *"));
     expect(scheduledJobs.editedArrival).toHaveBeenCalledWith(expect.anything(), 1_725_000_000_000);
+  });
+
+  it("runs the embedded media sweep once a day, on the hourly trigger at 19:00 UTC (03:00 Malaysia), and never on the minute trigger", async () => {
+    const at = (hour: number) => ({ cron: "0 * * * *", scheduledTime: Date.UTC(2026, 9, 4, hour, 0), noRetry() {} }) as ScheduledController;
+    for (let hour = 0; hour < 24; hour += 1) await worker().scheduled(at(hour));
+    expect(scheduledJobs.embeddedMedia).toHaveBeenCalledOnce();
+    expect(scheduledJobs.embeddedMedia).toHaveBeenCalledWith(expect.anything(), Date.UTC(2026, 9, 4, 19, 0));
+    scheduledJobs.embeddedMedia.mockClear();
+    await worker().scheduled({ cron: "* * * * *", scheduledTime: Date.UTC(2026, 9, 4, 19, 0), noRetry() {} } as ScheduledController);
+    expect(scheduledJobs.embeddedMedia).not.toHaveBeenCalled();
+  });
+
+  it("isolates a failing embedded media sweep, and runs it after the other hourly jobs", async () => {
+    scheduledJobs.embeddedMedia.mockRejectedValueOnce(new Error("sweep failed"));
+    await expect(worker().scheduled({ cron: "0 * * * *", scheduledTime: Date.UTC(2026, 9, 4, 19, 0), noRetry() {} } as ScheduledController)).resolves.toBeUndefined();
+    for (const job of [scheduledJobs.raw, scheduledJobs.stalled, scheduledJobs.subtasks, scheduledJobs.prune]) expect(job).toHaveBeenCalledOnce();
+    expect(consoleError).toHaveBeenCalled();
   });
 
   it("warns and runs nothing for an unrecognized trigger", async () => {
