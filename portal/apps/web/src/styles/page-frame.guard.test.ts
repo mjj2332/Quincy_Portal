@@ -264,7 +264,7 @@ export function diffFrameManifest(
 const FRAME_MANIFEST: Record<string, FrameCounts> = {
   "screens/Dashboard.tsx": { full: 1, capped: 0 },
   // FULL_PAGE (loading/unavailable/error) + the two collaboration-only views, capped.
-  "screens/ProjectWorkspace.tsx": { full: 1, capped: 2 },
+  "screens/ProjectWorkspace.tsx": { full: 1, capped: 3 }, // #498: the collaboration-only view's whiteboard keeps the capped frame, like its sibling views
   "screens/CreateProject.tsx": { full: 0, capped: 1 },
   "screens/EditProject.tsx": { full: 0, capped: 1 },
   "screens/Admin.tsx": { full: 0, capped: 1 },

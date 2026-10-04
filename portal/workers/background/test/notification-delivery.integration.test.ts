@@ -9,7 +9,7 @@ import {
   NOTIFICATION_QUEUE_STUCK_MS,
   deliverBroadInApp,
   processNotificationDlqMessage,
-  processNotificationMessage,
+  processNotificationMessage as processNotificationMessageReal,
   recoverNotificationOutbox,
 } from "../src/notification-delivery";
 
@@ -24,6 +24,20 @@ async function executeSql(source: string): Promise<void> {
       if (flat) await database.DB.exec(`${flat};`);
     }
   }
+}
+
+/**
+ * #489: a user with no preference row now defaults to the twice-daily digest, which defers a non-exempt
+ * email. The tests that predate the digest assert inline sends, so every user WITHOUT a preference row is
+ * put on Immediately before the consumer runs. A test that sets a cadence explicitly keeps its row.
+ */
+async function processNotificationMessage(env: Env, message: Parameters<typeof processNotificationMessageReal>[1]) {
+  await database.DB.prepare("INSERT INTO notification_preferences (user_id, email_digest_cadence, updated_at) SELECT id, 'immediate', ? FROM user WHERE true ON CONFLICT(user_id) DO NOTHING").bind(Date.now()).run();
+  return processNotificationMessageReal(env, message);
+}
+
+async function setCadence(userId: string, cadence: "immediate" | "hourly" | "twice_daily" | "daily") {
+  await database.DB.prepare("INSERT INTO notification_preferences (user_id, email_digest_cadence, updated_at) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET email_digest_cadence = excluded.email_digest_cadence").bind(userId, cadence, Date.now()).run();
 }
 
 type DeliveryFixtureOptions = {
@@ -1042,5 +1056,194 @@ describe("#368 per-person subtask assignment delivery (the relation is authorita
     const ledgers = (await database.DB.prepare("SELECT channel, status FROM notification_delivery_ledger WHERE outbox_id = ? ORDER BY channel").bind(pending!).all<{ channel: string; status: string }>()).results;
     expect(ledgers.find((row) => row.channel === "in_app")?.status).toBe("sent");
     expect(ledgers.find((row) => row.channel === "email")?.status).toBe("suppressed");
+  });
+});
+
+describe("#489 email digest deferral through the durable consumer", () => {
+  beforeAll(async () => {
+    const applied = await database.DB.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'notification_outbox'").first();
+    if (!applied) await executeSql(__PORTAL_MIGRATION_SQL__);
+  }, 60_000);
+
+  async function digestState(outboxId: string) {
+    const ledgers = await database.DB.prepare("SELECT channel, status FROM notification_delivery_ledger WHERE outbox_id = ? ORDER BY channel").bind(outboxId).all<{ channel: string; status: string }>();
+    const items = await database.DB.prepare("SELECT i.recipient_id AS recipientId, i.project_id AS projectId, i.notification_type AS type, i.state, i.notification_id AS notificationId, l.channel AS ledgerChannel FROM notification_digest_items i JOIN notification_delivery_ledger l ON l.id = i.ledger_id WHERE l.outbox_id = ?").bind(outboxId).all<{ recipientId: string; projectId: string; type: string; state: string; notificationId: string; ledgerChannel: string }>();
+    const outbox = await database.DB.prepare("SELECT status FROM notification_outbox WHERE id = ?").bind(outboxId).first<{ status: string }>();
+    return { ledgers: ledgers.results, items: items.results, outbox };
+  }
+
+  it("defers a project-comment mention for a twice-daily user: in-app now, one pending digest item, no email, outbox completed", async () => {
+    const fixture = await seedDelivery();
+    await setCadence(fixture.recipientId, "twice_daily");
+    const send = vi.fn().mockResolvedValue({ messageId: "must-not-send" });
+    const m = message(fixture.outboxId);
+    await processNotificationMessage(deliveryEnv(send), m);
+    expect(send).not.toHaveBeenCalled();
+    const found = await digestState(fixture.outboxId);
+    expect(found.ledgers).toEqual([{ channel: "email", status: "deferred" }, { channel: "in_app", status: "sent" }]);
+    const notification = await database.DB.prepare("SELECT id, email_sent_at AS emailSentAt FROM notifications WHERE source_key = ?").bind(fixture.mappingId).first<{ id: string; emailSentAt: number | null }>();
+    expect(notification?.emailSentAt).toBeNull();
+    expect(found.items).toEqual([{ recipientId: fixture.recipientId, projectId: fixture.projectId, type: "mentioned", state: "pending", notificationId: notification!.id, ledgerChannel: "email" }]);
+    expect(found.outbox).toEqual({ status: "completed" });
+    expect((m as { ack: ReturnType<typeof vi.fn> }).ack).toHaveBeenCalledOnce();
+  });
+
+  it.each(["hourly", "daily"] as const)("defers for a %s user as well", async (cadence) => {
+    const fixture = await seedDelivery();
+    await setCadence(fixture.recipientId, cadence);
+    const send = vi.fn();
+    await processNotificationMessage(deliveryEnv(send), message(fixture.outboxId));
+    expect(send).not.toHaveBeenCalled();
+    expect((await digestState(fixture.outboxId)).items).toHaveLength(1);
+  });
+
+  it("defers even when the email binding is not configured, since the digest run owns sending", async () => {
+    const fixture = await seedDelivery();
+    await setCadence(fixture.recipientId, "twice_daily");
+    await processNotificationMessage(deliveryEnv(), message(fixture.outboxId));
+    expect((await digestState(fixture.outboxId)).ledgers).toEqual([{ channel: "email", status: "deferred" }, { channel: "in_app", status: "sent" }]);
+  });
+
+  it("still sends inline for an Immediately user and records no digest item", async () => {
+    const fixture = await seedDelivery();
+    await setCadence(fixture.recipientId, "immediate");
+    const send = vi.fn().mockResolvedValue({ messageId: "inline-1" });
+    await processNotificationMessage(deliveryEnv(send), message(fixture.outboxId));
+    expect(send).toHaveBeenCalledTimes(1);
+    const found = await digestState(fixture.outboxId);
+    expect(found.ledgers).toEqual([{ channel: "email", status: "sent" }, { channel: "in_app", status: "sent" }]);
+    expect(found.items).toEqual([]);
+  });
+
+  it("creates exactly one digest item when the same message is delivered twice", async () => {
+    const fixture = await seedDelivery();
+    await setCadence(fixture.recipientId, "twice_daily");
+    const send = vi.fn();
+    await processNotificationMessage(deliveryEnv(send), message(fixture.outboxId));
+    await processNotificationMessage(deliveryEnv(send), message(fixture.outboxId));
+    expect(send).not.toHaveBeenCalled();
+    expect((await digestState(fixture.outboxId)).items).toHaveLength(1);
+  });
+
+  it("defers a durable assignment for a daily user", async () => {
+    const fixture = await seedAssignment();
+    await setCadence(fixture.recipientId, "daily");
+    const send = vi.fn();
+    await processNotificationMessage(deliveryEnv(send), message(fixture.outboxId));
+    expect(send).not.toHaveBeenCalled();
+    const found = await digestState(fixture.outboxId);
+    expect(found.ledgers).toEqual([{ channel: "email", status: "deferred" }, { channel: "in_app", status: "sent" }]);
+    expect(found.items).toEqual([expect.objectContaining({ type: "assigned_to_project", state: "pending" })]);
+  });
+
+  it("does not defer when email access is lost between in-app and email: the channel is suppressed, not deferred", async () => {
+    const fixture = await seedDelivery();
+    await setCadence(fixture.recipientId, "twice_daily");
+    await database.DB.prepare("UPDATE user SET active = 0 WHERE id = ?").bind(fixture.recipientId).run();
+    await processNotificationMessage(deliveryEnv(vi.fn()), message(fixture.outboxId));
+    const found = await digestState(fixture.outboxId);
+    expect(found.items).toEqual([]);
+    expect(found.ledgers.find((ledger) => ledger.channel === "email")?.status).not.toBe("deferred");
+  });
+
+  it("never resends, replays or discards a deferred ledger: Cron recovery and the operator discard leave it alone", async () => {
+    const fixture = await seedDelivery();
+    await setCadence(fixture.recipientId, "twice_daily");
+    await processNotificationMessage(deliveryEnv(vi.fn()), message(fixture.outboxId));
+    const before = await digestState(fixture.outboxId);
+    expect(before.ledgers).toEqual([{ channel: "email", status: "deferred" }, { channel: "in_app", status: "sent" }]);
+    await recoverNotificationOutbox(deliveryEnv(vi.fn()), Date.now() + 24 * 60 * 60_000);
+    await processNotificationDlqMessage(deliveryEnv(vi.fn()), message(fixture.outboxId));
+    const after = await digestState(fixture.outboxId);
+    expect(after.ledgers).toEqual(before.ledgers);
+    expect(after.outbox).toEqual({ status: "completed" });
+    expect(after.items).toHaveLength(1);
+  });
+
+  it("sends exactly once when a failed digest item is replayed after the user switched to Immediately", async () => {
+    const fixture = await seedDelivery();
+    await setCadence(fixture.recipientId, "twice_daily");
+    const send = vi.fn().mockResolvedValue({ messageId: "direct" });
+    await processNotificationMessage(deliveryEnv(send), message(fixture.outboxId));
+    // The digest run failed permanently: item and email ledger are failed, as the digest leaves them.
+    await database.DB.batch([
+      database.DB.prepare("UPDATE notification_digest_items SET state = 'failed', outcome_code = 'E_X' WHERE ledger_id IN (SELECT id FROM notification_delivery_ledger WHERE outbox_id = ?)").bind(fixture.outboxId),
+      database.DB.prepare("UPDATE notification_delivery_ledger SET status = 'failed' WHERE outbox_id = ? AND channel = 'email'").bind(fixture.outboxId),
+    ]);
+    await setCadence(fixture.recipientId, "immediate");
+    // The operator replay (admin route) resets the email ledger, the item and the outbox.
+    await database.DB.batch([
+      database.DB.prepare("UPDATE notification_delivery_ledger SET status = 'pending' WHERE outbox_id = ? AND channel = 'email'").bind(fixture.outboxId),
+      database.DB.prepare("UPDATE notification_digest_items SET state = 'pending', outcome_code = NULL, digest_id = NULL WHERE ledger_id IN (SELECT id FROM notification_delivery_ledger WHERE outbox_id = ?)").bind(fixture.outboxId),
+      database.DB.prepare("UPDATE notification_outbox SET status = 'pending', completed_at = NULL, lease_token = NULL, lease_expires_at = NULL WHERE id = ?").bind(fixture.outboxId),
+    ]);
+    await processNotificationMessage(deliveryEnv(send), message(fixture.outboxId));
+    expect(send).not.toHaveBeenCalled();
+    const found = await digestState(fixture.outboxId);
+    expect(found.ledgers).toEqual([{ channel: "email", status: "deferred" }, { channel: "in_app", status: "sent" }]);
+    expect(found.items).toEqual([expect.objectContaining({ state: "pending" })]);
+  });
+});
+
+describe("#490 Project activity is digest-only through the durable consumer", () => {
+  beforeAll(async () => {
+    const applied = await database.DB.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'notification_outbox'").first();
+    if (!applied) await executeSql(__PORTAL_MIGRATION_SQL__);
+  }, 60_000);
+
+  async function deliverActivity(options: { cadence?: "immediate" | "hourly" | "twice_daily" | "daily"; includeActivity?: boolean; removeMembership?: boolean } = {}) {
+    const fixture = await seedBroadDelivery();
+    if (options.cadence) await setCadence(fixture.recipientId, options.cadence);
+    if (options.includeActivity === false) {
+      await database.DB.prepare("INSERT INTO notification_preferences (user_id, include_project_activity, updated_at) VALUES (?, 0, ?) ON CONFLICT(user_id) DO UPDATE SET include_project_activity = 0").bind(fixture.recipientId, Date.now()).run();
+    }
+    if (options.removeMembership) await database.DB.prepare("DELETE FROM project_members WHERE id = ?").bind(fixture.membershipId).run();
+    const send = vi.fn().mockResolvedValue({ messageId: "must-not-send" });
+    const m = message(fixture.outboxId);
+    await processNotificationMessage(deliveryEnv(send), m);
+    return { fixture, send, m };
+  }
+
+  async function itemsFor(recipientId: string) {
+    return (await database.DB.prepare("SELECT i.notification_id AS notificationId, i.project_id AS projectId, i.notification_type AS type, i.state, i.ledger_id AS ledgerId, n.user_id AS owner FROM notification_digest_items i LEFT JOIN notifications n ON n.id = i.notification_id WHERE i.recipient_id = ?").bind(recipientId).all<{ notificationId: string; projectId: string; type: string; state: string; ledgerId: string | null; owner: string }>()).results;
+  }
+
+  it.each(["twice_daily", "hourly", "daily", "immediate"] as const)("records one pending digest item and sends no email for a %s user", async (cadence) => {
+    const { fixture, send, m } = await deliverActivity({ cadence });
+    expect(send).not.toHaveBeenCalled();
+    expect((m as { ack: ReturnType<typeof vi.fn> }).ack).toHaveBeenCalledOnce();
+    const notification = await database.DB.prepare("SELECT id, email_sent_at AS emailSentAt FROM notifications WHERE user_id = ? AND project_id = ?").bind(fixture.recipientId, fixture.projectId).first<{ id: string; emailSentAt: number | null }>();
+    expect(notification?.emailSentAt).toBeNull();
+    expect(await itemsFor(fixture.recipientId)).toEqual([{ notificationId: notification!.id, projectId: fixture.projectId, type: "project_collaboration_activity", state: "pending", ledgerId: null, owner: fixture.recipientId }]);
+    // The outbox still completes with the in-app ledger alone: there is no email ledger row to drain.
+    expect(await database.DB.prepare("SELECT status FROM notification_outbox WHERE id = ?").bind(fixture.outboxId).first()).toEqual({ status: "completed" });
+    expect(await database.DB.prepare("SELECT channel, status FROM notification_delivery_ledger WHERE outbox_id = ?").bind(fixture.outboxId).all()).toMatchObject({ results: [{ channel: "in_app", status: "sent" }] });
+  });
+
+  it("creates no digest item when the person turned Include Project activity off, and still delivers in-app", async () => {
+    const { fixture, send } = await deliverActivity({ cadence: "twice_daily", includeActivity: false });
+    expect(send).not.toHaveBeenCalled();
+    expect(await itemsFor(fixture.recipientId)).toEqual([]);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notifications WHERE user_id = ? AND project_id = ?").bind(fixture.recipientId, fixture.projectId).first()).toEqual({ count: 1 });
+  });
+
+  it("creates no digest item when in-app delivery is suppressed (the recipient left the Project)", async () => {
+    const { fixture } = await deliverActivity({ cadence: "twice_daily", removeMembership: true });
+    expect(await itemsFor(fixture.recipientId)).toEqual([]);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notifications WHERE user_id = ?").bind(fixture.recipientId).first()).toEqual({ count: 0 });
+  });
+
+  it("creates no digest item for a deactivated recipient", async () => {
+    const fixture = await seedBroadDelivery();
+    await setCadence(fixture.recipientId, "twice_daily");
+    await database.DB.prepare("UPDATE user SET active = 0 WHERE id = ?").bind(fixture.recipientId).run();
+    await processNotificationMessage(deliveryEnv(), message(fixture.outboxId));
+    expect(await itemsFor(fixture.recipientId)).toEqual([]);
+  });
+
+  it("creates exactly one digest item when the same message is delivered twice", async () => {
+    const { fixture } = await deliverActivity({ cadence: "twice_daily" });
+    await processNotificationMessage(deliveryEnv(), message(fixture.outboxId));
+    expect(await itemsFor(fixture.recipientId)).toHaveLength(1);
   });
 });

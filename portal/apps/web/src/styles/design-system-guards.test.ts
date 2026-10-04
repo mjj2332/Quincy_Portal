@@ -776,6 +776,22 @@ describe("guard: the bare-border compat rule", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Guard — FieldDescription help/status text needs 4.5:1 (#488 design review)
+// ---------------------------------------------------------------------------
+// The vendored default was `text-muted-foreground` (--text-muted, greige-400): 3.57:1 on white, an axe
+// `color-contrast` failure for the 12-14px help and status text under a field (same defect as #212).
+describe("guard: FieldDescription reads the secondary text role (#488)", () => {
+  it("does not use the muted text role", () => {
+    const field = readFileSync(join(srcDir, "components/reui/field.tsx"), "utf8");
+    const at = field.indexOf('data-slot="field-description"');
+    expect(at, "field-description not found in reui/field.tsx").toBeGreaterThan(-1);
+    const classes = /className=\{cn\(\s*"([^"]+)"/.exec(field.slice(at))?.[1] ?? "";
+    expect(classes, "FieldDescription must not use the 3.57:1 muted text role").not.toMatch(/\btext-muted-foreground\b/);
+    expect(classes, "FieldDescription must use text-foreground-secondary").toContain("text-foreground-secondary");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Guard — avatar fallback initials are text, so they need 4.5:1 (#212)
 // ---------------------------------------------------------------------------
 // The vendored `AvatarFallback` / `AvatarGroupCount` shipped `text-muted-foreground` on `bg-muted`:

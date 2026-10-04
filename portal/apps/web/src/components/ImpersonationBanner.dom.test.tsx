@@ -66,4 +66,10 @@ describe("ImpersonationBanner", () => {
     expect(button.classList.contains("button--text")).toBe(false);
     expect(button.classList.contains("hover:not-disabled:!text-on-inverse")).toBe(true);
   });
+
+  it("names an External editor with its label, not the raw role key (#517)", async () => {
+    await act(async () => { root!.render(<ImpersonationBanner user={{ name: "Ext Example", role: "external_editor" }} invalidated={false} />); });
+    expect(host.textContent).toContain("Acting as Ext Example (External editor) · Exit");
+    expect(host.textContent).not.toContain("External_editor");
+  });
 });

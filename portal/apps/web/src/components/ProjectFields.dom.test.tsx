@@ -2,7 +2,9 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { emptyProjectForm, ProjectFields, type ProjectForm, type User } from "./ProjectFields";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ApiError } from "../lib/api";
+import { emptyProjectForm, ProjectFields, type ProjectForm } from "./ProjectFields";
 import "@/testing/dom-polyfills";
 
 const apiGetMock = vi.fn<(path: string) => Promise<unknown>>();
@@ -11,27 +13,28 @@ vi.mock("../lib/api", async (importOriginal) => {
   return { ...actual, apiGet: (path: string) => apiGetMock(path) };
 });
 
-function user(id: string, role: User["role"]): User {
-  return { id, name: `${role} ${id}`, email: `${id}@example.test`, role, active: true };
-}
+type Person = { id: string; name: string; email: string; globalRole: "photographer" | "editor" | "external_editor" | "admin"; active: true; defaultEditor?: boolean };
 
-function candidate(value: User) {
-  const { role, ...rest } = value;
-  return { ...rest, globalRole: role };
+function person(id: string, globalRole: Person["globalRole"], extra: Partial<Person> = {}): Person {
+  return { id, name: `${globalRole} ${id}`, email: `${id}@example.test`, globalRole, active: true, ...extra };
 }
 
 let root: Root | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 function mount() {
+  queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   return host;
 }
 
+let queryClient: QueryClient;
+
 async function render(value: ReactNode) {
-  await act(async () => { root!.render(value); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  await act(async () => { root!.render(<QueryClientProvider client={queryClient}>{value}</QueryClientProvider>); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
 }
 
 async function changeInput(element: HTMLInputElement, value: string) {
@@ -53,13 +56,19 @@ function click(el: Element) {
   return act(async () => { el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await Promise.resolve(); });
 }
 
-function checklistLabel(host: HTMLElement, heading: string, userId: string): HTMLLabelElement {
-  const headingEl = [...host.querySelectorAll('[data-slot="eyebrow"]')].find((el) => el.textContent === heading);
-  if (!headingEl) throw new Error(`No "${heading}" heading`);
-  const checklist = headingEl.parentElement?.querySelector('[data-testid="create-project-checklist"]');
-  const label = [...(checklist?.querySelectorAll('label[data-testid="create-project-check"]') ?? [])].find((el) => el.querySelector(`input[type="checkbox"]`) && el.textContent?.includes(userId));
-  if (!label) throw new Error(`No checklist entry for ${userId} under "${heading}"`);
-  return label as HTMLLabelElement;
+async function openPicker() {
+  const input = document.querySelector<HTMLInputElement>('[aria-label="Add team member"]')!;
+  await act(async () => { input.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); input.focus(); await Promise.resolve(); });
+  for (let attempt = 0; attempt < 50 && !document.querySelector('[role="listbox"]'); attempt += 1) await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 20)); });
+  return input;
+}
+
+function group(label: string): HTMLElement | undefined {
+  return [...document.querySelectorAll<HTMLElement>('[role="group"]')].find((element) => element.textContent?.startsWith(label));
+}
+
+function option(groupLabel: string, text: string): HTMLElement | undefined {
+  return [...(group(groupLabel)?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])].find((element) => element.textContent?.includes(text));
 }
 
 const form: ProjectForm = { ...emptyProjectForm, photographerUserIds: [], editorUserIds: [] };
@@ -70,51 +79,91 @@ const clientControls = [
   ["project-agent-phone", "agentPhone", "+61 412 345 678"],
 ] as const;
 
-describe("ProjectFields photographer/editor team pickers", () => {
+describe("ProjectFields Team (create mode combobox, #487)", () => {
   let host: HTMLElement;
   beforeEach(() => { host = mount(); apiGetMock.mockReset(); });
-  afterEach(async () => { await unmount(); host.remove(); });
+  afterEach(async () => { await unmount(); host.remove(); document.body.replaceChildren(); });
 
-  it("offers an editor-role user in the Photographers checklist with an editor badge, selectable like a photographer", async () => {
-    const users = [user("photographer-1", "photographer"), user("editor-1", "editor")];
-    apiGetMock.mockResolvedValue({ photographers: users.filter((item) => item.role !== "admin").map(candidate), editors: users.filter((item) => item.role === "editor").map(candidate) });
-    const onToggle = vi.fn();
-
-    await render(<ProjectFields form={form} errors={{}} onChange={() => undefined} onToggle={onToggle} />);
-
-    const label = checklistLabel(host, "Photographers", "editor-1");
-    expect(label.textContent).toContain("· editor");
-    const checkbox = label.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-    expect(checkbox.checked).toBe(false);
-
-    await click(checkbox);
-    expect(onToggle).toHaveBeenCalledWith("photographerUserIds", "editor-1");
-  });
-
-  it("leaves the Editors checklist candidate set unchanged (no photographer-role users appear there)", async () => {
-    const users = [user("photographer-1", "photographer"), user("editor-1", "editor")];
-    apiGetMock.mockResolvedValue({ photographers: users.filter((item) => item.role !== "admin").map(candidate), editors: users.filter((item) => item.role === "editor").map(candidate) });
-
+  it("has no checkbox team lists any more, only the Services checkboxes", async () => {
+    apiGetMock.mockResolvedValue({ photographers: [person("photographer-1", "photographer")], editors: [] });
     await render(<ProjectFields form={form} errors={{}} onChange={() => undefined} onToggle={() => undefined} />);
-
-    expect(() => checklistLabel(host, "Editors", "photographer-1")).toThrow();
-    const editorLabel = checklistLabel(host, "Editors", "editor-1");
-    expect(editorLabel.textContent).not.toContain("· editor");
+    expect(host.querySelector('[data-testid="create-project-checklist"]')).toBeNull();
+    expect(host.querySelector('[aria-label="Add team member"]')).not.toBeNull();
+    // RAW + the four services.
+    expect(host.querySelectorAll('input[type="checkbox"]')).toHaveLength(5);
   });
 
-  it("shows the editor already selected in the photographer slot as checked, and lets it be deselected", async () => {
-    const users = [user("editor-1", "editor")];
-    apiGetMock.mockResolvedValue({ photographers: users.filter((item) => item.role !== "admin").map(candidate), editors: users.filter((item) => item.role === "editor").map(candidate) });
+  it("offers an editor-role user under Photographers with an Editor description, selectable like a photographer", async () => {
+    const people = [person("photographer-1", "photographer"), person("editor-1", "editor")];
+    apiGetMock.mockResolvedValue({ photographers: people, editors: [people[1]] });
     const onToggle = vi.fn();
-    const preselected: ProjectForm = { ...form, photographerUserIds: ["editor-1"] };
+    await render(<ProjectFields form={form} errors={{}} onChange={() => undefined} onToggle={onToggle} />);
+    await openPicker();
 
-    await render(<ProjectFields form={preselected} errors={{}} onChange={() => undefined} onToggle={onToggle} />);
-
-    const checkbox = checklistLabel(host, "Photographers", "editor-1").querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-    expect(checkbox.checked).toBe(true);
-
-    await click(checkbox);
+    const item = option("Photographers", "editor-1")!;
+    expect(item.textContent).toContain("Editor");
+    await click(item);
     expect(onToggle).toHaveBeenCalledWith("photographerUserIds", "editor-1");
+  });
+
+  it("describes an External editor candidate as External editor in the collect-mode row (#517)", async () => {
+    const people = [person("external-1", "external_editor")];
+    apiGetMock.mockResolvedValue({ photographers: [], editors: people });
+    await render(<ProjectFields form={form} errors={{}} onChange={() => undefined} onToggle={() => undefined} />);
+    await openPicker();
+
+    const item = option("Editors", "external-1")!;
+    const description = item.querySelector<HTMLElement>("[title]")!;
+    expect(description.title).toBe("external-1@example.test · External editor");
+    expect(description.lastElementChild!.textContent).toBe("External editor");
+  });
+
+  it("leaves the Editors candidate set unchanged (no photographer-role users appear there)", async () => {
+    const people = [person("photographer-1", "photographer"), person("editor-1", "editor")];
+    apiGetMock.mockResolvedValue({ photographers: people, editors: [people[1]] });
+    await render(<ProjectFields form={form} errors={{}} onChange={() => undefined} onToggle={() => undefined} />);
+    await openPicker();
+    expect(option("Editors", "photographer-1")).toBeUndefined();
+    expect(option("Editors", "editor-1")).toBeDefined();
+  });
+
+  it("shows an editor already picked for the photographer slot as a chip, and a click on its x deselects it", async () => {
+    const people = [person("editor-1", "editor")];
+    apiGetMock.mockResolvedValue({ photographers: people, editors: people });
+    const onToggle = vi.fn();
+    await render(<ProjectFields form={{ ...form, photographerUserIds: ["editor-1"] }} errors={{}} onChange={() => undefined} onToggle={onToggle} />);
+
+    expect(host.querySelector('[data-testid="project-member-photographer:editor-1"]')).not.toBeNull();
+    await click(host.querySelector('[data-testid="project-member-remove"]')!);
+    expect(onToggle).toHaveBeenCalledWith("photographerUserIds", "editor-1");
+  });
+
+  it("shows a Default editor chip marked as such, with no way to remove it", async () => {
+    apiGetMock.mockResolvedValue({ photographers: [], editors: [person("editor-1", "editor", { defaultEditor: true })] });
+    await render(<ProjectFields form={form} errors={{}} onChange={() => undefined} onToggle={() => undefined} />);
+    const chip = host.querySelector('[data-testid="project-member-editor:editor-1"]')!;
+    expect(chip.textContent).toContain("Default editor");
+    expect(chip.querySelector('[data-testid="project-member-remove"]')).toBeNull();
+  });
+
+  it("labels the control Team members, and the label names the search input", async () => {
+    apiGetMock.mockResolvedValue({ photographers: [], editors: [] });
+    await render(<ProjectFields form={form} errors={{}} onChange={() => undefined} onToggle={() => undefined} />);
+    const label = [...host.querySelectorAll<HTMLLabelElement>("label")].find((element) => element.textContent === "Team members")!;
+    expect(label.control).toBe(host.querySelector('[aria-label="Add team member"]'));
+  });
+
+  it("renders no Team section in edit mode and does not ask for candidates", async () => {
+    await render(<ProjectFields form={form} errors={{}} mode="edit" onChange={() => undefined} onToggle={() => undefined} />);
+    expect(host.querySelector("#team-heading")).toBeNull();
+    expect(host.querySelector('[aria-label="Add team member"]')).toBeNull();
+    expect(apiGetMock).not.toHaveBeenCalled();
+  });
+
+  it("says so when candidates cannot be loaded", async () => {
+    apiGetMock.mockRejectedValue(new ApiError("Candidates unavailable", 400));
+    await render(<ProjectFields form={form} errors={{}} onChange={() => undefined} onToggle={() => undefined} />);
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Candidates could not be loaded");
   });
 });
 

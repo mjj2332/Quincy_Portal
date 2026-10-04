@@ -1,17 +1,14 @@
-import { useCallback, useEffect, useState } from "react";
-import type { CollectionKind, MonitoredRawFolder, Role } from "@quincy/shared";
-import { apiGet } from "../lib/api";
+import type { ReactNode } from "react";
+import type { CollectionKind, MonitoredRawFolder } from "@quincy/shared";
 import { cn } from "@/lib/utils";
-import { FieldGroup } from "@/components/reui/field";
+import { FieldGroup, FieldLabel } from "@/components/reui/field";
 import { DateTimeField } from "@/components/quincy/DateTimeField";
 import { QuincyField } from "@/components/quincy/QuincyField";
 import { QuincyTextareaField } from "@/components/quincy/QuincyTextareaField";
 import { SectionHead } from "@/components/quincy/SectionHead";
-import { Eyebrow } from "@/components/quincy/Eyebrow";
 import { Notice } from "@/components/quincy/Notice";
-import { buttonClasses } from "@/components/quincy/Button";
+import { ProjectTeamCollectCombobox } from "./ProjectTeamCombobox";
 
-export type User = { id: string; name: string; email: string; role: Role; active: boolean };
 export type ProjectForm = {
   street: string; suburb: string; postcode: string; agencyName: string; agentName: string; agentEmail: string; agentPhone: string;
   shootDate: string; timeWindow: string; orderNo: string; orderId: string; invoiceAmount: string; paymentStatus: string; notes: string; productionNotes: string;
@@ -22,7 +19,6 @@ export type ProjectSelectionField = "orderedServices" | "photographerUserIds" | 
 export type ProjectFieldError = "agentEmail" | "rawFolderLink" | "invoiceAmount";
 export type ProjectFieldsMode = "create" | "edit";
 
-type AssignmentCandidatesResponse = { photographers: Array<Omit<User, "role"> & { globalRole: Role }>; editors: Array<Omit<User, "role"> & { globalRole: Role }> };
 type Service = { kind: Exclude<CollectionKind, "raw">; label: string };
 
 export const SERVICES: Service[] = [
@@ -39,7 +35,7 @@ export const emptyProjectForm: ProjectForm = {
 };
 
 // Inlined from the legacy `ui/checkbox` primitive, which this file no longer imports. The
-// checklist and services-grid checkboxes stay native `<input type="checkbox">`s, not ReUI's Base
+// services-grid checkboxes stay native `<input type="checkbox">`s, not ReUI's Base
 // UI `Checkbox`: `ProjectFields.test.ts:66,132` match serialised markup on
 // `/<input type="checkbox"[^>]*><span[^>]*>…<\/span>/g`, but Base UI's hidden input orders its
 // props `checked, disabled, form, name, id, required, ref, style, tabIndex, type, …` (so `type`
@@ -51,7 +47,7 @@ const CHECKBOX_INPUT =
   "focus-visible:outline-ring focus-visible:outline-offset-2 " +
   "disabled:cursor-not-allowed";
 
-/* A bordered, selectable tile: the services grid and the create-mode team checklist. */
+/* A bordered, selectable tile: the services grid. */
 const CHECK_TILE =
   "flex items-start gap-[var(--space-3)] cursor-pointer " +
   "min-h-[var(--space-7)] p-[12px] bg-card text-foreground-secondary " +
@@ -75,24 +71,15 @@ export const FIELD_GRID_PROPERTY = "grid gap-[var(--space-4)] grid-cols-1 min-[7
 // is imported outside any `@layer`, and its unlayered `p { margin: 0 }` beats any margin utility
 // Tailwind emits into `@layer utilities`. Without the `!` these two collapse to zero. (§7 case O)
 const SECTION_NOTE = "!mt-[var(--space-2)] !mb-[var(--space-4)] [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary";
-// The team checklist's own empty message. It sits inside `TEAM_CHECKLIST`'s `bg-border` ground, so
-// it needs a tile's own paper behind it or it renders on the rule colour.
-const CHECKLIST_EMPTY = "m-0 p-[12px] bg-card [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary";
 const TILE_LABEL = "text-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]";
 const TILE_HINT = "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary";
 const TILE_SPAN = "flex min-w-0 flex-col gap-[var(--space-1)]";
-// Reproduces what the now-deleted `.create-project__checklist` rule did: a 1px-gap hairline grid,
-// same technique as the services grid, plus its own `margin-top: var(--space-3)`.
-const TEAM_CHECKLIST = "grid gap-[1px] mt-[var(--space-3)] bg-border border-solid border-[length:var(--border-width-hair)] border-border";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function isUrl(value: string): boolean {
   try { new URL(value); return true; } catch { return false; }
 }
-
-function userName(user: User): string { return user.name || user.email; }
-function roleLabel(role: Role): string { return role === "external_editor" ? "External editor" : role === "admin" ? "admin" : role === "editor" ? "editor" : ""; }
 
 export function projectFieldsPolicy(mode: ProjectFieldsMode = "create") {
   const readOnly = mode === "edit";
@@ -108,7 +95,7 @@ export function validateProjectFields(form: ProjectForm, mode: ProjectFieldsMode
   };
 }
 
-export function ProjectFields({ form, errors, existingCollections = [], mode = "create", monitoredRawFolder, onChange, onToggle }: {
+export function ProjectFields({ form, errors, existingCollections = [], mode = "create", monitoredRawFolder, shootExtras, onChange, onToggle }: {
   form: ProjectForm;
   errors: Partial<Record<ProjectFieldError, string>>;
   existingCollections?: CollectionKind[];
@@ -117,30 +104,11 @@ export function ProjectFields({ form, errors, existingCollections = [], mode = "
    * Tonomo fields below stay fully editable (they still drive Tonomo change detection, RAW
    * identity recovery and AutoHDR naming) but are no longer the folder being watched. */
   monitoredRawFolder?: MonitoredRawFolder | null;
+  /** #488: extra controls for the Shoot section (New shoot's Deadline and Priority), laid out under the date. Edit details passes none. */
+  shootExtras?: ReactNode;
   onChange: (field: ProjectTextField, value: string) => void;
   onToggle: (field: ProjectSelectionField, value: string) => void;
 }) {
-  const [users, setUsers] = useState<User[]>([]);
-  const [isLoadingUsers, setIsLoadingUsers] = useState(true);
-  const [usersError, setUsersError] = useState<string>();
-  const loadUsers = useCallback(async () => {
-    setIsLoadingUsers(true); setUsersError(undefined);
-    try {
-      const response = await apiGet<AssignmentCandidatesResponse>("/api/project-assignment-candidates");
-      const candidates = [...response.photographers, ...response.editors];
-      setUsers([...new Map(candidates.map((user) => [user.id, { ...user, role: user.globalRole }])).values()]);
-    }
-    catch (reason) { setUsersError(reason instanceof Error ? reason.message : "Team members could not be loaded."); }
-    finally { setIsLoadingUsers(false); }
-  }, []);
-
-  useEffect(() => {
-    if (mode !== "create") { setIsLoadingUsers(false); return; }
-    void loadUsers();
-  }, [loadUsers, mode]);
-
-  const photographers = users.filter((user) => (user.role === "photographer" || user.role === "editor" || user.role === "admin") && (user.active || form.photographerUserIds.includes(user.id)));
-  const editors = users.filter((user) => (user.role === "editor" || user.role === "external_editor" || user.role === "admin") && (user.active || form.editorUserIds.includes(user.id)));
   const collectionExists = (kind: CollectionKind) => existingCollections.includes(kind);
   const policy = projectFieldsPolicy(mode);
 
@@ -160,6 +128,7 @@ export function ProjectFields({ form, errors, existingCollections = [], mode = "
         <DateTimeField variant="date" id="project-shoot-date" label="Shoot date" clearable value={form.shootDate || null} onApply={(day) => onChange("shootDate", day ?? "")} />
         <QuincyField id="project-time-window" label="Time window" placeholder="e.g. 9:00–11:00 am" value={form.timeWindow} onChange={(event) => onChange("timeWindow", event.target.value)} />
       </div>
+      {shootExtras && <div className={cn(FIELD_GRID_2, "mt-[var(--space-4)]")}>{shootExtras}</div>}
     </section>
     <section className="create-project__section" aria-labelledby="order-heading">
       <SectionHead eyebrow="Order" id="order-heading">How is it tracked?</SectionHead>
@@ -197,18 +166,10 @@ export function ProjectFields({ form, errors, existingCollections = [], mode = "
     </section>
     {mode === "create" && <section className="create-project__section" aria-labelledby="team-heading">
       <SectionHead eyebrow="Team" id="team-heading">Who is assigned?</SectionHead>
-      {isLoadingUsers && <div role="status" className={SECTION_NOTE}>Loading available team members…</div>}
-      {!isLoadingUsers && usersError && <Notice role="alert">{usersError}<div className="mt-[var(--space-3)]"><button className={buttonClasses("secondary", {})} type="button" onClick={() => void loadUsers()}>Try again</button></div></Notice>}
-      {!isLoadingUsers && !usersError && <div className={FIELD_GRID_2}>
-        <div>
-          <Eyebrow className="block mb-[var(--space-2)]">Photographers</Eyebrow>
-          <div data-testid="create-project-checklist" className={TEAM_CHECKLIST}>{photographers.length ? photographers.map((user) => <label data-testid="create-project-check" className={CHECK_TILE} key={user.id}><input type="checkbox" checked={form.photographerUserIds.includes(user.id)} onChange={() => onToggle("photographerUserIds", user.id)} className={CHECKBOX_INPUT} /><span className={TILE_SPAN}><strong className={TILE_LABEL}>{userName(user)}</strong><small className={TILE_HINT}>{user.email}{roleLabel(user.role) && ` · ${roleLabel(user.role)}`}</small></span></label>) : <p className={CHECKLIST_EMPTY}>No active photographers are provisioned.</p>}</div>
-        </div>
-        <div>
-          <Eyebrow className="block mb-[var(--space-2)]">Editors</Eyebrow>
-          <div data-testid="create-project-checklist" className={TEAM_CHECKLIST}>{editors.length ? editors.map((user) => <label data-testid="create-project-check" className={CHECK_TILE} key={user.id}><input type="checkbox" checked={form.editorUserIds.includes(user.id)} onChange={() => onToggle("editorUserIds", user.id)} className={CHECKBOX_INPUT} /><span className={TILE_SPAN}><strong className={TILE_LABEL}>{userName(user)}</strong><small className={TILE_HINT}>{user.email}{user.role === "admin" && " · admin"}{user.role === "external_editor" && " · External editor"}</small></span></label>) : <p className={CHECKLIST_EMPTY}>No active editors are provisioned.</p>}</div>
-        </div>
-      </div>}
+      <div className="grid gap-[var(--space-2)]">
+        <FieldLabel htmlFor="project-team-input">Team members</FieldLabel>
+        <ProjectTeamCollectCombobox photographerUserIds={form.photographerUserIds} editorUserIds={form.editorUserIds} onToggle={onToggle} inputId="project-team-input" />
+      </div>
     </section>}
     <section className="create-project__section" aria-labelledby="notes-heading">
       <SectionHead eyebrow="Notes" id="notes-heading">Anything the team should know?</SectionHead>

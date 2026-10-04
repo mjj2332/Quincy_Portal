@@ -1,5 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { type NotificationType } from "@quincy/shared";
+import { DEFAULT_EMAIL_DIGEST_CADENCE, isDigestExemptType, isEmailDigestCadence, type EmailDigestCadence, type NotificationType } from "@quincy/shared";
 import type { Database } from "./index";
 import * as schema from "./schema";
 
@@ -139,12 +139,18 @@ export async function emitNotifications(
   const recipients = [...new Map(input.recipients.map((recipient) => [recipient.userId, recipient])).values()];
   // This is the security choke point for all legacy direct emitters. Do not rely on each of the
   // six current callers to remember the role boundary, and do not send an email before this
-  // reload. Tests that use a deliberately minimal mock DB have no select method; real D1-backed
-  // databases always take this branch.
-  const currentRoles = typeof (db as unknown as { select?: unknown }).select === "function"
-    ? await db.select({ id: schema.user.id, role: schema.user.role }).from(schema.user).where(inArray(schema.user.id, recipients.map((recipient) => recipient.userId))).all()
-    : [];
+  // reload. The same read carries each recipient's digest cadence (#489): there is deliberately no
+  // fallback for a missing `select`, so a recipient whose cadence cannot be read is never silently
+  // treated as Immediately.
+  const currentRoles = await db.select({
+    id: schema.user.id,
+    role: schema.user.role,
+    cadence: sql<string>`coalesce(${schema.notificationPreferences.emailDigestCadence}, ${DEFAULT_EMAIL_DIGEST_CADENCE})`,
+  }).from(schema.user)
+    .leftJoin(schema.notificationPreferences, eq(schema.notificationPreferences.userId, schema.user.id))
+    .where(inArray(schema.user.id, recipients.map((recipient) => recipient.userId))).all();
   const externalIds = new Set(currentRoles.filter((row) => row.role === "external_editor").map((row) => row.id));
+  const cadenceByUser = new Map<string, EmailDigestCadence>(currentRoles.map((row) => [row.id, isEmailDigestCadence(row.cadence) ? row.cadence : DEFAULT_EMAIL_DIGEST_CADENCE]));
   let insertedCount = 0;
   for (const recipient of recipients) {
     if (externalIds.has(recipient.userId)) continue;
@@ -158,8 +164,13 @@ export async function emitNotifications(
       sourceKey: input.sourceKey ?? null,
       createdAt: new Date(),
     };
+    // #489: a non-exempt email for a recipient who is not on Immediately waits for their Email digest.
+    // The notification row and its digest item are written in ONE batch, so a crash can never leave
+    // a notification whose email is neither sent nor pending.
+    const emailEligible = EMAIL_ENABLED_EVENTS.includes(input.type) && Boolean(input.email) && Boolean(input.fromAddress);
+    const deferToDigest = emailEligible && !isDigestExemptType(input.type) && (cadenceByUser.get(recipient.userId) ?? DEFAULT_EMAIL_DIGEST_CADENCE) !== "immediate";
     let didInsert: boolean;
-    if (input.sourceKey) {
+    if (input.sourceKey || deferToDigest) {
       // drizzle-orm's onConflictDoNothing({ target, where }) places `where` after
       // `DO NOTHING`, but SQLite requires a partial unique index's predicate *before*
       // DO NOTHING (as part of the conflict target itself) — the builder-generated SQL is
@@ -169,10 +180,42 @@ export async function emitNotifications(
       const guard = input.requireSubtaskAssignee;
       const guardedVersion = guard ? guard.versions[recipient.userId] : undefined;
       if (guard && guardedVersion === undefined) continue;
+      const conflict = input.sourceKey ? "on conflict (type, source_key, user_id) where source_key is not null do nothing" : "";
+      const createdAtMs = values.createdAt.getTime();
+      const row = [values.id, values.userId, values.projectId, values.type, values.title, values.body, values.sourceKey, createdAtMs];
+      if (deferToDigest) {
+        // Raw D1 batch (drizzle's D1 batch cannot carry raw SQL): D1 runs the statements in one
+        // transaction, and `changes()` in the second statement reads the first one's result.
+        const insertNotification = guard
+          ? db.$client.prepare(`
+              insert into notifications (id, user_id, project_id, type, title, body, source_key, created_at)
+              select ?, ?, ?, ?, ?, ?, ?, ?
+              where exists (
+                select 1 from project_subtask_assignees a
+                where a.subtask_id = ? and a.user_id = ? and a.assignment_version = ?
+              )
+              ${conflict}
+            `).bind(...row, guard.subtaskId, values.userId, guardedVersion)
+          : db.$client.prepare(`
+              insert into notifications (id, user_id, project_id, type, title, body, source_key, created_at)
+              values (?, ?, ?, ?, ?, ?, ?, ?)
+              ${conflict}
+            `).bind(...row);
+        const insertItem = db.$client.prepare(`
+          insert into notification_digest_items (id, recipient_id, notification_id, project_id, notification_type, state, created_at, updated_at)
+          select ?, ?, ?, ?, ?, 'pending', ?, ?
+          where changes() = 1
+          on conflict (notification_id) do nothing
+        `).bind(crypto.randomUUID(), values.userId, values.id, values.projectId, values.type, createdAtMs, createdAtMs);
+        const [result] = await db.$client.batch([insertNotification, insertItem]);
+        didInsert = (result?.meta?.changes ?? 0) === 1;
+        if (didInsert) insertedCount += 1;
+        continue;
+      }
       const result = guard
         ? await db.run(sql`
           insert into notifications (id, user_id, project_id, type, title, body, source_key, created_at)
-          select ${values.id}, ${values.userId}, ${values.projectId}, ${values.type}, ${values.title}, ${values.body}, ${values.sourceKey}, ${values.createdAt.getTime()}
+          select ${values.id}, ${values.userId}, ${values.projectId}, ${values.type}, ${values.title}, ${values.body}, ${values.sourceKey}, ${createdAtMs}
           where exists (
             select 1 from project_subtask_assignees a
             where a.subtask_id = ${guard.subtaskId} and a.user_id = ${values.userId} and a.assignment_version = ${guardedVersion}
@@ -181,7 +224,7 @@ export async function emitNotifications(
         `)
         : await db.run(sql`
         insert into notifications (id, user_id, project_id, type, title, body, source_key, created_at)
-        values (${values.id}, ${values.userId}, ${values.projectId}, ${values.type}, ${values.title}, ${values.body}, ${values.sourceKey}, ${values.createdAt.getTime()})
+        values (${values.id}, ${values.userId}, ${values.projectId}, ${values.type}, ${values.title}, ${values.body}, ${values.sourceKey}, ${createdAtMs})
         on conflict (type, source_key, user_id) where source_key is not null do nothing
       `);
       didInsert = (result.meta?.changes ?? 0) === 1;

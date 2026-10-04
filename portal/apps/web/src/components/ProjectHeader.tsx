@@ -11,6 +11,9 @@ import { ProjectHeaderDeadline } from "./ProjectHeaderDeadline";
 import { ProjectHeaderDropbox } from "./ProjectHeaderDropbox";
 import { Tabs, TabsList, TabsTrigger } from "@/components/reui/tabs";
 import { Badge } from "@/components/reui/badge";
+import { Button } from "@/components/reui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/reui/tooltip";
+import { PresentationIcon } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/reui/select";
 import { cn, formatUnreadCount } from "../lib/utils";
 import { HEADER_READONLY_VALUE, HEADER_TEXT_LINK, READONLY_GROUP_FOCUS } from "./project-header-popover";
@@ -22,6 +25,16 @@ function date(value: string | null) {
   return value
     ? new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short", year: "numeric" }).format(new Date(value))
     : "Shoot date pending";
+}
+
+/** #498: the whiteboard's entry, beside the Collaboration tab (outside the tablist: it is a button, not a tab). */
+export function WhiteboardButton({ onOpen }: { onOpen: () => void }) {
+  return <Tooltip>
+    <TooltipTrigger render={<Button type="button" variant="ghost" size="icon" aria-label="Open whiteboard" data-testid="project-whiteboard-open" className="min-h-[44px] min-w-[44px]" onClick={onOpen} />}>
+      <PresentationIcon className="size-4" aria-hidden="true" />
+    </TooltipTrigger>
+    <TooltipContent side="bottom">Open whiteboard</TooltipContent>
+  </Tooltip>;
 }
 
 function collectionLabel(value: string) {
@@ -164,8 +177,14 @@ export function ProjectHeader({
   onStageMove,
   stageMovePending = false,
   stageMoveDisabledReason = null,
+  onOpenWhiteboard,
+  whiteboardOpen = false,
 }: {
   project: ProjectDetail;
+  /** #498: opens the Project whiteboard. Offered only once the Workspace has confirmed collaboration access. */
+  onOpenWhiteboard?: () => void;
+  /** #498: the board is open and this header is hidden beneath it; see the scroll effect. */
+  whiteboardOpen?: boolean;
   activeTab: WorkspaceTab;
   availableTabs: CollectionKind[];
   canUpload: boolean;
@@ -257,10 +276,14 @@ export function ProjectHeader({
     }
     return callback;
   };
+  // While the whiteboard is open the Workspace is `display:none`: a hidden scroller has no layout, so
+  // `scrollIntoView` does nothing (a deep link mounts the header that way) and a scroller that was laid out
+  // loses its scrollLeft. The effect therefore re-runs when the board closes and the header is shown again (#498).
   useEffect(() => {
+    if (whiteboardOpen) return;
     const selected = tabsRef.current?.querySelector<HTMLElement>('[data-testid="project-overview-tab"][aria-selected="true"]');
     if (typeof selected?.scrollIntoView === "function") selected.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [activeTab]);
+  }, [activeTab, whiteboardOpen]);
 
   return <section className="project-header" aria-label="Project Overview" data-testid="project-header">
     <div className="project-header__identity">
@@ -315,7 +338,10 @@ export function ProjectHeader({
       </div>}
     </div>
 
-    <div className="project-header__tabs" ref={tabsRef}>
+    {/* The entry button sits beside the scroller, not inside it: at phone width the tabs scroll sideways and it must stay in view. */}
+    <div className="flex min-w-0 items-center gap-[var(--space-2)]">
+    {/* The scroller clips its overflow on both axes: the padding (cancelled by the negative margin) keeps the focus ring and the count chip inside it. */}
+    <div className="project-header__tabs -my-[var(--space-1)] flex min-w-0 flex-1 items-center gap-[var(--space-2)] p-[var(--space-1)]" ref={tabsRef}>
       <Tabs value={activeTab} onValueChange={(next) => { if (typeof next === "string" && next !== activeTab) onActiveTabChange(next as WorkspaceTab); }}>
         <TabsList variant="line" aria-label="Workspace">
           {availableTabs.map((tab) => { const collection = project.collections.find((item) => item.kind === tab); return (
@@ -333,6 +359,8 @@ export function ProjectHeader({
           </TabsTrigger>
         </TabsList>
       </Tabs>
+    </div>
+    {onOpenWhiteboard && <div className="shrink-0"><WhiteboardButton onOpen={onOpenWhiteboard} /></div>}
     </div>
   </section>;
 }

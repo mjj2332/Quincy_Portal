@@ -112,21 +112,35 @@ describe("TB4B Deadline and personal preference APIs", () => {
   it("is strict, self-only, default-on, and idempotent for personal preferences", async () => {
     const initial = await request("/api/notification-preferences", token);
     expect(initial.status).toBe(200);
-    expect(await initial.json()).toEqual({ projectDeadlineReminderEmails: true, subtaskReminderEmails: true });
+    expect(await initial.json()).toEqual({ projectDeadlineReminderEmails: true, subtaskReminderEmails: true, emailDigestCadence: "twice_daily", includeProjectActivity: true });
 
     const disabled = await request("/api/notification-preferences", token, "PATCH", { projectDeadlineReminderEmails: false });
     expect(disabled.status).toBe(200);
-    expect(await disabled.json()).toEqual({ projectDeadlineReminderEmails: false, subtaskReminderEmails: true });
+    expect(await disabled.json()).toEqual({ projectDeadlineReminderEmails: false, subtaskReminderEmails: true, emailDigestCadence: "twice_daily", includeProjectActivity: true });
     const repeated = await request("/api/notification-preferences", token, "PATCH", { projectDeadlineReminderEmails: false });
-    expect(await repeated.json()).toEqual({ projectDeadlineReminderEmails: false, subtaskReminderEmails: true });
+    expect(await repeated.json()).toEqual({ projectDeadlineReminderEmails: false, subtaskReminderEmails: true, emailDigestCadence: "twice_daily", includeProjectActivity: true });
 
     // The Subtask reminder switch is its own field: it changes alone and leaves the Deadline switch as stored.
     const subtaskOff = await request("/api/notification-preferences", token, "PATCH", { subtaskReminderEmails: false });
-    expect(await subtaskOff.json()).toEqual({ projectDeadlineReminderEmails: false, subtaskReminderEmails: false });
+    expect(await subtaskOff.json()).toEqual({ projectDeadlineReminderEmails: false, subtaskReminderEmails: false, emailDigestCadence: "twice_daily", includeProjectActivity: true });
     const deadlineOn = await request("/api/notification-preferences", token, "PATCH", { projectDeadlineReminderEmails: true });
-    expect(await deadlineOn.json()).toEqual({ projectDeadlineReminderEmails: true, subtaskReminderEmails: false });
-    const both = await request("/api/notification-preferences", token, "PATCH", { projectDeadlineReminderEmails: false, subtaskReminderEmails: true });
-    expect(await both.json()).toEqual({ projectDeadlineReminderEmails: false, subtaskReminderEmails: true });
+    expect(await deadlineOn.json()).toEqual({ projectDeadlineReminderEmails: true, subtaskReminderEmails: false, emailDigestCadence: "twice_daily", includeProjectActivity: true });
+    const both = await request("/api/notification-preferences", token, "PATCH", { projectDeadlineReminderEmails: false, subtaskReminderEmails: true, emailDigestCadence: "twice_daily" });
+    expect(await both.json()).toEqual({ projectDeadlineReminderEmails: false, subtaskReminderEmails: true, emailDigestCadence: "twice_daily", includeProjectActivity: true });
+    // The digest cadence is its own field: it changes alone, every value is accepted, and both reminder switches stay as stored.
+    for (const cadence of ["immediate", "hourly", "daily", "twice_daily"] as const) {
+      const changed = await request("/api/notification-preferences", token, "PATCH", { emailDigestCadence: cadence });
+      expect(changed.status).toBe(200);
+      expect(await changed.json()).toEqual({ projectDeadlineReminderEmails: false, subtaskReminderEmails: true, emailDigestCadence: cadence, includeProjectActivity: true });
+    }
+    const daily = await request("/api/notification-preferences", token, "PATCH", { emailDigestCadence: "daily" });
+    expect(await daily.json()).toEqual({ projectDeadlineReminderEmails: false, subtaskReminderEmails: true, emailDigestCadence: "daily", includeProjectActivity: true });
+    // A switch PATCH leaves the cadence as stored.
+    const switchOnly = await request("/api/notification-preferences", token, "PATCH", { subtaskReminderEmails: false });
+    expect(await switchOnly.json()).toEqual({ projectDeadlineReminderEmails: false, subtaskReminderEmails: false, emailDigestCadence: "daily", includeProjectActivity: true });
+    expect((await request("/api/notification-preferences", token, "PATCH", { emailDigestCadence: "weekly" })).status).toBe(400);
+    expect((await request("/api/notification-preferences", token, "PATCH", { emailDigestCadence: 3 })).status).toBe(400);
+    await request("/api/notification-preferences", token, "PATCH", { emailDigestCadence: "twice_daily", subtaskReminderEmails: true });
     // At least one field is required.
     expect((await request("/api/notification-preferences", token, "PATCH", {})).status).toBe(400);
     expect((await request("/api/notification-preferences", token, "PATCH", { subtaskReminderEmails: "no" })).status).toBe(400);
@@ -134,6 +148,28 @@ describe("TB4B Deadline and personal preference APIs", () => {
     const extra = await request("/api/notification-preferences", token, "PATCH", { projectDeadlineReminderEmails: true, anotherUserId: crypto.randomUUID() });
     expect(extra.status).toBe(400);
     expect((await database.DB.prepare("SELECT user_id AS userId, project_deadline_reminder_emails AS enabled FROM notification_preferences").all()).results).toMatchObject([{ userId, enabled: 0 }]);
+  });
+
+  it("serves and saves the Include Project activity switch (#490): default on, saved alone, strict boolean", async () => {
+    const before = await request("/api/notification-preferences", token);
+    expect((await before.json() as { includeProjectActivity: boolean }).includeProjectActivity).toBe(true);
+    await request("/api/notification-preferences", token, "PATCH", { emailDigestCadence: "hourly", subtaskReminderEmails: false });
+    const off = await request("/api/notification-preferences", token, "PATCH", { includeProjectActivity: false });
+    expect(off.status).toBe(200);
+    expect(await off.json()).toMatchObject({ includeProjectActivity: false, emailDigestCadence: "hourly", subtaskReminderEmails: false });
+    // Another field's PATCH leaves it off.
+    const cadence = await request("/api/notification-preferences", token, "PATCH", { emailDigestCadence: "daily" });
+    expect(await cadence.json()).toMatchObject({ includeProjectActivity: false, emailDigestCadence: "daily" });
+    expect(await (await request("/api/notification-preferences", token)).json()).toMatchObject({ includeProjectActivity: false });
+    const on = await request("/api/notification-preferences", token, "PATCH", { includeProjectActivity: true });
+    expect(await on.json()).toMatchObject({ includeProjectActivity: true, emailDigestCadence: "daily" });
+    expect((await request("/api/notification-preferences", token, "PATCH", { includeProjectActivity: "no" })).status).toBe(400);
+    expect((await request("/api/notification-preferences", token, "PATCH", { includeProjectActivity: 0 })).status).toBe(400);
+    expect((await request("/api/notification-preferences", token, "PATCH", {})).status).toBe(400);
+    const audit = await database.DB.prepare("SELECT meta_json AS meta FROM audit_log WHERE action = 'notification.preference.update' AND meta_json LIKE '%includeProjectActivity%'").all<{ meta: string }>();
+    expect(audit.results.length).toBeGreaterThanOrEqual(1);
+    // Leave the stored row as the next test expects.
+    await request("/api/notification-preferences", token, "PATCH", { emailDigestCadence: "twice_daily", subtaskReminderEmails: true });
   });
 
   it("keeps a surviving current-version occurrence active instead of exposing Resume", async () => {

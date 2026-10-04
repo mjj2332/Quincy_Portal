@@ -65,4 +65,4 @@ records where that copy is assembled, and why it is not the write path.
   means editing `staffNotificationListItemSchema`, deliberately.
 - Enriched copy reflects the source row as it is now: an edited comment shows its current text, a
   renamed user their current name.
-- Emails are unchanged. They are composed on the write path, which this ADR does not touch.
+- Emails are unchanged. They are composed on the write path, which this ADR does not touch. (The Email digest is the exception: its emails are composed at send time from the stored copy. See ADR 0018.)

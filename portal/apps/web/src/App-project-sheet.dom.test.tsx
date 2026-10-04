@@ -76,7 +76,7 @@ vi.mock("./screens/ProjectWorkspace", async () => {
   const { projectDetailQueryOptions } = await import("./lib/project-data");
   const { pushToast } = await import("./lib/toast-store");
   return {
-    ProjectWorkspace: ({ projectId, arrivalTab, arrivalSignal, notice, onNoticeShown }: { projectId: string; arrivalTab?: string; arrivalSignal?: number; notice?: string | null; onNoticeShown?: () => void }) => {
+    ProjectWorkspace: ({ projectId, arrivalTab, arrivalSignal, notice, onNoticeShown, whiteboardOpen, onOpenWhiteboard, onCloseWhiteboard, onTabShown }: { projectId: string; arrivalTab?: string; arrivalSignal?: number; whiteboardOpen?: boolean; onOpenWhiteboard?: () => void; onCloseWhiteboard?: (tab: string) => void; onTabShown?: (tab: string) => void; notice?: string | null; onNoticeShown?: () => void }) => {
       // Reads through the REAL project-detail query (the key the real ProjectWorkspace and the edit
       // form's setQueryData publish to), never the mocked server directly (#374).
       const detail = useQuery({ ...projectDetailQueryOptions(projectId), staleTime: 60_000 });
@@ -85,7 +85,11 @@ vi.mock("./screens/ProjectWorkspace", async () => {
       useEffect(() => { if (arrivalTab !== undefined) trigger.current?.focus(); }, [arrivalTab, arrivalSignal]);
       useEffect(() => { if (notice) { pushToast(notice); onNoticeShown?.(); } }, [notice, onNoticeShown]);
       return (
-        <main data-testid="ws-stub" data-project-id={projectId} data-arrival-tab={String(arrivalTab)}>
+        <main data-testid="ws-stub" data-project-id={projectId} data-arrival-tab={String(arrivalTab)} data-whiteboard={String(Boolean(whiteboardOpen))}>
+          {/* #498: stands in for the header button, the board's Close and the Workspace's tab write (real ones: ProjectWorkspace-sheet.dom.test.tsx). */}
+          <button type="button" data-testid="ws-open-whiteboard" onClick={() => onOpenWhiteboard?.()}>Open whiteboard</button>
+          <button type="button" data-testid="ws-close-whiteboard" onClick={() => onCloseWhiteboard?.("raw")}>Close whiteboard</button>
+          <button type="button" data-testid="ws-sync-tab" onClick={() => onTabShown?.("raw")}>Sync tab</button>
           <button type="button">inner</button>
           <button type="button" ref={trigger} data-testid="ws-tab-trigger">Collaboration</button>
           <span data-testid="ws-street">{street}</span>
@@ -666,6 +670,93 @@ async function openEditFromList() {
   await click(sheet()!.querySelector('[data-testid="ws-edit-link"]')!);
   return { host, from, main };
 }
+
+describe("the Project whiteboard link (#498)", () => {
+  const BOARD_PATH = `${PROJECT_PATH}?whiteboard=open`;
+  const stub = () => sheet()!.querySelector<HTMLElement>('[data-testid="ws-stub"]')!;
+  const press = (testId: string) => click(sheet()!.querySelector(`[data-testid="${testId}"]`)!);
+
+  it("opening pushes ?whiteboard=open through the location store, deepening the sheet's bookkeeping", async () => {
+    window.localStorage.setItem("quincy:dashboard:view", "table");
+    const entry = { quincySheet: { v: 1, backdrop: "/?view=table", depth: 1, prev: "/?view=table" } };
+    await renderApp(`${PROJECT_PATH}?tab=raw`, entry);
+    const push = vi.spyOn(window.history, "pushState");
+    await press("ws-open-whiteboard");
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(currentUrl()).toBe(BOARD_PATH);
+    expect(window.history.state).toEqual({ quincySheet: { v: 1, backdrop: "/?view=table", depth: 2, prev: `${PROJECT_PATH}?tab=raw` } });
+    expect(stub().dataset.whiteboard).toBe("true");
+  });
+
+  it("shows a single close control while the board is open: the sheet's X is hidden (the other tests here click it on the workspace)", async () => {
+    await renderApp(BOARD_PATH, { quincySheet: { v: 1, backdrop: "/?view=table", depth: 2, prev: PROJECT_PATH } });
+    expect(stub().dataset.whiteboard).toBe("true");
+    expect(sheet()!.querySelector('[data-testid="project-sheet-close"]')).toBeNull();
+  });
+
+  it("closing steps back onto the workspace entry below, so the previous tab returns", async () => {
+    window.localStorage.setItem("quincy:dashboard:view", "table");
+    const below = { quincySheet: { v: 1, backdrop: "/?view=table", depth: 1, prev: "/?view=table" } };
+    await renderApp(BOARD_PATH, { quincySheet: { v: 1, backdrop: "/?view=table", depth: 2, prev: `${PROJECT_PATH}?tab=raw` } });
+    expect(stub().dataset.whiteboard).toBe("true");
+    const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
+    await press("ws-close-whiteboard");
+    expect(go).toHaveBeenCalledWith(-1);
+    const closeBtn = sheet()!.querySelector<HTMLElement>('[data-testid="ws-close-whiteboard"]')!;
+    closeBtn.focus();
+    await traverseTo(`${PROJECT_PATH}?tab=raw`, below);
+    expect(stub().dataset.whiteboard).toBe("false");
+    // Closing the board is not an arrival: no arrival tab/signal reaches the Workspace, so it never steals focus (#498).
+    expect(stub().dataset.arrivalTab).toBe("undefined");
+    expect(document.activeElement).not.toBe(sheet()!.querySelector('[data-testid="ws-tab-trigger"]'));
+  });
+
+  it("a cold whiteboard link has no workspace entry below: closing replaces with the tab the Workspace was showing", async () => {
+    window.localStorage.setItem("quincy:dashboard:view", "table");
+    await renderApp(BOARD_PATH, null);
+    expect(stub().dataset.whiteboard).toBe("true");
+    const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
+    const replace = vi.spyOn(window.history, "replaceState");
+    await press("ws-close-whiteboard");
+    expect(go).not.toHaveBeenCalled();
+    expect(replace).toHaveBeenCalledWith(null, "", `${PROJECT_PATH}?tab=raw`);
+  });
+
+  it("closing a cold whiteboard link is not an arrival: the Workspace gets no arrival signal and focus is not stolen", async () => {
+    window.localStorage.setItem("quincy:dashboard:view", "table");
+    await renderApp(BOARD_PATH, null);
+    const closeBtn = sheet()!.querySelector<HTMLElement>('[data-testid="ws-close-whiteboard"]')!;
+    closeBtn.focus();
+    await press("ws-close-whiteboard");
+    expect(currentUrl()).toBe(`${PROJECT_PATH}?tab=raw`);
+    expect(stub().dataset.whiteboard).toBe("false");
+    expect(stub().dataset.arrivalTab).toBe("undefined");
+    expect(document.activeElement).not.toBe(sheet()!.querySelector('[data-testid="ws-tab-trigger"]'));
+  });
+
+  it("a later real arrival at the same Project URL still reaches the Workspace", async () => {
+    window.localStorage.setItem("quincy:dashboard:view", "table");
+    await renderApp(BOARD_PATH, null);
+    await press("ws-close-whiteboard");
+    await traverseTo(`${PROJECT_PATH}?tab=edited`, null);
+    expect(stub().dataset.arrivalTab).toBe("edited");
+  });
+
+  it("the Workspace's tab write never rewrites the whiteboard URL", async () => {
+    window.localStorage.setItem("quincy:dashboard:view", "table");
+    await renderApp(BOARD_PATH, null);
+    const replace = vi.spyOn(window.history, "replaceState");
+    await press("ws-sync-tab");
+    expect(replace).not.toHaveBeenCalled();
+    expect(currentUrl()).toBe(BOARD_PATH);
+  });
+
+  it("only the exact spelling opens it: ?whiteboard=1 is not a Project location", async () => {
+    window.localStorage.setItem("quincy:dashboard:view", "table");
+    await renderApp(`${PROJECT_PATH}?whiteboard=1`, null);
+    expect(document.querySelector('[data-testid="ws-stub"]')).toBeNull();
+  });
+});
 
 describe("Edit details opens the form inside the sheet (#374)", () => {
   it("shows the real form in the sheet with the SAME Dashboard <main> mounted, depth 2, prev = the project URL", async () => {

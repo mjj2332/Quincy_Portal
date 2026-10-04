@@ -118,6 +118,8 @@ describe("notifications API and recipient selection", () => {
       database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Admin dedupe', 'awaiting_raw', ?, ?)").bind(projectId, now, now),
       database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'photographer', ?)").bind(crypto.randomUUID(), projectId, adminId, now),
     ]);
+    // #489: the immediate path is what this test exercises; staff default to a digest.
+    await database.DB.prepare("INSERT INTO notification_preferences (user_id, email_digest_cadence, updated_at) SELECT id, 'immediate', ? FROM user WHERE true ON CONFLICT(user_id) DO UPDATE SET email_digest_cadence = 'immediate'").bind(Date.now()).run();
     const send = vi.fn().mockResolvedValue({ messageId: "test-message" });
     const testEnv = { DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test", APP_ORIGIN: "https://portal.test" } as unknown as Env;
     await notifyProject(testEnv, projectId, "raw_ready");
@@ -163,6 +165,7 @@ describe("notifications API and recipient selection", () => {
 
   it("records a mocked email failure without failing the notification write", async () => {
     const project = await database.DB.prepare("SELECT id FROM projects WHERE street = 'Comment Street'").first<{ id: string }>();
+    await database.DB.prepare("INSERT INTO notification_preferences (user_id, email_digest_cadence, updated_at) SELECT id, 'immediate', ? FROM user WHERE true ON CONFLICT(user_id) DO UPDATE SET email_digest_cadence = 'immediate'").bind(Date.now()).run();
     const send = async () => { throw new Error("mock email unavailable"); };
     await notifyProject({ DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test", APP_ORIGIN: "https://portal.test" } as unknown as Env, project!.id, "edited_landed");
     const row = await database.DB.prepare("SELECT email_error FROM notifications WHERE project_id = ? AND type = 'edited_landed' LIMIT 1").bind(project!.id).first<{ email_error: string }>();
