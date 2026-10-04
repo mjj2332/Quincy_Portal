@@ -1729,6 +1729,38 @@ export function buildDeadlineSuppressionBundle(input: DeadlineSuppressionBundleI
     indexes: { occurrences: 0, ledgers: 1, outboxes: 2 }
   };
 }
+/**
+ * The two statements that retire Deadline reminders already in flight when a Deadline's schedule is replaced (a person's save
+ * or an Automatic Deadline move, #485): pending ledger rows are suppressed, then the outbox rows nothing is still delivering.
+ * Both are gated on the caller's winner audit row and carry no RETURNING, so a caller can append them at a fixed position.
+ * One shared definition so the two writers cannot drift.
+ */
+export function buildDeadlineScheduleReplacementStatements(input: { db: D1Database; projectId: string; auditId: string; now: number }): [D1PreparedStatement, D1PreparedStatement] {
+  const ledgers = input.db.prepare(`
+      UPDATE notification_delivery_ledger
+      SET status = 'suppressed', last_error_code = 'reauthorization_suppressed',
+        last_error = 'Deadline schedule changed.', updated_at = ?
+      WHERE event_type = 'project.deadline.reminder' AND status = 'pending'
+        AND EXISTS (
+          SELECT 1 FROM notification_outbox o
+          WHERE o.id = notification_delivery_ledger.outbox_id
+            AND o.project_id = ? AND o.event_type = 'project.deadline.reminder'
+            AND o.source_key IN (SELECT id FROM project_deadline_occurrences WHERE project_id = ?)
+        )
+        AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
+    `).bind(input.now, input.projectId, input.projectId, input.auditId);
+  const outboxes = input.db.prepare(`
+      UPDATE notification_outbox
+      SET status = 'suppressed', lease_token = NULL, lease_expires_at = NULL,
+        completed_at = ?, last_error_code = 'reauthorization_suppressed',
+        last_error = 'Deadline schedule changed.', updated_at = ?
+      WHERE project_id = ? AND event_type = 'project.deadline.reminder'
+        AND status IN ('pending', 'queued')
+        AND NOT EXISTS (SELECT 1 FROM notification_delivery_ledger WHERE outbox_id = notification_outbox.id AND status IN ('pending', 'processing'))
+        AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
+    `).bind(input.now, input.now, input.projectId, input.auditId);
+  return [ledgers, outboxes];
+}
 type WorkflowTailInput = GuardedTransitionPrerequisite & { db: D1Database; auditId: string; now?: number; };
 const AUDIT_EXISTS = "AND EXISTS (SELECT 1 FROM audit_log WHERE id = ? AND action = 'stage.auto_advance' AND target_type = 'project' AND target_id = ?)";
 function requireProject(input: WorkflowTailInput): string { if (input.kind === "none") return ""; if (!("projectId" in input)) throw new Error("Workflow tail requires projectId"); return input.projectId; }

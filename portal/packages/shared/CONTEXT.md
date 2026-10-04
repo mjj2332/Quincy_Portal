@@ -130,7 +130,7 @@ _Avoid_: Due date, ETA
 **Automatic Deadline**:
 A Deadline the system filled in: the first weekday (Monday to Friday) after the shoot date, at
 17:00; public holidays are not skipped. It follows the shoot
-date when that moves, for as long as it still holds the value the system gave it. Once
+date when that moves, until a person saves it. Once
 anyone sets the Deadline by hand, it is an ordinary Deadline and is never moved again. A
 Deadline already held is never replaced by an Automatic one. It carries the same reminders
 as any Deadline.
