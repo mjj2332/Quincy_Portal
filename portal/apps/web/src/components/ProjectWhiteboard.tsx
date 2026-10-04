@@ -21,6 +21,8 @@ const Whiteboard = lazy(() => import("./reui/whiteboard/whiteboard").then((modul
  * a WebSocket to the Project's Durable Object. Live broadcast and presence arrive with #499, versions with
  * #500 and media with #501, so the image tool is off. Quincy has no dark tokens, so the theme is fixed light.
  */
+const FINAL_FLUSH_TIMEOUT_MS = 10_000;
+
 export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, onAccessFailure }: {
   projectId: string;
   street: string;
@@ -43,12 +45,14 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
   accessFailureRef.current = onAccessFailure;
 
   useEffect(() => {
+    // This effect's own socket: a final flush that runs after a remount must not use the new one.
+    let socket: WhiteboardSocket | null = null;
     const saver = createWhiteboardSaver({
       getElements: () => elementsRef.current,
-      send: (batch) => socketRef.current?.send(batch) ?? Promise.reject(new Error("The whiteboard is not connected.")),
+      send: (batch) => socket?.send(batch) ?? Promise.reject(new Error("The whiteboard is not connected.")),
     });
     saverRef.current = saver;
-    const socket = openWhiteboardSocket(projectId, {
+    const opened = openWhiteboardSocket(projectId, {
       onInit: (next, reconnect) => {
         // A reconnect keeps the board the user is looking at (#499 reconciles it live); only the mode moves.
         setInit((current) => (reconnect && current ? { ...current, mode: next.mode } : next));
@@ -60,13 +64,17 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
       onDeleted: () => { setDeleted(true); pushToast("This project's whiteboard was deleted.", "error"); },
       onAccessFailure: (error) => accessFailureRef.current(error),
     });
-    socketRef.current = socket;
+    socket = opened;
+    socketRef.current = opened;
     return () => {
       // Best effort for closes that bypass the Close button (Esc, tab switch, navigation): send what is
       // left, then let the socket wait briefly for the acks. The Close button itself waits and reports.
-      saver.flush().catch(() => undefined);
-      socket.close();
-      socketRef.current = null;
+      // The flush may queue behind a save in flight, so the socket closes only once it settles (bounded).
+      const finalFlush = saver.flush().catch(() => undefined);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const bound = new Promise<void>((resolve) => { timer = setTimeout(resolve, FINAL_FLUSH_TIMEOUT_MS); });
+      void Promise.race([finalFlush, bound]).then(() => { clearTimeout(timer); opened.close(); });
+      if (socketRef.current === opened) socketRef.current = null;
     };
   }, [projectId]);
 

@@ -28,11 +28,12 @@ export function withoutUnsupported<T extends { type?: unknown; isDeleted?: boole
   return { kept: removed === 0 ? elements : kept, removed };
 }
 /** What to do with files dropped on the board: a scene or library file is loaded through the controller
- * (which tombstones what it replaces), and refused outright in view-only mode. Anything else is Excalidraw's. */
+ * (which tombstones what it replaces), and every file is refused in view-only mode. Anything else is Excalidraw's. */
 export function planSceneDrop(files: Iterable<File>, viewOnly: boolean): "ignore" | "refuse" | { load: File } {
-  const file = [...files].find((item) => /\.excalidraw(lib)?$/i.test(item.name));
-  if (!file) return "ignore";
-  return viewOnly ? "refuse" : { load: file };
+  const all = [...files];
+  if (viewOnly) return all.length > 0 ? "refuse" : "ignore";   // nothing may be dropped on a view-only board
+  const file = all.find((item) => /\.(excalidraw|excalidrawlib|json)$/i.test(item.name));
+  return file ? { load: file } : "ignore";
 }
 const encoder = new TextEncoder();
 const keyOf = (element: SavedElement) => `${element.version}:${element.versionNonce}`;
@@ -81,7 +82,10 @@ export function createWhiteboardSaver({ getElements, send }: {
 
     for (const element of scene) {
       const sceneKey = keyOf(element);
-      if (stored.get(element.id) === sceneKey) continue;
+      // Skip only when the desired state is both acknowledged and the last thing transmitted: a newer
+      // state (a tombstone whose ack was lost) may be on the server.
+      const last = transmitted.get(element.id);
+      if (stored.get(element.id) === sceneKey && (last === undefined || last.key === sceneKey)) continue;
       const before = transmitted.get(element.id);
       const f = floor.get(element.id);
       const version = before?.key === sceneKey ? before.version : f !== undefined && element.version <= f ? f + 1 : element.version;

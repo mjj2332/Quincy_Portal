@@ -96,12 +96,12 @@ const pressTab = (shift = false) => act(async () => {
 const confirmFocusables = (modal: HTMLElement) => [...modal.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]')].filter((el) => el.getAttribute("tabindex") !== "-1" && !el.hasAttribute("data-floating-ui-focus-guard"));
 
 
-const board = vi.hoisted(() => ({ mode: "edit" as WhiteboardMode, props: null as null | { onElements?: (e: unknown[]) => void; readOnly?: boolean; imageTool?: boolean; theme?: string; onSave?: () => Promise<void> }, scene: [] as Array<Record<string, unknown>>, send: null as null | ((batch: readonly unknown[]) => Promise<void>), handlers: null as null | { onInit: (init: { mode: WhiteboardMode; elements: unknown[] }, reconnect: boolean) => void } }));
+const board = vi.hoisted(() => ({ log: [] as string[], mode: "edit" as WhiteboardMode, props: null as null | { onElements?: (e: unknown[]) => void; readOnly?: boolean; imageTool?: boolean; theme?: string; onSave?: () => Promise<void> }, scene: [] as Array<Record<string, unknown>>, send: null as null | ((batch: readonly unknown[]) => Promise<void>), handlers: null as null | { onInit: (init: { mode: WhiteboardMode; elements: unknown[] }, reconnect: boolean) => void } }));
 vi.mock("../lib/whiteboard-socket", () => ({
   openWhiteboardSocket: (_projectId: string, handlers: { onInit: (init: { mode: WhiteboardMode; elements: unknown[] }, reconnect: boolean) => void; onConnection: (state: string) => void }) => {
     board.handlers = handlers;
     queueMicrotask(() => { handlers.onConnection("open"); handlers.onInit({ mode: board.mode, elements: [] }, false); });
-    return { send: (batch: readonly unknown[]) => (board.send ? board.send(batch) : Promise.resolve()), close: () => undefined };
+    return { send: (batch: readonly unknown[]) => (board.send ? board.send(batch) : Promise.resolve()), close: () => { board.log.push("close"); } };
   },
 }));
 vi.mock("../components/reui/whiteboard/whiteboard", () => ({
@@ -133,7 +133,7 @@ let archived = false;
 beforeEach(() => {
   authState.role = "editor";
   archived = false;
-  board.mode = "edit"; board.props = null; board.scene = []; board.send = null; board.handlers = null;
+  board.log = []; board.mode = "edit"; board.props = null; board.scene = []; board.send = null; board.handlers = null;
   onRequestClose.mockReset(); onOpenWhiteboard.mockReset(); onCloseWhiteboard.mockReset();
   apiGetMock.mockReset();
   apiPatchMock.mockReset().mockResolvedValue({});
@@ -239,6 +239,23 @@ describe("the open whiteboard (#498)", () => {
     await act(async () => { root!.unmount(); await Promise.resolve(); });
     root = null;
     expect(sent.flat()).toEqual([{ id: "a", version: 3, versionNonce: 9 }]);
+  });
+
+  it("unmount with an autosave in flight and a newer edit sends the edit before the socket closes", async () => {
+    const acks: Array<() => void> = [];
+    board.send = (batch) => { board.log.push(`send:${(batch[0] as { version: number }).version}`); return new Promise<void>((resolve) => { acks.push(resolve); }); };
+    await renderSheet({ whiteboardOpen: true });
+    await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
+    board.props!.onElements!([{ id: "a", version: 2, versionNonce: 5 }]);
+    void board.props!.onSave!().catch(() => undefined);          // autosave v2, in flight
+    board.props!.onElements!([{ id: "a", version: 3, versionNonce: 6 }]);   // then an edit
+    await act(async () => { root!.unmount(); await Promise.resolve(); });
+    root = null;
+    expect(board.log).toEqual(["send:2"]);                       // not closed yet; the edit is queued behind the save
+    await act(async () => { acks[0]!(); await new Promise<void>((r) => setTimeout(r, 0)); });
+    expect(board.log).toEqual(["send:2", "send:3"]);
+    await act(async () => { acks[1]!(); await new Promise<void>((r) => setTimeout(r, 0)); });
+    expect(board.log).toEqual(["send:2", "send:3", "close"]);
   });
 
   it("Close stays open with a visible error when the final save fails, and a second Close leaves", async () => {

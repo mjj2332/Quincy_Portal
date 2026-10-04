@@ -179,6 +179,22 @@ describe("whiteboard saver", () => {
     const file = { name: "board.excalidraw" } as File;
     expect(planSceneDrop([file], true)).toBe("refuse");
     expect(planSceneDrop([file], false)).toEqual({ load: file });
-    expect(planSceneDrop([{ name: "photo.png" } as File], true)).toBe("ignore");
+    expect(planSceneDrop([{ name: "photo.png" } as File], true)).toBe("refuse");   // every file, any extension
+    expect(planSceneDrop([{ name: "board.json" } as File], false)).toEqual({ load: { name: "board.json" } });
+    expect(planSceneDrop([{ name: "lib.excalidrawlib" } as File], false)).toEqual({ load: { name: "lib.excalidrawlib" } });
+    expect(planSceneDrop([{ name: "photo.png" } as File], false)).toBe("ignore");
+  });
+
+  it("re-sends an element that reappears after a tombstone whose ack was lost", async () => {
+    let scene = [el("a", 2)]; const sent: SavedElement[][] = []; let lose = false;
+    const saver = createWhiteboardSaver({ getElements: () => scene, send: async (batch) => { sent.push([...batch]); if (lose) throw new Error("ack lost"); } });
+    await saver.flush();                      // A v2 acked
+    scene = []; lose = true;
+    await expect(saver.flush()).rejects.toThrow();   // tombstone v3 transmitted, ack lost
+    lose = false;
+    scene = [el("a", 2)];                     // A is back, equal to its last ACKED state
+    await saver.flush();
+    expect(sent.at(-1)).toMatchObject([{ id: "a", version: 4 }]);
+    expect(sent.at(-1)![0]!.isDeleted).toBeUndefined();
   });
 });
