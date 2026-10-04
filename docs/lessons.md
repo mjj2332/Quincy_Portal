@@ -1213,6 +1213,18 @@ own fix. The working form is the important modifier:
 focus-visible:!outline-on-inverse
 ```
 
+**Superseded for surfaces by #532.** The `!outline-on-inverse` override is gone. Tailwind's
+`transition-colors`/`transition-all` animate `outline-color`, and an unfocused element's outline
+colour is `currentcolor`, so a paper-text control (checked checkbox, primary button, inverse-surface
+button) faded its ring paper -> ink over 150ms on focus. `tokens/base.css` now sets
+`outline-color: var(--focus-ring)` on all elements inside `@layer base` (rest state = ring colour,
+nothing to fade from; layered so explicit `outline-*` utilities still win). An ink surface that is
+not a `data-surface="inverse"` scope (the impersonation banner, the toast) sets
+`[--focus-ring:var(--text-on-inverse)]` on itself instead of overriding the outline colour per
+control. A `!outline-on-inverse` override would reintroduce the fade from the rest colour.
+Guarded in `design-system-guards.test.ts`. Verify live: read the computed outline colour on the
+frame of focus, the next frame and settled.
+
 **Rules.** (1) The unlayered set is every non-`layer()` `@import` in `index.css`, not `app.css`
 alone — grep the whole list before assuming a utility will win. (2) A shorthand in an unlayered
 rule silently resets longhands that layered utilities set, so an overriding utility for any

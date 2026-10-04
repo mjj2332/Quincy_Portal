@@ -54,6 +54,19 @@ a { color: inherit; }
   *, *::before, *::after { border-color: var(--border); }
 }
 
+/* ---- The outline-colour rest state (#532) ---------------------------------
+   Tailwind v4's `transition-colors` / `transition-all` animate `outline-color`. An unfocused
+   element's outline colour is `currentcolor`, so on a checked checkbox or a primary button
+   (paper text) the focus ring faded paper -> ink over 150ms on every focus. Defaulting the
+   colour to `--focus-ring` makes the rest state already the ring colour: nothing to fade from.
+   Layered, like the border rule above, so an explicit `outline-*` utility still wins; the
+   unlayered `:focus-visible` rule keeps painting the ring itself. Ink surfaces that are not a
+   `data-surface="inverse"` scope set `--focus-ring` on themselves (never `!outline-on-inverse`,
+   which would fade from this rest colour again). */
+@layer base {
+  *, *::before, *::after { outline-color: var(--focus-ring); }
+}
+
 /* ---- Brand display helpers ------------------------------------------ */
 .q-display   { font: var(--type-display); letter-spacing: var(--tracking-tightest); }
 .q-h1        { font: var(--type-h1); letter-spacing: var(--tracking-tight); }
