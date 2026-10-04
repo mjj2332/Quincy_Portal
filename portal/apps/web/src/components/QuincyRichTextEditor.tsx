@@ -2,10 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import { exitSuggestion } from "@tiptap/suggestion";
 import { ChevronDownIcon, ImageIcon, ListChecksIcon, ListIcon, ListOrderedIcon, Redo2Icon, TableIcon, Undo2Icon, VideoIcon } from "lucide-react";
-import { RICH_TEXT_JSON_MAX_BYTES, richTextDocByteLength, richTextMediaIds, richTextPlainText, type RichTextDoc } from "@quincy/shared";
+import { RICH_TEXT_JSON_MAX_BYTES, RICH_TEXT_MAX_LINK_PREVIEWS, richTextDocByteLength, richTextMediaIds, richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { cn } from "../lib/utils";
 import { EMBEDDED_IMAGE_ACCEPT, EMBEDDED_MEDIA_MAX_PER_POST, EMBEDDED_VIDEO_ACCEPT, embeddedImageProblem, embeddedVideoProblem, uploadEmbeddedImage, uploadEmbeddedVideo, type EmbeddedMediaScope } from "../lib/embedded-media";
+import { requestLinkPreview } from "../lib/link-previews";
 import {
+  LinkPreview,
   createRichTextEditorExtensions,
   type RichTextEditorPreset,
   itemContainerDepth,
@@ -19,6 +21,7 @@ import { Button } from "./reui/button";
 import { Input } from "./reui/input";
 import { Progress, ProgressValue } from "./reui/progress";
 import { Notice } from "./quincy/Notice";
+import { LinkPreviewWithView } from "./quincy/LinkPreviewEditorNode";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -107,6 +110,8 @@ export type QuincyRichTextEditorProps = {
   onSubmit?: () => void;
   /** Turns on embedded images (#493, #496): the toolbar button, paste and drop upload into this Project or the Notice board. A Project also takes video (#494). */
   media?: EmbeddedMediaScope;
+  /** Turns on link previews (#497): applying a link asks the server for the page's card and inserts it after the link's block. */
+  linkPreviews?: EmbeddedMediaScope;
   /** Reports whether an image is still uploading, so the host can hold Post / Save until it lands. */
   onUploadingChange?: (uploading: boolean) => void;
 };
@@ -128,6 +133,7 @@ export function QuincyRichTextEditor({
   id,
   onSubmit,
   media,
+  linkPreviews,
   onUploadingChange,
 }: QuincyRichTextEditorProps) {
   const valueRef = useRef(JSON.stringify(value));
@@ -156,6 +162,9 @@ export function QuincyRichTextEditor({
   const inFlight = useRef(0);
   const mountedRef = useRef(true);
   const mediaRef = useRef(media); mediaRef.current = media;
+  const linkPreviewsRef = useRef(linkPreviews); linkPreviewsRef.current = linkPreviews;
+  // Bumped when the host replaces the content, so an answer that was in flight for the old content is dropped.
+  const contentEpoch = useRef(0);
   const onUploadingChangeRef = useRef(onUploadingChange); onUploadingChangeRef.current = onUploadingChange;
   const addImagesRef = useRef<(files: File[], at?: number, as?: "image" | "video") => void>(() => {});
   // Each running upload's way to stop and to give up its place (the busy count and the tray row), once, whichever of finishing and cancelling comes first.
@@ -165,7 +174,7 @@ export function QuincyRichTextEditor({
   const [picking, setPicking] = useState<{ n: number; kind: "image" | "video" } | null>(null);
   const pickerRef = useRef<HTMLInputElement>(null);
   const extensions = useMemo(() => [
-    ...createRichTextEditorExtensions(preset),
+    ...createRichTextEditorExtensions(preset).map((extension) => extension === LinkPreview ? LinkPreviewWithView : extension),
     ...(preset === "document" ? [RichTextSlashCommand.configure({ items: [...RICH_TEXT_BASIC_SLASH_ITEMS, RICH_TEXT_TABLE_SLASH_ITEM] })] : []),
   ], [preset]);
   const editor = useEditor({
@@ -301,6 +310,30 @@ export function QuincyRichTextEditor({
     }
     setUploadErrors(problems);
   };
+  // A link was just applied: ask for its card and put it after the link's top-level block. The place is carried through later
+  // edits like an upload's, and a late answer (the content was replaced, the editor unmounted, three cards already, the same address
+  // already carded) is dropped. No card, a refusal or a failure all leave the link a link.
+  const previewControllers = useRef(new Set<AbortController>());
+  const offerLinkPreview = (href: string) => {
+    const scope = linkPreviewsRef.current; const current = editorRef.current;
+    if (!scope || !current || disabledRef.current) return;
+    const cards = () => { const found: string[] = []; current.state.doc.forEach((child) => { if (child.type.name === "linkPreview") found.push(String(child.attrs.url ?? "")); }); return found; };
+    if (cards().length >= RICH_TEXT_MAX_LINK_PREVIEWS || cards().includes(href)) return;
+    const key = ++uploadSeq.current; const epoch = contentEpoch.current;
+    const { $to } = current.state.selection;
+    insertAt.current.set(key, $to.depth >= 1 ? $to.after(1) : $to.pos);
+    const controller = new AbortController(); previewControllers.current.add(controller);
+    void requestLinkPreview(scope, href, controller.signal).then((card) => {
+      const live = editorRef.current;
+      if (!card || controller.signal.aborted || !mountedRef.current || !live || epoch !== contentEpoch.current) return;
+      if (cards().length >= RICH_TEXT_MAX_LINK_PREVIEWS || cards().includes(card.url)) return;
+      const size = live.state.doc.content.size;
+      const mapped = Math.min(insertAt.current.get(key) ?? size, size);
+      const $at = live.state.doc.resolve(mapped);
+      live.chain().insertContentAt($at.depth >= 1 ? $at.after(1) : mapped, { type: "linkPreview", attrs: card }).run();
+    }).catch(() => undefined).finally(() => { insertAt.current.delete(key); previewControllers.current.delete(controller); });
+  };
+  useEffect(() => () => { for (const controller of previewControllers.current) controller.abort(); }, []);
   useEffect(() => () => {
     for (const entry of [...running.current.values()]) entry.controller.abort();
     if (inFlight.current > 0) onUploadingChangeRef.current?.(false);
@@ -349,6 +382,7 @@ export function QuincyRichTextEditor({
     if (serialised !== valueRef.current) {
       // The host replaced the content (a post cleared the composer, or an edit began): an earlier upload error is stale.
       setUploadErrors((entries) => (entries.length ? [] : entries));
+      contentEpoch.current += 1;
       const applied = editor.commands.setContent(toTiptap(value), { emitUpdate: false });
       if (applied && JSON.stringify(tiptapToRichTextDoc(editor.getJSON())) === serialised) valueRef.current = serialised;
     }
@@ -412,7 +446,7 @@ export function QuincyRichTextEditor({
                 </DropdownMenuRadioGroup>
               </DropdownMenuContent>
             </DropdownMenu>
-            <RichTextLinkPopover editor={editor} state={state} disabled={disabled} testId="rich-text-link-popover" open={linkOpen} onOpenChange={setLinkOpen} />
+            <RichTextLinkPopover editor={editor} state={state} disabled={disabled} testId="rich-text-link-popover" open={linkOpen} onOpenChange={setLinkOpen} onApplied={offerLinkPreview} />
             <RichTextToggle label="Bullet list" pressed={state.bulletList} disabled={off(state.canBulletList) || state.atListNestingLimit} onToggle={() => editor.chain().focus().toggleBulletList().run()}><ListIcon aria-hidden="true" /></RichTextToggle>
             <RichTextToggle label="Ordered list" pressed={state.orderedList} disabled={off(state.canOrderedList) || state.atListNestingLimit} onToggle={() => editor.chain().focus().toggleOrderedList().run()}><ListOrderedIcon aria-hidden="true" /></RichTextToggle>
             <RichTextToggle label="Checklist" pressed={state.taskList} disabled={off(state.canTaskList) || state.atListNestingLimit} onToggle={() => editor.chain().focus().toggleTaskList().run()}><ListChecksIcon aria-hidden="true" /></RichTextToggle>

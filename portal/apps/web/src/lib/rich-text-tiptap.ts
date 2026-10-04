@@ -46,6 +46,7 @@ export function toTiptap(doc: RichTextDoc): Record<string, unknown> {
     if (valueNode.type === "mention") return { type: "mention", attrs: { ...(valueNode.attrs as Record<string, unknown>) } };
     if (valueNode.type === "image") return { type: "image", attrs: { mediaId: (valueNode.attrs as Record<string, unknown> | undefined)?.mediaId } };
     if (valueNode.type === "video") return { type: "video", attrs: { mediaId: (valueNode.attrs as Record<string, unknown> | undefined)?.mediaId } };
+    if (valueNode.type === "linkPreview") return { type: "linkPreview", attrs: { ...(valueNode.attrs as Record<string, unknown>) } };
     if (valueNode.type === "heading" || valueNode.type === "taskItem") return { type: valueNode.type, attrs: { ...(valueNode.attrs as Record<string, unknown>) }, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
     if (valueNode.type === "paragraph" && valueNode.attrs) return { type: "paragraph", attrs: tiptapTextAlign(valueNode.attrs as Record<string, unknown>), ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
     if (valueNode.type === "tableCell" || valueNode.type === "tableHeader") {
@@ -199,6 +200,22 @@ export const EmbeddedVideo = TiptapNode.create({
   },
 });
 
+/**
+ * A link preview card (#497): an atom that names a server-held preview by id. The display fields (address, title, description, site,
+ * image) are served by the server and live on the editor node only so the card can draw; `tiptapToRichTextDoc` strips them back to the
+ * id. No `parseHTML` rule, so pasted HTML never becomes a card: the only way in is the editor's own request after a link is applied.
+ */
+export const LinkPreview = TiptapNode.create({
+  name: "linkPreview",
+  group: "block",
+  atom: true,
+  draggable: false,
+  selectable: true,
+  addAttributes() { return { previewId: { default: null }, url: { default: null }, title: { default: null }, description: { default: null }, siteName: { default: null }, imageMediaId: { default: null } }; },
+  parseHTML() { return []; },
+  renderHTML({ node }) { return ["div", { "data-link-preview": String(node.attrs.previewId ?? ""), class: "rich-text__link-preview" }, String(node.attrs.title ?? node.attrs.url ?? "")]; },
+});
+
 /** Rows x columns of a table node, spans included (what the server's limits count). */
 export function tableDimensions(table: ProseMirrorNode): { rows: number; columns: number } {
   const map = TableMap.get(table);
@@ -269,6 +286,7 @@ export function createRichTextEditorExtensions(preset: RichTextEditorPreset = "c
     ListItemHeadingCommandBoundary,
     ListNestingBoundary,
     EmbeddedImage,
+    LinkPreview,
     ...(preset === "composer" ? [EmbeddedVideo] : []),
     ...(preset === "document" ? documentExtensions() : []),
   ];
@@ -302,6 +320,10 @@ export function tiptapToRichTextDoc(value: unknown): RichTextDoc {
     if (valueNode.type === "video") {
       const attrs = valueNode.attrs as Record<string, unknown> | undefined;
       return { type: "video", attrs: { mediaId: attrs?.mediaId } };
+    }
+    if (valueNode.type === "linkPreview") {
+      const attrs = valueNode.attrs as Record<string, unknown> | undefined;
+      return { type: "linkPreview", attrs: { previewId: attrs?.previewId } };
     }
     if (valueNode.type === "heading") {
       const attrs = valueNode.attrs as Record<string, unknown> | undefined;

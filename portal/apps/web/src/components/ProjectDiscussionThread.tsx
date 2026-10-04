@@ -122,7 +122,7 @@ function CommentItem({ comment, isOwn, now, saving, editing, editingOverBytes, p
     </Menu> : <span aria-hidden="true" />}
     <div className="col-start-2 col-span-2 max-[721px]:col-start-1 max-[721px]:col-span-3 grid gap-[var(--space-2)] min-w-0">
       {editing ? <>
-        <QuincyRichTextEditor preset="composer" value={editing} onChange={onEditChange} limit={COMMENT_LIMIT} disabled={saving} loadMentionables={loadMentionables} placeholder="Edit comment…" onSubmit={saveEdit} media={{ projectId }} onUploadingChange={setEditUploading} />
+        <QuincyRichTextEditor preset="composer" value={editing} onChange={onEditChange} limit={COMMENT_LIMIT} disabled={saving} loadMentionables={loadMentionables} placeholder="Edit comment…" onSubmit={saveEdit} media={{ projectId }} linkPreviews={{ projectId }} onUploadingChange={setEditUploading} />
         <div className="flex justify-end gap-[var(--space-3)]"><Button variant="secondary" type="button" disabled={saving} onClick={onEditCancel}>Cancel</Button><Button type="button" disabled={saving || editingOverBytes || editUploading} onClick={saveEdit}>Save</Button></div>
       </> : <RichTextContent className="rich-text--body" content={comment.content} />}
     </div>
@@ -305,7 +305,7 @@ export function ProjectDiscussionThread({
     {typeof viewerName === "string" && viewerName !== "" && <InitialsAvatar name={viewerName} className="mt-[var(--space-1)] max-[721px]:hidden" />}
     <div className="grid gap-[var(--space-2)] min-w-0 flex-1">
       <label className="sr-only" htmlFor={`project-comment-${projectId}`}>Write a comment</label>
-      <QuincyRichTextEditor preset="composer" id={`project-comment-${projectId}`} value={content} onChange={setContent} limit={COMMENT_LIMIT} disabled={saving} loadMentionables={loadMentionables} placeholder="Write a project comment…" onSubmit={() => void submit()} media={{ projectId }} onUploadingChange={setComposerUploading} />
+      <QuincyRichTextEditor preset="composer" id={`project-comment-${projectId}`} value={content} onChange={setContent} limit={COMMENT_LIMIT} disabled={saving} loadMentionables={loadMentionables} placeholder="Write a project comment…" onSubmit={() => void submit()} media={{ projectId }} linkPreviews={{ projectId }} onUploadingChange={setComposerUploading} />
       <div className="flex flex-wrap items-center justify-between gap-[var(--space-3)]"><span className={cn(META_TEXT, "!normal-case")}>Use @ to mention project participants</span><Button type="submit" className="ml-auto" disabled={!canPost}>{saving ? "Posting…" : "Post"}</Button></div>
     </div>
   </form>;

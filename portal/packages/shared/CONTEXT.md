@@ -269,7 +269,8 @@ _Avoid_: Summary, newsletter, batch
 
 **Link preview**:
 The card a post shows for a link inside it: the linked page's title, description and image,
-fetched once when the post is saved. Only the post's author may remove one. At most three per
+fetched once, when the author adds the link (applies it in the editor), never again on save or
+view. Only the post's author may remove one. At most three per
 post.
 _Avoid_: Unfurl, embed, OG card
 

@@ -1,6 +1,7 @@
 import { Fragment, type ReactNode } from "react";
 import { EmbeddedImage } from "./quincy/EmbeddedImage";
 import { EmbeddedVideo } from "./quincy/EmbeddedVideo";
+import { LinkPreviewCard } from "./quincy/LinkPreviewCard";
 import type { RichTextBlock, RichTextDoc, RichTextInline, RichTextListItem, RichTextMark, RichTextTableCell, RichTextTableRow, RichTextTaskItem } from "@quincy/shared";
 
 function marked(node: ReactNode, marks: RichTextMark[] | undefined): ReactNode {
@@ -45,6 +46,7 @@ function block(node: RichTextBlock | RichTextListItem | RichTextTaskItem | RichT
   }
   if (node.type === "image") return <EmbeddedImage key={key} mediaId={node.attrs.mediaId} />;
   if (node.type === "video") return <EmbeddedVideo key={key} mediaId={node.attrs.mediaId} />;
+  if (node.type === "linkPreview") return <LinkPreviewCard key={key} attrs={node.attrs} />;
   if (node.type === "table") {
     const columns = Math.max(...node.content.map((row) => row.content.reduce((sum, cell) => sum + (cell.attrs?.colspan ?? 1), 0)));
     return <div key={key} className="rich-text__table-scroll"><table style={{ minWidth: columns * TABLE_CELL_MIN_WIDTH }}><tbody>{node.content.map(block)}</tbody></table></div>;

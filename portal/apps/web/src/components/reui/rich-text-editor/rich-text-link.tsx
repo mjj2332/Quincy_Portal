@@ -15,6 +15,8 @@
 //    share the trigger's `aria-label="Link"`.
 // 7. The popover's test id is a `testId` prop, passed by `QuincyRichTextEditor` (Quincy-owned hooks).
 // 6. Pressed link trigger reads `bg-primary` like the other toolbar toggles.
+// 8. Optional `onApplied(href)` on `RichTextLinkPopover`, threaded to `LinkForm` and called only after a successful Apply (never Remove):
+//    the owner uses it to offer a link preview (#497). No other behaviour change.
 import { useId, useRef, useState, type FormEvent, type RefObject } from "react"
 import { type Editor } from "@tiptap/react"
 import { isHttpUrl } from "@quincy/shared"
@@ -56,9 +58,10 @@ interface LinkFormProps {
   href: string | null
   inputRef: RefObject<HTMLInputElement | null>
   onDone: (applied: boolean) => void
+  onApplied?: (href: string) => void
 }
 
-function LinkForm({ editor, href, inputRef, onDone }: LinkFormProps) {
+function LinkForm({ editor, href, inputRef, onDone, onApplied }: LinkFormProps) {
   const [draft, setDraft] = useState(href ?? "")
   const [invalid, setInvalid] = useState(false)
   const errorId = useId()
@@ -84,6 +87,7 @@ function LinkForm({ editor, href, inputRef, onDone }: LinkFormProps) {
     chain.setLink({ href: next }).run()
 
     onDone(true)
+    onApplied?.(next)
   }
 
   return (
@@ -146,6 +150,8 @@ interface RichTextLinkPopoverProps {
   /** Quincy-owned test hook for the popover; the vendor file does not name one. */
   testId?: string
   onOpenChange: (open: boolean) => void
+  /** Called with the address after a successful Apply (not Remove). */
+  onApplied?: (href: string) => void
 }
 
 export function RichTextLinkPopover({
@@ -155,6 +161,7 @@ export function RichTextLinkPopover({
   disabled = false,
   testId,
   onOpenChange,
+  onApplied,
 }: RichTextLinkPopoverProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   // Escape / outside press / re-pressing the trigger return focus to the trigger; Apply and Remove
@@ -206,6 +213,7 @@ export function RichTextLinkPopover({
           editor={editor}
           href={state.link}
           inputRef={inputRef}
+          onApplied={onApplied}
           onDone={(applied) => {
             appliedRef.current = applied
             onOpenChange(false)
