@@ -52,7 +52,7 @@ async function apply(host: HTMLElement, href: string) {
   await settle();
 }
 const cards = (host: HTMLElement) => [...host.querySelectorAll('[data-testid="link-preview-card-editor"]')];
-const storedPreviews = () => latest.content.filter((block) => block.type === "linkPreview");
+const storedPreviews = () => stripLinkPreviewDisplay(latest).content.filter((block) => block.type === "linkPreview");
 
 beforeEach(() => { request.mockReset(); latest = plain(); reset = null; });
 afterEach(async () => { await act(async () => root?.unmount()); root = null; document.body.replaceChildren(); });
@@ -238,7 +238,7 @@ describe("a card in a Project composer draft (#497)", () => {
     latest = content;
     // Something to link: a typed sentence (set once, only while the draft is empty).
     useEffect(() => { if (!richTextPlainText(content)) setContent(plain()); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-    return <QuincyRichTextEditor preset="composer" value={content} onChange={setContent} keepPreviewDisplay limit={10_000} loadMentionables={async () => []} linkPreviews={{ projectId: "p1" }} media={{ projectId: "p1" }} />;
+    return <QuincyRichTextEditor preset="composer" value={content} onChange={setContent} limit={10_000} loadMentionables={async () => []} linkPreviews={{ projectId: "p1" }} media={{ projectId: "p1" }} />;
   }
   let open: ((on: boolean) => void) | null = null;
   function Sheet() { const [on, setOn] = useState(true); open = setOn; return <ProjectCommentDraftsProvider>{on ? <DraftComposer /> : null}</ProjectCommentDraftsProvider>; }
@@ -270,6 +270,31 @@ describe("a card in a Project composer draft (#497)", () => {
     await apply(host, "https://example.test/a");
     expect(latest.content.filter((block) => block.type === "linkPreview")).toHaveLength(1);
     expect(() => parseRichTextDoc(stripLinkPreviewDisplay(latest), COMMENT_MEDIA_RICH_TEXT_PROFILE)).not.toThrow();
+  });
+});
+
+describe("any editor whose state lives outside it (#497)", () => {
+  it("restores the card and its Remove control when a host that held the edit state re-mounts the editor", async () => {
+    request.mockResolvedValue(cardFor(P1, "https://example.test/a"));
+    const host = await mount(plain());
+    await apply(host, "https://example.test/a");
+    const held = latest;
+    await act(async () => root!.unmount()); root = null; document.body.replaceChildren();
+    const again = await mount(held);
+    expect(cards(again)).toHaveLength(1);
+    expect(again.querySelector('[data-testid="link-preview-remove"]')).not.toBeNull();
+  });
+
+  it("measures the size of a draft without the display data a card carries", async () => {
+    const big = "x".repeat(2_500);
+    const cardsOf = (count: number) => Array.from({ length: count }, (_, index) => ({ type: "linkPreview" as const, attrs: { previewId: `${index}2222222-2222-4222-8222-222222222222`, url: `https://example.test/${index}`, title: big, description: big, siteName: "S", imageMediaId: null } }));
+    const stripped = stripLinkPreviewDisplay({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hi" }] }, ...cardsOf(3)] });
+    const rich: RichTextDoc = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hi" }] }, ...cardsOf(3)] };
+    const limitBytes = new TextEncoder().encode(JSON.stringify(stripped)).length + 50;
+    expect(new TextEncoder().encode(JSON.stringify(rich)).length).toBeGreaterThan(limitBytes);
+    const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
+    await act(async () => root!.render(<QuincyRichTextEditor preset="composer" value={rich} onChange={() => undefined} limit={10_000} maxBytes={limitBytes} loadMentionables={async () => []} linkPreviews={{ projectId: "p1" }} />));
+    expect(host.textContent).not.toMatch(/too large|too long|over the limit|bytes/i);
   });
 });
 

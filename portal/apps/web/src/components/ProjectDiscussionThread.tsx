@@ -232,7 +232,7 @@ export function ProjectDiscussionThread({
   }, [consumeOrForward, projectId, queryClient, session.data?.user.role]);
 
   const postingOverBytes = richTextDocByteLength(stripLinkPreviewDisplay(content)) > RICH_TEXT_JSON_MAX_BYTES;
-  const editingOverBytes = editing ? richTextDocByteLength(editing.content) > RICH_TEXT_JSON_MAX_BYTES : false;
+  const editingOverBytes = editing ? richTextDocByteLength(stripLinkPreviewDisplay(editing.content)) > RICH_TEXT_JSON_MAX_BYTES : false;
   // Post is disabled for an empty or over-limit comment (previously it posted and the server
   // rejected it with a 400); keyboard submit already refused the same cases.
   const postingPlainText = richTextPlainText(content);
@@ -267,7 +267,7 @@ export function ProjectDiscussionThread({
     const mutationProjectId = projectId;
     setSaving(true); setMutationError(undefined);
     try {
-      const comment = await apiPatch<Comment, { content: RichTextDoc }>(`/api/projects/${encodeURIComponent(projectId)}/comments/${encodeURIComponent(editing.id)}`, { content: editing.content });
+      const comment = await apiPatch<Comment, { content: RichTextDoc }>(`/api/projects/${encodeURIComponent(projectId)}/comments/${encodeURIComponent(editing.id)}`, { content: stripLinkPreviewDisplay(editing.content) });
       if (!presentation.isCurrent(mutationProjectId)) return;
       replaceProjectComment(queryClient, projectId, comment);
       setEditing(undefined);
@@ -306,7 +306,7 @@ export function ProjectDiscussionThread({
     {typeof viewerName === "string" && viewerName !== "" && <InitialsAvatar name={viewerName} className="mt-[var(--space-1)] max-[721px]:hidden" />}
     <div className="grid gap-[var(--space-2)] min-w-0 flex-1">
       <label className="sr-only" htmlFor={`project-comment-${projectId}`}>Write a comment</label>
-      <QuincyRichTextEditor preset="composer" id={`project-comment-${projectId}`} value={content} onChange={setContent} keepPreviewDisplay limit={COMMENT_LIMIT} disabled={saving} loadMentionables={loadMentionables} placeholder="Write a project comment…" onSubmit={() => void submit()} media={{ projectId }} linkPreviews={{ projectId }} onUploadingChange={setComposerUploading} />
+      <QuincyRichTextEditor preset="composer" id={`project-comment-${projectId}`} value={content} onChange={setContent} limit={COMMENT_LIMIT} disabled={saving} loadMentionables={loadMentionables} placeholder="Write a project comment…" onSubmit={() => void submit()} media={{ projectId }} linkPreviews={{ projectId }} onUploadingChange={setComposerUploading} />
       <div className="flex flex-wrap items-center justify-between gap-[var(--space-3)]"><span className={cn(META_TEXT, "!normal-case")}>Use @ to mention project participants</span><Button type="submit" className="ml-auto" disabled={!canPost}>{saving ? "Posting…" : "Post"}</Button></div>
     </div>
   </form>;

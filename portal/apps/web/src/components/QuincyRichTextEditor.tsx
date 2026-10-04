@@ -13,6 +13,7 @@ import {
   itemContainerDepth,
   mentionQuery,
   shouldBlockListIndent,
+  stripLinkPreviewDisplay,
   tiptapToRichTextDoc,
   toTiptap,
 } from "../lib/rich-text-tiptap";
@@ -100,8 +101,9 @@ export type QuincyRichTextEditorProps = {
   preset: RichTextEditorPreset;
   value: RichTextDoc;
   onChange: (value: RichTextDoc) => void;
-  /** A local draft keeps what each link preview card shows (the id alone is stored): `onChange` then carries it, and the host strips it with `stripLinkPreviewDisplay` before posting. */
-  keepPreviewDisplay?: boolean;
+  // `onChange` carries what each link preview card shows (title, description, site, address, image) beside its id, because whatever a
+  // host keeps outside the editor (a draft, an edit in progress) has to redraw the card when the editor is mounted again. The id alone
+  // is what is stored, so a host strips with `stripLinkPreviewDisplay` at the point it submits and wherever it measures size.
   limit: number;
   /** The stored-JSON cap the surface's server profile enforces (default: the comment cap). */
   maxBytes?: number;
@@ -127,7 +129,6 @@ export function QuincyRichTextEditor({
   preset,
   value,
   onChange,
-  keepPreviewDisplay = false,
   limit,
   maxBytes = RICH_TEXT_JSON_MAX_BYTES,
   disabled = false,
@@ -141,7 +142,6 @@ export function QuincyRichTextEditor({
 }: QuincyRichTextEditorProps) {
   const valueRef = useRef(JSON.stringify(value));
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
-  const keepDisplayRef = useRef(keepPreviewDisplay); keepDisplayRef.current = keepPreviewDisplay;
   const onSubmitRef = useRef(onSubmit); onSubmitRef.current = onSubmit;
   const limitRef = useRef(limit); limitRef.current = limit;
   const maxBytesRef = useRef(maxBytes); maxBytesRef.current = maxBytes;
@@ -225,7 +225,7 @@ export function QuincyRichTextEditor({
           const plainText = richTextPlainText(doc);
           // Never submit while an image is still uploading: the post would go without it.
           if (inFlight.current > 0) { event.preventDefault(); return true; }
-          if (plainText.trim().length > 0 && plainText.length <= limitRef.current && richTextDocByteLength(doc) <= maxBytesRef.current && !disabledRef.current) {
+          if (plainText.trim().length > 0 && plainText.length <= limitRef.current && richTextDocByteLength(stripLinkPreviewDisplay(doc)) <= maxBytesRef.current && !disabledRef.current) {
             event.preventDefault();
             onSubmitRef.current?.();
             return true;
@@ -235,7 +235,7 @@ export function QuincyRichTextEditor({
       },
     },
     onUpdate: ({ editor: next }) => {
-      const doc = tiptapToRichTextDoc(next.getJSON(), { keepPreviewDisplay: keepDisplayRef.current });
+      const doc = tiptapToRichTextDoc(next.getJSON(), { keepPreviewDisplay: true });
       const serialised = JSON.stringify(doc);
       // Tiptap/ProseMirror can dispatch a no-op transaction (e.g. from a blur triggered by a
       // submit button click) that reports the same content as before. Propagating it anyway can
@@ -408,7 +408,7 @@ export function QuincyRichTextEditor({
       setUploadErrors((entries) => (entries.length ? [] : entries));
       contentEpoch.current += 1; shownPreviews.current = new Set(); removedPreviews.current = new Map(); pendingPreviews.current = new Set();
       const applied = editor.commands.setContent(toTiptap(value), { emitUpdate: false });
-      if (applied && JSON.stringify(tiptapToRichTextDoc(editor.getJSON(), { keepPreviewDisplay: keepDisplayRef.current })) === serialised) valueRef.current = serialised;
+      if (applied && JSON.stringify(tiptapToRichTextDoc(editor.getJSON(), { keepPreviewDisplay: true })) === serialised) valueRef.current = serialised;
     }
   }, [editor, value]);
   useEffect(() => {
@@ -424,7 +424,7 @@ export function QuincyRichTextEditor({
   if (!editor) return null;
 
   const plainText = richTextPlainText(value);
-  const overBytes = richTextDocByteLength(value) > maxBytes;
+  const overBytes = richTextDocByteLength(stripLinkPreviewDisplay(value)) > maxBytes;
   const selectMention = (user: MentionableUser) => {
     const activeQuery = query ?? "";
     const from = editor.state.selection.from - activeQuery.length - 1;

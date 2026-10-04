@@ -293,6 +293,20 @@ describe("NoticeBoard disclosure and polling", () => {
     expect(apiPatchMock).not.toHaveBeenCalled();
   });
 
+  it("saves an edited notice's link preview cards as their ids alone, though the editor holds what the cards show (#497)", async () => {
+    const card = { type: "linkPreview" as const, attrs: { previewId: "22222222-2222-4222-8222-222222222222", url: "https://example.test/a", title: "A page", description: "About it", siteName: "Example", imageMediaId: null } };
+    const withCard: NoticeBoardPost = { ...oldPost, content: { ...doc("Old notice"), content: [...doc("Old notice").content, card] } };
+    apiGetMock.mockImplementation(async (path: string) => path.includes("read-state") ? { marker: null, latest: null, unreadCount: 0 } : { posts: [withCard], hasMore: false, nextCursor: null });
+    const host = mount();
+    await render(<NoticeBoard currentUserId="user-a" />);
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit")!);
+    expect(host.querySelector('[data-testid="link-preview-card-editor"]')).not.toBeNull();
+    await appendToEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "!");
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
+    const sent = apiPatchMock.mock.calls.at(-1)![1] as { content: { content: Array<{ type: string; attrs?: unknown }> } };
+    expect(sent.content.content.find((block) => block.type === "linkPreview")).toEqual({ type: "linkPreview", attrs: { previewId: card.attrs.previewId } });
+  });
+
   it("hides Edit/Delete on the post being edited, keeps them on other posts, and restores them on Cancel", async () => {
     apiGetMock.mockResolvedValue({ posts: [{ ...newPost, authorId: "user-a" }, oldPost] });
     const host = mount();
