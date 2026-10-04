@@ -1,5 +1,5 @@
 import { sydneyBusinessDate, type StageKey } from "@quincy/shared";
-import { buildAutomaticDeadlineBundle } from "./automatic-deadline";
+import { buildAutomaticDeadlineBundle, buildAutomaticDeadlineMoveBundle } from "./automatic-deadline";
 import type { PreparedStatementBundle } from "./stage-board-bundles";
 
 /**
@@ -24,6 +24,13 @@ export type ShootDateFillIndexes = {
    * this fill's own audit row so it lands exactly when the fill did.
    */
   automaticDeadline?: number;
+  /**
+   * The Automatic Deadline move UPDATE (#510), after the set bundle: a Deadline the system set earlier and that
+   * outlived a cleared Shoot date follows the date the fill wrote. Mutually exclusive with the set bundle (the set
+   * needs `deadline_at IS NULL`, the move needs it held), gated on the same fill audit row, and it takes no
+   * Deadline version the caller read (see docs/lessons.md, #485).
+   */
+  automaticDeadlineMove?: number;
 };
 export type ShootDateFillReason = "stage_move" | "deadline_set";
 export type ShootDateFillTrigger =
@@ -76,8 +83,15 @@ export function buildShootDateFillBundle(input: {
   const automaticDeadline = input.trigger.kind === "stage_move"
     ? buildAutomaticDeadlineBundle({ db: input.db, projectId: input.projectId, shootDate, gate: { kind: "audit", auditId: input.fillAuditId }, auditId: crypto.randomUUID(), reason: "shoot_date_fill", now: input.now })
     : undefined;
-  if (!automaticDeadline) return { statements: [update, audit], indexes: { update: 0, audit: 1 } };
-  return { statements: [update, audit, ...automaticDeadline.statements], indexes: { update: 0, audit: 1, automaticDeadline: 2 + automaticDeadline.indexes.update } };
+  const automaticDeadlineMove = input.trigger.kind === "stage_move"
+    ? buildAutomaticDeadlineMoveBundle({ db: input.db, projectId: input.projectId, shootDate, gate: { kind: "audit", auditId: input.fillAuditId }, auditId: crypto.randomUUID(), reason: "shoot_date_fill", now: input.now })
+    : undefined;
+  if (!automaticDeadline || !automaticDeadlineMove) return { statements: [update, audit], indexes: { update: 0, audit: 1 } };
+  const moveOffset = 2 + automaticDeadline.statements.length;
+  return {
+    statements: [update, audit, ...automaticDeadline.statements, ...automaticDeadlineMove.statements],
+    indexes: { update: 0, audit: 1, automaticDeadline: 2 + automaticDeadline.indexes.update, automaticDeadlineMove: moveOffset + automaticDeadlineMove.indexes.update },
+  };
 }
 
 /**
