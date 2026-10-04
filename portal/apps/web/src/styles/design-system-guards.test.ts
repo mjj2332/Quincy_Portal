@@ -839,3 +839,102 @@ describe("guard: avatar fallback initials clear 4.5:1 on their ground (#212)", (
     expect((hi! + 0.05) / (lo! + 0.05)).toBeGreaterThanOrEqual(4.5);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Guard — the vendored Select popup and its items (#522)
+// ---------------------------------------------------------------------------
+// The popup shipped a `ring-1 ring-foreground/10` outline, no shadow and no inner padding, so the
+// highlighted row ran edge to edge. Its item took BOTH the `focus:bg-accent` fill and the global
+// `:focus-visible` ink ring, which `overflow-x-hidden` clipped. The fix is source text — happy-dom
+// resolves no cascade — so it is pinned as source text, scoped to the two components (an assertion
+// over the whole file would pass on a stray class anywhere in it).
+//
+// The item's outline is recoloured and inset with `!` on BOTH colour and offset: `tokens/base.css`
+// declares an unlayered `:focus-visible { outline: … ; outline-offset: 2px }`, and unlayered CSS
+// beats Tailwind's layered utilities regardless of specificity (lessons.md, inset-focus entries).
+// Suppression (`outline-none` / `outline-hidden`) is never the fix — guard 3 tracks suppression.
+
+/** The class string of the first `className=…` after `marker`, comments stripped. */
+function selectClassesAfter(source: string, marker: string): string | null {
+  const stripped = stripComments(source);
+  const at = stripped.indexOf(marker);
+  if (at < 0) return null;
+  const match = /className=\{cn\(\s*"([^"]+)"/.exec(stripped.slice(at));
+  return match ? match[1]! : null;
+}
+
+export function selectPopupProblems(classes: string): string[] {
+  const problems: string[] = [];
+  if (!/(?:^|\s)shadow-\[var\(--shadow-md\)\]/.test(classes)) problems.push("missing shadow-[var(--shadow-md)]");
+  if (!/(?:^|\s)border(?:\s|$)/.test(classes) || !/(?:^|\s)border-border(?:\s|$)/.test(classes)) {
+    problems.push("missing border border-border");
+  }
+  if (/(?:^|\s)ring-1(?:\s|$)|ring-foreground\/10/.test(classes)) problems.push("still has the ring-1 outline");
+  return problems;
+}
+
+export function selectItemProblems(classes: string): string[] {
+  const problems: string[] = [];
+  if (!/(?:^|\s)focus-visible:!outline-\[color:var\(--accent-on\)\]/.test(classes)) {
+    problems.push("outline colour must be !outline-[color:var(--accent-on)]");
+  }
+  if (!/(?:^|\s)focus-visible:!-outline-offset-\d+/.test(classes) &&
+      !/(?:^|\s)focus-visible:!outline-offset-\[-\d+px\]/.test(classes)) {
+    problems.push("outline offset must be an important negative (inset) offset");
+  }
+  if (/(?:^|\s)(?:focus(?:-visible)?:)?!?outline-(?:none|hidden)!?(?:\s|$)/.test(classes)) {
+    problems.push("suppresses the focus outline");
+  }
+  if (/focus-visible:ring-/.test(classes)) problems.push("adds a second (ring) focus indicator");
+  if (!/(?:^|\s)focus:bg-accent(?:\s|$)/.test(classes)) problems.push("lost the accent fill");
+  return problems;
+}
+
+describe("guard: reui/select popup is elevated and its items show one inset indicator (#522)", () => {
+  const source = readFileSync(join(srcDir, "components/reui/select.tsx"), "utf8");
+
+  it("SelectContent carries a shadow token and a border, and no ring-1 outline", () => {
+    const classes = selectClassesAfter(source, 'data-slot="select-content"');
+    expect(classes, "SelectContent popup className not found").not.toBeNull();
+    expect(selectPopupProblems(classes!)).toEqual([]);
+  });
+
+  it("SelectContent pads its list so the highlighted row is inset from the popup edge", () => {
+    const stripped = stripComments(source);
+    const list = /<SelectPrimitive\.List\b[^>]*>/.exec(stripped)?.[0] ?? "";
+    expect(list, "SelectPrimitive.List not found").not.toBe("");
+    expect(list).toMatch(/className=["{][^>]*\bp-1\b/);
+  });
+
+  it("SelectItem keeps the fill and draws one inset outline in --accent-on, important on colour and offset", () => {
+    const classes = selectClassesAfter(source, 'data-slot="select-item"');
+    expect(classes, "SelectItem className not found").not.toBeNull();
+    expect(selectItemProblems(classes!)).toEqual([]);
+  });
+
+  it("proves the matchers on planted fixtures", () => {
+    const OLD_POPUP = "relative rounded-lg bg-popover ring-1 ring-foreground/10 duration-100";
+    expect(selectPopupProblems(OLD_POPUP)).toEqual([
+      "missing shadow-[var(--shadow-md)]",
+      "missing border border-border",
+      "still has the ring-1 outline",
+    ]);
+    expect(selectPopupProblems("border border-border shadow-[var(--shadow-md)] bg-popover")).toEqual([]);
+
+    const OLD_ITEM = "focus:bg-accent focus:text-accent-foreground";
+    expect(selectItemProblems(OLD_ITEM)).toHaveLength(2);
+    const NO_BANG = "focus:bg-accent focus-visible:outline-[color:var(--accent-on)] focus-visible:-outline-offset-4";
+    expect(selectItemProblems(NO_BANG)).toHaveLength(2);
+    const NO_INSET = "focus:bg-accent focus-visible:!outline-[color:var(--accent-on)]";
+    expect(selectItemProblems(NO_INSET)).toEqual(["outline offset must be an important negative (inset) offset"]);
+    const SUPPRESSED = "focus:bg-accent focus-visible:!outline-[color:var(--accent-on)] focus-visible:!-outline-offset-4 outline-none";
+    expect(selectItemProblems(SUPPRESSED)).toEqual(["suppresses the focus outline"]);
+    // The important forms are the ones that can actually beat the unlayered global outline rule.
+    for (const suppress of ["focus-visible:!outline-none", "!outline-hidden", "focus:outline-none!"]) {
+      const IMPORTANT = "focus:bg-accent focus-visible:!outline-[color:var(--accent-on)] focus-visible:!-outline-offset-4 " + suppress;
+      expect(selectItemProblems(IMPORTANT)).toEqual(["suppresses the focus outline"]);
+    }
+    const GOOD = "focus:bg-accent focus-visible:!outline-[color:var(--accent-on)] focus-visible:!-outline-offset-4";
+    expect(selectItemProblems(GOOD)).toEqual([]);
+  });
+});
