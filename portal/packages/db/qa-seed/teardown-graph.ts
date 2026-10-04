@@ -102,6 +102,7 @@ export const NO_FK_ID_COLUMNS: readonly NoFkColumn[] = [
   { table: "external_edited_upload_sessions", column: "asset_id", references: "assets", evidence: "routes/external-uploads.ts reads schema.assets by session.assetId" },
   { table: "external_edited_upload_sessions", column: "membership_cycle_id", references: "project_members", evidence: "external-upload-sweep.ts: INNER JOIN project_members pm ON pm.id = s.membership_cycle_id" },
   { table: "embedded_media", column: "owner_id", references: "*", evidence: "polymorphic by owner_kind (project_comment, notice_post) — workers/app/src/lib/project-comments.ts and notice-board-service.ts attach rows to the comment / post id" },
+  { table: "link_previews", column: "owner_id", references: "*", evidence: "polymorphic by owner_kind (project_comment, notice_post) — workers/app/src/lib/link-previews.ts attaches rows to the comment / post id in the same batch as the post. The rows hang off projects by project_id (cascade), so a QA Project teardown clears them" },
   { table: "embedded_media_cleanup", column: "project_id", references: "projects", evidence: "workers/app/src/routes/projects.ts queues the key of every embedded_media row of a Project it hard-deletes, with that Project id" },
   { table: "notice_board_read_markers", column: "last_read_post_id", references: "notice_board_posts", evidence: "read marker's last-read notice-board post" },
 ];

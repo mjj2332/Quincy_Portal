@@ -29,7 +29,13 @@ export type RichTextImage = { type: "image"; attrs: { mediaId: string } };
 /** A video placed in a post (#494). Like an image it names stored media by id and never carries a URL or bytes. */
 export type RichTextVideo = { type: "video"; attrs: { mediaId: string } };
 export type RichTextMediaNode = RichTextImage | RichTextVideo;
-export type RichTextBlock = RichTextParagraph | RichTextHeading | RichTextBulletList | RichTextOrderedList | RichTextTaskList | RichTextTable | RichTextImage | RichTextVideo;
+/**
+ * The card a post shows for a link (#497). A stored post names a preview by id alone, and the server fills the rest in when it
+ * serves the post (`attrs` then also carries the card), so a browser can never put its own title or image on a link. Whatever
+ * display fields arrive on a write are dropped.
+ */
+export type RichTextLinkPreview = { type: "linkPreview"; attrs: { previewId: string; url?: string; title?: string | null; description?: string | null; siteName?: string | null; imageMediaId?: string | null } };
+export type RichTextBlock = RichTextParagraph | RichTextHeading | RichTextBulletList | RichTextOrderedList | RichTextTaskList | RichTextTable | RichTextImage | RichTextVideo | RichTextLinkPreview;
 /** Every node a tree walk can meet. */
 export type RichTextTreeNode = RichTextBlock | RichTextListItem | RichTextTaskItem | RichTextTableRow | RichTextTableCell | RichTextInline;
 export type RichTextDoc = { type: "doc"; content: RichTextBlock[] };
@@ -39,6 +45,9 @@ export const RICH_TEXT_JSON_MAX_BYTES = 32 * 1024;
 export const NOTICE_RICH_TEXT_JSON_MAX_BYTES = 64 * 1024;
 export const NOTICE_BODY_MAX_LENGTH = 10_000;
 export const RICH_TEXT_MAX_NESTING = 8;
+/** At most this many link preview cards in one document (#497). */
+export const RICH_TEXT_MAX_LINK_PREVIEWS = 3;
+const LINK_PREVIEW_DISPLAY_KEYS = ["url", "title", "description", "siteName", "imageMediaId"] as const;
 export const RICH_TEXT_TABLE_MAX_ROWS = 50;
 export const RICH_TEXT_TABLE_MAX_COLUMNS = 12;
 export const STAFF_NAME_MAX_LENGTH = 200;
@@ -47,11 +56,11 @@ export const STAFF_NAME_MAX_LENGTH = 200;
  * What a surface may store. The default is the comment profile (Project discussion, #491); the
  * Notice board's document profile is a strict superset (#492), so an old row always still parses.
  */
-export type RichTextProfile = { readonly maxBytes: number; readonly allowTables: boolean; readonly allowAlign: boolean; readonly allowHighlight: boolean; readonly allowMedia: boolean; readonly allowVideo: boolean };
-export const COMMENT_RICH_TEXT_PROFILE: RichTextProfile = { maxBytes: RICH_TEXT_JSON_MAX_BYTES, allowTables: false, allowAlign: false, allowHighlight: false, allowMedia: false, allowVideo: false };
-export const NOTICE_RICH_TEXT_PROFILE: RichTextProfile = { maxBytes: NOTICE_RICH_TEXT_JSON_MAX_BYTES, allowTables: true, allowAlign: true, allowHighlight: true, allowMedia: true, allowVideo: false };
+export type RichTextProfile = { readonly maxBytes: number; readonly allowTables: boolean; readonly allowAlign: boolean; readonly allowHighlight: boolean; readonly allowMedia: boolean; readonly allowVideo: boolean; readonly allowLinkPreviews: boolean };
+export const COMMENT_RICH_TEXT_PROFILE: RichTextProfile = { maxBytes: RICH_TEXT_JSON_MAX_BYTES, allowTables: false, allowAlign: false, allowHighlight: false, allowMedia: false, allowVideo: false, allowLinkPreviews: false };
+export const NOTICE_RICH_TEXT_PROFILE: RichTextProfile = { maxBytes: NOTICE_RICH_TEXT_JSON_MAX_BYTES, allowTables: true, allowAlign: true, allowHighlight: true, allowMedia: true, allowVideo: false, allowLinkPreviews: true };
 /** Project discussion (#493, #494): the comment profile plus embedded images and videos. The Notice board's profile takes images too (#496), never video. */
-export const COMMENT_MEDIA_RICH_TEXT_PROFILE: RichTextProfile = { ...COMMENT_RICH_TEXT_PROFILE, allowMedia: true, allowVideo: true };
+export const COMMENT_MEDIA_RICH_TEXT_PROFILE: RichTextProfile = { ...COMMENT_RICH_TEXT_PROFILE, allowMedia: true, allowVideo: true, allowLinkPreviews: true };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const encoder = new TextEncoder();
@@ -243,6 +252,15 @@ function parseBlock(value: unknown, depth: number, profile: RichTextProfile, ite
     if (typeof attrs.mediaId !== "string" || !UUID.test(attrs.mediaId)) throw new RichTextValidationError("Video media id must be a UUID");
     return { type: "video", attrs: { mediaId: attrs.mediaId } };
   }
+  if (node.type === "linkPreview") {
+    if (!profile.allowLinkPreviews || depth > 0 || itemKind || insideListItem) throw new RichTextValidationError("Unsupported rich-text node");
+    onlyKeys(node, ["type", "attrs"], "Link preview");
+    const attrs = record(node.attrs, "Link preview attributes");
+    onlyKeys(attrs, ["previewId", ...LINK_PREVIEW_DISPLAY_KEYS], "Link preview attributes");
+    if (typeof attrs.previewId !== "string" || !UUID.test(attrs.previewId)) throw new RichTextValidationError("Link preview id must be a UUID");
+    // A served document carries the card's fields. They are never stored: the server fills them in from its own row.
+    return { type: "linkPreview", attrs: { previewId: attrs.previewId } };
+  }
   if (node.type === "table") {
     if (!profile.allowTables || depth > 0) throw new RichTextValidationError("Unsupported rich-text node");
     return parseTable(node, profile);
@@ -301,6 +319,9 @@ export function parseRichTextDoc(value: unknown, profile: RichTextProfile = COMM
   const parsed = { type: "doc" as const, content: content as RichTextBlock[] };
   const mediaIds = richTextMediaIds(parsed);
   if (new Set(mediaIds).size !== mediaIds.length) throw new RichTextValidationError("A media item may be placed only once in a document");
+  const previewIds = richTextLinkPreviewIds(parsed);
+  if (previewIds.length > RICH_TEXT_MAX_LINK_PREVIEWS) throw new RichTextValidationError("A post may have at most 3 link previews");
+  if (new Set(previewIds).size !== previewIds.length) throw new RichTextValidationError("A link preview may be placed only once in a document");
   if (!richTextPlainText(parsed).trim()) throw new RichTextValidationError("Rich-text document must not be empty");
   return parsed;
 }
@@ -319,6 +340,7 @@ function textFromBlock(block: RichTextBlock | RichTextListItem | RichTextTaskIte
   // notification and counts toward the character limit the way it reads.
   if (block.type === "image") return RICH_TEXT_IMAGE_PLACEHOLDER;
   if (block.type === "video") return RICH_TEXT_VIDEO_PLACEHOLDER;
+  if (block.type === "linkPreview") return "";
   if (block.type === "table") return block.content.map((row) => row.content.map((cell) => cell.content.map(textFromBlock).filter(Boolean).join("\n")).join("\t")).join("\n");
   if (block.type === "paragraph" || block.type === "heading") return (block.content ?? []).map((node) => node.type === "text" ? node.text : node.type === "hardBreak" ? "\n" : node.attrs.label).join("");
   if (block.type === "listItem") return (block.content ?? []).map(textFromBlock).filter(Boolean).join("\n");
@@ -335,7 +357,7 @@ export function richTextMentionIds(doc: RichTextDoc): string[] {
   const ids: string[] = [];
   const visit = (node: RichTextTreeNode) => {
     if (node.type === "mention") { if (!ids.includes(node.attrs.id)) ids.push(node.attrs.id); return; }
-    if (node.type === "text" || node.type === "hardBreak" || node.type === "image" || node.type === "video") return;
+    if (node.type === "text" || node.type === "hardBreak" || node.type === "image" || node.type === "video" || node.type === "linkPreview") return;
     if (node.type === "paragraph" || node.type === "heading") { for (const child of node.content ?? []) visit(child); return; }
     for (const child of node.content ?? []) visit(child);
   };
@@ -355,6 +377,13 @@ export function richTextMediaIds(doc: RichTextDoc): string[] {
   return richTextMediaRefs(doc).map((ref) => ref.id);
 }
 
+/** Returns the link preview ids a document's cards name, in document order. */
+export function richTextLinkPreviewIds(doc: RichTextDoc): string[] {
+  const ids: string[] = [];
+  for (const block of doc.content) if (block.type === "linkPreview") ids.push(block.attrs.previewId);
+  return ids;
+}
+
 /** Replaces untrusted display labels after the server has resolved eligible users. */
 export function normalizeRichTextMentionLabels(doc: RichTextDoc, namesById: ReadonlyMap<string, string>): RichTextDoc {
   const normalize = (node: RichTextTreeNode): RichTextTreeNode => {
@@ -367,6 +396,7 @@ export function normalizeRichTextMentionLabels(doc: RichTextDoc, namesById: Read
     if (node.type === "hardBreak") return { ...node };
     if (node.type === "image") return { type: "image", attrs: { mediaId: node.attrs.mediaId } };
     if (node.type === "video") return { type: "video", attrs: { mediaId: node.attrs.mediaId } };
+    if (node.type === "linkPreview") return { type: "linkPreview", attrs: { previewId: node.attrs.previewId } };
     if (node.type === "paragraph") return { type: "paragraph", ...(node.attrs ? { attrs: { ...node.attrs } } : {}), ...(node.content ? { content: node.content.map(normalize) as RichTextInline[] } : {}) };
     if (node.type === "heading") return { type: "heading", attrs: { ...node.attrs }, ...(node.content ? { content: node.content.map(normalize) as RichTextInline[] } : {}) };
     if (node.type === "taskItem") return { type: "taskItem", attrs: { ...node.attrs }, content: node.content.map(normalize) as RichTextTaskItem["content"] };
