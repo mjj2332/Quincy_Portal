@@ -38,6 +38,8 @@ const NOT_ENTITY_REFERENCES: Readonly<Record<string, string>> = {
   "notification_delivery_ledger.email_message_id": "the email provider's message id",
   "notification_digests.email_message_id": "the email provider's message id",
   "external_edited_upload_sessions.r2_upload_id": "an R2 multipart-upload id",
+  "embedded_media.upload_id": "an R2 multipart-upload id",
+  "embedded_media_cleanup.upload_id": "an R2 multipart-upload id",
 };
 
 /**

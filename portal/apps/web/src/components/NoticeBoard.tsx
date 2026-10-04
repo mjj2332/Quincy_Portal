@@ -1,11 +1,11 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useId, useRef, useState, type FormEvent } from "react";
-import { RICH_TEXT_JSON_MAX_BYTES, richTextDocByteLength, type RichTextDoc } from "@quincy/shared";
+import { NOTICE_BODY_MAX_LENGTH, NOTICE_RICH_TEXT_JSON_MAX_BYTES, richTextDocByteLength, richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { createNoticeBoardPost, deleteNoticeBoardPost, editNoticeBoardPost, useNoticeBoardPostsQuery, useNoticeBoardPresentation, useNoticeBoardReadStateQuery } from "../lib/notice-board-data";
 import { apiGet } from "../lib/api";
 import { cn } from "@/lib/utils";
 import { RichTextContent } from "./RichTextContent";
-import { RichTextEditor } from "./RichTextEditor";
+import { QuincyRichTextEditor } from "./QuincyRichTextEditor";
 import { META_TEXT } from "./quincy/Eyebrow";
 import { buttonClasses } from "./quincy/Button";
 import { EmptyState } from "./quincy/EmptyState";
@@ -79,8 +79,11 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
     onSuccess: () => setPresentationError(null),
   });
 
-  const postingOverBytes = richTextDocByteLength(content) > RICH_TEXT_JSON_MAX_BYTES;
-  const editingOverBytes = richTextDocByteLength(editingContent) > RICH_TEXT_JSON_MAX_BYTES;
+  // Over either cap the editor says so and the action is disabled: the server (the notice profile)
+  // would answer 400, and the character counter reads the same untrimmed plain text.
+  const overCap = (doc: RichTextDoc) => richTextDocByteLength(doc) > NOTICE_RICH_TEXT_JSON_MAX_BYTES || richTextPlainText(doc).length > NOTICE_BODY_MAX_LENGTH;
+  const postingOverBytes = overCap(content);
+  const editingOverBytes = overCap(editingContent);
   const queryError = postsQuery.error ?? readStateQuery.error;
   const mutationError = mutationErrors.create ?? mutationErrors.edit ?? mutationErrors.delete ?? null;
   const visibleError = mutationError ?? presentationError ?? (queryError ? "Notice board is unavailable." : null);
@@ -138,7 +141,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
   }
 
   const renderEditComposer = (id: string) => <div data-slot="notice-board-edit-composer" className={EDIT_COMPOSER}>
-    <RichTextEditor value={editingContent} onChange={setEditingContent} limit={2_000} disabled={isBusy} loadMentionables={loadMentionables} placeholder="Edit notice…" onSubmit={() => void saveEdit(id)} />
+    <QuincyRichTextEditor preset="document" value={editingContent} onChange={setEditingContent} limit={NOTICE_BODY_MAX_LENGTH} maxBytes={NOTICE_RICH_TEXT_JSON_MAX_BYTES} disabled={isBusy} loadMentionables={loadMentionables} placeholder="Edit notice…" onSubmit={() => void saveEdit(id)} />
     <div className={COMPOSER_FOOT}><button className={buttonClasses("secondary")} type="button" disabled={isBusy} onClick={() => { setEditingId(null); setEditingContent(EMPTY_DOC); }}>Cancel</button><button className={buttonClasses("primary")} type="button" disabled={isBusy || editingOverBytes} onClick={() => void saveEdit(id)}>{isSaving ? "Saving…" : "Save"}</button></div>
   </div>;
 
@@ -184,7 +187,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
           {renderEditComposer(editingId)}
         </article>}
       </div>
-      <form data-slot="notice-board-composer" className={CREATE_COMPOSER} onSubmit={(event) => void submit(event)}><label className="sr-only" htmlFor={`${panelId}-body`}>Write a notice</label><RichTextEditor id={`${panelId}-body`} value={content} onChange={setContent} limit={2_000} disabled={isBusy} loadMentionables={loadMentionables} placeholder="Write a notice for the team…" onSubmit={() => void submit()} /><div className={COMPOSER_FOOT}><span className={MENTION_HINT}>Use @ to mention active staff</span><button className={buttonClasses("primary")} type="submit" disabled={isBusy || postingOverBytes}>{isPosting ? "Posting…" : "Post notice"}</button></div></form>
+      <form data-slot="notice-board-composer" className={CREATE_COMPOSER} onSubmit={(event) => void submit(event)}><label className="sr-only" htmlFor={`${panelId}-body`}>Write a notice</label><QuincyRichTextEditor preset="document" id={`${panelId}-body`} value={content} onChange={setContent} limit={NOTICE_BODY_MAX_LENGTH} maxBytes={NOTICE_RICH_TEXT_JSON_MAX_BYTES} disabled={isBusy} loadMentionables={loadMentionables} placeholder="Write a notice for the team…" onSubmit={() => void submit()} /><div className={COMPOSER_FOOT}><span className={MENTION_HINT}>Use @ to mention active staff</span><button className={buttonClasses("primary")} type="submit" disabled={isBusy || postingOverBytes}>{isPosting ? "Posting…" : "Post notice"}</button></div></form>
     </div>
   </section>;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addCivilDays, buildShortcuts, cellToCivil, civilToCell, civilWeekday, joinCivilMinute, parseTypedTime, splitCivilMinute, sydneyToday, timeSlots, yearBounds } from "./date-time-field";
+import { addCivilDays, resolveDateTimePopupPlacement, buildShortcuts, cellToCivil, civilToCell, civilWeekday, joinCivilMinute, parseTypedTime, splitCivilMinute, sydneyToday, timeSlots, yearBounds } from "./date-time-field";
 import { formatCivilDay } from "./date-format";
 
 const resolved = (today: string, clearable = false) =>
@@ -161,5 +161,24 @@ describe("civil date-time pieces (#422)", () => {
     expect(joinCivilMinute("2026-04-05", "02:30")).toBe("2026-04-05T02:30");
     expect(joinCivilMinute(null, "02:30")).toBeNull();
     expect(joinCivilMinute("2026-04-05", null)).toBeNull();
+  });
+});
+
+describe("resolveDateTimePopupPlacement (#528)", () => {
+  it("keeps the desktop default: no sideways fallback, 16px padding", () => {
+    expect(resolveDateTimePopupPlacement({ narrow: false })).toEqual({ collisionAvoidance: { fallbackAxisSide: "none" }, collisionPadding: 16 });
+  });
+  it("keeps the #447 phone default: shift over the trigger", () => {
+    expect(resolveDateTimePopupPlacement({ narrow: true })).toEqual({ collisionAvoidance: { side: "shift", fallbackAxisSide: "none" }, collisionPadding: 16 });
+  });
+  it("an override replaces the default at any width", () => {
+    const avoidance = { side: "shift", align: "shift", fallbackAxisSide: "none" } as const;
+    const padding = { top: 66, right: 16, bottom: 16, left: 16 };
+    for (const narrow of [false, true]) {
+      expect(resolveDateTimePopupPlacement({ narrow, avoidance, padding })).toEqual({ collisionAvoidance: avoidance, collisionPadding: padding });
+    }
+  });
+  it("an undefined override never erases the default", () => {
+    expect(resolveDateTimePopupPlacement({ narrow: true, avoidance: undefined, padding: undefined })).toEqual({ collisionAvoidance: { side: "shift", fallbackAxisSide: "none" }, collisionPadding: 16 });
   });
 });

@@ -2,14 +2,15 @@ import { Hono, type Context } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
 import { createDb, schema } from "@quincy/db";
 import { and, eq, isNull } from "drizzle-orm";
-import { DNG_CONTENT_TYPE, RENDITION_SPECS, RENDITION_SPEC_VERSION, TRANSFORM_CACHE_VERSION, dngPreviewKey, rawMediaContentType } from "@quincy/shared";
+import { isEmbeddedImageContentType, DNG_CONTENT_TYPE, RENDITION_SPECS, RENDITION_SPEC_VERSION, TRANSFORM_CACHE_VERSION, dngPreviewKey, rawMediaContentType } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
-import { hasProjectAccess } from "../middleware/capability";
+import { hasProjectAccess, hasProjectCollaborationAccess } from "../middleware/capability";
 import { roleHasCapability } from "@quincy/shared";
 import { issueTransformSource } from "../lib/transform-source";
 import { isUserVisibleAsset, unpublishedAssetResponse } from "../lib/asset-visibility";
 import { visibleProjectWhere } from "../lib/visible-project-scope";
+import { getEmbeddedMedia } from "../lib/embedded-media";
 
 export const mediaRoutes = new Hono<AppEnv>();
 
@@ -190,4 +191,32 @@ mediaRoutes.get("/annotation/:annotationId", terminalRoute("/annotation/:annotat
   const object = await c.env.MEDIA.get(row.strokeR2Key);
   if (!object) return c.json({ error: "Annotation markup was not found" }, 404);
   return new Response(object.body, { headers: { "content-type": "application/json", "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
+}));
+
+/**
+ * Embedded media (#493). An attached image follows its post: anyone who can collaborate on the Project
+ * may read it, an assigned External editor included. Until it is attached (and after it is edited out)
+ * only the person who uploaded it can see it. Every refusal is `no-store` through the /media default.
+ */
+mediaRoutes.get("/embedded/:mediaId", terminalRoute("/embedded/:mediaId", async (c) => {
+  const mediaId = c.req.param("mediaId");
+  if (!z.string().uuid().safeParse(mediaId).success) return c.json({ error: "Invalid media id" }, 400);
+  const row = await getEmbeddedMedia(c.env.DB, mediaId);
+  if (!row || row.state === "uploading") return c.json({ error: "Media not found" }, 404);
+  const user = c.get("user");
+  if (row.state === "attached") {
+    if (!row.projectId) return c.json({ error: "Media not found" }, 404);
+    if (!await hasProjectCollaborationAccess(c, row.projectId)) return user.role === "external_editor" ? c.json({ error: "Media not found" }, 404) : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+  } else if (row.uploaderId !== user.id) return c.json({ error: "Media not found" }, 404);
+  const object = await c.env.MEDIA.get(row.originalKey);
+  if (!object) return c.json({ error: "Media object not found" }, 404);
+  const headers: Record<string, string> = {
+    "content-type": isEmbeddedImageContentType(row.contentType) ? row.contentType : "application/octet-stream",
+    "content-length": String(object.size),
+    "x-content-type-options": "nosniff",
+    "content-security-policy": "default-src 'none'; sandbox",
+    ...RENDITION_CACHE_HEADERS,
+  };
+  if (object.httpEtag) headers.etag = object.httpEtag;
+  return new Response(object.body, { headers });
 }));

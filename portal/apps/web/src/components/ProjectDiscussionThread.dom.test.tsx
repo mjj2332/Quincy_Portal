@@ -186,6 +186,20 @@ describe("ProjectDiscussionThread", () => {
     expect(apiPostMock).not.toHaveBeenCalled();
   });
 
+  it("targets the Project for images and holds Post (and Save) while an image uploads (#493)", async () => {
+    state.commentsQuery = queryState({ data: { pages: [{ project, comments: [ownComment] }], pageParams: [null] } });
+    render(); await flush();
+    const composer = () => state.editors.find((editor) => editor.id === `project-comment-${projectId}`)!;
+    expect(composer().media).toEqual({ projectId });
+    await act(async () => { composer().onChange(doc("Ready to post")); await Promise.resolve(); });
+    const post = () => host.querySelector<HTMLButtonElement>(`[data-testid=discussion-composer] button[type="submit"]`)!;
+    expect(post().disabled).toBe(false);
+    await act(async () => { composer().onUploadingChange(true); await Promise.resolve(); });
+    expect(post().disabled).toBe(true);
+    await act(async () => { composer().onUploadingChange(false); await Promise.resolve(); });
+    expect(post().disabled).toBe(false);
+  });
+
   it("consumes a discussion-only 403 locally with no composer or close/purge callback", async () => {
     const onAccessFailure = vi.fn();
     state.commentsQuery = queryState({ data: undefined, error: new ApiError("Discussion denied", 403), isPending: false });

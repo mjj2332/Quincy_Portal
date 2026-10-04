@@ -216,6 +216,22 @@ describe("project comments API", () => {
     }
   });
 
+  it("keeps the comment profile: a table, alignment or highlight document is a 400 on POST and PATCH (#492)", async () => {
+    const created = await request(`/api/projects/${projectId}/comments`, "comments-editor-token", "POST", { content: headingDoc(2) });
+    expect(created.status).toBe(201);
+    const comment = await created.json() as { id: string };
+    const cell = { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "x" }] }] };
+    const rich = [
+      { type: "doc", content: [{ type: "table", content: [{ type: "tableRow", content: [cell] }] }] },
+      { type: "doc", content: [{ type: "paragraph", attrs: { textAlign: "center" }, content: [{ type: "text", text: "x" }] }] },
+      { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "x", marks: [{ type: "highlight", color: "yellow" }] }] }] },
+    ];
+    for (const content of rich) {
+      expect((await request(`/api/projects/${projectId}/comments`, "comments-editor-token", "POST", { content })).status).toBe(400);
+      expect((await request(`/api/projects/${projectId}/comments/${comment.id}`, "comments-editor-token", "PATCH", { content })).status).toBe(400);
+    }
+  });
+
   it("rejects malformed headings on both POST and author PATCH", async () => {
     const created = await request(`/api/projects/${projectId}/comments`, "comments-editor-token", "POST", { content: headingDoc(2) });
     expect(created.status).toBe(201);

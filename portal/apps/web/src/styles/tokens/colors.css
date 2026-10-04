@@ -58,6 +58,15 @@
   --star-amber:     #f0a020;               /* 9.20:1 on --ink-900; 1.89:1 on --paper-100 */
   --star-off-media: rgba(255,255,255,.28); /* over an unknown image, carried by a text-shadow */
 
+  /* ---- Highlight washes (#492) ----------------------------------------
+     The three highlight colours the Notice board's document editor stores (`yellow`, `green`,
+     `blue`, the closed set `parseRichTextDoc` accepts). Pale on-brand washes behind --text-primary
+     ink text: each clears 4.5:1 against ink-900 (guarded in styles/design-system-guards.test.ts).
+     Light only; the Portal has no dark theme. */
+  --highlight-yellow: #f2dd8f;
+  --highlight-green:  #cfe0c3;
+  --highlight-blue:   #cbd7e6;
+
   /* ====================================================================
      SEMANTIC ALIASES — reference these in components, not the raw scale
      ==================================================================== */

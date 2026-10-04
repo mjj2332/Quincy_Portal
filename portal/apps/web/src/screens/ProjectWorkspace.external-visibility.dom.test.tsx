@@ -701,6 +701,7 @@ const FROZEN_EXTERNAL_EDITOR = {
       "project-workspace": 1,
       "rich-text-field": 1,
       "rich-text-heading-menu": 1,
+      "rich-text-media-tools": 1,
       "subtask-checklist-count": 1,
       "toast-viewport": 1,
       "workspace-main": 1
@@ -733,6 +734,7 @@ const FROZEN_EXTERNAL_EDITOR = {
       "Edited1",
       "Floorplan0",
       "Heading",
+      "Insert image",
       "Italic",
       "Link",
       "Move project Stage",
@@ -1030,6 +1032,7 @@ const FROZEN_ADMIN = {
       "project-workspace": 1,
       "rich-text-field": 1,
       "rich-text-heading-menu": 1,
+      "rich-text-media-tools": 1,
       "subtask-checklist-count": 1,
       "toast-viewport": 1,
       "workspace-main": 1
@@ -1065,6 +1068,7 @@ const FROZEN_ADMIN = {
       "Edited1",
       "Floorplan0",
       "Heading",
+      "Insert image",
       "Italic",
       "Link",
       "Move project Stage",

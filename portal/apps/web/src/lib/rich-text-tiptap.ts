@@ -1,4 +1,4 @@
-import { Extension } from "@tiptap/core";
+import { Extension, Node as TiptapNode, mergeAttributes } from "@tiptap/core";
 import { setBlockType } from "@tiptap/pm/commands";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { Plugin } from "@tiptap/pm/state";
@@ -6,13 +6,28 @@ import type { useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import HardBreak from "@tiptap/extension-hard-break";
 import Mention from "@tiptap/extension-mention";
+import { Highlight } from "@tiptap/extension-highlight";
 import { ListItem, TaskItem, TaskList } from "@tiptap/extension-list";
-import { RICH_TEXT_MAX_NESTING, type RichTextDoc } from "@quincy/shared";
+import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table";
+import { TableMap } from "@tiptap/pm/tables";
+import { TextAlign } from "@tiptap/extension-text-align";
+import { embeddedMediaUrl } from "./embedded-media";
+import { RICH_TEXT_HIGHLIGHT_COLORS, RICH_TEXT_MAX_NESTING, RICH_TEXT_TABLE_MAX_COLUMNS, RICH_TEXT_TABLE_MAX_ROWS, type RichTextDoc } from "@quincy/shared";
 
-// The Tiptap <-> stored RichTextDoc contract, shared by the legacy `RichTextEditor` (still serving
-// the Notice board until #492) and `QuincyRichTextEditor` (Project discussion, #491). Relocated
-// verbatim from `components/RichTextEditor.tsx`: the schema here is the one `parseRichTextDoc`
-// accepts, so both editors must build on it and never on a vendor extension set.
+// The Tiptap <-> stored RichTextDoc contract for `QuincyRichTextEditor`, in its two presets:
+// `"composer"` (Project discussion, #491) and `"document"` (Notice board, #492). The schema here is
+// the one `parseRichTextDoc` accepts (comment profile for the composer, notice profile for the
+// document), so the editor builds on it and never on a vendor extension set. Every attribute that
+// is stored has an explicit mapping in BOTH directions below: a mark or attribute with no mapping
+// collapses to `{ type }` and silently loses its value (docs/lessons.md, 2026-08-18).
+export type RichTextEditorPreset = "composer" | "document";
+
+const DEFAULT_HIGHLIGHT = RICH_TEXT_HIGHLIGHT_COLORS[0];
+
+/** Stored alignment is omitted for left; Tiptap's own default is the string "left". */
+function tiptapTextAlign(attrs: Record<string, unknown> | undefined): Record<string, unknown> {
+  return typeof attrs?.textAlign === "string" ? { textAlign: attrs.textAlign } : {};
+}
 
 export function toTiptap(doc: RichTextDoc): Record<string, unknown> {
   const copy = (node: unknown): unknown => {
@@ -23,11 +38,19 @@ export function toTiptap(doc: RichTextDoc): Record<string, unknown> {
       text: valueNode.text,
       ...(Array.isArray(valueNode.marks) ? { marks: valueNode.marks.map((mark) => {
         const current = mark as Record<string, unknown>;
-        return current.type === "link" ? { type: "link", attrs: { href: current.href } } : { ...current };
+        if (current.type === "link") return { type: "link", attrs: { href: current.href } };
+        if (current.type === "highlight") return { type: "highlight", attrs: { color: current.color } };
+        return { ...current };
       }) } : {}),
     };
     if (valueNode.type === "mention") return { type: "mention", attrs: { ...(valueNode.attrs as Record<string, unknown>) } };
+    if (valueNode.type === "image") return { type: "image", attrs: { mediaId: (valueNode.attrs as Record<string, unknown> | undefined)?.mediaId } };
     if (valueNode.type === "heading" || valueNode.type === "taskItem") return { type: valueNode.type, attrs: { ...(valueNode.attrs as Record<string, unknown>) }, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
+    if (valueNode.type === "paragraph" && valueNode.attrs) return { type: "paragraph", attrs: tiptapTextAlign(valueNode.attrs as Record<string, unknown>), ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
+    if (valueNode.type === "tableCell" || valueNode.type === "tableHeader") {
+      const attrs = valueNode.attrs as { colspan?: number; rowspan?: number } | undefined;
+      return { type: valueNode.type, attrs: { colspan: attrs?.colspan ?? 1, rowspan: attrs?.rowspan ?? 1 }, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
+    }
     return { type: valueNode.type, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
   };
   return copy(doc) as Record<string, unknown>;
@@ -110,8 +133,97 @@ export const ListNestingBoundary = Extension.create({
   },
 });
 
-/** The Phase 2C editor schema, shared with direct schema regression tests. */
-export function createRichTextEditorExtensions() {
+function normaliseHighlightColor(value: unknown): string | null {
+  return typeof value === "string" && (RICH_TEXT_HIGHLIGHT_COLORS as readonly string[]).includes(value) ? value : null;
+}
+
+/**
+ * Highlight stores the colour id, never inline CSS (the vendor's `rich-text-highlight.tsx` defined
+ * this; it lives here so the schema module has no UI import). A bare `setHighlight()` has no colour,
+ * which the server would reject, so `tiptapToRichTextDoc` maps it to the default.
+ */
+export const RichTextHighlight = Highlight.extend({
+  addAttributes() {
+    return {
+      color: {
+        default: null,
+        // Pasted HTML can carry any colour (`#faf594`); only the stored ids survive, the rest become the
+        // bare mark that `tiptapToRichTextDoc` maps to the default.
+        parseHTML: (element) => normaliseHighlightColor(element.getAttribute("data-color")),
+        renderHTML: (attributes) => attributes.color ? { "data-color": attributes.color } : {},
+      },
+    };
+  },
+});
+
+// Cells hold paragraphs only (the stored contract); TableKit's default `block+` would let the
+// editor build a list in a cell that the server then rejects.
+const CELL_CONTENT = "paragraph+";
+
+/**
+ * An embedded image (#493): an atom that names stored media by id. It deliberately has no `parseHTML`
+ * rule, so pasted or dropped HTML (a foreign `<img>`, a base64 `data:` URL) never becomes a node; the
+ * only way in is the editor's own upload, which inserts one after the server accepts the file.
+ */
+export const EmbeddedImage = TiptapNode.create({
+  name: "image",
+  group: "block",
+  atom: true,
+  draggable: true,
+  selectable: true,
+  addAttributes() { return { mediaId: { default: null } }; },
+  parseHTML() { return []; },
+  renderHTML({ node, HTMLAttributes }) {
+    const mediaId = String(node.attrs.mediaId ?? "");
+    return ["img", mergeAttributes(HTMLAttributes, { src: embeddedMediaUrl(mediaId), alt: "Embedded image", "data-media-id": mediaId, class: "rich-text__embedded-image" })];
+  },
+});
+
+/** Rows x columns of a table node, spans included (what the server's limits count). */
+export function tableDimensions(table: ProseMirrorNode): { rows: number; columns: number } {
+  const map = TableMap.get(table);
+  return { rows: map.height, columns: map.width };
+}
+
+export function exceedsTableLimit(doc: ProseMirrorNode): boolean {
+  let exceeded = false;
+  doc.descendants((node) => {
+    if (exceeded) return false;
+    if (node.type.name !== "table") return true;
+    const { rows, columns } = tableDimensions(node);
+    exceeded = rows > RICH_TEXT_TABLE_MAX_ROWS || columns > RICH_TEXT_TABLE_MAX_COLUMNS;
+    return false;
+  });
+  return exceeded;
+}
+
+/** Rejects a transaction (a command, Tab in the last cell, a paste) that grows a table past the server's limits. */
+export const TableSizeBoundary = Extension.create({
+  name: "tableSizeBoundary",
+  addProseMirrorPlugins() {
+    return [new Plugin({
+      filterTransaction: (transaction) => !transaction.docChanged || !exceedsTableLimit(transaction.doc),
+    })];
+  },
+});
+
+/** Document-only nodes and attributes: tables, alignment and highlight (#492). */
+function documentExtensions() {
+  return [
+    // Not resizable (no stored `colwidth`); the wrapper scrolls a wide table sideways on a phone, and
+    // `cellMinWidth` sets the table's inline `min-width` (cells x 96px) that makes it overflow there.
+    Table.configure({ resizable: false, renderWrapper: true, cellMinWidth: 96 }),
+    TableRow,
+    TableSizeBoundary,
+    TableHeader.extend({ content: CELL_CONTENT }),
+    TableCell.extend({ content: CELL_CONTENT }),
+    TextAlign.configure({ types: ["heading", "paragraph"], alignments: ["left", "center", "right", "justify"] }),
+    RichTextHighlight.configure({ multicolor: true }),
+  ];
+}
+
+/** The editor schema for a preset, shared with direct schema regression tests. */
+export function createRichTextEditorExtensions(preset: RichTextEditorPreset = "composer") {
   const itemContent = "paragraph (paragraph|bulletList|orderedList|taskList)*";
   return [
     StarterKit.configure({
@@ -136,31 +248,56 @@ export function createRichTextEditorExtensions() {
     Mention.configure({ HTMLAttributes: { class: "rich-text__mention" }, suggestion: { items: () => [] } }),
     ListItemHeadingCommandBoundary,
     ListNestingBoundary,
+    ...(preset === "composer" ? [EmbeddedImage] : []),
+    ...(preset === "document" ? documentExtensions() : []),
   ];
 }
 
 /** Removes TipTap-only attributes before data leaves the browser. */
 export function tiptapToRichTextDoc(value: unknown): RichTextDoc {
+  const alignAttrs = (attrs: Record<string, unknown> | undefined) => {
+    const align = attrs?.textAlign;
+    return typeof align === "string" && align !== "left" ? { textAlign: align } : {};
+  };
   const copy = (node: unknown): unknown => {
     if (!node || typeof node !== "object" || Array.isArray(node)) return node;
     const valueNode = node as Record<string, unknown>;
+    const children = Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {};
     if (valueNode.type === "text") return { type: "text", text: valueNode.text, ...(Array.isArray(valueNode.marks) ? { marks: valueNode.marks.map((mark) => {
       const current = mark as Record<string, unknown>;
-      return current.type === "link" ? { type: "link", href: current.attrs && typeof current.attrs === "object" ? (current.attrs as Record<string, unknown>).href : undefined } : { type: current.type };
+      const attrs = current.attrs && typeof current.attrs === "object" ? current.attrs as Record<string, unknown> : undefined;
+      if (current.type === "link") return { type: "link", href: attrs?.href };
+      if (current.type === "highlight") return { type: "highlight", color: normaliseHighlightColor(attrs?.color) ?? DEFAULT_HIGHLIGHT };
+      return { type: current.type };
     }) } : {}) };
     if (valueNode.type === "mention") {
       const attrs = valueNode.attrs as Record<string, unknown> | undefined;
       return { type: "mention", attrs: { id: attrs?.id, label: attrs?.label } };
     }
+    if (valueNode.type === "image") {
+      const attrs = valueNode.attrs as Record<string, unknown> | undefined;
+      return { type: "image", attrs: { mediaId: attrs?.mediaId } };
+    }
     if (valueNode.type === "heading") {
       const attrs = valueNode.attrs as Record<string, unknown> | undefined;
-      return { type: "heading", attrs: { level: attrs?.level }, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
+      return { type: "heading", attrs: { level: attrs?.level, ...alignAttrs(attrs) }, ...children };
+    }
+    if (valueNode.type === "paragraph") {
+      const attrs = alignAttrs(valueNode.attrs as Record<string, unknown> | undefined);
+      return { type: "paragraph", ...(Object.keys(attrs).length ? { attrs } : {}), ...children };
     }
     if (valueNode.type === "taskItem") {
       const attrs = valueNode.attrs as Record<string, unknown> | undefined;
-      return { type: "taskItem", attrs: { checked: attrs?.checked }, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
+      return { type: "taskItem", attrs: { checked: attrs?.checked }, ...children };
     }
-    return { type: valueNode.type, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
+    if (valueNode.type === "tableCell" || valueNode.type === "tableHeader") {
+      const attrs = valueNode.attrs as { colspan?: number; rowspan?: number } | undefined;
+      const colspan = attrs?.colspan ?? 1; const rowspan = attrs?.rowspan ?? 1;
+      return { type: valueNode.type, ...(colspan !== 1 || rowspan !== 1 ? { attrs: { colspan, rowspan } } : {}), ...children };
+    }
+    // A row fully covered by rowspans has no cells and Tiptap omits `content`; the stored form is `[]`.
+    if (valueNode.type === "tableRow") return { type: "tableRow", content: children.content ?? [] };
+    return { type: valueNode.type, ...children };
   };
   return copy(value) as RichTextDoc;
 }

@@ -524,4 +524,38 @@ describe("DateTimeField date-time: seeding a draft", () => {
       expect(queries).toContain("(width < 40rem)");
     } finally { window.matchMedia = original; }
   });
+
+  it("focuses the selected day without scrolling the popup body, so the month navigation stays in view (#528)", async () => {
+    const calls: Array<{ el: Element; options: FocusOptions | undefined }> = [];
+    const original = HTMLElement.prototype.focus;
+    HTMLElement.prototype.focus = function (this: HTMLElement, options?: FocusOptions) { calls.push({ el: this, options }); return original.call(this, options); };
+    try {
+      await mount({ value: stored("2027-01-15T09:00") });
+      await open();
+    } finally { HTMLElement.prototype.focus = original; }
+    const selected = popup()!.querySelector<HTMLElement>('[aria-selected="true"] button')!;
+    expect(document.activeElement).toBe(selected);
+    const focusing = calls.filter((call) => call.el === selected);
+    expect(focusing.length).toBeGreaterThan(0);
+    expect(focusing.every((call) => call.options?.preventScroll === true)).toBe(true);
+  });
+
+  it("reads a collision-padding callback on each open, not at mount, so a late shell header counts (#528)", async () => {
+    // Stands in for the shell header's bottom edge (`shellChromeBottom`, tested on its own): 0 until the header renders.
+    let headerBottom = 0;
+    const padding = vi.fn(() => ({ top: headerBottom + 16 }));
+    await act(async () => { root.render(<DateTimeField variant="date-time" id="deadline" label="Deadline" value={null} popupCollisionPadding={padding} onApply={vi.fn()} />); await Promise.resolve(); });
+    // Cold mount: no shell header yet, and the closed field must not have asked.
+    expect(padding).not.toHaveBeenCalled();
+    headerBottom = 50;
+    await open();
+    expect(padding).toHaveBeenCalledTimes(1);
+    expect(padding).toHaveReturnedWith({ top: 66 });
+    await click(popupButton(popup()!, "Cancel")!);
+    expect(popup()).toBeNull();
+    headerBottom = 92; // impersonation banner appears
+    await open();
+    expect(padding).toHaveBeenCalledTimes(2);
+    expect(padding).toHaveLastReturnedWith({ top: 108 });
+  });
 });

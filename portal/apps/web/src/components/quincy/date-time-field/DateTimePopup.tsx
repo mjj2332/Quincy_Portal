@@ -125,7 +125,7 @@ function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedba
   useLayoutEffect(() => {
     if (!focusOnMount) return;
     const body = bodyRef.current;
-    (body?.querySelector<HTMLElement>('[aria-selected="true"] button') ?? body?.querySelector<HTMLElement>("button"))?.focus();
+    (body?.querySelector<HTMLElement>('[aria-selected="true"] button') ?? body?.querySelector<HTMLElement>("button"))?.focus({ preventScroll: true });
     // Mount only: Base UI owns focus for the cached-detail case, this covers a late mount.
   }, []);
 

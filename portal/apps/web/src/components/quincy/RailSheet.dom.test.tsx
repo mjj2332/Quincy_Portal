@@ -111,3 +111,22 @@ describe("RailSheet", () => {
     expect(onOpenChange.mock.calls[0]?.[0]).toBe(false);
   });
 });
+
+describe("RailSheet under impersonation (#531)", () => {
+  it("offsets scrim and panel below the banner and shields the banner strip only while impersonating", async () => {
+    await render(<Sheet open onOpenChange={() => {}}><RailSheet impersonating><div>content</div></RailSheet></Sheet>);
+    const scrim = document.querySelector('[data-testid="rail-sheet-scrim"]')!;
+    const popup = document.querySelector('[data-testid="rail-sheet"]')!;
+    expect(scrim.hasAttribute("data-impersonating")).toBe(true);
+    expect(scrim.className).toContain("data-[impersonating]:top-[var(--impersonation-banner-height)]");
+    expect(scrim.className).toContain("data-[impersonating]:before:h-[var(--impersonation-banner-height)]");
+    expect(popup.hasAttribute("data-impersonating")).toBe(true);
+    expect(popup.className).toContain("data-[impersonating]:data-[side=left]:top-[var(--impersonation-banner-height)]");
+  });
+
+  it("carries no impersonation marker otherwise", async () => {
+    await render(<Sheet open onOpenChange={() => {}}><RailSheet><div>content</div></RailSheet></Sheet>);
+    expect(document.querySelector('[data-testid="rail-sheet-scrim"]')!.hasAttribute("data-impersonating")).toBe(false);
+    expect(document.querySelector('[data-testid="rail-sheet"]')!.hasAttribute("data-impersonating")).toBe(false);
+  });
+});

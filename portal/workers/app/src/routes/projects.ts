@@ -1304,6 +1304,16 @@ projectsRoutes.delete("/projects/:id", terminalRoute("/projects/:id", async (c) 
     await abortActiveDocumentSessions(c, id);
     return c.json({ error: "Active document uploads were aborted. Confirm deletion again after the sessions are terminal.", activeDocuments }, 409);
   }
+  // Abort any embedded-media upload that was started but never completed, so no upload outlives the Project (fast path).
+  // An abort that fails is not forgotten: the batch below queues every media key before the cascade erases the rows, and the
+  // queue entries of uploads whose abort failed survive until the background sweep has aborted them and deleted the object.
+  const startedUploads = (await c.env.DB.prepare("SELECT original_key, upload_id FROM embedded_media WHERE project_id = ? AND state = 'uploading'").bind(id).all<{ original_key: string; upload_id: string | null }>()).results;
+  const unresolvedUploadKeys: string[] = [];
+  await Promise.all(startedUploads.map(async (row) => {
+    // A dev-direct upload has no upload id: nothing to abort, but its key stays queued like any in-flight upload.
+    if (!row.upload_id) { unresolvedUploadKeys.push(row.original_key); return; }
+    try { await abortMultipart(c.env, row.original_key, row.upload_id); } catch { unresolvedUploadKeys.push(row.original_key); }
+  }));
   const r2Prefix = `projects/${id}/`;
   const assetIds = (await db.select({ id: schema.assets.id }).from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).where(eq(schema.collections.projectId, id)).all()).map((asset) => asset.id);
   const assetCount = assetIds.length;
@@ -1346,8 +1356,22 @@ projectsRoutes.delete("/projects/:id", terminalRoute("/projects/:id", async (c) 
     // otherwise recreate the Project (its order_id is lost with the row). Same batch, so either both
     // happen or neither. A live Project holding the order_id still wins over a tombstone.
     c.env.DB.prepare("INSERT INTO tonomo_order_tombstones (order_id, deleted_project_id, street, deleted_at, deleted_by, source, created_at) SELECT order_id, id, street, ?, ?, 'project_delete', ? FROM projects WHERE id = ? AND order_id IS NOT NULL AND TRIM(order_id) != '' ON CONFLICT(order_id) DO UPDATE SET deleted_project_id=excluded.deleted_project_id, street=excluded.street, deleted_at=excluded.deleted_at, deleted_by=excluded.deleted_by, source=excluded.source").bind(deletedAt, c.get("user").id, deletedAt, id),
+    // Cleanup ownership survives the cascade: every media key of this Project (plus the upload id of one still uploading) is queued first.
+    c.env.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) SELECT original_key, CASE WHEN state = 'uploading' THEN upload_id END, project_id, ? FROM embedded_media WHERE project_id = ? ON CONFLICT(storage_key) DO NOTHING").bind(deletedAt, id),
+    c.env.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) SELECT display_key, NULL, project_id, ? FROM embedded_media WHERE project_id = ? AND display_key IS NOT NULL ON CONFLICT(storage_key) DO NOTHING").bind(deletedAt, id),
+    c.env.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) SELECT poster_key, NULL, project_id, ? FROM embedded_media WHERE project_id = ? AND poster_key IS NOT NULL ON CONFLICT(storage_key) DO NOTHING").bind(deletedAt, id),
     c.env.DB.prepare("DELETE FROM projects WHERE id = ?").bind(id),
   ]);
+  // Dequeue only what THIS request resolved: a key it queued in the batch above (queued_at = deletedAt), whose object the purge deleted,
+  // and whose upload (if any) it aborted. Entries queued by anyone else (a sweep whose abort failed, a completion mid-purge) and uploads
+  // whose abort failed here all stay for the drain. Never a Project-wide delete.
+  const deletedKeys = new Set(keys); const unresolved = new Set(unresolvedUploadKeys);
+  const mine = (await c.env.DB.prepare("SELECT storage_key FROM embedded_media_cleanup WHERE project_id = ? AND queued_at = ?").bind(id, deletedAt).all<{ storage_key: string }>()).results
+    .map((row) => row.storage_key).filter((key) => deletedKeys.has(key) && !unresolved.has(key));
+  for (let index = 0; index < mine.length; index += 50) {
+    const chunk = mine.slice(index, index + 50);
+    await c.env.DB.prepare(`DELETE FROM embedded_media_cleanup WHERE queued_at = ? AND storage_key IN (${chunk.map(() => "?").join(",")})`).bind(deletedAt, ...chunk).run();
+  }
   return c.json({ ok: true, deletedObjects: keys.length });
 }));
 const stageHandler = async (c: Context<AppEnv>) => {
