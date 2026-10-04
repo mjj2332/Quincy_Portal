@@ -91,6 +91,7 @@ import {
   type WhiteboardPanel,
   type WhiteboardSaveStatus,
   type WhiteboardScene,
+  WHITEBOARD_SAVE_SKIPPED,
 } from "./whiteboard"
 import {
   adjacentFrames,
@@ -1225,9 +1226,16 @@ export function useAutosave(
     savingRef.current = true
     report("saving")
     try {
-      await save(finalSceneRef.current ?? readScene(current))
-      failuresRef.current = 0
-      report(dirtyRef.current ? "unsaved" : "saved")
+      const outcome = await save(finalSceneRef.current ?? readScene(current))
+      if (outcome === WHITEBOARD_SAVE_SKIPPED) {
+        // QUINCY ADDITION #499: nothing was sent (the board went view-only before this hook's pause caught up). The
+        // edit is still unsaved: keep it dirty, never report Saved, and let the pause ending flush it.
+        dirtyRef.current = true
+        report("unsaved")
+      } else {
+        failuresRef.current = 0
+        report(dirtyRef.current ? "unsaved" : "saved")
+      }
     } catch {
       // Keep the edits dirty, so the next change or page hide retries the save.
       dirtyRef.current = true

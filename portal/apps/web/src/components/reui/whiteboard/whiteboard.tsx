@@ -64,6 +64,9 @@ export const MIN_ZOOM = 0.1
 export const MAX_ZOOM = 30
 
 export type WhiteboardSaveStatus = "saved" | "unsaved" | "saving" | "error"
+/** QUINCY ADDITION #499: what onSave resolves with when it deliberately sent nothing; see onSave. */
+export const WHITEBOARD_SAVE_SKIPPED = "skipped" as const
+export type WhiteboardSaveOutcome = void | typeof WHITEBOARD_SAVE_SKIPPED
 
 /** An image the board draws, keyed by the fileId its image element carries. */
 export type WhiteboardFile = {
@@ -272,8 +275,11 @@ export type WhiteboardProps = {
   /** Milliseconds edits settle before onChange; default 300. */
   changeDelay?: number
   /** Autosave: store the scene as JSON and pass it back as initialData. Called after edits idle,
-   * and when the page hides or unmounts; a rejected promise reports "error" and retries on the next edit. */
-  onSave?: (scene: WhiteboardScene) => Promise<void> | void
+   * and when the page hides or unmounts; a rejected promise reports "error" and retries on the next edit.
+   * QUINCY ADDITION #499: resolving WHITEBOARD_SAVE_SKIPPED means "nothing was sent" (the board went view-only):
+   * the edit stays dirty, the status is "unsaved", and it is flushed when the pause ends. Any other resolution
+   * means the scene was stored. */
+  onSave?: (scene: WhiteboardScene) => Promise<WhiteboardSaveOutcome> | WhiteboardSaveOutcome
   /** Milliseconds of idle before onSave; default 1500. */
   autosaveDelay?: number
   onSaveStatusChange?: (status: WhiteboardSaveStatus) => void

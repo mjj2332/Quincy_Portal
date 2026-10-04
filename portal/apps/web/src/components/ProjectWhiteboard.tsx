@@ -3,7 +3,7 @@ import { ArrowLeftIcon } from "lucide-react";
 import type { WhiteboardMode, WhiteboardPeer } from "@quincy/shared";
 import { Button } from "@/components/reui/button";
 import { Badge } from "@/components/reui/badge";
-import type { WhiteboardController, WhiteboardPresence, WhiteboardSaveStatus } from "./reui/whiteboard/whiteboard";
+import type { WhiteboardController, WhiteboardPresence, WhiteboardSaveOutcome, WhiteboardSaveStatus } from "./reui/whiteboard/whiteboard";
 import { CopyProjectLinkButton } from "./quincy/CopyProjectLinkButton";
 import { ViewLoadBoundary } from "./ViewLoadBoundary";
 import { openWhiteboardSocket, type WhiteboardConnection, type WhiteboardInit, type WhiteboardSocket } from "../lib/whiteboard-socket";
@@ -145,7 +145,8 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
   }, []);
 
   // View-only boards never send: the server would refuse, and the refusal would read as a failed save.
-  const save = useCallback(async () => { if (modeRef.current === "view") return; await saverRef.current?.flush(); }, []);
+  // The autosave is told so ("skipped"), not shown a success: the edit stays dirty and goes out when the board is editable again.
+  const save = useCallback(async (): Promise<WhiteboardSaveOutcome> => { if (modeRef.current === "view") return "skipped"; await saverRef.current?.flush(); }, []);
   const sharePresence = useCallback((presence: WhiteboardPresence) => { lastPresenceRef.current = presence; socketRef.current?.sendPresence(presence); }, []);
 
   const mode: WhiteboardMode = liveMode ?? init?.mode ?? (archivedHint ? "view" : "edit");

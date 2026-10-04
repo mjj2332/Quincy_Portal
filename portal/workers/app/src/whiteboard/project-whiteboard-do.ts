@@ -210,6 +210,11 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
 
   private async applyAccessNow(): Promise<void> {
     const sockets = this.attachments();
+    // A refresh answers only for the sockets that were here when it started. A socket admitted while its reads were in
+    // flight was authorised by its own fresh read under the epoch rule; this refresh's answer may predate the change
+    // that admitted it, so applying it would close (4403) or downgrade a socket it never read for. The refresh that
+    // change queued covers the newcomer.
+    const snapshot = new Set(sockets.map((entry) => entry.attachment.sessionId));
     const first = sockets[0];
     if (!first) return;
     const projectId = first.attachment.projectId;
@@ -217,13 +222,14 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
     const archived = project === null || project.archivedAt !== null;
     const access = new Map<string, boolean>();
     if (project) for (const userId of new Set(sockets.map((entry) => entry.attachment.userId))) access.set(userId, await this.userHasAccess(userId, projectId));
-    // Apply to whatever is connected NOW: the awaits above let sockets come and go.
+    // Apply to the sockets still connected NOW that were in the snapshot: the awaits above let sockets come and go.
     for (const { ws, attachment } of this.attachments()) {
       if (ws.readyState !== OPEN) continue;                     // closing or closed: nothing to tell it, and a send would throw
       try {
-        if (!project) { this.close(ws, WHITEBOARD_CLOSE.deleted, "Project deleted"); continue; }
+        if (!project) { this.close(ws, WHITEBOARD_CLOSE.deleted, "Project deleted"); continue; }   // a deleted Project is final: it covers everyone
+        if (!snapshot.has(attachment.sessionId)) continue;      // admitted after this refresh began: not covered by its reads
         const allowed = access.get(attachment.userId);
-        if (allowed === undefined) continue;                    // joined after the read; its own admission checked it
+        if (allowed === undefined) continue;
         if (!allowed) { this.revoke(ws); continue; }
         this.settleMode(ws, attachment, archived ? "view" : "edit");
       } catch (error) {

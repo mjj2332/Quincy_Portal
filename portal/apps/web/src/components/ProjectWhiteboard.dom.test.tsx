@@ -29,7 +29,7 @@ const board = vi.hoisted(() => ({
   send: null as null | ((batch: readonly unknown[]) => Promise<void>),
   sentPresence: [] as unknown[],
   deferReady: false,
-  props: null as null | { readOnly?: boolean; onSave?: () => Promise<void>; onElements?: (e: unknown[]) => void; onPresence?: (p: unknown) => void; onReady?: (c: unknown) => void },
+  props: null as null | { readOnly?: boolean; onSave?: () => Promise<void | "skipped">; onElements?: (e: unknown[]) => void; onPresence?: (p: unknown) => void; onReady?: (c: unknown) => void },
   collaborators: [] as Collaborator[][],
   applied: [] as unknown[][],
   initMode: "edit" as WhiteboardMode,
@@ -235,6 +235,15 @@ describe("mode changes (#499)", () => {
     board.scene = [el("late", 2)]; board.props!.onElements!(board.scene);
     await act(async () => { await board.props!.onSave!(); });
     expect(board.log).not.toContain("send");
+  });
+
+  it("a save that arrives after the archive frame reports itself skipped, so autosave cannot call it Saved", async () => {
+    await mount();
+    await act(async () => { handlers().onMode("view"); });
+    let outcome: unknown;
+    await act(async () => { outcome = await board.props!.onSave!(); });
+    expect(board.log).not.toContain("send");
+    expect(outcome).toBe("skipped");
   });
 
   it("still shows other people's edits while view-only, and flips back to editing on restore", async () => {

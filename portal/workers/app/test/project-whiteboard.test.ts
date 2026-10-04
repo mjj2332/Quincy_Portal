@@ -753,6 +753,35 @@ describe("write authorization against refreshAccess (#499, epoch at invocation)"
     a.client.ws.close(1000); b.client.ws.close(1000);
   });
 
+  it("an older refresh never applies its stale denial to a socket admitted after it started (Sol round 11)", async () => {
+    const project = await newProject([[memberId, "editor"], [externalId, "editor"]]);
+    const first = await join(project, "external");                                    // the External editor's first socket
+    await archiveNow(project);
+    // Refresh 1 reads the archived Project, so it denies the External editor, and is held before it applies that.
+    await runInDurableObject(stubFor(project), async (instance) => {
+      const target = instance as unknown as { userHasAccess: (userId: string, projectId: string) => Promise<boolean>; heldAccess?: number; releaseAccess?: () => void };
+      const real = target.userHasAccess.bind(target); let calls = 0;
+      const gate = new Promise<void>((resolve) => { target.releaseAccess = resolve; });
+      target.userHasAccess = async (userId, projectId) => { calls += 1; const answer = await real(userId, projectId); if (calls === 1) { target.heldAccess = 1; await gate; } return answer; };
+    });
+    await startRefresh(project);
+    for (let attempt = 0; attempt < 100 && !(await runInDurableObject(stubFor(project), async (instance) => (instance as unknown as { heldAccess?: number }).heldAccess)); attempt += 1) await tick(20);
+    // The Project is restored and its refresh queued behind the held one; the External editor opens a new socket.
+    await database.DB.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").bind(project).run();
+    await startRefresh(project);
+    const second = await join(project, "external");
+    expect(second.init.mode).toBe("edit");
+    await runInDurableObject(stubFor(project), async (instance) => (instance as unknown as { releaseAccess: () => void }).releaseAccess());
+    await settleRefreshes(project);
+    expect((await first.client.closed).code).toBe(4403);                              // the older socket was in that refresh's snapshot
+    await tick(100);
+    second.client.send(batch(1, element("after-refresh", 1, 1)));
+    const rest = await second.client.drain(300);
+    expect(rest).toContainEqual({ type: "ack", seq: 1 });                              // the new socket was never closed or rejected
+    expect(rest).not.toContainEqual({ type: "mode", mode: "view" });
+    second.client.ws.close(1000);
+  });
+
   it("refreshAccess skips a closing socket ordered before an open one: the open socket still gets its mode", async () => {
     const project = await newProject();
     await archiveNow(project);

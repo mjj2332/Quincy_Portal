@@ -14,7 +14,7 @@ let useAutosave: typeof import("./whiteboard-canvas").useAutosave;
 beforeAll(async () => { HTMLCanvasElement.prototype.getContext = (() => ({})) as never; ({ useAutosave } = await import("./whiteboard-canvas")); });
 const fakeApi = { getSceneElementsIncludingDeleted: () => [], getFiles: () => ({}), getAppState: () => ({}) } as never;
 
-function mount(onSave: () => Promise<void>, paused = false) {
+function mount(onSave: () => Promise<void | "skipped">, paused = false) {
   let dirty: () => void = () => undefined;
   const statuses: string[] = [];
   function Harness({ paused: isPaused }: { paused: boolean }) {
@@ -86,6 +86,28 @@ describe("autosave while the board is view-only (#499)", () => {
     board.setPaused(false);                                  // restored
     await advance(0);
     expect(onSave).toHaveBeenCalledTimes(1);
+    expect(board.statuses.at(-1)).toBe("saved");
+  });
+
+  it("a save that reports it was skipped (the board went view-only before the pause committed) is not Saved: the edit stays dirty and goes out when the pause ends", async () => {
+    // Sol round 11: the archive frame flips the shell's mode at once, but React's pause reaches the hook later. The
+    // due autosave runs in between, and the shell's save declines to send.
+    let sending = true;
+    const onSave = vi.fn<() => Promise<void | "skipped">>(async () => (sending ? undefined : "skipped"));
+    const board = mount(onSave);
+    board.edit();
+    sending = false;                                         // the archive frame landed; the hook is not paused yet
+    await advance(100);                                      // the idle save is due and is skipped
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(board.statuses).not.toContain("saved");
+    expect(board.statuses.at(-1)).toBe("unsaved");
+    board.setPaused(true);                                   // React catches up
+    await advance(5_000);
+    expect(board.statuses).not.toContain("saved");
+    sending = true;                                          // restored: the pause ends
+    board.setPaused(false);
+    await advance(0);
+    expect(onSave).toHaveBeenCalledTimes(2);                 // the edit was never lost
     expect(board.statuses.at(-1)).toBe("saved");
   });
 });
