@@ -319,6 +319,24 @@ describe("PUT …/poster (#494)", () => {
     expect(logged).toBeDefined(); expect(JSON.stringify(logged)).toContain(written);
   });
 
+  it("keeps the poster when the adoption batch commits and then throws and the verification read throws too: object present, row references it, no queue entry, key logged", async () => {
+    const { id } = await pending(); let written = ""; let committed = false;
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const base = wrapMedia((target, property) => property === "put" ? async (key: string, ...rest: unknown[]) => { written = key; return (target.put as (...a: unknown[]) => Promise<unknown>).call(target, key, ...rest); } : undefined);
+    const flaky: Env = { ...base, DB: new Proxy(base.DB, { get: (target, property) => {
+      if (property === "batch") return async (statements: D1PreparedStatement[]) => { await target.batch(statements); committed = true; throw new Error("D1 connection lost"); };
+      if (property === "prepare" && committed) return () => { throw new Error("D1 still down"); };
+      const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value;
+    } }) };
+    const response = await putPoster("member", id, jpegBytes(64), flaky);
+    const logged = errors.mock.calls.find((call) => /UNKNOWN/.test(String(call[0])));
+    errors.mockRestore();
+    expect(response.status).toBeGreaterThanOrEqual(500);
+    expect(logged).toBeDefined(); expect(JSON.stringify(logged)).toContain(written);
+    expect((await mediaRow(id))!.poster_key).toBe(written);
+    expect(await database.MEDIA.head(written)).not.toBeNull(); expect(await queued(written)).toBeNull();
+  });
+
   it("uses a fresh key for every attempt, never reusing one across PUTs", async () => {
     const { id } = await pending(); const keys: string[] = [];
     const recording = (claim: boolean) => wrapMedia((target, property) => property === "put" ? async (key: string, ...rest: unknown[]) => {

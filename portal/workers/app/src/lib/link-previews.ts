@@ -4,7 +4,7 @@ import {
 } from "@quincy/shared";
 import type { Env, SessionUser } from "../env";
 import { audit } from "./audit";
-import { abortEmbeddedMedia, claimAndDiscardUploadingMedia, discardUnreferencedObject, getEmbeddedMedia } from "./embedded-media";
+import { abortEmbeddedMedia, claimAndDiscardUploadingMedia, discardUnreferencedObject, getEmbeddedMedia, settleThrownAdoption } from "./embedded-media";
 import { newId } from "./ids";
 
 /** What owns a post's link previews: a Project comment (inside its Project) or a Notice board post (no Project). */
@@ -211,7 +211,7 @@ async function fetchAndStorePreview(env: Env, user: SessionUser, scope: { ownerK
       let copied = false;
       try { await env.MEDIA.put(key, image.bytes, { httpMetadata: { contentType } }); copied = true; }
       catch (error) { console.error("Link preview image copy failed", { error: error instanceof Error ? error.message.slice(0, 160) : "unknown" }); }
-      let promoted = false;
+      let promoted = false; let unknownOutcome = false; let discardedOnThrow = false;
       if (copied) {
         try {
           const results = await env.DB.batch([
@@ -225,14 +225,15 @@ async function fetchAndStorePreview(env: Env, user: SessionUser, scope: { ownerK
           promoted = (results[0]!.meta.changes ?? 0) === 1;
         } catch (error) {
           console.error("Link preview image promotion failed", { error: error instanceof Error ? error.message.slice(0, 160) : "unknown" });
-          // A throw can still follow a commit: a row already promoted is live and stays.
-          promoted = await getEmbeddedMedia(env.DB, mediaId).then((current) => current?.state === "pending", () => false);
+          // A throw can still follow a commit. Unknown keeps the object and the row: nothing is deleted or queued on a guess.
+          const outcome = await settleThrownAdoption(env, { key, projectId: scope.projectId, mediaId, what: "Link preview image", error, isAdopted: async () => (await getEmbeddedMedia(env.DB, mediaId))?.state === "pending" });
+          promoted = outcome === "adopted"; unknownOutcome = outcome === "unknown"; discardedOnThrow = outcome === "discarded";
         }
       }
       if (promoted) imageId = mediaId;
-      else {
+      else if (!unknownOutcome) {
         // Nothing references the object: delete it (re-queueing it if R2 refuses), then drop the reserved row.
-        await discardUnreferencedObject(env, key, scope.projectId);
+        if (!discardedOnThrow) await discardUnreferencedObject(env, key, scope.projectId);
         const discarded = await claimAndDiscardUploadingMedia(env, row);
         if (copied && discarded && scope.projectId !== null) {
           const live = await env.DB.prepare("SELECT 1 AS one FROM projects WHERE id = ? AND archived_at IS NULL").bind(scope.projectId).first();

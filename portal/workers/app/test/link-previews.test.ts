@@ -318,6 +318,31 @@ describe("POST /projects/:projectId/link-previews", () => {
     expect(await database.DB.prepare("SELECT count(*) AS n FROM embedded_media WHERE original_key = ?").bind(entry!.storage_key).first()).toEqual({ n: 0 });
   });
 
+  it.each([[true], [false]])("keeps the preview image object when the promotion batch threw (committed: %s) and the verification read threw too: nothing deleted or queued, key logged", async (commit) => {
+    await database.DB.prepare("DELETE FROM embedded_media_cleanup").run();
+    await database.DB.prepare("DELETE FROM link_preview_attempts").run();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { environment } = background(fetched());
+    let down = false; let key = "";
+    const flaky = { ...environment,
+      MEDIA: new Proxy(environment.MEDIA, { get: (target, property) => { const value = Reflect.get(target, property); if (property === "put") return async (k: string, ...rest: Parameters<R2Bucket["put"]> extends [unknown, ...infer R] ? R : never) => { key = k; return target.put(k, ...rest); }; return typeof value === "function" ? value.bind(target) : value; } }),
+      DB: new Proxy(environment.DB, { get: (target, property) => {
+        if (property === "batch") return async (statements: D1PreparedStatement[]) => { if (commit) await target.batch(statements); down = true; throw new Error("D1 connection lost"); };
+        if (property === "prepare" && down) return () => { throw new Error("D1 still down"); };
+        const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value;
+      } }) } as Env;
+    const response = await call(flaky, PROJECT_PATH(), "member", "POST", { url: `https://example.com/unknown-${commit}` });
+    const logged = errors.mock.calls.find((entry) => /UNKNOWN/.test(String(entry[0])));
+    errors.mockRestore();
+    expect(response.status).toBeGreaterThanOrEqual(500);
+    expect(logged).toBeDefined(); expect(JSON.stringify(logged)).toContain(key);
+    expect(await objectExists(key)).toBe(true);
+    const row = await database.DB.prepare("SELECT state FROM embedded_media WHERE original_key = ?").bind(key).first<{ state: string }>();
+    expect(row?.state).toBe(commit ? "pending" : "uploading");
+    const entry = await database.DB.prepare("SELECT queued_at FROM embedded_media_cleanup WHERE storage_key = ?").bind(key).first();
+    expect(entry === null).toBe(commit);
+  });
+
   it("leaves no cleanup entry behind once the image is promoted", async () => {
     await database.DB.prepare("DELETE FROM embedded_media_cleanup").run();
     const { environment } = background(fetched());

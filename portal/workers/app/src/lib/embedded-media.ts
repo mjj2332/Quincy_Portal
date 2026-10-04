@@ -269,3 +269,21 @@ export async function discardUnreferencedObject(env: Pick<Env, "DB" | "MEDIA">, 
   catch (error) { console.error("Embedded object ORPHANED: the R2 delete and the re-queue both failed, the object needs manual cleanup", { key: posterKey, projectId, error: error instanceof Error ? error.message : String(error) }); }
 }
 
+/**
+ * Decides, after an adoption batch threw, what to do with the object it was meant to adopt (a video poster, a link preview image).
+ * A throw can follow a commit, so the outcome comes from reading the row, in three: `adopted` (the row references the object, it is
+ * live and stays), `discarded` (confirmed not adopted, so the object is deleted, re-queued if R2 refuses, see `discardUnreferencedObject`),
+ * or `unknown` (the read threw too). Unknown deletes nothing and queues nothing, since either could destroy a live object: the object
+ * stays, an unadopted queue entry is still the sweep's to reclaim, and the key is logged with the batch's error.
+ */
+export async function settleThrownAdoption(env: Pick<Env, "DB" | "MEDIA">, input: { key: string; projectId: string | null; mediaId: string; what: string; isAdopted: () => Promise<boolean>; error: unknown }): Promise<"adopted" | "discarded" | "unknown"> {
+  let adopted: boolean;
+  try { adopted = await input.isAdopted(); }
+  catch {
+    console.error(`${input.what} adoption outcome UNKNOWN: the batch threw and the verification read failed, the object was kept (a leak is possible, accepted gap #549)`, { key: input.key, mediaId: input.mediaId, projectId: input.projectId, error: input.error instanceof Error ? input.error.message : String(input.error) });
+    return "unknown";
+  }
+  if (adopted) return "adopted";
+  await discardUnreferencedObject(env, input.key, input.projectId);
+  return "discarded";
+}

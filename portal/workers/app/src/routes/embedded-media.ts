@@ -12,7 +12,7 @@ import { hasProjectCollaborationAccess } from "../middleware/capability";
 import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { abortMultipart, createMultipartPresign, PART_BYTES, PRESIGN_EXPIRES_SECONDS } from "../lib/r2s3";
-import { abortEmbeddedMedia, claimAndDiscardUploadingMedia, discardUnreferencedObject, enqueueEmbeddedMediaCleanup, getEmbeddedMedia, verifyUploadedEmbeddedObject } from "../lib/embedded-media";
+import { abortEmbeddedMedia, claimAndDiscardUploadingMedia, discardUnreferencedObject, enqueueEmbeddedMediaCleanup, getEmbeddedMedia, settleThrownAdoption, verifyUploadedEmbeddedObject } from "../lib/embedded-media";
 import { jsonInput } from "./helpers";
 
 const uuid = z.string().uuid();
@@ -154,10 +154,10 @@ embeddedMediaRoutes.put("/projects/:projectId/embedded-media/:mediaId/poster", t
       c.env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ? AND queued_at = ? AND claimed_until IS NULL AND (SELECT poster_key FROM embedded_media WHERE id = ?) = ?").bind(posterKey, queuedAt, mediaId, posterKey),
     ]);
   } catch (error) {
-    // A throw can still follow a commit: if the row already references the object, it is live and stays.
-    const committed = await getEmbeddedMedia(c.env.DB, mediaId).then((current) => current?.posterKey === posterKey, () => false);
-    if (committed) return c.body(null, 204);
-    await discardUnreferencedObject(c.env, posterKey, projectId); throw error;
+    // A throw can still follow a commit: adopted keeps the object (204), unknown keeps it too (500), only a confirmed miss discards it.
+    const outcome = await settleThrownAdoption(c.env, { key: posterKey, projectId, mediaId, what: "Embedded poster", error, isAdopted: async () => (await getEmbeddedMedia(c.env.DB, mediaId))?.posterKey === posterKey });
+    if (outcome === "adopted") return c.body(null, 204);
+    throw error;
   }
   if ((results[0]!.meta.changes ?? 0) === 1) return c.body(null, 204);
   // Lost: nothing references the object, and a sweep's claim on its entry can never be undone (adoption needs an unclaimed entry).
