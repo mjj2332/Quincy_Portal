@@ -141,7 +141,8 @@ describe("NoticeBoard disclosure and polling", () => {
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
     const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
     await typeIntoEditor(editor, "Notice section");
-    await selectOption(host.querySelector<HTMLSelectElement>('[aria-label="Heading"]')!, "2");
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Heading"]')!);
+    await click([...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find((item) => item.textContent === "Section")!);
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!);
     await flush();
     expect(apiPostMock).toHaveBeenCalledWith("/api/notice-board/posts", { content });
@@ -190,7 +191,7 @@ describe("NoticeBoard disclosure and polling", () => {
     });
     const host = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
-    expect(host.querySelector('button[aria-expanded]')).toBeNull();
+    expect(host.querySelector('button[aria-expanded]:not([data-toolbar-item])')).toBeNull();
     expect(apiGetMock).toHaveBeenCalledWith("/api/notice-board/posts?limit=50");
     expect(apiGetMock.mock.calls.some(([path]) => path.includes("latest"))).toBe(false);
     await advance(30_000);
