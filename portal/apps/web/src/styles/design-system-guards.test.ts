@@ -938,3 +938,43 @@ describe("guard: reui/select popup is elevated and its items show one inset indi
     expect(selectItemProblems(GOOD)).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Guard — the focus ring has nothing to animate from (#532)
+// ---------------------------------------------------------------------------
+/**
+ * Tailwind 4's `transition-colors` / `transition-all` animate `outline-color`. An unfocused
+ * element's outline colour is `currentcolor`, so on a checked checkbox or a primary button (paper
+ * text) the ring faded paper -> ink over 150ms on every focus. `tokens/base.css` therefore sets
+ * `outline-color: var(--focus-ring)` on every element inside `@layer base`: the rest-state colour
+ * is already the ring colour, so there is nothing to fade from. It must stay layered so an
+ * explicit `outline-*` utility still wins.
+ *
+ * Because the ring is now `--focus-ring` at rest, an ink surface that is NOT a
+ * `data-surface="inverse"` scope must set `--focus-ring` itself instead of overriding the outline
+ * colour with `focus-visible:!outline-on-inverse` (which would fade from the rest colour again).
+ */
+describe("guard: outline-color defaults to --focus-ring in @layer base (#532)", () => {
+  const baseCss = () => stripCssComments(readFileSync(join(stylesDir, "tokens", "base.css"), "utf8"));
+  const layerBaseBodies = (css: string) =>
+    topLevelBlocks(css).filter(({ prelude }) => /^@layer\s+base$/.test(prelude.trim())).map(({ body }) => body);
+
+  it("tokens/base.css sets `outline-color: var(--focus-ring)` on all elements inside `@layer base`", () => {
+    const hit = layerBaseBodies(baseCss()).some((body) =>
+      /\*\s*,[^{]*\{[^}]*\boutline-color\s*:\s*var\(--focus-ring\)/.test(body));
+    expect(hit, "base.css needs `*, *::before, *::after { outline-color: var(--focus-ring); }` in @layer base").toBe(true);
+  });
+
+  it("does not put that rule outside a layer (it would beat every outline utility)", () => {
+    const unlayered = topLevelBlocks(baseCss()).filter(({ prelude }) => !prelude.startsWith("@"));
+    expect(unlayered.filter(({ prelude, body }) => /^\*/.test(prelude.trim()) && /\boutline-color\b/.test(body))).toEqual([]);
+  });
+
+  it("the ink banner and toast set --focus-ring on their surface, not `!outline-on-inverse`", () => {
+    for (const file of ["components/ImpersonationBanner.tsx", "components/quincy/ToastViewport.tsx"]) {
+      const code = stripComments(readFileSync(join(srcDir, file), "utf8"));
+      expect(code, `${file} must not override the ring colour`).not.toContain("outline-on-inverse");
+      expect(code, `${file} must set --focus-ring on its ink surface`).toContain("[--focus-ring:var(--text-on-inverse)]");
+    }
+  });
+});

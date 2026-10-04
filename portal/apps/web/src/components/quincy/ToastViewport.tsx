@@ -55,7 +55,7 @@ export function ToastViewport({ testId = "toast-viewport", toastTestId = "toast"
             if (!event.currentTarget.contains(event.relatedTarget as Node | null)) resumeToast(item.id);
           }}
           className={cn(
-            "flex items-center gap-[var(--space-3)] bg-surface-inverse text-on-inverse px-[var(--space-5)] py-[var(--space-3)] rounded-[var(--radius-sm)] shadow-[var(--shadow-md)] text-[length:var(--text-sm)] leading-[var(--leading-normal)] motion-safe:animate-[slidein_var(--dur-base)_var(--ease-entrance)] pointer-events-auto max-w-[min(380px,100%)]",
+            "flex items-center gap-[var(--space-3)] bg-surface-inverse text-on-inverse [--focus-ring:var(--text-on-inverse)] px-[var(--space-5)] py-[var(--space-3)] rounded-[var(--radius-sm)] shadow-[var(--shadow-md)] text-[length:var(--text-sm)] leading-[var(--leading-normal)] motion-safe:animate-[slidein_var(--dur-base)_var(--ease-entrance)] pointer-events-auto max-w-[min(380px,100%)]",
             item.tone === "error" && "bg-destructive",
           )}
         >
@@ -79,14 +79,12 @@ export function ToastViewport({ testId = "toast-viewport", toastTestId = "toast"
               `no-underline` strips, and `min-h-[44px]` overrides `text`'s 32px box (only kicks in
               at `max-[721px]` on `text` otherwise) to keep the hit target at every width.
 
-              `focus-visible:!outline-on-inverse` is the same fix `ImpersonationBanner.tsx`'s `EXIT`
-              carries, applied here for the same reason: the toast sits on ink (or, in the error
-              tone, on `bg-destructive`), and `styles/tokens/base.css:25`'s unlayered global
-              `:focus-visible { outline: … var(--focus-ring); }` (imported outside any layer at
-              `index.css:8`) beats an ordinary layered `outline-*` utility regardless of
-              specificity — so without the `!`, the ring stays `--focus-ring` (ink), unreadable on
-              an ink toast (~1.00:1) and barely better on the destructive one (~1.98:1). */}
-          {item.action && <button type="button" data-testid="toast-action" className={buttonClasses("text", { className: "underline underline-offset-2 shrink-0 min-h-[44px] px-[var(--space-2)] focus-visible:!outline-on-inverse" })} onClick={() => activateToastAction(item)}>{item.action.label}</button>}
+              The ring colour is set on the toast wrapper (`[--focus-ring:var(--text-on-inverse)]`),
+              the same way `ImpersonationBanner.tsx` does it: the toast sits on ink (or, in the
+              error tone, `bg-destructive`), where the default ink `--focus-ring` is unreadable.
+              Setting the variable rather than a `focus-visible:!outline-*` override keeps the
+              rest-state outline colour (base.css, #532) equal to the ring, so nothing fades. */}
+          {item.action && <button type="button" data-testid="toast-action" className={buttonClasses("text", { className: "underline underline-offset-2 shrink-0 min-h-[44px] px-[var(--space-2)]" })} onClick={() => activateToastAction(item)}>{item.action.label}</button>}
         </div>
       ))}
     </div>

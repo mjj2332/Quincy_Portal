@@ -17,28 +17,21 @@ const EXIT_ERROR = "Could not automatically exit. Sign out completely and sign b
 // or alert still covers it, so Exit is never mouse-reachable behind a focus-trapped modal.
 const BANNER = "fixed inset-x-0 top-0 z-[76] flex items-center " +
   "gap-[var(--space-3)] h-[var(--impersonation-banner-height)] overflow-hidden px-[var(--space-6)] " +
-  "bg-surface-inverse text-on-inverse " +
+  "bg-surface-inverse text-on-inverse [--focus-ring:var(--text-on-inverse)] " +
   "[font:var(--weight-regular)_var(--text-2xs)/1.2_var(--font-sans)] " +
   "uppercase tracking-[var(--tracking-wide)]";
 
 const IDENTITY = "impersonation-banner__identity min-w-0 overflow-hidden text-ellipsis whitespace-nowrap";
 
 // Exit sits on ink, so every colour `VARIANT.text` sets has to be inverted — including the
-// disabled colour from BASE and the focus ring, which is `--ring` → `--ink-900`: an ink ring on
-// an ink strip is as invisible as the ink label was (E-11, E-12). `cn` is twMerge-backed, so
-// these later utilities replace the earlier ones within each variant key (§2.1).
-//
-// `focus-visible:!outline-on-inverse` needs the important modifier, and the reason is the §2.2
-// cascade rule, not specificity: `styles/tokens/base.css:25` declares a GLOBAL
-// `:focus-visible { outline: var(--border-width-bold) solid var(--focus-ring); }`, and
-// `index.css:8` imports `base.css` outside any layer. That unlayered *shorthand* resets
-// `outline-color` and beats an ordinary layered `outline-*` utility, so without the `!` the ring
-// stays `--focus-ring` (ink) on an ink strip — E-12 unfixed. This is the same trap as §2.2, met
-// through a token file rather than through `app.css`.
+// disabled colour from BASE. The focus ring is inverted at the surface, not here: BANNER sets
+// `--focus-ring` to the paper text role, so the global `:focus-visible` ring (and the rest-state
+// `outline-color` from base.css, #532) is already paper on this ink strip. No outline override is
+// needed on the button. `cn` is twMerge-backed, so these later utilities replace the earlier ones
+// within each variant key (§2.1).
 const EXIT = buttonClasses("text", {
   className: "!text-on-inverse-muted hover:not-disabled:!text-on-inverse " +
-    "disabled:!text-on-inverse-muted disabled:bg-transparent disabled:border-transparent " +
-    "focus-visible:!outline-on-inverse",
+    "disabled:!text-on-inverse-muted disabled:bg-transparent disabled:border-transparent",
 });
 
 const ERROR = "flex-[1_1_160px] min-w-0 overflow-hidden " +

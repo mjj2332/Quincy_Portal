@@ -91,13 +91,13 @@ describe("ToastViewport action", () => {
     expect(actionButton?.hasAttribute("aria-hidden")).toBe(false);
   });
 
-  it("carries the inverse focus-ring override so focus-visible is readable on the toast (#216 fix round 5 item 4)", async () => {
+  it("sets the inverse --focus-ring on the toast surface so focus-visible is readable (#532)", async () => {
     const container = await mount(<ToastViewport />);
     await act(async () => { pushToast("Undo available", "success", { action: { label: "Undo", onAction: vi.fn() } }); await Promise.resolve(); });
     await flush();
     const actionButton = container.querySelector<HTMLButtonElement>('[data-testid="toast-action"]');
-    // Same fix as `ImpersonationBanner.tsx`'s `EXIT` — the global `:focus-visible` outline is ink,
-    // unreadable on this inverse toast (and barely better on the destructive tone) without it.
-    expect(actionButton?.classList.contains("focus-visible:!outline-on-inverse")).toBe(true);
+    const toast = actionButton?.closest('[data-testid="toast"]');
+    expect(toast?.classList.contains("[--focus-ring:var(--text-on-inverse)]")).toBe(true);
+    expect(actionButton?.className).not.toContain("outline-on-inverse");
   });
 });
