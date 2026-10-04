@@ -214,7 +214,10 @@ export function NotificationPreferences() {
               {saving.digest && <span className="text-foreground-secondary">Saving…</span>}
             </span>
           </div>
+        </div>
+        <p className={FOOT}>Comments, mentions, assignments and workflow updates are gathered into one email, grouped by Project, in Sydney time every day of the week. Anything you have already read in the app is left out, and nothing is sent when nothing is left. Checklist item and Project deadline reminders always arrive straight away.</p>
 
+        <div className="mt-[var(--space-4)]">
           <label className={CONTROL_ROW}>
             <Eyebrow>Project activity</Eyebrow>
             <span className={cn(VALUE, activityDisabled ? "text-muted-foreground" : "text-foreground")}>
@@ -232,8 +235,8 @@ export function NotificationPreferences() {
             </span>
           </label>
         </div>
-        <p className={FOOT}>Comments, mentions, assignments and workflow updates are gathered into one email, grouped by Project, in Sydney time every day of the week. Anything you have already read in the app is left out, and nothing is sent when nothing is left. Checklist item and Project deadline reminders always arrive straight away.</p>
-        <p className={cn(FOOT, "mt-[var(--space-2)]")}>Project activity (stage changes and collaboration activity) is only ever emailed in a digest; if you choose Immediately, it arrives hourly.</p>
+        {/* `p { margin: 0 }` in tokens/base.css sits outside @layer and beats a plain margin utility (CreateProject.tsx:109). */}
+        <p className={cn(FOOT, "!mt-[var(--space-2)]")}>Project activity (stage changes and collaboration activity) is only ever emailed in a digest; if you choose Immediately, it arrives hourly.</p>
         {(error?.section === "digest" || error?.section === "activity") && <Notice role="alert" className="mt-[var(--space-4)]">{error.message}</Notice>}
       </section>
 
