@@ -1078,4 +1078,21 @@ describe("Team chip labels (#514)", () => {
     expect(classes).toContain("rounded-[var(--radius-pill)]");
     expect(classes).toContain("max-[721px]:rounded-[var(--radius-sm)]");
   });
+
+  // Sol review: a collision label is long; the chip must wrap it, never overflow its column or truncate the email.
+  it.each([["editable", true], ["read-only", false]] as const)("keeps a long collision chip inside its container and lets the label wrap (%s)", async (_name, canEdit) => {
+    const host = await mount([member("u1", "Alexandria Montgomery", "alexandria.montgomery.photography@example-studio.test"), member("u2", "Alexandria Montgomery", "alexandria.montgomery.editing@example-studio.test")], canEdit);
+    const labelEls = [...host.querySelectorAll<HTMLElement>('[data-slot="team-chip-label"]')];
+    expect(labelEls).toHaveLength(2);
+    for (const label of labelEls) {
+      const chip = label.closest<HTMLElement>('[data-testid^="project-member-"]')!;
+      const chipTokens = chip.className.split(/\s+/);
+      expect(chipTokens).toContain("max-w-full");
+      expect(chipTokens).toContain("min-w-0");
+      expect(chipTokens).toContain("whitespace-normal");
+      expect(chipTokens).not.toContain("whitespace-nowrap");
+      expect(chipTokens).not.toContain("h-[calc(--spacing(5.25))]");
+      expect(label.parentElement!.className).toContain("[overflow-wrap:anywhere]");
+    }
+  });
 });

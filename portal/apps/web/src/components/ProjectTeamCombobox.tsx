@@ -100,6 +100,10 @@ export const TEAM_CHIP =
   // `width < 720`, excluding exactly 720 (docs/lessons.md:1141-1146).
   "max-[721px]:min-h-[44px]";
 
+/** #514: header chips may carry a long collision label (full name + email). They never outgrow their container and wrap
+ *  instead of truncating (the email is what tells two people apart); a short chip keeps TEAM_CHIP's fixed look as the minimum. */
+const TEAM_CHIP_FIT = "h-auto min-h-[calc(--spacing(5.25))] max-w-full min-w-0 whitespace-normal py-0.5";
+
 type TeamChipDataState = "idle" | "pending" | "error" | "conflict";
 
 /** Per-chip mutation-state styling (review fix #204 "visible per-chip state") — tokens only. */
@@ -282,7 +286,7 @@ function TeamChipContent({ option, dataState, roleTag, lockedLabel, fullName = f
     <Avatar size="sm" className="size-4">
       <AvatarFallback className="text-[length:var(--text-2xs)] leading-none">{initials(option.name, option.email)}</AvatarFallback>
     </Avatar>
-    <span className="[overflow-wrap:anywhere]">
+    <span className="min-w-0 [overflow-wrap:anywhere]">
       <span data-slot="team-chip-label">{fullName ? name : (label ?? firstName(option.name, option.email))}</span>
       {/* Dual-role disambiguation (review fix #204): visible when this userId is displayed in
        *  both the photographer and editor roles, so the two chips are not identical text. */}
@@ -379,7 +383,7 @@ function TeamComboboxView({ groups, value, onValueChange, visible, hiddenCount, 
           return <ComboboxChip
             key={option.key}
             showRemove={!locked}
-            className={cn(TEAM_CHIP, teamChipStateClasses(dataState), formControl && "max-[721px]:min-h-0")}
+            className={cn(TEAM_CHIP, TEAM_CHIP_FIT, teamChipStateClasses(dataState), formControl && "max-[721px]:min-h-0")}
             data-testid={`project-member-${option.key}`}
             data-state={dataState}
             aria-busy={isPending || undefined}
@@ -615,7 +619,7 @@ export function ProjectTeamCombobox({ projectId, members, canEdit, archived = fa
             data-state={dataState}
             aria-describedby={messageId}
             title={`${name} · ${ROLE_LABELS[option.role]}`}
-            className={cn(TEAM_CHIP, teamChipStateClasses(dataState), readOnly && "max-[721px]:min-h-0")}
+            className={cn(TEAM_CHIP, TEAM_CHIP_FIT, teamChipStateClasses(dataState), readOnly && "max-[721px]:min-h-0")}
           >
             <TeamChipContent option={option} dataState={dataState} roleTag={roleTag} label={label} />
           </span>;
