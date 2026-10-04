@@ -453,6 +453,8 @@ export const embeddedMediaCleanup = sqliteTable(
     projectId: text("project_id"),
     queuedAt: integer("queued_at").notNull(),
     attempts: integer("attempts").notNull().default(0),
+    /** The sweep's lease on this entry (epoch ms): set when it claims the entry, cleared on failure and on every re-queue, and the entry is deleted only on success. NULL = unclaimed. */
+    claimedUntil: integer("claimed_until"),
   },
   (t) => [index("embedded_media_cleanup_queued_idx").on(t.queuedAt)],
 );
