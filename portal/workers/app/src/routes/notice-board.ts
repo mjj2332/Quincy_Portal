@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
 import { createDb, schema } from "@quincy/db";
-import { legacyBodyToRichTextDoc, normalizeRichTextMentionLabels, parseRichTextDoc, richTextMentionIds, richTextPlainText, type RichTextDoc } from "@quincy/shared";
+import { NOTICE_BODY_MAX_LENGTH, NOTICE_RICH_TEXT_JSON_MAX_BYTES, NOTICE_RICH_TEXT_PROFILE, richTextDocByteLength, legacyBodyToRichTextDoc, normalizeRichTextMentionLabels, parseRichTextDoc, richTextMentionIds, richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import type { AppEnv } from "../env";
@@ -18,14 +18,15 @@ const optionalQuery = <T extends z.ZodTypeAny>(schema: T) => z.preprocess((value
 const postsQuery = z.object({ limit: optionalQuery(z.coerce.number().int().min(1).max(50)) });
 const postInput = z.object({ content: z.unknown() });
 const postId = z.string().uuid();
-const NOTICE_BODY_MAX_LENGTH = 2_000;
 
 export type NoticePost = { id: string; authorId: string; authorName: string; body: string; content: RichTextDoc; createdAt: string; editedAt: string | null };
 type NoticeBoardMutationResponse = { post: NoticePost; readState: NoticeBoardReadState };
 
 function storedContent(contentJson: string | null, body: string): RichTextDoc {
   if (!contentJson) return legacyBodyToRichTextDoc(body);
-  try { return parseRichTextDoc(JSON.parse(contentJson)); }
+  // The READ path must use the notice profile too: a parse failure falls back to the plain-text
+  // legacy document, so a comment-profile read would silently flatten every table notice (#492).
+  try { return parseRichTextDoc(JSON.parse(contentJson), NOTICE_RICH_TEXT_PROFILE); }
   catch { return legacyBodyToRichTextDoc(body); }
 }
 
@@ -49,7 +50,7 @@ async function findPost(db: ReturnType<typeof createDb>, id: string) {
 
 async function normalizedContent(db: ReturnType<typeof createDb>, input: unknown): Promise<{ content: RichTextDoc; body: string; mentionIds: string[] } | null> {
   let parsed: RichTextDoc;
-  try { parsed = parseRichTextDoc(input); } catch { return null; }
+  try { parsed = parseRichTextDoc(input, NOTICE_RICH_TEXT_PROFILE); } catch { return null; }
   const mentionIds = richTextMentionIds(parsed);
   const eligible = mentionIds.length
     ? await db.select({ id: schema.user.id, name: schema.user.name }).from(schema.user)
@@ -60,7 +61,8 @@ async function normalizedContent(db: ReturnType<typeof createDb>, input: unknown
   try { content = normalizeRichTextMentionLabels(parsed, new Map(eligible.map((target) => [target.id, target.name]))); }
   catch { return null; }
   const body = richTextPlainText(content).trim();
-  if (!body || body.length > NOTICE_BODY_MAX_LENGTH) return null;
+  // Re-check the byte cap here: a label rewritten to the current name can be longer than the one sent.
+  if (!body || body.length > NOTICE_BODY_MAX_LENGTH || richTextDocByteLength(content) > NOTICE_RICH_TEXT_JSON_MAX_BYTES) return null;
   return { content, body, mentionIds };
 }
 

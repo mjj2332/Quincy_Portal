@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
-import { ChevronDownIcon, ListChecksIcon, ListIcon, ListOrderedIcon, Redo2Icon, Undo2Icon } from "lucide-react";
+import { exitSuggestion } from "@tiptap/suggestion";
+import { ChevronDownIcon, ListChecksIcon, ListIcon, ListOrderedIcon, Redo2Icon, TableIcon, Undo2Icon } from "lucide-react";
 import { RICH_TEXT_JSON_MAX_BYTES, richTextDocByteLength, richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { cn } from "../lib/utils";
 import {
   createRichTextEditorExtensions,
+  type RichTextEditorPreset,
   itemContainerDepth,
   mentionQuery,
   shouldBlockListIndent,
@@ -21,8 +23,14 @@ import {
   DropdownMenuTrigger,
 } from "./reui/dropdown-menu";
 import { InputGroup, InputGroupAddon } from "./reui/input-group";
+import { DeleteTableDialog } from "./reui/rich-text-editor/delete-table-dialog";
+import { RichTextAlignMenu } from "./reui/rich-text-editor/rich-text-align";
+import { RichTextHighlightPopover } from "./reui/rich-text-editor/rich-text-highlight";
 import { RichTextLinkPopover } from "./reui/rich-text-editor/rich-text-link";
+import { RichTextOutlineRail, scrollToRichTextHeading, useRichTextActiveHeading, useRichTextOutline } from "./reui/rich-text-editor/rich-text-outline";
+import { RICH_TEXT_BASIC_SLASH_ITEMS, RICH_TEXT_SLASH_KEY, RichTextSlashCommand } from "./reui/rich-text-editor/rich-text-slash-menu";
 import { useRichTextState } from "./reui/rich-text-editor/rich-text-state";
+import { RICH_TEXT_TABLE_SLASH_ITEM, RichTextTableBubble } from "./reui/rich-text-editor/rich-text-table";
 import {
   RichTextButton,
   RichTextToggle,
@@ -33,9 +41,11 @@ import {
 
 /**
  * The one Quincy rich-text editor, built on the vendored ReUI `rich-text-editor-2` parts in
- * `components/reui/rich-text-editor/` (#491). `preset="composer"` is the compact Project-discussion
- * comment box: one `InputGroup` field with a roving-tabindex toolbar inside it. #492 adds the
- * `"document"` preset for the Notice board and retires the legacy `RichTextEditor`.
+ * `components/reui/rich-text-editor/` (#491, #492). `preset="composer"` is the compact
+ * Project-discussion comment box: one `InputGroup` field with a roving-tabindex toolbar inside it.
+ * `preset="document"` is the Notice board's page editor (#492): the same field plus alignment,
+ * highlight and tables, a "/" block menu, a table bubble and an outline rail. The legacy
+ * `RichTextEditor` is retired.
  *
  * What is deliberately NOT the vendor's:
  * - The extension set. The composer builds on `createRichTextEditorExtensions()` (the schema
@@ -55,6 +65,9 @@ import {
 const EDITOR_CONTENT_UTILITIES =
   "min-h-[var(--space-8)] w-full min-w-0 px-[var(--space-3)] py-[var(--space-2)] text-base md:text-sm " +
   "bg-transparent focus-visible:!outline-none ";
+
+/** Room for the outline rail's dashes at the right edge (the rail is hidden on a phone). */
+const DOCUMENT_CONTENT_UTILITIES = "min-[722px]:pe-12 ";
 
 // The group wrapper's call-site divergences from `InputGroup` (#376): `has-disabled:bg-card` because
 // the base's deep `:has(:disabled)` would paint the whole field sunken as soon as Undo/Redo are
@@ -76,11 +89,13 @@ const HEADING_LABEL = { paragraph: "Paragraph", "heading-2": "Section", "heading
 const HEADING_VALUE = { "heading-2": "2", "heading-3": "3", paragraph: "" } as const;
 
 export type QuincyRichTextEditorProps = {
-  /** `"composer"`: the compact Project-discussion comment box. (#492 adds `"document"`.) */
-  preset: "composer";
+  /** `"composer"`: the compact Project-discussion comment box. `"document"`: the Notice board page editor. */
+  preset: RichTextEditorPreset;
   value: RichTextDoc;
   onChange: (value: RichTextDoc) => void;
   limit: number;
+  /** The stored-JSON cap the surface's server profile enforces (default: the comment cap). */
+  maxBytes?: number;
   disabled?: boolean;
   loadMentionables: (query: string) => Promise<MentionableUser[]>;
   placeholder?: string;
@@ -89,9 +104,11 @@ export type QuincyRichTextEditorProps = {
 };
 
 export function QuincyRichTextEditor({
+  preset,
   value,
   onChange,
   limit,
+  maxBytes = RICH_TEXT_JSON_MAX_BYTES,
   disabled = false,
   loadMentionables,
   placeholder = "Write a message…",
@@ -102,6 +119,8 @@ export function QuincyRichTextEditor({
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
   const onSubmitRef = useRef(onSubmit); onSubmitRef.current = onSubmit;
   const limitRef = useRef(limit); limitRef.current = limit;
+  const maxBytesRef = useRef(maxBytes); maxBytesRef.current = maxBytes;
+  const isDocument = preset === "document";
   const disabledRef = useRef(disabled); disabledRef.current = disabled;
   const editorRef = useRef<Editor | null>(null);
   const menu = useRef<MentionAutocompleteHandle>(null);
@@ -114,7 +133,12 @@ export function QuincyRichTextEditor({
   const [mentionA11y, setMentionA11y] = useState<{ listboxId: string; activeId?: string; expanded: boolean } | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
   const [nestingBlocked, setNestingBlocked] = useState(false);
-  const extensions = useMemo(createRichTextEditorExtensions, []);
+  const [deleteTableOpen, setDeleteTableOpen] = useState(false);
+  const pageRef = useRef<HTMLDivElement>(null);
+  const extensions = useMemo(() => [
+    ...createRichTextEditorExtensions(preset),
+    ...(preset === "document" ? [RichTextSlashCommand.configure({ items: [...RICH_TEXT_BASIC_SLASH_ITEMS, RICH_TEXT_TABLE_SLASH_ITEM] })] : []),
+  ], [preset]);
   const editor = useEditor({
     extensions,
     // The toolbar subscribes to its own formatting snapshot (`useRichTextState`); the field itself
@@ -123,7 +147,7 @@ export function QuincyRichTextEditor({
     content: toTiptap(value),
     editable: !disabled,
     editorProps: {
-      attributes: { class: "rich-text__editor-content " + EDITOR_CONTENT_UTILITIES, "data-placeholder": placeholder, ...(id ? { id } : {}) },
+      attributes: { class: "rich-text__editor-content " + EDITOR_CONTENT_UTILITIES + (preset === "document" ? DOCUMENT_CONTENT_UTILITIES : ""), "data-placeholder": placeholder, ...(id ? { id } : {}) },
       handleKeyDown: (view, event) => {
         if (menu.current?.handleKeyDown(event)) return true;
         if (shouldBlockListIndent(event, itemContainerDepth(view.state.selection.$from))) {
@@ -141,7 +165,7 @@ export function QuincyRichTextEditor({
         if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
           const doc = tiptapToRichTextDoc(view.state.doc.toJSON());
           const plainText = richTextPlainText(doc);
-          if (plainText.trim().length > 0 && plainText.length <= limitRef.current && richTextDocByteLength(doc) <= RICH_TEXT_JSON_MAX_BYTES && !disabledRef.current) {
+          if (plainText.trim().length > 0 && plainText.length <= limitRef.current && richTextDocByteLength(doc) <= maxBytesRef.current && !disabledRef.current) {
             event.preventDefault();
             onSubmitRef.current?.();
             return true;
@@ -164,6 +188,9 @@ export function QuincyRichTextEditor({
   });
   editorRef.current = editor;
   const state = useRichTextState(editor);
+  // The derived outline rail (document preset only; `null` keeps the composer's selector idle).
+  const outline = useRichTextOutline(isDocument ? editor : null);
+  const activeHeading = useRichTextActiveHeading(isDocument ? editor : null, pageRef, outline);
 
   useEffect(() => { if (editor) editor.setEditable(!disabled); }, [disabled, editor]);
   useEffect(() => {
@@ -182,7 +209,11 @@ export function QuincyRichTextEditor({
   useEffect(() => {
     if (!editor) return;
     const dom = editor.view.dom;
-    const onBlur = () => setMentionDismissed(true);
+    const onBlur = () => {
+      setMentionDismissed(true);
+      // The slash menu only exists on the document preset; the other preset has no such plugin state.
+      if (RICH_TEXT_SLASH_KEY.getState(editor.view.state)) exitSuggestion(editor.view, RICH_TEXT_SLASH_KEY);
+    };
     dom.addEventListener("blur", onBlur);
     return () => dom.removeEventListener("blur", onBlur);
   }, [editor]);
@@ -213,7 +244,7 @@ export function QuincyRichTextEditor({
   if (!editor) return null;
 
   const plainText = richTextPlainText(value);
-  const overBytes = richTextDocByteLength(value) > RICH_TEXT_JSON_MAX_BYTES;
+  const overBytes = richTextDocByteLength(value) > maxBytes;
   const selectMention = (user: MentionableUser) => {
     const activeQuery = query ?? "";
     const from = editor.state.selection.from - activeQuery.length - 1;
@@ -241,7 +272,7 @@ export function QuincyRichTextEditor({
           <RichTextToolbarGroup label="Blocks">
             <DropdownMenu>
               <DropdownMenuTrigger
-                render={<Button variant="ghost" size="sm" aria-label="Heading" disabled={off(state.canHeading)} data-toolbar-item="" data-testid="rich-text-heading-menu" className="min-w-[112px] justify-between max-[721px]:h-11" />}
+                render={<Button variant="ghost" size="sm" aria-label="Heading" disabled={off(state.canHeading)} data-toolbar-item="" data-testid="rich-text-heading-menu" className="min-w-[8.5rem] justify-between max-[721px]:h-11" />}
               >
                 {HEADING_LABEL[state.blockType]}
                 <ChevronDownIcon aria-hidden="true" />
@@ -259,6 +290,14 @@ export function QuincyRichTextEditor({
             <RichTextToggle label="Ordered list" pressed={state.orderedList} disabled={off(state.canOrderedList) || state.atListNestingLimit} onToggle={() => editor.chain().focus().toggleOrderedList().run()}><ListOrderedIcon aria-hidden="true" /></RichTextToggle>
             <RichTextToggle label="Checklist" pressed={state.taskList} disabled={off(state.canTaskList) || state.atListNestingLimit} onToggle={() => editor.chain().focus().toggleTaskList().run()}><ListChecksIcon aria-hidden="true" /></RichTextToggle>
           </RichTextToolbarGroup>
+          {isDocument && <>
+            <RichTextToolbarSeparator />
+            <RichTextToolbarGroup label="Layout">
+              <RichTextAlignMenu editor={editor} state={state} disabled={disabled} />
+              <RichTextHighlightPopover editor={editor} state={state} />
+              <RichTextButton label="Insert table" disabled={off(state.canInsertTable)} onClick={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}><TableIcon aria-hidden="true" /></RichTextButton>
+            </RichTextToolbarGroup>
+          </>}
           <RichTextToolbarSeparator />
           <RichTextToolbarGroup label="History">
             <RichTextButton label="Undo" shortcut={["mod", "Z"]} disabled={off(state.canUndo)} onClick={() => editor.chain().focus().undo().run()}><Undo2Icon aria-hidden="true" /></RichTextButton>
@@ -266,8 +305,15 @@ export function QuincyRichTextEditor({
           </RichTextToolbarGroup>
         </RichTextToolbar>
       </InputGroupAddon>
-      <EditorContent editor={editor} className="w-full min-w-0" />
+      <div ref={pageRef} className="relative w-full min-w-0">
+        <EditorContent editor={editor} className="w-full min-w-0" />
+        {isDocument && outline.length >= 2 && <RichTextOutlineRail outline={outline} activeIndex={activeHeading} onSelect={(index) => scrollToRichTextHeading(editor, index)} className="absolute end-1 top-2 z-[1] max-[721px]:hidden" />}
+      </div>
     </InputGroup>
+    {isDocument && <>
+      <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} />
+      <DeleteTableDialog editor={editor} open={deleteTableOpen} onOpenChange={setDeleteTableOpen} />
+    </>}
     <MentionAutocomplete ref={menu} query={query} loadMentionables={loadMentionables} onSelect={selectMention} onDismiss={() => setMentionDismissed(true)} onAccessibilityChange={setMentionA11y} />
     {plainText.length >= limit * COUNTER_THRESHOLD && <div data-testid="rich-text-counter" className={cn("text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", plainText.length > limit && "!text-destructive")}>{plainText.length}/{limit}</div>}
     <div className="min-h-[1.2em] [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive" aria-live="polite">{overBytes ? "This formatting is too large to save; remove list items or formatting." : nestingBlocked ? "Maximum list nesting is four levels" : ""}</div>

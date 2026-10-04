@@ -1,4 +1,4 @@
-import { createServer as createHttpServer, type IncomingHttpHeaders, type Server } from "node:http";
+import { createServer as createHttpServer, request as httpRequest, type IncomingHttpHeaders, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -19,6 +19,11 @@ beforeAll(async () => {
   api = createHttpServer((req, res) => {
     seen.push(req.headers);
     res.end("ok");
+  });
+  // #498: a WebSocket handshake. The worker answers 101 so the test can see what Origin it was handed.
+  api.on("upgrade", (req, socket) => {
+    seen.push(req.headers);
+    socket.end("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n");
   });
   await new Promise<void>((resolve) => api.listen(0, "127.0.0.1", resolve));
   apiOrigin = `http://127.0.0.1:${(api.address() as AddressInfo).port}`;
@@ -61,6 +66,22 @@ describe("Vite dev proxy Origin", () => {
 
   it("does not invent an Origin the browser did not send", async () => {
     expect(await originSeenByApi(undefined)).toBeUndefined();
+  });
+
+  it("forwards a WebSocket upgrade (#498) with the same Origin rewrite as a mutation", async () => {
+    async function upgradeOrigin(origin: string): Promise<string | undefined> {
+      seen.length = 0;
+      await new Promise<void>((resolve, reject) => {
+        const req = httpRequest(`${viteOrigin}/api/projects/x/whiteboard/socket`, { headers: { Connection: "Upgrade", Upgrade: "websocket", "Sec-WebSocket-Version": "13", "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==", Origin: origin } });
+        req.on("upgrade", (_res, socket) => { socket.destroy(); resolve(); });
+        req.on("error", reject);
+        req.end();
+      });
+      expect(seen).toHaveLength(1);
+      return seen[0]!.origin;
+    }
+    expect(await upgradeOrigin(viteOrigin)).toBe(apiOrigin);
+    expect(await upgradeOrigin("https://evil.example")).toBe("https://evil.example");
   });
 
   it("is what vite.config.ts proxies /api and /media through, aimed at the dev worker", async () => {

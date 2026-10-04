@@ -269,7 +269,7 @@ describe("Notice Board presentation freshness", () => {
       return Promise.resolve({ posts: [remoteEdit ? remotelyEdited : oldPost] });
     });
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
-    expect(host.querySelector('button[aria-expanded]')).toBeNull();
+    expect(host.querySelector('button[aria-expanded]:not([data-toolbar-item])')).toBeNull();
     await click(host.querySelector('[data-slot="notice-board-edit"]')!);
     await typeIntoEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "Keep this edit draft");
     const editorsAfterEdit = host.querySelectorAll<HTMLElement>('[contenteditable="true"]');
@@ -313,7 +313,7 @@ describe("Notice Board presentation freshness", () => {
     failPresentation = true;
     emit(false); await flush(); emit(true); await flush();
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("temporary list failure");
-    expect(host.querySelector('button[aria-expanded]')).toBeNull();
+    expect(host.querySelector('button[aria-expanded]:not([data-toolbar-item])')).toBeNull();
     assertCreateComposerPreserved();
     failPresentation = false;
     emit(false); await flush(); emit(true); await flush();

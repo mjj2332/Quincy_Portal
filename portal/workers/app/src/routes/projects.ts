@@ -1299,6 +1299,14 @@ projectsRoutes.delete("/projects/:id", terminalRoute("/projects/:id", async (c) 
   const assetCount = assetIds.length;
   // Audit BEFORE destruction so the trail survives even if a later step dies mid-way.
   await audit(c.env, c.get("user"), "project.delete", "project", id, { street: project.street, orderId: project.orderId, assetCount, r2Prefix });
+  // #498 (ADR 0017): the Project whiteboard's Durable Object holds the live board outside D1 and R2,
+  // so tear it down beside the R2 purge. It runs first and idempotently: a failure leaves the Project
+  // archived with every other store intact, so the delete can simply be retried.
+  try { await c.env.PROJECT_WHITEBOARD.get(c.env.PROJECT_WHITEBOARD.idFromName(id)).purge(); }
+  catch (error) {
+    console.error("Project whiteboard purge failed", { event: "project_whiteboard_purge_failed", projectId: id, message: error instanceof Error ? error.message : String(error) });
+    return c.json({ error: "The project whiteboard could not be cleared. Nothing else was deleted; try again." }, 502);
+  }
   const keys: string[] = [];
   for (const prefix of [r2Prefix, ...assetIds.map((assetId) => `renditions/${assetId}/`)]) {
     let cursor: string | undefined;

@@ -109,8 +109,7 @@ describe("TB8-07 — retired classes that are still load-bearing", () => {
     // the utility string (rather than appending) would unstyle every heading, list and task item
     // inside the composer while leaving them correct in the posted comment — the exact
     // two-renderer divergence the retained CSS block exists to prevent.
-    expect(read("./RichTextEditor.tsx")).toContain('class: "rich-text__editor-content "');
-    // #491: the composer builds on the same class, for the same reason.
+    // `QuincyRichTextEditor` (both presets) builds on this class (#491; the legacy editor was retired in #492).
     expect(read("./QuincyRichTextEditor.tsx")).toContain('class: "rich-text__editor-content "');
     expect(read("../styles/app.css")).toContain(".rich-text__editor-content ul[data-type=\"taskList\"]");
   });
@@ -122,7 +121,7 @@ describe("#491 — editor content rules in app.css", () => {
     expect(css).toContain(".rich-text__editor-content:has(> p:only-child > br.ProseMirror-trailingBreak:only-child)::before { content: attr(data-placeholder)");
     expect(css).toMatch(/\.rich-text__editor-content a \{ color: var\(--signal-info\); text-decoration: underline;/);
     // The dead `.is-editor-empty` utilities must not come back as the only placeholder rule.
-    for (const file of ["./RichTextEditor.tsx", "./QuincyRichTextEditor.tsx"]) expect(read(file), file).not.toContain("is-editor-empty");
+    expect(read("./QuincyRichTextEditor.tsx")).not.toContain("is-editor-empty");
   });
 });
 
@@ -130,12 +129,10 @@ describe("TB8-07 — ARIA that was deliberately NOT changed", () => {
   it("keeps the rich-text validation region polite, never an alert", () => {
     // `FieldError` would have been the tidy substitution, but it injects `role="alert"`, turning
     // a polite live region into an assertive one that interrupts a screen-reader user mid-typing.
-    for (const file of ["./RichTextEditor.tsx", "./QuincyRichTextEditor.tsx"]) {
-      const source = read(file);
-      const validation = source.slice(source.indexOf("min-h-[1.2em]"));
-      expect(validation.slice(0, 200), file).toContain('aria-live="polite"');
-      expect(validation.slice(0, 200), file).not.toContain('role="alert"');
-    }
+    const source = read("./QuincyRichTextEditor.tsx");
+    const validation = source.slice(source.indexOf("min-h-[1.2em]"));
+    expect(validation.slice(0, 200)).toContain('aria-live="polite"');
+    expect(validation.slice(0, 200)).not.toContain('role="alert"');
   });
 
   it("keeps <time dateTime> as a real time element in both ledgers", () => {

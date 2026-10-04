@@ -3,6 +3,9 @@ import {
   DEFAULT_EMAIL_DIGEST_CADENCE,
   EMAIL_DIGEST_CADENCES,
   digestSlotAt,
+  DEFAULT_INCLUDE_PROJECT_ACTIVITY,
+  EMAIL_DIGEST_ACTIVITY_TYPES,
+  isDigestActivityType,
   isDigestExemptType,
   isDigestSlotDue,
 } from "../src/email-digest";
@@ -62,5 +65,18 @@ describe("email digest cadence", () => {
   it("keys a slot by the UTC hour so a repeated wall-clock hour stays distinct", () => {
     expect(digestSlotAt(utc("2026-07-01T22:00:07Z"))).toBe(utc("2026-07-01T22:00:00Z"));
     expect(digestSlotAt(utc("2026-07-01T22:59:59.999Z"))).toBe(utc("2026-07-01T22:00:00Z"));
+  });
+});
+
+describe("Project activity digest types (#490)", () => {
+  it("names exactly the two broad Project activity types and includes them by default", () => {
+    expect([...EMAIL_DIGEST_ACTIVITY_TYPES].sort()).toEqual(["project_activity", "project_collaboration_activity"]);
+    expect(DEFAULT_INCLUDE_PROJECT_ACTIVITY).toBe(true);
+    for (const type of EMAIL_DIGEST_ACTIVITY_TYPES) expect(isDigestActivityType(type)).toBe(true);
+    for (const type of ["mentioned", "comment_added", "subtask_reminder", "project_deadline_reminder"]) expect(isDigestActivityType(type)).toBe(false);
+  });
+
+  it("never makes an activity type exempt from the digest", () => {
+    for (const type of EMAIL_DIGEST_ACTIVITY_TYPES) expect(isDigestExemptType(type)).toBe(false);
   });
 });

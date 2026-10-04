@@ -19,6 +19,7 @@ import {
   externalNotificationCopy,
   externalNotificationChannels,
   DEFAULT_EMAIL_DIGEST_CADENCE,
+  EMAIL_DIGEST_ACTIVITY_TYPES,
   isDigestExemptType,
   parseExternalNotificationOutboxPayload,
   projectExternalActivityPayload,
@@ -1786,13 +1787,14 @@ function broadAdmission(outbox: OutboxRow, resolved: BroadResolvedRecipient, tok
 
 /**
  * Broad activity admission is deliberately separate from the legacy two-channel delivery path.
- * The nine statements (including the two adjacent terminal audits) keep in-app admission,
+ * The statements (including the two adjacent terminal audits and, last, the digest item for a delivered occurrence) keep in-app admission,
  * authorization convergence, suppression, and completion in one lease-fenced D1 batch; a returned
  * outcome is terminal and never a Queue retry.
  */
 export async function deliverBroadInApp(env: Env, outbox: OutboxRow, token: string, resolved: BroadResolvedRecipient, now: number): Promise<"delivered" | "suppressed" | "failed"> {
   const admission = broadAdmission(outbox, resolved, token);
   const notificationId = crypto.randomUUID();
+  const deliveredAuditId = crypto.randomUUID();
   const results = await env.DB.batch([
     env.DB.prepare(`
       UPDATE notification_delivery_ledger
@@ -1820,7 +1822,7 @@ export async function deliverBroadInApp(env: Env, outbox: OutboxRow, token: stri
       INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
       SELECT ?, NULL, 'notification.delivery.delivered', 'notification_outbox', ?, ?, ?
       WHERE changes() = 1
-    `).bind(crypto.randomUUID(), outbox.id, JSON.stringify({ eventType: outbox.event_type, outboxId: outbox.id, recipientId: outbox.recipient_id }), now),
+    `).bind(deliveredAuditId, outbox.id, JSON.stringify({ eventType: outbox.event_type, outboxId: outbox.id, recipientId: outbox.recipient_id }), now),
     env.DB.prepare(`
       UPDATE notification_delivery_ledger
       SET status = 'suppressed', last_error_code = ${admission.suppressionCode.sql}, last_error = 'Current project activity authorization no longer matches.', updated_at = ?
@@ -1862,6 +1864,26 @@ export async function deliverBroadInApp(env: Env, outbox: OutboxRow, token: stri
       AND NOT EXISTS (SELECT 1 FROM notification_delivery_ledger WHERE outbox_id = ? AND status IN ('pending', 'processing'))
       RETURNING id, status
     `).bind(outbox.id, outbox.id, outbox.id, outbox.id, now, now, outbox.id, token, outbox.id),
+    // #490: Project activity is emailed only in a digest, so this delivered occurrence becomes a pending digest
+    // item for a person who still has Include Project activity on (an absent row is on). It is appended LAST so
+    // the positional checks above are untouched, and it is gated on THIS batch's own delivered audit row (never
+    // on changes(), which an earlier statement owns), so a replayed or suppressed occurrence adds nothing.
+    // Cadence is deliberately not a predicate: an Immediately user's activity drains in the hourly digest.
+    // ledger_id is NULL: the broad path has no email ledger row, so an item's outcome lives on the item itself.
+    env.DB.prepare(`
+      INSERT INTO notification_digest_items (id, recipient_id, notification_id, ledger_id, project_id, notification_type, state, created_at, updated_at)
+      SELECT ?, l.recipient_id, n.id, NULL, n.project_id, n.type, 'pending', ?, ?
+      FROM notification_delivery_ledger l
+      JOIN notifications n ON n.id = l.notification_id
+      JOIN user u ON u.id = l.recipient_id
+      LEFT JOIN notification_preferences p ON p.user_id = u.id
+      WHERE l.outbox_id = ? AND l.channel = 'in_app' AND l.status = 'sent'
+        AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
+        AND u.active = 1
+        AND COALESCE(p.include_project_activity, 1) = 1
+        AND n.type IN (${EMAIL_DIGEST_ACTIVITY_TYPES.map(() => "?").join(", ")})
+      ON CONFLICT (notification_id) DO NOTHING
+    `).bind(crypto.randomUUID(), now, now, outbox.id, deliveredAuditId, ...EMAIL_DIGEST_ACTIVITY_TYPES),
   ]);
   const terminalOutcomes = [
     [(results[2]?.meta.changes ?? 0) === 1, "delivered"],
@@ -2155,7 +2177,8 @@ export async function processNotificationMessage(env: Env, message: Message<Noti
       return "acked";
     }
     if (resolved.kind === "broad") {
-      // Broad delivery has no email phase. This dispatch remains defensive: the atomic broad
+      // Broad delivery has no email phase and never emails inline: Project activity (#490) is only ever
+      // deferred to a digest, by the last statement of the atomic broad batch. This dispatch remains defensive: the atomic broad
       // batch normally terminalizes the outbox. This read/ack is defensive only; it never writes
       // a second terminal transition.
       await deliverBroadInApp(env, row, token, resolved, now);

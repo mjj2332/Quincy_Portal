@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { EMAIL_ENABLED_EVENTS, emitNotifications, notificationCopy, type NotificationEmail, type NotificationType } from "./notifications";
-import type { EmailDigestCadence } from "@quincy/shared";
+import { EMAIL_DIGEST_ACTIVITY_TYPES, type EmailDigestCadence } from "@quincy/shared";
 import type { Database } from "./index";
 
 const ALL_TYPES: NotificationType[] = [
@@ -253,5 +253,11 @@ describe("emitNotifications email gating", () => {
       expect(batches).toHaveLength(0);
       expect(insertCalls).toHaveLength(1);
     });
+  });
+});
+
+describe("Project activity is digest-only (#490)", () => {
+  it("never overlaps the legacy emitter's inline email types, so a future emitter cannot email activity inline", () => {
+    for (const type of EMAIL_DIGEST_ACTIVITY_TYPES) expect((EMAIL_ENABLED_EVENTS as readonly string[]).includes(type), type).toBe(false);
   });
 });

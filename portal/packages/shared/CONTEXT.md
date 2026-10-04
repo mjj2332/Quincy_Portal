@@ -29,7 +29,9 @@ _Avoid_: Comments panel, chat
 One selectable view of a Project's workspace: each Collection, plus Project collaboration.
 Project collaboration is the tab a Project opens on, unless its link names another Workspace
 tab (`?tab=<collection>`; Collaboration's own is `?collaboration=open`). A Project's link always
-names the tab being viewed, so a copied link reopens that tab.
+names the tab being viewed, so a copied link reopens that tab. The Project whiteboard is not a
+Workspace tab: an icon button beside Collaboration opens it over the workspace, with its own link
+(`?whiteboard=open`).
 _Avoid_: Collection (for the Collaboration tab)
 
 **Project workspace**:

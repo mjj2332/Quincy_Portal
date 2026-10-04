@@ -13,7 +13,6 @@ const apiGetMock = vi.hoisted(() => vi.fn());
 vi.mock("../lib/api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../lib/api")>()), apiGet: apiGetMock }));
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { id: "user-1", role: "editor" } }, isPending: false }) }));
 vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ role: "editor", capabilities: ["collaborateOnProject"], can: (capability: string) => capability === "collaborateOnProject" }) }));
-vi.mock("../components/RichTextEditor", () => ({ RichTextEditor: () => <div data-testid="rich-text-editor" /> }));
 vi.mock("../components/QuincyRichTextEditor", () => ({ QuincyRichTextEditor: () => <div data-testid="rich-text-editor" /> }));
 
 function ClientSeed({ onClient }: { onClient: (client: ReturnType<typeof createQuincyQueryClient>) => void }) {
