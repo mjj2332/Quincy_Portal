@@ -194,6 +194,9 @@ function ShellRoute() {
   const lastObservedRef = useRef<{ location: string; epoch: number } | null>(null);
   const selfWriteRef = useRef<string | null>(null);
   const arrivalSignalRef = useRef(0);
+  // #498: the location a whiteboard Close is about to land on. Returning from the board is not an arrival (nothing was navigated *to*),
+  // so the observation of exactly that location is spent without a signal; otherwise the Workspace's arrival focus steals focus from the entry button.
+  const whiteboardReturnRef = useRef<string | null>(null);
   const [arrivalIntent, setArrivalIntent] = useState<ArrivalIntent | null>(null);
   const searchFocusSignalRef = useRef(0);
   const [searchFocusRequest, setSearchFocusRequest] = useState<SearchFocusRequest | null>(null);
@@ -243,12 +246,14 @@ function ShellRoute() {
       selfWriteRef.current = null;
       lastObservedRef.current = { location: completeLocation, epoch: navigationEpoch };
       if (selfWrite) { setArrivalIntent(null); return; } // the Workspace's own tab write is not an arrival
+      if (whiteboardReturnRef.current === completeLocation) { whiteboardReturnRef.current = null; setArrivalIntent(null); return; } // #498: closing the board is not an arrival
       const signal = ++arrivalSignalRef.current;
       setArrivalIntent({ projectId: route.projectId, tab: route.arrivalTab, signal, location: completeLocation });
       return;
     }
     lastObservedRef.current = null;
     selfWriteRef.current = null;
+    whiteboardReturnRef.current = null;
     setArrivalIntent(null);
   }, [completeLocation, navigationEpoch, route]);
 
@@ -289,8 +294,8 @@ function ShellRoute() {
     if (route.kind !== "project" || route.projectId !== projectId || !route.whiteboard) return;
     const prev = readSheetEntryState(window.history.state)?.prev;
     const below = prev === undefined ? null : parseStaffLocation(prev);
-    if (below?.kind === "project" && below.projectId === projectId && !below.whiteboard) history.go(-1);
-    else history.replace(staffPathFor({ kind: "project", projectId, arrivalTab: tab }));
+    if (below?.kind === "project" && below.projectId === projectId && !below.whiteboard) { whiteboardReturnRef.current = prev!; history.go(-1); }
+    else { const target = staffPathFor({ kind: "project", projectId, arrivalTab: tab }); whiteboardReturnRef.current = target; history.replace(target); }
   };
 
   // #427: ⌘K. On the Dashboard it targets the current location; anywhere else it first moves to the

@@ -702,9 +702,13 @@ describe("the Project whiteboard link (#498)", () => {
     const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
     await press("ws-close-whiteboard");
     expect(go).toHaveBeenCalledWith(-1);
+    const closeBtn = sheet()!.querySelector<HTMLElement>('[data-testid="ws-close-whiteboard"]')!;
+    closeBtn.focus();
     await traverseTo(`${PROJECT_PATH}?tab=raw`, below);
     expect(stub().dataset.whiteboard).toBe("false");
-    expect(stub().dataset.arrivalTab).toBe("raw");
+    // Closing the board is not an arrival: no arrival tab/signal reaches the Workspace, so it never steals focus (#498).
+    expect(stub().dataset.arrivalTab).toBe("undefined");
+    expect(document.activeElement).not.toBe(sheet()!.querySelector('[data-testid="ws-tab-trigger"]'));
   });
 
   it("a cold whiteboard link has no workspace entry below: closing replaces with the tab the Workspace was showing", async () => {
@@ -716,6 +720,26 @@ describe("the Project whiteboard link (#498)", () => {
     await press("ws-close-whiteboard");
     expect(go).not.toHaveBeenCalled();
     expect(replace).toHaveBeenCalledWith(null, "", `${PROJECT_PATH}?tab=raw`);
+  });
+
+  it("closing a cold whiteboard link is not an arrival: the Workspace gets no arrival signal and focus is not stolen", async () => {
+    window.localStorage.setItem("quincy:dashboard:view", "table");
+    await renderApp(BOARD_PATH, null);
+    const closeBtn = sheet()!.querySelector<HTMLElement>('[data-testid="ws-close-whiteboard"]')!;
+    closeBtn.focus();
+    await press("ws-close-whiteboard");
+    expect(currentUrl()).toBe(`${PROJECT_PATH}?tab=raw`);
+    expect(stub().dataset.whiteboard).toBe("false");
+    expect(stub().dataset.arrivalTab).toBe("undefined");
+    expect(document.activeElement).not.toBe(sheet()!.querySelector('[data-testid="ws-tab-trigger"]'));
+  });
+
+  it("a later real arrival at the same Project URL still reaches the Workspace", async () => {
+    window.localStorage.setItem("quincy:dashboard:view", "table");
+    await renderApp(BOARD_PATH, null);
+    await press("ws-close-whiteboard");
+    await traverseTo(`${PROJECT_PATH}?tab=edited`, null);
+    expect(stub().dataset.arrivalTab).toBe("edited");
   });
 
   it("the Workspace's tab write never rewrites the whiteboard URL", async () => {
