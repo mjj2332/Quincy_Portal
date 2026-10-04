@@ -76,6 +76,7 @@ describe("overlay stacking contract", () => {
       const media = /@media \(width < 721px\)\s*\{\s*:root\s*\{\s*--impersonation-banner-height:\s*(\d+)px/.exec(css);
       expect(media, "spacing.css needs `@media (width < 721px) { :root { --impersonation-banner-height: Npx } }`").not.toBeNull();
       expect(Number(media![1])).toBeGreaterThanOrEqual(mobileButton + ringSpace);
+      expect(Number(media![1]), "phone banner is 56px: 44px Exit + ring + ~2px ink clearance each side").toBe(56);
     });
   });
 });
