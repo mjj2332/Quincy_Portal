@@ -331,7 +331,7 @@ describe("SubtaskChecklist", () => {
     apiGetMock.mockImplementation((path) => path.includes("subtask-assignee-options") ? Promise.resolve(optionsResponse) : Promise.resolve({ subtasks: [repeated, second] }));
     const host = mount(); await render();
     const editor = await openSchedule(host, "Call client");
-    expect(rangeToggles(editor)).toEqual({ active: "Start", start: rangeMoment(`${year}-04-05`, "00:00"), end: rangeMoment(`${year}-04-05`, "02:30") });
+    expect(rangeToggles(editor)).toEqual({ active: "Start", start: rangeMoment(`2026-04-05`, "00:00"), end: rangeMoment(`2026-04-05`, "02:30") });
     // The End's Earlier / Later choice is seeded from the stored fold.
     const pressed = [...editor.querySelectorAll<HTMLButtonElement>('[aria-label="Which Sydney time, end"] button')].find((button) => button.getAttribute("aria-pressed") === "true");
     expect(pressed?.textContent?.startsWith(disambiguation === "earlier" ? "Earlier" : "Later")).toBe(true);
