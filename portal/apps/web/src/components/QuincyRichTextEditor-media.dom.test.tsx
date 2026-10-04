@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import editorSource from "./QuincyRichTextEditor.tsx?raw";
 import imageSource from "./quincy/EmbeddedImage.tsx?raw";
 import { act, useState } from "react";
@@ -212,7 +213,7 @@ describe("a posted image", () => {
 });
 
 describe("design review fixes (#493)", () => {
-  const appCss = readFileSync(resolve(process.cwd(), "src/styles/app.css"), "utf8");
+  const appCss = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../styles/app.css"), "utf8");
   const rule = (selector: string) => appCss.split("\n").find((line) => line.startsWith(selector)) ?? "";
 
   it("puts the thumbnail's vertical margin on the button, so the focus ring does not wrap it, and none on the image inside", () => {
