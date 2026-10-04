@@ -77,6 +77,8 @@ class Client {
   seq = 0;
   /** The element being resized right now: Excalidraw keeps the local copy and the applier defers remote winners for it. */
   interacting: string | null = null;
+  /** The very object Excalidraw's appState (`resizingElement` / `newElement`) points at: the gesture's next pointer event mutates THIS, never a scene lookup. */
+  held: El | null = null;
   saver!: WhiteboardSaver;
   applier!: ReturnType<typeof createRemoteApplier>;
 }
@@ -162,6 +164,7 @@ class World {
     const before = client.scene.map((element) => ({ id: element.id, version: element.version, versionNonce: element.versionNonce, index: element.index, pinned: hold(element as SavedElement).state === "stored" }));
     const incoming = new Map(remote.map((element) => [element.id, element]));
     client.scene = mergeRemote(client.scene, clone(remote) as never, fns, (element) => hold(element as SavedElement), resizing);
+    if (client.held && !client.scene.includes(client.held)) this.violations.push(`client ${c}: a merge replaced the object ${client.held.id} that the gesture holds, so its next pointer event never reaches the scene`);
     for (const was of before) {
       const now = client.scene.find((element) => element.id === was.id);
       const inc = incoming.get(was.id);
@@ -189,6 +192,11 @@ class World {
     return done;
   }
 
+  /** What a person's edit lands on: while a gesture holds an element, the held object itself (as Excalidraw's pointer handlers do), else the scene's copy. */
+  private target(client: Client, id: string): El | undefined {
+    return client.held && client.held.id === id ? client.held : client.scene.find((candidate) => candidate.id === id);
+  }
+
   private async run(step: Step): Promise<boolean> {
     // A legacy table only exists before the first normalising wake: once a batch has committed the table is unique for good, and
     // a duplicate row appearing later (so that the server re-keys a row the clients already know, a second time) cannot happen.
@@ -205,24 +213,27 @@ class World {
         client.scene = sortScene([...client.scene, element]); this.author(client, element); return true;
       }
       case "edit": {
-        const element = client.scene.find((candidate) => candidate.id === step.id);
+        const element = this.target(client, step.id);
         if (!element || element.isDeleted) return false;
+        if (element === client.held) { Object.assign(element, { x: step.x, version: element.version + 1, versionNonce: step.nonce }); this.author(client, element); return true; }   // a pointer event through the held reference
         const next = { ...element, x: step.x, version: element.version + 1, versionNonce: step.nonce };
         client.scene = client.scene.map((candidate) => (candidate === element ? next : candidate)); this.author(client, next); return true;
       }
       case "delete": {
-        const element = client.scene.find((candidate) => candidate.id === step.id);
+        const element = this.target(client, step.id);
         if (!element || element.isDeleted) return false;
+        if (element === client.held) { Object.assign(element, { isDeleted: true, version: element.version + 1, versionNonce: step.nonce }); this.author(client, element); return true; }
         const next = { ...element, isDeleted: true, version: element.version + 1, versionNonce: step.nonce };
         client.scene = client.scene.map((candidate) => (candidate === element ? next : candidate)); this.author(client, next); return true;
       }
       case "reorder": {
-        const element = client.scene.find((candidate) => candidate.id === step.id);
+        const element = this.target(client, step.id);
         if (!element) return false;
         const others = client.scene.filter((candidate) => candidate !== element);
         const at = step.pos % (others.length + 1);
         const index = step.to !== undefined && validKey(step.to) && !others.some((candidate) => candidate.index === step.to) ? step.to : generateKeyBetween(others[at - 1]?.index ?? null, others[at]?.index ?? null);
         if (index === element.index) return false;
+        if (element === client.held) { Object.assign(element, { index, version: element.version + 1, versionNonce: step.nonce }); client.scene = sortScene(client.scene); this.author(client, element); return true; }
         const next = { ...element, index, version: element.version + 1, versionNonce: step.nonce };
         client.scene = sortScene(client.scene.map((candidate) => (candidate === element ? next : candidate))); this.author(client, next); return true;
       }
@@ -248,9 +259,9 @@ class World {
       }
       case "interact": {
         if (client.interacting !== null || !client.scene.some((element) => element.id === step.id && !element.isDeleted)) return false;
-        client.interacting = step.id; return true;
+        client.interacting = step.id; client.held = client.scene.find((element) => element.id === step.id)!; return true;
       }
-      case "endInteract": { if (client.interacting === null) return false; client.interacting = null; return true; }
+      case "endInteract": { if (client.interacting === null) return false; client.interacting = null; client.held = null; return true; }
       case "reconnect": {
         for (const pending of client.pending.values()) pending.reject(new Error("socket closed"));
         client.pending.clear(); client.outbound.length = 0; client.inbound.length = 0;
@@ -266,7 +277,7 @@ class World {
   async drain() {
     for (let round = 0; round < 400; round += 1) {
       const before = this.messages;
-      for (const client of this.clients) { client.interacting = null; client.applier.replay(); }     // the person lets go
+      for (const client of this.clients) { client.interacting = null; client.held = null; client.applier.replay(); }     // the person lets go
       for (let c = 0; c < this.clients.length; c += 1) { this.clients[c]!.saver.flush().catch(() => undefined); await tick(); }
       let moved = true;
       while (moved) {

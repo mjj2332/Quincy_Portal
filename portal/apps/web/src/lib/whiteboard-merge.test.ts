@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { beforeAll, describe, expect, it } from "vitest";
 import { createWhiteboardSaver, type SavedElement, type ServerHold, type WhiteboardSaver } from "./whiteboard-saver";
-import { adoptArrivedRevisions, mergeRemote, type MergeFns } from "./whiteboard-merge";
+import { adoptArrivedRevisions, interactingIds, mergeRemote, type MergeFns } from "./whiteboard-merge";
 
 /**
  * #499: another person's elements are merged into the board by Excalidraw's own `restoreElements` and
@@ -11,7 +11,7 @@ import { adoptArrivedRevisions, mergeRemote, type MergeFns } from "./whiteboard-
  * derived nonce could beat or lose against the sender's genuine next version). These tests drive the INSTALLED Excalidraw
  * functions (never mocks) through the same pure function the canvas uses, with the real saver on top.
  */
-type Fns = { reconcileElements: (l: never, r: never, a: never) => Array<Record<string, unknown>>; restoreElements: (e: never, o: null) => Array<Record<string, unknown>>; newElementWith: (e: never, updates: Record<string, unknown>) => Record<string, unknown> };
+type Fns = { reconcileElements: (l: never, r: never, a: never) => Array<Record<string, unknown>>; restoreElements: (e: never, o: null) => Array<Record<string, unknown>>; newElementWith: (e: never, updates: Record<string, unknown>) => Record<string, unknown>; mutateElement: (e: never, updates: Record<string, unknown>) => unknown };
 type El = Record<string, unknown> & SavedElement;
 let excalidraw: Fns;
 let fns: MergeFns<El>;
@@ -177,5 +177,43 @@ describe("mergeRemote moves only what is in the way, and never a revision (#499)
     expect(find(scene, "y").index).toBe("a1");
     expect(find(scene, "x").index).toBe("a0V");
     expect(find(scene, "z").index).toBe("a0");
+  });
+});
+
+describe("an element under interaction keeps its identity through a re-key (#499, Sol round 8)", () => {
+  /** The merge as the canvas runs it: Excalidraw's own reconcile gets the real appState, and the same appState names what is interacting. */
+  const mergeWhile = (scene: El[], remote: Array<Record<string, unknown>>, appState: { newElement?: El | null; resizingElement?: El | null }, saver?: WhiteboardSaver) => {
+    const state = { editingTextElement: null, resizingElement: null, newElement: null, ...appState };
+    const live: MergeFns<El> = { restore: fns.restore, reconcile: (local, incoming) => excalidraw.reconcileElements(local as never, incoming as never, state as never) as El[] };
+    return mergeRemote(scene, remote as never, live, saver ? (element) => saver.hold(element) : none, interactingIds(state as never));
+  };
+
+  it.each([["newElement (being drawn)", "newElement"], ["resizingElement (being resized)", "resizingElement"]] as const)("%s: a collision re-keys the same object, so later pointer events reach the scene and the saver", async (_label, slot) => {
+    let scene = loaded([rect("a", 1, 7, { index: "a0" })]);
+    const held = scene[0]!;                                                              // what appState.newElement / resizingElement point at
+    const { sent, saver } = recordingSaver(() => scene);
+    scene = mergeWhile(scene, [rect("b", 1, 5, { index: "a0" })], { [slot]: held }, saver);
+    expect(find(scene, "a")).toBe(held);                                                 // same object, not a copy
+    expect(find(scene, "a")).toMatchObject({ index: "a1", version: 1, versionNonce: 7 });   // moved out of the way, revision untouched
+    expect(find(scene, "b")).toMatchObject({ index: "a0", version: 1, versionNonce: 5 });
+    excalidraw.mutateElement(held as never, { width: 99 });                              // the next pointer event, through the held reference
+    expect(find(scene, "a")).toMatchObject({ width: 99, version: 2 });
+    saver.adoptRemote([find(scene, "b")]);
+    await saver.flush();
+    expect(sent.flat().find((element) => element.id === "a")).toMatchObject({ width: 99, version: 2 });
+  });
+
+  it("a held in-flight element that yielded is put back at its sent index in place, once the index is free", () => {
+    let scene = loaded([rect("e", 1, 50, { index: "a0" })]);
+    const held = scene[0]!;
+    const pending = createWhiteboardSaver({ getElements: () => scene, send: () => new Promise<void>(() => undefined) });
+    void pending.flush();
+    scene = mergeWhile(scene, [rect("i", 1, 3, { index: "a0" })], { newElement: held }, pending);
+    expect(find(scene, "e")).toBe(held);
+    expect(held.index).not.toBe("a0");
+    scene = mergeWhile(scene, [rect("i", 2, 4, { index: "a5" })], { newElement: held }, pending);
+    expect(find(scene, "e")).toBe(held);
+    expect(held.index).toBe("a0");
+    expect(held).toMatchObject({ version: 1, versionNonce: 50 });
   });
 });

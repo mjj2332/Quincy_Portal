@@ -78,16 +78,27 @@ export function mergeRemote<E extends Revisioned>(local: readonly E[], remote: r
   // In-flight, then unsent or edited ones: those whose index is free keep it (so nothing moves that need not), and each one in
   // the way goes just above what it hit: a copy with a new index, revision untouched.
   const moved = new Map<E, E>();
+  // An element under interaction is re-keyed IN PLACE. Excalidraw's `appState.newElement` / `resizingElement` /
+  // `editingTextElement` are references to the scene's own object, and the next pointer event mutates THAT object: a copy
+  // installed in its place would stop receiving the rest of the gesture, and the scene and the saver would keep its first
+  // frame. `index` is a plain field Excalidraw only reads (to sort and validate), nothing else holds a snapshot that must
+  // differ, and a direct write bumps no revision (unlike `mutateElement`). Every other element is copied, as before.
+  const rekeyed = (element: E, index: string): E => {
+    if (interacting.has(element.id)) { setIndex(element, index); return element; }
+    const copy = { ...element } as E;
+    setIndex(copy, index);
+    return copy;
+  };
   const wanted = new Map<E, string | undefined>();
   const blocked: E[] = [];
   for (const element of withState("in-flight")) {
     const sent = (held.get(element) as { index: string | undefined }).index ?? indexOf(element);
     wanted.set(element, sent);
     if (!space.claim(sent, element.id)) blocked.push(element);
-    else if (sent !== indexOf(element)) { const copy = { ...element } as E; setIndex(copy, sent!); moved.set(element, copy); }   // undoes an earlier provisional move
+    else if (sent !== indexOf(element)) moved.set(element, rekeyed(element, sent!));   // undoes an earlier provisional move
   }
   for (const element of withState("none")) { wanted.set(element, indexOf(element)); if (!space.claim(indexOf(element), element.id)) blocked.push(element); }
-  for (const element of blocked) { const copy = { ...element } as E; setIndex(copy, space.place(wanted.get(element), element.id)); moved.set(element, copy); }
+  for (const element of blocked) moved.set(element, rekeyed(element, space.place(wanted.get(element), element.id)));
   const before = new Map<object, Revision>();
   const inputs = local.map((element) => {
     const input = moved.get(element) ?? element;
