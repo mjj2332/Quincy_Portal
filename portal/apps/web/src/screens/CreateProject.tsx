@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import type { CollectionKind } from "@quincy/shared";
 import { ProjectFields, emptyProjectForm, type ProjectFieldError, type ProjectForm, type ProjectSelectionField, type ProjectTextField, validateProjectFields } from "../components/ProjectFields";
 import { apiPost } from "../lib/api";
+import { AUTOMATIC_NEW_SHOOT_DEADLINE, deadlineRequestBody, NewShootSchedule, type NewShootDeadline } from "../components/NewShootSchedule";
 import { InternalLink } from "../components/InternalLink";
 import { invalidateProjectSurfaces, useOptionalProjectQueryClient } from "../lib/project-data";
 import { cn } from "@/lib/utils";
@@ -22,6 +23,8 @@ function optionalValue(value: string): string | null { return value.trim() || nu
 export function CreateProject({ onNavigate }: { onNavigate: (path: string, notice?: string) => void }) {
   const queryClient = useOptionalProjectQueryClient();
   const [form, setForm] = useState<ProjectForm>(emptyProjectForm);
+  const [deadline, setDeadline] = useState<NewShootDeadline>(AUTOMATIC_NEW_SHOOT_DEADLINE);
+  const [priority, setPriority] = useState<number | null>(null);
   const [showDetails, setShowDetails] = useState(false);
   const [errors, setErrors] = useState<FormErrors>({});
   const [submitError, setSubmitError] = useState<string>();
@@ -46,7 +49,7 @@ export function CreateProject({ onNavigate }: { onNavigate: (path: string, notic
     try {
       const invoiceAmount = form.invoiceAmount.trim();
       const project = await apiPost<ProjectDetail, Record<string, unknown>>("/api/projects", {
-        street: form.street.trim(), suburb: optionalValue(form.suburb), postcode: optionalValue(form.postcode), agencyName: optionalValue(form.agencyName), agentName: optionalValue(form.agentName), agentEmail: optionalValue(form.agentEmail), agentPhone: optionalValue(form.agentPhone), shootDate: optionalValue(form.shootDate), timeWindow: optionalValue(form.timeWindow), orderNo: optionalValue(form.orderNo), orderId: optionalValue(form.orderId), invoiceAmount: invoiceAmount ? Number(invoiceAmount) : null, paymentStatus: optionalValue(form.paymentStatus), productionNotes: optionalValue(form.productionNotes), rawFolderLink: optionalValue(form.rawFolderLink), rawFolderPath: optionalValue(form.rawFolderPath), orderedServices: form.orderedServices, photographerUserIds: form.photographerUserIds, editorUserIds: form.editorUserIds,
+        street: form.street.trim(), suburb: optionalValue(form.suburb), postcode: optionalValue(form.postcode), agencyName: optionalValue(form.agencyName), agentName: optionalValue(form.agentName), agentEmail: optionalValue(form.agentEmail), agentPhone: optionalValue(form.agentPhone), shootDate: optionalValue(form.shootDate), timeWindow: optionalValue(form.timeWindow), orderNo: optionalValue(form.orderNo), orderId: optionalValue(form.orderId), invoiceAmount: invoiceAmount ? Number(invoiceAmount) : null, paymentStatus: optionalValue(form.paymentStatus), productionNotes: optionalValue(form.productionNotes), rawFolderLink: optionalValue(form.rawFolderLink), rawFolderPath: optionalValue(form.rawFolderPath), orderedServices: form.orderedServices, photographerUserIds: form.photographerUserIds, editorUserIds: form.editorUserIds, deadline: deadlineRequestBody(deadline), priority,
       });
       if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId: project.id, resources: [], dashboard: true, calendar: true, gantt: true, people: true });
       onNavigate(`/projects/${encodeURIComponent(project.id)}`, "Shoot created.");
@@ -118,7 +121,10 @@ export function CreateProject({ onNavigate }: { onNavigate: (path: string, notic
           Add details now <span className="normal-case tracking-[var(--tracking-normal)] text-foreground-secondary">(optional)</span>
         </summary>
         <div className="p-[var(--space-5)] max-[721px]:p-[var(--space-4)] flex flex-col gap-[var(--space-8)]">
-          <ProjectFields form={form} errors={errors} onChange={updateField} onToggle={toggleValue} />
+          <ProjectFields
+            form={form} errors={errors} onChange={updateField} onToggle={toggleValue}
+            shootExtras={<NewShootSchedule shootDate={form.shootDate} street={form.street} deadline={deadline} onDeadlineChange={setDeadline} priority={priority} onPriorityChange={setPriority} />}
+          />
           <div className="flex flex-wrap justify-end gap-[var(--space-3)] max-[721px]:flex-col-reverse max-[721px]:[&>*]:w-full">
             <InternalLink className={buttonClasses("secondary", {})} to="/" aria-disabled={isSubmitting}>Cancel</InternalLink>
             <Button data-testid="create-project-submit" type="submit" disabled={isSubmitting || !form.street.trim()}>{isSubmitting ? "Creating shoot…" : "Create shoot"}</Button>

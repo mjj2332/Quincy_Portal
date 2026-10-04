@@ -4,7 +4,7 @@ import { AlertCircle, AlertTriangle, Loader2 } from "lucide-react";
 import type { ProjectMemberRole } from "@quincy/shared";
 import { ApiError, apiDeleteWithBody, apiPutWithStatus } from "../lib/api";
 import { confirm } from "../lib/confirm";
-import { buttonClasses } from "./quincy/Button";
+import { Button, buttonClasses } from "./quincy/Button";
 import { cn } from "../lib/utils";
 import { ARCHIVED_HEADER_NOTICE_CLASS } from "./archived-notice";
 import {
@@ -79,8 +79,10 @@ const PROJECT_TEAM_MESSAGE =
 export const TEAM_CHIP_REMOVE_HIT_AREA =
   // 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token. The visible icon-xs
   // button is 24px (`size-6`); a transparent pseudo-element extends the hit area to 44px
-  // (24 + 10 + 10) without growing the chip itself.
-  "relative before:absolute before:content-[''] before:-inset-[10px]";
+  // without growing the chip itself. An absolute inset is measured from the *padding* box, and
+  // the Button has a 1px transparent border, so the inset is 11px, not 10: 22 + 11 + 11 = 44
+  // (10px measured 42×42 in the browser, #487).
+  "relative before:absolute before:content-[''] before:-inset-[11px]";
 
 /** The chip's base look, identical for the real `ComboboxChip` (merged over its own vendor
  *  defaults via `cn`/`twMerge`) and the read-only `<span>`, which has no vendor component to fall
@@ -247,17 +249,18 @@ function TeamChipStateIcon({ dataState }: { dataState: TeamChipDataState }) {
   return null;
 }
 
-function TeamChipContent({ option, dataState, roleTag }: { option: TeamOption; dataState: TeamChipDataState; roleTag?: string }) {
+function TeamChipContent({ option, dataState, roleTag, lockedLabel, fullName = false }: { option: TeamOption; dataState: TeamChipDataState; roleTag?: string; lockedLabel?: string; /** New shoot shows the whole name; the header keeps the first name. */ fullName?: boolean }) {
   const name = displayName(option.name, option.email);
   return <>
     <Avatar size="sm" className="size-4">
       <AvatarFallback className="text-[length:var(--text-2xs)] leading-none">{initials(option.name, option.email)}</AvatarFallback>
     </Avatar>
     <span className="[overflow-wrap:anywhere]">
-      {firstName(option.name, option.email)}
+      {fullName ? name : firstName(option.name, option.email)}
       {/* Dual-role disambiguation (review fix #204): visible when this userId is displayed in
        *  both the photographer and editor roles, so the two chips are not identical text. */}
       {roleTag && <span className="ml-[var(--space-1)] text-[length:var(--text-2xs)] text-foreground-secondary">{roleTag}</span>}
+      {lockedLabel && <span className="ml-[var(--space-1)] text-[length:var(--text-2xs)] text-foreground-secondary">{lockedLabel}</span>}
       {!option.active && <em className="ml-[var(--space-1)] not-italic uppercase tracking-[var(--tracking-wide)] text-[color:var(--signal-caution-text)]"> Inactive</em>}
     </span>
     <TeamChipStateIcon dataState={dataState} />
@@ -286,8 +289,145 @@ function TeamMoreToggle({ hiddenCount, expanded, onToggle }: { hiddenCount: numb
   </button>;
 }
 
-export function ProjectTeamCombobox({ projectId, members, canEdit, archived = false, rowClassName, inputRef }: { projectId: string; members: ProjectMember[]; canEdit: boolean; /** #452: an archived Project's Team is read-only. Also latched on from a 409 `membership_project_archived`, until this goes true to false (Restore). */ archived?: boolean; /** Sizes the Team row, read-only or editable (#458); the header passes its 44px control height. */ rowClassName?: string; /** #365: lets a hosting popover focus the input (the first chip × is a Tab stop and would otherwise take initial focus). */ inputRef?: Ref<HTMLInputElement> }) {
+const NO_LOCKED_KEYS: Set<string> = new Set();
+
+type TeamGroup = { value: string; label: string; items: TeamOption[] };
+type TeamChipView = { dataState: TeamChipDataState; isPending: boolean; messageId: string | undefined; name: string; roleTag: string | undefined };
+
+/** The picker shared by the Project header (persisted mode, per-change saves) and New shoot
+ *  (collect mode, #487). Presentation only: callers own the value, the mutations and the chip
+ *  state. `lockedKeys` chips (New shoot's Default editors) render without a remove control and
+ *  with a visible "Default editor" tag; their list items are disabled. */
+function TeamComboboxView({ groups, value, onValueChange, visible, hiddenCount, expanded, onToggleExpanded, chipProps, pending, lockedKeys, inputRef, inputDisabled, rowClassName, contentRef, blockEnterSubmit = false, truncateDescriptions = false, formControl = false, inputId }: {
+  groups: TeamGroup[];
+  value: TeamOption[];
+  onValueChange: (next: TeamOption[], eventDetails: ComboboxPrimitive.Root.ChangeEventDetails) => void;
+  visible: TeamOption[];
+  hiddenCount: number;
+  expanded: boolean;
+  onToggleExpanded: () => void;
+  chipProps: (option: TeamOption) => TeamChipView;
+  pending: Set<string>;
+  lockedKeys: Set<string>;
+  inputRef?: Ref<HTMLInputElement>;
+  inputDisabled: boolean;
+  rowClassName?: string;
+  contentRef?: Ref<HTMLDivElement>;
+  /** Inside a `<form>` (New shoot) Enter in the search box would otherwise submit it; Base UI deliberately lets it through when no item is highlighted. */
+  blockEnterSubmit?: boolean;
+  /** Keeps each list row to one line when the list is the 300px minimum (New shoot's content-sized anchor); the full text stays in `title`. */
+  truncateDescriptions?: boolean;
+  /** New shoot: sized like the form's other inputs (38px, exactly 44px at narrow) instead of the header's control height. */
+  formControl?: boolean;
+  /** Lets an outside `<label for>` name the search input. */
+  inputId?: string;
+}) {
   const anchor = useComboboxAnchor();
+  return (
+<Combobox
+    multiple
+    items={groups}
+    value={value}
+    onValueChange={onValueChange}
+    isItemEqualToValue={(a: TeamOption, b: TeamOption) => a.key === b.key}
+    itemToStringLabel={(item: TeamOption) => displayName(item.name, item.email)}
+    itemToStringValue={(item: TeamOption) => item.key}
+    filter={(item: TeamOption, query: string) => {
+      const needle = query.trim().toLocaleLowerCase();
+      if (!needle) return true;
+      return `${item.name} ${item.email} ${roleLabel(item.role)} ${globalRoleLabel(item.globalRole)}`.toLocaleLowerCase().includes(needle);
+    }}
+  >
+    {/* No `has-data-[slot=combobox-chip]:pl-1` override here: the vendor default already
+     *  carries `has-data-[slot=combobox-chip]:px-1` (both sides, `reui/combobox.tsx`), which
+     *  subsumes the left-only version this file used to duplicate by hand. */}
+    {/* #213 follow-up: content-sized like prototype 2a's Team `.sel` (chips · Add… · chevron), not a
+     *  box stretched to its cell — `w-fit` sizes to the chips and `max-w-full` still wraps them
+     *  inside the cell. */}
+    <ComboboxChips ref={anchor} className={cn("w-fit max-w-full rounded-[var(--radius-pill)] max-[721px]:min-h-[44px]", formControl && "min-h-[38px] w-full rounded-[var(--radius-sm)]", rowClassName)}>
+      <ComboboxValue>
+        {() => visible.map((option) => {
+          const { dataState, isPending, messageId, name, roleTag } = chipProps(option);
+          const locked = lockedKeys.has(option.key);
+          return <ComboboxChip
+            key={option.key}
+            showRemove={!locked}
+            className={cn(TEAM_CHIP, teamChipStateClasses(dataState), formControl && "max-[721px]:min-h-0")}
+            data-testid={`project-member-${option.key}`}
+            data-state={dataState}
+            aria-busy={isPending || undefined}
+            aria-describedby={messageId}
+            title={`${name} · ${roleLabel(option.role)}`}
+            removeProps={{
+              "aria-label": `Remove ${name} (${roleLabel(option.role)})`,
+              "data-testid": "project-member-remove",
+              disabled: isPending,
+              className: TEAM_CHIP_REMOVE_HIT_AREA,
+              // #206: Base UI renders the chip as a `div tabIndex=-1` and `ChipRemove` as a
+              // `<button tabIndex=-1>`, relying on the chip's own Backspace/Delete path — which
+              // `onValueChange` above rejects on purpose (reason "none"). Base UI merges
+              // elementProps after its own `{ tabIndex: -1 }`, so this wins and makes the × a
+              // real Tab stop; ChipRemove's own onKeyDown still handles Enter/Space.
+              tabIndex: 0,
+              // A key the parent Chip does not recognise makes it refocus its own `div` from its
+              // keydown handler, so the browser's default Tab would then step from the chip
+              // back onto this × — a trap. Keep Tab from reaching the chip; the default move
+              // still happens. Arrow keys deliberately still bubble (chip-to-chip navigation).
+              // Capture phase, not `onKeyDown`: Base UI's `useButton` wraps the merged bubble
+              // handler and skips it while `disabled` — and the pending × is disabled yet still
+              // focusable, so a bubble-phase guard would leave exactly that state trapped.
+              onKeyDownCapture: (event) => { if (event.key === "Tab") event.stopPropagation(); },
+            }}
+          >
+            <TeamChipContent option={option} dataState={dataState} roleTag={locked ? undefined : roleTag} lockedLabel={locked ? "Default editor" : undefined} fullName={formControl} />
+          </ComboboxChip>;
+        })}
+      </ComboboxValue>
+      <TeamMoreToggle hiddenCount={hiddenCount} expanded={expanded} onToggle={onToggleExpanded} />
+      {/* `flex-none w-[12ch]`, not the vendor's `min-w-16 flex-1`: the input is the "Add…" affordance,
+       *  and a flexing input is what claimed the rest of the line as white space. No focus growth:
+       *  this box is the popup's anchor, so a width change on focus would jump the open list. */}
+      <ComboboxChipsInput ref={inputRef} id={inputId} aria-label="Add team member" placeholder="Add…" className="flex-none min-w-0 w-[12ch]" disabled={inputDisabled} aria-invalid={inputDisabled ? true : undefined}
+        onKeyDown={blockEnterSubmit ? (event) => { if (event.key === "Enter") event.preventDefault(); } : undefined} />
+    </ComboboxChips>
+    {/* #213 follow-up: the chips box is now content-sized, so the list no longer copies its width —
+     *  a one-member box would give an unusably narrow list. Prototype 2a's list is 300px; it
+     *  still never runs narrower than its anchor or wider than the viewport.
+     *  `w-`, not `min-w-` (#456): the vendor's `data-[chips=true]:min-w-(--anchor-width)` variant wins a
+     *  `min-w-` on specificity, pinning the popup to the content-sized anchor. Overriding `w-` makes
+     *  twMerge drop the vendor `w-(--anchor-width)`, and `max-w-` still caps it on small screens. */}
+    <ComboboxContent ref={contentRef} anchor={anchor} className="w-[max(var(--anchor-width),300px)] max-w-[calc(100vw-2*var(--space-4))]">
+      <ComboboxEmpty>No eligible people match.</ComboboxEmpty>
+      <ComboboxList aria-label="Team candidates">
+        {(group: (typeof groups)[number]) => <ComboboxGroup key={group.value} items={group.items}>
+          <ComboboxLabel>{group.label}</ComboboxLabel>
+          <ComboboxCollection>
+            {(option: TeamOption) => <ComboboxItem key={option.key} value={option} disabled={pending.has(option.key) || lockedKeys.has(option.key)} className="max-[721px]:min-h-[44px]">
+              <Item size="xs" className="p-0 flex-nowrap">
+                <Avatar size="sm" className="size-6 shrink-0">
+                  <AvatarFallback>{initials(option.name, option.email)}</AvatarFallback>
+                </Avatar>
+                <ItemContent className="min-w-0">
+                  <ItemTitle className="block max-w-full truncate">{displayName(option.name, option.email)}</ItemTitle>
+                  {truncateDescriptions
+                    // Collect mode: the email truncates, the role never does.
+                    ? <ItemDescription className="flex min-w-0 items-baseline gap-1" title={`${option.email} · ${globalRoleLabel(option.globalRole)}`}>
+                      <span className="min-w-0 truncate">{option.email}</span>
+                      <span aria-hidden="true">·</span>
+                      <span className="shrink-0">{globalRoleLabel(option.globalRole)}</span>
+                    </ItemDescription>
+                    : <ItemDescription>{option.email} · {globalRoleLabel(option.globalRole)}</ItemDescription>}
+                </ItemContent>
+              </Item>
+            </ComboboxItem>}
+          </ComboboxCollection>
+        </ComboboxGroup>}
+      </ComboboxList>
+    </ComboboxContent>
+  </Combobox>);
+}
+
+export function ProjectTeamCombobox({ projectId, members, canEdit, archived = false, rowClassName, inputRef }: { projectId: string; members: ProjectMember[]; canEdit: boolean; /** #452: an archived Project's Team is read-only. Also latched on from a 409 `membership_project_archived`, until this goes true to false (Restore). */ archived?: boolean; /** Sizes the Team row, read-only or editable (#458); the header passes its 44px control height. */ rowClassName?: string; /** #365: lets a hosting popover focus the input (the first chip × is a Tab stop and would otherwise take initial focus). */ inputRef?: Ref<HTMLInputElement> }) {
   const [latched, setLatched] = useState(false);
   const readOnly = archived || latched;
   const editable = canEdit && !readOnly;
@@ -416,98 +556,22 @@ export function ProjectTeamCombobox({ projectId, members, canEdit, archived = fa
   return <div ref={rootRef} className="grid gap-[var(--space-3)]" data-testid="project-team-control">
     {editable && candidatesQuery.isError && <p className={PROJECT_TEAM_MESSAGE} role="alert">Candidates could not be loaded. {candidatesQuery.error instanceof Error ? candidatesQuery.error.message : "Try again shortly."}</p>}
 
-    {editable ? <Combobox
-      multiple
-      items={groups}
+    {editable ? <TeamComboboxView
+      groups={groups}
       value={value}
       onValueChange={onValueChange}
-      isItemEqualToValue={(a: TeamOption, b: TeamOption) => a.key === b.key}
-      itemToStringLabel={(item: TeamOption) => displayName(item.name, item.email)}
-      itemToStringValue={(item: TeamOption) => item.key}
-      filter={(item: TeamOption, query: string) => {
-        const needle = query.trim().toLocaleLowerCase();
-        if (!needle) return true;
-        return `${item.name} ${item.email} ${roleLabel(item.role)} ${globalRoleLabel(item.globalRole)}`.toLocaleLowerCase().includes(needle);
-      }}
-    >
-      {/* No `has-data-[slot=combobox-chip]:pl-1` override here: the vendor default already
-       *  carries `has-data-[slot=combobox-chip]:px-1` (both sides, `reui/combobox.tsx`), which
-       *  subsumes the left-only version this file used to duplicate by hand. */}
-      {/* #213 follow-up: content-sized like prototype 2a's Team `.sel` (chips · Add… · chevron), not a
-       *  box stretched to its cell — `w-fit` sizes to the chips and `max-w-full` still wraps them
-       *  inside the cell. */}
-      <ComboboxChips ref={anchor} className={cn("w-fit max-w-full rounded-[var(--radius-pill)] max-[721px]:min-h-[44px]", rowClassName)}>
-        <ComboboxValue>
-          {() => visible.map((option) => {
-            const { dataState, isPending, messageId, name, roleTag } = chipProps(option);
-            return <ComboboxChip
-              key={option.key}
-              showRemove
-              className={cn(TEAM_CHIP, teamChipStateClasses(dataState))}
-              data-testid={`project-member-${option.key}`}
-              data-state={dataState}
-              aria-busy={isPending || undefined}
-              aria-describedby={messageId}
-              title={`${name} · ${roleLabel(option.role)}`}
-              removeProps={{
-                "aria-label": `Remove ${name} (${roleLabel(option.role)})`,
-                "data-testid": "project-member-remove",
-                disabled: isPending,
-                className: TEAM_CHIP_REMOVE_HIT_AREA,
-                // #206: Base UI renders the chip as a `div tabIndex=-1` and `ChipRemove` as a
-                // `<button tabIndex=-1>`, relying on the chip's own Backspace/Delete path — which
-                // `onValueChange` above rejects on purpose (reason "none"). Base UI merges
-                // elementProps after its own `{ tabIndex: -1 }`, so this wins and makes the × a
-                // real Tab stop; ChipRemove's own onKeyDown still handles Enter/Space.
-                tabIndex: 0,
-                // A key the parent Chip does not recognise makes it refocus its own `div` from its
-                // keydown handler, so the browser's default Tab would then step from the chip
-                // back onto this × — a trap. Keep Tab from reaching the chip; the default move
-                // still happens. Arrow keys deliberately still bubble (chip-to-chip navigation).
-                // Capture phase, not `onKeyDown`: Base UI's `useButton` wraps the merged bubble
-                // handler and skips it while `disabled` — and the pending × is disabled yet still
-                // focusable, so a bubble-phase guard would leave exactly that state trapped.
-                onKeyDownCapture: (event) => { if (event.key === "Tab") event.stopPropagation(); },
-              }}
-            >
-              <TeamChipContent option={option} dataState={dataState} roleTag={roleTag} />
-            </ComboboxChip>;
-          })}
-        </ComboboxValue>
-        <TeamMoreToggle hiddenCount={hiddenCount} expanded={effectiveExpanded} onToggle={() => setExpanded(!effectiveExpanded)} />
-        {/* `flex-none w-[12ch]`, not the vendor's `min-w-16 flex-1`: the input is the "Add…" affordance,
-         *  and a flexing input is what claimed the rest of the line as white space. No focus growth:
-         *  this box is the popup's anchor, so a width change on focus would jump the open list. */}
-        <ComboboxChipsInput ref={inputRef} aria-label="Add team member" placeholder="Add…" className="flex-none min-w-0 w-[12ch]" disabled={candidatesQuery.isError} aria-invalid={candidatesQuery.isError ? true : undefined} />
-      </ComboboxChips>
-      {/* #213 follow-up: the chips box is now content-sized, so the list no longer copies its width —
-       *  a one-member box would give an unusably narrow list. Prototype 2a's list is 300px; it
-       *  still never runs narrower than its anchor or wider than the viewport.
-       *  `w-`, not `min-w-` (#456): the vendor's `data-[chips=true]:min-w-(--anchor-width)` variant wins a
-       *  `min-w-` on specificity, pinning the popup to the content-sized anchor. Overriding `w-` makes
-       *  twMerge drop the vendor `w-(--anchor-width)`, and `max-w-` still caps it on small screens. */}
-      <ComboboxContent ref={contentRef} anchor={anchor} className="w-[max(var(--anchor-width),300px)] max-w-[calc(100vw-2*var(--space-4))]">
-        <ComboboxEmpty>No eligible people match.</ComboboxEmpty>
-        <ComboboxList aria-label="Team candidates">
-          {(group: (typeof groups)[number]) => <ComboboxGroup key={group.value} items={group.items}>
-            <ComboboxLabel>{group.label}</ComboboxLabel>
-            <ComboboxCollection>
-              {(option: TeamOption) => <ComboboxItem key={option.key} value={option} disabled={pending.has(option.key)} className="max-[721px]:min-h-[44px]">
-                <Item size="xs" className="p-0">
-                  <Avatar size="sm" className="size-6">
-                    <AvatarFallback>{initials(option.name, option.email)}</AvatarFallback>
-                  </Avatar>
-                  <ItemContent>
-                    <ItemTitle className="whitespace-nowrap">{displayName(option.name, option.email)}</ItemTitle>
-                    <ItemDescription>{option.email} · {globalRoleLabel(option.globalRole)}</ItemDescription>
-                  </ItemContent>
-                </Item>
-              </ComboboxItem>}
-            </ComboboxCollection>
-          </ComboboxGroup>}
-        </ComboboxList>
-      </ComboboxContent>
-    </Combobox> : <div
+      visible={visible}
+      hiddenCount={hiddenCount}
+      expanded={effectiveExpanded}
+      onToggleExpanded={() => setExpanded(!effectiveExpanded)}
+      chipProps={chipProps}
+      pending={pending}
+      lockedKeys={NO_LOCKED_KEYS}
+      inputRef={inputRef}
+      inputDisabled={candidatesQuery.isError}
+      rowClassName={rowClassName}
+      contentRef={contentRef}
+    /> : <div
       // Only an archived (or latched) Team gets the named group: the focus target, and the anchor for the notice. A live read-only Team keeps its plain row.
       {...(readOnly ? { role: "group", "aria-label": "Team", tabIndex: -1, "aria-describedby": latched ? noticeId : undefined } : {})}
       ref={readOnlyRef}
@@ -543,5 +607,105 @@ export function ProjectTeamCombobox({ projectId, members, canEdit, archived = fa
         {state.kind === "error" && !readOnly && <button type="button" className={buttonClasses("text", { className: "ml-[var(--space-2)] min-h-[44px]" })} onClick={() => state.retry === "add" ? void add(state.role, state.candidate) : void removeWithSnapshot(state.member)}>Retry</button>}
       </div>;
     })}
+  </div>;
+}
+
+type TeamSelectionField = "photographerUserIds" | "editorUserIds";
+
+/** New shoot's Team (#487): the same picker as the Project header, but it only *collects*. There is
+ *  no Project yet, so nothing is saved per change; each add/remove is reported through `onToggle`
+ *  and the parent form submits the ids with the create request.
+ *
+ *  Default editors (an active, editor-eligible user flagged `defaultEditor`) are applied by the
+ *  server at creation, so they show as locked "Default editor" chips here and are never part of
+ *  `editorUserIds`: sending them would turn a Default editor deactivated between page load and
+ *  submit into a 422, which the server rule deliberately never raises. Removing one is done from
+ *  the Project header after creation. */
+export function ProjectTeamCollectCombobox({ photographerUserIds, editorUserIds, onToggle, rowClassName, inputRef, inputId }: {
+  photographerUserIds: string[];
+  editorUserIds: string[];
+  onToggle: (field: TeamSelectionField, userId: string) => void;
+  rowClassName?: string;
+  inputRef?: Ref<HTMLInputElement>;
+  inputId?: string;
+}) {
+  const candidatesQuery = useProjectAssignmentCandidatesQuery(true);
+  // A picked person who later drops out of the candidates (deactivated while the form is open) must keep their chip, so the last
+  // option seen for each key is kept, like the header's `memberOption` for a member who is no longer a candidate.
+  const lastSeen = useRef(new Map<string, TeamOption>());
+
+  const candidateList = candidatesQuery.data && Array.isArray(candidatesQuery.data.photographers) && Array.isArray(candidatesQuery.data.editors)
+    ? candidatesQuery.data
+    : { photographers: [], editors: [] };
+  const photographerOptions = candidateList.photographers.map((candidate) => candidateOption("photographer", candidate));
+  const editorOptions = candidateList.editors.map((candidate) => candidateOption("editor", candidate));
+  const optionsByKey = new Map<string, TeamOption>();
+  for (const option of [...photographerOptions, ...editorOptions]) { optionsByKey.set(option.key, option); lastSeen.current.set(option.key, option); }
+  const groups: TeamGroup[] = [
+    { value: "photographer", label: "Photographers", items: photographerOptions },
+    { value: "editor", label: "Editors", items: editorOptions },
+  ];
+
+  const lockedKeys = new Set(candidateList.editors.filter((candidate) => candidate.defaultEditor).map((candidate) => cellKey("editor", candidate.id)));
+  const value: TeamOption[] = [];
+  const seen = new Set<string>();
+  const addToValue = (key: string) => {
+    const option = optionsByKey.get(key) ?? lastSeen.current.get(key);
+    if (option && !seen.has(key)) { seen.add(key); value.push(option); }
+  };
+  for (const id of photographerUserIds) addToValue(cellKey("photographer", id));
+  for (const key of lockedKeys) addToValue(key);
+  for (const id of editorUserIds) addToValue(cellKey("editor", id));
+  // Photographers first, then editors, like the header.
+  value.sort((left, right) => (left.role === right.role ? 0 : left.role === "photographer" ? -1 : 1));
+
+  function onValueChange(next: TeamOption[], eventDetails: ComboboxPrimitive.Root.ChangeEventDetails) {
+    // The form owns the selection; Base UI's optimistic local value must never be the source of truth.
+    eventDetails.cancel();
+    const currentKeys = value.map((option) => option.key);
+    const nextKeys = next.map((option) => option.key);
+    const added = nextKeys.filter((key) => !currentKeys.includes(key));
+    const removed = currentKeys.filter((key) => !nextKeys.includes(key));
+    const toggle = (key: string) => {
+      if (lockedKeys.has(key)) return;
+      const option = value.find((candidate) => candidate.key === key) ?? optionsByKey.get(key);
+      if (option) onToggle(option.role === "photographer" ? "photographerUserIds" : "editorUserIds", option.userId);
+    };
+    if (added.length === 1 && removed.length === 0) { toggle(added[0]!); return; }
+    // Only an explicit item-press or chip x removes; Backspace in an empty input is too easy to hit by accident.
+    if (removed.length === 1 && added.length === 0 && (eventDetails.reason === "item-press" || eventDetails.reason === "chip-remove-press")) toggle(removed[0]!);
+  }
+
+  // Collect mode always tags a chip with its role, spelled out: the team is reviewed here before Create, with no header context.
+  function chipProps(option: TeamOption): TeamChipView {
+    return { dataState: "idle", isPending: false, messageId: undefined, name: displayName(option.name, option.email), roleTag: roleLabel(option.role) };
+  }
+
+  return <div className="grid gap-[var(--space-3)]" data-testid="project-team-collect">
+    {candidatesQuery.isPending && <p role="status" className="m-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">Loading available team members…</p>}
+    {candidatesQuery.isError && <p className={PROJECT_TEAM_MESSAGE} role="alert">
+      Candidates could not be loaded. {candidatesQuery.error instanceof Error ? candidatesQuery.error.message : "Try again shortly."}
+      <Button variant="text" className="ml-[var(--space-2)] max-[721px]:min-h-[44px]" onClick={() => void candidatesQuery.refetch()}>Retry</Button>
+    </p>}
+    <TeamComboboxView
+      groups={groups}
+      value={value}
+      onValueChange={onValueChange}
+      // Every chip is shown: the whole team is reviewed before Create, and the visible chips stay a prefix of `value`, which ChipRemove needs.
+      visible={value}
+      hiddenCount={0}
+      expanded={false}
+      onToggleExpanded={() => undefined}
+      chipProps={chipProps}
+      pending={NO_LOCKED_KEYS}
+      lockedKeys={lockedKeys}
+      inputRef={inputRef}
+      inputDisabled={candidatesQuery.isError}
+      rowClassName={rowClassName}
+      blockEnterSubmit
+      truncateDescriptions
+      formControl
+      inputId={inputId}
+    />
   </div>;
 }
