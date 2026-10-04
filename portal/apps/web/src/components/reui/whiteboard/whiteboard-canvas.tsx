@@ -1167,8 +1167,12 @@ const RETRY_MAX_MS = 30_000
  * hides and on unmount, reporting the status as it moves. */
 export function useAutosave(
   api: ExcalidrawImperativeAPI | null,
-  options: RefObject<AutosaveOptions>
+  options: RefObject<AutosaveOptions>,
+  // QUINCY ADDITION #499: while paused (a view-only board) nothing is saved and pending edits stay dirty, never
+  // reported "saved"; they are saved when the pause ends.
+  paused = false
 ) {
+  const pausedRef = useRef(paused)
   const apiRef = useRef(api)
   useEffect(() => {
     apiRef.current = api
@@ -1198,6 +1202,10 @@ export function useAutosave(
     const current = apiRef.current
     const save = options.current.onSave
     if (!current || !save || !dirtyRef.current) return
+    if (pausedRef.current && !closedRef.current) {
+      report("unsaved")
+      return
+    }
     if (savingRef.current) {
       pendingRef.current = true
       return
@@ -1230,6 +1238,12 @@ export function useAutosave(
       }
     }
   }, [options, report])
+
+  // The pause ends: whatever is still dirty goes out now, with no new edit.
+  useEffect(() => {
+    pausedRef.current = paused
+    if (!paused && dirtyRef.current) void flush()
+  }, [paused, flush])
 
   const markDirty = useCallback(() => {
     if (!options.current.onSave) return
@@ -1695,7 +1709,7 @@ export function WhiteboardCanvas({
     armedRef.current = true
   }, [])
 
-  const { markDirty, scheduleChange } = useAutosave(api, latest)
+  const { markDirty, scheduleChange } = useAutosave(api, latest, readOnly)
   const history = useHistoryMirror(rootRef, api)
 
   const imageToolRef = useRef(imageTool)

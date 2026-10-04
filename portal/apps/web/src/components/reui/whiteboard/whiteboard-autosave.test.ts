@@ -14,17 +14,19 @@ let useAutosave: typeof import("./whiteboard-canvas").useAutosave;
 beforeAll(async () => { HTMLCanvasElement.prototype.getContext = (() => ({})) as never; ({ useAutosave } = await import("./whiteboard-canvas")); });
 const fakeApi = { getSceneElementsIncludingDeleted: () => [], getFiles: () => ({}), getAppState: () => ({}) } as never;
 
-function mount(onSave: () => Promise<void>) {
+function mount(onSave: () => Promise<void>, paused = false) {
   let dirty: () => void = () => undefined;
-  function Harness() {
-    const options = useRef({ onSave, changeDelay: 10, autosaveDelay: 100 } as never);
-    const { markDirty } = useAutosave(fakeApi, options);
+  const statuses: string[] = [];
+  function Harness({ paused: isPaused }: { paused: boolean }) {
+    const options = useRef({ onSave, changeDelay: 10, autosaveDelay: 100, onSaveStatusChange: (status: string) => statuses.push(status) } as never);
+    const { markDirty } = useAutosave(fakeApi, options, isPaused);
     useEffect(() => { dirty = markDirty; }, [markDirty]);
     return null;
   }
   const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
-  act(() => { root!.render(createElement(Harness)); });
-  return { edit: () => act(() => { dirty(); }) };
+  const render = (isPaused: boolean) => act(() => { root!.render(createElement(Harness, { paused: isPaused })); });
+  render(paused);
+  return { statuses, setPaused: render, edit: () => act(() => { dirty(); }) };
 }
 const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
 
@@ -68,5 +70,22 @@ describe("autosave liveness (#499)", () => {
     act(() => root!.unmount()); root = null;
     await advance(120_000);
     expect(onSave.mock.calls.length).toBeLessThanOrEqual(calls + 1);   // the unmount's own final flush at most
+  });
+});
+
+describe("autosave while the board is view-only (#499)", () => {
+  it("does not save or report Saved while paused, keeps the edit dirty, and sends it when the pause ends with no new edit", async () => {
+    const onSave = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+    const board = mount(onSave);
+    board.edit();                                            // a pending edit...
+    board.setPaused(true);                                   // ...and the Project is archived before the idle save
+    await advance(5_000);
+    expect(onSave).not.toHaveBeenCalled();
+    expect(board.statuses).not.toContain("saved");
+    expect(board.statuses.at(-1)).toBe("unsaved");
+    board.setPaused(false);                                  // restored
+    await advance(0);
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(board.statuses.at(-1)).toBe("saved");
   });
 });
