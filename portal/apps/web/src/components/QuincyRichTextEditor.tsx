@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import { exitSuggestion } from "@tiptap/suggestion";
 import { ChevronDownIcon, ImageIcon, ListChecksIcon, ListIcon, ListOrderedIcon, Redo2Icon, TableIcon, Undo2Icon } from "lucide-react";
@@ -109,6 +109,8 @@ export type QuincyRichTextEditorProps = {
   media?: { projectId: string };
   /** Reports whether an image is still uploading, so the host can hold Post / Save until it lands. */
   onUploadingChange?: (uploading: boolean) => void;
+  /** The host's helper line under the editor; the table bar may extend down to it (#535). Omit for none. */
+  tableBubbleFloor?: RefObject<HTMLElement | null>;
 };
 
 type UploadingImage = { key: number; name: string; percent: number };
@@ -126,6 +128,7 @@ export function QuincyRichTextEditor({
   onSubmit,
   media,
   onUploadingChange,
+  tableBubbleFloor,
 }: QuincyRichTextEditorProps) {
   const valueRef = useRef(JSON.stringify(value));
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
@@ -416,7 +419,7 @@ export function QuincyRichTextEditor({
       </div>
     </InputGroup>
     {isDocument && <>
-      <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} />
+      <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} tableBubbleFloor={tableBubbleFloor} />
       <DeleteTableDialog editor={editor} open={deleteTableOpen} onOpenChange={setDeleteTableOpen} />
     </>}
     {picking !== null && <Input

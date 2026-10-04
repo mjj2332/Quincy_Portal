@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { cn } from "@/lib/utils";
+import { tableBubbleOptions } from "./rich-text-table-position";
 
 const read = (name: string) => readFileSync(new URL(`./${name}`, import.meta.url), "utf8");
 
@@ -8,11 +9,22 @@ const read = (name: string) => readFileSync(new URL(`./${name}`, import.meta.url
 describe("rich-text editor layout contracts", () => {
   it("opens the table bar below the caret so it never covers the main toolbar", () => {
     const source = read("rich-text-table.tsx");
-    expect(source).toContain('placement: "top-start"');
-    expect(source).toContain('fallbackPlacements: ["bottom-start"');
-    // Kept inside the editable surface: never on the frame border or the helper line beneath it.
-    expect(source).toMatch(/flip: \{[^}]*boundary: editor\.view\.dom/);
-    expect(source).toMatch(/shift: \{ boundary: editor\.view\.dom[^}]*crossAxis: true/);
+    // The options come from the exported builder (tested in rich-text-table-position.test.ts), not a literal.
+    expect(source).toContain("tableBubbleOptions(");
+    expect(source).not.toMatch(/boundary: editor\.view\.dom/);
+    const options = tableBubbleOptions({ surface: () => ({ top: 500, left: 20, right: 340, bottom: 640 }), floorTop: () => 693 });
+    expect(options.placement).toBe("top-start");
+    expect(options.offset).toBe(8);
+    const flipOptions = options.flip();
+    expect(flipOptions.fallbackPlacements).toEqual(["bottom-start"]);
+    expect(flipOptions.fallbackStrategy).toBe("initialPlacement");
+    expect(flipOptions.padding).toBe(8);
+    // One boundary for both: the surface top down to the helper line, so the bar may cross the frame's bottom border.
+    expect(flipOptions.boundary).toEqual(options.shift().boundary);
+    expect(flipOptions.boundary.top).toBe(500);
+    expect(flipOptions.boundary.bottom).toBe(685);
+    expect(options.shift().crossAxis).toBe(true);
+    expect(options.shift().padding).toBe(8);
   });
 
   it("outline rows read as menu items: sentence case, no tracking, --text-sm", () => {

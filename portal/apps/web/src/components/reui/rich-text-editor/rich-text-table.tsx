@@ -13,13 +13,13 @@
 // 6. The bar anchors to the DOM element of the CELL holding the caret (`$anchor`), not the whole table
 //    (nothing in the vendored copy anchored to cells or rows; the original used the table), so it can be
 //    placed `top-start` -> `bottom-start` around the active cell and never over it. It is re-resolved on
-//    every selection update; the plugin's own scroll/resize handlers re-run it. flip/shift are bounded to
-//    the editable surface so the bar can never reach the toolbar, the frame border or the helper line.
-//    Known gap: when the bar fits on neither side of the cell inside the surface (a table that is the first
-//    block, caret in its second row, at <=721px where the buttons are 44px touch targets: 62px needed,
-//    ~50px available), flip keeps `top-start` and shift clamps the bar onto the top of the caret's row. The
-//    typed line stays clear (cell padding), so it is accepted; the boundary-rect alternative is #535.
-import { useCallback, useMemo } from "react"
+//    every selection update; the plugin's own scroll/resize handlers re-run it. flip and shift share one
+//    boundary rect (`rich-text-table-position.ts`): bounded by the editable surface's top down to the
+//    helper line, with 8px clearance. The bar may therefore cross the frame's bottom border (owner
+//    decision #535); it never covers the toolbar or the helper. Hosts without a helper (`tableBubbleFloor`
+//    unset, e.g. the edit composer) keep the surface as the boundary. When even that fails the bar keeps
+//    `top-start` and shift clamps it.
+import { useCallback, useMemo, type RefObject } from "react"
 import { findParentNodeClosestToPos, type Editor } from "@tiptap/react"
 import { BubbleMenu } from "@tiptap/react/menus"
 
@@ -40,6 +40,7 @@ import {
 } from "@/components/reui/tooltip"
 import { RICH_TEXT_TABLE_MAX_COLUMNS, RICH_TEXT_TABLE_MAX_ROWS } from "@quincy/shared"
 import { tableDimensions } from "@/lib/rich-text-tiptap"
+import { readFloorTop, readVisualOffset, tableBubbleOptions } from "./rich-text-table-position"
 import { RichTextBubbleBar } from "./rich-text-bubble-bar"
 import type { RichTextSlashItem } from "./rich-text-slash-menu"
 import { useRichTextSelector } from "./rich-text-state"
@@ -115,8 +116,6 @@ function readTable(editor: Editor | null): TableSnapshot {
 
 const TABLE_BUBBLE_KEY = "richTextTableBubble"
 
-const TABLE_BUBBLE_GAP = 8
-
 /** The DOM element of the table cell holding the selection anchor, or null outside a table. */
 export function getActiveCellElement(editor: Editor): HTMLElement | null {
   const found = findParentNodeClosestToPos(
@@ -146,12 +145,15 @@ interface RichTextTableBubbleProps {
   editor: Editor
   /** Deleting the whole table is the host's call: confirm it first. */
   onDeleteTable: () => void
+  /** The host's helper line under the editor: the table bar may extend down to it (#535). */
+  tableBubbleFloor?: RefObject<HTMLElement | null>
 }
 
 /** Row, column and header controls above the table holding the caret. */
 export function RichTextTableBubble({
   editor,
   onDeleteTable,
+  tableBubbleFloor,
 }: RichTextTableBubbleProps) {
   const table = useRichTextSelector(editor, readTable)
 
@@ -169,17 +171,13 @@ export function RichTextTableBubble({
   }, [editor])
 
   const options = useMemo(
-    () => ({
-      placement: "top-start" as const,
-      offset: TABLE_BUBBLE_GAP,
-      flip: {
-        fallbackPlacements: ["bottom-start" as const],
-        boundary: editor.view.dom,
-        padding: TABLE_BUBBLE_GAP,
-      },
-      shift: { boundary: editor.view.dom, padding: TABLE_BUBBLE_GAP, crossAxis: true },
-    }),
-    [editor]
+    () =>
+      tableBubbleOptions({
+        surface: () => editor.view.dom.getBoundingClientRect(),
+        floorTop: () => readFloorTop(tableBubbleFloor?.current),
+        visualOffset: () => readVisualOffset(),
+      }),
+    [editor, tableBubbleFloor]
   )
 
   return (
