@@ -84,7 +84,9 @@ describe("an archived Project's header on load (#455)", () => {
     const automatic = { ...project().deadlineSchedule, source: "automatic" as const };
     render(header(project({ archivedAt: Date.now(), deadlineSchedule: automatic })));
     const cell = group("Deadline")!;
-    expect(cell.textContent).toContain("Automatic");
+    expect(cell.querySelector('[data-testid="automatic-deadline-mark"]')?.textContent).toBe("Automatic");
+    // #509: provenance is not a status, so the archived cell holds no status pill.
+    expect(cell.querySelector('[data-slot="status-pill"]')).toBeNull();
     expect(cell.querySelector("time")!.textContent).toBe("Fri 15 Jan · 09:00");
   });
 

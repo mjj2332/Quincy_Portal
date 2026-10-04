@@ -160,14 +160,26 @@ describe("ProjectHeaderDeadline", () => {
   });
 
   // #484: an Automatic Deadline is labelled, in the visible text and in the accessible name (Label in Name).
-  it("labels an automatic Deadline with an Automatic pill and names it in the accessible name, and leaves a manual one unlabelled", async () => {
+  it("labels an automatic Deadline with a quiet Automatic mark (not a status pill) and names it in the accessible name, and leaves a manual one unlabelled", async () => {
     const host = await mount(scheduleAt("2027-01-14T22:00:00.000Z", { source: "automatic" }));
     const trigger = host.querySelector('[data-testid="project-deadline-trigger"]')!;
-    expect(trigger.textContent).toContain("Automatic");
+    expect(trigger.querySelector('[data-testid="automatic-deadline-mark"]')?.textContent).toBe("Automatic");
+    // #509: provenance is not a status, so no status pill carries the word.
+    expect([...trigger.querySelectorAll('[data-slot="status-pill"]')].some((pill) => pill.textContent === "Automatic")).toBe(false);
     expect(trigger.getAttribute("aria-label")).toMatch(/^Deadline: Fri 15 Jan · 09:00, Automatic/);
     await rerenderSchedule(scheduleAt("2027-01-14T22:00:00.000Z", { source: "manual" }));
     expect(trigger.textContent).not.toContain("Automatic");
+    expect(trigger.querySelector('[data-testid="automatic-deadline-mark"]')).toBeNull();
     expect(trigger.getAttribute("aria-label")).not.toContain("Automatic");
+  });
+
+  // #509: the popover says the Deadline is automatic and what Apply does.
+  it("explains an automatic Deadline in the popover, and says nothing on a manual one", async () => {
+    const host = await mount(scheduleAt("2027-01-14T22:00:00.000Z", { source: "automatic" }));
+    await openTrigger(host);
+    expect(document.querySelector('[data-testid="deadline-automatic-note"]')?.textContent).toBe("Automatic: the first weekday after the shoot, at 17:00. It moves with the shoot date until you Apply.");
+    await rerenderSchedule(scheduleAt("2027-01-14T22:00:00.000Z", { source: "manual" }));
+    expect(document.querySelector('[data-testid="deadline-automatic-note"]')).toBeNull();
   });
 
   // #484: Apply on an untouched Automatic Deadline still submits, so a person can confirm it (recorded manual).

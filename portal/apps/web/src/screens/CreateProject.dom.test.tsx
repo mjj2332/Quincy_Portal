@@ -264,11 +264,27 @@ describe("CreateProject Deadline and Priority (#488)", () => {
     expect(deadlineText()).toContain("Mon 5 Oct 2026");
     expect(deadlineText()).toContain("17:00");
     expect(deadlineField().getAttribute("aria-labelledby")!.split(" ").map((id) => document.getElementById(id)?.textContent).join(" ")).toContain("Automatic");
+    // #509: the adornment is the quiet mark, not a status pill.
+    expect(host.querySelector('[data-testid="automatic-deadline-mark"]')?.textContent).toBe("Automatic");
+    expect([...host.querySelectorAll('[data-slot="status-pill"]')].some((pill) => pill.textContent === "Automatic")).toBe(false);
     await pickShootDate("2026-10-05");
     expect(deadlineText()).toContain("Tue 6 Oct 2026");
     expect(deadlineText()).toContain("Automatic");
     await submit();
     expect(body()).toMatchObject({ shootDate: "2026-10-05", deadline: null });
+  });
+
+  it("explains the automatic preview in the popup, and drops the explanation once the Deadline is manual (#509)", async () => {
+    await startShoot();
+    await pickShootDate("2026-10-02");
+    const note = "Automatic: the first weekday after the shoot, at 17:00. Change it to set your own.";
+    const popup = await openFieldPopup("Deadline", host);
+    expect(popup.textContent).toContain(note);
+    await typePopupTime(popup, "10:00");
+    await applyPopup(popup);
+    await flush();
+    const again = await openFieldPopup("Deadline", host);
+    expect(again.textContent).not.toContain(note);
   });
 
   it("keeps an untouched Apply on the automatic preview automatic", async () => {
