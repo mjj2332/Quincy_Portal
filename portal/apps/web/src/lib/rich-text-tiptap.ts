@@ -293,7 +293,7 @@ export function createRichTextEditorExtensions(preset: RichTextEditorPreset = "c
 }
 
 /** Removes TipTap-only attributes before data leaves the browser. */
-export function tiptapToRichTextDoc(value: unknown): RichTextDoc {
+export function tiptapToRichTextDoc(value: unknown, options: { keepPreviewDisplay?: boolean } = {}): RichTextDoc {
   const alignAttrs = (attrs: Record<string, unknown> | undefined) => {
     const align = attrs?.textAlign;
     return typeof align === "string" && align !== "left" ? { textAlign: align } : {};
@@ -323,6 +323,8 @@ export function tiptapToRichTextDoc(value: unknown): RichTextDoc {
     }
     if (valueNode.type === "linkPreview") {
       const attrs = valueNode.attrs as Record<string, unknown> | undefined;
+      // The stored form is the id alone. A local draft (`keepPreviewDisplay`) also keeps what the card shows, so reopening the composer can draw it.
+      if (options.keepPreviewDisplay) return { type: "linkPreview", attrs: { previewId: attrs?.previewId, url: attrs?.url, title: attrs?.title ?? null, description: attrs?.description ?? null, siteName: attrs?.siteName ?? null, imageMediaId: attrs?.imageMediaId ?? null } };
       return { type: "linkPreview", attrs: { previewId: attrs?.previewId } };
     }
     if (valueNode.type === "heading") {
@@ -347,6 +349,12 @@ export function tiptapToRichTextDoc(value: unknown): RichTextDoc {
     return { type: valueNode.type, ...children };
   };
   return copy(value) as RichTextDoc;
+}
+
+/** The form a post is sent in: every card is its preview id alone, whatever a local draft kept for drawing it. */
+export function stripLinkPreviewDisplay(doc: RichTextDoc): RichTextDoc {
+  if (!doc.content.some((block) => block.type === "linkPreview" && Object.keys(block.attrs).length > 1)) return doc;
+  return { ...doc, content: doc.content.map((block) => block.type === "linkPreview" ? { type: "linkPreview" as const, attrs: { previewId: block.attrs.previewId } } : block) };
 }
 
 export function mentionQuery(editor: NonNullable<ReturnType<typeof useEditor>>): string | null {

@@ -100,6 +100,8 @@ export type QuincyRichTextEditorProps = {
   preset: RichTextEditorPreset;
   value: RichTextDoc;
   onChange: (value: RichTextDoc) => void;
+  /** A local draft keeps what each link preview card shows (the id alone is stored): `onChange` then carries it, and the host strips it with `stripLinkPreviewDisplay` before posting. */
+  keepPreviewDisplay?: boolean;
   limit: number;
   /** The stored-JSON cap the surface's server profile enforces (default: the comment cap). */
   maxBytes?: number;
@@ -125,6 +127,7 @@ export function QuincyRichTextEditor({
   preset,
   value,
   onChange,
+  keepPreviewDisplay = false,
   limit,
   maxBytes = RICH_TEXT_JSON_MAX_BYTES,
   disabled = false,
@@ -138,6 +141,7 @@ export function QuincyRichTextEditor({
 }: QuincyRichTextEditorProps) {
   const valueRef = useRef(JSON.stringify(value));
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
+  const keepDisplayRef = useRef(keepPreviewDisplay); keepDisplayRef.current = keepPreviewDisplay;
   const onSubmitRef = useRef(onSubmit); onSubmitRef.current = onSubmit;
   const limitRef = useRef(limit); limitRef.current = limit;
   const maxBytesRef = useRef(maxBytes); maxBytesRef.current = maxBytes;
@@ -231,7 +235,7 @@ export function QuincyRichTextEditor({
       },
     },
     onUpdate: ({ editor: next }) => {
-      const doc = tiptapToRichTextDoc(next.getJSON());
+      const doc = tiptapToRichTextDoc(next.getJSON(), { keepPreviewDisplay: keepDisplayRef.current });
       const serialised = JSON.stringify(doc);
       // Tiptap/ProseMirror can dispatch a no-op transaction (e.g. from a blur triggered by a
       // submit button click) that reports the same content as before. Propagating it anyway can
@@ -322,6 +326,9 @@ export function QuincyRichTextEditor({
     doc.descendants((child) => { if (child.marks.some((mark) => mark.type.name === "link" && mark.attrs.href === href)) found = true; return !found; });
     return found;
   };
+  const hasPreviewId = (doc: { forEach: (callback: (child: { type: { name: string }; attrs: Record<string, unknown> }) => void) => void }, previewId: string) => {
+    let found = false; doc.forEach((child) => { if (child.type.name === "linkPreview" && child.attrs.previewId === previewId) found = true; }); return found;
+  };
   const previewControllers = useRef(new Set<AbortController>());
   // One request per address at a time, and the addresses whose card the author removed (with when), so a late answer cannot put it back.
   const pendingPreviews = useRef(new Set<string>());
@@ -343,7 +350,7 @@ export function QuincyRichTextEditor({
       // The link may have been undone or replaced while the page was fetched: the card belongs to a link that is still there.
       if (!hasLink(live.state.doc, href)) return;
       if ((removedPreviews.current.get(card.url) ?? 0) > key || (removedPreviews.current.get(href) ?? 0) > key) return;
-      if (cards().length >= RICH_TEXT_MAX_LINK_PREVIEWS || cards().includes(card.url)) return;
+      if (cards().length >= RICH_TEXT_MAX_LINK_PREVIEWS || cards().includes(card.url) || hasPreviewId(live.state.doc, card.previewId)) return;
       const size = live.state.doc.content.size;
       const mapped = Math.min(insertAt.current.get(key) ?? size, size);
       const $at = live.state.doc.resolve(mapped);
@@ -401,7 +408,7 @@ export function QuincyRichTextEditor({
       setUploadErrors((entries) => (entries.length ? [] : entries));
       contentEpoch.current += 1; shownPreviews.current = new Set(); removedPreviews.current = new Map(); pendingPreviews.current = new Set();
       const applied = editor.commands.setContent(toTiptap(value), { emitUpdate: false });
-      if (applied && JSON.stringify(tiptapToRichTextDoc(editor.getJSON())) === serialised) valueRef.current = serialised;
+      if (applied && JSON.stringify(tiptapToRichTextDoc(editor.getJSON(), { keepPreviewDisplay: keepDisplayRef.current })) === serialised) valueRef.current = serialised;
     }
   }, [editor, value]);
   useEffect(() => {

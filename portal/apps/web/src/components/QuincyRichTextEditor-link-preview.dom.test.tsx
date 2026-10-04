@@ -1,9 +1,10 @@
-import { act, useState } from "react";
+import { act, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Editor } from "@tiptap/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { COMMENT_MEDIA_RICH_TEXT_PROFILE, NOTICE_RICH_TEXT_PROFILE, parseRichTextDoc, type LinkPreviewCard, type RichTextDoc } from "@quincy/shared";
-import { createRichTextEditorExtensions, tiptapToRichTextDoc, toTiptap } from "../lib/rich-text-tiptap";
+import { COMMENT_MEDIA_RICH_TEXT_PROFILE, NOTICE_RICH_TEXT_PROFILE, parseRichTextDoc, richTextPlainText, type LinkPreviewCard, type RichTextDoc } from "@quincy/shared";
+import { ProjectCommentDraftsProvider, useProjectCommentDraft } from "../lib/project-comment-drafts";
+import { createRichTextEditorExtensions, stripLinkPreviewDisplay, tiptapToRichTextDoc, toTiptap } from "../lib/rich-text-tiptap";
 import { QuincyRichTextEditor } from "./QuincyRichTextEditor";
 import { RichTextContent } from "./RichTextContent";
 
@@ -227,6 +228,48 @@ describe("applying a link offers a card (#497)", () => {
     expect(storedPreviews()).toHaveLength(0);
     expect(latest.content[0]).toMatchObject({ content: [{ marks: [{ type: "link" }] }] });
     expect(document.activeElement).toBe(host.querySelector('[contenteditable="true"]'));
+  });
+});
+
+describe("a card in a Project composer draft (#497)", () => {
+  /** The composer as the discussion thread mounts it: its content lives in the draft store, so closing and reopening re-mounts the editor over it. */
+  function DraftComposer() {
+    const [content, setContent] = useProjectCommentDraft("p1");
+    latest = content;
+    // Something to link: a typed sentence (set once, only while the draft is empty).
+    useEffect(() => { if (!richTextPlainText(content)) setContent(plain()); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    return <QuincyRichTextEditor preset="composer" value={content} onChange={setContent} keepPreviewDisplay limit={10_000} loadMentionables={async () => []} linkPreviews={{ projectId: "p1" }} media={{ projectId: "p1" }} />;
+  }
+  let open: ((on: boolean) => void) | null = null;
+  function Sheet() { const [on, setOn] = useState(true); open = setOn; return <ProjectCommentDraftsProvider>{on ? <DraftComposer /> : null}</ProjectCommentDraftsProvider>; }
+  async function mountSheet() {
+    const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
+    await act(async () => root!.render(<Sheet />));
+    return host;
+  }
+
+  it("still shows the card and its Remove control after the composer is closed and reopened, and posts the id alone", async () => {
+    request.mockResolvedValue(cardFor(P1, "https://example.test/a", { imageMediaId: M1 }));
+    const host = await mountSheet();
+    await apply(host, "https://example.test/a");
+    expect(cards(host)).toHaveLength(1);
+    await act(async () => open!(false)); await act(async () => open!(true));
+    expect(cards(host)).toHaveLength(1);
+    expect(host.querySelector('[data-testid="link-preview-card-editor"]')!.textContent).toContain("Title 1");
+    expect(host.querySelector('[data-testid="link-preview-remove"]')).not.toBeNull();
+    expect(stripLinkPreviewDisplay(latest).content.filter((block) => block.type === "linkPreview")).toEqual([{ type: "linkPreview", attrs: { previewId: P1 } }]);
+    await click(host.querySelector('[data-testid="link-preview-remove"]')!);
+    expect(cards(host)).toHaveLength(0);
+  });
+
+  it("never holds one preview twice: applying the same link again after reopening gives one card, and the post validates", async () => {
+    request.mockResolvedValue(cardFor(P1, "https://example.test/a"));
+    const host = await mountSheet();
+    await apply(host, "https://example.test/a");
+    await act(async () => open!(false)); await act(async () => open!(true));
+    await apply(host, "https://example.test/a");
+    expect(latest.content.filter((block) => block.type === "linkPreview")).toHaveLength(1);
+    expect(() => parseRichTextDoc(stripLinkPreviewDisplay(latest), COMMENT_MEDIA_RICH_TEXT_PROFILE)).not.toThrow();
   });
 });
 
