@@ -165,7 +165,7 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
   useLayoutEffect(() => {
     if (!focusOnMount) return;
     const body = bodyRef.current;
-    (body?.querySelector<HTMLElement>('[data-initial-focus="true"]') ?? body?.querySelector<HTMLElement>('[aria-selected="true"] button') ?? body?.querySelector<HTMLElement>("button"))?.focus();
+    (body?.querySelector<HTMLElement>('[data-initial-focus="true"]') ?? body?.querySelector<HTMLElement>('[aria-selected="true"] button') ?? body?.querySelector<HTMLElement>("button"))?.focus({ preventScroll: true });
     // Mount only: Base UI owns focus for the ordinary open, this covers a late mount.
   }, []);
 
