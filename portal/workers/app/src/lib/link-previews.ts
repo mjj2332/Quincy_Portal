@@ -117,6 +117,9 @@ export async function fillLinkPreviews<T extends { content: RichTextDoc }>(db: D
 const cardOf = (row: { id: string; url: string; title: string | null; description: string | null; site_name: string | null; image_media_id: string | null }): LinkPreviewCard =>
   ({ previewId: row.id, url: row.url, title: row.title, description: row.description, siteName: row.site_name, imageMediaId: row.image_media_id });
 
+/** A fetch that has not finished in this long is treated as lost (the worker died), and the same link can be fetched again. */
+const LINK_PREVIEW_STUCK_MS = 2 * 60 * 1000;
+
 export type PreviewRequestResult = { status: 200; body: { preview: LinkPreviewCard | null } } | { status: 400 | 409 | 429; body: { error: string; code: string } };
 
 /**
@@ -130,8 +133,6 @@ export async function requestLinkPreview(env: Env, user: SessionUser, scope: { o
   const verdict = checkPreviewTarget(rawUrl, { blockedHosts: ownHosts });
   if (!verdict.ok) return { status: 400, body: { error: "This link cannot be previewed", code: "link_preview_blocked" } };
   const now = Date.now();
-  const used = await env.DB.prepare("SELECT COUNT(*) AS n FROM link_previews WHERE requester_id = ? AND created_at > ?").bind(user.id, now - LINK_PREVIEW_RATE_WINDOW_MS).first<{ n: number }>();
-  if (Number(used?.n ?? 0) >= LINK_PREVIEW_RATE_LIMIT_PER_HOUR) return { status: 429, body: { error: "Too many link previews. Try again later.", code: "link_preview_rate_limited" } };
   const projectScope = scopeOf(scope.projectId);
   const existing = await env.DB.prepare(`
     SELECT id, url, title, description, site_name, image_media_id FROM link_previews
@@ -139,8 +140,39 @@ export async function requestLinkPreview(env: Env, user: SessionUser, scope: { o
   `).bind(user.id, scope.ownerKind, ...projectScope.binds, verdict.url, now - EMBEDDED_MEDIA_RETENTION_MS).first<Parameters<typeof cardOf>[0]>();
   if (existing) return { status: 200, body: { preview: cardOf(existing) } };
 
+
+  // One INSERT reserves the attempt: it writes nothing once the person holds 30 in the last hour, and nothing while the same link is
+  // already being fetched for them here (the partial unique index), so concurrent requests can neither pass a count nor fetch twice.
+  // Every attempt stays counted whether or not it makes a card, and removing a card gives nothing back.
+  const contextId = scope.projectId ?? "notice_board";
+  await env.DB.prepare("UPDATE link_preview_attempts SET status = 'failed', updated_at = ? WHERE requester_id = ? AND owner_kind = ? AND context_id = ? AND url = ? AND status = 'fetching' AND updated_at <= ?")
+    .bind(now, user.id, scope.ownerKind, contextId, verdict.fetchUrl, now - LINK_PREVIEW_STUCK_MS).run();
+  const attemptId = newId();
+  const reserved = await env.DB.prepare(`
+    INSERT INTO link_preview_attempts (id, requester_id, owner_kind, context_id, url, status, created_at, updated_at)
+    SELECT ?, ?, ?, ?, ?, 'fetching', ?, ?
+    WHERE (SELECT COUNT(*) FROM link_preview_attempts WHERE requester_id = ? AND created_at > ?) < ?
+    ON CONFLICT DO NOTHING
+  `).bind(attemptId, user.id, scope.ownerKind, contextId, verdict.fetchUrl, now, now, user.id, now - LINK_PREVIEW_RATE_WINDOW_MS, LINK_PREVIEW_RATE_LIMIT_PER_HOUR).run();
+  if ((reserved.meta.changes ?? 0) !== 1) {
+    const inFlight = await env.DB.prepare("SELECT 1 AS one FROM link_preview_attempts WHERE requester_id = ? AND owner_kind = ? AND context_id = ? AND url = ? AND status = 'fetching'").bind(user.id, scope.ownerKind, contextId, verdict.fetchUrl).first();
+    if (inFlight) return { status: 409, body: { error: "This link is already being previewed. Try again in a moment.", code: "link_preview_in_progress" } };
+    return { status: 429, body: { error: "Too many link previews. Try again later.", code: "link_preview_rate_limited" } };
+  }
+  let result: PreviewRequestResult | null = null;
+  try {
+    result = await fetchAndStorePreview(env, user, scope, verdict, ownHosts, now);
+    return result;
+  } finally {
+    const previewId = result?.status === 200 ? (result.body.preview?.previewId ?? null) : null;
+    await env.DB.prepare("UPDATE link_preview_attempts SET status = ?, preview_id = ?, updated_at = ? WHERE id = ?").bind(previewId ? "done" : "failed", previewId, Date.now(), attemptId).run()
+      .catch((error) => console.error("Link preview attempt close failed", { error: error instanceof Error ? error.message.slice(0, 160) : "unknown" }));
+  }
+}
+
+async function fetchAndStorePreview(env: Env, user: SessionUser, scope: { ownerKind: "project_comment" | "notice_post"; projectId: string | null }, verdict: { url: string; fetchUrl: string }, ownHosts: string[], now: number): Promise<PreviewRequestResult> {
   let fetched: Awaited<ReturnType<Env["BACKGROUND"]["fetchLinkPreview"]>>;
-  try { fetched = await env.BACKGROUND.fetchLinkPreview(verdict.url, ownHosts); }
+  try { fetched = await env.BACKGROUND.fetchLinkPreview(verdict.fetchUrl, ownHosts); }
   catch (error) { console.error("Link preview fetch failed", { error: error instanceof Error ? error.message.slice(0, 160) : "unknown" }); return { status: 200, body: { preview: null } }; }
   if (!fetched.ok) return { status: 200, body: { preview: null } };
 

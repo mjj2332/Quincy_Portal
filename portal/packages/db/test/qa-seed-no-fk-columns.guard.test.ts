@@ -40,6 +40,7 @@ const NOT_ENTITY_REFERENCES: Readonly<Record<string, string>> = {
   "external_edited_upload_sessions.r2_upload_id": "an R2 multipart-upload id",
   "embedded_media.upload_id": "an R2 multipart-upload id",
   "embedded_media_cleanup.upload_id": "an R2 multipart-upload id",
+  "link_preview_attempts.preview_id": "history: the id of the preview an attempt made, which the card's removal does not undo, so it may name no row",
 };
 
 /**

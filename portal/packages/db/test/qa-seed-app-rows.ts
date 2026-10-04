@@ -151,7 +151,7 @@ export function appRows(ctx: PlantContext, groups?: readonly AppRowGroup[]): Pla
   const id = (name: string) => plantId(`${ctx.tag}:${name}`);
   const want = (group: AppRowGroup) => !groups || groups.includes(group);
   const ids = {
-    member: id("member"), comment: id("comment"), linkPreview: id("link-preview"), embeddedMedia: id("embedded-media"), reply: id("reply"), mention: id("mention"), activity: id("activity"),
+    member: id("member"), comment: id("comment"), linkPreview: id("link-preview"), linkPreviewAttempt: id("link-preview-attempt"), embeddedMedia: id("embedded-media"), reply: id("reply"), mention: id("mention"), activity: id("activity"),
     job: id("job"), handoff: id("handoff"), mapping: id("mapping"), assetV1: id("asset-v1"), assetV2: id("asset-v2"), assetV3: id("asset-v3"),
     rendition: id("rendition"), dlq: id("dlq"), claim: id("claim"), outbox: id("outbox"), notification: id("notification"), ledger: id("ledger"),
     annotation: id("annotation"), link: id("link"), manifest: id("manifest"), rawClaim: id("raw-claim"), subtaskOcc: id("subtask-reminder-occurrence"), document: id("document"), documentAudit: id("document-audit"),
@@ -168,6 +168,7 @@ export function appRows(ctx: PlantContext, groups?: readonly AppRowGroup[]): Pla
       { table: "project_comments", values: { id: ids.comment, project_id: ctx.projectId, author_id: ctx.userId, body: "First", content_json: "{}", created_at: T0 } },
       { table: "embedded_media", values: { id: ids.embeddedMedia, owner_kind: "project_comment", owner_id: ids.comment, project_id: ctx.projectId, uploader_id: ctx.userId, kind: "image", content_type: "image/png", bytes: 64, original_key: `projects/${ctx.projectId}/embedded-media/${ids.embeddedMedia}/original`, state: "attached", created_at: T0, updated_at: T0 } },
       { table: "link_previews", values: { id: ids.linkPreview, owner_kind: "project_comment", owner_id: ids.comment, project_id: ctx.projectId, requester_id: ctx.userId, url: "https://example.test/", title: "Example", description: null, site_name: null, image_media_id: ids.embeddedMedia, created_at: T0, updated_at: T0 } },
+      { table: "link_preview_attempts", values: { id: ids.linkPreviewAttempt, requester_id: ctx.userId, owner_kind: "project_comment", context_id: ctx.projectId, url: "https://example.test/", status: "done", preview_id: ids.linkPreview, created_at: T0, updated_at: T0 } },
       { table: "project_comments", values: { id: ids.reply, project_id: ctx.projectId, author_id: ctx.userId, body: "Reply", content_json: "{}", created_at: T0 + 1 } },
     );
   }

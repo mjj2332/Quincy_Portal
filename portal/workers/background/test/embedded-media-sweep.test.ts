@@ -42,7 +42,7 @@ beforeAll(async () => {
   await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'U', 'u@example.test', 1, 'editor', 1, ?, ?)").bind(userId, now, now).run();
   await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'S', 'editing_autohdr', 0, ?, ?)").bind(projectId, now, now).run();
 });
-beforeEach(async () => { await database.DB.exec("DELETE FROM link_previews; DELETE FROM embedded_media; DELETE FROM embedded_media_cleanup;"); });
+beforeEach(async () => { await database.DB.exec("DELETE FROM link_preview_attempts; DELETE FROM link_previews; DELETE FROM embedded_media; DELETE FROM embedded_media_cleanup;"); });
 const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
 afterAll(() => { consoleError.mockRestore(); });
 
@@ -105,6 +105,17 @@ describe("embedded media sweep covers link previews (#497)", () => {
     await sweepEmbeddedMedia(env, now);
     expect(await exists(image.id)).toBe(false);
     expect(await database.DB.prepare("SELECT image_media_id AS i FROM link_previews WHERE id = ?").bind(owned).first()).toEqual({ i: null });
+  });
+});
+
+describe("link preview attempts sweep (#497)", () => {
+  it("drops attempts a day old or older, whatever their status, and keeps newer ones", async () => {
+    const attempt = async (id: string, status: string, at: number) => database.DB.prepare("INSERT INTO link_preview_attempts (id, requester_id, owner_kind, context_id, url, status, created_at, updated_at) VALUES (?, ?, 'notice_post', 'notice_board', ?, ?, ?, ?)").bind(id, userId, `https://e.com/${id}`, status, at, at).run();
+    await attempt("old-done", "done", now - day); await attempt("old-fetching", "fetching", now - 2 * day); await attempt("old-failed", "failed", now - 30 * day);
+    await attempt("fresh", "done", now - day + 1);
+    await sweepEmbeddedMedia(env, now);
+    const left = (await database.DB.prepare("SELECT id FROM link_preview_attempts").all<{ id: string }>()).results.map((row) => row.id);
+    expect(left).toEqual(["fresh"]);
   });
 });
 

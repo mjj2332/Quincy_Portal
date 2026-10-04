@@ -47,7 +47,7 @@ export function normalizePreviewText(value: unknown, max: number): string | null
 }
 
 export type PreviewTargetReason = "invalid_url" | "scheme" | "credentials" | "port" | "private_address" | "blocked_host" | "too_long";
-export type PreviewTargetVerdict = { ok: true; url: string } | { ok: false; reason: PreviewTargetReason };
+export type PreviewTargetVerdict = { ok: true; url: string; fetchUrl: string } | { ok: false; reason: PreviewTargetReason };
 
 const blocked = (reason: PreviewTargetReason): PreviewTargetVerdict => ({ ok: false, reason });
 
@@ -114,7 +114,8 @@ const LOCAL_SUFFIXES = [".localhost", ".local", ".internal", ".localdomain", ".h
  * (which rewrites a decimal, hex or octal IPv4 into dotted form), allows only http and https on their default ports with no
  * credentials, and refuses loopback, private, link-local, carrier-grade NAT, multicast and reserved addresses (an IPv4 address
  * written inside an IPv6 one included), local and single-label names, and any host in `blockedHosts` (the Portal's own).
- * Returns the normalised URL without its fragment.
+ * Returns the normalised URL as the author typed it (`url`, fragment kept, the card's target) and the same address without its fragment
+ * (`fetchUrl`, what is fetched and what the attempt is keyed on).
  */
 export function checkPreviewTarget(raw: string, options: { blockedHosts?: readonly string[] } = {}): PreviewTargetVerdict {
   if (typeof raw !== "string" || raw.length > LINK_PREVIEW_URL_MAX) return blocked(typeof raw === "string" && raw.length > 0 ? "too_long" : "invalid_url");
@@ -138,7 +139,8 @@ export function checkPreviewTarget(raw: string, options: { blockedHosts?: readon
       if ((options.blockedHosts ?? []).some((own) => own.toLowerCase().replace(/\.$/, "") === host)) return blocked("blocked_host");
     }
   }
-  url.hash = "";
   const href = url.href;
-  return href.length > LINK_PREVIEW_URL_MAX ? blocked("too_long") : { ok: true, url: href };
+  url.hash = "";
+  const fetchUrl = url.href;
+  return href.length > LINK_PREVIEW_URL_MAX ? blocked("too_long") : { ok: true, url: href, fetchUrl };
 }

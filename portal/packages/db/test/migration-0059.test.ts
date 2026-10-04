@@ -115,4 +115,47 @@ describe("migration 0059 adds link previews (#497)", () => {
     expect(names).toEqual(expect.arrayContaining(["link_previews_requester_created_idx", "link_previews_owner_idx", "link_previews_pending_idx"]));
     db.close();
   });
+
+  describe("link_preview_attempts, the durable count behind the hourly limit", () => {
+    const attempt = (db: SqliteDatabase, id: string, status: string, url = "https://e.com/a", kind = "project_comment", context = "p1") =>
+      db.prepare("INSERT INTO link_preview_attempts (id, requester_id, owner_kind, context_id, url, status, created_at, updated_at) VALUES (?, 'u1', ?, ?, ?, ?, ?, ?)").run(id, kind, context, url, status, NOW, NOW);
+
+    it("lets one fetch per person, place and address be in flight, and any number finish", () => {
+      const db = seeded();
+      attempt(db, "a1", "fetching");
+      expect(() => attempt(db, "a2", "fetching")).toThrow(/UNIQUE/i);
+      attempt(db, "a3", "fetching", "https://e.com/b");
+      attempt(db, "a4", "fetching", "https://e.com/a", "notice_post", "notice_board");
+      db.prepare("UPDATE link_preview_attempts SET status = 'done' WHERE id = 'a1'").run();
+      attempt(db, "a5", "fetching");
+      attempt(db, "a6", "failed");
+      attempt(db, "a7", "done");
+      db.close();
+    });
+
+    it("is not removed with a Project or a preview, so deleting a card does not give back a fetch", () => {
+      const db = seeded();
+      insert(db, { id: "l9" });
+      attempt(db, "a1", "done");
+      db.prepare("DELETE FROM link_previews WHERE id = 'l9'").run();
+      db.prepare("DELETE FROM projects WHERE id = 'p1'").run();
+      expect(db.prepare("SELECT count(*) AS n FROM link_preview_attempts").get()).toEqual({ n: 1 });
+      db.close();
+    });
+
+    it("checks its kind and status, and needs a requester that exists", () => {
+      const db = seeded();
+      expect(() => attempt(db, "x", "waiting")).toThrow(CHECK_FAILED);
+      expect(() => attempt(db, "y", "done", "https://e.com/a", "whiteboard")).toThrow(CHECK_FAILED);
+      expect(() => db.prepare("INSERT INTO link_preview_attempts (id, requester_id, owner_kind, context_id, url, status, created_at, updated_at) VALUES ('z', 'nobody', 'project_comment', 'p1', 'u', 'done', ?, ?)").run(NOW, NOW)).toThrow(/FOREIGN KEY/i);
+      db.close();
+    });
+
+    it("is indexed for the hourly count and the sweep", () => {
+      const db = seeded();
+      const names = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'link_preview_attempts'").all() as Array<{ name: string }>).map((row) => row.name);
+      expect(names).toEqual(expect.arrayContaining(["link_preview_attempts_requester_created_idx", "link_preview_attempts_created_idx", "link_preview_attempts_in_flight_idx"]));
+      db.close();
+    });
+  });
 });

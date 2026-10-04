@@ -52,6 +52,13 @@ async function seedPreview(input: SeedPreview = {}) {
   return { id, imageId: image?.id ?? null };
 }
 
+/** A row of the attempts table as a fetch the server started leaves it. */
+async function seedAttempt(input: { requester?: string; createdAt?: number; url?: string; status?: "fetching" | "done" | "failed"; projectId?: string } = {}) {
+  const at = input.createdAt ?? Date.now();
+  await database.DB.prepare("INSERT INTO link_preview_attempts (id, requester_id, owner_kind, context_id, url, status, created_at, updated_at) VALUES (?, ?, 'project_comment', ?, ?, ?, ?, ?)")
+    .bind(crypto.randomUUID(), input.requester ?? ids.member, input.projectId ?? ids.project, input.url ?? `https://example.com/${crypto.randomUUID()}`, input.status ?? "done", at, at).run();
+}
+
 const linkText = (href = "https://example.com/post") => ({ type: "paragraph", content: [{ type: "text", text: "See " }, { type: "text", text: "this", marks: [{ type: "link", href }] }] });
 const cardDoc = (...previewIds: string[]) => ({ type: "doc", content: [linkText(), ...previewIds.map((previewId) => ({ type: "linkPreview", attrs: { previewId } }))] });
 type Card = { type: string; attrs: Record<string, unknown> };
@@ -158,6 +165,14 @@ describe("POST /projects/:projectId/link-previews", () => {
     expect({ previews: await previewCount(), media: await mediaCount() }).toEqual(before);
   });
 
+  it("keeps the fragment the author typed on the card, and fetches without it", async () => {
+    const { environment, calls } = background(fetched({ image: null }));
+    const card = linkPreviewResponseSchema.parse(await (await call(environment, PROJECT_PATH(), "member", "POST", { url: "https://example.com/frag#part-2" })).json()).preview!;
+    expect(card.url).toBe("https://example.com/frag#part-2");
+    expect(calls[0]!.url).toBe("https://example.com/frag");
+    expect((await previewRow(card.previewId))!.url).toBe("https://example.com/frag#part-2");
+  });
+
   it("answers a retry for the same link with the preview it already made, without fetching or copying again", async () => {
     const { environment, calls } = background(fetched());
     const url = "https://example.com/retry";
@@ -169,17 +184,73 @@ describe("POST /projects/:projectId/link-previews", () => {
     expect(other.previewId).not.toBe(first.previewId); expect(calls).toHaveLength(2);
   });
 
-  it("limits a person to 30 fetches in a rolling hour, counted from their own preview rows, with 429 and no background call", async () => {
-    await database.DB.prepare("DELETE FROM link_previews WHERE requester_id = ?").bind(ids.other).run();
-    for (let index = 0; index < 29; index += 1) await seedPreview({ requester: ids.other, image: false, createdAt: Date.now() - 59 * 60 * 1000 });
-    for (let index = 0; index < 5; index += 1) await seedPreview({ requester: ids.other, image: false, createdAt: Date.now() - hour - 60_000 });
-    for (let index = 0; index < 5; index += 1) await seedPreview({ requester: ids.admin, image: false });
+  it("limits a person to 30 fetch attempts in a rolling hour, counted from the attempts table, with 429 and no background call", async () => {
+    await database.DB.prepare("DELETE FROM link_preview_attempts").run();
+    for (let index = 0; index < 29; index += 1) await seedAttempt({ requester: ids.other, createdAt: Date.now() - 59 * 60 * 1000 });
+    for (let index = 0; index < 5; index += 1) await seedAttempt({ requester: ids.other, createdAt: Date.now() - hour - 60_000 });
+    for (let index = 0; index < 5; index += 1) await seedAttempt({ requester: ids.admin });
     const { environment, calls } = background(fetched({ image: null }));
     expect((await call(environment, PROJECT_PATH(ids.otherProject), "other", "POST", { url: "https://example.com/thirtieth" })).status).toBe(200);
     expect((await call(environment, PROJECT_PATH(ids.otherProject), "other", "POST", { url: "https://example.com/thirty-first" })).status).toBe(429);
     expect((await call(environment, NOTICE_PATH, "other", "POST", { url: "https://example.com/notice" })).status).toBe(429);
     expect(calls).toHaveLength(1);
     expect((await call(environment, PROJECT_PATH(), "member", "POST", { url: "https://example.com/someone-else" })).status).toBe(200);
+  });
+
+  it("counts a fetch that made no card, so failed pages cannot be retried without limit", async () => {
+    await database.DB.prepare("DELETE FROM link_preview_attempts").run();
+    const { environment, calls } = background({ ok: false, reason: "not_html" });
+    for (let index = 0; index < 30; index += 1) expect((await call(environment, PROJECT_PATH(ids.otherProject), "other", "POST", { url: `https://example.com/bad-${index}` })).status).toBe(200);
+    expect((await call(environment, PROJECT_PATH(ids.otherProject), "other", "POST", { url: "https://example.com/bad-30" })).status).toBe(429);
+    expect(calls).toHaveLength(30);
+    const failed = await database.DB.prepare("SELECT count(*) AS n FROM link_preview_attempts WHERE requester_id = ? AND status = 'failed'").bind(ids.other).first<{ n: number }>();
+    expect(failed!.n).toBe(30);
+  });
+
+  it("does not give a fetch back when its card is deleted", async () => {
+    await database.DB.prepare("DELETE FROM link_preview_attempts").run();
+    const { environment, calls } = background(fetched({ image: null }));
+    for (let index = 0; index < 30; index += 1) expect((await call(environment, PROJECT_PATH(ids.otherProject), "other", "POST", { url: `https://example.com/keep-${index}` })).status).toBe(200);
+    await database.DB.prepare("DELETE FROM link_previews WHERE requester_id = ?").bind(ids.other).run();
+    expect((await call(environment, PROJECT_PATH(ids.otherProject), "other", "POST", { url: "https://example.com/after-delete" })).status).toBe(429);
+    expect(calls).toHaveLength(30);
+  });
+
+  it("admits at most 30 of 35 concurrent requests, never more", async () => {
+    await database.DB.prepare("DELETE FROM link_preview_attempts").run();
+    const { environment, calls } = background(fetched({ image: null }));
+    const statuses = (await Promise.all(Array.from({ length: 35 }, (_, index) => call(environment, PROJECT_PATH(ids.otherProject), "other", "POST", { url: `https://example.com/burst-${index}` })))).map((response) => response.status);
+    expect(statuses.filter((status) => status === 200)).toHaveLength(30);
+    expect(statuses.filter((status) => status === 429)).toHaveLength(5);
+    expect(calls).toHaveLength(30);
+  });
+
+  it("runs one fetch for two concurrent identical requests: the second is told it is in progress, then gets the stored preview", async () => {
+    await database.DB.prepare("DELETE FROM link_preview_attempts").run();
+    let release: () => void = () => undefined; const gate = new Promise<void>((resolve) => { release = resolve; });
+    const { environment, calls } = background(async () => { await gate; return fetched(); });
+    const url = "https://example.com/twice";
+    const first = call(environment, PROJECT_PATH(), "member", "POST", { url });
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    const second = await call(environment, PROJECT_PATH(), "member", "POST", { url });
+    expect(second.status).toBe(409);
+    expect(await second.json()).toMatchObject({ code: "link_preview_in_progress" });
+    release();
+    const done = linkPreviewResponseSchema.parse(await (await first).json()).preview!;
+    const retry = linkPreviewResponseSchema.parse(await (await call(environment, PROJECT_PATH(), "member", "POST", { url })).json()).preview!;
+    expect(retry).toEqual(done);
+    expect(calls).toHaveLength(1);
+    expect(await database.DB.prepare("SELECT count(*) AS n FROM link_previews WHERE url = ?").bind(url).first()).toEqual({ n: 1 });
+    expect(await database.DB.prepare("SELECT count(*) AS n FROM link_preview_attempts WHERE url = ?").bind(url).first()).toEqual({ n: 1 });
+  });
+
+  it("lets a fetch that never finished be retried after two minutes", async () => {
+    await database.DB.prepare("DELETE FROM link_preview_attempts").run();
+    const url = "https://example.com/stuck"; const old = Date.now() - 3 * 60 * 1000;
+    await seedAttempt({ requester: ids.member, url, status: "fetching", createdAt: old });
+    const { environment, calls } = background(fetched({ image: null }));
+    expect((await call(environment, PROJECT_PATH(), "member", "POST", { url })).status).toBe(200);
+    expect(calls).toHaveLength(1);
   });
 });
 

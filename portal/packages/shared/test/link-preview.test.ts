@@ -18,10 +18,10 @@ describe("link preview limits (#497)", () => {
 describe("checkPreviewTarget", () => {
   const ok = (value: string) => checkPreviewTarget(value, { blockedHosts: ["quincy.flamingfire.my"] });
 
-  it("accepts an ordinary http or https URL and returns the normalised address without its fragment", () => {
-    expect(ok("https://Example.com/a/b?x=1#frag")).toEqual({ ok: true, url: "https://example.com/a/b?x=1" });
-    expect(ok("http://example.com")).toEqual({ ok: true, url: "http://example.com/" });
-    expect(ok("https://example.com:443/")).toEqual({ ok: true, url: "https://example.com/" });
+  it("accepts an ordinary http or https URL and returns the normalised address as typed, and the same address without its fragment to fetch", () => {
+    expect(ok("https://Example.com/a/b?x=1#frag")).toEqual({ ok: true, url: "https://example.com/a/b?x=1#frag", fetchUrl: "https://example.com/a/b?x=1" });
+    expect(ok("http://example.com")).toEqual({ ok: true, url: "http://example.com/", fetchUrl: "http://example.com/" });
+    expect(ok("https://example.com:443/")).toEqual({ ok: true, url: "https://example.com/", fetchUrl: "https://example.com/" });
     expect(ok("https://news.example.co.uk/")).toMatchObject({ ok: true });
     expect(ok("https://[2606:4700:4700::1111]/")).toMatchObject({ ok: true });
     expect(ok("http://8.8.8.8/")).toMatchObject({ ok: true });

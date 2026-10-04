@@ -54,6 +54,17 @@ describe("fetchLinkPreview: what it reads", () => {
     expect(calls).toEqual(["https://example.com/post", "https://example.com/img/cover.png"]);
   });
 
+  it("decodes every HTML named entity, not a short list", async () => {
+    const { deps } = stub({ "https://example.com/e": html(page(`<meta property="og:title" content="Caf&eacute; &euro;10 &auml;&ouml;&uuml; &frac12; &hearts;"><meta property="og:description" content="Se&ntilde;or &amp;amp; &#x1F600;">`)) });
+    expect(await fetchLinkPreview("https://example.com/e", deps)).toMatchObject({ ok: true, title: "Café €10 äöü ½ ♥", description: "Señor &amp; \u{1F600}" });
+  });
+
+  it("fetches the address without its fragment", async () => {
+    const { deps, calls } = stub({ "https://example.com/f": html(page(`<title>T</title>`)) });
+    expect(await fetchLinkPreview("https://example.com/f#section", deps)).toMatchObject({ ok: true, finalUrl: "https://example.com/f" });
+    expect(calls).toEqual(["https://example.com/f"]);
+  });
+
   it("falls back from Open Graph to Twitter card tags, then to the title and meta description, then to the host", async () => {
     const twitter = stub({ "https://example.com/a": html(page(`<meta name="twitter:title" content="Tw title"><meta name="twitter:description" content="Tw desc"><meta name="twitter:image" content="https://cdn.example.com/t.png">`)), "https://cdn.example.com/t.png": png() });
     expect(await fetchLinkPreview("https://example.com/a", twitter.deps)).toMatchObject({ ok: true, title: "Tw title", description: "Tw desc", siteName: "example.com", image: { contentType: "image/png" } });

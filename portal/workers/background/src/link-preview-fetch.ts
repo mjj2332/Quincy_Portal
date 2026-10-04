@@ -1,3 +1,4 @@
+import { decodeHTMLAttribute } from "entities";
 import {
   LINK_PREVIEW_DESCRIPTION_MAX, LINK_PREVIEW_MAX_HTML_BYTES, LINK_PREVIEW_MAX_IMAGE_BYTES, LINK_PREVIEW_MAX_REDIRECTS, LINK_PREVIEW_SITE_NAME_MAX, LINK_PREVIEW_TIMEOUT_MS,
   LINK_PREVIEW_TITLE_MAX, checkPreviewTarget, normalizePreviewText, sniffEmbeddedImageType, type EmbeddedImageContentType,
@@ -46,14 +47,14 @@ async function follow(start: string, accept: string, signal: AbortSignal, deps: 
     const verdict = checkPreviewTarget(current, { blockedHosts: deps.blockedHosts });
     if (!verdict.ok) throw new Stop("blocked");
     let response: Response;
-    try { response = await abortable(deps.fetch(verdict.url, { redirect: "manual", signal, headers: { ...HEADERS, accept } }), signal); }
+    try { response = await abortable(deps.fetch(verdict.fetchUrl, { redirect: "manual", signal, headers: { ...HEADERS, accept } }), signal); }
     catch (error) { throw error instanceof Stop ? error : new Stop(signal.aborted ? "timeout" : "fetch_failed"); }
-    if (!REDIRECT_STATUSES.has(response.status)) return { response, finalUrl: verdict.url };
+    if (!REDIRECT_STATUSES.has(response.status)) return { response, finalUrl: verdict.fetchUrl };
     const location = response.headers.get("location");
     discard(response);
     if (!location) throw new Stop("bad_redirect");
     if (hop >= LINK_PREVIEW_MAX_REDIRECTS) throw new Stop("too_many_redirects");
-    try { current = new URL(location, verdict.url).href; } catch { throw new Stop("bad_redirect"); }
+    try { current = new URL(location, verdict.fetchUrl).href; } catch { throw new Stop("bad_redirect"); }
   }
 }
 
@@ -88,19 +89,8 @@ async function readLimited(response: Response, max: number, signal: AbortSignal)
   return { bytes, truncated };
 }
 
-const NAMED_ENTITIES: Record<string, string> = {
-  amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", nbsp: " ", ndash: "–", mdash: "—", hellip: "…", lsquo: "‘", rsquo: "’",
-  ldquo: "“", rdquo: "”", copy: "©", reg: "®", trade: "™", bull: "•", middot: "·", laquo: "«", raquo: "»",
-};
-
-/** Decodes the HTML entities a page may leave in a tag's value. HTMLRewriter hands values back as written. */
-function decodeEntities(value: string): string {
-  return value.replace(/&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|([a-zA-Z][a-zA-Z0-9]{1,8}));/g, (whole, decimal?: string, hex?: string, named?: string) => {
-    if (named !== undefined) return NAMED_ENTITIES[named] ?? NAMED_ENTITIES[named.toLowerCase()] ?? whole;
-    const code = decimal !== undefined ? Number(decimal) : parseInt(hex!, 16);
-    return code > 0 && code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff) ? String.fromCodePoint(code) : whole;
-  });
-}
+/** Decodes the HTML entities a page may leave in a tag's value (every named one, and numeric ones), as a browser reads an attribute. HTMLRewriter hands values back as written. */
+const decodeEntities = (value: string): string => decodeHTMLAttribute(value);
 
 function decodeBody(bytes: Uint8Array, contentType: string): string {
   const label = /charset\s*=\s*["']?([\w.:-]+)/i.exec(contentType)?.[1] ?? "utf-8";

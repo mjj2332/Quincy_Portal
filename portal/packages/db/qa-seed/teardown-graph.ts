@@ -104,6 +104,7 @@ export const NO_FK_ID_COLUMNS: readonly NoFkColumn[] = [
   { table: "embedded_media", column: "owner_id", references: "*", evidence: "polymorphic by owner_kind (project_comment, notice_post) — workers/app/src/lib/project-comments.ts and notice-board-service.ts attach rows to the comment / post id" },
   { table: "link_previews", column: "owner_id", references: "*", evidence: "polymorphic by owner_kind (project_comment, notice_post) — workers/app/src/lib/link-previews.ts attaches rows to the comment / post id in the same batch as the post. The rows hang off projects by project_id (cascade), so a QA Project teardown clears them" },
   { table: "embedded_media_cleanup", column: "project_id", references: "projects", evidence: "workers/app/src/routes/projects.ts queues the key of every embedded_media row of a Project it hard-deletes, with that Project id" },
+  { table: "link_preview_attempts", column: "context_id", references: "projects", evidence: "workers/app/src/lib/link-previews.ts writes the Project id (or the literal notice_board, which names no row) as the attempt context, with no foreign key because it is polymorphic. A Project teardown removes its attempts so none outlive it" },
   { table: "notice_board_read_markers", column: "last_read_post_id", references: "notice_board_posts", evidence: "read marker's last-read notice-board post" },
 ];
 
