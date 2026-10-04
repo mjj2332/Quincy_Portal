@@ -119,6 +119,37 @@ describe("uploadEmbeddedVideo (#494)", () => {
     expect(abortCalls()).toHaveLength(1); expect(apiPost.mock.calls.some((call) => String(call[0]).endsWith("/complete"))).toBe(false);
   });
 
+  it("cancels at once while the completion, the poster capture or the poster upload is still pending, and sends no further request", async () => {
+    const stall = () => new Promise<never>(() => undefined);
+    // Completion stalled.
+    let controller = new AbortController();
+    apiPost.mockImplementation(async (path: string) => path.endsWith("/complete") ? stall() : { mediaId: ID, devDirect: true });
+    let pending = uploadEmbeddedVideo("p 1", video(), { signal: controller.signal });
+    await vi.waitFor(() => expect(apiPost.mock.calls.some((call) => String(call[0]).endsWith("/complete"))).toBe(true));
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(abortCalls()).toHaveLength(1); expect(posterCalls()).toHaveLength(0);
+    // Poster upload stalled: the fetch receives the signal, and the abort goes out without waiting for it.
+    fetchStub.mockReset(); apiPost.mockReset(); controller = new AbortController();
+    apiPost.mockImplementation(async (path: string) => path.endsWith("/complete") ? { mediaId: ID, state: "pending" } : { mediaId: ID, devDirect: true });
+    fetchStub.mockImplementation((url: string, init?: RequestInit) => String(url).endsWith("/poster") ? stall() : Promise.resolve(new Response(null, { status: 204 })));
+    pending = uploadEmbeddedVideo("p 1", video(), { signal: controller.signal });
+    await vi.waitFor(() => expect(posterCalls()).toHaveLength(1));
+    expect(posterCalls()[0]![1].signal).toBe(controller.signal);
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(abortCalls()).toHaveLength(1);
+    // Poster capture stalled.
+    fetchStub.mockReset(); fetchStub.mockResolvedValue(new Response(null, { status: 204 })); controller = new AbortController();
+    captureVideoPoster.mockImplementation(stall);
+    pending = uploadEmbeddedVideo("p 1", video(), { signal: controller.signal });
+    await vi.waitFor(() => expect(captureVideoPoster).toHaveBeenCalled());
+    await vi.waitFor(() => expect(apiPost.mock.calls.filter((call) => String(call[0]).endsWith("/complete"))).toHaveLength(2));
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(abortCalls()).toHaveLength(1); expect(posterCalls()).toHaveLength(0);
+  });
+
   it("aborts on the server when the signal fires after the presign answered", async () => {
     const controller = new AbortController();
     apiPost.mockImplementation(async (path: string) => { if (!path.endsWith("/complete")) controller.abort(); return path.endsWith("/complete") ? { mediaId: ID, state: "pending" } : { mediaId: ID, devDirect: true }; });

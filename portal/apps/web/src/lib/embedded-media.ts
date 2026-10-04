@@ -95,7 +95,13 @@ export async function uploadEmbeddedVideo(projectId: string, file: File, options
   const base = mediaBase({ projectId });
   const presign = externalEmbeddedMediaPresignSchema.parse(await apiPost<unknown, { contentType: string; bytes: number }>(base, { contentType, bytes: file.size }));
   const mediaUrl = `${base}/${encodeURIComponent(presign.mediaId)}`;
-  const abortOnServer = () => fetch(`${mediaUrl}/abort`, { method: "POST", credentials: "include", keepalive: true, headers: { "content-type": "application/json" }, body: "{}" }).catch(() => undefined);
+  let abortSent: Promise<unknown> | null = null;
+  const abortOnServer = () => abortSent ??= fetch(`${mediaUrl}/abort`, { method: "POST", credentials: "include", keepalive: true, headers: { "content-type": "application/json" }, body: "{}" }).catch(() => undefined);
+  // A cancel is not queued behind a step that cannot be cancelled (the completion call, the poster capture): each of those is raced
+  // against the signal, so the abort goes out the moment the user cancels and nothing further is requested.
+  const cancelled = new Promise<never>((_, reject) => { signal?.addEventListener("abort", () => reject(abortError()), { once: true }); });
+  cancelled.catch(() => undefined);
+  const unlessCancelled = <T,>(work: Promise<T>): Promise<T> => signal ? Promise.race([work, cancelled]) : work;
   try {
     if (signal?.aborted) throw abortError();
     const poster = captureVideoPoster(file).catch(() => null);
@@ -107,9 +113,10 @@ export async function uploadEmbeddedVideo(projectId: string, file: File, options
       { signal, onBytes: (loaded, total) => onProgress?.(Math.min(100, Math.round((loaded / total) * 100))) },
     );
     if (signal?.aborted) throw abortError();
-    const done = externalEmbeddedMediaCompleteSchema.parse(await apiPost<unknown, { parts?: { partNumber: number; etag: string }[] }>(`${mediaUrl}/complete`, completed.parts ? { parts: completed.parts } : {}));
-    const frame = await poster;
-    if (frame) await fetch(`${mediaUrl}/poster`, { method: "PUT", credentials: "include", headers: { "content-type": "image/jpeg" }, body: frame }).catch(() => undefined);
+    const done = externalEmbeddedMediaCompleteSchema.parse(await unlessCancelled(apiPost<unknown, { parts?: { partNumber: number; etag: string }[] }>(`${mediaUrl}/complete`, completed.parts ? { parts: completed.parts } : {})));
+    const frame = await unlessCancelled(poster);
+    if (signal?.aborted) throw abortError();
+    if (frame) await unlessCancelled(fetch(`${mediaUrl}/poster`, { method: "PUT", credentials: "include", headers: { "content-type": "image/jpeg" }, body: frame, ...(signal ? { signal } : {}) }).catch(() => undefined));
     if (signal?.aborted) throw abortError();
     return done.mediaId;
   } catch (error) {

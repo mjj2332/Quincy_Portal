@@ -246,6 +246,15 @@ describe("a posted video (#494)", () => {
     expect(host.querySelector("video")).toBeNull();
   });
 
+  it("does not carry one video's failure to the next: A fails, the post is refreshed to B in the same place, and B gets a player", async () => {
+    const host = mount(<RichTextContent content={withVideos(A)} />);
+    await act(async () => { host.querySelector("video")!.dispatchEvent(new Event("error")); });
+    expect(host.querySelector('[data-testid="embedded-video-unavailable"]')).not.toBeNull();
+    act(() => root!.render(<RichTextContent content={withVideos(B)} />));
+    expect(host.querySelector('[data-testid="embedded-video-unavailable"]')).toBeNull();
+    expect(host.querySelector("video")!.getAttribute("src")).toBe(`/media/embedded/${B}`);
+  });
+
   it("decides per viewer from the error event: a poster that fails to load does not mark the video unplayable", async () => {
     const host = mount(<RichTextContent content={withVideos(A)} />);
     await act(async () => { host.querySelector("video")!.dispatchEvent(new Event("abort")); });
