@@ -26,7 +26,7 @@ export const embeddedMediaRoutes = new Hono<AppEnv>();
 type Project = { id: string; archivedAt: Date | null };
 
 /** The collaboration gate shared by the three routes: 403 for staff, 404 for an External editor (as the comment routes do). */
-async function collaborationGate(c: Context<AppEnv>, projectId: string): Promise<Project | Response> {
+export async function collaborationGate(c: Context<AppEnv>, projectId: string): Promise<Project | Response> {
   if (!await hasProjectCollaborationAccess(c, projectId)) return c.get("user").role === "external_editor" ? c.json({ error: "Project not found" }, 404) : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const project = await createDb(c.env.DB).select({ id: schema.projects.id, archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
   return project ?? c.json({ error: "Project not found" }, 404);

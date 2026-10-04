@@ -1,0 +1,196 @@
+import {
+  LINK_PREVIEW_MAX_IMAGE_BYTES, LINK_PREVIEW_RATE_LIMIT_PER_HOUR, LINK_PREVIEW_RATE_WINDOW_MS, EMBEDDED_MEDIA_RETENTION_MS, checkPreviewTarget, embeddedMediaObjectKey, noticeEmbeddedMediaObjectKey, sniffEmbeddedImageType,
+  type LinkPreviewCard, type RichTextBlock, type RichTextDoc,
+} from "@quincy/shared";
+import type { Env, SessionUser } from "../env";
+import { audit } from "./audit";
+import { abortEmbeddedMedia, claimAndDiscardUploadingMedia, getEmbeddedMedia } from "./embedded-media";
+import { newId } from "./ids";
+
+/** What owns a post's link previews: a Project comment (inside its Project) or a Notice board post (no Project). */
+export type PreviewOwner = { ownerKind: "project_comment" | "notice_post"; ownerId: string; projectId: string | null };
+
+const scopeOf = (projectId: string | null) => (projectId === null ? { sql: "project_id IS NULL", binds: [] as string[] } : { sql: "project_id = ?", binds: [projectId] });
+
+/**
+ * Pre-checks the previews a save names before its batch, so an obvious mistake is a clean 400. Advisory only: the batch's own
+ * statements (`linkPreviewStatements`) re-validate every id in SQL. At most three, none repeated; each must be this author's fresh
+ * pending preview in this scope, or one this owner already holds.
+ */
+export async function preflightLinkPreviews(db: D1Database, input: PreviewOwner & { requesterId: string; ids: string[]; now?: number }): Promise<boolean> {
+  if (!input.ids.length) return true;
+  if (input.ids.length > 3 || new Set(input.ids).size !== input.ids.length) return false;
+  const cutoff = (input.now ?? Date.now()) - EMBEDDED_MEDIA_RETENTION_MS;
+  const marks = input.ids.map(() => "?").join(", ");
+  const found = (await db.prepare(`SELECT id, owner_kind, owner_id, project_id, requester_id, created_at FROM link_previews WHERE id IN (${marks})`).bind(...input.ids).all<{ id: string; owner_kind: string; owner_id: string | null; project_id: string | null; requester_id: string; created_at: number }>()).results;
+  const byId = new Map(found.map((row) => [row.id, row]));
+  return input.ids.every((id) => {
+    const row = byId.get(id);
+    if (!row || row.owner_kind !== input.ownerKind || row.project_id !== input.projectId) return false;
+    return row.owner_id === input.ownerId || (row.owner_id === null && row.requester_id === input.requesterId && Number(row.created_at) > cutoff);
+  });
+}
+
+/**
+ * The link-preview statements of a save, appended after every other statement (batch results are read by position) and fenced
+ * exactly as the post's media statements are. They are self-validating: one UPDATE takes the wanted previews (a fresh pending
+ * one of this author in this scope, or one the owner already holds), everything else the owner holds is deleted, the preview
+ * images the owner no longer shows are detached for the seven-day grace, the wanted previews' images are attached, and a guard
+ * insert violates a CHECK (rolling the whole batch back) if the wanted previews are not all held by this owner afterwards.
+ * `ownedMediaStatements` leaves `preview_image` rows to these statements.
+ */
+export function linkPreviewStatements(db: D1Database, input: PreviewOwner & { requesterId: string; ids: string[]; now: number; fence: { sql: string; binds: unknown[] }; guardId: string }): D1PreparedStatement[] {
+  const { fence, ids, now } = input;
+  const cutoff = now - EMBEDDED_MEDIA_RETENTION_MS;
+  const scope = scopeOf(input.projectId);
+  const marks = ids.map(() => "?").join(", ");
+  const statements: D1PreparedStatement[] = [];
+  if (ids.length) {
+    statements.push(db.prepare(`
+      UPDATE link_previews SET owner_id = ?, updated_at = ?
+      WHERE id IN (${marks}) AND owner_kind = ? AND ${scope.sql} AND ${fence.sql}
+        AND ((owner_id IS NULL AND requester_id = ? AND created_at > ?) OR owner_id = ?)
+    `).bind(input.ownerId, now, ...ids, input.ownerKind, ...scope.binds, ...fence.binds, input.requesterId, cutoff, input.ownerId));
+  }
+  statements.push(db.prepare(`
+    DELETE FROM link_previews WHERE owner_kind = ? AND owner_id = ? ${ids.length ? `AND id NOT IN (${marks})` : ""} AND ${fence.sql}
+  `).bind(input.ownerKind, input.ownerId, ...ids, ...fence.binds));
+  statements.push(db.prepare(`
+    UPDATE embedded_media SET state = 'detached', detached_at = ?, updated_at = ?
+    WHERE kind = 'preview_image' AND owner_kind = ? AND owner_id = ? AND state = 'attached' AND ${fence.sql}
+      AND NOT EXISTS (SELECT 1 FROM link_previews WHERE link_previews.image_media_id = embedded_media.id AND link_previews.owner_kind = ? AND link_previews.owner_id = ?)
+  `).bind(now, now, input.ownerKind, input.ownerId, ...fence.binds, input.ownerKind, input.ownerId));
+  if (ids.length) {
+    statements.push(db.prepare(`
+      UPDATE embedded_media SET state = 'attached', owner_id = ?, detached_at = NULL, updated_at = ?
+      WHERE kind = 'preview_image' AND owner_kind = ? AND ${scope.sql} AND ${fence.sql}
+        AND id IN (SELECT image_media_id FROM link_previews WHERE owner_kind = ? AND owner_id = ? AND image_media_id IS NOT NULL)
+        AND ((state = 'pending' AND owner_id IS NULL AND uploader_id = ? AND created_at > ?)
+          OR (owner_id = ? AND (state = 'attached' OR (state = 'detached' AND detached_at > ?))))
+    `).bind(input.ownerId, now, input.ownerKind, ...scope.binds, ...fence.binds, input.ownerKind, input.ownerId, input.requesterId, cutoff, input.ownerId, cutoff));
+    statements.push(db.prepare(`
+      INSERT INTO embedded_media (id, owner_kind, uploader_id, kind, content_type, bytes, original_key, state, created_at, updated_at)
+      SELECT ?, ?, ?, 'preview_image', 'guard', 0, ?, 'uploading', ?, ?
+      WHERE ${fence.sql} AND (SELECT COUNT(*) FROM link_previews WHERE owner_kind = ? AND owner_id = ? AND id IN (${marks})) <> ?
+    `).bind(`guard-lp-${input.guardId}`, input.ownerKind, input.requesterId, `guard/lp-${input.guardId}`, now, now, ...fence.binds, input.ownerKind, input.ownerId, ...ids, ids.length));
+  }
+  return statements;
+}
+
+type PreviewRow = { id: string; url: string; title: string | null; description: string | null; site_name: string | null; image_media_id: string | null; image_state: string | null };
+
+/**
+ * Serves a post's cards (#497): the stored document names a preview by id alone, and this fills in the page's title,
+ * description, site name, URL and image from the server's own row, for every post in one pass (a query per ninety ids,
+ * since D1 takes a hundred bound values). A node whose row is gone is dropped. The image id is given only while its row is
+ * attached, so a card never points at media nobody can read. Returns new documents and leaves the input untouched.
+ */
+export async function fillLinkPreviews<T extends { content: RichTextDoc }>(db: D1Database, items: T[]): Promise<T[]> {
+  const wanted = new Set<string>();
+  for (const item of items) for (const block of item.content.content) if (block.type === "linkPreview") wanted.add(block.attrs.previewId);
+  if (!wanted.size) return items;
+  const rows = new Map<string, PreviewRow>();
+  const all = [...wanted];
+  for (let index = 0; index < all.length; index += 90) {
+    const chunk = all.slice(index, index + 90);
+    const found = await db.prepare(`
+      SELECT p.id, p.url, p.title, p.description, p.site_name, p.image_media_id, m.state AS image_state
+      FROM link_previews p LEFT JOIN embedded_media m ON m.id = p.image_media_id
+      WHERE p.id IN (${chunk.map(() => "?").join(", ")})
+    `).bind(...chunk).all<PreviewRow>();
+    for (const row of found.results) rows.set(row.id, row);
+  }
+  return items.map((item) => {
+    if (!item.content.content.some((block) => block.type === "linkPreview")) return item;
+    const content: RichTextBlock[] = [];
+    for (const block of item.content.content) {
+      if (block.type !== "linkPreview") { content.push(block); continue; }
+      const row = rows.get(block.attrs.previewId);
+      if (!row) continue;
+      content.push({ type: "linkPreview", attrs: { previewId: row.id, url: row.url, title: row.title, description: row.description, siteName: row.site_name, imageMediaId: row.image_media_id && row.image_state === "attached" ? row.image_media_id : null } });
+    }
+    return { ...item, content: { ...item.content, content } };
+  });
+}
+
+/** The card a preview row gives its requester before it is saved in a post: its image is still pending, which only they can read. */
+const cardOf = (row: { id: string; url: string; title: string | null; description: string | null; site_name: string | null; image_media_id: string | null }): LinkPreviewCard =>
+  ({ previewId: row.id, url: row.url, title: row.title, description: row.description, siteName: row.site_name, imageMediaId: row.image_media_id });
+
+export type PreviewRequestResult = { status: 200; body: { preview: LinkPreviewCard | null } } | { status: 400 | 409 | 429; body: { error: string; code: string } };
+
+/**
+ * One preview request (#497). The address is checked here and again by the background worker, which does the fetching (its
+ * `global_fetch_strictly_public` flag is what keeps a deployed fetch off private networks, the checks are what protect local
+ * development). A page that cannot be previewed is a 200 with no card, so the link just stays a link. The image is copied into
+ * R2 claim-first like every embedded-media write (a reserved `uploading` row, the object, then `pending`), and the preview row
+ * is written last. A retry for the same link answers with the preview already made.
+ */
+export async function requestLinkPreview(env: Env, user: SessionUser, scope: { ownerKind: "project_comment" | "notice_post"; projectId: string | null }, rawUrl: string, ownHosts: string[]): Promise<PreviewRequestResult> {
+  const verdict = checkPreviewTarget(rawUrl, { blockedHosts: ownHosts });
+  if (!verdict.ok) return { status: 400, body: { error: "This link cannot be previewed", code: "link_preview_blocked" } };
+  const now = Date.now();
+  const used = await env.DB.prepare("SELECT COUNT(*) AS n FROM link_previews WHERE requester_id = ? AND created_at > ?").bind(user.id, now - LINK_PREVIEW_RATE_WINDOW_MS).first<{ n: number }>();
+  if (Number(used?.n ?? 0) >= LINK_PREVIEW_RATE_LIMIT_PER_HOUR) return { status: 429, body: { error: "Too many link previews. Try again later.", code: "link_preview_rate_limited" } };
+  const projectScope = scopeOf(scope.projectId);
+  const existing = await env.DB.prepare(`
+    SELECT id, url, title, description, site_name, image_media_id FROM link_previews
+    WHERE requester_id = ? AND owner_kind = ? AND ${projectScope.sql} AND owner_id IS NULL AND url = ? AND created_at > ? ORDER BY created_at DESC LIMIT 1
+  `).bind(user.id, scope.ownerKind, ...projectScope.binds, verdict.url, now - EMBEDDED_MEDIA_RETENTION_MS).first<Parameters<typeof cardOf>[0]>();
+  if (existing) return { status: 200, body: { preview: cardOf(existing) } };
+
+  let fetched: Awaited<ReturnType<Env["BACKGROUND"]["fetchLinkPreview"]>>;
+  try { fetched = await env.BACKGROUND.fetchLinkPreview(verdict.url, ownHosts); }
+  catch (error) { console.error("Link preview fetch failed", { error: error instanceof Error ? error.message.slice(0, 160) : "unknown" }); return { status: 200, body: { preview: null } }; }
+  if (!fetched.ok) return { status: 200, body: { preview: null } };
+
+  const liveProject = scope.projectId === null ? null : "EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)";
+  const archived: PreviewRequestResult = { status: 409, body: { error: "Archived projects cannot take link previews", code: "project_archived" } };
+  let imageId: string | null = null;
+  const image = fetched.image;
+  if (image && image.bytes.byteLength > 0 && image.bytes.byteLength <= LINK_PREVIEW_MAX_IMAGE_BYTES) {
+    // Trust the bytes, never the declared type: the object is stored under the type they show.
+    const contentType = sniffEmbeddedImageType(image.bytes);
+    if (contentType) {
+      const mediaId = newId();
+      const key = scope.projectId === null ? noticeEmbeddedMediaObjectKey(mediaId) : embeddedMediaObjectKey(scope.projectId, mediaId);
+      const reserved = scope.projectId === null
+        ? await env.DB.prepare(`INSERT INTO embedded_media (id, owner_kind, owner_id, project_id, uploader_id, kind, content_type, bytes, original_key, state, created_at, updated_at) VALUES (?, 'notice_post', NULL, NULL, ?, 'preview_image', ?, ?, ?, 'uploading', ?, ?)`).bind(mediaId, user.id, contentType, image.bytes.byteLength, key, now, now).run()
+        : await env.DB.prepare(`INSERT INTO embedded_media (id, owner_kind, owner_id, project_id, uploader_id, kind, content_type, bytes, original_key, state, created_at, updated_at) SELECT ?, 'project_comment', NULL, id, ?, 'preview_image', ?, ?, ?, 'uploading', ?, ? FROM projects WHERE id = ? AND archived_at IS NULL`).bind(mediaId, user.id, contentType, image.bytes.byteLength, key, now, now, scope.projectId).run();
+      if ((reserved.meta.changes ?? 0) !== 1) return archived;
+      const row = { id: mediaId, originalKey: key, uploadId: null, projectId: scope.projectId };
+      try { await env.MEDIA.put(key, image.bytes, { httpMetadata: { contentType } }); }
+      catch (error) {
+        console.error("Link preview image copy failed", { error: error instanceof Error ? error.message.slice(0, 160) : "unknown" });
+        await claimAndDiscardUploadingMedia(env, row);
+      }
+      if (await env.MEDIA.head(key)) {
+        const promoted = await env.DB.prepare(`UPDATE embedded_media SET state = 'pending', updated_at = ? WHERE id = ? AND state = 'uploading'${liveProject ? ` AND ${liveProject}` : ""}`).bind(Date.now(), mediaId, ...(scope.projectId === null ? [] : [scope.projectId])).run();
+        if ((promoted.meta.changes ?? 0) === 1) imageId = mediaId;
+        else if (await claimAndDiscardUploadingMedia(env, row) && scope.projectId !== null) {
+          const live = await env.DB.prepare("SELECT 1 AS one FROM projects WHERE id = ? AND archived_at IS NULL").bind(scope.projectId).first();
+          if (!live) return archived;
+        }
+      }
+    }
+  }
+
+  const previewId = newId();
+  const cardBase = { title: fetched.title, description: fetched.description, site_name: fetched.siteName };
+  let wrote = false;
+  try {
+    const inserted = scope.projectId === null
+      ? await env.DB.prepare(`INSERT INTO link_previews (id, owner_kind, owner_id, project_id, requester_id, url, title, description, site_name, image_media_id, created_at, updated_at) VALUES (?, 'notice_post', NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(previewId, user.id, verdict.url, cardBase.title, cardBase.description, cardBase.site_name, imageId, now, now).run()
+      : await env.DB.prepare(`INSERT INTO link_previews (id, owner_kind, owner_id, project_id, requester_id, url, title, description, site_name, image_media_id, created_at, updated_at) SELECT ?, 'project_comment', NULL, id, ?, ?, ?, ?, ?, ?, ?, ? FROM projects WHERE id = ? AND archived_at IS NULL`).bind(previewId, user.id, verdict.url, cardBase.title, cardBase.description, cardBase.site_name, imageId, now, now, scope.projectId).run();
+    wrote = (inserted.meta.changes ?? 0) === 1;
+  } catch (error) {
+    if (imageId) { const media = await getEmbeddedMedia(env.DB, imageId); if (media) await abortEmbeddedMedia(env, media).catch(() => undefined); }
+    throw error;
+  }
+  if (!wrote) {
+    if (imageId) { const media = await getEmbeddedMedia(env.DB, imageId); if (media) await abortEmbeddedMedia(env, media).catch(() => undefined); }
+    return archived;
+  }
+  await audit(env, user, "link_preview.fetch", "link_preview", previewId, { url: verdict.url, scope: scope.projectId === null ? "notice_board" : "project", ...(scope.projectId === null ? {} : { projectId: scope.projectId }), hasImage: imageId !== null });
+  return { status: 200, body: { preview: cardOf({ id: previewId, url: verdict.url, ...cardBase, image_media_id: imageId }) } };
+}

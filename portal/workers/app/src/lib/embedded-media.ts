@@ -172,7 +172,7 @@ export async function preflightOwnedMedia(db: D1Database, input: OwnedMediaOwner
  * self-validating: every wanted id is attached by one UPDATE whose WHERE accepts only a fresh pending image upload of this
  * uploader in this scope, or a row this owner already owns (attached, or detached under seven days), then everything else the
  * owner holds is detached, then a guard statement violates a CHECK (rolling the whole batch back) if the wanted ids are not all
- * attached to this owner. A node names its kind (`videoIds` are the video nodes, every other id an image): the attach and the guard both
+ * attached to this owner. A link preview's image (`preview_image`, #497) is never touched here: `linkPreviewStatements` owns it. A node names its kind (`videoIds` are the video nodes, every other id an image): the attach and the guard both
  * require the stored row to be of that kind, so a video node cannot take an image row, nor the reverse. A save that lost the fence is skipped.
  */
 export function ownedMediaStatements(db: D1Database, input: OwnedMediaOwner & { uploaderId: string; ids: string[]; videoIds?: string[]; now: number; fence: { sql: string; binds: unknown[] }; guardId: string }): D1PreparedStatement[] {
@@ -191,7 +191,7 @@ export function ownedMediaStatements(db: D1Database, input: OwnedMediaOwner & { 
   `).bind(input.ownerId, now, id, input.ownerKind, ...scopeBinds, kindOf(id), ...fence.binds, input.uploaderId, cutoff, input.ownerId, cutoff));
   statements.push(db.prepare(`
     UPDATE embedded_media SET state = 'detached', detached_at = ?, updated_at = ?
-    WHERE owner_kind = ? AND owner_id = ? AND state = 'attached' ${ids.length ? `AND id NOT IN (${marks})` : ""} AND ${fence.sql}
+    WHERE owner_kind = ? AND owner_id = ? AND state = 'attached' AND kind <> 'preview_image' ${ids.length ? `AND id NOT IN (${marks})` : ""} AND ${fence.sql}
   `).bind(now, now, input.ownerKind, input.ownerId, ...ids, ...fence.binds));
   if (ids.length) {
     statements.push(db.prepare(`

@@ -42,7 +42,7 @@ beforeAll(async () => {
   await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'U', 'u@example.test', 1, 'editor', 1, ?, ?)").bind(userId, now, now).run();
   await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'S', 'editing_autohdr', 0, ?, ?)").bind(projectId, now, now).run();
 });
-beforeEach(async () => { await database.DB.exec("DELETE FROM embedded_media; DELETE FROM embedded_media_cleanup;"); });
+beforeEach(async () => { await database.DB.exec("DELETE FROM link_previews; DELETE FROM embedded_media; DELETE FROM embedded_media_cleanup;"); });
 const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
 afterAll(() => { consoleError.mockRestore(); });
 
@@ -68,6 +68,43 @@ describe("embedded media sweep covers Notice board media (#496)", () => {
     expect(await queueRow(stuck.keys[0]!)).toMatchObject({ projectId: null });
     failing = false; await sweepEmbeddedMedia(flaky as never, now + 1);
     expect(await queueRow(stuck.keys[0]!)).toBeNull(); expect(await objectExists(stuck.keys[0]!)).toBe(false);
+  });
+});
+
+describe("embedded media sweep covers link previews (#497)", () => {
+  type Preview = { createdAt: number; ownerId?: string | null; notice?: boolean; image?: { id: string } };
+  async function seedPreview(input: Preview) {
+    const id = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO link_previews (id, owner_kind, owner_id, project_id, requester_id, url, title, image_media_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'https://example.com/', 'T', ?, ?, ?)")
+      .bind(id, input.notice ? "notice_post" : "project_comment", input.ownerId ?? null, input.notice ? null : projectId, userId, input.image?.id ?? null, input.createdAt, input.createdAt).run();
+    return id;
+  }
+  const previewExists = async (id: string) => (await database.DB.prepare("SELECT 1 AS one FROM link_previews WHERE id = ?").bind(id).first()) !== null;
+
+  it("deletes previews nobody owns after seven days, and keeps fresh and owned ones", async () => {
+    const stale = await seedPreview({ createdAt: now - 7 * day });
+    const staleNotice = await seedPreview({ createdAt: now - 30 * day, notice: true });
+    const fresh = await seedPreview({ createdAt: now - 7 * day + 1 });
+    const owned = await seedPreview({ createdAt: now - 400 * day, ownerId: crypto.randomUUID() });
+    await sweepEmbeddedMedia(env, now);
+    expect(await previewExists(stale)).toBe(false); expect(await previewExists(staleNotice)).toBe(false);
+    expect(await previewExists(fresh)).toBe(true); expect(await previewExists(owned)).toBe(true);
+  });
+
+  it("reclaims the pending preview image the same run, which clears the card's image reference rather than blocking", async () => {
+    const image = await seed({ state: "pending", createdAt: now - 8 * day });
+    const stale = await seedPreview({ createdAt: now - 8 * day, image });
+    await sweepEmbeddedMedia(env, now);
+    expect(await previewExists(stale)).toBe(false);
+    expect(await exists(image.id)).toBe(false); expect(await objectExists(image.keys[0]!)).toBe(false);
+  });
+
+  it("leaves an owned preview whose image expired with no image, not a dangling reference", async () => {
+    const image = await seed({ state: "detached", detachedAt: now - 8 * day });
+    const owned = await seedPreview({ createdAt: now - 20 * day, ownerId: crypto.randomUUID(), image });
+    await sweepEmbeddedMedia(env, now);
+    expect(await exists(image.id)).toBe(false);
+    expect(await database.DB.prepare("SELECT image_media_id AS i FROM link_previews WHERE id = ?").bind(owned).first()).toEqual({ i: null });
   });
 });
 

@@ -3,6 +3,7 @@ import type { BackfillParams, BackfillResult } from "./autohdr/backfill";
 import type { AutoHdrFetchResult, AutoHdrResult } from "./autohdr/errors";
 import type { AutoHdrApiSendResult } from "./autohdr/api-send";
 import type { ReviewedEditorCandidate } from "./editor-folders/backfill";
+import type { LinkPreviewFetchResult } from "./link-preview-fetch";
 
 /** Public, serializable surface exposed over the BACKGROUND service binding. */
 export declare abstract class QuincyBackground extends WorkerEntrypoint {
@@ -36,5 +37,6 @@ export declare abstract class QuincyBackground extends WorkerEntrypoint {
   abstract publishManualEditedUpload(projectId: string, assetId: string): Promise<{ jobId: string }>;
   abstract handleDropboxWebhook(): Promise<void>;
   abstract processTonomoEvents(): Promise<void>;
+  abstract fetchLinkPreview(url: string, blockedHosts?: string[]): Promise<LinkPreviewFetchResult>;
   abstract backfillRenditions(input?: { dryRun?: boolean; cursor?: string; limit?: number; confirmProduction?: boolean }): Promise<{ scanned: number; wouldEnqueue: number; enqueued: number; skipped: number; nextCursor: string | null; dryRun: boolean }>;
 }

@@ -4,6 +4,7 @@ import { NOTIFICATION_OUTBOX_EVENT_TYPE, ROLE_LABELS, staffPathFor, type RichTex
 import type { ProjectActivityIntent } from "@quincy/shared";
 import { newId } from "./ids";
 import { isMediaGuardFailure, ownedMediaStatements, preflightOwnedMedia } from "./embedded-media";
+import { fillLinkPreviews, linkPreviewStatements, preflightLinkPreviews } from "./link-previews";
 import { auditMeta, type AuditPrincipal } from "./audit";
 
 const readMarkerUpsertSql = `
@@ -40,7 +41,7 @@ export type ProjectCommentReadState = {
 
 /** The images a comment's save wants (#493): the batch itself validates and reconciles them, `resolveCommentMedia` only pre-checks. */
 /** `ids` is every media node; `videoIds` the subset that are video nodes (every other id is an image). */
-export type CommentMediaChanges = { authorId: string; ids: string[]; videoIds?: string[] };
+export type CommentMediaChanges = { authorId: string; ids: string[]; videoIds?: string[]; /** The link preview cards (#497): the batch takes the author's pending ones and drops the rest. */ previewIds?: string[] };
 /** Thrown when the winning save's images are no longer all attachable (an image was swept, expired or taken); the whole save is rolled back. */
 export class CommentMediaConflictError extends Error { constructor() { super("An image or video in this comment is no longer available"); this.name = "CommentMediaConflictError"; } }
 
@@ -312,19 +313,26 @@ function mentionOutboxStatements(
 
 
 /** Pre-checks a comment's desired images (advisory, see `preflightOwnedMedia`) so an obvious mistake is a clean 400. */
-export async function resolveCommentMedia(db: D1Database, input: { projectId: string; authorId: string; commentId: string; mediaIds: string[]; videoIds?: string[]; now?: number }): Promise<CommentMediaChanges | null> {
-  const ok = await preflightOwnedMedia(db, { ownerKind: "project_comment", ownerId: input.commentId, projectId: input.projectId, uploaderId: input.authorId, ids: input.mediaIds, videoIds: input.videoIds, now: input.now });
-  return ok ? { authorId: input.authorId, ids: input.mediaIds, videoIds: input.videoIds } : null;
+export async function resolveCommentMedia(db: D1Database, input: { projectId: string; authorId: string; commentId: string; mediaIds: string[]; videoIds?: string[]; previewIds?: string[]; now?: number }): Promise<CommentMediaChanges | null> {
+  const ok = await preflightOwnedMedia(db, { ownerKind: "project_comment", ownerId: input.commentId, projectId: input.projectId, uploaderId: input.authorId, ids: input.mediaIds, videoIds: input.videoIds, now: input.now })
+    && await preflightLinkPreviews(db, { ownerKind: "project_comment", ownerId: input.commentId, projectId: input.projectId, requesterId: input.authorId, ids: input.previewIds ?? [], now: input.now });
+  return ok ? { authorId: input.authorId, ids: input.mediaIds, videoIds: input.videoIds, previewIds: input.previewIds ?? [] } : null;
 }
 
 /** The comment's media statements, fenced on the winner's audit row (lessons #364); see `ownedMediaStatements`. */
-function mediaStatements(db: D1Database, projectId: string, commentId: string, media: CommentMediaChanges, now: number, auditId: string): D1PreparedStatement[] {
-  return ownedMediaStatements(db, { ownerKind: "project_comment", ownerId: commentId, projectId, uploaderId: media.authorId, ids: media.ids, videoIds: media.videoIds, now, fence: { sql: "EXISTS (SELECT 1 FROM audit_log WHERE id = ?)", binds: [auditId] }, guardId: auditId });
+function mediaStatements(db: D1Database, projectId: string, commentId: string, media: CommentMediaChanges, now: number, auditId: string, includePreviews: boolean): D1PreparedStatement[] {
+  const fence = { sql: "EXISTS (SELECT 1 FROM audit_log WHERE id = ?)", binds: [auditId] };
+  const previews = media.previewIds ?? [];
+  return [
+    ...ownedMediaStatements(db, { ownerKind: "project_comment", ownerId: commentId, projectId, uploaderId: media.authorId, ids: media.ids, videoIds: media.videoIds, now, fence, guardId: auditId }),
+    // A new comment holds no previews yet, so only an edit has anything to drop.
+    ...(includePreviews || previews.length ? linkPreviewStatements(db, { ownerKind: "project_comment", ownerId: commentId, projectId, requesterId: media.authorId, ids: previews, now, fence, guardId: auditId }) : []),
+  ];
 }
 
 /** A batch that tripped the media guard failed on its CHECK: report it as a conflict, and rethrow anything else. */
 function rethrowMediaConflict(error: unknown, media: CommentMediaChanges | undefined): never {
-  if (isMediaGuardFailure(error, media?.ids)) throw new CommentMediaConflictError();
+  if (isMediaGuardFailure(error, [...(media?.ids ?? []), ...(media?.previewIds ?? [])])) throw new CommentMediaConflictError();
   throw error;
 }
 
@@ -377,7 +385,7 @@ export async function createProjectComment(db: D1Database, input: CreateProjectC
   const outbox = mentionOutboxStatements(db, input.projectId, input.authorId, activity, input.mentions, snapshots, input.occurredAt.getTime(), auditId);
   const activityStatements = buildProjectActivityStatements({ db, intent: activity, winnerAuditId: auditId, createdAt: input.occurredAt.getTime() });
   const activityStatementStart = 1 + mentions.length + 2 + outbox.statements.length;
-  const media = mediaStatements(db, input.projectId, input.id, input.media ?? { authorId: input.authorId, ids: [] }, input.occurredAt.getTime(), auditId);
+  const media = mediaStatements(db, input.projectId, input.id, input.media ?? { authorId: input.authorId, ids: [] }, input.occurredAt.getTime(), auditId, false);
   const results = await db.batch([insert, ...mentions, marker, audit, ...outbox.statements, ...activityStatements.statements, ...media]).catch((error) => rethrowMediaConflict(error, input.media));
   const comment = await findProjectComment(createDb(db), input.projectId, input.id);
   if (!comment) throw new Error("Comment could not be created");
@@ -423,7 +431,7 @@ export async function editProjectComment(db: D1Database, input: EditProjectComme
   const outbox = mentionOutboxStatements(db, input.projectId, input.actorId, activity, input.addMentions, snapshots, input.occurredAt.getTime(), auditId);
   const activityStatements = buildProjectActivityStatements({ db, intent: activity, winnerAuditId: auditId, createdAt: input.occurredAt.getTime() });
   const activityStatementStart = statements.length + outbox.statements.length;
-  const media = mediaStatements(db, input.projectId, input.commentId, input.media ?? { authorId: input.actorId, ids: [] }, input.editedAt.getTime(), auditId);
+  const media = mediaStatements(db, input.projectId, input.commentId, input.media ?? { authorId: input.actorId, ids: [] }, input.editedAt.getTime(), auditId, true);
   const results = await db.batch([...statements, ...outbox.statements, ...activityStatements.statements, ...media]).catch((error) => rethrowMediaConflict(error, input.media));
   if ((results[0]?.meta.changes ?? 0) !== 1) {
     // A rebuilt request whose complete canonical body/content/mention state is still current is
@@ -453,7 +461,8 @@ export async function deleteProjectComment(db: D1Database, input: DeleteProjectC
   // The comment's media is detached and due now in the same batch (no trigger carries the delete across, a polymorphic
   // owner has no foreign key). The route then deletes the objects and rows, and the daily sweep is the backstop.
   const media = db.prepare("UPDATE embedded_media SET state = 'detached', detached_at = 0, updated_at = ? WHERE owner_kind = 'project_comment' AND owner_id = ? AND state IN ('attached', 'detached') AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)").bind(input.occurredAt.getTime(), input.commentId, auditId);
-  const results = await db.batch([deletion, audit, ...activityStatements.statements, media]);
+  const previews = db.prepare("DELETE FROM link_previews WHERE owner_kind = 'project_comment' AND owner_id = ? AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)").bind(input.commentId, auditId);
+  const results = await db.batch([deletion, audit, ...activityStatements.statements, media, previews]);
   // The JS-level .meta.changes on the DELETE includes cascade-deleted
   // project_comment_mentions rows (ON DELETE CASCADE), so the outer check must accept any
   // positive value. The SQL-level changes() function used by the audit guard excludes those

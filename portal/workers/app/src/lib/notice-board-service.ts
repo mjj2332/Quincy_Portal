@@ -1,5 +1,6 @@
 import { NOTICE_BOARD_READ_MARKER_UPSERT_SQL } from "./notice-board-read-state";
 import { isMediaGuardFailure, ownedMediaStatements } from "./embedded-media";
+import { linkPreviewStatements } from "./link-previews";
 
 export type NoticeBoardMentionInsert = {
   id: string;
@@ -9,7 +10,8 @@ export type NoticeBoardMentionInsert = {
 };
 
 /** The images a post's save wants (#496): the batch itself validates and reconciles them, `preflightOwnedMedia` only pre-checks. */
-export type NoticeBoardMediaChanges = { authorId: string; ids: string[] };
+/** `previewIds` are the link preview cards (#497): the batch takes the author's pending ones and drops the rest. */
+export type NoticeBoardMediaChanges = { authorId: string; ids: string[]; previewIds?: string[] };
 
 export class NoticeBoardMediaConflictError extends Error { constructor() { super("An image in this notice is no longer available"); this.name = "NoticeBoardMediaConflictError"; } }
 
@@ -26,13 +28,19 @@ export type CreateNoticeBoardPostInput = {
 /** True only while this author still owns this post: every media statement is fenced on it, so a save that lost a race to a delete writes nothing. */
 const postFence = (postId: string, authorId: string) => ({ sql: "EXISTS (SELECT 1 FROM notice_board_posts WHERE id = ? AND author_id = ?)", binds: [postId, authorId] });
 
-function mediaStatements(db: D1Database, postId: string, authorId: string, media: NoticeBoardMediaChanges | undefined, now: number): D1PreparedStatement[] {
-  return ownedMediaStatements(db, { ownerKind: "notice_post", ownerId: postId, projectId: null, uploaderId: authorId, ids: media?.ids ?? [], now, fence: postFence(postId, authorId), guardId: `notice-${postId}-${now}` });
+function mediaStatements(db: D1Database, postId: string, authorId: string, media: NoticeBoardMediaChanges | undefined, now: number, includePreviews: boolean): D1PreparedStatement[] {
+  const guardId = `notice-${postId}-${now}`;
+  const previews = media?.previewIds ?? [];
+  return [
+    ...ownedMediaStatements(db, { ownerKind: "notice_post", ownerId: postId, projectId: null, uploaderId: authorId, ids: media?.ids ?? [], now, fence: postFence(postId, authorId), guardId }),
+    // A new post holds no previews yet, so only an edit has anything to drop.
+    ...(includePreviews || previews.length ? linkPreviewStatements(db, { ownerKind: "notice_post", ownerId: postId, projectId: null, requesterId: authorId, ids: previews, now, fence: postFence(postId, authorId), guardId }) : []),
+  ];
 }
 
 /** A batch that tripped the media guard failed on its CHECK: report it as a conflict, and rethrow anything else. */
 function rethrowMediaConflict(error: unknown, media: NoticeBoardMediaChanges | undefined): never {
-  if (isMediaGuardFailure(error, media?.ids)) throw new NoticeBoardMediaConflictError();
+  if (isMediaGuardFailure(error, [...(media?.ids ?? []), ...(media?.previewIds ?? [])])) throw new NoticeBoardMediaConflictError();
   throw error;
 }
 
@@ -57,7 +65,7 @@ export async function createNoticeBoardPost(db: D1Database, input: CreateNoticeB
   `).bind(mention.id, mention.postId, mention.mentionedUserId, mention.createdAt.getTime()));
   const marker = db.prepare(NOTICE_BOARD_READ_MARKER_UPSERT_SQL)
     .bind(input.authorId, input.wallClockMs, input.id);
-  await db.batch([insert, ...mentions, marker, ...mediaStatements(db, input.id, input.authorId, input.media, input.wallClockMs)]).catch((error) => rethrowMediaConflict(error, input.media));
+  await db.batch([insert, ...mentions, marker, ...mediaStatements(db, input.id, input.authorId, input.media, input.wallClockMs, false)]).catch((error) => rethrowMediaConflict(error, input.media));
 }
 
 export type EditNoticeBoardPostInput = {
@@ -84,7 +92,7 @@ export async function editNoticeBoardPost(db: D1Database, input: EditNoticeBoard
     INSERT INTO notice_board_post_mentions (id, post_id, mentioned_user_id, created_at)
     SELECT ?, ?, ?, ? WHERE ${fence.sql}
   `).bind(mention.id, mention.postId, mention.mentionedUserId, mention.createdAt.getTime(), ...fence.binds));
-  const results = await db.batch([update, ...removed, ...added, ...mediaStatements(db, input.id, input.authorId, input.media, input.editedAt.getTime())]).catch((error) => rethrowMediaConflict(error, input.media));
+  const results = await db.batch([update, ...removed, ...added, ...mediaStatements(db, input.id, input.authorId, input.media, input.editedAt.getTime(), true)]).catch((error) => rethrowMediaConflict(error, input.media));
   return { updated: (results[0]?.meta.changes ?? 0) === 1 };
 }
 
@@ -100,6 +108,7 @@ export async function deleteNoticeBoardPost(db: D1Database, input: { id: string;
       WHERE owner_kind = 'notice_post' AND owner_id = ? AND state IN ('attached', 'detached')
         AND NOT EXISTS (SELECT 1 FROM notice_board_posts WHERE id = ?)
     `).bind(Date.now(), input.id, input.id),
+    db.prepare("DELETE FROM link_previews WHERE owner_kind = 'notice_post' AND owner_id = ? AND NOT EXISTS (SELECT 1 FROM notice_board_posts WHERE id = ?)").bind(input.id, input.id),
   ]);
   return (results[0]?.meta.changes ?? 0) === 1;
 }

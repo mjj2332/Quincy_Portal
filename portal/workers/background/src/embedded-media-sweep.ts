@@ -86,6 +86,8 @@ export async function sweepEmbeddedMedia(env: Pick<Env, "DB" | "MEDIA">, now = D
       console.error("Embedded media sweep failed", { mediaId: row.id, error: errorText(error) });
     }
   }
+  // A link preview nobody saved in a post (#497) goes at the same age. Its image is an ordinary pending row, reclaimed above or on a later run.
+  await env.DB.prepare("DELETE FROM link_previews WHERE owner_id IS NULL AND created_at <= ?").bind(cutoff).run();
   return { scanned: rows.results.length, reclaimed, failed, drained: await drainCleanupQueue(env) };
 }
 
