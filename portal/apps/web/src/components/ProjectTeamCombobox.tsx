@@ -249,14 +249,14 @@ function TeamChipStateIcon({ dataState }: { dataState: TeamChipDataState }) {
   return null;
 }
 
-function TeamChipContent({ option, dataState, roleTag, lockedLabel }: { option: TeamOption; dataState: TeamChipDataState; roleTag?: string; lockedLabel?: string }) {
+function TeamChipContent({ option, dataState, roleTag, lockedLabel, fullName = false }: { option: TeamOption; dataState: TeamChipDataState; roleTag?: string; lockedLabel?: string; /** New shoot shows the whole name; the header keeps the first name. */ fullName?: boolean }) {
   const name = displayName(option.name, option.email);
   return <>
     <Avatar size="sm" className="size-4">
       <AvatarFallback className="text-[length:var(--text-2xs)] leading-none">{initials(option.name, option.email)}</AvatarFallback>
     </Avatar>
     <span className="[overflow-wrap:anywhere]">
-      {firstName(option.name, option.email)}
+      {fullName ? name : firstName(option.name, option.email)}
       {/* Dual-role disambiguation (review fix #204): visible when this userId is displayed in
        *  both the photographer and editor roles, so the two chips are not identical text. */}
       {roleTag && <span className="ml-[var(--space-1)] text-[length:var(--text-2xs)] text-foreground-secondary">{roleTag}</span>}
@@ -344,7 +344,7 @@ function TeamComboboxView({ groups, value, onValueChange, visible, hiddenCount, 
     {/* #213 follow-up: content-sized like prototype 2a's Team `.sel` (chips · Add… · chevron), not a
      *  box stretched to its cell — `w-fit` sizes to the chips and `max-w-full` still wraps them
      *  inside the cell. */}
-    <ComboboxChips ref={anchor} className={cn("w-fit max-w-full rounded-[var(--radius-pill)] max-[721px]:min-h-[44px]", formControl && "min-h-[38px]", rowClassName)}>
+    <ComboboxChips ref={anchor} className={cn("w-fit max-w-full rounded-[var(--radius-pill)] max-[721px]:min-h-[44px]", formControl && "min-h-[38px] w-full rounded-[var(--radius-sm)]", rowClassName)}>
       <ComboboxValue>
         {() => visible.map((option) => {
           const { dataState, isPending, messageId, name, roleTag } = chipProps(option);
@@ -379,7 +379,7 @@ function TeamComboboxView({ groups, value, onValueChange, visible, hiddenCount, 
               onKeyDownCapture: (event) => { if (event.key === "Tab") event.stopPropagation(); },
             }}
           >
-            <TeamChipContent option={option} dataState={dataState} roleTag={roleTag} lockedLabel={locked ? "Default editor" : undefined} />
+            <TeamChipContent option={option} dataState={dataState} roleTag={locked ? undefined : roleTag} lockedLabel={locked ? "Default editor" : undefined} fullName={formControl} />
           </ComboboxChip>;
         })}
       </ComboboxValue>
@@ -409,7 +409,14 @@ function TeamComboboxView({ groups, value, onValueChange, visible, hiddenCount, 
                 </Avatar>
                 <ItemContent className="min-w-0">
                   <ItemTitle className="block max-w-full truncate">{displayName(option.name, option.email)}</ItemTitle>
-                  <ItemDescription className={truncateDescriptions ? "truncate" : undefined} title={truncateDescriptions ? `${option.email} · ${globalRoleLabel(option.globalRole)}` : undefined}>{option.email} · {globalRoleLabel(option.globalRole)}</ItemDescription>
+                  {truncateDescriptions
+                    // Collect mode: the email truncates, the role never does.
+                    ? <ItemDescription className="flex min-w-0 items-baseline gap-1" title={`${option.email} · ${globalRoleLabel(option.globalRole)}`}>
+                      <span className="min-w-0 truncate">{option.email}</span>
+                      <span aria-hidden="true">·</span>
+                      <span className="shrink-0">{globalRoleLabel(option.globalRole)}</span>
+                    </ItemDescription>
+                    : <ItemDescription>{option.email} · {globalRoleLabel(option.globalRole)}</ItemDescription>}
                 </ItemContent>
               </Item>
             </ComboboxItem>}
@@ -669,9 +676,9 @@ export function ProjectTeamCollectCombobox({ photographerUserIds, editorUserIds,
     if (removed.length === 1 && added.length === 0 && (eventDetails.reason === "item-press" || eventDetails.reason === "chip-remove-press")) toggle(removed[0]!);
   }
 
-  // Collect mode always tags a chip with its role (Photo / Edit): the team is reviewed here before Create, with no header context.
+  // Collect mode always tags a chip with its role, spelled out: the team is reviewed here before Create, with no header context.
   function chipProps(option: TeamOption): TeamChipView {
-    return { dataState: "idle", isPending: false, messageId: undefined, name: displayName(option.name, option.email), roleTag: shortRoleTag(option.role) };
+    return { dataState: "idle", isPending: false, messageId: undefined, name: displayName(option.name, option.email), roleTag: roleLabel(option.role) };
   }
 
   return <div className="grid gap-[var(--space-3)]" data-testid="project-team-collect">

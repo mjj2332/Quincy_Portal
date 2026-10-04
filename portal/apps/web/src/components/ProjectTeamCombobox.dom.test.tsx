@@ -933,8 +933,31 @@ describe("ProjectTeamCollectCombobox (#487)", () => {
     const host = await mountCollect();
     await openPicker(host);
     const description = [...options().find((option) => option.textContent?.includes("Ari Photographer"))!.querySelectorAll<HTMLElement>("[title]")].find((element) => element.title.startsWith("ari@example.test"))!;
-    expect(description.className).toContain("truncate");
     expect(description.getAttribute("title")).toBe("ari@example.test · Photographer");
+    // The email truncates; the role sits in its own shrink-0 span so it always shows.
+    const spans = [...description.querySelectorAll("span")];
+    expect(spans.find((span) => span.textContent === "ari@example.test")!.className.split(/\s+/)).toContain("truncate");
+    expect(spans.find((span) => span.textContent === "Photographer")!.className.split(/\s+/)).toContain("shrink-0");
+  });
+
+  it("shows the full name and the spelled-out role on chips, and no role tag on the locked Default editor chip", async () => {
+    const host = await mountCollect({ photographerUserIds: [photographer.id], editorUserIds: [plainEditor.id] });
+    const photographerChip = host.querySelector(`[data-testid="project-member-photographer:${photographer.id}"]`)!;
+    expect(photographerChip.textContent).toContain("Ari Photographer");
+    expect(host.querySelector(`[data-testid="project-member-editor:${plainEditor.id}"]`)!.textContent).toContain("Eli Editor");
+    const locked = host.querySelector(`[data-testid="project-member-editor:${defaultEditor.id}"]`)!;
+    expect(locked.textContent).toContain("Default editor");
+    // No "Editor" role tag on top of "Default editor": strip the name and the Default editor tag, nothing else remains.
+    expect(locked.textContent!.replace("Default editor", "").replace("Dee Default", "").replace(/DD/g, "")).not.toMatch(/Editor/);
+  });
+
+  it("makes the control full width with the inputs' radius, not the pill; the header keeps the pill", async () => {
+    const host = await mountCollect({ photographerUserIds: [photographer.id], editorUserIds: [] });
+    const box = host.querySelector(`[data-testid="project-member-photographer:${photographer.id}"]`)!.parentElement!;
+    const tokens = box.className.split(/\s+/);
+    expect(tokens).toContain("w-full");
+    expect(tokens).toContain("rounded-[var(--radius-sm)]");
+    expect(tokens).not.toContain("rounded-[var(--radius-pill)]");
   });
 
   it("keeps each list row on one line: no wrapping row, and a shrinkable text column (browser pass geometry, #487)", async () => {
