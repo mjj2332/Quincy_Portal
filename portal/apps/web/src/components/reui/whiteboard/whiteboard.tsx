@@ -255,6 +255,8 @@ export type WhiteboardProps = {
   /** View only: nobody edits the board, though controller methods still write (gate your own actions).
    * Without onReadOnlyChange it is held on, and the footer's View Only toggle (Alt+R) switches the board's own. */
   readOnly?: boolean
+  /** Quincy: false hides the canvas's own "View Only" pill when the host shows one itself. Default true. */
+  viewOnlyIndicator?: boolean
   /** Hands the footer's View Only toggle, its Edit button and Alt+R to you: they call this and
    * readOnly follows your state, so a share setting and the canvas stay one switch. */
   onReadOnlyChange?: (readOnly: boolean) => void

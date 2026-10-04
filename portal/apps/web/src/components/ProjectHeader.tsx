@@ -33,7 +33,7 @@ export function WhiteboardButton({ onOpen }: { onOpen: () => void }) {
     <TooltipTrigger render={<Button type="button" variant="ghost" size="icon" aria-label="Open whiteboard" data-testid="project-whiteboard-open" className="min-h-[44px] min-w-[44px]" onClick={onOpen} />}>
       <PresentationIcon className="size-4" aria-hidden="true" />
     </TooltipTrigger>
-    <TooltipContent>Open whiteboard</TooltipContent>
+    <TooltipContent side="bottom">Open whiteboard</TooltipContent>
   </Tooltip>;
 }
 
@@ -331,7 +331,9 @@ export function ProjectHeader({
       </div>}
     </div>
 
-    <div className="project-header__tabs flex items-center gap-[var(--space-2)]" ref={tabsRef}>
+    {/* The entry button sits beside the scroller, not inside it: at phone width the tabs scroll sideways and it must stay in view. */}
+    <div className="flex min-w-0 items-center gap-[var(--space-2)]">
+    <div className="project-header__tabs flex min-w-0 flex-1 items-center gap-[var(--space-2)]" ref={tabsRef}>
       <Tabs value={activeTab} onValueChange={(next) => { if (typeof next === "string" && next !== activeTab) onActiveTabChange(next as WorkspaceTab); }}>
         <TabsList variant="line" aria-label="Workspace">
           {availableTabs.map((tab) => { const collection = project.collections.find((item) => item.kind === tab); return (
@@ -349,7 +351,8 @@ export function ProjectHeader({
           </TabsTrigger>
         </TabsList>
       </Tabs>
-      {onOpenWhiteboard && <WhiteboardButton onOpen={onOpenWhiteboard} />}
+    </div>
+    {onOpenWhiteboard && <div className="shrink-0"><WhiteboardButton onOpen={onOpenWhiteboard} /></div>}
     </div>
   </section>;
 }

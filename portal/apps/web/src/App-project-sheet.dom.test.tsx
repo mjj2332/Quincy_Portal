@@ -688,6 +688,12 @@ describe("the Project whiteboard link (#498)", () => {
     expect(stub().dataset.whiteboard).toBe("true");
   });
 
+  it("shows a single close control while the board is open: the sheet's X is hidden (the other tests here click it on the workspace)", async () => {
+    await renderApp(BOARD_PATH, { quincySheet: { v: 1, backdrop: "/?view=table", depth: 2, prev: PROJECT_PATH } });
+    expect(stub().dataset.whiteboard).toBe("true");
+    expect(sheet()!.querySelector('[data-testid="project-sheet-close"]')).toBeNull();
+  });
+
   it("closing steps back onto the workspace entry below, so the previous tab returns", async () => {
     window.localStorage.setItem("quincy:dashboard:view", "table");
     const below = { quincySheet: { v: 1, backdrop: "/?view=table", depth: 1, prev: "/?view=table" } };

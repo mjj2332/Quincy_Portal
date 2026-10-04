@@ -1501,6 +1501,7 @@ export function WhiteboardCanvas({
   onElements,
   onReady,
   readOnly = false,
+  viewOnlyIndicator = true,
   onReadOnlyChange,
   imageTool = true,
   theme,
@@ -2231,6 +2232,7 @@ export function WhiteboardCanvas({
         history={history}
         frames={frames}
         viewOnlyLocked={viewOnlyLocked}
+        viewOnlyIndicator={viewOnlyIndicator}
         imageTool={imageTool}
         platform={platform}
         menu={menu}

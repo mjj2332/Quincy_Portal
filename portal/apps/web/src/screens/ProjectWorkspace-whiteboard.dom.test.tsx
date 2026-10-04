@@ -167,7 +167,13 @@ describe("the whiteboard entry button (#498)", () => {
     expect(button).not.toBeNull();
     expect(button.getAttribute("aria-label")).toBe("Open whiteboard");
     expect(button.closest('[role="tablist"]')).toBeNull();
-    expect(button.previousElementSibling!.contains(tab("Collaboration")!)).toBe(true);
+    // Beside the horizontally scrolling tab strip, never inside it (it would scroll out of view at 390px):
+    // the strip is the tablist's ancestor that sits directly under the wrapper that also holds the button.
+    let strip: Element = tab("Collaboration")!.closest('[role="tablist"]')!;
+    while (strip.parentElement && !strip.parentElement.contains(button)) strip = strip.parentElement;
+    expect(strip.contains(button)).toBe(false);
+    expect(strip.nextElementSibling!.contains(button)).toBe(true);   // a sibling after the scroller
+    expect(button.parentElement!.previousElementSibling!.contains(tab("Collaboration")!)).toBe(true);
     await click(button);
     expect(onOpenWhiteboard).toHaveBeenCalledTimes(1);
   });
@@ -277,6 +283,9 @@ describe("the open whiteboard (#498)", () => {
     await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
     expect(board.props?.readOnly).toBe(true);
     expect(document.querySelector('[data-testid="project-whiteboard-view-only"]')?.textContent).toBe("View only");
+    // One indicator only: the canvas's own pill is off, and a read-only board has no save status to show.
+    expect((board.props as { viewOnlyIndicator?: boolean }).viewOnlyIndicator).toBe(false);
+    expect(document.querySelector('[data-testid="project-whiteboard-status"]')).toBeNull();
   });
 
   it("Esc inside the board never closes the sheet", async () => {

@@ -612,7 +612,7 @@ function Zoom({
                   <Button
                     variant="outline"
                     aria-label={`Zoom ${percent}%, zoom options`}
-                    className="min-w-16 tabular-nums"
+                    className="h-8 min-w-16 tabular-nums"
                   />
                 }
               />
@@ -1087,6 +1087,8 @@ export type WhiteboardChromeProps = {
   frames: readonly ChromeFrame[]
   /** The host holds the board view only, so the toggle cannot lift it. */
   viewOnlyLocked: boolean
+  /** Quincy: false drops the "View Only" pill when the host holds the board view only and says so itself. */
+  viewOnlyIndicator?: boolean
   /** #498: false hides the Image tool. */
   imageTool: boolean
   platform: ShortcutPlatform
@@ -1120,6 +1122,7 @@ export const WhiteboardChrome = memo(function WhiteboardChrome({
   history,
   frames,
   viewOnlyLocked,
+  viewOnlyIndicator = true,
   imageTool,
   platform,
   menu,
@@ -1154,7 +1157,7 @@ export const WhiteboardChrome = memo(function WhiteboardChrome({
     </div>
   )
   const top = state.viewMode ? (
-    <ViewOnlyBar
+    !viewOnlyIndicator && viewOnlyLocked ? null : <ViewOnlyBar
       locked={viewOnlyLocked}
       platform={platform}
       onViewOnly={onViewOnly}
@@ -1180,7 +1183,7 @@ export const WhiteboardChrome = memo(function WhiteboardChrome({
         ref={layerRef}
         data-slot="whiteboard-chrome"
         inert={loading}
-        className="@container pointer-events-none absolute inset-0 z-10"
+        className="@container pointer-events-none absolute inset-0 z-10 max-[721px]:[--wb-control-size:44px] max-[721px]:[&_[data-slot=button]]:min-h-11 max-[721px]:[&_[data-slot=button]]:min-w-11"
       >
         {state.phone ? (
           <>

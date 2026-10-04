@@ -103,6 +103,8 @@ export const WHITEBOARD_THEME = [
   "[:root:has(&)_.excalidraw_:is(.zoom-actions,.mobile-misc-tools-container)]:hidden!",
   // Undo and redo too: the kit's footer clicks these hidden buttons (0.18.1 has no API)
   "[:root:has(&)_.excalidraw_:is(.undo-redo-buttons,.App-toolbar-content>div:has(>[data-testid=button-undo]))]:hidden!",
+  // The phone bar takes 44px controls (WCAG 2.5.5) until the canvas measures the footer
+  "max-[721px]:[--wb-control-size:44px]",
   "[:root:has(&)_.excalidraw_.App-bottom-bar]:[--default-button-size:var(--wb-control-size,2rem)]!",
   "[:root:has(&)_.excalidraw_.App-bottom-bar>.Island_.App-toolbar-content]:p-1!",
   "[:root:has(&)_.excalidraw_.App-bottom-bar>.Island_.App-toolbar-content]:gap-1!",

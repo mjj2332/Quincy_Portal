@@ -99,12 +99,12 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
   const statusLabel = connection === "reconnecting" ? "Reconnecting" : saveStatus === "saving" ? "Saving" : saveStatus === "error" ? "Not saved" : saveStatus === "unsaved" ? "Unsaved changes" : "Saved";
 
   return (
-    <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-[var(--space-3)] h-[calc(100dvh-var(--space-8))] min-h-[28rem]" data-testid="project-whiteboard" data-quincy-whiteboard aria-label={`Whiteboard for ${street}`}>
+    <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-[var(--space-3)] px-[var(--space-6)] py-[var(--space-5)] max-[721px]:p-[var(--space-4)] h-[calc(100dvh-var(--space-8))] max-[721px]:h-[calc(100dvh-var(--impersonation-banner-height,0px))] min-h-[28rem]" data-testid="project-whiteboard" data-quincy-whiteboard aria-label={`Whiteboard for ${street}`}>
       <div className="flex flex-wrap items-center gap-[var(--space-2)]">
         <Button type="button" variant="ghost" onClick={() => void requestClose()} data-testid="project-whiteboard-close"><ArrowLeftIcon className="size-3.5" aria-hidden="true" data-icon="inline-start" />Close whiteboard</Button>
         <h2 className="serif [font:var(--type-h3)] me-auto min-w-0 truncate">{street}</h2>
         {mode === "view" && <Badge variant="primary-light" data-testid="project-whiteboard-view-only">View only</Badge>}
-        <span className="[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" role="status" data-testid="project-whiteboard-status">{deleted ? "Deleted" : statusLabel}</span>
+        {(deleted || mode !== "view") && <span className="[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" role="status" data-testid="project-whiteboard-status">{deleted ? "Deleted" : statusLabel}</span>}
         <CopyProjectLinkButton projectId={projectId} tab="collaboration" whiteboard />
       </div>
       <div className="min-h-0 relative border-solid border-[length:var(--border-width-hair)] border-border bg-card">
@@ -121,6 +121,7 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
                     label={`Whiteboard for ${street}`}
                     initialData={initialData}
                     readOnly={mode === "view"}
+                    viewOnlyIndicator={false}
                     imageTool={false}
                     background="grid"
                     onReady={(controller) => { controllerRef.current = controller; }}

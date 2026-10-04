@@ -537,6 +537,7 @@ function DashboardLayer() {
           sheetKey={isSheetRoute && (route.kind === "project" || route.kind === "edit-project") ? `${route.kind}:${route.projectId}` : "closed"}
           backdropHref={backdropLocation}
           onRequestClose={closeProjectSheet}
+          closeButton={!(route.kind === "project" && route.whiteboard === true)}
           impersonating={impersonating}
           finalFocus={finalFocus}
         >
