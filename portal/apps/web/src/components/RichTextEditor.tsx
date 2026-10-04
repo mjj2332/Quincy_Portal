@@ -1,14 +1,18 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
-import { Extension } from "@tiptap/core";
-import { setBlockType } from "@tiptap/pm/commands";
-import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { Plugin } from "@tiptap/pm/state";
 import { EditorContent, useEditor } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
-import HardBreak from "@tiptap/extension-hard-break";
-import Mention from "@tiptap/extension-mention";
-import { ListItem, TaskItem, TaskList } from "@tiptap/extension-list";
 import { isHttpUrl, RICH_TEXT_JSON_MAX_BYTES, RICH_TEXT_MAX_NESTING, richTextDocByteLength, richTextPlainText, type RichTextDoc } from "@quincy/shared";
+import {
+  createRichTextEditorExtensions,
+  itemContainerDepth,
+  mentionQuery,
+  RICH_TEXT_MAX_ITEM_CONTAINER_LEVELS,
+  shouldBlockListIndent,
+  tiptapToRichTextDoc,
+  toTiptap,
+} from "../lib/rich-text-tiptap";
+// The schema/serialisation contract moved to `lib/rich-text-tiptap.ts` (#491); re-exported here so
+// existing importers (and the direct schema regression tests) keep working unchanged.
+export { createRichTextEditorExtensions, shouldBlockListIndent, tiptapToRichTextDoc } from "../lib/rich-text-tiptap";
 import { cn } from "../lib/utils";
 import { MentionAutocomplete, type MentionAutocompleteHandle, type MentionableUser } from "./MentionAutocomplete";
 import { Modal } from "./Modal";
@@ -27,12 +31,7 @@ import { NativeSelect } from "./quincy/NativeSelect";
 // sees each one complete.
 const EDITOR_CONTENT_UTILITIES =
   FIELD_BOX +
-  " min-h-[var(--space-8)] bg-[var(--paper-050)] group-data-[disabled]:bg-surface-sunken " +
-  "[&.is-editor-empty:first-child]:before:content-[attr(data-placeholder)] " +
-  "[&.is-editor-empty:first-child]:before:text-foreground-secondary " +
-  "[&.is-editor-empty:first-child]:before:float-left " +
-  "[&.is-editor-empty:first-child]:before:h-0 " +
-  "[&.is-editor-empty:first-child]:before:pointer-events-none";
+  " min-h-[var(--space-8)] bg-[var(--paper-050)] group-data-[disabled]:bg-surface-sunken ";
 
 // #376 `variant="field"` — the content surface inside an `InputGroup` that already draws the one
 // border, ground and focus ring, so the box utilities (`FIELD_BOX`'s border, radius, ground and
@@ -41,12 +40,7 @@ const EDITOR_CONTENT_UTILITIES =
 // draws the field's single indicator via `X`.
 const EDITOR_CONTENT_FIELD_UTILITIES =
   "min-h-[var(--space-8)] w-full min-w-0 px-[var(--space-3)] py-[var(--space-2)] text-base md:text-sm " +
-  "bg-transparent focus-visible:!outline-none " +
-  "[&.is-editor-empty:first-child]:before:content-[attr(data-placeholder)] " +
-  "[&.is-editor-empty:first-child]:before:text-foreground-secondary " +
-  "[&.is-editor-empty:first-child]:before:float-left " +
-  "[&.is-editor-empty:first-child]:before:h-0 " +
-  "[&.is-editor-empty:first-child]:before:pointer-events-none";
+  "bg-transparent focus-visible:!outline-none ";
 
 // The group wrapper's call-site divergences from `InputGroup` (D5): `has-disabled:bg-card` because
 // the base's deep `:has(:disabled)` would paint the whole field sunken as soon as Undo/Redo are
@@ -74,130 +68,6 @@ const FIELD_INPUT = "bg-card border-solid border-[length:var(--border-width-hair
   "max-[721px]:min-h-[44px]";
 const FIELD_ERROR = "m-0 text-destructive text-[length:var(--text-xs)]";
 
-function toTiptap(doc: RichTextDoc): Record<string, unknown> {
-  const copy = (node: unknown): unknown => {
-    if (!node || typeof node !== "object" || Array.isArray(node)) return node;
-    const valueNode = node as Record<string, unknown>;
-    if (valueNode.type === "text") return {
-      type: "text",
-      text: valueNode.text,
-      ...(Array.isArray(valueNode.marks) ? { marks: valueNode.marks.map((mark) => {
-        const current = mark as Record<string, unknown>;
-        return current.type === "link" ? { type: "link", attrs: { href: current.href } } : { ...current };
-      }) } : {}),
-    };
-    if (valueNode.type === "mention") return { type: "mention", attrs: { ...(valueNode.attrs as Record<string, unknown>) } };
-    if (valueNode.type === "heading" || valueNode.type === "taskItem") return { type: valueNode.type, attrs: { ...(valueNode.attrs as Record<string, unknown>) }, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
-    return { type: valueNode.type, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
-  };
-  return copy(doc) as Record<string, unknown>;
-}
-
-const ListItemHardBreak = HardBreak.extend({
-  addKeyboardShortcuts() {
-    return {
-      "Shift-Enter": () => {
-        if (!this.editor.isActive("listItem")) return true;
-        return this.editor.commands.setHardBreak();
-      },
-    };
-  },
-});
-
-/** Tiptap's generic block commands otherwise lift a list item before making it a heading. */
-const ListItemHeadingCommandBoundary = Extension.create({
-  addCommands() {
-    return {
-      setNode: (typeOrName, attributes = {}) => (props) => {
-        if ((typeof typeOrName === "string" ? typeOrName : typeOrName.name) === "heading" && (this.editor.isActive("listItem") || this.editor.isActive("taskItem"))) return false;
-        const type = typeof typeOrName === "string" ? props.state.schema.nodes[typeOrName] : typeOrName;
-        if (!type?.isTextblock) return false;
-        const attributesToCopy = props.state.selection.$anchor.sameParent(props.state.selection.$head) ? props.state.selection.$anchor.parent.attrs : undefined;
-        return props.chain()
-          .command(({ commands }) => setBlockType(type, { ...attributesToCopy, ...attributes })(props.state) || commands.clearNodes())
-          .command(({ state }) => setBlockType(type, { ...attributesToCopy, ...attributes })(state, props.dispatch))
-          .run();
-      },
-    };
-  },
-});
-
-const LIST_NESTING_CONTAINERS = new Set(["bulletList", "orderedList", "taskList", "listItem", "taskItem"]);
-/** A level is a list plus its item; the server starts the outer list at depth zero. */
-const RICH_TEXT_MAX_ITEM_CONTAINER_LEVELS = Math.floor((RICH_TEXT_MAX_NESTING + 1) / 2);
-
-function isListNestingContainer(node: ProseMirrorNode): boolean {
-  return LIST_NESTING_CONTAINERS.has(node.type.name);
-}
-
-function exceedsListNestingLimit(doc: ProseMirrorNode): boolean {
-  const visit = (node: ProseMirrorNode, depth: number): boolean => {
-    if (isListNestingContainer(node) && depth > RICH_TEXT_MAX_NESTING) return true;
-    let exceeded = false;
-    // Match parseBlock(): only descending from a list or list-item consumes nesting depth.
-    node.forEach((child) => { if (!exceeded) exceeded = visit(child, depth + (isListNestingContainer(node) ? 1 : 0)); });
-    return exceeded;
-  };
-  let exceeded = false;
-  doc.forEach((child) => { if (!exceeded) exceeded = visit(child, 0); });
-  return exceeded;
-}
-
-function itemContainerDepth($from: { depth: number; node: (depth: number) => { type: { name: string } } }): number {
-  let count = 0;
-  for (let depth = 0; depth <= $from.depth; depth += 1) {
-    const name = $from.node(depth).type.name;
-    if (name === "listItem" || name === "taskItem") count += 1;
-  }
-  return count;
-}
-
-export function shouldBlockListIndent(event: Pick<KeyboardEvent, "key" | "shiftKey">, depth: number): boolean {
-  return event.key === "Tab" && !event.shiftKey && depth >= RICH_TEXT_MAX_ITEM_CONTAINER_LEVELS;
-}
-
-/** Rejects d9 list transactions before ProseMirror mutates the editor document. */
-const ListNestingBoundary = Extension.create({
-  name: "listNestingBoundary",
-  addProseMirrorPlugins() {
-    return [new Plugin({
-      filterTransaction: (transaction) => {
-        if (!transaction.docChanged || !exceedsListNestingLimit(transaction.doc)) return true;
-        this.editor.view?.dom.dispatchEvent(new Event("rich-text-nesting-blocked"));
-        return false;
-      },
-    })];
-  },
-});
-
-/** The Phase 2C editor schema, shared with direct schema regression tests. */
-export function createRichTextEditorExtensions() {
-  const itemContent = "paragraph (paragraph|bulletList|orderedList|taskList)*";
-  return [
-    StarterKit.configure({
-      heading: { levels: [2, 3] },
-      blockquote: false,
-      codeBlock: false,
-      horizontalRule: false,
-      hardBreak: false,
-      strike: {},
-      code: false,
-      underline: {},
-      listItem: false,
-      listKeymap: false,
-      trailingNode: false,
-      undoRedo: {},
-      link: { openOnClick: false, autolink: false, linkOnPaste: false },
-    }),
-    ListItem.extend({ content: itemContent }),
-    ListItemHardBreak,
-    TaskList.configure({}),
-    TaskItem.extend({ content: itemContent }).configure({ nested: true }),
-    Mention.configure({ HTMLAttributes: { class: "rich-text__mention" }, suggestion: { items: () => [] } }),
-    ListItemHeadingCommandBoundary,
-    ListNestingBoundary,
-  ];
-}
 
 function ToolbarGroup({ children, field }: { children: ReactNode; field?: boolean }) {
   // #376 field variant on a phone: the toolbar is one horizontally scrolling row, so each group keeps its buttons on one line.
@@ -229,38 +99,6 @@ function ToolbarButton({ label, active, disabled, onClick, children, field = fal
 
 function ToolbarDivider() { return <span className="w-px h-[var(--space-5)] bg-border shrink-0" aria-hidden="true" />; }
 
-/** Removes TipTap-only attributes before data leaves the browser. */
-export function tiptapToRichTextDoc(value: unknown): RichTextDoc {
-  const copy = (node: unknown): unknown => {
-    if (!node || typeof node !== "object" || Array.isArray(node)) return node;
-    const valueNode = node as Record<string, unknown>;
-    if (valueNode.type === "text") return { type: "text", text: valueNode.text, ...(Array.isArray(valueNode.marks) ? { marks: valueNode.marks.map((mark) => {
-      const current = mark as Record<string, unknown>;
-      return current.type === "link" ? { type: "link", href: current.attrs && typeof current.attrs === "object" ? (current.attrs as Record<string, unknown>).href : undefined } : { type: current.type };
-    }) } : {}) };
-    if (valueNode.type === "mention") {
-      const attrs = valueNode.attrs as Record<string, unknown> | undefined;
-      return { type: "mention", attrs: { id: attrs?.id, label: attrs?.label } };
-    }
-    if (valueNode.type === "heading") {
-      const attrs = valueNode.attrs as Record<string, unknown> | undefined;
-      return { type: "heading", attrs: { level: attrs?.level }, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
-    }
-    if (valueNode.type === "taskItem") {
-      const attrs = valueNode.attrs as Record<string, unknown> | undefined;
-      return { type: "taskItem", attrs: { checked: attrs?.checked }, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
-    }
-    return { type: valueNode.type, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
-  };
-  return copy(value) as RichTextDoc;
-}
-
-function mentionQuery(editor: NonNullable<ReturnType<typeof useEditor>>): string | null {
-  const { from } = editor.state.selection;
-  const before = editor.state.doc.textBetween(Math.max(0, from - 160), from, "\n", (node) => node.type.name === "hardBreak" ? "\n" : "\0");
-  const match = before.match(/(?:^|\s)@([^\s@]*)$/u);
-  return match ? match[1]! : null;
-}
 
 export function RichTextEditor({ value, onChange, limit, disabled = false, loadMentionables, placeholder = "Write a message…", id, onSubmit, variant = "stacked" }: {
   value: RichTextDoc;

@@ -213,6 +213,126 @@ describe("a person's save and the Automatic Deadline (#484)", () => {
   });
 });
 
+describe("an Automatic Deadline follows a shoot-date reschedule (#485)", () => {
+  const putDeadline = (projectId: string, body: unknown) => request(`/api/projects/${projectId}/deadline`, "PUT", body);
+  const patchDate = (projectId: string, shootDate: string | null) => request(`/api/projects/${projectId}`, "PATCH", { shootDate });
+  const movedAudits = async (projectId: string) => (await database.DB.prepare("SELECT actor_id, meta_json FROM audit_log WHERE target_id = ? AND action = 'project.deadline.automatic_moved'").bind(projectId).all<{ actor_id: string | null; meta_json: string }>()).results;
+  const slots = async (projectId: string) => (await database.DB.prepare("SELECT reminder_offset_minutes AS offset, status, terminal_reason AS reason, schedule_version AS version, fire_at, fired_at FROM project_deadline_occurrences WHERE project_id = ? ORDER BY schedule_version, reminder_offset_minutes DESC").bind(projectId).all<{ offset: number; status: string; reason: string | null; version: number; fire_at: number; fired_at: number | null }>()).results;
+  const DEFAULT_BODY = { reminderOffsetsMinutes: [1440, 240, 60] };
+
+  it("moves an automatic Deadline across the DST change, bumps its version and audits it with a system actor", async () => {
+    // Thu 1 Oct shoot: due Fri 2 Oct 17:00 +10:00. Rescheduled to Fri 2 Oct: due Mon 5 Oct 17:00 +11:00.
+    const projectId = await createProject({ shootDate: "2026-10-01" });
+    expect(await deadlineOf(projectId)).toMatchObject({ deadline_local_civil: "2026-10-02T17:00", deadline_version: 1, deadline_utc_offset_minutes: 600 });
+    expect((await patchDate(projectId, "2026-10-02")).status).toBe(200);
+    expect(await deadlineOf(projectId)).toEqual({ deadline_at: AUTOMATIC_MONDAY.at, deadline_local_civil: AUTOMATIC_MONDAY.civil, deadline_source: "automatic", deadline_version: 2, deadline_utc_offset_minutes: 660 });
+    const audits = await movedAudits(projectId);
+    expect(audits).toHaveLength(1);
+    expect(audits[0]!.actor_id).toBeNull();
+    expect(JSON.parse(audits[0]!.meta_json)).toMatchObject({ actor: "system", reason: "details", shootDate: "2026-10-02", previousDeadlineLocalCivil: "2026-10-02T17:00", deadlineLocalCivil: AUTOMATIC_MONDAY.civil, version: 2 });
+    const rows = await slots(projectId);
+    // v1's 24h slot had already elapsed when it was created (skipped); the rest were pending and are replaced.
+    expect(rows.filter((row) => row.version === 1).map((row) => [row.offset, row.status, row.reason])).toEqual([[1440, "skipped", "elapsed_at_save"], [240, "superseded", "schedule_replaced"], [60, "superseded", "schedule_replaced"], [0, "superseded", "schedule_replaced"]]);
+    expect(rows.filter((row) => row.version === 2).map((row) => [row.offset, row.status, row.fire_at])).toEqual([1440, 240, 60, 0].map((offset) => [offset, "pending", AUTOMATIC_MONDAY.at - offset * 60_000]));
+    const detail = await (await request(`/api/projects/${projectId}`, "GET")).json() as { deadlineSchedule: { source: string; version: number; deadline: { localCivil: string } } };
+    expect(detail.deadlineSchedule).toMatchObject({ source: "automatic", version: 2, deadline: { localCivil: AUTOMATIC_MONDAY.civil } });
+  });
+
+  it("never moves a Deadline a person set, even at exactly the automatic value", async () => {
+    const differing = await createProject({ shootDate: "2026-10-01" });
+    expect((await putDeadline(differing, { expectedVersion: 1, deadline: { localCivil: "2026-10-20T09:00" }, ...DEFAULT_BODY })).status).toBe(200);
+    expect((await patchDate(differing, "2026-10-02")).status).toBe(200);
+    expect(await deadlineOf(differing)).toMatchObject({ deadline_local_civil: "2026-10-20T09:00", deadline_source: "manual", deadline_version: 2 });
+    expect(await movedAudits(differing)).toHaveLength(0);
+
+    // The binding case: confirming the automatic value bumps no version but makes it manual.
+    const confirmed = await createProject({ shootDate: "2026-10-01" });
+    expect((await putDeadline(confirmed, { expectedVersion: 1, deadline: { localCivil: "2026-10-02T17:00" }, ...DEFAULT_BODY })).status).toBe(200);
+    expect(await deadlineOf(confirmed)).toMatchObject({ deadline_source: "manual", deadline_version: 1 });
+    expect((await patchDate(confirmed, "2026-10-02")).status).toBe(200);
+    expect(await deadlineOf(confirmed)).toMatchObject({ deadline_local_civil: "2026-10-02T17:00", deadline_source: "manual", deadline_version: 1 });
+    expect(await movedAudits(confirmed)).toHaveLength(0);
+  });
+
+  it("carries a sent reminder as sent and reschedules the unsent ones, with no notification traffic", async () => {
+    const projectId = await createProject({ shootDate: "2026-10-01" });
+    const sentAt = Date.now() - 1000;
+    await database.DB.prepare("UPDATE project_deadline_occurrences SET status = 'fired', terminal_reason = NULL, fired_at = ? WHERE project_id = ? AND reminder_offset_minutes = 1440").bind(sentAt, projectId).run();
+    expect((await patchDate(projectId, "2026-10-02")).status).toBe(200);
+    const v2 = (await slots(projectId)).filter((row) => row.version === 2);
+    expect(v2.map((row) => [row.offset, row.status, row.fired_at])).toEqual([[1440, "fired", sentAt], [240, "pending", null], [60, "pending", null], [0, "pending", null]]);
+    expect(v2.filter((row) => row.status === "pending").map((row) => row.fire_at)).toEqual([240, 60, 0].map((offset) => AUTOMATIC_MONDAY.at - offset * 60_000));
+    expect(await database.DB.prepare("SELECT count(*) AS n FROM notification_outbox WHERE project_id = ?").bind(projectId).first()).toEqual({ n: 0 });
+  });
+
+  it("carries a sent reminder through a second move", async () => {
+    const projectId = await createProject({ shootDate: "2026-10-01" });
+    const sentAt = Date.now() - 1000;
+    await database.DB.prepare("UPDATE project_deadline_occurrences SET status = 'fired', terminal_reason = NULL, fired_at = ? WHERE project_id = ? AND reminder_offset_minutes = 240").bind(sentAt, projectId).run();
+    expect((await patchDate(projectId, "2026-10-02")).status).toBe(200);
+    expect((await patchDate(projectId, "2026-10-12")).status).toBe(200);
+    expect(await deadlineOf(projectId)).toMatchObject({ deadline_local_civil: "2026-10-13T17:00", deadline_version: 3 });
+    const v3 = (await slots(projectId)).filter((row) => row.version === 3);
+    expect(v3.map((row) => [row.offset, row.status, row.fired_at])).toEqual([[1440, "pending", null], [240, "fired", sentAt], [60, "pending", null], [0, "pending", null]]);
+  });
+
+  it("skips every unsent reminder when the move lands in the past, due-now included", async () => {
+    const projectId = await createProject({ shootDate: "2026-10-01" });
+    expect((await patchDate(projectId, "2026-09-02")).status).toBe(200);
+    expect(await deadlineOf(projectId)).toMatchObject({ deadline_local_civil: "2026-09-03T17:00", deadline_version: 2 });
+    const v2 = (await slots(projectId)).filter((row) => row.version === 2);
+    expect(v2).toHaveLength(4);
+    expect(v2.every((row) => row.status === "skipped" && row.reason === "elapsed_at_save")).toBe(true);
+  });
+
+  it("leaves the Deadline alone when the reschedule resolves to the same Deadline", async () => {
+    const projectId = await createProject({ shootDate: "2026-10-10" });
+    expect((await patchDate(projectId, "2026-10-11")).status).toBe(200);
+    expect(await deadlineOf(projectId)).toMatchObject({ deadline_local_civil: "2026-10-12T17:00", deadline_version: 1 });
+    expect(await movedAudits(projectId)).toHaveLength(0);
+    expect((await slots(projectId)).every((row) => row.version === 1 && row.status === "pending")).toBe(true);
+  });
+
+  it("clearing the shoot date, or writing free text, leaves the Deadline automatic; a returning date recomputes it", async () => {
+    const projectId = await createProject({ shootDate: "2026-10-01" });
+    expect((await patchDate(projectId, null)).status).toBe(200);
+    expect(await deadlineOf(projectId)).toMatchObject({ deadline_local_civil: "2026-10-02T17:00", deadline_source: "automatic", deadline_version: 1 });
+    expect((await patchDate(projectId, "TBC")).status).toBe(200);
+    expect(await deadlineOf(projectId)).toMatchObject({ deadline_local_civil: "2026-10-02T17:00", deadline_source: "automatic", deadline_version: 1 });
+    expect(await movedAudits(projectId)).toHaveLength(0);
+    expect((await patchDate(projectId, "2026-10-02")).status).toBe(200);
+    expect(await deadlineOf(projectId)).toMatchObject({ deadline_local_civil: AUTOMATIC_MONDAY.civil, deadline_source: "automatic", deadline_version: 2 });
+    expect(JSON.parse((await movedAudits(projectId))[0]!.meta_json)).toMatchObject({ shootDate: "2026-10-02", reason: "details" });
+  });
+
+  it("rejects a Deadline save made against the version from before an automatic move, at any value", async () => {
+    const projectId = await createProject({ shootDate: "2026-10-01" });
+    expect((await patchDate(projectId, "2026-10-02")).status).toBe(200);
+    for (const localCivil of ["2026-10-20T09:00", AUTOMATIC_MONDAY.civil]) {
+      const stale = await putDeadline(projectId, { expectedVersion: 1, deadline: { localCivil }, ...DEFAULT_BODY });
+      expect(stale.status).toBe(409);
+      expect(await stale.json()).toMatchObject({ code: "deadline_version_conflict", current: { version: 2, source: "automatic" } });
+    }
+    expect(await deadlineOf(projectId)).toMatchObject({ deadline_source: "automatic", deadline_version: 2 });
+  });
+
+  it("does not move a Delivered Project's Deadline", async () => {
+    const projectId = await createProject({ shootDate: "2026-10-01" });
+    await database.DB.prepare("UPDATE projects SET stage_key = 'delivered' WHERE id = ?").bind(projectId).run();
+    expect((await patchDate(projectId, "2026-10-02")).status).toBe(200);
+    expect(await deadlineOf(projectId)).toMatchObject({ deadline_local_civil: "2026-10-02T17:00", deadline_version: 1 });
+    expect(await movedAudits(projectId)).toHaveLength(0);
+  });
+
+  it("does not backfill a Deadline on a reschedule of a Project that holds a shoot date and no Deadline", async () => {
+    const projectId = await seedProject({ shootDate: "2026-09-15" });
+    expect((await patchDate(projectId, "2026-10-02")).status).toBe(200);
+    expect(await deadlineOf(projectId)).toMatchObject({ deadline_at: null, deadline_source: "none", deadline_version: 0 });
+    expect(await movedAudits(projectId)).toHaveLength(0);
+    expect(await automaticAudits(projectId)).toHaveLength(0);
+  });
+});
+
 describe("Deadline and Priority on create (#488)", () => {
   const post = (body: Record<string, unknown>) => request("/api/projects", "POST", { street: `New ${crypto.randomUUID()}`, ...body });
   const projectCount = async () => (await database.DB.prepare("SELECT COUNT(*) AS n FROM projects").first<{ n: number }>())!.n;

@@ -1,6 +1,6 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { boardSchemaVariant, projectColumnsForVariant, type BoardSchemaVariant, type Database } from "@quincy/db";
-import { buildAutomaticDeadlineBundle, COLLECTION_RECEIVED_COUNT_SQL, appendToStageBottomExpr, collectionReceivedCountBindings, selectEffectiveDefaultEditorIds } from "@quincy/db";
+import { buildAutomaticDeadlineBundle, buildAutomaticDeadlineMoveBundle, COLLECTION_RECEIVED_COUNT_SQL, appendToStageBottomExpr, collectionReceivedCountBindings, selectEffectiveDefaultEditorIds } from "@quincy/db";
 import { COLLECTION_KINDS, isCanonicalCalendarDate, isVerifiedTonomoShootDateSource, normaliseAddressKey, normalisePath, parseTonomoOrder, publishNotificationOutbox, TonomoParseError, type CollectionKind, type TonomoOrder } from "@quincy/shared";
 import { auditLog, collectionLinks, collections, projects, tonomoOrderTombstones, user, webhookEvents } from "@quincy/db/schema";
 
@@ -277,14 +277,21 @@ async function updateProject(env: Env, project: Project, linkedByAddress: boolea
   }
 
   // #484: gaining a canonical shoot date (it was empty, or unparsed text) gives an empty Deadline its Automatic Deadline in the same
-  // atomic write. A canonical date moving to another one is a reschedule (#485), written through commitShootDateChange below.
+  // atomic write; a Project that still holds an Automatic Deadline instead has it recomputed for the returning date (#485). Both
+  // bundles are appended and their own predicates decide (Deadline empty vs held automatic), so no Deadline state is pre-read and a
+  // version bumped by a concurrent write cannot make the move lose. The date write is fenced on the shoot date this processor read: a
+  // lost fence throws so the queue retries, because writing over a newer date would leave its Deadline behind.
   const gainedShootDate = changes.shootDate !== undefined && (project.shootDate === null || !isCanonicalCalendarDate(project.shootDate));
-  const automaticDeadline = gainedShootDate
-    ? buildAutomaticDeadlineBundle({ db: env.DB, projectId: project.id, shootDate: changes.shootDate!, gate: { kind: "none" }, auditId: crypto.randomUUID(), reason: "tonomo_update", now: Date.now() })
-    : undefined;
-  if (automaticDeadline) {
-    const update = db.update(projects).set(changes).where(eq(projects.id, project.id)).toSQL();
-    await env.DB.batch([env.DB.prepare(update.sql).bind(...update.params), ...automaticDeadline.statements]);
+  const deadlineBundles = gainedShootDate
+    ? [
+      buildAutomaticDeadlineBundle({ db: env.DB, projectId: project.id, shootDate: changes.shootDate!, gate: { kind: "none" }, auditId: crypto.randomUUID(), reason: "tonomo_update", now: Date.now() }),
+      buildAutomaticDeadlineMoveBundle({ db: env.DB, projectId: project.id, shootDate: changes.shootDate!, gate: { kind: "none" }, auditId: crypto.randomUUID(), reason: "tonomo_update", now: Date.now() }),
+    ].flatMap((bundle) => bundle?.statements ?? [])
+    : [];
+  if (deadlineBundles.length) {
+    const update = db.update(projects).set(changes).where(and(eq(projects.id, project.id), sql`${projects.shootDate} IS ${project.shootDate}`)).toSQL();
+    const [written] = await env.DB.batch([env.DB.prepare(update.sql).bind(...update.params), ...deadlineBundles]);
+    if ((written?.meta.changes ?? 0) === 0) throw new Error(`Tonomo shoot date write lost its snapshot for project ${project.id}; the shoot date changed after it was read, retry`);
   } else {
     await db.update(projects).set(changes).where(eq(projects.id, project.id));
   }

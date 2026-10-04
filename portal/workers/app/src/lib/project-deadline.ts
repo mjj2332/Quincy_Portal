@@ -8,7 +8,7 @@ import {
   type ProjectDeadlineScheduleEventIntent,
   type SaveProjectDeadlineRequest,
 } from "@quincy/shared";
-import { buildDeadlineSuppressionBundle, buildProjectActivityStatements, buildShootDateFillBundle, shootDateFillLanded } from "@quincy/db";
+import { buildDeadlineScheduleReplacementStatements, buildDeadlineSuppressionBundle, buildProjectActivityStatements, buildShootDateFillBundle, shootDateFillLanded } from "@quincy/db";
 import { auditMeta, type AuditPrincipal } from "./audit";
 import { newId } from "./ids";
 
@@ -316,29 +316,7 @@ export async function saveProjectDeadlineSchedule(db: D1Database, input: SavePro
       WHERE project_id = ? AND status = 'pending'
         AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
     `).bind(request.operation === "clear" ? "deadline_cleared" : "schedule_replaced", now, input.projectId, auditId),
-    db.prepare(`
-      UPDATE notification_delivery_ledger
-      SET status = 'suppressed', last_error_code = 'reauthorization_suppressed',
-        last_error = 'Deadline schedule changed.', updated_at = ?
-      WHERE event_type = 'project.deadline.reminder' AND status = 'pending'
-        AND EXISTS (
-          SELECT 1 FROM notification_outbox o
-          WHERE o.id = notification_delivery_ledger.outbox_id
-            AND o.project_id = ? AND o.event_type = 'project.deadline.reminder'
-            AND o.source_key IN (SELECT id FROM project_deadline_occurrences WHERE project_id = ?)
-        )
-        AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
-    `).bind(now, input.projectId, input.projectId, auditId),
-    db.prepare(`
-      UPDATE notification_outbox
-      SET status = 'suppressed', lease_token = NULL, lease_expires_at = NULL,
-        completed_at = ?, last_error_code = 'reauthorization_suppressed',
-        last_error = 'Deadline schedule changed.', updated_at = ?
-      WHERE project_id = ? AND event_type = 'project.deadline.reminder'
-        AND status IN ('pending', 'queued')
-        AND NOT EXISTS (SELECT 1 FROM notification_delivery_ledger WHERE outbox_id = notification_outbox.id AND status IN ('pending', 'processing'))
-        AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
-    `).bind(now, now, input.projectId, auditId),
+    ...buildDeadlineScheduleReplacementStatements({ db, projectId: input.projectId, auditId, now }),
   ];
   for (const occurrence of occurrences) {
     statements.push(db.prepare(`
