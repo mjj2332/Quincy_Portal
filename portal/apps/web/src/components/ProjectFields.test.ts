@@ -1,8 +1,14 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import { emptyProjectForm, ProjectFields, projectFieldsPolicy, type ProjectForm, validateProjectFields } from "./ProjectFields";
 import { editProjectPayload } from "../screens/EditProject";
+
+// Create mode mounts the Team combobox, whose candidates query needs a client (it renders its pending state here).
+function withQueryClient(element: ReturnType<typeof createElement>) {
+  return createElement(QueryClientProvider, { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) }, element);
+}
 
 const form: ProjectForm = {
   ...emptyProjectForm,
@@ -68,6 +74,9 @@ describe("project field policies", () => {
     expect(serviceInputs.every(([input]) => input.includes("disabled=\"\""))).toBe(true);
     expect(markup).not.toContain("Invoice amount");
     expect(markup).not.toContain("Payment status");
+    // #487: Edit details has no Team section, so it has no team combobox to adopt.
+    expect(markup).not.toContain("team-heading");
+    expect(markup).not.toContain("Add team member");
     expect(markup).toContain("Order details are managed by the order system and are available here to copy.");
     expect(markup).toContain("Services are fixed after a project is created.");
     expect(markup).toContain("Notes are retained from the original order.");
@@ -75,7 +84,7 @@ describe("project field policies", () => {
 
   it("renders exactly the shared four-control Client contract in Create and Edit", () => {
     const renderClient = (mode: "create" | "edit", errors: Record<string, string> = {}) => {
-      const markup = renderToStaticMarkup(createElement(ProjectFields, { form, errors, mode, onChange: () => undefined, onToggle: () => undefined }));
+      const markup = renderToStaticMarkup(withQueryClient(createElement(ProjectFields, { form, errors, mode, onChange: () => undefined, onToggle: () => undefined })));
       const start = markup.indexOf('<section class="create-project__section" aria-labelledby="client-heading">');
       return markup.slice(start, markup.indexOf("</section>", start) + "</section>".length);
     };
@@ -116,16 +125,17 @@ describe("project field policies", () => {
   });
 
   it("renders create controls as editable and includes invoice and payment fields", () => {
-    const markup = renderToStaticMarkup(createElement(ProjectFields, {
+    const markup = renderToStaticMarkup(withQueryClient(createElement(ProjectFields, {
       form,
       errors: {},
       mode: "create",
       onChange: () => undefined,
       onToggle: () => undefined,
-    }));
+    })));
 
     expect(markup).toContain("Invoice amount");
     expect(markup).toContain("Payment status");
+    expect(markup).toContain("Add team member");
     expect(markup).not.toMatch(/for="project-order-number"[^>]*>Order number<\/label><input[^>]*id="project-order-number"[^>]*(?:readOnly|readonly)=""/);
     expect(markup).not.toMatch(/for="project-order-id"[^>]*>Order ID<\/label><input[^>]*id="project-order-id"[^>]*(?:readOnly|readonly)=""/);
     expect(markup).not.toMatch(/<textarea[^>]*(?:readOnly|readonly)=""/);

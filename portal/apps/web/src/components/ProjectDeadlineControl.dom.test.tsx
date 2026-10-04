@@ -20,10 +20,10 @@ vi.mock("../lib/confirm", () => ({ confirm: confirmMock }));
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const deadline = { localCivil: "2027-01-15T09:00", zone: "Australia/Sydney" as const, utcOffsetMinutes: 600, fold: 0 as const, instant: "2027-01-14T22:00:00.000Z" };
-const emptySchedule: ProjectDeadlineSchedule = { version: 0, deadline: null, reminderOffsetsMinutes: [], state: "unset", nextOccurrence: null, canResume: false };
-const activeSchedule: ProjectDeadlineSchedule = { version: 1, deadline, reminderOffsetsMinutes: [1440], state: "scheduled", nextOccurrence: { kind: "advance", offsetMinutes: 1440, firesAt: "2027-01-13T22:00:00.000Z" }, canResume: false };
-const authorityAfterConflict: ProjectDeadlineSchedule = { version: 2, deadline: { localCivil: "2027-02-20T10:00", zone: "Australia/Sydney", utcOffsetMinutes: 660, fold: 0, instant: "2027-02-19T23:00:00.000Z" }, reminderOffsetsMinutes: [240], state: "scheduled", nextOccurrence: { kind: "advance", offsetMinutes: 240, firesAt: "2027-02-19T19:00:00.000Z" }, canResume: false };
-const savedDraftSchedule: ProjectDeadlineSchedule = { version: 3, deadline: { localCivil: "2026-04-05T02:30", zone: "Australia/Sydney", utcOffsetMinutes: 600, fold: 1, instant: "2026-04-04T16:30:00.000Z" }, reminderOffsetsMinutes: [1440], state: "scheduled", nextOccurrence: { kind: "advance", offsetMinutes: 1440, firesAt: "2026-04-03T16:30:00.000Z" }, canResume: false };
+const emptySchedule: ProjectDeadlineSchedule = { version: 0, source: null, deadline: null, reminderOffsetsMinutes: [], state: "unset", nextOccurrence: null, canResume: false };
+const activeSchedule: ProjectDeadlineSchedule = { version: 1, source: "manual", deadline, reminderOffsetsMinutes: [1440], state: "scheduled", nextOccurrence: { kind: "advance", offsetMinutes: 1440, firesAt: "2027-01-13T22:00:00.000Z" }, canResume: false };
+const authorityAfterConflict: ProjectDeadlineSchedule = { version: 2, source: "manual", deadline: { localCivil: "2027-02-20T10:00", zone: "Australia/Sydney", utcOffsetMinutes: 660, fold: 0, instant: "2027-02-19T23:00:00.000Z" }, reminderOffsetsMinutes: [240], state: "scheduled", nextOccurrence: { kind: "advance", offsetMinutes: 240, firesAt: "2027-02-19T19:00:00.000Z" }, canResume: false };
+const savedDraftSchedule: ProjectDeadlineSchedule = { version: 3, source: "manual", deadline: { localCivil: "2026-04-05T02:30", zone: "Australia/Sydney", utcOffsetMinutes: 600, fold: 1, instant: "2026-04-04T16:30:00.000Z" }, reminderOffsetsMinutes: [1440], state: "scheduled", nextOccurrence: { kind: "advance", offsetMinutes: 1440, firesAt: "2026-04-03T16:30:00.000Z" }, canResume: false };
 const summarySchedule: ProjectDeadlineSchedule = { ...activeSchedule, reminderOffsetsMinutes: [1440, 240, 60], skippedReminderOffsetsMinutes: [1440, 240] };
 
 // Detects whether any class token on a control suppresses the focus outline. Three earlier
@@ -329,6 +329,37 @@ describe("ProjectDeadlineControl", () => {
     await pressInPopup(host, "Cancel");
     expect(onClose).toHaveBeenCalledTimes(2);
     expect(apiPutMock).not.toHaveBeenCalled();
+  });
+
+  // #509: the popover explains an Automatic Deadline and what Apply does; the note follows the schedule shown.
+  describe("Automatic Deadline note (#509)", () => {
+    const automaticSchedule: ProjectDeadlineSchedule = { ...activeSchedule, source: "automatic" };
+    const note = (host: HTMLElement) => host.querySelector('[data-testid="deadline-automatic-note"]');
+
+    it("tells a writer the Deadline is automatic and what Apply does", async () => {
+      const host = await mount(automaticSchedule);
+      expect(note(host)?.textContent).toBe("Automatic: the first weekday after the shoot, at 17:00. It moves with the shoot date until you Apply.");
+    });
+
+    it("shows no note on a manual Deadline", async () => {
+      const host = await mount(activeSchedule);
+      expect(note(host)).toBeNull();
+    });
+
+    it("tells a read-only viewer without an Apply clause", async () => {
+      const host = await mount(automaticSchedule, false);
+      expect(note(host)?.textContent).toBe("Automatic: the first weekday after the shoot, at 17:00. It moves with the shoot date until someone saves it.");
+    });
+
+    it("drops the note when Reload latest shows a manual Deadline", async () => {
+      apiPutMock.mockRejectedValueOnce(new ApiError("Project deadline changed; reload before saving.", 409, { current: authorityAfterConflict }));
+      const host = await mount(automaticSchedule);
+      await applyPopup(host);
+      await flush();
+      expect(note(host)).not.toBeNull();
+      await pressInPopup(host, "Reload latest");
+      expect(note(host)).toBeNull();
+    });
   });
 
   it("keeps the exact draft and exposes reapply controls on a version conflict, without closing", async () => {

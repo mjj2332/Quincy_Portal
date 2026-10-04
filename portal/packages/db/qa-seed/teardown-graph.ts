@@ -101,6 +101,8 @@ export const NO_FK_ID_COLUMNS: readonly NoFkColumn[] = [
   { table: "assets", column: "autohdr_handoff_id", references: "autohdr_handoffs", evidence: "AutoHDR final imported under a handoff" },
   { table: "external_edited_upload_sessions", column: "asset_id", references: "assets", evidence: "routes/external-uploads.ts reads schema.assets by session.assetId" },
   { table: "external_edited_upload_sessions", column: "membership_cycle_id", references: "project_members", evidence: "external-upload-sweep.ts: INNER JOIN project_members pm ON pm.id = s.membership_cycle_id" },
+  { table: "embedded_media", column: "owner_id", references: "*", evidence: "polymorphic by owner_kind (project_comment today) — workers/app/src/lib/project-comments.ts attaches rows to the comment id" },
+  { table: "embedded_media_cleanup", column: "project_id", references: "projects", evidence: "workers/app/src/routes/projects.ts queues the key of every embedded_media row of a Project it hard-deletes, with that Project id" },
   { table: "notice_board_read_markers", column: "last_read_post_id", references: "notice_board_posts", evidence: "read marker's last-read notice-board post" },
 ];
 
@@ -119,6 +121,7 @@ export const SHARED_PARENT_TABLES: Readonly<Record<string, string>> = {
   agencies: "global agency directory: projects.agency_id points at a shared agency row a browser pass may pick for a fixture project; teardown never deletes directory rows",
   agents: "global agent directory: projects.agent_id points at a shared agent row a browser pass may pick for a fixture project; teardown never deletes directory rows",
   integration_connections: "the one Dropbox/AutoHDR connection every project's AutoHDR handoffs, mappings and claims share; teardown never deletes it",
+  notification_digests: "per-recipient digest send records (#489): digest items point at one with ON DELETE SET NULL, but a digest belongs to a recipient and a slot, never to a fixture project; teardown never deletes them",
   pipeline_stages: "global stage lookup named in the round-3 review; no FK points at it today (projects.stage_key is a bare text key), so this entry is inert until one does",
 };
 

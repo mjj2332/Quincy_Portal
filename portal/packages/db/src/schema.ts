@@ -180,6 +180,11 @@ export const projects = sqliteTable(
     rawFolderPath: text("raw_folder_path"),
     coverAssetId: text("cover_asset_id"),
     archivedAt: integer("archived_at", { mode: "timestamp_ms" }),
+    /** Latest Edited-media arrival (epoch ms) awaiting the 15-minute quiet-period move to Edited review; NULL when none is pending. */
+    editedArrivedAt: integer("edited_arrived_at"),
+    /** Failed move attempts for the pending arrival, and when the pass may try again (backoff). Reset by every new arrival. */
+    editedArrivalAttempts: integer("edited_arrival_attempts").notNull().default(0),
+    editedArrivalRetryAt: integer("edited_arrival_retry_at"),
     archivedBy: text("archived_by").references(() => user.id),
     deadlineLocalCivil: text("deadline_local_civil"),
     deadlineZone: text("deadline_zone", { enum: ["Australia/Sydney"] }),
@@ -188,6 +193,7 @@ export const projects = sqliteTable(
     deadlineAt: integer("deadline_at"),
     deadlineReminderOffsetsJson: text("deadline_reminder_offsets_json"),
     deadlineVersion: integer("deadline_version").notNull().default(0),
+    deadlineSource: text("deadline_source", { enum: ["automatic", "manual", "none"] as const }).notNull().default("none"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -195,6 +201,8 @@ export const projects = sqliteTable(
     index("projects_stage_idx").on(t.stageKey),
     index("projects_order_idx").on(t.orderId),
     index("projects_archived_idx").on(t.archivedAt),
+    index("projects_edited_arrival_pending_idx").on(t.editedArrivedAt).where(sql`${t.editedArrivedAt} IS NOT NULL`),
+    check("projects_edited_arrived_at_check", sql`${t.editedArrivedAt} IS NULL OR typeof(${t.editedArrivedAt}) = 'integer'`),
     check("projects_board_revision_check", sql`typeof(${t.boardRevision}) = 'integer' AND ${t.boardRevision} >= 0 AND ${t.boardRevision} <= 9007199254740991`),
     check("projects_priority_check", sql`${t.priority} IS NULL OR (typeof(${t.priority}) = 'integer' AND ${t.priority} >= 1 AND ${t.priority} <= 5)`),
     check("projects_deadline_zone_check", sql`${t.deadlineZone} IS NULL OR ${t.deadlineZone} = 'Australia/Sydney'`),
@@ -203,6 +211,7 @@ export const projects = sqliteTable(
     check("projects_deadline_at_check", sql`${t.deadlineAt} IS NULL OR typeof(${t.deadlineAt}) = 'integer'`),
     check("projects_deadline_reminder_offsets_check", sql`${t.deadlineReminderOffsetsJson} IS NULL OR json_valid(${t.deadlineReminderOffsetsJson})`),
     check("projects_deadline_version_check", sql`typeof(${t.deadlineVersion}) = 'integer' AND ${t.deadlineVersion} >= 0`),
+    check("projects_deadline_source_check", sql`${t.deadlineSource} IN ('automatic', 'manual', 'none')`),
   ],
 );
 
@@ -248,11 +257,17 @@ export const notificationPreferences = sqliteTable(
     projectDeadlineReminderEmails: integer("project_deadline_reminder_emails").notNull().default(1),
     /** Migration 0053 (#424). Read with COALESCE(..., 1): an old Worker's upsert omits the column. */
     subtaskReminderEmails: integer("subtask_reminder_emails").notNull().default(1),
+    /** Migration 0056 (#489). How often non-exempt notification emails are gathered into one Email digest. Read with COALESCE(..., 'twice_daily'): a user with no row has the default. */
+    emailDigestCadence: text("email_digest_cadence", { enum: ["immediate", "hourly", "twice_daily", "daily"] as const }).notNull().default("twice_daily"),
+    /** Migration 0058 (#490). 1 = Project activity (stage changes, collaboration activity) is gathered into the person's Email digest; 0 = it is not. Read with COALESCE(..., 1): a user with no row, or an old Worker's upsert, is on. */
+    includeProjectActivity: integer("include_project_activity").notNull().default(1),
     updatedAt: integer("updated_at").notNull(),
   },
   (t) => [
     check("notification_preferences_email_check", sql`${t.projectDeadlineReminderEmails} IN (0, 1)`),
     check("notification_preferences_subtask_reminder_emails_check", sql`${t.subtaskReminderEmails} IN (0, 1)`),
+    check("notification_preferences_email_digest_cadence_check", sql`${t.emailDigestCadence} IN ('immediate', 'hourly', 'twice_daily', 'daily')`),
+    check("notification_preferences_include_project_activity_check", sql`${t.includeProjectActivity} IN (0, 1)`),
   ],
 );
 
@@ -320,6 +335,65 @@ export const projectComments = sqliteTable(
     editedAt: integer("edited_at", { mode: "timestamp_ms" }),
   },
   (t) => [index("project_comments_project_created_idx").on(t.projectId, t.createdAt, t.id)],
+);
+
+/**
+ * Embedded media (#493): an image or video placed inside a post. `ownerKind` / `ownerId` name what holds
+ * it. `ownerId` is polymorphic and has no foreign key, so a post and its media move together inside one
+ * batch in application code (no triggers). `projectId` cascades: a Project hard delete purges the objects
+ * by prefix first, then the rows go with it.
+ */
+export const embeddedMedia = sqliteTable(
+  "embedded_media",
+  {
+    id: id(),
+    ownerKind: text("owner_kind", { enum: ["project_comment", "notice_post", "whiteboard"] as const }).notNull(),
+    ownerId: text("owner_id"),
+    projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+    uploaderId: text("uploader_id").notNull().references(() => user.id),
+    kind: text("kind", { enum: ["image", "video", "preview_image"] as const }).notNull(),
+    contentType: text("content_type").notNull(),
+    bytes: integer("bytes").notNull(),
+    originalKey: text("original_key").notNull(),
+    displayKey: text("display_key"),
+    posterKey: text("poster_key"),
+    uploadId: text("upload_id"),
+    state: text("state", { enum: ["uploading", "pending", "attached", "detached"] as const }).notNull().default("uploading"),
+    detachedAt: integer("detached_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("embedded_media_original_key_unique").on(t.originalKey),
+    index("embedded_media_owner_idx").on(t.ownerKind, t.ownerId),
+    index("embedded_media_state_detached_idx").on(t.state, t.detachedAt),
+    index("embedded_media_state_created_idx").on(t.state, t.createdAt),
+    index("embedded_media_project_idx").on(t.projectId),
+    check("embedded_media_owner_kind_check", sql`${t.ownerKind} IN ('project_comment','notice_post','whiteboard')`),
+    check("embedded_media_kind_check", sql`${t.kind} IN ('image','video','preview_image')`),
+    check("embedded_media_bytes_check", sql`${t.bytes} > 0`),
+    check("embedded_media_state_check", sql`${t.state} IN ('uploading','pending','attached','detached')`),
+    check("embedded_media_owner_state_check", sql`(${t.state} IN ('uploading','pending')) = (${t.ownerId} IS NULL)`),
+    check("embedded_media_detached_check", sql`(${t.state} = 'detached') = (${t.detachedAt} IS NOT NULL)`),
+    check("embedded_media_project_check", sql`(${t.ownerKind} = 'notice_post') = (${t.projectId} IS NULL)`),
+  ],
+);
+
+/**
+ * Durable cleanup queue for embedded-media R2 objects and multipart uploads that no `embedded_media` row owns
+ * any more (#493). `projectId` deliberately has no foreign key: the Project is usually already gone. A row
+ * leaves only after its object is deleted (and its multipart upload is terminal).
+ */
+export const embeddedMediaCleanup = sqliteTable(
+  "embedded_media_cleanup",
+  {
+    storageKey: text("storage_key").primaryKey(),
+    uploadId: text("upload_id"),
+    projectId: text("project_id"),
+    queuedAt: integer("queued_at").notNull(),
+    attempts: integer("attempts").notNull().default(0),
+  },
+  (t) => [index("embedded_media_cleanup_queued_idx").on(t.queuedAt)],
 );
 
 export const projectCommentMentions = sqliteTable(
@@ -1373,7 +1447,7 @@ export const notificationDeliveryLedger = sqliteTable(
     sourceKey: text("source_key").notNull(),
     recipientId: text("recipient_id").notNull(),
     channel: text("channel", { enum: ["in_app", "email"] as const }).notNull(),
-    status: text("status", { enum: ["pending", "processing", "sent", "suppressed", "failed", "unknown", "discarded"] as const }).notNull().default("pending"),
+    status: text("status", { enum: ["pending", "processing", "sent", "suppressed", "failed", "unknown", "discarded", "deferred"] as const }).notNull().default("pending"),
     attempts: integer("attempts").notNull().default(0),
     notificationId: text("notification_id").references(() => notifications.id, { onDelete: "set null" }),
     emailMessageId: text("email_message_id"),
@@ -1391,8 +1465,60 @@ export const notificationDeliveryLedger = sqliteTable(
     unique("notification_delivery_ledger_outbox_channel_unique").on(t.outboxId, t.channel),
     unique("notification_delivery_ledger_event_source_recipient_channel_unique").on(t.eventType, t.sourceKey, t.recipientId, t.channel),
     check("notification_delivery_ledger_channel_check", sql`${t.channel} IN ('in_app', 'email')`),
-    check("notification_delivery_ledger_status_check", sql`${t.status} IN ('pending', 'processing', 'sent', 'suppressed', 'failed', 'unknown', 'discarded')`),
+    check("notification_delivery_ledger_status_check", sql`${t.status} IN ('pending', 'processing', 'sent', 'suppressed', 'failed', 'unknown', 'discarded', 'deferred')`),
     check("notification_delivery_ledger_attempts_check", sql`${t.attempts} >= 0`),
+  ],
+);
+
+/**
+ * #489: one Email digest per recipient per hourly slot. `UNIQUE(recipient_id, slot_at)` is the
+ * per-recipient-per-slot idempotency key: a cron retry loses the insert race and sends nothing.
+ */
+export const notificationDigests = sqliteTable(
+  "notification_digests",
+  {
+    id: id(),
+    recipientId: text("recipient_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+    slotAt: integer("slot_at").notNull(),
+    cadence: text("cadence").notNull(),
+    status: text("status", { enum: ["claimed", "sending", "sent", "empty", "failed", "unknown", "released"] as const }).notNull(),
+    itemCount: integer("item_count").notNull().default(0),
+    projectCount: integer("project_count").notNull().default(0),
+    emailMessageId: text("email_message_id"),
+    lastErrorCode: text("last_error_code"),
+    lastError: text("last_error"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    unique("notification_digests_recipient_slot_unique").on(t.recipientId, t.slotAt),
+    index("notification_digests_status_updated_idx").on(t.status, t.updatedAt),
+    check("notification_digests_status_check", sql`${t.status} IN ('claimed', 'sending', 'sent', 'empty', 'failed', 'unknown', 'released')`),
+    check("notification_digests_counts_check", sql`${t.itemCount} >= 0 AND ${t.projectCount} >= 0`),
+  ],
+);
+
+/** #489: a notification whose email waits for a digest. `notification_id` and `ledger_id` are SET NULL, never RESTRICT: project deletion removes ledger rows first. */
+export const notificationDigestItems = sqliteTable(
+  "notification_digest_items",
+  {
+    id: id(),
+    recipientId: text("recipient_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+    notificationId: text("notification_id").references(() => notifications.id, { onDelete: "set null" }),
+    ledgerId: text("ledger_id").references(() => notificationDeliveryLedger.id, { onDelete: "set null" }),
+    projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+    notificationType: text("notification_type").notNull(),
+    state: text("state", { enum: ["pending", "sent", "dropped_read", "suppressed", "failed", "unknown"] as const }).notNull().default("pending"),
+    outcomeCode: text("outcome_code"),
+    digestId: text("digest_id").references(() => notificationDigests.id, { onDelete: "set null" }),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    unique("notification_digest_items_notification_unique").on(t.notificationId),
+    index("notification_digest_items_state_recipient_idx").on(t.state, t.recipientId, t.createdAt),
+    index("notification_digest_items_digest_idx").on(t.digestId),
+    check("notification_digest_items_state_check", sql`${t.state} IN ('pending', 'sent', 'dropped_read', 'suppressed', 'failed', 'unknown')`),
   ],
 );
 

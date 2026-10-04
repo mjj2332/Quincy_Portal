@@ -19,4 +19,47 @@ describe("overlay stacking contract", () => {
     expect(content).toContain("z-[var(--z-menu)]");
     expect(content).not.toMatch(/\bz-50\b/);
   });
+  it("the dialog overlay and content use the dialog token, never the registry's bare z-50 (a dialog opened from a sheet must stack above it)", () => {
+    const src = read("../components/reui/dialog.tsx");
+    const overlay = src.slice(src.indexOf("function DialogOverlay"), src.indexOf("function DialogContent"));
+    const content = src.slice(src.indexOf("function DialogContent"), src.indexOf("function DialogHeader"));
+    for (const part of [overlay, content]) {
+      expect(part).toContain("z-[var(--z-dialog)]");
+      expect(part).not.toMatch(/\bz-50\b/);
+    }
+  });
+  it("the dialog overlay forces its Backdrop (every dialog sits inside a sheet Root, so Base UI treats it as nested and skips the scrim otherwise; #221, #493)", () => {
+    const src = read("../components/reui/dialog.tsx");
+    const overlay = src.slice(src.indexOf("function DialogOverlay"), src.indexOf("function DialogContent"));
+    expect(overlay).toMatch(/\bforceRender\b/);
+  });
+
+  /** #531: the Impersonation banner must stay readable under a Project sheet / rail sheet scrim. */
+  describe("impersonation banner (#531)", () => {
+    const banner = read("../components/ImpersonationBanner.tsx");
+    const appCss = read("./app.css");
+    const bannerClasses = /const BANNER = ([\s\S]*?);\n/.exec(banner)?.[1] ?? "";
+    it("the banner height comes from --impersonation-banner-height, never a literal 42px", () => {
+      expect(bannerClasses).toContain("h-[var(--impersonation-banner-height)]");
+      expect(bannerClasses).not.toContain("42px");
+    });
+    it("the banner stays below the dialog token (raising it would expose Exit to a modal's mouse users only)", () => {
+      const literal = /z-\[(\d+)\]/.exec(bannerClasses)?.[1];
+      const named = /z-\[var\(--z-([a-z]+)\)\]/.exec(bannerClasses)?.[1];
+      const value = literal ? Number(literal) : named ? z(tokens, named) : NaN;
+      expect(value).toBeLessThan(z(tokens, "dialog"));
+    });
+    it("no banner offset in app.css is a literal 42px", () => {
+      const rules = appCss.replace(/\/\*[\s\S]*?\*\//g, "");
+      const offenders = rules.split("\n").filter((line) => /impersonat/.test(line) && /42px/.test(line));
+      expect(offenders).toEqual([]);
+    });
+    it("both scrims start below the banner while impersonating and keep a transparent shield over the strip", () => {
+      for (const file of ["../components/quincy/ProjectSheet.tsx", "../components/quincy/RailSheet.tsx"]) {
+        const src = read(file);
+        expect(src, file).toContain("data-[impersonating]:top-[var(--impersonation-banner-height)]");
+        expect(src, file).toContain("data-[impersonating]:before:h-[var(--impersonation-banner-height)]");
+      }
+    });
+  });
 });

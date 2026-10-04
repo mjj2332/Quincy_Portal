@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { EMAIL_DIGEST_CADENCES } from "./email-digest";
 import { EXTERNAL_EDITOR_CAPABILITIES, ROLE_LABELS } from "./capabilities";
 import { EDITOR_FOLDER_ATTENTION_KINDS } from "./attention";
 import { externalAssetSchema } from "./external-asset-dto";
@@ -222,7 +223,7 @@ export const externalMeResponseSchema = z.object({
   user: z.object({ id: uuid, name: z.string(), email: z.string().email(), role: z.literal("external_editor"), active: z.literal(true), impersonatedBy: uuid.nullable(), authorizationEpoch: z.number().int().nonnegative() }).strict(),
   capabilities: z.array(z.enum(EXTERNAL_EDITOR_CAPABILITIES)).length(EXTERNAL_EDITOR_CAPABILITIES.length),
 }).strict();
-export const externalNotificationPreferenceResponseSchema = z.object({ projectDeadlineReminderEmails: z.boolean(), subtaskReminderEmails: z.boolean() }).strict();
+export const externalNotificationPreferenceResponseSchema = z.object({ projectDeadlineReminderEmails: z.boolean(), subtaskReminderEmails: z.boolean(), emailDigestCadence: z.enum(EMAIL_DIGEST_CADENCES), includeProjectActivity: z.boolean() }).strict();
 export const externalMutationOkResponseSchema = z.object({ ok: z.literal(true) }).strict();
 export const externalProjectAccessSnapshotSchema = z.object({
   principal: z.object({ id: uuid, role: z.string(), authorizationEpoch: z.number().int().nonnegative() }).strict(),
@@ -237,11 +238,22 @@ export const externalStageListResponseSchema = z.object({
 
 export const externalSubtaskAssigneeOptionsResponseSchema = z.object({ candidates: z.array(externalPersonSchema) }).strict();
 
+/** Embedded media (#493). Never carries the object key: the browser addresses a file by id alone. */
+export const externalEmbeddedMediaPresignSchema = z.object({
+  mediaId: uuid,
+  uploadId: z.string().min(1).optional(),
+  partUrls: z.array(z.string().url()).min(1).optional(),
+  partBytes: z.number().int().positive().optional(),
+  devDirect: z.literal(true).optional(),
+}).strict();
+export const externalEmbeddedMediaCompleteSchema = z.object({ mediaId: uuid, state: z.literal("pending") }).strict();
+
 export type ExternalApiSurface =
   | "me" | "notification-preferences" | "project-list" | "project-detail" | "asset-list" | "annotation-list"
   | "annotation-mutation" | "collection-links" | "ingest-status" | "stages" | "collaboration" | "checklist" | "comment-list"
   | "comment-mutation" | "comment-read-state" | "mentionable" | "notifications" | "notification-mutation"
-  | "review-mutation" | "external-upload" | "external-upload-complete" | "access-snapshot" | "activity" | "calendar" | "gantt" | "export" | "subtask-assignee-options";
+  | "review-mutation" | "external-upload" | "external-upload-complete" | "access-snapshot" | "activity" | "calendar" | "gantt" | "export" | "subtask-assignee-options"
+  | "embedded-media-presign" | "embedded-media-complete";
 
 export const EXTERNAL_API_RESPONSE_SCHEMAS: Readonly<Record<ExternalApiSurface, z.ZodTypeAny>> = {
   me: externalMeResponseSchema,
@@ -271,6 +283,8 @@ export const EXTERNAL_API_RESPONSE_SCHEMAS: Readonly<Record<ExternalApiSurface, 
   gantt: externalProductionGanttSchema,
   export: externalProjectExportSchema,
   "subtask-assignee-options": externalSubtaskAssigneeOptionsResponseSchema,
+  "embedded-media-presign": externalEmbeddedMediaPresignSchema,
+  "embedded-media-complete": externalEmbeddedMediaCompleteSchema,
 };
 
 export function externalRoleLabel(): string {

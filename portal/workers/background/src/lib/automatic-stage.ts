@@ -59,6 +59,7 @@ function stageWinnerRow(
 function workflowTailKindFor(p: GuardedTransitionPrerequisite): WorkflowTailKind {
   if (p.kind === "none") return "none";
   if (p.kind === "raw_reconciliation") return "raw_reconciliation";
+  if (p.kind === "edited_arrival_quiet") return "edited_arrival_quiet";
   if (p.kind === "autohdr_handoff") return "autohdr_handoff_entry";
   if (p.kind === "autohdr_mapping") return "autohdr_mapping_entry";
   if (p.kind === "autohdr_final_claim") return "autohdr_final_completion";

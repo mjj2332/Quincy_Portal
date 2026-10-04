@@ -45,3 +45,9 @@ export const STAGE_TRANSITIONS: Record<StageKey, readonly StageKey[]> = {
 export function isStageKey(value: string): value is StageKey {
   return (STAGE_KEYS as readonly string[]).includes(value);
 }
+
+/** Stages from which Edited media that has stopped arriving moves a Project to Edited review (#486). */
+export const EDITED_ARRIVAL_SOURCE_STAGES = ["awaiting_raw", "raw_review", "editing_autohdr"] as const satisfies readonly StageKey[];
+
+/** How long Edited media must have stopped arriving before the automatic move to Edited review. */
+export const EDITED_ARRIVAL_QUIET_MS = 15 * 60_000;

@@ -60,10 +60,12 @@ export type RailedShellProps = {
   shortcutsSuspended?: boolean;
   /** ⌘K: focus the Dashboard toolbar's search. Called after the navigation Sheet (if open) is closed. */
   onSearchShortcut?: () => void;
+  /** #531: an Admin is impersonating — the navigation sheet leaves the banner uncovered. */
+  impersonating?: boolean;
   children: ReactNode;
 };
 
-export function RailedShell({ navigation, user, shortcutsSuspended = false, onSearchShortcut, children }: RailedShellProps) {
+export function RailedShell({ navigation, user, shortcutsSuspended = false, onSearchShortcut, impersonating = false, children }: RailedShellProps) {
   const narrow = useMediaQuery(SHELL_NARROW_QUERY);
   const mode: RailMode = narrow ? "sheet" : "rail";
 
@@ -145,7 +147,7 @@ export function RailedShell({ navigation, user, shortcutsSuspended = false, onSe
 
   const railSlot = (
     <>
-      <RailSheet finalFocus={sheetFinalFocus}>
+      <RailSheet finalFocus={sheetFinalFocus} impersonating={impersonating}>
         <div className="contents" onClick={closeSheetOnLinkClick}>
           <NavigationRail navigation={navigation} user={user} variant="sheet" showBell={false} />
         </div>

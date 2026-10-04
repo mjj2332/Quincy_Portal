@@ -25,6 +25,7 @@ import { notificationsRoutes } from "./routes/notifications";
 import { assetsRoutes } from "./routes/assets";
 import { mentionableUsersRoutes } from "./routes/mentionable-users";
 import { projectCommentsRoutes } from "./routes/project-comments";
+import { embeddedMediaRoutes } from "./routes/embedded-media";
 import { projectSubtasksRoutes } from "./routes/project-subtasks";
 import { projectDeadlineRoutes } from "./routes/project-deadline";
 import { notificationPreferencesRoutes } from "./routes/notification-preferences";
@@ -34,6 +35,7 @@ import { dashboardPeopleRoutes } from "./routes/dashboard-people";
 import { productionCalendarRoutes } from "./routes/production-calendar";
 import { productionGanttRoutes } from "./routes/production-gantt";
 import { projectActivityRoutes } from "./routes/project-activity";
+import { projectWhiteboardRoutes } from "./routes/project-whiteboard";
 import { verifyTransformSource } from "./lib/transform-source";
 import { requireAppOrigin } from "./middleware/origin";
 import { safeStaffDestination } from "@quincy/shared";
@@ -71,7 +73,7 @@ app.all("/api/auth/*", terminalRoute("/api/auth/*", (c) => getAuth(c.env).handle
 const api = new Hono<AppEnv>();
 api.use("/*", requireSession);
 api.get("/me", terminalRoute("/me", (c) => { const user = c.get("user"); const response = { user, capabilities: [...(ROLE_CAPABILITIES[user.role] ?? [])] }; return c.json(user.role === "external_editor" ? externalMeResponseSchema.parse(response) : response); }));
-api.route("/", usersRoutes).route("/", projectsRoutes).route("/", projectDeadlineRoutes).route("/", notificationPreferencesRoutes).route("/", externalUploadsRoutes).route("/", uploadsRoutes).route("/", collectionsRoutes).route("/", integrationsRoutes).route("/", reviewRoutes).route("/", annotationsRoutes).route("/", stagesRoutes).route("/", adminRoutes).route("/", noticeBoardRoutes).route("/", mentionableUsersRoutes).route("/", projectCommentsRoutes).route("/", projectSubtasksRoutes).route("/", notificationsRoutes).route("/", assetsRoutes).route("/", projectAccessSnapshotRoutes).route("/", dashboardPeopleRoutes).route("/", productionCalendarRoutes).route("/", productionGanttRoutes).route("/", projectActivityRoutes).route("/", bootTimingRoutes);
+api.route("/", usersRoutes).route("/", projectsRoutes).route("/", projectDeadlineRoutes).route("/", notificationPreferencesRoutes).route("/", externalUploadsRoutes).route("/", uploadsRoutes).route("/", collectionsRoutes).route("/", integrationsRoutes).route("/", reviewRoutes).route("/", annotationsRoutes).route("/", stagesRoutes).route("/", adminRoutes).route("/", noticeBoardRoutes).route("/", mentionableUsersRoutes).route("/", projectCommentsRoutes).route("/", embeddedMediaRoutes).route("/", projectSubtasksRoutes).route("/", notificationsRoutes).route("/", assetsRoutes).route("/", projectAccessSnapshotRoutes).route("/", dashboardPeopleRoutes).route("/", productionCalendarRoutes).route("/", productionGanttRoutes).route("/", projectActivityRoutes).route("/", projectWhiteboardRoutes).route("/", bootTimingRoutes);
 app.route("/api", api);
 app.all("/api", terminalRoute("/api", (c) => c.json({ error: "Not found" }, 404)));
 app.all("/api/*", terminalRoute("/api/*", (c) => c.json({ error: "Not found" }, 404)));
@@ -117,4 +119,5 @@ app.all("*", terminalRoute("*", async (c) => {
   }
   return response;
 }));
+export { ProjectWhiteboardDO } from "./whiteboard/project-whiteboard-do";
 export default { fetch: (request: Request, env: Env, ctx: ExecutionContext) => fetchWithServerTiming(app.fetch, request, env, ctx) };

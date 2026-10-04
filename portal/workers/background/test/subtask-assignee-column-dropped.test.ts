@@ -67,6 +67,8 @@ describe("with project_subtasks.assignee_id dropped", () => {
 
   it("delivers a staff subtask_assigned notice (resolver and staff channel admission)", async () => {
     const fixture = await seed("2099-12-31");
+    // #489: staff default to a digest; this test is about the immediate channel, so opt the assignee into Immediately.
+    await database.DB.prepare("INSERT INTO notification_preferences (user_id, email_digest_cadence, updated_at) VALUES (?, 'immediate', ?)").bind(fixture.staffId, Date.now()).run();
     const sourceKey = `subtask-assignment:${fixture.subtaskId}:1`;
     const [outboxId] = await emitStaffSubtaskAssignedNotification(database.DB, { projectId: fixture.projectId, actorId: fixture.actorId, assigneeId: fixture.staffId, subtaskId: fixture.subtaskId, assignmentVersion: 1, sourceKey });
     const send = vi.fn().mockResolvedValue({ messageId: "dropped-staff" });

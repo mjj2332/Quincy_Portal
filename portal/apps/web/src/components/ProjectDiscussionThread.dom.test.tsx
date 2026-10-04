@@ -46,8 +46,8 @@ vi.mock("../lib/project-comments", () => ({
   useProjectCommentsQuery: () => state.commentsQuery,
 }));
 vi.mock("./RichTextContent", () => ({ RichTextContent: ({ content }: { content: { content?: Array<{ content?: Array<{ text?: string }> }> } }) => <div data-testid="rich-content">{content.content?.flatMap((block) => block.content ?? []).map((item) => item.text ?? "").join("")}</div> }));
-vi.mock("./RichTextEditor", () => ({
-  RichTextEditor: (props: Record<string, any>) => {
+vi.mock("./QuincyRichTextEditor", () => ({
+  QuincyRichTextEditor: (props: Record<string, any>) => {
     state.editors = state.editors.filter((editor) => editor.id !== props.id);
     state.editors.push(props);
     return <div data-testid={`editor-${props.id ?? "composer"}`}><button type="button" data-testid={`mention-${props.id ?? "composer"}`} onClick={() => { props.loadMentionables("Nor").catch(() => undefined); }}>Mention</button><button type="button" data-testid={`submit-${props.id ?? "composer"}`} disabled={props.disabled || props.limit < 0} onClick={props.onSubmit}>Submit</button><span data-testid={`editor-value-${props.id ?? "composer"}`}>{JSON.stringify(props.value)}</span><div role="textbox" aria-label="Editor surface" contentEditable="true" suppressContentEditableWarning tabIndex={0} /></div>;
@@ -184,6 +184,20 @@ describe("ProjectDiscussionThread", () => {
     await act(async () => { updatedComposer.onChange(byteOversized); await Promise.resolve(); });
     expect(host.querySelector<HTMLButtonElement>(`[data-testid=discussion-composer] button[type="submit"]`)?.disabled).toBe(true);
     expect(apiPostMock).not.toHaveBeenCalled();
+  });
+
+  it("targets the Project for images and holds Post (and Save) while an image uploads (#493)", async () => {
+    state.commentsQuery = queryState({ data: { pages: [{ project, comments: [ownComment] }], pageParams: [null] } });
+    render(); await flush();
+    const composer = () => state.editors.find((editor) => editor.id === `project-comment-${projectId}`)!;
+    expect(composer().media).toEqual({ projectId });
+    await act(async () => { composer().onChange(doc("Ready to post")); await Promise.resolve(); });
+    const post = () => host.querySelector<HTMLButtonElement>(`[data-testid=discussion-composer] button[type="submit"]`)!;
+    expect(post().disabled).toBe(false);
+    await act(async () => { composer().onUploadingChange(true); await Promise.resolve(); });
+    expect(post().disabled).toBe(true);
+    await act(async () => { composer().onUploadingChange(false); await Promise.resolve(); });
+    expect(post().disabled).toBe(false);
   });
 
   it("consumes a discussion-only 403 locally with no composer or close/purge callback", async () => {

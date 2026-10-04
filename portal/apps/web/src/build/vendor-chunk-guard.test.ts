@@ -31,6 +31,24 @@ describe("VENDOR_MODULE_PATTERN", () => {
   );
 });
 
+describe("checkVendorChunk keeps the whiteboard editor lazy (#498)", () => {
+  const vendor = chunk({ name: "vendor", moduleIds: [`${NM}/react/index.js`] });
+  it("passes when @excalidraw sits in its own lazy chunk", () => {
+    expect(() => checkVendorChunk(context(), {
+      "assets/index.js": chunk({ name: "index", isEntry: true, moduleIds: [`${APP}/main.tsx`] }),
+      "assets/vendor.js": vendor,
+      "assets/whiteboard.js": chunk({ name: "whiteboard", moduleIds: [`${NM}/@excalidraw/excalidraw/index.js`] }),
+    })).not.toThrow();
+  });
+  it.each(["entry", "vendor"] as const)("fails when an @excalidraw module reaches the %s chunk", (where) => {
+    const leaked = `${NM}/@excalidraw/excalidraw/index.js`;
+    expect(() => checkVendorChunk(context(), {
+      "assets/index.js": chunk({ name: "index", isEntry: true, moduleIds: where === "entry" ? [leaked] : [] }),
+      "assets/vendor.js": chunk({ name: "vendor", moduleIds: where === "vendor" ? [`${NM}/react/index.js`, leaked] : [`${NM}/react/index.js`] }),
+    })).toThrow(/@excalidraw/);
+  });
+});
+
 describe("checkVendorChunk (#359)", () => {
   it("passes a clean split: vendor chunk holds React, the entry holds only app code", () => {
     expect(() => checkVendorChunk(context(), {

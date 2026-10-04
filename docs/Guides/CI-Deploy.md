@@ -62,6 +62,14 @@ Version ID"` prints background, webhook-ingress, then app. Then check production
 Pages → the Worker → **Deployments**. A rollback holds only until the next deploy (a merge to
 `main` that touches `portal/`, or a manual **Run workflow**), so follow it with a revert PR or a fix.
 
+### The Project whiteboard Durable Object (#498): a rollback floor
+
+The app Worker's first version with `ProjectWhiteboardDO` carries a Durable Object migration (tag `v1`
+in `workers/app/wrangler.jsonc`, applied by the ordinary `wrangler deploy`). **Cloudflare cannot roll a
+Worker back across a Durable Object migration**, so that version is the floor: `wrangler rollback` to
+any version before it is refused. Roll forward with a revert or fix PR instead. No D1 migration is
+involved, so the pending-migration gate does not apply.
+
 ### Tonomo order tombstones (0051)
 
 0051 adds the table `tonomo_order_tombstones` and seeds it from `audit_log` (orders of Projects that no

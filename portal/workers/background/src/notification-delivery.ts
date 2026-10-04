@@ -18,6 +18,9 @@ import {
   NOTIFICATION_TYPES,
   externalNotificationCopy,
   externalNotificationChannels,
+  DEFAULT_EMAIL_DIGEST_CADENCE,
+  EMAIL_DIGEST_ACTIVITY_TYPES,
+  isDigestExemptType,
   parseExternalNotificationOutboxPayload,
   projectExternalActivityPayload,
   roleHasCapability,
@@ -1226,7 +1229,7 @@ async function suppressWholeOccurrence(env: Env, outbox: OutboxRow, token: strin
   ]);
 }
 
-type NotificationSuppressionCode = AuthorizationSuppressionCode | "recipient_preference_disabled";
+type NotificationSuppressionCode = AuthorizationSuppressionCode | "recipient_preference_disabled" | "digest_dropped_read";
 
 async function suppressEmailChannel(env: Env, outbox: OutboxRow, token: string, reason: string, now: number, code: NotificationSuppressionCode = "reauthorization_suppressed"): Promise<void> {
   const meta = JSON.stringify({ eventType: outbox.event_type, sourceKey: outbox.source_key, recipientId: outbox.recipient_id, reason });
@@ -1784,13 +1787,14 @@ function broadAdmission(outbox: OutboxRow, resolved: BroadResolvedRecipient, tok
 
 /**
  * Broad activity admission is deliberately separate from the legacy two-channel delivery path.
- * The nine statements (including the two adjacent terminal audits) keep in-app admission,
+ * The statements (including the two adjacent terminal audits and, last, the digest item for a delivered occurrence) keep in-app admission,
  * authorization convergence, suppression, and completion in one lease-fenced D1 batch; a returned
  * outcome is terminal and never a Queue retry.
  */
 export async function deliverBroadInApp(env: Env, outbox: OutboxRow, token: string, resolved: BroadResolvedRecipient, now: number): Promise<"delivered" | "suppressed" | "failed"> {
   const admission = broadAdmission(outbox, resolved, token);
   const notificationId = crypto.randomUUID();
+  const deliveredAuditId = crypto.randomUUID();
   const results = await env.DB.batch([
     env.DB.prepare(`
       UPDATE notification_delivery_ledger
@@ -1818,7 +1822,7 @@ export async function deliverBroadInApp(env: Env, outbox: OutboxRow, token: stri
       INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
       SELECT ?, NULL, 'notification.delivery.delivered', 'notification_outbox', ?, ?, ?
       WHERE changes() = 1
-    `).bind(crypto.randomUUID(), outbox.id, JSON.stringify({ eventType: outbox.event_type, outboxId: outbox.id, recipientId: outbox.recipient_id }), now),
+    `).bind(deliveredAuditId, outbox.id, JSON.stringify({ eventType: outbox.event_type, outboxId: outbox.id, recipientId: outbox.recipient_id }), now),
     env.DB.prepare(`
       UPDATE notification_delivery_ledger
       SET status = 'suppressed', last_error_code = ${admission.suppressionCode.sql}, last_error = 'Current project activity authorization no longer matches.', updated_at = ?
@@ -1860,6 +1864,26 @@ export async function deliverBroadInApp(env: Env, outbox: OutboxRow, token: stri
       AND NOT EXISTS (SELECT 1 FROM notification_delivery_ledger WHERE outbox_id = ? AND status IN ('pending', 'processing'))
       RETURNING id, status
     `).bind(outbox.id, outbox.id, outbox.id, outbox.id, now, now, outbox.id, token, outbox.id),
+    // #490: Project activity is emailed only in a digest, so this delivered occurrence becomes a pending digest
+    // item for a person who still has Include Project activity on (an absent row is on). It is appended LAST so
+    // the positional checks above are untouched, and it is gated on THIS batch's own delivered audit row (never
+    // on changes(), which an earlier statement owns), so a replayed or suppressed occurrence adds nothing.
+    // Cadence is deliberately not a predicate: an Immediately user's activity drains in the hourly digest.
+    // ledger_id is NULL: the broad path has no email ledger row, so an item's outcome lives on the item itself.
+    env.DB.prepare(`
+      INSERT INTO notification_digest_items (id, recipient_id, notification_id, ledger_id, project_id, notification_type, state, created_at, updated_at)
+      SELECT ?, l.recipient_id, n.id, NULL, n.project_id, n.type, 'pending', ?, ?
+      FROM notification_delivery_ledger l
+      JOIN notifications n ON n.id = l.notification_id
+      JOIN user u ON u.id = l.recipient_id
+      LEFT JOIN notification_preferences p ON p.user_id = u.id
+      WHERE l.outbox_id = ? AND l.channel = 'in_app' AND l.status = 'sent'
+        AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
+        AND u.active = 1
+        AND COALESCE(p.include_project_activity, 1) = 1
+        AND n.type IN (${EMAIL_DIGEST_ACTIVITY_TYPES.map(() => "?").join(", ")})
+      ON CONFLICT (notification_id) DO NOTHING
+    `).bind(crypto.randomUUID(), now, now, outbox.id, deliveredAuditId, ...EMAIL_DIGEST_ACTIVITY_TYPES),
   ]);
   const terminalOutcomes = [
     [(results[2]?.meta.changes ?? 0) === 1, "delivered"],
@@ -1968,6 +1992,65 @@ async function quotaReleaseAndRetry(env: Env, outbox: OutboxRow, token: string, 
   }
 }
 
+/**
+ * #489: a non-exempt email for a recipient who is not on Immediately waits for their Email digest.
+ * One batch, fenced on the lease and re-authorized exactly as `beginChannel` would have: it records the
+ * pending digest item (tied to the notification and this email ledger row), then moves the ledger to
+ * 'deferred' only while that item exists, then completes the outbox. 'deferred' is neither pending nor
+ * processing, so nothing resends it, and Cron recovery, the DLQ path and operator replay/discard all skip it.
+ * Returns false when nothing was deferred (admission lost, or the in-app notification is gone).
+ */
+async function deferEmailToDigest(env: Env, outbox: OutboxRow, token: string, now: number, resolved: LegacyResolvedRecipient): Promise<boolean> {
+  const admission = legacyAdmission(outbox, resolved, token);
+  const results = await env.DB.batch([
+    env.DB.prepare(`
+      INSERT INTO notification_digest_items (id, recipient_id, notification_id, ledger_id, project_id, notification_type, state, created_at, updated_at)
+      SELECT ?, n.user_id, n.id, email_ledger.id, n.project_id, n.type, 'pending', ?, ?
+      FROM notification_delivery_ledger in_app_ledger
+      JOIN notifications n ON n.id = in_app_ledger.notification_id
+      JOIN notification_delivery_ledger email_ledger ON email_ledger.outbox_id = in_app_ledger.outbox_id
+        AND email_ledger.channel = 'email' AND email_ledger.status = 'pending'
+      WHERE in_app_ledger.outbox_id = ? AND in_app_ledger.channel = 'in_app' AND in_app_ledger.status = 'sent'
+        AND ${admission.sql}
+      ON CONFLICT (notification_id) DO NOTHING
+    `).bind(crypto.randomUUID(), now, now, outbox.id, ...admission.values),
+    env.DB.prepare(`
+      UPDATE notification_delivery_ledger
+      SET status = 'deferred', last_error_code = NULL, last_error = NULL, updated_at = ?
+      WHERE outbox_id = ? AND channel = 'email' AND status = 'pending'
+        AND EXISTS (SELECT 1 FROM notification_digest_items item WHERE item.ledger_id = notification_delivery_ledger.id AND item.state = 'pending')
+        AND ${admission.sql}
+    `).bind(now, outbox.id, ...admission.values),
+    env.DB.prepare(`
+      UPDATE notification_outbox
+      SET status = 'completed', lease_token = NULL, lease_expires_at = NULL,
+          completed_at = ?, updated_at = ?
+      WHERE id = ? AND status = 'processing' AND lease_token = ?
+        AND NOT EXISTS (SELECT 1 FROM notification_delivery_ledger WHERE outbox_id = ? AND status IN ('pending', 'processing'))
+    `).bind(now, now, outbox.id, token, outbox.id),
+  ]);
+  return (results[1]?.meta.changes ?? 0) === 1;
+}
+
+async function recipientDigestCadence(env: Env, recipientId: string): Promise<string> {
+  const row = await env.DB.prepare(`
+    SELECT COALESCE(p.email_digest_cadence, ?) AS cadence
+    FROM user u LEFT JOIN notification_preferences p ON p.user_id = u.id
+    WHERE u.id = ?
+  `).bind(DEFAULT_EMAIL_DIGEST_CADENCE, recipientId).first<{ cadence: string }>();
+  return row?.cadence ?? DEFAULT_EMAIL_DIGEST_CADENCE;
+}
+
+/** #489: a digest item for this occurrence's notification means the digest owns its email, whatever the cadence is now. */
+async function digestOwnsEmail(env: Env, outboxId: string): Promise<boolean> {
+  const row = await env.DB.prepare(`
+    SELECT 1 AS owned FROM notification_delivery_ledger l
+    JOIN notification_digest_items i ON i.notification_id = l.notification_id
+    WHERE l.outbox_id = ? AND l.channel = 'in_app' LIMIT 1
+  `).bind(outboxId).first();
+  return row !== null;
+}
+
 async function finishEmail(env: Env, outbox: OutboxRow, token: string, now: number, messageAttempts: number, emailReachedProcessing: { value: boolean }): Promise<"done" | "retry"> {
   const reauthorized = await resolveRecipient(env, outbox);
   if (!reauthorized.ok) {
@@ -1978,6 +2061,21 @@ async function finishEmail(env: Env, outbox: OutboxRow, token: string, now: numb
   if (reauthorized.kind !== "legacy") throw new Error("Legacy email resolver returned a broad activity");
   if (reauthorized.row.recipientRole === "external_editor" && !externalNotificationChannels(reauthorized.delivery.notificationType).includes("email")) {
     await suppressEmailChannel(env, outbox, token, "external_email_not_allowed", now);
+    return "done";
+  }
+  if (!isDigestExemptType(reauthorized.delivery.notificationType) && (await recipientDigestCadence(env, outbox.recipient_id) !== "immediate" || await digestOwnsEmail(env, outbox.id))) {
+    if (!await deferEmailToDigest(env, outbox, token, now, reauthorized)) {
+      // Same recovery as a lost admission in `beginChannel`: the latest authorization decides.
+      const latest = await resolveRecipient(env, outbox);
+      if (!latest.ok && latest.kind === "suppress") await suppressEmailChannel(env, outbox, token, latest.reason, now, latest.code);
+      else if (latest.ok) {
+        // Still authorized yet nothing was deferred: the in-app notification is gone (deleted), so there is
+        // nothing to digest. Suppress the still-pending email rather than let Cron redeliver it forever.
+        const email = await env.DB.prepare("SELECT status FROM notification_delivery_ledger WHERE outbox_id = ? AND channel = 'email'").bind(outbox.id).first<{ status: string }>();
+        if (email?.status === "pending") await suppressEmailChannel(env, outbox, token, "notification_unavailable_for_digest", now, "digest_dropped_read");
+      }
+      await completeIfTerminal(env, outbox, token, now);
+    }
     return "done";
   }
   if (!env.EMAIL || !env.NOTIFICATIONS_FROM_ADDRESS) {
@@ -2079,7 +2177,8 @@ export async function processNotificationMessage(env: Env, message: Message<Noti
       return "acked";
     }
     if (resolved.kind === "broad") {
-      // Broad delivery has no email phase. This dispatch remains defensive: the atomic broad
+      // Broad delivery has no email phase and never emails inline: Project activity (#490) is only ever
+      // deferred to a digest, by the last statement of the atomic broad batch. This dispatch remains defensive: the atomic broad
       // batch normally terminalizes the outbox. This read/ack is defensive only; it never writes
       // a second terminal transition.
       await deliverBroadInApp(env, row, token, resolved, now);

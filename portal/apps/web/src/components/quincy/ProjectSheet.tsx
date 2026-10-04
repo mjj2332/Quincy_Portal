@@ -37,6 +37,8 @@ export type ProjectSheetProps = {
   /** The Dashboard location the sheet floats over: what a "Back to dashboard" link means here. */
   backdropHref: string;
   onRequestClose: () => void;
+  /** False while the Project whiteboard is open: its own Close control leaves the board, and a second X beside it only confuses. Default true. */
+  closeButton?: boolean;
   impersonating?: boolean;
   /** `false` leaves focus alone (#464: a Show-in landing owns it). */
   finalFocus?: () => HTMLElement | boolean;
@@ -68,7 +70,7 @@ export function useDashboardReturnLink(): { to: string; onClick?: (event: MouseE
   };
 }
 
-export function ProjectSheet({ open, kind, sheetKey, backdropHref, onRequestClose, impersonating = false, finalFocus, children }: ProjectSheetProps) {
+export function ProjectSheet({ open, kind, sheetKey, backdropHref, onRequestClose, closeButton = true, impersonating = false, finalFocus, children }: ProjectSheetProps) {
   const popupRef = useRef<HTMLDivElement | null>(null);
   const [slot, setSlot] = useState<HTMLDivElement | null>(null);
   const snapshotRef = useRef(false);
@@ -152,11 +154,16 @@ export function ProjectSheet({ open, kind, sheetKey, backdropHref, onRequestClos
         overlayProps={{
           forceRender: true,
           "data-testid": "project-sheet-scrim",
-          className: "z-[var(--z-dialog)] bg-[var(--scrim-overlay)] backdrop-blur-[3px] data-ending-style:duration-0",
+          // #531: while impersonating, the scrim starts below the banner so it is never dimmed or blurred.
+          // The `before:` shield is a transparent, background-less box over the excluded strip at the scrim's
+          // own layer, so a press there is still an outside press and cannot reach Exit under the open modal.
+          ...(impersonating ? { "data-impersonating": "" } : {}),
+          className: "z-[var(--z-dialog)] bg-[var(--scrim-overlay)] backdrop-blur-[3px] data-ending-style:duration-0 data-[impersonating]:top-[var(--impersonation-banner-height)] data-[impersonating]:before:absolute data-[impersonating]:before:content-[''] data-[impersonating]:before:inset-x-0 data-[impersonating]:before:bottom-full data-[impersonating]:before:h-[var(--impersonation-banner-height)]",
         }}
       >
         <SheetTitle className="sr-only">{kind === "edit" ? "Edit project details" : "Project workspace"}</SheetTitle>
         {/* Outside the scroller, above `.worktools` (z-20). */}
+        {closeButton ? (
         <SheetClose
           data-testid="project-sheet-close"
           aria-label="Close project"
@@ -164,6 +171,7 @@ export function ProjectSheet({ open, kind, sheetKey, backdropHref, onRequestClos
         >
           <XIcon aria-hidden />
         </SheetClose>
+        ) : null}
         <div key={sheetKey} ref={bodyRef} data-testid="project-sheet-body" className="project-sheet__body [--toast-inset-inline-end:calc(var(--space-5)+var(--space-5))] [--toast-inset-block-end:calc(var(--space-5)+var(--space-5))] max-[721px]:[--toast-inset-inline-end:max(var(--space-5),env(safe-area-inset-right))] max-[721px]:[--toast-inset-block-end:max(var(--space-5),env(safe-area-inset-bottom))] min-h-0 flex-1 overflow-y-auto overscroll-contain">
           <ProjectSheetContext.Provider value={context}>
             <OverlayContainerContext.Provider value={slot}>{children}</OverlayContainerContext.Provider>

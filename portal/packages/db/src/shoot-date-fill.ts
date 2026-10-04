@@ -1,4 +1,5 @@
 import { sydneyBusinessDate, type StageKey } from "@quincy/shared";
+import { buildAutomaticDeadlineBundle, buildAutomaticDeadlineMoveBundle } from "./automatic-deadline";
 import type { PreparedStatementBundle } from "./stage-board-bundles";
 
 /**
@@ -14,7 +15,23 @@ import type { PreparedStatementBundle } from "./stage-board-bundles";
  * The audit deliberately carries no `eventReceivedAt`, so a later verified Tonomo appointment is
  * not fenced out by it (see commitShootDateChange).
  */
-export type ShootDateFillIndexes = { update: number; audit: number };
+export type ShootDateFillIndexes = {
+  update: number;
+  audit: number;
+  /**
+   * The Automatic Deadline UPDATE (#484), present only on a stage-move fill: leaving Awaiting RAW
+   * gives the Shoot date it just filled an Automatic Deadline when the Deadline is empty, gated on
+   * this fill's own audit row so it lands exactly when the fill did.
+   */
+  automaticDeadline?: number;
+  /**
+   * The Automatic Deadline move UPDATE (#510), after the set bundle: a Deadline the system set earlier and that
+   * outlived a cleared Shoot date follows the date the fill wrote. Mutually exclusive with the set bundle (the set
+   * needs `deadline_at IS NULL`, the move needs it held), gated on the same fill audit row, and it takes no
+   * Deadline version the caller read (see docs/lessons.md, #485).
+   */
+  automaticDeadlineMove?: number;
+};
 export type ShootDateFillReason = "stage_move" | "deadline_set";
 export type ShootDateFillTrigger =
   | { kind: "stage_move"; destinationStage: StageKey; winnerAuditId: string; winnerAuditAction: "stage.set" | "stage.auto_advance" }
@@ -62,7 +79,19 @@ export function buildShootDateFillBundle(input: {
     ? input.db.prepare(STAGE_FILL_UPDATE_SQL).bind(shootDate, input.now, input.projectId, input.trigger.winnerAuditId, input.trigger.winnerAuditAction, input.trigger.destinationStage)
     : input.db.prepare(DEADLINE_FILL_UPDATE_SQL).bind(shootDate, input.now, input.projectId, input.trigger.winnerAuditId, DEADLINE_SAVED_AUDIT_ACTION);
   const audit = input.db.prepare(FILL_AUDIT_SQL).bind(input.fillAuditId, input.actorId, input.projectId, JSON.stringify(meta), input.now);
-  return { statements: [update, audit], indexes: { update: 0, audit: 1 } };
+  // A `deadline_set` fill never qualifies: that Project already holds a Deadline by definition.
+  const automaticDeadline = input.trigger.kind === "stage_move"
+    ? buildAutomaticDeadlineBundle({ db: input.db, projectId: input.projectId, shootDate, gate: { kind: "audit", auditId: input.fillAuditId }, auditId: crypto.randomUUID(), reason: "shoot_date_fill", now: input.now })
+    : undefined;
+  const automaticDeadlineMove = input.trigger.kind === "stage_move"
+    ? buildAutomaticDeadlineMoveBundle({ db: input.db, projectId: input.projectId, shootDate, gate: { kind: "audit", auditId: input.fillAuditId }, auditId: crypto.randomUUID(), reason: "shoot_date_fill", now: input.now })
+    : undefined;
+  if (!automaticDeadline || !automaticDeadlineMove) return { statements: [update, audit], indexes: { update: 0, audit: 1 } };
+  const moveOffset = 2 + automaticDeadline.statements.length;
+  return {
+    statements: [update, audit, ...automaticDeadline.statements, ...automaticDeadlineMove.statements],
+    indexes: { update: 0, audit: 1, automaticDeadline: 2 + automaticDeadline.indexes.update, automaticDeadlineMove: moveOffset + automaticDeadlineMove.indexes.update },
+  };
 }
 
 /**

@@ -11,6 +11,7 @@ import { NextReminder } from "./quincy/date-time-field/NextReminder";
 import { Notice } from "./quincy/Notice";
 import { StatusPill } from "./quincy/StatusPill";
 import { Button } from "./reui/button";
+import { AUTOMATIC_DEADLINE_APPLY_NOTE, AUTOMATIC_DEADLINE_NOTE } from "./AutomaticDeadlineMark";
 
 /**
  * The Deadline editor inside the project header's and the Timeline cell's Deadline popovers.
@@ -236,6 +237,8 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onClose, 
 
   const deadline = visibleSchedule.deadline;
   const overdue = visibleSchedule.state === "overdue";
+  // #509: an Automatic Deadline says so, and what Apply does. Driven by the schedule shown, so it stays in step with `applyUntouched` through Reload latest.
+  const automatic = visibleSchedule.source === "automatic";
   const skippedOffsets = (visibleSchedule.skippedReminderOffsetsMinutes ?? []).slice(0, 8);
 
   // #206: a plain `<div>` cannot carry an accessible name (html-aria naming rules) — `role="group"`
@@ -264,12 +267,14 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onClose, 
         </> : "Not set"}</span>
       </div>
       <NextReminder next={visibleSchedule.nextOccurrence} hasReminders={visibleSchedule.reminderOffsetsMinutes.length > 0} />
+      {automatic && <p className={DEADLINE_SUMMARY_TEXT} data-testid="deadline-automatic-note">{AUTOMATIC_DEADLINE_NOTE}</p>}
       {summaryLines}
       {notes}
     </div>;
   }
 
   const facts = <>
+    {automatic && <p className={DEADLINE_SUMMARY_TEXT} data-testid="deadline-automatic-note">{AUTOMATIC_DEADLINE_APPLY_NOTE}</p>}
     {overdue && <div><StatusPill tone="critical">Overdue</StatusPill></div>}
     {notes}
     {visibleSchedule.canResume && <div><Button type="button" variant="secondary" onClick={() => void resume()} disabled={saving}>Resume reminders</Button></div>}
@@ -301,6 +306,7 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onClose, 
     facts={facts}
     feedback={feedback}
     busy={saving}
+    applyUntouched={automatic}
     focusOnMount={focusOnMount}
     onApply={apply}
     onClose={() => onClose?.()}

@@ -6,9 +6,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ apiGet: vi.fn<(path: string) => Promise<unknown>>(), apiPost: vi.fn<(path: string, body: unknown) => Promise<unknown>>(), apiPatch: vi.fn<(path: string, body: unknown) => Promise<unknown>>() }));
 const oversized = { type: "doc", content: [{ type: "taskList", content: Array.from({ length: 280 }, () => ({ type: "taskItem", attrs: { checked: false }, content: [{ type: "paragraph", content: [{ type: "text", text: "abc" }] }] })) }] };
 const accepted = { type: "doc", content: [{ type: "taskList", content: Array.from({ length: 270 }, () => ({ type: "taskItem", attrs: { checked: false }, content: [{ type: "paragraph", content: [{ type: "text", text: "abc" }] }] })) }] };
+// #492: the Notice board's document preset caps stored JSON at 64 KiB (the discussion composer stays at 32 KiB), so its
+// boundary sits at twice the task items: 540 fit (~64,000 bytes), 560 do not (~66,500).
+const taskDoc = (count: number) => ({ type: "doc", content: [{ type: "taskList", content: Array.from({ length: count }, () => ({ type: "taskItem", attrs: { checked: false }, content: [{ type: "paragraph", content: [{ type: "text", text: "abc" }] }] })) }] });
+const noticeOversized = taskDoc(560);
+const noticeAccepted = taskDoc(540);
 
 vi.mock("../lib/api", () => ({ apiGet: (path: string) => mocks.apiGet(path), apiPost: (path: string, body: unknown) => mocks.apiPost(path, body), apiPatch: (path: string, body: unknown) => mocks.apiPatch(path, body), apiDelete: vi.fn() }));
-vi.mock("./RichTextEditor", () => ({ RichTextEditor: ({ onChange }: { onChange: (value: typeof oversized) => void }) => <><button type="button" onClick={() => onChange(oversized)}>Use oversized formatting</button><button type="button" onClick={() => onChange(accepted)}>Use accepted formatting</button></> }));
+const mockEditor = ({ onChange, preset }: { onChange: (value: typeof oversized) => void; preset: "composer" | "document" }) => <><button type="button" onClick={() => onChange(preset === "document" ? noticeOversized : oversized)}>Use oversized formatting</button><button type="button" onClick={() => onChange(preset === "document" ? noticeAccepted : accepted)}>Use accepted formatting</button></>;
+// Both surfaces mount `QuincyRichTextEditor` (#491 discussion composer, #492 Notice board document preset).
+vi.mock("./QuincyRichTextEditor", () => ({ QuincyRichTextEditor: (props: Parameters<typeof mockEditor>[0]) => mockEditor(props) }));
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { id: "user-me", role: "photographer" } }, isPending: false }) }));
 vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ role: "photographer", capabilities: ["collaborateOnProject"], can: () => true }) }));
 
@@ -35,14 +42,14 @@ beforeEach(() => {
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); await Promise.resolve(); }); root = null; document.body.replaceChildren(); });
 
 describe("rich-text serialized-width submit guards", () => {
-  it("disables and re-enables both notice submit buttons at the 280/270 task-item boundary", async () => {
+  it("disables and re-enables both notice submit buttons at the 560/540 task-item boundary (64 KiB)", async () => {
     mocks.apiGet.mockResolvedValue({ posts: [ownPost] }); const host = mount(); await render(<NoticeBoard currentUserId="user-me" />);
     await click(button(host, "Use oversized formatting")); expect(button(host, "Post notice").disabled).toBe(true);
-    await click(button(host, "Use accepted formatting")); expect(button(host, "Post notice").disabled).toBe(false); await click(button(host, "Post notice")); expect(mocks.apiPost).toHaveBeenCalledWith("/api/notice-board/posts", { content: accepted });
+    await click(button(host, "Use accepted formatting")); expect(button(host, "Post notice").disabled).toBe(false); await click(button(host, "Post notice")); expect(mocks.apiPost).toHaveBeenCalledWith("/api/notice-board/posts", { content: noticeAccepted });
     await click(button(host, "Edit")); const edit = host.querySelector('[data-slot="notice-board-edit-composer"]')!;
     await click(button(edit as HTMLElement, "Use oversized formatting")); expect(button(edit as HTMLElement, "Save").disabled).toBe(true);
     await click(button(edit as HTMLElement, "Use accepted formatting")); expect(button(edit as HTMLElement, "Save").disabled).toBe(false); await click(button(edit as HTMLElement, "Save"));
-    expect(mocks.apiPatch).toHaveBeenCalledWith(`/api/notice-board/posts/${ownPost.id}`, { content: accepted });
+    expect(mocks.apiPatch).toHaveBeenCalledWith(`/api/notice-board/posts/${ownPost.id}`, { content: noticeAccepted });
   });
 
   it("disables and re-enables both project-comment submit buttons at the 280/270 task-item boundary", async () => {

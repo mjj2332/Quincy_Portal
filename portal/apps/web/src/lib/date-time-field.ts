@@ -133,3 +133,18 @@ export function parseTypedTime(text: string): { ok: true; time: string } | { ok:
 export function sameReminderOffsets(a: readonly number[], b: readonly number[]): boolean {
   return a.length === b.length && a.every((offset) => b.includes(offset));
 }
+
+export type PopupCollisionAvoidance = { side?: "shift" | "none"; align?: "shift" | "none"; fallbackAxisSide?: "start" | "end" | "none" };
+export type PopupCollisionPadding = number | { top?: number; right?: number; bottom?: number; left?: number };
+
+/**
+ * How a date popup resolves its collision policy (#447, #528): below `sm` it shifts over its
+ * trigger; above, it stays on one axis. A caller's override replaces the default outright, and an
+ * `undefined` override is "no opinion", so it can never erase the default.
+ */
+export function resolveDateTimePopupPlacement({ narrow, avoidance, padding }: { narrow: boolean; avoidance?: PopupCollisionAvoidance | undefined; padding?: PopupCollisionPadding | undefined }): { collisionAvoidance: PopupCollisionAvoidance; collisionPadding: PopupCollisionPadding } {
+  return {
+    collisionAvoidance: avoidance ?? (narrow ? { side: "shift", fallbackAxisSide: "none" } : { fallbackAxisSide: "none" }),
+    collisionPadding: padding ?? 16,
+  };
+}

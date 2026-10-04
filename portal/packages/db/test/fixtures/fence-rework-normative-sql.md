@@ -58,6 +58,21 @@ AND (
 )
 )
 OR (
+  json_extract(?7, '$.kind') = 'edited_arrival_quiet'
+  AND EXISTS (
+  SELECT 1
+  FROM projects p
+  WHERE p.id = ?3
+    AND p.archived_at IS NULL
+    AND p.edited_arrived_at = json_extract(?7, '$.latestArrivalAt')
+    AND p.edited_arrived_at <= json_extract(?7, '$.cutoffAt')
+    AND EXISTS (
+      SELECT 1 FROM assets a INNER JOIN collections c ON c.id = a.collection_id
+      WHERE c.project_id = p.id AND c.kind = 'edited' AND a.superseded_at IS NULL AND a.publish_status = 'ready'
+    )
+)
+)
+OR (
   json_extract(?7, '$.kind') = 'autohdr_handoff'
   AND EXISTS (
   SELECT 1
@@ -222,6 +237,9 @@ UPDATE projects AS p
 SET
   stage_key = ?2,
   board_revision = p.board_revision + 1,
+  edited_arrived_at = CASE WHEN ?2 IN ('edited_review', 'delivered') THEN NULL ELSE p.edited_arrived_at END,
+  edited_arrival_attempts = CASE WHEN ?2 IN ('edited_review', 'delivered') THEN 0 ELSE p.edited_arrival_attempts END,
+  edited_arrival_retry_at = CASE WHEN ?2 IN ('edited_review', 'delivered') THEN NULL ELSE p.edited_arrival_retry_at END,
   updated_at = ?6
 FROM fence
 WHERE p.id = ?3
@@ -390,6 +408,10 @@ WHERE
             AND p.stage_key = i.destination_stage
             AND p.board_revision = i.old_board_revision + 1
             AND p.archived_at IS NULL
+            AND (
+              i.destination_stage NOT IN ('edited_review', 'delivered')
+              OR (p.edited_arrived_at IS NULL AND p.edited_arrival_attempts = 0 AND p.edited_arrival_retry_at IS NULL)
+            )
         )
         OR NOT COALESCE((1), 0)
         OR NOT COALESCE((1), 0)

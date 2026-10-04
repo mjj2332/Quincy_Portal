@@ -97,6 +97,9 @@ type ShellState = {
   arrivalIntent: ArrivalIntent | null;
   acknowledgeArrivalSignal: (projectId: string, signal: number) => void;
   syncProjectTab: (projectId: string, tab: WorkspaceTab) => void;
+  /** #498: the Project whiteboard's link. Open pushes `?whiteboard=open`; close returns to `tab`. */
+  openProjectWhiteboard: (projectId: string) => void;
+  closeProjectWhiteboard: (projectId: string, tab: WorkspaceTab) => void;
   /** #427: the ⌘K request that is current for the Dashboard layer's location, or null. */
   searchFocusSignal: number | null;
   acknowledgeSearchFocus: (signal: number) => void;
@@ -191,6 +194,9 @@ function ShellRoute() {
   const lastObservedRef = useRef<{ location: string; epoch: number } | null>(null);
   const selfWriteRef = useRef<string | null>(null);
   const arrivalSignalRef = useRef(0);
+  // #498: the location a whiteboard Close is about to land on. Returning from the board is not an arrival (nothing was navigated *to*),
+  // so the observation of exactly that location is spent without a signal; otherwise the Workspace's arrival focus steals focus from the entry button.
+  const whiteboardReturnRef = useRef<string | null>(null);
   const [arrivalIntent, setArrivalIntent] = useState<ArrivalIntent | null>(null);
   const searchFocusSignalRef = useRef(0);
   const [searchFocusRequest, setSearchFocusRequest] = useState<SearchFocusRequest | null>(null);
@@ -240,12 +246,14 @@ function ShellRoute() {
       selfWriteRef.current = null;
       lastObservedRef.current = { location: completeLocation, epoch: navigationEpoch };
       if (selfWrite) { setArrivalIntent(null); return; } // the Workspace's own tab write is not an arrival
+      if (whiteboardReturnRef.current === completeLocation) { whiteboardReturnRef.current = null; setArrivalIntent(null); return; } // #498: closing the board is not an arrival
       const signal = ++arrivalSignalRef.current;
       setArrivalIntent({ projectId: route.projectId, tab: route.arrivalTab, signal, location: completeLocation });
       return;
     }
     lastObservedRef.current = null;
     selfWriteRef.current = null;
+    whiteboardReturnRef.current = null;
     setArrivalIntent(null);
   }, [completeLocation, navigationEpoch, route]);
 
@@ -261,6 +269,8 @@ function ShellRoute() {
   // #367: the Workspace tells the shell which tab it is showing; the URL follows by `replace`.
   const syncProjectTab = (projectId: string, tab: WorkspaceTab) => {
     if (route.kind !== "project" || route.projectId !== projectId) return;
+    // #498: the whiteboard is not a Workspace tab; the Workspace stays mounted beneath it and must not rewrite its URL.
+    if (route.whiteboard) return;
     // A tab-naming location this shell has not observed yet is an arrival still to be handed over (the
     // Workspace's effects run before the shell's): it must land first, never be overwritten by the tab shown before it.
     if (route.arrivalTab !== undefined) {
@@ -271,6 +281,21 @@ function ShellRoute() {
     if (target === completeLocation) return;
     selfWriteRef.current = target;
     history.replace(target);
+  };
+
+  // #498: open is a push through the location store (never the router's navigate). Close returns to the
+  // Workspace the way `returnToWorkspace` does: when the entry below is this project's workspace, step
+  // back onto it; a cold whiteboard link has none, so replace with the tab the Workspace was showing.
+  const openProjectWhiteboard = (projectId: string) => {
+    if (route.kind !== "project" || route.projectId !== projectId || route.whiteboard) return;
+    history.push(staffPathFor({ kind: "project", projectId, whiteboard: true }));
+  };
+  const closeProjectWhiteboard = (projectId: string, tab: WorkspaceTab) => {
+    if (route.kind !== "project" || route.projectId !== projectId || !route.whiteboard) return;
+    const prev = readSheetEntryState(window.history.state)?.prev;
+    const below = prev === undefined ? null : parseStaffLocation(prev);
+    if (below?.kind === "project" && below.projectId === projectId && !below.whiteboard) { whiteboardReturnRef.current = prev!; history.go(-1); }
+    else { const target = staffPathFor({ kind: "project", projectId, arrivalTab: tab }); whiteboardReturnRef.current = target; history.replace(target); }
   };
 
   // #427: ⌘K. On the Dashboard it targets the current location; anywhere else it first moves to the
@@ -438,6 +463,7 @@ function ShellRoute() {
     clearNotice: () => setNotice(null),
     searchFocusSignal: currentSearchFocusSignal, acknowledgeSearchFocus,
     dashboardCalendar, arrivalIntent: currentArrivalIntent, acknowledgeArrivalSignal, syncProjectTab,
+    openProjectWhiteboard, closeProjectWhiteboard,
     impersonating, isSheetRoute, backdropLocation, backdropSource, closeProjectSheet,
     returnToWorkspace, leaveDeletedProject,
   };
@@ -448,7 +474,7 @@ function ShellRoute() {
 
   return (
     <div className={cn("app", impersonating && "app--impersonating", "app--railed")}>
-      <RailedShell navigation={navigation} user={user} shortcutsSuspended={isSheetRoute} onSearchShortcut={requestSearchFocus}>{routedContent}</RailedShell>
+      <RailedShell navigation={navigation} user={user} shortcutsSuspended={isSheetRoute} onSearchShortcut={requestSearchFocus} impersonating={impersonating}>{routedContent}</RailedShell>
     </div>
   );
 }
@@ -516,6 +542,7 @@ function DashboardLayer() {
           sheetKey={isSheetRoute && (route.kind === "project" || route.kind === "edit-project") ? `${route.kind}:${route.projectId}` : "closed"}
           backdropHref={backdropLocation}
           onRequestClose={closeProjectSheet}
+          closeButton={!(route.kind === "project" && route.whiteboard === true)}
           impersonating={impersonating}
           finalFocus={finalFocus}
         >
@@ -556,7 +583,7 @@ const projectRoute = createRoute({
   getParentRoute: () => dashboardLayerRoute,
   path: "/projects/$projectId",
   component: function ProjectLeaf() {
-    const { route, notice, pathname, clearNotice, arrivalIntent, acknowledgeArrivalSignal, syncProjectTab } = useShell();
+    const { route, notice, pathname, clearNotice, arrivalIntent, acknowledgeArrivalSignal, syncProjectTab, openProjectWhiteboard, closeProjectWhiteboard } = useShell();
     if (route.kind !== "project") return <NotAvailable />;
     return <ProjectWorkspace
       key={route.projectId}
@@ -568,6 +595,9 @@ const projectRoute = createRoute({
       onArrivalConsumed={(signal) => acknowledgeArrivalSignal(route.projectId, signal)}
       urlTab={route.arrivalTab}
       onTabShown={(tab) => syncProjectTab(route.projectId, tab)}
+      whiteboardOpen={route.whiteboard === true}
+      onOpenWhiteboard={() => openProjectWhiteboard(route.projectId)}
+      onCloseWhiteboard={(tab) => closeProjectWhiteboard(route.projectId, tab)}
     />;
   },
 });

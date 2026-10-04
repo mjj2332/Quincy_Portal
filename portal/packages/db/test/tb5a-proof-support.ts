@@ -53,8 +53,14 @@ export function applyThrough(db: SqliteDatabase, through: number): void {
   }
 }
 
+/** The proof schema is the 0037 board contract plus 0054: the generic workflow-premise CTE every
+ * Stage winner compiles names `projects.edited_arrived_at` (the #486 `edited_arrival_quiet` branch),
+ * and SQLite resolves a column at prepare time, so the winner cannot run on a schema without it. */
+export const PROOF_ADDITIONAL_MIGRATIONS = ["0054_project_edited_arrival.sql"] as const;
+
 export function applyAllMigrations(db: SqliteDatabase): void {
   applyThrough(db, 37);
+  for (const name of PROOF_ADDITIONAL_MIGRATIONS) applyMigration(db, name);
 }
 
 export function seedMigrationJournal(db: SqliteDatabase, through: number): void {

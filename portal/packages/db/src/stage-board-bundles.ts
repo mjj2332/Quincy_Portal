@@ -8,7 +8,7 @@ export type ActivityBundleIndexes = { activity: number; broadOutbox: number; bro
 export type DeadlineSuppressionIndexes = { occurrences: number; ledgers: number; outboxes: number; };
 export type LifecycleSet<T extends string> = readonly [T, ...T[]];
 export type ClosedSet<T extends string> = readonly [T, ...T[]];
-export type GuardedTransitionPrerequisite = { kind: "none"; } | { kind: "raw_reconciliation"; projectId: string; claimId: string | null; claimStates: LifecycleSet<"running">; shootDate: string | null; } | { kind: "autohdr_handoff"; projectId: string; handoffId: string; jobId: string | null; generation: number; connectionId: string; expectedStates: LifecycleSet<"starting" | "started">; expectedPriorToken: number | null; } | { kind: "autohdr_mapping"; projectId: string; mappingId: string; handoffId: string; generation: number; connectionId: string; mappingStates: LifecycleSet<"active">; handoffStates: LifecycleSet<"starting" | "started">; expectedPriorToken: number | null; } | {
+export type GuardedTransitionPrerequisite = { kind: "none"; } | { kind: "raw_reconciliation"; projectId: string; claimId: string | null; claimStates: LifecycleSet<"running">; shootDate: string | null; } | { kind: "edited_arrival_quiet"; projectId: string; latestArrivalAt: number; cutoffAt: number; } | { kind: "autohdr_handoff"; projectId: string; handoffId: string; jobId: string | null; generation: number; connectionId: string; expectedStates: LifecycleSet<"starting" | "started">; expectedPriorToken: number | null; } | { kind: "autohdr_mapping"; projectId: string; mappingId: string; handoffId: string; generation: number; connectionId: string; mappingStates: LifecycleSet<"active">; handoffStates: LifecycleSet<"starting" | "started">; expectedPriorToken: number | null; } | {
   kind: "autohdr_final_claim";
   projectId: string;
   collectionId: string;
@@ -29,7 +29,7 @@ export type GuardedTransitionPrerequisite = { kind: "none"; } | { kind: "raw_rec
 } | { kind: "autohdr_job"; mode: "entry"; projectId: string; jobId: string; jobKind: "autohdr" | "autohdr_api_send"; generation: number; jobStates: LifecycleSet<"running" | "done">; expectedPriorToken: number | null; } | { kind: "autohdr_job"; mode: "completion"; projectId: string; jobId: string; jobKind: "fetch_edited"; jobStates: LifecycleSet<"queued" | "running" | "done">; sourceJobId: string; sourceJobKinds: ClosedSet<"autohdr" | "autohdr_api_send">; sourceJobStates: LifecycleSet<"queued" | "running" | "done">; generation: number; expectedPriorToken: number; };
 export type ClosedPathClaimPlan = { kind: "reactivate" | "insert"; claimId: string; candidate: "final" | "finals"; path: string; pathKey: string; };
 export type ClosedAutomaticCoupling = { kind: "none"; } | { kind: "handoff_start"; handoffId: string; connectionId: string; generation: number; } | { kind: "job_entry_provenance"; jobId: string; jobKind: "autohdr" | "autohdr_api_send"; generation: number; jobStates: LifecycleSet<"running" | "done">; } | { kind: "autohdr_api_finalize"; jobId: string; uid: string; assetCount: number; finalizedAuditId: string; } | { kind: "repeat_claim"; retiredHandoffId: string; retiredMappingId: string; handoffId: string; mappingId: string; jobId: string; workflowId: string; generation: number; connectionId: string; selectionHash: string; expectedFinalHandoffState: "started"; pathClaims: readonly [ClosedPathClaimPlan, ClosedPathClaimPlan]; } | { kind: "implicit_claim"; handoffId: string; mappingId: string; jobId: string; workflowId: string; connectionId: string; targetPath: string; targetPathKey: string; } | { kind: "backfill_claim"; handoffId: string; mappingId: string; jobId: string; workflowId: string; connectionId: string; generation: number; targetPath: string; targetPathKey: string; folderId: string; } | { kind: "implicit_claim_collision"; handoffId: string; mappingId: string; jobId: string; workflowId: string; connectionId: string; targetPath: string; targetPathKey: string; diagnostic: string; collisionOwnerProjectId: string; };
-export type WorkflowTailIndexes = ({ kind: "none"; } | { kind: "raw_reconciliation"; prerequisiteMarker?: number; } | { kind: "autohdr_handoff_entry"; prerequisiteMarker: number; } | { kind: "autohdr_mapping_entry"; prerequisiteMarker: number; handoffState: number; mappingState: number; } | { kind: "autohdr_final_completion"; prerequisiteMarker: number; handoffState: number; mappingState: number; finalClaimState: number; } | { kind: "autohdr_job_entry"; prerequisiteMarker: number; jobState: number; } | { kind: "autohdr_job_completion"; prerequisiteMarker: number; sourceEntryJob: number; completionJobState: number; }) & { editingEntryToken?: number; };
+export type WorkflowTailIndexes = ({ kind: "none"; } | { kind: "raw_reconciliation"; prerequisiteMarker?: number; } | { kind: "edited_arrival_quiet"; } | { kind: "autohdr_handoff_entry"; prerequisiteMarker: number; } | { kind: "autohdr_mapping_entry"; prerequisiteMarker: number; handoffState: number; mappingState: number; } | { kind: "autohdr_final_completion"; prerequisiteMarker: number; handoffState: number; mappingState: number; finalClaimState: number; } | { kind: "autohdr_job_entry"; prerequisiteMarker: number; jobState: number; } | { kind: "autohdr_job_completion"; prerequisiteMarker: number; sourceEntryJob: number; completionJobState: number; }) & { editingEntryToken?: number; };
 export type HandoffStartBundle = PreparedStatementBundle<{ handoffStart: number; }> & {
   kind: "handoff_start";
   coupling: Extract<ClosedAutomaticCoupling, { kind: "handoff_start"; }>;
@@ -80,6 +80,7 @@ export type StageFinalizerWinnerResult = { kind: "winner"; row: StageWinnerResul
 const EXPECTED_KEYS = {
   none: ["kind"],
   raw_reconciliation: ["kind", "projectId", "claimId", "claimStates", "shootDate"],
+  edited_arrival_quiet: ["kind", "projectId", "latestArrivalAt", "cutoffAt"],
   autohdr_handoff: ["kind", "projectId", "handoffId", "jobId", "generation", "connectionId", "expectedStates", "expectedPriorToken"],
   autohdr_mapping: ["kind", "projectId", "mappingId", "handoffId", "generation", "connectionId", "mappingStates", "handoffStates", "expectedPriorToken"],
   autohdr_final_claim: ["kind", "projectId", "collectionId", "sourcePathKey", "currentAssetId", "handoffId", "mappingId", "fetchClaimId", "fetchJobId", "generation", "connectionId", "mappingStates", "handoffStates", "fetchStates", "manifestVersion", "finalPathKey", "expectedPriorToken"],
@@ -115,6 +116,9 @@ export function compileGuardedTransitionPrerequisite(input: GuardedTransitionPre
       break;
     case "raw_reconciliation":
       canonical = { kind: input.kind, projectId: nonEmpty(input.projectId, "projectId"), claimId: input.claimId === null ? null : nonEmpty(input.claimId, "claimId"), claimStates: lifecycle(input.claimStates, ["running"], "claimStates"), shootDate: input.shootDate === null ? null : nonEmpty(input.shootDate, "shootDate") };
+      break;
+    case "edited_arrival_quiet":
+      canonical = { kind: input.kind, projectId: nonEmpty(input.projectId, "projectId"), latestArrivalAt: safeInteger(input.latestArrivalAt, "latestArrivalAt"), cutoffAt: safeInteger(input.cutoffAt, "cutoffAt") };
       break;
     case "autohdr_handoff":
       canonical = {
@@ -296,6 +300,18 @@ AND (
       )
   )
 )`; }
+  if (input.kind === "edited_arrival_quiet") { return String.raw`EXISTS (
+  SELECT 1
+  FROM projects p
+  WHERE p.id = ?${projectParam}
+    AND p.archived_at IS NULL
+    AND p.edited_arrived_at = ${json(premiseParam, "latestArrivalAt")}
+    AND p.edited_arrived_at <= ${json(premiseParam, "cutoffAt")}
+    AND EXISTS (
+      SELECT 1 FROM assets a INNER JOIN collections c ON c.id = a.collection_id
+      WHERE c.project_id = p.id AND c.kind = 'edited' AND a.superseded_at IS NULL AND a.publish_status = 'ready'
+    )
+)`; }
   if (input.kind === "autohdr_handoff") { return String.raw`EXISTS (
   SELECT 1
   FROM autohdr_handoffs h
@@ -436,6 +452,10 @@ OR (
   AND ${workflowPremiseSql({ kind: "raw_reconciliation", projectId: "", claimId: null, claimStates: ["running"], shootDate: null }, premiseParam, projectParam, oldRevisionParam)}
 )
 OR (
+  ${kind} = 'edited_arrival_quiet'
+  AND ${workflowPremiseSql({ kind: "edited_arrival_quiet", projectId: "", latestArrivalAt: 0, cutoffAt: 0 }, premiseParam, projectParam, oldRevisionParam)}
+)
+OR (
   ${kind} = 'autohdr_handoff'
   AND ${workflowPremiseSql({ kind: "autohdr_handoff", projectId: "", handoffId: "", jobId: null, generation: 0, connectionId: "", expectedStates: ["starting"], expectedPriorToken: null }, premiseParam, projectParam, oldRevisionParam)}
 )
@@ -540,6 +560,15 @@ AND (
         FROM ${jsonArray(param, "claimStates")}
       )
   )
+)`; }
+  if (premise.kind === "edited_arrival_quiet") { return String.raw`EXISTS (
+  SELECT 1
+  FROM projects p
+  WHERE p.id = ?1
+    AND EXISTS (
+      SELECT 1 FROM assets a INNER JOIN collections c ON c.id = a.collection_id
+      WHERE c.project_id = p.id AND c.kind = 'edited' AND a.superseded_at IS NULL AND a.publish_status = 'ready'
+    )
 )`; }
   if (premise.kind === "autohdr_handoff") { return String.raw`EXISTS (
   SELECT 1
@@ -973,6 +1002,10 @@ WHERE
             AND p.stage_key = i.destination_stage
             AND p.board_revision = i.old_board_revision + 1
             AND p.archived_at IS NULL
+            AND (
+              i.destination_stage NOT IN ('edited_review', 'delivered')
+              OR (p.edited_arrived_at IS NULL AND p.edited_arrival_attempts = 0 AND p.edited_arrival_retry_at IS NULL)
+            )
         )
         OR NOT COALESCE((` + workflowDurablePostconditionSql(workflow) + String.raw`), 0)
         OR NOT COALESCE((` + couplingPostconditionSql(coupling, 8) + String.raw`), 0)
@@ -1037,6 +1070,9 @@ UPDATE projects AS p
 SET
   stage_key = ?2,
   board_revision = p.board_revision + 1,
+  edited_arrived_at = CASE WHEN ?2 IN ('edited_review', 'delivered') THEN NULL ELSE p.edited_arrived_at END,
+  edited_arrival_attempts = CASE WHEN ?2 IN ('edited_review', 'delivered') THEN 0 ELSE p.edited_arrival_attempts END,
+  edited_arrival_retry_at = CASE WHEN ?2 IN ('edited_review', 'delivered') THEN NULL ELSE p.edited_arrival_retry_at END,
   updated_at = ?6
 FROM fence
 WHERE p.id = ?3
@@ -1243,6 +1279,38 @@ export function buildDeadlineSuppressionBundle(input: DeadlineSuppressionBundleI
     indexes: { occurrences: 0, ledgers: 1, outboxes: 2 }
   };
 }
+/**
+ * The two statements that retire Deadline reminders already in flight when a Deadline's schedule is replaced (a person's save
+ * or an Automatic Deadline move, #485): pending ledger rows are suppressed, then the outbox rows nothing is still delivering.
+ * Both are gated on the caller's winner audit row and carry no RETURNING, so a caller can append them at a fixed position.
+ * One shared definition so the two writers cannot drift.
+ */
+export function buildDeadlineScheduleReplacementStatements(input: { db: D1Database; projectId: string; auditId: string; now: number }): [D1PreparedStatement, D1PreparedStatement] {
+  const ledgers = input.db.prepare(`
+      UPDATE notification_delivery_ledger
+      SET status = 'suppressed', last_error_code = 'reauthorization_suppressed',
+        last_error = 'Deadline schedule changed.', updated_at = ?
+      WHERE event_type = 'project.deadline.reminder' AND status = 'pending'
+        AND EXISTS (
+          SELECT 1 FROM notification_outbox o
+          WHERE o.id = notification_delivery_ledger.outbox_id
+            AND o.project_id = ? AND o.event_type = 'project.deadline.reminder'
+            AND o.source_key IN (SELECT id FROM project_deadline_occurrences WHERE project_id = ?)
+        )
+        AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
+    `).bind(input.now, input.projectId, input.projectId, input.auditId);
+  const outboxes = input.db.prepare(`
+      UPDATE notification_outbox
+      SET status = 'suppressed', lease_token = NULL, lease_expires_at = NULL,
+        completed_at = ?, last_error_code = 'reauthorization_suppressed',
+        last_error = 'Deadline schedule changed.', updated_at = ?
+      WHERE project_id = ? AND event_type = 'project.deadline.reminder'
+        AND status IN ('pending', 'queued')
+        AND NOT EXISTS (SELECT 1 FROM notification_delivery_ledger WHERE outbox_id = notification_outbox.id AND status IN ('pending', 'processing'))
+        AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
+    `).bind(input.now, input.now, input.projectId, input.auditId);
+  return [ledgers, outboxes];
+}
 type WorkflowTailInput = GuardedTransitionPrerequisite & { db: D1Database; auditId: string; now?: number; };
 const AUDIT_EXISTS = "AND EXISTS (SELECT 1 FROM audit_log WHERE id = ? AND action = 'stage.auto_advance' AND target_type = 'project' AND target_id = ?)";
 function requireProject(input: WorkflowTailInput): string { if (input.kind === "none") return ""; if (!("projectId" in input)) throw new Error("Workflow tail requires projectId"); return input.projectId; }
@@ -1274,6 +1342,10 @@ export function buildWorkflowTail(input: WorkflowTailInput, kind: WorkflowTailKi
     statements: [],
     indexes: { kind: "none" }
   };
+  if (kind === "edited_arrival_quiet") {
+    if (input.kind !== "edited_arrival_quiet") throw new Error("edited_arrival_quiet tail requires its matching prerequisite");
+    return { statements: [], indexes: { kind } };
+  }
   if (kind === "raw_reconciliation") {
     if (input.kind !== "raw_reconciliation") throw new Error("raw_reconciliation tail requires its matching prerequisite");
     if (input.claimId === null) return {

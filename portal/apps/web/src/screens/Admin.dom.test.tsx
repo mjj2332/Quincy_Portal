@@ -380,6 +380,24 @@ describe("Admin Pipeline configuration boundary", () => {
     expect(toggle.checked).toBe(false);
     expect(host.textContent).toContain("Setting unavailable");
   });
+
+  it("labels roles as Admin / Photographer / Editor / External editor in the provision and per-user role selects (#517)", async () => {
+    const users = [
+      { id: "ext", name: "External Person", email: "ext@example.test", role: "external_editor", active: true, createdAt: null },
+    ];
+    apiGetMock.mockImplementation((path) => path === "/api/users"
+      ? Promise.resolve({ users })
+      : path === "/api/users/impersonation-settings" ? Promise.resolve({ enabled: false }) : Promise.resolve({}));
+    await act(async () => { root!.render(<Admin currentUserId="self" />); await Promise.resolve(); });
+    await flush();
+
+    const rowSelect = host.querySelector<HTMLSelectElement>("#role-ext")!;
+    expect(rowSelect.value).toBe("external_editor");
+    expect(rowSelect.selectedOptions[0]!.textContent).toBe("External editor");
+    const provision = host.querySelector<HTMLSelectElement>("#admin-provision-role")!;
+    expect([...provision.options].map((option) => option.textContent)).toEqual(["Admin", "Photographer", "Editor", "External editor"]);
+    expect([...provision.options].map((option) => option.value)).toEqual(["admin", "photographer", "editor", "external_editor"]);
+  });
 });
 
 describe("Admin notification delivery operations", () => {

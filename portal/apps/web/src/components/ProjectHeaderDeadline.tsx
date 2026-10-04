@@ -5,6 +5,7 @@ import { Popover, PopoverTrigger } from "@/components/reui/popover";
 import { ProjectDeadlineControl } from "./ProjectDeadlineControl";
 import { DateTimePopoverContent } from "./quincy/DateTimeField";
 import { StatusPill } from "./quincy/StatusPill";
+import { AutomaticDeadlineMark } from "./AutomaticDeadlineMark";
 import { dueIn } from "../lib/deadline-due-in";
 import { cn } from "../lib/utils";
 import { DASHED_TRIGGER, HEADER_KV_VALUE, HEADER_READONLY_VALUE, READONLY_GROUP_FOCUS, TRIGGER_CHEVRON } from "./project-header-popover";
@@ -88,7 +89,9 @@ export function ProjectHeaderDeadline({ projectId, schedule, canEdit, archived =
   // inventory as "Deadline: Set deadline".
   const triggerText = schedule.deadline ? deadlineTriggerText(schedule.deadline.localCivil) : "Set deadline";
   const due = dueIn(schedule, now);
-  const ariaLabel = `Deadline: ${triggerText}${due ? `, ${due.label}` : ""}`;
+  // #484: an Automatic Deadline (no person has confirmed it) says so in the visible mark (#509: a quiet outline badge, not a status pill) and in the name.
+  const automatic = schedule.source === "automatic";
+  const ariaLabel = `Deadline: ${triggerText}${automatic ? ", Automatic" : ""}${due ? `, ${due.label}` : ""}`;
 
   if (archived) {
     // #455: plain value, same text as the trigger without the countdown or chevron. A labelled group (like the Team's) so a refusal can focus it.
@@ -102,7 +105,7 @@ export function ProjectHeaderDeadline({ projectId, schedule, canEdit, archived =
         className={cn(HEADER_READONLY_VALUE, READONLY_GROUP_FOCUS)}
       >
         {schedule.deadline
-          ? <time dateTime={schedule.deadline.instant}>{triggerText}</time>
+          ? <><time dateTime={schedule.deadline.instant}>{triggerText}</time>{automatic && <AutomaticDeadlineMark />}</>
           : <><span aria-hidden="true">—</span><span className="sr-only">No deadline set</span></>}
       </div>
       {archivedNotice && <p id={noticeId} role="status" className={ARCHIVED_HEADER_NOTICE_CLASS}>{ARCHIVED_DEADLINE_NOTICE}</p>}
@@ -118,6 +121,7 @@ export function ProjectHeaderDeadline({ projectId, schedule, canEdit, archived =
       className={DASHED_TRIGGER}
     >
       <span className={cn(HEADER_KV_VALUE, "[white-space:nowrap]")}>{triggerText}</span>
+      {automatic && <AutomaticDeadlineMark />}
       {due && <StatusPill tone={due.tone}>{due.label}</StatusPill>}
       <ChevronDown aria-hidden="true" className={TRIGGER_CHEVRON} />
     </PopoverTrigger>

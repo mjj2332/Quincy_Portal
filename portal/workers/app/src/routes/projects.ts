@@ -3,9 +3,9 @@ import { editorFolderAvailability, editorFolderProjection } from "../lib/editor-
 import { readEditorFolderAttention } from "../lib/attention";
 import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
-import { boardContractEnabled, boardSchemaVariant, buildDeadlineSuppressionBundle, buildProjectActivityStatements, buildSubtaskReminderMaterialization, buildSubtaskReminderSuppression, createDb, selectEffectiveDefaultEditorIds, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
+import { boardContractEnabled, boardSchemaVariant, buildAutomaticDeadlineBundle, buildAutomaticDeadlineMoveBundle, buildDeadlineSuppressionBundle, buildProjectActivityStatements, buildSubtaskReminderMaterialization, buildSubtaskReminderSuppression, createDb, selectEffectiveDefaultEditorIds, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
 import { and, asc, desc, eq, exists, gt, inArray, isNotNull, isNull, lte, notExists, sql } from "drizzle-orm";
-import { capDashboardSearchText, compareBoardCards, COLLECTION_KINDS, DASHBOARD_PROJECTS_FILTER_QUERY_NAMES, dashboardFilterArchivedMode, dashboardFilterHasArchivedLeaf, dashboardFilterHasPriorityLeaf, dashboardFilterTreeOf, dashboardProjectsFilterQuerySchema, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchema, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, roleHasCapability, stripUnsafeText, type CollectionKind, type DashboardFilter, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
+import { automaticDeadlineFor, capDashboardSearchText, compareBoardCards, COLLECTION_KINDS, DASHBOARD_PROJECTS_FILTER_QUERY_NAMES, dashboardFilterArchivedMode, dashboardFilterHasArchivedLeaf, dashboardFilterHasPriorityLeaf, dashboardFilterTreeOf, dashboardProjectsFilterQuerySchema, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchema, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, PROJECT_DEADLINE_ZONE, planDeadlineOccurrences, projectActivityDeepLink, roleHasCapability, stripUnsafeText, type CollectionKind, type DashboardFilter, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, hasProjectAccessForUser, requireCapability } from "../middleware/capability";
@@ -17,7 +17,7 @@ import { jsonInput } from "./helpers";
 import { projectStageForRole } from "./stages";
 import { abortMultipart } from "../lib/r2s3";
 import { isUserVisibleAsset } from "../lib/asset-visibility";
-import { readProjectDeadlineSchedule } from "../lib/project-deadline";
+import { ProjectDeadlineError, readProjectDeadlineSchedule, resolveDeadlineSet, type ResolvedDeadlineSet } from "../lib/project-deadline";
 import { listExternalProjects, readExternalProjectDetail } from "../lib/external-project-query";
 import { activeEditorRefsByProject } from "../lib/project-editors";
 import { boardContractDisabled, boardSchemaMaintenance } from "../lib/board-schema-maintenance";
@@ -32,7 +32,13 @@ import { queueProjectShootDateFollowUps } from "../lib/project-shoot-date";
 
 const nullable = <T extends z.ZodTypeAny>(item: T) => item.nullable().optional();
 const baseProjectFields = z.object({ street: z.string().min(1), suburb: nullable(z.string()), postcode: nullable(z.string()), agencyName: nullable(z.string()), agentName: nullable(z.string()), agentEmail: nullable(z.string().email()), agentPhone: nullable(z.string()), agencyId: nullable(z.string().uuid()), agentId: nullable(z.string().uuid()), shootDate: nullable(z.string()), timeWindow: nullable(z.string()), orderNo: nullable(z.string()), orderId: nullable(z.string()), invoiceAmount: nullable(z.number()), paymentStatus: nullable(z.string()), notes: nullable(z.string()), productionNotes: nullable(z.string()), rawFolderLink: nullable(z.string().url()), rawFolderPath: nullable(z.string()), orderedServices: z.array(z.enum(COLLECTION_KINDS)).optional() });
-const createProjectFields = baseProjectFields.extend({ photographerUserIds: z.array(z.string().uuid()).optional(), editorUserIds: z.array(z.string().uuid()).optional() });
+// #488: `deadline` absent or null means "Automatic Deadline from the shoot date, if one is given"; an object is always stored
+// manual. The client never names a source (`.strict()`), so an automatic value can never be submitted as a manual one.
+const createDeadlineField = z.object({ localCivil: z.string(), disambiguation: z.enum(["earlier", "later"]).optional(), reminderOffsetsMinutes: z.array(z.number()).optional() }).strict();
+const createProjectFields = baseProjectFields.extend({
+  photographerUserIds: z.array(z.string().uuid()).optional(), editorUserIds: z.array(z.string().uuid()).optional(),
+  priority: z.number().int().min(1).max(5).nullable().optional(), deadline: createDeadlineField.nullable().optional(),
+});
 const editFields = baseProjectFields.partial().strict();
 const deleteProjectMembershipInput = z.discriminatedUnion("clearSubtaskAssignments", [
   z.object({ membershipCycle: z.string().uuid(), clearSubtaskAssignments: z.literal(false), confirmedAssignmentCount: z.literal(0), confirmAccessLoss: z.boolean().optional() }).strict(),
@@ -257,14 +263,16 @@ async function matchingInternalProjectIds(database: D1Database, authorizedIds: s
 }
 
 type AssignmentCandidate = { id: string; name: string; email: string; globalRole: Role; active: true };
-type ProjectAssignmentCandidatesResponse = { photographers: AssignmentCandidate[]; editors: AssignmentCandidate[] };
+/** #487: editors also carry `defaultEditor`. The list is already active + editor-eligible, so the stored flag is the effective Default editor rule. */
+type EditorAssignmentCandidate = AssignmentCandidate & { defaultEditor: boolean };
+type ProjectAssignmentCandidatesResponse = { photographers: AssignmentCandidate[]; editors: EditorAssignmentCandidate[] };
 
 async function assignmentCandidates(db: ReturnType<typeof createDb>): Promise<ProjectAssignmentCandidatesResponse> {
   const [photographers, editors] = await Promise.all([
     db.select({ id: schema.user.id, name: schema.user.name, email: schema.user.email, globalRole: schema.user.role, active: schema.user.active })
       .from(schema.user).where(and(eq(schema.user.active, true), inArray(schema.user.role, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.photographer)))
       .orderBy(sql`lower(${schema.user.name})`, sql`lower(${schema.user.email})`, schema.user.id).all(),
-    db.select({ id: schema.user.id, name: schema.user.name, email: schema.user.email, globalRole: schema.user.role, active: schema.user.active })
+    db.select({ id: schema.user.id, name: schema.user.name, email: schema.user.email, globalRole: schema.user.role, active: schema.user.active, defaultEditor: schema.user.defaultEditor })
       .from(schema.user).where(and(eq(schema.user.active, true), inArray(schema.user.role, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.editor)))
       .orderBy(sql`lower(${schema.user.name})`, sql`lower(${schema.user.email})`, schema.user.id).all(),
   ]);
@@ -283,14 +291,14 @@ function createProjectResponse(data: z.infer<typeof createProjectFields>, id: st
     id, street: data.street, suburb: data.suburb ?? null, postcode: data.postcode ?? null,
     agencyName: data.agencyName ?? null, agentName: data.agentName ?? null, agentEmail: data.agentEmail ?? null, agentPhone: data.agentPhone ?? null,
     agencyId: data.agencyId ?? null, agentId: data.agentId ?? null, shootDate: data.shootDate ?? null, timeWindow: data.timeWindow ?? null,
-    stageKey: "awaiting_raw", priority: null, boardRevision: 0, orderNo: data.orderNo ?? null, orderId: data.orderId ?? null,
+    stageKey: "awaiting_raw", priority: data.priority ?? null, boardRevision: 0, orderNo: data.orderNo ?? null, orderId: data.orderId ?? null,
     invoiceAmount: data.invoiceAmount ?? null, paymentStatus: data.paymentStatus ?? null, notes: data.notes ?? null, productionNotes: data.productionNotes ?? null,
     rawFolderLink: data.rawFolderLink ?? null, rawFolderPath: data.rawFolderPath ?? null, coverAssetId: null, effectiveCoverAssetId: null,
     archivedAt: null, archivedBy: null, members: memberships,
   };
 }
 
-async function createProjectAtomically(c: Context<AppEnv>, data: z.infer<typeof createProjectFields>, slots: Array<{ userId: string; roleOnProject: ProjectMemberRole }>, candidates: ProjectAssignmentCandidatesResponse) {
+async function createProjectAtomically(c: Context<AppEnv>, data: z.infer<typeof createProjectFields>, manualDeadline: ResolvedDeadlineSet | null, slots: Array<{ userId: string; roleOnProject: ProjectMemberRole }>, candidates: ProjectAssignmentCandidatesResponse) {
   const now = Date.now();
   const projectId = newId();
   const services = [...new Set<CollectionKind>(["raw", ...(data.orderedServices ?? [])])];
@@ -319,6 +327,11 @@ async function createProjectAtomically(c: Context<AppEnv>, data: z.infer<typeof 
     data.agentEmail ?? null, data.agentPhone ?? null, data.agencyId ?? null, data.agentId ?? null, data.shootDate ?? null,
     data.timeWindow ?? null, data.orderNo ?? null, data.orderId ?? null, data.invoiceAmount ?? null, data.paymentStatus ?? null,
     data.notes ?? null, data.productionNotes ?? null, data.rawFolderLink ?? null, data.rawFolderPath ?? null, now, now,
+    // #488: appended last so the `.slice(0, 12)` / `.slice(12)` bind split below stays valid. A manual Deadline is written by
+    // the INSERT itself (version 1, source manual): it is never a second save after create, so it cannot half-land.
+    data.priority ?? null,
+    manualDeadline?.localCivil ?? null, manualDeadline ? PROJECT_DEADLINE_ZONE : null, manualDeadline?.offset ?? null, manualDeadline?.fold ?? null,
+    manualDeadline?.deadlineAt ?? null, manualDeadline ? JSON.stringify(manualDeadline.offsets) : null, manualDeadline ? 1 : 0, manualDeadline ? "manual" : "none",
   ];
   const projectInsert = raw.prepare(`
     INSERT INTO projects (
@@ -326,11 +339,14 @@ async function createProjectAtomically(c: Context<AppEnv>, data: z.infer<typeof 
       agency_id, agent_id, shoot_date, time_window, stage_key,
       board_revision,
       order_no, order_id, invoice_amount, payment_status, notes, production_notes, raw_folder_link, raw_folder_path,
-      created_at, updated_at
+      created_at, updated_at, priority,
+      deadline_local_civil, deadline_zone, deadline_utc_offset_minutes, deadline_fold, deadline_at,
+      deadline_reminder_offsets_json, deadline_version, deadline_source
     )
     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_raw',
       0,
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?, ?, ?, ?
     WHERE ${eligibilityPredicates.length ? eligibilityPredicates.join(" AND ") : "1 = 1"}
     RETURNING id
   `).bind(...fieldValues, ...slots.flatMap((slot) => [slot.userId, ...PROJECT_ASSIGNMENT_ELIGIBLE_ROLES[slot.roleOnProject]]));
@@ -357,13 +373,39 @@ async function createProjectAtomically(c: Context<AppEnv>, data: z.infer<typeof 
       WHERE pm.project_id = ? AND pm.role_on_project = 'editor' AND pm.user_id IN (${defaultEditorIds.map(() => "?").join(", ")})
     `).bind(projectId, ...defaultEditorIds)
     : null;
+  const projectAuditId = newId();
   const projectAudit = raw.prepare(`
     INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
     SELECT ?, ?, 'project.create', 'project', ?, ?, ? WHERE EXISTS (SELECT 1 FROM projects WHERE id = ?)
-  `).bind(newId(), c.get("user").id, projectId, auditMeta(c.get("user"), { orderedServices: services }), now, projectId);
+  `).bind(projectAuditId, c.get("user").id, projectId, auditMeta(c.get("user"), { orderedServices: services, ...(data.priority != null ? { priority: data.priority } : {}) }), now, projectId);
+  // #484: a Project created with a canonical Shoot date and no Deadline gets its Automatic Deadline in this same batch, appended
+  // last so every result index below stays valid and gated on this create's own audit row.
+  const automaticDeadline = !manualDeadline && typeof data.shootDate === "string"
+    ? buildAutomaticDeadlineBundle({ db: raw, projectId, shootDate: data.shootDate, gate: { kind: "audit", auditId: projectAuditId }, auditId: newId(), reason: "create", now })
+    : undefined;
+  // #488: a person's manual Deadline records one `schedule_saved` audit row (gated on the create's own audit row) and its
+  // reminder occurrences (gated on that row). No activity, outbox row or notification: the creator is the actor.
+  const manualDeadlineStatements: D1PreparedStatement[] = [];
+  if (manualDeadline) {
+    const scheduleAuditId = newId();
+    manualDeadlineStatements.push(raw.prepare(`
+      INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+      SELECT ?, ?, 'project.deadline.schedule_saved', 'project', ?, ?, ? WHERE EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
+    `).bind(scheduleAuditId, c.get("user").id, projectId, auditMeta(c.get("user"), { version: 1, operation: "set", via: "create" }), now, projectAuditId));
+    for (const occurrence of planDeadlineOccurrences(manualDeadline.deadlineAt, manualDeadline.offsets, now)) {
+      manualDeadlineStatements.push(raw.prepare(`
+        INSERT INTO project_deadline_occurrences
+          (id, project_id, schedule_version, kind, reminder_offset_minutes, fire_at, deadline_at,
+           deadline_local_civil, deadline_zone, deadline_utc_offset_minutes, deadline_fold,
+           status, terminal_reason, fired_at, created_by, created_at, updated_at)
+        SELECT ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?
+        WHERE EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
+      `).bind(newId(), projectId, occurrence.kind, occurrence.offsetMinutes, occurrence.fireAt, manualDeadline.deadlineAt, manualDeadline.localCivil, PROJECT_DEADLINE_ZONE, manualDeadline.offset, manualDeadline.fold, occurrence.status, occurrence.terminalReason, c.get("user").id, now, now, scheduleAuditId));
+    }
+  }
   const memberStatementStart = diagnostics.length + 1 + collectionStatements.length;
   const defaultMembershipsIndex = memberStatementStart + memberTuples.statements.length;
-  const result = await raw.batch([...diagnostics, projectInsert, ...collectionStatements, ...memberTuples.statements, ...(defaultMembershipsSelect ? [defaultMembershipsSelect] : []), projectAudit]);
+  const result = await raw.batch([...diagnostics, projectInsert, ...collectionStatements, ...memberTuples.statements, ...(defaultMembershipsSelect ? [defaultMembershipsSelect] : []), projectAudit, ...(automaticDeadline?.statements ?? []), ...manualDeadlineStatements]);
   const projectIndex = diagnostics.length;
   const created = rowsFromD1<{ id: string }>(result[projectIndex]).length > 0;
   if (!created) {
@@ -505,6 +547,19 @@ projectsRoutes.post("/projects", requireCapability("createProject"), terminalRou
   // studio must be able to onboard shoots throughout the flag-OFF rollout window. Stage move /
   // archive / restore stay flag-gated because they change existing rows' revision.
   const data = await jsonInput(c, createProjectFields); if (data instanceof Response) return data;
+  // #488: defence in depth. Only Admin holds `createProject` today, so neither branch is reachable over HTTP yet; they keep
+  // create from becoming a way round the Priority and Deadline capabilities if `createProject` is ever granted more widely.
+  const principal = c.get("user");
+  if (data.priority != null && !roleHasCapability(principal.role, "prioritizeProjects")) return c.json({ error: "Forbidden", capability: "prioritizeProjects" }, 403);
+  if (data.deadline != null && !roleHasCapability(principal.role, "editProject")) return c.json({ error: "Forbidden", capability: "editProject" }, 403);
+  let manualDeadline: ResolvedDeadlineSet | null = null;
+  if (data.deadline) {
+    try { manualDeadline = resolveDeadlineSet(data.deadline, data.deadline.reminderOffsetsMinutes ?? []); }
+    catch (error) {
+      if (!(error instanceof ProjectDeadlineError)) throw error;
+      return c.json({ error: error.message, code: error.code, ...(error.details ?? {}) }, error.status);
+    }
+  }
   const slots = normalizedProjectSlots(data.photographerUserIds, data.editorUserIds);
   const candidates = await assignmentCandidates(createDb(c.env.DB));
   const photographerIds = new Set(candidates.photographers.map((candidate) => candidate.id));
@@ -513,7 +568,7 @@ projectsRoutes.post("/projects", requireCapability("createProject"), terminalRou
   // This early response is only a useful UX guard. The same eligibility is rechecked inside the
   // conditional project INSERT in createProjectAtomically, which is the write authority.
   if (prevalidationFailures.length) return c.json({ error: "One or more project assignments are not eligible", code: "ineligible_project_assignments", ineligibleSlots: prevalidationFailures }, 422);
-  const result = await createProjectAtomically(c, data, slots, candidates);
+  const result = await createProjectAtomically(c, data, manualDeadline, slots, candidates);
   if (!result.created) return c.json({ error: "One or more project assignments are not eligible", code: "ineligible_project_assignments", ineligibleSlots: result.ineligibleSlots }, 422);
   return c.json({ ...result.response, contractEnabled: await boardContractEnabled(c.env.DB, variant) }, 201);
 }));
@@ -642,6 +697,23 @@ projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) =
   }
   const statements: D1PreparedStatement[] = [projectUpdate, c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project.update', 'project', ?, ?, ? WHERE changes() = 1 RETURNING id").bind(auditId, c.get("user").id, id, auditMeta(c.get("user"), projectAuditMeta), Date.now())];
   statements.push(...serviceStatements); if (activityBundle) statements.push(...activityBundle.statements);
+  // #484: gaining a canonical Shoot date (empty or free text before) gives an empty Deadline its Automatic Deadline, in this same
+  // batch. Appended last so every result index above stays valid, and gated on this save's own audit row so a lost race writes nothing.
+  // A canonical date moving to another canonical date is a reschedule (#485), not a gain, so it never qualifies here.
+  const gainedShootDate = Object.prototype.hasOwnProperty.call(projectUpdates, "shootDate") && typeof projectUpdates.shootDate === "string" && automaticDeadlineFor(projectUpdates.shootDate) !== null && automaticDeadlineFor(existingProject.shootDate) === null;
+  const automaticDeadline = gainedShootDate
+    ? buildAutomaticDeadlineBundle({ db: c.env.DB, projectId: id, shootDate: projectUpdates.shootDate as string, gate: { kind: "audit", auditId }, auditId: newId(), reason: "details", now: Date.now() })
+    : undefined;
+  if (automaticDeadline) statements.push(...automaticDeadline.statements);
+  // #485: a canonical Shoot date that differs from the stored one moves a Deadline the system set and nobody has saved. Appended
+  // whenever the date changes, with no pre-read of the Deadline: the bundle's own predicates (source `automatic`, a held Deadline,
+  // the date this save wrote) decide, so a Deadline version bumped by a concurrent write cannot make the move silently lose, and a
+  // Project with no Deadline is never backfilled. Clearing the date or writing free text never gets here. Gated on this save's audit row.
+  const rescheduledShootDate = Object.prototype.hasOwnProperty.call(projectUpdates, "shootDate") && typeof projectUpdates.shootDate === "string" && automaticDeadlineFor(projectUpdates.shootDate) !== null && projectUpdates.shootDate !== existingProject.shootDate;
+  const automaticDeadlineMove = rescheduledShootDate
+    ? buildAutomaticDeadlineMoveBundle({ db: c.env.DB, projectId: id, shootDate: projectUpdates.shootDate as string, gate: { kind: "audit", auditId }, auditId: newId(), reason: "details", now: Date.now() })
+    : undefined;
+  if (automaticDeadlineMove) statements.push(...automaticDeadlineMove.statements);
   const result = await c.env.DB.batch(statements);
   if (!rowsFromD1<{ id: string }>(result[0]).length) {
     const currentProject = await db.select(projectColumnsForVariant(variant)).from(schema.projects).where(eq(schema.projects.id, id)).get();
@@ -1219,11 +1291,29 @@ projectsRoutes.delete("/projects/:id", terminalRoute("/projects/:id", async (c) 
     await abortActiveDocumentSessions(c, id);
     return c.json({ error: "Active document uploads were aborted. Confirm deletion again after the sessions are terminal.", activeDocuments }, 409);
   }
+  // Abort any embedded-media upload that was started but never completed, so no upload outlives the Project (fast path).
+  // An abort that fails is not forgotten: the batch below queues every media key before the cascade erases the rows, and the
+  // queue entries of uploads whose abort failed survive until the background sweep has aborted them and deleted the object.
+  const startedUploads = (await c.env.DB.prepare("SELECT original_key, upload_id FROM embedded_media WHERE project_id = ? AND state = 'uploading'").bind(id).all<{ original_key: string; upload_id: string | null }>()).results;
+  const unresolvedUploadKeys: string[] = [];
+  await Promise.all(startedUploads.map(async (row) => {
+    // A dev-direct upload has no upload id: nothing to abort, but its key stays queued like any in-flight upload.
+    if (!row.upload_id) { unresolvedUploadKeys.push(row.original_key); return; }
+    try { await abortMultipart(c.env, row.original_key, row.upload_id); } catch { unresolvedUploadKeys.push(row.original_key); }
+  }));
   const r2Prefix = `projects/${id}/`;
   const assetIds = (await db.select({ id: schema.assets.id }).from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).where(eq(schema.collections.projectId, id)).all()).map((asset) => asset.id);
   const assetCount = assetIds.length;
   // Audit BEFORE destruction so the trail survives even if a later step dies mid-way.
   await audit(c.env, c.get("user"), "project.delete", "project", id, { street: project.street, orderId: project.orderId, assetCount, r2Prefix });
+  // #498 (ADR 0017): the Project whiteboard's Durable Object holds the live board outside D1 and R2,
+  // so tear it down beside the R2 purge. It runs first and idempotently: a failure leaves the Project
+  // archived with every other store intact, so the delete can simply be retried.
+  try { await c.env.PROJECT_WHITEBOARD.get(c.env.PROJECT_WHITEBOARD.idFromName(id)).purge(); }
+  catch (error) {
+    console.error("Project whiteboard purge failed", { event: "project_whiteboard_purge_failed", projectId: id, message: error instanceof Error ? error.message : String(error) });
+    return c.json({ error: "The project whiteboard could not be cleared. Nothing else was deleted; try again." }, 502);
+  }
   const keys: string[] = [];
   for (const prefix of [r2Prefix, ...assetIds.map((assetId) => `renditions/${assetId}/`)]) {
     let cursor: string | undefined;
@@ -1253,8 +1343,22 @@ projectsRoutes.delete("/projects/:id", terminalRoute("/projects/:id", async (c) 
     // otherwise recreate the Project (its order_id is lost with the row). Same batch, so either both
     // happen or neither. A live Project holding the order_id still wins over a tombstone.
     c.env.DB.prepare("INSERT INTO tonomo_order_tombstones (order_id, deleted_project_id, street, deleted_at, deleted_by, source, created_at) SELECT order_id, id, street, ?, ?, 'project_delete', ? FROM projects WHERE id = ? AND order_id IS NOT NULL AND TRIM(order_id) != '' ON CONFLICT(order_id) DO UPDATE SET deleted_project_id=excluded.deleted_project_id, street=excluded.street, deleted_at=excluded.deleted_at, deleted_by=excluded.deleted_by, source=excluded.source").bind(deletedAt, c.get("user").id, deletedAt, id),
+    // Cleanup ownership survives the cascade: every media key of this Project (plus the upload id of one still uploading) is queued first.
+    c.env.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) SELECT original_key, CASE WHEN state = 'uploading' THEN upload_id END, project_id, ? FROM embedded_media WHERE project_id = ? ON CONFLICT(storage_key) DO NOTHING").bind(deletedAt, id),
+    c.env.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) SELECT display_key, NULL, project_id, ? FROM embedded_media WHERE project_id = ? AND display_key IS NOT NULL ON CONFLICT(storage_key) DO NOTHING").bind(deletedAt, id),
+    c.env.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) SELECT poster_key, NULL, project_id, ? FROM embedded_media WHERE project_id = ? AND poster_key IS NOT NULL ON CONFLICT(storage_key) DO NOTHING").bind(deletedAt, id),
     c.env.DB.prepare("DELETE FROM projects WHERE id = ?").bind(id),
   ]);
+  // Dequeue only what THIS request resolved: a key it queued in the batch above (queued_at = deletedAt), whose object the purge deleted,
+  // and whose upload (if any) it aborted. Entries queued by anyone else (a sweep whose abort failed, a completion mid-purge) and uploads
+  // whose abort failed here all stay for the drain. Never a Project-wide delete.
+  const deletedKeys = new Set(keys); const unresolved = new Set(unresolvedUploadKeys);
+  const mine = (await c.env.DB.prepare("SELECT storage_key FROM embedded_media_cleanup WHERE project_id = ? AND queued_at = ?").bind(id, deletedAt).all<{ storage_key: string }>()).results
+    .map((row) => row.storage_key).filter((key) => deletedKeys.has(key) && !unresolved.has(key));
+  for (let index = 0; index < mine.length; index += 50) {
+    const chunk = mine.slice(index, index + 50);
+    await c.env.DB.prepare(`DELETE FROM embedded_media_cleanup WHERE queued_at = ? AND storage_key IN (${chunk.map(() => "?").join(",")})`).bind(deletedAt, ...chunk).run();
+  }
   return c.json({ ok: true, deletedObjects: keys.length });
 }));
 const stageHandler = async (c: Context<AppEnv>) => {

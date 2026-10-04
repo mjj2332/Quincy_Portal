@@ -3,7 +3,9 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { NOTIFICATION_OUTBOX_EVENT_TYPES } from "@quincy/shared";
 import type { Env } from "../src/env";
 import { processNotificationMessage, recoverNotificationOutbox } from "../src/notification-delivery";
-import { scanProjectDeadlineOccurrences } from "../src/project-deadline";
+import { buildAutomaticDeadlineBundle } from "@quincy/db";
+import { fireProjectDeadlineOccurrence, scanProjectDeadlineOccurrences } from "../src/project-deadline";
+import { commitShootDateChange } from "../src/projects/shoot-date";
 import { saveProjectDeadlineSchedule, suppressProjectDeadlineWork } from "../../app/src/lib/project-deadline";
 
 const database = env as unknown as { DB: D1Database };
@@ -307,5 +309,54 @@ describe("TB4B Deadline occurrence scan and delivery", () => {
     expect(await recoverNotificationOutbox(deliveryEnv(undefined, recoveredQueue), now + 1)).toBeGreaterThanOrEqual(1);
     expect(recoveredQueue).toHaveBeenCalledWith({ type: "notification_outbox", outboxId: outbox!.id });
     expect(await database.DB.prepare("SELECT status FROM notification_outbox WHERE id = ?").bind(outbox!.id).first()).toEqual({ status: "queued" });
+  });
+});
+
+/**
+ * #485: an Automatic Deadline moving while the scanner holds rows read at the old version. A Tuesday 2099-01-06 Deadline
+ * (shoot Monday 5 Jan) moves to Wednesday 7 Jan when Tonomo reschedules the shoot to Tuesday 6 Jan.
+ */
+describe("an Automatic Deadline move and the reminder scanner (#485)", () => {
+  const V1_1440_DUE = Date.parse("2099-01-05T07:00:00.000Z"); // after v1's 24h slot (Jan 5 06:00Z), before every v2 slot
+  const V2_1440_DUE = Date.parse("2099-01-06T07:00:00.000Z"); // after v2's 24h slot (Jan 6 06:00Z), before the rest
+
+  async function seedAutomatic(): Promise<string> {
+    const projectId = crypto.randomUUID();
+    const now = Date.now();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, shoot_date, board_position, board_revision, created_at, updated_at) VALUES (?, 'Move Scan Street', 'editing', '2099-01-05', 0, 0, ?, ?)").bind(projectId, now, now).run();
+    const bundle = buildAutomaticDeadlineBundle({ db: database.DB, projectId, shootDate: "2099-01-05", gate: { kind: "none" }, auditId: crypto.randomUUID(), reason: "tonomo_create", now })!;
+    await database.DB.batch(bundle.statements);
+    return projectId;
+  }
+  const reschedule = (projectId: string) => commitShootDateChange(env as never, { projectId, orderId: "order-move-scan", previous: "2099-01-05", next: "2099-01-06", receivedAt: new Date() });
+  const rowsAt = async (projectId: string, version: number) => (await database.DB.prepare("SELECT id, project_id AS projectId, schedule_version AS scheduleVersion, kind, reminder_offset_minutes AS reminderOffsetMinutes, fire_at AS fireAt, deadline_at AS deadlineAt, deadline_local_civil AS deadlineLocalCivil, deadline_utc_offset_minutes AS deadlineUtcOffsetMinutes, deadline_fold AS deadlineFold, created_at AS createdAt, created_by AS createdBy, status FROM project_deadline_occurrences WHERE project_id = ? AND schedule_version = ? ORDER BY reminder_offset_minutes DESC").bind(projectId, version).all<any>()).results;
+
+  it("cannot fire a row the scanner read at the old version after the move, and fires the new rows at their new times", async () => {
+    const projectId = await seedAutomatic();
+    const scanned = await rowsAt(projectId, 1);
+    expect(scanned.map((row) => row.status)).toEqual(["pending", "pending", "pending", "pending"]);
+    expect(await reschedule(projectId)).toBe(true);
+    expect(await database.DB.prepare("SELECT deadline_local_civil AS civil, deadline_version AS version FROM projects WHERE id = ?").bind(projectId).first()).toEqual({ civil: "2099-01-07T17:00", version: 2 });
+    expect(await fireProjectDeadlineOccurrence(deliveryEnv(), scanned[0], V1_1440_DUE)).toEqual({ claimed: false, publicationIds: [] });
+    await scanProjectDeadlineOccurrences(deliveryEnv(), V1_1440_DUE);
+    expect((await rowsAt(projectId, 2)).map((row) => row.status)).toEqual(["pending", "pending", "pending", "pending"]);
+    expect((await rowsAt(projectId, 1)).map((row) => row.status)).toEqual(["superseded", "superseded", "superseded", "superseded"]);
+    await scanProjectDeadlineOccurrences(deliveryEnv(), V2_1440_DUE);
+    expect((await rowsAt(projectId, 2)).map((row) => [row.reminderOffsetMinutes, row.status])).toEqual([[1440, "fired"], [240, "pending"], [60, "pending"], [0, "pending"]]);
+  });
+
+  it("never fires again a reminder the old version already sent", async () => {
+    const projectId = await seedAutomatic();
+    await scanProjectDeadlineOccurrences(deliveryEnv(), V1_1440_DUE);
+    const sent = (await rowsAt(projectId, 1))[0];
+    expect(sent.status).toBe("fired");
+    expect(await reschedule(projectId)).toBe(true);
+    expect((await rowsAt(projectId, 2)).map((row) => [row.reminderOffsetMinutes, row.status])).toEqual([[1440, "fired"], [240, "pending"], [60, "pending"], [0, "pending"]]);
+    await scanProjectDeadlineOccurrences(deliveryEnv(), V2_1440_DUE);
+    const carried = (await rowsAt(projectId, 2))[0];
+    expect(carried.status).toBe("fired");
+    // The carried slot was never claimed by a scan: no fire audit exists for it, only for the v1 row that really fired.
+    expect(await database.DB.prepare("SELECT count(*) AS n FROM audit_log WHERE action = 'project.deadline.occurrence_fired' AND target_id = ?").bind(carried.id).first()).toEqual({ n: 0 });
+    expect(await database.DB.prepare("SELECT count(*) AS n FROM audit_log WHERE action = 'project.deadline.occurrence_fired' AND target_id = ?").bind(sent.id).first()).toEqual({ n: 1 });
   });
 });

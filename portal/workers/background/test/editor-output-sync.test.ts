@@ -297,3 +297,65 @@ describe("Editor Output synchronization: move in progress (#153)", () => {
       .resolves.toEqual({ content_hash: oldHash, superseded_at: null });
   });
 });
+
+describe("Editor Output synchronization: Edited arrival (#486)", () => {
+  const arrivedAt = (projectId: string) => bindings.DB.prepare("SELECT edited_arrived_at AS v FROM projects WHERE id = ?").bind(projectId).first<{ v: number | null }>().then((row) => row?.v);
+
+  it("records the latest arrival for a new file and again for a changed version, never for an unchanged rescan", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const data = await fixture();
+      vi.setSystemTime(new Date("2026-10-02T01:00:00.000Z"));
+      configureFile(outputFile(data, "hash-a"));
+      await syncProjectEditorOutput(localEnv(), data.projectId, data.connectionId);
+      expect(await arrivedAt(data.projectId)).toBe(Date.parse("2026-10-02T01:00:00.000Z"));
+
+      vi.setSystemTime(new Date("2026-10-02T01:10:00.000Z"));
+      await syncProjectEditorOutput(localEnv(), data.projectId, data.connectionId);
+      expect(await arrivedAt(data.projectId)).toBe(Date.parse("2026-10-02T01:00:00.000Z"));
+
+      vi.setSystemTime(new Date("2026-10-02T01:12:00.000Z"));
+      configureFile(outputFile(data, "hash-b"));
+      await syncProjectEditorOutput(localEnv(), data.projectId, data.connectionId);
+      expect(await arrivedAt(data.projectId)).toBe(Date.parse("2026-10-02T01:12:00.000Z"));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not record an arrival for a rejected hash or a Project already in Edited review or Delivered", async () => {
+    const rejected = await fixture();
+    configureFile(outputFile(rejected, "listed"), "downloaded");
+    await expect(syncProjectEditorOutput(localEnv(), rejected.projectId, rejected.connectionId)).rejects.toThrow();
+    expect(await arrivedAt(rejected.projectId)).toBeNull();
+
+    for (const stage of ["edited_review", "delivered"]) {
+      const data = await fixture();
+      await bindings.DB.prepare("UPDATE projects SET stage_key = ? WHERE id = ?").bind(stage, data.projectId).run();
+      configureFile(outputFile(data, `hash-${stage}`));
+      await syncProjectEditorOutput(localEnv(), data.projectId, data.connectionId);
+      expect(await arrivedAt(data.projectId)).toBeNull();
+    }
+  });
+
+  it("does not record an arrival when the supersede loses to a newer current row", async () => {
+    const data = await fixture();
+    const file = outputFile(data, "hash-new");
+    const collectionId = crypto.randomUUID();
+    const existingId = crypto.randomUUID();
+    const now = Date.now();
+    await bindings.DB.batch([
+      bindings.DB.prepare("INSERT INTO collections (id, project_id, kind, status, created_at, updated_at) VALUES (?, ?, 'edited', 'received', ?, ?)").bind(collectionId, data.projectId, now, now),
+      bindings.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, source_path, source_path_key, section, is_premium, version, version_group_id, created_at, updated_at) VALUES (?, ?, 'photo', ?, 'edited.jpg', 4, 'hash-old', 'dropbox', ?, ?, NULL, 0, 1, ?, ?, ?)")
+        .bind(existingId, collectionId, `tests/${existingId}.jpg`, data.filePath, dropboxPathKey(file.path_lower), existingId, now, now),
+    ]);
+    configureFile(file);
+    // The scanned row changes content between the read and the guarded supersede.
+    vi.mocked(download).mockImplementation(async () => {
+      await bindings.DB.prepare("UPDATE assets SET content_hash = 'hash-concurrent' WHERE id = ?").bind(existingId).run();
+      return new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), { headers: { "Dropbox-API-Result": JSON.stringify({ content_hash: "hash-new" }) } });
+    });
+    await expect(syncProjectEditorOutput(localEnv(), data.projectId, data.connectionId)).resolves.toMatchObject({ newlyImported: 0 });
+    expect(await arrivedAt(data.projectId)).toBeNull();
+  });
+});

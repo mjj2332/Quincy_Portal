@@ -44,8 +44,17 @@ function refuse(input: RequestInfo | URL, init?: RequestInit): Promise<Response>
   return Promise.reject(new Error(`Unmocked fetch in a DOM test: ${attempt}`));
 }
 
+/** #498: the Project whiteboard opens a WebSocket. A DOM test that reaches one must stub the socket module. */
+class RefusedWebSocket {
+  constructor(url: string | URL) {
+    attempts.push(`WebSocket ${String(url)}`);
+    throw new Error(`Unmocked WebSocket in a DOM test: ${String(url)}`);
+  }
+}
+
 function install(): void {
   globalThis.fetch = refuse as typeof fetch;
+  globalThis.WebSocket = RefusedWebSocket as unknown as typeof WebSocket;
 }
 
 /** For `no-unmocked-fetch.self.dom.test.tsx` only: proves the gate fires, and clears what it recorded. */

@@ -23,11 +23,11 @@ function project(overrides: Partial<ProjectDetail> = {}): ProjectDetail {
     id: ID, street: "12 Example St", suburb: "Suburbia", postcode: "2000", agencyName: null, agentName: null,
     shootDate: null, stageKey: "editing", rawFolderPath: null, rawFolderLink: null, boardRevision: 5, contractEnabled: true,
     coverAssetId: null, effectiveCoverAssetId: null, collections: [], members: [],
-    deadlineSchedule: { version: 0, deadline: null, reminderOffsetsMinutes: [], state: "unset", nextOccurrence: null, canResume: false },
+    deadlineSchedule: { version: 0, source: null, deadline: null, reminderOffsetsMinutes: [], state: "unset", nextOccurrence: null, canResume: false },
     ...overrides,
   } as ProjectDetail;
 }
-const withDeadline = { version: 1, deadline: { localCivil: "2026-10-09T17:00", zone: "Australia/Sydney", utcOffsetMinutes: 660, fold: 0, instant: "2026-10-09T06:00:00Z" }, reminderOffsetsMinutes: [], state: "scheduled", nextOccurrence: null, canResume: false } as ProjectDetail["deadlineSchedule"];
+const withDeadline = { version: 1, source: "manual", deadline: { localCivil: "2026-10-09T17:00", zone: "Australia/Sydney", utcOffsetMinutes: 660, fold: 0, instant: "2026-10-09T06:00:00Z" }, reminderOffsetsMinutes: [], state: "scheduled", nextOccurrence: null, canResume: false } as ProjectDetail["deadlineSchedule"];
 
 let root: Root; let host: HTMLElement; let client: QueryClient;
 const calendar = () => host.querySelector<HTMLElement>('[data-testid="project-show-in-calendar"]');

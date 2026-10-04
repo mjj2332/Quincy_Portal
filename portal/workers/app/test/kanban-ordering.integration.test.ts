@@ -111,6 +111,19 @@ describe("Kanban priority and Board commands", () => {
     expect(await database.DB.prepare("SELECT stage_key, board_position, board_revision FROM projects WHERE id = ?").bind(created.id).first()).toEqual({ stage_key: "awaiting_raw", board_position: 0, board_revision: 0 });
   });
 
+  it("a manual move into Edited review clears the pending Edited arrival (#486), a move elsewhere keeps it", async () => {
+    const mover = crypto.randomUUID(); const other = crypto.randomUUID();
+    await seedProject(mover, "raw_review", 1024); await seedProject(other, "awaiting_raw", 1024);
+    await database.DB.prepare("UPDATE projects SET edited_arrived_at = 1000, edited_arrival_attempts = 2, edited_arrival_retry_at = 5000 WHERE id IN (?, ?)").bind(mover, other).run();
+    const move = (id: string, from: string, to: string, reasons: string[] = ["skipped_forward"]) => request(`/api/projects/${id}/stage`, adminToken, { method: "POST", body: JSON.stringify({
+      expected: { stageKey: from, boardRevision: 0 }, targetStageKey: to, placement: { kind: "append" }, confirmation: { reasons },
+    }) });
+    expect((await move(other, "awaiting_raw", "raw_review", [])).status).toBe(200);
+    expect(await database.DB.prepare("SELECT edited_arrived_at AS a, edited_arrival_attempts AS n, edited_arrival_retry_at AS r FROM projects WHERE id = ?").bind(other).first()).toEqual({ a: 1000, n: 2, r: 5000 });
+    expect((await move(mover, "raw_review", "edited_review")).status).toBe(200);
+    expect(await database.DB.prepare("SELECT edited_arrived_at AS a, edited_arrival_attempts AS n, edited_arrival_retry_at AS r FROM projects WHERE id = ?").bind(mover).first()).toEqual({ a: null, n: 0, r: null });
+  });
+
   it("answers a retired between placement on /stage with the reload-required 409 and writes nothing", async () => {
     const stage = "edited_review";
     const top = crypto.randomUUID(); const mover = crypto.randomUUID();

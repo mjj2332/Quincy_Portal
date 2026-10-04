@@ -36,6 +36,7 @@ import { routeAutoHdrDelta, type RoutedAutoHdrMapping } from "./autohdr/mapping"
 import { getMetadata, listFolderIfExists } from "./dropbox/client";
 import { autoHdrFinalPathCandidates, deriveAutoHdrFolderName } from "./autohdr/paths";
 import { reconcileAwaitingRawProjects } from "./reconcile-awaiting-raw";
+import { reconcileEditedArrivals } from "./edited-arrival";
 import { backfillAutoHdrV2 as backfillAutoHdrV2Impl, type BackfillParams, type BackfillResult } from "./autohdr/backfill";
 import { enqueueAutoHdrScaffold, ensureScaffold } from "./autohdr/scaffold";
 import { AutoHdrClaimError } from "./autohdr/errors";
@@ -46,7 +47,9 @@ import { notifyProject, pruneNotifications, scanStalledAutoHdr } from "./notific
 import { processNotificationDlqMessage, processNotificationMessage, recoverNotificationOutbox } from "./notification-delivery";
 import { scanProjectDeadlineOccurrences } from "./project-deadline";
 import { reconcileSubtaskReminderOccurrences, scanSubtaskReminderOccurrences } from "./subtask-reminders";
+import { runEmailDigests } from "./email-digest";
 import { sweepExternalEditedUploads } from "./external-upload-sweep";
+import { sweepEmbeddedMedia } from "./embedded-media-sweep";
 import { processExternalRoleCachePurges } from "./external-role-cache-purge";
 import { sweepStuckManualPublishes } from "./manual-publish-recovery";
 import { isBoardSchemaMaintenanceError, requireBoardSchemaReady } from "./lib/board-schema";
@@ -54,6 +57,8 @@ import { isBoardSchemaMaintenanceError, requireBoardSchemaReady } from "./lib/bo
 export { AutoHdrApiSend, AutoHdrFetch, AutoHdrSend, ManualEditedPublish, DropboxSyncDO, TonomoProcessorDO };
 
 const INGEST_QUEUE_MAX_ATTEMPTS = 4;
+/** 03:00 in Malaysia (UTC+8). */
+const EMBEDDED_MEDIA_SWEEP_UTC_HOUR = 19;
 export type RenditionBackfillInput = { dryRun?: boolean; cursor?: string; limit?: number; confirmProduction?: boolean };
 export type RenditionBackfillResult = { scanned: number; wouldEnqueue: number; enqueued: number; skipped: number; nextCursor: string | null; dryRun: boolean };
 
@@ -163,6 +168,12 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       } catch (error) {
         console.error("Manual publish stuck sweep failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
       }
+      try {
+        // Outside the Editor automation flag: a Portal Edited upload counts as an arrival too (#486).
+        await reconcileEditedArrivals(this.env, controller.scheduledTime);
+      } catch (error) {
+        console.error("Edited arrival reconciliation failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+      }
       return;
     }
     if (controller.cron !== "0 * * * *") {
@@ -201,10 +212,25 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       console.error("Subtask reminder reconcile failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
     }
     try {
+      const summary = await runEmailDigests(this.env, controller.scheduledTime);
+      console.log("Email digest run", summary);
+    } catch (error) {
+      console.error("Email digest run failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+    }
+    try {
       await pruneNotifications(this.env, controller.scheduledTime);
       console.log("Notification pruning complete");
     } catch (error) {
       console.error("Notification pruning failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+    }
+    // Daily, on the hourly trigger at 03:00 Malaysia time (19:00 UTC) rather than a new cron trigger (#493).
+    if (new Date(controller.scheduledTime).getUTCHours() === EMBEDDED_MEDIA_SWEEP_UTC_HOUR) {
+      try {
+        const swept = await sweepEmbeddedMedia(this.env, controller.scheduledTime);
+        console.log("Embedded media sweep complete", swept);
+      } catch (error) {
+        console.error("Embedded media sweep failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+      }
     }
   }
 
