@@ -185,6 +185,19 @@ describe("applying a link offers a card (#497)", () => {
     expect(storedPreviews()).toHaveLength(0);
   });
 
+  it("asks again for the same address after the composer was cleared while it was pending", async () => {
+    const resolvers: Array<(card: LinkPreviewCard) => void> = [];
+    request.mockImplementation(() => new Promise<LinkPreviewCard>((done) => { resolvers.push(done); }));
+    const host = await mount(plain());
+    await apply(host, "https://example.test/a");
+    await act(async () => reset!(plain("Next post")));
+    await apply(host, "https://example.test/a");
+    expect(request).toHaveBeenCalledTimes(2);
+    await act(async () => { resolvers[0]!(cardFor(P1, "https://example.test/a")); resolvers[1]!(cardFor(P2, "https://example.test/a")); });
+    await settle();
+    expect(storedPreviews()).toEqual([{ type: "linkPreview", attrs: { previewId: P2 } }]);
+  });
+
   it("lets the author bring a removed card back by applying the address again", async () => {
     request.mockResolvedValueOnce(cardFor(P1, "https://example.test/a")).mockResolvedValueOnce(cardFor(P2, "https://example.test/a"));
     const host = await mount(plain());

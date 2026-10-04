@@ -53,6 +53,18 @@ async function seedPreview(input: SeedPreview = {}) {
   return { id, imageId: image?.id ?? null };
 }
 
+/** An environment whose first look for a finished preview is held until `gate` opens, so it misses, as when another request finishes meanwhile. */
+function holdFirstLookup(environment: Env, gate: Promise<void>) {
+  const state = { held: false };
+  const db = new Proxy(environment.DB, { get(target, key) {
+    if (key !== "prepare") return Reflect.get(target, key, target);
+    return (sql: string) => { const statement = target.prepare(sql); if (state.held || !sql.includes("FROM link_previews") || !sql.includes("owner_id IS NULL AND url = ?")) return statement; state.held = true;
+      return { bind: (...values: unknown[]) => { const bound = statement.bind(...values); return { first: async () => { const found = await bound.first(); await gate; return found; } }; } }; };
+  } });
+  return { state, environment: { ...environment, DB: db } as Env };
+}
+const memberUser = () => ({ id: ids.member, email: "m@example.test", name: "M", role: "staff", active: true, authorizationEpoch: 0, impersonatedBy: null }) as never;
+
 /** A row of the attempts table as a fetch the server started leaves it. */
 async function seedAttempt(input: { requester?: string; createdAt?: number; url?: string; status?: "fetching" | "done" | "failed"; projectId?: string } = {}) {
   const at = input.createdAt ?? Date.now();
@@ -250,25 +262,68 @@ describe("POST /projects/:projectId/link-previews", () => {
     const url = "https://example.com/interleaved";
     let release: () => void = () => undefined; const gate = new Promise<void>((resolve) => { release = resolve; });
     const { environment, calls } = background(fetched({ image: null }));
-    // B's first look for a finished preview is held until A has completed, so it misses, exactly as the review describes.
-    let held = false;
-    const slowDb = new Proxy(environment.DB, { get(target, key) {
-      if (key !== "prepare") return Reflect.get(target, key, target);
-      return (sql: string) => { const statement = target.prepare(sql); if (held || !sql.includes("FROM link_previews") || !sql.includes("owner_id IS NULL AND url = ?")) return statement; held = true;
-        return { bind: (...values: unknown[]) => { const bound = statement.bind(...values); return { first: async () => { const found = await bound.first(); await gate; return found; } }; } }; };
-    } });
-    const user = { id: ids.member, email: "m@example.test", name: "M", role: "staff", active: true, authorizationEpoch: 0, impersonatedBy: null } as never;
+    const held = holdFirstLookup(environment, gate);
     const scope = { ownerKind: "project_comment" as const, projectId: ids.project };
-    const second = requestLinkPreview({ ...environment, DB: slowDb } as Env, user, scope, url, []);
-    await vi.waitFor(() => expect(held).toBe(true));
-    const first = await requestLinkPreview(environment, user, scope, url, []);
+    const second = requestLinkPreview(held.environment, memberUser(), scope, url, []);
+    await vi.waitFor(() => expect(held.state.held).toBe(true));
+    const first = await requestLinkPreview(environment, memberUser(), scope, url, []);
     expect(first.status).toBe(200);
     release();
-    const taken = await second;
-    expect(taken).toEqual(first);
+    expect(await second).toEqual(first);
     expect(calls).toHaveLength(1);
     expect(await database.DB.prepare("SELECT count(*) AS n FROM link_previews WHERE url = ?").bind(url).first()).toEqual({ n: 1 });
     expect(await database.DB.prepare("SELECT count(*) AS n FROM link_preview_attempts WHERE url = ?").bind(url).first()).toEqual({ n: 1 });
+  });
+
+  it("gives a reusable preview, not a 429, to a request whose reservation fails because the last slot went to the fetch that made it", async () => {
+    await database.DB.prepare("DELETE FROM link_preview_attempts").run();
+    for (let index = 0; index < 29; index += 1) await seedAttempt({ requester: ids.member });
+    const url = "https://example.com/last-slot";
+    let release: () => void = () => undefined; const gate = new Promise<void>((resolve) => { release = resolve; });
+    const { environment, calls } = background(fetched({ image: null }));
+    const held = holdFirstLookup(environment, gate);
+    const scope = { ownerKind: "project_comment" as const, projectId: ids.project };
+    const second = requestLinkPreview(held.environment, memberUser(), scope, url, []);
+    await vi.waitFor(() => expect(held.state.held).toBe(true));
+    const first = await requestLinkPreview(environment, memberUser(), scope, url, []);
+    expect(first.status).toBe(200);
+    release();
+    expect(await second).toEqual(first);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("deletes the preview image object when the Project is deleted and its cleanup entry leased while the copy is still in flight", async () => {
+    await database.DB.prepare("DELETE FROM embedded_media_cleanup").run();
+    await database.DB.prepare("DELETE FROM link_preview_attempts").run();
+    const projectId = crypto.randomUUID(); const now = Date.now();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Late Put Street', 'editing_autohdr', 0, ?, ?)").bind(projectId, now, now).run();
+    let release: () => void = () => undefined; const gate = new Promise<void>((resolve) => { release = resolve; });
+    let started = false;
+    const { environment } = background(fetched());
+    const media = new Proxy(environment.MEDIA, { get(target, key) {
+      if (key !== "put") return Reflect.get(target, key, target).bind?.(target) ?? Reflect.get(target, key, target);
+      return async (...args: Parameters<R2Bucket["put"]>) => { started = true; await gate; return target.put(...args); };
+    } });
+    const pending = requestLinkPreview({ ...environment, MEDIA: media } as Env, memberUser(), { ownerKind: "project_comment", projectId }, "https://example.com/late-put", []);
+    await vi.waitFor(() => expect(started).toBe(true));
+    const entry = await database.DB.prepare("SELECT storage_key FROM embedded_media_cleanup WHERE project_id = ?").bind(projectId).first<{ storage_key: string }>();
+    expect(entry).not.toBeNull();
+    // The Project goes and a sweep leases the entry, finishing before the put does.
+    await database.DB.prepare("UPDATE embedded_media_cleanup SET claimed_until = ?, attempts = attempts + 1 WHERE storage_key = ?").bind(Date.now() + 60_000, entry!.storage_key).run();
+    await database.DB.prepare("DELETE FROM projects WHERE id = ?").bind(projectId).run();
+    release();
+    const result = await pending;
+    expect(result.status === 200 && result.body.preview?.imageMediaId).toBeFalsy();
+    expect(await objectExists(entry!.storage_key)).toBe(false);
+    expect(await database.DB.prepare("SELECT count(*) AS n FROM embedded_media WHERE original_key = ?").bind(entry!.storage_key).first()).toEqual({ n: 0 });
+  });
+
+  it("leaves no cleanup entry behind once the image is promoted", async () => {
+    await database.DB.prepare("DELETE FROM embedded_media_cleanup").run();
+    const { environment } = background(fetched());
+    const card = linkPreviewResponseSchema.parse(await (await call(environment, PROJECT_PATH(), "member", "POST", { url: "https://example.com/promoted" })).json()).preview!;
+    expect(card.imageMediaId).not.toBeNull();
+    expect(await database.DB.prepare("SELECT count(*) AS n FROM embedded_media_cleanup").first()).toEqual({ n: 0 });
   });
 
   it("lets a fetch that never finished be retried after two minutes", async () => {

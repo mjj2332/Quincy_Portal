@@ -251,3 +251,21 @@ export async function verifyUploadedEmbeddedObject(env: Env, row: EmbeddedMediaR
   if (row.kind === "video" ? !sniffed : sniffed !== row.contentType) return reject(row.kind === "video" ? "The uploaded file is not an MP4 or MOV video" : "The uploaded file is not a JPEG, PNG or WebP image");
   return { ok: true };
 }
+
+/**
+ * Gives up an R2 object nothing references (a video poster, a link preview image): on a lost adoption and on an adoption that threw. Deletes the object, then its queue
+ * entry (a leftover entry is harmless, the sweep deletes an already-gone object). If R2 refuses, the key is queued again with the
+ * lease cleared. Accepted residual gap: when the R2 delete AND that following D1 write both fail back to back, the object is an orphan
+ * nothing tracks. That is logged loudly with the key (see docs/lessons.md) and left to a future R2 prefix reconciliation.
+ */
+export async function discardUnreferencedObject(env: Pick<Env, "DB" | "MEDIA">, posterKey: string, projectId: string | null): Promise<void> {
+  let deleted = false;
+  try { await env.MEDIA.delete(posterKey); deleted = true; } catch { /* queued below */ }
+  if (deleted) {
+    try { await env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ?").bind(posterKey).run(); } catch { /* the sweep drops the entry of a gone object */ }
+    return;
+  }
+  try { await enqueueEmbeddedMediaCleanup(env.DB, [{ key: posterKey, projectId }]); }
+  catch (error) { console.error("Embedded object ORPHANED: the R2 delete and the re-queue both failed, the object needs manual cleanup", { key: posterKey, projectId, error: error instanceof Error ? error.message : String(error) }); }
+}
+

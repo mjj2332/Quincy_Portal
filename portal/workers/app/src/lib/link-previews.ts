@@ -4,7 +4,7 @@ import {
 } from "@quincy/shared";
 import type { Env, SessionUser } from "../env";
 import { audit } from "./audit";
-import { abortEmbeddedMedia, claimAndDiscardUploadingMedia, getEmbeddedMedia } from "./embedded-media";
+import { abortEmbeddedMedia, claimAndDiscardUploadingMedia, discardUnreferencedObject, getEmbeddedMedia } from "./embedded-media";
 import { newId } from "./ids";
 
 /** What owns a post's link previews: a Project comment (inside its Project) or a Notice board post (no Project). */
@@ -159,6 +159,9 @@ export async function requestLinkPreview(env: Env, user: SessionUser, scope: { o
   if ((reserved.meta.changes ?? 0) !== 1) {
     const inFlight = await env.DB.prepare("SELECT 1 AS one FROM link_preview_attempts WHERE requester_id = ? AND owner_kind = ? AND context_id = ? AND url = ? AND status = 'fetching'").bind(user.id, scope.ownerKind, contextId, verdict.fetchUrl).first();
     if (inFlight) return { status: 409, body: { error: "This link is already being previewed. Try again in a moment.", code: "link_preview_in_progress" } };
+    // The last slot may have gone to the fetch that made the preview this request wants: look once more before refusing.
+    const late = await reusable();
+    if (late) return { status: 200, body: { preview: cardOf(late) } };
     return { status: 429, body: { error: "Too many link previews. Try again later.", code: "link_preview_rate_limited" } };
   }
   // Holding the reservation, look again: a fetch that finished since the first look left its preview, and this request must take it
@@ -200,15 +203,38 @@ async function fetchAndStorePreview(env: Env, user: SessionUser, scope: { ownerK
         : await env.DB.prepare(`INSERT INTO embedded_media (id, owner_kind, owner_id, project_id, uploader_id, kind, content_type, bytes, original_key, state, created_at, updated_at) SELECT ?, 'project_comment', NULL, id, ?, 'preview_image', ?, ?, ?, 'uploading', ?, ? FROM projects WHERE id = ? AND archived_at IS NULL`).bind(mediaId, user.id, contentType, image.bytes.byteLength, key, now, now, scope.projectId).run();
       if ((reserved.meta.changes ?? 0) !== 1) return archived;
       const row = { id: mediaId, originalKey: key, uploadId: null, projectId: scope.projectId };
-      try { await env.MEDIA.put(key, image.bytes, { httpMetadata: { contentType } }); }
-      catch (error) {
-        console.error("Link preview image copy failed", { error: error instanceof Error ? error.message.slice(0, 160) : "unknown" });
-        await claimAndDiscardUploadingMedia(env, row);
+      // The cleanup entry is the fence, as for a video poster: it is queued before the object exists, promotion needs it to still be there,
+      // unchanged and unleased, and removes it in the same batch. A Project delete plus a sweep that finish while the copy is in flight
+      // lose the promotion, and the object is then deleted here instead of being left with nothing that names it.
+      const queuedAt = Date.now();
+      await env.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) VALUES (?, NULL, ?, ?)").bind(key, scope.projectId, queuedAt).run();
+      let copied = false;
+      try { await env.MEDIA.put(key, image.bytes, { httpMetadata: { contentType } }); copied = true; }
+      catch (error) { console.error("Link preview image copy failed", { error: error instanceof Error ? error.message.slice(0, 160) : "unknown" }); }
+      let promoted = false;
+      if (copied) {
+        try {
+          const results = await env.DB.batch([
+            env.DB.prepare(`
+              UPDATE embedded_media SET state = 'pending', updated_at = ?
+              WHERE id = ? AND state = 'uploading'${liveProject ? ` AND ${liveProject}` : ""}
+                AND EXISTS (SELECT 1 FROM embedded_media_cleanup WHERE storage_key = ? AND queued_at = ? AND claimed_until IS NULL)
+            `).bind(Date.now(), mediaId, ...(scope.projectId === null ? [] : [scope.projectId]), key, queuedAt),
+            env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ? AND queued_at = ? AND claimed_until IS NULL AND (SELECT state FROM embedded_media WHERE id = ?) = 'pending'").bind(key, queuedAt, mediaId),
+          ]);
+          promoted = (results[0]!.meta.changes ?? 0) === 1;
+        } catch (error) {
+          console.error("Link preview image promotion failed", { error: error instanceof Error ? error.message.slice(0, 160) : "unknown" });
+          // A throw can still follow a commit: a row already promoted is live and stays.
+          promoted = await getEmbeddedMedia(env.DB, mediaId).then((current) => current?.state === "pending", () => false);
+        }
       }
-      if (await env.MEDIA.head(key)) {
-        const promoted = await env.DB.prepare(`UPDATE embedded_media SET state = 'pending', updated_at = ? WHERE id = ? AND state = 'uploading'${liveProject ? ` AND ${liveProject}` : ""}`).bind(Date.now(), mediaId, ...(scope.projectId === null ? [] : [scope.projectId])).run();
-        if ((promoted.meta.changes ?? 0) === 1) imageId = mediaId;
-        else if (await claimAndDiscardUploadingMedia(env, row) && scope.projectId !== null) {
+      if (promoted) imageId = mediaId;
+      else {
+        // Nothing references the object: delete it (re-queueing it if R2 refuses), then drop the reserved row.
+        await discardUnreferencedObject(env, key, scope.projectId);
+        const discarded = await claimAndDiscardUploadingMedia(env, row);
+        if (copied && discarded && scope.projectId !== null) {
           const live = await env.DB.prepare("SELECT 1 AS one FROM projects WHERE id = ? AND archived_at IS NULL").bind(scope.projectId).first();
           if (!live) return archived;
         }

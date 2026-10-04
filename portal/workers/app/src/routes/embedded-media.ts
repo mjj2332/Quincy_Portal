@@ -12,7 +12,7 @@ import { hasProjectCollaborationAccess } from "../middleware/capability";
 import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { abortMultipart, createMultipartPresign, PART_BYTES, PRESIGN_EXPIRES_SECONDS } from "../lib/r2s3";
-import { abortEmbeddedMedia, claimAndDiscardUploadingMedia, enqueueEmbeddedMediaCleanup, getEmbeddedMedia, verifyUploadedEmbeddedObject } from "../lib/embedded-media";
+import { abortEmbeddedMedia, claimAndDiscardUploadingMedia, discardUnreferencedObject, enqueueEmbeddedMediaCleanup, getEmbeddedMedia, verifyUploadedEmbeddedObject } from "../lib/embedded-media";
 import { jsonInput } from "./helpers";
 
 const uuid = z.string().uuid();
@@ -157,30 +157,13 @@ embeddedMediaRoutes.put("/projects/:projectId/embedded-media/:mediaId/poster", t
     // A throw can still follow a commit: if the row already references the object, it is live and stays.
     const committed = await getEmbeddedMedia(c.env.DB, mediaId).then((current) => current?.posterKey === posterKey, () => false);
     if (committed) return c.body(null, 204);
-    await discardPoster(c.env, posterKey, projectId); throw error;
+    await discardUnreferencedObject(c.env, posterKey, projectId); throw error;
   }
   if ((results[0]!.meta.changes ?? 0) === 1) return c.body(null, 204);
   // Lost: nothing references the object, and a sweep's claim on its entry can never be undone (adoption needs an unclaimed entry).
-  await discardPoster(c.env, posterKey, projectId);
+  await discardUnreferencedObject(c.env, posterKey, projectId);
   return c.json({ error: "This video can no longer take a poster", code: "poster_unavailable" }, 409);
 }));
-
-/**
- * Gives up a poster object nothing references: on a lost adoption and on an adoption that threw. Deletes the object, then its queue
- * entry (a leftover entry is harmless, the sweep deletes an already-gone object). If R2 refuses, the key is queued again with the
- * lease cleared. Accepted residual gap: when the R2 delete AND that following D1 write both fail back to back, the object is an orphan
- * nothing tracks. That is logged loudly with the key (see docs/lessons.md) and left to a future R2 prefix reconciliation.
- */
-async function discardPoster(env: Pick<Env, "DB" | "MEDIA">, posterKey: string, projectId: string): Promise<void> {
-  let deleted = false;
-  try { await env.MEDIA.delete(posterKey); deleted = true; } catch { /* queued below */ }
-  if (deleted) {
-    try { await env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ?").bind(posterKey).run(); } catch { /* the sweep drops the entry of a gone object */ }
-    return;
-  }
-  try { await enqueueEmbeddedMediaCleanup(env.DB, [{ key: posterKey, projectId }]); }
-  catch (error) { console.error("Embedded poster ORPHANED: the R2 delete and the re-queue both failed, the object needs manual cleanup", { key: posterKey, projectId, error: error instanceof Error ? error.message : String(error) }); }
-}
 
 /** A cancelled upload (#494): see `abortEmbeddedMedia`. The uploader's alone, in any Project state, since cleaning up is never harmful. */
 embeddedMediaRoutes.post("/projects/:projectId/embedded-media/:mediaId/abort", terminalRoute("/projects/:projectId/embedded-media/:mediaId/abort", async (c) => {
