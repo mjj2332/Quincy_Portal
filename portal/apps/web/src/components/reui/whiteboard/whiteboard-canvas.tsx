@@ -71,7 +71,7 @@ import type {
   UIOptions,
 } from "@excalidraw/excalidraw/types"
 import { cn } from "@/lib/utils"
-import { adoptArrivedRevisions, mergeRemote } from "@/lib/whiteboard-merge"
+import { adoptArrivedRevisions, createIndexLedger, mergeRemote } from "@/lib/whiteboard-merge"
 import { planSceneDrop, pasteIsUnsupported, withoutUnsupported } from "@/lib/whiteboard-saver"
 
 import "@excalidraw/excalidraw/index.css"
@@ -811,6 +811,8 @@ function createController(
   { root, arm, panel, library, editable, remoteApplied }: ControllerHost
 ): WhiteboardController {
   const libraryItem = (id: string) => library().find((item) => item.id === id)
+  // QUINCY ADDITION #499: canonical (server / authored) index per element, apart from the one the renderer repaired it to.
+  const indexLedger = createIndexLedger()
   const scrollTo = (ids?: readonly string[]) => {
     arm()
     const elements = api.getSceneElements()
@@ -970,7 +972,8 @@ function createController(
               incoming as never,
               api.getAppState()
             ) as unknown as MergeElement[],
-        }
+        },
+        indexLedger
       )
       api.updateScene({
         elements: merged as never,
@@ -984,7 +987,7 @@ function createController(
     adoptRevisions: (arrived) => {
       // The editor's own restore of `initialData` repaired indices and bumped revisions; the server's are what count.
       const scene = api.getSceneElementsIncludingDeleted()
-      adoptArrivedRevisions(scene, arrived as never)
+      adoptArrivedRevisions(scene, arrived as never, indexLedger)
       api.updateScene({
         elements: scene as never,
         captureUpdate: CaptureUpdateAction.NEVER,

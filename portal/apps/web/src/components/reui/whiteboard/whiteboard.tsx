@@ -229,8 +229,8 @@ export type WhiteboardController = {
   applyRemote: (elements: readonly unknown[]) => readonly ExcalidrawElement[]
   /** QUINCY ADDITION #499: puts the board's elements back at the version and nonce in `arrived` (matched by id), in place.
    * The editor's own restore of `initialData` repairs fractional-index clashes by bumping revisions; call this once the
-   * board is ready with what the server sent, so nothing the server already holds reads as an edit. */
-  adoptRevisions: (arrived: ReadonlyArray<{ id: string; version: number; versionNonce: number }>) => void
+   * board is ready with what the server sent, so nothing the server already holds reads as an edit. Their `index` is kept as the canonical one, apart from the renderer's repair. */
+  adoptRevisions: (arrived: ReadonlyArray<{ id: string; version: number; versionNonce: number; index?: string | null }>) => void
   /** Selects the given elements, replacing the selection. */
   select: (ids: readonly string[]) => void
   /** Your panel through onPanelRequest when it is set, else the editor's own library sidebar. */

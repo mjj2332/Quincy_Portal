@@ -593,6 +593,37 @@ describe("admission and stale reads (Sol review)", () => {
     expect((await stubFor(crypto.randomUUID()).fetch(new Request("https://whiteboard.internal/socket", { headers: trusted(memberId, crypto.randomUUID()) }))).status).toBe(404);
   });
 
+  it("refuses admission when the reread is overtaken too: a removed member never receives 101 or init", async () => {
+    const project = await newProject();
+    const other = await join(project, "member2");                                     // a connected socket, so a refresh really reads
+    const [firstRead, refreshRead, reread] = await holdProjectReads(project, 3);
+    await runInDurableObject(stubFor(project), async (instance) => {                  // admission of `member`, started inside the object so the test never awaits it
+      const target = instance as unknown as { fetch: (request: Request) => Promise<Response>; admission?: Promise<{ status: number; messages: unknown[] }> };
+      target.admission = target.fetch(new Request("https://whiteboard.internal/socket", { headers: trusted(memberId, project) })).then((response) => {
+        const messages: unknown[] = [];
+        if (response.webSocket) { response.webSocket.addEventListener("message", (event) => messages.push(JSON.parse(event.data as string))); response.webSocket.accept(); }
+        return { status: response.status, messages };
+      });
+    });
+    await firstRead.hit();                                                            // read 1 (held): still a member
+    await startRefresh(project);                                                      // overtakes read 1 (already_done: nothing changed)
+    await refreshRead.hit(); refreshRead.release();
+    firstRead.release();                                                              // admission waits for the refresh tail, then rereads (read 3)
+    await reread.hit();                                                               // held: still a member
+    await database.DB.prepare("DELETE FROM project_members WHERE project_id = ? AND user_id = ?").bind(project, memberId).run();   // removal commits...
+    await startRefresh(project);                                                      // ...and its refresh is invoked during the reread
+    reread.release();
+    await settleRefreshes(project);
+    const outcome = await runInDurableObject(stubFor(project), async (instance) => {
+      const result = await (instance as unknown as { admission: Promise<{ status: number; messages: unknown[] }> }).admission;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      return result;
+    });
+    expect(outcome.status).toBe(403);
+    expect(outcome.messages).toEqual([]);
+    other.client.ws.close(1000);
+  });
+
   it("never commits a batch whose archive-state read was overtaken by an archive refresh", async () => {
     const project = await newProject();
     const a = await join(project, "member");

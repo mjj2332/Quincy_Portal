@@ -86,27 +86,25 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
     if (!projectId) return new Response("Missing connection identity", { status: 400 });
     const name = decodeName(request.headers.get(WHITEBOARD_NAME_HEADER));
     // The route authorised this person a moment ago, and a membership removal or an archive may have landed since
-    // (and its refresh already run). Admission therefore rereads the Project and the person's access, and runs in the
-    // refresh queue so it can neither interleave with a refresh nor be missed by the next one: a socket it accepts is
-    // registered before any later refresh reads the sockets. The mode comes from this read, not from the route's header.
-    return this.enqueue(async () => {
-      // Same epoch rule as a write: a refresh invoked while this reads queues behind us and, once the socket below is
-      // registered, reconciles it; the single reread covers a commit that landed just before that invocation.
-      const epoch = this.accessEpoch;
-      let state = await this.access({ userId, projectId });
-      if (epoch !== this.accessEpoch) state = await this.access({ userId, projectId });
-      if (!state.exists) return new Response("Project not found", { status: 404 });
-      if (!state.access) return new Response("Forbidden", { status: 403 });
-      ensureSchema(this.ctx.storage);
-      const pair = new WebSocketPair();
-      const [client, server] = [pair[0], pair[1]];
-      this.ctx.acceptWebSocket(server);
-      const attachment: Attachment = { userId, mode: state.archived ? "view" : "edit", projectId, sessionId: crypto.randomUUID(), name };
-      server.serializeAttachment(attachment);
-      const peers = this.attachments().filter((other) => other.attachment.sessionId !== attachment.sessionId).map((other) => this.presence.peer(other.attachment));
-      this.send(server, { type: "init", mode: attachment.mode, sessionId: attachment.sessionId, elements: readElements(this.ctx.storage), peers });
-      return new Response(null, { status: 101, webSocket: client });
-    });
+    // (and its refresh already run). Admission therefore rereads the Project and the person's access under the SAME
+    // epoch rule as a write (`authorize`): a read overtaken by a `refreshAccess()` invocation is not trusted; admission
+    // waits for the refresh queue's tail and rereads with a fresh epoch capture, and if that is overtaken too it is
+    // refused (no 101, no init). Admission is never put on the refresh queue (it would deadlock on that tail). Nothing
+    // awaits between the trusted read and the socket's registration below, so a later refresh always sees the socket.
+    // The mode comes from this read, not from the route's header.
+    const state = await this.authorize({ userId, projectId });
+    if (state === "stale") return new Response("Forbidden", { status: 403 });
+    if (!state.exists) return new Response("Project not found", { status: 404 });
+    if (!state.access) return new Response("Forbidden", { status: 403 });
+    ensureSchema(this.ctx.storage);
+    const pair = new WebSocketPair();
+    const [client, server] = [pair[0], pair[1]];
+    this.ctx.acceptWebSocket(server);
+    const attachment: Attachment = { userId, mode: state.archived ? "view" : "edit", projectId, sessionId: crypto.randomUUID(), name };
+    server.serializeAttachment(attachment);
+    const peers = this.attachments().filter((other) => other.attachment.sessionId !== attachment.sessionId).map((other) => this.presence.peer(other.attachment));
+    this.send(server, { type: "init", mode: attachment.mode, sessionId: attachment.sessionId, elements: readElements(this.ctx.storage), peers });
+    return new Response(null, { status: 101, webSocket: client });
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
@@ -154,7 +152,7 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
   }
 
   /** A trustworthy read of the person's access for a write, or "stale" when refreshes kept overtaking it. */
-  private async authorize(attachment: Attachment): Promise<Access | "stale"> {
+  private async authorize(attachment: Pick<Attachment, "userId" | "projectId">): Promise<Access | "stale"> {
     const epoch = this.accessEpoch;
     const first = await this.access(attachment);
     if (epoch === this.accessEpoch) return first;

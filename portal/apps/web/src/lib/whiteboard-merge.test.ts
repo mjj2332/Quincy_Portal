@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createWhiteboardSaver, type SavedElement } from "./whiteboard-saver";
-import { adoptArrivedRevisions, mergeRemote, type MergeFns } from "./whiteboard-merge";
+import { adoptArrivedRevisions, createIndexLedger, mergeRemote, type IndexLedger, type MergeFns } from "./whiteboard-merge";
 
 /**
  * #499: another person's elements are merged into the board by Excalidraw's own `restoreElements` and
@@ -15,6 +15,8 @@ type Fns = { reconcileElements: (l: never, r: never, a: never) => Array<Record<s
 type El = Record<string, unknown> & SavedElement;
 let excalidraw: Fns;
 let fns: MergeFns<El>;
+let ledger: IndexLedger;
+beforeEach(() => { ledger = createIndexLedger(); });
 beforeAll(async () => {
   HTMLCanvasElement.prototype.getContext = (() => ({})) as never;
   excalidraw = (await import("@excalidraw/excalidraw")) as unknown as Fns;
@@ -29,7 +31,7 @@ const find = (scene: readonly El[], id: string) => scene.find((element) => eleme
 const revision = (element: El) => ({ version: element.version, versionNonce: element.versionNonce });
 /** The scene as the editor holds it after `initialData` went through its own restore. */
 const loaded = (raw: Array<Record<string, unknown>>) => excalidraw.restoreElements(raw as never, null) as El[];
-const merge = (scene: El[], remote: Array<Record<string, unknown>>) => mergeRemote(scene, remote as never, fns);
+const merge = (scene: El[], remote: Array<Record<string, unknown>>) => mergeRemote(scene, remote as never, fns, ledger);
 const recordingSaver = (getElements: () => readonly SavedElement[]) => {
   const sent: SavedElement[][] = [];
   return { sent, saver: createWhiteboardSaver({ getElements, send: async (batch) => { sent.push([...batch]); } }) };
@@ -73,7 +75,7 @@ describe("mergeRemote keeps every revision where it was (#499)", () => {
     expect(scene.some((element) => element.version === 2)).toBe(true);                // documents the repair
     const { sent, saver } = recordingSaver(() => scene);
     saver.seed(raw as unknown as SavedElement[]);
-    adoptArrivedRevisions(scene, raw as never);
+    adoptArrivedRevisions(scene, raw as never, ledger);
     expect(scene.map(revision)).toEqual(raw.map(({ version, versionNonce }) => ({ version, versionNonce })));
     await saver.flush();
     expect(sent.flat()).toEqual([]);
@@ -135,3 +137,48 @@ describe("mergeRemote keeps every revision where it was (#499)", () => {
     expect(before.version).toBe(2);
   });
 });
+
+describe("mergeRemote orders by canonical indices, so a tab converges with a fresh load (#499)", () => {
+  const ids = (scene: readonly El[]) => scene.map((element) => element.id);
+  /** What a tab opened on the stored rows shows: the editor's restore of rows the server sorted by (index, id). */
+  const fresh = (rows: Array<Record<string, unknown>>) => {
+    const sorted = [...rows].sort((x, y) => (x.index as string) < (y.index as string) ? -1 : (x.index as string) > (y.index as string) ? 1 : (x.id as string) < (y.id as string) ? -1 : 1);
+    const scene = loaded(sorted); adoptArrivedRevisions(scene, sorted as never, createIndexLedger()); return scene;
+  };
+
+  it("B9: shapes b, c, d at one index arriving one at a time end in the order a fresh tab shows, and nothing is sent", async () => {
+    const a = rect("a", 1, 5, { index: "a0" });
+    const incoming = [rect("b", 1, 7, { index: "a1" }), rect("c", 1, 8, { index: "a1" }), rect("d", 1, 9, { index: "a1" })];
+    let scene = loaded([a]); adoptArrivedRevisions(scene, [a] as never, ledger);
+    const { sent, saver } = recordingSaver(() => scene);
+    saver.seed([a] as unknown as SavedElement[]);
+    for (const element of incoming) { scene = merge(scene, [element]); saver.adoptRemote([find(scene, element.id as string)]); }
+    expect(ids(scene)).toEqual(ids(fresh([a, ...incoming])));
+    expect(ids(scene)).toEqual(["a", "b", "c", "d"]);
+    await saver.flush();
+    expect(sent.flat()).toEqual([]);
+  });
+
+  it("B10: the same shapes arriving in the opposite order still end in (index, id) order", () => {
+    const a = rect("a", 1, 5, { index: "a0" });
+    const incoming = [rect("d", 1, 9, { index: "a1" }), rect("c", 1, 8, { index: "a1" }), rect("b", 1, 7, { index: "a1" })];
+    let scene = loaded([a]); adoptArrivedRevisions(scene, [a] as never, ledger);
+    for (const element of incoming) scene = merge(scene, [element]);
+    expect(ids(scene)).toEqual(ids(fresh([a, ...incoming])));
+    expect(ids(scene)).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("B11: a genuine local reorder is canonical from then on, and the index it was reordered to is what goes out", async () => {
+    const a = rect("a", 1, 5, { index: "a0" }); const b = rect("b", 1, 6, { index: "a1" });
+    let scene = loaded([a, b]); adoptArrivedRevisions(scene, [a, b] as never, ledger);
+    const { sent, saver } = recordingSaver(() => scene);
+    saver.seed([a, b] as unknown as SavedElement[]);
+    scene = scene.map((element) => (element.id === "a" ? excalidraw.newElementWith(element as never, { index: "a2" }) as El : element));   // bring to front
+    scene = merge(scene, [rect("c", 1, 7, { index: "a1" })]);
+    saver.adoptRemote([find(scene, "c")]);
+    expect(ids(scene)).toEqual(["b", "c", "a"]);
+    await saver.flush();
+    expect(sent.flat()).toEqual([expect.objectContaining({ id: "a", index: "a2", version: 2 })]);
+  });
+});
+
