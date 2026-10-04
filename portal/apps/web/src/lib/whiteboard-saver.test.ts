@@ -221,6 +221,19 @@ describe("remote elements (#499)", () => {
     expect(sent.map((batch) => batch.map((entry) => entry.version))).toEqual([[5]]);   // v6 is never re-sent as v7
   });
 
+  it("B8: a remote arrival during an in-flight save is not clobbered by the older ack, and the next local edit is sent once", async () => {
+    const scene = [el("a", 5)]; const sent: SavedElement[][] = []; const ack = deferred();
+    const saver = createWhiteboardSaver({ getElements: () => scene, send: (batch) => { sent.push([...batch]); return sent.length === 1 ? ack.promise : Promise.resolve(); } });
+    const first = saver.flush();                                     // local v5 in flight
+    scene[0] = el("a", 6, { x: 99 }); saver.adoptRemote([scene[0]!]);   // the other person's v6 arrives meanwhile
+    ack.resolve(); await first;                                      // the ack for v5 lands after v6 was adopted
+    await saver.flush();
+    expect(sent).toHaveLength(1);                                    // v6 stays recorded as stored; the ack did not make v5 the stored copy
+    scene[0] = el("a", 7, { x: 1 });
+    await saver.flush(); await saver.flush();
+    expect(sent.slice(1).map((batch) => batch.map((entry) => entry.version))).toEqual([[7]]);
+  });
+
   it("sends the next local edit above the remote version without further escalation", async () => {
     const scene = [el("a", 2)]; const sent: SavedElement[][] = [];
     const saver = createWhiteboardSaver({ getElements: () => scene, send: async (batch) => { sent.push([...batch]); } });

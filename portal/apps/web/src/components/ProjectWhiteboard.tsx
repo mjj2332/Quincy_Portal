@@ -231,7 +231,7 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
                     viewOnlyIndicator={false}
                     imageTool={false}
                     background="grid"
-                    onReady={(controller) => { controllerRef.current = controller; drainRemote.current(); }}
+                    onReady={(controller) => { controllerRef.current = controller; controller.adoptRevisions((init?.elements ?? []) as unknown as SavedElement[]); drainRemote.current(); }}
                     onPresence={sharePresence}
                     onElements={(elements) => { elementsRef.current = elements as ReadonlyArray<SavedElement>; replayRemote.current(); }}
                     onSave={save}

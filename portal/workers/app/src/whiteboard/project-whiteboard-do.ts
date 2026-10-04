@@ -61,8 +61,16 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
   private readonly presence = new PresenceBook();
   /** Serialises `refreshAccess`, so a later call always rereads after an earlier one has applied. */
   private refreshQueue: Promise<unknown> = Promise.resolve();
-  /** Advanced when a refresh starts and when it ends, even if no mode changed: a read that began before it is stale. */
-  private generation = 0;
+  /**
+   * Advanced SYNCHRONOUSLY when `refreshAccess()` is invoked, before it is queued, even when no mode will change. A
+   * write authorizes from reads it makes itself; if the epoch moved while it read, a refresh was invoked (so something
+   * committed that the read may not show) and the read cannot be trusted. Writes are never put on the refresh queue
+   * (that would add a D1 round-trip to every ack); they wait for its tail only when the epoch moved.
+   *
+   * Correctness assumes D1 PRIMARY reads (no Sessions API / read replication), and that every route that changes
+   * archive state or membership calls `refreshAccess()` AFTER its change has committed.
+   */
+  private accessEpoch = 0;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -82,7 +90,11 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
     // refresh queue so it can neither interleave with a refresh nor be missed by the next one: a socket it accepts is
     // registered before any later refresh reads the sockets. The mode comes from this read, not from the route's header.
     return this.enqueue(async () => {
-      const state = await this.access({ userId, projectId });
+      // Same epoch rule as a write: a refresh invoked while this reads queues behind us and, once the socket below is
+      // registered, reconciles it; the single reread covers a commit that landed just before that invocation.
+      const epoch = this.accessEpoch;
+      let state = await this.access({ userId, projectId });
+      if (epoch !== this.accessEpoch) state = await this.access({ userId, projectId });
       if (!state.exists) return new Response("Project not found", { status: 404 });
       if (!state.access) return new Response("Forbidden", { status: 403 });
       ensureSchema(this.ctx.storage);
@@ -113,16 +125,14 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
     // an archive or a restore while it awaits, so it must never upgrade. A view-only socket is refused without a read.
     if (attachment.mode !== "edit") return this.send(ws, { type: "rejected", seq, reason: "view-only" });
     // For an edit socket the Project and the person's access are reread on EVERY batch, as the backstop for a
-    // notification that never arrived. A read that a refresh overtook (the generation moved) is retried, never used.
-    // Bounded, and fail-closed: if every read was overtaken, the write is refused (`stale`) for the client to retry.
-    let state: Access | undefined;
-    for (let tries = 0; tries < 3 && !state; tries += 1) {
-      const generation = this.generation;
-      const read = await this.access(attachment);
-      if (generation === this.generation) state = read;
-    }
-    if (!state) return ws.readyState === OPEN ? this.send(ws, { type: "rejected", seq, reason: "stale" }) : undefined;
+    // notification that never arrived. The read is trusted only if no `refreshAccess()` was invoked while it ran
+    // (`accessEpoch`). If one was, wait for the refresh queue's tail (every refresh invoked so far has then applied) and
+    // read once more; if the epoch moves again the write is refused (`stale`) and the client sends it again.
+    const state = await this.authorize(attachment);
+    // From here to the ack nothing awaits: the reconcile, the broadcast and the ack run in one turn, so no refresh can
+    // interleave with the commit.
     if (ws.readyState !== OPEN) return;
+    if (state === "stale") return this.send(ws, { type: "rejected", seq, reason: "stale" });
     if (!state.exists) return this.close(ws, WHITEBOARD_CLOSE.deleted, "Project deleted");
     if (!state.access) return this.revoke(ws);
     // Fail closed: an archived read (or a refresh that moved this socket meanwhile) refuses the write.
@@ -141,6 +151,17 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
     if (winners.length > 0) this.broadcast({ type: "elements", elements: winners }, attachment.sessionId);
     if (losers.length > 0) this.send(ws, { type: "elements", elements: losers });
     this.send(ws, { type: "ack", seq });
+  }
+
+  /** A trustworthy read of the person's access for a write, or "stale" when refreshes kept overtaking it. */
+  private async authorize(attachment: Attachment): Promise<Access | "stale"> {
+    const epoch = this.accessEpoch;
+    const first = await this.access(attachment);
+    if (epoch === this.accessEpoch) return first;
+    await this.refreshQueue;
+    const again = this.accessEpoch;
+    const second = await this.access(attachment);
+    return again === this.accessEpoch ? second : "stale";
   }
 
   webSocketClose(ws: WebSocket, code: number): void {
@@ -172,7 +193,8 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
    * done, so a retry heals a notification that failed the first time.
    */
   refreshAccess(): Promise<void> {
-    return this.enqueue(() => this.applyAccess());
+    this.accessEpoch += 1;                                   // before queueing: it must invalidate reads already in flight
+    return this.enqueue(() => this.applyAccessNow());
   }
 
   /** Runs `task` after every earlier refresh or admission has finished. */
@@ -180,11 +202,6 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
     const run = this.refreshQueue.then(task);
     this.refreshQueue = run.catch(() => undefined);
     return run;
-  }
-
-  private async applyAccess(): Promise<void> {
-    this.generation += 1;
-    try { await this.applyAccessNow(); } finally { this.generation += 1; }
   }
 
   private async applyAccessNow(): Promise<void> {

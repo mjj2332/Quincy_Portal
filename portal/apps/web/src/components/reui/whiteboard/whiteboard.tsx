@@ -227,6 +227,10 @@ export type WhiteboardController = {
    * everything the sender did not mention and never bumps versions or tombstones. Works in view-only mode too. Returns
    * every element now on the board, deleted ones included. */
   applyRemote: (elements: readonly unknown[]) => readonly ExcalidrawElement[]
+  /** QUINCY ADDITION #499: puts the board's elements back at the version and nonce in `arrived` (matched by id), in place.
+   * The editor's own restore of `initialData` repairs fractional-index clashes by bumping revisions; call this once the
+   * board is ready with what the server sent, so nothing the server already holds reads as an edit. */
+  adoptRevisions: (arrived: ReadonlyArray<{ id: string; version: number; versionNonce: number }>) => void
   /** Selects the given elements, replacing the selection. */
   select: (ids: readonly string[]) => void
   /** Your panel through onPanelRequest when it is set, else the editor's own library sidebar. */

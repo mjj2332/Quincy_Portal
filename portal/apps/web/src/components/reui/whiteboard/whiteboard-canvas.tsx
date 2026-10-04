@@ -6,7 +6,7 @@
  * Tailwind `shadow-*`, focus ring widths -- see `reui-skin.guard.test.ts`), and `noUncheckedIndexedAccess`
  * narrowing. `"dark": boolean` is quoted only so the guard's `dark:` matcher does not read a type as a variant.
  *
- * This file: The Excalidraw canvas and chrome host. Imports `@excalidraw/excalidraw/index.css`, which is UNLAYERED (see docs/lessons.md, #498): it only loads with this lazy chunk. Unchanged apart from the mechanical edits and the QUINCY ADDITIONs marked inline (#498: image tool off; #499: `applyRemote` (revisions pinned across index repair), collaborator `colorKey`, `onPresence`).
+ * This file: The Excalidraw canvas and chrome host. Imports `@excalidraw/excalidraw/index.css`, which is UNLAYERED (see docs/lessons.md, #498): it only loads with this lazy chunk. Unchanged apart from the mechanical edits and the QUINCY ADDITIONs marked inline (#498: image tool off; #499: `applyRemote` and `adoptRevisions` (revisions never change across index repair), collaborator `colorKey`, `onPresence`).
  */
 /**
  * The editor behind <Whiteboard>: the only runtime import of Excalidraw (MIT,
@@ -71,7 +71,7 @@ import type {
   UIOptions,
 } from "@excalidraw/excalidraw/types"
 import { cn } from "@/lib/utils"
-import { pinRemoteRevisions, restorePinnedRevisions } from "@/lib/whiteboard-merge"
+import { adoptArrivedRevisions, mergeRemote } from "@/lib/whiteboard-merge"
 import { planSceneDrop, pasteIsUnsupported, withoutUnsupported } from "@/lib/whiteboard-saver"
 
 import "@excalidraw/excalidraw/index.css"
@@ -771,6 +771,8 @@ function replaceContent(
   })
 }
 
+type MergeElement = { id: string; version: number; versionNonce: number }
+
 function toCollaborator(person: WhiteboardCollaborator): Collaborator {
   const selectedElementIds: Record<string, true> = {}
   for (const id of person.selectedIds ?? []) selectedElementIds[id] = true
@@ -956,22 +958,38 @@ function createController(
     },
     // QUINCY ADDITION #499: other people's elements, merged by Excalidraw's own rule and kept out of Undo.
     applyRemote: (remote) => {
-      const restored = restoreElements(remote as never, null)
-      // Excalidraw's index repair bumps a remote element's version/nonce locally; pin what arrived and put it back.
-      const pins = pinRemoteRevisions(restored)
+      // Restore, reconcile and the index repair they do never change a revision (see whiteboard-merge.ts).
+      const merged = mergeRemote(
+        api.getSceneElementsIncludingDeleted() as unknown as MergeElement[],
+        remote as never,
+        {
+          restore: (raw) => restoreElements(raw as never, null) as unknown as MergeElement[],
+          reconcile: (local, incoming) =>
+            reconcileElements(
+              local as never,
+              incoming as never,
+              api.getAppState()
+            ) as unknown as MergeElement[],
+        }
+      )
       api.updateScene({
-        elements: reconcileElements(
-          api.getSceneElementsIncludingDeleted(),
-          restored as never,
-          api.getAppState()
-        ),
+        elements: merged as never,
         captureUpdate: CaptureUpdateAction.NEVER,
       })
-      restorePinnedRevisions(pins, api.getSceneElementsIncludingDeleted())
       // handleChange must not read this as a local edit (a remote tick would flash "Unsaved changes").
-      const merged = api.getSceneElementsIncludingDeleted()
-      remoteApplied(hashElementsVersion(merged))
-      return merged
+      const scene = api.getSceneElementsIncludingDeleted()
+      remoteApplied(hashElementsVersion(scene))
+      return scene
+    },
+    adoptRevisions: (arrived) => {
+      // The editor's own restore of `initialData` repaired indices and bumped revisions; the server's are what count.
+      const scene = api.getSceneElementsIncludingDeleted()
+      adoptArrivedRevisions(scene, arrived as never)
+      api.updateScene({
+        elements: scene as never,
+        captureUpdate: CaptureUpdateAction.NEVER,
+      })
+      remoteApplied(hashElementsVersion(api.getSceneElementsIncludingDeleted()))
     },
     select: (ids) => {
       const selectedElementIds: Record<string, true> = {}
@@ -1136,9 +1154,14 @@ type AutosaveOptions = Pick<
   "onChange" | "onSave" | "onSaveStatusChange"
 > & { changeDelay: number; autosaveDelay: number }
 
+// QUINCY ADDITION #499: a failed or refused save (the server answers `stale` while an access change is landing) is
+// retried by the autosave itself, 1 s, 2 s, 4 s ... capped at 30 s, until it goes through or the board closes.
+const RETRY_BASE_MS = 1000
+const RETRY_MAX_MS = 30_000
+
 /** The settled onChange and the autosave: onSave after edits idle, when the page
  * hides and on unmount, reporting the status as it moves. */
-function useAutosave(
+export function useAutosave(
   api: ExcalidrawImperativeAPI | null,
   options: RefObject<AutosaveOptions>
 ) {
@@ -1154,6 +1177,9 @@ function useAutosave(
   const finalSceneRef = useRef<WhiteboardScene | null>(null)
   const changeTimer = useRef<number | undefined>(undefined)
   const saveTimer = useRef<number | undefined>(undefined)
+  const retryTimer = useRef<number | undefined>(undefined)
+  const failuresRef = useRef(0)
+  const closedRef = useRef(false)
 
   const report = useCallback(
     (status: WhiteboardSaveStatus) => {
@@ -1173,16 +1199,25 @@ function useAutosave(
       return
     }
     window.clearTimeout(saveTimer.current)
+    window.clearTimeout(retryTimer.current)
     dirtyRef.current = false
     savingRef.current = true
     report("saving")
     try {
       await save(finalSceneRef.current ?? readScene(current))
+      failuresRef.current = 0
       report(dirtyRef.current ? "unsaved" : "saved")
     } catch {
       // Keep the edits dirty, so the next change or page hide retries the save.
       dirtyRef.current = true
       report("error")
+      // QUINCY ADDITION #499: and retry without waiting for another edit, backing off to a bound.
+      if (!closedRef.current) {
+        const delay = Math.min(RETRY_BASE_MS * 2 ** failuresRef.current, RETRY_MAX_MS)
+        failuresRef.current += 1
+        window.clearTimeout(retryTimer.current)
+        retryTimer.current = window.setTimeout(() => void flush(), delay)
+      }
     } finally {
       savingRef.current = false
       if (pendingRef.current) {
@@ -1229,9 +1264,12 @@ function useAutosave(
   // so a save still in flight re-runs against this snapshot, never an empty board.
   useLayoutEffect(() => {
     finalSceneRef.current = null
+    closedRef.current = false
     return () => {
+      closedRef.current = true
       window.clearTimeout(changeTimer.current)
       window.clearTimeout(saveTimer.current)
+      window.clearTimeout(retryTimer.current)
       const current = apiRef.current
       if (dirtyRef.current && current) {
         finalSceneRef.current = readScene(current)

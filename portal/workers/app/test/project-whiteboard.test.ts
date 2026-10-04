@@ -548,6 +548,33 @@ describe("access changes reach live sockets (#499)", () => {
 });
 
 
+/** Makes the next `count` Project reads inside the Durable Object return their answer (read BEFORE the hold) only when that gate's `release` is called.
+ * `hit()` polls until the read has been reached: awaiting a promise the object resolved would carry this test into the object's I/O context. */
+async function holdProjectReads(projectId: string, count: number) {
+  const gates = Array.from({ length: count }, () => { let release!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; }); return { gate, release }; });
+  await runInDurableObject(stubFor(projectId), async (instance) => {
+    const target = instance as unknown as { env: { DB: D1Database }; heldReads?: number }; const real = target.env.DB; let next = 0; target.heldReads = 0;
+    const db = { prepare(sql: string) {
+      const statement = real.prepare(sql);
+      if (next >= count || !sql.includes("archived_at")) return statement;
+      const mine = gates[next]!; next += 1;
+      return { bind: (...values: unknown[]) => ({ first: async () => { const answer = await statement.bind(...values).first(); target.heldReads = (target.heldReads ?? 0) + 1; await mine.gate; return answer; } }) };
+    } };
+    target.env = Object.create(target.env, { DB: { value: db } });
+  });
+  return gates.map(({ release }, index) => ({
+    release,
+    hit: async () => { for (let attempt = 0; attempt < 100; attempt += 1) { if (await runInDurableObject(stubFor(projectId), async (instance) => ((instance as unknown as { heldReads?: number }).heldReads ?? 0) > index)) return; await new Promise((resolve) => setTimeout(resolve, 20)); } throw new Error("the held read was never reached"); },
+  }));
+}
+const holdNextProjectRead = async (projectId: string) => (await holdProjectReads(projectId, 1))[0]!;
+const archiveNow = (project: string) => database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), project).run();
+/** Invokes `refreshAccess()` inside the Durable Object without waiting for it (a pending cross-object call would block the test's own socket I/O); `settleRefreshes` waits. */
+const startRefresh = (projectId: string) => runInDurableObject(stubFor(projectId), async (instance) => { const target = instance as unknown as { refreshAccess: () => Promise<void>; pendingRefreshes?: Array<Promise<void>> }; (target.pendingRefreshes ??= []).push(target.refreshAccess()); });
+const settleRefreshes = (projectId: string) => runInDurableObject(stubFor(projectId), async (instance) => { const target = instance as unknown as { pendingRefreshes?: Array<Promise<void>> }; await Promise.all(target.pendingRefreshes ?? []); target.pendingRefreshes = []; });
+const tick = (ms = 50) => new Promise((resolve) => setTimeout(resolve, ms));
+
+
 describe("admission and stale reads (Sol review)", () => {
   const trusted = (userId: string, projectId: string, mode = "edit") => ({ Upgrade: "websocket", "x-wb-user": userId, "x-wb-mode": mode, "x-wb-project": projectId, "x-wb-name": "Someone" });
 
@@ -566,28 +593,12 @@ describe("admission and stale reads (Sol review)", () => {
     expect((await stubFor(crypto.randomUUID()).fetch(new Request("https://whiteboard.internal/socket", { headers: trusted(memberId, crypto.randomUUID()) }))).status).toBe(404);
   });
 
-  /** Makes the next Project read inside the Durable Object return its answer only when `release` is called. */
-  async function holdNextProjectRead(projectId: string) {
-    let release!: () => void; let reached!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; }); const hit = new Promise<void>((resolve) => { reached = resolve; });
-    await runInDurableObject(stubFor(projectId), async (instance) => {
-      const target = instance as unknown as { env: { DB: D1Database } }; const real = target.env.DB; let used = false;
-      const db = { prepare(sql: string) {
-        const statement = real.prepare(sql);
-        if (used || !sql.includes("archived_at")) return statement;
-        return { bind: (...values: unknown[]) => ({ first: async () => { const answer = await statement.bind(...values).first(); used = true; reached(); await gate; return answer; } }) };
-      } };
-      target.env = Object.create(target.env, { DB: { value: db } });
-    });
-    return { release, hit };
-  }
-
   it("never commits a batch whose archive-state read was overtaken by an archive refresh", async () => {
     const project = await newProject();
     const a = await join(project, "member");
     const held = await holdNextProjectRead(project);
     a.client.send(batch(1, element("stale", 1, 1)));                              // reads "not archived", then waits
-    await held.hit;
+    await held.hit();
     await database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), project).run();
     await stubFor(project).refreshAccess();
     expect(await a.client.next()).toEqual({ type: "mode", mode: "view" });
@@ -612,19 +623,111 @@ describe("admission and stale reads (Sol review)", () => {
     expect((await storedIds(project)).map((row) => row.id)).not.toContain("stale");
     a.client.ws.close(1000);
   });
+})
 
-  it("fails closed when every read of a write is overtaken by a refresh: a stale read is never used to commit", async () => {
+describe("write authorization against refreshAccess (#499, epoch at invocation)", () => {
+  it("A1: a refresh queued behind a held refresh still invalidates a write that read 'unarchived' meanwhile", async () => {
     const project = await newProject();
-    const a = await join(project, "member");
-    await runInDurableObject(stubFor(project), async (instance) => {
-      const target = instance as unknown as { generation: number; access: () => Promise<unknown> };
-      target.access = async () => { target.generation += 2; return { exists: true, archived: false, access: true }; };   // a refresh overtakes every read
-    });
-    a.client.send(batch(1, element("stale", 1, 1)));
+    const a = await join(project, "member"); const b = await join(project, "member2");
+    const [r0, writeRead] = await holdProjectReads(project, 2);
+    await startRefresh(project);                                                      // R0: its read is held
+    await r0.hit();
+    a.client.send(batch(1, element("stale", 1, 1)));                                 // starts during R0, reads "not archived", held
+    await writeRead.hit();
+    await archiveNow(project);                                                        // archive commits...
+    await startRefresh(project);                                                      // ...and its notification queues behind R0
+    writeRead.release(); await tick();                                               // the write's read returns
+    r0.release();
+    await settleRefreshes(project);
+    const rest = await a.client.drain(300);
+    expect(rest).toContainEqual({ type: "rejected", seq: 1, reason: "view-only" });
+    expect(rest).not.toContainEqual({ type: "ack", seq: 1 });
+    expect((await storedIds(project)).map((row) => row.id)).not.toContain("stale");
+    expect((await b.client.drain(100)).filter((message) => message.type === "elements")).toEqual([]);
+    a.client.ws.close(1000); b.client.ws.close(1000);
+  });
+
+  it("A2: a write whose reads are overtaken twice is rejected as stale and never commits from the stale read", async () => {
+    const project = await newProject();
+    const a = await join(project, "member"); const b = await join(project, "member2");
+    const [firstRead, refreshRead, reread] = await holdProjectReads(project, 3);
+    a.client.send(batch(1, element("stale", 1, 1)));                                 // read 1 (held): unarchived
+    await firstRead.hit();
+    await startRefresh(project);                                                      // overtakes read 1; its own read is read 2
+    await refreshRead.hit(); refreshRead.release();
+    firstRead.release();                                                              // the write awaits the refresh queue, then rereads (read 3)
+    await reread.hit();                                                               // the reread: unarchived, held
+    await archiveNow(project);
+    await startRefresh(project);                                                      // overtakes the reread
+    reread.release();
+    await settleRefreshes(project);
     const rest = await a.client.drain(300);
     expect(rest).toContainEqual({ type: "rejected", seq: 1, reason: "stale" });
     expect(rest).not.toContainEqual({ type: "ack", seq: 1 });
     expect((await storedIds(project)).map((row) => row.id)).not.toContain("stale");
+    expect((await b.client.drain(100)).filter((message) => message.type === "elements")).toEqual([]);
+    a.client.ws.close(1000); b.client.ws.close(1000);
+  });
+
+  it("A3: a write that starts after a refresh was invoked (still held) sees the archive and is refused, not committed", async () => {
+    const project = await newProject();
+    const a = await join(project, "member");
+    await archiveNow(project);
+    const [held] = await holdProjectReads(project, 1);
+    await startRefresh(project);                                                      // invoked, its read held
+    await held.hit();
+    a.client.send(batch(1, element("late", 1, 1)));
+    const early = await a.client.drain(150);
+    expect(early).not.toContainEqual({ type: "ack", seq: 1 });
+    held.release(); await settleRefreshes(project);
+    const rest = [...early, ...(await a.client.drain(200))];
+    expect(rest).toContainEqual({ type: "mode", mode: "view" });
+    expect(rest).toContainEqual({ type: "rejected", seq: 1, reason: "view-only" });
+    expect(rest).not.toContainEqual({ type: "ack", seq: 1 });
+    expect((await storedIds(project)).map((row) => row.id)).not.toContain("late");
+    a.client.ws.close(1000);
+  });
+
+  it("A4: once `await refreshAccess()` returns, no write that was in flight before it commits", async () => {
+    const project = await newProject();
+    const a = await join(project, "member");
+    const held = await holdNextProjectRead(project);
+    a.client.send(batch(1, element("inflight", 1, 1)));                              // read "not archived", held
+    await held.hit();
+    await archiveNow(project);
+    await stubFor(project).refreshAccess();                                          // the socket is view-only from here on
+    held.release();
+    expect(await a.client.next()).toEqual({ type: "mode", mode: "view" });
+    expect(await a.client.next()).toEqual({ type: "rejected", seq: 1, reason: "view-only" });
+    expect((await storedIds(project)).map((row) => row.id)).not.toContain("inflight");
+    a.client.ws.close(1000);
+  });
+
+  it("A5: with no refresh in play a slow read is never 'stale': the write commits and is relayed", async () => {
+    const project = await newProject();
+    const a = await join(project, "member"); const b = await join(project, "member2");
+    const held = await holdNextProjectRead(project);
+    a.client.send(batch(1, element("slow", 1, 1)));
+    await held.hit(); await tick(); held.release();
+    expect(await a.client.next()).toEqual({ type: "ack", seq: 1 });
+    expect(await b.client.next()).toMatchObject({ type: "elements", elements: [{ id: "slow" }] });
+    a.client.ws.close(1000); b.client.ws.close(1000);
+  });
+
+  it("keeps the refresh queue alive after a refresh fails: later refreshes and writes still work", async () => {
+    const project = await newProject();
+    const a = await join(project, "member");
+    await runInDurableObject(stubFor(project), async (instance) => {
+      const target = instance as unknown as { env: { DB: D1Database } }; const real = target.env.DB; let failed = false;
+      const db = { prepare(sql: string) { if (!failed && sql.includes("archived_at")) { failed = true; throw new Error("D1 unavailable"); } return real.prepare(sql); } };
+      target.env = Object.create(target.env, { DB: { value: db } });
+    });
+    const outcome = await runInDurableObject(stubFor(project), async (instance) => (instance as unknown as { refreshAccess: () => Promise<void> }).refreshAccess().then(() => "ok", (error: Error) => error.message));
+    expect(outcome).toBe("D1 unavailable");
+    await save(a.client, 1, element("alive", 1, 1));                                 // a write that awaits the (failed) queue tail still commits
+    await archiveNow(project);
+    await stubFor(project).refreshAccess();                                          // and the queue still runs later refreshes
+    expect(await a.client.next()).toEqual({ type: "mode", mode: "view" });
     a.client.ws.close(1000);
   });
 });

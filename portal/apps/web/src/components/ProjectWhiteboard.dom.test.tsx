@@ -34,12 +34,14 @@ const board = vi.hoisted(() => ({
   applied: [] as unknown[][],
   initMode: "edit" as WhiteboardMode,
   initPeers: [] as unknown[],
+  initElements: [] as unknown[],
+  adopted: [] as Array<{ arrived: unknown[]; appliedBefore: number }>,
   editingId: null as string | null,
 }));
 vi.mock("../lib/whiteboard-socket", () => ({
   openWhiteboardSocket: (_projectId: string, handlers: unknown) => {
     board.handlers = handlers;
-    queueMicrotask(() => { const h = handlers as Handlers; h.onConnection("open"); h.onInit({ mode: board.initMode, elements: [], sessionId: "me", peers: board.initPeers as WhiteboardPeer[] }, false); });
+    queueMicrotask(() => { const h = handlers as Handlers; h.onConnection("open"); h.onInit({ mode: board.initMode, elements: board.initElements, sessionId: "me", peers: board.initPeers as WhiteboardPeer[] }, false); });
     return {
       send: (batch: readonly unknown[]) => { board.log.push("send"); return board.send ? board.send(batch) : Promise.resolve(); },
       sendPresence: (state: unknown) => { board.sentPresence.push(state); },
@@ -49,6 +51,7 @@ vi.mock("../lib/whiteboard-socket", () => ({
 }));
 const controller = () => ({
   api: { getAppState: () => ({ editingTextElement: board.editingId ? { id: board.editingId } : null, resizingElement: null, newElement: null }) },
+  adoptRevisions: (arrived: unknown[]) => { board.adopted.push({ arrived, appliedBefore: board.applied.length }); },
   applyRemote: (remote: Array<Record<string, unknown>>) => {
     board.log.push("applyRemote"); board.applied.push(remote);
     // Like Excalidraw's reconcile: an element being edited here is not replaced by a remote one.
@@ -84,7 +87,7 @@ async function mount() {
 }
 
 beforeEach(() => {
-  Object.assign(board, { log: [], handlers: null, scene: [], send: null, sentPresence: [], deferReady: false, props: null, collaborators: [], applied: [], initMode: "edit", initPeers: [], editingId: null });
+  Object.assign(board, { log: [], handlers: null, scene: [], send: null, sentPresence: [], deferReady: false, props: null, collaborators: [], applied: [], initMode: "edit", initPeers: [], initElements: [], adopted: [], editingId: null });
   onAccessFailure.mockReset(); onClose.mockReset();
 });
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); await Promise.resolve(); }); root = null; document.body.replaceChildren(); });
@@ -151,6 +154,30 @@ describe("remote elements (#499)", () => {
     board.scene = [el("mine", 5, { x: 1 })]; board.props!.onElements!(board.scene);
     await act(async () => { await board.props!.onSave!(); });
     expect(board.log).toContain("send");
+  });
+});
+
+describe("revisions the server sent (#499)", () => {
+  it("puts the loaded board back at the server's revisions as soon as the editor is ready, before any buffered remote batch", async () => {
+    board.initElements = [el("stored", 4)]; board.deferReady = true;
+    await mount();
+    await act(async () => { handlers().onElements([el("late", 1)]); });
+    await act(async () => { board.props!.onReady!(controller()); });
+    expect(board.adopted[0]).toEqual({ arrived: [el("stored", 4)], appliedBefore: 0 });   // nothing remote had been merged yet
+    expect(board.applied).toHaveLength(1);
+  });
+
+  it("sends a save the server refused as stale again on the next flush, with no new edit in between", async () => {
+    await mount();
+    board.scene = [el("mine", 2, { x: 5 })]; board.props!.onElements!(board.scene);
+    const sent: unknown[][] = [];
+    board.send = async (batch) => { sent.push([...batch]); if (sent.length === 1) throw new Error("The board was changing; the change will be sent again."); };
+    await act(async () => { await board.props!.onSave!().catch(() => undefined); });
+    await act(async () => { await board.props!.onSave!(); });                         // what the autosave's retry timer does
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toEqual(sent[0]);
+    await act(async () => { await board.props!.onSave!(); });
+    expect(sent).toHaveLength(2);                                                      // acknowledged: nothing more to send
   });
 });
 

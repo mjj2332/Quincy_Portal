@@ -1,37 +1,56 @@
 /**
- * #499: keeps another person's elements at the revision they arrived in.
+ * #499: merging another person's elements into the board without ever changing a revision.
  *
- * Excalidraw's `reconcileElements` repairs a fractional-index clash (two people create a shape at the same index) with
- * `mutateElement`, which bumps `version` and draws a new `versionNonce` on the REMOTE element, locally. Left alone,
- * that derived revision looks like a local edit: the saver sends it back (overwriting the sender's real later edit)
- * and it can beat or lose against the sender's genuine next version. So the revision each remote winner arrived with
- * is recorded before the merge and restored after it. The repaired INDEX is kept (it orders the board here); the
- * server's copy keeps the sender's index, and the next genuine edit of that element carries ours.
+ * Excalidraw repairs a fractional-index clash (two people create a shape at the same index) with `mutateElement`, which
+ * bumps `version` and draws a new `versionNonce` on whichever element it touches: a remote one, a local one, and inside
+ * `restoreElements` as well as `reconcileElements`. That is a layout detail of THIS renderer, not an edit. Left alone it
+ * looks like one: the saver sends it (overwriting the sender's real later edit), and the derived nonce can beat or lose
+ * against the sender's genuine next version. So a merge puts every revision back: remote elements at the revision they
+ * arrived in, local elements at the revision they had before. The repaired INDEX stays (it orders the board here) and goes
+ * out only with a genuine edit of that element; a genuine reorder is an ordinary edit with a version of its own.
  *
- * No Excalidraw import: the canvas passes its own elements in, so this stays out of the entry chunk and is testable.
+ * `restore`/`reconcile` are parameters, so the canvas passes Excalidraw's and the tests pass the same installed
+ * functions; this file imports nothing from Excalidraw and stays out of the entry chunk.
  */
 type Revisioned = { id: string; version: number; versionNonce: number };
-export type RemotePin = { element: Revisioned; version: number; versionNonce: number };
+type Revision = { version: number; versionNonce: number };
 
-/** BEFORE reconcile: records the revision each restored remote element arrived at. */
-export function pinRemoteRevisions(remote: readonly Revisioned[]): RemotePin[] {
-  return remote.map((element) => ({ element, version: element.version, versionNonce: element.versionNonce }));
+export type MergeFns<E extends Revisioned> = {
+  /** Excalidraw's `restoreElements(raw, null)`. */
+  restore: (raw: readonly unknown[]) => E[];
+  /** Excalidraw's `reconcileElements(local, remote, appState)`. Its result holds the very objects it was given. */
+  reconcile: (local: E[], remote: E[]) => E[];
+};
+
+const setRevision = (element: Revisioned, revision: Revision) => {
+  (element as { version: number }).version = revision.version;
+  (element as { versionNonce: number }).versionNonce = revision.versionNonce;
+};
+
+/**
+ * Returns the reconciled scene for `local` plus the `remote` batch, with every element at an un-repaired revision.
+ * The caller installs the result with `updateScene` (which re-runs the index repair, a no-op by then).
+ */
+export function mergeRemote<E extends Revisioned>(local: readonly E[], remote: readonly Revisioned[], fns: MergeFns<E>): E[] {
+  const arrived = new Map<string, Revision>(remote.map((element) => [element.id, { version: element.version, versionNonce: element.versionNonce }]));
+  const restored = fns.restore(remote);
+  const restoredObjects = new Set<object>(restored);
+  for (const element of restored) { const revision = arrived.get(element.id); if (revision) setRevision(element, revision); }   // restore itself repairs indices
+  const before = new Map<object, Revision>(local.map((element) => [element, { version: element.version, versionNonce: element.versionNonce }]));
+  const merged = fns.reconcile([...local], restored);
+  for (const element of merged) {
+    if (restoredObjects.has(element)) { const revision = arrived.get(element.id); if (revision) setRevision(element, revision); continue; }
+    const revision = before.get(element);
+    if (revision) setRevision(element, revision);
+  }
+  return merged;
 }
 
 /**
- * AFTER the scene has been updated (and any index repair done): puts the remote elements the scene took back at the
- * revision they arrived in. Only the remote batch's own objects count (a loser is not in the scene; a local winner is
- * never touched): the object itself, or a scene copy of it that still carries its repaired nonce.
+ * The first load: `initialData` went through Excalidraw's own restore, which repairs indices exactly as above. Puts the
+ * scene's elements back at the revisions the server sent, in place, so nothing the server holds reads as an edit.
  */
-export function restorePinnedRevisions(pins: readonly RemotePin[], scene: readonly Revisioned[]): void {
-  const byId = new Map(scene.map((element) => [element.id, element]));
-  for (const pin of pins) {
-    const repairedNonce = pin.element.versionNonce;
-    const copy = byId.get(pin.element.id);
-    for (const target of new Set([pin.element, copy !== undefined && copy.versionNonce === repairedNonce ? copy : undefined])) {
-      if (!target) continue;
-      (target as { version: number }).version = pin.version;
-      (target as { versionNonce: number }).versionNonce = pin.versionNonce;
-    }
-  }
+export function adoptArrivedRevisions(scene: readonly Revisioned[], arrived: readonly Revisioned[]): void {
+  const byId = new Map(arrived.map((element) => [element.id, element]));
+  for (const element of scene) { const revision = byId.get(element.id); if (revision) setRevision(element, revision); }
 }
