@@ -73,9 +73,12 @@ const keyOf = (element: SavedElement) => `${element.version}:${element.versionNo
  * stored only after its own ack, keyed by the SCENE element it came from, and batches respect the
  * protocol's element-count and byte caps.
  */
-export function createWhiteboardSaver({ getElements, send }: {
+export function createWhiteboardSaver({ getElements, send, onRaised }: {
   getElements: () => readonly SavedElement[];
   send: (batch: readonly SavedElement[]) => Promise<void>;
+  /** #499: called (synchronously, before anything is sent) with the scene elements whose version the saver raised, after it
+   * wrote the raised version into them. The host tells its change tracker, so the write does not read as an edit. */
+  onRaised?: (elements: readonly SavedElement[]) => void;
 }): WhiteboardSaver {
   const floor = new Map<string, number>();
   /** The scene key last acknowledged per id (a synthetic tombstone records its own key). */
@@ -102,9 +105,10 @@ export function createWhiteboardSaver({ getElements, send }: {
     const scene = getElements().filter((element) => !isUnsupportedElement(element));
     const present = new Set(scene.map((element) => element.id));
     const outgoing: Array<{ element: SavedElement; sceneKey: string }> = [];
+    const raised: SavedElement[] = [];
 
     for (const element of scene) {
-      const sceneKey = keyOf(element);
+      let sceneKey = keyOf(element);
       // Skip only when the desired state is both acknowledged and the last thing transmitted: a newer
       // state (a tombstone whose ack was lost) may be on the server.
       const last = transmitted.get(element.id);
@@ -112,7 +116,13 @@ export function createWhiteboardSaver({ getElements, send }: {
       const before = transmitted.get(element.id);
       const f = floor.get(element.id);
       const version = before?.key === sceneKey ? before.version : f !== undefined && element.version <= f ? f + 1 : element.version;
-      outgoing.push({ element: { ...element, version }, sceneKey });
+      // The scene and the saver never disagree on a revision once it is transmitted: a version raised above the scene's (an
+      // element re-imported at an old version after a tombstone or a higher send, a retry) is written INTO the scene element
+      // (in place, as a revision only: `version`, never the nonce or content). Left behind, the person's next edit would be
+      // numbered from the old version and lose to what was sent. The write happens here, synchronously with the diff, so any
+      // later edit (which counts from the raised version) is genuinely newer and is sent. The scene's key moves with it.
+      if (version !== element.version) { (element as { version: number }).version = version; raised.push(element); sceneKey = keyOf(element); }
+      outgoing.push({ element: { ...element }, sceneKey });
     }
     // Gone from the scene without a tombstone (a replaced canvas, an unacknowledged create that vanished).
     for (const [id, last] of known) {
@@ -127,6 +137,7 @@ export function createWhiteboardSaver({ getElements, send }: {
       outgoing.push({ element: tombstone, sceneKey: keyOf(tombstone) });
     }
 
+    if (raised.length > 0) onRaised?.(raised);
     // Transmit time: raise the floor and remember what went out before anything is awaited.
     for (const { element, sceneKey } of outgoing) {
       floor.set(element.id, Math.max(floor.get(element.id) ?? 0, element.version));

@@ -48,6 +48,7 @@ type Step =
   | { op: "edit"; c: number; id: string; nonce: number; x: number }
   | { op: "reorder"; c: number; id: string; pos: number; nonce: number; to?: string }
   | { op: "delete"; c: number; id: string; nonce: number }
+  | { op: "vanish"; c: number; id: string }
   | { op: "flush"; c: number }
   | { op: "process"; c: number }
   | { op: "deliver"; c: number }
@@ -73,10 +74,12 @@ class Client {
   pending = new Map<number, { resolve: () => void; reject: (error: Error) => void }>();
   /** Every (id, nonce) a person authored on this client: the ONLY things a flush may transmit. */
   authored = new Set<string>();
-  log: Array<{ id: string; version: number; content: string; nonce: number; deleted: boolean }> = [];
+  log: Array<{ id: string; version: number; content: string; nonce: number; deleted: boolean; superseded?: boolean; sent?: boolean }> = [];
   seq = 0;
   /** The element being resized right now: Excalidraw keeps the local copy and the applier defers remote winners for it. */
   interacting: string | null = null;
+  /** Ids the editor dropped from the scene with no tombstone (a resize to zero size): the saver sends the synthetic deletion, which counts as authored. */
+  vanished = new Set<string>();
   /** The very object Excalidraw's appState (`resizingElement` / `newElement`) points at: the gesture's next pointer event mutates THIS, never a scene lookup. */
   held: El | null = null;
   saver!: WhiteboardSaver;
@@ -113,11 +116,15 @@ class World {
     client.saver = createWhiteboardSaver({
       getElements: () => client.scene,
       send: (batch) => new Promise<void>((resolve, reject) => {
+        for (const element of batch) if (element.isDeleted === true && client.vanished.has(element.id) && !client.authored.has(`${element.id}:${element.versionNonce}`)) this.author(client, element as El);   // the saver's synthetic deletion of a vanished element
         for (const element of batch) if (!client.authored.has(`${element.id}:${element.versionNonce}`)) this.violations.push(`client ${index} transmitted ${element.id} v${element.version} nonce ${element.versionNonce}, which nobody authored (a repair read as an edit)`);
+        for (const element of batch) for (const entry of client.log) if (entry.id === element.id && entry.nonce === element.versionNonce) entry.sent = true;
         client.seq += 1; this.messages += 1;
         client.pending.set(client.seq, { resolve, reject });
         client.outbound.push({ seq: client.seq, elements: clone([...batch]) });
       }),
+      // The saver raised a version above the scene's and wrote it into the scene element: the authored revision is that one now.
+      onRaised: (raised) => { for (const element of raised) for (const entry of client.log) if (entry.id === element.id && entry.nonce === element.versionNonce) entry.version = element.version; },
     });
     // The component's own remote path (`createRemoteApplier`), with Excalidraw's reconcile told what is being resized.
     client.applier = createRemoteApplier({
@@ -241,6 +248,13 @@ class World {
         const next = { ...element, index, version: element.version + 1, versionNonce: step.nonce };
         client.scene = sortScene(client.scene.map((candidate) => (candidate === element ? next : candidate))); this.author(client, next); return true;
       }
+      case "vanish": {
+        const element = client.scene.find((candidate) => candidate.id === step.id);
+        if (!element || element.isDeleted || client.held?.id === step.id) return false;
+        client.scene = client.scene.filter((candidate) => candidate !== element); client.vanished.add(step.id);
+        for (const entry of client.log) if (entry.id === step.id) entry.superseded = true;   // the person removed it: what they authored before is no longer theirs to have kept
+        return true;
+      }
       case "flush": { client.saver.flush().catch(() => undefined); return true; }
       case "process": {
         const message = client.outbound.shift();
@@ -329,8 +343,9 @@ class World {
     const found: string[] = [];
     const rows = orderStored([...this.rows.values()]);
     const fresh = excalidraw.restoreElements(clone(rows) as never, null);
-    const want = fresh.map((element) => element.id);
     this.clients.forEach((client, c) => {
+      // A tab that dropped an element with no tombstone (it was resized to zero) does not hold the tombstone the saver sent for it: the board it shows is the same.
+      const want = fresh.filter((element) => !(element.isDeleted && client.vanished.has(element.id) && !client.scene.some((held) => held.id === element.id))).map((element) => element.id);
       const got = client.scene.map((element) => element.id);
       if (got.join() !== want.join()) found.push(`client ${c} shows ${got.join(",")} but a fresh load shows ${want.join(",")}`);
       for (const row of rows) {
@@ -342,7 +357,7 @@ class World {
     // Content is decided by the AUTHORED revisions alone, as Excalidraw's own reconcile decides it: whatever a server re-key
     // did to an index, the winner of every id (nonce, deleted) is the one reconcile picks from everything any person authored.
     const authored = new Map<string, Array<{ id: string; version: number; versionNonce: number; isDeleted: boolean; index: string }>>();
-    for (const entry of [...this.clients.flatMap((client) => client.log), ...this.serverAuthored]) authored.set(entry.id, [...(authored.get(entry.id) ?? []), { id: entry.id, version: entry.version, versionNonce: entry.nonce, isDeleted: entry.deleted, index: "a0" }]);
+    for (const entry of [...this.clients.flatMap((client) => client.log.filter((logged) => !logged.superseded || logged.sent)), ...this.serverAuthored]) authored.set(entry.id, [...(authored.get(entry.id) ?? []), { id: entry.id, version: entry.version, versionNonce: entry.nonce, isDeleted: entry.deleted, index: "a0" }]);
     for (const [id, revisions] of authored) {
       const stored = this.rows.get(id);
       if (!stored) continue;
@@ -352,7 +367,7 @@ class World {
     // No genuine pending edit lost: a client's latest authored revision survives unless another person's concurrent-or-later revision with the stored content beat it.
     this.clients.forEach((client, c) => {
       const latest = new Map<string, { id: string; version: number; content: string }>();
-      for (const entry of client.log) { const known = latest.get(entry.id); if (!known || entry.version >= known.version) latest.set(entry.id, entry); }
+      for (const entry of client.log) { if (entry.superseded) continue; const known = latest.get(entry.id); if (!known || entry.version >= known.version) latest.set(entry.id, entry); }
       for (const mine of latest.values()) {
         const stored = this.rows.get(mine.id);
         if (!stored) { found.push(`client ${c}'s ${mine.id} (${mine.content}) is not stored at all`); continue; }
@@ -398,6 +413,9 @@ function generate(world: World, rng: () => number): Step {
   if (roll < 0.28 && live.length > 0) return { op: "edit", c, id: pickLive().id, nonce, x };
   if (roll < 0.36 && client.scene.length > 1) return { op: "reorder", c, id: client.scene[Math.floor(rng() * client.scene.length)]!.id, pos: Math.floor(rng() * 8), nonce };
   if (roll < 0.39 && live.length > 0) return { op: "delete", c, id: pickLive().id, nonce };
+  // `vanish` (an element dropped from the scene with no tombstone) is NOT drawn at random: a tab that vanished an element never hears
+  // the tombstone it sent for it, so a concurrent remote edit of the same id leaves that tab on a stale live copy while the server holds the
+  // tombstone. That divergence predates #499 round 13 and is a separate gap (docs/lessons.md), so the step is used in named scenarios only.
   if (roll < 0.53) return { op: "flush", c };
   if (roll < 0.75) { const busy = world.clients.map((other, i) => (other.outbound.length > 0 ? i : -1)).filter((i) => i >= 0); if (busy.length > 0) return { op: "process", c: busy[Math.floor(rng() * busy.length)]! }; }
   if (roll < 0.79) return client.interacting === null && live.length > 0 ? { op: "interact", c, id: pickLive().id } : { op: "endInteract", c };
@@ -541,6 +559,17 @@ describe("model: named scenarios from the Sol and Codex reviews (#499)", () => {
       process_(1), deliver(1, 2), flush(1), process_(1), deliver(1, 3), deliver(0, 4), deliver(2, 3),
     ]));
     expect(world.rows.get("0")).toMatchObject({ x: 2, isDeleted: false });
+  });
+
+  it("Sol round 13: an element resized to zero (synthetic deletion), re-imported at an older version, edited, then a reconnect keeps the edit", async () => {
+    const world = await play("sol13", { clients: 2, ids: ["e"], initial: [row("e", { kind: "fixed", index: "a0" }, 5)] }, script([
+      edit(0, "e", 40, 400), flush(0), process_(0), deliver(0), deliver(1),
+      { op: "vanish", c: 0, id: "e" }, flush(0), process_(0), deliver(0), deliver(1),     // the synthetic deletion is stored
+      create(0, "e", "a0", 11, 1), flush(0), process_(0), deliver(0), deliver(1),       // an older scene is imported: sent above the deletion
+      edit(0, "e", 60, 600), { op: "reconnect", c: 0 }, deliver(0),
+    ]));
+    expect(world.rows.get("e")).toMatchObject({ isDeleted: false, x: 600 });
+    expect(world.clients[0]!.scene.find((element) => element.id === "e")).toMatchObject({ x: 600 });
   });
 
   it("Sol round 9: A reorders e into x's index (v2/nonce 50, re-keyed by the server) while B deletes e (v2/nonce 40): the deletion wins in storage and on every tab", async () => {

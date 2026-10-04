@@ -68,6 +68,8 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
     const saver = createWhiteboardSaver({
       getElements: () => elementsRef.current,
       send: (batch) => socket?.send(batch) ?? Promise.reject(new Error("The whiteboard is not connected.")),
+      // A version the saver raised is written into the scene element; the change tracker is told, so it does not read as an edit.
+      onRaised: (raised) => controllerRef.current?.adoptRevisions(raised),
     });
     saverRef.current = saver;
     const peers = new Map<string, WhiteboardPeer>();
