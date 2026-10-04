@@ -13,7 +13,7 @@ export type WhiteboardSaver = {
 // Room for the `{"type":"elements","seq":N,"elements":[]}` envelope around the batch.
 const ENVELOPE_BYTES = 256;
 /** Element types the server refuses (until images ship). Tombstones count: the whole batch is rejected. */
-export const isUnsupportedElement = (element: { type?: unknown }) => element.type === "image";
+export const isUnsupportedElement = (element: object): boolean => "type" in element && element.type === "image";
 /** A paste carrying an element the whiteboard cannot store is refused whole, before it reaches the scene. */
 export const pasteIsUnsupported = (data: { elements?: readonly { type?: unknown }[] }) => data.elements?.some(isUnsupportedElement) === true;
 /**
