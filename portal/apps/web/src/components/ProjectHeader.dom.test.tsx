@@ -526,6 +526,18 @@ describe("Project header Stage control", () => {
     expect(classes).not.toContain("w-(--anchor-width)");
   });
 
+  // #514: the Stage rows were ~32px on a phone. Every row (including the fallback row for a
+  // current Stage the list no longer carries) takes the shipped 44px phone floor.
+  it("gives every Stage option the 44px phone row height, including the unknown-current fallback (#514)", async () => {
+    render(<ProjectHeader {...baseProps(project({ stageKey: "retired_stage" as ProjectDetail["stageKey"] }))} />);
+    await openStage(stageTrigger()!);
+    const popup = document.querySelector<HTMLElement>('[data-testid="project-stage-options"]')!;
+    expect(popup).not.toBeNull();
+    const rows = [...popup.querySelectorAll<HTMLElement>('[role="option"]')];
+    expect(rows.length).toBe(5); // four active Stages + the fallback for the unknown current key
+    for (const row of rows) expect(row.className.split(/\s+/), row.textContent ?? "").toContain("max-[721px]:min-h-[44px]");
+  });
+
   // #325: with no Open-in-Dropbox link, the first tabbable element was Sync from Dropbox, so an
   // Enter that opened the popover left the user one keypress from a sync. Focus lands on the
   // popover itself; Sync stays one Tab away.

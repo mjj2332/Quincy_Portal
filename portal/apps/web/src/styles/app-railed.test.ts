@@ -512,3 +512,12 @@ describe("header-relative offsets derive from --shell-header-height (#113)", () 
     expect(appCss.indexOf(`@media (max-width: 720px) {\n  ${sel}`)).toBeGreaterThan(appCss.indexOf(`${sel} {`));
   });
 });
+
+describe("Project header tab strip clearance (#514)", () => {
+  it("pads the tablist inline so the first and last tab's focus ring clears the scroll container's clip edge", () => {
+    expect(ruleBody(appCss, '.project-header__tabs [role="tablist"]') ?? "").toMatch(/padding-inline:\s*var\(--space-2\)\s*;/);
+  });
+  it("scroll-pads the strip so an auto-revealed tab lands with the same margin", () => {
+    expect(ruleBody(appCss, ".project-header__tabs") ?? "").toMatch(/scroll-padding-inline:\s*var\(--space-2\)\s*;/);
+  });
+});

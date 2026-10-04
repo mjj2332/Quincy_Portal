@@ -96,16 +96,16 @@ const pressTab = (shift = false) => act(async () => {
 const confirmFocusables = (modal: HTMLElement) => [...modal.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]')].filter((el) => el.getAttribute("tabindex") !== "-1" && !el.hasAttribute("data-floating-ui-focus-guard"));
 
 
-const board = vi.hoisted(() => ({ log: [] as string[], mode: "edit" as WhiteboardMode, props: null as null | { onElements?: (e: unknown[]) => void; readOnly?: boolean; imageTool?: boolean; theme?: string; onSave?: () => Promise<void> }, scene: [] as Array<Record<string, unknown>>, send: null as null | ((batch: readonly unknown[]) => Promise<void>), handlers: null as null | { onInit: (init: { mode: WhiteboardMode; elements: unknown[] }, reconnect: boolean) => void } }));
+const board = vi.hoisted(() => ({ log: [] as string[], mode: "edit" as WhiteboardMode, props: null as null | { onElements?: (e: unknown[]) => void; readOnly?: boolean; imageTool?: boolean; theme?: string; onSave?: () => Promise<void> }, scene: [] as Array<Record<string, unknown>>, send: null as null | ((batch: readonly unknown[]) => Promise<void>), handlers: null as null | { onInit: (init: { mode: WhiteboardMode; elements: unknown[]; sessionId: string; peers: unknown[] }, reconnect: boolean) => void } }));
 vi.mock("../lib/whiteboard-socket", () => ({
-  openWhiteboardSocket: (_projectId: string, handlers: { onInit: (init: { mode: WhiteboardMode; elements: unknown[] }, reconnect: boolean) => void; onConnection: (state: string) => void }) => {
+  openWhiteboardSocket: (_projectId: string, handlers: { onInit: (init: { mode: WhiteboardMode; elements: unknown[]; sessionId: string; peers: unknown[] }, reconnect: boolean) => void; onConnection: (state: string) => void }) => {
     board.handlers = handlers;
-    queueMicrotask(() => { handlers.onConnection("open"); handlers.onInit({ mode: board.mode, elements: [] }, false); });
-    return { send: (batch: readonly unknown[]) => (board.send ? board.send(batch) : Promise.resolve()), close: () => { board.log.push("close"); } };
+    queueMicrotask(() => { handlers.onConnection("open"); handlers.onInit({ mode: board.mode, elements: [], sessionId: "me", peers: [] }, false); });
+    return { send: (batch: readonly unknown[]) => (board.send ? board.send(batch) : Promise.resolve()), sendPresence: () => undefined, close: () => { board.log.push("close"); } };
   },
 }));
 vi.mock("../components/reui/whiteboard/whiteboard", () => ({
-  Whiteboard: (props: { readOnly?: boolean; imageTool?: boolean; theme?: string; onSave?: () => Promise<void>; onReady?: (controller: unknown) => void; onElements?: (e: unknown[]) => void }) => { board.props = props; props.onElements?.(board.scene); props.onReady?.({ api: { getSceneElementsIncludingDeleted: () => board.scene } }); return <div data-testid="whiteboard-stand-in" tabIndex={0}>board</div>; },
+  Whiteboard: (props: { readOnly?: boolean; imageTool?: boolean; theme?: string; onSave?: () => Promise<void>; onReady?: (controller: unknown) => void; onElements?: (e: unknown[]) => void }) => { board.props = props; props.onElements?.(board.scene); props.onReady?.({ api: { getSceneElementsIncludingDeleted: () => board.scene, getAppState: () => ({ editingTextElement: null, resizingElement: null, newElement: null }) }, applyRemote: () => board.scene, adoptRevisions: () => undefined, setCollaborators: () => undefined }); return <div data-testid="whiteboard-stand-in" tabIndex={0}>board</div>; },
 }));
 
 const onRequestClose = vi.fn();
@@ -280,7 +280,7 @@ describe("the open whiteboard (#498)", () => {
     board.props!.onElements!(board.scene);
     await act(async () => { await board.props!.onSave!().catch(() => undefined); });
     expect(sent).toHaveLength(1);
-    await act(async () => { board.handlers!.onInit({ mode: "edit", elements: [] }, true); await Promise.resolve(); });
+    await act(async () => { board.handlers!.onInit({ mode: "edit", elements: [], sessionId: "me2", peers: [] }, true); await Promise.resolve(); });
     await flush(3);
     expect(sent).toHaveLength(2);
   });

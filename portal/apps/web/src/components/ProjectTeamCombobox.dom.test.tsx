@@ -6,7 +6,7 @@ import type { CollectionKind } from "@quincy/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError } from "../lib/api";
 import { ProjectHeader } from "./ProjectHeader";
-import { ProjectTeamCombobox, ProjectTeamCollectCombobox } from "./ProjectTeamCombobox";
+import { ProjectTeamCombobox, ProjectTeamCollectCombobox, teamChipLabels } from "./ProjectTeamCombobox";
 import { useState } from "react";
 import { createRef } from "react";
 import { projectDataKeys, type ProjectDetail, type ProjectMember } from "../lib/project-data";
@@ -1010,5 +1010,89 @@ describe("ProjectTeamCollectCombobox (#487)", () => {
   it("never lists a Default editor in the explicit selection", async () => {
     await mountCollect({ photographerUserIds: [], editorUserIds: [plainEditor.id] });
     expect(selection.editorUserIds).toEqual([plainEditor.id]);
+  });
+});
+
+describe("Team chip labels (#514)", () => {
+  const member = (userId: string, name: string, email: string, roleOnProject: ProjectMember["roleOnProject"] = "editor"): ProjectMember =>
+    ({ id: `membership-${roleOnProject}-${userId}`, userId, roleOnProject, name, email, globalRole: "editor", active: true, assignedSubtaskCount: 0 });
+  /** The VISIBLE label only: the sr-only name that follows it is not what a sighted user reads. */
+  const labels = (container: ParentNode) => [...container.querySelectorAll<HTMLElement>('[data-slot="team-chip-label"]')].map((element) => element.textContent);
+
+  it("teamChipLabels: first name when unique, full name on a first-name collision, full name + email on a full-name collision", () => {
+    const map = teamChipLabels([
+      { userId: "a", name: "Ana Reyes", email: "ana@x.test" },
+      { userId: "b", name: "Sam Lee", email: "sam.lee@x.test" },
+      { userId: "c", name: "Sam Wong", email: "sam.wong@x.test" },
+      { userId: "d", name: "Kim Park", email: "kim1@x.test" },
+      { userId: "e", name: "kim  park", email: "kim2@x.test" },
+    ]);
+    expect(map.get("a")).toBe("Ana");
+    expect(map.get("b")).toBe("Sam Lee");
+    expect(map.get("c")).toBe("Sam Wong");
+    expect(map.get("d")).toBe("Kim Park (kim1@x.test)");
+    expect(map.get("e")).toBe("kim  park (kim2@x.test)");
+  });
+
+  it("teamChipLabels: one person under two roles is not a collision", () => {
+    const map = teamChipLabels([{ userId: "a", name: "Dana Dual", email: "d@x.test" }, { userId: "a", name: "Dana Dual", email: "d@x.test" }]);
+    expect([...map]).toEqual([["a", "Dana"]]);
+  });
+
+  it("shows first names when they are unique", async () => {
+    const host = await mount([member("u1", "Ana Reyes", "ana@x.test"), member("u2", "Bo Chen", "bo@x.test")]);
+    expect(labels(host)).toEqual(["Ana", "Bo"]);
+  });
+
+  it("shows full names when two members share a first name", async () => {
+    const host = await mount([member("u1", "Sam Lee", "sam.lee@x.test"), member("u2", "Sam Wong", "sam.wong@x.test"), member("u3", "Bo Chen", "bo@x.test")]);
+    expect(labels(host)).toEqual(["Sam Lee", "Sam Wong", "Bo"]);
+  });
+
+  it("adds the email when two members share a full name", async () => {
+    const host = await mount([member("u1", "Kim Park", "kim1@x.test"), member("u2", "Kim Park", "kim2@x.test")]);
+    expect(labels(host)).toEqual(["Kim Park (kim1@x.test)", "Kim Park (kim2@x.test)"]);
+  });
+
+  it("counts a member hidden behind +N when deciding a collision", async () => {
+    const host = await mount([member("u1", "Ana Reyes", "ana@x.test"), member("u2", "Bo Chen", "bo@x.test"), member("u3", "Cy Dunn", "cy@x.test"), member("u4", "Ana Smith", "ana.s@x.test")]);
+    expect(labels(host)).toEqual(["Ana Reyes", "Bo", "Cy"]);
+  });
+
+  it("applies the same labels to the read-only chips", async () => {
+    const host = await mount([member("u1", "Sam Lee", "sam.lee@x.test"), member("u2", "Sam Wong", "sam.wong@x.test")], false);
+    expect(labels(host)).toEqual(["Sam Lee", "Sam Wong"]);
+  });
+
+  it("keeps the Photo / Edit tag on a dual-role member's chips and does not treat them as a collision", async () => {
+    const host = await mount([member("dual", "Dana Dual", "d@x.test", "photographer"), member("dual", "Dana Dual", "d@x.test", "editor")]);
+    expect(labels(host)).toEqual(["Dana", "Dana"]);
+    expect(host.querySelector('[data-testid="project-member-photographer:dual"]')!.textContent).toContain("Photo");
+    expect(host.querySelector('[data-testid="project-member-editor:dual"]')!.textContent).toContain("Edit");
+  });
+
+  it("rounds the editable chips container to --radius-sm on a phone and keeps the pill above it", async () => {
+    const host = await mount([member("u1", "Ana Reyes", "ana@x.test")]);
+    const box = chipsInput(host).parentElement!; // the chips box owns the input directly
+    const classes = box.className.split(/\s+/);
+    expect(classes).toContain("rounded-[var(--radius-pill)]");
+    expect(classes).toContain("max-[721px]:rounded-[var(--radius-sm)]");
+  });
+
+  // Sol review: a collision label is long; the chip must wrap it, never overflow its column or truncate the email.
+  it.each([["editable", true], ["read-only", false]] as const)("keeps a long collision chip inside its container and lets the label wrap (%s)", async (_name, canEdit) => {
+    const host = await mount([member("u1", "Alexandria Montgomery", "alexandria.montgomery.photography@example-studio.test"), member("u2", "Alexandria Montgomery", "alexandria.montgomery.editing@example-studio.test")], canEdit);
+    const labelEls = [...host.querySelectorAll<HTMLElement>('[data-slot="team-chip-label"]')];
+    expect(labelEls).toHaveLength(2);
+    for (const label of labelEls) {
+      const chip = label.closest<HTMLElement>('[data-testid^="project-member-"]')!;
+      const chipTokens = chip.className.split(/\s+/);
+      expect(chipTokens).toContain("max-w-full");
+      expect(chipTokens).toContain("min-w-0");
+      expect(chipTokens).toContain("whitespace-normal");
+      expect(chipTokens).not.toContain("whitespace-nowrap");
+      expect(chipTokens).not.toContain("h-[calc(--spacing(5.25))]");
+      expect(label.parentElement!.className).toContain("[overflow-wrap:anywhere]");
+    }
   });
 });

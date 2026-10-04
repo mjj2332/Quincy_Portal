@@ -1004,3 +1004,36 @@ describe("guard: focus ring colour never comes from a raw palette step (#541)", 
     expect(offenders).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Guard — one active-row cue in a person picker (#514)
+// ---------------------------------------------------------------------------
+/**
+ * The mention list marked its active row with a 2px ink left bar while Select and Combobox filled
+ * the row with `bg-accent`: three pickers, two cues. The mention list now shares the fill, so a
+ * left-bar active treatment (or an active row with no fill) is a regression.
+ */
+describe("guard: the mention list's active row uses the shared fill, not a left bar (#514)", () => {
+  function mentionRowProblems(classes: string): string[] {
+    const tokens = classes.split(/\s+/);
+    const problems: string[] = [];
+    if (!tokens.includes("data-[active=true]:bg-accent")) problems.push("active row has no bg-accent fill");
+    if (!tokens.includes("data-[active=true]:text-accent-foreground")) problems.push("active row has no text-accent-foreground");
+    if (tokens.some((token) => /^(data-\[active=true\]:)?(border-l|border-l-|\[border-left)/.test(token) || /border-strong/.test(token))) problems.push("active row still draws a left bar");
+    return problems;
+  }
+  const source = () => stripComments(readFileSync(join(srcDir, "components", "MentionAutocomplete.tsx"), "utf8"));
+  const rowClasses = () => /data-slot="mention-option"[\s\S]*?className="([^"]*)"/.exec(source())?.[1] ?? "";
+
+  it("MentionAutocomplete's option row passes", () => {
+    expect(rowClasses(), "option row className not found").not.toBe("");
+    expect(mentionRowProblems(rowClasses())).toEqual([]);
+  });
+
+  it("proves the matcher on planted fixtures", () => {
+    const OLD = "bg-transparent border-0 [border-left-style:solid] border-l-[length:var(--border-width-bold)] border-l-transparent data-[active=true]:border-l-border-strong";
+    expect(mentionRowProblems(OLD)).toEqual(["active row has no bg-accent fill", "active row has no text-accent-foreground", "active row still draws a left bar"]);
+    expect(mentionRowProblems("data-[active=true]:bg-accent data-[active=true]:text-accent-foreground data-[active=true]:border-l-border-strong")).toEqual(["active row still draws a left bar"]);
+    expect(mentionRowProblems("rounded-md data-[active=true]:bg-accent data-[active=true]:text-accent-foreground")).toEqual([]);
+  });
+});
