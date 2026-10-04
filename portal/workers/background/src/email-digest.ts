@@ -1,5 +1,6 @@
 import {
   DEFAULT_EMAIL_DIGEST_CADENCE,
+  EMAIL_DIGEST_ACTIVITY_TYPES,
   EMAIL_DIGEST_CADENCES,
   digestSlotAt,
   isDigestSlotDue,
@@ -67,6 +68,14 @@ export function composeDigestEmail(input: { groups: DigestGroup[]; totalItems: n
  * the queue consumer to defer it again, so a send's outcome is never recorded against a row it cannot update.
  */
 const CLAIMABLE_ITEM = "(ledger_id IS NULL OR ledger_id IN (SELECT id FROM notification_delivery_ledger WHERE status = 'deferred'))";
+
+/**
+ * #490: items of a Project activity type, for a recipient whose "Include Project activity" switch is off. A person
+ * with no preference row is on, so the switch must exist AND be 0. Evaluated at claim time and again at admission
+ * to `sending`, so a toggle that races composition releases the slot instead of emailing activity they declined.
+ */
+const ACTIVITY_TYPE_LIST = EMAIL_DIGEST_ACTIVITY_TYPES.map(() => "?").join(", ");
+const ACTIVITY_EXCLUDED = `(notification_type IN (${ACTIVITY_TYPE_LIST}) AND EXISTS (SELECT 1 FROM notification_preferences np WHERE np.user_id = notification_digest_items.recipient_id AND np.include_project_activity = 0))`;
 
 type DueRecipient = { recipientId: string; email: string; role: string; cadence: string };
 
@@ -201,6 +210,13 @@ async function sendDigestForRecipient(env: Env, recipient: DueRecipient, slotAt:
       `).bind(rule.state, rule.code, now, digestId),
     ]);
   }
+  if (current && current.active === 1) {
+    // Activity the person has switched off. Its item has no ledger row (ledger_id is NULL), so only the item is updated.
+    await env.DB.prepare(`
+      UPDATE notification_digest_items SET state = 'suppressed', outcome_code = 'activity_excluded', updated_at = ?
+      WHERE digest_id = ? AND state = 'pending' AND ${ACTIVITY_EXCLUDED}
+    `).bind(now, digestId, ...EMAIL_DIGEST_ACTIVITY_TYPES).run();
+  }
   if (current && current.active === 1 && current.role === "external_editor") {
     // The same predicate the notification centre lists with (ADR 0008). It is far too deep to nest inside
     // another subquery (SQLite's expression-depth cap), so it is applied exactly as the centre applies it:
@@ -269,6 +285,12 @@ async function sendDigestForRecipient(env: Env, recipient: DueRecipient, slotAt:
     UPDATE notification_digests SET status = 'sending', item_count = ?, project_count = ?, updated_at = ?
     WHERE id = ? AND status = 'claimed'
       AND EXISTS (SELECT 1 FROM user u WHERE u.id = ? AND u.active = 1 AND u.role = ? AND u.authorization_epoch = ?)
+      AND NOT EXISTS (
+        SELECT 1 FROM notification_digest_items i
+        WHERE i.digest_id = notification_digests.id AND i.state = 'pending'
+          AND i.notification_type IN (${ACTIVITY_TYPE_LIST})
+          AND EXISTS (SELECT 1 FROM notification_preferences np WHERE np.user_id = i.recipient_id AND np.include_project_activity = 0)
+      )
       AND (SELECT COUNT(*) FROM notification_digest_items i WHERE i.digest_id = notification_digests.id AND i.state = 'pending') = ?
       AND NOT EXISTS (
         SELECT 1 FROM notification_digest_items i
@@ -281,12 +303,12 @@ async function sendDigestForRecipient(env: Env, recipient: DueRecipient, slotAt:
         WHERE i.digest_id = notification_digests.id AND i.state = 'pending'
           AND (i.notification_id IS NULL OR i.notification_id NOT IN (SELECT id FROM external_visible_notifications))
       )` : ""}
-  `).bind(...(visible ? visible.bindings : []), totals.total, totals.projects, now, digestId, recipient.recipientId, current!.role, current!.epoch, totals.total).run();
+  `).bind(...(visible ? visible.bindings : []), totals.total, totals.projects, now, digestId, recipient.recipientId, current!.role, current!.epoch, ...EMAIL_DIGEST_ACTIVITY_TYPES, totals.total).run();
   if ((fenced.meta.changes ?? 0) !== 1) {
     // Lost the admission: release the slot (items back to pending) so the next run rebuilds it from current state.
     await env.DB.batch([
       env.DB.prepare("UPDATE notification_digest_items SET digest_id = NULL, updated_at = ? WHERE digest_id = ? AND state = 'pending'").bind(now, digestId),
-      env.DB.prepare("UPDATE notification_digests SET status = 'released', last_error_code = 'digest_reauthorization_changed', last_error = 'Recipient authorization or item read state changed while composing.', updated_at = ? WHERE id = ? AND status = 'claimed'").bind(now, digestId),
+      env.DB.prepare("UPDATE notification_digests SET status = 'released', last_error_code = 'digest_reauthorization_changed', last_error = 'Recipient authorization, item read state or the Project activity switch changed while composing.', updated_at = ? WHERE id = ? AND status = 'claimed'").bind(now, digestId),
     ]);
     return "released";
   }

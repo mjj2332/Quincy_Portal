@@ -42,3 +42,11 @@ many of them. This ADR records where that email is assembled.
   notification centre.
 - `notifications.email_sent_at` and `email_message_id` are mirrored from the digest's message, so older
   readers of those columns still work.
+- **Project activity (#490) is digest-only and its items carry no email ledger row.** The last statement of the
+  broad in-app batch (`deliverBroadInApp`) records a pending `notification_digest_items` row for each delivered
+  activity occurrence whose recipient still has "Include Project activity" on, with `ledger_id` NULL. A broad
+  outbox has no email phase, so a ledger row would be a replayable `pending` row nothing could drain. The
+  item's own `state` and `outcome_code` are therefore the audit trail for activity email (parent story 23's
+  ledger outcome is met for ordinary items and deliberately not for activity). Activity never emails inline,
+  for any cadence; an Immediately user's activity goes out in the hourly digest. Turning the switch off
+  suppresses pending activity (`activity_excluded`) at the next slot, including a toggle that races composition.

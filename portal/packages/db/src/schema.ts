@@ -260,12 +260,15 @@ export const notificationPreferences = sqliteTable(
     subtaskReminderEmails: integer("subtask_reminder_emails").notNull().default(1),
     /** Migration 0056 (#489). How often non-exempt notification emails are gathered into one Email digest. Read with COALESCE(..., 'twice_daily'): a user with no row has the default. */
     emailDigestCadence: text("email_digest_cadence", { enum: ["immediate", "hourly", "twice_daily", "daily"] as const }).notNull().default("twice_daily"),
+    /** Migration 0058 (#490). 1 = Project activity (stage changes, collaboration activity) is gathered into the person's Email digest; 0 = it is not. Read with COALESCE(..., 1): a user with no row, or an old Worker's upsert, is on. */
+    includeProjectActivity: integer("include_project_activity").notNull().default(1),
     updatedAt: integer("updated_at").notNull(),
   },
   (t) => [
     check("notification_preferences_email_check", sql`${t.projectDeadlineReminderEmails} IN (0, 1)`),
     check("notification_preferences_subtask_reminder_emails_check", sql`${t.subtaskReminderEmails} IN (0, 1)`),
     check("notification_preferences_email_digest_cadence_check", sql`${t.emailDigestCadence} IN ('immediate', 'hourly', 'twice_daily', 'daily')`),
+    check("notification_preferences_include_project_activity_check", sql`${t.includeProjectActivity} IN (0, 1)`),
   ],
 );
 

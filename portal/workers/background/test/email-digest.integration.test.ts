@@ -492,6 +492,124 @@ describe("runEmailDigests: who gets an email, when, with what", () => {
     await runEmailDigests(digestEnv(send), NINE_AM);
     expect(sentTo(send, user.email)).toHaveLength(1);
   });
+
+  describe("Project activity (#490)", () => {
+    const activity = (projectId: string | null, extra: Partial<ItemOptions> = {}): ItemOptions => ({ projectId, type: "project_collaboration_activity", title: "Project comment added", body: "A project comment was added.", withLedger: false, ...extra });
+    const setIncludeActivity = (userId: string, on: boolean) => database.DB.prepare("INSERT INTO notification_preferences (user_id, include_project_activity, updated_at) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET include_project_activity = excluded.include_project_activity").bind(userId, on ? 1 : 0, Date.now()).run();
+
+    it("emails an Immediately user's activity in the hourly digest at 10:00 Sydney, then nothing in the next empty hour", async () => {
+      const user = await addUser({ cadence: "immediate" });
+      const project = await addProject("Hourly Activity Street");
+      await addItem(user.id, activity(project, { createdAt: EIGHT_AM + HOUR - 5 * 60_000 }));
+      const TEN_AM = EIGHT_AM + 2 * HOUR;
+      const send = vi.fn().mockResolvedValue({ messageId: "activity-1" });
+      await runEmailDigests(digestEnv(send), TEN_AM);
+      const emails = sentTo(send, user.email);
+      expect(emails).toHaveLength(1);
+      expect(emails[0]).toMatchObject({ subject: "1 update across 1 Project" });
+      expect(emails[0]!.text).toContain("Project comment added: A project comment was added.");
+      expect(emails[0]!.text).toContain("Hourly Activity Street");
+      expect(await states(user.id)).toEqual([{ state: "sent", outcome: null }]);
+      await runEmailDigests(digestEnv(send), TEN_AM + HOUR);
+      expect(sentTo(send, user.email)).toHaveLength(1);
+    });
+
+    it("sends a twice-daily user's activity and a comment for the same Project in ONE 08:00 email, under one Project section", async () => {
+      const user = await addUser({ cadence: "twice_daily" });
+      const project = await addProject("Grouped Activity Street");
+      await addItem(user.id, activity(project, { createdAt: EIGHT_AM - 3 * HOUR }));
+      await addItem(user.id, { projectId: project, type: "comment_added", title: "New review feedback", body: "Grouped Activity Street has new review feedback.", createdAt: EIGHT_AM - 2 * HOUR });
+      const send = vi.fn().mockResolvedValue({ messageId: "activity-2" });
+      await runEmailDigests(digestEnv(send), NINE_AM - HOUR);
+      const emails = sentTo(send, user.email);
+      expect(emails).toHaveLength(1);
+      expect(emails[0]!.subject).toBe("2 updates across 1 Project");
+      expect(emails[0]!.text.match(/Grouped Activity Street\n/g)).toHaveLength(1);
+      expect(emails[0]!.text).toContain("Project comment added");
+      expect(emails[0]!.text).toContain("New review feedback");
+    });
+
+    it("drops activity already read in the notification centre, and sends nothing when that was all there was", async () => {
+      const user = await addUser({ cadence: "hourly" });
+      const project = await addProject("Read Activity Street");
+      await addItem(user.id, activity(project, { read: true }));
+      const send = vi.fn().mockResolvedValue({ messageId: "m" });
+      expect(await runEmailDigests(digestEnv(send), EIGHT_AM)).toMatchObject({ empty: 1, sent: 0 });
+      expect(sentTo(send, user.email)).toHaveLength(0);
+      expect(await states(user.id)).toEqual([{ state: "dropped_read", outcome: "digest_dropped_read" }]);
+    });
+
+    it("suppresses activity queued before Include Project activity was switched off, and still sends the person's other items", async () => {
+      const user = await addUser({ cadence: "hourly" });
+      const project = await addProject("Opt Out Street");
+      await addItem(user.id, activity(project, { title: "Activity before opt-out" }));
+      await addItem(user.id, { projectId: project, type: "mentioned", title: "A real mention", body: "You were mentioned." });
+      await setIncludeActivity(user.id, false);
+      const send = vi.fn().mockResolvedValue({ messageId: "m" });
+      await runEmailDigests(digestEnv(send), EIGHT_AM);
+      const emails = sentTo(send, user.email);
+      expect(emails).toHaveLength(1);
+      expect(emails[0]!.subject).toBe("1 update across 1 Project");
+      expect(emails[0]!.text).toContain("A real mention");
+      expect(emails[0]!.text).not.toContain("Activity before opt-out");
+      expect(await states(user.id)).toEqual([{ state: "sent", outcome: null }, { state: "suppressed", outcome: "activity_excluded" }]);
+    });
+
+    it("sends no email when the only waiting items are activity the person switched off", async () => {
+      const user = await addUser({ cadence: "immediate" });
+      const project = await addProject("Opt Out Only Street");
+      await addItem(user.id, activity(project));
+      await setIncludeActivity(user.id, false);
+      const send = vi.fn().mockResolvedValue({ messageId: "m" });
+      expect(await runEmailDigests(digestEnv(send), EIGHT_AM)).toMatchObject({ empty: 1, sent: 0 });
+      expect(sentTo(send, user.email)).toHaveLength(0);
+      expect(await states(user.id)).toEqual([{ state: "suppressed", outcome: "activity_excluded" }]);
+    });
+
+    it("does not send activity when the switch is turned off while the digest is being composed, and suppresses it at the next slot", async () => {
+      const user = await addUser({ cadence: "hourly" });
+      const project = await addProject("Opt Out Race Street");
+      await addItem(user.id, activity(project));
+      const send = vi.fn().mockResolvedValue({ messageId: "m" });
+      await runEmailDigests(envMutatingMidCompose(send, async () => { await setIncludeActivity(user.id, false); }), EIGHT_AM);
+      expect(sentTo(send, user.email)).toHaveLength(0);
+      expect((await digests(user.id)).map((d) => d.status)).toEqual(["released"]);
+      expect(await states(user.id)).toEqual([{ state: "pending", outcome: null }]);
+      await runEmailDigests(digestEnv(send), NINE_AM);
+      expect(sentTo(send, user.email)).toHaveLength(0);
+      expect(await states(user.id)).toEqual([{ state: "suppressed", outcome: "activity_excluded" }]);
+    });
+
+    it("sends activity once when the same slot runs twice", async () => {
+      const user = await addUser({ cadence: "immediate" });
+      const project = await addProject("Retry Activity Street");
+      await addItem(user.id, activity(project));
+      const send = vi.fn().mockResolvedValue({ messageId: "m" });
+      await runEmailDigests(digestEnv(send), EIGHT_AM);
+      await runEmailDigests(digestEnv(send), EIGHT_AM);
+      expect(sentTo(send, user.email)).toHaveLength(1);
+    });
+
+    it("sends a deactivated user nothing", async () => {
+      const user = await addUser({ cadence: "immediate", active: false });
+      const project = await addProject("Inactive Activity Street");
+      await addItem(user.id, activity(project));
+      const send = vi.fn().mockResolvedValue({ messageId: "m" });
+      await runEmailDigests(digestEnv(send), EIGHT_AM);
+      expect(sentTo(send, user.email)).toHaveLength(0);
+      expect(await states(user.id)).toEqual([{ state: "suppressed", outcome: "recipient_inactive" }]);
+    });
+
+    it("holds back an External editor's activity that the notification centre would not show", async () => {
+      const external = await addUser({ cadence: "immediate", role: "external_editor" });
+      const project = await addProject("External Activity Street");
+      await addItem(external.id, activity(project));
+      const send = vi.fn().mockResolvedValue({ messageId: "m" });
+      await runEmailDigests(digestEnv(send), EIGHT_AM);
+      expect(sentTo(send, external.email)).toHaveLength(0);
+      expect(await states(external.id)).toEqual([{ state: "suppressed", outcome: "external_policy_suppressed" }]);
+    });
+  });
 });
 
 describe("runEmailDigests: failure handling never double-sends", () => {
