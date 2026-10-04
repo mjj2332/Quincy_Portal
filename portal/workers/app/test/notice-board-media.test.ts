@@ -372,6 +372,21 @@ describe("GET /media/embedded/:mediaId for notice media", () => {
     expect((await appRequest(baseEnv, `/media/embedded/${id}`, impersonatedToken, "GET")).status).toBe(200);
   });
 
+  it("answers 404 in every state once the uploader themself has lost the Notice board (demoted to External), also under impersonation", async () => {
+    const pending = await notice("pending", { uploader: ids.other }); const detached = await notice("detached", { uploader: ids.other }); const attached = await notice("attached", { uploader: ids.other });
+    expect((await get("other", pending)).status).toBe(200); expect((await get("other", detached)).status).toBe(200);
+    const now = Date.now();
+    await database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, impersonated_by, created_at, updated_at) VALUES ('em-imp-other', ?, 'em-impersonated-other-token', ?, ?, ?, ?)").bind(now + 3_600_000, ids.other, ids.admin, now, now).run();
+    try {
+      await database.DB.prepare("UPDATE user SET role = 'external_editor' WHERE id = ?").bind(ids.other).run();
+      for (const [state, id] of [["pending", pending], ["detached", detached], ["attached", attached]] as const) {
+        expect((await get("other", id)).status, `${state} as the demoted uploader`).toBe(404);
+        expect((await appRequest(baseEnv, `/media/embedded/${id}`, "em-impersonated-other-token", "GET")).status, `${state} impersonated`).toBe(404);
+      }
+    } finally { await database.DB.prepare("UPDATE user SET role = 'editor' WHERE id = ?").bind(ids.other).run(); }
+    expect((await get("other", pending)).status).toBe(200);
+  });
+
   it("keeps a Project comment image on the Project's own rule", async () => {
     const id = (await seedMedia({ state: "attached" })).id;
     expect((await get("other", id)).status).toBe(403); expect((await get("external", id)).status).toBe(200);

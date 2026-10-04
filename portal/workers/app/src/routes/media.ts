@@ -204,9 +204,11 @@ mediaRoutes.get("/embedded/:mediaId", terminalRoute("/embedded/:mediaId", async 
   const row = await getEmbeddedMedia(c.env.DB, mediaId);
   if (!row || row.state === "uploading") return c.json({ error: "Media not found" }, 404);
   const user = c.get("user");
-  if (row.state === "attached" && row.ownerKind === "notice_post") {
-    // A Notice board image follows its post (#496): anyone with the Notice board capability may read it, and no one else is told it exists.
+  if (row.ownerKind === "notice_post") {
+    // Notice board media (#496) needs the Notice board capability in every state, the uploader included (a demoted uploader, or an
+    // Admin impersonating one, is told nothing exists). Then an attached image follows its post; pending and detached ones are the uploader's.
     if (!roleHasCapability(user.role, "viewNoticeBoard")) return c.json({ error: "Media not found" }, 404);
+    if (row.state !== "attached" && row.uploaderId !== user.id) return c.json({ error: "Media not found" }, 404);
   } else if (row.state === "attached") {
     if (!row.projectId) return c.json({ error: "Media not found" }, 404);
     if (!await hasProjectCollaborationAccess(c, row.projectId)) return user.role === "external_editor" ? c.json({ error: "Media not found" }, 404) : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
