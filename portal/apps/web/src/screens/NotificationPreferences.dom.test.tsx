@@ -29,8 +29,8 @@ function deferred<T>() {
 }
 
 beforeEach(() => {
-  apiGetMock.mockReset().mockResolvedValue({ projectDeadlineReminderEmails: true, subtaskReminderEmails: true });
-  apiPatchMock.mockReset().mockResolvedValue({ projectDeadlineReminderEmails: false, subtaskReminderEmails: true });
+  apiGetMock.mockReset().mockResolvedValue({ projectDeadlineReminderEmails: true, subtaskReminderEmails: true, emailDigestCadence: "twice_daily" });
+  apiPatchMock.mockReset().mockResolvedValue({ projectDeadlineReminderEmails: false, subtaskReminderEmails: true, emailDigestCadence: "twice_daily" });
   const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
 });
 
@@ -47,7 +47,7 @@ describe("NotificationPreferences", () => {
     expect(apiGetMock).toHaveBeenCalledWith("/api/notification-preferences");
     // Scoped to the heading on purpose (§9.1): the checkbox keeps the longer aria-label, so an
     // unscoped toContain would pass on that alone even if the heading itself were deleted.
-    expect(host.querySelector("h2")!.textContent).toBe("Project deadlines");
+    expect([...host.querySelectorAll("h2")].map((h) => h.textContent)).toContain("Project deadlines");
     expect(host.textContent).toContain("Always on");
     expect(host.textContent).toContain("In-app reminders always arrive in your notification bell.");
     expect(host.querySelector<HTMLInputElement>('input[type="checkbox"]')?.checked).toBe(true);
@@ -58,7 +58,7 @@ describe("NotificationPreferences", () => {
     await act(async () => { root!.render(<NotificationPreferences />); await Promise.resolve(); });
     await flush();
     const headings = [...host.querySelectorAll("h2")].map((h) => h.textContent);
-    expect(headings).toEqual(["Project deadlines", "Checklist item reminders"]);
+    expect(headings).toEqual(["Email digest", "Project deadlines", "Checklist item reminders"]);
     const second = host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')[1]!;
     expect(second.checked).toBe(true);
     // The name sits on whichever element is the control (see the accessible-name test below), so match both forms in document order.
@@ -218,9 +218,10 @@ describe("NotificationPreferences", () => {
     // The flag and its cleanup are not the guard — the three `if (active)` checks are. Asserting
     // only the first two passes even with every guard deleted (Sol, diff review): assert each
     // guarded continuation by name, and that there are exactly three of them.
-    expect(source.match(/if \(active\)/g)).toHaveLength(4);
+    expect(source.match(/if \(active\)/g)).toHaveLength(5);
     expect(source).toContain("if (active) setEnabled(value.projectDeadlineReminderEmails)");
     expect(source).toContain("if (active) setSubtaskEnabled(value.subtaskReminderEmails)");
+    expect(source).toContain("if (active) setCadence(");
     expect(source).toContain("if (active) setLoadError(");
     expect(source).toContain("if (active) setLoading(false)");
   });
@@ -261,8 +262,102 @@ describe("NotificationPreferences", () => {
     const note = "In-app reminders always arrive in your notification bell.";
     expect(host.textContent!.split(note)).toHaveLength(2);
     expect(host.querySelector("section")!.textContent).not.toContain(note);
-    const [deadline, checklist] = [...host.querySelectorAll("section")];
+    const [, deadline, checklist] = [...host.querySelectorAll("section")];
     expect(deadline!.textContent).toContain("Sent before and when a Project's deadline is due.");
     expect(checklist!.textContent).toContain("Sent for checklist items assigned to you, before and when they're due.");
+  });
+
+  describe("Email digest cadence (#489)", () => {
+    const trigger = (host: HTMLElement) => host.querySelector<HTMLButtonElement>('section [role="combobox"]')!;
+    const option = (label: string) => [...document.querySelectorAll<HTMLElement>('[role="listbox"] [role="option"]')].find((element) => element.textContent === label) ?? null;
+    async function renderLoaded() {
+      const host = document.body.firstElementChild as HTMLElement;
+      await act(async () => { root!.render(<NotificationPreferences />); await Promise.resolve(); });
+      await flush();
+      return host;
+    }
+
+    it("names the combobox from the visible Frequency label, with no separate aria-label, and a touch-sized trigger at phone width", async () => {
+      const host = await renderLoaded();
+      const combobox = trigger(host);
+      const labelIds = (combobox.getAttribute("aria-labelledby") ?? "").split(/\s+/).filter(Boolean);
+      expect(labelIds.length).toBeGreaterThan(0);
+      expect(labelIds.map((id) => document.getElementById(id)?.textContent ?? "").join(" ").trim()).toBe("Frequency");
+      expect(combobox.hasAttribute("aria-label")).toBe(false);
+      expect(combobox.className).toContain("max-[721px]:min-h-[44px]");
+    });
+
+    it("gives every cadence option a 44px touch target at phone width", async () => {
+      const host = await renderLoaded();
+      await act(async () => { trigger(host).click(); await Promise.resolve(); await Promise.resolve(); });
+      const options = [...document.querySelectorAll<HTMLElement>('[role="listbox"] [role="option"]')];
+      expect(options.length).toBeGreaterThan(0);
+      for (const element of options) expect(element.className, element.textContent ?? "").toContain("max-[721px]:min-h-[44px]");
+    });
+
+    it("shows the stored cadence, with Twice daily as the default", async () => {
+      const host = await renderLoaded();
+      expect(trigger(host).textContent).toContain("Twice daily (8:00 am and 2:00 pm)");
+      expect(host.querySelector("section")!.querySelector("h2")!.textContent).toBe("Email digest");
+      expect(host.querySelector("section")!.textContent).toContain("Sydney time");
+    });
+
+    it("shows a stored cadence other than the default", async () => {
+      apiGetMock.mockReset().mockResolvedValue({ projectDeadlineReminderEmails: true, subtaskReminderEmails: true, emailDigestCadence: "daily" });
+      const host = await renderLoaded();
+      expect(trigger(host).textContent).toContain("Daily (8:00 am)");
+    });
+
+    it("offers the four cadences", async () => {
+      const host = await renderLoaded();
+      await act(async () => { trigger(host).click(); await Promise.resolve(); });
+      const labels = [...document.querySelectorAll('[role="listbox"] [role="option"]')].map((element) => element.textContent);
+      expect(labels).toEqual(["Immediately", "Hourly", "Twice daily (8:00 am and 2:00 pm)", "Daily (8:00 am)"]);
+    });
+
+    it("saves only the cadence, leaving both reminder switches out of the PATCH", async () => {
+      apiPatchMock.mockReset().mockResolvedValue({ projectDeadlineReminderEmails: true, subtaskReminderEmails: true, emailDigestCadence: "hourly" });
+      const host = await renderLoaded();
+      await act(async () => { trigger(host).click(); await Promise.resolve(); });
+      await act(async () => { option("Hourly")!.click(); await Promise.resolve(); });
+      await flush();
+      expect(apiPatchMock).toHaveBeenCalledExactlyOnceWith("/api/notification-preferences", { emailDigestCadence: "hourly" });
+      expect(trigger(host).textContent).toContain("Hourly");
+    });
+
+    it("rolls the cadence back and shows the error inside its own card when saving fails", async () => {
+      apiPatchMock.mockReset().mockRejectedValueOnce(new ApiError("Cadence save failed", 500));
+      const host = await renderLoaded();
+      await act(async () => { trigger(host).click(); await Promise.resolve(); });
+      await act(async () => { option("Immediately")!.click(); await Promise.resolve(); });
+      await flush();
+      expect(trigger(host).textContent).toContain("Twice daily (8:00 am and 2:00 pm)");
+      const notice = host.querySelector('[data-slot="notice"]')!;
+      expect(notice.textContent).toContain("Cadence save failed");
+      expect(notice.closest("section")!.querySelector("h2")!.textContent).toBe("Email digest");
+    });
+
+    it("disables the cadence control while it loads and when the load failed", async () => {
+      const gate = deferred<unknown>();
+      apiGetMock.mockReset().mockReturnValue(gate.promise);
+      const host = document.body.firstElementChild as HTMLElement;
+      await act(async () => { root!.render(<NotificationPreferences />); await Promise.resolve(); });
+      expect(trigger(host).disabled).toBe(true);
+      await act(async () => { gate.reject(new Error("Load failed")); await Promise.resolve(); await Promise.resolve(); });
+      expect(trigger(host).disabled).toBe(true);
+    });
+
+    it("keeps the reminder switches usable while the cadence save is pending", async () => {
+      const gate = deferred<unknown>();
+      apiPatchMock.mockReset().mockReturnValue(gate.promise);
+      const host = await renderLoaded();
+      await act(async () => { trigger(host).click(); await Promise.resolve(); });
+      await act(async () => { option("Daily (8:00 am)")!.click(); await Promise.resolve(); });
+      expect(trigger(host).disabled).toBe(true);
+      const boxes = host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+      for (const box of boxes) expect(box.disabled).toBe(false);
+      await act(async () => { gate.resolve({ projectDeadlineReminderEmails: true, subtaskReminderEmails: true, emailDigestCadence: "daily" }); await Promise.resolve(); await Promise.resolve(); });
+      expect(trigger(host).disabled).toBe(false);
+    });
   });
 });

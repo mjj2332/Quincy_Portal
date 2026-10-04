@@ -47,6 +47,7 @@ import { notifyProject, pruneNotifications, scanStalledAutoHdr } from "./notific
 import { processNotificationDlqMessage, processNotificationMessage, recoverNotificationOutbox } from "./notification-delivery";
 import { scanProjectDeadlineOccurrences } from "./project-deadline";
 import { reconcileSubtaskReminderOccurrences, scanSubtaskReminderOccurrences } from "./subtask-reminders";
+import { runEmailDigests } from "./email-digest";
 import { sweepExternalEditedUploads } from "./external-upload-sweep";
 import { processExternalRoleCachePurges } from "./external-role-cache-purge";
 import { sweepStuckManualPublishes } from "./manual-publish-recovery";
@@ -206,6 +207,12 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       await reconcileSubtaskReminderOccurrences(this.env, controller.scheduledTime);
     } catch (error) {
       console.error("Subtask reminder reconcile failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+    }
+    try {
+      const summary = await runEmailDigests(this.env, controller.scheduledTime);
+      console.log("Email digest run", summary);
+    } catch (error) {
+      console.error("Email digest run failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
     }
     try {
       await pruneNotifications(this.env, controller.scheduledTime);

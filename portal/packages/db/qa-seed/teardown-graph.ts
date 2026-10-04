@@ -119,6 +119,7 @@ export const SHARED_PARENT_TABLES: Readonly<Record<string, string>> = {
   agencies: "global agency directory: projects.agency_id points at a shared agency row a browser pass may pick for a fixture project; teardown never deletes directory rows",
   agents: "global agent directory: projects.agent_id points at a shared agent row a browser pass may pick for a fixture project; teardown never deletes directory rows",
   integration_connections: "the one Dropbox/AutoHDR connection every project's AutoHDR handoffs, mappings and claims share; teardown never deletes it",
+  notification_digests: "per-recipient digest send records (#489): digest items point at one with ON DELETE SET NULL, but a digest belongs to a recipient and a slot, never to a fixture project; teardown never deletes them",
   pipeline_stages: "global stage lookup named in the round-3 review; no FK points at it today (projects.stage_key is a bare text key), so this entry is inert until one does",
 };
 

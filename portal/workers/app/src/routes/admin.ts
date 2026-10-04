@@ -109,6 +109,7 @@ function safeNotificationErrorCode(value: string | null): string | null {
     "E_RECIPIENT_SUPPRESSED", "E_MESSAGE_TOO_LARGE", "E_INVALID_HEADERS",
     "project_activity_payload_invalid", "project_activity_missing", "project_activity_invalid",
     "project_activity_project_mismatch", "project_activity_type_reserved",
+    "digest_dropped_read", "recipient_inactive", "external_policy_suppressed", "digest_send_failed",
   ]);
   return safe.has(value) ? value : "delivery_error";
 }
@@ -303,6 +304,19 @@ adminRoutes.post("/admin/notification-deliveries/:outboxId/replay", terminalRout
       SELECT ?, ?, 'notification.delivery.replay', 'notification_outbox', ?, ?, ?
       WHERE changes() >= 1
     `).bind(newId(), c.get("user").id, outboxId, auditMeta(c.get("user"), { channels, acknowledgeDuplicateEmail: acknowledgement }), now),
+    // #489: a replayed email that had been digested must be digestible again. Its digest item is UNIQUE on the
+    // notification, so the consumer's insert would be a no-op and the item would stay failed/unknown. Reset it
+    // to pending and unclaimed. Runs after the audit insert (which reads changes()) and only for ledger rows
+    // this very batch just reset (pending, stamped `now`), so an unacknowledged `unknown` never reaches it.
+    c.env.DB.prepare(`
+      UPDATE notification_digest_items
+      SET state = 'pending', outcome_code = NULL, digest_id = NULL, updated_at = ?
+      WHERE state IN ('failed', 'unknown')
+        AND ledger_id IN (
+          SELECT id FROM notification_delivery_ledger
+          WHERE outbox_id = ? AND channel = 'email' AND status = 'pending' AND updated_at = ?
+        )
+    `).bind(now, outboxId, now),
   ]);
   if ((results[0]?.meta.changes ?? 0) === 0 || (results[1]?.meta.changes ?? 0) === 0) return c.json({ error: "Notification delivery is no longer replayable", code: "delivery_changed" }, 409);
   c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, [outboxId]));
@@ -326,7 +340,7 @@ adminRoutes.post("/admin/notification-deliveries/:outboxId/discard", terminalRou
           last_error_code = CASE WHEN channel = 'email' AND status IN ('processing', 'unknown') THEN 'email_acceptance_unknown' ELSE 'operator_discarded' END,
           last_error = CASE WHEN channel = 'email' AND status IN ('processing', 'unknown') THEN 'Email outcome requires duplicate acknowledgement.' ELSE 'Discarded by operator.' END,
           updated_at = ?
-      WHERE outbox_id = ? AND status NOT IN ('sent', 'suppressed')
+      WHERE outbox_id = ? AND status NOT IN ('sent', 'suppressed', 'deferred')
         AND EXISTS (SELECT 1 FROM notification_outbox o WHERE o.id = notification_delivery_ledger.outbox_id AND o.updated_at = ? AND o.status != 'discarded' AND o.status != 'suppressed' AND (o.status != 'processing' OR o.lease_expires_at IS NULL OR o.lease_expires_at <= ?))
       RETURNING channel, status
     `).bind(now, outboxId, existing.updatedAt, now),
@@ -335,7 +349,7 @@ adminRoutes.post("/admin/notification-deliveries/:outboxId/discard", terminalRou
       SET status = 'discarded', lease_token = NULL, lease_expires_at = NULL,
           completed_at = ?, last_error_code = 'operator_discarded', last_error = 'Discarded by operator.', updated_at = ?
       WHERE id = ? AND updated_at = ? AND status != 'discarded' AND status != 'suppressed' AND (status != 'processing' OR lease_expires_at IS NULL OR lease_expires_at <= ?)
-        AND EXISTS (SELECT 1 FROM notification_delivery_ledger WHERE outbox_id = ? AND status NOT IN ('sent', 'suppressed'))
+        AND EXISTS (SELECT 1 FROM notification_delivery_ledger WHERE outbox_id = ? AND status NOT IN ('sent', 'suppressed', 'deferred'))
     `).bind(now, now, outboxId, existing.updatedAt, now, outboxId),
     c.env.DB.prepare(`
       INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
