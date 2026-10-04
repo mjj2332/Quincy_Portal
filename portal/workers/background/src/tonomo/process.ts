@@ -17,7 +17,7 @@ import { commitShootDateChange, recordShootDateDecline } from "../projects/shoot
 import { canonicalDropboxConnectionId } from "../dropbox/connection";
 import { getMetadata, isDropboxPathNotFoundError } from "../dropbox/client";
 
-type Project = Pick<typeof projects.$inferSelect, "id" | "street" | "postcode" | "archivedAt" | "orderId" | "orderNo" | "suburb" | "agencyName" | "agentName" | "agentEmail" | "agentPhone" | "shootDate" | "timeWindow" | "notes" | "rawFolderLink" | "rawFolderPath" | "deadlineAt" | "deadlineVersion" | "deadlineLocalCivil">;
+type Project = Pick<typeof projects.$inferSelect, "id" | "street" | "postcode" | "archivedAt" | "orderId" | "orderNo" | "suburb" | "agencyName" | "agentName" | "agentEmail" | "agentPhone" | "shootDate" | "timeWindow" | "notes" | "rawFolderLink" | "rawFolderPath">;
 
 /** Optional dependency seam so tests can substitute Dropbox metadata verification without a live connection. */
 export type TonomoProcessDependencies = {
@@ -277,18 +277,21 @@ async function updateProject(env: Env, project: Project, linkedByAddress: boolea
   }
 
   // #484: gaining a canonical shoot date (it was empty, or unparsed text) gives an empty Deadline its Automatic Deadline in the same
-  // atomic write. A Project that still holds an Automatic Deadline instead has it recomputed for the returning date (#485); a manual
-  // one is left alone by the move's own predicates. A canonical date moving to another one is a reschedule, written through
-  // commitShootDateChange below.
+  // atomic write; a Project that still holds an Automatic Deadline instead has it recomputed for the returning date (#485). Both
+  // bundles are appended and their own predicates decide (Deadline empty vs held automatic), so no Deadline state is pre-read and a
+  // version bumped by a concurrent write cannot make the move lose. The date write is fenced on the shoot date this processor read: a
+  // lost fence throws so the queue retries, because writing over a newer date would leave its Deadline behind.
   const gainedShootDate = changes.shootDate !== undefined && (project.shootDate === null || !isCanonicalCalendarDate(project.shootDate));
-  const automaticDeadline = !gainedShootDate
-    ? undefined
-    : project.deadlineAt === null
-      ? buildAutomaticDeadlineBundle({ db: env.DB, projectId: project.id, shootDate: changes.shootDate!, gate: { kind: "none" }, auditId: crypto.randomUUID(), reason: "tonomo_update", now: Date.now() })
-      : buildAutomaticDeadlineMoveBundle({ db: env.DB, projectId: project.id, shootDate: changes.shootDate!, expectedVersion: project.deadlineVersion, previousDeadlineLocalCivil: project.deadlineLocalCivil, gate: { kind: "none" }, auditId: crypto.randomUUID(), reason: "tonomo_update", now: Date.now() });
-  if (automaticDeadline) {
-    const update = db.update(projects).set(changes).where(eq(projects.id, project.id)).toSQL();
-    await env.DB.batch([env.DB.prepare(update.sql).bind(...update.params), ...automaticDeadline.statements]);
+  const deadlineBundles = gainedShootDate
+    ? [
+      buildAutomaticDeadlineBundle({ db: env.DB, projectId: project.id, shootDate: changes.shootDate!, gate: { kind: "none" }, auditId: crypto.randomUUID(), reason: "tonomo_update", now: Date.now() }),
+      buildAutomaticDeadlineMoveBundle({ db: env.DB, projectId: project.id, shootDate: changes.shootDate!, gate: { kind: "none" }, auditId: crypto.randomUUID(), reason: "tonomo_update", now: Date.now() }),
+    ].flatMap((bundle) => bundle?.statements ?? [])
+    : [];
+  if (deadlineBundles.length) {
+    const update = db.update(projects).set(changes).where(and(eq(projects.id, project.id), sql`${projects.shootDate} IS ${project.shootDate}`)).toSQL();
+    const [written] = await env.DB.batch([env.DB.prepare(update.sql).bind(...update.params), ...deadlineBundles]);
+    if ((written?.meta.changes ?? 0) === 0) throw new Error(`Tonomo shoot date write lost its snapshot for project ${project.id}; the shoot date changed after it was read, retry`);
   } else {
     await db.update(projects).set(changes).where(eq(projects.id, project.id));
   }
@@ -308,7 +311,7 @@ async function updateProject(env: Env, project: Project, linkedByAddress: boolea
     if (isVerifiedTonomoShootDateSource(order.shootDateSource)) {
       // applyOrder enqueues the Editor reconcile after this returns; that pass records what the
       // date change means for an existing Editor tree.
-      await commitShootDateChange(env, { projectId: project.id, previous: reschedule.previous, next: reschedule.next, orderId: order.orderId, receivedAt: context.receivedAt, ...(project.deadlineAt !== null ? { deadline: { expectedVersion: project.deadlineVersion, previousLocalCivil: project.deadlineLocalCivil } } : {}) });
+      await commitShootDateChange(env, { projectId: project.id, previous: reschedule.previous, next: reschedule.next, orderId: order.orderId, receivedAt: context.receivedAt });
     } else {
       await recordShootDateDecline(env, { projectId: project.id, orderId: order.orderId, stored: reschedule.previous, incoming: reschedule.next, reason: "incoming shoot date is unparsed text, not a verified calendar date; keeping stored date" });
     }

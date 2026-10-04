@@ -328,7 +328,7 @@ describe("an Automatic Deadline move and the reminder scanner (#485)", () => {
     await database.DB.batch(bundle.statements);
     return projectId;
   }
-  const reschedule = (projectId: string) => commitShootDateChange(env as never, { projectId, orderId: "order-move-scan", previous: "2099-01-05", next: "2099-01-06", receivedAt: new Date(), deadline: { expectedVersion: 1, previousLocalCivil: "2099-01-06T17:00" } });
+  const reschedule = (projectId: string) => commitShootDateChange(env as never, { projectId, orderId: "order-move-scan", previous: "2099-01-05", next: "2099-01-06", receivedAt: new Date() });
   const rowsAt = async (projectId: string, version: number) => (await database.DB.prepare("SELECT id, project_id AS projectId, schedule_version AS scheduleVersion, kind, reminder_offset_minutes AS reminderOffsetMinutes, fire_at AS fireAt, deadline_at AS deadlineAt, deadline_local_civil AS deadlineLocalCivil, deadline_utc_offset_minutes AS deadlineUtcOffsetMinutes, deadline_fold AS deadlineFold, created_at AS createdAt, created_by AS createdBy, status FROM project_deadline_occurrences WHERE project_id = ? AND schedule_version = ? ORDER BY reminder_offset_minutes DESC").bind(projectId, version).all<any>()).results;
 
   it("cannot fire a row the scanner read at the old version after the move, and fires the new rows at their new times", async () => {

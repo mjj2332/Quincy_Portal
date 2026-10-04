@@ -659,12 +659,13 @@ projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) =
     ? buildAutomaticDeadlineBundle({ db: c.env.DB, projectId: id, shootDate: projectUpdates.shootDate as string, gate: { kind: "audit", auditId }, auditId: newId(), reason: "details", now: Date.now() })
     : undefined;
   if (automaticDeadline) statements.push(...automaticDeadline.statements);
-  // #485: a canonical Shoot date that differs from the stored one moves a Deadline the system set and nobody has saved (the Deadline
-  // is held, so this is never a backfill). The UPDATE holds the source and version CAS; clearing the date or writing free text
-  // never gets here, so an automatic Deadline stays as it is. Appended last, gated on this save's own audit row.
+  // #485: a canonical Shoot date that differs from the stored one moves a Deadline the system set and nobody has saved. Appended
+  // whenever the date changes, with no pre-read of the Deadline: the bundle's own predicates (source `automatic`, a held Deadline,
+  // the date this save wrote) decide, so a Deadline version bumped by a concurrent write cannot make the move silently lose, and a
+  // Project with no Deadline is never backfilled. Clearing the date or writing free text never gets here. Gated on this save's audit row.
   const rescheduledShootDate = Object.prototype.hasOwnProperty.call(projectUpdates, "shootDate") && typeof projectUpdates.shootDate === "string" && automaticDeadlineFor(projectUpdates.shootDate) !== null && projectUpdates.shootDate !== existingProject.shootDate;
-  const automaticDeadlineMove = rescheduledShootDate && existingProject.deadlineAt !== null
-    ? buildAutomaticDeadlineMoveBundle({ db: c.env.DB, projectId: id, shootDate: projectUpdates.shootDate as string, expectedVersion: existingProject.deadlineVersion, previousDeadlineLocalCivil: existingProject.deadlineLocalCivil, gate: { kind: "audit", auditId }, auditId: newId(), reason: "details", now: Date.now() })
+  const automaticDeadlineMove = rescheduledShootDate
+    ? buildAutomaticDeadlineMoveBundle({ db: c.env.DB, projectId: id, shootDate: projectUpdates.shootDate as string, gate: { kind: "audit", auditId }, auditId: newId(), reason: "details", now: Date.now() })
     : undefined;
   if (automaticDeadlineMove) statements.push(...automaticDeadlineMove.statements);
   const result = await c.env.DB.batch(statements);

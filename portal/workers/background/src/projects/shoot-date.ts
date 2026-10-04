@@ -9,12 +9,6 @@ export type ShootDateChange = {
   orderId: string;
   /** When the webhook carrying the new date was received; older than the last accepted change means stale. */
   receivedAt: Date;
-  /**
-   * The Deadline the Project held when the processor read it. Present only for a held Deadline: an Automatic Deadline is moved
-   * to follow the new date in this same batch (#485), and a manual one is left alone by the move's own predicates. Absent means
-   * the Project holds no Deadline, and a reschedule never backfills one.
-   */
-  deadline?: { expectedVersion: number; previousLocalCivil: string | null };
 };
 
 /**
@@ -23,19 +17,14 @@ export type ShootDateChange = {
  * received after this one (compared by receipt time, not processing time, so a retried or
  * redelivered older event cannot roll a newer reschedule back while a lagging newer event still
  * lands), and the audit INSERT fires only when that UPDATE landed.
- * When `deadline` is given, the Automatic Deadline move is appended last, gated on this write's audit row, so a lost fence moves nothing.
+ * The Automatic Deadline move (#485) is appended last, gated on this write's audit row, so a lost fence moves nothing and a won one always moves an automatic Deadline, whatever its version.
  * Returns false when the fence lost, which the caller treats as "already handled".
  */
 export async function commitShootDateChange(env: Env, change: ShootDateChange): Promise<boolean> {
   const at = Date.now();
   const auditId = crypto.randomUUID();
   const meta = JSON.stringify({ actor: "tonomo", orderId: change.orderId, previousShootDate: change.previous, shootDate: change.next, eventReceivedAt: change.receivedAt.getTime() });
-  const move = change.deadline
-    ? buildAutomaticDeadlineMoveBundle({
-      db: env.DB, projectId: change.projectId, shootDate: change.next, expectedVersion: change.deadline.expectedVersion,
-      previousDeadlineLocalCivil: change.deadline.previousLocalCivil, gate: { kind: "audit", auditId }, auditId: crypto.randomUUID(), reason: "tonomo_reschedule", now: at,
-    })
-    : undefined;
+  const move = buildAutomaticDeadlineMoveBundle({ db: env.DB, projectId: change.projectId, shootDate: change.next, gate: { kind: "audit", auditId }, auditId: crypto.randomUUID(), reason: "tonomo_reschedule", now: at });
   const [result] = await env.DB.batch([
     env.DB.prepare(
       `UPDATE projects SET shoot_date = ?, updated_at = ? WHERE id = ? AND shoot_date = ? AND archived_at IS NULL

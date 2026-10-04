@@ -798,7 +798,7 @@ describe("processTonomoEvent Automatic Deadline follows a reschedule (#485)", ()
 
   it("writes no move when the stored date changed after the processor read it", async () => {
     const { orderId, projectId } = await createdProject();
-    expect(await commitShootDateChange(env as never, { projectId, orderId, previous: "2026-09-17", next: "2026-10-02", receivedAt: new Date(), deadline: { expectedVersion: 1, previousLocalCivil: "2026-10-02T17:00" } })).toBe(false);
+    expect(await commitShootDateChange(env as never, { projectId, orderId, previous: "2026-09-17", next: "2026-10-02", receivedAt: new Date() })).toBe(false);
     expect(await projectFor(orderId)).toMatchObject({ shoot_date: "2026-10-01", deadline_local_civil: "2026-10-02T17:00", deadline_version: 1 });
     expect(await moved(projectId)).toHaveLength(0);
   });
@@ -814,6 +814,45 @@ describe("processTonomoEvent Automatic Deadline follows a reschedule (#485)", ()
     await database.DB.prepare("UPDATE projects SET shoot_date = 'Friday, TBC' WHERE id = ?").bind(unparsed.projectId).run();
     await processEvent(unparsed.orderId, { street: unparsed.street, shoot_date: "2026-10-02" });
     expect(await projectFor(unparsed.orderId)).toMatchObject({ deadline_local_civil: MONDAY.civil, deadline_version: 2 });
+  });
+
+  it("moves the Deadline even when its version was bumped (still automatic) between the read and the write", async () => {
+    const { orderId, projectId } = await createdProject();
+    // A Resume-style write kept the Deadline automatic but bumped it to v2 after the processor read v1.
+    await database.DB.batch([
+      database.DB.prepare("UPDATE projects SET deadline_version = 2 WHERE id = ?").bind(projectId),
+      database.DB.prepare("UPDATE project_deadline_occurrences SET schedule_version = 2 WHERE project_id = ?").bind(projectId),
+    ]);
+    expect(await commitShootDateChange(env as never, { projectId, orderId, previous: "2026-10-01", next: "2026-10-02", receivedAt: new Date() })).toBe(true);
+    expect(await projectFor(orderId)).toMatchObject({ shoot_date: "2026-10-02", deadline_local_civil: MONDAY.civil, deadline_source: "automatic", deadline_version: 3 });
+    expect(JSON.parse((await moved(projectId))[0]!.meta_json)).toMatchObject({ previousDeadlineLocalCivil: "2026-10-02T17:00", version: 3 });
+    expect((await slots(projectId)).filter((row) => row.version === 3).map((row) => row.status)).toEqual(["pending", "pending", "pending", "pending"]);
+  });
+
+  it("does not overwrite a newer shoot date from a returning-date write whose snapshot lost, and converges on retry", async () => {
+    const { orderId, street, projectId } = await createdProject();
+    await database.DB.prepare("UPDATE projects SET shoot_date = NULL WHERE id = ?").bind(projectId).run();
+    // Edit details lands between Tonomo's read (cleared date, Deadline v1) and its write: Oct 2 and the Deadline moved to Oct 5, v2.
+    let raced = false;
+    const racing = new Proxy(env.DB, { get(target, key) {
+      if (key === "batch") return async (statements: D1PreparedStatement[]) => {
+        if (!raced) {
+          raced = true;
+          await database.DB.prepare("UPDATE projects SET shoot_date = '2026-10-02', deadline_local_civil = ?, deadline_at = ?, deadline_utc_offset_minutes = 660, deadline_version = 2 WHERE id = ?").bind(MONDAY.civil, MONDAY.at, projectId).run();
+        }
+        return target.batch(statements);
+      };
+      const value = Reflect.get(target, key);
+      return typeof value === "function" ? value.bind(target) : value;
+    } });
+    const eventId = crypto.randomUUID();
+    const payloadJson = JSON.stringify({ id: orderId, street, shoot_date: "2026-10-09" });
+    await database.DB.prepare("INSERT INTO webhook_events (id, source, event_id, payload_json, status, received_at) VALUES (?, 'tonomo', ?, ?, 'received', ?)").bind(eventId, `event-${eventId}`, payloadJson, Date.now()).run();
+    await expect(processTonomoEvent({ ...env, DB: racing } as never, { id: eventId, payloadJson })).rejects.toThrow();
+    expect(await projectFor(orderId)).toMatchObject({ shoot_date: "2026-10-02", deadline_local_civil: MONDAY.civil, deadline_version: 2 });
+    // The queue retries: Oct 9 is now a reschedule of Oct 2, and the Deadline follows it.
+    await processTonomoEvent(env, { id: eventId, payloadJson });
+    expect(await projectFor(orderId)).toMatchObject({ shoot_date: "2026-10-09", deadline_local_civil: "2026-10-12T17:00", deadline_source: "automatic", deadline_version: 3 });
   });
 
   it("writes no Deadline on a reschedule of a Project that holds none", async () => {
