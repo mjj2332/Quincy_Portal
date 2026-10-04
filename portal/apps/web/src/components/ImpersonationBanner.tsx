@@ -11,11 +11,12 @@ export type ImpersonationBannerProps = {
 
 const EXIT_ERROR = "Could not automatically exit. Sign out completely and sign back in as Admin to restore your session.";
 
-// The banner is a fixed ink strip above the shell header. Its 42px height is load-bearing:
-// several app.css rules offset the header, rail, worktools, viewer and collaboration wrap by
-// exactly 42px under `.app--impersonating`. Do not change it here without updating those.
+// The banner is a fixed ink strip above the shell header. Its height is `--impersonation-banner-height`
+// (tokens/spacing.css), the one value every `.app--impersonating` offset in app.css reads too.
+// It sits below `--z-dialog` on purpose (#531): the long-lived sheets start under it, while a dialog
+// or alert still covers it, so Exit is never mouse-reachable behind a focus-trapped modal.
 const BANNER = "fixed inset-x-0 top-0 z-[76] flex items-center " +
-  "gap-[var(--space-3)] h-[42px] overflow-hidden px-[var(--space-6)] " +
+  "gap-[var(--space-3)] h-[var(--impersonation-banner-height)] overflow-hidden px-[var(--space-6)] " +
   "bg-surface-inverse text-on-inverse " +
   "[font:var(--weight-regular)_var(--text-2xs)/1.2_var(--font-sans)] " +
   "uppercase tracking-[var(--tracking-wide)]";

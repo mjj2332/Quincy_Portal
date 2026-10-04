@@ -39,9 +39,11 @@ export type RailSheetProps = {
   children: ReactNode;
   finalFocus?: React.ComponentProps<typeof SheetContent>["finalFocus"];
   initialFocus?: React.ComponentProps<typeof SheetContent>["initialFocus"];
+  /** #531: an Admin is impersonating; the scrim and panel start below the banner, which stays readable. */
+  impersonating?: boolean;
 };
 
-export function RailSheet({ children, finalFocus, initialFocus }: RailSheetProps) {
+export function RailSheet({ children, finalFocus, initialFocus, impersonating = false }: RailSheetProps) {
   const [slot, setSlot] = useState<HTMLDivElement | null>(null);
 
   return (
@@ -49,17 +51,19 @@ export function RailSheet({ children, finalFocus, initialFocus }: RailSheetProps
       side="left"
       showCloseButton={false}
       data-testid="rail-sheet"
-      className="z-[var(--z-dialog)] gap-0 bg-sidebar p-0 text-sidebar-foreground border-sidebar-border data-[side=left]:w-[288px]"
+      data-impersonating={impersonating ? "" : undefined}
+      className="z-[var(--z-dialog)] data-[impersonating]:data-[side=left]:top-[var(--impersonation-banner-height)] data-[impersonating]:data-[side=left]:h-auto data-[impersonating]:data-[side=left]:bottom-0 gap-0 bg-sidebar p-0 text-sidebar-foreground border-sidebar-border data-[side=left]:w-[288px]"
       finalFocus={finalFocus}
       initialFocus={initialFocus}
       overlayProps={{
         "data-testid": "rail-sheet-scrim",
+        ...(impersonating ? { "data-impersonating": "" } : {}),
         // The token plus a 3px blur — the same scrim `Modal.tsx`'s own `SCRIM` reaches for, not an
         // invented colour. Not the rest of `SCRIM`'s class string: that also centres a panel and
         // carries `max-[721px]:…` responsive variants for a DIALOG's own layout, neither of which
         // applies to a side-anchored Sheet, and the latter would trip
         // `shell-breakpoint.guard.test.ts`'s ban on a second, CSS-owned breakpoint.
-        className: "z-[var(--z-dialog)] bg-[var(--scrim-overlay)] backdrop-blur-[3px]",
+        className: "z-[var(--z-dialog)] bg-[var(--scrim-overlay)] backdrop-blur-[3px] data-[impersonating]:top-[var(--impersonation-banner-height)] data-[impersonating]:before:absolute data-[impersonating]:before:content-[''] data-[impersonating]:before:inset-x-0 data-[impersonating]:before:bottom-full data-[impersonating]:before:h-[var(--impersonation-banner-height)]",
       }}
     >
       {/* sr-only: the Sheet IS the rail, and its contents already say so visibly. A screen reader
