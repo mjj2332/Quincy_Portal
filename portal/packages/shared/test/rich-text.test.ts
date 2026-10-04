@@ -13,6 +13,7 @@ import {
   parseRichTextDoc,
   richTextDocByteLength,
   richTextMediaIds,
+  richTextMediaRefs,
   richTextMentionIds,
   richTextPlainText,
 } from "../src/rich-text";
@@ -421,5 +422,56 @@ describe("image node (#493)", () => {
   it("keeps the comment media profile identical to the comment profile otherwise", () => {
     expect(() => parseRichTextDoc({ type: "doc", content: [{ type: "table", content: [] }] }, COMMENT_MEDIA_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
     expect(parseRichTextDoc(valid, COMMENT_MEDIA_RICH_TEXT_PROFILE)).toEqual(parseRichTextDoc(valid));
+  });
+});
+
+describe("video node (#494)", () => {
+  const mediaA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const mediaB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const mediaC = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const video = (mediaId: unknown, extra: Record<string, unknown> = {}) => ({ type: "video", attrs: { mediaId, ...extra } });
+  const image = (mediaId: unknown) => ({ type: "image", attrs: { mediaId } });
+  const withNodes = (...nodes: unknown[]) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Look" }] }, ...nodes] });
+
+  it("is accepted under the comment media profile only, never the default, comment or notice profiles", () => {
+    const input = withNodes(video(mediaA));
+    expect(parseRichTextDoc(input, COMMENT_MEDIA_RICH_TEXT_PROFILE)).toEqual(input);
+    expect(() => parseRichTextDoc(input)).toThrow(RichTextValidationError);
+    expect(() => parseRichTextDoc(input, NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+  });
+
+  it("reads media ids and kinds in document order, images and videos together", () => {
+    const doc = parseRichTextDoc(withNodes(video(mediaB), image(mediaA), video(mediaC)), COMMENT_MEDIA_RICH_TEXT_PROFILE);
+    expect(richTextMediaIds(doc)).toEqual([mediaB, mediaA, mediaC]);
+    expect(richTextMediaRefs(doc)).toEqual([{ id: mediaB, kind: "video" }, { id: mediaA, kind: "image" }, { id: mediaC, kind: "video" }]);
+    expect(richTextMediaRefs(parseRichTextDoc(valid))).toEqual([]);
+  });
+
+  it("is strict: only a UUID mediaId, no extra attributes or keys, and only at the top level", () => {
+    const profile = COMMENT_MEDIA_RICH_TEXT_PROFILE;
+    const bad = [
+      withNodes(video("not-a-uuid")),
+      withNodes(video(undefined)),
+      withNodes(video(mediaA, { src: "https://evil.test/v.mp4" })),
+      withNodes({ type: "video" }),
+      withNodes({ type: "video", attrs: { mediaId: mediaA }, content: [] }),
+      withNodes({ type: "video", attrs: { mediaId: mediaA }, src: "x" }),
+      { type: "doc", content: [{ type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "x" }] }, video(mediaA)] }] }] },
+      { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "x" }, video(mediaA)] }] },
+    ];
+    for (const value of bad) expect(() => parseRichTextDoc(value, profile), JSON.stringify(value)).toThrow(RichTextValidationError);
+  });
+
+  it("places one media id only once across images and videos", () => {
+    expect(() => parseRichTextDoc(withNodes(video(mediaA), video(mediaA)), COMMENT_MEDIA_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+    expect(() => parseRichTextDoc(withNodes(video(mediaA), image(mediaA)), COMMENT_MEDIA_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+  });
+
+  it("reads as [video] in plain text, so a video-only post is valid, and survives mention-label normalisation", () => {
+    const only = parseRichTextDoc({ type: "doc", content: [video(mediaA)] }, COMMENT_MEDIA_RICH_TEXT_PROFILE);
+    expect(richTextPlainText(only)).toBe("[video]");
+    expect(richTextPlainText(parseRichTextDoc(withNodes(video(mediaA), image(mediaB)), COMMENT_MEDIA_RICH_TEXT_PROFILE))).toBe("Look\n[video]\n[image]");
+    expect(normalizeRichTextMentionLabels(only, new Map())).toEqual(only);
+    expect(richTextMentionIds(only)).toEqual([]);
   });
 });
