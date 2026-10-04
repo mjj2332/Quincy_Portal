@@ -195,7 +195,7 @@ export function NotificationPreferences() {
                   {CADENCE_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value} className="max-[721px]:min-h-[44px]">{option.label}</SelectItem>)}
                 </SelectContent>
               </Select>
-              {saving.digest && <span className="text-muted-foreground">Saving…</span>}
+              {saving.digest && <span className="text-foreground-secondary">Saving…</span>}
             </span>
           </div>
         </div>
