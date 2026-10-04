@@ -7,6 +7,8 @@
 //    this listbox is a floating overlay, and `reui-skin.guard` bans the registry's drop shadows.
 // 4. `data-testid` is forwarded to the `Command` root: tests select the Quincy-owned id, never the
 //    vendor's `data-slot` (test-seam guard F).
+// 5. `aria-expanded="true"` (and `role="combobox"` when unset) on the editor while the list is open,
+//    restoring the prior value on dismissal: MentionAutocomplete shares the element (#492 review).
 import {
   useEffect,
   useImperativeHandle,
@@ -118,6 +120,7 @@ export function RichTextSuggestionMenu<T>({
       const active = list?.querySelector('[aria-selected="true"]')?.id
 
       dom.setAttribute("aria-haspopup", "listbox")
+      dom.setAttribute("aria-expanded", "true")
       dom.setAttribute("aria-autocomplete", "list")
       if (list?.id) dom.setAttribute("aria-controls", list.id)
       if (active) dom.setAttribute("aria-activedescendant", active)
@@ -127,12 +130,20 @@ export function RichTextSuggestionMenu<T>({
     return () => window.clearTimeout(timer)
   })
 
-  useEffect(
-    () => () => {
-      for (const name of EDITOR_ARIA) editor.view.dom.removeAttribute(name)
-    },
-    [editor]
-  )
+  // The mention source can have left `role` / `aria-expanded` on the same element: an open list says
+  // "expanded", and dismissal hands back whatever was there.
+  useEffect(() => {
+    const dom = editor.view.dom
+    const priorExpanded = dom.getAttribute("aria-expanded")
+    const priorRole = dom.getAttribute("role")
+    if (!priorRole) dom.setAttribute("role", "combobox")
+    return () => {
+      for (const name of EDITOR_ARIA) dom.removeAttribute(name)
+      if (priorExpanded === null) dom.removeAttribute("aria-expanded")
+      else dom.setAttribute("aria-expanded", priorExpanded)
+      if (!priorRole) dom.removeAttribute("role")
+    }
+  }, [editor])
 
   return (
     <Command

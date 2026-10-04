@@ -4,7 +4,7 @@ import { Editor, type JSONContent } from "@tiptap/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NOTICE_RICH_TEXT_PROFILE, parseRichTextDoc, type RichTextDoc, type RichTextInline, type RichTextTaskItem, type RichTextTableCell, type RichTextTaskList } from "@quincy/shared";
 import StarterKit from "@tiptap/starter-kit";
-import { createRichTextEditorExtensions, shouldBlockListIndent, tiptapToRichTextDoc, toTiptap } from "../lib/rich-text-tiptap";
+import { createRichTextEditorExtensions, exceedsTableLimit, shouldBlockListIndent, tableDimensions, tiptapToRichTextDoc, toTiptap } from "../lib/rich-text-tiptap";
 import { QuincyRichTextEditor } from "./QuincyRichTextEditor";
 import { RichTextContent } from "./RichTextContent";
 
@@ -1059,6 +1059,75 @@ describe("QuincyRichTextEditor document preset (#492)", () => {
     } finally { tiptap.destroy(); }
   });
 
+  it("normalises a pasted highlight with an unsupported colour to the default, keeping a supported one", () => {
+    const tiptap = new Editor({ extensions: createRichTextEditorExtensions("document"), content: toTiptap(text("x")) });
+    try {
+      tiptap.commands.setTextSelection(1);
+      tiptap.view.pasteHTML('<p><mark data-color="#faf594">Hex</mark> <mark data-color="blue">Blue</mark></p>');
+      const back = tiptapToRichTextDoc(tiptap.getJSON());
+      expect(() => parseRichTextDoc(back, NOTICE_RICH_TEXT_PROFILE)).not.toThrow();
+      const colours = JSON.stringify(back).match(/"color":"[^"]*"/g);
+      expect(colours).toEqual(['"color":"yellow"', '"color":"blue"']);
+    } finally { tiptap.destroy(); }
+  });
+
+  it("stores a row covered by rowspans as content: [] so a pasted merged table still validates", () => {
+    const tiptap = new Editor({ extensions: createRichTextEditorExtensions("document"), content: toTiptap(empty()) });
+    try {
+      tiptap.view.pasteHTML('<table><tr><td rowspan="2">A</td><td rowspan="2">B</td></tr><tr></tr></table>');
+      const back = tiptapToRichTextDoc(tiptap.getJSON());
+      const table = back.content.find((block) => block.type === "table") as { content: Array<{ content: unknown[] }> } | undefined;
+      expect(table, JSON.stringify(back)).toBeDefined();
+      expect(table!.content[1]).toEqual({ type: "tableRow", content: [] });
+      expect(() => parseRichTextDoc(back, NOTICE_RICH_TEXT_PROFILE)).not.toThrow();
+      // And it loads back into the editor unchanged.
+      const again = new Editor({ extensions: createRichTextEditorExtensions("document"), content: toTiptap(back) });
+      try { expect(tiptapToRichTextDoc(again.getJSON())).toEqual(back); } finally { again.destroy(); }
+    } finally { tiptap.destroy(); }
+  });
+
+  it("refuses table growth past the server's 12 columns and 50 rows, and disables the controls there", async () => {
+    const tiptap = new Editor({ extensions: createRichTextEditorExtensions("document"), content: toTiptap(empty()) });
+    try {
+      tiptap.commands.insertTable({ rows: 3, cols: 3, withHeaderRow: true });
+      for (let i = 0; i < 12; i += 1) tiptap.chain().addColumnAfter().run();
+      for (let i = 0; i < 60; i += 1) tiptap.chain().addRowAfter().run();
+      const table = tiptap.getJSON().content!.find((block) => block.type === "table")! as { content: Array<{ content: unknown[] }> };
+      expect(table.content.length).toBe(50);
+      expect(table.content[0]!.content.length).toBe(12);
+      // A table pasted beyond the limit never lands.
+      tiptap.commands.setContent(toTiptap(empty()));
+      const wide = "<table><tr>" + "<td>x</td>".repeat(13) + "</tr></table>";
+      tiptap.view.pasteHTML(wide);
+      expect(JSON.stringify(tiptap.getJSON())).not.toContain("table");
+    } finally { tiptap.destroy(); }
+  });
+
+  it("counts a rowspan against the row limit, agreeing with the server's bound", () => {
+    const tall: RichTextDoc = { type: "doc", content: [{ type: "table", content: [
+      { type: "tableRow", content: [{ type: "tableCell", attrs: { colspan: 1, rowspan: 13 }, content: [{ type: "paragraph", content: [{ type: "text", text: "x" }] }] }] },
+      ...Array.from({ length: 12 }, () => ({ type: "tableRow" as const, content: [] })),
+    ] }] };
+    const tiptap = new Editor({ extensions: createRichTextEditorExtensions("document"), content: toTiptap(tall) });
+    try {
+      expect(exceedsTableLimit(tiptap.state.doc)).toBe(false);
+      expect(tableDimensions(tiptap.state.doc.firstChild!)).toEqual({ rows: 13, columns: 1 });
+    } finally { tiptap.destroy(); }
+  });
+
+  it("disables Add row / Add column in the table bar at the limits", async () => {
+    const wide = (cols: number, rows: number): RichTextDoc => ({ type: "doc", content: [{ type: "table", content: Array.from({ length: rows }, () => ({ type: "tableRow" as const, content: Array.from({ length: cols }, () => cell("tableCell", "x")) })) }] });
+    const host = mount(); const { editor } = await render(host, wide(12, 50));
+    await act(async () => { editor.focus(); (editor.querySelector("td p") as HTMLElement).dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); await Promise.resolve(); });
+    const bar = () => document.querySelector<HTMLElement>('[data-testid="rich-text-table-bubble"]');
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    const addRow = bar()?.querySelector<HTMLButtonElement>('[aria-label="Add row below"]');
+    const addCol = bar()?.querySelector<HTMLButtonElement>('[aria-label="Add column right"]');
+    expect(addRow, "table bar").toBeTruthy();
+    expect(addRow!.disabled).toBe(true);
+    expect(addCol!.disabled).toBe(true);
+  });
+
   it("keeps the composer schema free of tables, alignment and highlight", () => {
     const tiptap = new Editor({ extensions: createRichTextEditorExtensions("composer"), content: { type: "doc", content: [{ type: "paragraph" }] } });
     try {
@@ -1119,11 +1188,81 @@ describe("QuincyRichTextEditor document preset (#492)", () => {
     expect(slashMenu()).toBeNull();
   });
 
+  it("reports an expanded combobox while the slash menu is open and restores it on dismissal", async () => {
+    const host = mount(); const { editor } = await render(host, empty());
+    // The mention source has run its wiring before (a collapsed combobox), as it does once a user has typed @.
+    editor.setAttribute("role", "combobox"); editor.setAttribute("aria-expanded", "false");
+    await typeSlash(editor, "/");
+    expect(slashMenu()).not.toBeNull();
+    expect(editor.getAttribute("aria-expanded")).toBe("true");
+    await keydown(editor, "Escape");
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(slashMenu()).toBeNull();
+    expect(editor.getAttribute("aria-expanded")).toBe("false");
+  });
+
   it("lists only blocks the stored contract can hold", async () => {
     const host = mount(); const { editor } = await render(host, empty());
     await typeSlash(editor, "/");
     const titles = [...slashMenu()!.querySelectorAll('[role="option"]')].map((option) => option.textContent ?? "");
     expect(titles.map((title) => title.replace(/(Plain paragraph|Section heading|Smaller heading|Unordered points|Ordered steps|Track tasks with checkboxes|Rows and columns with a header).*$/, "").trim().replace(/[#\-[\] 1.]+$/, "").trim()).sort()).toEqual(["Bullet List", "Checklist", "Numbered List", "Section", "Subsection", "Table", "Text"]);
+  });
+
+  it("closes the slash menu and resets aria-expanded when the editor loses focus", async () => {
+    const host = mount(); const { editor } = await render(host, empty());
+    editor.setAttribute("role", "combobox"); editor.setAttribute("aria-expanded", "false");
+    await typeSlash(editor, "/");
+    expect(slashMenu()).not.toBeNull();
+    await act(async () => { editor.dispatchEvent(new FocusEvent("blur")); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(slashMenu()).toBeNull();
+    expect(editor.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("returns focus to the Highlight trigger on Escape, and to the editor only after applying a colour", async () => {
+    const host = mount(); const { editor } = await render(host, text("Mark me"));
+    await selectText(editor, editor.querySelector("p")!.firstChild!, 0, 4);
+    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="rich-text-highlight"]')!;
+    await click(trigger);
+    const popover = () => document.querySelector<HTMLElement>('[aria-label="Highlight color"]');
+    await waitForCondition(() => popover() !== null, "highlight popover");
+    await keydown(popover()!.querySelector("button")!, "Escape");
+    await waitForClose();
+    expect(popover()).toBeNull(); expect(document.activeElement).toBe(trigger);
+    await click(trigger);
+    await waitForCondition(() => popover() !== null, "highlight popover");
+    await click(popover()!.querySelector<HTMLButtonElement>('[aria-label="Yellow highlight"]')!);
+    await waitForClose();
+    expect(document.activeElement).toBe(editor);
+  });
+
+  it("returns focus to the Alignment trigger on Escape", async () => {
+    const host = mount(); const { editor } = await render(host, text("Align me"));
+    await selectText(editor, editor.querySelector("p")!.firstChild!, 0, 3);
+    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="rich-text-align-menu"]')!;
+    await click(trigger);
+    const menu = () => document.querySelector<HTMLElement>('[role="menu"]');
+    await waitForCondition(() => menu() !== null, "alignment menu");
+    await keydown(menu()!, "Escape");
+    await waitForClose();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("gives the table Delete trigger and the highlight colour buttons the 44px phone target", async () => {
+    const grid: RichTextDoc = { type: "doc", content: [{ type: "table", content: [{ type: "tableRow", content: [cell("tableCell", "x"), cell("tableCell", "y")] }] }, { type: "paragraph", content: [{ type: "text", text: "after" }] }] };
+    const host = mount(); const { editor } = await render(host, grid);
+    await act(async () => { editor.focus(); (editor.querySelector("td p") as HTMLElement).dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); await Promise.resolve(); });
+    const bubbleDelete = () => document.querySelector<HTMLElement>('[data-testid="rich-text-table-bubble"] [aria-label="Delete"]');
+    await waitForCondition(() => bubbleDelete() !== null, "table bar");
+    const del = bubbleDelete();
+    expect(del, "table Delete").toBeTruthy();
+    expect(del!.className).toContain("max-[721px]:size-11");
+    await selectText(editor, editor.lastElementChild!.firstChild!, 0, 2);
+    await click(host.querySelector<HTMLButtonElement>('[data-testid="rich-text-highlight"]')!);
+    const popover = document.querySelector<HTMLElement>('[aria-label="Highlight color"]')!;
+    const buttons = [...popover.querySelectorAll<HTMLButtonElement>("button")];
+    expect(buttons.length).toBeGreaterThanOrEqual(4);
+    for (const button of buttons) expect(button.className, button.getAttribute("aria-label") ?? "").toContain("max-[721px]:size-11");
   });
 
   it("closes the slash menu on Escape, and an open mention list takes Escape first", async () => {
@@ -1157,6 +1296,20 @@ describe("QuincyRichTextEditor document preset (#492)", () => {
     const rail = host.querySelector<HTMLElement>('[data-testid="rich-text-outline"]');
     expect(rail).not.toBeNull();
     expect([...rail!.querySelectorAll("button")].map((button) => button.textContent)).toEqual(["First", "Second"]);
+  });
+
+  it("labels inactive outline entries with the AA text role, not the 3.1:1 muted one", async () => {
+    const host = mount();
+    await render(host, { type: "doc", content: [
+      { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "First" }] },
+      { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Second" }] },
+    ] });
+    const buttons = [...host.querySelectorAll<HTMLElement>('[data-testid="rich-text-outline"] button')];
+    expect(buttons.length).toBe(2);
+    for (const button of buttons) {
+      expect(button.className).toContain("text-foreground-secondary");
+      expect(button.className).not.toMatch(/(^|\s)text-muted-foreground/);
+    }
   });
 
   it("shows no outline rail for a single heading", async () => {

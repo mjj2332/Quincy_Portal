@@ -9,9 +9,10 @@ import Mention from "@tiptap/extension-mention";
 import { Highlight } from "@tiptap/extension-highlight";
 import { ListItem, TaskItem, TaskList } from "@tiptap/extension-list";
 import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table";
+import { TableMap } from "@tiptap/pm/tables";
 import { TextAlign } from "@tiptap/extension-text-align";
 import { embeddedMediaUrl } from "./embedded-media";
-import { RICH_TEXT_HIGHLIGHT_COLORS, RICH_TEXT_MAX_NESTING, type RichTextDoc } from "@quincy/shared";
+import { RICH_TEXT_HIGHLIGHT_COLORS, RICH_TEXT_MAX_NESTING, RICH_TEXT_TABLE_MAX_COLUMNS, RICH_TEXT_TABLE_MAX_ROWS, type RichTextDoc } from "@quincy/shared";
 
 // The Tiptap <-> stored RichTextDoc contract for `QuincyRichTextEditor`, in its two presets:
 // `"composer"` (Project discussion, #491) and `"document"` (Notice board, #492). The schema here is
@@ -132,6 +133,10 @@ export const ListNestingBoundary = Extension.create({
   },
 });
 
+function normaliseHighlightColor(value: unknown): string | null {
+  return typeof value === "string" && (RICH_TEXT_HIGHLIGHT_COLORS as readonly string[]).includes(value) ? value : null;
+}
+
 /**
  * Highlight stores the colour id, never inline CSS (the vendor's `rich-text-highlight.tsx` defined
  * this; it lives here so the schema module has no UI import). A bare `setHighlight()` has no colour,
@@ -142,7 +147,9 @@ export const RichTextHighlight = Highlight.extend({
     return {
       color: {
         default: null,
-        parseHTML: (element) => element.getAttribute("data-color"),
+        // Pasted HTML can carry any colour (`#faf594`); only the stored ids survive, the rest become the
+        // bare mark that `tiptapToRichTextDoc` maps to the default.
+        parseHTML: (element) => normaliseHighlightColor(element.getAttribute("data-color")),
         renderHTML: (attributes) => attributes.color ? { "data-color": attributes.color } : {},
       },
     };
@@ -172,6 +179,34 @@ export const EmbeddedImage = TiptapNode.create({
   },
 });
 
+/** Rows x columns of a table node, spans included (what the server's limits count). */
+export function tableDimensions(table: ProseMirrorNode): { rows: number; columns: number } {
+  const map = TableMap.get(table);
+  return { rows: map.height, columns: map.width };
+}
+
+export function exceedsTableLimit(doc: ProseMirrorNode): boolean {
+  let exceeded = false;
+  doc.descendants((node) => {
+    if (exceeded) return false;
+    if (node.type.name !== "table") return true;
+    const { rows, columns } = tableDimensions(node);
+    exceeded = rows > RICH_TEXT_TABLE_MAX_ROWS || columns > RICH_TEXT_TABLE_MAX_COLUMNS;
+    return false;
+  });
+  return exceeded;
+}
+
+/** Rejects a transaction (a command, Tab in the last cell, a paste) that grows a table past the server's limits. */
+export const TableSizeBoundary = Extension.create({
+  name: "tableSizeBoundary",
+  addProseMirrorPlugins() {
+    return [new Plugin({
+      filterTransaction: (transaction) => !transaction.docChanged || !exceedsTableLimit(transaction.doc),
+    })];
+  },
+});
+
 /** Document-only nodes and attributes: tables, alignment and highlight (#492). */
 function documentExtensions() {
   return [
@@ -179,6 +214,7 @@ function documentExtensions() {
     // `cellMinWidth` sets the table's inline `min-width` (cells x 96px) that makes it overflow there.
     Table.configure({ resizable: false, renderWrapper: true, cellMinWidth: 96 }),
     TableRow,
+    TableSizeBoundary,
     TableHeader.extend({ content: CELL_CONTENT }),
     TableCell.extend({ content: CELL_CONTENT }),
     TextAlign.configure({ types: ["heading", "paragraph"], alignments: ["left", "center", "right", "justify"] }),
@@ -231,7 +267,7 @@ export function tiptapToRichTextDoc(value: unknown): RichTextDoc {
       const current = mark as Record<string, unknown>;
       const attrs = current.attrs && typeof current.attrs === "object" ? current.attrs as Record<string, unknown> : undefined;
       if (current.type === "link") return { type: "link", href: attrs?.href };
-      if (current.type === "highlight") return { type: "highlight", color: typeof attrs?.color === "string" ? attrs.color : DEFAULT_HIGHLIGHT };
+      if (current.type === "highlight") return { type: "highlight", color: normaliseHighlightColor(attrs?.color) ?? DEFAULT_HIGHLIGHT };
       return { type: current.type };
     }) } : {}) };
     if (valueNode.type === "mention") {
@@ -259,6 +295,8 @@ export function tiptapToRichTextDoc(value: unknown): RichTextDoc {
       const colspan = attrs?.colspan ?? 1; const rowspan = attrs?.rowspan ?? 1;
       return { type: valueNode.type, ...(colspan !== 1 || rowspan !== 1 ? { attrs: { colspan, rowspan } } : {}), ...children };
     }
+    // A row fully covered by rowspans has no cells and Tiptap omits `content`; the stored form is `[]`.
+    if (valueNode.type === "tableRow") return { type: "tableRow", content: children.content ?? [] };
     return { type: valueNode.type, ...children };
   };
   return copy(value) as RichTextDoc;

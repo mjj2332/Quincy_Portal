@@ -307,6 +307,28 @@ describe("document profile (#492)", () => {
     expect(() => parseRichTextDoc({ type: "doc", content: [{ type: "bulletList", content: [{ type: "listItem", content: [{ type: "table", content: [row(1)] }] }] }] }, NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
   });
 
+  it("accepts a row fully covered by rowspans as content: [] and rejects an uncovered empty row", () => {
+    const span = (text: string) => cell(text, { attrs: { colspan: 1, rowspan: 2 } });
+    const table = (rows: unknown[]) => ({ type: "doc", content: [{ type: "table", content: rows }] });
+    const covered = table([{ type: "tableRow", content: [span("a"), span("b")] }, { type: "tableRow", content: [] }]);
+    expect(parseRichTextDoc(covered, NOTICE_RICH_TEXT_PROFILE)).toEqual(covered);
+    // Only one of two columns is covered, so the empty row is still malformed.
+    const partial = table([{ type: "tableRow", content: [span("a"), cell("b")] }, { type: "tableRow", content: [] }]);
+    expect(() => parseRichTextDoc(partial, NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+    expect(() => parseRichTextDoc(table([{ type: "tableRow", content: [] }]), NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+  });
+
+  it("bounds rowspan by the 50-row limit and colspan by the 12-column limit", () => {
+    const table = (rows: unknown[]) => ({ type: "doc", content: [{ type: "table", content: rows }] });
+    const tall = (n: number, span: number) => table([
+      { type: "tableRow", content: [cell("a", { attrs: { colspan: 1, rowspan: span } })] },
+      ...Array.from({ length: n - 1 }, () => ({ type: "tableRow", content: [] })),
+    ]);
+    expect(parseRichTextDoc(tall(13, 13), NOTICE_RICH_TEXT_PROFILE)).toEqual(tall(13, 13));
+    expect(() => parseRichTextDoc(tall(50, 51), NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+    expect(() => parseRichTextDoc(table([{ type: "tableRow", content: [cell("a", { attrs: { colspan: 13, rowspan: 1 } })] }]), NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+  });
+
   it("rejects unknown alignment and highlight values", () => {
     expect(() => parseRichTextDoc({ type: "doc", content: [para("x", { attrs: { textAlign: "left" } })] }, NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
     expect(() => parseRichTextDoc({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "x", marks: [{ type: "highlight", color: "red" }] }] }] }, NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
