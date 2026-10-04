@@ -1,3 +1,4 @@
+import { buildAutomaticDeadlineMoveBundle } from "@quincy/db";
 import type { Env } from "../env";
 import { errorMessage } from "../lib/db";
 
@@ -16,11 +17,14 @@ export type ShootDateChange = {
  * received after this one (compared by receipt time, not processing time, so a retried or
  * redelivered older event cannot roll a newer reschedule back while a lagging newer event still
  * lands), and the audit INSERT fires only when that UPDATE landed.
+ * The Automatic Deadline move (#485) is appended last, gated on this write's audit row, so a lost fence moves nothing and a won one always moves an automatic Deadline, whatever its version.
  * Returns false when the fence lost, which the caller treats as "already handled".
  */
 export async function commitShootDateChange(env: Env, change: ShootDateChange): Promise<boolean> {
   const at = Date.now();
+  const auditId = crypto.randomUUID();
   const meta = JSON.stringify({ actor: "tonomo", orderId: change.orderId, previousShootDate: change.previous, shootDate: change.next, eventReceivedAt: change.receivedAt.getTime() });
+  const move = buildAutomaticDeadlineMoveBundle({ db: env.DB, projectId: change.projectId, shootDate: change.next, gate: { kind: "audit", auditId }, auditId: crypto.randomUUID(), reason: "tonomo_reschedule", now: at });
   const [result] = await env.DB.batch([
     env.DB.prepare(
       `UPDATE projects SET shoot_date = ?, updated_at = ? WHERE id = ? AND shoot_date = ? AND archived_at IS NULL
@@ -32,7 +36,8 @@ export async function commitShootDateChange(env: Env, change: ShootDateChange): 
     env.DB.prepare(
       // changes() is this connection's previous statement in the batch: the audit exists only if the fenced UPDATE landed.
       "INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'project.shoot_date.changed', 'project', ?, ?, ? WHERE changes() = 1",
-    ).bind(crypto.randomUUID(), change.projectId, meta, at),
+    ).bind(auditId, change.projectId, meta, at),
+    ...(move?.statements ?? []),
   ]);
   // A lost fence is not retried: either a newer webhook already moved the date, or another writer
   // changed shoot_date since the processor read it, and the next Tonomo event re-evaluates both.
