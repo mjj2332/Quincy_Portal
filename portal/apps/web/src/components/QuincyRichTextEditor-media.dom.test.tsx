@@ -1,3 +1,7 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import editorSource from "./QuincyRichTextEditor.tsx?raw";
+import imageSource from "./quincy/EmbeddedImage.tsx?raw";
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Editor } from "@tiptap/core";
@@ -204,5 +208,72 @@ describe("a posted image", () => {
     const host = mount(<RichTextContent content={withImages(A)} />);
     await act(async () => { host.querySelector("img")!.dispatchEvent(new Event("error")); });
     expect(host.querySelector('[data-testid="embedded-image-unavailable"]')?.textContent).toBe("Image unavailable");
+  });
+});
+
+describe("design review fixes (#493)", () => {
+  const appCss = readFileSync(resolve(process.cwd(), "src/styles/app.css"), "utf8");
+  const rule = (selector: string) => appCss.split("\n").find((line) => line.startsWith(selector)) ?? "";
+
+  it("puts the thumbnail's vertical margin on the button, so the focus ring does not wrap it, and none on the image inside", () => {
+    const host = mount(<RichTextContent content={withImages(A)} />);
+    expect(imageSource).toMatch(/data-testid="embedded-image"[\s\S]{0,240}my-\[var\(--space-2\)\]/);
+    expect(host.querySelector('[data-testid="embedded-image"]')).not.toBeNull();
+    expect(rule(".rich-text__embedded-image {")).toMatch(/margin: 0[;\s]/);
+    expect(rule(".rich-text__editor-content img.rich-text__embedded-image {")).toContain("margin: var(--space-2) 0");
+  });
+
+  it("outlines the selected image with a hairline accent, not the heavy focus ring", () => {
+    const selected = rule(".rich-text__editor-content img.rich-text__embedded-image.ProseMirror-selectednode");
+    expect(selected).toContain("var(--border-width-hair)"); expect(selected).not.toContain("--ring"); expect(selected).not.toContain("--border-width-bold");
+  });
+
+  it("moves the Media group to the front of the toolbar on a phone, so Insert image is never scrolled off-screen", () => {
+    const host = mount(<Harness />);
+    expect(insertButton(host)).not.toBeNull();
+    // The wrapper holds the separator and the group; reversed and ordered first on a phone it reads Insert image | separator | the rest.
+    expect(editorSource).toMatch(/data-testid="rich-text-media-tools"[^>]*max-\[721px\]:order-first[^>]*max-\[721px\]:flex-row-reverse|data-testid="rich-text-media-tools"[^>]*max-\[721px\]:flex-row-reverse[^>]*max-\[721px\]:order-first/);
+    expect(host.querySelector('[data-testid="rich-text-media-tools"] button[aria-label="Insert image"]')).not.toBeNull();
+  });
+
+  it("shows the upload percentage beside the label", async () => {
+    let report!: (percent: number) => void;
+    upload.mockImplementation((_p: string, _f: File, onProgress: (percent: number) => void) => { report = onProgress; return new Promise<string>(() => undefined); });
+    const host = mount(<Harness />);
+    await choose(host, [png()]);
+    await act(async () => { report(40); });
+    expect(host.querySelector('[data-testid="rich-text-upload-tray"] [data-testid="upload-progress-value"]')?.textContent).toContain("40");
+  });
+
+  it("clears an upload error when a new pick starts and when the host replaces the content (a post)", async () => {
+    upload.mockRejectedValueOnce(new Error("Upload service is down")).mockImplementation(() => new Promise<string>(() => undefined));
+    const host = mount(<Harness />);
+    await choose(host, [png()]);
+    expect(host.querySelector('[role="alert"]')).not.toBeNull();
+    await choose(host, [png()]);
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("clears an upload error once the composer is emptied after posting", async () => {
+    upload.mockRejectedValue(new Error("Upload service is down"));
+    let reset!: () => void;
+    function Posting() { const [value, setValue] = useState<RichTextDoc>(empty()); reset = () => setValue(withImages()); return <QuincyRichTextEditor preset="composer" value={value} onChange={setValue} limit={10_000} loadMentionables={async () => []} media={{ projectId: "p1" }} />; }
+    const host = mount(<Posting />);
+    await choose(host, [png()]);
+    expect(host.querySelector('[role="alert"]')).not.toBeNull();
+    await act(async () => { reset(); }); await settle();
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("opens the larger view on a dark, edge-to-edge stage with the close button over a scrim", async () => {
+    const host = mount(<RichTextContent content={withImages(A)} />);
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="embedded-image"]')!.click(); });
+    await settle();
+    const dialog = document.querySelector<HTMLElement>('[data-testid="embedded-image-dialog"]')!;
+    expect(dialog.getAttribute("data-surface")).toBe("inverse");
+    expect(dialog.querySelector('[data-testid="embedded-image-scrim"]')).not.toBeNull();
+    expect(imageSource).toMatch(/data-testid="embedded-image-dialog"/);
+    expect(imageSource).toMatch(/p-0/); expect(imageSource).toMatch(/bg-background/); expect(imageSource).toMatch(/embedded-image-scrim[^>]*scrim-overlay/);
+    expect(imageSource).toMatch(/max-w-\[calc\(100%-2rem\)\]/);
   });
 });

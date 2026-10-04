@@ -17,7 +17,7 @@ import {
 import { MentionAutocomplete, type MentionAutocompleteHandle, type MentionableUser } from "./MentionAutocomplete";
 import { Button } from "./reui/button";
 import { Input } from "./reui/input";
-import { Progress } from "./reui/progress";
+import { Progress, ProgressValue } from "./reui/progress";
 import { Notice } from "./quincy/Notice";
 import {
   DropdownMenu,
@@ -224,7 +224,7 @@ export function QuincyRichTextEditor({
       // clobber a concurrent external reset (e.g. the composer clearing after a successful post)
       // that lands between this event and the next render.
       if (serialised === valueRef.current) return;
-      valueRef.current = serialised; onChangeRef.current(doc); setNestingBlocked(false); setMentionDismissed(false); setQuery(mentionQuery(next));
+      valueRef.current = serialised; onChangeRef.current(doc); setUploadErrors((entries) => (entries.length ? [] : entries)); setNestingBlocked(false); setMentionDismissed(false); setQuery(mentionQuery(next));
     },
     onSelectionUpdate: ({ editor: next }) => setQuery(mentionQuery(next)),
   });
@@ -318,6 +318,8 @@ export function QuincyRichTextEditor({
     if (!editor) return;
     const serialised = JSON.stringify(value);
     if (serialised !== valueRef.current) {
+      // The host replaced the content (a post cleared the composer, or an edit began): an earlier upload error is stale.
+      setUploadErrors((entries) => (entries.length ? [] : entries));
       const applied = editor.commands.setContent(toTiptap(value), { emitUpdate: false });
       if (applied && JSON.stringify(tiptapToRichTextDoc(editor.getJSON())) === serialised) valueRef.current = serialised;
     }
@@ -392,12 +394,13 @@ export function QuincyRichTextEditor({
               <RichTextButton label="Insert table" disabled={off(state.canInsertTable)} onClick={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}><TableIcon aria-hidden="true" /></RichTextButton>
             </RichTextToolbarGroup>
           </>}
-          {media && <>
+          {/* On a phone the toolbar scrolls sideways, which would leave Insert image off-screen: there it comes first (reversed, so the separator follows it). */}
+          {media && <div data-testid="rich-text-media-tools" className="flex shrink-0 items-center gap-[var(--space-2)] max-[721px]:order-first max-[721px]:flex-row-reverse">
             <RichTextToolbarSeparator />
             <RichTextToolbarGroup label="Media">
               <RichTextButton label="Insert image" disabled={disabled} onClick={chooseImages}><ImageIcon aria-hidden="true" /></RichTextButton>
             </RichTextToolbarGroup>
-          </>}
+          </div>}
           <RichTextToolbarSeparator />
           <RichTextToolbarGroup label="History">
             <RichTextButton label="Undo" shortcut={["mod", "Z"]} disabled={off(state.canUndo)} onClick={() => editor.chain().focus().undo().run()}><Undo2Icon aria-hidden="true" /></RichTextButton>
@@ -420,7 +423,7 @@ export function QuincyRichTextEditor({
       {...{ onCancel: () => setPicking(null) }}
     />}
     {(uploads.length > 0 || uploadErrors.length > 0) && <div data-testid="rich-text-upload-tray" className="grid gap-[var(--space-2)]">
-      {uploads.map((entry) => <Progress key={entry.key} value={entry.percent} aria-label={`Uploading ${entry.name}`} className="grid gap-[var(--space-1)]"><span className="[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary [overflow-wrap:anywhere]">Uploading {entry.name}…</span></Progress>)}
+      {uploads.map((entry) => <Progress key={entry.key} value={entry.percent} aria-label={`Uploading ${entry.name}`} className="flex flex-wrap items-baseline gap-[var(--space-1)]"><span className="[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary [overflow-wrap:anywhere]">Uploading {entry.name}…</span><ProgressValue data-testid="upload-progress-value" className="[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" /></Progress>)}
       {uploadErrors.map((message, index) => <Notice key={index} tone="critical" role="alert">{message}</Notice>)}
     </div>}
     <MentionAutocomplete ref={menu} query={query} loadMentionables={loadMentionables} onSelect={selectMention} onDismiss={() => setMentionDismissed(true)} onAccessibilityChange={setMentionA11y} />
