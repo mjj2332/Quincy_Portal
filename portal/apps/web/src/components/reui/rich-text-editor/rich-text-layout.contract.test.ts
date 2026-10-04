@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { cn } from "@/lib/utils";
 
 const read = (name: string) => readFileSync(new URL(`./${name}`, import.meta.url), "utf8");
 
@@ -9,13 +10,26 @@ describe("rich-text editor layout contracts", () => {
     const source = read("rich-text-table.tsx");
     expect(source).toContain('placement: "bottom-start"');
     expect(source).not.toContain('"top-start"');
+    // Kept inside the editable surface: never on the frame border or the helper line beneath it.
+    expect(source).toMatch(/flip: \{ boundary: editor\.view\.dom/);
+    expect(source).toMatch(/shift: \{ boundary: editor\.view\.dom/);
   });
 
   it("outline rows read as menu items: sentence case, no tracking, --text-sm", () => {
     const source = read("rich-text-outline.tsx");
     expect(source).toContain("normal-case");
     expect(source).toContain("tracking-normal");
-    expect(source).toContain("text-[length:var(--text-sm)]");
+    expect(source).toContain("[font:var(--weight-regular)_var(--text-sm)");
+  });
+
+  it("the merged row class drops the Button base's text-xs font shorthand (twMerge, not a source grep)", () => {
+    const base = /\[font:var\(--weight-regular\)_var\(--text-xs\)[^\]]*\]/.exec(read("../button.tsx"))?.[0];
+    const row = /\[font:var\(--weight-regular\)_var\(--text-sm\)[^\]]*\]/.exec(read("rich-text-outline.tsx"))?.[0];
+    expect(base).toBeDefined();
+    expect(row).toBeDefined();
+    const merged = cn(`uppercase ${base}`, `normal-case ${row}`);
+    expect(merged).not.toContain("var(--text-xs)");
+    expect(merged).toContain("var(--text-sm)");
   });
 
   it("keeps the outline focus ring inside the scroller (no clipping)", () => {
