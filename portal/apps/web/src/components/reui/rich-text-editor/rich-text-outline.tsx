@@ -298,7 +298,7 @@ export function RichTextOutlineList({
           onFocus={() => setFocused(index)}
           onClick={() => onSelect(index)}
           className={cn(
-            "text-muted-foreground aria-[current=location]:bg-muted aria-[current=location]:text-foreground w-full justify-start font-normal aria-[current=location]:font-medium",
+            "text-foreground-secondary aria-[current=location]:bg-muted aria-[current=location]:text-foreground w-full justify-start font-normal aria-[current=location]:font-medium",
             LIST_INDENT[entry.depth]
           )}
         >

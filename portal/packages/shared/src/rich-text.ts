@@ -159,41 +159,60 @@ function parseTable(node: Record<string, unknown>, profile: RichTextProfile): Ri
   onlyKeys(node, ["type", "content"], "Table");
   const rows = contentArray(node.content, "Table");
   if (!rows.length || rows.length > RICH_TEXT_TABLE_MAX_ROWS) throw new RichTextValidationError("Tables must have between 1 and 50 rows");
-  return {
-    type: "table",
-    content: rows.map((rowValue) => {
-      const row = record(rowValue, "Table row");
-      if (row.type !== "tableRow") throw new RichTextValidationError("Tables may contain only rows");
-      onlyKeys(row, ["type", "content"], "Table row");
-      const cells = contentArray(row.content, "Table row");
-      if (!cells.length) throw new RichTextValidationError("Table rows must have cells");
-      let width = 0;
-      const parsedCells = cells.map((cellValue) => {
-        const cell = record(cellValue, "Table cell");
-        if (cell.type !== "tableCell" && cell.type !== "tableHeader") throw new RichTextValidationError("Table rows may contain only cells");
-        onlyKeys(cell, ["type", "attrs", "content"], "Table cell");
-        let attrs: RichTextTableCell["attrs"];
-        let colspan = 1;
-        if (cell.attrs !== undefined) {
-          const raw = record(cell.attrs, "Table cell attributes");
-          onlyKeys(raw, ["colspan", "rowspan"], "Table cell attributes");
-          colspan = raw.colspan === undefined ? 1 : spanOf(raw.colspan, "Column");
-          const rowspan = raw.rowspan === undefined ? 1 : spanOf(raw.rowspan, "Row");
-          if (colspan !== 1 || rowspan !== 1) attrs = { colspan, rowspan };
-        }
-        width += colspan;
-        const content = contentArray(cell.content, "Table cell").map((item) => {
-          const child = record(item, "Table cell node");
-          if (child.type !== "paragraph") throw new RichTextValidationError("Table cells may contain paragraphs only");
-          return parseParagraph(child, profile);
-        });
-        if (!content.length) throw new RichTextValidationError("Table cells must not be empty");
-        return { type: cell.type, ...(attrs ? { attrs } : {}), content } as RichTextTableCell;
+  // Rows still covered by an earlier row's rowspan, per column. A row whose every column is covered
+  // has no cells of its own (Tiptap emits it as `content: []`), so it is valid only then.
+  let pending: number[] = [];
+  const widths: number[] = [];
+  const emptyRows: Array<{ index: number; covered: number; contiguous: boolean }> = [];
+  const parsed = rows.map((rowValue, rowIndex) => {
+    const row = record(rowValue, "Table row");
+    if (row.type !== "tableRow") throw new RichTextValidationError("Tables may contain only rows");
+    onlyKeys(row, ["type", "content"], "Table row");
+    const cells = contentArray(row.content, "Table row");
+    const next = pending.map((remaining) => Math.max(remaining - 1, 0));
+    let col = 0;
+    const skipCovered = () => { while ((pending[col] ?? 0) > 0) col += 1; };
+    const parsedCells = cells.map((cellValue) => {
+      const cell = record(cellValue, "Table cell");
+      if (cell.type !== "tableCell" && cell.type !== "tableHeader") throw new RichTextValidationError("Table rows may contain only cells");
+      onlyKeys(cell, ["type", "attrs", "content"], "Table cell");
+      let attrs: RichTextTableCell["attrs"];
+      let colspan = 1;
+      let rowspan = 1;
+      if (cell.attrs !== undefined) {
+        const raw = record(cell.attrs, "Table cell attributes");
+        onlyKeys(raw, ["colspan", "rowspan"], "Table cell attributes");
+        colspan = raw.colspan === undefined ? 1 : spanOf(raw.colspan, "Column");
+        rowspan = raw.rowspan === undefined ? 1 : spanOf(raw.rowspan, "Row");
+        if (colspan !== 1 || rowspan !== 1) attrs = { colspan, rowspan };
+      }
+      skipCovered();
+      for (let offset = 0; offset < colspan; offset += 1) next[col + offset] = Math.max(next[col + offset] ?? 0, rowspan - 1);
+      col += colspan;
+      if (col > RICH_TEXT_TABLE_MAX_COLUMNS) throw new RichTextValidationError("Tables may have at most 12 columns");
+      const content = contentArray(cell.content, "Table cell").map((item) => {
+        const child = record(item, "Table cell node");
+        if (child.type !== "paragraph") throw new RichTextValidationError("Table cells may contain paragraphs only");
+        return parseParagraph(child, profile);
       });
-      if (width > RICH_TEXT_TABLE_MAX_COLUMNS) throw new RichTextValidationError("Tables may have at most 12 columns");
-      return { type: "tableRow" as const, content: parsedCells };
-    }),
-  };
+      if (!content.length) throw new RichTextValidationError("Table cells must not be empty");
+      return { type: cell.type, ...(attrs ? { attrs } : {}), content } as RichTextTableCell;
+    });
+    if (parsedCells.length) {
+      skipCovered();
+      widths.push(col);
+    } else {
+      const covered = pending.filter((remaining) => remaining > 0).length;
+      emptyRows.push({ index: rowIndex, covered, contiguous: pending.slice(0, covered).every((remaining) => remaining > 0) });
+    }
+    pending = next;
+    return { type: "tableRow" as const, content: parsedCells };
+  });
+  const tableWidth = Math.max(0, ...widths);
+  for (const empty of emptyRows) {
+    if (!empty.covered || !empty.contiguous || empty.covered !== tableWidth) throw new RichTextValidationError("Table rows must have cells");
+  }
+  return { type: "table", content: parsed };
 }
 
 function parseBlock(value: unknown, depth: number, profile: RichTextProfile, itemKind: "listItem" | "taskItem" | false = false, insideListItem = false): RichTextBlock | RichTextListItem | RichTextTaskItem {

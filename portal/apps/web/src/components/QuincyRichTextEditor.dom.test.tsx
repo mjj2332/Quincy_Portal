@@ -1059,6 +1059,63 @@ describe("QuincyRichTextEditor document preset (#492)", () => {
     } finally { tiptap.destroy(); }
   });
 
+  it("normalises a pasted highlight with an unsupported colour to the default, keeping a supported one", () => {
+    const tiptap = new Editor({ extensions: createRichTextEditorExtensions("document"), content: toTiptap(text("x")) });
+    try {
+      tiptap.commands.setTextSelection(1);
+      tiptap.view.pasteHTML('<p><mark data-color="#faf594">Hex</mark> <mark data-color="blue">Blue</mark></p>');
+      const back = tiptapToRichTextDoc(tiptap.getJSON());
+      expect(() => parseRichTextDoc(back, NOTICE_RICH_TEXT_PROFILE)).not.toThrow();
+      const colours = JSON.stringify(back).match(/"color":"[^"]*"/g);
+      expect(colours).toEqual(['"color":"yellow"', '"color":"blue"']);
+    } finally { tiptap.destroy(); }
+  });
+
+  it("stores a row covered by rowspans as content: [] so a pasted merged table still validates", () => {
+    const tiptap = new Editor({ extensions: createRichTextEditorExtensions("document"), content: toTiptap(empty()) });
+    try {
+      tiptap.view.pasteHTML('<table><tr><td rowspan="2">A</td><td rowspan="2">B</td></tr><tr></tr></table>');
+      const back = tiptapToRichTextDoc(tiptap.getJSON());
+      const table = back.content.find((block) => block.type === "table") as { content: Array<{ content: unknown[] }> } | undefined;
+      expect(table, JSON.stringify(back)).toBeDefined();
+      expect(table!.content[1]).toEqual({ type: "tableRow", content: [] });
+      expect(() => parseRichTextDoc(back, NOTICE_RICH_TEXT_PROFILE)).not.toThrow();
+      // And it loads back into the editor unchanged.
+      const again = new Editor({ extensions: createRichTextEditorExtensions("document"), content: toTiptap(back) });
+      try { expect(tiptapToRichTextDoc(again.getJSON())).toEqual(back); } finally { again.destroy(); }
+    } finally { tiptap.destroy(); }
+  });
+
+  it("refuses table growth past the server's 12 columns and 50 rows, and disables the controls there", async () => {
+    const tiptap = new Editor({ extensions: createRichTextEditorExtensions("document"), content: toTiptap(empty()) });
+    try {
+      tiptap.commands.insertTable({ rows: 3, cols: 3, withHeaderRow: true });
+      for (let i = 0; i < 12; i += 1) tiptap.chain().addColumnAfter().run();
+      for (let i = 0; i < 60; i += 1) tiptap.chain().addRowAfter().run();
+      const table = tiptap.getJSON().content!.find((block) => block.type === "table")! as { content: Array<{ content: unknown[] }> };
+      expect(table.content.length).toBe(50);
+      expect(table.content[0]!.content.length).toBe(12);
+      // A table pasted beyond the limit never lands.
+      tiptap.commands.setContent(toTiptap(empty()));
+      const wide = "<table><tr>" + "<td>x</td>".repeat(13) + "</tr></table>";
+      tiptap.view.pasteHTML(wide);
+      expect(JSON.stringify(tiptap.getJSON())).not.toContain("table");
+    } finally { tiptap.destroy(); }
+  });
+
+  it("disables Add row / Add column in the table bar at the limits", async () => {
+    const wide = (cols: number, rows: number): RichTextDoc => ({ type: "doc", content: [{ type: "table", content: Array.from({ length: rows }, () => ({ type: "tableRow" as const, content: Array.from({ length: cols }, () => cell("tableCell", "x")) })) }] });
+    const host = mount(); const { editor } = await render(host, wide(12, 50));
+    await act(async () => { editor.focus(); (editor.querySelector("td p") as HTMLElement).dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); await Promise.resolve(); });
+    const bar = () => document.querySelector<HTMLElement>('[data-testid="rich-text-table-bubble"]');
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    const addRow = bar()?.querySelector<HTMLButtonElement>('[aria-label="Add row below"]');
+    const addCol = bar()?.querySelector<HTMLButtonElement>('[aria-label="Add column right"]');
+    expect(addRow, "table bar").toBeTruthy();
+    expect(addRow!.disabled).toBe(true);
+    expect(addCol!.disabled).toBe(true);
+  });
+
   it("keeps the composer schema free of tables, alignment and highlight", () => {
     const tiptap = new Editor({ extensions: createRichTextEditorExtensions("composer"), content: { type: "doc", content: [{ type: "paragraph" }] } });
     try {
@@ -1119,6 +1176,19 @@ describe("QuincyRichTextEditor document preset (#492)", () => {
     expect(slashMenu()).toBeNull();
   });
 
+  it("reports an expanded combobox while the slash menu is open and restores it on dismissal", async () => {
+    const host = mount(); const { editor } = await render(host, empty());
+    // The mention source has run its wiring before (a collapsed combobox), as it does once a user has typed @.
+    editor.setAttribute("role", "combobox"); editor.setAttribute("aria-expanded", "false");
+    await typeSlash(editor, "/");
+    expect(slashMenu()).not.toBeNull();
+    expect(editor.getAttribute("aria-expanded")).toBe("true");
+    await keydown(editor, "Escape");
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(slashMenu()).toBeNull();
+    expect(editor.getAttribute("aria-expanded")).toBe("false");
+  });
+
   it("lists only blocks the stored contract can hold", async () => {
     const host = mount(); const { editor } = await render(host, empty());
     await typeSlash(editor, "/");
@@ -1157,6 +1227,20 @@ describe("QuincyRichTextEditor document preset (#492)", () => {
     const rail = host.querySelector<HTMLElement>('[data-testid="rich-text-outline"]');
     expect(rail).not.toBeNull();
     expect([...rail!.querySelectorAll("button")].map((button) => button.textContent)).toEqual(["First", "Second"]);
+  });
+
+  it("labels inactive outline entries with the AA text role, not the 3.1:1 muted one", async () => {
+    const host = mount();
+    await render(host, { type: "doc", content: [
+      { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "First" }] },
+      { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Second" }] },
+    ] });
+    const buttons = [...host.querySelectorAll<HTMLElement>('[data-testid="rich-text-outline"] button')];
+    expect(buttons.length).toBe(2);
+    for (const button of buttons) {
+      expect(button.className).toContain("text-foreground-secondary");
+      expect(button.className).not.toMatch(/(^|\s)text-muted-foreground/);
+    }
   });
 
   it("shows no outline rail for a single heading", async () => {

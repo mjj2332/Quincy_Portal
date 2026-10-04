@@ -8,6 +8,8 @@
 //    / `.rich-text__editor-content table`), as the rest of the editor surface is.
 // 3. `z-50` -> `z-[var(--z-popover)]` (the overlay ladder; a bare `z-50` sits under the shell header).
 // 4. `testId="rich-text-table-bubble"` on the bar: a Quincy-owned test hook.
+// 5. Add row / Add column disable at the server's 50 x 12 limits (`tableDimensions`); the hard stop for
+//    Tab and paste is `TableSizeBoundary` in `lib/rich-text-tiptap.ts`.
 import { useCallback } from "react"
 import { findParentNodeClosestToPos, type Editor } from "@tiptap/react"
 import { BubbleMenu } from "@tiptap/react/menus"
@@ -27,6 +29,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/reui/tooltip"
+import { RICH_TEXT_TABLE_MAX_COLUMNS, RICH_TEXT_TABLE_MAX_ROWS } from "@quincy/shared"
+import { tableDimensions } from "@/lib/rich-text-tiptap"
 import { RichTextBubbleBar } from "./rich-text-bubble-bar"
 import type { RichTextSlashItem } from "./rich-text-slash-menu"
 import { useRichTextSelector } from "./rich-text-state"
@@ -62,12 +66,17 @@ interface TableSnapshot {
   headerRow: boolean
   canDeleteRow: boolean
   canDeleteColumn: boolean
+  /** The server stores at most 50 rows x 12 columns: growth stops there. */
+  canAddRow: boolean
+  canAddColumn: boolean
 }
 
 const IDLE_TABLE: TableSnapshot = {
   headerRow: false,
   canDeleteRow: false,
   canDeleteColumn: false,
+  canAddRow: false,
+  canAddColumn: false,
 }
 
 function findTable(editor: Editor) {
@@ -84,15 +93,14 @@ function readTable(editor: Editor | null): TableSnapshot {
 
   if (!table || !firstRow) return IDLE_TABLE
 
-  let columns = 0
-  firstRow.forEach((cell) => {
-    columns += Number(cell.attrs.colspan ?? 1)
-  })
+  const { rows, columns } = tableDimensions(table.node)
 
   return {
     headerRow: firstRow.firstChild?.type.name === "tableHeader",
     canDeleteRow: table.node.childCount > 1,
     canDeleteColumn: columns > 1,
+    canAddRow: rows < RICH_TEXT_TABLE_MAX_ROWS,
+    canAddColumn: columns < RICH_TEXT_TABLE_MAX_COLUMNS,
   }
 }
 
@@ -159,12 +167,14 @@ export function RichTextTableBubble({
         <RichTextToolbarGroup label="Insert">
           <RichTextButton
             label="Add row below"
+            disabled={!table.canAddRow}
             onClick={() => editor.chain().focus().addRowAfter().run()}
           >
             <BetweenHorizontalEndIcon aria-hidden="true" />
           </RichTextButton>
           <RichTextButton
             label="Add column right"
+            disabled={!table.canAddColumn}
             onClick={() => editor.chain().focus().addColumnAfter().run()}
           >
             <BetweenVerticalEndIcon aria-hidden="true" />
