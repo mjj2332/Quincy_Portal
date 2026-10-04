@@ -10,6 +10,11 @@
 // 4. `testId="rich-text-table-bubble"` on the bar: a Quincy-owned test hook.
 // 5. Add row / Add column disable at the server's 50 x 12 limits (`tableDimensions`); the hard stop for
 //    Tab and paste is `TableSizeBoundary` in `lib/rich-text-tiptap.ts`.
+// 6. The bar anchors to the DOM element of the CELL holding the caret (`$anchor`), not the whole table
+//    (nothing in the vendored copy anchored to cells or rows; the original used the table), so it can be
+//    placed `top-start` -> `bottom-start` around the active cell and never over it. It is re-resolved on
+//    every selection update; the plugin's own scroll/resize handlers re-run it. flip/shift are bounded to
+//    the editable surface so the bar can never reach the toolbar, the frame border or the helper line.
 import { useCallback, useMemo } from "react"
 import { findParentNodeClosestToPos, type Editor } from "@tiptap/react"
 import { BubbleMenu } from "@tiptap/react/menus"
@@ -106,11 +111,18 @@ function readTable(editor: Editor | null): TableSnapshot {
 
 const TABLE_BUBBLE_KEY = "richTextTableBubble"
 
-// Below the table, never flipped: flipping above puts the bar over the main toolbar when the table is the
-// first block. Instead `shift` (cross axis too) clamps the bar inside the editable surface, so when the table
-// is the last block or tall the bar rides over the table's lower rows rather than leaving the surface onto the
-// frame border, the helper line or the toolbar. A table is always taller than the bar, so it always fits.
 const TABLE_BUBBLE_GAP = 8
+
+/** The DOM element of the table cell holding the selection anchor, or null outside a table. */
+export function getActiveCellElement(editor: Editor): HTMLElement | null {
+  const found = findParentNodeClosestToPos(
+    editor.state.selection.$anchor,
+    (node) => node.type.name === "tableCell" || node.type.name === "tableHeader"
+  )
+  const dom = found ? editor.view.nodeDOM(found.pos) : null
+
+  return dom instanceof HTMLElement ? dom : null
+}
 
 function showInTable({
   editor,
@@ -139,12 +151,11 @@ export function RichTextTableBubble({
 }: RichTextTableBubbleProps) {
   const table = useRichTextSelector(editor, readTable)
 
-  // Anchors to the whole table, so the bar holds still while the caret moves.
-  const getTableRect = useCallback(() => {
-    const found = findTable(editor)
-    const dom = found ? editor.view.nodeDOM(found.pos) : null
+  // Anchors to the active cell; re-resolved on each selection update, so moving the caret re-anchors.
+  const getCellRect = useCallback(() => {
+    const dom = getActiveCellElement(editor)
 
-    if (!(dom instanceof HTMLElement)) return null
+    if (!dom) return null
 
     return {
       getBoundingClientRect: () => dom.getBoundingClientRect(),
@@ -155,9 +166,13 @@ export function RichTextTableBubble({
 
   const options = useMemo(
     () => ({
-      placement: "bottom-start" as const,
+      placement: "top-start" as const,
       offset: TABLE_BUBBLE_GAP,
-      flip: false as const,
+      flip: {
+        fallbackPlacements: ["bottom-start" as const],
+        boundary: editor.view.dom,
+        padding: TABLE_BUBBLE_GAP,
+      },
       shift: { boundary: editor.view.dom, padding: TABLE_BUBBLE_GAP, crossAxis: true },
     }),
     [editor]
@@ -168,7 +183,7 @@ export function RichTextTableBubble({
       editor={editor}
       pluginKey={TABLE_BUBBLE_KEY}
       shouldShow={showInTable}
-      getReferencedVirtualElement={getTableRect}
+      getReferencedVirtualElement={getCellRect}
       options={options}
       className="z-[var(--z-popover)]"
     >

@@ -7,6 +7,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { createRichTextEditorExtensions, exceedsTableLimit, shouldBlockListIndent, tableDimensions, tiptapToRichTextDoc, toTiptap } from "../lib/rich-text-tiptap";
 import { QuincyRichTextEditor } from "./QuincyRichTextEditor";
 import { RichTextContent } from "./RichTextContent";
+import { getActiveCellElement } from "./reui/rich-text-editor/rich-text-table";
 
 let root: Root | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -1329,5 +1330,46 @@ describe("QuincyRichTextEditor document preset (#492)", () => {
     const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
     await keydown(editor, "Enter", { metaKey: true });
     expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("table bar anchor", () => {
+  it("resolves the DOM node of the cell holding the caret, not the table, and follows the caret", () => {
+    const cell = (kind: string, text: string) => ({ type: kind, content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
+    const element = document.createElement("div");
+    document.body.append(element);
+    const editor = new Editor({
+      element,
+      extensions: createRichTextEditorExtensions("document"),
+      content: { type: "doc", content: [{ type: "table", content: [
+        { type: "tableRow", content: [cell("tableHeader", "H1"), cell("tableHeader", "H2")] },
+        { type: "tableRow", content: [cell("tableCell", "A1"), cell("tableCell", "A2")] },
+        { type: "tableRow", content: [cell("tableCell", "B1"), cell("tableCell", "B2")] },
+      ] }] },
+    });
+    const posOf = (text: string) => {
+      let found = -1;
+      editor.state.doc.descendants((node, pos) => { if (node.isText && node.text === text) found = pos + 1; });
+      return found;
+    };
+    try {
+      const table = element.querySelector("table")!;
+      const seen: Array<HTMLElement | null> = [];
+      for (const text of ["H2", "A1", "B2"]) {
+        editor.commands.setTextSelection(posOf(text));
+        const anchor = getActiveCellElement(editor);
+        seen.push(anchor);
+        expect(anchor).not.toBeNull();
+        expect(anchor).not.toBe(table);
+        expect(anchor!.tagName).toMatch(/^T[DH]$/);
+        expect(anchor!.textContent).toBe(text);
+      }
+      expect(new Set(seen).size).toBe(3);
+      editor.commands.setTextSelection(1);
+      expect(getActiveCellElement(editor)?.textContent).toBe("H1");
+    } finally {
+      editor.destroy();
+      element.remove();
+    }
   });
 });
