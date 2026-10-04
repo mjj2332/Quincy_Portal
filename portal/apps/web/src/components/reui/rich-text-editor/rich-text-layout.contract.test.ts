@@ -11,8 +11,9 @@ describe("rich-text editor layout contracts", () => {
     expect(source).toContain('placement: "bottom-start"');
     expect(source).not.toContain('"top-start"');
     // Kept inside the editable surface: never on the frame border or the helper line beneath it.
-    expect(source).toMatch(/flip: \{ boundary: editor\.view\.dom/);
-    expect(source).toMatch(/shift: \{ boundary: editor\.view\.dom/);
+    // Never flips (a flip above the first-block table covers the toolbar); clamps inside the surface instead.
+    expect(source).toMatch(/flip: false/);
+    expect(source).toMatch(/shift: \{ boundary: editor\.view\.dom[^}]*crossAxis: true/);
   });
 
   it("outline rows read as menu items: sentence case, no tracking, --text-sm", () => {

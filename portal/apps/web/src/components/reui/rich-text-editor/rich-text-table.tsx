@@ -106,9 +106,10 @@ function readTable(editor: Editor | null): TableSnapshot {
 
 const TABLE_BUBBLE_KEY = "richTextTableBubble"
 
-// Below the table (above would cover the main toolbar). The editable surface is the flip/shift
-// boundary, so the bar stays inside it: it never lands on the composer frame border or the helper line
-// under the frame (it flips above the table, still inside the surface, when there is no room below).
+// Below the table, never flipped: flipping above puts the bar over the main toolbar when the table is the
+// first block. Instead `shift` (cross axis too) clamps the bar inside the editable surface, so when the table
+// is the last block or tall the bar rides over the table's lower rows rather than leaving the surface onto the
+// frame border, the helper line or the toolbar. A table is always taller than the bar, so it always fits.
 const TABLE_BUBBLE_GAP = 8
 
 function showInTable({
@@ -156,8 +157,8 @@ export function RichTextTableBubble({
     () => ({
       placement: "bottom-start" as const,
       offset: TABLE_BUBBLE_GAP,
-      flip: { boundary: editor.view.dom, padding: TABLE_BUBBLE_GAP },
-      shift: { boundary: editor.view.dom, padding: TABLE_BUBBLE_GAP },
+      flip: false as const,
+      shift: { boundary: editor.view.dom, padding: TABLE_BUBBLE_GAP, crossAxis: true },
     }),
     [editor]
   )
