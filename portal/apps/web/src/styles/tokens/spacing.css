@@ -86,3 +86,11 @@
   --overlay-enter: var(--dur-base) var(--ease-entrance);
   --overlay-exit:  var(--dur-fast) var(--ease-exit);
 }
+
+/* #541: at <=721px the banner's Exit button is 44px tall (`BUTTON_HEIGHT_CLASS`), and the global
+   `:focus-visible` ring (2px width + 2px offset, tokens/base.css) needs 4px clear on each side
+   inside the banner's `overflow-hidden` box: 44 + 2 x (2 + 2) = 52. The 42px default covers the
+   32px text button (32 + 8 = 40). `(width < 721px)` matches Tailwind's `max-[721px]`. */
+@media (width < 721px) {
+  :root { --impersonation-banner-height: 52px; }
+}
