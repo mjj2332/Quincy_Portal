@@ -15,6 +15,19 @@ export const EMAIL_DIGEST_EXEMPT_TYPES: ReadonlySet<string> = new Set([
   "project_deadline_reminder",
 ]);
 
+/**
+ * #490: Project activity (stage changes, collaboration activity) is never emailed inline. It reaches email only
+ * through a digest, so even an Immediately user receives it hourly. These are the two broad-delivery types.
+ */
+export const EMAIL_DIGEST_ACTIVITY_TYPES = ["project_activity", "project_collaboration_activity"] as const;
+export type EmailDigestActivityType = (typeof EMAIL_DIGEST_ACTIVITY_TYPES)[number];
+/** The "Include Project activity" preference is on until the person turns it off. */
+export const DEFAULT_INCLUDE_PROJECT_ACTIVITY = true;
+
+export function isDigestActivityType(type: string): type is EmailDigestActivityType {
+  return (EMAIL_DIGEST_ACTIVITY_TYPES as readonly string[]).includes(type);
+}
+
 export function isDigestExemptType(type: string): boolean {
   return EMAIL_DIGEST_EXEMPT_TYPES.has(type);
 }

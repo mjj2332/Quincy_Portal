@@ -7,8 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { DEFAULT_EMAIL_DIGEST_CADENCE, type EmailDigestCadence } from "@quincy/shared";
 import { cn } from "@/lib/utils";
 
-type NotificationPreferencesValue = { projectDeadlineReminderEmails: boolean; subtaskReminderEmails: boolean; emailDigestCadence: EmailDigestCadence };
-type Section = "digest" | "deadline" | "subtask";
+type NotificationPreferencesValue = { projectDeadlineReminderEmails: boolean; subtaskReminderEmails: boolean; emailDigestCadence: EmailDigestCadence; includeProjectActivity: boolean };
+type Section = "digest" | "activity" | "deadline" | "subtask";
 
 // #489: the studio's own slots, in Sydney time every day of the week. The wording is the whole contract the
 // person reads, so it names the hours rather than saying "twice a day".
@@ -68,7 +68,7 @@ const VALUE = "flex items-center gap-[var(--space-2)] " +
 // The footnote under the ledger.
 const FOOT = "mt-[var(--space-4)] mb-0 " +
   "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] " +
-  "text-muted-foreground";
+  "text-foreground-secondary";
 
 type EmailRowProps = { ariaLabel: string; checked: boolean; loading: boolean; unavailable: boolean; saving: boolean; disabled: boolean; onChange: (next: boolean) => void };
 
@@ -123,20 +123,22 @@ export function NotificationPreferences() {
   const [deadlineEnabled, setEnabled] = useState(true);
   const [subtaskEnabled, setSubtaskEnabled] = useState(true);
   const [cadence, setCadence] = useState<EmailDigestCadence>(DEFAULT_EMAIL_DIGEST_CADENCE);
+  // #490: on until the person turns it off, so the control never flashes a wrong "Off" while loading.
+  const [includeActivity, setIncludeActivity] = useState(true);
   const [loading, setLoading] = useState(true);
   // One flag per card: the two saves are independent, so one must not clear or disable the other.
-  const [saving, setSaving] = useState<Record<Section, boolean>>({ digest: false, deadline: false, subtask: false });
+  const [saving, setSaving] = useState<Record<Section, boolean>>({ digest: false, activity: false, deadline: false, subtask: false });
   const [error, setError] = useState<{ section: Section; message: string } | null>(null);
   // A failed load is page-level: it covers both cards, so it has its own slot rather than a card's.
   const [loadError, setLoadError] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
-    apiGet<NotificationPreferencesValue>("/api/notification-preferences").then((value) => { if (active) setEnabled(value.projectDeadlineReminderEmails); if (active) setSubtaskEnabled(value.subtaskReminderEmails); if (active) setCadence(value.emailDigestCadence ?? DEFAULT_EMAIL_DIGEST_CADENCE); }).catch((reason) => { if (active) setLoadError(reason instanceof Error ? reason.message : "Preferences could not be loaded."); }).finally(() => { if (active) setLoading(false); });
+    apiGet<NotificationPreferencesValue>("/api/notification-preferences").then((value) => { if (active) setEnabled(value.projectDeadlineReminderEmails); if (active) setSubtaskEnabled(value.subtaskReminderEmails); if (active) setCadence(value.emailDigestCadence ?? DEFAULT_EMAIL_DIGEST_CADENCE); if (active) setIncludeActivity(value.includeProjectActivity ?? true); }).catch((reason) => { if (active) setLoadError(reason instanceof Error ? reason.message : "Preferences could not be loaded."); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, []);
   // One switch per PATCH. The route upserts atomically and keeps the other stored value when a
   // field is absent (COALESCE), so concurrent PATCHes of different fields cannot clobber each other.
-  async function change(section: Section, next: boolean) {
+  async function change(section: "deadline" | "subtask", next: boolean) {
     const setValue = section === "deadline" ? setEnabled : setSubtaskEnabled;
     const previous = section === "deadline" ? deadlineEnabled : subtaskEnabled;
     setValue(next); setSaving((current) => ({ ...current, [section]: true })); setError((current) => (current?.section === section ? null : current));
@@ -161,8 +163,22 @@ export function NotificationPreferences() {
     finally { setSaving((current) => ({ ...current, digest: false })); }
   }
 
+  // #490: its own PATCH, like the cadence and each reminder switch, so saving it never carries (or clobbers) another preference.
+  async function changeActivity(next: boolean) {
+    const previous = includeActivity;
+    setIncludeActivity(next); setSaving((current) => ({ ...current, activity: true })); setError((current) => (current?.section === "activity" ? null : current));
+    try {
+      const value = await apiPatch<NotificationPreferencesValue, Partial<NotificationPreferencesValue>>("/api/notification-preferences", { includeProjectActivity: next });
+      setIncludeActivity(value.includeProjectActivity);
+    }
+    catch (reason) { setIncludeActivity(previous); setError({ section: "activity", message: reason instanceof ApiError ? reason.message : "Preferences could not be saved." }); }
+    finally { setSaving((current) => ({ ...current, activity: false })); }
+  }
+
   const unavailable = loadError !== null;
-  const anySaving = saving.digest || saving.deadline || saving.subtask;
+  const anySaving = saving.digest || saving.activity || saving.deadline || saving.subtask;
+  const activityDisabled = loading || unavailable || saving.activity;
+  const activityValueText = loading ? "Loading…" : unavailable ? "Unavailable" : saving.activity ? "Saving…" : includeActivity ? "On" : "Off";
 
   return (
     <main className={PAGE}>
@@ -200,7 +216,28 @@ export function NotificationPreferences() {
           </div>
         </div>
         <p className={FOOT}>Comments, mentions, assignments and workflow updates are gathered into one email, grouped by Project, in Sydney time every day of the week. Anything you have already read in the app is left out, and nothing is sent when nothing is left. Checklist item and Project deadline reminders always arrive straight away.</p>
-        {error?.section === "digest" && <Notice role="alert" className="mt-[var(--space-4)]">{error.message}</Notice>}
+
+        <div className="mt-[var(--space-4)]">
+          <label className={CONTROL_ROW}>
+            <Eyebrow>Project activity</Eyebrow>
+            <span className={cn(VALUE, activityDisabled ? "text-muted-foreground" : "text-foreground")}>
+              <Checkbox
+                // Same two load-bearing attributes as EmailRows: the explicit name beats the wrapping <label>'s
+                // computed one, and the empty aria-labelledby stops Base UI re-pointing the control at that label.
+                aria-label="Include Project activity in email digest"
+                aria-labelledby=""
+                checked={unavailable ? false : includeActivity}
+                disabled={activityDisabled}
+                className={saving.activity ? "data-disabled:!cursor-wait" : undefined}
+                onCheckedChange={(next) => void changeActivity(next)}
+              />
+              {activityValueText}
+            </span>
+          </label>
+        </div>
+        {/* `p { margin: 0 }` in tokens/base.css sits outside @layer and beats a plain margin utility (CreateProject.tsx:109). */}
+        <p className={cn(FOOT, "!mt-[var(--space-2)]")}>Project activity (stage changes and collaboration activity) is only ever emailed in a digest; if you choose Immediately, it arrives hourly.</p>
+        {(error?.section === "digest" || error?.section === "activity") && <Notice role="alert" className="mt-[var(--space-4)]">{error.message}</Notice>}
       </section>
 
       <section className={cn(CARD, "mt-[var(--space-4)]")} aria-labelledby="deadline-reminders">

@@ -1184,3 +1184,66 @@ describe("#489 email digest deferral through the durable consumer", () => {
     expect(found.items).toEqual([expect.objectContaining({ state: "pending" })]);
   });
 });
+
+describe("#490 Project activity is digest-only through the durable consumer", () => {
+  beforeAll(async () => {
+    const applied = await database.DB.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'notification_outbox'").first();
+    if (!applied) await executeSql(__PORTAL_MIGRATION_SQL__);
+  }, 60_000);
+
+  async function deliverActivity(options: { cadence?: "immediate" | "hourly" | "twice_daily" | "daily"; includeActivity?: boolean; removeMembership?: boolean } = {}) {
+    const fixture = await seedBroadDelivery();
+    if (options.cadence) await setCadence(fixture.recipientId, options.cadence);
+    if (options.includeActivity === false) {
+      await database.DB.prepare("INSERT INTO notification_preferences (user_id, include_project_activity, updated_at) VALUES (?, 0, ?) ON CONFLICT(user_id) DO UPDATE SET include_project_activity = 0").bind(fixture.recipientId, Date.now()).run();
+    }
+    if (options.removeMembership) await database.DB.prepare("DELETE FROM project_members WHERE id = ?").bind(fixture.membershipId).run();
+    const send = vi.fn().mockResolvedValue({ messageId: "must-not-send" });
+    const m = message(fixture.outboxId);
+    await processNotificationMessage(deliveryEnv(send), m);
+    return { fixture, send, m };
+  }
+
+  async function itemsFor(recipientId: string) {
+    return (await database.DB.prepare("SELECT i.notification_id AS notificationId, i.project_id AS projectId, i.notification_type AS type, i.state, i.ledger_id AS ledgerId, n.user_id AS owner FROM notification_digest_items i LEFT JOIN notifications n ON n.id = i.notification_id WHERE i.recipient_id = ?").bind(recipientId).all<{ notificationId: string; projectId: string; type: string; state: string; ledgerId: string | null; owner: string }>()).results;
+  }
+
+  it.each(["twice_daily", "hourly", "daily", "immediate"] as const)("records one pending digest item and sends no email for a %s user", async (cadence) => {
+    const { fixture, send, m } = await deliverActivity({ cadence });
+    expect(send).not.toHaveBeenCalled();
+    expect((m as { ack: ReturnType<typeof vi.fn> }).ack).toHaveBeenCalledOnce();
+    const notification = await database.DB.prepare("SELECT id, email_sent_at AS emailSentAt FROM notifications WHERE user_id = ? AND project_id = ?").bind(fixture.recipientId, fixture.projectId).first<{ id: string; emailSentAt: number | null }>();
+    expect(notification?.emailSentAt).toBeNull();
+    expect(await itemsFor(fixture.recipientId)).toEqual([{ notificationId: notification!.id, projectId: fixture.projectId, type: "project_collaboration_activity", state: "pending", ledgerId: null, owner: fixture.recipientId }]);
+    // The outbox still completes with the in-app ledger alone: there is no email ledger row to drain.
+    expect(await database.DB.prepare("SELECT status FROM notification_outbox WHERE id = ?").bind(fixture.outboxId).first()).toEqual({ status: "completed" });
+    expect(await database.DB.prepare("SELECT channel, status FROM notification_delivery_ledger WHERE outbox_id = ?").bind(fixture.outboxId).all()).toMatchObject({ results: [{ channel: "in_app", status: "sent" }] });
+  });
+
+  it("creates no digest item when the person turned Include Project activity off, and still delivers in-app", async () => {
+    const { fixture, send } = await deliverActivity({ cadence: "twice_daily", includeActivity: false });
+    expect(send).not.toHaveBeenCalled();
+    expect(await itemsFor(fixture.recipientId)).toEqual([]);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notifications WHERE user_id = ? AND project_id = ?").bind(fixture.recipientId, fixture.projectId).first()).toEqual({ count: 1 });
+  });
+
+  it("creates no digest item when in-app delivery is suppressed (the recipient left the Project)", async () => {
+    const { fixture } = await deliverActivity({ cadence: "twice_daily", removeMembership: true });
+    expect(await itemsFor(fixture.recipientId)).toEqual([]);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notifications WHERE user_id = ?").bind(fixture.recipientId).first()).toEqual({ count: 0 });
+  });
+
+  it("creates no digest item for a deactivated recipient", async () => {
+    const fixture = await seedBroadDelivery();
+    await setCadence(fixture.recipientId, "twice_daily");
+    await database.DB.prepare("UPDATE user SET active = 0 WHERE id = ?").bind(fixture.recipientId).run();
+    await processNotificationMessage(deliveryEnv(), message(fixture.outboxId));
+    expect(await itemsFor(fixture.recipientId)).toEqual([]);
+  });
+
+  it("creates exactly one digest item when the same message is delivered twice", async () => {
+    const { fixture } = await deliverActivity({ cadence: "twice_daily" });
+    await processNotificationMessage(deliveryEnv(), message(fixture.outboxId));
+    expect(await itemsFor(fixture.recipientId)).toHaveLength(1);
+  });
+});
