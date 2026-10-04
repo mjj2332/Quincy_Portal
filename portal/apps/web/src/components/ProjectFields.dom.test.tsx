@@ -106,6 +106,18 @@ describe("ProjectFields Team (create mode combobox, #487)", () => {
     expect(onToggle).toHaveBeenCalledWith("photographerUserIds", "editor-1");
   });
 
+  it("describes an External editor candidate as External editor in the collect-mode row (#517)", async () => {
+    const people = [person("external-1", "external_editor")];
+    apiGetMock.mockResolvedValue({ photographers: [], editors: people });
+    await render(<ProjectFields form={form} errors={{}} onChange={() => undefined} onToggle={() => undefined} />);
+    await openPicker();
+
+    const item = option("Editors", "external-1")!;
+    const description = item.querySelector<HTMLElement>("[title]")!;
+    expect(description.title).toBe("external-1@example.test · External editor");
+    expect(description.lastElementChild!.textContent).toBe("External editor");
+  });
+
   it("leaves the Editors candidate set unchanged (no photographer-role users appear there)", async () => {
     const people = [person("photographer-1", "photographer"), person("editor-1", "editor")];
     apiGetMock.mockResolvedValue({ photographers: people, editors: [people[1]] });

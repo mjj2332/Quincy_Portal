@@ -1,5 +1,5 @@
 import { useState, type JSX } from "react";
-import type { Role } from "@quincy/shared";
+import { ROLE_LABELS, type Role } from "@quincy/shared";
 import { stopImpersonating, useSession } from "../lib/auth";
 import { locationStore } from "../lib/router";
 import { buttonClasses } from "./quincy/Button";
@@ -44,10 +44,6 @@ const ERROR = "flex-[1_1_160px] min-w-0 overflow-hidden " +
   "text-signal-critical normal-case tracking-normal text-ellipsis whitespace-nowrap " +
   "[font:var(--weight-regular)_var(--text-xs)/1.35_var(--font-sans)]";
 
-function roleTitle(role: ImpersonationBannerProps["user"]["role"]): string {
-  return role.charAt(0).toUpperCase() + role.slice(1);
-}
-
 export function ImpersonationBanner({ user, invalidated }: ImpersonationBannerProps): JSX.Element {
   const session = useSession();
   const [isExiting, setIsExiting] = useState(false);
@@ -68,7 +64,7 @@ export function ImpersonationBanner({ user, invalidated }: ImpersonationBannerPr
   }
 
   return <aside className={BANNER} aria-label="Impersonation status" data-invalidated={invalidated ? "true" : undefined}>
-    <span className={IDENTITY}>Acting as {user.name} ({roleTitle(user.role)}) · </span>
+    <span className={IDENTITY}>Acting as {user.name} ({ROLE_LABELS[user.role]}) · </span>
     <button className={EXIT} type="button" disabled={isExiting} onClick={() => void exit()} data-testid="impersonation-exit">Exit</button>
     {error && <span className={ERROR} role="alert" title={error}>{error}</span>}
   </aside>;

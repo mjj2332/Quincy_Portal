@@ -1,7 +1,7 @@
 import { useCallback, useId, useLayoutEffect, useRef, useState, type Ref } from "react";
 import type { Combobox as ComboboxPrimitive } from "@base-ui/react";
 import { AlertCircle, AlertTriangle, Loader2 } from "lucide-react";
-import type { ProjectMemberRole } from "@quincy/shared";
+import { ROLE_LABELS, type ProjectMemberRole, type Role } from "@quincy/shared";
 import { ApiError, apiDeleteWithBody, apiPutWithStatus } from "../lib/api";
 import { confirm } from "../lib/confirm";
 import { Button, buttonClasses } from "./quincy/Button";
@@ -66,7 +66,7 @@ type TeamOption = {
   userId: string;
   name: string;
   email: string;
-  globalRole: string;
+  globalRole: Role;
   active: boolean;
   candidate: ProjectAssignmentCandidate | null;
 };
@@ -118,9 +118,8 @@ const ARCHIVED_TEAM_NOTICE = "Read-only while archived. Restore the project befo
 /** Capped so a long notice wraps inside the Team column instead of widening it and shifting its neighbours. */
 
 function cellKey(roleOnProject: ProjectMemberRole, userId: string) { return `${roleOnProject}:${userId}`; }
-function roleLabel(roleOnProject: ProjectMemberRole) { return roleOnProject === "photographer" ? "Photographer" : "Editor"; }
+// Deliberately a short dual-role chip tag ("Photo"/"Edit"), not a role label; labels come from ROLE_LABELS.
 function shortRoleTag(roleOnProject: ProjectMemberRole) { return roleOnProject === "photographer" ? "Photo" : "Edit"; }
-function globalRoleLabel(role: string) { return role === "admin" ? "Admin" : role === "photographer" ? "Photographer" : role === "external_editor" ? "External editor" : "Editor"; }
 function details(error: unknown): Record<string, unknown> | null { return error instanceof ApiError && error.details && typeof error.details === "object" ? error.details as Record<string, unknown> : null; }
 function displayName(name: string, email: string) { return name || email; }
 function firstName(name: string, email: string) {
@@ -335,7 +334,7 @@ function TeamComboboxView({ groups, value, onValueChange, visible, hiddenCount, 
     filter={(item: TeamOption, query: string) => {
       const needle = query.trim().toLocaleLowerCase();
       if (!needle) return true;
-      return `${item.name} ${item.email} ${roleLabel(item.role)} ${globalRoleLabel(item.globalRole)}`.toLocaleLowerCase().includes(needle);
+      return `${item.name} ${item.email} ${ROLE_LABELS[item.role]} ${ROLE_LABELS[item.globalRole]}`.toLocaleLowerCase().includes(needle);
     }}
   >
     {/* No `has-data-[slot=combobox-chip]:pl-1` override here: the vendor default already
@@ -357,9 +356,9 @@ function TeamComboboxView({ groups, value, onValueChange, visible, hiddenCount, 
             data-state={dataState}
             aria-busy={isPending || undefined}
             aria-describedby={messageId}
-            title={`${name} · ${roleLabel(option.role)}`}
+            title={`${name} · ${ROLE_LABELS[option.role]}`}
             removeProps={{
-              "aria-label": `Remove ${name} (${roleLabel(option.role)})`,
+              "aria-label": `Remove ${name} (${ROLE_LABELS[option.role]})`,
               "data-testid": "project-member-remove",
               disabled: isPending,
               className: TEAM_CHIP_REMOVE_HIT_AREA,
@@ -411,12 +410,12 @@ function TeamComboboxView({ groups, value, onValueChange, visible, hiddenCount, 
                   <ItemTitle className="block max-w-full truncate">{displayName(option.name, option.email)}</ItemTitle>
                   {truncateDescriptions
                     // Collect mode: the email truncates, the role never does.
-                    ? <ItemDescription className="flex min-w-0 items-baseline gap-1" title={`${option.email} · ${globalRoleLabel(option.globalRole)}`}>
+                    ? <ItemDescription className="flex min-w-0 items-baseline gap-1" title={`${option.email} · ${ROLE_LABELS[option.globalRole]}`}>
                       <span className="min-w-0 truncate">{option.email}</span>
                       <span aria-hidden="true">·</span>
-                      <span className="shrink-0">{globalRoleLabel(option.globalRole)}</span>
+                      <span className="shrink-0">{ROLE_LABELS[option.globalRole]}</span>
                     </ItemDescription>
-                    : <ItemDescription>{option.email} · {globalRoleLabel(option.globalRole)}</ItemDescription>}
+                    : <ItemDescription>{option.email} · {ROLE_LABELS[option.globalRole]}</ItemDescription>}
                 </ItemContent>
               </Item>
             </ComboboxItem>}
@@ -585,7 +584,7 @@ export function ProjectTeamCombobox({ projectId, members, canEdit, archived = fa
             data-testid={`project-member-${option.key}`}
             data-state={dataState}
             aria-describedby={messageId}
-            title={`${name} · ${roleLabel(option.role)}`}
+            title={`${name} · ${ROLE_LABELS[option.role]}`}
             className={cn(TEAM_CHIP, teamChipStateClasses(dataState), readOnly && "max-[721px]:min-h-0")}
           >
             <TeamChipContent option={option} dataState={dataState} roleTag={roleTag} />
@@ -678,7 +677,7 @@ export function ProjectTeamCollectCombobox({ photographerUserIds, editorUserIds,
 
   // Collect mode always tags a chip with its role, spelled out: the team is reviewed here before Create, with no header context.
   function chipProps(option: TeamOption): TeamChipView {
-    return { dataState: "idle", isPending: false, messageId: undefined, name: displayName(option.name, option.email), roleTag: roleLabel(option.role) };
+    return { dataState: "idle", isPending: false, messageId: undefined, name: displayName(option.name, option.email), roleTag: ROLE_LABELS[option.role] };
   }
 
   return <div className="grid gap-[var(--space-3)]" data-testid="project-team-collect">

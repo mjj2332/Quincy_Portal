@@ -238,6 +238,18 @@ describe("ProjectTeamCombobox", () => {
     expect(options().some((option) => option.textContent?.includes("Eli Editor"))).toBe(false);
   });
 
+  it("describes an External editor candidate as External editor and finds it by that label (#517)", async () => {
+    const external = { id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", name: "Xavi Outsider", email: "xavi@example.test", globalRole: "external_editor" as const, active: true as const };
+    apiGetMock.mockResolvedValue({ photographers: [photographer], editors: [editor, external] });
+    const host = await mount([]);
+    const input = await openPicker(host);
+    const row = options().find((option) => option.textContent?.includes("Xavi Outsider"))!;
+    expect(row.textContent).toContain("xavi@example.test · External editor");
+    await typeQuery(input, "external");
+    await waitFor(() => expect(options().some((option) => option.textContent?.includes("Xavi Outsider"))).toBe(true));
+    expect(options().some((option) => option.textContent?.includes("Eli Editor"))).toBe(false);
+  });
+
   it("3. disables only the pending option while another candidate stays actionable", async () => {
     let resolvePut!: (value: unknown) => void;
     apiPutMock.mockReturnValueOnce(new Promise((resolve) => { resolvePut = resolve; }));
