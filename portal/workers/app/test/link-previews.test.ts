@@ -83,20 +83,20 @@ describe("POST /projects/:projectId/link-previews", () => {
     expect(response.status).toBe(200);
     const body = linkPreviewResponseSchema.parse(await response.json());
     const card = body.preview!;
-    expect(card).toMatchObject({ url: "https://example.com/post", title: "Example title", description: "Example description", siteName: "Example" });
+    expect(card).toMatchObject({ url: "https://example.com/post#frag", title: "Example title", description: "Example description", siteName: "Example" });
     expect(JSON.stringify(body)).not.toMatch(/embedded-media|original|projects\//);
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toBe("https://example.com/post");
     expect(calls[0]!.blockedHosts).toEqual(expect.arrayContaining([new URL(baseEnv.APP_ORIGIN).hostname]));
     const row = (await previewRow(card.previewId))!;
-    expect(row).toMatchObject({ owner_kind: "project_comment", owner_id: null, project_id: ids.project, requester_id: ids.member, url: "https://example.com/post", title: "Example title", description: "Example description", site_name: "Example", image_media_id: card.imageMediaId });
+    expect(row).toMatchObject({ owner_kind: "project_comment", owner_id: null, project_id: ids.project, requester_id: ids.member, url: "https://example.com/post#frag", title: "Example title", description: "Example description", site_name: "Example", image_media_id: card.imageMediaId });
     const image = (await mediaRow(card.imageMediaId!))!;
     expect(image).toMatchObject({ kind: "preview_image", state: "pending", owner_id: null, owner_kind: "project_comment", project_id: ids.project, uploader_id: ids.member, content_type: "image/png", bytes: 256, original_key: mediaKey(ids.project, card.imageMediaId!) });
     const stored = await database.MEDIA.get(image.original_key as string);
     expect(new Uint8Array(await stored!.arrayBuffer())).toEqual(pngBytes(256));
     const audited = await database.DB.prepare("SELECT actor_id, meta_json FROM audit_log WHERE action = 'link_preview.fetch' AND target_id = ?").bind(card.previewId).first<{ actor_id: string; meta_json: string }>();
     expect(audited!.actor_id).toBe(ids.member);
-    expect(JSON.parse(audited!.meta_json)).toMatchObject({ url: "https://example.com/post", scope: "project", projectId: ids.project });
+    expect(JSON.parse(audited!.meta_json)).toMatchObject({ url: "https://example.com/post#frag", scope: "project", projectId: ids.project });
   });
 
   it("answers a card with no image when the page has none", async () => {

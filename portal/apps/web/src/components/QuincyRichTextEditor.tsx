@@ -313,6 +313,11 @@ export function QuincyRichTextEditor({
   // A link was just applied: ask for its card and put it after the link's top-level block. The place is carried through later
   // edits like an upload's, and a late answer (the content was replaced, the editor unmounted, three cards already, the same address
   // already carded) is dropped. No card, a refusal or a failure all leave the link a link.
+  const hasLink = (doc: { descendants: (callback: (child: { marks: ReadonlyArray<{ type: { name: string }; attrs: Record<string, unknown> }> }) => boolean | void) => void }, href: string) => {
+    let found = false;
+    doc.descendants((child) => { if (child.marks.some((mark) => mark.type.name === "link" && mark.attrs.href === href)) found = true; return !found; });
+    return found;
+  };
   const previewControllers = useRef(new Set<AbortController>());
   const offerLinkPreview = (href: string) => {
     const scope = linkPreviewsRef.current; const current = editorRef.current;
@@ -326,6 +331,8 @@ export function QuincyRichTextEditor({
     void requestLinkPreview(scope, href, controller.signal).then((card) => {
       const live = editorRef.current;
       if (!card || controller.signal.aborted || !mountedRef.current || !live || epoch !== contentEpoch.current) return;
+      // The link may have been undone or replaced while the page was fetched: the card belongs to a link that is still there.
+      if (!hasLink(live.state.doc, href)) return;
       if (cards().length >= RICH_TEXT_MAX_LINK_PREVIEWS || cards().includes(card.url)) return;
       const size = live.state.doc.content.size;
       const mapped = Math.min(insertAt.current.get(key) ?? size, size);

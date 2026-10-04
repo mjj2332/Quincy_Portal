@@ -36,7 +36,7 @@ const settle = () => act(async () => { await new Promise((resolve) => setTimeout
 const click = (element: Element) => act(async () => { (element as HTMLElement).click(); });
 async function apply(host: HTMLElement, href: string) {
   const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
-  const text = editor.querySelector("p")!.firstChild!;
+  const text = document.createTreeWalker(editor.querySelector("p")!, NodeFilter.SHOW_TEXT).nextNode()!;
   await act(async () => {
     editor.focus();
     const range = document.createRange(); range.setStart(text, 0); range.setEnd(text, text.textContent!.length);
@@ -141,6 +141,32 @@ describe("applying a link offers a card (#497)", () => {
     expect(cards(host)).toHaveLength(0);
   });
 
+  const pressUndo = (host: HTMLElement) => act(async () => { const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!; editor.focus(); editor.dispatchEvent(new KeyboardEvent("keydown", { key: "z", code: "KeyZ", keyCode: 90, ctrlKey: true, bubbles: true, cancelable: true })); });
+
+  it("drops a late answer once the link was undone", async () => {
+    let resolve!: (card: LinkPreviewCard) => void;
+    request.mockReturnValue(new Promise<LinkPreviewCard>((done) => { resolve = done; }));
+    const host = await mount(plain());
+    await apply(host, "https://example.test/a");
+    await pressUndo(host);
+    expect(host.querySelector('[contenteditable="true"] a')).toBeNull();
+    await act(async () => resolve(cardFor(P1, "https://example.test/a")));
+    await settle();
+    expect(cards(host)).toHaveLength(0);
+    expect(storedPreviews()).toHaveLength(0);
+  });
+
+  it("drops a late answer once the link was replaced by another address, and keeps the new link's own card", async () => {
+    let resolveA!: (card: LinkPreviewCard) => void;
+    request.mockImplementation((_scope: unknown, href: string) => href.endsWith("/a") ? new Promise<LinkPreviewCard>((done) => { resolveA = done; }) : Promise.resolve(cardFor(P2, href)));
+    const host = await mount(plain());
+    await apply(host, "https://example.test/a");
+    await apply(host, "https://example.test/b");
+    await act(async () => resolveA(cardFor(P1, "https://example.test/a")));
+    await settle();
+    expect(storedPreviews()).toEqual([{ type: "linkPreview", attrs: { previewId: P2 } }]);
+  });
+
   it("drops a late answer once the editor has unmounted", async () => {
     let resolve!: (card: LinkPreviewCard) => void;
     request.mockReturnValue(new Promise<LinkPreviewCard>((done) => { resolve = done; }));
@@ -181,6 +207,23 @@ describe("a posted card (#497)", () => {
     const host = show(doc({ url: "https://example.test/a", title: null, description: null, siteName: null, imageMediaId: null }));
     expect(host.querySelector('[data-testid="link-preview-image"]')).toBeNull();
     expect(host.querySelector('[data-testid="link-preview-card"]')!.textContent).toContain("example.test/a");
+  });
+
+  it("reads its secondary text in the 4.5:1 text role, never the muted one", () => {
+    const host = show(doc({ url: "https://example.test/a", title: "A page", description: "About it", siteName: "example.test" }));
+    const card = host.querySelector('[data-testid="link-preview-card"]')!;
+    expect(card.innerHTML).not.toMatch(/\btext-muted-foreground\b/);
+    for (const text of ["example.test", "About it", "example.test/a"]) {
+      const element = [...card.querySelectorAll("span, p")].find((candidate) => candidate.textContent === text)!;
+      expect(element.className, text).toContain("text-foreground-secondary");
+    }
+  });
+
+  it("gives the editor's remove control a 44px target on narrow screens", async () => {
+    request.mockResolvedValue(cardFor(P1, "https://example.test/a"));
+    const editorHost = await mount(plain());
+    await apply(editorHost, "https://example.test/a");
+    expect(editorHost.querySelector('[data-testid="link-preview-remove"]')!.className).toContain("max-[721px]:size-11");
   });
 
   it("renders nothing for a card the server could not fill in", () => {

@@ -10,7 +10,7 @@ function LinkPreviewEditorView({ node, deleteNode, editor }: NodeViewProps) {
     <LinkPreviewCard
       testId="link-preview-card-editor"
       attrs={{ previewId: attrs.previewId, url: attrs.url, title: attrs.title ?? null, description: attrs.description ?? null, siteName: attrs.siteName ?? null, imageMediaId: attrs.imageMediaId ?? null }}
-      actions={<Button type="button" variant="ghost" size="icon-xs" data-testid="link-preview-remove" aria-label="Remove link preview" className="absolute top-[var(--space-1)] right-[var(--space-1)]" onClick={() => { deleteNode(); editor.commands.focus(); }}><XIcon aria-hidden="true" /></Button>}
+      actions={<Button type="button" variant="ghost" size="icon-xs" data-testid="link-preview-remove" aria-label="Remove link preview" className="absolute top-[var(--space-1)] right-[var(--space-1)] max-[721px]:size-11" onClick={() => { deleteNode(); editor.commands.focus(); }}><XIcon aria-hidden="true" /></Button>}
     />
   </NodeViewWrapper>;
 }

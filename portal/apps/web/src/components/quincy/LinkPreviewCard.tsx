@@ -23,10 +23,10 @@ export function LinkPreviewCard({ attrs, actions, testId = "link-preview-card" }
         <img data-testid="link-preview-image" src={embeddedMediaUrl(attrs.imageMediaId!)} alt="" loading="lazy" decoding="async" onError={() => setImageFailed(true)} />
       </ItemMedia>}
       <ItemContent className="min-w-0">
-        {attrs.siteName && <span className="text-xs text-muted-foreground">{attrs.siteName}</span>}
+        {attrs.siteName && <span className="text-xs text-foreground-secondary">{attrs.siteName}</span>}
         <ItemTitle className="line-clamp-2 break-words">{attrs.title ?? hostAndPath(attrs.url)}</ItemTitle>
-        {attrs.description && <ItemDescription>{attrs.description}</ItemDescription>}
-        {!attrs.title && attrs.description === null ? null : <span className="truncate text-xs text-muted-foreground">{hostAndPath(attrs.url)}</span>}
+        {attrs.description && <ItemDescription className="text-foreground-secondary">{attrs.description}</ItemDescription>}
+        {!attrs.title && attrs.description === null ? null : <span className="truncate text-xs text-foreground-secondary">{hostAndPath(attrs.url)}</span>}
       </ItemContent>
     </Item>
     {actions}

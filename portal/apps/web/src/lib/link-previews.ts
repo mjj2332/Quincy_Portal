@@ -8,8 +8,20 @@ import type { EmbeddedMediaScope } from "./embedded-media";
  */
 export async function requestLinkPreview(scope: EmbeddedMediaScope, url: string, _signal?: AbortSignal): Promise<LinkPreviewCard | null> {
   const path = "noticeBoard" in scope ? "/api/notice-board/link-previews" : `/api/projects/${encodeURIComponent(scope.projectId)}/link-previews`;
-  try {
-    const parsed = linkPreviewResponseSchema.safeParse(await apiPost<unknown, { url: string }>(path, { url }));
-    return parsed.success ? parsed.data.preview : null;
-  } catch { return null; }
+  // The server fetches a link once. A second request for it while the first is still running is told so (409) and asks again once after
+  // a short wait, by which time the first has stored the card.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const parsed = linkPreviewResponseSchema.safeParse(await apiPost<unknown, { url: string }>(path, { url }));
+      return parsed.success ? parsed.data.preview : null;
+    } catch (error) {
+      if (attempt === 0 && isInProgress(error)) { await new Promise((resolve) => setTimeout(resolve, IN_PROGRESS_RETRY_MS)); continue; }
+      return null;
+    }
+  }
+  return null;
 }
+
+const IN_PROGRESS_RETRY_MS = 1_500;
+const isInProgress = (error: unknown): boolean =>
+  (error as { status?: unknown } | null)?.status === 409 && (error as { details?: { code?: unknown } | null }).details?.code === "link_preview_in_progress";
