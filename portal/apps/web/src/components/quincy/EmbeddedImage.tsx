@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { embeddedMediaUrl } from "../../lib/embedded-media";
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../reui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "../reui/dialog";
 
 /**
  * A posted embedded image (#493): a thumbnail that opens the larger view in the ReUI dialog. The
@@ -13,10 +13,11 @@ export function EmbeddedImage({ mediaId }: { mediaId: string }) {
   const src = embeddedMediaUrl(mediaId);
   if (failed) return <p data-testid="embedded-image-unavailable" className="my-[var(--space-2)] text-foreground-secondary [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">Image unavailable</p>;
   return <>
-    <button type="button" data-testid="embedded-image" aria-label="View image larger" onClick={() => setOpen(true)} className="my-[var(--space-2)] block max-w-full cursor-zoom-in rounded-[var(--radius-xs)] focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-2">
-      <img src={src} alt="Embedded image" loading="lazy" decoding="async" onError={() => setFailed(true)} className="rich-text__embedded-image" />
-    </button>
+    {/* The trigger is registered with the dialog, so Escape or Close returns focus to this thumbnail even where a click does not focus a button. */}
     <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger render={<button type="button" data-testid="embedded-image" aria-label="View image larger" className="my-[var(--space-2)] block max-w-full cursor-zoom-in rounded-[var(--radius-xs)] focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-2" />}>
+        <img src={src} alt="Embedded image" loading="lazy" decoding="async" onError={() => setFailed(true)} className="rich-text__embedded-image" />
+      </DialogTrigger>
       {/* The review Lightbox's language: an inverse (dark) stage, the image edge to edge, and the close button on a scrim so a wide image never sits under it. */}
       <DialogContent data-surface="inverse" data-testid="embedded-image-dialog" className="max-h-[90dvh] max-w-[calc(100%-2rem)] gap-0 overflow-hidden bg-background p-0 text-foreground ring-0 sm:max-w-[min(90vw,64rem)]">
         <DialogTitle className="sr-only">Image</DialogTitle>

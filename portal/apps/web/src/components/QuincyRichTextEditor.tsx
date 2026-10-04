@@ -352,6 +352,8 @@ export function QuincyRichTextEditor({
   // The picker is mounted only while a choice is being made: a standing file input would be a second upload control on
   // every Project surface that renders the composer. It is the installed ReUI `Input`, clicked as soon as it mounts.
   const chooseImages = () => setPicking((n) => (n ?? 0) + 1);
+  // The live region stays mounted so screen readers announce a message when it appears, but it takes no space while empty.
+  const liveMessage = overBytes ? "This formatting is too large to save; remove list items or formatting." : nestingBlocked ? "Maximum list nesting is four levels" : "";
   const off = (can: boolean) => disabled || !can;
 
   return <div ref={wrapperRef} className="group grid gap-[var(--space-2)]" data-disabled={disabled || undefined}>
@@ -428,6 +430,6 @@ export function QuincyRichTextEditor({
     </div>}
     <MentionAutocomplete ref={menu} query={query} loadMentionables={loadMentionables} onSelect={selectMention} onDismiss={() => setMentionDismissed(true)} onAccessibilityChange={setMentionA11y} />
     {plainText.length >= limit * COUNTER_THRESHOLD && <div data-testid="rich-text-counter" className={cn("text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", plainText.length > limit && "!text-destructive")}>{plainText.length}/{limit}</div>}
-    <div className="min-h-[1.2em] [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive" aria-live="polite">{overBytes ? "This formatting is too large to save; remove list items or formatting." : nestingBlocked ? "Maximum list nesting is four levels" : ""}</div>
+    <div className={liveMessage ? "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive" : "sr-only"} aria-live="polite">{liveMessage}</div>
   </div>;
 }

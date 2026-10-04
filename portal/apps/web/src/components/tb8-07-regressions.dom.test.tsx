@@ -130,9 +130,10 @@ describe("TB8-07 — ARIA that was deliberately NOT changed", () => {
     // `FieldError` would have been the tidy substitution, but it injects `role="alert"`, turning
     // a polite live region into an assertive one that interrupts a screen-reader user mid-typing.
     const source = read("./QuincyRichTextEditor.tsx");
-    const validation = source.slice(source.indexOf("min-h-[1.2em]"));
-    expect(validation.slice(0, 200)).toContain('aria-live="polite"');
-    expect(validation.slice(0, 200)).not.toContain('role="alert"');
+    // The region is the `liveMessage` div (it is `sr-only` while empty, so it takes no space).
+    const validation = source.slice(source.indexOf("<div className={liveMessage"));
+    expect(validation.slice(0, 300)).toContain('aria-live="polite"');
+    expect(validation.slice(0, 300)).not.toContain('role="alert"');
   });
 
   it("keeps <time dateTime> as a real time element in both ledgers", () => {

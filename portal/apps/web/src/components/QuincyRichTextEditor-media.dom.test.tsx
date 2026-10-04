@@ -276,4 +276,39 @@ describe("design review fixes (#493)", () => {
     expect(imageSource).toMatch(/p-0/); expect(imageSource).toMatch(/bg-background/); expect(imageSource).toMatch(/embedded-image-scrim[^>]*scrim-overlay/);
     expect(imageSource).toMatch(/max-w-\[calc\(100%-2rem\)\]/);
   });
+
+  async function openViewer(host: HTMLElement) {
+    const thumbnail = host.querySelector<HTMLButtonElement>('[data-testid="embedded-image"]')!;
+    // No explicit focus(): Safari and touch do not focus a button on click, so the dialog must know its trigger rather than rely on prior focus.
+    await act(async () => { thumbnail.click(); });
+    await settle();
+    expect(document.querySelector('[data-testid="embedded-image-dialog"]')).not.toBeNull();
+    return thumbnail;
+  }
+
+  it("returns focus to the thumbnail when the larger view is closed with Escape", async () => {
+    const host = mount(<RichTextContent content={withImages(A)} />);
+    const thumbnail = await openViewer(host);
+    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+    await settle(); await settle();
+    expect(document.querySelector('[data-testid="embedded-image-dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(thumbnail);
+  });
+
+  it("returns focus to the thumbnail when the larger view is closed with its close button", async () => {
+    const host = mount(<RichTextContent content={withImages(A)} />);
+    const thumbnail = await openViewer(host);
+    await act(async () => { document.querySelector<HTMLButtonElement>('[data-testid="embedded-image-dialog"] button')!.click(); });
+    await settle(); await settle();
+    expect(document.querySelector('[data-testid="embedded-image-dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(thumbnail);
+  });
+
+  it("keeps the error live region for screen readers but gives it no space while empty", () => {
+    const host = mount(<Harness />);
+    const region = host.querySelector<HTMLElement>('[aria-live="polite"]')!;
+    expect(region.textContent).toBe("");
+    expect(region.classList.contains("sr-only")).toBe(true);
+    expect(region.classList.contains("min-h-[1.2em]")).toBe(false);
+  });
 });
