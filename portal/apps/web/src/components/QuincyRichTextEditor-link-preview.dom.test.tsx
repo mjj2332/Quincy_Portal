@@ -267,6 +267,19 @@ describe("a posted card (#497)", () => {
     expect(editorHost.querySelector('[data-testid="link-preview-remove"]')!.className).toContain("max-[721px]:size-11");
   });
 
+  it("does not hand a failed image to the card that takes its place when the list changes", () => {
+    const M2 = "55555555-5555-4555-8555-555555555555";
+    const two: RichTextDoc = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "see" }] },
+      { type: "linkPreview", attrs: { previewId: P1, url: "https://example.test/a", title: "A", description: null, siteName: null, imageMediaId: M1 } },
+      { type: "linkPreview", attrs: { previewId: P2, url: "https://example.test/b", title: "B", description: null, siteName: null, imageMediaId: M2 } }] };
+    const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
+    act(() => root!.render(<RichTextContent content={two} />));
+    act(() => { host.querySelectorAll("img")[0]!.dispatchEvent(new Event("error")); });
+    expect(host.querySelectorAll("img")).toHaveLength(1);
+    act(() => root!.render(<RichTextContent content={{ ...two, content: [two.content[0]!, two.content[2]!] }} />));
+    expect(host.querySelector("img")!.getAttribute("src")).toBe(`/media/embedded/${M2}`);
+  });
+
   it("renders nothing for a card the server could not fill in", () => {
     expect(show(doc({})).querySelector('[data-testid="link-preview-card"]')).toBeNull();
   });
