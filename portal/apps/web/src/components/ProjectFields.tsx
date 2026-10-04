@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { CollectionKind, MonitoredRawFolder } from "@quincy/shared";
 import { cn } from "@/lib/utils";
 import { FieldGroup, FieldLabel } from "@/components/reui/field";
@@ -94,7 +95,7 @@ export function validateProjectFields(form: ProjectForm, mode: ProjectFieldsMode
   };
 }
 
-export function ProjectFields({ form, errors, existingCollections = [], mode = "create", monitoredRawFolder, onChange, onToggle }: {
+export function ProjectFields({ form, errors, existingCollections = [], mode = "create", monitoredRawFolder, shootExtras, onChange, onToggle }: {
   form: ProjectForm;
   errors: Partial<Record<ProjectFieldError, string>>;
   existingCollections?: CollectionKind[];
@@ -103,6 +104,8 @@ export function ProjectFields({ form, errors, existingCollections = [], mode = "
    * Tonomo fields below stay fully editable (they still drive Tonomo change detection, RAW
    * identity recovery and AutoHDR naming) but are no longer the folder being watched. */
   monitoredRawFolder?: MonitoredRawFolder | null;
+  /** #488: extra controls for the Shoot section (New shoot's Deadline and Priority), laid out under the date. Edit details passes none. */
+  shootExtras?: ReactNode;
   onChange: (field: ProjectTextField, value: string) => void;
   onToggle: (field: ProjectSelectionField, value: string) => void;
 }) {
@@ -125,6 +128,7 @@ export function ProjectFields({ form, errors, existingCollections = [], mode = "
         <DateTimeField variant="date" id="project-shoot-date" label="Shoot date" clearable value={form.shootDate || null} onApply={(day) => onChange("shootDate", day ?? "")} />
         <QuincyField id="project-time-window" label="Time window" placeholder="e.g. 9:00–11:00 am" value={form.timeWindow} onChange={(event) => onChange("timeWindow", event.target.value)} />
       </div>
+      {shootExtras && <div className={cn(FIELD_GRID_2, "mt-[var(--space-4)]")}>{shootExtras}</div>}
     </section>
     <section className="create-project__section" aria-labelledby="order-heading">
       <SectionHead eyebrow="Order" id="order-heading">How is it tracked?</SectionHead>

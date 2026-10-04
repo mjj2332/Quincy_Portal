@@ -18,6 +18,7 @@ vi.mock("../lib/api", async (importOriginal) => {
 
 import { CreateProject } from "./CreateProject";
 import "@/testing/dom-polyfills";
+import { applyPopup, dateTimePopup, openFieldPopup, pickPopupDay, pressInPopup, typePopupTime } from "@/testing/date-time-popup";
 
 let root: Root | null = null;
 let host: HTMLElement;
@@ -208,5 +209,171 @@ describe("CreateProject Team (#487)", () => {
     // A synthetic key event never triggers implicit submission itself, so the default being cancelled is what stops a real one.
     expect(enter.defaultPrevented).toBe(true);
     expect(apiPostMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("CreateProject Deadline and Priority (#488)", () => {
+  // Thu 1 Oct 2026 in Sydney. The Sydney clocks go forward on Sun 4 Oct, so a Fri 2 Oct shoot is due Mon 5 Oct 17:00.
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-01T02:00:00Z") }); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  const deadlineField = () => host.querySelector<HTMLButtonElement>("button#project-deadline")!;
+  const deadlineText = () => deadlineField().textContent ?? "";
+  const body = () => apiPostMock.mock.calls.at(-1)![1] as Record<string, unknown>;
+
+  async function startShoot(street = "12 Deadline Street") {
+    await render();
+    await typeInto(host.querySelector<HTMLInputElement>('input[placeholder="12 Kings Road, Vaucluse"]')!, street);
+  }
+
+  async function pickShootDate(day: string) {
+    await act(async () => { host.querySelector<HTMLButtonElement>("button#project-shoot-date")!.click(); await Promise.resolve(); await Promise.resolve(); });
+    await flush();
+    const popup = dateTimePopup("Shoot date")!;
+    await pickPopupDay(popup, day);
+    await applyPopup(popup);
+    await flush();
+  }
+
+  async function setDeadline(draft: { day?: string; time?: string; shortcut?: string }) {
+    const popup = await openFieldPopup("Deadline", host);
+    if (draft.shortcut) await pressInPopup(popup, draft.shortcut);
+    if (draft.day) await pickPopupDay(popup, draft.day);
+    if (draft.time) await typePopupTime(popup, draft.time);
+    await applyPopup(popup);
+    await flush();
+  }
+
+  async function pressStar(label: string) {
+    const star = host.querySelector<HTMLElement>(`[role="radio"][aria-label="${label}"]`)!;
+    await act(async () => { star.click(); await Promise.resolve(); });
+  }
+
+  it("starts empty with a hint, and sends no Deadline and no Priority", async () => {
+    await startShoot();
+    expect(deadlineText()).toContain("Select a date and time");
+    expect(host.textContent).toContain("Set automatically from the shoot date once one is picked.");
+    expect(host.querySelectorAll('[role="radio"][aria-checked="true"]')).toHaveLength(0);
+    await submit();
+    expect(body()).toMatchObject({ deadline: null, priority: null });
+  });
+
+  it("shows the Automatic Deadline once a shoot date is picked, follows a change of date, and sends null", async () => {
+    await startShoot();
+    await pickShootDate("2026-10-02");
+    expect(deadlineText()).toContain("Mon 5 Oct 2026");
+    expect(deadlineText()).toContain("17:00");
+    expect(deadlineField().getAttribute("aria-labelledby")!.split(" ").map((id) => document.getElementById(id)?.textContent).join(" ")).toContain("Automatic");
+    await pickShootDate("2026-10-05");
+    expect(deadlineText()).toContain("Tue 6 Oct 2026");
+    expect(deadlineText()).toContain("Automatic");
+    await submit();
+    expect(body()).toMatchObject({ shootDate: "2026-10-05", deadline: null });
+  });
+
+  it("keeps an untouched Apply on the automatic preview automatic", async () => {
+    await startShoot();
+    await pickShootDate("2026-10-02");
+    const popup = await openFieldPopup("Deadline", host);
+    await applyPopup(popup);
+    await flush();
+    expect(deadlineText()).toContain("Automatic");
+    await submit();
+    expect(body()).toMatchObject({ deadline: null });
+  });
+
+  it("makes an edited Deadline manual, seeds the default reminders, and stops following the shoot date", async () => {
+    await startShoot();
+    await pickShootDate("2026-10-02");
+    await setDeadline({ time: "10:00" });
+    expect(deadlineText()).toContain("Mon 5 Oct 2026");
+    expect(deadlineText()).toContain("10:00");
+    expect(deadlineText()).not.toContain("Automatic");
+    await pickShootDate("2026-10-09");
+    expect(deadlineText()).toContain("Mon 5 Oct 2026");
+    await submit();
+    expect(body()).toMatchObject({ deadline: { localCivil: "2026-10-05T10:00", reminderOffsetsMinutes: [1440, 240, 60] } });
+  });
+
+  it("makes a manual Deadline set with no shoot date start with no advance reminders", async () => {
+    await startShoot();
+    await setDeadline({ day: "2026-10-08", time: "09:30" });
+    await submit();
+    expect(body()).toMatchObject({ shootDate: null, deadline: { localCivil: "2026-10-08T09:30", reminderOffsetsMinutes: [] } });
+  });
+
+  it("makes a reminder-only change on the automatic preview manual", async () => {
+    await startShoot();
+    await pickShootDate("2026-10-02");
+    const popup = await openFieldPopup("Deadline", host);
+    const chip = [...popup.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="Advance reminders"] button[aria-pressed="true"]')].find((button) => !button.disabled);
+    expect(chip).toBeDefined(); // the first pressed advance chip is the 1 day preset (1440 minutes)
+    await act(async () => { chip!.click(); await Promise.resolve(); });
+    await applyPopup(popup);
+    await flush();
+    expect(deadlineText()).not.toContain("Automatic");
+    await submit();
+    expect(body()).toMatchObject({ deadline: { localCivil: "2026-10-05T17:00", reminderOffsetsMinutes: [240, 60] } });
+  });
+
+  it("returns a cleared Deadline to automatic with a visible note, and sends null", async () => {
+    await startShoot();
+    await pickShootDate("2026-10-02");
+    await setDeadline({ time: "10:00" });
+    expect(host.textContent).not.toContain("Cleared");
+    await setDeadline({ shortcut: "No date" });
+    expect(host.querySelector('[role="status"]')?.textContent).toContain("the Automatic Deadline will be set from the shoot date");
+    expect(deadlineText()).toContain("Mon 5 Oct 2026");
+    expect(deadlineText()).toContain("Automatic");
+    await submit();
+    expect(body()).toMatchObject({ deadline: null });
+  });
+
+  it("starts Priority unset, sends the picked stars, and clears them again", async () => {
+    await startShoot();
+    await pressStar("4 stars");
+    expect(host.querySelector('[role="radio"][aria-label="4 stars"]')!.getAttribute("aria-checked")).toBe("true");
+    await submit();
+    expect(body()).toMatchObject({ priority: 4 });
+    await pressStar("4 stars");
+    await submit();
+    expect(body()).toMatchObject({ priority: null });
+  });
+
+  it("names the Priority group after the street being entered", async () => {
+    await startShoot("12 Named Street");
+    expect(host.querySelector('[role="radiogroup"]')!.getAttribute("aria-label")).toBe("Priority for 12 Named Street");
+  });
+
+  it("keeps the Deadline and Priority when validation blocks the submit, and again when the server refuses", async () => {
+    await startShoot();
+    await pickShootDate("2026-10-02");
+    await setDeadline({ time: "10:00" });
+    await pressStar("2 stars");
+    await typeInto(clientInput("project-agent-email"), "not-an-email");
+    await submit();
+    expect(apiPostMock).not.toHaveBeenCalled();
+    expect(deadlineText()).toContain("10:00");
+    expect(host.querySelector('[role="radio"][aria-label="2 stars"]')!.getAttribute("aria-checked")).toBe("true");
+    await typeInto(clientInput("project-agent-email"), "agent@example.test");
+    apiPostMock.mockRejectedValueOnce(new Error("The server said no."));
+    await submit();
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("The server said no.");
+    expect(deadlineText()).toContain("10:00");
+    expect(host.querySelector('[role="radio"][aria-label="2 stars"]')!.getAttribute("aria-checked")).toBe("true");
+    await submit();
+    expect(body()).toMatchObject({ deadline: { localCivil: "2026-10-05T10:00" }, priority: 2 });
+  });
+
+  it("sends the same Deadline and Priority from the top Create button as from the details button", async () => {
+    await startShoot();
+    await pickShootDate("2026-10-02");
+    await setDeadline({ time: "10:00" });
+    await pressStar("5 stars");
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="create-project-hero-submit"]')!.click(); await Promise.resolve(); });
+    await flush();
+    const hero = body();
+    await submit();
+    expect(body()).toEqual(hero);
   });
 });

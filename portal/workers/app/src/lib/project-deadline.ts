@@ -186,15 +186,23 @@ function scheduleEventIntent(projectId: string, actorId: string, version: number
   };
 }
 
+export type ResolvedDeadlineSet = { deadlineAt: number; localCivil: string; offset: number; fold: number; offsets: number[] };
+
+/** Resolves a civil Sydney time and reminder offsets, or throws the 400 `ProjectDeadlineError` the PUT and create both return. */
+export function resolveDeadlineSet(deadline: { localCivil: string; disambiguation?: "earlier" | "later" }, reminderOffsetsMinutes: unknown): ResolvedDeadlineSet {
+  const resolved = resolveSydneyCivilTime(deadline.localCivil, deadline.disambiguation);
+  if (!resolved.ok) throw new ProjectDeadlineError(resolved.message, 400, resolved.code, "choices" in resolved ? { choices: resolved.choices } : undefined);
+  let offsets: number[];
+  try { offsets = normalizeReminderOffsets(reminderOffsetsMinutes); }
+  catch (error) { throw new ProjectDeadlineError(error instanceof Error ? error.message : "Invalid reminder offsets.", 400, "deadline_invalid_reminder_offsets"); }
+  return { deadlineAt: resolved.value.epochMs, localCivil: resolved.value.localCivil, offset: resolved.value.utcOffsetMinutes, fold: resolved.value.fold, offsets };
+}
+
 function parseRequest(request: SaveProjectDeadlineRequest): { expectedVersion: number; deadlineAt: number | null; localCivil: string | null; offset: number | null; fold: number | null; offsets: number[]; operation: "set" | "clear" } {
   if (!Number.isSafeInteger(request.expectedVersion) || request.expectedVersion < 0) throw new ProjectDeadlineError("Invalid Deadline version.", 400, "deadline_invalid_version");
   if (request.deadline === null) return { expectedVersion: request.expectedVersion, deadlineAt: null, localCivil: null, offset: null, fold: null, offsets: [], operation: "clear" };
-  const resolved = resolveSydneyCivilTime(request.deadline.localCivil, request.deadline.disambiguation);
-  if (!resolved.ok) throw new ProjectDeadlineError(resolved.message, 400, resolved.code, "choices" in resolved ? { choices: resolved.choices } : undefined);
-  let offsets: number[];
-  try { offsets = normalizeReminderOffsets(request.reminderOffsetsMinutes); }
-  catch (error) { throw new ProjectDeadlineError(error instanceof Error ? error.message : "Invalid reminder offsets.", 400, "deadline_invalid_reminder_offsets"); }
-  return { expectedVersion: request.expectedVersion, deadlineAt: resolved.value.epochMs, localCivil: resolved.value.localCivil, offset: resolved.value.utcOffsetMinutes, fold: resolved.value.fold, offsets, operation: "set" };
+  const set = resolveDeadlineSet(request.deadline, request.reminderOffsetsMinutes);
+  return { expectedVersion: request.expectedVersion, ...set, operation: "set" };
 }
 
 /**

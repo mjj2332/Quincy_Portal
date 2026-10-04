@@ -387,3 +387,25 @@ describe("DateTimeField focus and header contract (#421 review)", () => {
   });
 });
 
+
+describe("adornment and description (#488)", () => {
+  async function mountWith(extra: { adornment?: React.ReactNode; description?: React.ReactNode }) {
+    await act(async () => { root.render(<DateTimeField variant="date" id="shoot" label="Shoot date" value="2026-10-02" onApply={vi.fn()} {...extra} />); await Promise.resolve(); });
+  }
+  const accessibleName = () => trigger().getAttribute("aria-labelledby")!.split(" ").map((id) => document.getElementById(id)?.textContent ?? "").join(" ");
+  const accessibleDescription = () => (trigger().getAttribute("aria-describedby") ?? "").split(" ").filter(Boolean).map((id) => document.getElementById(id)?.textContent ?? "").join(" ");
+
+  it("puts an adornment inside the trigger and in its accessible name", async () => {
+    await mountWith({ adornment: <span>Automatic</span> });
+    expect(trigger().textContent).toContain("Automatic");
+    expect(accessibleName()).toContain("Automatic");
+  });
+
+  it("wires a description to the trigger as its accessible description, and adds nothing without one", async () => {
+    await mountWith({ description: "Set from the shoot date." });
+    expect(accessibleDescription()).toBe("Set from the shoot date.");
+    await mountWith({});
+    expect(trigger().getAttribute("aria-describedby")).toBeNull();
+    expect(accessibleName()).toBe("Shoot date Fri 2 Oct 2026");
+  });
+});

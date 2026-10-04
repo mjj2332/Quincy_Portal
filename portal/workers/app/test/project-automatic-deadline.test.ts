@@ -212,3 +212,107 @@ describe("a person's save and the Automatic Deadline (#484)", () => {
     expect(detail.deadlineSchedule.source).toBe("manual");
   });
 });
+
+describe("Deadline and Priority on create (#488)", () => {
+  const post = (body: Record<string, unknown>) => request("/api/projects", "POST", { street: `New ${crypto.randomUUID()}`, ...body });
+  const projectCount = async () => (await database.DB.prepare("SELECT COUNT(*) AS n FROM projects").first<{ n: number }>())!.n;
+  const auditsOf = async (projectId: string, action: string) => (await database.DB.prepare("SELECT actor_id, meta_json FROM audit_log WHERE target_id = ? AND action = ?").bind(projectId, action).all<{ actor_id: string | null; meta_json: string }>()).results;
+
+  it("stores a supplied Deadline as manual with its reminders, in the same write as the Project", async () => {
+    const response = await post({ shootDate: "2026-10-02", deadline: { localCivil: "2026-10-06T10:00", reminderOffsetsMinutes: [120, 30] } });
+    expect(response.status).toBe(201);
+    const { id } = await response.json() as { id: string };
+    expect(await deadlineOf(id)).toEqual({ deadline_at: Date.parse("2026-10-05T23:00:00.000Z"), deadline_local_civil: "2026-10-06T10:00", deadline_source: "manual", deadline_version: 1, deadline_utc_offset_minutes: 660 });
+    expect((await occurrencesOf(id)).map((row) => [row.kind, row.offset, row.status, row.version, row.created_by])).toEqual([["advance", 120, "pending", 1, userId], ["advance", 30, "pending", 1, userId], ["due_now", 0, "pending", 1, userId]]);
+    expect(await automaticAudits(id)).toHaveLength(0);
+    const saved = await auditsOf(id, "project.deadline.schedule_saved");
+    expect(saved).toHaveLength(1);
+    expect(saved[0]!.actor_id).toBe(userId);
+    expect(JSON.parse(saved[0]!.meta_json)).toMatchObject({ version: 1, operation: "set", via: "create" });
+    const detail = await (await request(`/api/projects/${id}`, "GET")).json() as { deadlineSchedule: { source: string; version: number; reminderOffsetsMinutes: number[]; deadline: { localCivil: string } } };
+    expect(detail.deadlineSchedule).toMatchObject({ source: "manual", version: 1, reminderOffsetsMinutes: [120, 30], deadline: { localCivil: "2026-10-06T10:00" } });
+  });
+
+  it("defaults a supplied Deadline's reminders to none, stores it without a shoot date, and fills no shoot date", async () => {
+    const response = await post({ deadline: { localCivil: "2026-10-06T10:00" } });
+    expect(response.status).toBe(201);
+    const { id, shootDate } = await response.json() as { id: string; shootDate: string | null };
+    expect(shootDate).toBeNull();
+    expect((await deadlineOf(id)).deadline_source).toBe("manual");
+    expect((await occurrencesOf(id)).map((row) => [row.kind, row.offset])).toEqual([["due_now", 0]]);
+    expect((await database.DB.prepare("SELECT shoot_date FROM projects WHERE id = ?").bind(id).first<{ shoot_date: string | null }>())!.shoot_date).toBeNull();
+  });
+
+  it("a manual Deadline equal to the automatic value is still manual, and replaces the automatic one", async () => {
+    const id = await createProject({ shootDate: "2026-10-02", deadline: { localCivil: AUTOMATIC_MONDAY.civil, reminderOffsetsMinutes: [1440, 240, 60] } });
+    expect(await deadlineOf(id)).toMatchObject({ deadline_source: "manual", deadline_version: 1, deadline_local_civil: AUTOMATIC_MONDAY.civil });
+    expect(await automaticAudits(id)).toHaveLength(0);
+  });
+
+  it("an explicit null Deadline with a shoot date, and an absent one, both get the server-computed automatic value", async () => {
+    for (const body of [{ shootDate: "2026-10-02", deadline: null }, { shootDate: "2026-10-02" }]) {
+      const id = await createProject(body);
+      expect(await deadlineOf(id)).toMatchObject({ deadline_source: "automatic", deadline_local_civil: AUTOMATIC_MONDAY.civil, deadline_version: 1 });
+    }
+    const noDate = await createProject({ deadline: null });
+    expect(await deadlineOf(noDate)).toMatchObject({ deadline_source: "none", deadline_at: null, deadline_version: 0 });
+  });
+
+  it("stores Priority and returns it; unset stays null", async () => {
+    const response = await post({ priority: 4 });
+    expect(response.status).toBe(201);
+    const body = await response.json() as { id: string; priority: number | null; stageKey: string };
+    expect(body).toMatchObject({ priority: 4, stageKey: "awaiting_raw" });
+    expect((await database.DB.prepare("SELECT priority FROM projects WHERE id = ?").bind(body.id).first<{ priority: number | null }>())!.priority).toBe(4);
+    expect(JSON.parse((await auditsOf(body.id, "project.create"))[0]!.meta_json)).toMatchObject({ priority: 4 });
+    for (const unset of [{ priority: null }, {}]) {
+      const created = await (await post(unset)).json() as { priority: number | null; id: string };
+      expect(created.priority).toBeNull();
+      expect((await database.DB.prepare("SELECT priority FROM projects WHERE id = ?").bind(created.id).first<{ priority: number | null }>())!.priority).toBeNull();
+    }
+  });
+
+  it("rejects an invalid Priority and creates nothing", async () => {
+    const before = await projectCount();
+    for (const priority of [0, 6, 2.5, "3", -1]) expect((await post({ priority })).status).toBe(400);
+    expect(await projectCount()).toBe(before);
+  });
+
+  it("rejects an invalid Deadline and creates nothing", async () => {
+    const before = await projectCount();
+    const gap = await post({ deadline: { localCivil: "2026-10-04T02:30" } });
+    expect(gap.status).toBe(400);
+    expect(await gap.json()).toMatchObject({ code: "deadline_nonexistent_local_time" });
+    const repeated = await post({ deadline: { localCivil: "2027-04-04T02:30" } });
+    expect(repeated.status).toBe(400);
+    expect(await repeated.json()).toMatchObject({ code: "deadline_repeated_local_time", choices: expect.any(Array) });
+    const badOffsets = await post({ deadline: { localCivil: "2026-10-06T10:00", reminderOffsetsMinutes: [0] } });
+    expect(badOffsets.status).toBe(400);
+    expect(await badOffsets.json()).toMatchObject({ code: "deadline_invalid_reminder_offsets" });
+    expect((await post({ deadline: { localCivil: "not a time" } })).status).toBe(400);
+    expect((await post({ deadline: { localCivil: "2026-10-06T10:00", source: "automatic" } })).status).toBe(400);
+    expect(await projectCount()).toBe(before);
+  });
+
+  it("stores the chosen fold of a repeated local time", async () => {
+    const id = await createProject({ deadline: { localCivil: "2027-04-04T02:30", disambiguation: "later" } });
+    expect(await deadlineOf(id)).toMatchObject({ deadline_source: "manual", deadline_local_civil: "2027-04-04T02:30", deadline_utc_offset_minutes: 600 });
+  });
+
+  it("never accepts a Stage on create", async () => {
+    const created = await (await post({ stageKey: "editing", shootDate: "2026-10-02" })).json() as { stageKey: string };
+    expect(created.stageKey).toBe("awaiting_raw");
+  });
+
+  it("keeps team assignments, services and the manual Deadline together", async () => {
+    const editor = crypto.randomUUID();
+    const nowMs = Date.now();
+    await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, authorization_epoch, created_at, updated_at) VALUES (?, 'Ed', ?, 1, 'editor', 1, 0, ?, ?)").bind(editor, `${editor}@example.test`, nowMs, nowMs).run();
+    const response = await post({ shootDate: "2026-10-02", editorUserIds: [editor], orderedServices: ["video"], priority: 2, deadline: { localCivil: "2026-10-06T10:00", reminderOffsetsMinutes: [60] }, agentName: "Pat", orderNo: "N1" });
+    expect(response.status).toBe(201);
+    const body = await response.json() as { id: string; agentName: string; orderNo: string; priority: number; members: Array<{ userId: string }> };
+    expect(body).toMatchObject({ agentName: "Pat", orderNo: "N1", priority: 2 });
+    expect(body.members.map((m) => m.userId)).toContain(editor);
+    expect(await deadlineOf(body.id)).toMatchObject({ deadline_source: "manual", deadline_local_civil: "2026-10-06T10:00" });
+  });
+});

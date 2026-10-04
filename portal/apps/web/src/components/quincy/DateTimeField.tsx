@@ -1,6 +1,6 @@
-import { useContext, useId, useRef, useState, type ComponentProps, type Ref } from "react";
+import { useContext, useId, useRef, useState, type ComponentProps, type ReactNode, type Ref } from "react";
 import { Calendar as CalendarIcon } from "lucide-react";
-import { Field, FieldLabel } from "@/components/reui/field";
+import { Field, FieldDescription, FieldLabel } from "@/components/reui/field";
 import { FIELD_BOX } from "@/components/reui/input";
 import { PopoverContent, Popover, PopoverTrigger } from "@/components/reui/popover";
 import { isSydneyCalendarDate } from "@quincy/shared";
@@ -46,6 +46,12 @@ type CommonProps = {
   clearable?: boolean;
   placeholder?: string;
   disabled?: boolean;
+  /** Inline status shown inside the trigger after the value (e.g. an "Automatic" pill). It is part of the trigger's accessible name. */
+  adornment?: ReactNode;
+  /** Helper or status text under the trigger, wired to it as its accessible description. */
+  description?: ReactNode;
+  /** Set when `description` is a live status (a note that appears after an action) rather than static help. */
+  descriptionRole?: "status";
 };
 
 export type DateTimeFieldProps =
@@ -184,6 +190,10 @@ export function DateTimeField(props: DateTimeFieldProps) {
   const [open, setOpen] = useState(false);
   const labelId = `${id}-label`;
   const valueId = `${id}-value`;
+  const adornmentId = `${id}-adornment`;
+  const descriptionId = `${id}-description`;
+  const hasAdornment = props.adornment !== undefined && props.adornment !== null && props.adornment !== false;
+  const hasDescription = props.description !== undefined && props.description !== null && props.description !== false;
   const display = props.variant === "date"
     ? (props.value ? (isSydneyCalendarDate(props.value) ? formatCivilDay(props.value) : props.value) : null)
     : props.variant === "range"
@@ -198,11 +208,15 @@ export function DateTimeField(props: DateTimeFieldProps) {
           id={id}
           type="button"
           disabled={disabled}
-          aria-labelledby={`${labelId} ${valueId}`}
+          aria-labelledby={hasAdornment ? `${labelId} ${valueId} ${adornmentId}` : `${labelId} ${valueId}`}
+          aria-describedby={hasDescription ? descriptionId : undefined}
           // A <button> always matches :read-only, which would paint FIELD_BOX's read-only skin.
           className={cn(FIELD_BOX, "flex cursor-pointer items-center justify-between gap-[var(--space-2)] text-left [&:read-only:not(select)]:bg-[var(--field-bg)] [&:read-only:not(select)]:text-foreground")}
         >
-          <span id={valueId} className={cn("min-w-0 [overflow-wrap:anywhere]", display === null && "text-muted-foreground")}>{display ?? placeholder}</span>
+          <span className="flex min-w-0 flex-wrap items-center gap-x-[var(--space-2)] gap-y-[var(--space-1)]">
+            <span id={valueId} className={cn("min-w-0 [overflow-wrap:anywhere]", display === null && "text-muted-foreground")}>{display ?? placeholder}</span>
+            {hasAdornment && <span id={adornmentId} className="shrink-0">{props.adornment}</span>}
+          </span>
           <CalendarIcon aria-hidden className="size-4 shrink-0 text-foreground-secondary" />
         </PopoverTrigger>
         <DateTimePopoverContent label={label} align={props.popupAlign ?? "start"} positionerClassName={props.positionerClassName}>
@@ -213,6 +227,7 @@ export function DateTimeField(props: DateTimeFieldProps) {
               : <DateTimePopup label={label} value={props.value} clearable={clearable} reminders={props.reminders} seed={props.seed} seedKey={props.seedKey} facts={props.facts} feedback={props.feedback} busy={props.busy} onApply={props.onApply} onClose={() => setOpen(false)} />}
         </DateTimePopoverContent>
       </Popover>
+      {hasDescription && <FieldDescription id={descriptionId} role={props.descriptionRole}>{props.description}</FieldDescription>}
     </Field>
   );
 }
