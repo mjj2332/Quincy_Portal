@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
 import { createDb, schema } from "@quincy/db";
 import { and, eq, isNull } from "drizzle-orm";
-import { isEmbeddedImageContentType, DNG_CONTENT_TYPE, RENDITION_SPECS, RENDITION_SPEC_VERSION, TRANSFORM_CACHE_VERSION, dngPreviewKey, rawMediaContentType } from "@quincy/shared";
+import { isEmbeddedMediaContentType, ifRangeAllows, parseByteRange, DNG_CONTENT_TYPE, RENDITION_SPECS, RENDITION_SPEC_VERSION, TRANSFORM_CACHE_VERSION, dngPreviewKey, rawMediaContentType } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, hasProjectCollaborationAccess } from "../middleware/capability";
@@ -196,11 +196,10 @@ mediaRoutes.get("/annotation/:annotationId", terminalRoute("/annotation/:annotat
 /**
  * Embedded media (#493). An attached image follows its post: anyone who can collaborate on the Project
  * may read it, an assigned External editor included. A Notice board image (#496) needs the Notice board capability. Until it is attached (and after it is edited out)
- * only the person who uploaded it can see it. Every refusal is `no-store` through the /media default.
+ * only the person who uploaded it can see it. Every refusal is `no-store` through the /media default. A video (#494) follows exactly the same rules.
+ * Returns the row when the caller may read it, or the refusal.
  */
-mediaRoutes.get("/embedded/:mediaId", terminalRoute("/embedded/:mediaId", async (c) => {
-  const mediaId = c.req.param("mediaId");
-  if (!z.string().uuid().safeParse(mediaId).success) return c.json({ error: "Invalid media id" }, 400);
+async function readableEmbeddedMedia(c: Context<AppEnv>, mediaId: string): Promise<NonNullable<Awaited<ReturnType<typeof getEmbeddedMedia>>> | Response> {
   const row = await getEmbeddedMedia(c.env.DB, mediaId);
   if (!row || row.state === "uploading") return c.json({ error: "Media not found" }, 404);
   const user = c.get("user");
@@ -213,15 +212,52 @@ mediaRoutes.get("/embedded/:mediaId", terminalRoute("/embedded/:mediaId", async 
     if (!row.projectId) return c.json({ error: "Media not found" }, 404);
     if (!await hasProjectCollaborationAccess(c, row.projectId)) return user.role === "external_editor" ? c.json({ error: "Media not found" }, 404) : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   } else if (row.uploaderId !== user.id) return c.json({ error: "Media not found" }, 404);
-  const object = await c.env.MEDIA.get(row.originalKey);
+  return row;
+}
+
+const EMBEDDED_RESPONSE_HEADERS = { "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox", ...RENDITION_CACHE_HEADERS } as const;
+
+mediaRoutes.get("/embedded/:mediaId", terminalRoute("/embedded/:mediaId", async (c) => {
+  const mediaId = c.req.param("mediaId");
+  if (!z.string().uuid().safeParse(mediaId).success) return c.json({ error: "Invalid media id" }, 400);
+  const row = await readableEmbeddedMedia(c, mediaId); if (row instanceof Response) return row;
+  // A single byte range is served (#494): a browser plays a video by asking for pieces of it, and cannot seek without. `head` gives
+  // the size and ETag, then the parser decides; the body is a second, ranged read, so no behaviour depends on how R2 treats a range it cannot satisfy.
+  let object: R2ObjectBody | null; let status = 200; let contentRange: string | undefined; let length: number | undefined;
+  const rangeHeader = c.req.header("range");
+  if (rangeHeader) {
+    const meta = await c.env.MEDIA.head(row.originalKey);
+    if (!meta) return c.json({ error: "Media object not found" }, 404);
+    const parsed = parseByteRange(rangeHeader, meta.size);
+    if (parsed.kind === "unsatisfiable") return new Response(null, { status: 416, headers: { "content-range": `bytes */${meta.size}` } });
+    if (parsed.kind === "partial" && ifRangeAllows(c.req.header("if-range"), meta.httpEtag)) {
+      object = await c.env.MEDIA.get(row.originalKey, { range: { offset: parsed.offset, length: parsed.length } });
+      status = 206; length = parsed.length; contentRange = `bytes ${parsed.offset}-${parsed.offset + parsed.length - 1}/${meta.size}`;
+    } else object = await c.env.MEDIA.get(row.originalKey);
+  } else object = await c.env.MEDIA.get(row.originalKey);
   if (!object) return c.json({ error: "Media object not found" }, 404);
   const headers: Record<string, string> = {
-    "content-type": isEmbeddedImageContentType(row.contentType) ? row.contentType : "application/octet-stream",
-    "content-length": String(object.size),
-    "x-content-type-options": "nosniff",
-    "content-security-policy": "default-src 'none'; sandbox",
-    ...RENDITION_CACHE_HEADERS,
+    "content-type": isEmbeddedMediaContentType(row.contentType) ? row.contentType : "application/octet-stream",
+    "content-length": String(length ?? object.size),
+    "accept-ranges": "bytes",
+    ...EMBEDDED_RESPONSE_HEADERS,
   };
+  if (contentRange) headers["content-range"] = contentRange;
+  if (object.httpEtag) headers.etag = object.httpEtag;
+  // The viewer's fallback when a video cannot play in its browser (#494): the file itself, named by its type.
+  if (c.req.query("download") === "1" && row.kind === "video") headers["content-disposition"] = `attachment; filename="video.${row.contentType === "video/quicktime" ? "mov" : "mp4"}"`;
+  return new Response(object.body, { status, headers });
+}));
+
+/** A video's poster frame (#494), under the video's own access rules. */
+mediaRoutes.get("/embedded/:mediaId/poster", terminalRoute("/embedded/:mediaId/poster", async (c) => {
+  const mediaId = c.req.param("mediaId");
+  if (!z.string().uuid().safeParse(mediaId).success) return c.json({ error: "Invalid media id" }, 400);
+  const row = await readableEmbeddedMedia(c, mediaId); if (row instanceof Response) return row;
+  if (row.kind !== "video" || !row.posterKey) return c.json({ error: "Poster not found" }, 404);
+  const object = await c.env.MEDIA.get(row.posterKey);
+  if (!object) return c.json({ error: "Poster not found" }, 404);
+  const headers: Record<string, string> = { "content-type": "image/jpeg", "content-length": String(object.size), ...EMBEDDED_RESPONSE_HEADERS };
   if (object.httpEtag) headers.etag = object.httpEtag;
   return new Response(object.body, { headers });
 }));

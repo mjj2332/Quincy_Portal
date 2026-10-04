@@ -3,19 +3,22 @@ import { z } from "zod";
 import { createDb, schema } from "@quincy/db";
 import { eq } from "drizzle-orm";
 import {
-  EMBEDDED_IMAGE_CONTENT_TYPES, EMBEDDED_MEDIA_MAX_BYTES, embeddedMediaObjectKey, externalEmbeddedMediaCompleteSchema, externalEmbeddedMediaPresignSchema,
+  EMBEDDED_IMAGE_CONTENT_TYPES, EMBEDDED_POSTER_MAX_BYTES, EMBEDDED_VIDEO_CONTENT_TYPES, EMBEDDED_VIDEO_PART_URL_TTL_SECONDS, embeddedMediaKindFor, embeddedMediaMaxBytes, embeddedMediaObjectKey,
+  embeddedMediaPosterKey, externalEmbeddedMediaCompleteSchema, externalEmbeddedMediaPresignSchema, isJpeg,
 } from "@quincy/shared";
 import { terminalRoute } from "../lib/terminal-route";
 import type { AppEnv } from "../env";
 import { hasProjectCollaborationAccess } from "../middleware/capability";
 import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
-import { abortMultipart, createMultipartPresign } from "../lib/r2s3";
-import { claimAndDiscardUploadingMedia, enqueueEmbeddedMediaCleanup, getEmbeddedMedia, verifyUploadedEmbeddedObject } from "../lib/embedded-media";
+import { abortMultipart, createMultipartPresign, PART_BYTES, PRESIGN_EXPIRES_SECONDS } from "../lib/r2s3";
+import { abortEmbeddedMedia, claimAndDiscardUploadingMedia, enqueueEmbeddedMediaCleanup, getEmbeddedMedia, verifyUploadedEmbeddedObject } from "../lib/embedded-media";
 import { jsonInput } from "./helpers";
 
 const uuid = z.string().uuid();
-const presignInput = z.object({ contentType: z.enum(EMBEDDED_IMAGE_CONTENT_TYPES), bytes: z.number().int().min(1).max(EMBEDDED_MEDIA_MAX_BYTES) }).strict();
+/** A Project's discussion takes images and videos (#494); each kind has its own size cap. */
+const presignInput = z.object({ contentType: z.enum([...EMBEDDED_IMAGE_CONTENT_TYPES, ...EMBEDDED_VIDEO_CONTENT_TYPES]), bytes: z.number().int().min(1) }).strict()
+  .superRefine((value, context) => { if (value.bytes > embeddedMediaMaxBytes(embeddedMediaKindFor(value.contentType)!)) context.addIssue({ code: "custom", path: ["bytes"], message: "File is too large" }); });
 const completeInput = z.object({ parts: z.array(z.object({ partNumber: z.number().int().positive(), etag: z.string().min(1) }).strict()).optional() }).strict();
 
 export const embeddedMediaRoutes = new Hono<AppEnv>();
@@ -35,15 +38,16 @@ embeddedMediaRoutes.post("/projects/:projectId/embedded-media", terminalRoute("/
   if (project.archivedAt) return c.json({ error: "Archived projects cannot accept media", code: "project_archived" }, 409);
   const data = await jsonInput(c, presignInput); if (data instanceof Response) return data;
   const user = c.get("user"); const mediaId = newId(); const key = embeddedMediaObjectKey(projectId, mediaId); const now = Date.now();
+  const kind = embeddedMediaKindFor(data.contentType)!;
   // Fenced on the Project still being live, so a reservation never lands in an archived Project.
   const reserved = await c.env.DB.prepare(`
     INSERT INTO embedded_media (id, owner_kind, owner_id, project_id, uploader_id, kind, content_type, bytes, original_key, state, created_at, updated_at)
-    SELECT ?, 'project_comment', NULL, id, ?, 'image', ?, ?, ?, 'uploading', ?, ? FROM projects WHERE id = ? AND archived_at IS NULL
-  `).bind(mediaId, user.id, data.contentType, data.bytes, key, now, now, projectId).run();
+    SELECT ?, 'project_comment', NULL, id, ?, ?, ?, ?, ?, 'uploading', ?, ? FROM projects WHERE id = ? AND archived_at IS NULL
+  `).bind(mediaId, user.id, kind, data.contentType, data.bytes, key, now, now, projectId).run();
   if ((reserved.meta.changes ?? 0) !== 1) return c.json({ error: "Archived projects cannot accept media", code: "project_archived" }, 409);
   const release = () => c.env.DB.prepare("DELETE FROM embedded_media WHERE id = ? AND state = 'uploading'").bind(mediaId).run();
   let multipart: Awaited<ReturnType<typeof createMultipartPresign>>;
-  try { multipart = await createMultipartPresign(c.env, key, data.bytes, data.contentType); }
+  try { multipart = await createMultipartPresign(c.env, key, data.bytes, data.contentType, PART_BYTES, kind === "video" ? EMBEDDED_VIDEO_PART_URL_TTL_SECONDS : PRESIGN_EXPIRES_SECONDS); }
   catch (error) { await release(); throw error; }
   if (!multipart) {
     // Dev has no R2 S3 credentials: steer the browser to the direct-PUT route (Miniflare R2).
@@ -111,4 +115,56 @@ embeddedMediaRoutes.post("/projects/:projectId/embedded-media/:mediaId/complete"
     await audit(c.env, user, "embedded_media.upload", "embedded_media", mediaId, { projectId, bytes: row.bytes, contentType: row.contentType });
   }
   return c.json(externalEmbeddedMediaCompleteSchema.parse({ mediaId, state: "pending" }));
+}));
+
+/**
+ * The poster frame the browser captured from a video (#494). Best effort: a video without one plays from its first frame.
+ * Only the uploader, only for a video that has finished uploading and is not yet in a comment, only once. The write order
+ * leaves no orphan whichever way a race goes: the key is queued first, then written, then one batch sets it on the row and
+ * unqueues it, but only if the row still wants it. A batch that loses (the upload was cancelled, the Project went away) deletes the
+ * object, and if R2 refuses, the queued key is left for the daily sweep.
+ */
+embeddedMediaRoutes.put("/projects/:projectId/embedded-media/:mediaId/poster", terminalRoute("/projects/:projectId/embedded-media/:mediaId/poster", async (c) => {
+  const projectId = c.req.param("projectId"); const mediaId = c.req.param("mediaId");
+  if (!uuid.safeParse(projectId).success || !uuid.safeParse(mediaId).success) return c.json({ error: "Invalid media upload" }, 400);
+  const project = await collaborationGate(c, projectId); if (project instanceof Response) return project;
+  if (project.archivedAt) return c.json({ error: "Archived projects cannot accept media", code: "project_archived" }, 409);
+  const user = c.get("user"); const row = await getEmbeddedMedia(c.env.DB, mediaId);
+  if (!row || row.projectId !== projectId || row.uploaderId !== user.id || row.kind !== "video") return c.json({ error: "Media upload not found" }, 404);
+  if (row.state !== "pending" || row.posterKey) return c.json({ error: "This video cannot take a poster", code: "poster_unavailable" }, 409);
+  const declared = Number(c.req.header("content-length") ?? "0");
+  if (declared > EMBEDDED_POSTER_MAX_BYTES) return c.json({ error: "The poster is larger than 2 MB" }, 413);
+  const body = new Uint8Array(await c.req.arrayBuffer());
+  if (body.byteLength > EMBEDDED_POSTER_MAX_BYTES) return c.json({ error: "The poster is larger than 2 MB" }, 413);
+  if (!isJpeg(body)) return c.json({ error: "The poster must be a JPEG image" }, 400);
+  const posterKey = embeddedMediaPosterKey(projectId, mediaId, newId());
+  await enqueueEmbeddedMediaCleanup(c.env.DB, [{ key: posterKey, projectId }]);
+  try { await c.env.MEDIA.put(posterKey, body, { httpMetadata: { contentType: "image/jpeg" } }); }
+  catch (error) { await c.env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ?").bind(posterKey).run(); throw error; }
+  const results = await c.env.DB.batch([
+    c.env.DB.prepare(`
+      UPDATE embedded_media SET poster_key = ?, updated_at = ?
+      WHERE id = ? AND kind = 'video' AND state = 'pending' AND poster_key IS NULL AND uploader_id = ? AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)
+    `).bind(posterKey, Date.now(), mediaId, user.id, projectId),
+    c.env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ? AND (SELECT poster_key FROM embedded_media WHERE id = ?) = ?").bind(posterKey, mediaId, posterKey),
+  ]);
+  if ((results[0]!.meta.changes ?? 0) === 1) return c.body(null, 204);
+  // Lost: nothing references the object. Delete it and unqueue it; if R2 refuses, the queued key is the sweep's.
+  try { await c.env.MEDIA.delete(posterKey); await c.env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ?").bind(posterKey).run(); } catch { /* the queue owns it */ }
+  return c.json({ error: "This video can no longer take a poster", code: "poster_unavailable" }, 409);
+}));
+
+/** A cancelled upload (#494): see `abortEmbeddedMedia`. The uploader's alone, in any Project state, since cleaning up is never harmful. */
+embeddedMediaRoutes.post("/projects/:projectId/embedded-media/:mediaId/abort", terminalRoute("/projects/:projectId/embedded-media/:mediaId/abort", async (c) => {
+  const projectId = c.req.param("projectId"); const mediaId = c.req.param("mediaId");
+  if (!uuid.safeParse(projectId).success || !uuid.safeParse(mediaId).success) return c.json({ error: "Invalid media upload" }, 400);
+  const live = await createDb(c.env.DB).select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
+  if (!live) return c.json({ error: "Media upload not found" }, 404);
+  const project = await collaborationGate(c, projectId); if (project instanceof Response) return project;
+  const user = c.get("user"); const row = await getEmbeddedMedia(c.env.DB, mediaId);
+  if (!row || row.projectId !== projectId || row.uploaderId !== user.id) return c.json({ error: "Media upload not found" }, 404);
+  const outcome = await abortEmbeddedMedia(c.env, row);
+  if (outcome === "gone") return c.json({ error: "Media upload not found" }, 404);
+  if (outcome === "in_use") return c.json({ error: "This media is already in use", code: "media_not_uploading" }, 409);
+  return c.body(null, 204);
 }));
