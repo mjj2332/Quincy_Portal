@@ -25,8 +25,8 @@ type ControlProps = { onRequestStart?: () => void; onArchivedRefusal?: () => voi
 const controlProps = vi.hoisted(() => ({ latest: null as ControlProps | null }));
 vi.mock("./ProjectDeadlineControl", () => ({ ProjectDeadlineControl: (props: ControlProps) => { controlProps.latest = props; return <div data-testid="deadline-control"><button type="button" data-testid="in-popup">Inside the popup</button></div>; } }));
 
-const schedule = { version: 1, deadline: { localCivil: "2027-01-15T09:00", zone: "Australia/Sydney" as const, utcOffsetMinutes: 660, fold: 0 as const, instant: "2027-01-14T22:00:00.000Z" }, reminderOffsetsMinutes: [1440], state: "scheduled" as const, nextOccurrence: null, canResume: false };
-const unsetSchedule = { version: 0, deadline: null, reminderOffsetsMinutes: [], state: "unset" as const, nextOccurrence: null, canResume: false };
+const schedule = { version: 1, source: "manual", deadline: { localCivil: "2027-01-15T09:00", zone: "Australia/Sydney" as const, utcOffsetMinutes: 660, fold: 0 as const, instant: "2027-01-14T22:00:00.000Z" }, reminderOffsetsMinutes: [1440], state: "scheduled" as const, nextOccurrence: null, canResume: false };
+const unsetSchedule = { version: 0, source: null, deadline: null, reminderOffsetsMinutes: [], state: "unset" as const, nextOccurrence: null, canResume: false };
 
 function project(overrides: Partial<ProjectDetail> = {}): ProjectDetail {
   return {
@@ -78,6 +78,14 @@ describe("an archived Project's header on load (#455)", () => {
     expect(time.getAttribute("datetime")).toBe("2027-01-14T22:00:00.000Z");
     expect(time.textContent).toBe("Fri 15 Jan · 09:00");
     expect(host.querySelector('[role="status"]')).toBeNull();
+  });
+
+  it("labels an automatic Deadline in the read-only value too (#484)", () => {
+    const automatic = { ...project().deadlineSchedule, source: "automatic" as const };
+    render(header(project({ archivedAt: Date.now(), deadlineSchedule: automatic })));
+    const cell = group("Deadline")!;
+    expect(cell.textContent).toContain("Automatic");
+    expect(cell.querySelector("time")!.textContent).toBe("Fri 15 Jan · 09:00");
   });
 
   it("shows an unset Deadline as a dash with 'No deadline set' for screen readers", () => {

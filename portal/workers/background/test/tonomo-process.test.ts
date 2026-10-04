@@ -1,5 +1,5 @@
 import { env } from "cloudflare:test";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { processTonomoEvent, type TonomoProcessDependencies } from "../src/tonomo/process";
 import { commitShootDateChange } from "../src/projects/shoot-date";
 import { commitAutomaticStage } from "../src/lib/automatic-stage";
@@ -638,5 +638,94 @@ describe("processTonomoEvent order tombstones and create cutoff", () => {
     const event = await processEvent(orderId, { street, shoot_date: "2026-08-01" });
     expect(event?.error ?? null).toBeNull();
     expect(await database.DB.prepare("SELECT order_id FROM projects WHERE id = ?").bind(projectId).first()).toEqual({ order_id: orderId });
+  });
+});
+
+/**
+ * #484: the Automatic Deadline through the Tonomo handler. The clock is pinned to an instant whose UTC
+ * day (Thu 2026-10-01) differs from its Sydney day (Fri 2026-10-02), and Sydney's clocks go forward on
+ * Sun 2026-10-04, so a Friday shoot is due Monday 5 Oct 17:00 at +11:00 (06:00Z).
+ */
+describe("processTonomoEvent Automatic Deadline (#484)", () => {
+  const MONDAY = { at: Date.parse("2026-10-05T06:00:00.000Z"), civil: "2026-10-05T17:00" };
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-01T14:30:00.000Z") }); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  async function processEvent(orderId: string, order: Record<string, unknown>) {
+    const eventId = crypto.randomUUID();
+    const payloadJson = JSON.stringify({ id: orderId, ...order });
+    await database.DB.prepare("INSERT INTO webhook_events (id, source, event_id, payload_json, status, received_at) VALUES (?, 'tonomo', ?, ?, 'received', ?)")
+      .bind(eventId, `event-${eventId}`, payloadJson, Date.now()).run();
+    await processTonomoEvent(env, { id: eventId, payloadJson });
+  }
+  const newOrder = () => { const suffix = crypto.randomUUID(); return { orderId: `order-${suffix}`, street: `${suffix} Auto Deadline Street` }; };
+  const projectFor = (orderId: string) => database.DB.prepare("SELECT id, shoot_date, deadline_at, deadline_local_civil, deadline_source, deadline_version FROM projects WHERE order_id = ?").bind(orderId)
+    .first<{ id: string; shoot_date: string | null; deadline_at: number | null; deadline_local_civil: string | null; deadline_source: string; deadline_version: number }>();
+  const audits = async (projectId: string) => (await database.DB.prepare("SELECT actor_id, meta_json FROM audit_log WHERE target_id = ? AND action = 'project.deadline.automatic_set'").bind(projectId).all<{ actor_id: string | null; meta_json: string }>()).results;
+  const occurrences = async (projectId: string) => (await database.DB.prepare("SELECT kind, reminder_offset_minutes AS offset, status, created_by FROM project_deadline_occurrences WHERE project_id = ? ORDER BY reminder_offset_minutes DESC").bind(projectId).all<{ kind: string; offset: number; status: string; created_by: string }>()).results;
+  const seedProject = async (orderId: string, street: string, shootDate: string | null, extra = "") => {
+    const projectId = crypto.randomUUID();
+    const now = Date.now();
+    await database.DB.prepare(`INSERT INTO projects (id, order_id, street, stage_key, shoot_date, created_at, updated_at) VALUES (?, ?, ?, 'awaiting_raw', ?, ?, ?)`).bind(projectId, orderId, street, shootDate, now, now).run();
+    if (extra) await database.DB.exec(extra.replaceAll("?", `'${projectId}'`));
+    return projectId;
+  };
+
+  it("gives a Project created with a shoot date its Automatic Deadline and default reminders in the create batch", async () => {
+    const { orderId, street } = newOrder();
+    await processEvent(orderId, { street, shoot_date: "2026-10-02" });
+    const project = (await projectFor(orderId))!;
+    expect(project).toMatchObject({ shoot_date: "2026-10-02", deadline_at: MONDAY.at, deadline_local_civil: MONDAY.civil, deadline_source: "automatic", deadline_version: 1 });
+    const written = await audits(project.id);
+    expect(written).toHaveLength(1);
+    expect(written[0]!.actor_id).toBeNull();
+    expect(JSON.parse(written[0]!.meta_json)).toMatchObject({ actor: "system", reason: "tonomo_create", shootDate: "2026-10-02", reminderOffsetsMinutes: [1440, 240, 60] });
+    const rows = await occurrences(project.id);
+    expect(rows.map((row) => [row.kind, row.offset, row.status])).toEqual([["advance", 1440, "pending"], ["advance", 240, "pending"], ["advance", 60, "pending"], ["due_now", 0, "pending"]]);
+    expect(rows.every((row) => row.created_by === "00000000-0000-4000-8000-000000000000")).toBe(true);
+  });
+
+  it("is idempotent under redelivery of the create event", async () => {
+    const { orderId, street } = newOrder();
+    await processEvent(orderId, { street, shoot_date: "2026-10-02" });
+    await processEvent(orderId, { street, shoot_date: "2026-10-02" });
+    const project = (await projectFor(orderId))!;
+    expect(project.deadline_version).toBe(1);
+    expect(await audits(project.id)).toHaveLength(1);
+    expect(await occurrences(project.id)).toHaveLength(4);
+  });
+
+  it("sets no Deadline for a Project created without a shoot date", async () => {
+    const { orderId, street } = newOrder();
+    await processEvent(orderId, { street });
+    const project = (await projectFor(orderId))!;
+    expect(project).toMatchObject({ shoot_date: null, deadline_at: null, deadline_source: "none", deadline_version: 0 });
+    expect(await audits(project.id)).toHaveLength(0);
+  });
+
+  it("gives an existing Project that has no shoot date its Automatic Deadline when Tonomo supplies one", async () => {
+    const { orderId, street } = newOrder();
+    const projectId = await seedProject(orderId, street, null);
+    await processEvent(orderId, { street, shoot_date: "2026-10-02" });
+    expect(await projectFor(orderId)).toMatchObject({ id: projectId, shoot_date: "2026-10-02", deadline_at: MONDAY.at, deadline_source: "automatic", deadline_version: 1 });
+    expect(JSON.parse((await audits(projectId))[0]!.meta_json)).toMatchObject({ reason: "tonomo_update" });
+    expect(await occurrences(projectId)).toHaveLength(4);
+  });
+
+  it("never replaces a Deadline already held when Tonomo supplies the shoot date", async () => {
+    const { orderId, street } = newOrder();
+    const held = Date.parse("2026-11-20T06:00:00.000Z");
+    const projectId = await seedProject(orderId, street, null);
+    await database.DB.prepare("UPDATE projects SET deadline_at = ?, deadline_local_civil = '2026-11-20T17:00', deadline_zone = 'Australia/Sydney', deadline_utc_offset_minutes = 660, deadline_fold = 0, deadline_source = 'manual', deadline_version = 2 WHERE id = ?").bind(held, projectId).run();
+    await processEvent(orderId, { street, shoot_date: "2026-10-02" });
+    expect(await projectFor(orderId)).toMatchObject({ shoot_date: "2026-10-02", deadline_at: held, deadline_source: "manual", deadline_version: 2 });
+    expect(await audits(projectId)).toHaveLength(0);
+  });
+
+  it("does not backfill a Project that already holds a canonical shoot date, nor move on a reschedule (#485)", async () => {
+    const { orderId, street } = newOrder();
+    await seedProject(orderId, street, "2026-09-15");
+    await processEvent(orderId, { street, shoot_date: "2026-10-02" });
+    expect(await projectFor(orderId)).toMatchObject({ deadline_at: null, deadline_source: "none", deadline_version: 0 });
   });
 });

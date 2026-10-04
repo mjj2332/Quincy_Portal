@@ -298,3 +298,61 @@ describe("queueProjectShootDateFollowUps", () => {
     expect(background.ensureEditorFolder).toHaveBeenCalledTimes(2);
   });
 });
+
+type DeadlineRow = { deadline_at: number | null; deadline_local_civil: string | null; deadline_source: string; deadline_version: number };
+const deadlineOf = async (projectId: string) => (await database.DB.prepare("SELECT deadline_at, deadline_local_civil, deadline_source, deadline_version FROM projects WHERE id = ?").bind(projectId).first<DeadlineRow>())!;
+const automaticAudits = async (projectId: string) => (await database.DB.prepare("SELECT actor_id, meta_json FROM audit_log WHERE target_id = ? AND action = 'project.deadline.automatic_set'").bind(projectId).all<{ actor_id: string | null; meta_json: string }>()).results;
+const occurrencesOf = async (projectId: string) => (await database.DB.prepare("SELECT kind, reminder_offset_minutes AS offset, status, terminal_reason, schedule_version, created_by FROM project_deadline_occurrences WHERE project_id = ? ORDER BY reminder_offset_minutes DESC").bind(projectId).all<{ kind: string; offset: number; status: string; terminal_reason: string | null; schedule_version: number; created_by: string }>()).results;
+
+describe("Automatic Deadline on the Shoot date fill (#484)", () => {
+  it("gives the filled Shoot date an Automatic Deadline: Sydney Friday 2 Oct shoot is due Monday 5 Oct 17:00", async () => {
+    const projectId = await seedProject("awaiting_raw");
+    const { response } = await moveStage(projectId, "awaiting_raw", "raw_review");
+    expect(response.status).toBe(200);
+    expect(await shootDateOf(projectId)).toBe(SYDNEY_DAY);
+    expect(await deadlineOf(projectId)).toEqual({ deadline_at: Date.parse("2026-10-05T06:00:00.000Z"), deadline_local_civil: "2026-10-05T17:00", deadline_source: "automatic", deadline_version: 1 });
+    const audits = await automaticAudits(projectId);
+    expect(audits).toHaveLength(1);
+    expect(audits[0]!.actor_id).toBeNull();
+    expect(JSON.parse(audits[0]!.meta_json)).toMatchObject({ actor: "system", reason: "shoot_date_fill", shootDate: SYDNEY_DAY, deadlineLocalCivil: "2026-10-05T17:00", version: 1, reminderOffsetsMinutes: [1440, 240, 60] });
+    const occurrences = await occurrencesOf(projectId);
+    expect(occurrences.map((row) => [row.kind, row.offset, row.status])).toEqual([["advance", 1440, "pending"], ["advance", 240, "pending"], ["advance", 60, "pending"], ["due_now", 0, "pending"]]);
+    expect(new Set(occurrences.map((row) => row.schedule_version))).toEqual(new Set([1]));
+    expect(occurrences.every((row) => row.created_by === "00000000-0000-4000-8000-000000000000")).toBe(true);
+  });
+
+  it("never replaces a held Deadline and does not mark it automatic", async () => {
+    const projectId = await seedProject("awaiting_raw");
+    const held = Date.parse("2026-11-20T06:00:00.000Z");
+    await database.DB.prepare("UPDATE projects SET deadline_at = ?, deadline_local_civil = '2026-11-20T17:00', deadline_zone = 'Australia/Sydney', deadline_utc_offset_minutes = 660, deadline_fold = 0, deadline_source = 'manual', deadline_version = 3 WHERE id = ?").bind(held, projectId).run();
+    expect((await moveStage(projectId, "awaiting_raw", "editing_autohdr")).response.status).toBe(200);
+    expect(await shootDateOf(projectId)).toBe(SYDNEY_DAY);
+    expect(await deadlineOf(projectId)).toEqual({ deadline_at: held, deadline_local_civil: "2026-11-20T17:00", deadline_source: "manual", deadline_version: 3 });
+    expect(await automaticAudits(projectId)).toHaveLength(0);
+    expect(await occurrencesOf(projectId)).toHaveLength(0);
+  });
+
+  it("sets no Deadline when the move goes straight to Delivered", async () => {
+    const projectId = await seedProject("awaiting_raw");
+    expect((await moveStage(projectId, "awaiting_raw", "delivered")).response.status).toBe(200);
+    expect(await shootDateOf(projectId)).toBe(SYDNEY_DAY);
+    expect(await deadlineOf(projectId)).toMatchObject({ deadline_at: null, deadline_source: "none", deadline_version: 0 });
+    expect(await occurrencesOf(projectId)).toHaveLength(0);
+  });
+
+  it("leaves a Project that already holds a Shoot date untouched by a stage move", async () => {
+    const projectId = await seedProject("awaiting_raw", "2026-09-15");
+    expect((await moveStage(projectId, "awaiting_raw", "raw_review")).response.status).toBe(200);
+    expect(await deadlineOf(projectId)).toMatchObject({ deadline_at: null, deadline_source: "none" });
+    expect(await automaticAudits(projectId)).toHaveLength(0);
+  });
+
+  it("writes nothing when the move loses a board revision race", async () => {
+    const projectId = await seedProject("awaiting_raw");
+    const stale = await call(`/api/projects/${projectId}/stage`, "POST", stageBody("awaiting_raw", "raw_review", 7));
+    expect(stale.response.status).toBe(409);
+    expect(await shootDateOf(projectId)).toBeNull();
+    expect(await deadlineOf(projectId)).toMatchObject({ deadline_at: null, deadline_source: "none" });
+    expect(await automaticAudits(projectId)).toHaveLength(0);
+  });
+});
