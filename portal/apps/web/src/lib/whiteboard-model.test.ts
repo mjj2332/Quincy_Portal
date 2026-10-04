@@ -49,6 +49,7 @@ type Step =
   | { op: "reorder"; c: number; id: string; pos: number; nonce: number; to?: string }
   | { op: "delete"; c: number; id: string; nonce: number }
   | { op: "vanish"; c: number; id: string }
+  | { op: "import"; c: number; id: string; nonce: number; x: number }
   | { op: "flush"; c: number }
   | { op: "process"; c: number }
   | { op: "deliver"; c: number }
@@ -116,7 +117,6 @@ class World {
     client.saver = createWhiteboardSaver({
       getElements: () => client.scene,
       send: (batch) => new Promise<void>((resolve, reject) => {
-        for (const element of batch) if (element.isDeleted === true && client.vanished.has(element.id) && !client.authored.has(`${element.id}:${element.versionNonce}`)) this.author(client, element as El);   // the saver's synthetic deletion of a vanished element
         for (const element of batch) if (!client.authored.has(`${element.id}:${element.versionNonce}`)) this.violations.push(`client ${index} transmitted ${element.id} v${element.version} nonce ${element.versionNonce}, which nobody authored (a repair read as an edit)`);
         for (const element of batch) for (const entry of client.log) if (entry.id === element.id && entry.nonce === element.versionNonce) entry.sent = true;
         client.seq += 1; this.messages += 1;
@@ -124,6 +124,8 @@ class World {
         client.outbound.push({ seq: client.seq, elements: clone([...batch]) });
       }),
       // The saver raised a version above the scene's and wrote it into the scene element: the authored revision is that one now.
+      // The saver's tombstone for an element the editor dropped goes into the scene as a real deleted element, merged like the component's `applyRemote`.
+      onTombstoned: (tombstones) => { const absent = tombstones.filter((tomb) => !client.scene.some((held) => held.id === tomb.id)); for (const tomb of absent) if (!client.authored.has(`${tomb.id}:${tomb.versionNonce}`)) this.author(client, tomb as El); if (absent.length > 0) this.mergeInto(index, client, clone(absent) as unknown as StoredElement[], (element) => client.saver.hold(element as SavedElement)); },
       onRaised: (raised) => { for (const element of raised) for (const entry of client.log) if (entry.id === element.id && entry.nonce === element.versionNonce) entry.version = element.version; },
     });
     // The component's own remote path (`createRemoteApplier`), with Excalidraw's reconcile told what is being resized.
@@ -198,7 +200,7 @@ class World {
   /** Runs one step. Returns false when it does not apply in this world (a replay that has diverged skips it). */
   async execute(step: Step): Promise<boolean> {
     const done = await this.run(step);
-    for (const client of this.clients) client.applier.replay();           // the editor's change event
+    for (const client of this.clients) { client.saver.sync(); client.applier.replay(); }           // the editor's change event
     await tick();
     return done;
   }
@@ -248,6 +250,15 @@ class World {
         const next = { ...element, index, version: element.version + 1, versionNonce: step.nonce };
         client.scene = sortScene(client.scene.map((candidate) => (candidate === element ? next : candidate))); this.author(client, next); return true;
       }
+      case "import": {
+        // An older scene file is loaded over the board: whatever the board held under this id (a tombstone included) is replaced by a version 1 copy.
+        if (client.held?.id === step.id) return false;
+        const rest = client.scene.filter((element) => element.id !== step.id);
+        const element = excalidraw.restoreElements([rect(step.id, 1, step.nonce, { index: generateKeyBetween(rest.at(-1)?.index ?? null, null), x: step.x })] as never, null)[0]!;
+        client.scene = sortScene([...rest, element]); client.vanished.delete(step.id);
+        for (const entry of client.log) if (entry.id === step.id) entry.superseded = true;   // what the board held before is replaced, so what was never sent of it is no longer anyone's
+        this.author(client, element); return true;
+      }
       case "vanish": {
         const element = client.scene.find((candidate) => candidate.id === step.id);
         if (!element || element.isDeleted || client.held?.id === step.id) return false;
@@ -295,7 +306,7 @@ class World {
   async drain() {
     for (let round = 0; round < 400; round += 1) {
       const before = this.messages;
-      for (const client of this.clients) { client.interacting = null; client.held = null; client.applier.replay(); }     // the person lets go
+      for (const client of this.clients) { client.interacting = null; client.held = null; client.saver.sync(); client.applier.replay(); }     // the person lets go
       for (let c = 0; c < this.clients.length; c += 1) { this.clients[c]!.saver.flush().catch(() => undefined); await tick(); }
       let moved = true;
       while (moved) {
@@ -344,8 +355,7 @@ class World {
     const rows = orderStored([...this.rows.values()]);
     const fresh = excalidraw.restoreElements(clone(rows) as never, null);
     this.clients.forEach((client, c) => {
-      // A tab that dropped an element with no tombstone (it was resized to zero) does not hold the tombstone the saver sent for it: the board it shows is the same.
-      const want = fresh.filter((element) => !(element.isDeleted && client.vanished.has(element.id) && !client.scene.some((held) => held.id === element.id))).map((element) => element.id);
+      const want = fresh.map((element) => element.id);
       const got = client.scene.map((element) => element.id);
       if (got.join() !== want.join()) found.push(`client ${c} shows ${got.join(",")} but a fresh load shows ${want.join(",")}`);
       for (const row of rows) {
@@ -413,9 +423,8 @@ function generate(world: World, rng: () => number): Step {
   if (roll < 0.28 && live.length > 0) return { op: "edit", c, id: pickLive().id, nonce, x };
   if (roll < 0.36 && client.scene.length > 1) return { op: "reorder", c, id: client.scene[Math.floor(rng() * client.scene.length)]!.id, pos: Math.floor(rng() * 8), nonce };
   if (roll < 0.39 && live.length > 0) return { op: "delete", c, id: pickLive().id, nonce };
-  // `vanish` (an element dropped from the scene with no tombstone) is NOT drawn at random: a tab that vanished an element never hears
-  // the tombstone it sent for it, so a concurrent remote edit of the same id leaves that tab on a stale live copy while the server holds the
-  // tombstone. That divergence predates #499 round 13 and is a separate gap (docs/lessons.md), so the step is used in named scenarios only.
+  if (roll < 0.42 && live.length > 0) return { op: "vanish", c, id: pickLive().id };
+  if (roll < 0.44) return { op: "import", c, id: ids[Math.floor(rng() * ids.length)]!, nonce, x };
   if (roll < 0.53) return { op: "flush", c };
   if (roll < 0.75) { const busy = world.clients.map((other, i) => (other.outbound.length > 0 ? i : -1)).filter((i) => i >= 0); if (busy.length > 0) return { op: "process", c: busy[Math.floor(rng() * busy.length)]! }; }
   if (roll < 0.79) return client.interacting === null && live.length > 0 ? { op: "interact", c, id: pickLive().id } : { op: "endInteract", c };
@@ -565,7 +574,7 @@ describe("model: named scenarios from the Sol and Codex reviews (#499)", () => {
     const world = await play("sol13", { clients: 2, ids: ["e"], initial: [row("e", { kind: "fixed", index: "a0" }, 5)] }, script([
       edit(0, "e", 40, 400), flush(0), process_(0), deliver(0), deliver(1),
       { op: "vanish", c: 0, id: "e" }, flush(0), process_(0), deliver(0), deliver(1),     // the synthetic deletion is stored
-      create(0, "e", "a0", 11, 1), flush(0), process_(0), deliver(0), deliver(1),       // an older scene is imported: sent above the deletion
+      { op: "import", c: 0, id: "e", nonce: 11, x: 1 }, flush(0), process_(0), deliver(0), deliver(1),       // an older scene is imported: sent above the deletion
       edit(0, "e", 60, 600), { op: "reconnect", c: 0 }, deliver(0),
     ]));
     expect(world.rows.get("e")).toMatchObject({ isDeleted: false, x: 600 });

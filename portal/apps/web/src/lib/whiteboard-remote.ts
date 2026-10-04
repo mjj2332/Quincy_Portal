@@ -28,6 +28,7 @@ export function createRemoteApplier({ saver, merge, setScene, getScene, interact
   const apply = (remote: Array<Record<string, unknown>>) => {
     const into = merge();
     if (!into) { pending.push(remote); return; }
+    saver.sync();                                  // what the scene holds that the saver numbered above it, and what it dropped, is settled before the merge reads the scene
     // A deferred winner means the server holds something else of that element than the copy shown (an ack of the shown
     // revision does not change that), so what is shown is not "stored" and may yield its index until the winner is applied.
     const scene = into(remote, (element) => (deferred.has(element.id) ? { state: "none" } : saver.hold(element))) as SavedElement[];
@@ -36,6 +37,8 @@ export function createRemoteApplier({ saver, merge, setScene, getScene, interact
     // A remote element the scene did not take, though it beats the scene's copy on version, was skipped for the edit in
     // progress: keep it for when that ends. One the local copy beats is rightly dropped.
     const held = new Map(scene.map((element) => [element.id, element]));
+    // Only what the local copy BEAT is noted (a winner skipped for an edit in progress is applied later, and is not below anything).
+    saver.noteRemote((remote as unknown as SavedElement[]).filter((incoming) => { const mine = held.get(incoming.id); return mine !== undefined && !(mine.version === incoming.version && mine.versionNonce === incoming.versionNonce) && !whiteboardIncomingWins(mine, incoming); }));
     for (const incoming of remote as unknown as SavedElement[]) {
       const local = held.get(incoming.id);
       // Accepted gap (docs/lessons.md, #499 round 10): an exact version + versionNonce tie is read as "same element", as in Excalidraw's own

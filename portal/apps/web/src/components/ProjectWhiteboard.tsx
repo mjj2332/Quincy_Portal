@@ -70,6 +70,9 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
       send: (batch) => socket?.send(batch) ?? Promise.reject(new Error("The whiteboard is not connected.")),
       // A version the saver raised is written into the scene element; the change tracker is told, so it does not read as an edit.
       onRaised: (raised) => controllerRef.current?.adoptRevisions(raised),
+      // A tombstone the saver sends for an element the editor dropped is put on the board as a real deleted element, merged like a remote one
+      // (so it never reads as an edit and a stale remote edit of that element loses to it).
+      onTombstoned: (tombstones) => { const controller = controllerRef.current; if (controller) elementsRef.current = controller.applyRemote(tombstones, (element) => saver.hold(element as unknown as SavedElement)) as unknown as SavedElement[]; },
     });
     saverRef.current = saver;
     const peers = new Map<string, WhiteboardPeer>();
@@ -200,7 +203,7 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
                     background="grid"
                     onReady={(controller) => { controllerRef.current = controller; controller.adoptRevisions((init?.elements ?? []) as unknown as SavedElement[]); drainRemote.current(); }}
                     onPresence={sharePresence}
-                    onElements={(elements) => { elementsRef.current = elements as ReadonlyArray<SavedElement>; replayRemote.current(); }}
+                    onElements={(elements) => { elementsRef.current = elements as ReadonlyArray<SavedElement>; saverRef.current?.sync(); replayRemote.current(); }}
                     onSave={save}
                     onSaveStatusChange={setSaveStatus}
                     onToast={pushToast}

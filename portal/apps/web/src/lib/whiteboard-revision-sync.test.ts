@@ -38,6 +38,8 @@ function world(initial: Array<Record<string, unknown>>) {
     getElements: () => scene,
     send: async (batch) => { sent.push(batch.map((element) => ({ ...element }) as El)); for (const element of batch) { const held = rows.get(element.id); if (!held || whiteboardIncomingWins(held as never, element as never)) rows.set(element.id, { ...element } as El); } },
     onRaised: (elements) => { raisedHosts.push([...elements]); },
+    // The host puts the saver's tombstone on the board as a merged deleted element, as the component does.
+    onTombstoned: (tombstones) => { scene = mergeRemote(scene, tombstones as never, fns, (element) => saver.hold(element as SavedElement)); },
   });
   saver.seed(initial as unknown as SavedElement[]);
   const applier = createRemoteApplier({
@@ -84,5 +86,19 @@ describe("the scene and the saver agree on a transmitted revision", () => {
     expect(w.raisedHosts.flat().map((element) => element.id)).toEqual(["a"]);
     await w.saver.flush();
     expect(w.sent).toHaveLength(2);                              // the raised key is recorded: nothing repeats
+  });
+
+  it("puts the tombstone of a dropped element on the board, so a stale remote edit of it loses (resize to zero)", async () => {
+    const w = world([rect("e", 4, 40)]);
+    w.scene = w.scene.filter((element) => element.id !== "e");   // resized to zero: dropped with no tombstone
+    w.saver.sync();                                              // the editor's change event
+    expect(w.scene).toHaveLength(1);
+    expect(w.scene[0]).toMatchObject({ id: "e", isDeleted: true, version: 5 });
+    expect(w.sent).toHaveLength(0);                              // nothing transmitted yet: the tombstone is just on the board
+
+    w.applier.apply([rect("e", 5, 2 ** 31, { x: 77 })]);         // a stale remote edit (higher nonce, same version) arrives before the flush
+    expect(w.scene[0]).toMatchObject({ isDeleted: true, version: 5 });   // the local tombstone keeps the element
+    await w.saver.flush();
+    expect(w.rows.get("e")).toMatchObject({ isDeleted: true, version: 6 });   // sent above the remote edit it beat
   });
 });

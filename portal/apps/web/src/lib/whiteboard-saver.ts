@@ -1,4 +1,4 @@
-import { WHITEBOARD_MAX_ELEMENTS_PER_MESSAGE, WHITEBOARD_MAX_MESSAGE_BYTES } from "@quincy/shared";
+import { IndexSpace, WHITEBOARD_MAX_ELEMENTS_PER_MESSAGE, WHITEBOARD_MAX_MESSAGE_BYTES } from "@quincy/shared";
 
 /** What the server holds of one scene element: exactly this revision, acknowledged ("stored": its index is the server's);
  * this revision, sent and not yet acknowledged ("in-flight": the index it was SENT with is the one the server will keep,
@@ -14,9 +14,17 @@ export type WhiteboardSaver = {
   /** #499: records elements that arrived from another person (and were applied to the scene) as stored AND transmitted
    * at exactly the version they came in, so they are never echoed back or re-sent at a higher version. */
   adoptRemote: (elements: readonly SavedElement[]) => void;
+  /** #499: remote elements the scene did NOT take because the local copy beat them. The server holds them, so they are the base and the
+   * floor of any tombstone for that id, if the person removes the local copy before it was ever sent. Never marks anything stored. */
+  noteRemote: (elements: readonly SavedElement[]) => void;
   /** #499: what the server holds, or is about to hold, of this scene element (see `ServerHold`). A merge must not move the
    * index of an element the server holds, and must put back one it was sent with. */
   hold: (element: SavedElement) => ServerHold;
+  /** #499: call after every editor change. An element the saver knows that the editor dropped with no tombstone (a resize to zero
+   * size) gets its tombstone NOW, put on the board through `onTombstoned` as a real deleted element above every revision of it
+   * transmitted or acked, not at the next flush: until it is there, a remote revision of that element arrives into an empty
+   * place and the scene holds nothing to beat it with. Transmits nothing; the tombstone is an ordinary scene element to `flush`. */
+  sync: () => void;
   /** Sends every element whose version differs from what is stored or in flight. Rejects if any batch fails. */
   flush: () => Promise<void>;
 };
@@ -73,12 +81,17 @@ const keyOf = (element: SavedElement) => `${element.version}:${element.versionNo
  * stored only after its own ack, keyed by the SCENE element it came from, and batches respect the
  * protocol's element-count and byte caps.
  */
-export function createWhiteboardSaver({ getElements, send, onRaised }: {
+export function createWhiteboardSaver({ getElements, send, onRaised, onTombstoned }: {
   getElements: () => readonly SavedElement[];
   send: (batch: readonly SavedElement[]) => Promise<void>;
   /** #499: called (synchronously, before anything is sent) with the scene elements whose version the saver raised, after it
    * wrote the raised version into them. The host tells its change tracker, so the write does not read as an edit. */
   onRaised?: (elements: readonly SavedElement[]) => void;
+  /** #499: called (synchronously, before anything is sent) with every tombstone the saver is transmitting for an element the scene
+   * no longer holds (a resize to zero size drops it with no tombstone). The host puts each into the scene as a real deleted
+   * element at exactly that version and nonce (Excalidraw keeps deleted elements by design), as a merge, so a stale remote
+   * edit meets a higher local revision and loses, and nothing reads as an edit. */
+  onTombstoned?: (tombstones: readonly SavedElement[]) => void;
 }): WhiteboardSaver {
   const floor = new Map<string, number>();
   /** The scene key last acknowledged per id (a synthetic tombstone records its own key). */
@@ -87,6 +100,8 @@ export function createWhiteboardSaver({ getElements, send, onRaised }: {
   const known = new Map<string, SavedElement>();
   /** The scene key last transmitted per id and the version it went out at, so a retry is idempotent. */
   const transmitted = new Map<string, { key: string; version: number; index?: string }>();
+  /** The index each element last had in the SCENE (the host may have moved it off the one it was sent with). */
+  const sceneIndex = new Map<string, string>();
   let active: Promise<void> | null = null;
 
   const batchesOf = (changed: readonly SavedElement[]): number[][] => {
@@ -101,11 +116,15 @@ export function createWhiteboardSaver({ getElements, send, onRaised }: {
     return batches;
   };
 
+  /** The deletion of an element the scene dropped: above everything transmitted or acked of it, with a nonce of its own. */
+  const tombstoneOf = (last: SavedElement): SavedElement => ({ ...last, ...(sceneIndex.has(last.id) ? { index: sceneIndex.get(last.id) } : {}), isDeleted: true, version: (floor.get(last.id) ?? last.version) + 1, versionNonce: Math.floor(Math.random() * 2 ** 31) });
+
   const run = async (): Promise<void> => {
     const scene = getElements().filter((element) => !isUnsupportedElement(element));
     const present = new Set(scene.map((element) => element.id));
     const outgoing: Array<{ element: SavedElement; sceneKey: string }> = [];
     const raised: SavedElement[] = [];
+    const tombstoned: SavedElement[] = [];
 
     for (const element of scene) {
       let sceneKey = keyOf(element);
@@ -129,15 +148,16 @@ export function createWhiteboardSaver({ getElements, send, onRaised }: {
       if (present.has(id)) continue;
       if (last.isDeleted === true) {
         // A tombstone the server has acknowledged is done; one that failed to send goes out again as it was.
-        if (stored.get(id) !== keyOf(last)) outgoing.push({ element: last, sceneKey: keyOf(last) });
+        if (stored.get(id) !== keyOf(last)) { outgoing.push({ element: last, sceneKey: keyOf(last) }); tombstoned.push({ ...last }); }
         continue;
       }
-      const version = (floor.get(id) ?? last.version) + 1;
-      const tombstone = { ...last, isDeleted: true, version, versionNonce: Math.floor(Math.random() * 2 ** 31) };
+      const tombstone = tombstoneOf(last);
       outgoing.push({ element: tombstone, sceneKey: keyOf(tombstone) });
+      tombstoned.push({ ...tombstone });
     }
 
     if (raised.length > 0) onRaised?.(raised);
+    if (tombstoned.length > 0) onTombstoned?.(tombstoned);
     // Transmit time: raise the floor and remember what went out before anything is awaited.
     for (const { element, sceneKey } of outgoing) {
       floor.set(element.id, Math.max(floor.get(element.id) ?? 0, element.version));
@@ -176,6 +196,42 @@ export function createWhiteboardSaver({ getElements, send, onRaised }: {
       const last = transmitted.get(element.id);
       if (stored.get(element.id) === key && (last === undefined || last.key === key)) return { state: "stored" };
       return last?.key === key ? { state: "in-flight", index: last.index } : { state: "none" };
+    },
+    noteRemote(elements) {
+      for (const element of elements) {
+        const held = known.get(element.id); if (!held || held.version <= element.version) known.set(element.id, { ...element });
+        floor.set(element.id, Math.max(floor.get(element.id) ?? 0, element.version));
+      }
+    },
+    sync() {
+      // A scene element that is a NEW revision (not stored, not what was transmitted) yet numbered at or below what was transmitted or acked
+      // of that id (an older scene imported after a deletion, say) is raised above it now, in place, not at the next flush: a merge
+      // that runs before the flush (a reconnect) must see it above what the server holds, or the server's copy replaces it.
+      const raisedNow: SavedElement[] = [];
+      for (const element of getElements()) {
+        if (isUnsupportedElement(element)) continue;
+        const key = keyOf(element); const last = transmitted.get(element.id); const f = floor.get(element.id);
+        if (stored.get(element.id) === key || last?.key === key || f === undefined || element.version > f) continue;
+        (element as { version: number }).version = f + 1; raisedNow.push(element);
+      }
+      if (raisedNow.length > 0) onRaised?.(raisedNow);
+      if (!onTombstoned) return;
+      for (const element of getElements()) if (typeof element.index === "string") sceneIndex.set(element.id, element.index);
+      const present = new Set(getElements().map((element) => element.id));
+      // The tombstone takes a place on the board no other element holds (the one the element had, else just above it), so putting it
+      // there never moves an element the server holds out of its index.
+      const space = new IndexSpace();
+      for (const element of getElements()) space.claim(element.index, element.id);
+      const gone = [...known.values()].filter((last) => !present.has(last.id)).map((last) => {
+        // A tombstone already transmitted or acked keeps exactly the index it was sent with (the server holds it there; the merge moves an unsent
+        // element out of its way). A new one takes a free place.
+        const key = keyOf(last);
+        if (last.isDeleted === true && (stored.get(last.id) === key || transmitted.get(last.id)?.key === key)) return { ...last };
+        const tombstone = tombstoneOf(last);
+        const wanted = typeof tombstone.index === "string" ? tombstone.index : undefined;
+        return { ...tombstone, index: space.claim(wanted, last.id) ? wanted : space.place(wanted, last.id) };
+      });
+      if (gone.length > 0) onTombstoned(gone);
     },
     flush() {
       // One flush at a time: a later one joins the earlier save (and its failure) before it diffs.

@@ -159,7 +159,7 @@ describe("remote elements (#499)", () => {
 
 describe("revisions the server sent (#499)", () => {
   it("puts the loaded board back at the server's revisions as soon as the editor is ready, before any buffered remote batch", async () => {
-    board.initElements = [el("stored", 4)]; board.deferReady = true;
+    board.initElements = [el("stored", 4)]; board.scene = [el("stored", 4)]; board.deferReady = true;   // the editor holds what it loaded
     await mount();
     await act(async () => { handlers().onElements([el("late", 1)]); });
     await act(async () => { board.props!.onReady!(controller()); });
