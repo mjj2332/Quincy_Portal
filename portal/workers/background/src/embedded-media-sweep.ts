@@ -14,7 +14,7 @@ function isMissingUpload(error: unknown): boolean {
   return value.status === 404 || /NoSuchUpload|no such upload|upload (?:does not exist|was not found)|multipart upload (?:does not exist|not found)|already aborted/i.test(text);
 }
 
-type QueueRow = { storageKey: string; uploadId: string | null };
+type QueueRow = { storageKey: string; uploadId: string | null; queuedAt: number; attempts: number };
 
 const keysOf = (row: Pick<SweepRow, "originalKey" | "displayKey" | "posterKey">) => [row.originalKey, row.displayKey, row.posterKey].filter((key): key is string => Boolean(key));
 const errorText = (error: unknown) => (error instanceof Error ? error.message.slice(0, 160) : "unknown");
@@ -22,7 +22,7 @@ const errorText = (error: unknown) => (error instanceof Error ? error.message.sl
 /** Upsert shape shared with the app worker's `enqueueEmbeddedMediaCleanup`: a key already queued keeps its row and gains an upload id it lacked. */
 const ENQUEUE_SQL = `
   INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) VALUES (?, ?, ?, ?)
-  ON CONFLICT(storage_key) DO UPDATE SET project_id = COALESCE(embedded_media_cleanup.project_id, excluded.project_id), upload_id = COALESCE(embedded_media_cleanup.upload_id, excluded.upload_id)
+  ON CONFLICT(storage_key) DO UPDATE SET project_id = COALESCE(embedded_media_cleanup.project_id, excluded.project_id), upload_id = COALESCE(embedded_media_cleanup.upload_id, excluded.upload_id), queued_at = MAX(embedded_media_cleanup.queued_at + 1, excluded.queued_at)
 `;
 
 /**
@@ -91,7 +91,7 @@ export async function sweepEmbeddedMedia(env: Pick<Env, "DB" | "MEDIA">, now = D
 
 /** Works through up to 100 queued keys. An entry leaves only after its upload is terminal and its object is deleted. */
 async function drainCleanupQueue(env: Pick<Env, "DB" | "MEDIA">): Promise<number> {
-  const queue = await env.DB.prepare("SELECT storage_key AS storageKey, upload_id AS uploadId FROM embedded_media_cleanup ORDER BY queued_at, storage_key LIMIT ?").bind(SWEEP_LIMIT).all<QueueRow>();
+  const queue = await env.DB.prepare("SELECT storage_key AS storageKey, upload_id AS uploadId, queued_at AS queuedAt, attempts FROM embedded_media_cleanup ORDER BY queued_at, storage_key LIMIT ?").bind(SWEEP_LIMIT).all<QueueRow>();
   let drained = 0;
   for (const entry of queue.results) {
     const fail = (error: unknown, step: string) => {
@@ -105,8 +105,10 @@ async function drainCleanupQueue(env: Pick<Env, "DB" | "MEDIA">): Promise<number
       }
       try { await env.MEDIA.delete(entry.storageKey); }
       catch (error) { await fail(error, "delete"); continue; }
-      await env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ?").bind(entry.storageKey).run();
-      drained += 1;
+      // Dequeue only the entry this pass read. A re-queue (which moves queued_at) or a failure (which moves attempts) since then means
+      // a newer object may need reclaiming, so the entry stays for the next run.
+      const dequeued = await env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ? AND queued_at = ? AND attempts = ?").bind(entry.storageKey, entry.queuedAt, entry.attempts).run();
+      if ((dequeued.meta.changes ?? 0) === 1) drained += 1;
     } catch (error) { console.error("Embedded media cleanup failed", { key: entry.storageKey, error: errorText(error) }); }
   }
   return drained;
