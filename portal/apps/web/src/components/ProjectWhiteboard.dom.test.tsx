@@ -51,7 +51,6 @@ vi.mock("../lib/whiteboard-socket", () => ({
 }));
 const controller = () => ({
   api: { getAppState: () => ({ editingTextElement: board.editingId ? { id: board.editingId } : null, resizingElement: null, newElement: null }) },
-  noteTransmitted: () => undefined,
   adoptRevisions: (arrived: unknown[]) => { board.adopted.push({ arrived, appliedBefore: board.applied.length }); },
   applyRemote: (remote: Array<Record<string, unknown>>) => {
     board.log.push("applyRemote"); board.applied.push(remote);

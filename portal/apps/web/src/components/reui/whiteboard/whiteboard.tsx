@@ -33,6 +33,7 @@ import type {
   AppState,
   ExcalidrawImperativeAPI,
 } from "@excalidraw/excalidraw/types"
+import type { ServerHold } from "@/lib/whiteboard-saver"
 import { cn } from "@/lib/utils"
 
 import { Button } from "@/components/reui/button"
@@ -224,15 +225,13 @@ export type WhiteboardController = {
   setCollaborators: (collaborators: readonly WhiteboardCollaborator[]) => void
   /** QUINCY ADDITION #499: merges elements another person changed into the board, by Excalidraw's own element-version
    * reconciliation (`reconcileElements`), as a change that never enters this person's Undo. Unlike `replace`, it keeps
-   * everything the sender did not mention and never bumps versions or tombstones. Works in view-only mode too. Returns
+   * everything the sender did not mention and never bumps versions or tombstones. `hold` says what the server holds of each board element (the saver's `hold`): what it holds keeps its index, and an unsent or edited element in the way of an incoming index is moved (never changing a revision). Works in view-only mode too. Returns
    * every element now on the board, deleted ones included. */
-  applyRemote: (elements: readonly unknown[]) => readonly ExcalidrawElement[]
+  applyRemote: (elements: readonly unknown[], hold: (element: ExcalidrawElement) => ServerHold) => readonly ExcalidrawElement[]
   /** QUINCY ADDITION #499: puts the board's elements back at the version and nonce in `arrived` (matched by id), in place.
    * The editor's own restore of `initialData` repairs fractional-index clashes by bumping revisions; call this once the
-   * board is ready with what the server sent, so nothing the server already holds reads as an edit. Their `index` is kept as the canonical one, apart from the renderer's repair. */
+   * board is ready with what the server sent, so nothing the server already holds reads as an edit. */
   adoptRevisions: (arrived: ReadonlyArray<{ id: string; version: number; versionNonce: number; index?: string | null }>) => void
-  /** QUINCY ADDITION #499: the elements the saver is about to transmit; the index they go out with is what the server stores, so it becomes their canonical index. */
-  noteTransmitted: (sent: readonly object[]) => void
   /** Selects the given elements, replacing the selection. */
   select: (ids: readonly string[]) => void
   /** Your panel through onPanelRequest when it is set, else the editor's own library sidebar. */

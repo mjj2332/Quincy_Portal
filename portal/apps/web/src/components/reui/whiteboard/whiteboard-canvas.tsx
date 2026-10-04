@@ -6,7 +6,7 @@
  * Tailwind `shadow-*`, focus ring widths -- see `reui-skin.guard.test.ts`), and `noUncheckedIndexedAccess`
  * narrowing. `"dark": boolean` is quoted only so the guard's `dark:` matcher does not read a type as a variant.
  *
- * This file: The Excalidraw canvas and chrome host. Imports `@excalidraw/excalidraw/index.css`, which is UNLAYERED (see docs/lessons.md, #498): it only loads with this lazy chunk. Unchanged apart from the mechanical edits and the QUINCY ADDITIONs marked inline (#498: image tool off; #499: `applyRemote` and `adoptRevisions` (revisions never change across index repair), collaborator `colorKey`, `onPresence`).
+ * This file: The Excalidraw canvas and chrome host. Imports `@excalidraw/excalidraw/index.css`, which is UNLAYERED (see docs/lessons.md, #498): it only loads with this lazy chunk. Unchanged apart from the mechanical edits and the QUINCY ADDITIONs marked inline (#498: image tool off; #499: `applyRemote` and `adoptRevisions` (revisions never change across an index move), collaborator `colorKey`, `onPresence`).
  */
 /**
  * The editor behind <Whiteboard>: the only runtime import of Excalidraw (MIT,
@@ -71,7 +71,7 @@ import type {
   UIOptions,
 } from "@excalidraw/excalidraw/types"
 import { cn } from "@/lib/utils"
-import { adoptArrivedRevisions, createIndexLedger, mergeRemote, recordTransmitted } from "@/lib/whiteboard-merge"
+import { adoptArrivedRevisions, mergeRemote } from "@/lib/whiteboard-merge"
 import { planSceneDrop, pasteIsUnsupported, withoutUnsupported } from "@/lib/whiteboard-saver"
 
 import "@excalidraw/excalidraw/index.css"
@@ -812,7 +812,6 @@ function createController(
 ): WhiteboardController {
   const libraryItem = (id: string) => library().find((item) => item.id === id)
   // QUINCY ADDITION #499: canonical (server / authored) index per element, apart from the one the renderer repaired it to.
-  const indexLedger = createIndexLedger()
   const scrollTo = (ids?: readonly string[]) => {
     arm()
     const elements = api.getSceneElements()
@@ -959,7 +958,7 @@ function createController(
       })
     },
     // QUINCY ADDITION #499: other people's elements, merged by Excalidraw's own rule and kept out of Undo.
-    applyRemote: (remote) => {
+    applyRemote: (remote, hold) => {
       // Restore, reconcile and the index repair they do never change a revision (see whiteboard-merge.ts).
       const merged = mergeRemote(
         api.getSceneElementsIncludingDeleted() as unknown as MergeElement[],
@@ -973,7 +972,7 @@ function createController(
               api.getAppState()
             ) as unknown as MergeElement[],
         },
-        indexLedger
+        (element) => hold(element as never)
       )
       api.updateScene({
         elements: merged as never,
@@ -984,11 +983,10 @@ function createController(
       remoteApplied(hashElementsVersion(scene))
       return scene
     },
-    noteTransmitted: (sent) => recordTransmitted(indexLedger, sent),
     adoptRevisions: (arrived) => {
       // The editor's own restore of `initialData` repaired indices and bumped revisions; the server's are what count.
       const scene = api.getSceneElementsIncludingDeleted()
-      adoptArrivedRevisions(scene, arrived as never, indexLedger)
+      adoptArrivedRevisions(scene, arrived as never)
       api.updateScene({
         elements: scene as never,
         captureUpdate: CaptureUpdateAction.NEVER,

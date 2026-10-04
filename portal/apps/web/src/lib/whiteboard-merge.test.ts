@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { createWhiteboardSaver, type SavedElement } from "./whiteboard-saver";
-import { adoptArrivedRevisions, createIndexLedger, mergeRemote, recordTransmitted, type IndexLedger, type MergeFns } from "./whiteboard-merge";
+import { beforeAll, describe, expect, it } from "vitest";
+import { createWhiteboardSaver, type SavedElement, type ServerHold, type WhiteboardSaver } from "./whiteboard-saver";
+import { adoptArrivedRevisions, mergeRemote, type MergeFns } from "./whiteboard-merge";
 
 /**
  * #499: another person's elements are merged into the board by Excalidraw's own `restoreElements` and
@@ -15,8 +15,6 @@ type Fns = { reconcileElements: (l: never, r: never, a: never) => Array<Record<s
 type El = Record<string, unknown> & SavedElement;
 let excalidraw: Fns;
 let fns: MergeFns<El>;
-let ledger: IndexLedger;
-beforeEach(() => { ledger = createIndexLedger(); });
 beforeAll(async () => {
   HTMLCanvasElement.prototype.getContext = (() => ({})) as never;
   excalidraw = (await import("@excalidraw/excalidraw")) as unknown as Fns;
@@ -31,10 +29,11 @@ const find = (scene: readonly El[], id: string) => scene.find((element) => eleme
 const revision = (element: El) => ({ version: element.version, versionNonce: element.versionNonce });
 /** The scene as the editor holds it after `initialData` went through its own restore. */
 const loaded = (raw: Array<Record<string, unknown>>) => excalidraw.restoreElements(raw as never, null) as El[];
-const merge = (scene: El[], remote: Array<Record<string, unknown>>) => mergeRemote(scene, remote as never, fns, ledger);
+const none = (): ServerHold => ({ state: "none" });
+const merge = (scene: El[], remote: Array<Record<string, unknown>>, saver?: WhiteboardSaver) => mergeRemote(scene, remote as never, fns, saver ? (element) => saver.hold(element) : none);
 const recordingSaver = (getElements: () => readonly SavedElement[]) => {
   const sent: SavedElement[][] = [];
-  return { sent, saver: createWhiteboardSaver({ getElements, send: async (batch) => { sent.push([...batch]); }, onTransmit: (batch) => recordTransmitted(ledger, batch) }) };
+  return { sent, saver: createWhiteboardSaver({ getElements, send: async (batch) => { sent.push([...batch]); } }) };
 };
 
 describe("documents the editor's behaviour (why the merge must put revisions back)", () => {
@@ -75,20 +74,20 @@ describe("mergeRemote keeps every revision where it was (#499)", () => {
     expect(scene.some((element) => element.version === 2)).toBe(true);                // documents the repair
     const { sent, saver } = recordingSaver(() => scene);
     saver.seed(raw as unknown as SavedElement[]);
-    adoptArrivedRevisions(scene, raw as never, ledger);
+    adoptArrivedRevisions(scene, raw as never);
     expect(scene.map(revision)).toEqual(raw.map(({ version, versionNonce }) => ({ version, versionNonce })));
     await saver.flush();
     expect(sent.flat()).toEqual([]);
   });
 
-  it("B4: a repaired incoming element is never sent back, and Bob's genuine move over it survives Alice's save", async () => {
+  it("B4: an incoming element is never sent back, and Bob's genuine move over it survives Alice's save", async () => {
     let scene = loaded([rect("a", 1, 5)]);
     const { sent, saver } = recordingSaver(() => scene);
     saver.seed([rect("a", 1, 5)] as unknown as SavedElement[]);
-    scene = merge(scene, [rect("b", 1, 7)]);
+    scene = merge(scene, [rect("b", 1, 7, { index: "a1" })], saver);
     saver.adoptRemote([find(scene, "b")]);
-    expect(find(scene, "b")).toMatchObject({ version: 1, versionNonce: 7, index: "a1" });   // the sender's revision, our index
-    scene = merge(scene, [rect("b", 2, 3, { x: 100 })]);
+    expect(find(scene, "b")).toMatchObject({ version: 1, versionNonce: 7, index: "a1" });   // the sender's revision and index
+    scene = merge(scene, [rect("b", 2, 3, { x: 100, index: "a1" })], saver);
     saver.adoptRemote([find(scene, "b")]);
     expect(find(scene, "b")).toMatchObject({ x: 100, version: 2, versionNonce: 3 });
     await saver.flush();                                                               // Alice's save / Close
@@ -138,79 +137,45 @@ describe("mergeRemote keeps every revision where it was (#499)", () => {
   });
 });
 
-describe("mergeRemote orders by canonical indices, so a tab converges with a fresh load (#499)", () => {
+describe("mergeRemote moves only what is in the way, and never a revision (#499)", () => {
   const ids = (scene: readonly El[]) => scene.map((element) => element.id);
-  /** What a tab opened on the stored rows shows: the editor's restore of rows the server sorted by (index, id). */
-  const fresh = (rows: Array<Record<string, unknown>>) => {
-    const sorted = [...rows].sort((x, y) => (x.index as string) < (y.index as string) ? -1 : (x.index as string) > (y.index as string) ? 1 : (x.id as string) < (y.id as string) ? -1 : 1);
-    const scene = loaded(sorted); adoptArrivedRevisions(scene, sorted as never, createIndexLedger()); return scene;
-  };
 
-  it("B9: shapes b, c, d at one index arriving one at a time end in the order a fresh tab shows, and nothing is sent", async () => {
-    const a = rect("a", 1, 5, { index: "a0" });
-    const incoming = [rect("b", 1, 7, { index: "a1" }), rect("c", 1, 8, { index: "a1" }), rect("d", 1, 9, { index: "a1" })];
-    let scene = loaded([a]); adoptArrivedRevisions(scene, [a] as never, ledger);
-    const { sent, saver } = recordingSaver(() => scene);
-    saver.seed([a] as unknown as SavedElement[]);
-    for (const element of incoming) { scene = merge(scene, [element]); saver.adoptRemote([find(scene, element.id as string)]); }
-    expect(ids(scene)).toEqual(ids(fresh([a, ...incoming])));
-    expect(ids(scene)).toEqual(["a", "b", "c", "d"]);
-    await saver.flush();
-    expect(sent.flat()).toEqual([]);
+  it("an unsent local shape at an incoming index moves just above it; the incoming shape keeps its index and both keep their revisions", () => {
+    const scene = merge(loaded([rect("b", 1, 900, { index: "a0" })]), [rect("a", 1, 5, { index: "a0" })]);
+    expect(find(scene, "a")).toMatchObject({ index: "a0", version: 1, versionNonce: 5 });
+    expect(find(scene, "b")).toMatchObject({ index: "a1", version: 1, versionNonce: 900 });
+    expect(ids(scene)).toEqual(["a", "b"]);
   });
 
-  it("B10: the same shapes arriving in the opposite order still end in (index, id) order", () => {
-    const a = rect("a", 1, 5, { index: "a0" });
-    const incoming = [rect("d", 1, 9, { index: "a1" }), rect("c", 1, 8, { index: "a1" }), rect("b", 1, 7, { index: "a1" })];
-    let scene = loaded([a]); adoptArrivedRevisions(scene, [a] as never, ledger);
-    for (const element of incoming) scene = merge(scene, [element]);
-    expect(ids(scene)).toEqual(ids(fresh([a, ...incoming])));
-    expect(ids(scene)).toEqual(["a", "b", "c", "d"]);
+  it("a shape the server holds keeps its index and a clash moves the OTHER (unsent) shape, whatever the ids", async () => {
+    let scene = loaded([rect("m", 1, 6, { index: "a0" })]);
+    const { saver } = recordingSaver(() => scene);
+    saver.seed([rect("m", 1, 6, { index: "a0" })] as unknown as SavedElement[]);
+    scene = [...scene, ...loaded([rect("0", 1, 9, { index: "a1" })])];                    // unsent, sorts before "m" by id
+    scene = merge(scene, [rect("n", 1, 7, { index: "a1" })], saver);
+    expect(find(scene, "m").index).toBe("a0");
+    expect(find(scene, "n").index).toBe("a1");
+    expect(find(scene, "0")).toMatchObject({ index: "a2", version: 1, versionNonce: 9 });
   });
 
-  it("B11: a genuine local reorder is canonical from then on, and the index it was reordered to is what goes out", async () => {
-    const a = rect("a", 1, 5, { index: "a0" }); const b = rect("b", 1, 6, { index: "a1" });
-    let scene = loaded([a, b]); adoptArrivedRevisions(scene, [a, b] as never, ledger);
-    const { sent, saver } = recordingSaver(() => scene);
-    saver.seed([a, b] as unknown as SavedElement[]);
-    scene = scene.map((element) => (element.id === "a" ? excalidraw.newElementWith(element as never, { index: "a2" }) as El : element));   // bring to front
-    scene = merge(scene, [rect("c", 1, 7, { index: "a1" })]);
-    saver.adoptRemote([find(scene, "c")]);
-    expect(ids(scene)).toEqual(["b", "c", "a"]);
-    await saver.flush();
-    expect(sent.flat()).toEqual([expect.objectContaining({ id: "a", index: "a2", version: 2 })]);
+  it("a local shape SENT at a0 and not yet acknowledged yields provisionally, and goes back to a0 once the incoming shape moves away", async () => {
+    let scene = loaded([rect("e", 1, 50, { index: "a0" })]);
+    const { saver } = recordingSaver(() => scene);
+    await saver.flush();                                                                 // sent at a0, acked by this stub; make it unacked below
+    const pending = createWhiteboardSaver({ getElements: () => scene, send: () => new Promise<void>(() => undefined) });
+    void pending.flush();
+    scene = merge(scene, [rect("i", 1, 3, { index: "a0" })], pending);
+    expect(find(scene, "e").index).not.toBe("a0");
+    expect(find(scene, "e")).toMatchObject({ version: 1, versionNonce: 50 });
+    scene = merge(scene, [rect("i", 2, 4, { index: "a5" })], pending);                   // the server moved i, then processed e at a0
+    expect(find(scene, "e").index).toBe("a0");
+    expect(find(scene, "i").index).toBe("a5");
   });
 
-  it("B12: a shape this tab saved is registered, so receiving a and c afterwards orders a,b,c like a fresh tab, and nothing more is sent", async () => {
-    const b = rect("b", 1, 6, { index: "a0" });
-    let scene = loaded([b]);                                                          // authored here, concurrent with a and c
-    const { sent, saver } = recordingSaver(() => scene);
-    await saver.flush();
-    expect(sent.flat().map((element) => element.id)).toEqual(["b"]);
-    const rows = [rect("a", 1, 5, { index: "a0" }), rect("c", 1, 7, { index: "a0" })];
-    for (const row of rows) { scene = merge(scene, [row]); saver.adoptRemote([find(scene, row.id as string)]); }
-    expect(ids(scene)).toEqual(ids(fresh([b, ...rows])));
-    expect(ids(scene)).toEqual(["a", "b", "c"]);
-    sent.length = 0;
-    await saver.flush();
-    expect(sent.flat()).toEqual([]);
-  });
-
-  it("B13: a genuine edit sent with a repaired index makes that index canonical: a later remote merge orders like a fresh load of the stored rows", async () => {
-    const a = rect("a", 1, 5, { index: "a0" });
-    let scene = loaded([a]); adoptArrivedRevisions(scene, [a] as never, ledger);
-    const { sent, saver } = recordingSaver(() => scene);
-    saver.seed([a] as unknown as SavedElement[]);
-    scene = merge(scene, [rect("b", 1, 6, { index: "a0" })]);                          // b arrives at a's index: the renderer puts it at a1
-    saver.adoptRemote([find(scene, "b")]);
-    const repaired = find(scene, "b").index as string;
-    expect(repaired).not.toBe("a0");
-    scene = scene.map((element) => (element.id === "b" ? excalidraw.newElementWith(element as never, { x: 5 }) as El : element));   // a genuine edit of b
-    await saver.flush();
-    expect(sent.flat()).toEqual([expect.objectContaining({ id: "b", x: 5, index: repaired })]);   // the stored row now has the repaired index
-    const stored = sent.flat()[0]!;
-    const later = rect("0", 1, 9, { index: repaired });                                // a remote shape that ties with b's STORED index, sorting before it by id
-    scene = merge(scene, [later]);
-    expect(ids(scene)).toEqual(ids(fresh([a, stored as never, later])));
+  it("a second incoming shape never takes the index an unmoved local shape holds", () => {
+    const scene = merge(loaded([rect("x", 1, 1, { index: "a0" }), rect("y", 1, 2, { index: "a1" })]), [rect("z", 1, 3, { index: "a0" })]);
+    expect(find(scene, "y").index).toBe("a1");
+    expect(find(scene, "x").index).toBe("a0V");
+    expect(find(scene, "z").index).toBe("a0");
   });
 });

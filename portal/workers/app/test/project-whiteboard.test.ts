@@ -1,5 +1,6 @@
 import { env, evictDurableObject, listDurableObjectIds, runInDurableObject, SELF as workerSelf } from "cloudflare:test";
 import { makeSignature } from "better-auth/crypto";
+import { generateKeyBetween } from "fractional-indexing";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { WhiteboardServerMessage } from "@quincy/shared";
 import { createAuth } from "../src/auth";
@@ -65,7 +66,11 @@ async function connect(projectId: string, options: Options = {}): Promise<Client
     drain: async (ms = 150) => { await new Promise((resolve) => setTimeout(resolve, ms)); return queue.splice(0); },
   };
 }
-const element = (id: string, version: number, versionNonce: number, extra: Record<string, unknown> = {}) => ({ id, type: "rectangle", version, versionNonce, isDeleted: false, x: 0, y: 0, ...extra });
+// #499: the server keeps stored indices unique, so an element with no index (or a taken one) is re-keyed and sent back to its sender. Excalidraw always
+// gives an element an index; each id here gets its own, in first-use order, unless a test passes one.
+const defaultIndexes = new Map<string, string>(); let lastDefaultIndex: string | null = null;
+const defaultIndex = (id: string) => { let key = defaultIndexes.get(id); if (!key) { key = generateKeyBetween(lastDefaultIndex, null); lastDefaultIndex = key; defaultIndexes.set(id, key); } return key; };
+const element = (id: string, version: number, versionNonce: number, extra: Record<string, unknown> = {}) => ({ id, type: "rectangle", version, versionNonce, isDeleted: false, x: 0, y: 0, index: defaultIndex(id), ...extra });
 const batch = (seq: number, ...elements: unknown[]) => ({ type: "elements", seq, elements });
 async function initOf(projectId: string, options: Options = {}) { const client = await connect(projectId, options); const init = await client.next(); client.ws.close(1000); return init as Extract<WhiteboardServerMessage, { type: "init" }>; }
 async function save(client: Client, seq: number, ...elements: unknown[]) { client.send(batch(seq, ...elements)); expect(await client.next()).toEqual({ type: "ack", seq }); }
@@ -198,10 +203,13 @@ describe("server-side write guards", () => {
   it("returns elements in Excalidraw's fractional index order, so send-to-back survives a reload", async () => {
     const client = await connect(orderProject, { who: "member" });
     await client.next();
-    await save(client, 1, element("a", 1, 1, { index: "a1" }), element("b", 1, 2, { index: "a2" }), element("c", 1, 3, { index: "a3" }), element("noindex", 1, 4), element("bad", 1, 5, { index: 7 }));
+    // An element with no usable index is given one at the end of the board (#499), and sent back to its sender before the ack.
+    client.send(batch(1, element("a", 1, 1, { index: "a1" }), element("b", 1, 2, { index: "a2" }), element("c", 1, 3, { index: "a3" }), { ...element("noindex", 1, 4), index: undefined }, element("bad", 1, 5, { index: 7 })));
+    expect(await client.next()).toMatchObject({ type: "elements", elements: [{ id: "noindex", version: 2 }, { id: "bad", version: 2 }] });
+    expect(await client.next()).toEqual({ type: "ack", seq: 1 });
     await save(client, 2, element("c", 2, 9, { index: "Zz" })); // sent to back
     client.ws.close(1000);
-    expect((await initOf(orderProject)).elements.map((entry) => entry.id)).toEqual(["c", "a", "b", "bad", "noindex"]);
+    expect((await initOf(orderProject)).elements.map((entry) => entry.id)).toEqual(["c", "a", "b", "noindex", "bad"]);
   });
 
   it("purges twice without error and still serves an empty board afterwards", async () => {
@@ -760,5 +768,111 @@ describe("write authorization against refreshAccess (#499, epoch at invocation)"
     await stubFor(project).refreshAccess();                                          // and the queue still runs later refreshes
     expect(await a.client.next()).toEqual({ type: "mode", mode: "view" });
     a.client.ws.close(1000);
+  });
+});
+
+// ----------------------------------------------------------------------------------------------------------------------
+// #499: the server guarantees unique, valid stored indices (the model test runs the same rules, `whiteboard-index.ts`, over
+// a Map; these pin the SQLite adapter and the Durable Object around it).
+const SERVER_NONCE = 2 ** 31 - 1;
+const BASE62 = /^[0-9A-Za-z]+$/;
+const indexesOf = (projectId: string) => runInDurableObject(stubFor(projectId), async (_instance, state) => state.storage.sql.exec("SELECT id, json_extract(json, '$.index') AS idx, version, version_nonce FROM elements ORDER BY id").toArray().map((row) => ({ id: row.id as string, index: row.idx as unknown, version: row.version as number, nonce: row.version_nonce as number })));
+const expectUnique = (rows: Array<{ index: unknown }>) => { const indices = rows.map((row) => row.index); expect(indices.every((index) => typeof index === "string" && BASE62.test(index))).toBe(true); expect(new Set(indices).size).toBe(indices.length); };
+const plant = (projectId: string, rows: Array<Record<string, unknown>>) => runInDurableObject(stubFor(projectId), async (_instance, state) => { for (const row of rows) state.storage.sql.exec("INSERT INTO elements (id, version, version_nonce, is_deleted, json, updated_at) VALUES (?, ?, ?, 0, ?, ?)", row.id as string, row.version as number, row.versionNonce as number, JSON.stringify(row), Date.now()); });
+
+describe("stored indices are unique (#499)", () => {
+  it("re-keys an element that takes a stored index: its sender hears the stored copy before its ack, the others get the stored form", async () => {
+    const project = await newProject();
+    const a = await join(project, "member"); const b = await join(project, "member2");
+    a.client.send(batch(1, element("a", 1, 10, { index: "a0" }))); expect(await a.client.next()).toEqual({ type: "ack", seq: 1 }); await b.client.next();
+    b.client.send(batch(1, element("b", 1, 20, { index: "a0", x: 7 })));
+    const rewritten = { id: "b", index: "a1", x: 7, version: 2, versionNonce: SERVER_NONCE };
+    expect(await b.client.next()).toMatchObject({ type: "elements", elements: [rewritten] });
+    expect(await b.client.next()).toEqual({ type: "ack", seq: 1 });
+    expect(await a.client.next()).toMatchObject({ type: "elements", elements: [rewritten] });          // peers receive what was STORED, not what was sent
+    expect(await indexesOf(project)).toEqual([expect.objectContaining({ id: "a", index: "a0" }), expect.objectContaining({ id: "b", index: "a1", version: 2, nonce: SERVER_NONCE })]);
+    a.client.ws.close(1000); b.client.ws.close(1000);
+  });
+
+  it("keeps the first of several elements that collide inside one batch and re-keys the rest in order", async () => {
+    const project = await newProject();
+    const a = await join(project, "member"); const b = await join(project, "member2");
+    a.client.send(batch(1, element("x", 1, 1, { index: "a0" }), element("y", 1, 2, { index: "a0" }), element("z", 1, 3, { index: "a0" })));
+    expect(await a.client.next()).toMatchObject({ type: "elements", elements: [{ id: "y", index: "a1", version: 2 }, { id: "z", index: "a0V", version: 2 }] });
+    expect(await a.client.next()).toEqual({ type: "ack", seq: 1 });
+    expect(await b.client.next()).toMatchObject({ elements: [{ id: "x", index: "a0", version: 1 }, { id: "y", index: "a1" }, { id: "z", index: "a0V" }] });
+    expectUnique(await indexesOf(project));
+    a.client.ws.close(1000); b.client.ws.close(1000);
+  });
+
+  it("an element moving off an index frees it for another element in the same batch", async () => {
+    const project = await newProject();
+    const a = await join(project, "member");
+    await save(a.client, 1, element("m", 1, 1, { index: "a0" }));
+    await save(a.client, 2, element("m", 2, 2, { index: "a5" }), element("n", 1, 3, { index: "a0" }));    // n takes what m just left: nothing is re-keyed
+    expect((await indexesOf(project)).map((row) => [row.id, row.index, row.version])).toEqual([["m", "a5", 2], ["n", "a0", 1]]);
+    a.client.ws.close(1000);
+  });
+
+  it("a re-keyed row loses every version tie: the sender's genuine edit at the same version wins and is re-keyed again, content kept", async () => {
+    const project = await newProject();
+    const a = await join(project, "member");
+    await save(a.client, 1, element("a", 1, 10, { index: "a0" }));
+    a.client.send(batch(2, element("b", 1, 20, { index: "a0", x: 1 })));
+    expect(await a.client.next()).toMatchObject({ elements: [{ id: "b", version: 2, versionNonce: SERVER_NONCE, x: 1 }] }); await a.client.next();
+    // The sender edited b to v2 before it saw the correction: its nonce is lower than the server's, so it wins the tie.
+    a.client.send(batch(3, element("b", 2, SERVER_NONCE - 1, { index: "a0", x: 2 })));
+    expect(await a.client.next()).toMatchObject({ elements: [{ id: "b", version: 3, versionNonce: SERVER_NONCE, x: 2, index: "a1" }] });
+    expect(await a.client.next()).toEqual({ type: "ack", seq: 3 });
+    expect(await storedRow(project, "b")).toMatchObject({ x: 2, version: 3 });
+    // An edit that ties on version AND carries the server's nonce is no better than the row it ties with: nothing changes.
+    await save(a.client, 4, element("b", 3, SERVER_NONCE, { index: "a1", x: 99 }));
+    expect(await storedRow(project, "b")).toMatchObject({ x: 2, version: 3 });
+    a.client.ws.close(1000);
+  });
+
+  it("stores a missing, malformed or empty index as a valid unique one and keeps the element's content", async () => {
+    const project = await newProject();
+    const a = await join(project, "member");
+    a.client.send(batch(1, { ...element("m1", 1, 1, { x: 11 }), index: undefined }, element("m2", 1, 2, { x: 12, index: "!!" }), element("m3", 1, 3, { x: 13, index: "a0 " }), element("m4", 1, 4, { x: 14, index: 7 }), element("m5", 1, 5, { x: 15, index: "" }), element("m6", 1, 6, { x: 16, index: "a00" })));
+    const back = await a.client.next() as { type: "elements"; elements: Array<Record<string, unknown>> };
+    expect(back.elements.map((entry) => [entry.id, entry.x, entry.version])).toEqual([["m1", 11, 2], ["m2", 12, 2], ["m3", 13, 2], ["m4", 14, 2], ["m5", 15, 2], ["m6", 16, 2]]);
+    expect(await a.client.next()).toEqual({ type: "ack", seq: 1 });
+    expectUnique(await indexesOf(project));
+    a.client.ws.close(1000);
+  });
+
+  it("re-keys a container above where it was and keeps it below its bound text (they may no longer sit side by side)", async () => {
+    const project = await newProject();
+    const a = await join(project, "member");
+    await save(a.client, 1, element("s1", 1, 1, { index: "a0" }), element("s2", 1, 2, { index: "a1" }));
+    a.client.send(batch(2, element("box", 1, 3, { index: "a0", boundElements: [{ id: "label", type: "text" }] }), element("label", 1, 4, { index: "a1", containerId: "box" })));
+    await a.client.next(); expect(await a.client.next()).toEqual({ type: "ack", seq: 2 });
+    const rows = await runInDurableObject(stubFor(project), async (_instance, state) => state.storage.sql.exec("SELECT json FROM elements").toArray().map((row) => JSON.parse(row.json as string) as Record<string, unknown>));
+    const box = rows.find((row) => row.id === "box")!; const label = rows.find((row) => row.id === "label")!;
+    expect(box.boundElements).toEqual([{ id: "label", type: "text" }]); expect(label.containerId).toBe("box");
+    expect(box.index as string < (label.index as string)).toBe(true);
+    expectUnique(await indexesOf(project));
+    a.client.ws.close(1000);
+  });
+
+  it("normalises a table written before indices were unique when the object wakes, and tells the sockets that survived", async () => {
+    const project = await newProject();
+    const a = await join(project, "member");
+    await plant(project, [{ ...element("p", 1, 1), index: "a0" }, { ...element("q", 1, 2), index: "a0" }, { ...element("r", 1, 3), index: undefined }, { ...element("s", 1, 4), index: "bad index" }, { ...element("t", 1, 5), index: "a1" }]);
+    await evictDurableObject(stubFor(project));
+    const b = await join(project, "member2");                                                            // the wake: normalises before serving this init
+    expectUnique(b.init.elements as Array<{ index: unknown }>);
+    expect(b.init.elements.map((entry) => entry.id)).toContain("p");
+    const told = await a.client.next() as { type: "elements"; elements: Array<Record<string, unknown>> };
+    expect(told.type).toBe("elements");
+    expect(told.elements.map((entry) => entry.id).sort()).toEqual(["q", "r", "s"]);                      // p kept a0 (lowest id), t was already unique
+    expect(told.elements.every((entry) => entry.version === 2 && entry.versionNonce === SERVER_NONCE)).toBe(true);
+    expectUnique(await indexesOf(project));
+    expect(await a.client.drain()).toEqual([]);
+    // An already-unique table is a scan, not a rewrite: the next wake changes and announces nothing.
+    await evictDurableObject(stubFor(project));
+    const c = await join(project, "member"); expect(await a.client.drain()).toEqual([]);
+    a.client.ws.close(1000); b.client.ws.close(1000); c.client.ws.close(1000);
   });
 });

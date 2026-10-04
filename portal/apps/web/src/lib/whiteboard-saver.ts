@@ -1,5 +1,10 @@
 import { WHITEBOARD_MAX_ELEMENTS_PER_MESSAGE, WHITEBOARD_MAX_MESSAGE_BYTES } from "@quincy/shared";
 
+/** What the server holds of one scene element: exactly this revision, acknowledged ("stored": its index is the server's);
+ * this revision, sent and not yet acknowledged ("in-flight": the index it was SENT with is the one the server will keep,
+ * unless it answers with a re-keyed copy first); or nothing of this revision ("none": never sent, or edited since). */
+export type ServerHold = { state: "stored" } | { state: "in-flight"; index: string | undefined } | { state: "none" };
+
 /** The part of an Excalidraw element the saver needs; everything else is passed through untouched. */
 export type SavedElement = { id: string; version: number; versionNonce: number } & Record<string, unknown>;
 
@@ -9,6 +14,9 @@ export type WhiteboardSaver = {
   /** #499: records elements that arrived from another person (and were applied to the scene) as stored AND transmitted
    * at exactly the version they came in, so they are never echoed back or re-sent at a higher version. */
   adoptRemote: (elements: readonly SavedElement[]) => void;
+  /** #499: what the server holds, or is about to hold, of this scene element (see `ServerHold`). A merge must not move the
+   * index of an element the server holds, and must put back one it was sent with. */
+  hold: (element: SavedElement) => ServerHold;
   /** Sends every element whose version differs from what is stored or in flight. Rejects if any batch fails. */
   flush: () => Promise<void>;
 };
@@ -65,12 +73,9 @@ const keyOf = (element: SavedElement) => `${element.version}:${element.versionNo
  * stored only after its own ack, keyed by the SCENE element it came from, and batches respect the
  * protocol's element-count and byte caps.
  */
-export function createWhiteboardSaver({ getElements, send, onTransmit }: {
+export function createWhiteboardSaver({ getElements, send }: {
   getElements: () => readonly SavedElement[];
   send: (batch: readonly SavedElement[]) => Promise<void>;
-  /** #499: called at transmit time with everything about to be sent (before any await), so the board can record the
-   * indices the server is about to store. */
-  onTransmit?: (elements: readonly SavedElement[]) => void;
 }): WhiteboardSaver {
   const floor = new Map<string, number>();
   /** The scene key last acknowledged per id (a synthetic tombstone records its own key). */
@@ -78,7 +83,7 @@ export function createWhiteboardSaver({ getElements, send, onTransmit }: {
   /** Last form transmitted or acked per id; the base of a synthetic tombstone. */
   const known = new Map<string, SavedElement>();
   /** The scene key last transmitted per id and the version it went out at, so a retry is idempotent. */
-  const transmitted = new Map<string, { key: string; version: number }>();
+  const transmitted = new Map<string, { key: string; version: number; index?: string }>();
   let active: Promise<void> | null = null;
 
   const batchesOf = (changed: readonly SavedElement[]): number[][] => {
@@ -126,9 +131,8 @@ export function createWhiteboardSaver({ getElements, send, onTransmit }: {
     for (const { element, sceneKey } of outgoing) {
       floor.set(element.id, Math.max(floor.get(element.id) ?? 0, element.version));
       known.set(element.id, element);
-      transmitted.set(element.id, { key: sceneKey, version: element.version });
+      transmitted.set(element.id, { key: sceneKey, version: element.version, index: typeof element.index === "string" ? element.index : undefined });
     }
-    onTransmit?.(outgoing.map(({ element }) => element));
     const sends = batchesOf(outgoing.map(({ element }) => element)).map(async (indexes) => {
       await send(indexes.map((index) => outgoing[index]!.element));
       // A remote edit adopted while this batch was in flight is newer than what this ack confirms: it stays recorded.
@@ -155,6 +159,12 @@ export function createWhiteboardSaver({ getElements, send, onTransmit }: {
         floor.set(element.id, Math.max(floor.get(element.id) ?? 0, element.version));
         transmitted.set(element.id, { key, version: element.version });
       }
+    },
+    hold(element) {
+      const key = keyOf(element);
+      const last = transmitted.get(element.id);
+      if (stored.get(element.id) === key && (last === undefined || last.key === key)) return { state: "stored" };
+      return last?.key === key ? { state: "in-flight", index: last.index } : { state: "none" };
     },
     flush() {
       // One flush at a time: a later one joins the earlier save (and its failure) before it diffs.

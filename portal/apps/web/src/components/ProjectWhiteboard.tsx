@@ -66,7 +66,6 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
     let socket: WhiteboardSocket | null = null;
     const saver = createWhiteboardSaver({
       getElements: () => elementsRef.current,
-      onTransmit: (sent) => controllerRef.current?.noteTransmitted(sent),
       send: (batch) => socket?.send(batch) ?? Promise.reject(new Error("The whiteboard is not connected.")),
     });
     saverRef.current = saver;
@@ -92,7 +91,7 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
     const applyRemote = (remote: Array<Record<string, unknown>>) => {
       const controller = controllerRef.current;
       if (!controller) { pendingRemote.push(remote); return; }
-      const scene = controller.applyRemote(remote) as unknown as SavedElement[];
+      const scene = controller.applyRemote(remote, (element) => saver.hold(element as unknown as SavedElement)) as unknown as SavedElement[];
       elementsRef.current = scene;                           // before the editor's own change event, so nothing looks "gone"
       saver.adoptRemote(appliedFromRemote(remote as unknown as SavedElement[], scene));
       // A remote element the scene did not take, though it beats the scene's copy on version, was skipped for the edit in

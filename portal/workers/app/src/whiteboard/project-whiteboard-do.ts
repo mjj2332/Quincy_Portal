@@ -15,7 +15,7 @@ import {
 import type { Env, SessionUser } from "../env";
 import { hasProjectCollaborationAccessForUser } from "../middleware/capability";
 import { PresenceBook, decodeName, type Attachment } from "./presence";
-import { clearElements, ensureSchema, readElements, reconcile } from "./scene-store";
+import { clearElements, ensureSchema, normaliseIndices, readElements, reconcile } from "./scene-store";
 
 /** Trusted headers the app worker's route sets after it has authenticated and authorised the
  * caller. The route builds a fresh Request, so a browser can never inject these. */
@@ -44,9 +44,9 @@ type Access = { exists: boolean; archived: boolean; access: boolean };
  * Excalidraw's reconciliation) and `presence.ts` (who is here and where their cursor is). This
  * object is the dispatch and the broadcast.
  *
- * Relay (#499): after a batch commits, the elements that won go to every OTHER socket, and the
- * stored rows that beat the sender's elements go back to the sender BEFORE its `ack`. Nothing is
- * echoed to the sender.
+ * Relay (#499): after a batch commits, the elements that won go to every OTHER socket (in the form that was stored: a
+ * shape whose index was taken is re-keyed by the server, see `whiteboard-index.ts`), and the stored rows that beat the
+ * sender's elements, with its own re-keyed ones, go back to the sender BEFORE its `ack`. Nothing else is echoed to it.
  *
  * Access (#499): the Project's archive/restore and membership routes call `refreshAccess()`, which
  * rereads the Project and each connected user's current access and then switches sockets to
@@ -74,7 +74,13 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    ctx.blockConcurrencyWhile(async () => ensureSchema(this.ctx.storage));
+    // Before anything is served or accepted, a table written before indices were unique is brought to the invariant, and
+    // every socket that survived the wake (hibernation keeps them) is told what changed. An already-unique table is a scan.
+    ctx.blockConcurrencyWhile(async () => {
+      ensureSchema(this.ctx.storage);
+      const changed = normaliseIndices(this.ctx.storage);
+      if (changed.length > 0) this.broadcast({ type: "elements", elements: changed }, "");
+    });
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -143,11 +149,11 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
     }
     const elements = z.array(whiteboardElementSchema).safeParse(envelope.data.elements);
     if (!elements.success) return this.send(ws, { type: "rejected", seq, reason: "invalid" });
-    const serialised = elements.data.map((element) => JSON.stringify(element));
-    if (serialised.some((text) => encoder.encode(text).byteLength > WHITEBOARD_MAX_ELEMENT_BYTES)) return this.send(ws, { type: "rejected", seq, reason: "invalid" });
-    const { winners, losers } = reconcile(this.ctx.storage, elements.data, serialised);
+    if (elements.data.some((element) => encoder.encode(JSON.stringify(element)).byteLength > WHITEBOARD_MAX_ELEMENT_BYTES)) return this.send(ws, { type: "rejected", seq, reason: "invalid" });
+    const { winners, losers, rewritten } = reconcile(this.ctx.storage, elements.data);
     if (winners.length > 0) this.broadcast({ type: "elements", elements: winners }, attachment.sessionId);
-    if (losers.length > 0) this.send(ws, { type: "elements", elements: losers });
+    const back = [...losers, ...rewritten];
+    if (back.length > 0) this.send(ws, { type: "elements", elements: back });
     this.send(ws, { type: "ack", seq });
   }
 
