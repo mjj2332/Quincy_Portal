@@ -8,6 +8,9 @@
 // 3. `text-muted-foreground` -> `text-foreground-secondary` (the AA role; `muted-foreground` is 3.13:1),
 //    `dark:` pair removed (`reui-skin.guard`).
 // 4. `data-testid`s on the nav and panel: Quincy-owned test hooks.
+// 5. Rows: `Button`'s uppercase/wide tracking/text-xs are reset (`normal-case tracking-normal` + --text-sm) so
+//    headings read like dropdown items; the focus ring is inset (`outline-offset-[-2px]`) so the scroller
+//    cannot clip it. Divergence from the vendored row styling.
 // NOT vendored: `rich-text-outline-node.tsx`. `richTextOutline` is a STORED atom node (a Contents
 // block); the stored contract has none, so the outline here is the derived rail only.
 import {
@@ -298,7 +301,7 @@ export function RichTextOutlineList({
           onFocus={() => setFocused(index)}
           onClick={() => onSelect(index)}
           className={cn(
-            "text-foreground-secondary aria-[current=location]:bg-muted aria-[current=location]:text-foreground w-full justify-start font-normal aria-[current=location]:font-medium",
+            "text-foreground-secondary aria-[current=location]:bg-muted aria-[current=location]:text-foreground w-full justify-start text-[length:var(--text-sm)] font-normal tracking-normal normal-case focus-visible:outline-offset-[-2px] aria-[current=location]:font-medium",
             LIST_INDENT[entry.depth]
           )}
         >
@@ -356,7 +359,7 @@ export function RichTextOutlineRail({
           outline={outline}
           activeIndex={activeIndex}
           onSelect={onSelect}
-          className="max-h-80 overflow-y-auto p-0.5"
+          className="max-h-80 overflow-y-auto"
         />
       </div>
     </nav>
