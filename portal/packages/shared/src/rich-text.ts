@@ -150,8 +150,9 @@ function parseParagraph(node: Record<string, unknown>, profile: RichTextProfile)
   };
 }
 
-function spanOf(value: unknown, label: string): number {
-  if (!Number.isInteger(value) || (value as number) < 1 || (value as number) > RICH_TEXT_TABLE_MAX_COLUMNS) throw new RichTextValidationError(`${label} span is invalid`);
+/** A column span is bounded by the column limit, a row span by the row limit. */
+function spanOf(value: unknown, label: string, max: number): number {
+  if (!Number.isInteger(value) || (value as number) < 1 || (value as number) > max) throw new RichTextValidationError(`${label} span is invalid`);
   return value as number;
 }
 
@@ -182,8 +183,8 @@ function parseTable(node: Record<string, unknown>, profile: RichTextProfile): Ri
       if (cell.attrs !== undefined) {
         const raw = record(cell.attrs, "Table cell attributes");
         onlyKeys(raw, ["colspan", "rowspan"], "Table cell attributes");
-        colspan = raw.colspan === undefined ? 1 : spanOf(raw.colspan, "Column");
-        rowspan = raw.rowspan === undefined ? 1 : spanOf(raw.rowspan, "Row");
+        colspan = raw.colspan === undefined ? 1 : spanOf(raw.colspan, "Column", RICH_TEXT_TABLE_MAX_COLUMNS);
+        rowspan = raw.rowspan === undefined ? 1 : spanOf(raw.rowspan, "Row", RICH_TEXT_TABLE_MAX_ROWS);
         if (colspan !== 1 || rowspan !== 1) attrs = { colspan, rowspan };
       }
       skipCovered();

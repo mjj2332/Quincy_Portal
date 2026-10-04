@@ -316,6 +316,17 @@ describe("document profile (#492)", () => {
     expect(() => parseRichTextDoc(table([{ type: "tableRow", content: [] }]), NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
   });
 
+  it("bounds rowspan by the 50-row limit and colspan by the 12-column limit", () => {
+    const table = (rows: unknown[]) => ({ type: "doc", content: [{ type: "table", content: rows }] });
+    const tall = (n: number, span: number) => table([
+      { type: "tableRow", content: [cell("a", { attrs: { colspan: 1, rowspan: span } })] },
+      ...Array.from({ length: n - 1 }, () => ({ type: "tableRow", content: [] })),
+    ]);
+    expect(parseRichTextDoc(tall(13, 13), NOTICE_RICH_TEXT_PROFILE)).toEqual(tall(13, 13));
+    expect(() => parseRichTextDoc(tall(50, 51), NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+    expect(() => parseRichTextDoc(table([{ type: "tableRow", content: [cell("a", { attrs: { colspan: 13, rowspan: 1 } })] }]), NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+  });
+
   it("rejects unknown alignment and highlight values", () => {
     expect(() => parseRichTextDoc({ type: "doc", content: [para("x", { attrs: { textAlign: "left" } })] }, NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
     expect(() => parseRichTextDoc({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "x", marks: [{ type: "highlight", color: "red" }] }] }] }, NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);

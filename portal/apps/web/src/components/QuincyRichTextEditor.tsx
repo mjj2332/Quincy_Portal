@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
+import { exitSuggestion } from "@tiptap/suggestion";
 import { ChevronDownIcon, ListChecksIcon, ListIcon, ListOrderedIcon, Redo2Icon, TableIcon, Undo2Icon } from "lucide-react";
 import { RICH_TEXT_JSON_MAX_BYTES, richTextDocByteLength, richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { cn } from "../lib/utils";
@@ -27,7 +28,7 @@ import { RichTextAlignMenu } from "./reui/rich-text-editor/rich-text-align";
 import { RichTextHighlightPopover } from "./reui/rich-text-editor/rich-text-highlight";
 import { RichTextLinkPopover } from "./reui/rich-text-editor/rich-text-link";
 import { RichTextOutlineRail, scrollToRichTextHeading, useRichTextActiveHeading, useRichTextOutline } from "./reui/rich-text-editor/rich-text-outline";
-import { RICH_TEXT_BASIC_SLASH_ITEMS, RichTextSlashCommand } from "./reui/rich-text-editor/rich-text-slash-menu";
+import { RICH_TEXT_BASIC_SLASH_ITEMS, RICH_TEXT_SLASH_KEY, RichTextSlashCommand } from "./reui/rich-text-editor/rich-text-slash-menu";
 import { useRichTextState } from "./reui/rich-text-editor/rich-text-state";
 import { RICH_TEXT_TABLE_SLASH_ITEM, RichTextTableBubble } from "./reui/rich-text-editor/rich-text-table";
 import {
@@ -208,7 +209,11 @@ export function QuincyRichTextEditor({
   useEffect(() => {
     if (!editor) return;
     const dom = editor.view.dom;
-    const onBlur = () => setMentionDismissed(true);
+    const onBlur = () => {
+      setMentionDismissed(true);
+      // The slash menu only exists on the document preset; the other preset has no such plugin state.
+      if (RICH_TEXT_SLASH_KEY.getState(editor.view.state)) exitSuggestion(editor.view, RICH_TEXT_SLASH_KEY);
+    };
     dom.addEventListener("blur", onBlur);
     return () => dom.removeEventListener("blur", onBlur);
   }, [editor]);

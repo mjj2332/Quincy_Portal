@@ -8,7 +8,9 @@
 //    `styles/app.css`. `pink` and `violet` are gone: `parseRichTextDoc` would reject them.
 // 4. The pressed toggle reads `bg-primary` / `--accent-on`, as `RichTextToggle` does (#491 edit 3).
 // 5. `data-testid="rich-text-highlight"` on the trigger, a Quincy-owned test hook.
-import { useState } from "react"
+// 6. `finalFocus` depends on the close reason (as the link popover): applying a colour -> the editor,
+//    Escape / outside dismissal -> the trigger. Colour buttons are 44px at <=721px.
+import { useRef, useState } from "react"
 import type { RichTextHighlightColor } from "@quincy/shared"
 import type { Editor } from "@tiptap/react"
 import { cn } from "@/lib/utils"
@@ -57,6 +59,8 @@ export function RichTextHighlightPopover({
   state,
 }: RichTextHighlightPopoverProps) {
   const [open, setOpen] = useState(false)
+  // Only applying a colour moves focus to the editor; Escape / outside dismissal returns it to the trigger.
+  const appliedRef = useRef(false)
 
   function apply(color: HighlightColorId | null) {
     const chain = editor?.chain().focus()
@@ -67,11 +71,18 @@ export function RichTextHighlightPopover({
       chain?.unsetHighlight().run()
     }
 
+    appliedRef.current = true
     setOpen(false)
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        if (next) appliedRef.current = false
+        setOpen(next)
+      }}
+    >
       <Tooltip>
         {/* The span carries the tooltip, so the trigger keeps its own props. */}
         <TooltipTrigger render={<span className="flex" />}>
@@ -101,7 +112,7 @@ export function RichTextHighlightPopover({
         align="start"
         aria-label="Highlight color"
         className="w-auto"
-        finalFocus={() => editor?.view.dom ?? true}
+        finalFocus={() => (appliedRef.current ? (editor?.view.dom ?? true) : true)}
       >
         <div className="flex items-center gap-1">
           {HIGHLIGHT_COLORS.map((color) => {
@@ -112,6 +123,7 @@ export function RichTextHighlightPopover({
                 key={color.id}
                 variant="ghost"
                 size="icon-sm"
+                className="max-[721px]:size-11"
                 aria-label={`${color.label} highlight`}
                 aria-pressed={selected}
                 onClick={() => apply(color.id)}
@@ -137,6 +149,7 @@ export function RichTextHighlightPopover({
           <Button
             variant="ghost"
             size="icon-sm"
+            className="max-[721px]:size-11"
             aria-label="Remove highlight"
             disabled={state.highlight === null}
             onClick={() => apply(null)}

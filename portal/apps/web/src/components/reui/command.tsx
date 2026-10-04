@@ -7,6 +7,10 @@
 //    back from the registry if a palette arrives.
 // 3. `rounded-xl!` / `rounded-sm` / `rounded-lg!` removed: Quincy's radius is square (ADR 0002 family).
 // 4. `no-scrollbar` (not a utility in this Tailwind) removed from `CommandList`.
+// 6. Selected styling keys on `data-[selected=true]` (and `group-data-[selected=true]`), not the bare
+//    `data-selected` variant: cmdk 1.x sets `data-selected="false"` on inactive items, and the bare
+//    variant matches any present value, so every row painted as selected. A Quincy divergence from
+//    the registry; `command.test.ts` holds the class contract.
 // 5. The `CommandItem` trailing `CheckIcon` is dropped: nothing here is a multi-select, and it only
 //    ever painted on `data-checked`.
 import * as React from "react"
@@ -97,7 +101,7 @@ function CommandItem({
     <CommandPrimitive.Item
       data-slot="command-item"
       className={cn(
-        "group/command-item relative flex cursor-default items-center gap-2 px-2 py-1.5 text-sm outline-hidden select-none data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 data-selected:bg-muted data-selected:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 data-selected:*:[svg]:text-foreground",
+        "group/command-item relative flex cursor-default items-center gap-2 px-2 py-1.5 text-sm outline-hidden select-none data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 data-[selected=true]:bg-muted data-[selected=true]:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 data-[selected=true]:*:[svg]:text-foreground",
         className
       )}
       {...props}
@@ -115,7 +119,7 @@ function CommandShortcut({
     <span
       data-slot="command-shortcut"
       className={cn(
-        "ml-auto text-xs tracking-widest text-foreground-secondary group-data-selected/command-item:text-foreground",
+        "ml-auto text-xs tracking-widest text-foreground-secondary group-data-[selected=true]/command-item:text-foreground",
         className
       )}
       {...props}

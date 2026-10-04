@@ -6,7 +6,7 @@
 // 2. The trigger reads `state.align` / `state.canAlign` (document-only: the composer has no
 //    `TextAlign`, so `setTextAlign` does not exist there and the snapshot never calls it).
 // 3. `data-testid="rich-text-align-menu"` on the trigger, a Quincy-owned test hook.
-import type { ReactNode } from "react"
+import { useRef, type ReactNode } from "react"
 import type { Editor } from "@tiptap/react"
 import { AlignCenterIcon, AlignJustifyIcon, AlignLeftIcon, AlignRightIcon, ChevronDownIcon } from "lucide-react"
 
@@ -52,9 +52,11 @@ function MenuShortcut({ keys }: { keys: readonly string[] }) {
 }
 
 export function RichTextAlignMenu({ editor, state, disabled = false }: { editor: Editor | null; state: RichTextSnapshot; disabled?: boolean }) {
+  // Only choosing an alignment moves focus to the editor; Escape / outside dismissal returns it to the trigger.
+  const appliedRef = useRef(false)
   // Two glyphs and no label read as an icon button, so the text inset is trimmed.
   return (
-    <DropdownMenu>
+    <DropdownMenu onOpenChange={(open) => { if (open) appliedRef.current = false }}>
       <Tooltip>
         {/* The span carries the tooltip, so the trigger keeps its own props. */}
         <TooltipTrigger render={<span className="flex shrink-0" />}>
@@ -77,13 +79,13 @@ export function RichTextAlignMenu({ editor, state, disabled = false }: { editor:
         </TooltipTrigger>
         <TooltipContent>Alignment</TooltipContent>
       </Tooltip>
-      <DropdownMenuContent align="start" className="w-auto" finalFocus={() => editor?.view.dom ?? true}>
+      <DropdownMenuContent align="start" className="w-auto" finalFocus={() => (appliedRef.current ? (editor?.view.dom ?? true) : true)}>
         <DropdownMenuGroup>
           <DropdownMenuLabel>Alignment</DropdownMenuLabel>
           <DropdownMenuRadioGroup
             value={state.align}
             onValueChange={(value) => {
-              if (isAlign(value)) editor?.chain().focus().setTextAlign(value).run()
+              if (isAlign(value)) { appliedRef.current = true; editor?.chain().focus().setTextAlign(value).run() }
             }}
           >
             {RICH_TEXT_ALIGNS.map((align) => (

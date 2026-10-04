@@ -198,6 +198,7 @@ export function RichTextTableBubble({
                   <Button
                     variant="ghost"
                     size="icon-sm"
+                    className="max-[721px]:size-11"
                     aria-label="Delete"
                     data-toolbar-item=""
                   />

@@ -4,7 +4,7 @@ import { Editor, type JSONContent } from "@tiptap/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NOTICE_RICH_TEXT_PROFILE, parseRichTextDoc, type RichTextDoc, type RichTextInline, type RichTextTaskItem, type RichTextTableCell, type RichTextTaskList } from "@quincy/shared";
 import StarterKit from "@tiptap/starter-kit";
-import { createRichTextEditorExtensions, shouldBlockListIndent, tiptapToRichTextDoc, toTiptap } from "../lib/rich-text-tiptap";
+import { createRichTextEditorExtensions, exceedsTableLimit, shouldBlockListIndent, tableDimensions, tiptapToRichTextDoc, toTiptap } from "../lib/rich-text-tiptap";
 import { QuincyRichTextEditor } from "./QuincyRichTextEditor";
 import { RichTextContent } from "./RichTextContent";
 
@@ -1103,6 +1103,18 @@ describe("QuincyRichTextEditor document preset (#492)", () => {
     } finally { tiptap.destroy(); }
   });
 
+  it("counts a rowspan against the row limit, agreeing with the server's bound", () => {
+    const tall: RichTextDoc = { type: "doc", content: [{ type: "table", content: [
+      { type: "tableRow", content: [{ type: "tableCell", attrs: { colspan: 1, rowspan: 13 }, content: [{ type: "paragraph", content: [{ type: "text", text: "x" }] }] }] },
+      ...Array.from({ length: 12 }, () => ({ type: "tableRow" as const, content: [] })),
+    ] }] };
+    const tiptap = new Editor({ extensions: createRichTextEditorExtensions("document"), content: toTiptap(tall) });
+    try {
+      expect(exceedsTableLimit(tiptap.state.doc)).toBe(false);
+      expect(tableDimensions(tiptap.state.doc.firstChild!)).toEqual({ rows: 13, columns: 1 });
+    } finally { tiptap.destroy(); }
+  });
+
   it("disables Add row / Add column in the table bar at the limits", async () => {
     const wide = (cols: number, rows: number): RichTextDoc => ({ type: "doc", content: [{ type: "table", content: Array.from({ length: rows }, () => ({ type: "tableRow" as const, content: Array.from({ length: cols }, () => cell("tableCell", "x")) })) }] });
     const host = mount(); const { editor } = await render(host, wide(12, 50));
@@ -1194,6 +1206,63 @@ describe("QuincyRichTextEditor document preset (#492)", () => {
     await typeSlash(editor, "/");
     const titles = [...slashMenu()!.querySelectorAll('[role="option"]')].map((option) => option.textContent ?? "");
     expect(titles.map((title) => title.replace(/(Plain paragraph|Section heading|Smaller heading|Unordered points|Ordered steps|Track tasks with checkboxes|Rows and columns with a header).*$/, "").trim().replace(/[#\-[\] 1.]+$/, "").trim()).sort()).toEqual(["Bullet List", "Checklist", "Numbered List", "Section", "Subsection", "Table", "Text"]);
+  });
+
+  it("closes the slash menu and resets aria-expanded when the editor loses focus", async () => {
+    const host = mount(); const { editor } = await render(host, empty());
+    editor.setAttribute("role", "combobox"); editor.setAttribute("aria-expanded", "false");
+    await typeSlash(editor, "/");
+    expect(slashMenu()).not.toBeNull();
+    await act(async () => { editor.dispatchEvent(new FocusEvent("blur")); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(slashMenu()).toBeNull();
+    expect(editor.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("returns focus to the Highlight trigger on Escape, and to the editor only after applying a colour", async () => {
+    const host = mount(); const { editor } = await render(host, text("Mark me"));
+    await selectText(editor, editor.querySelector("p")!.firstChild!, 0, 4);
+    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="rich-text-highlight"]')!;
+    await click(trigger);
+    const popover = () => document.querySelector<HTMLElement>('[aria-label="Highlight color"]');
+    await waitForCondition(() => popover() !== null, "highlight popover");
+    await keydown(popover()!.querySelector("button")!, "Escape");
+    await waitForClose();
+    expect(popover()).toBeNull(); expect(document.activeElement).toBe(trigger);
+    await click(trigger);
+    await waitForCondition(() => popover() !== null, "highlight popover");
+    await click(popover()!.querySelector<HTMLButtonElement>('[aria-label="Yellow highlight"]')!);
+    await waitForClose();
+    expect(document.activeElement).toBe(editor);
+  });
+
+  it("returns focus to the Alignment trigger on Escape", async () => {
+    const host = mount(); const { editor } = await render(host, text("Align me"));
+    await selectText(editor, editor.querySelector("p")!.firstChild!, 0, 3);
+    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="rich-text-align-menu"]')!;
+    await click(trigger);
+    const menu = () => document.querySelector<HTMLElement>('[role="menu"]');
+    await waitForCondition(() => menu() !== null, "alignment menu");
+    await keydown(menu()!, "Escape");
+    await waitForClose();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("gives the table Delete trigger and the highlight colour buttons the 44px phone target", async () => {
+    const grid: RichTextDoc = { type: "doc", content: [{ type: "table", content: [{ type: "tableRow", content: [cell("tableCell", "x"), cell("tableCell", "y")] }] }, { type: "paragraph", content: [{ type: "text", text: "after" }] }] };
+    const host = mount(); const { editor } = await render(host, grid);
+    await act(async () => { editor.focus(); (editor.querySelector("td p") as HTMLElement).dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); await Promise.resolve(); });
+    const bubbleDelete = () => document.querySelector<HTMLElement>('[data-testid="rich-text-table-bubble"] [aria-label="Delete"]');
+    await waitForCondition(() => bubbleDelete() !== null, "table bar");
+    const del = bubbleDelete();
+    expect(del, "table Delete").toBeTruthy();
+    expect(del!.className).toContain("max-[721px]:size-11");
+    await selectText(editor, editor.lastElementChild!.firstChild!, 0, 2);
+    await click(host.querySelector<HTMLButtonElement>('[data-testid="rich-text-highlight"]')!);
+    const popover = document.querySelector<HTMLElement>('[aria-label="Highlight color"]')!;
+    const buttons = [...popover.querySelectorAll<HTMLButtonElement>("button")];
+    expect(buttons.length).toBeGreaterThanOrEqual(4);
+    for (const button of buttons) expect(button.className, button.getAttribute("aria-label") ?? "").toContain("max-[721px]:size-11");
   });
 
   it("closes the slash menu on Escape, and an open mention list takes Escape first", async () => {
