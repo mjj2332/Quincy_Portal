@@ -48,7 +48,7 @@ import {
 } from "@/components/reui/tooltip"
 import { RICH_TEXT_TABLE_MAX_COLUMNS, RICH_TEXT_TABLE_MAX_ROWS } from "@quincy/shared"
 import { tableDimensions } from "@/lib/rich-text-tiptap"
-import { readFloorTop, readVisualOffset, tableBubbleOptions } from "./rich-text-table-position"
+import { readFloorTop, readVisualOffset, tableBubbleAnchor, tableBubbleOptions } from "./rich-text-table-position"
 import { RichTextBubbleBar, focusFirstToolbarStop, fromOwnDom } from "./rich-text-bubble-bar"
 import type { RichTextSlashItem } from "./rich-text-slash-menu"
 import { useRichTextSelector } from "./rich-text-state"
@@ -309,18 +309,29 @@ export function RichTextTableBubble({
   onDeleteTable,
   tableBubbleFloors,
 }: RichTextTableBubbleProps) {
-  // Anchors to the active cell; re-resolved on each selection update, so moving the caret re-anchors.
+  // The anchor and the zone share ONE rect (row/cell union, `tableBubbleAnchor`); re-resolved on each pass.
+  const readAnchor = useCallback(() => {
+    const dom = getActiveCellElement(editor)
+
+    if (!dom) return null
+    return tableBubbleAnchor(readActiveRowRect(editor), dom.getBoundingClientRect())
+  }, [editor])
+
   const getCellRect = useCallback(() => {
     const dom = getActiveCellElement(editor)
 
     if (!dom) return null
 
     return {
-      getBoundingClientRect: () => dom.getBoundingClientRect(),
+      getBoundingClientRect: () => {
+        const rect = readAnchor() ?? dom.getBoundingClientRect()
+
+        return new DOMRect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
+      },
       getClientRects: () => [dom.getBoundingClientRect()],
       contextElement: dom,
     }
-  }, [editor])
+  }, [editor, readAnchor])
 
   const options = useMemo(
     () =>
@@ -328,10 +339,10 @@ export function RichTextTableBubble({
         surface: () => editor.view.dom.getBoundingClientRect(),
         floorTop: () => readFloorTop(...(tableBubbleFloors ?? []).map((ref) => ref?.current)),
         neighbours: () => readTableNeighbours(editor),
-        row: () => readActiveRowRect(editor),
+        row: () => readAnchor() ?? readActiveRowRect(editor),
         visualOffset: () => readVisualOffset(),
       }),
-    [editor, tableBubbleFloors]
+    [editor, tableBubbleFloors, readAnchor]
   )
 
   return (

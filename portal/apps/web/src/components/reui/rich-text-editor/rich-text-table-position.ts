@@ -32,6 +32,20 @@ interface RectLike {
   bottom: number
 }
 
+/**
+ * The ONE rect the bar anchors to and the zone is judged against: vertically the union of the row and the active
+ * cell (a rowspan cell reaches past its row's rect), horizontally the cell. Anchoring to the cell while judging
+ * the row let floating-ui and the zone disagree about which side fits.
+ */
+export function tableBubbleAnchor(row: RectLike, cell: RectLike): RectLike {
+  return {
+    top: Math.min(row.top, cell.top),
+    bottom: Math.max(row.bottom, cell.bottom),
+    left: cell.left,
+    right: cell.right,
+  }
+}
+
 export interface VisualOffset {
   x: number
   y: number

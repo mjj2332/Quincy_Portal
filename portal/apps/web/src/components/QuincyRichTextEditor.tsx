@@ -35,6 +35,7 @@ import { RichTextLinkPopover } from "./reui/rich-text-editor/rich-text-link";
 import { RichTextOutlineRail, scrollToRichTextHeading, useRichTextActiveHeading, useRichTextOutline } from "./reui/rich-text-editor/rich-text-outline";
 import { RICH_TEXT_BASIC_SLASH_ITEMS, RICH_TEXT_SLASH_KEY, RichTextSlashCommand } from "./reui/rich-text-editor/rich-text-slash-menu";
 import { useRichTextState } from "./reui/rich-text-editor/rich-text-state";
+import { editorOwnsBubbleBar } from "./reui/rich-text-editor/rich-text-bubble-bar";
 import { RICH_TEXT_TABLE_SLASH_ITEM, RichTextTableBubble, RichTextTableTools } from "./reui/rich-text-editor/rich-text-table";
 import {
   RICH_TEXT_PHONE_QUERY,
@@ -246,7 +247,11 @@ export function QuincyRichTextEditor({
   // The presentation holding focus is about to unmount: note it while the DOM still shows it (render runs before commit).
   if (phoneRef.current !== phone) {
     phoneRef.current = phone;
-    refocusRef.current = document.activeElement?.closest('[data-testid="rich-text-table-tools"], [data-testid="rich-text-table-bubble"]') != null;
+    // Only focus inside THIS editor's own toolbar group or bar counts: another mounted editor must not claim it.
+    const active = document.activeElement;
+    const own = active?.closest('[data-testid="rich-text-table-tools"]') != null && wrapperRef.current?.contains(active) === true
+      || (active?.closest('[data-testid="rich-text-table-bubble"]') != null && editorRef.current != null && editorOwnsBubbleBar(editorRef.current, active));
+    refocusRef.current = own;
   }
   useLayoutEffect(() => {
     if (!refocusRef.current) return;

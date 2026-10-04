@@ -8,6 +8,8 @@
 //    8px taller than its controls (~46px against ~38px) and did not fit above row 2 of a first-block table (#535).
 // 4. `focusFirstToolbarStop` and `fromOwnDom` are exported: the phone table group (`RichTextTableTools`) reuses
 //    the Alt+F10 / Escape behaviour instead of copying the selectors.
+// 5. Each mounted bar is registered against its editor (`editorOwnsBubbleBar`): a bubble portals out of the
+//    editor's own DOM, so "is this focus in MY bar" cannot be answered by containment alone (#535).
 import {
   useEffect,
   useLayoutEffect,
@@ -55,6 +57,15 @@ export function fromOwnDom(event: { target: EventTarget; currentTarget: Element 
   )
 }
 
+const barsByEditor = new WeakMap<Editor, Set<HTMLElement>>()
+
+/** True when `node` sits inside a bubble bar mounted by this editor (not another editor's). */
+export function editorOwnsBubbleBar(editor: Editor, node: Node | null): boolean {
+  if (!node) return false
+  for (const bar of barsByEditor.get(editor) ?? []) if (bar.contains(node)) return true
+  return false
+}
+
 interface RichTextBubbleBarProps {
   editor: Editor
   pluginKey: string
@@ -83,6 +94,17 @@ export function RichTextBubbleBar({
   useLayoutEffect(() => {
     holdRef.current = holdOpen
   }, [holdOpen])
+
+  useLayoutEffect(() => {
+    const bar = barRef.current
+    if (!bar) return
+    const bars = barsByEditor.get(editor) ?? new Set<HTMLElement>()
+    bars.add(bar)
+    barsByEditor.set(editor, bars)
+    return () => {
+      bars.delete(bar)
+    }
+  }, [editor])
 
   useEffect(() => {
     const { dom } = editor.view

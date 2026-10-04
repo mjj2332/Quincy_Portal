@@ -3,6 +3,7 @@ import { computePosition, flip, offset, shift, type Platform } from "@floating-u
 import {
   TABLE_BUBBLE_GAP,
   readFloorTop,
+  tableBubbleAnchor,
   tableBubbleBoundary,
   tableBubbleOptions,
   tableBubbleZone,
@@ -270,6 +271,17 @@ describe("tableBubbleZone", () => {
   });
 });
 
+describe("tableBubbleAnchor", () => {
+  it("is the row when the cell sits inside it", () => {
+    expect(tableBubbleAnchor(rect(530, 560), rect(530, 560, 30, 120))).toEqual({ top: 530, bottom: 560, left: 30, right: 120 });
+  });
+
+  it("spans row and cell vertically (a rowspan cell reaches past the row), horizontally the cell", () => {
+    expect(tableBubbleAnchor(rect(530, 560), rect(530, 630, 30, 120))).toEqual({ top: 530, bottom: 630, left: 30, right: 120 });
+    expect(tableBubbleAnchor(rect(530, 560), rect(500, 545, 30, 120))).toEqual({ top: 500, bottom: 560, left: 30, right: 120 });
+  });
+});
+
 describe("table bar zone placement (floating-ui computePosition)", () => {
   const G = TABLE_BUBBLE_GAP;
   const VIEWPORT = { top: 0, left: 0, right: 1200, bottom: 900 };
@@ -290,6 +302,8 @@ describe("table bar zone placement (floating-ui computePosition)", () => {
   interface Scene {
     surface: ReturnType<typeof rect>;
     row: ReturnType<typeof rect>;
+    /** The active cell, when it differs from the row (a rowspan cell reaches past the row's rect). */
+    cell?: ReturnType<typeof rect>;
     barHeight: number;
     prevBottom?: number | null;
     nextTop?: number | null;
@@ -300,12 +314,14 @@ describe("table bar zone placement (floating-ui computePosition)", () => {
 
   async function run(scene: Scene) {
     const bar = { width: 280, height: scene.barHeight };
-    const reference = { x: 40, y: scene.row.top, width: 200, height: scene.row.bottom - scene.row.top };
+    // Production feeds ONE rect to both the anchor and the zone maths: the row/cell union.
+    const anchor = tableBubbleAnchor(scene.row, scene.cell ?? scene.row);
+    const reference = { x: 40, y: anchor.top, width: 200, height: anchor.bottom - anchor.top };
     const options = tableBubbleOptions({
       surface: () => scene.surface,
       floorTop: () => scene.floorTop ?? null,
       neighbours: () => ({ prevBottom: scene.prevBottom ?? null, nextTop: scene.nextTop ?? null }),
-      row: () => scene.row,
+      row: () => anchor,
       viewport: () => scene.viewport ?? { top: 0, bottom: 900 },
       ...(scene.visualOffset ? { visualOffset: () => scene.visualOffset! } : {}),
     });
@@ -370,6 +386,20 @@ describe("table bar zone placement (floating-ui computePosition)", () => {
     const result = await run({ surface: rect(400, 760), row: rect(600, 640), barHeight: 38, prevBottom: 480, nextTop: next.top });
     expect(overlap(result, next)).toBe(0);
     expect(overlap(result, rect(600, 640))).toBe(0);
+  });
+
+  it("a rowspan cell taller than its row: zone and anchor agree, so the bar clears both the row and the cell", async () => {
+    // Clean zone 500-640, row 530-560, spanning cell 530-630, bar 38. Judged on the union (530-630) neither side
+    // fits the clean zone, so the zone widens to the helper line and floating-ui drops the bar below the cell.
+    // (Judged on the row alone the zone said "below fits", floating-ui rejected it against the longer cell,
+    // fell back above and clamped to 500-538: 8px over the row.)
+    const row = rect(530, 560);
+    const cell = rect(530, 630);
+    const result = await run({ surface: rect(500, 640), row, cell, barHeight: 38, prevBottom: 500, nextTop: 640, floorTop: 760 });
+    expect(overlap(result, row)).toBe(0);
+    expect(overlap(result, cell)).toBe(0);
+    expect(result.placement).toBe("bottom-start");
+    expect(result.top - 630).toBe(G);
   });
 
   it("a single-row table between two paragraphs uses the wide zone and still keeps clear of the row", async () => {

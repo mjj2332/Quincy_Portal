@@ -1564,4 +1564,27 @@ describe("table controls on a phone (#535)", () => {
     await setPhone(true);
     await waitForCondition(() => document.activeElement === editor, "focus back in the text again");
   });
+
+  it("with two editors mounted, only the one whose table control held focus takes it back", async () => {
+    const plain: RichTextDoc = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "elsewhere" }] }] };
+    const host = mount();
+    await act(async () => {
+      root!.render(<>
+        <EditorUnderTest value={grid()} onChange={vi.fn()} limit={2_000} loadMentionables={mentionables} />
+        <EditorUnderTest value={plain} onChange={vi.fn()} limit={2_000} loadMentionables={mentionables} />
+      </>);
+      await Promise.resolve(); await Promise.resolve();
+    });
+    const [first, second] = [...host.querySelectorAll<HTMLElement>('[contenteditable="true"]')];
+    await caretIn(first!, "Mon");
+    const add = host.querySelector<HTMLElement>('[data-testid="rich-text-table-tools"] [aria-label="Add row below"]')!;
+    await act(async () => { add.focus(); });
+    expect(document.activeElement).toBe(add);
+    await setPhone(false);
+    await waitForCondition(() => document.activeElement === first, "focus back in the first editor");
+    // Let every queued focus frame run: a second editor that also claimed focus would land after the first.
+    await act(async () => { for (let frame = 0; frame < 3; frame += 1) await new Promise((resolve) => requestAnimationFrame(() => resolve(null))); });
+    expect(document.activeElement).toBe(first);
+    expect(document.activeElement).not.toBe(second);
+  });
 });
