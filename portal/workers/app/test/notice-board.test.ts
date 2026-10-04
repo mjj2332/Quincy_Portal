@@ -300,14 +300,14 @@ describe("notice board API", () => {
   });
 
   it("trims leading and trailing whitespace before accepting an at-limit body", async () => {
-    const body = "x".repeat(2_000);
+    const body = "x".repeat(10_000);
     const response = await request("/api/notice-board/posts", editorToken, "POST", { content: textDoc(`  ${body}  `) });
     expect(response.status).toBe(201);
     expect((await response.json() as { post: unknown }).post).toMatchObject({ body });
   });
 
   it("rejects malformed rich documents, overlong semantic bodies, and inactive mention targets", async () => {
-    const invalid = [textDoc("x".repeat(2_001)), { type: "doc", content: [{ type: "heading", content: [{ type: "text", text: "bad" }] }] }, doc([{ type: "mention", attrs: { id: "not-a-uuid", label: "bad" } }])];
+    const invalid = [textDoc("x".repeat(10_001)), { type: "doc", content: [{ type: "heading", content: [{ type: "text", text: "bad" }] }] }, doc([{ type: "mention", attrs: { id: "not-a-uuid", label: "bad" } }])];
     for (const content of invalid) expect((await request("/api/notice-board/posts", editorToken, "POST", { content })).status).toBe(400);
     await database.DB.prepare("UPDATE user SET active = 0 WHERE id = ?").bind(adminId).run();
     expect((await request("/api/notice-board/posts", editorToken, "POST", { content: doc([{ type: "mention", attrs: { id: adminId, label: "Admin" } }]) })).status).toBe(400);
@@ -394,6 +394,56 @@ describe("notice board API", () => {
       expect((await request("/api/notice-board/posts", editorToken, "POST", { content })).status).toBe(400);
       expect((await request(`/api/notice-board/posts/${post.id}`, editorToken, "PATCH", { content })).status).toBe(400);
     }
+  });
+
+  it("stores tables, alignment and highlight through POST/PATCH and GET returns them intact, not the legacy plain-text fallback (#492)", async () => {
+    const content = {
+      type: "doc",
+      content: [
+        { type: "heading", attrs: { level: 2, textAlign: "center" }, content: [{ type: "text", text: "Rota" }] },
+        { type: "paragraph", attrs: { textAlign: "right" }, content: [{ type: "text", text: "Hot", marks: [{ type: "highlight", color: "yellow" }] }] },
+        { type: "table", content: [
+          { type: "tableRow", content: [{ type: "tableHeader", content: [{ type: "paragraph", content: [{ type: "text", text: "Day" }] }] }, { type: "tableHeader", content: [{ type: "paragraph", content: [{ type: "text", text: "Who" }] }] }] },
+          { type: "tableRow", content: [{ type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "Mon" }] }] }, { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "mention", attrs: { id: adminId, label: "forged" } }] }] }] },
+        ] },
+      ],
+    };
+    const created = await request("/api/notice-board/posts", editorToken, "POST", { content });
+    expect(created.status).toBe(201);
+    const post = (await created.json() as { post: { id: string; body: string; content: { content: Array<Record<string, unknown>> } } }).post;
+    expect(post.body).toBe("Rota\nHot\nDay\tWho\nMon\tNotice Admin");
+    expect(post.content.content.map((block) => block.type)).toEqual(["heading", "paragraph", "table"]);
+    const listed = await request("/api/notice-board/posts?limit=50", editorToken);
+    const fetched = (await listed.json() as { posts: Array<{ id: string; content: { content: Array<Record<string, unknown>> } }> }).posts.find((item) => item.id === post.id)!;
+    expect(fetched.content).toEqual(post.content);
+    expect(fetched.content.content[0]).toMatchObject({ attrs: { level: 2, textAlign: "center" } });
+    const edited = await request(`/api/notice-board/posts/${post.id}`, editorToken, "PATCH", { content });
+    expect(edited.status).toBe(200);
+    expect((await edited.json() as { post: { content: { content: Array<Record<string, unknown>> } } }).post.content.content[2]).toMatchObject({ type: "table" });
+  });
+
+  it("accepts 10,000 characters and 40 KiB of JSON, and rejects 10,001 characters or over 64 KiB", async () => {
+    expect((await request("/api/notice-board/posts", editorToken, "POST", { content: textDoc("y".repeat(10_000)) })).status).toBe(201);
+    expect((await request("/api/notice-board/posts", editorToken, "POST", { content: textDoc("y".repeat(10_001)) })).status).toBe(400);
+    const paragraphs = (count: number) => ({ type: "doc", content: Array.from({ length: count }, () => ({ type: "paragraph", content: [{ type: "text", text: "z".repeat(9) }] })) });
+    const big = paragraphs(700);
+    expect(new TextEncoder().encode(JSON.stringify(big)).byteLength).toBeGreaterThan(40_000);
+    expect(new TextEncoder().encode(JSON.stringify(big)).byteLength).toBeLessThan(64 * 1024);
+    expect((await request("/api/notice-board/posts", editorToken, "POST", { content: big })).status).toBe(201);
+    const huge = paragraphs(1_000);
+    expect(new TextEncoder().encode(JSON.stringify(huge)).byteLength).toBeGreaterThan(64 * 1024);
+    expect((await request("/api/notice-board/posts", editorToken, "POST", { content: huge })).status).toBe(400);
+  });
+
+  it("serves a legacy null-content_json row and an old h2/list document unchanged (#492)", async () => {
+    const legacyId = "00000000-0000-4000-8000-000000000492"; const oldId = "00000000-0000-4000-8000-000000000493"; const now = Date.now() + 20_000;
+    const oldDoc = { type: "doc", content: [{ type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Old section" }] }, { type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "Old item" }] }] }] }] };
+    await database.DB.prepare("INSERT INTO notice_board_posts (id, author_id, body, created_at) VALUES (?, ?, ?, ?)").bind(legacyId, editorId, "Plain legacy", now).run();
+    await database.DB.prepare("INSERT INTO notice_board_posts (id, author_id, body, content_json, created_at) VALUES (?, ?, ?, ?, ?)").bind(oldId, editorId, "Old section\nOld item", JSON.stringify(oldDoc), now + 1).run();
+    const listed = await request("/api/notice-board/posts?limit=50", editorToken);
+    const posts = (await listed.json() as { posts: Array<{ id: string; content: unknown }> }).posts;
+    expect(posts.find((item) => item.id === legacyId)?.content).toEqual(textDoc("Plain legacy"));
+    expect(posts.find((item) => item.id === oldId)?.content).toEqual(oldDoc);
   });
 
   it("stores checked and unchecked task lists through POST/PATCH and re-parses them on GET", async () => {

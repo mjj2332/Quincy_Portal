@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  NOTICE_BODY_MAX_LENGTH,
+  NOTICE_RICH_TEXT_JSON_MAX_BYTES,
+  NOTICE_RICH_TEXT_PROFILE,
   RICH_TEXT_JSON_MAX_BYTES,
   RICH_TEXT_MAX_NESTING,
   RichTextValidationError,
@@ -249,5 +252,87 @@ describe("rich-text contract", () => {
 
   it("wraps legacy plain body values in a paragraph", () => {
     expect(legacyBodyToRichTextDoc("Existing notice")).toEqual({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Existing notice" }] }] });
+  });
+});
+
+
+describe("document profile (#492)", () => {
+  const para = (text: string, extra: Record<string, unknown> = {}) => ({ type: "paragraph", ...extra, content: [{ type: "text", text }] });
+  const cell = (text: string, extra: Record<string, unknown> = {}) => ({ type: "tableCell", ...extra, content: [para(text)] });
+  const richDoc = {
+    type: "doc",
+    content: [
+      { type: "heading", attrs: { level: 2, textAlign: "center" }, content: [{ type: "text", text: "Title" }] },
+      para("Aligned", { attrs: { textAlign: "right" } }),
+      { type: "paragraph", content: [{ type: "text", text: "Marked", marks: [{ type: "highlight", color: "green" }] }] },
+      { type: "table", content: [
+        { type: "tableRow", content: [{ type: "tableHeader", content: [para("A")] }, { type: "tableHeader", content: [para("B")] }] },
+        { type: "tableRow", content: [cell("1", { attrs: { colspan: 2, rowspan: 1 } })] },
+      ] },
+    ],
+  };
+
+  it("accepts tables, alignment and highlight under the notice profile and keeps them", () => {
+    const doc = parseRichTextDoc(richDoc, NOTICE_RICH_TEXT_PROFILE);
+    expect(doc).toEqual(richDoc);
+  });
+
+  it("rejects each of them under the default comment profile", () => {
+    for (const block of richDoc.content.slice(0, 4)) {
+      expect(() => parseRichTextDoc({ type: "doc", content: [para("ok"), block] })).toThrow(RichTextValidationError);
+    }
+  });
+
+  it("keeps the comment cap at 32 KiB and raises the notice cap to 64 KiB", () => {
+    const sized = (bytes: number) => ({ type: "doc", content: [para("x".repeat(bytes - 70))] });
+    const forty = sized(40 * 1024);
+    expect(() => parseRichTextDoc(forty)).toThrow(RichTextValidationError);
+    expect(() => parseRichTextDoc(forty, NOTICE_RICH_TEXT_PROFILE)).not.toThrow();
+    expect(() => parseRichTextDoc(sized(NOTICE_RICH_TEXT_JSON_MAX_BYTES + 1), NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+    expect(NOTICE_BODY_MAX_LENGTH).toBe(10_000);
+  });
+
+  it("bounds tables: rows, columns, spans, nesting and cell content", () => {
+    const row = (cells: number) => ({ type: "tableRow", content: Array.from({ length: cells }, () => cell("x")) });
+    const table = (rows: unknown[]) => ({ type: "doc", content: [{ type: "table", content: rows }] });
+    expect(() => parseRichTextDoc(table([row(12)]), NOTICE_RICH_TEXT_PROFILE)).not.toThrow();
+    expect(() => parseRichTextDoc(table([row(13)]), NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+    expect(() => parseRichTextDoc(table(Array.from({ length: 50 }, () => row(1))), NOTICE_RICH_TEXT_PROFILE)).not.toThrow();
+    expect(() => parseRichTextDoc(table(Array.from({ length: 51 }, () => row(1))), NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+    expect(() => parseRichTextDoc(table([{ type: "tableRow", content: [cell("x", { attrs: { colspan: 0, rowspan: 1 } })] }]), NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+    expect(() => parseRichTextDoc(table([{ type: "tableRow", content: [cell("x", { attrs: { colspan: 1, rowspan: 1, colwidth: [10] } })] }]), NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+    expect(() => parseRichTextDoc(table([{ type: "tableRow", content: [{ type: "tableCell", content: [{ type: "bulletList", content: [] }] }] }]), NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+    expect(() => parseRichTextDoc({ type: "doc", content: [{ type: "bulletList", content: [{ type: "listItem", content: [{ type: "table", content: [row(1)] }] }] }] }, NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+  });
+
+  it("rejects unknown alignment and highlight values", () => {
+    expect(() => parseRichTextDoc({ type: "doc", content: [para("x", { attrs: { textAlign: "left" } })] }, NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+    expect(() => parseRichTextDoc({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "x", marks: [{ type: "highlight", color: "red" }] }] }] }, NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+    expect(() => parseRichTextDoc({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "x", marks: [{ type: "highlight", color: "yellow", css: "x" }] }] }] }, NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+  });
+
+  it("reads a table as tab-separated cells and newline-separated rows, finds mentions in cells, and keeps alignment through normalisation", () => {
+    const withMention = {
+      type: "doc",
+      content: [
+        para("Lead", { attrs: { textAlign: "center" } }),
+        { type: "table", content: [{ type: "tableRow", content: [
+          { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "mention", attrs: { id: userId, label: "Old" } }] }] },
+          cell("B"),
+        ] }] },
+      ],
+    };
+    const doc = parseRichTextDoc(withMention, NOTICE_RICH_TEXT_PROFILE);
+    expect(richTextPlainText(doc)).toBe("Lead\nOld\tB");
+    expect(richTextMentionIds(doc)).toEqual([userId]);
+    const renamed = normalizeRichTextMentionLabels(doc, new Map([[userId, "Terry"]]));
+    expect(richTextPlainText(renamed)).toBe("Lead\nTerry\tB");
+    expect(renamed.content[0]).toEqual(para("Lead", { attrs: { textAlign: "center" } }));
+    expect(() => parseRichTextDoc(renamed, NOTICE_RICH_TEXT_PROFILE)).not.toThrow();
+  });
+
+  it("still parses every comment-profile document under the notice profile", () => {
+    expect(parseRichTextDoc(valid, NOTICE_RICH_TEXT_PROFILE)).toEqual(parseRichTextDoc(valid));
+    expect(parseRichTextDoc(taskListDoc(3, true), NOTICE_RICH_TEXT_PROFILE)).toEqual(parseRichTextDoc(taskListDoc(3, true)));
   });
 });
