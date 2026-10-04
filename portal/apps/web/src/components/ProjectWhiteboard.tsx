@@ -7,8 +7,9 @@ import type { WhiteboardController, WhiteboardPresence, WhiteboardSaveStatus } f
 import { CopyProjectLinkButton } from "./quincy/CopyProjectLinkButton";
 import { ViewLoadBoundary } from "./ViewLoadBoundary";
 import { openWhiteboardSocket, type WhiteboardConnection, type WhiteboardInit, type WhiteboardSocket } from "../lib/whiteboard-socket";
-import { whiteboardIncomingWins } from "@quincy/shared";
-import { appliedFromRemote, createWhiteboardSaver, type SavedElement, type WhiteboardSaver } from "../lib/whiteboard-saver";
+import { interactingIds } from "../lib/whiteboard-merge";
+import { createRemoteApplier } from "../lib/whiteboard-remote";
+import { createWhiteboardSaver, type SavedElement, type WhiteboardSaver } from "../lib/whiteboard-saver";
 import { toCollaborator } from "../lib/whiteboard-collaborators";
 import { pushToast } from "../lib/toast-store";
 
@@ -69,60 +70,23 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
       send: (batch) => socket?.send(batch) ?? Promise.reject(new Error("The whiteboard is not connected.")),
     });
     saverRef.current = saver;
-    // #499: remote batches that arrive before the editor has mounted wait here, each as the batch it arrived in: two
-    // versions of one element in a single reconcile would make Excalidraw rename the duplicate id and keep both.
-    const pendingRemote: Array<Array<Record<string, unknown>>> = [];
-    // Remote winners the editor skipped because that element is being edited right now (Excalidraw never replaces an
-    // element mid-edit). They are replayed once the interaction ends, never forgotten.
-    const deferred = new Map<string, Record<string, unknown>>();
-    let applying = false;
     const peers = new Map<string, WhiteboardPeer>();
     let frameHandle: number | undefined;
     const showPeers = () => {
       if (frameHandle !== undefined) return;                // a cursor moves up to 30 times a second: draw once a frame
       frameHandle = frame(() => { frameHandle = undefined; controllerRef.current?.setCollaborators([...peers.values()].map(toCollaborator)); });
     };
-    const interacting = (controller: WhiteboardController) => {
-      const state = controller.api.getAppState();
-      return Boolean(state.editingTextElement || state.resizingElement || state.newElement);
-    };
-    /** Merges what other people did into the board, then records exactly what the board now holds of it as
-     * already stored, so the saver never echoes it or sends it at a higher version. */
-    const applyRemote = (remote: Array<Record<string, unknown>>) => {
-      const controller = controllerRef.current;
-      if (!controller) { pendingRemote.push(remote); return; }
-      const scene = controller.applyRemote(remote, (element) => saver.hold(element as unknown as SavedElement)) as unknown as SavedElement[];
-      elementsRef.current = scene;                           // before the editor's own change event, so nothing looks "gone"
-      saver.adoptRemote(appliedFromRemote(remote as unknown as SavedElement[], scene));
-      // A remote element the scene did not take, though it beats the scene's copy on version, was skipped for the edit in
-      // progress: keep it (the highest version per id) for when that ends. One the local copy beats is rightly dropped.
-      const held = new Map(scene.map((element) => [element.id, element]));
-      for (const incoming of remote as unknown as SavedElement[]) {
-        const local = held.get(incoming.id);
-        const taken = local !== undefined && local.version === incoming.version && local.versionNonce === incoming.versionNonce;
-        const queued = deferred.get(incoming.id) as SavedElement | undefined;
-        if (taken) { if (queued && !whiteboardIncomingWins(incoming, queued)) deferred.delete(incoming.id); continue; }
-        if (local && !whiteboardIncomingWins(local, incoming)) continue;
-        if (!queued || whiteboardIncomingWins(queued, incoming)) deferred.set(incoming.id, incoming);
-      }
-    };
-    /** After every editor change: once no interaction holds an element, replay what was deferred. */
-    const replayDeferred = () => {
-      const controller = controllerRef.current;
-      if (applying || deferred.size === 0 || !controller || interacting(controller)) return;
-      // Whatever the person has since made newer than a deferred winner no longer needs it.
-      const local = new Map(elementsRef.current.map((element) => [element.id, element]));
-      for (const [id, incoming] of deferred) { const mine = local.get(id); if (mine && !whiteboardIncomingWins(mine, incoming as unknown as SavedElement)) deferred.delete(id); }
-      if (deferred.size === 0) return;
-      applying = true;
-      try { const batch = [...deferred.values()]; deferred.clear(); applyRemote(batch); }
-      finally { applying = false; }
-    };
-    drainRemote.current = () => {
-      for (const batch of pendingRemote.splice(0)) applyRemote(batch);
-      showPeers();
-    };
-    replayRemote.current = replayDeferred;
+    // Merging, recording what the board took as stored, and deferring winners the editor skipped: `lib/whiteboard-remote.ts`.
+    const remoteApplier = createRemoteApplier({
+      saver,
+      merge: () => { const controller = controllerRef.current; return controller ? (remote, hold) => controller.applyRemote(remote, (element) => hold(element as unknown as SavedElement)) as unknown as SavedElement[] : null; },
+      setScene: (scene) => { elementsRef.current = scene; },
+      getScene: () => elementsRef.current,
+      interacting: () => { const controller = controllerRef.current; return controller ? interactingIds(controller.api.getAppState()).size > 0 : false; },
+    });
+    const applyRemote = remoteApplier.apply;
+    drainRemote.current = () => { remoteApplier.drain(); showPeers(); };
+    replayRemote.current = remoteApplier.replay;
     const opened = openWhiteboardSocket(projectId, {
       onInit: (next, reconnect) => {
         modeRef.current = next.mode; setLiveMode(next.mode);

@@ -753,6 +753,23 @@ describe("write authorization against refreshAccess (#499, epoch at invocation)"
     a.client.ws.close(1000); b.client.ws.close(1000);
   });
 
+  it("refreshAccess skips a closing socket ordered before an open one: the open socket still gets its mode", async () => {
+    const project = await newProject();
+    await archiveNow(project);
+    const a = await join(project, "member");
+    expect(a.init.mode).toBe("view");
+    await database.DB.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").bind(project).run();
+    await runInDurableObject(stubFor(project), async (instance, state) => {
+      const real = state.getWebSockets();
+      const attachment = real[0]!.deserializeAttachment();
+      const closing = { readyState: 2, deserializeAttachment: () => ({ ...attachment, sessionId: "closing", mode: "view" }), serializeAttachment: () => undefined, send: () => { throw new Error("socket is closing"); }, close: () => undefined } as unknown as WebSocket;
+      (state as unknown as { getWebSockets: () => WebSocket[] }).getWebSockets = () => [closing, ...real];
+      await (instance as unknown as { refreshAccess: () => Promise<void> }).refreshAccess();
+    });
+    expect(await a.client.next()).toEqual({ type: "mode", mode: "edit" });
+    a.client.ws.close(1000);
+  });
+
   it("keeps the refresh queue alive after a refresh fails: later refreshes and writes still work", async () => {
     const project = await newProject();
     const a = await join(project, "member");

@@ -39,12 +39,18 @@ const setRevision = (element: Revisioned, revision: Revision) => {
 const indexOf = (element: object): string | undefined => { const index = (element as { index?: unknown }).index; return typeof index === "string" ? index : undefined; };
 const setIndex = (element: object, index: string) => { (element as { index: string }).index = index; };
 
+/** The ids Excalidraw will not replace right now: the element being text-edited, resized or drawn. */
+export function interactingIds(appState: { editingTextElement?: { id: string } | null; resizingElement?: { id: string } | null; newElement?: { id: string } | null }): ReadonlySet<string> {
+  return new Set([appState.editingTextElement?.id, appState.resizingElement?.id, appState.newElement?.id].filter((id): id is string => typeof id === "string"));
+}
+
 /**
  * Returns the reconciled scene for `local` plus the `remote` batch, with every element at an un-repaired revision.
- * `hold` says what the server holds of each local element (the saver's `hold`). The caller installs the
+ * `interacting` is the ids Excalidraw keeps as they are (it skips an element being edited): an incoming winner for one of those
+ * is not applied now, but it is the server's, so its index is still claimed, and the local copy shown meanwhile yields. `hold` says what the server holds of each local element (the saver's `hold`). The caller installs the
  * result with `updateScene` (which re-runs Excalidraw's index repair, a no-op by then).
  */
-export function mergeRemote<E extends Revisioned>(local: readonly E[], remote: readonly Revisioned[], fns: MergeFns<E>, hold: (element: E) => ServerHold): E[] {
+export function mergeRemote<E extends Revisioned>(local: readonly E[], remote: readonly Revisioned[], fns: MergeFns<E>, hold: (element: E) => ServerHold, interacting: ReadonlySet<string> = new Set()): E[] {
   const arrived = new Map<string, Revision & { index: string | undefined }>(remote.map((element) => [element.id, { version: element.version, versionNonce: element.versionNonce, index: indexOf(element) }]));
   const restored = fns.restore(remote);
   const restoredObjects = new Set<object>(restored);
@@ -57,13 +63,16 @@ export function mergeRemote<E extends Revisioned>(local: readonly E[], remote: r
 
   // Who keeps their index, in priority order (see the header).
   const localById = new Map(local.map((element) => [element.id, element]));
-  const incomingTaken = restored.filter((element) => { const mine = localById.get(element.id); return !mine || whiteboardIncomingWins(mine, element); });
+  const winning = restored.filter((element) => { const mine = localById.get(element.id); return !mine || whiteboardIncomingWins(mine, element); });
+  const skipped = new Set(winning.filter((element) => interacting.has(element.id) && localById.has(element.id)).map((element) => element.id));
+  const incomingTaken = winning.filter((element) => !skipped.has(element.id));
   const superseded = new Set(incomingTaken.map((element) => element.id));
   const held = new Map<E, ServerHold>();
-  for (const element of local) if (!superseded.has(element.id)) held.set(element, hold(element));
+  // A skipped element's local copy is mid-edit, whatever the saver last saw: it holds nothing of the server's now.
+  for (const element of local) if (!superseded.has(element.id)) held.set(element, skipped.has(element.id) ? { state: "none" } : hold(element));
   const withState = (state: ServerHold["state"]) => local.filter((element) => held.get(element)?.state === state);
   const space = new IndexSpace();
-  for (const element of incomingTaken) space.claim(indexOf(element), element.id);
+  for (const element of winning) space.claim(indexOf(element), element.id);      // skipped ones too: the server's index, applied when the edit ends
   for (const element of withState("stored")) space.claim(indexOf(element), element.id);
 
   // In-flight, then unsent or edited ones: those whose index is free keep it (so nothing moves that need not), and each one in

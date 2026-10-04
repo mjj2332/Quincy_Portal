@@ -219,11 +219,17 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
     if (project) for (const userId of new Set(sockets.map((entry) => entry.attachment.userId))) access.set(userId, await this.userHasAccess(userId, projectId));
     // Apply to whatever is connected NOW: the awaits above let sockets come and go.
     for (const { ws, attachment } of this.attachments()) {
-      if (!project) { this.close(ws, WHITEBOARD_CLOSE.deleted, "Project deleted"); continue; }
-      const allowed = access.get(attachment.userId);
-      if (allowed === undefined) continue;                      // joined after the read; its own admission checked it
-      if (!allowed) { this.revoke(ws); continue; }
-      this.settleMode(ws, attachment, archived ? "view" : "edit");
+      if (ws.readyState !== OPEN) continue;                     // closing or closed: nothing to tell it, and a send would throw
+      try {
+        if (!project) { this.close(ws, WHITEBOARD_CLOSE.deleted, "Project deleted"); continue; }
+        const allowed = access.get(attachment.userId);
+        if (allowed === undefined) continue;                    // joined after the read; its own admission checked it
+        if (!allowed) { this.revoke(ws); continue; }
+        this.settleMode(ws, attachment, archived ? "view" : "edit");
+      } catch (error) {
+        // One socket failing must never leave the sockets after it on a stale mode.
+        console.error("whiteboard refreshAccess: a socket failed", error);
+      }
     }
   }
 

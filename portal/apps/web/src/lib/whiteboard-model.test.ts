@@ -2,8 +2,9 @@
 import { generateKeyBetween } from "fractional-indexing";
 import { beforeAll, describe, expect, it } from "vitest";
 import { normaliseRows, orderStored, reconcileRows, whiteboardElementSchema, whiteboardIncomingWins, type ElementStore, type StoredElement } from "@quincy/shared";
-import { adoptArrivedRevisions, mergeRemote, type MergeFns } from "./whiteboard-merge";
-import { appliedFromRemote, createWhiteboardSaver, type SavedElement, type WhiteboardSaver } from "./whiteboard-saver";
+import { adoptArrivedRevisions, interactingIds, mergeRemote, type MergeFns } from "./whiteboard-merge";
+import { createRemoteApplier } from "./whiteboard-remote";
+import { createWhiteboardSaver, type SavedElement, type ServerHold, type WhiteboardSaver } from "./whiteboard-saver";
 
 /**
  * #499: the gate for stacking-order convergence. A seeded, randomised MODEL of the whole whiteboard: the real stored-row
@@ -29,14 +30,13 @@ type Excalidraw = {
   restoreElements: (e: never, o: null) => El[];
 };
 let excalidraw: Excalidraw;
-let fns: MergeFns<El>;
+let reconcileFn: (l: never, r: never, a: never) => El[];
+let restoreFn: (raw: readonly unknown[]) => El[];
 beforeAll(async () => {
   HTMLCanvasElement.prototype.getContext = (() => ({})) as never;
   excalidraw = (await import("@excalidraw/excalidraw")) as unknown as Excalidraw;
-  fns = {
-    restore: (raw) => excalidraw.restoreElements(raw as never, null),
-    reconcile: (local, remote) => excalidraw.reconcileElements(local as never, remote as never, { editingTextElement: null, resizingElement: null, newElement: null } as never),
-  };
+  reconcileFn = excalidraw.reconcileElements;
+  restoreFn = (raw) => excalidraw.restoreElements(raw as never, null);
 });
 
 // ---------------------------------------------------------------------------------------------------------------- steps
@@ -46,11 +46,13 @@ type LegacyRow = { id: string; index: LegacyIndex; nonce: number; x: number };
 type Step =
   | { op: "create"; c: number; id: string; place: Place; nonce: number; x: number }
   | { op: "edit"; c: number; id: string; nonce: number; x: number }
-  | { op: "reorder"; c: number; id: string; pos: number; nonce: number }
+  | { op: "reorder"; c: number; id: string; pos: number; nonce: number; to?: string }
   | { op: "delete"; c: number; id: string; nonce: number }
   | { op: "flush"; c: number }
   | { op: "process"; c: number }
   | { op: "deliver"; c: number }
+  | { op: "interact"; c: number; id: string }
+  | { op: "endInteract"; c: number }
   | { op: "reconnect"; c: number }
   | { op: "legacy"; rows: LegacyRow[] };
 type Config = { clients: number; ids: string[]; initial: LegacyRow[] };
@@ -73,7 +75,10 @@ class Client {
   authored = new Set<string>();
   log: Array<{ id: string; version: number; content: string }> = [];
   seq = 0;
+  /** The element being resized right now: Excalidraw keeps the local copy and the applier defers remote winners for it. */
+  interacting: string | null = null;
   saver!: WhiteboardSaver;
+  applier!: ReturnType<typeof createRemoteApplier>;
 }
 
 class World {
@@ -110,6 +115,14 @@ class World {
         client.outbound.push({ seq: client.seq, elements: clone([...batch]) });
       }),
     });
+    // The component's own remote path (`createRemoteApplier`), with Excalidraw's reconcile told what is being resized.
+    client.applier = createRemoteApplier({
+      saver: client.saver,
+      merge: () => (remote, hold) => this.mergeInto(index, client, remote as StoredElement[], hold) as unknown as SavedElement[],
+      setScene: () => undefined,
+      getScene: () => client.scene as unknown as SavedElement[],
+      interacting: () => client.interacting !== null,
+    });
     const init = orderStored(this.store.all());
     client.scene = excalidraw.restoreElements(clone(init) as never, null);
     adoptArrivedRevisions(client.scene, init as never);
@@ -139,31 +152,39 @@ class World {
     client.log.push({ id: element.id, version: element.version, content: contentOf(element) });
   }
 
-  /** Mirrors ProjectWhiteboard.applyRemote: merge, then record what the scene took as stored. */
-  private applyRemote(c: number, remote: StoredElement[]) {
-    const client = this.clients[c]!;
-    const before = client.scene.map((element) => ({ id: element.id, version: element.version, versionNonce: element.versionNonce, index: element.index, pinned: client.saver.hold(element).state === "stored" }));
+  /** The controller's `applyRemote`: merge with Excalidraw's own restore and reconcile, checking what a merge may never do. */
+  private mergeInto(c: number, client: Client, remote: StoredElement[], hold: (element: SavedElement) => ServerHold): El[] {
+    const fns: MergeFns<El> = {
+      restore: restoreFn,
+      reconcile: (local, incomingElements) => reconcileFn(local as never, incomingElements as never, { editingTextElement: null, resizingElement: client.interacting ? { id: client.interacting } : null, newElement: null } as never),
+    };
+    const resizing = interactingIds({ resizingElement: client.interacting ? { id: client.interacting } : null });
+    const before = client.scene.map((element) => ({ id: element.id, version: element.version, versionNonce: element.versionNonce, index: element.index, pinned: hold(element as SavedElement).state === "stored" }));
     const incoming = new Map(remote.map((element) => [element.id, element]));
-    client.scene = mergeRemote(client.scene, clone(remote) as never, fns, (element) => client.saver.hold(element as SavedElement));
+    client.scene = mergeRemote(client.scene, clone(remote) as never, fns, (element) => hold(element as SavedElement), resizing);
     for (const was of before) {
       const now = client.scene.find((element) => element.id === was.id);
       const inc = incoming.get(was.id);
       if (!now) { this.violations.push(`client ${c}: ${was.id} vanished in a merge`); continue; }
-      const replaced = inc !== undefined && whiteboardIncomingWins(was, inc);
+      const replaced = inc !== undefined && !resizing.has(was.id) && whiteboardIncomingWins(was, inc);
       if (replaced) { if (now.version !== inc.version || now.versionNonce !== inc.versionNonce) this.violations.push(`client ${c}: ${was.id} should have taken the incoming v${inc.version}/${inc.versionNonce} but holds v${now.version}/${now.versionNonce}`); continue; }
       if (now.version !== was.version || now.versionNonce !== was.versionNonce) this.violations.push(`client ${c}: a merge changed ${was.id}'s revision v${was.version}/${was.versionNonce} -> v${now.version}/${now.versionNonce}`);
-      if (was.pinned && now.index !== was.index) this.violations.push(`client ${c}: a merge moved the pinned ${was.id} from ${was.index} to ${now.index}`);
+      const deferred = inc !== undefined && resizing.has(was.id) && whiteboardIncomingWins(was, inc);   // its copy shown meanwhile is mid-edit and yields to the server's index
+      if (was.pinned && !deferred && now.index !== was.index) this.violations.push(`client ${c}: a merge moved the pinned ${was.id} from ${was.index} to ${now.index}`);
     }
     for (const element of client.scene) {
       const inc = incoming.get(element.id);
       if (inc && element.version === inc.version && element.versionNonce === inc.versionNonce && element.index !== inc.index) this.violations.push(`client ${c}: incoming ${element.id} was re-indexed here (${String(inc.index)} -> ${element.index})`);
     }
-    client.saver.adoptRemote(appliedFromRemote(clone(remote) as unknown as SavedElement[], client.scene as unknown as SavedElement[]));
+    return client.scene;
   }
+
+  private applyRemote(c: number, remote: StoredElement[]) { this.clients[c]!.applier.apply(clone(remote) as Array<Record<string, unknown>>); }
 
   /** Runs one step. Returns false when it does not apply in this world (a replay that has diverged skips it). */
   async execute(step: Step): Promise<boolean> {
     const done = await this.run(step);
+    for (const client of this.clients) client.applier.replay();           // the editor's change event
     await tick();
     return done;
   }
@@ -200,7 +221,7 @@ class World {
         if (!element) return false;
         const others = client.scene.filter((candidate) => candidate !== element);
         const at = step.pos % (others.length + 1);
-        const index = generateKeyBetween(others[at - 1]?.index ?? null, others[at]?.index ?? null);
+        const index = step.to !== undefined && validKey(step.to) && !others.some((candidate) => candidate.index === step.to) ? step.to : generateKeyBetween(others[at - 1]?.index ?? null, others[at]?.index ?? null);
         if (index === element.index) return false;
         const next = { ...element, index, version: element.version + 1, versionNonce: step.nonce };
         client.scene = sortScene(client.scene.map((candidate) => (candidate === element ? next : candidate))); this.author(client, next); return true;
@@ -225,6 +246,11 @@ class World {
         else this.applyRemote(step.c, message.elements);
         return true;
       }
+      case "interact": {
+        if (client.interacting !== null || !client.scene.some((element) => element.id === step.id && !element.isDeleted)) return false;
+        client.interacting = step.id; return true;
+      }
+      case "endInteract": { if (client.interacting === null) return false; client.interacting = null; return true; }
       case "reconnect": {
         for (const pending of client.pending.values()) pending.reject(new Error("socket closed"));
         client.pending.clear(); client.outbound.length = 0; client.inbound.length = 0;
@@ -240,6 +266,7 @@ class World {
   async drain() {
     for (let round = 0; round < 400; round += 1) {
       const before = this.messages;
+      for (const client of this.clients) { client.interacting = null; client.applier.replay(); }     // the person lets go
       for (let c = 0; c < this.clients.length; c += 1) { this.clients[c]!.saver.flush().catch(() => undefined); await tick(); }
       let moved = true;
       while (moved) {
@@ -347,6 +374,7 @@ function generate(world: World, rng: () => number): Step {
   if (roll < 0.39 && live.length > 0) return { op: "delete", c, id: pickLive().id, nonce };
   if (roll < 0.53) return { op: "flush", c };
   if (roll < 0.75) { const busy = world.clients.map((other, i) => (other.outbound.length > 0 ? i : -1)).filter((i) => i >= 0); if (busy.length > 0) return { op: "process", c: busy[Math.floor(rng() * busy.length)]! }; }
+  if (roll < 0.79) return client.interacting === null && live.length > 0 ? { op: "interact", c, id: pickLive().id } : { op: "endInteract", c };
   if (roll < 0.97) { const busy = world.clients.map((other, i) => (other.inbound.length > 0 ? i : -1)).filter((i) => i >= 0); if (busy.length > 0) return { op: "deliver", c: busy[Math.floor(rng() * busy.length)]! }; }
   if (roll < 0.985) return { op: "reconnect", c };
   if (roll >= 0.985) { const id = ids[Math.floor(rng() * ids.length)]!; if (!world.rows.has(id) && world.processed === 0) return { op: "legacy", rows: [legacyRow(rng, id)] }; }
@@ -440,6 +468,9 @@ const play = async (label: string, config: Config, steps: Step[]) => {
   expect(world.converged()).toEqual([]);
   return world;
 };
+const interact = (c: number, id: string): Step => ({ op: "interact", c, id });
+const endInteract = (c: number): Step => ({ op: "endInteract", c });
+const reorder = (c: number, id: string, pos: number, nonce: number, to?: string): Step => ({ op: "reorder", c, id, pos, nonce, to });
 const idsOf = (world: World, c = 0) => world.clients[c]!.scene.map((element) => element.id);
 const row = (id: string, index: LegacyIndex, nonce: number): LegacyRow => ({ id, index, nonce, x: nonce });
 
@@ -484,5 +515,18 @@ describe("model: named scenarios from the Sol and Codex reviews (#499)", () => {
       process_(1), deliver(1, 2), flush(1), process_(1), deliver(1, 3), deliver(0, 4), deliver(2, 3),
     ]));
     expect(world.rows.get("0")).toMatchObject({ x: 2, isDeleted: false });
+  });
+
+  it("Sol round 7: while a is being resized, newer a and b arrive (b takes a's old index); the deferred a is replayed and a later 0 still lands where a fresh load puts it", async () => {
+    const world = await play("sol7", { clients: 3, ids: ["a", "b", "c", "0"], initial: [row("a", { kind: "fixed", index: "a0" }, 5), row("b", { kind: "fixed", index: "a1" }, 6), row("c", { kind: "fixed", index: "a1V" }, 7)] }, script([
+      interact(0, "a"),
+      reorder(1, "a", 2, 21, "a2"), reorder(1, "b", 0, 22, "a0"), flush(1), process_(1),
+      deliver(0), deliver(2),
+      endInteract(0),
+      create(2, "0", "a1", 8), flush(2), process_(2),
+      deliver(0), deliver(1),
+    ]));
+    expect(idsOf(world, 0)).toEqual(["b", "0", "c", "a"]);
+    expect(new Set(world.clients.map((client) => client.scene.map((element) => element.id).join()))).toHaveProperty("size", 1);
   });
 });

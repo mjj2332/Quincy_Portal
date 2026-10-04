@@ -71,7 +71,7 @@ import type {
   UIOptions,
 } from "@excalidraw/excalidraw/types"
 import { cn } from "@/lib/utils"
-import { adoptArrivedRevisions, mergeRemote } from "@/lib/whiteboard-merge"
+import { adoptArrivedRevisions, interactingIds, mergeRemote } from "@/lib/whiteboard-merge"
 import { planSceneDrop, pasteIsUnsupported, withoutUnsupported } from "@/lib/whiteboard-saver"
 
 import "@excalidraw/excalidraw/index.css"
@@ -972,7 +972,8 @@ function createController(
               api.getAppState()
             ) as unknown as MergeElement[],
         },
-        (element) => hold(element as never)
+        (element) => hold(element as never),
+        interactingIds(api.getAppState())
       )
       api.updateScene({
         elements: merged as never,
