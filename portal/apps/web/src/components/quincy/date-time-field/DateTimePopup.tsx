@@ -68,6 +68,8 @@ export type DateTimePopupProps = {
   focusOnMount?: boolean;
   /** A mutation the caller owns is in flight: Apply is disabled until it settles. */
   busy?: boolean;
+  /** Apply submits even on an untouched draft (it re-saves the stored value). For a value the caller wants a person to confirm, e.g. an Automatic Deadline (#484). */
+  applyUntouched?: boolean;
   onApply: (next: DateTimeApply) => void | Promise<void>;
   onClose: () => void;
 };
@@ -104,7 +106,7 @@ function initialDraft(value: DateTimeStored | null, reminders: DateTimeReminders
 const TIME_ERROR = "Enter a time as HH:MM, from 00:00 to 23:59.";
 const SLOTS = timeSlots();
 
-function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedback, focusOnMount, busy = false, onApply, onClose }: Omit<DateTimePopupProps, "seedKey">) {
+function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedback, focusOnMount, busy = false, applyUntouched = false, onApply, onClose }: Omit<DateTimePopupProps, "seedKey">) {
   const anchor = useContext(PopupAnchorContext);
   const ownId = useId();
   const ownBodyRef = useRef<HTMLDivElement>(null);
@@ -177,7 +179,7 @@ function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedba
   const blocked = draft.touched && !draft.clear && (civil === null || timeInvalid || gap || (choices !== null && activeChoice === undefined));
 
   const apply = async () => {
-    if (!draft.touched) { onClose(); return; }
+    if (!draft.touched && !applyUntouched) { onClose(); return; }
     const payload: DateTimeApply = draft.clear
       ? { localCivil: null }
       : { localCivil: civil, ...(activeChoice ? { disambiguation: activeChoice } : {}), ...(reminders ? { reminderOffsetsMinutes: draft.offsets } : {}) };

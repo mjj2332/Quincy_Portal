@@ -194,6 +194,7 @@ export const projects = sqliteTable(
     deadlineAt: integer("deadline_at"),
     deadlineReminderOffsetsJson: text("deadline_reminder_offsets_json"),
     deadlineVersion: integer("deadline_version").notNull().default(0),
+    deadlineSource: text("deadline_source", { enum: ["automatic", "manual", "none"] as const }).notNull().default("none"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -211,6 +212,7 @@ export const projects = sqliteTable(
     check("projects_deadline_at_check", sql`${t.deadlineAt} IS NULL OR typeof(${t.deadlineAt}) = 'integer'`),
     check("projects_deadline_reminder_offsets_check", sql`${t.deadlineReminderOffsetsJson} IS NULL OR json_valid(${t.deadlineReminderOffsetsJson})`),
     check("projects_deadline_version_check", sql`typeof(${t.deadlineVersion}) = 'integer' AND ${t.deadlineVersion} >= 0`),
+    check("projects_deadline_source_check", sql`${t.deadlineSource} IN ('automatic', 'manual', 'none')`),
   ],
 );
 

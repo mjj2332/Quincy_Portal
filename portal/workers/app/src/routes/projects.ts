@@ -3,9 +3,9 @@ import { editorFolderAvailability, editorFolderProjection } from "../lib/editor-
 import { readEditorFolderAttention } from "../lib/attention";
 import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
-import { boardContractEnabled, boardSchemaVariant, buildDeadlineSuppressionBundle, buildProjectActivityStatements, buildSubtaskReminderMaterialization, buildSubtaskReminderSuppression, createDb, selectEffectiveDefaultEditorIds, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
+import { boardContractEnabled, boardSchemaVariant, buildAutomaticDeadlineBundle, buildDeadlineSuppressionBundle, buildProjectActivityStatements, buildSubtaskReminderMaterialization, buildSubtaskReminderSuppression, createDb, selectEffectiveDefaultEditorIds, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
 import { and, asc, desc, eq, exists, gt, inArray, isNotNull, isNull, lte, notExists, sql } from "drizzle-orm";
-import { capDashboardSearchText, compareBoardCards, COLLECTION_KINDS, DASHBOARD_PROJECTS_FILTER_QUERY_NAMES, dashboardFilterArchivedMode, dashboardFilterHasArchivedLeaf, dashboardFilterHasPriorityLeaf, dashboardFilterTreeOf, dashboardProjectsFilterQuerySchema, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchemaForProject, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, roleHasCapability, stripUnsafeText, type CollectionKind, type DashboardFilter, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
+import { automaticDeadlineFor, capDashboardSearchText, compareBoardCards, COLLECTION_KINDS, DASHBOARD_PROJECTS_FILTER_QUERY_NAMES, dashboardFilterArchivedMode, dashboardFilterHasArchivedLeaf, dashboardFilterHasPriorityLeaf, dashboardFilterTreeOf, dashboardProjectsFilterQuerySchema, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchemaForProject, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, roleHasCapability, stripUnsafeText, type CollectionKind, type DashboardFilter, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, hasProjectAccessForUser, requireCapability } from "../middleware/capability";
@@ -351,13 +351,19 @@ async function createProjectAtomically(c: Context<AppEnv>, data: z.infer<typeof 
       WHERE pm.project_id = ? AND pm.role_on_project = 'editor' AND pm.user_id IN (${defaultEditorIds.map(() => "?").join(", ")})
     `).bind(projectId, ...defaultEditorIds)
     : null;
+  const projectAuditId = newId();
   const projectAudit = raw.prepare(`
     INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
     SELECT ?, ?, 'project.create', 'project', ?, ?, ? WHERE EXISTS (SELECT 1 FROM projects WHERE id = ?)
-  `).bind(newId(), c.get("user").id, projectId, auditMeta(c.get("user"), { orderedServices: services }), now, projectId);
+  `).bind(projectAuditId, c.get("user").id, projectId, auditMeta(c.get("user"), { orderedServices: services }), now, projectId);
+  // #484: a Project created with a canonical Shoot date and no Deadline gets its Automatic Deadline in this same batch, appended
+  // last so every result index below stays valid and gated on this create's own audit row.
+  const automaticDeadline = typeof data.shootDate === "string"
+    ? buildAutomaticDeadlineBundle({ db: raw, projectId, shootDate: data.shootDate, gate: { kind: "audit", auditId: projectAuditId }, auditId: newId(), reason: "create", now })
+    : undefined;
   const memberStatementStart = diagnostics.length + 1 + collectionStatements.length;
   const defaultMembershipsIndex = memberStatementStart + memberTuples.statements.length;
-  const result = await raw.batch([...diagnostics, projectInsert, ...collectionStatements, ...memberTuples.statements, ...(defaultMembershipsSelect ? [defaultMembershipsSelect] : []), projectAudit]);
+  const result = await raw.batch([...diagnostics, projectInsert, ...collectionStatements, ...memberTuples.statements, ...(defaultMembershipsSelect ? [defaultMembershipsSelect] : []), projectAudit, ...(automaticDeadline?.statements ?? [])]);
   const projectIndex = diagnostics.length;
   const created = rowsFromD1<{ id: string }>(result[projectIndex]).length > 0;
   if (!created) {
@@ -645,6 +651,14 @@ projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) =
   }
   const statements: D1PreparedStatement[] = [projectUpdate, c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project.update', 'project', ?, ?, ? WHERE changes() = 1 RETURNING id").bind(auditId, c.get("user").id, id, auditMeta(c.get("user"), projectAuditMeta), Date.now())];
   statements.push(...serviceStatements); if (activityBundle) statements.push(...activityBundle.statements);
+  // #484: gaining a canonical Shoot date (empty or free text before) gives an empty Deadline its Automatic Deadline, in this same
+  // batch. Appended last so every result index above stays valid, and gated on this save's own audit row so a lost race writes nothing.
+  // A canonical date moving to another canonical date is a reschedule (#485), not a gain, so it never qualifies here.
+  const gainedShootDate = Object.prototype.hasOwnProperty.call(projectUpdates, "shootDate") && typeof projectUpdates.shootDate === "string" && automaticDeadlineFor(projectUpdates.shootDate) !== null && automaticDeadlineFor(existingProject.shootDate) === null;
+  const automaticDeadline = gainedShootDate
+    ? buildAutomaticDeadlineBundle({ db: c.env.DB, projectId: id, shootDate: projectUpdates.shootDate as string, gate: { kind: "audit", auditId }, auditId: newId(), reason: "details", now: Date.now() })
+    : undefined;
+  if (automaticDeadline) statements.push(...automaticDeadline.statements);
   const result = await c.env.DB.batch(statements);
   if (!rowsFromD1<{ id: string }>(result[0]).length) {
     const currentProject = await db.select(projectColumnsForVariant(variant)).from(schema.projects).where(eq(schema.projects.id, id)).get();

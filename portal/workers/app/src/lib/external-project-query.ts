@@ -111,7 +111,8 @@ function summaryFields(project: ProjectRow, services: ServiceRow[], deadline: Aw
     timeWindow: project.timeWindow,
     stageKey: stageTransportKeyForRole(project.stageKey as StageKey, "external_editor"),
     boardRevision: project.boardRevision,
-    deadline,
+    // #484: Deadline provenance is internal (the strict External DTO has no `source`), so it never reaches the wire.
+    deadline: deadline ? (({ source: _source, ...external }) => external)(deadline) : null,
     productionNotes: project.productionNotes,
     services: services.map(({ id, kind, status, expectedCount, receivedCount }) => ({ id, kind, status, expectedCount, receivedCount })),
     cover: coverUrl(origin, coverAsset),

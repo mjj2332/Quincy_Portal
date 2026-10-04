@@ -113,6 +113,7 @@ function freshServer(): Server {
 function scheduleOf(): ProjectDeadlineSchedule {
   return {
     version: server.deadlineVersion,
+    source: server.deadline ? "manual" : null,
     deadline: server.deadline ? { localCivil: server.deadline.localCivil, zone: "Australia/Sydney", utcOffsetMinutes: 600, fold: 0, instant: server.deadline.at } : null,
     reminderOffsetsMinutes: [],
     state: server.deadline ? "scheduled" : "unset",

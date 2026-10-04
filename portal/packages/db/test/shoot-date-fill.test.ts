@@ -239,7 +239,8 @@ describe("composeStageBundle shootDateFill slot", () => {
     const { shootDateFill, ...rest } = withFill.indexes;
     expect(rest).toEqual(without.indexes);
     expect(withFill.statements.slice(0, without.statements.length)).toEqual(without.statements);
-    expect(shootDateFill).toEqual({ update: without.statements.length, audit: without.statements.length + 1 });
-    expect(withFill.statements).toHaveLength(without.statements.length + 2);
+    // The stage-move fill carries the Automatic Deadline (#484) after its own audit: UPDATE, audit, then 4 occurrences.
+    expect(shootDateFill).toEqual({ update: without.statements.length, audit: without.statements.length + 1, automaticDeadline: without.statements.length + 2 });
+    expect(withFill.statements).toHaveLength(without.statements.length + 2 + 2 + 4);
   });
 });
