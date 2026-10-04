@@ -24,13 +24,16 @@ const BANNER = "fixed inset-x-0 top-0 z-[76] flex items-center " +
 const IDENTITY = "impersonation-banner__identity min-w-0 overflow-hidden text-ellipsis whitespace-nowrap";
 
 // Exit sits on ink, so every colour `VARIANT.text` sets has to be inverted — including the
-// disabled colour from BASE. The focus ring is inverted at the surface, not here: BANNER sets
+// disabled colour from BASE and the ghost hover fill: `hover:bg-muted` would paint a cream pill
+// behind the paper label (#541). The banner is not a `data-surface="inverse"` scope, so inverse.css
+// does not remap `--muted`; `hover:bg-transparent` replaces it via twMerge, and the muted→full
+// on-inverse text change is the hover feedback. The focus ring is inverted at the surface, not here: BANNER sets
 // `--focus-ring` to the paper text role, so the global `:focus-visible` ring (and the rest-state
 // `outline-color` from base.css, #532) is already paper on this ink strip. No outline override is
 // needed on the button. `cn` is twMerge-backed, so these later utilities replace the earlier ones
 // within each variant key (§2.1).
 const EXIT = buttonClasses("text", {
-  className: "!text-on-inverse-muted hover:not-disabled:!text-on-inverse " +
+  className: "!text-on-inverse-muted hover:bg-transparent hover:not-disabled:!text-on-inverse " +
     "disabled:!text-on-inverse-muted disabled:bg-transparent disabled:border-transparent",
 });
 
