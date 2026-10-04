@@ -4,6 +4,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { linkPreviewResponseSchema } from "@quincy/shared";
 import { createAuth } from "../src/auth";
 import { app } from "../src/index";
+import { requestLinkPreview } from "../src/lib/link-previews";
 import type { Env } from "../src/env";
 import { baseEnv, database, ids, jpegBytes, mediaKey, mediaRow, noticeMediaKey, pngBytes, request, seedFixture, seedMedia, tokens, type Who } from "./embedded-media-support";
 
@@ -239,6 +240,32 @@ describe("POST /projects/:projectId/link-previews", () => {
     const done = linkPreviewResponseSchema.parse(await (await first).json()).preview!;
     const retry = linkPreviewResponseSchema.parse(await (await call(environment, PROJECT_PATH(), "member", "POST", { url })).json()).preview!;
     expect(retry).toEqual(done);
+    expect(calls).toHaveLength(1);
+    expect(await database.DB.prepare("SELECT count(*) AS n FROM link_previews WHERE url = ?").bind(url).first()).toEqual({ n: 1 });
+    expect(await database.DB.prepare("SELECT count(*) AS n FROM link_preview_attempts WHERE url = ?").bind(url).first()).toEqual({ n: 1 });
+  });
+
+  it("takes the preview a fetch finished while this request was starting, instead of fetching twice, and does not count it", async () => {
+    await database.DB.prepare("DELETE FROM link_preview_attempts").run();
+    const url = "https://example.com/interleaved";
+    let release: () => void = () => undefined; const gate = new Promise<void>((resolve) => { release = resolve; });
+    const { environment, calls } = background(fetched({ image: null }));
+    // B's first look for a finished preview is held until A has completed, so it misses, exactly as the review describes.
+    let held = false;
+    const slowDb = new Proxy(environment.DB, { get(target, key) {
+      if (key !== "prepare") return Reflect.get(target, key, target);
+      return (sql: string) => { const statement = target.prepare(sql); if (held || !sql.includes("FROM link_previews") || !sql.includes("owner_id IS NULL AND url = ?")) return statement; held = true;
+        return { bind: (...values: unknown[]) => { const bound = statement.bind(...values); return { first: async () => { const found = await bound.first(); await gate; return found; } }; } }; };
+    } });
+    const user = { id: ids.member, email: "m@example.test", name: "M", role: "staff", active: true, authorizationEpoch: 0, impersonatedBy: null } as never;
+    const scope = { ownerKind: "project_comment" as const, projectId: ids.project };
+    const second = requestLinkPreview({ ...environment, DB: slowDb } as Env, user, scope, url, []);
+    await vi.waitFor(() => expect(held).toBe(true));
+    const first = await requestLinkPreview(environment, user, scope, url, []);
+    expect(first.status).toBe(200);
+    release();
+    const taken = await second;
+    expect(taken).toEqual(first);
     expect(calls).toHaveLength(1);
     expect(await database.DB.prepare("SELECT count(*) AS n FROM link_previews WHERE url = ?").bind(url).first()).toEqual({ n: 1 });
     expect(await database.DB.prepare("SELECT count(*) AS n FROM link_preview_attempts WHERE url = ?").bind(url).first()).toEqual({ n: 1 });

@@ -167,6 +167,34 @@ describe("applying a link offers a card (#497)", () => {
     expect(storedPreviews()).toEqual([{ type: "linkPreview", attrs: { previewId: P2 } }]);
   });
 
+  it("does not bring a removed card back when the same address was applied twice while pending", async () => {
+    const resolvers: Array<(card: LinkPreviewCard) => void> = [];
+    request.mockImplementation(() => new Promise<LinkPreviewCard>((done) => { resolvers.push(done); }));
+    const host = await mount(plain());
+    await apply(host, "https://example.test/a");
+    await apply(host, "https://example.test/a");
+    expect(request).toHaveBeenCalledTimes(1);
+    await act(async () => resolvers[0]!(cardFor(P1, "https://example.test/a")));
+    await settle();
+    expect(cards(host)).toHaveLength(1);
+    await click(host.querySelector('[data-testid="link-preview-remove"]')!);
+    expect(cards(host)).toHaveLength(0);
+    await act(async () => { for (const resolve of resolvers.slice(1)) resolve(cardFor(P2, "https://example.test/a")); });
+    await settle();
+    expect(cards(host)).toHaveLength(0);
+    expect(storedPreviews()).toHaveLength(0);
+  });
+
+  it("lets the author bring a removed card back by applying the address again", async () => {
+    request.mockResolvedValueOnce(cardFor(P1, "https://example.test/a")).mockResolvedValueOnce(cardFor(P2, "https://example.test/a"));
+    const host = await mount(plain());
+    await apply(host, "https://example.test/a");
+    await click(host.querySelector('[data-testid="link-preview-remove"]')!);
+    await apply(host, "https://example.test/a");
+    expect(cards(host)).toHaveLength(1);
+    expect(storedPreviews()).toEqual([{ type: "linkPreview", attrs: { previewId: P2 } }]);
+  });
+
   it("drops a late answer once the editor has unmounted", async () => {
     let resolve!: (card: LinkPreviewCard) => void;
     request.mockReturnValue(new Promise<LinkPreviewCard>((done) => { resolve = done; }));

@@ -237,6 +237,10 @@ export function QuincyRichTextEditor({
       // submit button click) that reports the same content as before. Propagating it anyway can
       // clobber a concurrent external reset (e.g. the composer clearing after a successful post)
       // that lands between this event and the next render.
+      // A card that was shown and is gone now was removed by the author: remember it so a late answer does not bring it back.
+      const nowShown = new Set<string>(); next.state.doc.forEach((child) => { if (child.type.name === "linkPreview") nowShown.add(String(child.attrs.url ?? "")); });
+      for (const url of shownPreviews.current) if (!nowShown.has(url)) removedPreviews.current.set(url, ++uploadSeq.current);
+      shownPreviews.current = nowShown;
       if (serialised === valueRef.current) return;
       valueRef.current = serialised; onChangeRef.current(doc); setUploadErrors((entries) => (entries.length ? [] : entries)); setNestingBlocked(false); setMentionDismissed(false); setQuery(mentionQuery(next));
     },
@@ -319,11 +323,16 @@ export function QuincyRichTextEditor({
     return found;
   };
   const previewControllers = useRef(new Set<AbortController>());
+  // One request per address at a time, and the addresses whose card the author removed (with when), so a late answer cannot put it back.
+  const pendingPreviews = useRef(new Set<string>());
+  const removedPreviews = useRef(new Map<string, number>());
+  const shownPreviews = useRef(new Set<string>());
   const offerLinkPreview = (href: string) => {
     const scope = linkPreviewsRef.current; const current = editorRef.current;
     if (!scope || !current || disabledRef.current) return;
     const cards = () => { const found: string[] = []; current.state.doc.forEach((child) => { if (child.type.name === "linkPreview") found.push(String(child.attrs.url ?? "")); }); return found; };
-    if (cards().length >= RICH_TEXT_MAX_LINK_PREVIEWS || cards().includes(href)) return;
+    if (cards().length >= RICH_TEXT_MAX_LINK_PREVIEWS || cards().includes(href) || pendingPreviews.current.has(href)) return;
+    pendingPreviews.current.add(href);
     const key = ++uploadSeq.current; const epoch = contentEpoch.current;
     const { $to } = current.state.selection;
     insertAt.current.set(key, $to.depth >= 1 ? $to.after(1) : $to.pos);
@@ -333,12 +342,13 @@ export function QuincyRichTextEditor({
       if (!card || controller.signal.aborted || !mountedRef.current || !live || epoch !== contentEpoch.current) return;
       // The link may have been undone or replaced while the page was fetched: the card belongs to a link that is still there.
       if (!hasLink(live.state.doc, href)) return;
+      if ((removedPreviews.current.get(card.url) ?? 0) > key || (removedPreviews.current.get(href) ?? 0) > key) return;
       if (cards().length >= RICH_TEXT_MAX_LINK_PREVIEWS || cards().includes(card.url)) return;
       const size = live.state.doc.content.size;
       const mapped = Math.min(insertAt.current.get(key) ?? size, size);
       const $at = live.state.doc.resolve(mapped);
       live.chain().insertContentAt($at.depth >= 1 ? $at.after(1) : mapped, { type: "linkPreview", attrs: card }).run();
-    }).catch(() => undefined).finally(() => { insertAt.current.delete(key); previewControllers.current.delete(controller); });
+    }).catch(() => undefined).finally(() => { pendingPreviews.current.delete(href); insertAt.current.delete(key); previewControllers.current.delete(controller); });
   };
   useEffect(() => () => { for (const controller of previewControllers.current) controller.abort(); }, []);
   useEffect(() => () => {
@@ -389,7 +399,7 @@ export function QuincyRichTextEditor({
     if (serialised !== valueRef.current) {
       // The host replaced the content (a post cleared the composer, or an edit began): an earlier upload error is stale.
       setUploadErrors((entries) => (entries.length ? [] : entries));
-      contentEpoch.current += 1;
+      contentEpoch.current += 1; shownPreviews.current = new Set(); removedPreviews.current = new Map();
       const applied = editor.commands.setContent(toTiptap(value), { emitUpdate: false });
       if (applied && JSON.stringify(tiptapToRichTextDoc(editor.getJSON())) === serialised) valueRef.current = serialised;
     }

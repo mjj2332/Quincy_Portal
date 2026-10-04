@@ -134,12 +134,14 @@ export async function requestLinkPreview(env: Env, user: SessionUser, scope: { o
   if (!verdict.ok) return { status: 400, body: { error: "This link cannot be previewed", code: "link_preview_blocked" } };
   const now = Date.now();
   const projectScope = scopeOf(scope.projectId);
-  const existing = await env.DB.prepare(`
+  // A completed preview for this link is answered without fetching. This first look is only a shortcut (it costs no attempt): the
+  // authoritative look is the one below, made while holding the reservation, because a fetch can finish between the two.
+  const reusable = () => env.DB.prepare(`
     SELECT id, url, title, description, site_name, image_media_id FROM link_previews
     WHERE requester_id = ? AND owner_kind = ? AND ${projectScope.sql} AND owner_id IS NULL AND url = ? AND created_at > ? ORDER BY created_at DESC LIMIT 1
   `).bind(user.id, scope.ownerKind, ...projectScope.binds, verdict.url, now - EMBEDDED_MEDIA_RETENTION_MS).first<Parameters<typeof cardOf>[0]>();
-  if (existing) return { status: 200, body: { preview: cardOf(existing) } };
-
+  const early = await reusable();
+  if (early) return { status: 200, body: { preview: cardOf(early) } };
 
   // One INSERT reserves the attempt: it writes nothing once the person holds 30 in the last hour, and nothing while the same link is
   // already being fetched for them here (the partial unique index), so concurrent requests can neither pass a count nor fetch twice.
@@ -158,6 +160,13 @@ export async function requestLinkPreview(env: Env, user: SessionUser, scope: { o
     const inFlight = await env.DB.prepare("SELECT 1 AS one FROM link_preview_attempts WHERE requester_id = ? AND owner_kind = ? AND context_id = ? AND url = ? AND status = 'fetching'").bind(user.id, scope.ownerKind, contextId, verdict.fetchUrl).first();
     if (inFlight) return { status: 409, body: { error: "This link is already being previewed. Try again in a moment.", code: "link_preview_in_progress" } };
     return { status: 429, body: { error: "Too many link previews. Try again later.", code: "link_preview_rate_limited" } };
+  }
+  // Holding the reservation, look again: a fetch that finished since the first look left its preview, and this request must take it
+  // rather than fetch twice. A reuse made no fetch, so its attempt is released and does not count against the hourly limit.
+  const held = await reusable().catch(async (error) => { await env.DB.prepare("DELETE FROM link_preview_attempts WHERE id = ?").bind(attemptId).run(); throw error; });
+  if (held) {
+    await env.DB.prepare("DELETE FROM link_preview_attempts WHERE id = ?").bind(attemptId).run();
+    return { status: 200, body: { preview: cardOf(held) } };
   }
   let result: PreviewRequestResult | null = null;
   try {
