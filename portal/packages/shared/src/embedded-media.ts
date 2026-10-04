@@ -28,3 +28,10 @@ export function sniffEmbeddedImageType(head: Uint8Array): EmbeddedImageContentTy
   if (head.length >= 12 && startsWith(0, [0x52, 0x49, 0x46, 0x46]) && startsWith(8, [0x57, 0x45, 0x42, 0x50])) return "image/webp";
   return null;
 }
+
+/** A Notice board post's media (#496). The post is created after its images are uploaded, so the key cannot carry the post id: the
+ * post owns the image through the D1 row (`owner_kind = 'notice_post'`, `owner_id`). The prefix sits outside `projects/`, so a
+ * Project hard delete never touches it. */
+export function noticeEmbeddedMediaObjectKey(mediaId: string): string {
+  return `notice-board/embedded-media/${mediaId}/original`;
+}

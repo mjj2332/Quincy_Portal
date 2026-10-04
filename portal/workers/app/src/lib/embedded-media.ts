@@ -1,4 +1,5 @@
-import { EMBEDDED_MEDIA_MAX_PER_POST, EMBEDDED_MEDIA_RETENTION_MS } from "@quincy/shared";
+import { EMBEDDED_MEDIA_MAX_PER_POST, EMBEDDED_MEDIA_RETENTION_MS, sniffEmbeddedImageType } from "@quincy/shared";
+import { completeMultipart, validateMultipartParts } from "./r2s3";
 import type { Env } from "../env";
 
 /** Embedded media (#493): the D1 row plus the helpers every writer of it shares. */
@@ -152,4 +153,36 @@ export async function purgeDetachedOwnerMedia(env: Pick<Env, "DB" | "MEDIA">, ow
     const owned = (await env.DB.prepare("SELECT * FROM embedded_media WHERE owner_kind = ? AND owner_id = ? AND state = 'detached'").bind(ownerKind, ownerId).all<Parameters<typeof embeddedMediaFromRaw>[0]>()).results.map(embeddedMediaFromRaw);
     if (owned.length && await deleteEmbeddedMediaObjects(env, owned)) await env.DB.batch(owned.map((row) => env.DB.prepare("DELETE FROM embedded_media WHERE id = ? AND state = 'detached' AND owner_id = ?").bind(row.id, ownerId)));
   } catch { /* the sweep reclaims rows left behind */ }
+}
+
+export type UploadVerdict = { ok: true } | { ok: false; status: 400 | 409 | 502; body: Record<string, unknown> };
+
+/**
+ * The middle of every completion (#493, #496): finishes the multipart upload if there is one, then checks the stored object
+ * against what was reserved (size, content type, first bytes). A rejection is claim-first: the still-`uploading` row and its
+ * queue entry change in one batch and only the winner deletes the object. The caller then promotes the row to `pending`
+ * under its own fence (a live Project, or nothing for a Notice board post).
+ */
+export async function verifyUploadedEmbeddedObject(env: Env, row: EmbeddedMediaRow, parts: Array<{ partNumber: number; etag: string }> | undefined): Promise<UploadVerdict> {
+  if (row.uploadId) {
+    if (!parts?.length) return { ok: false, status: 400, body: { error: "Multipart uploads require completed parts" } };
+    try { validateMultipartParts(row.bytes, parts); } catch (error) { return { ok: false, status: 400, body: { error: error instanceof Error ? error.message : "Invalid multipart parts" } }; }
+    try { await completeMultipart(env, row.originalKey, row.uploadId, parts, row.bytes); }
+    catch (error) {
+      // A retry after a lost response finds the upload already completed: carry on if the object is there.
+      if (!await env.MEDIA.head(row.originalKey)) return { ok: false, status: 502, body: { error: error instanceof Error ? error.message : "Upload could not be completed" } };
+    }
+  }
+  const head = await env.MEDIA.head(row.originalKey);
+  if (!head) return { ok: false, status: 400, body: { error: "The file has not finished uploading", code: "upload_missing" } };
+  const reject = async (message: string): Promise<UploadVerdict> => {
+    if (!await claimAndDiscardUploadingMedia(env, row)) return { ok: false, status: 409, body: { error: "This media is already in use", code: "media_not_uploading" } };
+    return { ok: false, status: 400, body: { error: message, code: "media_rejected" } };
+  };
+  if (head.size !== row.bytes) return reject("The uploaded file is not the size that was reserved");
+  if (head.httpMetadata?.contentType !== row.contentType) return reject("The uploaded file is not the type that was reserved");
+  const first = await env.MEDIA.get(row.originalKey, { range: { offset: 0, length: 16 } });
+  const sniffed = first ? sniffEmbeddedImageType(new Uint8Array(await first.arrayBuffer())) : null;
+  if (sniffed !== row.contentType) return reject("The uploaded file is not a JPEG, PNG or WebP image");
+  return { ok: true };
 }

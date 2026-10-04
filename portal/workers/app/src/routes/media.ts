@@ -195,7 +195,7 @@ mediaRoutes.get("/annotation/:annotationId", terminalRoute("/annotation/:annotat
 
 /**
  * Embedded media (#493). An attached image follows its post: anyone who can collaborate on the Project
- * may read it, an assigned External editor included. Until it is attached (and after it is edited out)
+ * may read it, an assigned External editor included. A Notice board image (#496) needs the Notice board capability. Until it is attached (and after it is edited out)
  * only the person who uploaded it can see it. Every refusal is `no-store` through the /media default.
  */
 mediaRoutes.get("/embedded/:mediaId", terminalRoute("/embedded/:mediaId", async (c) => {
@@ -204,7 +204,10 @@ mediaRoutes.get("/embedded/:mediaId", terminalRoute("/embedded/:mediaId", async 
   const row = await getEmbeddedMedia(c.env.DB, mediaId);
   if (!row || row.state === "uploading") return c.json({ error: "Media not found" }, 404);
   const user = c.get("user");
-  if (row.state === "attached") {
+  if (row.state === "attached" && row.ownerKind === "notice_post") {
+    // A Notice board image follows its post (#496): anyone with the Notice board capability may read it, and no one else is told it exists.
+    if (!roleHasCapability(user.role, "viewNoticeBoard")) return c.json({ error: "Media not found" }, 404);
+  } else if (row.state === "attached") {
     if (!row.projectId) return c.json({ error: "Media not found" }, 404);
     if (!await hasProjectCollaborationAccess(c, row.projectId)) return user.role === "external_editor" ? c.json({ error: "Media not found" }, 404) : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   } else if (row.uploaderId !== user.id) return c.json({ error: "Media not found" }, 404);
