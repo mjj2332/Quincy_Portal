@@ -17,7 +17,7 @@ mechanics of spawning them.
 | **deep-reasoner** | `Agent` tool, `subagent_type: deep-reasoner` (`~/.claude/agents/deep-reasoner.md`) | Claude Opus 5.5, high effort | Reasoning-heavy phases: architecture decisions, hard debugging, algorithm design, tradeoff analysis. Returns a concise, actionable conclusion |
 | **design-reviewer** | `Agent` tool, `subagent_type: design-reviewer` (`~/.claude/agents/design-reviewer.md`) | Claude Opus 5.5, medium effort | Second stage of every UI browser pass ([§2a](#2a-the-browser-pass-two-stages)): judges the screenshots as a designer against the design tokens and the rest of the Portal, audits Agy's PASS/FAIL table. Read-only |
 | **Sol** | `codex exec` — [§3](codex-cli.md) | `gpt-6.1-sol`, always high effort | Diff reviewer |
-| **Luna** | `codex exec` — [§3](codex-cli.md) | `gpt-6-luna`, always xhigh effort | Test code and non-browser QA: diagnosis, authoring and fixing tests. Never the browser pass |
+| **Luna** | `codex exec` — [§3](codex-cli.md) | `gpt-6-luna`, always xhigh effort | Test code and non-browser QA: diagnosis, authoring and fixing tests. Fallback browser-pass measurer only when Agy is down ([§2a](#2a-the-browser-pass-two-stages)) |
 | **Codex (peer)** | `/codex:rescue --background` | shared Codex runtime | A second, independent-model-family opinion on high-stakes decisions — a peer worked in parallel with Opus/deep-reasoner, not a reviewer of their output |
 | **Terra** | `codex exec` — [§3](codex-cli.md) | `gpt-5.6-terra` | No default role — available as an on-request builder when the user asks for a Codex-driven build by name |
 | **Astra** | `codex exec` — [§3](codex-cli.md) | `gpt-6-astra` | No default role — available on request; pass `-m gpt-6-astra` explicitly, the account default doesn't reliably select it |
@@ -69,8 +69,16 @@ they are different agents, and the second is blind to the first's verdicts until
    the ticket names, each open state (popover, menu, sheet), hit areas, gaps, overflow, tab order.
    Its report contract: screenshots as files in one folder named per viewport and state, and a
    PASS/FAIL table where every row carries the measurement and the screenshot that shows it.
-   Agy is the only measurer (owner decision, 2026-09-28): Luna's passes ran one to two hours and
-   outlasted timed UI such as a 10 s toast. huashu's input is synthetic, so its drag, keyboard,
+   Agy is the measurer (owner decision, 2026-09-28): Luna's earlier passes ran one to two hours and
+   outlasted timed UI such as a 10 s toast. **Luna is the fallback when Agy is down** (quota, auth,
+   outage; owner decision, 2026-10-04), run through `huashu-chrome` with the same brief and report
+   contract, an unsandboxed `codex exec` the owner approved in chat ([codex-cli.md](codex-cli.md)).
+   Its #522 trial finished in 22 min inside a 40-min time-box, kept to labelled tabs and flagged
+   two of its own bad screenshots, but measured the wrong element for six token rows and missed a
+   duplicate screenshot. So a Luna brief carries a time-box, names the exact selector for every
+   row that measures a token value, and requires a FAIL on a token value to be cross-checked
+   against its screenshot before it is reported. Every Luna screenshot is verified as for Agy's.
+   huashu's input is synthetic, so its drag, keyboard,
    focus, hover and narrow-viewport rows rerun as a `chrome-devtools-mcp` fallback pass (native
    `drag`, trusted keys, real viewports). The session still re-runs every row that stays
    synthetic, and every row whose measurement contradicts its verdict, with trusted input before
