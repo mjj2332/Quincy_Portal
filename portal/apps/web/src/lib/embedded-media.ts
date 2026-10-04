@@ -29,9 +29,16 @@ export function embeddedImageProblem(file: Pick<File, "type" | "size" | "name">)
 
 export const EMBEDDED_IMAGE_ACCEPT = EMBEDDED_IMAGE_CONTENT_TYPES.join(",");
 
+/** Where an upload belongs: a Project's discussion, or the Notice board (#496). */
+export type EmbeddedMediaScope = { projectId: string } | { noticeBoard: true };
+
+function mediaBase(scope: EmbeddedMediaScope): string {
+  return "noticeBoard" in scope ? "/api/notice-board/embedded-media" : `/api/projects/${encodeURIComponent(scope.projectId)}/embedded-media`;
+}
+
 /** presign, then bytes straight to R2, then complete. Resolves with the media id once the server accepts the file. */
-export async function uploadEmbeddedImage(projectId: string, file: File, onProgress?: (percent: number) => void): Promise<string> {
-  const base = `/api/projects/${encodeURIComponent(projectId)}/embedded-media`;
+export async function uploadEmbeddedImage(scope: EmbeddedMediaScope, file: File, onProgress?: (percent: number) => void): Promise<string> {
+  const base = mediaBase(scope);
   const presign = externalEmbeddedMediaPresignSchema.parse(await apiPost<unknown, { contentType: string; bytes: number }>(base, { contentType: file.type, bytes: file.size }));
   const completed = await uploadMultipartFile(
     file,
