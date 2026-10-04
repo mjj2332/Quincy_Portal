@@ -110,4 +110,35 @@ describe("autosave while the board is view-only (#499)", () => {
     expect(onSave).toHaveBeenCalledTimes(2);                 // the edit was never lost
     expect(board.statuses.at(-1)).toBe("saved");
   });
+  it("a skipped save is retried on its own when the restore lands before the pause ever commits: exactly one send of the pending edit, no double-send", async () => {
+    // Sol round 12: archive -> due autosave skipped -> restore, all before React commits paused=true. paused never
+    // flips, so the resume effect never runs; the skipped outcome itself must arm the bounded retry.
+    let sending = true;
+    const onSave = vi.fn<() => Promise<void | "skipped">>(async () => (sending ? undefined : "skipped"));
+    const board = mount(onSave);
+    board.edit();
+    sending = false;                                         // the archive frame landed; the hook is not paused yet
+    await advance(100);                                      // the idle save is due and is skipped
+    expect(onSave).toHaveBeenCalledTimes(1);
+    sending = true;                                          // restored before paused=true was ever committed
+    await advance(1_000);                                    // within the first retry window
+    expect(onSave).toHaveBeenCalledTimes(2);                 // the pending edit went out exactly once
+    expect(board.statuses.at(-1)).toBe("saved");
+    await advance(120_000);
+    expect(onSave).toHaveBeenCalledTimes(2);                 // saved: the retries stop
+  });
+
+  it("a skipped retry and the resume effect firing together send the edit once", async () => {
+    let sending = true;
+    const onSave = vi.fn<() => Promise<void | "skipped">>(async () => (sending ? undefined : "skipped"));
+    const board = mount(onSave);
+    board.edit();
+    sending = false;
+    await advance(100);
+    board.setPaused(true);
+    sending = true;
+    board.setPaused(false);                                  // the resume effect flushes now; the armed retry must not resend
+    await advance(120_000);
+    expect(onSave).toHaveBeenCalledTimes(2);
+  });
 });

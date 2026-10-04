@@ -1208,6 +1208,16 @@ export function useAutosave(
     [options]
   )
 
+  // Declared before flush and bound to it through a ref, since the retry calls flush and flush arms the retry.
+  const flushRef = useRef<() => Promise<void>>(async () => undefined)
+  const scheduleRetry = useCallback(() => {
+    if (closedRef.current) return
+    const delay = Math.min(RETRY_BASE_MS * 2 ** failuresRef.current, RETRY_MAX_MS)
+    failuresRef.current += 1
+    window.clearTimeout(retryTimer.current)
+    retryTimer.current = window.setTimeout(() => void flushRef.current(), delay)
+  }, [])
+
   const flush = useCallback(async () => {
     const current = apiRef.current
     const save = options.current.onSave
@@ -1229,9 +1239,12 @@ export function useAutosave(
       const outcome = await save(finalSceneRef.current ?? readScene(current))
       if (outcome === WHITEBOARD_SAVE_SKIPPED) {
         // QUINCY ADDITION #499: nothing was sent (the board went view-only before this hook's pause caught up). The
-        // edit is still unsaved: keep it dirty, never report Saved, and let the pause ending flush it.
+        // edit is still unsaved: keep it dirty and never report Saved. The pause ending flushes it, but the restore can
+        // land before React ever commits paused=true (no flip, no resume effect), so arm the same bounded retry as a
+        // failed save. Each retry goes through this flush: paused, it stays dirty and waits; not paused, it sends.
         dirtyRef.current = true
         report("unsaved")
+        scheduleRetry()
       } else {
         failuresRef.current = 0
         report(dirtyRef.current ? "unsaved" : "saved")
@@ -1241,12 +1254,7 @@ export function useAutosave(
       dirtyRef.current = true
       report("error")
       // QUINCY ADDITION #499: and retry without waiting for another edit, backing off to a bound.
-      if (!closedRef.current) {
-        const delay = Math.min(RETRY_BASE_MS * 2 ** failuresRef.current, RETRY_MAX_MS)
-        failuresRef.current += 1
-        window.clearTimeout(retryTimer.current)
-        retryTimer.current = window.setTimeout(() => void flush(), delay)
-      }
+      scheduleRetry()
     } finally {
       savingRef.current = false
       if (pendingRef.current) {
@@ -1254,7 +1262,10 @@ export function useAutosave(
         void flush()
       }
     }
-  }, [options, report])
+  }, [options, report, scheduleRetry])
+  useEffect(() => {
+    flushRef.current = flush
+  }, [flush])
 
   // The pause ends: whatever is still dirty goes out now, with no new edit.
   useEffect(() => {
