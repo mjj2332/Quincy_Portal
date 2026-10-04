@@ -195,7 +195,7 @@ export function PriorityStars({ priority, street, canPrioritize, pending = false
               // glyphs' `starpulse` tells touch and keyboard (all five while a clear is saving,
               // since none are lit). The pulse is a scale, not an opacity
               // fade: a fade is what took the disabled drag handle to 1.72:1.
-              className={`group inline-grid place-items-center size-9 pointer-coarse:size-11 max-[641px]:size-11 cursor-pointer aria-disabled:cursor-progress select-none text-[18px] leading-none focus-visible:!outline-2 focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-[-2px] ${on ? "text-star-on" : "text-star-off"}`}
+              className={`group inline-grid place-items-center size-9 pointer-coarse:size-11 max-[641px]:size-11 cursor-pointer aria-disabled:cursor-progress select-none text-[18px] leading-none focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px] ${on ? "text-star-on" : "text-star-off"}`}
             >
               <span aria-hidden="true" className={on || priority === null ? "inline-block group-aria-disabled:motion-safe:animate-[starpulse_var(--dur-reveal)_var(--ease-standard)_infinite_alternate]" : undefined}>★</span>
             </span>

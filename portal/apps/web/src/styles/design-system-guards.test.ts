@@ -979,6 +979,32 @@ describe("guard: outline-color defaults to --focus-ring in @layer base (#532)", 
   });
 });
 
+/**
+ * #541: a focus ring coloured from a raw palette step ignores `data-surface="inverse"` scopes (and
+ * the banner/toast `--focus-ring` override), so the ring is ink on ink. Any `focus*:` / `has-[…focus…]`
+ * / `focus-visible:after:` outline colour has to read `var(--focus-ring)` (or a role utility), never
+ * `--ink-N` / `--paper-N` / `--greige-N` or the palette utilities.
+ */
+export function rawFocusRingColourProblems(source: string): string[] {
+  return source.split(/[\s"'`]+/).filter((token) =>
+    token.includes("focus") && /outline-(?:\[var\(--(?:ink|paper|greige)-\d+\)\]|(?:ink|paper|greige)-\d+)(?![\w-])/.test(token));
+}
+
+describe("guard: focus ring colour never comes from a raw palette step (#541)", () => {
+  it("flags planted raw-palette focus outlines and accepts the token", () => {
+    expect(rawFocusRingColourProblems('"focus-visible:!outline-[var(--ink-900)]"')).toHaveLength(1);
+    expect(rawFocusRingColourProblems('"focus-visible:after:outline-[var(--paper-050)]"')).toHaveLength(1);
+    expect(rawFocusRingColourProblems('"has-[:focus-visible]:outline-greige-200"')).toHaveLength(1);
+    expect(rawFocusRingColourProblems('"focus-visible:!outline-[var(--focus-ring)] outline-[var(--ink-900)]"')).toEqual([]);
+  });
+
+  it("no source file colours a focus ring from the palette", () => {
+    const offenders = sourceFiles().flatMap((file) =>
+      rawFocusRingColourProblems(stripComments(readFileSync(file, "utf8"))).map((token) => `${rel(file)}: ${token}`));
+    expect(offenders).toEqual([]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Guard — one active-row cue in a person picker (#514)
 // ---------------------------------------------------------------------------
