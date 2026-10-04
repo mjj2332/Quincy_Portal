@@ -62,6 +62,18 @@ describe("migration 0057 adds embedded media (#493)", () => {
     db.close();
   });
 
+  it("adds the cleanup queue with no foreign key, so it outlives a Project hard delete", () => {
+    const db = seeded();
+    const columns = db.prepare("PRAGMA table_info(embedded_media_cleanup)").all() as Array<{ name: string; notnull: number; pk: number }>;
+    expect(columns.map((column) => column.name)).toEqual(["storage_key", "upload_id", "project_id", "queued_at", "attempts"]);
+    expect(db.prepare("PRAGMA foreign_key_list(embedded_media_cleanup)").all()).toEqual([]);
+    db.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) VALUES ('k', 'u', 'p1', ?)").run(now);
+    db.prepare("DELETE FROM projects WHERE id = 'p1'").run();
+    expect(db.prepare("SELECT attempts FROM embedded_media_cleanup WHERE storage_key = 'k'").get()).toEqual({ attempts: 0 });
+    expect(() => db.prepare("INSERT INTO embedded_media_cleanup (storage_key, queued_at) VALUES ('k', ?)").run(now)).toThrow(/UNIQUE|PRIMARY/i);
+    db.close();
+  });
+
   it("holds an uploading or pending row with no owner, and an attached or detached row with one", () => {
     const db = seeded();
     insert(db, { id: "up", state: "uploading" });

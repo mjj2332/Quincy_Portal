@@ -374,6 +374,23 @@ export const embeddedMedia = sqliteTable(
   ],
 );
 
+/**
+ * Durable cleanup queue for embedded-media R2 objects and multipart uploads that no `embedded_media` row owns
+ * any more (#493). `projectId` deliberately has no foreign key: the Project is usually already gone. A row
+ * leaves only after its object is deleted (and its multipart upload is terminal).
+ */
+export const embeddedMediaCleanup = sqliteTable(
+  "embedded_media_cleanup",
+  {
+    storageKey: text("storage_key").primaryKey(),
+    uploadId: text("upload_id"),
+    projectId: text("project_id"),
+    queuedAt: integer("queued_at").notNull(),
+    attempts: integer("attempts").notNull().default(0),
+  },
+  (t) => [index("embedded_media_cleanup_queued_idx").on(t.queuedAt)],
+);
+
 export const projectCommentMentions = sqliteTable(
   "project_comment_mentions",
   {

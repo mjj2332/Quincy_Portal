@@ -27,6 +27,31 @@ export async function getEmbeddedMedia(db: D1Database, mediaId: string): Promise
   return raw ? embeddedMediaFromRaw(raw) : null;
 }
 
+export type CleanupEntry = { key: string; uploadId?: string | null; projectId?: string | null };
+
+/**
+ * Hands R2 objects (and the multipart uploads that may still create them) to the durable cleanup queue
+ * (`embedded_media_cleanup`), which the background sweep drains. Idempotent: a key already queued keeps its row,
+ * and gains an upload id if it had none.
+ */
+export async function enqueueEmbeddedMediaCleanup(db: D1Database, entries: CleanupEntry[], now = Date.now()): Promise<void> {
+  if (!entries.length) return;
+  await db.batch(entries.map((entry) => db.prepare(`
+    INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) VALUES (?, ?, ?, ?)
+    ON CONFLICT(storage_key) DO UPDATE SET project_id = COALESCE(embedded_media_cleanup.project_id, excluded.project_id), upload_id = COALESCE(embedded_media_cleanup.upload_id, excluded.upload_id)
+  `).bind(entry.key, entry.uploadId ?? null, entry.projectId ?? null, now)));
+}
+
+/**
+ * Deletes one object nobody owns. If R2 refuses, the key goes to the cleanup queue instead, so a caller never
+ * returns with the object neither deleted nor owned. Returns whether the object is already gone.
+ */
+export async function discardEmbeddedMediaObject(env: Pick<Env, "DB" | "MEDIA">, key: string, projectId: string | null): Promise<boolean> {
+  if (await deleteEmbeddedMediaObjects(env, [{ originalKey: key, displayKey: null, posterKey: null }])) return true;
+  await enqueueEmbeddedMediaCleanup(env.DB, [{ key, projectId }]);
+  return false;
+}
+
 /** Every object a row can own. Best effort: returns whether R2 accepted the deletes. */
 export async function deleteEmbeddedMediaObjects(env: Pick<Env, "MEDIA">, rows: Array<Pick<EmbeddedMediaRow, "originalKey" | "displayKey" | "posterKey">>): Promise<boolean> {
   const keys = rows.flatMap((row) => [row.originalKey, row.displayKey, row.posterKey]).filter((key): key is string => Boolean(key));

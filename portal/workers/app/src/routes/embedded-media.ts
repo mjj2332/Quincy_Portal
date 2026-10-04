@@ -11,7 +11,7 @@ import { hasProjectCollaborationAccess } from "../middleware/capability";
 import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { abortMultipart, completeMultipart, createMultipartPresign, validateMultipartParts } from "../lib/r2s3";
-import { deleteEmbeddedMediaObjects, getEmbeddedMedia } from "../lib/embedded-media";
+import { discardEmbeddedMediaObject, enqueueEmbeddedMediaCleanup, getEmbeddedMedia } from "../lib/embedded-media";
 import { jsonInput } from "./helpers";
 
 const uuid = z.string().uuid();
@@ -56,7 +56,8 @@ embeddedMediaRoutes.post("/projects/:projectId/embedded-media", terminalRoute("/
     UPDATE embedded_media SET upload_id = ? WHERE id = ? AND state = 'uploading' AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)
   `).bind(multipart.uploadId, mediaId, projectId).run();
   if ((stored.meta.changes ?? 0) !== 1) {
-    try { await abortMultipart(c.env, key, multipart.uploadId); } catch { /* R2 aborts a stale multipart upload by itself */ }
+    // An abort that fails leaves the upload completable, so the queue takes it over (the sweep aborts it, then deletes the key).
+    try { await abortMultipart(c.env, key, multipart.uploadId); } catch { await enqueueEmbeddedMediaCleanup(c.env.DB, [{ key, uploadId: multipart.uploadId, projectId }]); }
     await release();
     return c.json({ error: "This project can no longer accept media", code: "project_unavailable" }, 409);
   }
@@ -79,7 +80,7 @@ embeddedMediaRoutes.post("/projects/:projectId/embedded-media/:mediaId/complete"
   const projectId = c.req.param("projectId"); const mediaId = c.req.param("mediaId");
   if (!uuid.safeParse(projectId).success || !uuid.safeParse(mediaId).success) return c.json({ error: "Invalid media upload" }, 400);
   const strayKey = embeddedMediaObjectKey(projectId, mediaId);
-  const stray = async () => { await deleteEmbeddedMediaObjects(c.env, [{ originalKey: strayKey, displayKey: null, posterKey: null }]); return c.json({ error: "Media upload not found" }, 404); };
+  const stray = async () => { await discardEmbeddedMediaObject(c.env, strayKey, projectId); return c.json({ error: "Media upload not found" }, 404); };
   // The Project was deleted while the browser was still uploading: nothing owns the object any more.
   const live = await createDb(c.env.DB).select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
   if (!live) return stray();
@@ -103,9 +104,10 @@ embeddedMediaRoutes.post("/projects/:projectId/embedded-media/:mediaId/complete"
   }
   const head = await c.env.MEDIA.head(row.originalKey);
   if (!head) return c.json({ error: "The file has not finished uploading", code: "upload_missing" }, 400);
-  // The row goes only after the object is gone: if R2 refuses the delete the row stays, so the upload can be retried and the sweep can find the object.
+  // The row goes only once the object is deleted or queued for cleanup, so the object never loses its owner.
   const reject = async (message: string) => {
-    if (await deleteEmbeddedMediaObjects(c.env, [row])) await c.env.DB.prepare("DELETE FROM embedded_media WHERE id = ? AND state = 'uploading'").bind(mediaId).run();
+    await discardEmbeddedMediaObject(c.env, row.originalKey, projectId);
+    await c.env.DB.prepare("DELETE FROM embedded_media WHERE id = ? AND state = 'uploading'").bind(mediaId).run();
     return c.json({ error: message, code: "media_rejected" }, 400);
   };
   if (head.size !== row.bytes) return reject("The uploaded file is not the size that was reserved");
@@ -121,7 +123,8 @@ embeddedMediaRoutes.post("/projects/:projectId/embedded-media/:mediaId/complete"
     if (!current) return stray();
     if (current.state === "uploading") {
       // Lost to the Project's lifecycle, not to another writer: nothing will ever own this object.
-      if (await deleteEmbeddedMediaObjects(c.env, [current])) await c.env.DB.prepare("DELETE FROM embedded_media WHERE id = ? AND state = 'uploading'").bind(mediaId).run();
+      await discardEmbeddedMediaObject(c.env, current.originalKey, projectId);
+      await c.env.DB.prepare("DELETE FROM embedded_media WHERE id = ? AND state = 'uploading'").bind(mediaId).run();
       return c.json({ error: "This project can no longer accept media", code: "project_unavailable" }, 409);
     }
     if (current.state !== "pending") return c.json({ error: "This media is already in use", code: "media_not_uploading" }, 409);

@@ -189,6 +189,25 @@ describe("Project hard delete", () => {
   });
 });
 
+describe("Project hard delete keeps cleanup ownership of what it could not abort (#493)", () => {
+  it("queues the multipart upload whose abort failed, with its upload id, after the Project and its rows are gone", async () => {
+    const projectId = crypto.randomUUID(); const now = Date.now();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, archived_at, created_at, updated_at) VALUES (?, 'Doomed2', 'editing_autohdr', 0, ?, ?, ?)").bind(projectId, now, now, now).run();
+    const uploading = await seedMedia({ projectId, state: "uploading", uploadId: "s3-upload-stuck" }); const attached = await seedMedia({ projectId, state: "attached" });
+    vi.stubGlobal("fetch", async () => new Response("R2 unavailable", { status: 403 }));
+    const environment: Env = { ...baseEnv, R2_ACCOUNT_ID: "acct", R2_S3_ACCESS_KEY_ID: "key", R2_S3_SECRET_ACCESS_KEY: "secret" };
+    const context = await createAuth(environment).$context;
+    const cookie = `${context.authCookies.sessionToken.name}=${tokens.admin}.${await makeSignature(tokens.admin, baseEnv.BETTER_AUTH_SECRET ?? "dev-only-replace-better-auth-secret-32-bytes")}`;
+    const response = await app.fetch(new Request(`https://portal.test/api/projects/${projectId}`, { method: "DELETE", headers: { cookie, origin: baseEnv.APP_ORIGIN } }), environment, createExecutionContext());
+    expect(response.status).toBe(200);
+    expect(await database.DB.prepare("SELECT 1 FROM projects WHERE id = ?").bind(projectId).first()).toBeNull();
+    expect(await mediaRow(uploading.id)).toBeNull();
+    const queue = await database.DB.prepare("SELECT storage_key AS k, upload_id AS u, project_id AS p FROM embedded_media_cleanup WHERE project_id = ?").bind(projectId).all<{ k: string; u: string | null; p: string }>();
+    expect(queue.results).toEqual([{ k: uploading.key, u: "s3-upload-stuck", p: projectId }]);
+    expect(attached.key).not.toBe(uploading.key);
+  });
+});
+
 describe("concurrent saves reconcile media inside the winning batch", () => {
   const editLib = (commentId: string, content: unknown, ids_: string[], text = "x") => editProjectComment(database.DB, { projectId: ids.project, commentId, actorId: ids.member, body: text, contentJson: JSON.stringify(content), removeMentionIds: [], addMentions: [], mentionIds: [], editedAt: new Date(), occurredAt: new Date(), media: { authorId: ids.member, ids: ids_ } });
 

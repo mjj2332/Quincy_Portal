@@ -18,6 +18,11 @@ async function appRequest(environment: Env, path: string, who: Who, method: "GET
   return app.fetch(new Request(`https://portal.test${path}`, init), environment, createExecutionContext());
 }
 const presign = (environment: Env, who: Who, body: unknown, projectId: string = ids.project) => appRequest(environment, `/api/projects/${projectId}/embedded-media`, who, "POST", body);
+const queued = async (key: string) => database.DB.prepare("SELECT storage_key AS storageKey, upload_id AS uploadId, project_id AS projectId, attempts FROM embedded_media_cleanup WHERE storage_key = ?").bind(key).first<{ storageKey: string; uploadId: string | null; projectId: string | null; attempts: number }>();
+const failingDelete = (): Env => ({ ...baseEnv, MEDIA: new Proxy(baseEnv.MEDIA, { get: (target, property) => {
+  if (property === "delete") return async () => { throw new Error("R2 down"); };
+  const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value;
+} }) });
 const rowCount = async () => (await database.DB.prepare("SELECT count(*) AS n FROM embedded_media").first<{ n: number }>())!.n;
 
 function stubS3(handler: (url: string, init: RequestInit | undefined) => Response | undefined = () => undefined) {
@@ -25,7 +30,7 @@ function stubS3(handler: (url: string, init: RequestInit | undefined) => Respons
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init); const url = request.url;
     calls.push({ url, method: request.method, headers: request.headers });
-    const custom = handler(url, init); if (custom) return custom;
+    const custom = handler(url, { ...init, method: request.method }); if (custom) return custom;
     if (request.method === "POST" && url.includes("?uploads")) return new Response("<InitiateMultipartUploadResult><UploadId>s3-upload-1</UploadId></InitiateMultipartUploadResult>");
     if (request.method === "POST" && url.includes("uploadId=")) return new Response("<CompleteMultipartUploadResult/>");
     return new Response("unexpected", { status: 500 });
@@ -105,6 +110,21 @@ describe("POST /projects/:id/embedded-media (presign)", () => {
     expect(await rowCount()).toBe(before);
   });
 
+  it("queues the multipart upload for cleanup when the abort itself fails after the reservation vanished", async () => {
+    stubS3((_url, init) => init?.method === "DELETE" ? new Response("down", { status: 403 }) : undefined);
+    const racing: Env = { ...S3_ENV, DB: new Proxy(S3_ENV.DB, { get: (target, property) => {
+      if (property !== "prepare") { const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value; }
+      return (sql: string) => {
+        const statement = target.prepare(sql);
+        if (!sql.includes("SET upload_id")) return statement;
+        return { bind: (...values: unknown[]) => { const bound = statement.bind(...values); return { run: async () => { await target.prepare("DELETE FROM embedded_media WHERE state = 'uploading' AND bytes = 7778").run(); return bound.run(); } }; } };
+      };
+    } }) };
+    expect((await presign(racing, "member", { contentType: "image/png", bytes: 7778 })).status).toBe(409);
+    const row = await database.DB.prepare("SELECT storage_key AS k, upload_id AS u, project_id AS p FROM embedded_media_cleanup WHERE upload_id = 's3-upload-1'").first<{ k: string; u: string; p: string }>();
+    expect(row).toMatchObject({ u: "s3-upload-1", p: ids.project });
+  });
+
   it("dev: answers devDirect and accepts the bytes only from the uploader, with the stored content type", async () => {
     const response = await presign(DEV_ENV, "member", { contentType: "image/jpeg", bytes: 40 });
     expect(response.status).toBe(200); const body = externalEmbeddedMediaPresignSchema.parse(await response.json());
@@ -151,16 +171,34 @@ describe("POST /projects/:id/embedded-media/:mediaId/complete", () => {
     }
   });
 
-  it("keeps the row (so the sweep can find the object) when a rejection cannot delete the object, and removes both once R2 recovers", async () => {
+  it("queues the object for cleanup (never just drops it) when a rejection cannot delete it, and the queue owns it from then on", async () => {
     const { id, key } = await seedMedia({ state: "uploading", bytes: 99, object: pngBytes(64) });
-    const failing: Env = { ...baseEnv, MEDIA: new Proxy(baseEnv.MEDIA, { get: (target, property) => {
+    expect((await complete("member", id, {}, ids.project, failingDelete())).status).toBe(400);
+    expect(await database.MEDIA.head(key)).not.toBeNull();
+    expect(await mediaRow(id)).toBeNull();
+    expect(await queued(key)).toMatchObject({ storageKey: key, projectId: ids.project, attempts: 0 });
+  });
+
+  it("queues the object when the row vanished (a sweep claim) while R2 was being read and the delete then fails", async () => {
+    const { id, key } = await seedMedia({ state: "uploading", object: pngBytes(64) });
+    const racing: Env = { ...baseEnv, MEDIA: new Proxy(baseEnv.MEDIA, { get: (target, property) => {
       if (property === "delete") return async () => { throw new Error("R2 down"); };
+      if (property === "get") return async (...args: Parameters<R2Bucket["get"]>) => {
+        const result = await (target.get as (...a: unknown[]) => Promise<unknown>).call(target, ...args);
+        await database.DB.prepare("DELETE FROM embedded_media WHERE id = ?").bind(id).run();
+        return result;
+      };
       const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value;
     } }) };
-    expect((await complete("member", id, {}, ids.project, failing)).status).toBe(400);
-    expect(await mediaRow(id)).toMatchObject({ state: "uploading" }); expect(await database.MEDIA.head(key)).not.toBeNull();
-    expect((await complete("member", id)).status).toBe(400);
-    expect(await mediaRow(id)).toBeNull(); expect(await database.MEDIA.head(key)).toBeNull();
+    expect((await complete("member", id, {}, ids.project, racing)).status).toBe(404);
+    expect(await queued(key)).toMatchObject({ projectId: ids.project });
+  });
+
+  it("queues the stray object when the Project is gone and the delete fails", async () => {
+    const projectId = crypto.randomUUID(); const mediaId = crypto.randomUUID(); const key = mediaKey(projectId, mediaId);
+    await database.MEDIA.put(key, pngBytes(64), { httpMetadata: { contentType: "image/png" } });
+    expect((await complete("admin", mediaId, {}, projectId, failingDelete())).status).toBe(404);
+    expect(await queued(key)).toMatchObject({ projectId });
   });
 
   it("does not promote, and deletes the object and the row, when the Project is archived or deleted while R2 is being read", async () => {

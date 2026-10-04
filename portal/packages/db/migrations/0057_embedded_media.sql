@@ -4,6 +4,9 @@
 -- project_id cascades, so a Project hard delete leaves no rows (its objects are purged by prefix first).
 -- state: uploading (presigned, no bytes confirmed), pending (uploaded, not yet in a post), attached, detached.
 -- A detached row is reclaimed 7 days after detached_at, and an uploading or pending row 7 days after created_at.
+-- embedded_media_cleanup is the durable queue of R2 objects and multipart uploads that no row owns any more
+-- (a Project hard delete, a sweep claim, a rejected or late completion). project_id has no foreign key on purpose:
+-- the Project is usually gone by the time the queue is drained. Rows leave only once the object is deleted.
 -- No trigger and no semicolon inside a comment: the worker test harness splits this file on semicolons.
 CREATE TABLE embedded_media (
   id text PRIMARY KEY NOT NULL,
@@ -36,3 +39,13 @@ CREATE INDEX embedded_media_state_detached_idx ON embedded_media (state, detache
 CREATE INDEX embedded_media_state_created_idx ON embedded_media (state, created_at);
 --> statement-breakpoint
 CREATE INDEX embedded_media_project_idx ON embedded_media (project_id);
+--> statement-breakpoint
+CREATE TABLE embedded_media_cleanup (
+  storage_key text PRIMARY KEY NOT NULL,
+  upload_id text,
+  project_id text,
+  queued_at integer NOT NULL,
+  attempts integer NOT NULL DEFAULT 0
+);
+--> statement-breakpoint
+CREATE INDEX embedded_media_cleanup_queued_idx ON embedded_media_cleanup (queued_at);

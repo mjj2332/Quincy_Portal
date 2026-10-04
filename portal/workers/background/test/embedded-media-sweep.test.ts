@@ -29,6 +29,12 @@ async function seed(input: Seed) {
 }
 const exists = async (id: string) => (await database.DB.prepare("SELECT 1 AS one FROM embedded_media WHERE id = ?").bind(id).first()) !== null;
 const objectExists = async (key: string) => (await database.MEDIA.head(key)) !== null;
+const queueRow = (key: string) => database.DB.prepare("SELECT storage_key AS storageKey, upload_id AS uploadId, project_id AS projectId, attempts FROM embedded_media_cleanup WHERE storage_key = ?").bind(key).first<{ storageKey: string; uploadId: string | null; projectId: string | null; attempts: number }>();
+const queueSize = async () => (await database.DB.prepare("SELECT count(*) AS n FROM embedded_media_cleanup").first<{ n: number }>())!.n;
+const wrapMedia = (override: (target: R2Bucket, property: string | symbol) => unknown) => ({ ...env, MEDIA: new Proxy(database.MEDIA, { get: (target, property) => {
+  const custom = override(target, property); if (custom !== undefined) return custom;
+  const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value;
+} }) });
 const count = async () => (await database.DB.prepare("SELECT count(*) AS n FROM embedded_media").first<{ n: number }>())!.n;
 
 beforeAll(async () => {
@@ -36,7 +42,7 @@ beforeAll(async () => {
   await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'U', 'u@example.test', 1, 'editor', 1, ?, ?)").bind(userId, now, now).run();
   await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'S', 'editing_autohdr', 0, ?, ?)").bind(projectId, now, now).run();
 });
-beforeEach(async () => { await database.DB.exec("DELETE FROM embedded_media;"); });
+beforeEach(async () => { await database.DB.exec("DELETE FROM embedded_media; DELETE FROM embedded_media_cleanup;"); });
 const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
 afterAll(() => { consoleError.mockRestore(); });
 
@@ -85,16 +91,71 @@ describe("embedded media sweep (#493)", () => {
     expect(await exists(started.id)).toBe(false);
   });
 
-  it("keeps the row for tomorrow when R2 will not delete its objects", async () => {
-    const stuck = await seed({ state: "detached", detachedAt: 0 });
-    const failing = { ...env, MEDIA: new Proxy(database.MEDIA, { get: (target, property) => {
-      if (property === "delete") return async () => { throw new Error("R2 down"); };
-      const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value;
-    } }) };
-    expect(await sweepEmbeddedMedia(failing, now)).toMatchObject({ scanned: 1, reclaimed: 0, failed: 1 });
-    expect(await exists(stuck.id)).toBe(true);
-    expect(await sweepEmbeddedMedia(env, now)).toMatchObject({ reclaimed: 1 });
+  it("hands a pending row's keys to the cleanup queue when R2 will not delete its objects, then drains them once R2 recovers", async () => {
+    const stuck = await seed({ state: "detached", detachedAt: 0, display: true });
+    const failing = wrapMedia((_t, property) => property === "delete" ? async () => { throw new Error("R2 down"); } : undefined);
+    expect(await sweepEmbeddedMedia(failing as typeof env, now)).toMatchObject({ scanned: 1, reclaimed: 1, failed: 0 });
     expect(await exists(stuck.id)).toBe(false);
+    for (const key of stuck.keys) expect(await queueRow(key), key).toMatchObject({ projectId, attempts: 1 });
+    expect(await sweepEmbeddedMedia(env, now)).toMatchObject({ scanned: 0, drained: 2 });
+    for (const key of stuck.keys) { expect(await queueRow(key)).toBeNull(); expect(await objectExists(key)).toBe(false); }
+  });
+
+  it("moves an expired uploading row to the queue in one step instead of deleting its objects, and drains it in the same run", async () => {
+    const row = await seed({ state: "uploading", createdAt: now - 8 * day, uploadId: "s3-upload-2" });
+    let queuedWhileAborting: unknown = "not seen";
+    const watching = wrapMedia((_t, property) => property === "resumeMultipartUpload" ? (_key: string, _uploadId: string) => ({ abort: async () => { queuedWhileAborting = await queueRow(row.keys[0]!); } }) : undefined);
+    expect(await sweepEmbeddedMedia(watching as typeof env, now)).toMatchObject({ scanned: 1, reclaimed: 1, drained: 1 });
+    expect(queuedWhileAborting).toMatchObject({ uploadId: "s3-upload-2", projectId });
+    expect(await exists(row.id)).toBe(false); expect(await objectExists(row.keys[0]!)).toBe(false); expect(await queueSize()).toBe(0);
+  });
+
+  it("keeps an unabortable upload queued with its attempts counted, never deleting the object before the upload is terminal", async () => {
+    const row = await seed({ state: "uploading", createdAt: now - 8 * day, uploadId: "s3-upload-3" });
+    const deleted: unknown[] = [];
+    const down = wrapMedia((target, property) => {
+      if (property === "resumeMultipartUpload") return () => ({ abort: async () => { throw new Error("R2 unavailable"); } });
+      if (property === "delete") return async (keys: unknown) => { deleted.push(keys); return target.delete(keys as string); };
+      return undefined;
+    });
+    expect(await sweepEmbeddedMedia(down as typeof env, now)).toMatchObject({ reclaimed: 1, drained: 0 });
+    expect(await exists(row.id)).toBe(false); expect(deleted).toEqual([]); expect(await objectExists(row.keys[0]!)).toBe(true);
+    expect(await queueRow(row.keys[0]!)).toMatchObject({ uploadId: "s3-upload-3", attempts: 1 });
+    await sweepEmbeddedMedia(down as typeof env, now);
+    expect(await queueRow(row.keys[0]!)).toMatchObject({ attempts: 2 });
+    // Once R2 reports the upload gone, the (late-completed) object is deleted and the entry leaves.
+    const gone = wrapMedia((_t, property) => property === "resumeMultipartUpload" ? () => ({ abort: async () => { throw Object.assign(new Error("no"), { code: "NoSuchUpload" }); } }) : undefined);
+    expect(await sweepEmbeddedMedia(gone as typeof env, now)).toMatchObject({ drained: 1 });
+    expect(await objectExists(row.keys[0]!)).toBe(false); expect(await queueSize()).toBe(0);
+  });
+
+  it("retries a queued key whose delete fails (attempts counted, entry kept) until R2 accepts it", async () => {
+    const key = `projects/${projectId}/embedded-media/${crypto.randomUUID()}/original`;
+    await database.MEDIA.put(key, "late");
+    await database.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) VALUES (?, NULL, ?, ?)").bind(key, projectId, now).run();
+    const failing = wrapMedia((_t, property) => property === "delete" ? async () => { throw new Error("R2 down"); } : undefined);
+    expect(await sweepEmbeddedMedia(failing as typeof env, now)).toMatchObject({ drained: 0 });
+    expect(await queueRow(key)).toMatchObject({ attempts: 1 }); expect(await objectExists(key)).toBe(true);
+    expect(await sweepEmbeddedMedia(env, now)).toMatchObject({ drained: 1 });
+    expect(await queueRow(key)).toBeNull(); expect(await objectExists(key)).toBe(false);
+  });
+
+  it("skips an uploading row that was promoted to pending between the read and the claim, leaving it and its object alone", async () => {
+    const row = await seed({ state: "uploading", createdAt: now - 8 * day });
+    const racing = { ...env, DB: new Proxy(database.DB, { get: (target, property) => {
+      if (property !== "prepare") { const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value; }
+      return (sql: string) => {
+        const statement = target.prepare(sql);
+        if (!sql.includes("ORDER BY id LIMIT")) return statement;
+        return { bind: (...values: unknown[]) => { const bound = statement.bind(...values); return { all: async () => {
+          const read = await bound.all();
+          await database.DB.prepare("UPDATE embedded_media SET state = 'pending' WHERE id = ?").bind(row.id).run();
+          return read;
+        } }; } };
+      };
+    } }) };
+    expect(await sweepEmbeddedMedia(racing as unknown as typeof env, now)).toMatchObject({ scanned: 1, reclaimed: 0, failed: 0 });
+    expect(await exists(row.id)).toBe(true); expect(await objectExists(row.keys[0]!)).toBe(true); expect(await queueSize()).toBe(0);
   });
 
   it("skips a row that was attached between the sweep's read and its claim, leaving the object alone", async () => {
@@ -131,6 +192,6 @@ describe("embedded media sweep (#493)", () => {
     expect(await sweepEmbeddedMedia(env, now)).toMatchObject({ scanned: 100, reclaimed: 100 });
     expect(await count()).toBe(1);
     expect(await sweepEmbeddedMedia(env, now)).toMatchObject({ scanned: 1, reclaimed: 1 });
-    expect(await sweepEmbeddedMedia(env, now)).toEqual({ scanned: 0, reclaimed: 0, failed: 0 });
+    expect(await sweepEmbeddedMedia(env, now)).toEqual({ scanned: 0, reclaimed: 0, failed: 0, drained: 0 });
   });
 });
