@@ -292,7 +292,7 @@ export function QuincyRichTextEditor({
           if (cancelled || !mountedRef.current || !live) return;
           const position = Math.min(insertAt.current.get(key) ?? live.state.doc.content.size, live.state.doc.content.size);
           // insertContentAt selects inserted content by default; an async insert must leave the caret where the author is typing.
-          live.chain().insertContentAt(position, { type: kind, attrs: { mediaId } }, kind === "image" ? { updateSelection: false } : {}).run();
+          live.chain().insertContentAt(position, { type: kind, attrs: { mediaId } }, { updateSelection: false }).run();
         })
         .catch((reason) => {
           if (cancelled || (reason instanceof Error && reason.name === "AbortError")) return;

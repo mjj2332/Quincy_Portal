@@ -5335,6 +5335,7 @@ The vendored Select popup shipped `ring-1 ring-foreground/10`, no shadow and no 
 
 - **Tiptap's `insertContentAt` selects the inserted content by default.** An embedded-image upload completes asynchronously, so the insert landed a `NodeSelection` on the whole image while the author was still typing; the next keystroke replaced the image with a paragraph (seen in real Chrome).
 - **Async inserts must pass `{ updateSelection: false }`** as the third argument so the caret stays where the author is typing. Pinned by `QuincyRichTextEditor-media.dom.test.tsx` ("keeps the image when the author types on after it lands"). Behaviour change: a just-uploaded image is no longer selected, so Backspace right after an upload no longer deletes it.
+- **Video uploads share that one insert call (#494).** Images and videos complete through the same `insertContentAt(..., { updateSelection: false })`; the video case is pinned by `QuincyRichTextEditor-video.dom.test.tsx` ("keeps the video when the author types on after it lands").
 
 ## 2026-10-05 — Video in Project discussion (#494)
 
