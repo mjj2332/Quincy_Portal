@@ -729,3 +729,100 @@ describe("processTonomoEvent Automatic Deadline (#484)", () => {
     expect(await projectFor(orderId)).toMatchObject({ deadline_at: null, deadline_source: "none", deadline_version: 0 });
   });
 });
+
+/** #485: an Automatic Deadline follows a Tonomo reschedule. Same pinned clock as the #484 block above. */
+describe("processTonomoEvent Automatic Deadline follows a reschedule (#485)", () => {
+  const MONDAY = { at: Date.parse("2026-10-05T06:00:00.000Z"), civil: "2026-10-05T17:00" };
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-01T14:30:00.000Z") }); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  async function processEvent(orderId: string, order: Record<string, unknown>, receivedAt = Date.now()) {
+    const eventId = crypto.randomUUID();
+    const payloadJson = JSON.stringify({ id: orderId, ...order });
+    await database.DB.prepare("INSERT INTO webhook_events (id, source, event_id, payload_json, status, received_at) VALUES (?, 'tonomo', ?, ?, 'received', ?)")
+      .bind(eventId, `event-${eventId}`, payloadJson, receivedAt).run();
+    await processTonomoEvent(env, { id: eventId, payloadJson });
+  }
+  const projectFor = (orderId: string) => database.DB.prepare("SELECT id, shoot_date, deadline_at, deadline_local_civil, deadline_source, deadline_version FROM projects WHERE order_id = ?").bind(orderId)
+    .first<{ id: string; shoot_date: string | null; deadline_at: number | null; deadline_local_civil: string | null; deadline_source: string; deadline_version: number }>();
+  const moved = async (projectId: string) => (await database.DB.prepare("SELECT actor_id, meta_json FROM audit_log WHERE target_id = ? AND action = 'project.deadline.automatic_moved'").bind(projectId).all<{ actor_id: string | null; meta_json: string }>()).results;
+  const slots = async (projectId: string) => (await database.DB.prepare("SELECT reminder_offset_minutes AS offset, status, schedule_version AS version FROM project_deadline_occurrences WHERE project_id = ? ORDER BY schedule_version, reminder_offset_minutes DESC").bind(projectId).all<{ offset: number; status: string; version: number }>()).results;
+  /** A Project Tonomo created with a Thursday shoot: automatic Deadline Fri 2 Oct 17:00, version 1. */
+  async function createdProject() {
+    const suffix = crypto.randomUUID();
+    const orderId = `order-${suffix}`;
+    const street = `${suffix} Reschedule Street`;
+    await processEvent(orderId, { street, shoot_date: "2026-10-01" });
+    const project = (await projectFor(orderId))!;
+    expect(project).toMatchObject({ deadline_local_civil: "2026-10-02T17:00", deadline_source: "automatic", deadline_version: 1 });
+    return { orderId, street, projectId: project.id };
+  }
+
+  it("moves an automatic Deadline when Tonomo reschedules the shoot, with the reminders and a system audit", async () => {
+    const { orderId, street, projectId } = await createdProject();
+    await processEvent(orderId, { street, shoot_date: "2026-10-02" });
+    expect(await projectFor(orderId)).toMatchObject({ shoot_date: "2026-10-02", deadline_at: MONDAY.at, deadline_local_civil: MONDAY.civil, deadline_source: "automatic", deadline_version: 2 });
+    const audits = await moved(projectId);
+    expect(audits).toHaveLength(1);
+    expect(audits[0]!.actor_id).toBeNull();
+    expect(JSON.parse(audits[0]!.meta_json)).toMatchObject({ actor: "system", reason: "tonomo_reschedule", shootDate: "2026-10-02", previousDeadlineLocalCivil: "2026-10-02T17:00", deadlineLocalCivil: MONDAY.civil, version: 2 });
+    expect((await slots(projectId)).filter((row) => row.version === 2).map((row) => [row.offset, row.status])).toEqual([[1440, "pending"], [240, "pending"], [60, "pending"], [0, "pending"]]);
+    // Redelivering the same event changes nothing.
+    await processEvent(orderId, { street, shoot_date: "2026-10-02" });
+    expect((await projectFor(orderId))!.deadline_version).toBe(2);
+    expect(await moved(projectId)).toHaveLength(1);
+  });
+
+  it("never moves a Deadline a person set", async () => {
+    const { orderId, street, projectId } = await createdProject();
+    await database.DB.prepare("UPDATE projects SET deadline_source = 'manual' WHERE id = ?").bind(projectId).run();
+    await processEvent(orderId, { street, shoot_date: "2026-10-02" });
+    expect(await projectFor(orderId)).toMatchObject({ shoot_date: "2026-10-02", deadline_local_civil: "2026-10-02T17:00", deadline_source: "manual", deadline_version: 1 });
+    expect(await moved(projectId)).toHaveLength(0);
+  });
+
+  it("does not move the Deadline for unparsed date text it declines", async () => {
+    const { orderId, street, projectId } = await createdProject();
+    await processEvent(orderId, { street, date: "Monday, 17 Sep, 2026" });
+    expect(await projectFor(orderId)).toMatchObject({ shoot_date: "2026-10-01", deadline_local_civil: "2026-10-02T17:00", deadline_version: 1 });
+    expect(await moved(projectId)).toHaveLength(0);
+  });
+
+  it("does not move the Deadline for a stale redelivered event that lost the receipt-time fence", async () => {
+    const { orderId, street, projectId } = await createdProject();
+    await processEvent(orderId, { street, shoot_date: "2026-10-02" });
+    await processEvent(orderId, { street, shoot_date: "2026-10-09" }, Date.now() - 60_000);
+    expect(await projectFor(orderId)).toMatchObject({ shoot_date: "2026-10-02", deadline_local_civil: MONDAY.civil, deadline_version: 2 });
+    expect(await moved(projectId)).toHaveLength(1);
+  });
+
+  it("writes no move when the stored date changed after the processor read it", async () => {
+    const { orderId, projectId } = await createdProject();
+    expect(await commitShootDateChange(env as never, { projectId, orderId, previous: "2026-09-17", next: "2026-10-02", receivedAt: new Date(), deadline: { expectedVersion: 1, previousLocalCivil: "2026-10-02T17:00" } })).toBe(false);
+    expect(await projectFor(orderId)).toMatchObject({ shoot_date: "2026-10-01", deadline_local_civil: "2026-10-02T17:00", deadline_version: 1 });
+    expect(await moved(projectId)).toHaveLength(0);
+  });
+
+  it("recomputes a retained automatic Deadline when a shoot date returns after being cleared or unparsed", async () => {
+    const cleared = await createdProject();
+    await database.DB.prepare("UPDATE projects SET shoot_date = NULL WHERE id = ?").bind(cleared.projectId).run();
+    await processEvent(cleared.orderId, { street: cleared.street, shoot_date: "2026-10-02" });
+    expect(await projectFor(cleared.orderId)).toMatchObject({ shoot_date: "2026-10-02", deadline_local_civil: MONDAY.civil, deadline_source: "automatic", deadline_version: 2 });
+    expect(JSON.parse((await moved(cleared.projectId))[0]!.meta_json)).toMatchObject({ reason: "tonomo_update" });
+
+    const unparsed = await createdProject();
+    await database.DB.prepare("UPDATE projects SET shoot_date = 'Friday, TBC' WHERE id = ?").bind(unparsed.projectId).run();
+    await processEvent(unparsed.orderId, { street: unparsed.street, shoot_date: "2026-10-02" });
+    expect(await projectFor(unparsed.orderId)).toMatchObject({ deadline_local_civil: MONDAY.civil, deadline_version: 2 });
+  });
+
+  it("writes no Deadline on a reschedule of a Project that holds none", async () => {
+    const suffix = crypto.randomUUID();
+    const orderId = `order-${suffix}`;
+    const projectId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO projects (id, order_id, street, stage_key, shoot_date, created_at, updated_at) VALUES (?, ?, ?, 'awaiting_raw', '2026-09-15', ?, ?)").bind(projectId, orderId, `${suffix} Street`, Date.now(), Date.now()).run();
+    await processEvent(orderId, { street: `${suffix} Street`, shoot_date: "2026-10-02" });
+    expect(await projectFor(orderId)).toMatchObject({ shoot_date: "2026-10-02", deadline_at: null, deadline_version: 0 });
+    expect(await moved(projectId)).toHaveLength(0);
+  });
+});

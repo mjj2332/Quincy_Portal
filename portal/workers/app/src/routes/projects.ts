@@ -3,7 +3,7 @@ import { editorFolderAvailability, editorFolderProjection } from "../lib/editor-
 import { readEditorFolderAttention } from "../lib/attention";
 import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
-import { boardContractEnabled, boardSchemaVariant, buildAutomaticDeadlineBundle, buildDeadlineSuppressionBundle, buildProjectActivityStatements, buildSubtaskReminderMaterialization, buildSubtaskReminderSuppression, createDb, selectEffectiveDefaultEditorIds, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
+import { boardContractEnabled, boardSchemaVariant, buildAutomaticDeadlineBundle, buildAutomaticDeadlineMoveBundle, buildDeadlineSuppressionBundle, buildProjectActivityStatements, buildSubtaskReminderMaterialization, buildSubtaskReminderSuppression, createDb, selectEffectiveDefaultEditorIds, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
 import { and, asc, desc, eq, exists, gt, inArray, isNotNull, isNull, lte, notExists, sql } from "drizzle-orm";
 import { automaticDeadlineFor, capDashboardSearchText, compareBoardCards, COLLECTION_KINDS, DASHBOARD_PROJECTS_FILTER_QUERY_NAMES, dashboardFilterArchivedMode, dashboardFilterHasArchivedLeaf, dashboardFilterHasPriorityLeaf, dashboardFilterTreeOf, dashboardProjectsFilterQuerySchema, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchemaForProject, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, roleHasCapability, stripUnsafeText, type CollectionKind, type DashboardFilter, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
 import { z } from "zod";
@@ -659,6 +659,14 @@ projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) =
     ? buildAutomaticDeadlineBundle({ db: c.env.DB, projectId: id, shootDate: projectUpdates.shootDate as string, gate: { kind: "audit", auditId }, auditId: newId(), reason: "details", now: Date.now() })
     : undefined;
   if (automaticDeadline) statements.push(...automaticDeadline.statements);
+  // #485: a canonical Shoot date that differs from the stored one moves a Deadline the system set and nobody has saved (the Deadline
+  // is held, so this is never a backfill). The UPDATE holds the source and version CAS; clearing the date or writing free text
+  // never gets here, so an automatic Deadline stays as it is. Appended last, gated on this save's own audit row.
+  const rescheduledShootDate = Object.prototype.hasOwnProperty.call(projectUpdates, "shootDate") && typeof projectUpdates.shootDate === "string" && automaticDeadlineFor(projectUpdates.shootDate) !== null && projectUpdates.shootDate !== existingProject.shootDate;
+  const automaticDeadlineMove = rescheduledShootDate && existingProject.deadlineAt !== null
+    ? buildAutomaticDeadlineMoveBundle({ db: c.env.DB, projectId: id, shootDate: projectUpdates.shootDate as string, expectedVersion: existingProject.deadlineVersion, previousDeadlineLocalCivil: existingProject.deadlineLocalCivil, gate: { kind: "audit", auditId }, auditId: newId(), reason: "details", now: Date.now() })
+    : undefined;
+  if (automaticDeadlineMove) statements.push(...automaticDeadlineMove.statements);
   const result = await c.env.DB.batch(statements);
   if (!rowsFromD1<{ id: string }>(result[0]).length) {
     const currentProject = await db.select(projectColumnsForVariant(variant)).from(schema.projects).where(eq(schema.projects.id, id)).get();
