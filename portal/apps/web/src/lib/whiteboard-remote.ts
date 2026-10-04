@@ -38,6 +38,8 @@ export function createRemoteApplier({ saver, merge, setScene, getScene, interact
     const held = new Map(scene.map((element) => [element.id, element]));
     for (const incoming of remote as unknown as SavedElement[]) {
       const local = held.get(incoming.id);
+      // Accepted gap (docs/lessons.md, #499 round 10): an exact version + versionNonce tie is read as "same element", as in Excalidraw's own
+      // reconcileElements; two different payloads tying needs the same 31-bit nonce drawn twice (~1 in 2^31) and gains a writer nothing.
       const taken = local !== undefined && local.version === incoming.version && local.versionNonce === incoming.versionNonce;
       const queued = deferred.get(incoming.id) as SavedElement | undefined;
       if (taken) { if (queued && !whiteboardIncomingWins(incoming, queued)) deferred.delete(incoming.id); continue; }

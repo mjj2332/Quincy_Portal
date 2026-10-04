@@ -71,6 +71,7 @@ import type {
   UIOptions,
 } from "@excalidraw/excalidraw/types"
 import { cn } from "@/lib/utils"
+import { createChangeTracker } from "@/lib/whiteboard-changes"
 import { adoptArrivedRevisions, interactingIds, mergeRemote } from "@/lib/whiteboard-merge"
 import { planSceneDrop, pasteIsUnsupported, withoutUnsupported } from "@/lib/whiteboard-saver"
 
@@ -803,7 +804,7 @@ type ControllerHost = {
   /** False in view-only mode; checked again after the async parse, since the mode can change meanwhile. */
   editable: () => boolean
   /** QUINCY ADDITION #499: the element hash right after a remote merge, so the editor's own change event for it is not a local edit. */
-  remoteApplied: (hash: number) => void
+  remoteApplied: (hash: number, taken: readonly { id: string; version: number; versionNonce: number }[]) => void
 }
 
 function createController(
@@ -981,7 +982,15 @@ function createController(
       })
       // handleChange must not read this as a local edit (a remote tick would flash "Unsaved changes").
       const scene = api.getSceneElementsIncludingDeleted()
-      remoteApplied(hashElementsVersion(scene))
+      // Only what the scene actually took of the batch is remote; an unreported local edit stays the person's own.
+      const taken = new Map(remote.map((element) => [String((element as { id: unknown }).id), element as { version: number; versionNonce: number }]))
+      remoteApplied(
+        hashElementsVersion(scene),
+        scene.filter((element) => {
+          const incoming = taken.get(element.id)
+          return incoming !== undefined && incoming.version === element.version && incoming.versionNonce === element.versionNonce
+        })
+      )
       return scene
     },
     adoptRevisions: (arrived) => {
@@ -992,7 +1001,8 @@ function createController(
         elements: scene as never,
         captureUpdate: CaptureUpdateAction.NEVER,
       })
-      remoteApplied(hashElementsVersion(api.getSceneElementsIncludingDeleted()))
+      const adopted = api.getSceneElementsIncludingDeleted()
+      remoteApplied(hashElementsVersion(adopted), adopted.filter((element) => arrived.some((a) => (a as { id: string }).id === element.id)))
     },
     select: (ids) => {
       const selectedElementIds: Record<string, true> = {}
@@ -1678,7 +1688,7 @@ export function WhiteboardCanvas({
   const signatureRef = useRef("")
   const armedRef = useRef(false)
   // QUINCY ADDITION #499: the element hash a remote merge produced (see applyRemote), and the local presence last reported.
-  const remoteHashRef = useRef<number | null>(null)
+  const changesRef = useRef(createChangeTracker())
   const pointerRef = useRef<{ x: number; y: number } | null>(null)
   const buttonRef = useRef<"up" | "down">("up")
   const selectionRef = useRef("")
@@ -1805,6 +1815,7 @@ export function WhiteboardCanvas({
       signatureRef.current = signature
       scheduleChange()
       if (!loadedRef.current) {
+        changesRef.current.seed(elements)
         loadedRef.current = true
         setReady(true)
         return
@@ -1812,8 +1823,7 @@ export function WhiteboardCanvas({
       // Font loading re-measures text after load; only edits after a real
       // interaction count as unsaved work.
       // QUINCY ADDITION #499: the change event of a remote merge is not the person's own edit.
-      if (remoteHashRef.current === hash) return
-      remoteHashRef.current = null
+      if (changesRef.current.classify(elements, hash) === "remote") return
       if (armedRef.current) markDirty()
     },
     [markDirty, reportPresence, scheduleChange]
@@ -2105,8 +2115,8 @@ export function WhiteboardCanvas({
           panel: hostPanel,
           library: libraryOf,
           editable: () => !latest.current.viewOnly,
-          remoteApplied: (hash) => {
-            remoteHashRef.current = hash
+          remoteApplied: (hash, taken) => {
+            changesRef.current.remoteApplied(hash, [], taken)
           },
         })
       )
