@@ -28,7 +28,9 @@ import { ApiError, apiGet } from "./api";
  */
 
 export type WhiteboardConnection = "connecting" | "open" | "reconnecting" | "closed";
-export type WhiteboardInit = { mode: WhiteboardMode; elements: Array<Record<string, unknown>>; sessionId: string; peers: WhiteboardPeer[] };
+export type WhiteboardInit = { mode: WhiteboardMode; generation: number; elements: Array<Record<string, unknown>>; sessionId: string; peers: WhiteboardPeer[] };
+/** #500: a version was restored. The authoritative scene of the new generation. */
+export type WhiteboardReset = { generation: number; elements: Array<Record<string, unknown>> };
 export type WhiteboardPresenceState = Omit<WhiteboardPresenceMessage, "type" | "selectedIds"> & { selectedIds: readonly string[] };
 
 export type WhiteboardSocketHandlers = {
@@ -46,6 +48,12 @@ export type WhiteboardSocketHandlers = {
   onPeerLeft: (sessionId: string) => void;
   /** #499: the Project was archived or restored (view-only or editable), with no reconnect. */
   onMode: (mode: WhiteboardMode) => void;
+  /**
+   * #500: the board was restored to a version. From here on every batch carries the new generation, and the server refuses
+   * the old one, so the board must drop its own edits and load this scene. Phase C wires the board's reset; until it does a
+   * restore leaves a connected tab refused (its sends reject), never merged with the restored scene.
+   */
+  onReset?: (reset: WhiteboardReset) => void;
 };
 
 export type WhiteboardSocket = {
@@ -99,6 +107,7 @@ export function openWhiteboardSocket(projectId: string, handlers: WhiteboardSock
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
   let seq = 0;
+  let generation = 0;           // #500: the board's current generation, from `init` and `reset`; stamped on every batch
   let presenceTimer: ReturnType<typeof setTimeout> | undefined;
   let presenceWaiting: WhiteboardPresenceState | null = null;
   const pending = new Map<number, { resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
@@ -131,9 +140,13 @@ export function openWhiteboardSocket(projectId: string, handlers: WhiteboardSock
       if (!parsed.success) return;
       const message = parsed.data;
       if (message.type === "init") {
+        generation = message.generation;
         handlers.onConnection("open");
-        handlers.onInit({ mode: message.mode, elements: message.elements, sessionId: message.sessionId, peers: message.peers }, initCount > 0);
+        handlers.onInit({ mode: message.mode, generation: message.generation, elements: message.elements, sessionId: message.sessionId, peers: message.peers }, initCount > 0);
         initCount += 1;
+      } else if (message.type === "reset") {
+        generation = message.generation;
+        handlers.onReset?.({ generation: message.generation, elements: message.elements });
       } else if (message.type === "elements") {
         handlers.onElements(message.elements);
       } else if (message.type === "presence") {
@@ -148,7 +161,7 @@ export function openWhiteboardSocket(projectId: string, handlers: WhiteboardSock
         if (entry) { clearTimeout(entry.timer); pending.delete(message.seq); entry.resolve(); finishIfDrained(); }
       } else if (message.seq !== undefined) {
         const entry = pending.get(message.seq);
-        if (entry) { clearTimeout(entry.timer); pending.delete(message.seq); entry.reject(new Error(message.reason === "view-only" ? "This board is view-only." : message.reason === "stale" ? "The board was changing; the change will be sent again." : "The board rejected the change.")); finishIfDrained(); }
+        if (entry) { clearTimeout(entry.timer); pending.delete(message.seq); entry.reject(new Error(message.reason === "view-only" ? "This board is view-only." : message.reason === "stale" ? "The board was changing; the change will be sent again." : message.reason === "generation" ? "The board was restored to an earlier version, so this change was not applied." : "The board rejected the change.")); finishIfDrained(); }
       }
     }) as (event: never) => void);
     current.addEventListener("close", ((event: { code: number }) => {
@@ -229,7 +242,7 @@ export function openWhiteboardSocket(projectId: string, handlers: WhiteboardSock
       return new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => { pending.delete(id); reject(new Error("The whiteboard did not confirm the save.")); }, SEND_TIMEOUT_MS);
         pending.set(id, { resolve, reject, timer });
-        try { current.send(JSON.stringify({ type: "elements", seq: id, elements })); }
+        try { current.send(JSON.stringify({ type: "elements", seq: id, generation, elements })); }
         catch (error) { clearTimeout(timer); pending.delete(id); reject(error instanceof Error ? error : new Error("The whiteboard could not send.")); }
       });
     },

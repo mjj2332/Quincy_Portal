@@ -7,8 +7,8 @@ import { normaliseRows, orderStored, reconcileRows, type ElementStore, type Reco
  *
  * The Durable Object owns the socket and the broadcast; this module owns the table, as an
  * `ElementStore` over SQLite. What gets stored (revision winners, unique fractional indices) is decided by
- * `@quincy/shared`'s `whiteboard-index.ts`, which the model test runs against an in-memory store. #500 adds its
- * version snapshots in a module beside this one rather than in the object.
+ * `@quincy/shared`'s `whiteboard-index.ts`, which the model test runs against an in-memory store. #500's
+ * version snapshots live in `snapshot.ts`, beside this module rather than in the object.
  */
 
 type ElementRow = { json: string };
@@ -48,18 +48,21 @@ export function readElements(storage: DurableObjectStorage): StoredElement[] {
   return orderStored(sqlStore(storage).all());
 }
 
-/** Reconciles one batch, all in one transaction (see `reconcileRows`). */
-export function reconcile(storage: DurableObjectStorage, elements: ReadonlyArray<WhiteboardElement>): Reconciliation {
+/**
+ * Reconciles one batch, all in one transaction (see `reconcileRows`). `afterWrite` runs INSIDE that transaction once the
+ * rows are stored (#500: it marks the board dirty, so a change and its dirty mark commit or roll back together).
+ */
+export function reconcile(storage: DurableObjectStorage, elements: ReadonlyArray<WhiteboardElement>, afterWrite?: (result: Reconciliation) => void): Reconciliation {
   let result!: Reconciliation;
-  storage.transactionSync(() => { result = reconcileRows(sqlStore(storage), elements); });
+  storage.transactionSync(() => { result = reconcileRows(sqlStore(storage), elements); afterWrite?.(result); });
   return result;
 }
 
 /** Brings a table written before indices were unique to the invariant, in one transaction. Returns the rows it changed. */
-export function normaliseIndices(storage: DurableObjectStorage): StoredElement[] {
+export function normaliseIndices(storage: DurableObjectStorage, afterWrite?: (changed: StoredElement[]) => void): StoredElement[] {
   ensureSchema(storage);
   let changed: StoredElement[] = [];
-  storage.transactionSync(() => { changed = normaliseRows(sqlStore(storage)); });
+  storage.transactionSync(() => { changed = normaliseRows(sqlStore(storage)); if (changed.length > 0) afterWrite?.(changed); });
   return changed;
 }
 

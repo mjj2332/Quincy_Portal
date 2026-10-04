@@ -414,6 +414,13 @@
       "when": 1789560000000,
       "tag": "0058_include_project_activity",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "6",
+      "when": 1789600000000,
+      "tag": "0061_project_whiteboard_versions",
+      "breakpoints": true
     }
   ]
 }
