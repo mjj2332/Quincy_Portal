@@ -31,12 +31,7 @@ import { NativeSelect } from "./quincy/NativeSelect";
 // sees each one complete.
 const EDITOR_CONTENT_UTILITIES =
   FIELD_BOX +
-  " min-h-[var(--space-8)] bg-[var(--paper-050)] group-data-[disabled]:bg-surface-sunken " +
-  "[&.is-editor-empty:first-child]:before:content-[attr(data-placeholder)] " +
-  "[&.is-editor-empty:first-child]:before:text-foreground-secondary " +
-  "[&.is-editor-empty:first-child]:before:float-left " +
-  "[&.is-editor-empty:first-child]:before:h-0 " +
-  "[&.is-editor-empty:first-child]:before:pointer-events-none";
+  " min-h-[var(--space-8)] bg-[var(--paper-050)] group-data-[disabled]:bg-surface-sunken ";
 
 // #376 `variant="field"` — the content surface inside an `InputGroup` that already draws the one
 // border, ground and focus ring, so the box utilities (`FIELD_BOX`'s border, radius, ground and
@@ -45,12 +40,7 @@ const EDITOR_CONTENT_UTILITIES =
 // draws the field's single indicator via `X`.
 const EDITOR_CONTENT_FIELD_UTILITIES =
   "min-h-[var(--space-8)] w-full min-w-0 px-[var(--space-3)] py-[var(--space-2)] text-base md:text-sm " +
-  "bg-transparent focus-visible:!outline-none " +
-  "[&.is-editor-empty:first-child]:before:content-[attr(data-placeholder)] " +
-  "[&.is-editor-empty:first-child]:before:text-foreground-secondary " +
-  "[&.is-editor-empty:first-child]:before:float-left " +
-  "[&.is-editor-empty:first-child]:before:h-0 " +
-  "[&.is-editor-empty:first-child]:before:pointer-events-none";
+  "bg-transparent focus-visible:!outline-none ";
 
 // The group wrapper's call-site divergences from `InputGroup` (D5): `has-disabled:bg-card` because
 // the base's deep `:has(:disabled)` would paint the whole field sunken as soon as Undo/Redo are

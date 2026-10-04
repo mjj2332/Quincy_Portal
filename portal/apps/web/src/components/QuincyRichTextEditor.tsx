@@ -54,12 +54,7 @@ import {
 /** The content surface inside an `InputGroup` that already draws the one border, ground and focus ring. */
 const EDITOR_CONTENT_UTILITIES =
   "min-h-[var(--space-8)] w-full min-w-0 px-[var(--space-3)] py-[var(--space-2)] text-base md:text-sm " +
-  "bg-transparent focus-visible:!outline-none " +
-  "[&.is-editor-empty:first-child]:before:content-[attr(data-placeholder)] " +
-  "[&.is-editor-empty:first-child]:before:text-foreground-secondary " +
-  "[&.is-editor-empty:first-child]:before:float-left " +
-  "[&.is-editor-empty:first-child]:before:h-0 " +
-  "[&.is-editor-empty:first-child]:before:pointer-events-none";
+  "bg-transparent focus-visible:!outline-none ";
 
 // The group wrapper's call-site divergences from `InputGroup` (#376): `has-disabled:bg-card` because
 // the base's deep `:has(:disabled)` would paint the whole field sunken as soon as Undo/Redo are

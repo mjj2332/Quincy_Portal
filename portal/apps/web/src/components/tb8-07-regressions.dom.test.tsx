@@ -116,6 +116,16 @@ describe("TB8-07 — retired classes that are still load-bearing", () => {
   });
 });
 
+describe("#491 — editor content rules in app.css", () => {
+  it("paints the empty-editor placeholder and keeps in-editor links visibly links", () => {
+    const css = read("../styles/app.css");
+    expect(css).toContain(".rich-text__editor-content:has(> p:only-child > br.ProseMirror-trailingBreak:only-child)::before { content: attr(data-placeholder)");
+    expect(css).toMatch(/\.rich-text__editor-content a \{ color: var\(--signal-info\); text-decoration: underline;/);
+    // The dead `.is-editor-empty` utilities must not come back as the only placeholder rule.
+    for (const file of ["./RichTextEditor.tsx", "./QuincyRichTextEditor.tsx"]) expect(read(file), file).not.toContain("is-editor-empty");
+  });
+});
+
 describe("TB8-07 — ARIA that was deliberately NOT changed", () => {
   it("keeps the rich-text validation region polite, never an alert", () => {
     // `FieldError` would have been the tidy substitution, but it injects `role="alert"`, turning

@@ -874,6 +874,21 @@ describe("RichTextEditor hard breaks", () => {
   });
 });
 
+describe("empty-editor placeholder (#491)", () => {
+  it("carries data-placeholder on a root whose only child is a trailing-break-only paragraph, until text is typed", async () => {
+    // `app.css` paints the placeholder with `:has(> p:only-child > br.ProseMirror-trailingBreak:only-child)`
+    // (the old `.is-editor-empty` utilities matched nothing: no Placeholder extension is installed).
+    const host = mount(); const { editor, onChange } = await render(host, empty());
+    expect(editor.getAttribute("data-placeholder")).toBe("Write a message…");
+    expect(editor.children).toHaveLength(1);
+    expect(editor.firstElementChild!.tagName).toBe("P");
+    expect(editor.firstElementChild!.children).toHaveLength(1);
+    expect(editor.firstElementChild!.firstElementChild!.tagName).toBe("BR"); // ProseMirror's trailing break
+    await appendText(editor, "x", onChange);
+    expect(editor.firstElementChild!.querySelector("br")).toBeNull();
+  });
+});
+
 describe("RichTextEditor counter and field variant (#376)", () => {
   const LIMIT = 10_000;
   async function renderWith(value: RichTextDoc, extra: Partial<React.ComponentProps<typeof RichTextEditor>> = {}) {
@@ -1006,6 +1021,21 @@ describe("QuincyRichTextEditor composer (#491)", () => {
     await keydown(editor, "k", { metaKey: true });
     expect(linkDialog()).not.toBeNull();
     expect(document.activeElement).toBe(linkInput());
+  });
+
+  it("fades only the toolbar side that has more content as it scrolls", async () => {
+    const host = mount(); await render(host, text("Toolbar"));
+    const toolbar = host.querySelector<HTMLElement>('[role="toolbar"]')!;
+    const metrics = (scrollLeft: number) => {
+      Object.defineProperty(toolbar, "scrollWidth", { configurable: true, value: 600 });
+      Object.defineProperty(toolbar, "clientWidth", { configurable: true, value: 300 });
+      toolbar.scrollLeft = scrollLeft;
+    };
+    for (const [left, fade] of [[0, "end"], [150, "both"], [300, "start"]] as const) {
+      metrics(left);
+      await act(async () => { toolbar.dispatchEvent(new Event("scroll")); await Promise.resolve(); });
+      expect(toolbar.getAttribute("data-fade"), `scrollLeft ${left}`).toBe(fade);
+    }
   });
 
   it("exposes the Quincy test ids, never a vendor data-slot", async () => {

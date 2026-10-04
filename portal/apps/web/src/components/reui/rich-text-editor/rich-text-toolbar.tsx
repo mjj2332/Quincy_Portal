@@ -9,12 +9,16 @@
 //    state, rather than nova's `bg-muted` (which the hover state shares).
 // 4. `RichTextButton` (Undo/Redo) overrides `reui/button`'s `disabled:opacity-50` with transparent +
 //    muted text and `disabled:opacity-100`: disabled is colour, never dimming (the #376 rule).
-// 5. The scroller carries `p-[var(--space-1)]` so the overflow clip does not cut the controls' focus
+// 5. `RichTextToolbarSeparator`: `data-vertical:self-center` -> `data-[orientation=vertical]:self-center` (Base UI emits
+//    `data-orientation`; the bare form matched nothing; `reui-skin.guard` now rejects it).
+// 5b. The phone fade mask follows scroll position (`data-fade` start/end/both/none) instead of staying on at the end.
+// 5c. The scroller carries `p-[var(--space-1)]` so the overflow clip does not cut the controls' focus
 //    outlines (3px ring + 2px offset); Undo/Redo are 44px at <=721px.
 // 6. Roving tabindex is kept as-is: the toolbar is ONE tab stop (the legacy bar had ~12) and arrow
 //    keys / Home / End walk it. Intended; flagged to design-review.
 import {
   useLayoutEffect,
+  useState,
   useRef,
   useSyncExternalStore,
   type ComponentProps,
@@ -107,6 +111,7 @@ export function RichTextToolbar({
   ...props
 }: ComponentProps<"div">) {
   const ref = useRef<HTMLDivElement>(null)
+  const [fade, setFade] = useState<"none" | "start" | "end" | "both">("none")
   const activeRef = useRef<HTMLElement | null>(null)
 
   function items() {
@@ -130,6 +135,24 @@ export function RichTextToolbar({
   useLayoutEffect(() => {
     rove(activeRef.current)
   })
+
+  // Fade only the side that has more content: scrolled to the end, the last control (Redo) is not faded.
+  function measureFade() {
+    const el = ref.current
+    if (!el) return
+    const more = (start: boolean, end: boolean) =>
+      setFade(start && end ? "both" : start ? "start" : end ? "end" : "none")
+    more(el.scrollLeft > 1, el.scrollLeft + el.clientWidth < el.scrollWidth - 1)
+  }
+
+  useLayoutEffect(() => {
+    measureFade()
+    const el = ref.current
+    if (!el || typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(measureFade)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
 
   function handleFocus(event: FocusEvent<HTMLDivElement>) {
     if (event.target.matches(TOOLBAR_ITEM)) {
@@ -158,10 +181,12 @@ export function RichTextToolbar({
       ref={ref}
       role="toolbar"
       aria-orientation="horizontal"
+      data-fade={fade}
+      onScroll={measureFade}
       onFocus={handleFocus}
       onKeyDown={handleKeyDown}
       className={cn(
-        "flex items-center gap-1 p-[var(--space-1)] overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden max-[721px]:[mask-image:linear-gradient(to_right,black_85%,transparent)]",
+        "flex items-center gap-1 p-[var(--space-1)] overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden max-[721px]:data-[fade=end]:[mask-image:linear-gradient(to_right,black_85%,transparent)] max-[721px]:data-[fade=start]:[mask-image:linear-gradient(to_left,black_85%,transparent)] max-[721px]:data-[fade=both]:[mask-image:linear-gradient(to_right,transparent,black_15%,black_85%,transparent)]",
         className
       )}
       {...props}
@@ -193,7 +218,7 @@ export function RichTextToolbarSeparator() {
   return (
     <Separator
       orientation="vertical"
-      className="h-4 shrink-0 data-vertical:self-center"
+      className="h-4 shrink-0 data-[orientation=vertical]:self-center"
     />
   )
 }
