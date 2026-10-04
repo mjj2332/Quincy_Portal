@@ -1,6 +1,7 @@
 import type { Role } from "./capabilities";
 import {
   formatSydneyCivilMinute,
+  isSydneyCalendarDate,
   resolveSydneyCivilMinute,
   SYDNEY_TIME_ZONE,
   type SydneyCivilResolution,
@@ -11,6 +12,8 @@ export const PROJECT_DEADLINE_ZONE = SYDNEY_TIME_ZONE;
 export const PROJECT_DEADLINE_PRESETS = [1440, 240, 60] as const;
 /** The Sydney wall-clock time a date-only Deadline pick lands on (#422): a shortcut, or a calendar day with no time yet. */
 export const DEADLINE_PRESET_TIME = "17:00";
+/** The advance reminders an Automatic Deadline carries (#484); "Due now" is always added on top. */
+export const PROJECT_DEADLINE_DEFAULT_REMINDER_OFFSETS: readonly number[] = PROJECT_DEADLINE_PRESETS;
 export const PROJECT_DEADLINE_MAX_ADVANCE_OFFSETS = 8;
 export const PROJECT_DEADLINE_MAX_OFFSET_MINUTES = 30 * 24 * 60;
 
@@ -23,8 +26,13 @@ export type ProjectDeadlineKind = "advance" | "due_now";
 export type ProjectDeadlineDisambiguation = "earlier" | "later";
 export type ProjectDeadlineScheduleState = "unset" | "scheduled" | "overdue" | "inactive_delivered" | "inactive_archived";
 
+/** Who set the Deadline: the system (Automatic Deadline) or a person. Null on the read model means no Deadline. */
+export type DeadlineSource = "automatic" | "manual";
+
 export type ProjectDeadlineSchedule = {
   version: number;
+  /** Null exactly when `deadline` is null. A held Deadline that is not automatic reads as manual. */
+  source: DeadlineSource | null;
   deadline: null | {
     localCivil: string;
     zone: typeof PROJECT_DEADLINE_ZONE;
@@ -116,6 +124,57 @@ export function resolveSydneyCivilTime(localCivil: string, disambiguation?: Proj
     case "repeated_local_time": return { ok: false, code: "deadline_repeated_local_time", message: result.message, choices: result.choices };
     case "resolver_defect": return { ok: false, code: "deadline_resolver_defect", message: result.message };
   }
+}
+
+export type AutomaticDeadline = {
+  localCivil: string;
+  epochMs: number;
+  instant: string;
+  utcOffsetMinutes: number;
+  fold: 0 | 1;
+};
+
+/**
+ * The Automatic Deadline for a Shoot date (#484): the first Monday-Friday day after it, at 17:00
+ * Sydney time. Public holidays are not skipped. Null unless the Shoot date is a canonical
+ * `YYYY-MM-DD` calendar date: free text is never guessed at. The weekday comes from calendar
+ * arithmetic on the date's own components, never from an instant, so the host timezone cannot move it.
+ */
+export function automaticDeadlineFor(shootDate: string | null | undefined): AutomaticDeadline | null {
+  if (typeof shootDate !== "string" || !isSydneyCalendarDate(shootDate)) return null;
+  const [year, month, day] = shootDate.split("-").map(Number) as [number, number, number];
+  const next = new Date(Date.UTC(year, month - 1, day + 1));
+  while (next.getUTCDay() === 0 || next.getUTCDay() === 6) next.setUTCDate(next.getUTCDate() + 1);
+  const localCivil = `${next.toISOString().slice(0, 10)}T${DEADLINE_PRESET_TIME}`;
+  const resolved = resolveSydneyCivilMinute(localCivil);
+  if (!resolved.ok) return null;
+  const { epochMs, instant, utcOffsetMinutes, fold } = resolved.value;
+  return { localCivil, epochMs, instant, utcOffsetMinutes, fold };
+}
+
+export type PlannedDeadlineOccurrence = {
+  kind: ProjectDeadlineKind;
+  offsetMinutes: number;
+  fireAt: number;
+  status: "pending" | "skipped";
+  terminalReason: "elapsed_at_save" | null;
+};
+
+/**
+ * The reminder occurrences for a Deadline set at `now`: one per advance offset plus "Due now".
+ * A person's save keeps "Due now" pending even when it has already elapsed, so the reminder is
+ * sent straight away. `skipElapsedDueNow` is the Automatic Deadline rule: a backdated Automatic
+ * Deadline records every elapsed occurrence, "Due now" included, as skipped so a backdated Project
+ * never produces an immediate reminder burst.
+ */
+export function planDeadlineOccurrences(deadlineAt: number, offsets: readonly number[], now: number, options: { skipElapsedDueNow?: boolean } = {}): PlannedDeadlineOccurrence[] {
+  const planned: PlannedDeadlineOccurrence[] = offsets.map((offsetMinutes) => {
+    const fireAt = deadlineFireAt(deadlineAt, offsetMinutes);
+    return { kind: "advance" as const, offsetMinutes, fireAt, status: fireAt <= now ? "skipped" as const : "pending" as const, terminalReason: fireAt <= now ? "elapsed_at_save" as const : null };
+  });
+  const dueNowElapsed = options.skipElapsedDueNow === true && deadlineAt <= now;
+  planned.push({ kind: "due_now", offsetMinutes: 0, fireAt: deadlineAt, status: dueNowElapsed ? "skipped" : "pending", terminalReason: dueNowElapsed ? "elapsed_at_save" : null });
+  return planned;
 }
 
 export function normalizeReminderOffsets(value: unknown): number[] {

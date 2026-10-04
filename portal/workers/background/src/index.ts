@@ -36,6 +36,7 @@ import { routeAutoHdrDelta, type RoutedAutoHdrMapping } from "./autohdr/mapping"
 import { getMetadata, listFolderIfExists } from "./dropbox/client";
 import { autoHdrFinalPathCandidates, deriveAutoHdrFolderName } from "./autohdr/paths";
 import { reconcileAwaitingRawProjects } from "./reconcile-awaiting-raw";
+import { reconcileEditedArrivals } from "./edited-arrival";
 import { backfillAutoHdrV2 as backfillAutoHdrV2Impl, type BackfillParams, type BackfillResult } from "./autohdr/backfill";
 import { enqueueAutoHdrScaffold, ensureScaffold } from "./autohdr/scaffold";
 import { AutoHdrClaimError } from "./autohdr/errors";
@@ -162,6 +163,12 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
         console.log("Manual publish stuck sweep", recoveredManualPublishes);
       } catch (error) {
         console.error("Manual publish stuck sweep failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+      }
+      try {
+        // Outside the Editor automation flag: a Portal Edited upload counts as an arrival too (#486).
+        await reconcileEditedArrivals(this.env, controller.scheduledTime);
+      } catch (error) {
+        console.error("Edited arrival reconciliation failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
       }
       return;
     }

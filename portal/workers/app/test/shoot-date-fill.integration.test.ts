@@ -40,7 +40,7 @@ async function cookie(token: string) {
 
 type CallOptions = { editorAutomation?: string; db?: D1Database };
 /** Runs the real app with a recording BACKGROUND and every waitUntil promise awaited. */
-async function call(path: string, method: "POST" | "PUT", body: unknown, options: CallOptions = {}) {
+async function call(path: string, method: "POST" | "PUT" | "PATCH", body: unknown, options: CallOptions = {}) {
   const editorFolderCalls: string[] = [];
   const waits: Promise<unknown>[] = [];
   const executionContext = { waitUntil: (promise: Promise<unknown>) => { waits.push(promise); }, passThroughOnException: () => undefined, props: undefined } as unknown as ExecutionContext;
@@ -296,5 +296,133 @@ describe("queueProjectShootDateFollowUps", () => {
     expect(background.ensureEditorFolder).not.toHaveBeenCalled();
     for (const flag of ["1", true] as const) await queueProjectShootDateFollowUps({ DROPBOX_EDITOR_AUTOMATION_ENABLED: flag, BACKGROUND: background as never }, "p1");
     expect(background.ensureEditorFolder).toHaveBeenCalledTimes(2);
+  });
+});
+
+type DeadlineRow = { deadline_at: number | null; deadline_local_civil: string | null; deadline_source: string; deadline_version: number };
+const deadlineOf = async (projectId: string) => (await database.DB.prepare("SELECT deadline_at, deadline_local_civil, deadline_source, deadline_version FROM projects WHERE id = ?").bind(projectId).first<DeadlineRow>())!;
+const automaticAudits = async (projectId: string) => (await database.DB.prepare("SELECT actor_id, meta_json FROM audit_log WHERE target_id = ? AND action = 'project.deadline.automatic_set'").bind(projectId).all<{ actor_id: string | null; meta_json: string }>()).results;
+const occurrencesOf = async (projectId: string) => (await database.DB.prepare("SELECT kind, reminder_offset_minutes AS offset, status, terminal_reason, schedule_version, created_by FROM project_deadline_occurrences WHERE project_id = ? ORDER BY reminder_offset_minutes DESC").bind(projectId).all<{ kind: string; offset: number; status: string; terminal_reason: string | null; schedule_version: number; created_by: string }>()).results;
+
+describe("Automatic Deadline on the Shoot date fill (#484)", () => {
+  it("gives the filled Shoot date an Automatic Deadline: Sydney Friday 2 Oct shoot is due Monday 5 Oct 17:00", async () => {
+    const projectId = await seedProject("awaiting_raw");
+    const { response } = await moveStage(projectId, "awaiting_raw", "raw_review");
+    expect(response.status).toBe(200);
+    expect(await shootDateOf(projectId)).toBe(SYDNEY_DAY);
+    expect(await deadlineOf(projectId)).toEqual({ deadline_at: Date.parse("2026-10-05T06:00:00.000Z"), deadline_local_civil: "2026-10-05T17:00", deadline_source: "automatic", deadline_version: 1 });
+    const audits = await automaticAudits(projectId);
+    expect(audits).toHaveLength(1);
+    expect(audits[0]!.actor_id).toBeNull();
+    expect(JSON.parse(audits[0]!.meta_json)).toMatchObject({ actor: "system", reason: "shoot_date_fill", shootDate: SYDNEY_DAY, deadlineLocalCivil: "2026-10-05T17:00", version: 1, reminderOffsetsMinutes: [1440, 240, 60] });
+    const occurrences = await occurrencesOf(projectId);
+    expect(occurrences.map((row) => [row.kind, row.offset, row.status])).toEqual([["advance", 1440, "pending"], ["advance", 240, "pending"], ["advance", 60, "pending"], ["due_now", 0, "pending"]]);
+    expect(new Set(occurrences.map((row) => row.schedule_version))).toEqual(new Set([1]));
+    expect(occurrences.every((row) => row.created_by === "00000000-0000-4000-8000-000000000000")).toBe(true);
+  });
+
+  it("never replaces a held Deadline and does not mark it automatic", async () => {
+    const projectId = await seedProject("awaiting_raw");
+    const held = Date.parse("2026-11-20T06:00:00.000Z");
+    await database.DB.prepare("UPDATE projects SET deadline_at = ?, deadline_local_civil = '2026-11-20T17:00', deadline_zone = 'Australia/Sydney', deadline_utc_offset_minutes = 660, deadline_fold = 0, deadline_source = 'manual', deadline_version = 3 WHERE id = ?").bind(held, projectId).run();
+    expect((await moveStage(projectId, "awaiting_raw", "editing_autohdr")).response.status).toBe(200);
+    expect(await shootDateOf(projectId)).toBe(SYDNEY_DAY);
+    expect(await deadlineOf(projectId)).toEqual({ deadline_at: held, deadline_local_civil: "2026-11-20T17:00", deadline_source: "manual", deadline_version: 3 });
+    expect(await automaticAudits(projectId)).toHaveLength(0);
+    expect(await occurrencesOf(projectId)).toHaveLength(0);
+  });
+
+  it("sets no Deadline when the move goes straight to Delivered", async () => {
+    const projectId = await seedProject("awaiting_raw");
+    expect((await moveStage(projectId, "awaiting_raw", "delivered")).response.status).toBe(200);
+    expect(await shootDateOf(projectId)).toBe(SYDNEY_DAY);
+    expect(await deadlineOf(projectId)).toMatchObject({ deadline_at: null, deadline_source: "none", deadline_version: 0 });
+    expect(await occurrencesOf(projectId)).toHaveLength(0);
+  });
+
+  it("leaves a Project that already holds a Shoot date untouched by a stage move", async () => {
+    const projectId = await seedProject("awaiting_raw", "2026-09-15");
+    expect((await moveStage(projectId, "awaiting_raw", "raw_review")).response.status).toBe(200);
+    expect(await deadlineOf(projectId)).toMatchObject({ deadline_at: null, deadline_source: "none" });
+    expect(await automaticAudits(projectId)).toHaveLength(0);
+  });
+
+  it("writes nothing when the move loses a board revision race", async () => {
+    const projectId = await seedProject("awaiting_raw");
+    const stale = await call(`/api/projects/${projectId}/stage`, "POST", stageBody("awaiting_raw", "raw_review", 7));
+    expect(stale.response.status).toBe(409);
+    expect(await shootDateOf(projectId)).toBeNull();
+    expect(await deadlineOf(projectId)).toMatchObject({ deadline_at: null, deadline_source: "none" });
+    expect(await automaticAudits(projectId)).toHaveLength(0);
+  });
+});
+
+describe("Automatic Deadline follows the shoot-date fill (#510)", () => {
+  const board = async (projectId: string) => (await database.DB.prepare("SELECT stage_key, board_revision FROM projects WHERE id = ?").bind(projectId).first<{ stage_key: string; board_revision: number }>())!;
+  const movedAudits = async (projectId: string) => (await database.DB.prepare("SELECT actor_id, meta_json FROM audit_log WHERE target_id = ? AND action = 'project.deadline.automatic_moved'").bind(projectId).all<{ actor_id: string | null; meta_json: string }>()).results;
+  const slots = async (projectId: string) => (await database.DB.prepare("SELECT reminder_offset_minutes AS offset, status, terminal_reason AS reason, schedule_version AS version, fire_at, fired_at FROM project_deadline_occurrences WHERE project_id = ? ORDER BY schedule_version, reminder_offset_minutes DESC").bind(projectId).all<{ offset: number; status: string; reason: string | null; version: number; fire_at: number; fired_at: number | null }>()).results;
+  const outboxCount = async (projectId: string) => (await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(projectId).first<{ count: number }>())!.count;
+
+  /** A Project created through the real route (so v1 has occurrence rows) whose shoot date is then cleared. */
+  async function undatedAutomaticProject() {
+    const created = await call("/api/projects", "POST", { street: `Move ${crypto.randomUUID()}`, shootDate: "2026-10-07" });
+    expect(created.response.status).toBe(201);
+    const projectId = ((await created.response.json()) as { id: string }).id;
+    expect(await deadlineOf(projectId)).toMatchObject({ deadline_local_civil: "2026-10-08T17:00", deadline_source: "automatic", deadline_version: 1 });
+    expect((await call(`/api/projects/${projectId}`, "PATCH", { shootDate: null })).response.status).toBe(200);
+    expect(await shootDateOf(projectId)).toBeNull();
+    expect(await deadlineOf(projectId)).toMatchObject({ deadline_local_civil: "2026-10-08T17:00", deadline_source: "automatic", deadline_version: 1 });
+    return projectId;
+  }
+  const leaveAwaitingRaw = async (projectId: string) => {
+    const { stage_key, board_revision } = await board(projectId);
+    const first = await call(`/api/projects/${projectId}/stage`, "POST", stageBody(stage_key, "raw_review", board_revision));
+    if (first.response.status !== 409) return first;
+    const payload = await first.response.clone().json() as { code?: string; requiredConfirmation?: { reasons: string[] } };
+    if (payload.code !== "stage_confirmation_required") return first;
+    return call(`/api/projects/${projectId}/stage`, "POST", stageBody(stage_key, "raw_review", board_revision, { reasons: payload.requiredConfirmation!.reasons }));
+  };
+
+  it("recomputes a retained Automatic Deadline from the filled date, keeps a sent reminder sent, and conflicts a stale save", async () => {
+    const projectId = await undatedAutomaticProject();
+    const sentAt = Date.parse("2026-10-01T10:00:00.000Z");
+    await database.DB.prepare("UPDATE project_deadline_occurrences SET status = 'fired', terminal_reason = NULL, fired_at = ? WHERE project_id = ? AND reminder_offset_minutes = 1440").bind(sentAt, projectId).run();
+
+    const { response } = await leaveAwaitingRaw(projectId);
+    expect(response.status).toBe(200);
+    expect(await shootDateOf(projectId)).toBe(SYDNEY_DAY);
+    expect(await deadlineOf(projectId)).toEqual({ deadline_at: Date.parse("2026-10-05T06:00:00.000Z"), deadline_local_civil: "2026-10-05T17:00", deadline_source: "automatic", deadline_version: 2 });
+
+    const moved = await movedAudits(projectId);
+    expect(moved).toHaveLength(1);
+    expect(moved[0]!.actor_id).toBeNull();
+    expect(JSON.parse(moved[0]!.meta_json)).toMatchObject({ actor: "system", reason: "shoot_date_fill", shootDate: SYDNEY_DAY, previousDeadlineLocalCivil: "2026-10-08T17:00", version: 2 });
+    expect((await database.DB.prepare("SELECT meta_json FROM audit_log WHERE target_id = ? AND action = 'project.deadline.automatic_set'").bind(projectId).all<{ meta_json: string }>()).results.map((row) => JSON.parse(row.meta_json).reason)).not.toContain("shoot_date_fill");
+
+    const rows = await slots(projectId);
+    expect(rows.filter((row) => row.version === 1).map((row) => [row.offset, row.status, row.reason])).toEqual([[1440, "fired", null], [240, "superseded", "schedule_replaced"], [60, "superseded", "schedule_replaced"], [0, "superseded", "schedule_replaced"]]);
+    const v2 = rows.filter((row) => row.version === 2);
+    expect(v2.map((row) => [row.offset, row.status, row.fired_at])).toEqual([[1440, "fired", sentAt], [240, "pending", null], [60, "pending", null], [0, "pending", null]]);
+    expect(v2.find((row) => row.offset === 240)!.fire_at).toBe(Date.parse("2026-10-05T06:00:00.000Z") - 240 * 60_000);
+    expect(await outboxCount(projectId)).toBe(0);
+
+    const stale = await call(`/api/projects/${projectId}/deadline`, "PUT", { expectedVersion: 1, deadline: { localCivil: "2026-11-02T09:00" }, reminderOffsetsMinutes: [] });
+    expect(stale.response.status).toBe(409);
+    expect(await stale.response.json()).toMatchObject({ code: "deadline_version_conflict", current: { version: 2, source: "automatic" } });
+  });
+
+  it("leaves a manual Deadline untouched", async () => {
+    const projectId = await undatedAutomaticProject();
+    const saved = await call(`/api/projects/${projectId}/deadline`, "PUT", { expectedVersion: 1, deadline: { localCivil: "2026-11-20T17:00" }, reminderOffsetsMinutes: [] });
+    expect(saved.response.status).toBe(200);
+    const before = await deadlineOf(projectId);
+    expect(before).toMatchObject({ deadline_source: "manual", deadline_version: 2 });
+    const occurrencesBefore = await slots(projectId);
+
+    expect((await leaveAwaitingRaw(projectId)).response.status).toBe(200);
+    expect(await shootDateOf(projectId)).toBe(SYDNEY_DAY);
+    expect(await deadlineOf(projectId)).toEqual(before);
+    expect(await movedAudits(projectId)).toHaveLength(0);
+    expect(await slots(projectId)).toEqual(occurrencesBefore);
   });
 });

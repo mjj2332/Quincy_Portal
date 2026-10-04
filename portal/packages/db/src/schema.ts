@@ -181,6 +181,11 @@ export const projects = sqliteTable(
     rawFolderPath: text("raw_folder_path"),
     coverAssetId: text("cover_asset_id"),
     archivedAt: integer("archived_at", { mode: "timestamp_ms" }),
+    /** Latest Edited-media arrival (epoch ms) awaiting the 15-minute quiet-period move to Edited review; NULL when none is pending. */
+    editedArrivedAt: integer("edited_arrived_at"),
+    /** Failed move attempts for the pending arrival, and when the pass may try again (backoff). Reset by every new arrival. */
+    editedArrivalAttempts: integer("edited_arrival_attempts").notNull().default(0),
+    editedArrivalRetryAt: integer("edited_arrival_retry_at"),
     archivedBy: text("archived_by").references(() => user.id),
     deadlineLocalCivil: text("deadline_local_civil"),
     deadlineZone: text("deadline_zone", { enum: ["Australia/Sydney"] }),
@@ -189,6 +194,7 @@ export const projects = sqliteTable(
     deadlineAt: integer("deadline_at"),
     deadlineReminderOffsetsJson: text("deadline_reminder_offsets_json"),
     deadlineVersion: integer("deadline_version").notNull().default(0),
+    deadlineSource: text("deadline_source", { enum: ["automatic", "manual", "none"] as const }).notNull().default("none"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -196,6 +202,8 @@ export const projects = sqliteTable(
     index("projects_stage_idx").on(t.stageKey),
     index("projects_order_idx").on(t.orderId),
     index("projects_archived_idx").on(t.archivedAt),
+    index("projects_edited_arrival_pending_idx").on(t.editedArrivedAt).where(sql`${t.editedArrivedAt} IS NOT NULL`),
+    check("projects_edited_arrived_at_check", sql`${t.editedArrivedAt} IS NULL OR typeof(${t.editedArrivedAt}) = 'integer'`),
     check("projects_board_revision_check", sql`typeof(${t.boardRevision}) = 'integer' AND ${t.boardRevision} >= 0 AND ${t.boardRevision} <= 9007199254740991`),
     check("projects_priority_check", sql`${t.priority} IS NULL OR (typeof(${t.priority}) = 'integer' AND ${t.priority} >= 1 AND ${t.priority} <= 5)`),
     check("projects_deadline_zone_check", sql`${t.deadlineZone} IS NULL OR ${t.deadlineZone} = 'Australia/Sydney'`),
@@ -204,6 +212,7 @@ export const projects = sqliteTable(
     check("projects_deadline_at_check", sql`${t.deadlineAt} IS NULL OR typeof(${t.deadlineAt}) = 'integer'`),
     check("projects_deadline_reminder_offsets_check", sql`${t.deadlineReminderOffsetsJson} IS NULL OR json_valid(${t.deadlineReminderOffsetsJson})`),
     check("projects_deadline_version_check", sql`typeof(${t.deadlineVersion}) = 'integer' AND ${t.deadlineVersion} >= 0`),
+    check("projects_deadline_source_check", sql`${t.deadlineSource} IN ('automatic', 'manual', 'none')`),
   ],
 );
 

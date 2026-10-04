@@ -49,7 +49,7 @@ function project(overrides: Partial<ProjectDetail> = {}): ProjectDetail {
   return {
     id: projectId, street: "12 Example St", suburb: "Suburbia", postcode: "2000", agencyName: null, agentName: null,
     shootDate: null, stageKey: "editing", rawFolderPath: null, rawFolderLink: null, boardRevision: 5, contractEnabled: true,
-    coverAssetId: null, effectiveCoverAssetId: null, collections: [], members: [member], deadlineSchedule: { version: 0, deadline: null, reminderOffsetsMinutes: [], state: "unset", nextOccurrence: null, canResume: false },
+    coverAssetId: null, effectiveCoverAssetId: null, collections: [], members: [member], deadlineSchedule: { version: 0, source: null, deadline: null, reminderOffsetsMinutes: [], state: "unset", nextOccurrence: null, canResume: false },
     ...overrides,
   };
 }

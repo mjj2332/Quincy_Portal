@@ -400,6 +400,11 @@ button { font-family: var(--font-sans); }
 .rich-text__editor-content ul[data-type="taskList"] li > label { display: inline-flex; align-items: center; }
 .rich-text__editor-content ul[data-type="taskList"] li > label input { accent-color: var(--signal-positive); }
 .rich-text a { color: var(--signal-info); text-decoration: underline; text-underline-offset: 2px; }
+.rich-text__editor-content a { color: var(--signal-info); text-decoration: underline; text-underline-offset: 2px; }
+/* Empty-editor placeholder (#491). Tiptap's Placeholder extension is not installed, so `.is-editor-empty`
+   was never set and the old utilities matched nothing: an empty doc is one paragraph holding only the
+   ProseMirror trailing break, and the editor root carries `data-placeholder`. */
+.rich-text__editor-content:has(> p:only-child > br.ProseMirror-trailingBreak:only-child)::before { content: attr(data-placeholder); color: var(--foreground-secondary); float: left; height: 0; pointer-events: none; }
 .rich-text u { color: inherit; text-decoration: underline; text-decoration-color: var(--text-muted); text-underline-offset: 2px; }
 .rich-text s { text-decoration: line-through; text-decoration-color: var(--text-muted); }
 .rich-text__mention { display: inline-block; padding: 0 4px; border-radius: var(--radius-xs); background: color-mix(in srgb, var(--signal-info) 12%, var(--paper-000)); color: var(--signal-info); font-weight: 600; white-space: nowrap; }

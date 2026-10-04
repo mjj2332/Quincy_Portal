@@ -12,7 +12,7 @@ import { liveTransformLocation } from "../src/routes/media";
 import { EXTERNAL_API_RESPONSE_SCHEMAS, PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID, RENDITION_SPEC_VERSION } from "@quincy/shared";
 import { createDb } from "@quincy/db";
 import { collectionLinkUrlConflict, uniqueVersionError } from "../src/routes/collections";
-import { finalizeIngest } from "../src/lib/ingest";
+import { finalizeExternalEditedUpload, finalizeIngest } from "../src/lib/ingest";
 
 const database = env as unknown as { DB: D1Database };
 const authEnv = env as unknown as Env;
@@ -4084,6 +4084,108 @@ describe("staff app API", () => {
     } })).rejects.toThrow(/destination changed/);
     expect(await database.DB.prepare("SELECT id FROM assets WHERE id = ?").bind(assetId).first()).toBeNull();
     expect(await authEnv.MEDIA.head(key)).not.toBeNull();
+  });
+
+  describe("Edited arrival tracking (#486)", () => {
+    const arrivedAt = async (projectId: string) => (await database.DB.prepare("SELECT edited_arrived_at AS v FROM projects WHERE id = ?").bind(projectId).first<{ v: number | null }>())?.v;
+    const putEdited = async (projectId: string, name: string) => {
+      const assetId = crypto.randomUUID();
+      const key = `projects/${projectId}/edited/${assetId}/${name}`;
+      await authEnv.MEDIA.put(key, new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), { httpMetadata: { contentType: "image/jpeg" } });
+      return { assetId, key };
+    };
+
+    it("records the arrival when a Portal Edited upload commits, and a duplicate completion does not move it", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        const projectId = crypto.randomUUID();
+        await seedSyncDropboxProject(projectId, "/Tonomo/Raw Files/Arrival");
+        const { assetId, key } = await putEdited(projectId, "first.jpg");
+        vi.setSystemTime(new Date("2026-10-02T01:00:00.000Z"));
+        await finalizeIngest(authEnv, { actorId: seedAdminId, projectId, assetId, key, originalFilename: "first.jpg", collection: "edited" });
+        expect(await arrivedAt(projectId)).toBe(Date.parse("2026-10-02T01:00:00.000Z"));
+
+        vi.setSystemTime(new Date("2026-10-02T01:07:00.000Z"));
+        await finalizeIngest(authEnv, { actorId: seedAdminId, projectId, assetId, key, originalFilename: "first.jpg", collection: "edited" });
+        expect(await arrivedAt(projectId)).toBe(Date.parse("2026-10-02T01:00:00.000Z"));
+
+        vi.setSystemTime(new Date("2026-10-02T01:09:00.000Z"));
+        const second = await putEdited(projectId, "second.jpg");
+        await finalizeIngest(authEnv, { actorId: seedAdminId, projectId, assetId: second.assetId, key: second.key, originalFilename: "second.jpg", collection: "edited" });
+        expect(await arrivedAt(projectId)).toBe(Date.parse("2026-10-02T01:09:00.000Z"));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("records the arrival through the staff upload route, but never for RAW, Edited review, Delivered or an Archived Project", async () => {
+      const cookie = await sessionCookie(adminToken);
+      const projectId = crypto.randomUUID();
+      await seedSyncDropboxProject(projectId, "/Tonomo/Raw Files/Arrival route");
+      const { key } = await putEdited(projectId, "route.jpg");
+      const response = await SELF.fetch("https://portal.test/api/uploads/complete", {
+        method: "POST", headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ projectId, key, originalFilename: "route.jpg", collection: "edited" }),
+      });
+      expect(response.status).toBe(202);
+      expect(await arrivedAt(projectId)).not.toBeNull();
+
+      const rawProject = crypto.randomUUID();
+      await seedSyncDropboxProject(rawProject, "/Tonomo/Raw Files/Arrival raw");
+      expect((await completeRawUpload(cookie, rawProject, "capture.jpg")).status).toBe(201);
+      expect(await arrivedAt(rawProject)).toBeNull();
+
+      for (const stage of ["edited_review", "delivered"]) {
+        const settled = crypto.randomUUID();
+        await seedSyncDropboxProject(settled, `/Tonomo/Raw Files/Arrival ${stage}`);
+        await database.DB.prepare("UPDATE projects SET stage_key = ? WHERE id = ?").bind(stage, settled).run();
+        const upload = await putEdited(settled, "late.jpg");
+        await finalizeIngest(authEnv, { actorId: seedAdminId, projectId: settled, assetId: upload.assetId, key: upload.key, originalFilename: "late.jpg", collection: "edited" });
+        expect(await arrivedAt(settled)).toBeNull();
+      }
+
+      const archived = crypto.randomUUID();
+      await seedSyncDropboxProject(archived, "/Tonomo/Raw Files/Arrival archived");
+      await database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), archived).run();
+      const late = await putEdited(archived, "late.jpg");
+      await expect(finalizeIngest(authEnv, { actorId: seedAdminId, projectId: archived, assetId: late.assetId, key: late.key, originalFilename: "late.jpg", collection: "edited" })).rejects.toThrow();
+      expect(await arrivedAt(archived)).toBeNull();
+    });
+
+    it("records the arrival when an External editor upload completes, and not for a lost authorization", async () => {
+      const projectId = crypto.randomUUID();
+      await seedSyncDropboxProject(projectId, "/Tonomo/Raw Files/Arrival external");
+      const now = Date.now();
+      const collectionId = crypto.randomUUID();
+      const membershipId = crypto.randomUUID();
+      await database.DB.batch([
+        database.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'edited', 'empty', 0, ?, ?)").bind(collectionId, projectId, now, now),
+        database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(membershipId, projectId, externalEditorId, now),
+      ]);
+      const session = async (leaseToken: string) => {
+        const assetId = crypto.randomUUID();
+        const key = `projects/${projectId}/edited/${assetId}/ext.jpg`;
+        const sessionId = crypto.randomUUID();
+        await database.DB.prepare(`INSERT INTO external_edited_upload_sessions
+          (id, token_hash, project_id, collection_id, asset_id, created_by, membership_cycle_id, authorization_epoch, original_filename, bytes, r2_key, r2_upload_id, part_bytes, part_count, status, completion_lease_token, completion_lease_expires_at, expires_at, created_at, updated_at)
+          SELECT ?, ?, ?, ?, ?, ?, ?, u.authorization_epoch, 'ext.jpg', 4, ?, 'upload', 4, 1, 'completing', ?, ?, ?, ?, ? FROM user u WHERE u.id = ?`)
+          .bind(sessionId, crypto.randomUUID(), projectId, collectionId, assetId, externalEditorId, membershipId, key, leaseToken, now + 60_000, now + 3_600_000, now, now, externalEditorId).run();
+        return { sessionId, assetId, key };
+      };
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        vi.setSystemTime(now);
+        const ok = await session("lease-ok");
+        await finalizeExternalEditedUpload(authEnv, { sessionId: ok.sessionId, leaseToken: "lease-ok", projectId, collectionId, assetId: ok.assetId, key: ok.key, originalFilename: "ext.jpg", bytes: 4, auditPrincipal: { id: externalEditorId, impersonatedBy: null }, now });
+        expect(await arrivedAt(projectId)).toBe(now);
+
+        const lost = await session("lease-lost");
+        await expect(finalizeExternalEditedUpload(authEnv, { sessionId: lost.sessionId, leaseToken: "wrong-lease", projectId, collectionId, assetId: lost.assetId, key: lost.key, originalFilename: "ext.jpg", bytes: 4, auditPrincipal: { id: externalEditorId, impersonatedBy: null }, now: now + 5 * 60_000 })).rejects.toThrow();
+        expect(await arrivedAt(projectId)).toBe(now);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   describe("default editors — project creation (#135)", () => {

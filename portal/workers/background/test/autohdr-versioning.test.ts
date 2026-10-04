@@ -326,3 +326,64 @@ describe("immutable AutoHDR final writer", () => {
     }
   });
 });
+
+describe("AutoHDR finals racing the Edited arrival move (#486)", () => {
+  const T0 = Date.parse("2026-10-02T01:00:00.000Z");
+  // One notification per recipient: every active admin, so "exactly one" is one per admin, not one row.
+  const admins = async () => (await bindings.DB.prepare("SELECT count(*) n FROM user WHERE role = 'admin' AND active = 1").first<{ n: number }>())!.n;
+  const landed = async (projectId: string) => (await bindings.DB.prepare("SELECT count(*) n FROM notifications WHERE project_id = ? AND type = 'edited_landed'").bind(projectId).first<{ n: number }>())!.n;
+  const advances = async (projectId: string) => (await bindings.DB.prepare("SELECT count(*) n FROM audit_log WHERE target_id = ? AND action = 'stage.auto_advance'").bind(projectId).first<{ n: number }>())!.n;
+
+  async function arrivedFixture() {
+    const context = await fixture();
+    await seedCurrent(context, "human-import");
+    await bindings.DB.prepare("UPDATE projects SET edited_arrived_at = ? WHERE id = ?").bind(T0, context.projectId).run();
+    await bindings.DB.prepare("INSERT OR IGNORE INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES ('race-admin', 'Admin', 'race-admin@test.invalid', 1, 'admin', 1, 1, 1)").run();
+    return context;
+  }
+  const runPass = (commit?: never) => import("../src/edited-arrival").then(({ reconcileEditedArrivals }) =>
+    reconcileEditedArrivals({ DB: bindings.DB, MEDIA: bindings.MEDIA, APP_ORIGIN: "https://portal.test" } as never, T0 + 15 * 60_000, commit ? { commit } : {}));
+
+  it("yields one move and one notification when the AutoHDR final lands first", async () => {
+    const context = await arrivedFixture();
+    await expect(writeAutoHdrFinal(bindings as never, context, file("race-final-first"), deps)).resolves.toMatchObject({ stageAdvanced: true });
+    await runPass();
+    expect(await advances(context.projectId)).toBe(1);
+    expect(await landed(context.projectId)).toBe(await admins());
+  });
+
+  it("yields one move and one notification when the Edited arrival move lands first", async () => {
+    const context = await arrivedFixture();
+    await runPass();
+    expect(await advances(context.projectId)).toBe(1);
+    const final = await writeAutoHdrFinal(bindings as never, context, file("race-pass-first"), deps);
+    expect(final.stageAdvanced).toBe(false);
+    expect(await advances(context.projectId)).toBe(1);
+    expect(await landed(context.projectId)).toBe(await admins());
+  });
+
+  it("does not move again after AutoHDR wins and a human moves the Project back to Editing", async () => {
+    const context = await arrivedFixture();
+    await expect(writeAutoHdrFinal(bindings as never, context, file("race-moveback"), deps)).resolves.toMatchObject({ stageAdvanced: true });
+    // The AutoHDR winner itself cleared the arrival, in the same batch.
+    await expect(bindings.DB.prepare("SELECT edited_arrived_at AS a FROM projects WHERE id = ?").bind(context.projectId).first()).resolves.toEqual({ a: null });
+    await bindings.DB.prepare("UPDATE projects SET stage_key = 'editing_autohdr' WHERE id = ?").bind(context.projectId).run();
+    const before = await landed(context.projectId);
+    await runPass();
+    expect((await bindings.DB.prepare("SELECT stage_key FROM projects WHERE id = ?").bind(context.projectId).first<{ stage_key: string }>())?.stage_key).toBe("editing_autohdr");
+    expect(await advances(context.projectId)).toBe(1);
+    expect(await landed(context.projectId)).toBe(before);
+  });
+
+  it("yields one move and one notification when the final commits between the scan and the commit", async () => {
+    const context = await arrivedFixture();
+    const { commitAutomaticStage } = await import("../src/lib/automatic-stage");
+    const interleaved = (async (input: Parameters<typeof commitAutomaticStage>[0]) => {
+      await writeAutoHdrFinal(bindings as never, context, file("race-interleaved"), deps);
+      return commitAutomaticStage(input);
+    }) as never;
+    await runPass(interleaved);
+    expect(await advances(context.projectId)).toBe(1);
+    expect(await landed(context.projectId)).toBe(await admins());
+  });
+});

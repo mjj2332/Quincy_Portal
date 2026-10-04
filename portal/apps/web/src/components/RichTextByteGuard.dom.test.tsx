@@ -8,7 +8,10 @@ const oversized = { type: "doc", content: [{ type: "taskList", content: Array.fr
 const accepted = { type: "doc", content: [{ type: "taskList", content: Array.from({ length: 270 }, () => ({ type: "taskItem", attrs: { checked: false }, content: [{ type: "paragraph", content: [{ type: "text", text: "abc" }] }] })) }] };
 
 vi.mock("../lib/api", () => ({ apiGet: (path: string) => mocks.apiGet(path), apiPost: (path: string, body: unknown) => mocks.apiPost(path, body), apiPatch: (path: string, body: unknown) => mocks.apiPatch(path, body), apiDelete: vi.fn() }));
-vi.mock("./RichTextEditor", () => ({ RichTextEditor: ({ onChange }: { onChange: (value: typeof oversized) => void }) => <><button type="button" onClick={() => onChange(oversized)}>Use oversized formatting</button><button type="button" onClick={() => onChange(accepted)}>Use accepted formatting</button></> }));
+const mockEditor = ({ onChange }: { onChange: (value: typeof oversized) => void }) => <><button type="button" onClick={() => onChange(oversized)}>Use oversized formatting</button><button type="button" onClick={() => onChange(accepted)}>Use accepted formatting</button></>;
+// #491: the Notice board still mounts the legacy `RichTextEditor`; the Project discussion composer is `QuincyRichTextEditor`.
+vi.mock("./RichTextEditor", () => ({ RichTextEditor: (props: Parameters<typeof mockEditor>[0]) => mockEditor(props) }));
+vi.mock("./QuincyRichTextEditor", () => ({ QuincyRichTextEditor: (props: Parameters<typeof mockEditor>[0]) => mockEditor(props) }));
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { id: "user-me", role: "photographer" } }, isPending: false }) }));
 vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ role: "photographer", capabilities: ["collaborateOnProject"], can: () => true }) }));
 

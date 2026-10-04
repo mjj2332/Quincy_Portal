@@ -5,6 +5,7 @@ const scheduledJobs = vi.hoisted(() => ({
   recovery: vi.fn().mockResolvedValue(0),
   manualPublish: vi.fn().mockResolvedValue({ scanned: 0, recovered: 0, skipped: 0 }),
   raw: vi.fn().mockResolvedValue({ attempted: 0, advanced: 0, skipped: 0, failures: 0 }),
+  editedArrival: vi.fn().mockResolvedValue({ scanned: 0, moved: 0, kept: 0, cleared: 0, failures: 0 }),
   stalled: vi.fn().mockResolvedValue(0),
   subtaskScan: vi.fn().mockResolvedValue({ scanned: 0, fired: 0, published: 0 }),
   subtasks: vi.fn().mockResolvedValue({ inserted: 0 }),
@@ -23,6 +24,7 @@ vi.mock("../src/notification-delivery", () => ({
 }));
 vi.mock("../src/manual-publish-recovery", () => ({ sweepStuckManualPublishes: scheduledJobs.manualPublish }));
 vi.mock("../src/reconcile-awaiting-raw", () => ({ reconcileAwaitingRawProjects: scheduledJobs.raw }));
+vi.mock("../src/edited-arrival", () => ({ reconcileEditedArrivals: scheduledJobs.editedArrival }));
 vi.mock("../src/notifications", () => ({
   notifyProject: vi.fn(),
   pruneNotifications: scheduledJobs.prune,
@@ -48,6 +50,7 @@ beforeEach(() => {
   scheduledJobs.subtaskScan.mockResolvedValue({ scanned: 0, fired: 0, published: 0 });
   scheduledJobs.manualPublish.mockResolvedValue({ scanned: 0, recovered: 0, skipped: 0 });
   scheduledJobs.raw.mockResolvedValue({ attempted: 0, advanced: 0, skipped: 0, failures: 0 });
+  scheduledJobs.editedArrival.mockResolvedValue({ scanned: 0, moved: 0, kept: 0, cleared: 0, failures: 0 });
   consoleError.mockClear();
   consoleWarn.mockClear();
 });
@@ -63,6 +66,7 @@ describe("background scheduled Cron dispatch", () => {
     expect(scheduledJobs.deadline).toHaveBeenCalledOnce();
     expect(scheduledJobs.subtaskScan).toHaveBeenCalledOnce();
     expect(scheduledJobs.recovery).toHaveBeenCalledOnce();
+    expect(scheduledJobs.editedArrival).toHaveBeenCalledOnce();
     expect(scheduledJobs.raw).not.toHaveBeenCalled();
     expect(scheduledJobs.stalled).not.toHaveBeenCalled();
     expect(scheduledJobs.subtasks).not.toHaveBeenCalled();
@@ -74,6 +78,7 @@ describe("background scheduled Cron dispatch", () => {
     expect(scheduledJobs.deadline).not.toHaveBeenCalled();
     expect(scheduledJobs.subtaskScan).not.toHaveBeenCalled();
     expect(scheduledJobs.recovery).not.toHaveBeenCalled();
+    expect(scheduledJobs.editedArrival).not.toHaveBeenCalled();
     expect(scheduledJobs.raw).toHaveBeenCalledOnce();
     expect(scheduledJobs.stalled).toHaveBeenCalledOnce();
     expect(scheduledJobs.subtasks).toHaveBeenCalledOnce();
@@ -85,6 +90,7 @@ describe("background scheduled Cron dispatch", () => {
     ["subtaskScan", "* * * * *"],
     ["recovery", "* * * * *"],
     ["manualPublish", "* * * * *"],
+    ["editedArrival", "* * * * *"],
     ["raw", "0 * * * *"],
     ["stalled", "0 * * * *"],
     ["subtasks", "0 * * * *"],
@@ -93,7 +99,7 @@ describe("background scheduled Cron dispatch", () => {
     scheduledJobs[name].mockRejectedValueOnce(new Error(`${name} failed`));
     await expect(worker().scheduled(controller(cron))).resolves.toBeUndefined();
     const siblings = cron === "* * * * *"
-      ? [scheduledJobs.deadline, scheduledJobs.subtaskScan, scheduledJobs.recovery, scheduledJobs.manualPublish]
+      ? [scheduledJobs.deadline, scheduledJobs.subtaskScan, scheduledJobs.recovery, scheduledJobs.manualPublish, scheduledJobs.editedArrival]
       : [scheduledJobs.raw, scheduledJobs.stalled, scheduledJobs.subtasks, scheduledJobs.prune];
     for (const job of siblings) expect(job).toHaveBeenCalledOnce();
     expect(consoleError).toHaveBeenCalled();
@@ -106,6 +112,11 @@ describe("background scheduled Cron dispatch", () => {
     scheduledJobs.manualPublish.mockClear();
     await worker().scheduled(controller("0 * * * *"));
     expect(scheduledJobs.manualPublish).not.toHaveBeenCalled();
+  });
+
+  it("runs the Edited arrival pass with the scheduled instant, and with Editor automation off", async () => {
+    await worker().scheduled(controller("* * * * *"));
+    expect(scheduledJobs.editedArrival).toHaveBeenCalledWith(expect.anything(), 1_725_000_000_000);
   });
 
   it("warns and runs nothing for an unrecognized trigger", async () => {

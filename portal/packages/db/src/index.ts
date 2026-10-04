@@ -4,6 +4,7 @@ import * as schema from "./schema";
 export * as schema from "./schema";
 export { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings } from "./collection-count";
 export { RAW_CLAIM_LEASE_MS } from "./raw-reconciliation-claims";
+export { buildEditedArrivalRecord } from "./edited-arrival";
 export { effectiveDefaultEditorSql, selectEffectiveDefaultEditorIds } from "./default-editors";
 export { buildProjectActivityStatements, type ProjectActivityStatementBundle } from "./project-activity";
 export {
@@ -23,6 +24,18 @@ export {
   type ShootDateFillReason,
   type ShootDateFillTrigger,
 } from "./shoot-date-fill";
+export {
+  AUTOMATIC_DEADLINE_AUDIT_ACTION,
+  automaticDeadlineLanded,
+  AUTOMATIC_DEADLINE_MOVED_AUDIT_ACTION,
+  automaticDeadlineMoved,
+  buildAutomaticDeadlineBundle,
+  buildAutomaticDeadlineMoveBundle,
+  type AutomaticDeadlineMoveIndexes,
+  type AutomaticDeadlineGate,
+  type AutomaticDeadlineIndexes,
+  type AutomaticDeadlineReason,
+} from "./automatic-deadline";
 export { projectColumnsForVariant, projectColumnsPre0037 } from "./project-projections";
 export { emitExternalSafeLegacyNotification, emitExternalSubtaskNotification, emitExternalSubtaskNotifications, emitStaffSubtaskAssignedNotification, type ExternalSafeLegacyInput, type ExternalSubtaskNotificationInput, type StaffSubtaskAssignedInput } from "./external-notifications";
 export {
@@ -63,6 +76,7 @@ export {
   buildAutoHdrApiFinalizeBundle,
   buildTerminalAssertionBundle,
   buildCompactingStageWinner,
+  buildDeadlineScheduleReplacementStatements,
   buildDeadlineSuppressionBundle,
   buildEditingEntryTokenTail,
   buildNonCompactingStageWinner,

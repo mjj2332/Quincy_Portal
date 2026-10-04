@@ -129,8 +129,8 @@ const PROJECT_COLUMNS = [
   "id", "street", "suburb", "postcode", "agency_name", "agent_name", "agent_email", "agent_phone",
   "agency_id", "agent_id", "shoot_date", "time_window", "stage_key", "board_position", "board_revision",
   "order_no", "order_id", "invoice_amount", "payment_status", "notes", "production_notes", "raw_folder_link", "raw_folder_path",
-  "cover_asset_id", "archived_at", "archived_by",
-  "deadline_local_civil", "deadline_zone", "deadline_utc_offset_minutes", "deadline_fold", "deadline_at", "deadline_reminder_offsets_json", "deadline_version",
+  "cover_asset_id", "archived_at", "archived_by", "edited_arrived_at", "edited_arrival_attempts", "edited_arrival_retry_at",
+  "deadline_local_civil", "deadline_zone", "deadline_utc_offset_minutes", "deadline_fold", "deadline_at", "deadline_reminder_offsets_json", "deadline_version", "deadline_source",
   "priority", "created_at", "updated_at",
 ];
 
@@ -159,7 +159,7 @@ function projectInsertStatement(dataset: QaFixtureDataset, project: QaFixtureDat
     "NULL", "NULL", "NULL", "NULL",
     sqlText(project.notes, "notes"),
     "NULL", "NULL", "NULL",
-    "NULL", "NULL", "NULL",
+    "NULL", "NULL", "NULL", "NULL", "0", "NULL",
     deadline ? sqlText(deadline.localCivil, "deadline local civil") : "NULL",
     deadline ? "'Australia/Sydney'" : "NULL",
     deadline ? sqlInt(deadline.utcOffsetMinutes, "deadline utc offset") : "NULL",
@@ -167,6 +167,7 @@ function projectInsertStatement(dataset: QaFixtureDataset, project: QaFixtureDat
     deadline ? sqlInt(deadline.epochMs, "deadline at") : "NULL",
     deadline ? sqlText(JSON.stringify(deadline.offsetsMinutes), "deadline reminder offsets") : "NULL",
     sqlInt(deadline ? 1 : 0, "deadline version"),
+    deadline ? "'manual'" : "'none'",
     sqlNullableInt(project.priority, "priority"),
     sqlInt(project.createdAtMs, "created at"),
     sqlInt(project.updatedAtMs, "updated at"),
@@ -294,11 +295,11 @@ function projectFingerprintRow(project: QaFixtureDataset["projects"][number], bo
     agent_name: null, agent_email: null, agent_phone: null, agency_id: null, agent_id: null,
     shoot_date: project.shootDate, time_window: null, stage_key: project.stageKey, board_position: boardPosition, board_revision: project.boardRevision,
     order_no: null, order_id: null, invoice_amount: null, payment_status: null, notes: project.notes,
-    production_notes: null, raw_folder_link: null, raw_folder_path: null, cover_asset_id: null, archived_at: null, archived_by: null,
+    production_notes: null, raw_folder_link: null, raw_folder_path: null, cover_asset_id: null, archived_at: null, archived_by: null, edited_arrived_at: null, edited_arrival_attempts: 0, edited_arrival_retry_at: null,
     deadline_local_civil: deadline ? deadline.localCivil : null, deadline_zone: deadline ? "Australia/Sydney" : null,
     deadline_utc_offset_minutes: deadline ? deadline.utcOffsetMinutes : null, deadline_fold: deadline ? deadline.fold : null,
     deadline_at: deadline ? deadline.epochMs : null, deadline_reminder_offsets_json: deadline ? JSON.stringify(deadline.offsetsMinutes) : null,
-    deadline_version: deadline ? 1 : 0, priority: project.priority, created_at: project.createdAtMs, updated_at: project.updatedAtMs,
+    deadline_version: deadline ? 1 : 0, deadline_source: deadline ? "manual" : "none", priority: project.priority, created_at: project.createdAtMs, updated_at: project.updatedAtMs,
   };
 }
 

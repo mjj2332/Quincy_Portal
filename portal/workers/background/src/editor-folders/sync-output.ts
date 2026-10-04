@@ -1,5 +1,6 @@
 import {
   COLLECTION_RECEIVED_COUNT_SQL,
+  buildEditedArrivalRecord,
   collectionReceivedCountBindings,
   createDb,
 } from "@quincy/db";
@@ -397,6 +398,16 @@ export async function syncProjectEditorOutput(
       // current row because the old id/hash are both guarded; if it loses, the insert is gated by
       // that update's changes() and the candidate is simply ignored (the R2 object is immutable
       // and can be reclaimed by the existing project-prefix cleanup).
+      // Fence the arrival on this attempt's own fresh ingest audit row: the audit is inserted only
+      // when the insert changed a row, so a losing supersede or a duplicate never restarts the
+      // 15-minute quiet period (#486).
+      const ingestAuditId = crypto.randomUUID();
+      const recordArrival = buildEditedArrivalRecord(env.DB, {
+        projectId,
+        now,
+        gateSql: "EXISTS (SELECT 1 FROM audit_log WHERE id = ? AND action = 'asset.ingested' AND target_type = 'asset' AND target_id = ?)",
+        gateBindings: [ingestAuditId, assetId],
+      });
       const statements: D1PreparedStatement[] = supersede
         ? [
             supersede,
@@ -404,7 +415,7 @@ export async function syncProjectEditorOutput(
             env.DB.prepare(
               "INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'asset.ingested', 'asset', ?, ?, ? WHERE changes() = 1",
             ).bind(
-              crypto.randomUUID(),
+              ingestAuditId,
               assetId,
               JSON.stringify({
                 projectId,
@@ -419,13 +430,14 @@ export async function syncProjectEditorOutput(
             env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(
               ...collectionReceivedCountBindings(collection.id, now),
             ),
+            recordArrival,
           ]
         : [
             insert,
             env.DB.prepare(
               "INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'asset.ingested', 'asset', ?, ?, ? WHERE changes() = 1",
             ).bind(
-              crypto.randomUUID(),
+              ingestAuditId,
               assetId,
               JSON.stringify({
                 projectId,
@@ -439,6 +451,7 @@ export async function syncProjectEditorOutput(
             env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(
               ...collectionReceivedCountBindings(collection.id, now),
             ),
+            recordArrival,
           ];
       const results = await env.DB.batch(statements);
       const insertResult = supersede ? results[1] : results[0];
