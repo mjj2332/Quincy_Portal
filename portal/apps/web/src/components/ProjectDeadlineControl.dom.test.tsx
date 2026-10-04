@@ -331,6 +331,37 @@ describe("ProjectDeadlineControl", () => {
     expect(apiPutMock).not.toHaveBeenCalled();
   });
 
+  // #509: the popover explains an Automatic Deadline and what Apply does; the note follows the schedule shown.
+  describe("Automatic Deadline note (#509)", () => {
+    const automaticSchedule: ProjectDeadlineSchedule = { ...activeSchedule, source: "automatic" };
+    const note = (host: HTMLElement) => host.querySelector('[data-testid="deadline-automatic-note"]');
+
+    it("tells a writer the Deadline is automatic and what Apply does", async () => {
+      const host = await mount(automaticSchedule);
+      expect(note(host)?.textContent).toBe("Automatic: the first weekday after the shoot, at 17:00. It moves with the shoot date until you Apply.");
+    });
+
+    it("shows no note on a manual Deadline", async () => {
+      const host = await mount(activeSchedule);
+      expect(note(host)).toBeNull();
+    });
+
+    it("tells a read-only viewer without an Apply clause", async () => {
+      const host = await mount(automaticSchedule, false);
+      expect(note(host)?.textContent).toBe("Automatic: the first weekday after the shoot, at 17:00. It moves with the shoot date until someone saves it.");
+    });
+
+    it("drops the note when Reload latest shows a manual Deadline", async () => {
+      apiPutMock.mockRejectedValueOnce(new ApiError("Project deadline changed; reload before saving.", 409, { current: authorityAfterConflict }));
+      const host = await mount(automaticSchedule);
+      await applyPopup(host);
+      await flush();
+      expect(note(host)).not.toBeNull();
+      await pressInPopup(host, "Reload latest");
+      expect(note(host)).toBeNull();
+    });
+  });
+
   it("keeps the exact draft and exposes reapply controls on a version conflict, without closing", async () => {
     apiPutMock.mockRejectedValueOnce(new ApiError("Project deadline changed; reload before saving.", 409, { current: { ...activeSchedule, version: 2 } }));
     const host = await mount(emptySchedule);

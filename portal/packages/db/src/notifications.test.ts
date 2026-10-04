@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { EMAIL_ENABLED_EVENTS, emitNotifications, notificationCopy, type NotificationEmail, type NotificationType } from "./notifications";
+import { EMAIL_DIGEST_ACTIVITY_TYPES, type EmailDigestCadence } from "@quincy/shared";
 import type { Database } from "./index";
 
 const ALL_TYPES: NotificationType[] = [
@@ -7,11 +8,31 @@ const ALL_TYPES: NotificationType[] = [
 ];
 
 /** Mocks the Drizzle chainable `insert().values()` / `update().set().where()` shape
- * `emitNotifications()`'s non-sourceKey path actually calls — not a raw D1Database. */
-function mockDb() {
+ * `emitNotifications()`'s non-sourceKey path actually calls — not a raw D1Database. `select` answers the
+ * recipient reload with one internal-editor row per user and their digest cadence (Immediately unless a
+ * test says otherwise), so the emitter's cadence read is always exercised rather than defaulted away. */
+function mockDb(cadence: EmailDigestCadence = "immediate", users: readonly string[] = ["u1", "u2", "u3"]) {
   const insertCalls: Record<string, unknown>[] = [];
   const updateCalls: Record<string, unknown>[] = [];
+  const batches: unknown[][] = [];
   const db = {
+    select: vi.fn(() => {
+      const chain = {
+        from: () => chain,
+        leftJoin: () => chain,
+        where: () => chain,
+        all: () => Promise.resolve(users.map((id) => ({ id, role: "editor", cadence }))),
+      };
+      return chain;
+    }),
+    run: vi.fn(() => Promise.resolve({ meta: { changes: 1 } })),
+    $client: {
+      prepare: (sqlText: string) => ({ bind: (...values: unknown[]) => ({ sqlText, values }) }),
+      batch: vi.fn((statements: unknown[]) => {
+        batches.push(statements);
+        return Promise.resolve([{ meta: { changes: 1 } }, { meta: { changes: 1 } }]);
+      }),
+    },
     insert: vi.fn(() => ({
       values: vi.fn((values: Record<string, unknown>) => {
         insertCalls.push(values);
@@ -27,7 +48,7 @@ function mockDb() {
       })),
     })),
   } as unknown as Database;
-  return { db, insertCalls, updateCalls };
+  return { db, insertCalls, updateCalls, batches };
 }
 
 function fakeEmail(sendImpl: NotificationEmail["send"]): NotificationEmail {
@@ -188,5 +209,55 @@ describe("emitNotifications email gating", () => {
     expect(updateCalls[0]).toMatchObject({ emailError: expect.stringContaining("smtp rejected") });
     expect(updateCalls[1]).toMatchObject({ emailMessageId: "m1" });
     expect(updateCalls[1]).toHaveProperty("emailSentAt");
+  });
+
+  describe("Email digest deferral (#489)", () => {
+    it.each(["hourly", "twice_daily", "daily"] as const)("sends nothing inline and writes the notification and a digest item in one batch for a %s recipient", async (cadence) => {
+      const { db, insertCalls, batches } = mockDb(cadence);
+      const email = fakeEmail(async () => ({ messageId: "m1" }));
+      const written = await emitNotifications(db, { type: "mentioned", recipients: [recipient("u1", "u1@example.com")], email, fromAddress: "studio@example.test", sourceKey: "mention:1" });
+      expect(written).toBe(1);
+      expect(email.send).not.toHaveBeenCalled();
+      expect(batches).toHaveLength(1);
+      expect(batches[0]).toHaveLength(2);
+      expect(insertCalls).toHaveLength(0);
+    });
+
+    it("also defers a notification with no source key", async () => {
+      const { db, batches } = mockDb("twice_daily");
+      const email = fakeEmail(async () => ({ messageId: "m1" }));
+      await emitNotifications(db, { type: "raw_ready", recipients: [recipient("u1", "u1@example.com")], email, fromAddress: "studio@example.test" });
+      expect(email.send).not.toHaveBeenCalled();
+      expect(batches).toHaveLength(1);
+    });
+
+    it("still emails an Immediately recipient inline and writes no digest item", async () => {
+      const { db, batches } = mockDb("immediate");
+      const email = fakeEmail(async () => ({ messageId: "m1" }));
+      await emitNotifications(db, { type: "mentioned", recipients: [recipient("u1", "u1@example.com")], email, fromAddress: "studio@example.test", sourceKey: "mention:2" });
+      expect(email.send).toHaveBeenCalledTimes(1);
+      expect(batches).toHaveLength(0);
+    });
+
+    it("keeps an exempt reminder type inline whatever the cadence", async () => {
+      const { db, batches } = mockDb("daily");
+      const email = fakeEmail(async () => ({ messageId: "m1" }));
+      await emitNotifications(db, { type: "subtask_due_today", recipients: [recipient("u1", "u1@example.com")], email, fromAddress: "studio@example.test" });
+      expect(email.send).toHaveBeenCalledTimes(1);
+      expect(batches).toHaveLength(0);
+    });
+
+    it("writes no digest item when the caller supplies no email transport", async () => {
+      const { db, batches, insertCalls } = mockDb("daily");
+      await emitNotifications(db, { type: "raw_ready", recipients: [recipient("u1", "u1@example.com")] });
+      expect(batches).toHaveLength(0);
+      expect(insertCalls).toHaveLength(1);
+    });
+  });
+});
+
+describe("Project activity is digest-only (#490)", () => {
+  it("never overlaps the legacy emitter's inline email types, so a future emitter cannot email activity inline", () => {
+    for (const type of EMAIL_DIGEST_ACTIVITY_TYPES) expect((EMAIL_ENABLED_EVENTS as readonly string[]).includes(type), type).toBe(false);
   });
 });

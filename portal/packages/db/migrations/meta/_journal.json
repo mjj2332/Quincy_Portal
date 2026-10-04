@@ -395,10 +395,24 @@
       "breakpoints": true
     },
     {
+      "idx": 56,
+      "version": "6",
+      "when": 1789550000000,
+      "tag": "0056_email_digest",
+      "breakpoints": true
+    },
+    {
       "idx": 57,
       "version": "6",
-      "when": 1789560000000,
+      "when": 1789555000000,
       "tag": "0057_embedded_media",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "6",
+      "when": 1789560000000,
+      "tag": "0058_include_project_activity",
       "breakpoints": true
     }
   ]

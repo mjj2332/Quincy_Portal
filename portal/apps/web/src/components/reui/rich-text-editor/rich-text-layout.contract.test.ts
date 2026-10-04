@@ -8,11 +8,11 @@ const read = (name: string) => readFileSync(new URL(`./${name}`, import.meta.url
 describe("rich-text editor layout contracts", () => {
   it("opens the table bar below the caret so it never covers the main toolbar", () => {
     const source = read("rich-text-table.tsx");
-    expect(source).toContain('placement: "bottom-start"');
-    expect(source).not.toContain('"top-start"');
+    expect(source).toContain('placement: "top-start"');
+    expect(source).toContain('fallbackPlacements: ["bottom-start"');
     // Kept inside the editable surface: never on the frame border or the helper line beneath it.
-    expect(source).toMatch(/flip: \{ boundary: editor\.view\.dom/);
-    expect(source).toMatch(/shift: \{ boundary: editor\.view\.dom/);
+    expect(source).toMatch(/flip: \{[^}]*boundary: editor\.view\.dom/);
+    expect(source).toMatch(/shift: \{ boundary: editor\.view\.dom[^}]*crossAxis: true/);
   });
 
   it("outline rows read as menu items: sentence case, no tracking, --text-sm", () => {

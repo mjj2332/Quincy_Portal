@@ -49,3 +49,5 @@ export * from "./external-project-policy";
 export * from "./board-projection";
 export * from "./raw-media";
 export * from "./subtask-reminders";
+export * from "./whiteboard-protocol";
+export * from "./email-digest";

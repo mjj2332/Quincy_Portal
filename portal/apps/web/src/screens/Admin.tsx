@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
-import { isProjectAssignmentEligible, ROLES, type Role } from "@quincy/shared";
+import { isProjectAssignmentEligible, ROLE_LABELS, ROLES, type Role } from "@quincy/shared";
 import { ApiError, apiGet, apiPatch, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
 import { useStages } from "../lib/stages";
@@ -129,10 +129,6 @@ function relativeTime(value: string | null): string {
 
 function statusLabel(status: IntegrationStatus | "not-configured"): string {
   return status === "not-configured" ? "Not configured" : status.charAt(0).toUpperCase() + status.slice(1);
-}
-
-function roleLabel(role: Role): string {
-  return role.charAt(0).toUpperCase() + role.slice(1);
 }
 
 function eventTypeLabel(eventType: string): string {
@@ -529,7 +525,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
             value={form.role}
             onChange={(event) => setForm((value) => ({ ...value, role: event.target.value as Role }))}
           >
-            {ROLES.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}
+            {ROLES.map((role) => <option key={role} value={role}>{ROLE_LABELS[role]}</option>)}
           </QuincySelectField>
           <Button type="submit" className="max-[721px]:w-full" disabled={isProvisioning}>{isProvisioning ? "Provisioning…" : "Provision user"}</Button>
         </form>
@@ -553,7 +549,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
           return <TableRow key={user.id} data-testid="admin-user-row">
             <TableCell data-label="Name">{isEditingName ? <Input className="min-w-[130px] border-[var(--field-border)]" value={userNameDraft} onChange={(event) => setUserNameDraft(event.target.value)} aria-label={`Name for ${user.name}`} /> : <strong>{user.name}</strong>}</TableCell>
             <TableCell data-label="Email">{user.email}</TableCell>
-            <TableCell data-label="Role"><label className="sr-only" htmlFor={`role-${user.id}`}>Role for {user.name}</label><NativeSelect id={`role-${user.id}`} className="min-w-[128px]" value={user.role} disabled={isUpdating} onChange={(event) => void updateUser(user, { role: event.target.value as Role })}>{ROLES.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}</NativeSelect></TableCell>
+            <TableCell data-label="Role"><label className="sr-only" htmlFor={`role-${user.id}`}>Role for {user.name}</label><NativeSelect id={`role-${user.id}`} className="min-w-[128px]" value={user.role} disabled={isUpdating} onChange={(event) => void updateUser(user, { role: event.target.value as Role })}>{ROLES.map((role) => <option key={role} value={role}>{ROLE_LABELS[role]}</option>)}</NativeSelect></TableCell>
             <TableCell data-label="Access"><StatusPill tone={user.active ? "positive" : "neutral"}>{user.active ? "Active" : "Inactive"}</StatusPill></TableCell>
             <TableCell data-label="Default editor"><input type="checkbox" className={CHECKBOX_INPUT} checked={user.defaultEditor} disabled={isUpdating || isDefaultEditorIneligible} title={isDefaultEditorIneligible ? "Only active editors, external editors and admins can be default editors" : undefined} onChange={() => void updateUser(user, { defaultEditor: !user.defaultEditor })} aria-label={`Default editor: ${user.name}`} /></TableCell>
             <TableCell data-label="Created">{formatDate(user.createdAt)}</TableCell>

@@ -15,8 +15,14 @@ export const DEV_API_ORIGIN = "http://localhost:8787";
 export function devApiProxy(target: string): ProxyOptions {
   return {
     target,
+    // #498: the Project whiteboard's WebSocket rides `/api`. Its handshake is a GET carrying an Origin the
+    // worker checks explicitly, so it needs the same rewrite (proxyReqWs) as a mutation (proxyReq).
+    ws: true,
     configure(proxy) {
       proxy.on("proxyReq", (proxyReq, req) => {
+        if (isSameOrigin(req.headers.origin, req.headers.host)) proxyReq.setHeader("origin", target);
+      });
+      proxy.on("proxyReqWs", (proxyReq, req) => {
         if (isSameOrigin(req.headers.origin, req.headers.host)) proxyReq.setHeader("origin", target);
       });
     },

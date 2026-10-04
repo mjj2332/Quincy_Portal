@@ -55,7 +55,13 @@ async function seedStalledHandoff(now: number, options: { withMember?: boolean }
       database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, userId, now),
     ]);
   }
+  await makeEveryoneImmediate();
   return { projectId, userId, handoffId };
+}
+
+/** #489: a user with no preference row now defaults to the twice-daily digest, so tests that assert an inline email put every user on Immediately first. */
+async function makeEveryoneImmediate() {
+  await database.DB.prepare("INSERT INTO notification_preferences (user_id, email_digest_cadence, updated_at) SELECT id, 'immediate', ? FROM user WHERE true ON CONFLICT(user_id) DO UPDATE SET email_digest_cadence = 'immediate'").bind(Date.now()).run();
 }
 
 function notificationEnv(send: ReturnType<typeof vi.fn>): Env {
@@ -72,6 +78,7 @@ describe("notification fanout and stalled scan", () => {
       database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Both Roles Street', 'awaiting_raw', ?, ?)").bind(projectId, now, now),
       database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'photographer', ?), (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, userId, now, crypto.randomUUID(), projectId, userId, now),
     ]);
+    await makeEveryoneImmediate();
     const send = vi.fn().mockResolvedValue({ messageId: "message-1" });
     await notifyProject({ DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test", APP_ORIGIN: "https://portal.test" } as unknown as Env, projectId, "raw_ready");
     const row = await database.DB.prepare("SELECT user_id, email_sent_at, email_message_id FROM notifications WHERE project_id = ? AND type = 'raw_ready'").bind(projectId).all();
@@ -79,6 +86,50 @@ describe("notification fanout and stalled scan", () => {
     expect(row.results[0]).toMatchObject({ user_id: userId, email_message_id: "message-1" });
     expect(send).toHaveBeenCalledTimes(1);
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining(`https://portal.test/projects/${projectId}?tab=raw`) }));
+  });
+
+  it("defers a non-exempt email to a pending digest item for a twice-daily user and still emails an Immediately user inline (#489)", async () => {
+    const now = Date.now();
+    const projectId = crypto.randomUUID();
+    const digestUser = crypto.randomUUID();
+    const immediateUser = crypto.randomUUID();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Digest user', ?, 1, 'editor', 1, ?, ?), (?, 'Immediate user', ?, 1, 'editor', 1, ?, ?)").bind(digestUser, `${digestUser}@example.test`, now, now, immediateUser, `${immediateUser}@example.test`, now, now),
+      database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Digest Fanout Street', 'awaiting_raw', ?, ?)").bind(projectId, now, now),
+      database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?), (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, digestUser, now, crypto.randomUUID(), projectId, immediateUser, now),
+      database.DB.prepare("INSERT INTO notification_preferences (user_id, email_digest_cadence, updated_at) VALUES (?, 'immediate', ?)").bind(immediateUser, now),
+    ]);
+    await withActiveAdminsSuppressed(async () => {
+      const send = vi.fn().mockResolvedValue({ messageId: "inline-1" });
+      await notifyProject(notificationEnv(send), projectId, "raw_ready");
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(send).toHaveBeenCalledWith(expect.objectContaining({ to: `${immediateUser}@example.test` }));
+    });
+    const rows = await database.DB.prepare("SELECT user_id, email_sent_at FROM notifications WHERE project_id = ? AND type = 'raw_ready' ORDER BY user_id").bind(projectId).all<{ user_id: string; email_sent_at: number | null }>();
+    expect(rows.results.map((row) => row.user_id).sort()).toEqual([digestUser, immediateUser].sort());
+    expect(rows.results.find((row) => row.user_id === digestUser)?.email_sent_at).toBeNull();
+    const items = await database.DB.prepare("SELECT recipient_id, project_id, notification_type, state, notification_id FROM notification_digest_items WHERE project_id = ?").bind(projectId).all();
+    expect(items.results).toEqual([expect.objectContaining({ recipient_id: digestUser, project_id: projectId, notification_type: "raw_ready", state: "pending", notification_id: expect.any(String) })]);
+  });
+
+  it("writes the notification and its digest item atomically (#489)", async () => {
+    const now = Date.now();
+    const projectId = crypto.randomUUID();
+    const userId = crypto.randomUUID();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Atomic user', ?, 1, 'editor', 1, ?, ?)").bind(userId, `${userId}@example.test`, now, now),
+      database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Atomic Street', 'awaiting_raw', ?, ?)").bind(projectId, now, now),
+    ]);
+    const db = dbFor({ DB: database.DB } as unknown as Env);
+    const send = vi.fn().mockResolvedValue({ messageId: "never" });
+    await database.DB.exec(`CREATE TRIGGER fail_digest_item BEFORE INSERT ON notification_digest_items WHEN NEW.recipient_id = '${userId}' BEGIN SELECT RAISE(ABORT, 'forced digest item failure'); END`);
+    try {
+      await expect(emitNotifications(db, { projectId, type: "raw_ready", recipients: [{ userId, email: `${userId}@example.test`, name: "Atomic user" }], email: { send }, fromAddress: "studio@example.test", sourceKey: crypto.randomUUID() })).rejects.toThrow();
+    } finally {
+      await database.DB.exec("DROP TRIGGER fail_digest_item");
+    }
+    expect((await database.DB.prepare("SELECT id FROM notifications WHERE user_id = ?").bind(userId).all()).results).toHaveLength(0);
+    expect(send).not.toHaveBeenCalled();
   });
 
   it("finds stalled handoffs and makes a second scan a true no-op", async () => {
@@ -99,6 +150,7 @@ describe("notification fanout and stalled scan", () => {
       database.DB.prepare("INSERT INTO autohdr_handoffs (id, project_id, connection_id, generation, selection_hash, selected_asset_ids_json, readiness_units_json, frozen_raw_folder_path, state, workflow_id, job_id, lease_expires_at, started_at, created_at, updated_at) VALUES (?, ?, ?, 1, 'test', '[]', '[]', '/raw', 'started', ?, ?, ?, ?, ?, ?)").bind(handoffId, projectId, connectionId, `workflow-${handoffId}`, jobId, now + 86_400_000, now - 4 * 60 * 60 * 1000, now, now),
       database.DB.prepare("INSERT INTO autohdr_output_mappings (id, project_id, handoff_id, connection_id, generation, state, created_at, updated_at) VALUES (?, ?, ?, ?, 1, 'pending_discovery', ?, ?)").bind(crypto.randomUUID(), projectId, handoffId, connectionId, now, now),
     ]);
+    await makeEveryoneImmediate();
     const send = vi.fn().mockResolvedValue({ messageId: "test-message" });
     const localEnv = { DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test", APP_ORIGIN: "https://portal.test" } as unknown as Env;
     expect(await scanStalledAutoHdr(localEnv, now)).toBe(2);
@@ -123,6 +175,7 @@ describe("notification fanout and stalled scan", () => {
     ]);
     const db = dbFor({ DB: database.DB } as unknown as Env);
     const recipients = [{ userId, email: `${userId}@example.test`, name: "SourceKey editor" }];
+    await makeEveryoneImmediate();
 
     const firstSend = vi.fn().mockResolvedValue({ messageId: "message-1" });
     const firstCount = await emitNotifications(db, {

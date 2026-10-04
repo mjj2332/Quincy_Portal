@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RichTextDoc } from "@quincy/shared";
 import { QuincyRichTextEditor } from "./QuincyRichTextEditor";
+import type { MentionableUser } from "./MentionAutocomplete";
 
 /**
  * #375 (L2/L3) — the mention list must be dismissable in EVERY state, because the Project sheet's
@@ -18,7 +19,7 @@ let root: Root | null = null;
 const empty = (): RichTextDoc => ({ type: "doc", content: [{ type: "paragraph" }] });
 const NORA = { id: "11111111-1111-4111-8111-111111111111", name: "Nora Mention", role: "editor" as const };
 
-async function mount(loader: (query: string) => Promise<typeof NORA[]>) {
+async function mount(loader: (query: string) => Promise<MentionableUser[]>) {
   const host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -145,5 +146,27 @@ describe.each(VARIANTS)("mention list dismissal (#375) (%s)", (name) => {
     await act(async () => { document.querySelector('[data-testid="elsewhere"]')!.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })); await Promise.resolve(); });
     expect(expanded(editor)).toBe("false");
     expect(listVisible()).toBe(false);
+  });
+});
+
+/** #513 — candidates show the Portal's role labels (ROLE_LABELS), not the raw role key. */
+describe.each(VARIANTS)("mention role labels (#513) (%s)", (name) => {
+  beforeEach(() => { variant = name; });
+  it("shows every role's Portal label, never the raw key, and applies no capitalize transform", async () => {
+    const users: MentionableUser[] = [
+      { id: "21111111-1111-4111-8111-111111111111", name: "Ada Admin", role: "admin" },
+      { id: "22222222-2222-4222-8222-222222222222", name: "Pia Photographer", role: "photographer" },
+      NORA,
+      { id: "23333333-3333-4333-8333-333333333333", name: "Eli External", role: "external_editor" },
+    ];
+    const editor = await mount(async () => users);
+    await type(editor, "@");
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    const options = [...document.querySelectorAll('[aria-label="Mention suggestions"] [role="option"]')];
+    const captions = options.map((option) => option.querySelector("small"));
+    expect(captions.map((caption) => caption?.textContent)).toEqual(["Admin", "Photographer", "Editor", "External editor"]);
+    // jsdom does not apply text-transform, so assert the class that would re-case "External editor" is gone.
+    for (const caption of captions) expect(caption?.classList.contains("capitalize")).toBe(false);
+    expect(document.body.textContent).not.toMatch(/external_editor/i);
   });
 });

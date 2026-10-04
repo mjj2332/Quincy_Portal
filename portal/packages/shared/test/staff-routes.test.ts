@@ -181,6 +181,24 @@ describe("shared staff route contract", () => {
     expect(staffPathFor({ kind: "project", projectId })).toBe(`/projects/${projectId}`);
   });
 
+  it("#498: `?whiteboard=open` is the Project whiteboard's one spelling, exclusive with an arrival tab", () => {
+    expect(parseStaffLocation(`/projects/${projectId}?whiteboard=open`)).toEqual({ kind: "project", projectId, whiteboard: true });
+    expect(staffPathFor({ kind: "project", projectId, whiteboard: true })).toBe(`/projects/${projectId}?whiteboard=open`);
+    for (const rejected of [
+      `/projects/${projectId}?whiteboard=1`,
+      `/projects/${projectId}?whiteboard=open&tab=raw`,
+      `/projects/${projectId}?tab=raw&whiteboard=open`,
+      `/projects/${projectId}?whiteboard=open&collaboration=open`,
+      `/projects/${projectId}?whiteboard=open&whiteboard=open`,
+      `/projects/${projectId}?whiteboard=`,
+      `/projects/${projectId}?whiteboard`,
+      `/projects/${projectId}/edit?whiteboard=open`,
+      `/?whiteboard=open`,
+    ]) expect(parseStaffLocation(rejected), rejected).toEqual({ kind: "not-found" });
+    // The frozen Collaboration spelling is untouched.
+    expect(staffPathFor({ kind: "project", projectId, arrivalTab: "collaboration" })).toBe(`/projects/${projectId}?collaboration=open`);
+  });
+
   it("round-trips a minimal Calendar query with all documented defaults", () => {
     const location = calendarUrl("view=calendar&date=2026-08-30&sub=month&layers=project%2Cchecklist");
     const route = { kind: "dashboard", calendar: calendar() } satisfies StaffRoute;

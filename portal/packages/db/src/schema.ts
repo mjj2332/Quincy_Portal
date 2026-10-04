@@ -258,11 +258,17 @@ export const notificationPreferences = sqliteTable(
     projectDeadlineReminderEmails: integer("project_deadline_reminder_emails").notNull().default(1),
     /** Migration 0053 (#424). Read with COALESCE(..., 1): an old Worker's upsert omits the column. */
     subtaskReminderEmails: integer("subtask_reminder_emails").notNull().default(1),
+    /** Migration 0056 (#489). How often non-exempt notification emails are gathered into one Email digest. Read with COALESCE(..., 'twice_daily'): a user with no row has the default. */
+    emailDigestCadence: text("email_digest_cadence", { enum: ["immediate", "hourly", "twice_daily", "daily"] as const }).notNull().default("twice_daily"),
+    /** Migration 0058 (#490). 1 = Project activity (stage changes, collaboration activity) is gathered into the person's Email digest; 0 = it is not. Read with COALESCE(..., 1): a user with no row, or an old Worker's upsert, is on. */
+    includeProjectActivity: integer("include_project_activity").notNull().default(1),
     updatedAt: integer("updated_at").notNull(),
   },
   (t) => [
     check("notification_preferences_email_check", sql`${t.projectDeadlineReminderEmails} IN (0, 1)`),
     check("notification_preferences_subtask_reminder_emails_check", sql`${t.subtaskReminderEmails} IN (0, 1)`),
+    check("notification_preferences_email_digest_cadence_check", sql`${t.emailDigestCadence} IN ('immediate', 'hourly', 'twice_daily', 'daily')`),
+    check("notification_preferences_include_project_activity_check", sql`${t.includeProjectActivity} IN (0, 1)`),
   ],
 );
 
@@ -1442,7 +1448,7 @@ export const notificationDeliveryLedger = sqliteTable(
     sourceKey: text("source_key").notNull(),
     recipientId: text("recipient_id").notNull(),
     channel: text("channel", { enum: ["in_app", "email"] as const }).notNull(),
-    status: text("status", { enum: ["pending", "processing", "sent", "suppressed", "failed", "unknown", "discarded"] as const }).notNull().default("pending"),
+    status: text("status", { enum: ["pending", "processing", "sent", "suppressed", "failed", "unknown", "discarded", "deferred"] as const }).notNull().default("pending"),
     attempts: integer("attempts").notNull().default(0),
     notificationId: text("notification_id").references(() => notifications.id, { onDelete: "set null" }),
     emailMessageId: text("email_message_id"),
@@ -1460,8 +1466,60 @@ export const notificationDeliveryLedger = sqliteTable(
     unique("notification_delivery_ledger_outbox_channel_unique").on(t.outboxId, t.channel),
     unique("notification_delivery_ledger_event_source_recipient_channel_unique").on(t.eventType, t.sourceKey, t.recipientId, t.channel),
     check("notification_delivery_ledger_channel_check", sql`${t.channel} IN ('in_app', 'email')`),
-    check("notification_delivery_ledger_status_check", sql`${t.status} IN ('pending', 'processing', 'sent', 'suppressed', 'failed', 'unknown', 'discarded')`),
+    check("notification_delivery_ledger_status_check", sql`${t.status} IN ('pending', 'processing', 'sent', 'suppressed', 'failed', 'unknown', 'discarded', 'deferred')`),
     check("notification_delivery_ledger_attempts_check", sql`${t.attempts} >= 0`),
+  ],
+);
+
+/**
+ * #489: one Email digest per recipient per hourly slot. `UNIQUE(recipient_id, slot_at)` is the
+ * per-recipient-per-slot idempotency key: a cron retry loses the insert race and sends nothing.
+ */
+export const notificationDigests = sqliteTable(
+  "notification_digests",
+  {
+    id: id(),
+    recipientId: text("recipient_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+    slotAt: integer("slot_at").notNull(),
+    cadence: text("cadence").notNull(),
+    status: text("status", { enum: ["claimed", "sending", "sent", "empty", "failed", "unknown", "released"] as const }).notNull(),
+    itemCount: integer("item_count").notNull().default(0),
+    projectCount: integer("project_count").notNull().default(0),
+    emailMessageId: text("email_message_id"),
+    lastErrorCode: text("last_error_code"),
+    lastError: text("last_error"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    unique("notification_digests_recipient_slot_unique").on(t.recipientId, t.slotAt),
+    index("notification_digests_status_updated_idx").on(t.status, t.updatedAt),
+    check("notification_digests_status_check", sql`${t.status} IN ('claimed', 'sending', 'sent', 'empty', 'failed', 'unknown', 'released')`),
+    check("notification_digests_counts_check", sql`${t.itemCount} >= 0 AND ${t.projectCount} >= 0`),
+  ],
+);
+
+/** #489: a notification whose email waits for a digest. `notification_id` and `ledger_id` are SET NULL, never RESTRICT: project deletion removes ledger rows first. */
+export const notificationDigestItems = sqliteTable(
+  "notification_digest_items",
+  {
+    id: id(),
+    recipientId: text("recipient_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+    notificationId: text("notification_id").references(() => notifications.id, { onDelete: "set null" }),
+    ledgerId: text("ledger_id").references(() => notificationDeliveryLedger.id, { onDelete: "set null" }),
+    projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+    notificationType: text("notification_type").notNull(),
+    state: text("state", { enum: ["pending", "sent", "dropped_read", "suppressed", "failed", "unknown"] as const }).notNull().default("pending"),
+    outcomeCode: text("outcome_code"),
+    digestId: text("digest_id").references(() => notificationDigests.id, { onDelete: "set null" }),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    unique("notification_digest_items_notification_unique").on(t.notificationId),
+    index("notification_digest_items_state_recipient_idx").on(t.state, t.recipientId, t.createdAt),
+    index("notification_digest_items_digest_idx").on(t.digestId),
+    check("notification_digest_items_state_check", sql`${t.state} IN ('pending', 'sent', 'dropped_read', 'suppressed', 'failed', 'unknown')`),
   ],
 );
 

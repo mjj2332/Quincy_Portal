@@ -23,6 +23,10 @@ export const VENDOR_MODULE_PATTERN = /[\\/]node_modules[\\/](?:(?:react|react-do
 export const VENDOR_CHUNK_NAME = "vendor";
 
 /** The slice of a Rolldown output chunk this check reads. */
+/** #498: the Project whiteboard's editor. It is lazy-loaded only when a board opens, so no module of it may
+ * reach an entry chunk or the shared `vendor` chunk (which every page load downloads). */
+export const EXCALIDRAW_MODULE_PATTERN = /[\\/]node_modules[\\/]@excalidraw[\\/]/u;
+
 export interface VendorGuardChunk {
   type: "chunk" | "asset";
   name?: string;
@@ -52,6 +56,11 @@ export function checkVendorChunk(context: VendorGuardContext, bundle: Record<str
     if (leaked.length === 0) continue;
     const sample = leaked.slice(0, 5).join(", ");
     problems.push(`  entry chunk ${chunk.fileName ?? chunk.name ?? "(unnamed)"} contains ${leaked.length} vendor module(s), e.g. ${sample}`);
+  }
+  for (const chunk of chunks) {
+    if (!chunk.isEntry && chunk.name !== VENDOR_CHUNK_NAME) continue;
+    const leaked = (chunk.moduleIds ?? []).filter((id) => EXCALIDRAW_MODULE_PATTERN.test(id));
+    if (leaked.length > 0) problems.push(`  chunk ${chunk.fileName ?? chunk.name ?? "(unnamed)"} contains ${leaked.length} @excalidraw module(s), e.g. ${leaked[0]}; the whiteboard editor must load only when a board opens (#498)`);
   }
   if (problems.length === 0) return;
   context.error(
