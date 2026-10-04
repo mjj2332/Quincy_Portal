@@ -3,15 +3,15 @@ import { z } from "zod";
 import { createDb, schema } from "@quincy/db";
 import { eq } from "drizzle-orm";
 import {
-  EMBEDDED_IMAGE_CONTENT_TYPES, EMBEDDED_MEDIA_MAX_BYTES, embeddedMediaObjectKey, externalEmbeddedMediaCompleteSchema, externalEmbeddedMediaPresignSchema, sniffEmbeddedImageType,
+  EMBEDDED_IMAGE_CONTENT_TYPES, EMBEDDED_MEDIA_MAX_BYTES, embeddedMediaObjectKey, externalEmbeddedMediaCompleteSchema, externalEmbeddedMediaPresignSchema,
 } from "@quincy/shared";
 import { terminalRoute } from "../lib/terminal-route";
 import type { AppEnv } from "../env";
 import { hasProjectCollaborationAccess } from "../middleware/capability";
 import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
-import { abortMultipart, completeMultipart, createMultipartPresign, validateMultipartParts } from "../lib/r2s3";
-import { claimAndDiscardUploadingMedia, enqueueEmbeddedMediaCleanup, getEmbeddedMedia } from "../lib/embedded-media";
+import { abortMultipart, createMultipartPresign } from "../lib/r2s3";
+import { claimAndDiscardUploadingMedia, enqueueEmbeddedMediaCleanup, getEmbeddedMedia, verifyUploadedEmbeddedObject } from "../lib/embedded-media";
 import { jsonInput } from "./helpers";
 
 const uuid = z.string().uuid();
@@ -93,27 +93,8 @@ embeddedMediaRoutes.post("/projects/:projectId/embedded-media/:mediaId/complete"
   if (row.state === "pending") return c.json(externalEmbeddedMediaCompleteSchema.parse({ mediaId, state: "pending" }));
   if (row.state !== "uploading") return c.json({ error: "This media is already in use", code: "media_not_uploading" }, 409);
 
-  if (row.uploadId) {
-    if (!data.parts?.length) return c.json({ error: "Multipart uploads require completed parts" }, 400);
-    try { validateMultipartParts(row.bytes, data.parts); } catch (error) { return c.json({ error: error instanceof Error ? error.message : "Invalid multipart parts" }, 400); }
-    try { await completeMultipart(c.env, row.originalKey, row.uploadId, data.parts, row.bytes); }
-    catch (error) {
-      // A retry after a lost response finds the upload already completed: carry on if the object is there.
-      if (!await c.env.MEDIA.head(row.originalKey)) return c.json({ error: error instanceof Error ? error.message : "Upload could not be completed" }, 502);
-    }
-  }
-  const head = await c.env.MEDIA.head(row.originalKey);
-  if (!head) return c.json({ error: "The file has not finished uploading", code: "upload_missing" }, 400);
-  // Claim first: the row and its queue entry change in one batch, and only the winner deletes the object.
-  const reject = async (message: string) => {
-    if (!await claimAndDiscardUploadingMedia(c.env, row)) return c.json({ error: "This media is already in use", code: "media_not_uploading" }, 409);
-    return c.json({ error: message, code: "media_rejected" }, 400);
-  };
-  if (head.size !== row.bytes) return reject("The uploaded file is not the size that was reserved");
-  if (head.httpMetadata?.contentType !== row.contentType) return reject("The uploaded file is not the type that was reserved");
-  const first = await c.env.MEDIA.get(row.originalKey, { range: { offset: 0, length: 16 } });
-  const sniffed = first ? sniffEmbeddedImageType(new Uint8Array(await first.arrayBuffer())) : null;
-  if (sniffed !== row.contentType) return reject("The uploaded file is not a JPEG, PNG or WebP image");
+  const verdict = await verifyUploadedEmbeddedObject(c.env, row, data.parts);
+  if (!verdict.ok) return c.json(verdict.body, verdict.status);
 
   // Fenced on the Project still being live and unarchived: R2 was awaited above, so the Project may have been deleted or archived meanwhile.
   const promoted = await c.env.DB.prepare("UPDATE embedded_media SET state = 'pending', updated_at = ? WHERE id = ? AND state = 'uploading' AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)").bind(Date.now(), mediaId, projectId).run();

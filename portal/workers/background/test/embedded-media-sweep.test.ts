@@ -16,13 +16,13 @@ async function executeSql(source: string): Promise<void> {
   }
 }
 
-type Seed = { state: "uploading" | "pending" | "attached" | "detached"; createdAt?: number; detachedAt?: number | null; uploadId?: string | null; display?: boolean; poster?: boolean; id?: string };
+type Seed = { state: "uploading" | "pending" | "attached" | "detached"; createdAt?: number; detachedAt?: number | null; uploadId?: string | null; display?: boolean; poster?: boolean; id?: string; notice?: boolean };
 async function seed(input: Seed) {
-  const id = input.id ?? crypto.randomUUID(); const key = `projects/${projectId}/embedded-media/${id}/original`;
+  const id = input.id ?? crypto.randomUUID(); const key = input.notice ? `notice-board/embedded-media/${id}/original` : `projects/${projectId}/embedded-media/${id}/original`;
   const detachedAt = input.state === "detached" ? (input.detachedAt ?? now) : null;
   const ownerId = input.state === "attached" || input.state === "detached" ? crypto.randomUUID() : null;
-  await database.DB.prepare("INSERT INTO embedded_media (id, owner_kind, owner_id, project_id, uploader_id, kind, content_type, bytes, original_key, display_key, poster_key, upload_id, state, detached_at, created_at, updated_at) VALUES (?, 'project_comment', ?, ?, ?, 'image', 'image/png', 3, ?, ?, ?, ?, ?, ?, ?, ?)")
-    .bind(id, ownerId, projectId, userId, key, input.display ? `${key}.display` : null, input.poster ? `${key}.poster` : null, input.uploadId ?? null, input.state, detachedAt, input.createdAt ?? now, input.createdAt ?? now).run();
+  await database.DB.prepare("INSERT INTO embedded_media (id, owner_kind, owner_id, project_id, uploader_id, kind, content_type, bytes, original_key, display_key, poster_key, upload_id, state, detached_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'image', 'image/png', 3, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .bind(id, input.notice ? "notice_post" : "project_comment", ownerId, input.notice ? null : projectId, userId, key, input.display ? `${key}.display` : null, input.poster ? `${key}.poster` : null, input.uploadId ?? null, input.state, detachedAt, input.createdAt ?? now, input.createdAt ?? now).run();
   const keys = [key, ...(input.display ? [`${key}.display`] : []), ...(input.poster ? [`${key}.poster`] : [])];
   for (const object of keys) await database.MEDIA.put(object, "xyz");
   return { id, keys };
@@ -45,6 +45,31 @@ beforeAll(async () => {
 beforeEach(async () => { await database.DB.exec("DELETE FROM embedded_media; DELETE FROM embedded_media_cleanup;"); });
 const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
 afterAll(() => { consoleError.mockRestore(); });
+
+describe("embedded media sweep covers Notice board media (#496)", () => {
+  it("reclaims notice media detached seven days ago, detached at 0, and left pending or uploading for seven days, and never an attached notice row", async () => {
+    const oldDetached = await seed({ notice: true, state: "detached", detachedAt: now - 7 * day });
+    const deletedPost = await seed({ notice: true, state: "detached", detachedAt: 0 });
+    const stalePending = await seed({ notice: true, state: "pending", createdAt: now - 7 * day });
+    const staleUploading = await seed({ notice: true, state: "uploading", createdAt: now - 8 * day });
+    const freshDetached = await seed({ notice: true, state: "detached", detachedAt: now - 7 * day + 1 });
+    const attached = await seed({ notice: true, state: "attached", createdAt: now - 400 * day });
+    expect(await sweepEmbeddedMedia(env, now)).toMatchObject({ scanned: 4, reclaimed: 4 });
+    for (const row of [oldDetached, deletedPost, stalePending, staleUploading]) { expect(await exists(row.id)).toBe(false); expect(await objectExists(row.keys[0]!)).toBe(false); }
+    for (const row of [freshDetached, attached]) { expect(await exists(row.id)).toBe(true); expect(await objectExists(row.keys[0]!)).toBe(true); }
+  });
+
+  it("queues an unremovable notice object with no Project id, and drains it once R2 recovers", async () => {
+    const stuck = await seed({ notice: true, state: "pending", createdAt: now - 8 * day });
+    let failing = true;
+    const flaky = wrapMedia((target, property) => property === "delete" ? async (keys: string | string[]) => { if (failing) throw new Error("R2 down"); return target.delete(keys); } : undefined);
+    await sweepEmbeddedMedia(flaky as never, now);
+    expect(await exists(stuck.id)).toBe(false);
+    expect(await queueRow(stuck.keys[0]!)).toMatchObject({ projectId: null });
+    failing = false; await sweepEmbeddedMedia(flaky as never, now + 1);
+    expect(await queueRow(stuck.keys[0]!)).toBeNull(); expect(await objectExists(stuck.keys[0]!)).toBe(false);
+  });
+});
 
 describe("embedded media sweep (#493)", () => {
   it("reclaims media detached seven days ago or longer, and keeps newer detached media", async () => {

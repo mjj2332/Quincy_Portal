@@ -4,6 +4,7 @@ import {
   EMBEDDED_MEDIA_MAX_BYTES,
   EMBEDDED_MEDIA_MAX_PER_POST,
   embeddedMediaObjectKey,
+  noticeEmbeddedMediaObjectKey,
   isEmbeddedImageContentType,
   sniffEmbeddedImageType,
 } from "../src/embedded-media";
@@ -21,6 +22,13 @@ describe("embedded media limits (#493)", () => {
 
   it("stores a Project's media under the Project's storage prefix, with no user filename in the key", () => {
     expect(embeddedMediaObjectKey("p-1", "m-1")).toBe("projects/p-1/embedded-media/m-1/original");
+  });
+});
+
+describe("Notice board media keys (#496)", () => {
+  it("stores Notice board media under the Notice-board prefix, outside every Project prefix, with no user filename in the key", () => {
+    expect(noticeEmbeddedMediaObjectKey("m-1")).toBe("notice-board/embedded-media/m-1/original");
+    expect(noticeEmbeddedMediaObjectKey("m-1").startsWith("projects/")).toBe(false);
   });
 });
 

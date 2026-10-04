@@ -4,7 +4,7 @@ import { exitSuggestion } from "@tiptap/suggestion";
 import { ChevronDownIcon, ImageIcon, ListChecksIcon, ListIcon, ListOrderedIcon, Redo2Icon, TableIcon, Undo2Icon } from "lucide-react";
 import { RICH_TEXT_JSON_MAX_BYTES, richTextDocByteLength, richTextMediaIds, richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { cn } from "../lib/utils";
-import { EMBEDDED_IMAGE_ACCEPT, EMBEDDED_MEDIA_MAX_PER_POST, embeddedImageProblem, uploadEmbeddedImage } from "../lib/embedded-media";
+import { EMBEDDED_IMAGE_ACCEPT, EMBEDDED_MEDIA_MAX_PER_POST, embeddedImageProblem, uploadEmbeddedImage, type EmbeddedMediaScope } from "../lib/embedded-media";
 import {
   createRichTextEditorExtensions,
   type RichTextEditorPreset,
@@ -105,8 +105,8 @@ export type QuincyRichTextEditorProps = {
   placeholder?: string;
   id?: string;
   onSubmit?: () => void;
-  /** Turns on embedded images (#493): the toolbar button, paste and drop upload into this Project. */
-  media?: { projectId: string };
+  /** Turns on embedded images (#493, #496): the toolbar button, paste and drop upload into this Project or the Notice board. */
+  media?: EmbeddedMediaScope;
   /** Reports whether an image is still uploading, so the host can hold Post / Save until it lands. */
   onUploadingChange?: (uploading: boolean) => void;
 };
@@ -250,9 +250,9 @@ export function QuincyRichTextEditor({
   // Each file uploads on its own; its node enters the document only once the server has accepted it, so
   // a failed or abandoned upload leaves nothing behind. An upload still running when the editor unmounts is lost.
   addImagesRef.current = (files: File[], at?: number) => {
-    const projectId = mediaRef.current?.projectId;
+    const scope = mediaRef.current;
     const current = editorRef.current;
-    if (!projectId || !current) return;
+    if (!scope || !current) return;
     const problems: string[] = [];
     let slots = EMBEDDED_MEDIA_MAX_PER_POST - richTextMediaIds(tiptapToRichTextDoc(current.getJSON())).length - inFlight.current;
     for (const file of files) {
@@ -263,7 +263,7 @@ export function QuincyRichTextEditor({
       insertAt.current.set(key, at ?? current.state.selection.to);
       inFlight.current += 1; onUploadingChangeRef.current?.(true);
       setUploads((entries) => [...entries, { key, name: file.name || "Image", percent: 0 }]);
-      void uploadEmbeddedImage(projectId, file, (percent) => { if (mountedRef.current) setUploads((entries) => entries.map((entry) => entry.key === key ? { ...entry, percent } : entry)); })
+      void uploadEmbeddedImage(scope, file, (percent) => { if (mountedRef.current) setUploads((entries) => entries.map((entry) => entry.key === key ? { ...entry, percent } : entry)); })
         .then((mediaId) => {
           const live = editorRef.current;
           if (!mountedRef.current || !live) return;
