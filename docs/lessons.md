@@ -5249,3 +5249,8 @@ An Editor Output import and a Portal Edited upload only record `projects.edited_
 - **Buffer remote batches as batches.** Two versions of one id in one `restoreElements` call make Excalidraw rename the duplicate and keep both. Also, `reconcileElements` skips an element being edited/resized/drawn; those winners are deferred and replayed when the interaction ends, or the client stays stale forever.
 - **Excalidraw 0.18.1 ignores `Collaborator.color`.** Cursor, label and selection colours are `hsl` of a hash of `collaborator.id || socketId`; the controller writes `colorKey` (the user id) there while the map key stays the session id.
 
+
+### #499 round 2: a stale read is never used, and a remote element keeps the revision it arrived in
+
+- A write's access read that a refresh overtook is retried a bounded number of times; if every attempt is overtaken the write is **rejected** (`stale`), never committed from the last read. Fail closed.
+- `reconcileElements` repairs a fractional-index clash with `mutateElement`, bumping the REMOTE element's version and nonce locally. Pin the arrived revision before the merge and restore it after (`lib/whiteboard-merge.ts`), or the saver echoes a derived revision that overwrites the sender's real edit.

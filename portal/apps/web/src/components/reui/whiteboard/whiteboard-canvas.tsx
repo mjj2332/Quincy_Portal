@@ -6,7 +6,7 @@
  * Tailwind `shadow-*`, focus ring widths -- see `reui-skin.guard.test.ts`), and `noUncheckedIndexedAccess`
  * narrowing. `"dark": boolean` is quoted only so the guard's `dark:` matcher does not read a type as a variant.
  *
- * This file: The Excalidraw canvas and chrome host. Imports `@excalidraw/excalidraw/index.css`, which is UNLAYERED (see docs/lessons.md, #498): it only loads with this lazy chunk. Unchanged apart from the mechanical edits and the QUINCY ADDITIONs marked inline (#498: image tool off; #499: `applyRemote`, collaborator `colorKey`, `onPresence`).
+ * This file: The Excalidraw canvas and chrome host. Imports `@excalidraw/excalidraw/index.css`, which is UNLAYERED (see docs/lessons.md, #498): it only loads with this lazy chunk. Unchanged apart from the mechanical edits and the QUINCY ADDITIONs marked inline (#498: image tool off; #499: `applyRemote` (revisions pinned across index repair), collaborator `colorKey`, `onPresence`).
  */
 /**
  * The editor behind <Whiteboard>: the only runtime import of Excalidraw (MIT,
@@ -71,6 +71,7 @@ import type {
   UIOptions,
 } from "@excalidraw/excalidraw/types"
 import { cn } from "@/lib/utils"
+import { pinRemoteRevisions, restorePinnedRevisions } from "@/lib/whiteboard-merge"
 import { planSceneDrop, pasteIsUnsupported, withoutUnsupported } from "@/lib/whiteboard-saver"
 
 import "@excalidraw/excalidraw/index.css"
@@ -956,6 +957,8 @@ function createController(
     // QUINCY ADDITION #499: other people's elements, merged by Excalidraw's own rule and kept out of Undo.
     applyRemote: (remote) => {
       const restored = restoreElements(remote as never, null)
+      // Excalidraw's index repair bumps a remote element's version/nonce locally; pin what arrived and put it back.
+      const pins = pinRemoteRevisions(restored)
       api.updateScene({
         elements: reconcileElements(
           api.getSceneElementsIncludingDeleted(),
@@ -964,6 +967,7 @@ function createController(
         ),
         captureUpdate: CaptureUpdateAction.NEVER,
       })
+      restorePinnedRevisions(pins, api.getSceneElementsIncludingDeleted())
       // handleChange must not read this as a local edit (a remote tick would flash "Unsaved changes").
       const merged = api.getSceneElementsIncludingDeleted()
       remoteApplied(hashElementsVersion(merged))

@@ -73,7 +73,7 @@ export type WhiteboardPresenceMessage = z.infer<typeof whiteboardPresenceMessage
 export const whiteboardClientMessageSchema = z.discriminatedUnion("type", [whiteboardElementsMessageSchema, whiteboardPresenceMessageSchema]);
 export type WhiteboardClientMessage = z.infer<typeof whiteboardClientMessageSchema>;
 
-export const whiteboardRejectionReasonSchema = z.enum(["view-only", "invalid"]);
+export const whiteboardRejectionReasonSchema = z.enum(["view-only", "invalid", "stale"]);
 export type WhiteboardRejectionReason = z.infer<typeof whiteboardRejectionReasonSchema>;
 
 /** One other open connection on the board (two tabs of one person are two peers). */

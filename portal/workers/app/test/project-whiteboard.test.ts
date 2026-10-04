@@ -612,4 +612,19 @@ describe("admission and stale reads (Sol review)", () => {
     expect((await storedIds(project)).map((row) => row.id)).not.toContain("stale");
     a.client.ws.close(1000);
   });
+
+  it("fails closed when every read of a write is overtaken by a refresh: a stale read is never used to commit", async () => {
+    const project = await newProject();
+    const a = await join(project, "member");
+    await runInDurableObject(stubFor(project), async (instance) => {
+      const target = instance as unknown as { generation: number; access: () => Promise<unknown> };
+      target.access = async () => { target.generation += 2; return { exists: true, archived: false, access: true }; };   // a refresh overtakes every read
+    });
+    a.client.send(batch(1, element("stale", 1, 1)));
+    const rest = await a.client.drain(300);
+    expect(rest).toContainEqual({ type: "rejected", seq: 1, reason: "stale" });
+    expect(rest).not.toContainEqual({ type: "ack", seq: 1 });
+    expect((await storedIds(project)).map((row) => row.id)).not.toContain("stale");
+    a.client.ws.close(1000);
+  });
 });

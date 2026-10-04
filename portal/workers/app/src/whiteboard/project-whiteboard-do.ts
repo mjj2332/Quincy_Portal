@@ -114,12 +114,14 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
     if (attachment.mode !== "edit") return this.send(ws, { type: "rejected", seq, reason: "view-only" });
     // For an edit socket the Project and the person's access are reread on EVERY batch, as the backstop for a
     // notification that never arrived. A read that a refresh overtook (the generation moved) is retried, never used.
-    let state: Access;
-    for (let tries = 0; ; tries += 1) {
+    // Bounded, and fail-closed: if every read was overtaken, the write is refused (`stale`) for the client to retry.
+    let state: Access | undefined;
+    for (let tries = 0; tries < 3 && !state; tries += 1) {
       const generation = this.generation;
-      state = await this.access(attachment);
-      if (generation === this.generation || tries >= 2) break;
+      const read = await this.access(attachment);
+      if (generation === this.generation) state = read;
     }
+    if (!state) return ws.readyState === OPEN ? this.send(ws, { type: "rejected", seq, reason: "stale" }) : undefined;
     if (ws.readyState !== OPEN) return;
     if (!state.exists) return this.close(ws, WHITEBOARD_CLOSE.deleted, "Project deleted");
     if (!state.access) return this.revoke(ws);

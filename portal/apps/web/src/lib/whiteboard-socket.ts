@@ -148,7 +148,7 @@ export function openWhiteboardSocket(projectId: string, handlers: WhiteboardSock
         if (entry) { clearTimeout(entry.timer); pending.delete(message.seq); entry.resolve(); finishIfDrained(); }
       } else if (message.seq !== undefined) {
         const entry = pending.get(message.seq);
-        if (entry) { clearTimeout(entry.timer); pending.delete(message.seq); entry.reject(new Error(message.reason === "view-only" ? "This board is view-only." : "The board rejected the change.")); finishIfDrained(); }
+        if (entry) { clearTimeout(entry.timer); pending.delete(message.seq); entry.reject(new Error(message.reason === "view-only" ? "This board is view-only." : message.reason === "stale" ? "The board was changing; the change will be sent again." : "The board rejected the change.")); finishIfDrained(); }
       }
     }) as (event: never) => void);
     current.addEventListener("close", ((event: { code: number }) => {
