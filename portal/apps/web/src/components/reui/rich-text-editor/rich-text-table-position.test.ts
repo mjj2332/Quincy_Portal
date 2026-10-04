@@ -63,6 +63,17 @@ describe("readFloorTop", () => {
     expect(readFloorTop(helper({ height: 0 }))).toBeNull();
   });
   it("is null for a non-finite rect", () => expect(readFloorTop(helper({ top: Number.NaN }))).toBeNull());
+
+  it("with a counter above the helper, the floor is the counter's top (the first rendered element below the frame)", () => {
+    expect(readFloorTop(helper({ top: 628 }), helper({ top: 644 }))).toBe(628);
+    expect(readFloorTop(helper({ top: 644 }), helper({ top: 628 }))).toBe(628);
+  });
+  it("skips absent, hidden or detached elements and falls back to the next one", () => {
+    expect(readFloorTop(null, helper({ top: 644 }))).toBe(644);
+    expect(readFloorTop(helper({ top: 628, height: 0 }), helper({ top: 644 }))).toBe(644);
+    expect(readFloorTop(helper({ top: 628, isConnected: false }), helper({ top: 644 }))).toBe(644);
+  });
+  it("is null when no element is usable", () => expect(readFloorTop(null, undefined, helper({ width: 0 }))).toBeNull());
 });
 
 // Real @floating-ui/core middleware (flip, shift, offset) in the order the pinned Tiptap 3.30.2 BubbleMenu
@@ -87,7 +98,7 @@ describe("table bar placement (floating-ui computePosition)", () => {
     },
   } as unknown as Platform;
 
-  async function place(helperTop: number | null, cellOverride = cell, surfaceRect = surface) {
+  async function place(helperTop: number | null, cellOverride = cell, surfaceRect = surface, bar = BAR) {
     const options = tableBubbleOptions({ surface: () => surfaceRect, floorTop: () => helperTop });
     const result = await computePosition(
       cellOverride as never,
@@ -96,12 +107,13 @@ describe("table bar placement (floating-ui computePosition)", () => {
         placement: options.placement,
         platform: {
           ...platform,
-          getElementRects: async () => ({ reference: cellOverride, floating: { x: 0, y: 0, ...BAR } }),
+          getElementRects: async () => ({ reference: cellOverride, floating: { x: 0, y: 0, ...bar } }),
+          getDimensions: async () => bar,
         } as Platform,
         middleware: [flip(options.flip as never), shift(options.shift as never), offset(options.offset)],
       }
     );
-    return { ...result, barTop: result.y, barBottom: result.y + BAR.height };
+    return { ...result, barTop: result.y, barBottom: result.y + bar.height };
   }
 
   it("without a floor keeps today's behaviour: top-start, clamped to the surface top", async () => {
@@ -129,5 +141,43 @@ describe("table bar placement (floating-ui computePosition)", () => {
     const result = await place(660);
     expect(result.placement).toBe("top-start");
     expect(result.barTop).toBe(500);
+  });
+
+  // LIVE geometry measured in the browser (#535 round 7): the bar is 62px tall, a 54px element plus the 8px offset gap.
+  describe("live geometry", () => {
+    const LIVE_BAR = { width: 300, height: 54 };
+    const liveCell = { x: 20, y: 538.3, width: 300, height: 34 }; // caret row 538.3-572.3
+    const liveSurface = rect(480, 600);
+    const FRAME_BOTTOM = 615.8;
+
+    it("390px: the helper is 12px under the frame, there is no room below, so top-start clamps (never bottom-start)", async () => {
+      const helperTop = FRAME_BOTTOM + 12; // 627.8
+      const result = await place(helperTop, liveCell, liveSurface, LIVE_BAR);
+      expect(result.placement).toBe("top-start");
+      expect(result.placement).not.toBe("bottom-start");
+    });
+
+    it("desktop: the helper is 28px under the frame, so the bar drops below the caret row and clears the helper", async () => {
+      const helperTop = FRAME_BOTTOM + 28; // 643.8
+      const result = await place(helperTop, liveCell, liveSurface, LIVE_BAR);
+      expect(result.placement).toBe("bottom-start");
+      expect(result.barTop).toBeCloseTo(572.3 + TABLE_BUBBLE_GAP, 5);
+      expect(result.barBottom).toBeLessThanOrEqual(helperTop - TABLE_BUBBLE_GAP);
+    });
+
+    it("desktop with the counter showing: the floor is the counter's top, so the same bar does not drop onto it", async () => {
+      const counterTop = FRAME_BOTTOM + 12; // 627.8, between the frame and the helper
+      const helperTop = counterTop + 16 + 8; // under the counter
+      const floorTop = readFloorTop(
+        { isConnected: true, getBoundingClientRect: () => ({ top: counterTop, bottom: counterTop + 16, left: 0, right: 80, width: 80, height: 16 }) },
+        { isConnected: true, getBoundingClientRect: () => ({ top: helperTop, bottom: helperTop + 16, left: 0, right: 200, width: 200, height: 16 }) }
+      );
+      expect(floorTop).toBe(counterTop);
+      const result = await place(floorTop, liveCell, liveSurface, LIVE_BAR);
+      expect(result.placement).toBe("top-start");
+      // The helper alone (the old floor) would have dropped it over the counter.
+      const old = await place(helperTop, liveCell, liveSurface, LIVE_BAR);
+      expect(old.barBottom).toBeGreaterThan(counterTop - TABLE_BUBBLE_GAP);
+    });
   });
 });

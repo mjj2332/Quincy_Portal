@@ -66,18 +66,31 @@ export function tableBubbleBoundary(
   }
 }
 
-/** The helper line's top edge, or null when it is absent, detached, hidden, zero-size or non-finite. */
-export function readFloorTop(
-  helper: { isConnected: boolean; getBoundingClientRect: () => RectLike & { width: number; height: number } } | null | undefined
-): number | null {
-  if (!helper || !helper.isConnected) return null
+interface FloorElement {
+  isConnected: boolean
+  getBoundingClientRect: () => RectLike & { width: number; height: number }
+}
 
-  const rect = helper.getBoundingClientRect()
+/**
+ * The top edge of the first rendered element below the editor frame: pass the candidates in any order (the
+ * character counter, the host's helper line) and the highest usable one wins. Absent, detached, hidden,
+ * zero-size or non-finite candidates are skipped; null when none is usable, so the surface stays the boundary.
+ */
+export function readFloorTop(...elements: Array<FloorElement | null | undefined>): number | null {
+  let floor: number | null = null
 
-  if (![rect.top, rect.bottom, rect.width, rect.height].every(Number.isFinite)) return null
-  if (rect.width <= 0 || rect.height <= 0) return null
+  for (const element of elements) {
+    if (!element || !element.isConnected) continue
 
-  return rect.top
+    const rect = element.getBoundingClientRect()
+
+    if (![rect.top, rect.bottom, rect.width, rect.height].every(Number.isFinite)) continue
+    if (rect.width <= 0 || rect.height <= 0) continue
+
+    floor = floor === null ? rect.top : Math.min(floor, rect.top)
+  }
+
+  return floor
 }
 
 /** floating-ui subtracts the visualViewport offset from Rect boundaries on WebKit only. */

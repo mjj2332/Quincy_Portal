@@ -140,6 +140,10 @@ export function QuincyRichTextEditor({
   const editorRef = useRef<Editor | null>(null);
   const menu = useRef<MentionAutocompleteHandle>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  // Everything rendered under the frame that the table bar must not cover (#535): the upload tray, the counter, the host's helper.
+  const counterRef = useRef<HTMLDivElement>(null);
+  const trayRef = useRef<HTMLDivElement>(null);
+  const tableBubbleFloors = useMemo(() => [trayRef, counterRef, tableBubbleFloor], [tableBubbleFloor]);
   const [rawQuery, setQuery] = useState<string | null>(null);
   // #375: Esc / an outside press closes the mention list and it stays closed until the content
   // actually changes; the sheet's layer gate reads the list as open through `aria-expanded`.
@@ -419,7 +423,7 @@ export function QuincyRichTextEditor({
       </div>
     </InputGroup>
     {isDocument && <>
-      <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} tableBubbleFloor={tableBubbleFloor} />
+      <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} tableBubbleFloors={tableBubbleFloors} />
       <DeleteTableDialog editor={editor} open={deleteTableOpen} onOpenChange={setDeleteTableOpen} />
     </>}
     {picking !== null && <Input
@@ -427,12 +431,12 @@ export function QuincyRichTextEditor({
       onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); setPicking(null); if (files.length) addImagesRef.current(files, editor.state.selection.to); }}
       {...{ onCancel: () => setPicking(null) }}
     />}
-    {(uploads.length > 0 || uploadErrors.length > 0) && <div data-testid="rich-text-upload-tray" className="grid gap-[var(--space-2)]">
+    {(uploads.length > 0 || uploadErrors.length > 0) && <div ref={trayRef} data-testid="rich-text-upload-tray" className="grid gap-[var(--space-2)]">
       {uploads.map((entry) => <Progress key={entry.key} value={entry.percent} aria-label={`Uploading ${entry.name}`} className="flex flex-wrap items-baseline gap-[var(--space-1)]"><span className="[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary [overflow-wrap:anywhere]">Uploading {entry.name}…</span><ProgressValue data-testid="upload-progress-value" className="[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" /></Progress>)}
       {uploadErrors.map((message, index) => <Notice key={index} tone="critical" role="alert">{message}</Notice>)}
     </div>}
     <MentionAutocomplete ref={menu} query={query} loadMentionables={loadMentionables} onSelect={selectMention} onDismiss={() => setMentionDismissed(true)} onAccessibilityChange={setMentionA11y} />
-    {plainText.length >= limit * COUNTER_THRESHOLD && <div data-testid="rich-text-counter" className={cn("text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", plainText.length > limit && "!text-destructive")}>{plainText.length}/{limit}</div>}
+    {plainText.length >= limit * COUNTER_THRESHOLD && <div ref={counterRef} data-testid="rich-text-counter" className={cn("text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", plainText.length > limit && "!text-destructive")}>{plainText.length}/{limit}</div>}
     <div className={liveMessage ? "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive" : "sr-only"} aria-live="polite">{liveMessage}</div>
   </div>;
 }

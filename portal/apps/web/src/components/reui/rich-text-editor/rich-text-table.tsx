@@ -16,8 +16,9 @@
 //    every selection update; the plugin's own scroll/resize handlers re-run it. flip and shift share one
 //    boundary rect (`rich-text-table-position.ts`): bounded by the editable surface's top down to the
 //    helper line, with 8px clearance. The bar may therefore cross the frame's bottom border (owner
-//    decision #535); it never covers the toolbar or the helper. Hosts without a helper (`tableBubbleFloor`
-//    unset, e.g. the edit composer) keep the surface as the boundary. When even that fails the bar keeps
+//    decision #535); it never covers the toolbar, the character counter or the helper: the floor is the top of
+//    the first rendered element below the frame (`tableBubbleFloors`). Hosts with none of them (e.g. the edit
+//    composer below 90% of the limit) keep the surface as the boundary. When even that fails the bar keeps
 //    `top-start` and shift clamps it.
 import { useCallback, useMemo, type RefObject } from "react"
 import { findParentNodeClosestToPos, type Editor } from "@tiptap/react"
@@ -145,15 +146,18 @@ interface RichTextTableBubbleProps {
   editor: Editor
   /** Deleting the whole table is the host's call: confirm it first. */
   onDeleteTable: () => void
-  /** The host's helper line under the editor: the table bar may extend down to it (#535). */
-  tableBubbleFloor?: RefObject<HTMLElement | null>
+  /**
+   * Elements rendered below the editor frame (character counter, host helper line): the table bar may extend
+   * down to the highest of them (#535).
+   */
+  tableBubbleFloors?: ReadonlyArray<RefObject<HTMLElement | null> | undefined>
 }
 
 /** Row, column and header controls above the table holding the caret. */
 export function RichTextTableBubble({
   editor,
   onDeleteTable,
-  tableBubbleFloor,
+  tableBubbleFloors,
 }: RichTextTableBubbleProps) {
   const table = useRichTextSelector(editor, readTable)
 
@@ -174,10 +178,10 @@ export function RichTextTableBubble({
     () =>
       tableBubbleOptions({
         surface: () => editor.view.dom.getBoundingClientRect(),
-        floorTop: () => readFloorTop(tableBubbleFloor?.current),
+        floorTop: () => readFloorTop(...(tableBubbleFloors ?? []).map((ref) => ref?.current)),
         visualOffset: () => readVisualOffset(),
       }),
-    [editor, tableBubbleFloor]
+    [editor, tableBubbleFloors]
   )
 
   return (
