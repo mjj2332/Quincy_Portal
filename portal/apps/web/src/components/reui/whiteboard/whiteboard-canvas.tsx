@@ -6,7 +6,7 @@
  * Tailwind `shadow-*`, focus ring widths -- see `reui-skin.guard.test.ts`), and `noUncheckedIndexedAccess`
  * narrowing. `"dark": boolean` is quoted only so the guard's `dark:` matcher does not read a type as a variant.
  *
- * This file: The Excalidraw canvas and chrome host. Imports `@excalidraw/excalidraw/index.css`, which is UNLAYERED (see docs/lessons.md, #498): it only loads with this lazy chunk. Unchanged apart from the mechanical edits.
+ * This file: The Excalidraw canvas and chrome host. Imports `@excalidraw/excalidraw/index.css`, which is UNLAYERED (see docs/lessons.md, #498): it only loads with this lazy chunk. Unchanged apart from the mechanical edits and the QUINCY ADDITIONs marked inline (#498: image tool off; #499: `applyRemote`, collaborator colour, `onPresence`).
  */
 /**
  * The editor behind <Whiteboard>: the only runtime import of Excalidraw (MIT,
@@ -34,6 +34,7 @@ import {
   getCommonBounds,
   getNonDeletedElements,
   hashElementsVersion,
+  reconcileElements,
   isElementLink,
   languages,
   loadSceneOrLibraryFromBlob,
@@ -782,6 +783,8 @@ function toCollaborator(person: WhiteboardCollaborator): Collaborator {
     button: person.pressed ? "down" : "up",
     selectedElementIds,
     userState: IDLE_STATE[person.state ?? "active"],
+    // QUINCY ADDITION #499: the host's colour for this person.
+    color: person.color,
   }
 }
 
@@ -797,11 +800,13 @@ type ControllerHost = {
   library: () => LibraryItems
   /** False in view-only mode; checked again after the async parse, since the mode can change meanwhile. */
   editable: () => boolean
+  /** QUINCY ADDITION #499: the element hash right after a remote merge, so the editor's own change event for it is not a local edit. */
+  remoteApplied: (hash: number) => void
 }
 
 function createController(
   api: ExcalidrawImperativeAPI,
-  { root, arm, panel, library, editable }: ControllerHost
+  { root, arm, panel, library, editable, remoteApplied }: ControllerHost
 ): WhiteboardController {
   const libraryItem = (id: string) => library().find((item) => item.id === id)
   const scrollTo = (ids?: readonly string[]) => {
@@ -948,6 +953,22 @@ function createController(
         ),
         captureUpdate: CaptureUpdateAction.NEVER,
       })
+    },
+    // QUINCY ADDITION #499: other people's elements, merged by Excalidraw's own rule and kept out of Undo.
+    applyRemote: (remote) => {
+      const restored = restoreElements(remote as never, null)
+      api.updateScene({
+        elements: reconcileElements(
+          api.getSceneElementsIncludingDeleted(),
+          restored as never,
+          api.getAppState()
+        ),
+        captureUpdate: CaptureUpdateAction.NEVER,
+      })
+      // handleChange must not read this as a local edit (a remote tick would flash "Unsaved changes").
+      const merged = api.getSceneElementsIncludingDeleted()
+      remoteApplied(hashElementsVersion(merged))
+      return merged
     },
     select: (ids) => {
       const selectedElementIds: Record<string, true> = {}
@@ -1499,6 +1520,7 @@ export function WhiteboardCanvas({
   autosaveDelay = 1500,
   onSaveStatusChange,
   onElements,
+  onPresence,
   onReady,
   readOnly = false,
   viewOnlyIndicator = true,
@@ -1552,6 +1574,7 @@ export function WhiteboardCanvas({
     onSave,
     onSaveStatusChange,
     onElements,
+    onPresence,
     onReady,
     changeDelay,
     autosaveDelay,
@@ -1570,6 +1593,7 @@ export function WhiteboardCanvas({
       onSave,
       onSaveStatusChange,
       onElements,
+      onPresence,
       onReady,
       changeDelay,
       autosaveDelay,
@@ -1595,10 +1619,32 @@ export function WhiteboardCanvas({
   const loadedRef = useRef(false)
   const signatureRef = useRef("")
   const armedRef = useRef(false)
+  // QUINCY ADDITION #499: the element hash a remote merge produced (see applyRemote), and the local presence last reported.
+  const remoteHashRef = useRef<number | null>(null)
+  const pointerRef = useRef<{ x: number; y: number } | null>(null)
+  const buttonRef = useRef<"up" | "down">("up")
+  const selectionRef = useRef("")
 
   useEffect(() => {
     apiRef.current = api
   }, [api])
+
+  const reportPresence = useCallback((selectedIds: readonly string[]) => {
+    latest.current.onPresence?.({
+      pointer: pointerRef.current,
+      button: buttonRef.current,
+      selectedIds,
+    })
+  }, [])
+  const handlePointerUpdate = useCallback(
+    (payload: { pointer: { x: number; y: number }; button: "down" | "up" }) => {
+      pointerRef.current = { x: payload.pointer.x, y: payload.pointer.y }
+      buttonRef.current = payload.button
+      const selected = Object.keys(apiRef.current?.getAppState().selectedElementIds ?? {})
+      reportPresence(selected)
+    },
+    [reportPresence]
+  )
 
   const arm = useCallback(() => {
     armedRef.current = true
@@ -1641,6 +1687,13 @@ export function WhiteboardCanvas({
         }
       }
       latest.current.onElements?.(elements)
+      // QUINCY ADDITION #499: a changed selection is presence too.
+      const selected = Object.keys(appState.selectedElementIds)
+      const selection = selected.join(",")
+      if (selection !== selectionRef.current) {
+        selectionRef.current = selection
+        reportPresence(selected)
+      }
       // Written straight to the layer: panning never re-renders React.
       placeGrid(gridRef.current, appState)
       // Any path left to Excalidraw's own Help swaps it for the kit's dialog
@@ -1700,9 +1753,12 @@ export function WhiteboardCanvas({
       }
       // Font loading re-measures text after load; only edits after a real
       // interaction count as unsaved work.
+      // QUINCY ADDITION #499: the change event of a remote merge is not the person's own edit.
+      if (remoteHashRef.current === hash) return
+      remoteHashRef.current = null
       if (armedRef.current) markDirty()
     },
-    [markDirty, scheduleChange]
+    [markDirty, reportPresence, scheduleChange]
   )
 
   const loadInitialData =
@@ -1991,6 +2047,9 @@ export function WhiteboardCanvas({
           panel: hostPanel,
           library: libraryOf,
           editable: () => !latest.current.viewOnly,
+          remoteApplied: (hash) => {
+            remoteHashRef.current = hash
+          },
         })
       )
     },
@@ -2211,6 +2270,7 @@ export function WhiteboardCanvas({
         excalidrawAPI={handleApi}
         initialData={loadInitialData}
         onChange={handleChange}
+        onPointerUpdate={handlePointerUpdate}
         onPaste={handlePaste}
         onLinkOpen={handleLinkOpen}
         onLibraryChange={handleLibraryChange}

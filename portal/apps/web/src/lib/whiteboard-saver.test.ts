@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { WHITEBOARD_MAX_ELEMENTS_PER_MESSAGE, WHITEBOARD_MAX_MESSAGE_BYTES } from "@quincy/shared";
-import { createWhiteboardSaver, pasteIsUnsupported, withoutUnsupported, planSceneDrop, type SavedElement } from "./whiteboard-saver";
+import { appliedFromRemote, createWhiteboardSaver, pasteIsUnsupported, withoutUnsupported, planSceneDrop, type SavedElement } from "./whiteboard-saver";
 
 const el = (id: string, version: number, extra: Record<string, unknown> = {}): SavedElement => ({ id, version, versionNonce: version * 7, ...extra });
 const deferred = () => { let resolve!: () => void; let reject!: (e: Error) => void; const promise = new Promise<void>((res, rej) => { resolve = res; reject = rej; }); return { promise, resolve, reject }; };
@@ -196,5 +196,66 @@ describe("whiteboard saver", () => {
     await saver.flush();
     expect(sent.at(-1)).toMatchObject([{ id: "a", version: 4 }]);
     expect(sent.at(-1)![0]!.isDeleted).toBeUndefined();
+  });
+});
+
+describe("remote elements (#499)", () => {
+  it("does not echo an element that arrived from another person", async () => {
+    const scene = [el("mine", 1), el("theirs", 3)];
+    const send = vi.fn().mockResolvedValue(undefined);
+    const saver = createWhiteboardSaver({ getElements: () => scene, send });
+    saver.seed([el("mine", 1)]);
+    saver.adoptRemote([el("theirs", 3)]);
+    await saver.flush();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("does not escalate a version when a remote edit lands over a local one still in flight", async () => {
+    const scene = [el("a", 5)]; const sent: SavedElement[][] = []; const ack = deferred();
+    const saver = createWhiteboardSaver({ getElements: () => scene, send: (batch) => { sent.push([...batch]); return ack.promise; } });
+    const first = saver.flush();                                     // local v5 in flight
+    scene[0] = el("a", 6, { x: 99 });                                // the other person's v6 wins and is applied
+    saver.adoptRemote([scene[0]!]);
+    ack.resolve(); await first;
+    await saver.flush();
+    expect(sent.map((batch) => batch.map((entry) => entry.version))).toEqual([[5]]);   // v6 is never re-sent as v7
+  });
+
+  it("sends the next local edit above the remote version without further escalation", async () => {
+    const scene = [el("a", 2)]; const sent: SavedElement[][] = [];
+    const saver = createWhiteboardSaver({ getElements: () => scene, send: async (batch) => { sent.push([...batch]); } });
+    saver.seed([el("a", 2)]);
+    scene[0] = el("a", 6); saver.adoptRemote([scene[0]!]);
+    scene[0] = el("a", 7, { x: 1 });                                  // a local edit on top of the remote v6
+    await saver.flush();
+    expect(sent).toEqual([[expect.objectContaining({ id: "a", version: 7 })]]);
+  });
+
+  it("writes no tombstone for a remote element it was never given", async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    const saver = createWhiteboardSaver({ getElements: () => [el("mine", 1)], send });
+    saver.seed([el("mine", 1)]);                                      // "theirs" is not in the scene and was never adopted
+    await saver.flush();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("still sends a local delete of a remote element as a tombstone above the remote version", async () => {
+    const scene = [el("theirs", 4)]; const sent: SavedElement[][] = [];
+    const saver = createWhiteboardSaver({ getElements: () => scene, send: async (batch) => { sent.push([...batch]); } });
+    saver.adoptRemote([el("theirs", 4)]);
+    scene.length = 0;                                                  // removed from the scene without a tombstone
+    await saver.flush();
+    expect(sent[0]![0]).toMatchObject({ id: "theirs", isDeleted: true, version: 5 });
+  });
+});
+
+describe("appliedFromRemote (#499)", () => {
+  it("returns the scene elements that came from the remote batch, not the ones the local copy beat", () => {
+    const remote = [el("won", 3), el("lost", 2), el("absent", 1)];
+    const scene = [el("won", 3), el("lost", 5), el("mine", 1)];
+    expect(appliedFromRemote(remote, scene).map((entry) => entry.id)).toEqual(["won"]);
+  });
+  it("treats an equal version with a different nonce as not applied", () => {
+    expect(appliedFromRemote([{ id: "a", version: 2, versionNonce: 1 }], [{ id: "a", version: 2, versionNonce: 2 }])).toEqual([]);
   });
 });

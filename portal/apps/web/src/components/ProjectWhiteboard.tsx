@@ -1,13 +1,14 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeftIcon } from "lucide-react";
-import type { WhiteboardMode } from "@quincy/shared";
+import type { WhiteboardMode, WhiteboardPeer } from "@quincy/shared";
 import { Button } from "@/components/reui/button";
 import { Badge } from "@/components/reui/badge";
-import type { WhiteboardController, WhiteboardSaveStatus } from "./reui/whiteboard/whiteboard";
+import type { WhiteboardController, WhiteboardPresence, WhiteboardSaveStatus } from "./reui/whiteboard/whiteboard";
 import { CopyProjectLinkButton } from "./quincy/CopyProjectLinkButton";
 import { ViewLoadBoundary } from "./ViewLoadBoundary";
 import { openWhiteboardSocket, type WhiteboardConnection, type WhiteboardInit, type WhiteboardSocket } from "../lib/whiteboard-socket";
-import { createWhiteboardSaver, type SavedElement, type WhiteboardSaver } from "../lib/whiteboard-saver";
+import { appliedFromRemote, createWhiteboardSaver, type SavedElement, type WhiteboardSaver } from "../lib/whiteboard-saver";
+import { toCollaborator } from "../lib/whiteboard-collaborators";
 import { pushToast } from "../lib/toast-store";
 
 // The ReUI block lazy-loads Excalidraw itself (`whiteboard.tsx` imports `whiteboard-canvas` on demand); this
@@ -18,10 +19,15 @@ const Whiteboard = lazy(() => import("./reui/whiteboard/whiteboard").then((modul
 /**
  * #498: the Project whiteboard (ADR 0017), composed on ReUI `whiteboard-1`. The Portal's own parts are the
  * toolbar (street, view-only badge, save status, a link that reopens THIS board, Close) and the transport:
- * a WebSocket to the Project's Durable Object. Live broadcast and presence arrive with #499, versions with
- * #500 and media with #501, so the image tool is off. Quincy has no dark tokens, so the theme is fixed light.
+ * a WebSocket to the Project's Durable Object. #499 makes it live: other people's elements are merged into the
+ * board (Excalidraw's element-version reconciliation, never `replace`, so nothing local is dropped and nothing is
+ * echoed back), their cursors, names, colours and selections show as Excalidraw collaborators, and archive/restore
+ * flips the board between view-only and editable without a reload. Versions arrive with #500 and media with #501,
+ * so the image tool is off. Quincy has no dark tokens, so the theme is fixed light.
  */
 const FINAL_FLUSH_TIMEOUT_MS = 10_000;
+const frame = (run: () => void) => (typeof requestAnimationFrame === "function" ? requestAnimationFrame(() => run()) : window.setTimeout(run, 16));
+const cancelFrame = (handle: number) => (typeof cancelAnimationFrame === "function" ? cancelAnimationFrame(handle) : window.clearTimeout(handle));
 
 export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, onAccessFailure }: {
   projectId: string;
@@ -35,11 +41,17 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
   const [connection, setConnection] = useState<WhiteboardConnection>("connecting");
   const [saveStatus, setSaveStatus] = useState<WhiteboardSaveStatus>("saved");
   const [deleted, setDeleted] = useState(false);
+  // #499: the mode the server last set (init, then `mode` frames), which moves without a reconnect.
+  const [liveMode, setLiveMode] = useState<WhiteboardMode | null>(null);
+  const modeRef = useRef<WhiteboardMode>(archivedHint ? "view" : "edit");
+  const lastPresenceRef = useRef<WhiteboardPresence>({ pointer: null, button: "up", selectedIds: [] });
   const socketRef = useRef<WhiteboardSocket | null>(null);
   const controllerRef = useRef<WhiteboardController | null>(null);
   const saverRef = useRef<WhiteboardSaver | null>(null);
   // The editor's own API is empty by the time the board unmounts; the last change it reported is not.
   const elementsRef = useRef<ReadonlyArray<SavedElement>>([]);
+  /** Set by the socket effect: merges what arrived before the editor was ready, and draws the peers. */
+  const drainRemote = useRef<() => void>(() => undefined);
   const closeFailed = useRef(false);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const leftByClose = useRef(false);
@@ -54,17 +66,49 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
       send: (batch) => socket?.send(batch) ?? Promise.reject(new Error("The whiteboard is not connected.")),
     });
     saverRef.current = saver;
+    // #499: remote messages that arrive before the editor has mounted wait here, in order.
+    const pendingRemote: Array<Record<string, unknown>> = [];
+    const peers = new Map<string, WhiteboardPeer>();
+    let frameHandle: number | undefined;
+    const showPeers = () => {
+      if (frameHandle !== undefined) return;                // a cursor moves up to 30 times a second: draw once a frame
+      frameHandle = frame(() => { frameHandle = undefined; controllerRef.current?.setCollaborators([...peers.values()].map(toCollaborator)); });
+    };
+    /** Merges what other people did into the board, then records exactly what the board now holds of it as
+     * already stored, so the saver never echoes it or sends it at a higher version. */
+    const applyRemote = (remote: Array<Record<string, unknown>>) => {
+      const controller = controllerRef.current;
+      if (!controller) { pendingRemote.push(...remote); return; }
+      const scene = controller.applyRemote(remote) as unknown as SavedElement[];
+      elementsRef.current = scene;                           // before the editor's own change event, so nothing looks "gone"
+      saver.adoptRemote(appliedFromRemote(remote as unknown as SavedElement[], scene));
+    };
+    drainRemote.current = () => {
+      if (pendingRemote.length > 0) applyRemote(pendingRemote.splice(0));
+      showPeers();
+    };
     const opened = openWhiteboardSocket(projectId, {
       onInit: (next, reconnect) => {
-        // A reconnect keeps the board the user is looking at (#499 reconciles it live); only the mode moves.
-        setInit((current) => (reconnect && current ? { ...current, mode: next.mode } : next));
-        if (!reconnect) { saver.seed(next.elements as unknown as SavedElement[]); elementsRef.current = next.elements as unknown as SavedElement[]; }
-        // Anything that was not acknowledged before the drop goes out again now.
-        else if (next.mode === "edit") saver.flush().catch(() => setSaveStatus("error"));
+        modeRef.current = next.mode; setLiveMode(next.mode);
+        peers.clear(); for (const peer of next.peers) peers.set(peer.sessionId, peer); showPeers();
+        if (!reconnect) { setInit(next); saver.seed(next.elements as unknown as SavedElement[]); elementsRef.current = next.elements as unknown as SavedElement[]; return; }
+        // A reconnect keeps the board the user is looking at: what happened while away is merged into it first (the
+        // server's copy of anything newer wins, anything only we have stays), and only then does what was not
+        // acknowledged before the drop go out again, now above what it was merged with.
+        applyRemote(next.elements);
+        if (next.mode === "edit") saver.flush().catch(() => setSaveStatus("error"));
       },
       onConnection: setConnection,
       onDeleted: () => { setDeleted(true); pushToast("This project's whiteboard was deleted.", "error"); },
       onAccessFailure: (error) => accessFailureRef.current(error),
+      onElements: applyRemote,
+      onPresence: (peer) => { peers.set(peer.sessionId, peer); showPeers(); },
+      onPeerLeft: (sessionId) => { peers.delete(sessionId); showPeers(); },
+      onMode: (next) => {
+        if (modeRef.current === next) return;
+        modeRef.current = next; setLiveMode(next);
+        pushToast(next === "view" ? "This project was archived. The whiteboard is now view-only." : "This project was restored. You can edit the whiteboard again.", "caution");
+      },
     });
     socket = opened;
     socketRef.current = opened;
@@ -77,8 +121,17 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
       const bound = new Promise<void>((resolve) => { timer = setTimeout(resolve, FINAL_FLUSH_TIMEOUT_MS); });
       void Promise.race([finalFlush, bound]).then(() => { clearTimeout(timer); opened.close(); });
       if (socketRef.current === opened) socketRef.current = null;
+      drainRemote.current = () => undefined;
+      if (frameHandle !== undefined) cancelFrame(frameHandle);
     };
   }, [projectId]);
+
+  // The pointer is shared only while the tab is visible: a hidden tab's last cursor would hang on everyone's board.
+  useEffect(() => {
+    const onVisibility = () => { if (document.visibilityState === "hidden") socketRef.current?.sendPresence({ ...lastPresenceRef.current, pointer: null, button: "up" }); };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
 
   // The sheet focuses its popup when it opens, and a deep link mounts the board after that (and the entry
   // button that opened it is hidden now): focus lands on the way out of the board instead.
@@ -92,9 +145,11 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
     };
   }, []);
 
-  const save = useCallback(async () => { await saverRef.current?.flush(); }, []);
+  // View-only boards never send: the server would refuse, and the refusal would read as a failed save.
+  const save = useCallback(async () => { if (modeRef.current === "view") return; await saverRef.current?.flush(); }, []);
+  const sharePresence = useCallback((presence: WhiteboardPresence) => { lastPresenceRef.current = presence; socketRef.current?.sendPresence(presence); }, []);
 
-  const mode: WhiteboardMode = init?.mode ?? (archivedHint ? "view" : "edit");
+  const mode: WhiteboardMode = liveMode ?? init?.mode ?? (archivedHint ? "view" : "edit");
 
   const requestClose = useCallback(async () => {
     // Flush the final state through the live socket and wait for its ack before the board unmounts.
@@ -141,7 +196,8 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
                     viewOnlyIndicator={false}
                     imageTool={false}
                     background="grid"
-                    onReady={(controller) => { controllerRef.current = controller; }}
+                    onReady={(controller) => { controllerRef.current = controller; drainRemote.current(); }}
+                    onPresence={sharePresence}
                     onElements={(elements) => { elementsRef.current = elements as ReadonlyArray<SavedElement>; }}
                     onSave={save}
                     onSaveStatusChange={setSaveStatus}

@@ -6,7 +6,9 @@
  * Tailwind `shadow-*`, focus ring widths -- see `reui-skin.guard.test.ts`), and `noUncheckedIndexedAccess`
  * narrowing. `"dark": boolean` is quoted only so the guard's `dark:` matcher does not read a type as a variant.
  *
- * This file: The editor wrapper: lazy-loads `whiteboard-canvas` (so Excalidraw never reaches the entry chunk), the skeleton, error state and theme. Unchanged apart from the mechanical edits.
+ * This file: The editor wrapper: lazy-loads `whiteboard-canvas` (so Excalidraw never reaches the entry chunk), the skeleton, error state and theme. Unchanged apart from the mechanical edits and the additions marked QUINCY ADDITION below.
+ * QUINCY ADDITION #499 (additive; nothing existing changes): `WhiteboardCollaborator.color`, the controller's
+ * `applyRemote` and the `onPresence` prop, so the Project whiteboard can show live cursors and merge other people's edits.
  * Left out of the install on purpose: `share-popover` (public view-only links: ADR 0017 / #483 forbid them),
  * `review-board` (the demo composition -- `components/ProjectWhiteboard.tsx` is the Portal's), `page`, `presence`
  * (#499) and `history-tab` (#500). New production dependencies: `@excalidraw/excalidraw` (pinned 0.18.1) and `motion`.
@@ -162,6 +164,16 @@ export type WhiteboardCollaborator = {
   selectedIds?: readonly string[]
   state?: "active" | "idle" | "away"
   pressed?: boolean
+  /** QUINCY ADDITION #499: the cursor, name label and selection colour; Excalidraw picks its own when omitted. */
+  color?: { background: string; stroke: string }
+}
+
+/** QUINCY ADDITION #499: what onPresence reports: the local pointer in scene coordinates (null until it has moved),
+ * whether a button is down, and the ids of the selected elements. */
+export type WhiteboardPresence = {
+  pointer: { x: number; y: number } | null
+  button: "up" | "down"
+  selectedIds: readonly string[]
 }
 
 export type WhiteboardExportScope =
@@ -208,6 +220,11 @@ export type WhiteboardController = {
   /** Call it straight from the click: browsers only allow it inside a gesture; SVG logs the same line as exportImage. */
   copyImage: (options: WhiteboardExportOptions) => Promise<void>
   setCollaborators: (collaborators: readonly WhiteboardCollaborator[]) => void
+  /** QUINCY ADDITION #499: merges elements another person changed into the board, by Excalidraw's own element-version
+   * reconciliation (`reconcileElements`), as a change that never enters this person's Undo. Unlike `replace`, it keeps
+   * everything the sender did not mention and never bumps versions or tombstones. Works in view-only mode too. Returns
+   * every element now on the board, deleted ones included. */
+  applyRemote: (elements: readonly unknown[]) => readonly ExcalidrawElement[]
   /** Selects the given elements, replacing the selection. */
   select: (ids: readonly string[]) => void
   /** Your panel through onPanelRequest when it is set, else the editor's own library sidebar. */
@@ -242,6 +259,9 @@ export type WhiteboardProps = {
   /** Every editor change, synchronously, with ALL elements (deleted tombstones included). Quincy: lets a host
    * keep a snapshot that survives the editor tearing down. */
   onElements?: (elements: readonly unknown[]) => void
+  /** QUINCY ADDITION #499: the local pointer and selection, for a host that shares presence. Fires on every pointer
+   * move (throttle it) and whenever the selection changes. */
+  onPresence?: (presence: WhiteboardPresence) => void
   /** Milliseconds edits settle before onChange; default 300. */
   changeDelay?: number
   /** Autosave: store the scene as JSON and pass it back as initialData. Called after edits idle,

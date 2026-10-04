@@ -6,6 +6,9 @@ export type SavedElement = { id: string; version: number; versionNonce: number }
 export type WhiteboardSaver = {
   /** Records the loaded scene as already stored, so it is not sent back. */
   seed: (elements: readonly SavedElement[]) => void;
+  /** #499: records elements that arrived from another person (and were applied to the scene) as stored AND transmitted
+   * at exactly the version they came in, so they are never echoed back or re-sent at a higher version. */
+  adoptRemote: (elements: readonly SavedElement[]) => void;
   /** Sends every element whose version differs from what is stored or in flight. Rejects if any batch fails. */
   flush: () => Promise<void>;
 };
@@ -34,6 +37,18 @@ export function planSceneDrop(files: Iterable<File>, viewOnly: boolean): "ignore
   if (viewOnly) return all.length > 0 ? "refuse" : "ignore";   // nothing may be dropped on a view-only board
   const file = all.find((item) => /\.(excalidraw|excalidrawlib|json)$/i.test(item.name));
   return file ? { load: file } : "ignore";
+}
+/**
+ * #499: after a remote batch is reconciled into the scene, which of those remote elements is now what the
+ * scene holds? The ones the local copy beat (a higher version, or an equal version with a lower nonce) are not,
+ * so they are not recorded as stored: the local one is still the thing to send. Returns the scene's elements.
+ */
+export function appliedFromRemote<T extends { id: string; version: number; versionNonce: number }>(remote: ReadonlyArray<{ id: string; version: number; versionNonce: number }>, scene: readonly T[]): T[] {
+  const byId = new Map(scene.map((element) => [element.id, element]));
+  return remote.flatMap((incoming) => {
+    const held = byId.get(incoming.id);
+    return held && held.version === incoming.version && held.versionNonce === incoming.versionNonce ? [held] : [];
+  });
 }
 const encoder = new TextEncoder();
 const keyOf = (element: SavedElement) => `${element.version}:${element.versionNonce}`;
@@ -112,7 +127,8 @@ export function createWhiteboardSaver({ getElements, send }: {
     }
     const sends = batchesOf(outgoing.map(({ element }) => element)).map(async (indexes) => {
       await send(indexes.map((index) => outgoing[index]!.element));
-      for (const index of indexes) { const { element, sceneKey } = outgoing[index]!; stored.set(element.id, sceneKey); }
+      // A remote edit adopted while this batch was in flight is newer than what this ack confirms: it stays recorded.
+      for (const index of indexes) { const { element, sceneKey } = outgoing[index]!; if (transmitted.get(element.id)?.key === sceneKey) stored.set(element.id, sceneKey); }
     });
     const results = await Promise.allSettled(sends);
     const failed = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
@@ -125,6 +141,15 @@ export function createWhiteboardSaver({ getElements, send }: {
         stored.set(element.id, keyOf(element));
         known.set(element.id, { ...element });
         floor.set(element.id, Math.max(floor.get(element.id) ?? 0, element.version));
+      }
+    },
+    adoptRemote(elements) {
+      for (const element of elements) {
+        const key = keyOf(element);
+        stored.set(element.id, key);
+        known.set(element.id, { ...element });
+        floor.set(element.id, Math.max(floor.get(element.id) ?? 0, element.version));
+        transmitted.set(element.id, { key, version: element.version });
       }
     },
     flush() {
