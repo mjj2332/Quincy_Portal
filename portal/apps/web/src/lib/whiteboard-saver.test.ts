@@ -106,4 +106,20 @@ describe("whiteboard saver", () => {
     expect(withoutUnsupported(scene)).toEqual({ kept: scene, removed: 0 });
     expect(withoutUnsupported([{ id: "i", type: "image", isDeleted: true }]).removed).toBe(0);
   });
+
+  it("sends a tombstone for an element that vanished from the scene without one", async () => {
+    let scene = [el("a", 2), el("b", 1)];
+    const sent: SavedElement[][] = [];
+    const saver = createWhiteboardSaver({ getElements: () => scene, send: async (batch) => { sent.push([...batch]); } });
+    saver.seed(scene);
+    scene = [el("c", 1)];                 // a scene file replaced the canvas: A and B are simply gone
+    await saver.flush();
+    const sentById = new Map(sent.flat().map((e) => [e.id, e]));
+    expect(sentById.get("a")).toMatchObject({ isDeleted: true, version: 3 });
+    expect(sentById.get("b")).toMatchObject({ isDeleted: true, version: 2 });
+    expect(sentById.get("c")?.isDeleted).toBeUndefined();
+    sent.length = 0;
+    await saver.flush();                  // tombstones are recorded: nothing repeats
+    expect(sent).toHaveLength(0);
+  });
 });

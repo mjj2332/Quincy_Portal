@@ -41,6 +41,8 @@ export function createWhiteboardSaver({ getElements, send }: {
   send: (batch: readonly SavedElement[]) => Promise<void>;
 }): WhiteboardSaver {
   const stored = new Map<string, string>();
+  // Last known form of every element the server holds, so one that vanishes without a tombstone can be deleted.
+  const known = new Map<string, SavedElement>();
   const inflight = new Map<string, { key: string; promise: Promise<void> }>();
 
   const batchesOf = (changed: readonly SavedElement[]): SavedElement[][] => {
@@ -56,12 +58,20 @@ export function createWhiteboardSaver({ getElements, send }: {
   };
 
   return {
-    seed(elements) { for (const element of elements) stored.set(element.id, keyOf(element)); },
+    seed(elements) { for (const element of elements) { stored.set(element.id, keyOf(element)); known.set(element.id, { ...element }); } },
     flush() {
       // Image elements (tombstones too) are never sent: the server refuses the whole batch.
       const candidates = getElements().filter((element) => !isUnsupportedElement(element));
       const waits: Promise<void>[] = [];
-      const changed = candidates.filter((element) => {
+      // An id the server holds that is gone from the scene (a replaced canvas) gets a tombstone.
+      const present = new Set(candidates.map((element) => element.id));
+      const vanished: SavedElement[] = [];
+      for (const [id, last] of known) {
+        if (present.has(id) || last.isDeleted === true) continue;
+        vanished.push({ ...last, isDeleted: true, version: last.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31) });
+      }
+
+      const changed = [...candidates, ...vanished].filter((element) => {
         const key = keyOf(element);
         if (stored.get(element.id) === key) return false;
         const flying = inflight.get(element.id);
@@ -75,6 +85,7 @@ export function createWhiteboardSaver({ getElements, send }: {
           try {
             await send(batch);
             for (const [id, key] of sentKeys) stored.set(id, key);
+            for (const element of batch) known.set(element.id, element);
           } finally {
             for (const [id, key] of sentKeys) if (inflight.get(id)?.key === key) inflight.delete(id);
           }

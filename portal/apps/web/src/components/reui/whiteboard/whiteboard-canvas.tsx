@@ -1992,6 +1992,22 @@ export function WhiteboardCanvas({
     [arm, hostPanel, libraryOf, rootOf]
   )
 
+  // Quincy (#498): a dropped scene file would replace the canvas without tombstoning what it replaces.
+  // Route it through controller.load (replaceContent), which emits versioned tombstones.
+  useEffect(() => {
+    const root = rootRef.current
+    if (!root || !controller) return
+    const onDrop = (event: DragEvent) => {
+      const file = [...(event.dataTransfer?.files ?? [])].find((item) => /\.excalidraw(lib)?$/i.test(item.name))
+      if (!file) return
+      event.preventDefault()
+      event.stopPropagation()
+      void controller.load(file).catch(() => latest.current.onToast?.("That file could not be opened."))
+    }
+    root.addEventListener("drop", onDrop, true)
+    return () => root.removeEventListener("drop", onDrop, true)
+  }, [rootRef, controller])
+
   // Anything the user does inside the board makes later edits unsaved work.
   useEffect(() => {
     const root = rootRef.current
