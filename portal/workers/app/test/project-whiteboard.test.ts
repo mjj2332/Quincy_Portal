@@ -184,12 +184,15 @@ describe("server-side write guards", () => {
     expect(await client.next()).toEqual({ type: "mode", mode: "view" });          // a missed notification is healed by the write itself
     expect(await client.next()).toEqual({ type: "rejected", seq: 2, reason: "view-only" });
     await database.DB.prepare("UPDATE projects SET archived_at = NULL, archived_by = NULL WHERE id = ?").bind(archiveLater).run();
-    client.send(batch(3, element("restored", 1, 1)));
+    // A write never upgrades a socket (a delayed read could be stale): only a refresh does.
+    client.send(batch(3, element("early", 1, 1)));
+    expect(await client.next()).toEqual({ type: "rejected", seq: 3, reason: "view-only" });
+    await stubFor(archiveLater).refreshAccess();
     expect(await client.next()).toEqual({ type: "mode", mode: "edit" });
-    expect(await client.next()).toEqual({ type: "ack", seq: 3 });
+    await save(client, 4, element("restored", 1, 1));
     client.ws.close(1000);
     const stored = byId(await initOf(archiveLater));
-    expect(stored["before"]).toBeDefined(); expect(stored["restored"]).toBeDefined(); expect(stored["after"]).toBeUndefined();
+    expect(stored["before"]).toBeDefined(); expect(stored["restored"]).toBeDefined(); expect(stored["after"]).toBeUndefined(); expect(stored["early"]).toBeUndefined();
   });
 
   it("returns elements in Excalidraw's fractional index order, so send-to-back survives a reload", async () => {
@@ -541,5 +544,72 @@ describe("access changes reach live sockets (#499)", () => {
       expect((await a.client.closed).code).toBe(4403);
     } finally { await database.DB.prepare("UPDATE user SET active = 1 WHERE id = ?").bind(member2Id).run(); }
     b.client.ws.close(1000);
+  });
+});
+
+
+describe("admission and stale reads (Sol review)", () => {
+  const trusted = (userId: string, projectId: string, mode = "edit") => ({ Upgrade: "websocket", "x-wb-user": userId, "x-wb-mode": mode, "x-wb-project": projectId, "x-wb-name": "Someone" });
+
+  it("rechecks access and archive state at admission, even when the route authorised earlier", async () => {
+    const project = await newProject();
+    await database.DB.prepare("DELETE FROM project_members WHERE project_id = ? AND user_id = ?").bind(project, memberId).run();   // removed after the route's check
+    expect((await stubFor(project).fetch(new Request("https://whiteboard.internal/socket", { headers: trusted(memberId, project) }))).status).toBe(403);
+    const archived = await newProject(staff, true);
+    const response = await stubFor(archived).fetch(new Request("https://whiteboard.internal/socket", { headers: trusted(memberId, archived, "edit") }));   // route saw it unarchived
+    expect(response.status).toBe(101);
+    const ws = response.webSocket!; const messages: WhiteboardServerMessage[] = [];
+    ws.addEventListener("message", (event) => messages.push(JSON.parse(event.data as string))); ws.accept();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(messages[0]).toMatchObject({ type: "init", mode: "view" });
+    ws.close(1000);
+    expect((await stubFor(crypto.randomUUID()).fetch(new Request("https://whiteboard.internal/socket", { headers: trusted(memberId, crypto.randomUUID()) }))).status).toBe(404);
+  });
+
+  /** Makes the next Project read inside the Durable Object return its answer only when `release` is called. */
+  async function holdNextProjectRead(projectId: string) {
+    let release!: () => void; let reached!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; }); const hit = new Promise<void>((resolve) => { reached = resolve; });
+    await runInDurableObject(stubFor(projectId), async (instance) => {
+      const target = instance as unknown as { env: { DB: D1Database } }; const real = target.env.DB; let used = false;
+      const db = { prepare(sql: string) {
+        const statement = real.prepare(sql);
+        if (used || !sql.includes("archived_at")) return statement;
+        return { bind: (...values: unknown[]) => ({ first: async () => { const answer = await statement.bind(...values).first(); used = true; reached(); await gate; return answer; } }) };
+      } };
+      target.env = Object.create(target.env, { DB: { value: db } });
+    });
+    return { release, hit };
+  }
+
+  it("never commits a batch whose archive-state read was overtaken by an archive refresh", async () => {
+    const project = await newProject();
+    const a = await join(project, "member");
+    const held = await holdNextProjectRead(project);
+    a.client.send(batch(1, element("stale", 1, 1)));                              // reads "not archived", then waits
+    await held.hit;
+    await database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), project).run();
+    await stubFor(project).refreshAccess();
+    expect(await a.client.next()).toEqual({ type: "mode", mode: "view" });
+    held.release();
+    expect(await a.client.next()).toEqual({ type: "rejected", seq: 1, reason: "view-only" });
+    expect((await storedIds(project)).map((row) => row.id)).not.toContain("stale");
+    a.client.ws.close(1000);
+  });
+
+  it("never upgrades a view-only socket from a write's read: a stale 'restored' answer cannot commit while archived", async () => {
+    const project = await newProject(staff, true);
+    const a = await join(project, "member");
+    expect(a.init.mode).toBe("view");
+    await database.DB.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").bind(project).run();     // restored, notification not yet delivered
+    a.client.send(batch(1, element("stale", 1, 1)));                                                           // a read could say "restored"; it must not be used
+    await database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), project).run();   // archived again
+    await stubFor(project).refreshAccess();                                                                   // confirms view
+    const rest = await a.client.drain(200);
+    expect(rest).toContainEqual({ type: "rejected", seq: 1, reason: "view-only" });
+    expect(rest).not.toContainEqual({ type: "mode", mode: "edit" });
+    expect(rest).not.toContainEqual({ type: "ack", seq: 1 });
+    expect((await storedIds(project)).map((row) => row.id)).not.toContain("stale");
+    a.client.ws.close(1000);
   });
 });

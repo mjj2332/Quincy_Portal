@@ -61,6 +61,8 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
   private readonly presence = new PresenceBook();
   /** Serialises `refreshAccess`, so a later call always rereads after an earlier one has applied. */
   private refreshQueue: Promise<unknown> = Promise.resolve();
+  /** Advanced when a refresh starts and when it ends, even if no mode changed: a read that began before it is stale. */
+  private generation = 0;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -74,15 +76,25 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
     if (!userId || !mode.success) return new Response("Missing connection identity", { status: 400 });
     const projectId = request.headers.get(WHITEBOARD_PROJECT_HEADER);
     if (!projectId) return new Response("Missing connection identity", { status: 400 });
-    ensureSchema(this.ctx.storage);
-    const pair = new WebSocketPair();
-    const [client, server] = [pair[0], pair[1]];
-    this.ctx.acceptWebSocket(server);
-    const attachment: Attachment = { userId, mode: mode.data, projectId, sessionId: crypto.randomUUID(), name: decodeName(request.headers.get(WHITEBOARD_NAME_HEADER)) };
-    server.serializeAttachment(attachment);
-    const peers = this.attachments().filter((other) => other.attachment.sessionId !== attachment.sessionId).map((other) => this.presence.peer(other.attachment));
-    this.send(server, { type: "init", mode: mode.data, sessionId: attachment.sessionId, elements: readElements(this.ctx.storage), peers });
-    return new Response(null, { status: 101, webSocket: client });
+    const name = decodeName(request.headers.get(WHITEBOARD_NAME_HEADER));
+    // The route authorised this person a moment ago, and a membership removal or an archive may have landed since
+    // (and its refresh already run). Admission therefore rereads the Project and the person's access, and runs in the
+    // refresh queue so it can neither interleave with a refresh nor be missed by the next one: a socket it accepts is
+    // registered before any later refresh reads the sockets. The mode comes from this read, not from the route's header.
+    return this.enqueue(async () => {
+      const state = await this.access({ userId, projectId });
+      if (!state.exists) return new Response("Project not found", { status: 404 });
+      if (!state.access) return new Response("Forbidden", { status: 403 });
+      ensureSchema(this.ctx.storage);
+      const pair = new WebSocketPair();
+      const [client, server] = [pair[0], pair[1]];
+      this.ctx.acceptWebSocket(server);
+      const attachment: Attachment = { userId, mode: state.archived ? "view" : "edit", projectId, sessionId: crypto.randomUUID(), name };
+      server.serializeAttachment(attachment);
+      const peers = this.attachments().filter((other) => other.attachment.sessionId !== attachment.sessionId).map((other) => this.presence.peer(other.attachment));
+      this.send(server, { type: "init", mode: attachment.mode, sessionId: attachment.sessionId, elements: readElements(this.ctx.storage), peers });
+      return new Response(null, { status: 101, webSocket: client });
+    });
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
@@ -97,16 +109,28 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
     const { seq } = envelope.data;
     const attachment = readAttachment(ws);
     if (!attachment) return this.send(ws, { type: "rejected", seq, reason: "view-only" });
-    // The mode was decided at connect time and moves with `refreshAccess`; the Project and the
-    // person's access are reread on EVERY batch as the backstop for a notification that never arrived.
-    const state = await this.access(attachment);
-    // The await let other messages and a refresh run: a socket that closed meanwhile is done, and a
-    // mode a refresh set meanwhile is newer than what this read saw.
+    // A socket only ever moves to edit through `refreshAccess` (and admission): a write's own read can be overtaken by
+    // an archive or a restore while it awaits, so it must never upgrade. A view-only socket is refused without a read.
+    if (attachment.mode !== "edit") return this.send(ws, { type: "rejected", seq, reason: "view-only" });
+    // For an edit socket the Project and the person's access are reread on EVERY batch, as the backstop for a
+    // notification that never arrived. A read that a refresh overtook (the generation moved) is retried, never used.
+    let state: Access;
+    for (let tries = 0; ; tries += 1) {
+      const generation = this.generation;
+      state = await this.access(attachment);
+      if (generation === this.generation || tries >= 2) break;
+    }
     if (ws.readyState !== OPEN) return;
     if (!state.exists) return this.close(ws, WHITEBOARD_CLOSE.deleted, "Project deleted");
     if (!state.access) return this.revoke(ws);
-    const mode = this.settleMode(ws, attachment, state.archived ? "view" : "edit");
-    if (mode !== "edit") return this.send(ws, { type: "rejected", seq, reason: "view-only" });
+    // Fail closed: an archived read (or a refresh that moved this socket meanwhile) refuses the write.
+    const current = readAttachment(ws);
+    if (!current || current.mode !== "edit") return this.send(ws, { type: "rejected", seq, reason: "view-only" });
+    if (state.archived) {
+      ws.serializeAttachment({ ...current, mode: "view" } satisfies Attachment);
+      this.send(ws, { type: "mode", mode: "view" });
+      return this.send(ws, { type: "rejected", seq, reason: "view-only" });
+    }
     const elements = z.array(whiteboardElementSchema).safeParse(envelope.data.elements);
     if (!elements.success) return this.send(ws, { type: "rejected", seq, reason: "invalid" });
     const serialised = elements.data.map((element) => JSON.stringify(element));
@@ -146,12 +170,22 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
    * done, so a retry heals a notification that failed the first time.
    */
   refreshAccess(): Promise<void> {
-    const run = this.refreshQueue.then(() => this.applyAccess());
+    return this.enqueue(() => this.applyAccess());
+  }
+
+  /** Runs `task` after every earlier refresh or admission has finished. */
+  private enqueue<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.refreshQueue.then(task);
     this.refreshQueue = run.catch(() => undefined);
     return run;
   }
 
   private async applyAccess(): Promise<void> {
+    this.generation += 1;
+    try { await this.applyAccessNow(); } finally { this.generation += 1; }
+  }
+
+  private async applyAccessNow(): Promise<void> {
     const sockets = this.attachments();
     const first = sockets[0];
     if (!first) return;
@@ -170,7 +204,7 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
     }
   }
 
-  private async access(attachment: Attachment): Promise<Access> {
+  private async access(attachment: Pick<Attachment, "userId" | "projectId">): Promise<Access> {
     const project = await this.env.DB.prepare("SELECT archived_at AS archivedAt FROM projects WHERE id = ?").bind(attachment.projectId).first<{ archivedAt: number | null }>();
     if (!project) return { exists: false, archived: true, access: false };
     return { exists: true, archived: project.archivedAt !== null, access: await this.userHasAccess(attachment.userId, attachment.projectId) };

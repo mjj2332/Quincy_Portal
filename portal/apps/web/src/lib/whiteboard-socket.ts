@@ -1,5 +1,6 @@
 import {
   WHITEBOARD_CLOSE,
+  WHITEBOARD_MAX_SELECTED_IDS,
   whiteboardServerMessageSchema,
   whiteboardSocketPath,
   type WhiteboardMode,
@@ -204,7 +205,7 @@ export function openWhiteboardSocket(projectId: string, handlers: WhiteboardSock
   const transmitPresence = (state: WhiteboardPresenceState) => {
     const current = socket;
     if (stopped || closing || !current || current.readyState !== OPEN) return;
-    try { current.send(JSON.stringify({ type: "presence", ...state })); } catch { /* a cursor is never worth an error */ }
+    try { current.send(JSON.stringify({ type: "presence", ...state, selectedIds: state.selectedIds.slice(0, WHITEBOARD_MAX_SELECTED_IDS) })); } catch { /* a cursor is never worth an error */ }
   };
 
   connect();

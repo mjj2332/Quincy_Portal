@@ -96,18 +96,6 @@ export const whiteboardServerMessageSchema = z.discriminatedUnion("type", [
 ]);
 export type WhiteboardServerMessage = z.infer<typeof whiteboardServerMessageSchema>;
 
-/** How many colours the whiteboard assigns people. The hex values live with the canvas theme
- * (`whiteboard-theme.ts`): a canvas cannot read CSS tokens. */
-export const WHITEBOARD_PRESENCE_PALETTE_SIZE = 8;
-
-/** A person's presence colour, as an index into the palette: deterministic in the user id, so every
- * client shows the same person in the same colour without the server sending one. */
-export function whiteboardPresenceColour(userId: string): number {
-  let hash = 2166136261;                                  // FNV-1a
-  for (let index = 0; index < userId.length; index += 1) hash = Math.imul(hash ^ userId.charCodeAt(index), 16777619);
-  return (hash >>> 0) % WHITEBOARD_PRESENCE_PALETTE_SIZE;
-}
-
 /** Excalidraw's reconciliation rule: does `incoming` replace `stored`? */
 export function whiteboardIncomingWins(
   stored: { version: number; versionNonce: number } | undefined,

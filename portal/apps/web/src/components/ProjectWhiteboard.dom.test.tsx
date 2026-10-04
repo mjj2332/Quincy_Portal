@@ -3,8 +3,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WhiteboardMode, WhiteboardPeer } from "@quincy/shared";
 import { ApiError } from "../lib/api";
-import { WHITEBOARD_PRESENCE_COLOURS } from "../lib/whiteboard-collaborators";
-import { whiteboardPresenceColour } from "@quincy/shared";
 import { ProjectWhiteboard } from "./ProjectWhiteboard";
 
 /**
@@ -23,7 +21,7 @@ type Handlers = {
   onPeerLeft: (sessionId: string) => void;
   onMode: (mode: WhiteboardMode) => void;
 };
-type Collaborator = { id: string; name: string; pointer?: { x: number; y: number }; selectedIds?: readonly string[]; pressed?: boolean; color?: unknown };
+type Collaborator = { id: string; name: string; colorKey?: string; pointer?: { x: number; y: number }; selectedIds?: readonly string[]; pressed?: boolean };
 const board = vi.hoisted(() => ({
   log: [] as string[],
   handlers: null as unknown,
@@ -36,6 +34,7 @@ const board = vi.hoisted(() => ({
   applied: [] as unknown[][],
   initMode: "edit" as WhiteboardMode,
   initPeers: [] as unknown[],
+  editingId: null as string | null,
 }));
 vi.mock("../lib/whiteboard-socket", () => ({
   openWhiteboardSocket: (_projectId: string, handlers: unknown) => {
@@ -49,11 +48,13 @@ vi.mock("../lib/whiteboard-socket", () => ({
   },
 }));
 const controller = () => ({
-  api: {},
+  api: { getAppState: () => ({ editingTextElement: board.editingId ? { id: board.editingId } : null, resizingElement: null, newElement: null }) },
   applyRemote: (remote: Array<Record<string, unknown>>) => {
     board.log.push("applyRemote"); board.applied.push(remote);
-    const ids = new Set(remote.map((entry) => entry.id));
-    board.scene = [...board.scene.filter((entry) => !ids.has(entry.id)), ...remote];
+    // Like Excalidraw's reconcile: an element being edited here is not replaced by a remote one.
+    const taken = remote.filter((entry) => entry.id !== board.editingId);
+    const ids = new Set(taken.map((entry) => entry.id));
+    board.scene = [...board.scene.filter((entry) => !ids.has(entry.id)), ...taken];
     return board.scene;
   },
   setCollaborators: (people: Collaborator[]) => { board.collaborators.push(people); },
@@ -83,7 +84,7 @@ async function mount() {
 }
 
 beforeEach(() => {
-  Object.assign(board, { log: [], handlers: null, scene: [], send: null, sentPresence: [], deferReady: false, props: null, collaborators: [], applied: [], initMode: "edit", initPeers: [] });
+  Object.assign(board, { log: [], handlers: null, scene: [], send: null, sentPresence: [], deferReady: false, props: null, collaborators: [], applied: [], initMode: "edit", initPeers: [], editingId: null });
   onAccessFailure.mockReset(); onClose.mockReset();
 });
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); await Promise.resolve(); }); root = null; document.body.replaceChildren(); });
@@ -106,6 +107,42 @@ describe("remote elements (#499)", () => {
     expect(board.applied.flat().map((entry) => (entry as { id: string }).id)).toEqual(["a", "b"]);
   });
 
+  it("keeps buffered batches apart: two versions of one element arriving before the board is ready are applied in order, never merged into one call", async () => {
+    board.deferReady = true;
+    await mount();
+    await act(async () => { handlers().onElements([el("same", 1, { x: 1 })]); handlers().onElements([el("same", 2, { x: 2 })]); });
+    await act(async () => { board.props!.onReady!(controller()); });
+    expect(board.applied).toEqual([[el("same", 1, { x: 1 })], [el("same", 2, { x: 2 })]]);
+    expect(board.scene).toEqual([el("same", 2, { x: 2 })]);
+  });
+
+  it("replays a remote winner that was skipped while the person was editing that element, once editing ends", async () => {
+    await mount();
+    board.scene = [el("text", 1, { text: "mine" })]; board.props!.onElements!(board.scene);
+    board.editingId = "text";
+    await act(async () => { handlers().onElements([el("text", 3, { text: "theirs" })]); });
+    expect(board.scene).toEqual([el("text", 1, { text: "mine" })]);              // skipped: being edited
+    board.props!.onElements!(board.scene);                                          // still editing: nothing replays
+    expect(board.applied).toHaveLength(1);
+    board.editingId = null;                                                         // Alice leaves the text without typing
+    await act(async () => { board.props!.onElements!(board.scene); });
+    expect(board.applied).toHaveLength(2);
+    expect(board.scene).toEqual([el("text", 3, { text: "theirs" })]);
+    // and it is recorded as stored: nothing is echoed
+    await act(async () => { await board.props!.onSave!(); });
+    expect(board.log).not.toContain("send");
+  });
+
+  it("drops a deferred winner once a newer local version exists, instead of replaying it", async () => {
+    await mount();
+    board.scene = [el("text", 1)]; board.props!.onElements!(board.scene);
+    board.editingId = "text";
+    await act(async () => { handlers().onElements([el("text", 2)]); });
+    board.scene = [el("text", 5)]; board.editingId = null;
+    await act(async () => { board.props!.onElements!(board.scene); });
+    expect(board.applied).toHaveLength(1);
+  });
+
   it("does not drop a local edit the remote batch lost to: it is still sent", async () => {
     await mount();
     board.scene = [el("mine", 5, { x: 1 })];
@@ -122,7 +159,7 @@ describe("presence (#499)", () => {
     board.initPeers = [peer({ sessionId: "s2", userId: "u2", name: "Ana" })];
     await mount();
     await settle(50);
-    expect(board.collaborators.at(-1)).toEqual([{ id: "s2", name: "Ana", pointer: { x: 3, y: 4 }, selectedIds: ["a"], pressed: false, color: WHITEBOARD_PRESENCE_COLOURS[whiteboardPresenceColour("u2")] }]);
+    expect(board.collaborators.at(-1)).toEqual([{ id: "s2", colorKey: "u2", name: "Ana", pointer: { x: 3, y: 4 }, selectedIds: ["a"], pressed: false }]);
     await act(async () => { handlers().onPresence(peer({ sessionId: "s3", userId: "u3", name: "Ben", pointer: null })); });
     await settle(50);
     expect(board.collaborators.at(-1)!.map((person) => person.name)).toEqual(["Ana", "Ben"]);

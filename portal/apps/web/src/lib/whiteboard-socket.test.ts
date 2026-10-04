@@ -162,6 +162,15 @@ describe("whiteboard socket", () => {
       expect(sentPresence(current())).toHaveLength(2);                 // nothing pending: nothing more
     });
 
+    it("sends at most the protocol's 500 selected ids, so a large selection never makes every pointer frame invalid", () => {
+      const { socket, current } = setup();
+      current().open(); current().receive(init());
+      socket.sendPresence({ pointer: { x: 1, y: 1 }, button: "up", selectedIds: Array.from({ length: 600 }, (_, index) => `e${index}`) });
+      const [frame] = sentPresence(current());
+      expect(frame.selectedIds).toHaveLength(500);
+      expect(frame.selectedIds[0]).toBe("e0");
+    });
+
     it("drops presence while the socket is not open, without throwing and without queueing it for later", () => {
       const { socket, current } = setup();
       socket.sendPresence(cursor(1));                                  // connecting

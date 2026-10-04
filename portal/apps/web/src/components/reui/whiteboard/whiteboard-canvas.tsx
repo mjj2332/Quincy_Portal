@@ -6,7 +6,7 @@
  * Tailwind `shadow-*`, focus ring widths -- see `reui-skin.guard.test.ts`), and `noUncheckedIndexedAccess`
  * narrowing. `"dark": boolean` is quoted only so the guard's `dark:` matcher does not read a type as a variant.
  *
- * This file: The Excalidraw canvas and chrome host. Imports `@excalidraw/excalidraw/index.css`, which is UNLAYERED (see docs/lessons.md, #498): it only loads with this lazy chunk. Unchanged apart from the mechanical edits and the QUINCY ADDITIONs marked inline (#498: image tool off; #499: `applyRemote`, collaborator colour, `onPresence`).
+ * This file: The Excalidraw canvas and chrome host. Imports `@excalidraw/excalidraw/index.css`, which is UNLAYERED (see docs/lessons.md, #498): it only loads with this lazy chunk. Unchanged apart from the mechanical edits and the QUINCY ADDITIONs marked inline (#498: image tool off; #499: `applyRemote`, collaborator `colorKey`, `onPresence`).
  */
 /**
  * The editor behind <Whiteboard>: the only runtime import of Excalidraw (MIT,
@@ -774,7 +774,8 @@ function toCollaborator(person: WhiteboardCollaborator): Collaborator {
   const selectedElementIds: Record<string, true> = {}
   for (const id of person.selectedIds ?? []) selectedElementIds[id] = true
   return {
-    id: person.id,
+    // QUINCY ADDITION #499: Excalidraw 0.18.1 colours from a hash of this field (and ignores `color`).
+    id: person.colorKey ?? person.id,
     username: person.name,
     avatarUrl: person.avatarUrl,
     pointer: person.pointer
@@ -783,8 +784,6 @@ function toCollaborator(person: WhiteboardCollaborator): Collaborator {
     button: person.pressed ? "down" : "up",
     selectedElementIds,
     userState: IDLE_STATE[person.state ?? "active"],
-    // QUINCY ADDITION #499: the host's colour for this person.
-    color: person.color,
   }
 }
 

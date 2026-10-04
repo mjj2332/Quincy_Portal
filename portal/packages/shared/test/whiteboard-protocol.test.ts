@@ -3,10 +3,8 @@ import {
   WHITEBOARD_CLOSE,
   WHITEBOARD_MAX_ELEMENTS_PER_MESSAGE,
   WHITEBOARD_MAX_SELECTED_IDS,
-  WHITEBOARD_PRESENCE_PALETTE_SIZE,
   whiteboardClientMessageSchema,
   whiteboardIncomingWins,
-  whiteboardPresenceColour,
   whiteboardServerMessageSchema,
   whiteboardSocketPath,
 } from "../src/whiteboard-protocol";
@@ -90,15 +88,5 @@ describe("whiteboard protocol", () => {
       ]) expect(whiteboardServerMessageSchema.safeParse(frame).success, JSON.stringify(frame)).toBe(true);
       expect(whiteboardServerMessageSchema.safeParse({ type: "mode", mode: "admin" }).success).toBe(false);
     });
-  });
-
-  it("assigns a person the same presence colour in every client, always inside the palette", () => {
-    const ids = ["22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111", "x", ""];
-    for (const id of ids) {
-      const colour = whiteboardPresenceColour(id);
-      expect(colour).toBe(whiteboardPresenceColour(id));
-      expect(Number.isInteger(colour) && colour >= 0 && colour < WHITEBOARD_PRESENCE_PALETTE_SIZE).toBe(true);
-    }
-    expect(new Set(Array.from({ length: 200 }, (_, index) => whiteboardPresenceColour(`user-${index}`))).size).toBeGreaterThan(WHITEBOARD_PRESENCE_PALETTE_SIZE / 2);
   });
 });

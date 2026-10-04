@@ -7,7 +7,7 @@
  * narrowing. `"dark": boolean` is quoted only so the guard's `dark:` matcher does not read a type as a variant.
  *
  * This file: The editor wrapper: lazy-loads `whiteboard-canvas` (so Excalidraw never reaches the entry chunk), the skeleton, error state and theme. Unchanged apart from the mechanical edits and the additions marked QUINCY ADDITION below.
- * QUINCY ADDITION #499 (additive; nothing existing changes): `WhiteboardCollaborator.color`, the controller's
+ * QUINCY ADDITION #499 (additive; nothing existing changes): `WhiteboardCollaborator.colorKey`, the controller's
  * `applyRemote` and the `onPresence` prop, so the Project whiteboard can show live cursors and merge other people's edits.
  * Left out of the install on purpose: `share-popover` (public view-only links: ADR 0017 / #483 forbid them),
  * `review-board` (the demo composition -- `components/ProjectWhiteboard.tsx` is the Portal's), `page`, `presence`
@@ -164,8 +164,10 @@ export type WhiteboardCollaborator = {
   selectedIds?: readonly string[]
   state?: "active" | "idle" | "away"
   pressed?: boolean
-  /** QUINCY ADDITION #499: the cursor, name label and selection colour; Excalidraw picks its own when omitted. */
-  color?: { background: string; stroke: string }
+  /** QUINCY ADDITION #499: what Excalidraw 0.18.1 hashes for this person's cursor, label and selection colour
+   * (it ignores a supplied colour). Give one person's connections the same key (the user id) to share a colour;
+   * defaults to `id`. */
+  colorKey?: string
 }
 
 /** QUINCY ADDITION #499: what onPresence reports: the local pointer in scene coordinates (null until it has moved),
