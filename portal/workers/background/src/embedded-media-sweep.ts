@@ -89,26 +89,35 @@ export async function sweepEmbeddedMedia(env: Pick<Env, "DB" | "MEDIA">, now = D
   return { scanned: rows.results.length, reclaimed, failed, drained: await drainCleanupQueue(env) };
 }
 
-/** Works through up to 100 queued keys. An entry leaves only after its upload is terminal and its object is deleted. */
+/**
+ * Works through up to 100 queued keys, claim-first: an entry is deleted (version-checked, RETURNING) BEFORE its object is touched, so
+ * the sweep owns the object only if it won that delete. A poster adoption fences on the same entry still existing, which makes the two
+ * mutually exclusive: either the adoption removed the entry and the claim finds nothing, or the claim removed it and the adoption fails
+ * and deletes its own object. If the abort or delete then fails, the entry is put back (attempts counted, queued_at moved) so ownership
+ * of the object is never lost.
+ */
 async function drainCleanupQueue(env: Pick<Env, "DB" | "MEDIA">): Promise<number> {
-  const queue = await env.DB.prepare("SELECT storage_key AS storageKey, upload_id AS uploadId, queued_at AS queuedAt, attempts FROM embedded_media_cleanup ORDER BY queued_at, storage_key LIMIT ?").bind(SWEEP_LIMIT).all<QueueRow>();
+  const queue = await env.DB.prepare("SELECT storage_key AS storageKey, upload_id AS uploadId, project_id AS projectId, queued_at AS queuedAt, attempts FROM embedded_media_cleanup ORDER BY queued_at, storage_key LIMIT ?").bind(SWEEP_LIMIT).all<QueueRow & { projectId: string | null }>();
   let drained = 0;
   for (const entry of queue.results) {
-    const fail = (error: unknown, step: string) => {
-      console.error(`Embedded media cleanup ${step} failed`, { key: entry.storageKey, error: errorText(error) });
-      return env.DB.prepare("UPDATE embedded_media_cleanup SET attempts = attempts + 1 WHERE storage_key = ?").bind(entry.storageKey).run();
-    };
     try {
-      if (entry.uploadId) {
-        try { await env.MEDIA.resumeMultipartUpload(entry.storageKey, entry.uploadId).abort(); }
-        catch (error) { if (!isMissingUpload(error)) { await fail(error, "abort"); continue; } }
+      const claim = await env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ? AND queued_at = ? AND attempts = ? RETURNING upload_id AS uploadId, project_id AS projectId").bind(entry.storageKey, entry.queuedAt, entry.attempts).all<{ uploadId: string | null; projectId: string | null }>();
+      const claimed = claim.results[0];
+      if (!claimed) continue;
+      const requeue = async (error: unknown, step: string) => {
+        console.error(`Embedded media cleanup ${step} failed`, { key: entry.storageKey, error: errorText(error) });
+        await env.DB.prepare(`
+          INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at, attempts) VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(storage_key) DO UPDATE SET project_id = COALESCE(embedded_media_cleanup.project_id, excluded.project_id), upload_id = COALESCE(embedded_media_cleanup.upload_id, excluded.upload_id), queued_at = MAX(embedded_media_cleanup.queued_at + 1, excluded.queued_at), attempts = embedded_media_cleanup.attempts + 1
+        `).bind(entry.storageKey, claimed.uploadId, claimed.projectId, Date.now(), entry.attempts + 1).run();
+      };
+      if (claimed.uploadId) {
+        try { await env.MEDIA.resumeMultipartUpload(entry.storageKey, claimed.uploadId).abort(); }
+        catch (error) { if (!isMissingUpload(error)) { await requeue(error, "abort"); continue; } }
       }
       try { await env.MEDIA.delete(entry.storageKey); }
-      catch (error) { await fail(error, "delete"); continue; }
-      // Dequeue only the entry this pass read. A re-queue (which moves queued_at) or a failure (which moves attempts) since then means
-      // a newer object may need reclaiming, so the entry stays for the next run.
-      const dequeued = await env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ? AND queued_at = ? AND attempts = ?").bind(entry.storageKey, entry.queuedAt, entry.attempts).run();
-      if ((dequeued.meta.changes ?? 0) === 1) drained += 1;
+      catch (error) { await requeue(error, "delete"); continue; }
+      drained += 1;
     } catch (error) { console.error("Embedded media cleanup failed", { key: entry.storageKey, error: errorText(error) }); }
   }
   return drained;

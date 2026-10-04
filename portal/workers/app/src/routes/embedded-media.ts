@@ -138,14 +138,17 @@ embeddedMediaRoutes.put("/projects/:projectId/embedded-media/:mediaId/poster", t
   if (body.byteLength > EMBEDDED_POSTER_MAX_BYTES) return c.json({ error: "The poster is larger than 2 MB" }, 413);
   if (!isJpeg(body)) return c.json({ error: "The poster must be a JPEG image" }, 400);
   const posterKey = embeddedMediaPosterKey(projectId, mediaId, newId());
-  await enqueueEmbeddedMediaCleanup(c.env.DB, [{ key: posterKey, projectId }]);
+  // The queue entry is the fence: the adopting batch needs it to still exist with this version, so a sweep that claimed it (deleted it) first wins.
+  const queuedAt = Date.now();
+  await c.env.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) VALUES (?, NULL, ?, ?)").bind(posterKey, projectId, queuedAt).run();
   try { await c.env.MEDIA.put(posterKey, body, { httpMetadata: { contentType: "image/jpeg" } }); }
   catch (error) { await c.env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ?").bind(posterKey).run(); throw error; }
   const results = await c.env.DB.batch([
     c.env.DB.prepare(`
       UPDATE embedded_media SET poster_key = ?, updated_at = ?
       WHERE id = ? AND kind = 'video' AND state = 'pending' AND poster_key IS NULL AND uploader_id = ? AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)
-    `).bind(posterKey, Date.now(), mediaId, user.id, projectId),
+        AND EXISTS (SELECT 1 FROM embedded_media_cleanup WHERE storage_key = ? AND queued_at = ?)
+    `).bind(posterKey, Date.now(), mediaId, user.id, projectId, posterKey, queuedAt),
     c.env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ? AND (SELECT poster_key FROM embedded_media WHERE id = ?) = ?").bind(posterKey, mediaId, posterKey),
   ]);
   if ((results[0]!.meta.changes ?? 0) === 1) return c.body(null, 204);
