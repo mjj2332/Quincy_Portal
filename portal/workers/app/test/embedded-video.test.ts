@@ -239,6 +239,19 @@ describe("PUT …/poster (#494)", () => {
     expect(await queued(written)).not.toBeNull();
   });
 
+  it("does not adopt a poster whose cleanup entry the sweep claimed while the PUT was pending: the object is deleted and the row keeps no poster", async () => {
+    const { id } = await pending();
+    let written = "";
+    const racing = wrapMedia((target, property) => property === "put" ? async (key: string, ...rest: unknown[]) => {
+      written = key; const result = await (target.put as (...a: unknown[]) => Promise<unknown>).call(target, key, ...rest);
+      await database.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ?").bind(key).run();
+      return result;
+    } : undefined);
+    expect((await putPoster("member", id, jpegBytes(64), racing)).status).toBe(409);
+    expect((await mediaRow(id))!.poster_key).toBeNull();
+    expect(await database.MEDIA.head(written)).toBeNull(); expect(await queued(written)).toBeNull();
+  });
+
   it("leaves no orphan when the Project cascades away mid-write: with R2 refusing the delete, the key waits in the cleanup queue", async () => {
     const projectId = crypto.randomUUID(); const now = Date.now();
     await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Cascade', 'editing_autohdr', 0, ?, ?)").bind(projectId, now, now).run();
