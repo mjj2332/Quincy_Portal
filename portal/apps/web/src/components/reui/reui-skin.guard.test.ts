@@ -54,6 +54,9 @@ function readVendoredFiles(): Map<string, string> {
 
 const DARK_VARIANT = /(?<![\w-])dark:[^\s"'`]*/g;
 const SHADOW_SCALE = /[^\s"'`]*(?<![\w-])shadow-(?:2xs|xs|sm|md|lg|xl|2xl)(?![\w-])/g;
+// Base UI emits `data-orientation="…"`, never a bare `data-vertical` / `data-horizontal` attribute, so the
+// registry's `data-vertical:` / `data-horizontal:` variants match nothing (the 2026-09-28 sweep; #491 re-introduced one).
+const BARE_ORIENTATION_VARIANT = /(?<![\w-])(?:[\w-]+:)*data-(?:vertical|horizontal):[^\s"'`]*/g;
 const BLACK_WHITE_PAINT = /[^\s"'`]*(?<![\w-])bg-(?:black|white)(?![\w-])[^\s"'`]*/g;
 
 /**
@@ -116,6 +119,11 @@ describe("detectors (planted fixtures)", () => {
     expect(offenders(fixture, SHADOW_SCALE)).toEqual(["planted.tsx: hover:shadow-xs", "planted.tsx: shadow-md"]);
   });
 
+  it("finds a bare data-vertical:/data-horizontal: variant, but not the data-[orientation=…] form", () => {
+    const planted = new Map([["planted.tsx", stripComments('cn("data-vertical:self-center group-hover:data-horizontal:h-px data-[orientation=vertical]:self-center")')]]);
+    expect(offenders(planted, BARE_ORIENTATION_VARIANT)).toEqual(["planted.tsx: data-vertical:self-center", "planted.tsx: group-hover:data-horizontal:h-px"]);
+  });
+
   it("finds a ring width under a focus variant, but not a colour, ring-0 or an unfocused ring", () => {
     const planted = new Map([
       ["planted.tsx", stripComments('cn("focus-within:ring-3 focus-visible:ring-2 has-[>[data-slot=field]]:has-[:focus-visible]:ring-3 group-focus:ring peer-focus-visible:ring-[3px] focus-visible:ring-3! focus:!ring-2 focus-visible:ring-[length:var(--border-width-bold)] focus:ring-[3px]!")')],
@@ -145,7 +153,15 @@ describe("components/reui/ (#239)", () => {
   it("reads the whole tree, subdirectories included", () => {
     expect(files.has("badge.tsx")).toBe(true);
     expect(files.has("gantt/gantt-view.tsx")).toBe(true);
+    // #491: the vendored rich-text-editor-2 subset is inside every detector below (each one is shown
+    // to fail on a planted `dark:` / `shadow-md` / `bg-black/10` in this tree).
+    expect(files.has("rich-text-editor/rich-text-link.tsx")).toBe(true);
+    expect(files.has("rich-text-editor/rich-text-toolbar.tsx")).toBe(true);
     expect([...files.keys()].some((name) => name.includes(".test."))).toBe(false);
+  });
+
+  it("carries no bare data-vertical:/data-horizontal: variant (Base UI emits data-orientation)", () => {
+    expect(offenders(files, BARE_ORIENTATION_VARIANT)).toEqual([]);
   });
 
   it("carries no dark: variant", () => {
