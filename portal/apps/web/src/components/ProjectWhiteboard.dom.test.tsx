@@ -27,6 +27,7 @@ const board = vi.hoisted(() => ({
   handlers: null as unknown,
   scene: [] as Array<Record<string, unknown>>,
   send: null as null | ((batch: readonly unknown[]) => Promise<void>),
+  sentBatches: [] as unknown[][],
   sentPresence: [] as unknown[],
   deferReady: false,
   props: null as null | { readOnly?: boolean; onSave?: () => Promise<void | "skipped">; onElements?: (e: unknown[]) => void; onPresence?: (p: unknown) => void; onReady?: (c: unknown) => void },
@@ -36,6 +37,7 @@ const board = vi.hoisted(() => ({
   initPeers: [] as unknown[],
   initElements: [] as unknown[],
   adopted: [] as Array<{ arrived: unknown[]; appliedBefore: number }>,
+  localApplied: [] as unknown[][],
   editingId: null as string | null,
 }));
 vi.mock("../lib/whiteboard-socket", () => ({
@@ -43,7 +45,7 @@ vi.mock("../lib/whiteboard-socket", () => ({
     board.handlers = handlers;
     queueMicrotask(() => { const h = handlers as Handlers; h.onConnection("open"); h.onInit({ mode: board.initMode, elements: board.initElements, sessionId: "me", peers: board.initPeers as WhiteboardPeer[] }, false); });
     return {
-      send: (batch: readonly unknown[]) => { board.log.push("send"); return board.send ? board.send(batch) : Promise.resolve(); },
+      send: (batch: readonly unknown[]) => { board.log.push("send"); board.sentBatches.push([...batch]); return board.send ? board.send(batch) : Promise.resolve(); },
       sendPresence: (state: unknown) => { board.sentPresence.push(state); },
       close: () => { board.log.push("close"); },
     };
@@ -58,6 +60,14 @@ const controller = () => ({
     const taken = remote.filter((entry) => entry.id !== board.editingId);
     const ids = new Set(taken.map((entry) => entry.id));
     board.scene = [...board.scene.filter((entry) => !ids.has(entry.id)), ...taken];
+    return board.scene;
+  },
+  // #499: the editor's own deletion, and its merge as the person's own change (never recorded as remote).
+  author: (element: Record<string, unknown>, updates: Record<string, unknown>) => ({ ...element, ...updates, version: (element.version as number) + 1, versionNonce: 999 }),
+  applyLocal: (local: Array<Record<string, unknown>>) => {
+    board.log.push("applyLocal"); board.localApplied.push(local);
+    const ids = new Set(local.map((entry) => entry.id));
+    board.scene = [...board.scene.filter((entry) => !ids.has(entry.id)), ...local];
     return board.scene;
   },
   setCollaborators: (people: Collaborator[]) => { board.collaborators.push(people); },
@@ -87,10 +97,35 @@ async function mount() {
 }
 
 beforeEach(() => {
-  Object.assign(board, { log: [], handlers: null, scene: [], send: null, sentPresence: [], deferReady: false, props: null, collaborators: [], applied: [], initMode: "edit", initPeers: [], initElements: [], adopted: [], editingId: null });
+  Object.assign(board, { log: [], handlers: null, scene: [], send: null, sentBatches: [], sentPresence: [], deferReady: false, props: null, collaborators: [], applied: [], initMode: "edit", initPeers: [], initElements: [], adopted: [], localApplied: [], editingId: null });
   onAccessFailure.mockReset(); onClose.mockReset();
 });
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); await Promise.resolve(); }); root = null; document.body.replaceChildren(); });
+
+describe("an element the editor drops with no tombstone is deleted by the person's own change (#499, re-plan 2)", () => {
+  it("authors the editor-style deletion at observation time, puts it on the board as a local change, and sends exactly it", async () => {
+    board.initElements = [el("a", 3), el("b", 1)]; board.scene = [el("a", 3), el("b", 1)];
+    await mount();
+    board.props!.onElements!([el("b", 1)]);                          // a resized to zero: the editor drops it with no tombstone
+    expect(board.localApplied).toEqual([[expect.objectContaining({ id: "a", isDeleted: true, version: 4, versionNonce: 999 })]]);
+    expect(board.applied).toEqual([]);                                // a local change, not a remote one
+    await act(async () => { await board.props!.onSave!(); });
+    const sent = (board.sentBatches as unknown[][]).flat() as Array<{ id: string; isDeleted?: boolean; version: number }>;
+    expect(sent).toEqual([expect.objectContaining({ id: "a", isDeleted: true, version: 4 })]);
+  });
+
+  it("deletes nothing at teardown, and nothing the server never held", async () => {
+    board.initElements = [el("a", 3)]; board.scene = [el("a", 3)];
+    await mount();
+    board.props!.onElements!([el("a", 3), el("fresh", 1)]);          // fresh was drawn here and never saved
+    board.props!.onElements!([el("a", 3)]);                           // and removed again before any save
+    expect(board.localApplied).toEqual([]);
+    const props = board.props!;
+    await act(async () => { root!.unmount(); await Promise.resolve(); }); root = null;
+    props.onElements!([]);                                            // the unmounting editor reports an empty scene
+    expect(board.localApplied).toEqual([]);
+  });
+});
 
 describe("remote elements (#499)", () => {
   it("merges another person's elements into the board and never sends them back", async () => {

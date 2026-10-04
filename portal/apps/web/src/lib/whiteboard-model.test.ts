@@ -5,6 +5,7 @@ import { normaliseRows, orderStored, reconcileRows, whiteboardElementSchema, whi
 import { adoptArrivedRevisions, interactingIds, mergeRemote, type MergeFns } from "./whiteboard-merge";
 import { createRemoteApplier } from "./whiteboard-remote";
 import { createWhiteboardSaver, type SavedElement, type ServerHold, type WhiteboardSaver } from "./whiteboard-saver";
+import { createVanishObserver, type VanishObserver } from "./whiteboard-vanish";
 
 /**
  * #499: the gate for stacking-order convergence. A seeded, randomised MODEL of the whole whiteboard: the real stored-row
@@ -17,6 +18,11 @@ import { createWhiteboardSaver, type SavedElement, type ServerHold, type Whitebo
  * and in array order (so Excalidraw's own index repair, which bumps revisions, can never fire); a merge changes no revision
  * and no pinned element's index (a pinned element is exactly what the server holds: the saver's `isStored`); an incoming
  * element is never re-indexed here; a flush transmits only what a person authored (never a repair).
+ * THE AUTHORED-SET ORACLE (re-plan 2): the saver never authors a revision. Every revision a person (or the editor-style vanish deletion, or an
+ * import numbered as `replaceContent` numbers it) authors is keyed (id, version, nonce) and deep-frozen at that moment; nothing the saver, the
+ * merge or the applier does can rewrite it. After every step: every tuple a client transmits was authored; every live tuple a client holds
+ * was authored (so it changes only by an authoring step or by a merge accepting someone's authored revision), with exactly the authored
+ * content; a vanish leaves the editor-style deletion on the board right after the change.
  * After every step, too: the world is FORKED (the saver's state is closure-private, so a fork is a deterministic replay of
  * the recorded steps in a fresh world), every pending save and message is drained, and then every client must show exactly
  * a fresh load of what is stored, and no genuine edit may have been lost. (Equality only holds after draining: an unsent
@@ -28,6 +34,7 @@ type El = SavedElement & { index: string; x: number; isDeleted: boolean };
 type Excalidraw = {
   reconcileElements: (l: never, r: never, a: never) => El[];
   restoreElements: (e: never, o: null) => El[];
+  newElementWith: (element: never, updates: Record<string, unknown>) => El;
 };
 let excalidraw: Excalidraw;
 let reconcileFn: (l: never, r: never, a: never) => El[];
@@ -73,17 +80,16 @@ class Client {
   inbound: ServerMessage[] = [];
   outbound: Array<{ seq: number; elements: SavedElement[] }> = [];
   pending = new Map<number, { resolve: () => void; reject: (error: Error) => void }>();
-  /** Every (id, nonce) a person authored on this client: the ONLY things a flush may transmit. */
+  /** Every (id, version, nonce) a person authored on this client. */
   authored = new Set<string>();
   log: Array<{ id: string; version: number; content: string; nonce: number; deleted: boolean; superseded?: boolean; sent?: boolean }> = [];
   seq = 0;
   /** The element being resized right now: Excalidraw keeps the local copy and the applier defers remote winners for it. */
   interacting: string | null = null;
-  /** Ids the editor dropped from the scene with no tombstone (a resize to zero size): the saver sends the synthetic deletion, which counts as authored. */
-  vanished = new Set<string>();
   /** The very object Excalidraw's appState (`resizingElement` / `newElement`) points at: the gesture's next pointer event mutates THIS, never a scene lookup. */
   held: El | null = null;
   saver!: WhiteboardSaver;
+  vanish!: VanishObserver;
   applier!: ReturnType<typeof createRemoteApplier>;
 }
 
@@ -99,6 +105,10 @@ class World {
   readonly violations: string[] = [];
   /** Revisions authored on the server itself (legacy rows): they are genuine content too. */
   readonly serverAuthored: Array<{ id: string; version: number; content: string; nonce: number; deleted: boolean }> = [];
+  /** Every revision anyone authored, keyed (id, version, nonce), deep-frozen at the moment of authoring: the immutable oracle. */
+  readonly authoredRevisions = new Map<string, Readonly<{ id: string; version: number; versionNonce: number; isDeleted: boolean; x: unknown }>>();
+  /** A vanish step's expectation: right after the change the scene holds the editor-style deletion of exactly this revision (or nothing, when the server could not hold the id). */
+  expectedDeletion: { c: number; id: string; version: number | null } | null = null;
   /** The id most recently authored by anyone: the generator aims concurrent edits, deletes and reorders at it so nonce tiebreaks actually happen. */
   hot: string | undefined;
   messages = 0;
@@ -115,18 +125,21 @@ class World {
     const index = this.clients.length;
     this.clients.push(client);
     client.saver = createWhiteboardSaver({
-      getElements: () => client.scene,
+      // The saver is shown frozen copies of the scene: it can send them, never write to them.
+      getElements: () => client.scene.map((element) => Object.freeze({ ...element }) as SavedElement),
       send: (batch) => new Promise<void>((resolve, reject) => {
-        for (const element of batch) if (!client.authored.has(`${element.id}:${element.versionNonce}`)) this.violations.push(`client ${index} transmitted ${element.id} v${element.version} nonce ${element.versionNonce}, which nobody authored (a repair read as an edit)`);
-        for (const element of batch) for (const entry of client.log) if (entry.id === element.id && entry.nonce === element.versionNonce) entry.sent = true;
+        for (const element of batch) if (!this.authoredRevisions.has(`${element.id}:${element.version}:${element.versionNonce}`)) this.violations.push(`client ${index} transmitted ${element.id} v${element.version} nonce ${element.versionNonce}, which nobody authored (a revision the saver or a repair invented)`);
+        for (const element of batch) for (const entry of client.log) if (entry.id === element.id && entry.version === element.version && entry.nonce === element.versionNonce) entry.sent = true;
         client.seq += 1; this.messages += 1;
         client.pending.set(client.seq, { resolve, reject });
         client.outbound.push({ seq: client.seq, elements: clone([...batch]) });
       }),
-      // The saver raised a version above the scene's and wrote it into the scene element: the authored revision is that one now.
-      // The saver's tombstone for an element the editor dropped goes into the scene as a real deleted element, merged like the component's `applyRemote`.
-      onTombstoned: (tombstones) => { const absent = tombstones.filter((tomb) => !client.scene.some((held) => held.id === tomb.id)); for (const tomb of absent) if (!client.authored.has(`${tomb.id}:${tomb.versionNonce}`)) this.author(client, tomb as El); if (absent.length > 0) this.mergeInto(index, client, clone(absent) as unknown as StoredElement[], (element) => client.saver.hold(element as SavedElement)); },
-      onRaised: (raised) => { for (const element of raised) for (const entry of client.log) if (entry.id === element.id && entry.nonce === element.versionNonce) entry.version = element.version; },
+    });
+    // The editor-style deletion of an element the editor dropped, authored at observation time and merged like the component's `applyLocal`.
+    client.vanish = createVanishObserver({
+      mayHold: client.saver.mayHold,
+      deletion: (last, patch) => { const deletion = excalidraw.newElementWith(last as never, { isDeleted: true, ...patch }); this.author(client, deletion); return deletion as SavedElement; },
+      install: (deletions) => { this.mergeInto(index, client, clone(deletions) as unknown as StoredElement[], (element) => client.saver.hold(element as SavedElement)); return client.scene as unknown as SavedElement[]; },
     });
     // The component's own remote path (`createRemoteApplier`), with Excalidraw's reconcile told what is being resized.
     client.applier = createRemoteApplier({
@@ -135,11 +148,13 @@ class World {
       setScene: () => undefined,
       getScene: () => client.scene as unknown as SavedElement[],
       interacting: () => client.interacting !== null,
+      settle: () => client.vanish.observe(client.scene),
     });
     const init = orderStored(this.store.all());
     client.scene = excalidraw.restoreElements(clone(init) as never, null);
     adoptArrivedRevisions(client.scene, init as never);
     client.saver.seed(clone(init) as unknown as SavedElement[]);
+    client.vanish.observe(client.scene);                       // the editor's first change event, at load
   }
 
   /** A table written before indices were unique, then the Durable Object's wake: normalise, tell every open socket. */
@@ -151,6 +166,7 @@ class World {
       const stored = { ...rect(row.id, 1, row.nonce, { x: row.x }), ...(index === undefined ? {} : { index }) } as StoredElement;
       this.rows.set(row.id, stored);
       this.serverAuthored.push({ id: row.id, version: 1, content: contentOf(stored), nonce: row.nonce, deleted: false });
+      this.freezeRevision(stored as unknown as El);
     }
     // The wake normalises, then tells every open socket. A row that was already unique changes nothing, but the clients in this
     // model have never seen a row inserted behind their back, so the rows inserted here reach them as stored too.
@@ -160,8 +176,15 @@ class World {
     if (inserted.length > 0) for (const client of this.clients) client.inbound.push({ type: "elements", elements: clone(inserted) });
   }
 
+  /** Records a revision as authored: keyed (id, version, nonce), and a deep-frozen snapshot nothing can rewrite. */
+  private freezeRevision(element: El) {
+    const key = `${element.id}:${element.version}:${element.versionNonce}`;
+    if (!this.authoredRevisions.has(key)) this.authoredRevisions.set(key, Object.freeze({ id: element.id, version: element.version, versionNonce: element.versionNonce, isDeleted: element.isDeleted === true, x: element.x }));
+  }
+
   private author(client: Client, element: El) {
-    client.authored.add(`${element.id}:${element.versionNonce}`);
+    this.freezeRevision(element);
+    client.authored.add(`${element.id}:${element.version}:${element.versionNonce}`);
     client.log.push({ id: element.id, version: element.version, content: contentOf(element), nonce: element.versionNonce, deleted: element.isDeleted === true });
     this.hot = element.id;
   }
@@ -199,9 +222,19 @@ class World {
 
   /** Runs one step. Returns false when it does not apply in this world (a replay that has diverged skips it). */
   async execute(step: Step): Promise<boolean> {
+    const before = this.clients.map((client) => new Map(client.scene.map((element) => [element.id, `${element.version}:${element.versionNonce}`])));
+    this.expectedDeletion = null;
     const done = await this.run(step);
-    for (const client of this.clients) { client.saver.sync(); client.applier.replay(); }           // the editor's change event
+    for (const client of this.clients) { client.vanish.observe(client.scene); client.applier.replay(); }           // the editor's change event
     await tick();
+    const expected = this.expectedDeletion as World["expectedDeletion"];
+    if (expected) {
+      const scene = this.clients[expected.c]!.scene.find((element) => element.id === expected.id);
+      if (expected.version === null) { if (scene) this.violations.push(`client ${expected.c}: ${expected.id} was never on the server, yet the scene holds it after a vanish`); }
+      else if (!scene || scene.isDeleted !== true || scene.version !== expected.version) this.violations.push(`client ${expected.c}: after the vanish of ${expected.id} the scene holds ${scene ? `v${scene.version} deleted=${String(scene.isDeleted)}` : "nothing"}, expected the editor-style deletion v${expected.version}`);
+    }
+    // No live revision changes except by an authoring step or by a merge accepting an authored one: whatever a client holds now, somebody authored.
+    this.clients.forEach((client, c) => { for (const element of client.scene) { const key = `${element.version}:${element.versionNonce}`; if (before[c]!.get(element.id) !== key && !this.authoredRevisions.has(`${element.id}:${key}`)) this.violations.push(`client ${c}: ${element.id} moved to v${element.version}/${element.versionNonce}, which nobody authored`); } });
     return done;
   }
 
@@ -254,15 +287,19 @@ class World {
         // An older scene file is loaded over the board: whatever the board held under this id (a tombstone included) is replaced by a version 1 copy.
         if (client.held?.id === step.id) return false;
         const rest = client.scene.filter((element) => element.id !== step.id);
-        const element = excalidraw.restoreElements([rect(step.id, 1, step.nonce, { index: generateKeyBetween(rest.at(-1)?.index ?? null, null), x: step.x })] as never, null)[0]!;
-        client.scene = sortScene([...rest, element]); client.vanished.delete(step.id);
+        const previous = client.scene.find((element) => element.id === step.id);
+        const incoming = excalidraw.restoreElements([rect(step.id, 1, step.nonce, { index: generateKeyBetween(rest.at(-1)?.index ?? null, null), x: step.x })] as never, null)[0]!;
+        // replaceContent's numbering: above what the board holds (a deletion included), authored with a fresh nonce.
+        const element = previous ? { ...incoming, version: Math.max(incoming.version, previous.version) + 1, versionNonce: step.nonce } : incoming;
+        client.scene = sortScene([...rest, element]);
         for (const entry of client.log) if (entry.id === step.id) entry.superseded = true;   // what the board held before is replaced, so what was never sent of it is no longer anyone's
         this.author(client, element); return true;
       }
       case "vanish": {
         const element = client.scene.find((candidate) => candidate.id === step.id);
         if (!element || element.isDeleted || client.held?.id === step.id) return false;
-        client.scene = client.scene.filter((candidate) => candidate !== element); client.vanished.add(step.id);
+        this.expectedDeletion = { c: step.c, id: step.id, version: client.saver.mayHold(step.id) ? element.version + 1 : null };
+        client.scene = client.scene.filter((candidate) => candidate !== element);
         for (const entry of client.log) if (entry.id === step.id) entry.superseded = true;   // the person removed it: what they authored before is no longer theirs to have kept
         return true;
       }
@@ -306,7 +343,7 @@ class World {
   async drain() {
     for (let round = 0; round < 400; round += 1) {
       const before = this.messages;
-      for (const client of this.clients) { client.interacting = null; client.held = null; client.saver.sync(); client.applier.replay(); }     // the person lets go
+      for (const client of this.clients) { client.interacting = null; client.held = null; client.vanish.observe(client.scene); client.applier.replay(); }     // the person lets go
       for (let c = 0; c < this.clients.length; c += 1) { this.clients[c]!.saver.flush().catch(() => undefined); await tick(); }
       let moved = true;
       while (moved) {
@@ -338,6 +375,11 @@ class World {
       else seen.set(row.index, row.id);
     }
     this.clients.forEach((client, c) => {
+      for (const element of client.scene) {
+        const authored = this.authoredRevisions.get(`${element.id}:${element.version}:${element.versionNonce}`);
+        if (!authored) found.push(`client ${c} holds ${element.id} v${element.version}/${element.versionNonce}, which nobody authored`);
+        else if (contentOf(element) !== contentOf(authored)) found.push(`client ${c} holds ${element.id} v${element.version}/${element.versionNonce} with content ${contentOf(element)}, but that revision was authored as ${contentOf(authored)}`);
+      }
       const indices = new Set<string>();
       client.scene.forEach((element, position) => {
         if (indices.has(element.index)) found.push(`client ${c} holds two elements at index ${element.index}`);
@@ -570,15 +612,26 @@ describe("model: named scenarios from the Sol and Codex reviews (#499)", () => {
     expect(world.rows.get("0")).toMatchObject({ x: 2, isDeleted: false });
   });
 
-  it("Sol round 13: an element resized to zero (synthetic deletion), re-imported at an older version, edited, then a reconnect keeps the edit", async () => {
+  it("Sol round 13: an element resized to zero (editor-style deletion at observation time), re-imported at an older version (numbered above it), edited, then a reconnect keeps the edit", async () => {
     const world = await play("sol13", { clients: 2, ids: ["e"], initial: [row("e", { kind: "fixed", index: "a0" }, 5)] }, script([
       edit(0, "e", 40, 400), flush(0), process_(0), deliver(0), deliver(1),
-      { op: "vanish", c: 0, id: "e" }, flush(0), process_(0), deliver(0), deliver(1),     // the synthetic deletion is stored
-      { op: "import", c: 0, id: "e", nonce: 11, x: 1 }, flush(0), process_(0), deliver(0), deliver(1),       // an older scene is imported: sent above the deletion
+      { op: "vanish", c: 0, id: "e" }, flush(0), process_(0), deliver(0), deliver(1),     // the deletion (v3) is on the board at once and is stored
+      { op: "import", c: 0, id: "e", nonce: 11, x: 1 }, flush(0), process_(0), deliver(0), deliver(1),       // an older scene is imported: authored v4, above the deletion
       edit(0, "e", 60, 600), { op: "reconnect", c: 0 }, deliver(0),
     ]));
     expect(world.rows.get("e")).toMatchObject({ isDeleted: false, x: 600 });
-    expect(world.clients[0]!.scene.find((element) => element.id === "e")).toMatchObject({ x: 600 });
+    expect(world.clients[0]!.scene.find((element) => element.id === "e")).toMatchObject({ x: 600, version: 5 });
+  });
+
+  it("re-plan 2: a local copy that beat the server's remote revision and is then removed is deleted above it (the server holds the id although the saver never sent it)", async () => {
+    const world = await play("beat-then-vanish", { clients: 2, ids: ["d", "a", "c"], initial: [] }, script([
+      { op: "import", c: 1, id: "a", nonce: 434715436, x: 569810 },
+      { op: "legacy", rows: [{ id: "a", index: { kind: "malformed", value: null }, nonce: 1778559496, x: 993303 }] },
+      deliver(1),
+      { op: "vanish", c: 1, id: "a" },
+    ]));
+    expect(world.rows.get("a")).toMatchObject({ isDeleted: true, version: 2 });
+    for (const client of world.clients) expect(client.scene.find((element) => element.id === "a")).toMatchObject({ isDeleted: true, version: 2 });
   });
 
   it("Sol round 9: A reorders e into x's index (v2/nonce 50, re-keyed by the server) while B deletes e (v2/nonce 40): the deletion wins in storage and on every tab", async () => {

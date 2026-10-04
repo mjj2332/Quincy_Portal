@@ -126,12 +126,18 @@ export function mergeRemote<E extends Revisioned>(local: readonly E[], remote: r
 
 /**
  * The first load: `initialData` went through Excalidraw's own restore, which repairs indices exactly as above. Puts the
- * scene's elements back at the revisions the server sent, in place, so nothing the server holds reads as an edit.
+ * scene's elements back at the revisions the server sent, in place, so nothing the server holds reads as an edit. Returns the elements it left
+ * alone because `edited` says the person has already changed them.
  */
-export function adoptArrivedRevisions(scene: readonly Revisioned[], arrived: readonly Revisioned[]): void {
+export function adoptArrivedRevisions(scene: readonly Revisioned[], arrived: readonly Revisioned[], edited: (element: Revisioned) => boolean = () => false): Revisioned[] {
   const byId = new Map(arrived.map((element) => [element.id, element]));
+  const left: Revisioned[] = [];
   for (const element of scene) {
     const incoming = byId.get(element.id);
-    if (incoming) setRevision(element, incoming);
+    // An element the person edited since the load carries THEIR revision (an edit can land before the shell's onReady): putting the server's back would
+    // erase it, the saver would see the stored key, and the edit would show Saved without ever being sent.
+    if (incoming && edited(element)) left.push(element);
+    else if (incoming) setRevision(element, incoming);
   }
+  return left;
 }

@@ -231,6 +231,12 @@ export type WhiteboardController = {
    * everything the sender did not mention and never bumps versions or tombstones. `hold` says what the server holds of each board element (the saver's `hold`): what it holds keeps its index, and an unsent or edited element in the way of an incoming index is moved (never changing a revision). Works in view-only mode too. Returns
    * every element now on the board, deleted ones included. */
   applyRemote: (elements: readonly unknown[], hold: (element: ExcalidrawElement) => ServerHold) => readonly ExcalidrawElement[]
+  /** QUINCY ADDITION #499: merges elements the PERSON authored (an editor-style deletion of an element the editor dropped) into the board, the way
+   * `applyRemote` does (never a raw append, whose index repair would bump a revision), but they are NOT remote: the board's change event reads
+   * them as the person's own edit, so the board is dirty and autosave sends them. Returns every element now on the board, deleted ones included. */
+  applyLocal: (elements: readonly unknown[], hold: (element: ExcalidrawElement) => ServerHold) => readonly ExcalidrawElement[]
+  /** QUINCY ADDITION #499: the editor's own `newElementWith`: a copy of `element` with `updates`, one version up and a fresh nonce. The only way a revision is authored outside the editor. */
+  author: (element: ExcalidrawElement, updates: Record<string, unknown>) => ExcalidrawElement
   /** QUINCY ADDITION #499: puts the board's elements back at the version and nonce in `arrived` (matched by id), in place.
    * The editor's own restore of `initialData` repairs fractional-index clashes by bumping revisions; call this once the
    * board is ready with what the server sent, so nothing the server already holds reads as an edit. */

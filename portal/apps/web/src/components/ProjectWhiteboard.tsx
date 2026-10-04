@@ -10,6 +10,7 @@ import { openWhiteboardSocket, type WhiteboardConnection, type WhiteboardInit, t
 import { interactingIds } from "../lib/whiteboard-merge";
 import { createRemoteApplier } from "../lib/whiteboard-remote";
 import { createWhiteboardSaver, type SavedElement, type WhiteboardSaver } from "../lib/whiteboard-saver";
+import { createVanishObserver, type VanishObserver } from "../lib/whiteboard-vanish";
 import { toCollaborator } from "../lib/whiteboard-collaborators";
 import { pushToast } from "../lib/toast-store";
 
@@ -50,6 +51,7 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
   const socketRef = useRef<WhiteboardSocket | null>(null);
   const controllerRef = useRef<WhiteboardController | null>(null);
   const saverRef = useRef<WhiteboardSaver | null>(null);
+  const vanishRef = useRef<VanishObserver | null>(null);
   // The editor's own API is empty by the time the board unmounts; the last change it reported is not.
   const elementsRef = useRef<ReadonlyArray<SavedElement>>([]);
   /** Set by the socket effect: merges what arrived before the editor was ready, and draws the peers. */
@@ -68,12 +70,16 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
     const saver = createWhiteboardSaver({
       getElements: () => elementsRef.current,
       send: (batch) => socket?.send(batch) ?? Promise.reject(new Error("The whiteboard is not connected.")),
-      // A version the saver raised is written into the scene element; the change tracker is told, so it does not read as an edit.
-      onRaised: (raised) => controllerRef.current?.adoptRevisions(raised),
-      // A tombstone the saver sends for an element the editor dropped is put on the board as a real deleted element, merged like a remote one
-      // (so it never reads as an edit and a stale remote edit of that element loses to it).
-      onTombstoned: (tombstones) => { const controller = controllerRef.current; if (controller) elementsRef.current = controller.applyRemote(tombstones, (element) => saver.hold(element as unknown as SavedElement)) as unknown as SavedElement[]; },
     });
+    // An element the editor dropped with no tombstone (a resize to zero size) is deleted the way the editor deletes, as soon as the change is seen:
+    // the deletion goes on the board as the person's own change (so autosave sends it), and the saver only ever sends what the scene holds.
+    const vanish = createVanishObserver({
+      mayHold: saver.mayHold,
+      ready: () => controllerRef.current !== null,
+      deletion: (last, patch) => controllerRef.current!.author(last as never, { isDeleted: true, ...patch }) as unknown as SavedElement,
+      install: (deletions) => { elementsRef.current = controllerRef.current!.applyLocal(deletions, (element) => saver.hold(element as unknown as SavedElement)) as unknown as SavedElement[]; return elementsRef.current; },
+    });
+    vanishRef.current = vanish;
     saverRef.current = saver;
     const peers = new Map<string, WhiteboardPeer>();
     let frameHandle: number | undefined;
@@ -87,6 +93,7 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
       merge: () => { const controller = controllerRef.current; return controller ? (remote, hold) => controller.applyRemote(remote, (element) => hold(element as unknown as SavedElement)) as unknown as SavedElement[] : null; },
       setScene: (scene) => { elementsRef.current = scene; },
       getScene: () => elementsRef.current,
+      settle: () => vanish.observe(elementsRef.current),
       interacting: () => { const controller = controllerRef.current; return controller ? interactingIds(controller.api.getAppState()).size > 0 : false; },
     });
     const applyRemote = remoteApplier.apply;
@@ -117,6 +124,7 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
     socket = opened;
     socketRef.current = opened;
     return () => {
+      vanish.stop();                                        // the editor is going away: whatever it no longer holds was not deleted
       // Best effort for closes that bypass the Close button (Esc, tab switch, navigation): send what is
       // left, then let the socket wait briefly for the acks. The Close button itself waits and reports.
       // The flush may queue behind a save in flight, so the socket closes only once it settles (bounded).
@@ -203,7 +211,7 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
                     background="grid"
                     onReady={(controller) => { controllerRef.current = controller; controller.adoptRevisions((init?.elements ?? []) as unknown as SavedElement[]); drainRemote.current(); }}
                     onPresence={sharePresence}
-                    onElements={(elements) => { elementsRef.current = elements as ReadonlyArray<SavedElement>; saverRef.current?.sync(); replayRemote.current(); }}
+                    onElements={(elements) => { elementsRef.current = elements as ReadonlyArray<SavedElement>; vanishRef.current?.observe(elementsRef.current); replayRemote.current(); }}
                     onSave={save}
                     onSaveStatusChange={setSaveStatus}
                     onToast={pushToast}

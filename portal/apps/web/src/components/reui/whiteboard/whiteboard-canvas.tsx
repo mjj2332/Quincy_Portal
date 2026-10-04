@@ -73,7 +73,7 @@ import type {
 import { cn } from "@/lib/utils"
 import { createChangeTracker } from "@/lib/whiteboard-changes"
 import { adoptArrivedRevisions, interactingIds, mergeRemote } from "@/lib/whiteboard-merge"
-import { planSceneDrop, pasteIsUnsupported, withoutUnsupported } from "@/lib/whiteboard-saver"
+import { planSceneDrop, pasteIsUnsupported, withoutUnsupported, type ServerHold } from "@/lib/whiteboard-saver"
 
 import "@excalidraw/excalidraw/index.css"
 
@@ -738,7 +738,7 @@ const tombstones = (elements: readonly OrderedExcalidrawElement[]) =>
     element.isDeleted ? element : newElementWith(element, { isDeleted: true })
   )
 
-function replaceContent(
+export function replaceContent(
   api: ExcalidrawImperativeAPI,
   content: WhiteboardContent,
   undoable: boolean
@@ -806,11 +806,13 @@ type ControllerHost = {
   editable: () => boolean
   /** QUINCY ADDITION #499: the element hash right after a remote merge, so the editor's own change event for it is not a local edit. */
   remoteApplied: (hash: number, taken: readonly { id: string; version: number; versionNonce: number }[]) => void
+  /** QUINCY ADDITION #499: has the person already changed this element since the load? */
+  edited?: (element: { id: string; version: number; versionNonce: number }) => boolean
 }
 
-function createController(
+export function createController(
   api: ExcalidrawImperativeAPI,
-  { root, arm, panel, library, editable, remoteApplied }: ControllerHost
+  { root, arm, panel, library, editable, remoteApplied, edited }: ControllerHost
 ): WhiteboardController {
   const libraryItem = (id: string) => library().find((item) => item.id === id)
   // QUINCY ADDITION #499: canonical (server / authored) index per element, apart from the one the renderer repaired it to.
@@ -827,6 +829,34 @@ function createController(
     } else {
       fitElements(api, elements, false, root())
     }
+  }
+
+  // QUINCY ADDITION #499: merges a batch into the board and returns every element now on it. Restore, reconcile and the index
+  // repair they do never change a revision (see whiteboard-merge.ts).
+  const mergeInto = (
+    batch: readonly unknown[],
+    hold: (element: ExcalidrawElement) => ServerHold
+  ) => {
+    const merged = mergeRemote(
+      api.getSceneElementsIncludingDeleted() as unknown as MergeElement[],
+      batch as never,
+      {
+        restore: (raw) => restoreElements(raw as never, null) as unknown as MergeElement[],
+        reconcile: (local, incoming) =>
+          reconcileElements(
+            local as never,
+            incoming as never,
+            api.getAppState()
+          ) as unknown as MergeElement[],
+      },
+      (element) => hold(element as never),
+      interactingIds(api.getAppState())
+    )
+    api.updateScene({
+      elements: merged as never,
+      captureUpdate: CaptureUpdateAction.NEVER,
+    })
+    return api.getSceneElementsIncludingDeleted()
   }
 
   return {
@@ -961,28 +991,8 @@ function createController(
     },
     // QUINCY ADDITION #499: other people's elements, merged by Excalidraw's own rule and kept out of Undo.
     applyRemote: (remote, hold) => {
-      // Restore, reconcile and the index repair they do never change a revision (see whiteboard-merge.ts).
-      const merged = mergeRemote(
-        api.getSceneElementsIncludingDeleted() as unknown as MergeElement[],
-        remote as never,
-        {
-          restore: (raw) => restoreElements(raw as never, null) as unknown as MergeElement[],
-          reconcile: (local, incoming) =>
-            reconcileElements(
-              local as never,
-              incoming as never,
-              api.getAppState()
-            ) as unknown as MergeElement[],
-        },
-        (element) => hold(element as never),
-        interactingIds(api.getAppState())
-      )
-      api.updateScene({
-        elements: merged as never,
-        captureUpdate: CaptureUpdateAction.NEVER,
-      })
+      const scene = mergeInto(remote, hold)
       // handleChange must not read this as a local edit (a remote tick would flash "Unsaved changes").
-      const scene = api.getSceneElementsIncludingDeleted()
       // Only what the scene actually took of the batch is remote; an unreported local edit stays the person's own.
       const taken = new Map(remote.map((element) => [String((element as { id: unknown }).id), element as { version: number; versionNonce: number }]))
       remoteApplied(
@@ -994,16 +1004,20 @@ function createController(
       )
       return scene
     },
+    // QUINCY ADDITION #499: the person's own deletion of an element the editor dropped: merged like a remote one, never recorded as remote.
+    applyLocal: (elements, hold) => mergeInto(elements, hold),
+    author: (element, updates) => newElementWith(element, updates as never),
     adoptRevisions: (arrived) => {
       // The editor's own restore of `initialData` repaired indices and bumped revisions; the server's are what count.
+      // An element the person edited before this ran keeps its own revision: it is their edit, not a repair.
       const scene = api.getSceneElementsIncludingDeleted()
-      adoptArrivedRevisions(scene, arrived as never)
+      const left = new Set<unknown>(adoptArrivedRevisions(scene, arrived as never, edited))
       api.updateScene({
         elements: scene as never,
         captureUpdate: CaptureUpdateAction.NEVER,
       })
       const adopted = api.getSceneElementsIncludingDeleted()
-      remoteApplied(hashElementsVersion(adopted), adopted.filter((element) => arrived.some((a) => (a as { id: string }).id === element.id)))
+      remoteApplied(hashElementsVersion(adopted), adopted.filter((element) => !left.has(element) && arrived.some((a) => (a as { id: string }).id === element.id)))
     },
     select: (ids) => {
       const selectedElementIds: Record<string, true> = {}
@@ -2137,6 +2151,7 @@ export function WhiteboardCanvas({
           remoteApplied: (hash, taken) => {
             changesRef.current.remoteApplied(hash, [], taken)
           },
+          edited: (element) => changesRef.current.editedSinceLoad(element),
         })
       )
     },
