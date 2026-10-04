@@ -27,73 +27,110 @@ export function withoutUnsupported<T extends { type?: unknown; isDeleted?: boole
   const removed = elements.filter((element) => isUnsupportedElement(element) && !element.isDeleted).length;
   return { kept: removed === 0 ? elements : kept, removed };
 }
+/** What to do with files dropped on the board: a scene or library file is loaded through the controller
+ * (which tombstones what it replaces), and refused outright in view-only mode. Anything else is Excalidraw's. */
+export function planSceneDrop(files: Iterable<File>, viewOnly: boolean): "ignore" | "refuse" | { load: File } {
+  const file = [...files].find((item) => /\.excalidraw(lib)?$/i.test(item.name));
+  if (!file) return "ignore";
+  return viewOnly ? "refuse" : { load: file };
+}
 const encoder = new TextEncoder();
 const keyOf = (element: SavedElement) => `${element.version}:${element.versionNonce}`;
 
 /**
- * #498: decides what to send and when it counts as saved. The version recorded for an element is
- * the one that was TRANSMITTED (captured before the send), never whatever the live scene holds when
- * the ack arrives: an edit made while a save is in flight must still go out next time. Each batch is
- * recorded only after its own ack, and batches respect the protocol's element-count and byte caps.
+ * #498: decides what to send and when it counts as saved, around one invariant.
+ *
+ * `floor[id]` is the highest version ever TRANSMITTED or acked for that id (synthetic tombstones
+ * included), raised at transmit time, never at ack time. Whatever goes out is sent at a version above
+ * the floor, so a newer state always beats an older one the server may already hold: a tombstone for an
+ * element whose v5 is still in flight is v6, and an element re-imported at an old version after its
+ * tombstone is re-sent above it. Flushes run one after another, so removal diffing only ever happens
+ * once every earlier save has settled, against everything transmitted or acked. Each batch counts as
+ * stored only after its own ack, keyed by the SCENE element it came from, and batches respect the
+ * protocol's element-count and byte caps.
  */
 export function createWhiteboardSaver({ getElements, send }: {
   getElements: () => readonly SavedElement[];
   send: (batch: readonly SavedElement[]) => Promise<void>;
 }): WhiteboardSaver {
+  const floor = new Map<string, number>();
+  /** The scene key last acknowledged per id (a synthetic tombstone records its own key). */
   const stored = new Map<string, string>();
-  // Last known form of every element the server holds, so one that vanishes without a tombstone can be deleted.
+  /** Last form transmitted or acked per id; the base of a synthetic tombstone. */
   const known = new Map<string, SavedElement>();
-  const inflight = new Map<string, { key: string; promise: Promise<void> }>();
+  /** The scene key last transmitted per id and the version it went out at, so a retry is idempotent. */
+  const transmitted = new Map<string, { key: string; version: number }>();
+  let active: Promise<void> | null = null;
 
-  const batchesOf = (changed: readonly SavedElement[]): SavedElement[][] => {
-    const batches: SavedElement[][] = [];
-    let current: SavedElement[] = []; let bytes = ENVELOPE_BYTES;
-    for (const element of changed) {
+  const batchesOf = (changed: readonly SavedElement[]): number[][] => {
+    const batches: number[][] = [];
+    let current: number[] = []; let bytes = ENVELOPE_BYTES;
+    changed.forEach((element, index) => {
       const size = encoder.encode(JSON.stringify(element)).byteLength + 1;
       if (current.length > 0 && (current.length >= WHITEBOARD_MAX_ELEMENTS_PER_MESSAGE || bytes + size > WHITEBOARD_MAX_MESSAGE_BYTES)) { batches.push(current); current = []; bytes = ENVELOPE_BYTES; }
-      current.push(element); bytes += size;
-    }
+      current.push(index); bytes += size;
+    });
     if (current.length > 0) batches.push(current);
     return batches;
   };
 
-  return {
-    seed(elements) { for (const element of elements) { stored.set(element.id, keyOf(element)); known.set(element.id, { ...element }); } },
-    flush() {
-      // Image elements (tombstones too) are never sent: the server refuses the whole batch.
-      const candidates = getElements().filter((element) => !isUnsupportedElement(element));
-      const waits: Promise<void>[] = [];
-      // An id the server holds that is gone from the scene (a replaced canvas) gets a tombstone.
-      const present = new Set(candidates.map((element) => element.id));
-      const vanished: SavedElement[] = [];
-      for (const [id, last] of known) {
-        if (present.has(id) || last.isDeleted === true) continue;
-        vanished.push({ ...last, isDeleted: true, version: last.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31) });
-      }
+  const run = async (): Promise<void> => {
+    const scene = getElements().filter((element) => !isUnsupportedElement(element));
+    const present = new Set(scene.map((element) => element.id));
+    const outgoing: Array<{ element: SavedElement; sceneKey: string }> = [];
 
-      const changed = [...candidates, ...vanished].filter((element) => {
-        const key = keyOf(element);
-        if (stored.get(element.id) === key) return false;
-        const flying = inflight.get(element.id);
-        if (flying?.key === key) { waits.push(flying.promise); return false; }  // join it: its failure is ours
-        return true;
-      });
-      // Capture what is transmitted now; the scene objects may be mutated by later edits.
-      const sends = batchesOf(changed.map((element) => ({ ...element }))).map((batch) => {
-        const sentKeys = batch.map((element) => [element.id, keyOf(element)] as const);
-        const promise = (async () => {
-          try {
-            await send(batch);
-            for (const [id, key] of sentKeys) stored.set(id, key);
-            for (const element of batch) known.set(element.id, element);
-          } finally {
-            for (const [id, key] of sentKeys) if (inflight.get(id)?.key === key) inflight.delete(id);
-          }
-        })();
-        for (const [id, key] of sentKeys) inflight.set(id, { key, promise });
-        return promise;
-      });
-      return Promise.all([...waits, ...sends]).then(() => undefined);
+    for (const element of scene) {
+      const sceneKey = keyOf(element);
+      if (stored.get(element.id) === sceneKey) continue;
+      const before = transmitted.get(element.id);
+      const f = floor.get(element.id);
+      const version = before?.key === sceneKey ? before.version : f !== undefined && element.version <= f ? f + 1 : element.version;
+      outgoing.push({ element: { ...element, version }, sceneKey });
+    }
+    // Gone from the scene without a tombstone (a replaced canvas, an unacknowledged create that vanished).
+    for (const [id, last] of known) {
+      if (present.has(id)) continue;
+      if (last.isDeleted === true) {
+        // A tombstone the server has acknowledged is done; one that failed to send goes out again as it was.
+        if (stored.get(id) !== keyOf(last)) outgoing.push({ element: last, sceneKey: keyOf(last) });
+        continue;
+      }
+      const version = (floor.get(id) ?? last.version) + 1;
+      const tombstone = { ...last, isDeleted: true, version, versionNonce: Math.floor(Math.random() * 2 ** 31) };
+      outgoing.push({ element: tombstone, sceneKey: keyOf(tombstone) });
+    }
+
+    // Transmit time: raise the floor and remember what went out before anything is awaited.
+    for (const { element, sceneKey } of outgoing) {
+      floor.set(element.id, Math.max(floor.get(element.id) ?? 0, element.version));
+      known.set(element.id, element);
+      transmitted.set(element.id, { key: sceneKey, version: element.version });
+    }
+    const sends = batchesOf(outgoing.map(({ element }) => element)).map(async (indexes) => {
+      await send(indexes.map((index) => outgoing[index]!.element));
+      for (const index of indexes) { const { element, sceneKey } = outgoing[index]!; stored.set(element.id, sceneKey); }
+    });
+    const results = await Promise.allSettled(sends);
+    const failed = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failed) throw failed.reason;
+  };
+
+  return {
+    seed(elements) {
+      for (const element of elements) {
+        stored.set(element.id, keyOf(element));
+        known.set(element.id, { ...element });
+        floor.set(element.id, Math.max(floor.get(element.id) ?? 0, element.version));
+      }
+    },
+    flush() {
+      // One flush at a time: a later one joins the earlier save (and its failure) before it diffs.
+      const previous = active;
+      const current = (async () => { if (previous) await previous; await run(); })();
+      active = current;
+      const clear = () => { if (active === current) active = null; };
+      current.then(clear, clear);
+      return current;
     },
   };
 }

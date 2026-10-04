@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { WHITEBOARD_MAX_ELEMENTS_PER_MESSAGE, WHITEBOARD_MAX_MESSAGE_BYTES } from "@quincy/shared";
-import { createWhiteboardSaver, pasteIsUnsupported, withoutUnsupported, type SavedElement } from "./whiteboard-saver";
+import { createWhiteboardSaver, pasteIsUnsupported, withoutUnsupported, planSceneDrop, type SavedElement } from "./whiteboard-saver";
 
 const el = (id: string, version: number, extra: Record<string, unknown> = {}): SavedElement => ({ id, version, versionNonce: version * 7, ...extra });
 const deferred = () => { let resolve!: () => void; let reject!: (e: Error) => void; const promise = new Promise<void>((res, rej) => { resolve = res; reject = rej; }); return { promise, resolve, reject }; };
@@ -121,5 +121,64 @@ describe("whiteboard saver", () => {
     sent.length = 0;
     await saver.flush();                  // tombstones are recorded: nothing repeats
     expect(sent).toHaveLength(0);
+  });
+
+  it("tombstones a vanished element above a newer version still in flight", async () => {
+    let scene = [el("a", 2)];
+    const acks: Array<ReturnType<typeof deferred>> = []; const sent: SavedElement[][] = [];
+    const saver = createWhiteboardSaver({ getElements: () => scene, send: (batch) => { sent.push([...batch]); const d = deferred(); acks.push(d); return d.promise; } });
+    saver.seed(scene);
+    scene = [el("a", 5)];
+    const first = saver.flush();          // v5 in flight
+    scene = [];                           // then the canvas is replaced
+    const second = saver.flush();         // joins the first, then diffs
+    acks[0]!.resolve(); await first;
+    await Promise.resolve(); await Promise.resolve();
+    acks[1]!.resolve(); await second;
+    expect(sent.map((batch) => batch.map((e) => `${e.id}:${e.version}:${e.isDeleted === true}`))).toEqual([["a:5:false"], ["a:6:true"]]);
+  });
+
+  it("tombstones an element that was created and removed before its ack", async () => {
+    let scene = [el("n", 1)];
+    const acks: Array<ReturnType<typeof deferred>> = []; const sent: SavedElement[][] = [];
+    const saver = createWhiteboardSaver({ getElements: () => scene, send: (batch) => { sent.push([...batch]); const d = deferred(); acks.push(d); return d.promise; } });
+    const first = saver.flush();
+    scene = [];
+    const second = saver.flush();
+    acks[0]!.resolve(); await first;
+    await Promise.resolve(); await Promise.resolve();
+    acks[1]!.resolve(); await second;
+    expect(sent[1]).toMatchObject([{ id: "n", isDeleted: true, version: 2 }]);
+  });
+
+  it("re-sends an element re-imported at an old version above its synthetic tombstone", async () => {
+    let scene = [el("a", 4)];
+    const sent: SavedElement[][] = [];
+    const saver = createWhiteboardSaver({ getElements: () => scene, send: async (batch) => { sent.push([...batch]); } });
+    saver.seed(scene);
+    scene = [];
+    await saver.flush();                   // synthetic tombstone v5
+    scene = [el("a", 1, { versionNonce: 99 })];
+    await saver.flush();                   // older import must still win
+    expect(sent[0]).toMatchObject([{ id: "a", isDeleted: true, version: 5 }]);
+    expect(sent[1]).toMatchObject([{ id: "a", version: 6 }]);
+    expect(sent[1]![0]!.isDeleted).toBeUndefined();
+  });
+
+  it("retries a failed synthetic tombstone", async () => {
+    let scene = [el("a", 2)]; let fail = true; const sent: SavedElement[][] = [];
+    const saver = createWhiteboardSaver({ getElements: () => scene, send: async (batch) => { sent.push([...batch]); if (fail) { fail = false; throw new Error("x"); } } });
+    saver.seed(scene); scene = [];
+    await expect(saver.flush()).rejects.toThrow("x");
+    await saver.flush();
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toMatchObject([{ id: "a", isDeleted: true, version: 3 }]);
+  });
+
+  it("refuses a scene drop in view-only mode and plans a load in edit mode", () => {
+    const file = { name: "board.excalidraw" } as File;
+    expect(planSceneDrop([file], true)).toBe("refuse");
+    expect(planSceneDrop([file], false)).toEqual({ load: file });
+    expect(planSceneDrop([{ name: "photo.png" } as File], true)).toBe("ignore");
   });
 });

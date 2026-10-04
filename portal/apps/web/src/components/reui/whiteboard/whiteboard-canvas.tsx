@@ -70,7 +70,7 @@ import type {
   UIOptions,
 } from "@excalidraw/excalidraw/types"
 import { cn } from "@/lib/utils"
-import { pasteIsUnsupported, withoutUnsupported } from "@/lib/whiteboard-saver"
+import { planSceneDrop, pasteIsUnsupported, withoutUnsupported } from "@/lib/whiteboard-saver"
 
 import "@excalidraw/excalidraw/index.css"
 
@@ -795,11 +795,13 @@ type ControllerHost = {
   /** The host's panel handler, when it hosts the library and search itself. */
   panel: () => ((panel: WhiteboardPanel) => void) | undefined
   library: () => LibraryItems
+  /** False in view-only mode; checked again after the async parse, since the mode can change meanwhile. */
+  editable: () => boolean
 }
 
 function createController(
   api: ExcalidrawImperativeAPI,
-  { root, arm, panel, library }: ControllerHost
+  { root, arm, panel, library, editable }: ControllerHost
 ): WhiteboardController {
   const libraryItem = (id: string) => library().find((item) => item.id === id)
   const scrollTo = (ids?: readonly string[]) => {
@@ -840,6 +842,7 @@ function createController(
         api.getAppState(),
         api.getSceneElements()
       )
+      if (!editable()) throw new Error("The whiteboard is view only.")
       arm()
       if (result.type === MIME_TYPES.excalidrawlib) {
         const hostPanel = panel()
@@ -1986,6 +1989,7 @@ export function WhiteboardCanvas({
           arm,
           panel: hostPanel,
           library: libraryOf,
+          editable: () => !latest.current.viewOnly,
         })
       )
     },
@@ -1998,11 +2002,12 @@ export function WhiteboardCanvas({
     const root = rootRef.current
     if (!root || !controller) return
     const onDrop = (event: DragEvent) => {
-      const file = [...(event.dataTransfer?.files ?? [])].find((item) => /\.excalidraw(lib)?$/i.test(item.name))
-      if (!file) return
+      const plan = planSceneDrop(event.dataTransfer?.files ?? [], latest.current.viewOnly)
+      if (plan === "ignore") return
       event.preventDefault()
       event.stopPropagation()
-      void controller.load(file).catch(() => latest.current.onToast?.("That file could not be opened."))
+      if (plan === "refuse") return
+      void controller.load(plan.load).catch(() => latest.current.onToast?.("That file could not be opened."))
     }
     root.addEventListener("drop", onDrop, true)
     return () => root.removeEventListener("drop", onDrop, true)
