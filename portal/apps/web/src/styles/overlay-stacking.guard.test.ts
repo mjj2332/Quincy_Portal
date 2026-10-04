@@ -28,4 +28,9 @@ describe("overlay stacking contract", () => {
       expect(part).not.toMatch(/\bz-50\b/);
     }
   });
+  it("the dialog overlay forces its Backdrop (every dialog sits inside a sheet Root, so Base UI treats it as nested and skips the scrim otherwise; #221, #493)", () => {
+    const src = read("../components/reui/dialog.tsx");
+    const overlay = src.slice(src.indexOf("function DialogOverlay"), src.indexOf("function DialogContent"));
+    expect(overlay).toMatch(/\bforceRender\b/);
+  });
 });

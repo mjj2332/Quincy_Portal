@@ -20,6 +20,11 @@ import { XIcon } from "lucide-react"
  * opened from inside a sheet rendered underneath it, invisible. Equal z stacks the later-portalled
  * dialog on top. `overlay-stacking.guard.test.ts` keeps it that way.
  *
+ * Divergence (#493): the overlay passes `forceRender`, like `reui/alert-dialog.tsx` (#221). Every
+ * Portal page sits inside RailedShell's `Sheet` Root (and the Project sheet is another), so Base UI
+ * treats this dialog as nested and renders its Backdrop only when `forceRender || !nested`. Without
+ * it the scrim never appeared and the sheet stayed at full brightness behind the dialog.
+ *
  * NOTE: this repo already has a `components/reui/sheet.tsx` (base-nova's `sheet`, #56) that
  * covers most of the Portal's existing overlay needs. `dialog` is vendored separately here
  * because it is a `registryDependencies` entry of `@reui/gantt` (task/dependency editing
@@ -49,6 +54,8 @@ function DialogOverlay({
   return (
     <DialogPrimitive.Backdrop
       data-slot="dialog-overlay"
+      // Nested under a sheet Root, Base UI would skip the Backdrop (`forceRender || !nested`). See header.
+      forceRender
       className={cn(
         "fixed inset-0 isolate z-[var(--z-dialog)] bg-[var(--scrim-overlay)] duration-100 supports-backdrop-filter:backdrop-blur-[3px] data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
         className
