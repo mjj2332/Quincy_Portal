@@ -19,4 +19,13 @@ describe("overlay stacking contract", () => {
     expect(content).toContain("z-[var(--z-menu)]");
     expect(content).not.toMatch(/\bz-50\b/);
   });
+  it("the dialog overlay and content use the dialog token, never the registry's bare z-50 (a dialog opened from a sheet must stack above it)", () => {
+    const src = read("../components/reui/dialog.tsx");
+    const overlay = src.slice(src.indexOf("function DialogOverlay"), src.indexOf("function DialogContent"));
+    const content = src.slice(src.indexOf("function DialogContent"), src.indexOf("function DialogHeader"));
+    for (const part of [overlay, content]) {
+      expect(part).toContain("z-[var(--z-dialog)]");
+      expect(part).not.toMatch(/\bz-50\b/);
+    }
+  });
 });
