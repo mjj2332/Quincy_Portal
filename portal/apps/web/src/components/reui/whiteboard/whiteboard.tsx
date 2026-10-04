@@ -231,6 +231,8 @@ export type WhiteboardController = {
    * The editor's own restore of `initialData` repairs fractional-index clashes by bumping revisions; call this once the
    * board is ready with what the server sent, so nothing the server already holds reads as an edit. Their `index` is kept as the canonical one, apart from the renderer's repair. */
   adoptRevisions: (arrived: ReadonlyArray<{ id: string; version: number; versionNonce: number; index?: string | null }>) => void
+  /** QUINCY ADDITION #499: the elements the saver is about to transmit; the index they go out with is what the server stores, so it becomes their canonical index. */
+  noteTransmitted: (sent: readonly object[]) => void
   /** Selects the given elements, replacing the selection. */
   select: (ids: readonly string[]) => void
   /** Your panel through onPanelRequest when it is set, else the editor's own library sidebar. */

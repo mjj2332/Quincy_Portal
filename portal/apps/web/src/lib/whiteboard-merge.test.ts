@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createWhiteboardSaver, type SavedElement } from "./whiteboard-saver";
-import { adoptArrivedRevisions, createIndexLedger, mergeRemote, type IndexLedger, type MergeFns } from "./whiteboard-merge";
+import { adoptArrivedRevisions, createIndexLedger, mergeRemote, recordTransmitted, type IndexLedger, type MergeFns } from "./whiteboard-merge";
 
 /**
  * #499: another person's elements are merged into the board by Excalidraw's own `restoreElements` and
@@ -34,7 +34,7 @@ const loaded = (raw: Array<Record<string, unknown>>) => excalidraw.restoreElemen
 const merge = (scene: El[], remote: Array<Record<string, unknown>>) => mergeRemote(scene, remote as never, fns, ledger);
 const recordingSaver = (getElements: () => readonly SavedElement[]) => {
   const sent: SavedElement[][] = [];
-  return { sent, saver: createWhiteboardSaver({ getElements, send: async (batch) => { sent.push([...batch]); } }) };
+  return { sent, saver: createWhiteboardSaver({ getElements, send: async (batch) => { sent.push([...batch]); }, onTransmit: (batch) => recordTransmitted(ledger, batch) }) };
 };
 
 describe("documents the editor's behaviour (why the merge must put revisions back)", () => {
@@ -180,5 +180,37 @@ describe("mergeRemote orders by canonical indices, so a tab converges with a fre
     await saver.flush();
     expect(sent.flat()).toEqual([expect.objectContaining({ id: "a", index: "a2", version: 2 })]);
   });
-});
 
+  it("B12: a shape this tab saved is registered, so receiving a and c afterwards orders a,b,c like a fresh tab, and nothing more is sent", async () => {
+    const b = rect("b", 1, 6, { index: "a0" });
+    let scene = loaded([b]);                                                          // authored here, concurrent with a and c
+    const { sent, saver } = recordingSaver(() => scene);
+    await saver.flush();
+    expect(sent.flat().map((element) => element.id)).toEqual(["b"]);
+    const rows = [rect("a", 1, 5, { index: "a0" }), rect("c", 1, 7, { index: "a0" })];
+    for (const row of rows) { scene = merge(scene, [row]); saver.adoptRemote([find(scene, row.id as string)]); }
+    expect(ids(scene)).toEqual(ids(fresh([b, ...rows])));
+    expect(ids(scene)).toEqual(["a", "b", "c"]);
+    sent.length = 0;
+    await saver.flush();
+    expect(sent.flat()).toEqual([]);
+  });
+
+  it("B13: a genuine edit sent with a repaired index makes that index canonical: a later remote merge orders like a fresh load of the stored rows", async () => {
+    const a = rect("a", 1, 5, { index: "a0" });
+    let scene = loaded([a]); adoptArrivedRevisions(scene, [a] as never, ledger);
+    const { sent, saver } = recordingSaver(() => scene);
+    saver.seed([a] as unknown as SavedElement[]);
+    scene = merge(scene, [rect("b", 1, 6, { index: "a0" })]);                          // b arrives at a's index: the renderer puts it at a1
+    saver.adoptRemote([find(scene, "b")]);
+    const repaired = find(scene, "b").index as string;
+    expect(repaired).not.toBe("a0");
+    scene = scene.map((element) => (element.id === "b" ? excalidraw.newElementWith(element as never, { x: 5 }) as El : element));   // a genuine edit of b
+    await saver.flush();
+    expect(sent.flat()).toEqual([expect.objectContaining({ id: "b", x: 5, index: repaired })]);   // the stored row now has the repaired index
+    const stored = sent.flat()[0]!;
+    const later = rect("0", 1, 9, { index: repaired });                                // a remote shape that ties with b's STORED index, sorting before it by id
+    scene = merge(scene, [later]);
+    expect(ids(scene)).toEqual(ids(fresh([a, stored as never, later])));
+  });
+});

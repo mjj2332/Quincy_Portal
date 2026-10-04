@@ -65,9 +65,12 @@ const keyOf = (element: SavedElement) => `${element.version}:${element.versionNo
  * stored only after its own ack, keyed by the SCENE element it came from, and batches respect the
  * protocol's element-count and byte caps.
  */
-export function createWhiteboardSaver({ getElements, send }: {
+export function createWhiteboardSaver({ getElements, send, onTransmit }: {
   getElements: () => readonly SavedElement[];
   send: (batch: readonly SavedElement[]) => Promise<void>;
+  /** #499: called at transmit time with everything about to be sent (before any await), so the board can record the
+   * indices the server is about to store. */
+  onTransmit?: (elements: readonly SavedElement[]) => void;
 }): WhiteboardSaver {
   const floor = new Map<string, number>();
   /** The scene key last acknowledged per id (a synthetic tombstone records its own key). */
@@ -125,6 +128,7 @@ export function createWhiteboardSaver({ getElements, send }: {
       known.set(element.id, element);
       transmitted.set(element.id, { key: sceneKey, version: element.version });
     }
+    onTransmit?.(outgoing.map(({ element }) => element));
     const sends = batchesOf(outgoing.map(({ element }) => element)).map(async (indexes) => {
       await send(indexes.map((index) => outgoing[index]!.element));
       // A remote edit adopted while this batch was in flight is newer than what this ack confirms: it stays recorded.

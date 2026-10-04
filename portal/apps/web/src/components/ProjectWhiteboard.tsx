@@ -66,6 +66,7 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
     let socket: WhiteboardSocket | null = null;
     const saver = createWhiteboardSaver({
       getElements: () => elementsRef.current,
+      onTransmit: (sent) => controllerRef.current?.noteTransmitted(sent),
       send: (batch) => socket?.send(batch) ?? Promise.reject(new Error("The whiteboard is not connected.")),
     });
     saverRef.current = saver;

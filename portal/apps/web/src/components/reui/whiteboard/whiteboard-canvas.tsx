@@ -71,7 +71,7 @@ import type {
   UIOptions,
 } from "@excalidraw/excalidraw/types"
 import { cn } from "@/lib/utils"
-import { adoptArrivedRevisions, createIndexLedger, mergeRemote } from "@/lib/whiteboard-merge"
+import { adoptArrivedRevisions, createIndexLedger, mergeRemote, recordTransmitted } from "@/lib/whiteboard-merge"
 import { planSceneDrop, pasteIsUnsupported, withoutUnsupported } from "@/lib/whiteboard-saver"
 
 import "@excalidraw/excalidraw/index.css"
@@ -984,6 +984,7 @@ function createController(
       remoteApplied(hashElementsVersion(scene))
       return scene
     },
+    noteTransmitted: (sent) => recordTransmitted(indexLedger, sent),
     adoptRevisions: (arrived) => {
       // The editor's own restore of `initialData` repaired indices and bumped revisions; the server's are what count.
       const scene = api.getSceneElementsIncludingDeleted()

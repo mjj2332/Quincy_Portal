@@ -101,3 +101,15 @@ export function adoptArrivedRevisions(scene: readonly Revisioned[], arrived: rea
     if (canonical !== undefined && rendered !== undefined) ledger.set(element.id, { canonical, rendered });
   }
 }
+
+/**
+ * Elements this tab just transmitted: the index they went out with is exactly what the server stored, so it is canonical
+ * (a repair the renderer made before the genuine edit that sent it is part of that edit). Called at transmit time, because
+ * a loser's correction arrives before its ack and replaces the entry through `mergeRemote`.
+ */
+export function recordTransmitted(ledger: IndexLedger, elements: readonly object[]): void {
+  for (const element of elements) {
+    const id = (element as { id?: unknown }).id; const index = indexOf(element);
+    if (typeof id === "string" && index !== undefined) ledger.set(id, { canonical: index, rendered: index });
+  }
+}
