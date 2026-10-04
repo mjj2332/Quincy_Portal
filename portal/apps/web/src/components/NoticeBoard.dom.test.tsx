@@ -307,6 +307,25 @@ describe("NoticeBoard disclosure and polling", () => {
     expect(sent.content.content.find((block) => block.type === "linkPreview")).toEqual({ type: "linkPreview", attrs: { previewId: card.attrs.previewId } });
   });
 
+  it("cannot remove a card while a Save is pending: Remove is disabled, a click leaves the card, and the saved post still has it (#497)", async () => {
+    const card = { type: "linkPreview" as const, attrs: { previewId: "22222222-2222-4222-8222-222222222222", url: "https://example.test/a", title: "A page", description: "About it", siteName: "Example", imageMediaId: null } };
+    const withCard: NoticeBoardPost = { ...oldPost, content: { ...doc("Old notice"), content: [...doc("Old notice").content, card] } };
+    apiGetMock.mockImplementation(async (path: string) => path.includes("read-state") ? { marker: null, latest: null, unreadCount: 0 } : { posts: [withCard], hasMore: false, nextCursor: null });
+    let finish!: (value: unknown) => void;
+    apiPatchMock.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const host = mount();
+    await render(<NoticeBoard currentUserId="user-a" />);
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit")!);
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
+    const remove = host.querySelector<HTMLButtonElement>('[data-testid="link-preview-remove"]')!;
+    expect(remove.disabled).toBe(true);
+    await click(remove);
+    expect(host.querySelectorAll('[data-testid="link-preview-card-editor"]')).toHaveLength(1);
+    await act(async () => { finish({ post: { ...withCard, editedAt: "2026-07-28T00:01:00.000Z" }, readState: { marker: null, latest: null, unreadCount: 0 } }); await Promise.resolve(); await Promise.resolve(); });
+    await flush();
+    expect(host.querySelectorAll('[data-testid="link-preview-card"]')).toHaveLength(1);
+  });
+
   it("hides Edit/Delete on the post being edited, keeps them on other posts, and restores them on Cancel", async () => {
     apiGetMock.mockResolvedValue({ posts: [{ ...newPost, authorId: "user-a" }, oldPost] });
     const host = mount();
