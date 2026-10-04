@@ -298,7 +298,7 @@ type TeamChipView = { dataState: TeamChipDataState; isPending: boolean; messageI
  *  (collect mode, #487). Presentation only: callers own the value, the mutations and the chip
  *  state. `lockedKeys` chips (New shoot's Default editors) render without a remove control and
  *  with a visible "Default editor" tag; their list items are disabled. */
-function TeamComboboxView({ groups, value, onValueChange, visible, hiddenCount, expanded, onToggleExpanded, chipProps, pending, lockedKeys, inputRef, inputDisabled, rowClassName, contentRef, blockEnterSubmit = false, truncateDescriptions = false, inputId }: {
+function TeamComboboxView({ groups, value, onValueChange, visible, hiddenCount, expanded, onToggleExpanded, chipProps, pending, lockedKeys, inputRef, inputDisabled, rowClassName, contentRef, blockEnterSubmit = false, truncateDescriptions = false, formControl = false, inputId }: {
   groups: TeamGroup[];
   value: TeamOption[];
   onValueChange: (next: TeamOption[], eventDetails: ComboboxPrimitive.Root.ChangeEventDetails) => void;
@@ -317,6 +317,8 @@ function TeamComboboxView({ groups, value, onValueChange, visible, hiddenCount, 
   blockEnterSubmit?: boolean;
   /** Keeps each list row to one line when the list is the 300px minimum (New shoot's content-sized anchor); the full text stays in `title`. */
   truncateDescriptions?: boolean;
+  /** New shoot: sized like the form's other inputs (38px, exactly 44px at narrow) instead of the header's control height. */
+  formControl?: boolean;
   /** Lets an outside `<label for>` name the search input. */
   inputId?: string;
 }) {
@@ -342,7 +344,7 @@ function TeamComboboxView({ groups, value, onValueChange, visible, hiddenCount, 
     {/* #213 follow-up: content-sized like prototype 2a's Team `.sel` (chips · Add… · chevron), not a
      *  box stretched to its cell — `w-fit` sizes to the chips and `max-w-full` still wraps them
      *  inside the cell. */}
-    <ComboboxChips ref={anchor} className={cn("w-fit max-w-full rounded-[var(--radius-pill)] max-[721px]:min-h-[44px]", rowClassName)}>
+    <ComboboxChips ref={anchor} className={cn("w-fit max-w-full rounded-[var(--radius-pill)] max-[721px]:min-h-[44px]", formControl && "min-h-[38px]", rowClassName)}>
       <ComboboxValue>
         {() => visible.map((option) => {
           const { dataState, isPending, messageId, name, roleTag } = chipProps(option);
@@ -350,7 +352,7 @@ function TeamComboboxView({ groups, value, onValueChange, visible, hiddenCount, 
           return <ComboboxChip
             key={option.key}
             showRemove={!locked}
-            className={cn(TEAM_CHIP, teamChipStateClasses(dataState))}
+            className={cn(TEAM_CHIP, teamChipStateClasses(dataState), formControl && "max-[721px]:min-h-0")}
             data-testid={`project-member-${option.key}`}
             data-state={dataState}
             aria-busy={isPending || undefined}
@@ -401,12 +403,12 @@ function TeamComboboxView({ groups, value, onValueChange, visible, hiddenCount, 
           <ComboboxLabel>{group.label}</ComboboxLabel>
           <ComboboxCollection>
             {(option: TeamOption) => <ComboboxItem key={option.key} value={option} disabled={pending.has(option.key) || lockedKeys.has(option.key)} className="max-[721px]:min-h-[44px]">
-              <Item size="xs" className="p-0">
-                <Avatar size="sm" className="size-6">
+              <Item size="xs" className="p-0 flex-nowrap">
+                <Avatar size="sm" className="size-6 shrink-0">
                   <AvatarFallback>{initials(option.name, option.email)}</AvatarFallback>
                 </Avatar>
-                <ItemContent>
-                  <ItemTitle className="whitespace-nowrap">{displayName(option.name, option.email)}</ItemTitle>
+                <ItemContent className="min-w-0">
+                  <ItemTitle className="block max-w-full truncate">{displayName(option.name, option.email)}</ItemTitle>
                   <ItemDescription className={truncateDescriptions ? "truncate" : undefined} title={truncateDescriptions ? `${option.email} · ${globalRoleLabel(option.globalRole)}` : undefined}>{option.email} · {globalRoleLabel(option.globalRole)}</ItemDescription>
                 </ItemContent>
               </Item>
@@ -695,6 +697,7 @@ export function ProjectTeamCollectCombobox({ photographerUserIds, editorUserIds,
       rowClassName={rowClassName}
       blockEnterSubmit
       truncateDescriptions
+      formControl
       inputId={inputId}
     />
   </div>;

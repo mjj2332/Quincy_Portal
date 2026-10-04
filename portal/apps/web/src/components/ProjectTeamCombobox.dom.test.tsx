@@ -937,6 +937,24 @@ describe("ProjectTeamCollectCombobox (#487)", () => {
     expect(description.getAttribute("title")).toBe("ari@example.test · Photographer");
   });
 
+  it("keeps each list row on one line: no wrapping row, and a shrinkable text column (browser pass geometry, #487)", async () => {
+    const host = await mountCollect();
+    await openPicker(host);
+    const row = options().find((option) => option.textContent?.includes("Ari Photographer"))!.firstElementChild as HTMLElement;
+    expect(row.className.split(/\s+/)).toContain("flex-nowrap");
+    expect(row.className.split(/\s+/)).not.toContain("flex-wrap");
+    const column = [...row.children].find((child) => child.textContent?.includes("ari@example.test")) as HTMLElement;
+    expect(column.className.split(/\s+/)).toContain("min-w-0");
+  });
+
+  it("sizes the control like the form's inputs: 38px, exactly 44px at narrow, with chips not adding height there", async () => {
+    const host = await mountCollect({ photographerUserIds: [photographer.id], editorUserIds: [] });
+    const chip = host.querySelector<HTMLElement>(`[data-testid="project-member-photographer:${photographer.id}"]`)!;
+    const box = chip.parentElement!;
+    expect(box.className.split(/\s+/)).toEqual(expect.arrayContaining(["min-h-[38px]", "max-[721px]:min-h-[44px]"]));
+    expect(host.querySelector(`[data-testid="project-member-photographer:${photographer.id}"]`)!.className.split(/\s+/)).toContain("max-[721px]:min-h-0");
+  });
+
   it("says it is loading while candidates load", async () => {
     apiGetMock.mockReset().mockReturnValue(new Promise(() => undefined));
     const host = await mountCollect();
