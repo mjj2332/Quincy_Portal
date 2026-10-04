@@ -882,7 +882,7 @@ export function selectItemProblems(classes: string): string[] {
       !/(?:^|\s)focus-visible:!outline-offset-\[-\d+px\]/.test(classes)) {
     problems.push("outline offset must be an important negative (inset) offset");
   }
-  if (/(?:^|\s)(?:focus(?:-visible)?:)?outline-(?:none|hidden)(?:\s|$)/.test(classes)) {
+  if (/(?:^|\s)(?:focus(?:-visible)?:)?!?outline-(?:none|hidden)!?(?:\s|$)/.test(classes)) {
     problems.push("suppresses the focus outline");
   }
   if (/focus-visible:ring-/.test(classes)) problems.push("adds a second (ring) focus indicator");
@@ -929,6 +929,11 @@ describe("guard: reui/select popup is elevated and its items show one inset indi
     expect(selectItemProblems(NO_INSET)).toEqual(["outline offset must be an important negative (inset) offset"]);
     const SUPPRESSED = "focus:bg-accent focus-visible:!outline-[color:var(--accent-on)] focus-visible:!-outline-offset-4 outline-none";
     expect(selectItemProblems(SUPPRESSED)).toEqual(["suppresses the focus outline"]);
+    // The important forms are the ones that can actually beat the unlayered global outline rule.
+    for (const suppress of ["focus-visible:!outline-none", "!outline-hidden", "focus:outline-none!"]) {
+      const IMPORTANT = "focus:bg-accent focus-visible:!outline-[color:var(--accent-on)] focus-visible:!-outline-offset-4 " + suppress;
+      expect(selectItemProblems(IMPORTANT)).toEqual(["suppresses the focus outline"]);
+    }
     const GOOD = "focus:bg-accent focus-visible:!outline-[color:var(--accent-on)] focus-visible:!-outline-offset-4";
     expect(selectItemProblems(GOOD)).toEqual([]);
   });
