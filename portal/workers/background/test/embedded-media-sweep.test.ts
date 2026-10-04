@@ -220,3 +220,34 @@ describe("embedded media sweep (#493)", () => {
     expect(await sweepEmbeddedMedia(env, now)).toEqual({ scanned: 0, reclaimed: 0, failed: 0, drained: 0 });
   });
 });
+
+describe("embedded media sweep claims keys it deletes (#494)", () => {
+  /** Wraps the database so a poster lands between the sweep's read and its claim, the window a video upload's poster PUT can hit. */
+  const lateWriter = (afterReadBeforeClaim: () => Promise<void>) => ({ ...env, DB: new Proxy(database.DB, { get: (target, property) => {
+    if (property !== "prepare") { const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value; }
+    return (sql: string) => {
+      const statement = target.prepare(sql);
+      if (!/UPDATE embedded_media SET state = 'detached', detached_at = 0/.test(sql)) return statement;
+      return new Proxy(statement, { get: (inner, key) => {
+        if (key === "bind") return (...values: unknown[]) => { const bound = inner.bind(...values); return new Proxy(bound, { get: (b, k) => {
+          if (k === "run" || k === "all") return async () => { await afterReadBeforeClaim(); return (b as unknown as Record<string, () => Promise<unknown>>)[k as string]!(); };
+          const v = Reflect.get(b, k); return typeof v === "function" ? v.bind(b) : v;
+        } }); };
+        const v = Reflect.get(inner, key); return typeof v === "function" ? v.bind(inner) : v;
+      } });
+    };
+  } }) });
+
+  it("deletes a poster written after the sweep read the row but before it claimed it", async () => {
+    const stale = await seed({ state: "pending", createdAt: now - 8 * day });
+    const posterKey = `projects/${projectId}/embedded-media/${stale.id}/poster-late`;
+    const writer = lateWriter(async () => {
+      await database.MEDIA.put(posterKey, "jpeg");
+      await database.DB.prepare("UPDATE embedded_media SET poster_key = ? WHERE id = ?").bind(posterKey, stale.id).run();
+    });
+    expect(await sweepEmbeddedMedia(writer as never, now)).toMatchObject({ scanned: 1, reclaimed: 1 });
+    expect(await exists(stale.id)).toBe(false);
+    expect(await objectExists(stale.keys[0]!)).toBe(false);
+    expect(await objectExists(posterKey)).toBe(false);
+  });
+});

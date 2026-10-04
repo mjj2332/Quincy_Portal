@@ -64,15 +64,20 @@ export async function sweepEmbeddedMedia(env: Pick<Env, "DB" | "MEDIA">, now = D
       // Claim first: flip the row into 'detached' at 0 (due now; an unowned row takes its own id as owner, which the table's CHECK requires and no comment can match), with the same expiry predicate the read used. Every attach
       // predicate in the API needs 'pending' or an owner and a fresh timestamp, so a claimed row can no longer be attached. A lost claim
       // means the row changed under us (attached, or already taken): skip it.
+      // RETURNING hands back the keys the row owns at the moment of the claim, not the ones the read saw: a poster written between the two
+      // (a video upload's poster PUT) is deleted too, and one written after it finds the row no longer 'pending' and queues its own key.
       const claim = await env.DB.prepare(`
         UPDATE embedded_media SET state = 'detached', detached_at = 0, owner_id = COALESCE(owner_id, id), updated_at = ?
         WHERE id = ? AND ((state = 'detached' AND detached_at <= ?) OR (state = 'pending' AND created_at <= ?))
-      `).bind(now, row.id, cutoff, cutoff).run();
-      if ((claim.meta.changes ?? 0) !== 1) continue;
-      try { await env.MEDIA.delete(keysOf(row)); }
+        RETURNING original_key AS originalKey, display_key AS displayKey, poster_key AS posterKey
+      `).bind(now, row.id, cutoff, cutoff).all<Pick<SweepRow, "originalKey" | "displayKey" | "posterKey">>();
+      const claimed = claim.results[0];
+      if (!claimed) continue;
+      const claimedKeys = keysOf(claimed);
+      try { await env.MEDIA.delete(claimedKeys); }
       catch (error) {
         console.error("Embedded media object delete failed, queued for cleanup", { mediaId: row.id, error: errorText(error) });
-        await env.DB.batch(keysOf(row).map((key) => env.DB.prepare(ENQUEUE_SQL).bind(key, null, row.projectId, now)));
+        await env.DB.batch(claimedKeys.map((key) => env.DB.prepare(ENQUEUE_SQL).bind(key, null, row.projectId, now)));
       }
       const deleted = await env.DB.prepare("DELETE FROM embedded_media WHERE id = ? AND state = 'detached' AND detached_at = 0").bind(row.id).run();
       if ((deleted.meta.changes ?? 0) === 1) reclaimed += 1;
