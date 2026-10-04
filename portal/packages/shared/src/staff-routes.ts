@@ -184,7 +184,10 @@ export type StaffRoute =
   | { kind: "create-project" }
   /** `arrivalTab` is the Workspace tab the URL names (#337 arrival; persistent since #367: the
    * Workspace keeps the URL naming the tab it shows). */
-  | { kind: "project"; projectId: string; arrivalTab?: WorkspaceTab }
+  /** `whiteboard` (#498): the Project whiteboard (`?whiteboard=open`) replaces the sheet's body.
+   * Exclusive with `arrivalTab` -- the board is not a Workspace tab, so the parser never yields
+   * both and a URL naming both is not-found. */
+  | { kind: "project"; projectId: string; arrivalTab?: WorkspaceTab; whiteboard?: true }
   | { kind: "edit-project"; projectId: string }
   | { kind: "admin" }
   | { kind: "notices" }
@@ -207,6 +210,8 @@ const reservedRoots = new Set(["api", "media", "__transform-source", "d"]);
 function projectArrivalQuery(tab: WorkspaceTab): string {
   return tab === "collaboration" ? "collaboration=open" : `tab=${tab}`;
 }
+/** #498: the Project whiteboard's one spelling. */
+export const PROJECT_WHITEBOARD_QUERY = "whiteboard=open";
 const PROJECT_ARRIVAL_BY_QUERY: ReadonlyMap<string, WorkspaceTab> = new Map(
   WORKSPACE_TABS.map((tab) => [projectArrivalQuery(tab), tab]),
 );
@@ -613,6 +618,7 @@ export function parseStaffLocation(location: string): StaffRoute {
   const query = location.slice(question + 1);
   const route = parseStaffPathname(pathname);
   if (route.kind === "project") {
+    if (query === PROJECT_WHITEBOARD_QUERY) return { ...route, whiteboard: true };
     const arrivalTab = PROJECT_ARRIVAL_BY_QUERY.get(query);
     return arrivalTab ? { ...route, arrivalTab } : { kind: "not-found" };
   }
@@ -883,7 +889,7 @@ export function staffPathFor(route: Exclude<StaffRoute, { kind: "not-found" } | 
       return qs ? `/?${qs}` : "/";
     }
     case "create-project": return "/projects/new";
-    case "project": return `/projects/${encodeURIComponent(route.projectId)}${route.arrivalTab ? `?${projectArrivalQuery(route.arrivalTab)}` : ""}`;
+    case "project": return `/projects/${encodeURIComponent(route.projectId)}${route.whiteboard ? `?${PROJECT_WHITEBOARD_QUERY}` : route.arrivalTab ? `?${projectArrivalQuery(route.arrivalTab)}` : ""}`;
     case "edit-project": return `/projects/${encodeURIComponent(route.projectId)}/edit`;
     case "admin": return "/admin";
     case "notices": return "/notices";
