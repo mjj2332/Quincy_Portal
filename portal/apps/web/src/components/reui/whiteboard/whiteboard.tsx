@@ -6,7 +6,9 @@
  * Tailwind `shadow-*`, focus ring widths -- see `reui-skin.guard.test.ts`), and `noUncheckedIndexedAccess`
  * narrowing. `"dark": boolean` is quoted only so the guard's `dark:` matcher does not read a type as a variant.
  *
- * This file: The editor wrapper: lazy-loads `whiteboard-canvas` (so Excalidraw never reaches the entry chunk), the skeleton, error state and theme. Unchanged apart from the mechanical edits.
+ * This file: The editor wrapper: lazy-loads `whiteboard-canvas` (so Excalidraw never reaches the entry chunk), the skeleton, error state and theme. Unchanged apart from the mechanical edits and the additions marked QUINCY ADDITION below.
+ * QUINCY ADDITION #499 (additive; nothing existing changes): `WhiteboardCollaborator.colorKey`, the controller's
+ * `applyRemote` and the `onPresence` prop, so the Project whiteboard can show live cursors and merge other people's edits.
  * Left out of the install on purpose: `share-popover` (public view-only links: ADR 0017 / #483 forbid them),
  * `review-board` (the demo composition -- `components/ProjectWhiteboard.tsx` is the Portal's), `page`, `presence`
  * (#499) and `history-tab` (#500). New production dependencies: `@excalidraw/excalidraw` (pinned 0.18.1) and `motion`.
@@ -31,6 +33,7 @@ import type {
   AppState,
   ExcalidrawImperativeAPI,
 } from "@excalidraw/excalidraw/types"
+import type { ServerHold } from "@/lib/whiteboard-saver"
 import { cn } from "@/lib/utils"
 
 import { Button } from "@/components/reui/button"
@@ -61,6 +64,9 @@ export const MIN_ZOOM = 0.1
 export const MAX_ZOOM = 30
 
 export type WhiteboardSaveStatus = "saved" | "unsaved" | "saving" | "error"
+/** QUINCY ADDITION #499: what onSave resolves with when it deliberately sent nothing; see onSave. */
+export const WHITEBOARD_SAVE_SKIPPED = "skipped" as const
+export type WhiteboardSaveOutcome = void | typeof WHITEBOARD_SAVE_SKIPPED
 
 /** An image the board draws, keyed by the fileId its image element carries. */
 export type WhiteboardFile = {
@@ -162,6 +168,18 @@ export type WhiteboardCollaborator = {
   selectedIds?: readonly string[]
   state?: "active" | "idle" | "away"
   pressed?: boolean
+  /** QUINCY ADDITION #499: what Excalidraw 0.18.1 hashes for this person's cursor, label and selection colour
+   * (it ignores a supplied colour). Give one person's connections the same key (the user id) to share a colour;
+   * defaults to `id`. */
+  colorKey?: string
+}
+
+/** QUINCY ADDITION #499: what onPresence reports: the local pointer in scene coordinates (null until it has moved),
+ * whether a button is down, and the ids of the selected elements. */
+export type WhiteboardPresence = {
+  pointer: { x: number; y: number } | null
+  button: "up" | "down"
+  selectedIds: readonly string[]
 }
 
 export type WhiteboardExportScope =
@@ -208,6 +226,21 @@ export type WhiteboardController = {
   /** Call it straight from the click: browsers only allow it inside a gesture; SVG logs the same line as exportImage. */
   copyImage: (options: WhiteboardExportOptions) => Promise<void>
   setCollaborators: (collaborators: readonly WhiteboardCollaborator[]) => void
+  /** QUINCY ADDITION #499: merges elements another person changed into the board, by Excalidraw's own element-version
+   * reconciliation (`reconcileElements`), as a change that never enters this person's Undo. Unlike `replace`, it keeps
+   * everything the sender did not mention and never bumps versions or tombstones. `hold` says what the server holds of each board element (the saver's `hold`): what it holds keeps its index, and an unsent or edited element in the way of an incoming index is moved (never changing a revision). Works in view-only mode too. Returns
+   * every element now on the board, deleted ones included. */
+  applyRemote: (elements: readonly unknown[], hold: (element: ExcalidrawElement) => ServerHold) => readonly ExcalidrawElement[]
+  /** QUINCY ADDITION #499: merges elements the PERSON authored (an editor-style deletion of an element the editor dropped) into the board, the way
+   * `applyRemote` does (never a raw append, whose index repair would bump a revision), but they are NOT remote: the board's change event reads
+   * them as the person's own edit, so the board is dirty and autosave sends them. Returns every element now on the board, deleted ones included. */
+  applyLocal: (elements: readonly unknown[], hold: (element: ExcalidrawElement) => ServerHold) => readonly ExcalidrawElement[]
+  /** QUINCY ADDITION #499: the editor's own `newElementWith`: a copy of `element` with `updates`, one version up and a fresh nonce. The only way a revision is authored outside the editor. */
+  author: (element: ExcalidrawElement, updates: Record<string, unknown>) => ExcalidrawElement
+  /** QUINCY ADDITION #499: puts the board's elements back at the version and nonce in `arrived` (matched by id), in place.
+   * The editor's own restore of `initialData` repairs fractional-index clashes by bumping revisions; call this once the
+   * board is ready with what the server sent, so nothing the server already holds reads as an edit. */
+  adoptRevisions: (arrived: ReadonlyArray<{ id: string; version: number; versionNonce: number; index?: string | null }>) => void
   /** Selects the given elements, replacing the selection. */
   select: (ids: readonly string[]) => void
   /** Your panel through onPanelRequest when it is set, else the editor's own library sidebar. */
@@ -242,11 +275,17 @@ export type WhiteboardProps = {
   /** Every editor change, synchronously, with ALL elements (deleted tombstones included). Quincy: lets a host
    * keep a snapshot that survives the editor tearing down. */
   onElements?: (elements: readonly unknown[]) => void
+  /** QUINCY ADDITION #499: the local pointer and selection, for a host that shares presence. Fires on every pointer
+   * move (throttle it) and whenever the selection changes. */
+  onPresence?: (presence: WhiteboardPresence) => void
   /** Milliseconds edits settle before onChange; default 300. */
   changeDelay?: number
   /** Autosave: store the scene as JSON and pass it back as initialData. Called after edits idle,
-   * and when the page hides or unmounts; a rejected promise reports "error" and retries on the next edit. */
-  onSave?: (scene: WhiteboardScene) => Promise<void> | void
+   * and when the page hides or unmounts; a rejected promise reports "error" and retries on the next edit.
+   * QUINCY ADDITION #499: resolving WHITEBOARD_SAVE_SKIPPED means "nothing was sent" (the board went view-only):
+   * the edit stays dirty, the status is "unsaved", and it is flushed when the pause ends. Any other resolution
+   * means the scene was stored. */
+  onSave?: (scene: WhiteboardScene) => Promise<WhiteboardSaveOutcome> | WhiteboardSaveOutcome
   /** Milliseconds of idle before onSave; default 1500. */
   autosaveDelay?: number
   onSaveStatusChange?: (status: WhiteboardSaveStatus) => void

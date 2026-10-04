@@ -29,6 +29,13 @@ afterEach(async () => {
 });
 
 describe("ImpersonationBanner", () => {
+  it("Exit keeps a transparent hover fill so the paper label stays readable on the ink strip (#541)", async () => {
+    await act(async () => { root!.render(<ImpersonationBanner user={{ name: "Editor Example", role: "editor" }} invalidated={false} />); });
+    const classes = host.querySelector<HTMLButtonElement>('[data-testid="impersonation-exit"]')!.className.split(/\s+/);
+    expect(classes).toContain("hover:bg-transparent");
+    expect(classes.filter((c) => /^hover:.*bg-muted/.test(c))).toEqual([]);
+  });
+
   it("shows the exact target identity and exits through the stock client transition", async () => {
     let resolveExit!: () => void;
     stopImpersonatingMock.mockImplementation(() => new Promise<void>((resolve) => { resolveExit = resolve; }));

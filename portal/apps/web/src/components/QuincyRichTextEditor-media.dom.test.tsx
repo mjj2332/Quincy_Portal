@@ -6,6 +6,7 @@ import imageSource from "./quincy/EmbeddedImage.tsx?raw";
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Editor } from "@tiptap/core";
+import { NodeSelection } from "@tiptap/pm/state";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { COMMENT_MEDIA_RICH_TEXT_PROFILE, parseRichTextDoc, type RichTextDoc } from "@quincy/shared";
 import { createRichTextEditorExtensions, tiptapToRichTextDoc, toTiptap } from "../lib/rich-text-tiptap";
@@ -313,5 +314,26 @@ describe("design review fixes (#493)", () => {
     expect(region.textContent).toBe("");
     expect(region.classList.contains("sr-only")).toBe(true);
     expect(region.classList.contains("min-h-[1.2em]")).toBe(false);
+  });
+});
+
+describe("an upload that lands while the author is composing", () => {
+  it("keeps the image when the author types on after it lands (a finished upload must not select it)", async () => {
+    let finish!: (id: string) => void;
+    upload.mockImplementation(() => new Promise<string>((resolve) => { finish = resolve; }));
+    const typed: RichTextDoc = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "QA 547 repro" }] }] };
+    const host = mount(<Harness initial={typed} />);
+    const editor = tiptapOf(host);
+    act(() => { editor.commands.focus("end"); });
+    // Paste goes through the same addImagesRef path as the toolbar picker and drop.
+    act(() => { const event = new Event("paste", { bubbles: true, cancelable: true }) as Event & { clipboardData: unknown }; event.clipboardData = { files: [png()], getData: () => "", types: ["Files"] }; editor.view.dom.dispatchEvent(event); });
+    await act(async () => { finish(A); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(latest.content.some((node) => node.type === "image")).toBe(true);
+    // Tiptap's insertContentAt selects inserted content by default: a NodeSelection on the new atom means the next keystroke replaces it.
+    expect(editor.state.selection).not.toBeInstanceOf(NodeSelection);
+    // What ProseMirror does with the author's next keystroke: insert at the current selection.
+    act(() => { editor.view.dispatch(editor.view.state.tr.insertText(" ok")); });
+    expect(latest.content.filter((node) => node.type === "image")).toHaveLength(1);
+    expect(JSON.stringify(latest)).toContain("QA 547 repro ok");
   });
 });

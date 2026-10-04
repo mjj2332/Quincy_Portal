@@ -291,7 +291,8 @@ export function QuincyRichTextEditor({
           const live = editorRef.current;
           if (cancelled || !mountedRef.current || !live) return;
           const position = Math.min(insertAt.current.get(key) ?? live.state.doc.content.size, live.state.doc.content.size);
-          live.chain().insertContentAt(position, { type: kind, attrs: { mediaId } }).run();
+          // insertContentAt selects inserted content by default; an async insert must leave the caret where the author is typing.
+          live.chain().insertContentAt(position, { type: kind, attrs: { mediaId } }, kind === "image" ? { updateSelection: false } : {}).run();
         })
         .catch((reason) => {
           if (cancelled || (reason instanceof Error && reason.name === "AbortError")) return;

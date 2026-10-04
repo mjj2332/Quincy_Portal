@@ -61,5 +61,22 @@ describe("overlay stacking contract", () => {
         expect(src, file).toContain("data-[impersonating]:before:h-[var(--impersonation-banner-height)]");
       }
     });
+
+    /** #541: Exit is 44px tall at <=721px; the global ring (width + offset tokens) must fit inside the strip. */
+    it("the banner is tall enough for the focus ring around Exit at every width", () => {
+      const num = (name: string) => Number(new RegExp(`--${name}:\\s*(\\d+)px`).exec(tokens)?.[1]);
+      const ringSpace = 2 * (num("border-width-bold") + 2); // base.css `:focus-visible` offset is 2px
+      const buttonSrc = read("../components/reui/button.tsx");
+      const mobileButton = Number(/BUTTON_HEIGHT_CLASS = "[^"]*max-\[721px\]:min-h-\[(\d+)px\]/.exec(buttonSrc)?.[1]);
+      const textButton = Number(/TEXT_BUTTON = "min-h-\[(\d+)px\]/.exec(read("../components/quincy/Button.tsx"))?.[1]);
+      expect(mobileButton).toBe(44);
+      const css = tokens.replace(/\/\*[\s\S]*?\*\//g, "");
+      const base = Number(/--impersonation-banner-height:\s*(\d+)px/.exec(css)?.[1]);
+      expect(base).toBeGreaterThanOrEqual(textButton + ringSpace);
+      const media = /@media \(width < 721px\)\s*\{\s*:root\s*\{\s*--impersonation-banner-height:\s*(\d+)px/.exec(css);
+      expect(media, "spacing.css needs `@media (width < 721px) { :root { --impersonation-banner-height: Npx } }`").not.toBeNull();
+      expect(Number(media![1])).toBeGreaterThanOrEqual(mobileButton + ringSpace);
+      expect(Number(media![1]), "phone banner is 56px: 44px Exit + ring + ~2px ink clearance each side").toBe(56);
+    });
   });
 });
