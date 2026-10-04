@@ -178,10 +178,13 @@ export function ProjectHeader({
   stageMovePending = false,
   stageMoveDisabledReason = null,
   onOpenWhiteboard,
+  whiteboardOpen = false,
 }: {
   project: ProjectDetail;
   /** #498: opens the Project whiteboard. Offered only once the Workspace has confirmed collaboration access. */
   onOpenWhiteboard?: () => void;
+  /** #498: the board is open and this header is hidden beneath it; see the scroll effect. */
+  whiteboardOpen?: boolean;
   activeTab: WorkspaceTab;
   availableTabs: CollectionKind[];
   canUpload: boolean;
@@ -273,10 +276,14 @@ export function ProjectHeader({
     }
     return callback;
   };
+  // While the whiteboard is open the Workspace is `display:none`: a hidden scroller has no layout, so
+  // `scrollIntoView` does nothing (a deep link mounts the header that way) and a scroller that was laid out
+  // loses its scrollLeft. The effect therefore re-runs when the board closes and the header is shown again (#498).
   useEffect(() => {
+    if (whiteboardOpen) return;
     const selected = tabsRef.current?.querySelector<HTMLElement>('[data-testid="project-overview-tab"][aria-selected="true"]');
     if (typeof selected?.scrollIntoView === "function") selected.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [activeTab]);
+  }, [activeTab, whiteboardOpen]);
 
   return <section className="project-header" aria-label="Project Overview" data-testid="project-header">
     <div className="project-header__identity">

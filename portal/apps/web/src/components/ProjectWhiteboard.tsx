@@ -114,8 +114,8 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
   const statusLabel = connection === "reconnecting" ? "Reconnecting" : saveStatus === "saving" ? "Saving" : saveStatus === "error" ? "Not saved" : saveStatus === "unsaved" ? "Unsaved changes" : "Saved";
 
   return (
-    <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-[var(--space-3)] px-[var(--space-6)] py-[var(--space-5)] max-[721px]:p-[var(--space-4)] h-[calc(100dvh-var(--space-5)*2-2px)] [[data-impersonating]_&]:h-[calc(100dvh-var(--impersonation-banner-height)-var(--space-5)*2-2px)] max-[721px]:h-dvh max-[721px]:[[data-impersonating]_&]:h-[calc(100dvh-var(--impersonation-banner-height))] min-h-[28rem]" data-testid="project-whiteboard" data-quincy-whiteboard aria-label={`Whiteboard for ${street}`}>
-      <div className="flex flex-wrap items-center gap-[var(--space-2)]">
+    <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-[var(--space-3)] px-[var(--space-6)] py-[var(--space-5)] max-[721px]:p-[var(--space-4)] h-[calc(100dvh-var(--space-5)*2-var(--border-width-hair)*2)] [[data-impersonating]_&]:h-[calc(100dvh-var(--impersonation-banner-height)-var(--space-5)*2-var(--border-width-hair)*2)] max-[721px]:h-dvh max-[721px]:[[data-impersonating]_&]:h-[calc(100dvh-var(--impersonation-banner-height))] min-h-[28rem]" data-testid="project-whiteboard" data-quincy-whiteboard aria-label={`Whiteboard for ${street}`}>
+      <div className="flex flex-wrap items-center gap-[var(--space-3)]">
         <Button ref={closeButtonRef} type="button" variant="ghost" onClick={() => void requestClose()} data-testid="project-whiteboard-close"><ArrowLeftIcon className="size-3.5" aria-hidden="true" data-icon="inline-start" />Close whiteboard</Button>
         <h2 className="serif [font:var(--type-h3)] min-w-0 truncate">{street}</h2>
         <div className="ms-auto flex flex-wrap items-center gap-[var(--space-2)]">

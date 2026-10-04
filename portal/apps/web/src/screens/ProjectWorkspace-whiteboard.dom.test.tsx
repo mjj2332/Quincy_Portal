@@ -199,11 +199,29 @@ describe("whiteboard focus and layout (#498 design review)", () => {
     expect(document.activeElement).toBe(openButton());
   });
 
+  it("closing a deep-linked board scrolls the selected tab into view (a hidden scroller cannot scroll)", async () => {
+    const scrolled: Array<{ selected: string | null; hidden: boolean }> = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push({ selected: this.getAttribute("aria-selected"), hidden: this.closest("[data-whiteboard-hidden]")?.getAttribute("data-whiteboard-hidden") === "true" });
+    };
+    try {
+      await renderSheet({ whiteboardOpen: true });
+      await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
+      // Mounted under the open board: nothing may be driven while the header has no layout.
+      expect(scrolled.filter((call) => call.hidden)).toEqual([]);
+      scrolled.length = 0;
+      await rerenderSheet({ whiteboardOpen: false });
+      await flush(3);
+      expect(scrolled).toContainEqual({ selected: "true", hidden: false });
+    } finally { Element.prototype.scrollIntoView = original; }
+  });
+
   it("the section only subtracts the banner while impersonating (the token is always defined)", async () => {
     await renderSheet({ whiteboardOpen: true });
     const cls = boardRoot()!.className;
     expect(cls).not.toMatch(/(^|\s)(max-\[721px\]:)?h-\[calc\(100dvh-var\(--impersonation-banner-height,0px\)\)\]/);
-    expect(cls).toContain("[[data-impersonating]_&]:h-[calc(100dvh-var(--impersonation-banner-height)-var(--space-5)*2-2px)]");
+    expect(cls).toContain("[[data-impersonating]_&]:h-[calc(100dvh-var(--impersonation-banner-height)-var(--space-5)*2-var(--border-width-hair)*2)]");
     expect(cls).toContain("max-[721px]:[[data-impersonating]_&]:h-[calc(100dvh-var(--impersonation-banner-height))]");
   });
 
