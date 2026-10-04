@@ -227,8 +227,8 @@ describe("the rail's impersonation offset (#122)", () => {
 
   it("offsets 42px under impersonation, with a matching 42px-reduced height", () => {
     const body = ruleBody(appCss, ".app--impersonating .app__rail") ?? "";
-    expect(body).toMatch(/top:\s*42px/);
-    expect(body).toMatch(/height:\s*calc\(100dvh - 42px\)/);
+    expect(body).toMatch(/top:\s*var\(--impersonation-banner-height\)/);
+    expect(body).toMatch(/height:\s*calc\(100dvh - var\(--impersonation-banner-height\)\)/);
   });
 
   it("declares the rule outside any @layer", () => {
@@ -253,7 +253,7 @@ describe("the rail's impersonation offset (#122)", () => {
   it("declares .app--impersonating .app__shell with a 42px-reduced min-height", () => {
     const body = ruleBody(appCss, ".app--impersonating .app__shell");
     expect(body, ".app--impersonating .app__shell must exist as a real rule in app.css").not.toBeNull();
-    expect(body).toMatch(/min-height:\s*calc\(100svh - 42px\)/);
+    expect(body).toMatch(/min-height:\s*calc\(100svh - var\(--impersonation-banner-height\)\)/);
   });
 
   it("declares the app__shell impersonation rule outside any @layer", () => {
@@ -326,7 +326,7 @@ describe("the shell header clears the impersonation banner and carries a z-index
   it("offsets .shell-header under impersonation, the deleted .topbar's 42px banner offset", () => {
     const body = ruleBody(appCss, ".app--impersonating .shell-header");
     expect(body, ".app--impersonating .shell-header must exist as a real rule in app.css").not.toBeNull();
-    expect(body).toMatch(/top:\s*42px/);
+    expect(body).toMatch(/top:\s*var\(--impersonation-banner-height\)/);
   });
 
   it("declares both rules outside any @layer", () => {
@@ -400,7 +400,7 @@ describe("header-relative offsets derive from --shell-header-height (#113)", () 
     for (const selector of [".worktools", ".app--impersonating .worktools"]) {
       const body = ruleBody(appCss, selector);
       expect(body, `${selector} must exist as a real rule`).not.toBeNull();
-      expect(body, `${selector} top`).toMatch(/top:\s*(var\(--shell-header-height\)|calc\(var\(--shell-header-height\) \+ 42px\))/);
+      expect(body, `${selector} top`).toMatch(/top:\s*(var\(--shell-header-height\)|calc\(var\(--shell-header-height\) \+ var\(--impersonation-banner-height\)\))/);
     }
     expect(appCss).not.toMatch(/top:\s*(64|58|106|100)px/);
     expect(appCss).not.toMatch(/calc\((64|58)px \+ env/);

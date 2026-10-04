@@ -154,7 +154,11 @@ export function ProjectSheet({ open, kind, sheetKey, backdropHref, onRequestClos
         overlayProps={{
           forceRender: true,
           "data-testid": "project-sheet-scrim",
-          className: "z-[var(--z-dialog)] bg-[var(--scrim-overlay)] backdrop-blur-[3px] data-ending-style:duration-0",
+          // #531: while impersonating, the scrim starts below the banner so it is never dimmed or blurred.
+          // The `before:` shield is a transparent, background-less box over the excluded strip at the scrim's
+          // own layer, so a press there is still an outside press and cannot reach Exit under the open modal.
+          ...(impersonating ? { "data-impersonating": "" } : {}),
+          className: "z-[var(--z-dialog)] bg-[var(--scrim-overlay)] backdrop-blur-[3px] data-ending-style:duration-0 data-[impersonating]:top-[var(--impersonation-banner-height)] data-[impersonating]:before:absolute data-[impersonating]:before:content-[''] data-[impersonating]:before:inset-x-0 data-[impersonating]:before:bottom-full data-[impersonating]:before:h-[var(--impersonation-banner-height)]",
         }}
       >
         <SheetTitle className="sr-only">{kind === "edit" ? "Edit project details" : "Project workspace"}</SheetTitle>

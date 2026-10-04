@@ -474,7 +474,7 @@ function ShellRoute() {
 
   return (
     <div className={cn("app", impersonating && "app--impersonating", "app--railed")}>
-      <RailedShell navigation={navigation} user={user} shortcutsSuspended={isSheetRoute} onSearchShortcut={requestSearchFocus}>{routedContent}</RailedShell>
+      <RailedShell navigation={navigation} user={user} shortcutsSuspended={isSheetRoute} onSearchShortcut={requestSearchFocus} impersonating={impersonating}>{routedContent}</RailedShell>
     </div>
   );
 }

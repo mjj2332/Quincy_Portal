@@ -50,23 +50,23 @@ button { font-family: var(--font-sans); }
    base-nova's `Sidebar` renders its own `fixed inset-y-0 h-svh` container (`sidebar-container`)
    beside an in-flow width spacer (`sidebar-gap`), full height and pinned out of the box. */
 .app--railed { flex-direction: row; align-items: stretch; }
-.app--impersonating { padding-top: 42px; }
+.app--impersonating { padding-top: var(--impersonation-banner-height); }
 /* Same 42px banner offset the shell header takes below — the rail must sit below it, not under it.
    `app__rail` (`components/quincy/NavigationRail.tsx`) lands on base-nova's `sidebar-container`
    div (`reui/sidebar.tsx`'s `Sidebar`, the `fixed inset-y-0 h-svh` element) via the `className` it
    spreads there, so this descendant selector reaches past the provider wrapper and the `group
    peer` outer div straight to the fixed element itself — unlayered here beats the vendored
    `top-0`/`h-svh` utilities the same way `.app` beats a `flex-row` utility above. */
-.app--impersonating .app__rail { top: 42px; height: calc(100dvh - 42px); }
+.app--impersonating .app__rail { top: var(--impersonation-banner-height); height: calc(100dvh - var(--impersonation-banner-height)); }
 /* Sol review (#122 P1): `SidebarProvider`'s own `data-slot="sidebar-wrapper"` (`app__shell`,
    `RailedShell.tsx`) is `min-h-svh` — a MINIMUM, not a height, so `.app--impersonating`'s own
    `padding-top: 42px` on `.app` ADDS to that minimum rather than sharing it, and a short
    impersonated page renders 42px taller than the viewport. Unlayered, so it beats the vendored
    `min-h-svh` utility the same way the rest of this file beats Tailwind's `@layer utilities`. */
-.app--impersonating .app__shell { min-height: calc(100svh - 42px); }
+.app--impersonating .app__shell { min-height: calc(100svh - var(--impersonation-banner-height)); }
 /* #112's `ShellHeader`: sticky stacking and impersonation banner offset. */
 .shell-header { z-index: 75; }
-.app--impersonating .shell-header { top: 42px; }
+.app--impersonating .shell-header { top: var(--impersonation-banner-height); }
 /* #363: a page that fills the viewport and scrolls inside itself (the Dashboard's `page--fill`).
    Keyed on the page being MOUNTED, not on the route, so the Project sheet (#366) that floats over a
    live Dashboard keeps it. Unlayered like the rest of this block: `.app`'s min-height, the vendored
@@ -106,8 +106,8 @@ button { font-family: var(--font-sans); }
 [data-rail-mode="rail"] { --app-rail-inline-size: calc(3rem + var(--space-4) + var(--space-2)); }
 [data-rail-mode="sheet"] { --app-rail-inline-size: 0px; }
 [data-rail-mode] { --toast-inset-inline-start: calc(var(--app-rail-inline-size) + max(var(--space-5), env(safe-area-inset-left))); }
-.app--impersonating .worktools { top: calc(var(--shell-header-height) + 42px); }
-.app--impersonating .viewer { inset: 42px 0 0; }
+.app--impersonating .worktools { top: calc(var(--shell-header-height) + var(--impersonation-banner-height)); }
+.app--impersonating .viewer { inset: var(--impersonation-banner-height) 0 0; }
 
 /* ---------------------------------------------------------------------
    Icon buttons / chips
@@ -635,4 +635,4 @@ button { font-family: var(--font-sans); }
   .document-group__head { align-items: stretch; flex-direction: column; }
 }
 
-.impersonation-invalidated { min-height: 100vh; padding: 42px var(--space-6) var(--space-6); display: grid; place-items: center; color: var(--signal-critical); font: var(--type-body-lg); text-align: center; }
+.impersonation-invalidated { min-height: 100vh; padding: var(--impersonation-banner-height) var(--space-6) var(--space-6); display: grid; place-items: center; color: var(--signal-critical); font: var(--type-body-lg); text-align: center; }
