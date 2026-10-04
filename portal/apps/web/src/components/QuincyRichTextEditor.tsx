@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import { exitSuggestion } from "@tiptap/suggestion";
-import { ChevronDownIcon, ImageIcon, ListChecksIcon, ListIcon, ListOrderedIcon, Redo2Icon, TableIcon, Undo2Icon } from "lucide-react";
+import { ChevronDownIcon, ImageIcon, ListChecksIcon, ListIcon, ListOrderedIcon, Redo2Icon, TableIcon, Undo2Icon, VideoIcon } from "lucide-react";
 import { RICH_TEXT_JSON_MAX_BYTES, richTextDocByteLength, richTextMediaIds, richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { cn } from "../lib/utils";
-import { EMBEDDED_IMAGE_ACCEPT, EMBEDDED_MEDIA_MAX_PER_POST, embeddedImageProblem, uploadEmbeddedImage, type EmbeddedMediaScope } from "../lib/embedded-media";
+import { EMBEDDED_IMAGE_ACCEPT, EMBEDDED_MEDIA_MAX_PER_POST, EMBEDDED_VIDEO_ACCEPT, embeddedImageProblem, embeddedVideoProblem, uploadEmbeddedImage, uploadEmbeddedVideo, type EmbeddedMediaScope } from "../lib/embedded-media";
 import {
   createRichTextEditorExtensions,
   type RichTextEditorPreset,
@@ -105,13 +105,16 @@ export type QuincyRichTextEditorProps = {
   placeholder?: string;
   id?: string;
   onSubmit?: () => void;
-  /** Turns on embedded images (#493, #496): the toolbar button, paste and drop upload into this Project or the Notice board. */
+  /** Turns on embedded images (#493, #496): the toolbar button, paste and drop upload into this Project or the Notice board. A Project also takes video (#494). */
   media?: EmbeddedMediaScope;
   /** Reports whether an image is still uploading, so the host can hold Post / Save until it lands. */
   onUploadingChange?: (uploading: boolean) => void;
 };
 
-type UploadingImage = { key: number; name: string; percent: number };
+type UploadingMedia = { key: number; name: string; percent: number; kind: "image" | "video" };
+
+/** A file this editor would send down the video path: a Project's discussion only, and by what the file says it is. */
+const isVideoFile = (file: Pick<File, "type" | "name">) => file.type.startsWith("video/") || /\.(?:mp4|mov)$/i.test(file.name);
 
 export function QuincyRichTextEditor({
   preset,
@@ -147,17 +150,19 @@ export function QuincyRichTextEditor({
   const [nestingBlocked, setNestingBlocked] = useState(false);
   const [deleteTableOpen, setDeleteTableOpen] = useState(false);
   const pageRef = useRef<HTMLDivElement>(null);
-  const [uploads, setUploads] = useState<UploadingImage[]>([]);
+  const [uploads, setUploads] = useState<UploadingMedia[]>([]);
   const [uploadErrors, setUploadErrors] = useState<string[]>([]);
   const uploadSeq = useRef(0);
   const inFlight = useRef(0);
   const mountedRef = useRef(true);
   const mediaRef = useRef(media); mediaRef.current = media;
   const onUploadingChangeRef = useRef(onUploadingChange); onUploadingChangeRef.current = onUploadingChange;
-  const addImagesRef = useRef<(files: File[], at?: number) => void>(() => {});
+  const addImagesRef = useRef<(files: File[], at?: number, as?: "image" | "video") => void>(() => {});
+  // Each running upload's way to stop and to give up its place (the busy count and the tray row), once, whichever of finishing and cancelling comes first.
+  const running = useRef(new Map<number, { controller: AbortController; release: () => void }>());
   // Where each running upload will land: captured when it starts and mapped through every later transaction.
   const insertAt = useRef(new Map<number, number>());
-  const [picking, setPicking] = useState<number | null>(null);
+  const [picking, setPicking] = useState<{ n: number; kind: "image" | "video" } | null>(null);
   const pickerRef = useRef<HTMLInputElement>(null);
   const extensions = useMemo(() => [
     ...createRichTextEditorExtensions(preset),
@@ -248,42 +253,66 @@ export function QuincyRichTextEditor({
     return () => { editor.off("transaction", follow); };
   }, [editor]);
   // Each file uploads on its own; its node enters the document only once the server has accepted it, so
-  // a failed or abandoned upload leaves nothing behind. An upload still running when the editor unmounts is lost.
-  addImagesRef.current = (files: File[], at?: number) => {
+  // a failed, cancelled or abandoned upload leaves nothing behind. A video can be cancelled from its tray row, and an
+  // upload still running when the editor unmounts is cancelled (the server is told, so no reservation is left).
+  addImagesRef.current = (files: File[], at?: number, as?: "image" | "video") => {
     const scope = mediaRef.current;
     const current = editorRef.current;
     if (!scope || !current) return;
+    const videos = "projectId" in scope;
     const problems: string[] = [];
     let slots = EMBEDDED_MEDIA_MAX_PER_POST - richTextMediaIds(tiptapToRichTextDoc(current.getJSON())).length - inFlight.current;
     for (const file of files) {
-      const problem = embeddedImageProblem(file) ?? (slots <= 0 ? `A post can hold ${EMBEDDED_MEDIA_MAX_PER_POST} images at most.` : null);
+      const kind = as ?? (videos && isVideoFile(file) ? "video" : "image");
+      const problem = (kind === "video" ? embeddedVideoProblem(file) : embeddedImageProblem(file)) ?? (slots <= 0 ? `A post can hold ${EMBEDDED_MEDIA_MAX_PER_POST} ${videos ? "images and videos" : "images"} at most.` : null);
       if (problem) { problems.push(problem); continue; }
       slots -= 1;
       const key = ++uploadSeq.current;
+      const controller = new AbortController();
+      let released = false; let cancelled = false;
+      const release = () => {
+        if (released) return; released = true;
+        insertAt.current.delete(key); running.current.delete(key);
+        inFlight.current -= 1;
+        // An editor that has unmounted has already told its host it is no longer uploading, and the host may
+        // since be running a different editor's uploads: a late callback from this one must not touch that.
+        if (!mountedRef.current) return;
+        if (inFlight.current === 0) onUploadingChangeRef.current?.(false);
+        setUploads((entries) => entries.filter((entry) => entry.key !== key));
+      };
       insertAt.current.set(key, at ?? current.state.selection.to);
       inFlight.current += 1; onUploadingChangeRef.current?.(true);
-      setUploads((entries) => [...entries, { key, name: file.name || "Image", percent: 0 }]);
-      void uploadEmbeddedImage(scope, file, (percent) => { if (mountedRef.current) setUploads((entries) => entries.map((entry) => entry.key === key ? { ...entry, percent } : entry)); })
+      running.current.set(key, { controller, release: () => { cancelled = true; controller.abort(); release(); } });
+      setUploads((entries) => [...entries, { key, name: file.name || (kind === "video" ? "Video" : "Image"), percent: 0, kind }]);
+      const onProgress = (percent: number) => { if (mountedRef.current && !released) setUploads((entries) => entries.map((entry) => entry.key === key ? { ...entry, percent } : entry)); };
+      const uploading = kind === "video" && "projectId" in scope ? uploadEmbeddedVideo(scope.projectId, file, { signal: controller.signal, onProgress }) : uploadEmbeddedImage(scope, file, onProgress);
+      void uploading
         .then((mediaId) => {
           const live = editorRef.current;
-          if (!mountedRef.current || !live) return;
+          if (cancelled || !mountedRef.current || !live) return;
           const position = Math.min(insertAt.current.get(key) ?? live.state.doc.content.size, live.state.doc.content.size);
-          live.chain().insertContentAt(position, { type: "image", attrs: { mediaId } }).run();
+          live.chain().insertContentAt(position, { type: kind, attrs: { mediaId } }).run();
         })
-        .catch((reason) => { if (mountedRef.current) setUploadErrors((entries) => [...entries, `${file.name || "Image"} could not be uploaded${reason instanceof Error && reason.message ? `: ${reason.message}` : "."}`]); })
-        .finally(() => {
-          insertAt.current.delete(key);
-          inFlight.current -= 1;
-          // An editor that has unmounted has already told its host it is no longer uploading, and the host may
-          // since be running a different editor's uploads: a late callback from this one must not touch that.
-          if (!mountedRef.current) return;
-          if (inFlight.current === 0) onUploadingChangeRef.current?.(false);
-          setUploads((entries) => entries.filter((entry) => entry.key !== key));
-        });
+        .catch((reason) => {
+          if (cancelled || (reason instanceof Error && reason.name === "AbortError")) return;
+          if (mountedRef.current) setUploadErrors((entries) => [...entries, `${file.name || (kind === "video" ? "Video" : "Image")} could not be uploaded${reason instanceof Error && reason.message ? `: ${reason.message}` : "."}`]);
+        })
+        .finally(release);
     }
     setUploadErrors(problems);
   };
-  useEffect(() => () => { if (inFlight.current > 0) onUploadingChangeRef.current?.(false); }, []);
+  useEffect(() => () => {
+    for (const entry of [...running.current.values()]) entry.controller.abort();
+    if (inFlight.current > 0) onUploadingChangeRef.current?.(false);
+  }, []);
+  // A video can take minutes: leaving the page would lose it, so the browser is asked to confirm. Images are over too fast to warn about.
+  const uploadingVideo = uploads.some((entry) => entry.kind === "video");
+  useEffect(() => {
+    if (!uploadingVideo) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [uploadingVideo]);
   useEffect(() => {
     if (query === null) return;
     // Bubble phase on purpose: the Project sheet snapshots "is a layer open" at window-capture,
@@ -351,7 +380,7 @@ export function QuincyRichTextEditor({
   };
   // The picker is mounted only while a choice is being made: a standing file input would be a second upload control on
   // every Project surface that renders the composer. It is the installed ReUI `Input`, clicked as soon as it mounts.
-  const chooseImages = () => setPicking((n) => (n ?? 0) + 1);
+  const choose = (kind: "image" | "video") => setPicking((previous) => ({ n: (previous?.n ?? 0) + 1, kind }));
   // The live region stays mounted so screen readers announce a message when it appears, but it takes no space while empty.
   const liveMessage = overBytes ? "This formatting is too large to save; remove list items or formatting." : nestingBlocked ? "Maximum list nesting is four levels" : "";
   const off = (can: boolean) => disabled || !can;
@@ -400,7 +429,8 @@ export function QuincyRichTextEditor({
           {media && <div data-testid="rich-text-media-tools" className="flex shrink-0 items-center gap-[var(--space-2)] max-[721px]:order-first max-[721px]:flex-row-reverse">
             <RichTextToolbarSeparator />
             <RichTextToolbarGroup label="Media">
-              <RichTextButton label="Insert image" disabled={disabled} onClick={chooseImages}><ImageIcon aria-hidden="true" /></RichTextButton>
+              <RichTextButton label="Insert image" disabled={disabled} onClick={() => choose("image")}><ImageIcon aria-hidden="true" /></RichTextButton>
+              {"projectId" in media && <RichTextButton label="Insert video" disabled={disabled} onClick={() => choose("video")}><VideoIcon aria-hidden="true" /></RichTextButton>}
             </RichTextToolbarGroup>
           </div>}
           <RichTextToolbarSeparator />
@@ -420,12 +450,15 @@ export function QuincyRichTextEditor({
       <DeleteTableDialog editor={editor} open={deleteTableOpen} onOpenChange={setDeleteTableOpen} />
     </>}
     {picking !== null && <Input
-      key={picking} ref={pickerRef} type="file" multiple accept={EMBEDDED_IMAGE_ACCEPT} tabIndex={-1} aria-hidden="true" aria-label="Choose images" data-testid="rich-text-image-picker" className="sr-only"
-      onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); setPicking(null); if (files.length) addImagesRef.current(files, editor.state.selection.to); }}
+      key={picking.n} ref={pickerRef} type="file" multiple accept={picking.kind === "video" ? EMBEDDED_VIDEO_ACCEPT : EMBEDDED_IMAGE_ACCEPT} tabIndex={-1} aria-hidden="true" aria-label={picking.kind === "video" ? "Choose videos" : "Choose images"} data-testid={picking.kind === "video" ? "rich-text-video-picker" : "rich-text-image-picker"} className="sr-only"
+      onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); const kind = picking.kind; setPicking(null); if (files.length) addImagesRef.current(files, editor.state.selection.to, kind); }}
       {...{ onCancel: () => setPicking(null) }}
     />}
     {(uploads.length > 0 || uploadErrors.length > 0) && <div data-testid="rich-text-upload-tray" className="grid gap-[var(--space-2)]">
-      {uploads.map((entry) => <Progress key={entry.key} value={entry.percent} aria-label={`Uploading ${entry.name}`} className="flex flex-wrap items-baseline gap-[var(--space-1)]"><span className="[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary [overflow-wrap:anywhere]">Uploading {entry.name}…</span><ProgressValue data-testid="upload-progress-value" className="[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" /></Progress>)}
+      {uploads.map((entry) => <div key={entry.key} className="flex flex-wrap items-center justify-between gap-[var(--space-1)]">
+        <Progress value={entry.percent} aria-label={`Uploading ${entry.name}`} className="flex min-w-0 flex-1 flex-wrap items-baseline gap-[var(--space-1)]"><span className="[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary [overflow-wrap:anywhere]">Uploading {entry.name}…</span><ProgressValue data-testid="upload-progress-value" className="[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" /></Progress>
+        {entry.kind === "video" && <Button type="button" variant="ghost" aria-label={`Cancel upload of ${entry.name}`} onClick={() => running.current.get(entry.key)?.release()}>Cancel</Button>}
+      </div>)}
       {uploadErrors.map((message, index) => <Notice key={index} tone="critical" role="alert">{message}</Notice>)}
     </div>}
     <MentionAutocomplete ref={menu} query={query} loadMentionables={loadMentionables} onSelect={selectMention} onDismiss={() => setMentionDismissed(true)} onAccessibilityChange={setMentionA11y} />

@@ -107,7 +107,7 @@ describe("inserting an image", () => {
     await choose(host, [new File(["x"], "doc.pdf", { type: "application/pdf" }), png("big.png", 25 * 1024 * 1024 + 1), png("eleventh.png")]);
     expect(upload).not.toHaveBeenCalled();
     const alerts = Array.from(host.querySelectorAll('[role="alert"]')).map((node) => node.textContent);
-    expect(alerts[0]).toContain("not a JPEG, PNG or WebP"); expect(alerts[1]).toContain("larger than 25 MB"); expect(alerts[2]).toContain("10 images at most");
+    expect(alerts[0]).toContain("not a JPEG, PNG or WebP"); expect(alerts[1]).toContain("larger than 25 MB"); expect(alerts[2]).toContain("10 images and videos at most");
   });
 
   it("does not offer images when the editor has no media target", () => {

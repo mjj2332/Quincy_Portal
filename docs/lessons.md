@@ -5277,3 +5277,12 @@ An Editor Output import and a Portal Edited upload only record `projects.edited_
 ## `reui/select` popup takes the overlay treatment, and its item ring is inset with `!` on colour and offset (#522)
 
 The vendored Select popup shipped `ring-1 ring-foreground/10`, no shadow and no inner padding, so the highlighted row ran edge to edge and its outward `:focus-visible` ring was clipped by `overflow-x-hidden`, while the `focus:bg-accent` fill painted a second indicator. It now matches `reui/dropdown-menu` and `quincy/menu` (`border border-border`, `shadow-[var(--shadow-md)]`, `rounded-none`, `p-1` on the List so scroll arrows stay flush). The item draws the global ring inside the fill: `focus-visible:!outline-[color:var(--accent-on)] focus-visible:!-outline-offset-4`. Both need `!` because `tokens/base.css:25` is an unlayered `outline` shorthand that resets colour and offset; `outline-none` is suppression and guard 3 tracks it. Pinned as source text in `styles/design-system-guards.test.ts` (happy-dom resolves no cascade); the built CSS is the proof the utilities were emitted.
+
+## 2026-10-05 — Video in Project discussion (#494)
+
+- **`fetch` cannot report upload bytes, so a video's parts go over XHR.** `uploadMultipartFile` takes an opt-in `UploadControl` (`signal`, `onBytes`); a caller that passes none keeps the fetch path unchanged. Cancel aborts the part in flight, starts no further part and rejects as an `AbortError`; the editor then tells the server (abort route) so no reservation is left.
+- **The poster is captured in the uploader's browser, best effort.** `captureVideoPoster` seeks to min(1s, 10% of duration), draws at most 1280 on the long edge and exports a JPEG. A file the browser cannot decode (ProRes) answers `null` and the video posts without a poster; capture runs alongside the byte upload and never delays it.
+- **Playability is a per-viewer decision.** Nothing is transcoded, so `EmbeddedVideo` falls back to a download link from the `<video>` element's own `error` event, not from the stored content type.
+- **`/media/embedded/:id` answers byte ranges** (parser in `@quincy/shared`, unit table beside it), which is what makes a large file seekable. The sweep deletes poster and display keys with `UPDATE ... RETURNING` at claim time, so a claimed row owns the keys it removes.
+- **A video upload warns on `beforeunload`**, only while one is running; images finish too fast to warrant it. Unmounting the editor cancels any running upload.
+
