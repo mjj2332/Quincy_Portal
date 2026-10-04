@@ -139,13 +139,13 @@ function StageControl({ project, currentStageKey, stages, contractEnabled, pendi
       </SelectTrigger>
       {/* #325: options are nowrap, so the registry's `w-(--anchor-width)` clipped a long Stage
           ("Awaiting RAW · Smoke"). Never narrower than the trigger, never wider than the viewport. */}
-      <SelectContent className="w-auto min-w-(--anchor-width) max-w-(--available-width)">
+      <SelectContent data-testid="project-stage-options" className="w-auto min-w-(--anchor-width) max-w-(--available-width)">
         {stages.filter((stage) => stage.active || stage.key === currentStageKey).map((stage) => (
-          <SelectItem value={stage.key} key={stage.key} disabled={!stage.active && stage.key === currentStageKey}>
+          <SelectItem className="max-[721px]:min-h-[44px]" value={stage.key} key={stage.key} disabled={!stage.active && stage.key === currentStageKey}>
             <StageOption stageKey={stage.key} label={stage.label} />
           </SelectItem>
         ))}
-        {!current && <SelectItem value={currentStageKey}><StageOption stageKey={currentStageKey} label={labelFor(currentStageKey)} /></SelectItem>}
+        {!current && <SelectItem className="max-[721px]:min-h-[44px]" value={currentStageKey}><StageOption stageKey={currentStageKey} label={labelFor(currentStageKey)} /></SelectItem>}
       </SelectContent>
     </Select>
     {/* #213 (Sol): the Stage column is `max-content`, so an unconstrained reason (75–89 characters)
