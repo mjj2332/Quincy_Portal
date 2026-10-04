@@ -268,7 +268,7 @@ describe("NotificationPreferences", () => {
   });
 
   describe("Email digest cadence (#489)", () => {
-    const trigger = (host: HTMLElement) => host.querySelector<HTMLButtonElement>('[aria-label="Email digest frequency"][role="combobox"]')!;
+    const trigger = (host: HTMLElement) => host.querySelector<HTMLButtonElement>('section [role="combobox"]')!;
     const option = (label: string) => [...document.querySelectorAll<HTMLElement>('[role="listbox"] [role="option"]')].find((element) => element.textContent === label) ?? null;
     async function renderLoaded() {
       const host = document.body.firstElementChild as HTMLElement;
@@ -276,6 +276,16 @@ describe("NotificationPreferences", () => {
       await flush();
       return host;
     }
+
+    it("names the combobox from the visible Frequency label, with no separate aria-label, and a touch-sized trigger at phone width", async () => {
+      const host = await renderLoaded();
+      const combobox = trigger(host);
+      const labelIds = (combobox.getAttribute("aria-labelledby") ?? "").split(/\s+/).filter(Boolean);
+      expect(labelIds.length).toBeGreaterThan(0);
+      expect(labelIds.map((id) => document.getElementById(id)?.textContent ?? "").join(" ").trim()).toBe("Frequency");
+      expect(combobox.hasAttribute("aria-label")).toBe(false);
+      expect(combobox.className).toContain("max-[721px]:min-h-[44px]");
+    });
 
     it("shows the stored cadence, with Twice daily as the default", async () => {
       const host = await renderLoaded();

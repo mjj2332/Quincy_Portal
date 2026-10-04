@@ -181,14 +181,14 @@ export function NotificationPreferences() {
         <h2 id="email-digest" className={CARD_TITLE}>Email digest</h2>
         <div className="mt-[var(--space-4)]">
           <div className={ROW}>
-            <Eyebrow>Frequency</Eyebrow>
+            <Eyebrow id="email-digest-frequency-label">Frequency</Eyebrow>
             <span className={cn(VALUE, "text-foreground")}>
               <Select
                 value={cadence}
                 disabled={loading || unavailable || saving.digest}
                 onValueChange={(next) => { if (next) void changeCadence(next as EmailDigestCadence); }}
               >
-                <SelectTrigger aria-label="Email digest frequency" aria-busy={saving.digest || undefined} className="min-w-[16rem] max-[721px]:w-full">
+                <SelectTrigger aria-labelledby="email-digest-frequency-label" aria-busy={saving.digest || undefined} className="min-h-[38px] min-w-[16rem] max-[721px]:min-h-[44px] max-[721px]:w-full">
                   <SelectValue>{(value: string | null) => cadenceLabel(value ?? cadence)}</SelectValue>
                 </SelectTrigger>
                 <SelectContent className="w-auto min-w-(--anchor-width) max-w-(--available-width)">
