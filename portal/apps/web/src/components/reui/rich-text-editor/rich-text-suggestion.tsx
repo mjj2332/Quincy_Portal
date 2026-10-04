@@ -112,24 +112,6 @@ export function RichTextSuggestionMenu<T>({
     [keys.length]
   )
 
-  useEffect(() => {
-    const dom = editor.view.dom
-    // Command marks the active option after this commit, so read it a task later.
-    const timer = window.setTimeout(() => {
-      const list = rootRef.current?.querySelector("[cmdk-list]")
-      const active = list?.querySelector('[aria-selected="true"]')?.id
-
-      dom.setAttribute("aria-haspopup", "listbox")
-      dom.setAttribute("aria-expanded", "true")
-      dom.setAttribute("aria-autocomplete", "list")
-      if (list?.id) dom.setAttribute("aria-controls", list.id)
-      if (active) dom.setAttribute("aria-activedescendant", active)
-      else dom.removeAttribute("aria-activedescendant")
-    })
-
-    return () => window.clearTimeout(timer)
-  })
-
   // The mention source can have left `role` / `aria-expanded` on the same element: an open list says
   // "expanded", and dismissal hands back whatever was there.
   useEffect(() => {
@@ -144,6 +126,28 @@ export function RichTextSuggestionMenu<T>({
       if (!priorRole) dom.removeAttribute("role")
     }
   }, [editor])
+
+  // Declared after the restore effect above: it must read the mention source's attributes before this one overwrites them.
+  useEffect(() => {
+    const dom = editor.view.dom
+    // The list is open from the moment it commits, so say so now: waiting a task to announce "expanded" left a window (and a
+    // timing-dependent test) in which assistive technology was told the list was closed.
+    dom.setAttribute("aria-haspopup", "listbox")
+    dom.setAttribute("aria-expanded", "true")
+    dom.setAttribute("aria-autocomplete", "list")
+    // Command marks the active option after this commit, so only the option and the list id are read a task later.
+    const timer = window.setTimeout(() => {
+      const list = rootRef.current?.querySelector("[cmdk-list]")
+      const active = list?.querySelector('[aria-selected="true"]')?.id
+
+      dom.setAttribute("aria-expanded", "true")
+      if (list?.id) dom.setAttribute("aria-controls", list.id)
+      if (active) dom.setAttribute("aria-activedescendant", active)
+      else dom.removeAttribute("aria-activedescendant")
+    })
+
+    return () => window.clearTimeout(timer)
+  })
 
   return (
     <Command
