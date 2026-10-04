@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useId, useImperativeHandle, useState } from "react";
-import type { Role } from "@quincy/shared";
+import { ROLE_LABELS, type Role } from "@quincy/shared";
 
 export type MentionableUser = { id: string; name: string; role: Role };
 export type MentionAutocompleteHandle = { handleKeyDown(event: KeyboardEvent): boolean };
@@ -58,7 +58,7 @@ export const MentionAutocomplete = forwardRef<MentionAutocompleteHandle, {
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => onSelect(user)}
         >
-          <span>{user.name}</span><small className="text-foreground-secondary capitalize">{user.role}</small>
+          <span>{user.name}</span><small className="text-foreground-secondary">{ROLE_LABELS[user.role]}</small>
         </button>
       </li>)}
       {!users.length && <li className="p-[var(--space-2)] [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" role="status">No active staff found.</li>}
