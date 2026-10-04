@@ -6,7 +6,7 @@
  * Tailwind `shadow-*`, focus ring widths -- see `reui-skin.guard.test.ts`), and `noUncheckedIndexedAccess`
  * narrowing. `"dark": boolean` is quoted only so the guard's `dark:` matcher does not read a type as a variant.
  *
- * This file: The Excalidraw canvas and chrome host. Imports `@excalidraw/excalidraw/index.css`, which is UNLAYERED (see docs/lessons.md, #498): it only loads with this lazy chunk. Unchanged apart from the mechanical edits.
+ * This file: The Excalidraw canvas and chrome host. Imports `@excalidraw/excalidraw/index.css`, which is UNLAYERED (see docs/lessons.md, #498): it only loads with this lazy chunk. Unchanged apart from the mechanical edits and the QUINCY ADDITIONs marked inline (#498: image tool off; #499: `applyRemote` and `adoptRevisions` (revisions never change across an index move), collaborator `colorKey`, `onPresence`).
  */
 /**
  * The editor behind <Whiteboard>: the only runtime import of Excalidraw (MIT,
@@ -34,6 +34,7 @@ import {
   getCommonBounds,
   getNonDeletedElements,
   hashElementsVersion,
+  reconcileElements,
   isElementLink,
   languages,
   loadSceneOrLibraryFromBlob,
@@ -70,7 +71,10 @@ import type {
   UIOptions,
 } from "@excalidraw/excalidraw/types"
 import { cn } from "@/lib/utils"
-import { planSceneDrop, pasteIsUnsupported, withoutUnsupported } from "@/lib/whiteboard-saver"
+import { createChangeTracker } from "@/lib/whiteboard-changes"
+import { adoptArrivedRevisions, interactingIds, mergeRemote } from "@/lib/whiteboard-merge"
+import { planSceneDrop, pasteIsUnsupported, withoutUnsupported, type ServerHold } from "@/lib/whiteboard-saver"
+import { unfinalized } from "@/lib/whiteboard-vanish"
 
 import "@excalidraw/excalidraw/index.css"
 
@@ -88,6 +92,7 @@ import {
   type WhiteboardPanel,
   type WhiteboardSaveStatus,
   type WhiteboardScene,
+  WHITEBOARD_SAVE_SKIPPED,
 } from "./whiteboard"
 import {
   adjacentFrames,
@@ -734,7 +739,7 @@ const tombstones = (elements: readonly OrderedExcalidrawElement[]) =>
     element.isDeleted ? element : newElementWith(element, { isDeleted: true })
   )
 
-function replaceContent(
+export function replaceContent(
   api: ExcalidrawImperativeAPI,
   content: WhiteboardContent,
   undoable: boolean
@@ -769,11 +774,14 @@ function replaceContent(
   })
 }
 
+type MergeElement = { id: string; version: number; versionNonce: number }
+
 function toCollaborator(person: WhiteboardCollaborator): Collaborator {
   const selectedElementIds: Record<string, true> = {}
   for (const id of person.selectedIds ?? []) selectedElementIds[id] = true
   return {
-    id: person.id,
+    // QUINCY ADDITION #499: Excalidraw 0.18.1 colours from a hash of this field (and ignores `color`).
+    id: person.colorKey ?? person.id,
     username: person.name,
     avatarUrl: person.avatarUrl,
     pointer: person.pointer
@@ -789,6 +797,26 @@ function toCollaborator(person: WhiteboardCollaborator): Collaborator {
 const boardElement = (root: HTMLElement | null) =>
   root?.querySelector<HTMLElement>(".excalidraw-container") ?? null
 
+/**
+ * QUINCY ADDITION #499: the scene without its unfinalized elements (live, invisibly small, nothing holding them), or null when it has
+ * none. Excalidraw finalizes a zero-size element when a pointer gesture ends; one that gets here by any other path would be sent as an
+ * ordinary edit and dropped by every other tab's restore. `handleChange` reports the scene once, then drops them through updateScene,
+ * and the vanish observer authors their deletion. An element a gesture holds (drawing, resizing, text editing, a multi-point line in
+ * progress) is left alone.
+ */
+export function sweepUnfinalized(
+  elements: readonly OrderedExcalidrawElement[],
+  appState: AppState
+): readonly OrderedExcalidrawElement[] | null {
+  const holding = new Set<string>(interactingIds(appState))
+  const drawing = appState.multiElement?.id
+  const lineEdit = appState.editingLinearElement?.elementId
+  if (drawing) holding.add(drawing)
+  if (lineEdit) holding.add(lineEdit)
+  const stray = new Set(unfinalized(elements as never, holding))
+  return stray.size === 0 ? null : elements.filter((element) => !stray.has(element.id))
+}
+
 type ControllerHost = {
   root: () => HTMLDivElement | null
   arm: () => void
@@ -797,13 +825,18 @@ type ControllerHost = {
   library: () => LibraryItems
   /** False in view-only mode; checked again after the async parse, since the mode can change meanwhile. */
   editable: () => boolean
+  /** QUINCY ADDITION #499: the element hash right after a remote merge, so the editor's own change event for it is not a local edit. */
+  remoteApplied: (hash: number, taken: readonly { id: string; version: number; versionNonce: number }[]) => void
+  /** QUINCY ADDITION #499: has the person already changed this element since the load? */
+  edited?: (element: { id: string; version: number; versionNonce: number }) => boolean
 }
 
-function createController(
+export function createController(
   api: ExcalidrawImperativeAPI,
-  { root, arm, panel, library, editable }: ControllerHost
+  { root, arm, panel, library, editable, remoteApplied, edited }: ControllerHost
 ): WhiteboardController {
   const libraryItem = (id: string) => library().find((item) => item.id === id)
+  // QUINCY ADDITION #499: canonical (server / authored) index per element, apart from the one the renderer repaired it to.
   const scrollTo = (ids?: readonly string[]) => {
     arm()
     const elements = api.getSceneElements()
@@ -817,6 +850,34 @@ function createController(
     } else {
       fitElements(api, elements, false, root())
     }
+  }
+
+  // QUINCY ADDITION #499: merges a batch into the board and returns every element now on it. Restore, reconcile and the index
+  // repair they do never change a revision (see whiteboard-merge.ts).
+  const mergeInto = (
+    batch: readonly unknown[],
+    hold: (element: ExcalidrawElement) => ServerHold
+  ) => {
+    const merged = mergeRemote(
+      api.getSceneElementsIncludingDeleted() as unknown as MergeElement[],
+      batch as never,
+      {
+        restore: (raw) => restoreElements(raw as never, null) as unknown as MergeElement[],
+        reconcile: (local, incoming) =>
+          reconcileElements(
+            local as never,
+            incoming as never,
+            api.getAppState()
+          ) as unknown as MergeElement[],
+      },
+      (element) => hold(element as never),
+      interactingIds(api.getAppState())
+    )
+    api.updateScene({
+      elements: merged as never,
+      captureUpdate: CaptureUpdateAction.NEVER,
+    })
+    return api.getSceneElementsIncludingDeleted()
   }
 
   return {
@@ -948,6 +1009,36 @@ function createController(
         ),
         captureUpdate: CaptureUpdateAction.NEVER,
       })
+    },
+    // QUINCY ADDITION #499: other people's elements, merged by Excalidraw's own rule and kept out of Undo.
+    applyRemote: (remote, hold) => {
+      const scene = mergeInto(remote, hold)
+      // handleChange must not read this as a local edit (a remote tick would flash "Unsaved changes").
+      // Only what the scene actually took of the batch is remote; an unreported local edit stays the person's own.
+      const taken = new Map(remote.map((element) => [String((element as { id: unknown }).id), element as { version: number; versionNonce: number }]))
+      remoteApplied(
+        hashElementsVersion(scene),
+        scene.filter((element) => {
+          const incoming = taken.get(element.id)
+          return incoming !== undefined && incoming.version === element.version && incoming.versionNonce === element.versionNonce
+        })
+      )
+      return scene
+    },
+    // QUINCY ADDITION #499: the person's own deletion of an element the editor dropped: merged like a remote one, never recorded as remote.
+    applyLocal: (elements, hold) => mergeInto(elements, hold),
+    author: (element, updates) => newElementWith(element, updates as never),
+    adoptRevisions: (arrived) => {
+      // The editor's own restore of `initialData` repaired indices and bumped revisions; the server's are what count.
+      // An element the person edited before this ran keeps its own revision: it is their edit, not a repair.
+      const scene = api.getSceneElementsIncludingDeleted()
+      const left = new Set<unknown>(adoptArrivedRevisions(scene, arrived as never, edited))
+      api.updateScene({
+        elements: scene as never,
+        captureUpdate: CaptureUpdateAction.NEVER,
+      })
+      const adopted = api.getSceneElementsIncludingDeleted()
+      remoteApplied(hashElementsVersion(adopted), adopted.filter((element) => !left.has(element) && arrived.some((a) => (a as { id: string }).id === element.id)))
     },
     select: (ids) => {
       const selectedElementIds: Record<string, true> = {}
@@ -1112,12 +1203,21 @@ type AutosaveOptions = Pick<
   "onChange" | "onSave" | "onSaveStatusChange"
 > & { changeDelay: number; autosaveDelay: number }
 
+// QUINCY ADDITION #499: a failed or refused save (the server answers `stale` while an access change is landing) is
+// retried by the autosave itself, 1 s, 2 s, 4 s ... capped at 30 s, until it goes through or the board closes.
+const RETRY_BASE_MS = 1000
+const RETRY_MAX_MS = 30_000
+
 /** The settled onChange and the autosave: onSave after edits idle, when the page
  * hides and on unmount, reporting the status as it moves. */
-function useAutosave(
+export function useAutosave(
   api: ExcalidrawImperativeAPI | null,
-  options: RefObject<AutosaveOptions>
+  options: RefObject<AutosaveOptions>,
+  // QUINCY ADDITION #499: while paused (a view-only board) nothing is saved and pending edits stay dirty, never
+  // reported "saved"; they are saved when the pause ends.
+  paused = false
 ) {
+  const pausedRef = useRef(paused)
   const apiRef = useRef(api)
   useEffect(() => {
     apiRef.current = api
@@ -1130,6 +1230,9 @@ function useAutosave(
   const finalSceneRef = useRef<WhiteboardScene | null>(null)
   const changeTimer = useRef<number | undefined>(undefined)
   const saveTimer = useRef<number | undefined>(undefined)
+  const retryTimer = useRef<number | undefined>(undefined)
+  const failuresRef = useRef(0)
+  const closedRef = useRef(false)
 
   const report = useCallback(
     (status: WhiteboardSaveStatus) => {
@@ -1140,25 +1243,53 @@ function useAutosave(
     [options]
   )
 
+  // Declared before flush and bound to it through a ref, since the retry calls flush and flush arms the retry.
+  const flushRef = useRef<() => Promise<void>>(async () => undefined)
+  const scheduleRetry = useCallback(() => {
+    if (closedRef.current) return
+    const delay = Math.min(RETRY_BASE_MS * 2 ** failuresRef.current, RETRY_MAX_MS)
+    failuresRef.current += 1
+    window.clearTimeout(retryTimer.current)
+    retryTimer.current = window.setTimeout(() => void flushRef.current(), delay)
+  }, [])
+
   const flush = useCallback(async () => {
     const current = apiRef.current
     const save = options.current.onSave
     if (!current || !save || !dirtyRef.current) return
+    if (pausedRef.current && !closedRef.current) {
+      report("unsaved")
+      return
+    }
     if (savingRef.current) {
       pendingRef.current = true
       return
     }
     window.clearTimeout(saveTimer.current)
+    window.clearTimeout(retryTimer.current)
     dirtyRef.current = false
     savingRef.current = true
     report("saving")
     try {
-      await save(finalSceneRef.current ?? readScene(current))
-      report(dirtyRef.current ? "unsaved" : "saved")
+      const outcome = await save(finalSceneRef.current ?? readScene(current))
+      if (outcome === WHITEBOARD_SAVE_SKIPPED) {
+        // QUINCY ADDITION #499: nothing was sent (the board went view-only before this hook's pause caught up). The
+        // edit is still unsaved: keep it dirty and never report Saved. The pause ending flushes it, but the restore can
+        // land before React ever commits paused=true (no flip, no resume effect), so arm the same bounded retry as a
+        // failed save. Each retry goes through this flush: paused, it stays dirty and waits; not paused, it sends.
+        dirtyRef.current = true
+        report("unsaved")
+        scheduleRetry()
+      } else {
+        failuresRef.current = 0
+        report(dirtyRef.current ? "unsaved" : "saved")
+      }
     } catch {
       // Keep the edits dirty, so the next change or page hide retries the save.
       dirtyRef.current = true
       report("error")
+      // QUINCY ADDITION #499: and retry without waiting for another edit, backing off to a bound.
+      scheduleRetry()
     } finally {
       savingRef.current = false
       if (pendingRef.current) {
@@ -1166,7 +1297,16 @@ function useAutosave(
         void flush()
       }
     }
-  }, [options, report])
+  }, [options, report, scheduleRetry])
+  useEffect(() => {
+    flushRef.current = flush
+  }, [flush])
+
+  // The pause ends: whatever is still dirty goes out now, with no new edit.
+  useEffect(() => {
+    pausedRef.current = paused
+    if (!paused && dirtyRef.current) void flush()
+  }, [paused, flush])
 
   const markDirty = useCallback(() => {
     if (!options.current.onSave) return
@@ -1205,9 +1345,12 @@ function useAutosave(
   // so a save still in flight re-runs against this snapshot, never an empty board.
   useLayoutEffect(() => {
     finalSceneRef.current = null
+    closedRef.current = false
     return () => {
+      closedRef.current = true
       window.clearTimeout(changeTimer.current)
       window.clearTimeout(saveTimer.current)
+      window.clearTimeout(retryTimer.current)
       const current = apiRef.current
       if (dirtyRef.current && current) {
         finalSceneRef.current = readScene(current)
@@ -1499,6 +1642,7 @@ export function WhiteboardCanvas({
   autosaveDelay = 1500,
   onSaveStatusChange,
   onElements,
+  onPresence,
   onReady,
   readOnly = false,
   viewOnlyIndicator = true,
@@ -1552,6 +1696,7 @@ export function WhiteboardCanvas({
     onSave,
     onSaveStatusChange,
     onElements,
+    onPresence,
     onReady,
     changeDelay,
     autosaveDelay,
@@ -1570,6 +1715,7 @@ export function WhiteboardCanvas({
       onSave,
       onSaveStatusChange,
       onElements,
+      onPresence,
       onReady,
       changeDelay,
       autosaveDelay,
@@ -1595,16 +1741,38 @@ export function WhiteboardCanvas({
   const loadedRef = useRef(false)
   const signatureRef = useRef("")
   const armedRef = useRef(false)
+  // QUINCY ADDITION #499: the element hash a remote merge produced (see applyRemote), and the local presence last reported.
+  const changesRef = useRef(createChangeTracker())
+  const pointerRef = useRef<{ x: number; y: number } | null>(null)
+  const buttonRef = useRef<"up" | "down">("up")
+  const selectionRef = useRef("")
 
   useEffect(() => {
     apiRef.current = api
   }, [api])
 
+  const reportPresence = useCallback((selectedIds: readonly string[]) => {
+    latest.current.onPresence?.({
+      pointer: pointerRef.current,
+      button: buttonRef.current,
+      selectedIds,
+    })
+  }, [])
+  const handlePointerUpdate = useCallback(
+    (payload: { pointer: { x: number; y: number }; button: "down" | "up" }) => {
+      pointerRef.current = { x: payload.pointer.x, y: payload.pointer.y }
+      buttonRef.current = payload.button
+      const selected = Object.keys(apiRef.current?.getAppState().selectedElementIds ?? {})
+      reportPresence(selected)
+    },
+    [reportPresence]
+  )
+
   const arm = useCallback(() => {
     armedRef.current = true
   }, [])
 
-  const { markDirty, scheduleChange } = useAutosave(api, latest)
+  const { markDirty, scheduleChange } = useAutosave(api, latest, readOnly)
   const history = useHistoryMirror(rootRef, api)
 
   const imageToolRef = useRef(imageTool)
@@ -1640,7 +1808,25 @@ export function WhiteboardCanvas({
           return
         }
       }
+      // QUINCY ADDITION #499: an unfinalized zero-size element is reported once (so its observer has seen it), then dropped; the
+      // update is another change event, where the observer authors its deletion.
+      const unfinished = sweepUnfinalized(elements, appState)
+      if (unfinished) {
+        latest.current.onElements?.(elements)
+        apiRef.current?.updateScene({
+          elements: unfinished as never,
+          captureUpdate: CaptureUpdateAction.NEVER,
+        })
+        return
+      }
       latest.current.onElements?.(elements)
+      // QUINCY ADDITION #499: a changed selection is presence too.
+      const selected = Object.keys(appState.selectedElementIds)
+      const selection = selected.join(",")
+      if (selection !== selectionRef.current) {
+        selectionRef.current = selection
+        reportPresence(selected)
+      }
       // Written straight to the layer: panning never re-renders React.
       placeGrid(gridRef.current, appState)
       // Any path left to Excalidraw's own Help swaps it for the kit's dialog
@@ -1694,15 +1880,18 @@ export function WhiteboardCanvas({
       signatureRef.current = signature
       scheduleChange()
       if (!loadedRef.current) {
+        changesRef.current.seed(elements)
         loadedRef.current = true
         setReady(true)
         return
       }
       // Font loading re-measures text after load; only edits after a real
       // interaction count as unsaved work.
+      // QUINCY ADDITION #499: the change event of a remote merge is not the person's own edit.
+      if (changesRef.current.classify(elements, hash) === "remote") return
       if (armedRef.current) markDirty()
     },
-    [markDirty, scheduleChange]
+    [markDirty, reportPresence, scheduleChange]
   )
 
   const loadInitialData =
@@ -1991,6 +2180,10 @@ export function WhiteboardCanvas({
           panel: hostPanel,
           library: libraryOf,
           editable: () => !latest.current.viewOnly,
+          remoteApplied: (hash, taken) => {
+            changesRef.current.remoteApplied(hash, [], taken)
+          },
+          edited: (element) => changesRef.current.editedSinceLoad(element),
         })
       )
     },
@@ -2211,6 +2404,7 @@ export function WhiteboardCanvas({
         excalidrawAPI={handleApi}
         initialData={loadInitialData}
         onChange={handleChange}
+        onPointerUpdate={handlePointerUpdate}
         onPaste={handlePaste}
         onLinkOpen={handleLinkOpen}
         onLibraryChange={handleLibraryChange}

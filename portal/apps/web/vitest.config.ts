@@ -10,5 +10,5 @@ export default defineConfig({
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
-  test: { reporters: ["default", requireExecutedTests("apps/web/vitest.config.ts")], testTimeout: TEST_TIMEOUT_MS, hookTimeout: HOOK_TIMEOUT_MS, environment: "node", include: ["src/**/*.test.ts"] },
+  test: { server: { deps: { inline: [/@excalidraw/, /open-color/] } }, reporters: ["default", requireExecutedTests("apps/web/vitest.config.ts")], testTimeout: TEST_TIMEOUT_MS, hookTimeout: HOOK_TIMEOUT_MS, environment: "node", include: ["src/**/*.test.ts"] },
 });
