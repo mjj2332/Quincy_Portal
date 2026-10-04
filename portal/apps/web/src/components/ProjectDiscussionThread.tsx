@@ -98,6 +98,8 @@ function CommentItem({ comment, isOwn, now, saving, editing, editingOverBytes, p
     return surface;
   }, []);
   const [editUploading, setEditUploading] = useState(false);
+  // Every save path (the Save button, and Ctrl/Cmd+Enter in the editor) goes through this: an image still uploading would be lost.
+  const saveEdit = () => { if (!editUploading) onEditSave(); };
   const isEditing = editing !== undefined;
   const wasEditing = useRef(false);
   useEffect(() => {
@@ -120,8 +122,8 @@ function CommentItem({ comment, isOwn, now, saving, editing, editingOverBytes, p
     </Menu> : <span aria-hidden="true" />}
     <div className="col-start-2 col-span-2 max-[721px]:col-start-1 max-[721px]:col-span-3 grid gap-[var(--space-2)] min-w-0">
       {editing ? <>
-        <QuincyRichTextEditor preset="composer" value={editing} onChange={onEditChange} limit={COMMENT_LIMIT} disabled={saving} loadMentionables={loadMentionables} placeholder="Edit comment…" onSubmit={onEditSave} media={{ projectId }} onUploadingChange={setEditUploading} />
-        <div className="flex justify-end gap-[var(--space-3)]"><Button variant="secondary" type="button" disabled={saving} onClick={onEditCancel}>Cancel</Button><Button type="button" disabled={saving || editingOverBytes || editUploading} onClick={onEditSave}>Save</Button></div>
+        <QuincyRichTextEditor preset="composer" value={editing} onChange={onEditChange} limit={COMMENT_LIMIT} disabled={saving} loadMentionables={loadMentionables} placeholder="Edit comment…" onSubmit={saveEdit} media={{ projectId }} onUploadingChange={setEditUploading} />
+        <div className="flex justify-end gap-[var(--space-3)]"><Button variant="secondary" type="button" disabled={saving} onClick={onEditCancel}>Cancel</Button><Button type="button" disabled={saving || editingOverBytes || editUploading} onClick={saveEdit}>Save</Button></div>
       </> : <RichTextContent className="rich-text--body" content={comment.content} />}
     </div>
   </article>;

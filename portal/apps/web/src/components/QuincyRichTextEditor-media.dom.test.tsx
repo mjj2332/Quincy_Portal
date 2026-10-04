@@ -20,24 +20,25 @@ const png = (name = "a.png", size = 100) => new File([new Uint8Array(size)], nam
 let root: Root | null = null;
 let latest: RichTextDoc = empty();
 let uploadingNow = false;
-function Harness({ initial = empty(), media = true }: { initial?: RichTextDoc; media?: boolean }) {
+function Harness({ initial = empty(), media = true, onSubmit }: { initial?: RichTextDoc; media?: boolean; onSubmit?: () => void }) {
   const [value, setValue] = useState(initial);
-  return <QuincyRichTextEditor preset="composer" value={value} onChange={(next) => { latest = next; setValue(next); }} limit={10_000} loadMentionables={async () => []} {...(media ? { media: { projectId: "p1" } } : {})} onUploadingChange={(busy) => { uploadingNow = busy; }} />;
+  return <QuincyRichTextEditor preset="composer" value={value} onChange={(next) => { latest = next; setValue(next); }} limit={10_000} loadMentionables={async () => []} {...(media ? { media: { projectId: "p1" } } : {})} {...(onSubmit ? { onSubmit } : {})} onUploadingChange={(busy) => { uploadingNow = busy; }} />;
 }
 function mount(ui: React.ReactElement) { const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); act(() => root!.render(ui)); return host; }
 const settle = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 const insertButton = (host: HTMLElement) => host.querySelector<HTMLButtonElement>('button[aria-label="Insert image"]');
-// The picker is a native input made on click: capture it, give it the files, and fire its change.
+// The picker is the ReUI Input, mounted only while choosing: capture its click, give it the files, and fire its change.
 async function choose(host: HTMLElement, files: File[]) {
-  const made: HTMLInputElement[] = [];
-  const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(function (this: HTMLInputElement) { made.push(this); });
+  expect(host.querySelector('input[type="file"]')).toBeNull();
+  const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => undefined);
   await act(async () => { insertButton(host)!.click(); });
   click.mockRestore();
-  const picker = made[0]!;
-  expect(picker.type).toBe("file"); expect(picker.accept).toBe("image/jpeg,image/png,image/webp"); expect(picker.multiple).toBe(true);
+  const picker = host.querySelector<HTMLInputElement>('input[data-testid="rich-text-image-picker"]')!;
+  expect(picker.accept).toBe("image/jpeg,image/png,image/webp"); expect(picker.multiple).toBe(true);
   Object.defineProperty(picker, "files", { configurable: true, value: files });
-  await act(async () => { picker.dispatchEvent(new Event("change")); });
+  await act(async () => { picker.dispatchEvent(new Event("change", { bubbles: true })); });
   await settle();
+  expect(host.querySelector('input[type="file"]')).toBeNull();
 }
 
 beforeEach(() => { latest = empty(); uploadingNow = false; upload.mockReset(); });
@@ -122,6 +123,70 @@ describe("inserting an image", () => {
     drop.dataTransfer = { files: [new File(["x"], "a.zip", { type: "application/zip" })], types: ["Files"], getData: () => "" };
     await act(async () => { surface.dispatchEvent(drop); }); await settle();
     expect(upload).toHaveBeenCalledTimes(1); expect(drop.defaultPrevented).toBe(true);
+  });
+});
+
+const textDoc = (text: string): RichTextDoc => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
+const tiptapOf = (host: HTMLElement) => (host.querySelector('[contenteditable="true"]') as unknown as { editor: Editor }).editor;
+
+describe("where an uploaded image lands", () => {
+  it("goes where the upload started, never over a selection made while it ran", async () => {
+    let finish!: (id: string) => void;
+    upload.mockImplementation(() => new Promise<string>((resolve) => { finish = resolve; }));
+    const host = mount(<Harness initial={textDoc("Hello world")} />);
+    const editor = tiptapOf(host);
+    await act(async () => { editor.commands.setTextSelection(editor.state.doc.content.size - 1); });
+    await choose(host, [png()]);
+    // The user selects text to copy while the file uploads.
+    await act(async () => { editor.commands.setTextSelection({ from: 1, to: 6 }); });
+    await act(async () => { finish(A); }); await settle();
+    expect(latest.content[0]).toMatchObject({ type: "paragraph", content: [{ type: "text", text: "Hello world" }] });
+    expect(latest.content.some((node) => node.type === "image" && node.attrs.mediaId === A)).toBe(true);
+  });
+
+  it("follows the text it was beside when the document changes before the upload ends", async () => {
+    let finish!: (id: string) => void;
+    upload.mockImplementation(() => new Promise<string>((resolve) => { finish = resolve; }));
+    const host = mount(<Harness initial={textDoc("Hello")} />);
+    const editor = tiptapOf(host);
+    await act(async () => { editor.commands.setTextSelection(1 + "Hello".length); });
+    await choose(host, [png()]);
+    await act(async () => { editor.commands.insertContentAt(1, "XX"); });
+    await act(async () => { finish(A); }); await settle();
+    expect(latest.content[0]).toMatchObject({ content: [{ type: "text", text: "XXHello" }] });
+    expect(latest.content.map((node) => node.type)).toEqual(["paragraph", "image"]);
+  });
+});
+
+describe("saving while an image uploads", () => {
+  it("does not submit on Ctrl/Cmd+Enter until the upload has finished", async () => {
+    let finish!: (id: string) => void;
+    upload.mockImplementation(() => new Promise<string>((resolve) => { finish = resolve; }));
+    const onSubmit = vi.fn();
+    const host = mount(<Harness initial={textDoc("Hi")} onSubmit={onSubmit} />);
+    await choose(host, [png()]);
+    const surface = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    await act(async () => { surface.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true })); });
+    expect(onSubmit).not.toHaveBeenCalled();
+    await act(async () => { finish(A); }); await settle();
+    await act(async () => { surface.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true })); });
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("a cancelled editor's late upload cannot clear the busy flag of the editor that replaced it", async () => {
+    const finishers: Array<(id: string) => void> = [];
+    upload.mockImplementation(() => new Promise<string>((resolve) => { finishers.push(resolve); }));
+    const host = mount(<Harness key="first" />);
+    await choose(host, [png("a.png")]);
+    expect(uploadingNow).toBe(true);
+    // Cancel (unmount) and reopen (a fresh editor), then start another upload.
+    await act(async () => { root!.render(<Harness key="second" />); }); await settle();
+    await choose(host, [png("b.png")]);
+    expect(uploadingNow).toBe(true);
+    await act(async () => { finishers[0]!(A); }); await settle();
+    expect(uploadingNow).toBe(true);
+    await act(async () => { finishers[1]!(B); }); await settle();
+    expect(uploadingNow).toBe(false);
   });
 });
 

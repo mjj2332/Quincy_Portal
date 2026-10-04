@@ -15,6 +15,7 @@ import {
 } from "../lib/rich-text-tiptap";
 import { MentionAutocomplete, type MentionAutocompleteHandle, type MentionableUser } from "./MentionAutocomplete";
 import { Button } from "./reui/button";
+import { Input } from "./reui/input";
 import { Progress } from "./reui/progress";
 import { Notice } from "./quincy/Notice";
 import {
@@ -152,7 +153,11 @@ export function QuincyRichTextEditor({
   const mountedRef = useRef(true);
   const mediaRef = useRef(media); mediaRef.current = media;
   const onUploadingChangeRef = useRef(onUploadingChange); onUploadingChangeRef.current = onUploadingChange;
-  const addImagesRef = useRef<(files: File[]) => void>(() => {});
+  const addImagesRef = useRef<(files: File[], at?: number) => void>(() => {});
+  // Where each running upload will land: captured when it starts and mapped through every later transaction.
+  const insertAt = useRef(new Map<number, number>());
+  const [picking, setPicking] = useState<number | null>(null);
+  const pickerRef = useRef<HTMLInputElement>(null);
   const extensions = useMemo(() => [
     ...createRichTextEditorExtensions(preset),
     ...(preset === "document" ? [RichTextSlashCommand.configure({ items: [...RICH_TEXT_BASIC_SLASH_ITEMS, RICH_TEXT_TABLE_SLASH_ITEM] })] : []),
@@ -174,11 +179,12 @@ export function QuincyRichTextEditor({
         if (!files.length) return false;
         event.preventDefault(); addImagesRef.current(files); return true;
       },
-      handleDrop: (_view, event) => {
+      handleDrop: (view, event) => {
         const files = Array.from(event.dataTransfer?.files ?? []);
         if (!files.length) return false;
         event.preventDefault();
-        if (mediaRef.current && !disabledRef.current) addImagesRef.current(files);
+        // The drop lands where it was released, not wherever the selection is by the time the upload finishes.
+        if (mediaRef.current && !disabledRef.current) addImagesRef.current(files, view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos);
         return true;
       },
       handleKeyDown: (view, event) => {
@@ -198,6 +204,8 @@ export function QuincyRichTextEditor({
         if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
           const doc = tiptapToRichTextDoc(view.state.doc.toJSON());
           const plainText = richTextPlainText(doc);
+          // Never submit while an image is still uploading: the post would go without it.
+          if (inFlight.current > 0) { event.preventDefault(); return true; }
           if (plainText.trim().length > 0 && plainText.length <= limitRef.current && richTextDocByteLength(doc) <= maxBytesRef.current && !disabledRef.current) {
             event.preventDefault();
             onSubmitRef.current?.();
@@ -226,28 +234,50 @@ export function QuincyRichTextEditor({
   const activeHeading = useRichTextActiveHeading(isDocument ? editor : null, pageRef, outline);
 
   useEffect(() => { if (editor) editor.setEditable(!disabled); }, [disabled, editor]);
+  useEffect(() => { if (picking !== null) pickerRef.current?.click(); }, [picking]);
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
+  // Keep every pending insertion point on the text it was beside as the document changes.
+  useEffect(() => {
+    if (!editor) return;
+    const follow = ({ transaction }: { transaction: { docChanged: boolean; mapping: { map: (pos: number) => number } } }) => {
+      if (!transaction.docChanged) return;
+      for (const [key, pos] of insertAt.current) insertAt.current.set(key, transaction.mapping.map(pos));
+    };
+    editor.on("transaction", follow);
+    return () => { editor.off("transaction", follow); };
+  }, [editor]);
   // Each file uploads on its own; its node enters the document only once the server has accepted it, so
   // a failed or abandoned upload leaves nothing behind. An upload still running when the editor unmounts is lost.
-  addImagesRef.current = (files: File[]) => {
+  addImagesRef.current = (files: File[], at?: number) => {
     const projectId = mediaRef.current?.projectId;
-    if (!projectId || !editorRef.current) return;
+    const current = editorRef.current;
+    if (!projectId || !current) return;
     const problems: string[] = [];
-    let slots = EMBEDDED_MEDIA_MAX_PER_POST - richTextMediaIds(tiptapToRichTextDoc(editorRef.current.getJSON())).length - inFlight.current;
+    let slots = EMBEDDED_MEDIA_MAX_PER_POST - richTextMediaIds(tiptapToRichTextDoc(current.getJSON())).length - inFlight.current;
     for (const file of files) {
       const problem = embeddedImageProblem(file) ?? (slots <= 0 ? `A post can hold ${EMBEDDED_MEDIA_MAX_PER_POST} images at most.` : null);
       if (problem) { problems.push(problem); continue; }
       slots -= 1;
       const key = ++uploadSeq.current;
+      insertAt.current.set(key, at ?? current.state.selection.to);
       inFlight.current += 1; onUploadingChangeRef.current?.(true);
-      setUploads((current) => [...current, { key, name: file.name || "Image", percent: 0 }]);
-      void uploadEmbeddedImage(projectId, file, (percent) => { if (mountedRef.current) setUploads((current) => current.map((entry) => entry.key === key ? { ...entry, percent } : entry)); })
-        .then((mediaId) => { if (mountedRef.current) editorRef.current?.chain().focus().insertContent({ type: "image", attrs: { mediaId } }).run(); })
-        .catch((reason) => { if (mountedRef.current) setUploadErrors((current) => [...current, `${file.name || "Image"} could not be uploaded${reason instanceof Error && reason.message ? `: ${reason.message}` : "."}`]); })
+      setUploads((entries) => [...entries, { key, name: file.name || "Image", percent: 0 }]);
+      void uploadEmbeddedImage(projectId, file, (percent) => { if (mountedRef.current) setUploads((entries) => entries.map((entry) => entry.key === key ? { ...entry, percent } : entry)); })
+        .then((mediaId) => {
+          const live = editorRef.current;
+          if (!mountedRef.current || !live) return;
+          const position = Math.min(insertAt.current.get(key) ?? live.state.doc.content.size, live.state.doc.content.size);
+          live.chain().insertContentAt(position, { type: "image", attrs: { mediaId } }).run();
+        })
+        .catch((reason) => { if (mountedRef.current) setUploadErrors((entries) => [...entries, `${file.name || "Image"} could not be uploaded${reason instanceof Error && reason.message ? `: ${reason.message}` : "."}`]); })
         .finally(() => {
+          insertAt.current.delete(key);
           inFlight.current -= 1;
+          // An editor that has unmounted has already told its host it is no longer uploading, and the host may
+          // since be running a different editor's uploads: a late callback from this one must not touch that.
+          if (!mountedRef.current) return;
           if (inFlight.current === 0) onUploadingChangeRef.current?.(false);
-          if (mountedRef.current) setUploads((current) => current.filter((entry) => entry.key !== key));
+          setUploads((entries) => entries.filter((entry) => entry.key !== key));
         });
     }
     setUploadErrors(problems);
@@ -312,14 +342,9 @@ export function QuincyRichTextEditor({
     if (next === "2" || next === "3") editor.chain().focus().toggleHeading({ level: Number(next) as 2 | 3 }).run();
     else editor.chain().focus().setParagraph().run();
   };
-  // The native picker is created on demand rather than kept in the tree: a standing file input would be a
-  // second upload control on every Project surface that renders the composer.
-  const chooseImages = () => {
-    const picker = document.createElement("input");
-    picker.type = "file"; picker.multiple = true; picker.accept = EMBEDDED_IMAGE_ACCEPT;
-    picker.addEventListener("change", () => { const files = Array.from(picker.files ?? []); if (files.length) addImagesRef.current(files); });
-    picker.click();
-  };
+  // The picker is mounted only while a choice is being made: a standing file input would be a second upload control on
+  // every Project surface that renders the composer. It is the installed ReUI `Input`, clicked as soon as it mounts.
+  const chooseImages = () => setPicking((n) => (n ?? 0) + 1);
   const off = (can: boolean) => disabled || !can;
 
   return <div ref={wrapperRef} className="group grid gap-[var(--space-2)]" data-disabled={disabled || undefined}>
@@ -384,6 +409,11 @@ export function QuincyRichTextEditor({
       <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} />
       <DeleteTableDialog editor={editor} open={deleteTableOpen} onOpenChange={setDeleteTableOpen} />
     </>}
+    {picking !== null && <Input
+      key={picking} ref={pickerRef} type="file" multiple accept={EMBEDDED_IMAGE_ACCEPT} tabIndex={-1} aria-hidden="true" aria-label="Choose images" data-testid="rich-text-image-picker" className="sr-only"
+      onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); setPicking(null); if (files.length) addImagesRef.current(files, editor.state.selection.to); }}
+      {...{ onCancel: () => setPicking(null) }}
+    />}
     {(uploads.length > 0 || uploadErrors.length > 0) && <div data-testid="rich-text-upload-tray" className="grid gap-[var(--space-2)]">
       {uploads.map((entry) => <Progress key={entry.key} value={entry.percent} aria-label={`Uploading ${entry.name}`} className="grid gap-[var(--space-1)]"><span className="[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary [overflow-wrap:anywhere]">Uploading {entry.name}…</span></Progress>)}
       {uploadErrors.map((message, index) => <Notice key={index} tone="critical" role="alert">{message}</Notice>)}
