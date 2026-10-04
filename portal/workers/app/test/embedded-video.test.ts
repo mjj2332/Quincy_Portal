@@ -254,7 +254,7 @@ describe("PUT …/poster (#494)", () => {
   });
 
   it("refuses to adopt a poster whose cleanup entry the sweep holds a lease on, even an expired one: the object is deleted, no orphan", async () => {
-    for (const claimedUntil of [Date.now() + 600_000, 1]) {
+    for (const claimedUntil of [Date.now() + 600_000, 1, 0]) {
       const { id } = await pending();
       let written = "";
       const racing = wrapMedia((target, property) => property === "put" ? async (key: string, ...rest: unknown[]) => {
@@ -268,27 +268,67 @@ describe("PUT …/poster (#494)", () => {
     }
   });
 
-  it("when a claimed poster is refused and R2 will not delete it, the key is re-queued unclaimed with a newer queued_at, so a sweep's own dequeue cannot remove it", async () => {
+  it("when a claimed poster is refused and R2 will not delete it, the key is re-queued unclaimed with a newer queued_at, so a stale sweep's fenced dequeue and release match nothing", async () => {
     const { id } = await pending();
-    let written = ""; let leaseHeld = 0;
+    let written = ""; let staleFence = { attempts: 0, queuedAt: 0 };
     const racing = wrapMedia((target, property) => {
       if (property === "delete") return async () => { throw new Error("R2 down"); };
       if (property === "put") return async (key: string, ...rest: unknown[]) => {
         written = key; const result = await (target.put as (...a: unknown[]) => Promise<unknown>).call(target, key, ...rest);
-        leaseHeld = Date.now() + 600_000;
-        await database.DB.prepare("UPDATE embedded_media_cleanup SET claimed_until = ? WHERE storage_key = ?").bind(leaseHeld, key).run();
+        await database.DB.prepare("UPDATE embedded_media_cleanup SET claimed_until = ?, attempts = attempts + 1 WHERE storage_key = ?").bind(Date.now() + 600_000, key).run();
+        const claimed = await database.DB.prepare("SELECT attempts, queued_at AS queuedAt FROM embedded_media_cleanup WHERE storage_key = ?").bind(key).first<{ attempts: number; queuedAt: number }>();
+        staleFence = claimed!;
         return result;
       };
       return undefined;
     });
     expect((await putPoster("member", id, jpegBytes(64), racing)).status).toBe(409);
     expect(await database.MEDIA.head(written)).not.toBeNull();
-    const entry = await database.DB.prepare("SELECT claimed_until AS claimedUntil FROM embedded_media_cleanup WHERE storage_key = ?").bind(written).first<{ claimedUntil: number | null }>();
-    expect(entry).toEqual({ claimedUntil: null });
-    // The sweep that held the lease finishes and tries to dequeue under its own lease value: it matches nothing, so the entry survives.
-    const dequeue = await database.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ? AND claimed_until = ?").bind(written, leaseHeld).run();
-    expect(dequeue.meta.changes).toBe(0);
+    expect(await database.DB.prepare("SELECT claimed_until AS claimedUntil FROM embedded_media_cleanup WHERE storage_key = ?").bind(written).first()).toEqual({ claimedUntil: null });
+    const stale = [staleFence.attempts, staleFence.queuedAt];
+    expect((await database.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ? AND attempts = ? AND queued_at = ?").bind(written, ...stale).run()).meta.changes).toBe(0);
+    expect((await database.DB.prepare("UPDATE embedded_media_cleanup SET claimed_until = 0 WHERE storage_key = ? AND attempts = ? AND queued_at = ?").bind(written, ...stale).run()).meta.changes).toBe(0);
     expect(await queued(written)).not.toBeNull();
+  });
+
+  const throwingBatch = (base: Env): Env => ({ ...base, DB: new Proxy(base.DB, { get: (target, property) => {
+    if (property === "batch") return async () => { throw new Error("D1 down"); };
+    const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value;
+  } }) });
+
+  it("(3) deletes the poster object when the adoption batch throws, leaving the row without a poster and no queue entry", async () => {
+    const { id } = await pending(); let written = "";
+    const base = wrapMedia((target, property) => property === "put" ? async (key: string, ...rest: unknown[]) => { written = key; return (target.put as (...a: unknown[]) => Promise<unknown>).call(target, key, ...rest); } : undefined);
+    const response = await putPoster("member", id, jpegBytes(64), throwingBatch(base));
+    expect(response.status).toBeGreaterThanOrEqual(500);
+    expect((await mediaRow(id))!.poster_key).toBeNull();
+    expect(await database.MEDIA.head(written)).toBeNull(); expect(await queued(written)).toBeNull();
+  });
+
+  it("when the adoption throws, R2 refuses the delete and the re-queue fails too, the key is logged loudly as an orphan", async () => {
+    const { id } = await pending(); let written = "";
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const base = wrapMedia((target, property) => {
+      if (property === "delete") return async () => { throw new Error("R2 down"); };
+      if (property === "put") return async (key: string, ...rest: unknown[]) => { written = key; return (target.put as (...a: unknown[]) => Promise<unknown>).call(target, key, ...rest); };
+      return undefined;
+    });
+    await putPoster("member", id, jpegBytes(64), throwingBatch(base));
+    const logged = errors.mock.calls.find((call) => /orphan/i.test(String(call[0])));
+    errors.mockRestore();
+    expect(logged).toBeDefined(); expect(JSON.stringify(logged)).toContain(written);
+  });
+
+  it("uses a fresh key for every attempt, never reusing one across PUTs", async () => {
+    const { id } = await pending(); const keys: string[] = [];
+    const recording = (claim: boolean) => wrapMedia((target, property) => property === "put" ? async (key: string, ...rest: unknown[]) => {
+      keys.push(key); const result = await (target.put as (...a: unknown[]) => Promise<unknown>).call(target, key, ...rest);
+      if (claim) await database.DB.prepare("UPDATE embedded_media_cleanup SET claimed_until = 0 WHERE storage_key = ?").bind(key).run();
+      return result;
+    } : undefined);
+    expect((await putPoster("member", id, jpegBytes(64), recording(true))).status).toBe(409);
+    expect((await putPoster("member", id, jpegBytes(64), recording(false))).status).toBe(204);
+    expect(keys).toHaveLength(2); expect(keys[0]).not.toBe(keys[1]);
   });
 
   it("a poster adopted before any sweep claims it leaves no queue entry for a sweep to take", async () => {

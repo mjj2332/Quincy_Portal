@@ -96,26 +96,28 @@ export async function sweepEmbeddedMedia(env: Pick<Env, "DB" | "MEDIA">, now = D
 }
 
 /**
- * Works through up to 100 queued keys under a lease (#494). An entry is claimed by setting `claimed_until` to now plus the lease, and is
- * NEVER deleted before its cleanup succeeded: a failure at any step leaves it in the table, so ownership of the object is durable. The
- * claim is conditional on the entry being unleased or its lease past, so concurrent sweeps cannot both take it. After the abort and delete
- * the entry is deleted only under this sweep's own lease value. A failure releases the lease (best effort, and if that fails too the
- * lease simply expires), keeping the upload id and counting the attempt. A re-queue (which bumps queued_at and clears the lease) while
- * the sweep worked makes that delete match nothing, so the entry for the newer object survives. The poster route adopts a poster only
- * from an unclaimed entry, so a claim and an adoption can never both win.
+ * Works through up to 100 queued keys under a lease (#494). An entry is claimed by setting `claimed_until` to now plus the lease and
+ * adding 1 to `attempts`, and is NEVER deleted before its cleanup succeeded: a failure at any step leaves it in the table, so ownership
+ * of the object is durable. The claim is conditional on the entry being unleased or its lease past, so concurrent sweeps cannot both take
+ * it. The claim's identity is the (attempts, queued_at) it returns, and every later statement of this sweep (the dequeue and the release)
+ * is fenced on both: a later claim moves `attempts` and a re-queue moves `queued_at`, so a stalled sweep can never remove or alter an
+ * entry that is no longer its own, even if two sweeps share a scheduled `now`.
+ * A claim permanently invalidates poster adoption of the key: release sets `claimed_until` to 0 (claimed before, lease over), never back
+ * to NULL, so it stays reclaimable (0 is below any now) while the adoption, which needs NULL, can never win after any claim. Only a
+ * re-queue (for an object the route has given up on) resets it to NULL.
  */
 async function drainCleanupQueue(env: Pick<Env, "DB" | "MEDIA">, now: number): Promise<number> {
   const queue = await env.DB.prepare("SELECT storage_key AS storageKey FROM embedded_media_cleanup WHERE claimed_until IS NULL OR claimed_until < ? ORDER BY queued_at, storage_key LIMIT ?").bind(now, SWEEP_LIMIT).all<{ storageKey: string }>();
   let drained = 0;
   for (const { storageKey } of queue.results) {
     try {
-      const claim = await env.DB.prepare("UPDATE embedded_media_cleanup SET claimed_until = ?, attempts = attempts + 1 WHERE storage_key = ? AND (claimed_until IS NULL OR claimed_until < ?) RETURNING upload_id AS uploadId, claimed_until AS claimedUntil")
-        .bind(now + CLEANUP_LEASE_MS, storageKey, now).all<{ uploadId: string | null; claimedUntil: number }>();
+      const claim = await env.DB.prepare("UPDATE embedded_media_cleanup SET claimed_until = ?, attempts = attempts + 1 WHERE storage_key = ? AND (claimed_until IS NULL OR claimed_until < ?) RETURNING upload_id AS uploadId, attempts, queued_at AS queuedAt")
+        .bind(now + CLEANUP_LEASE_MS, storageKey, now).all<{ uploadId: string | null; attempts: number; queuedAt: number }>();
       const claimed = claim.results[0];
       if (!claimed) continue;
       const release = async (error: unknown, step: string) => {
         console.error(`Embedded media cleanup ${step} failed`, { key: storageKey, error: errorText(error) });
-        try { await env.DB.prepare("UPDATE embedded_media_cleanup SET claimed_until = NULL WHERE storage_key = ? AND claimed_until = ?").bind(storageKey, claimed.claimedUntil).run(); }
+        try { await env.DB.prepare("UPDATE embedded_media_cleanup SET claimed_until = 0 WHERE storage_key = ? AND attempts = ? AND queued_at = ?").bind(storageKey, claimed.attempts, claimed.queuedAt).run(); }
         catch (releaseError) { console.error("Embedded media cleanup lease release failed, it expires on its own", { key: storageKey, error: errorText(releaseError) }); }
       };
       if (claimed.uploadId) {
@@ -124,7 +126,7 @@ async function drainCleanupQueue(env: Pick<Env, "DB" | "MEDIA">, now: number): P
       }
       try { await env.MEDIA.delete(storageKey); }
       catch (error) { await release(error, "delete"); continue; }
-      const dequeued = await env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ? AND claimed_until = ?").bind(storageKey, claimed.claimedUntil).run();
+      const dequeued = await env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ? AND attempts = ? AND queued_at = ?").bind(storageKey, claimed.attempts, claimed.queuedAt).run();
       if ((dequeued.meta.changes ?? 0) === 1) drained += 1;
     } catch (error) { console.error("Embedded media cleanup failed", { key: storageKey, error: errorText(error) }); }
   }
