@@ -10,7 +10,7 @@
 // 4. `testId="rich-text-table-bubble"` on the bar: a Quincy-owned test hook.
 // 5. Add row / Add column disable at the server's 50 x 12 limits (`tableDimensions`); the hard stop for
 //    Tab and paste is `TableSizeBoundary` in `lib/rich-text-tiptap.ts`.
-import { useCallback } from "react"
+import { useCallback, useMemo } from "react"
 import { findParentNodeClosestToPos, type Editor } from "@tiptap/react"
 import { BubbleMenu } from "@tiptap/react/menus"
 
@@ -106,7 +106,10 @@ function readTable(editor: Editor | null): TableSnapshot {
 
 const TABLE_BUBBLE_KEY = "richTextTableBubble"
 
-const TABLE_BUBBLE_OPTIONS = { placement: "bottom-start", offset: 4 } as const
+// Below the table (above would cover the main toolbar). The editable surface is the flip/shift
+// boundary, so the bar stays inside it: it never lands on the composer frame border or the helper line
+// under the frame (it flips above the table, still inside the surface, when there is no room below).
+const TABLE_BUBBLE_GAP = 8
 
 function showInTable({
   editor,
@@ -149,13 +152,23 @@ export function RichTextTableBubble({
     }
   }, [editor])
 
+  const options = useMemo(
+    () => ({
+      placement: "bottom-start" as const,
+      offset: TABLE_BUBBLE_GAP,
+      flip: { boundary: editor.view.dom, padding: TABLE_BUBBLE_GAP },
+      shift: { boundary: editor.view.dom, padding: TABLE_BUBBLE_GAP },
+    }),
+    [editor]
+  )
+
   return (
     <BubbleMenu
       editor={editor}
       pluginKey={TABLE_BUBBLE_KEY}
       shouldShow={showInTable}
       getReferencedVirtualElement={getTableRect}
-      options={TABLE_BUBBLE_OPTIONS}
+      options={options}
       className="z-[var(--z-popover)]"
     >
       <RichTextBubbleBar
