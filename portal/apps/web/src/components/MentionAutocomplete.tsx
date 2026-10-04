@@ -58,7 +58,7 @@ export const MentionAutocomplete = forwardRef<MentionAutocompleteHandle, {
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => onSelect(user)}
         >
-          <span>{user.name}</span><small className="text-foreground-secondary">{ROLE_LABELS[user.role]}</small>
+          <span className="min-w-0 truncate">{user.name}</span><small className="shrink-0 [font:inherit] text-foreground-secondary">{ROLE_LABELS[user.role]}</small>
         </button>
       </li>)}
       {!users.length && <li className="p-[var(--space-2)] [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" role="status">No active staff found.</li>}
