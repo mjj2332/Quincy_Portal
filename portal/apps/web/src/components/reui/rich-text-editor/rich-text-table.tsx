@@ -15,6 +15,10 @@
 //    placed `top-start` -> `bottom-start` around the active cell and never over it. It is re-resolved on
 //    every selection update; the plugin's own scroll/resize handlers re-run it. flip/shift are bounded to
 //    the editable surface so the bar can never reach the toolbar, the frame border or the helper line.
+//    Known gap: when the bar fits on neither side of the cell inside the surface (a table that is the first
+//    block, caret in its second row, at <=721px where the buttons are 44px touch targets: 62px needed,
+//    ~50px available), flip keeps `top-start` and shift clamps the bar onto the top of the caret's row. The
+//    typed line stays clear (cell padding), so it is accepted; the boundary-rect alternative is #535.
 import { useCallback, useMemo } from "react"
 import { findParentNodeClosestToPos, type Editor } from "@tiptap/react"
 import { BubbleMenu } from "@tiptap/react/menus"
