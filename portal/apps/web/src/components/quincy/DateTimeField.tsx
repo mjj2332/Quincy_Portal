@@ -5,7 +5,7 @@ import { FIELD_BOX } from "@/components/reui/input";
 import { PopoverContent, Popover, PopoverTrigger } from "@/components/reui/popover";
 import { isSydneyCalendarDate } from "@quincy/shared";
 import { formatCivilDay, formatCivilRange } from "@/lib/date-format";
-import { buildShortcuts, civilToCell, sydneyToday, yearBounds } from "@/lib/date-time-field";
+import { buildShortcuts, civilToCell, resolveDateTimePopupPlacement, sydneyToday, yearBounds, type PopupCollisionAvoidance, type PopupCollisionPadding } from "@/lib/date-time-field";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { cn } from "@/lib/utils";
 import { CalendarPane } from "./date-time-field/CalendarPane";
@@ -52,6 +52,10 @@ type CommonProps = {
   description?: ReactNode;
   /** Set when `description` is a live status (a note that appears after an action) rather than static help. */
   descriptionRole?: "status";
+  /** Replaces the popup's collision policy (see `resolveDateTimePopupPlacement`); omitted keeps the default. */
+  popupCollisionAvoidance?: PopupCollisionAvoidance;
+  /** Replaces the popup's 16px viewport padding. A function is read once, when the popup opens. */
+  popupCollisionPadding?: PopupCollisionPadding | (() => PopupCollisionPadding);
 };
 
 export type DateTimeFieldProps =
@@ -160,23 +164,31 @@ function usePopupAnchor(): { zoneId: string; bodyRef: Ref<HTMLDivElement> } {
  * opening focus on the selected day (so no shortcut reads as selected) else the first control.
  * Provides the zone id and body ref the popup's frame needs.
  */
-export function DateTimePopoverContent({ label, className, children, ...props }: Omit<ComponentProps<typeof PopoverContent>, "aria-label" | "aria-describedby" | "initialFocus"> & { label: string }) {
+export function DateTimePopoverContent({ label, className, children, popupCollisionAvoidance, popupCollisionPadding, ...props }: Omit<ComponentProps<typeof PopoverContent>, "aria-label" | "aria-describedby" | "initialFocus" | "collisionAvoidance" | "collisionPadding"> & { label: string; popupCollisionAvoidance?: PopupCollisionAvoidance; popupCollisionPadding?: PopupCollisionPadding | (() => PopupCollisionPadding) }) {
   const zoneId = useId();
   const bodyRef = useRef<HTMLDivElement>(null);
   // Below sm the popup may cover its trigger: "shift" on y gives --available-height the whole
   // viewport (minus padding) instead of the sliver above or below the field (#447).
   const narrow = useMediaQuery("(width < 40rem)");
+  // The content mounts on open, so this reads the shell header once per open (#528).
+  const [padding] = useState(() => typeof popupCollisionPadding === "function" ? popupCollisionPadding() : popupCollisionPadding);
+  // ~530-680px tall: if it fits neither side, stay above/below and scroll the body rather than opening sideways.
+  const { collisionAvoidance, collisionPadding } = resolveDateTimePopupPlacement({ narrow, avoidance: popupCollisionAvoidance, padding });
   return (
     <PopoverContent
       align="start"
-      collisionPadding={16}
-      // ~530-680px tall: if it fits neither side, stay above/below and scroll the body rather than opening sideways.
-      // On a phone, shift over the trigger instead so the body gets the viewport's height.
-      collisionAvoidance={narrow ? { side: "shift", fallbackAxisSide: "none" } : { fallbackAxisSide: "none" }}
+      collisionPadding={collisionPadding as ComponentProps<typeof PopoverContent>["collisionPadding"]}
+      collisionAvoidance={collisionAvoidance}
       {...props}
       aria-label={label}
       aria-describedby={zoneId}
-      initialFocus={() => bodyRef.current?.querySelector<HTMLElement>('[data-initial-focus="true"]') ?? bodyRef.current?.querySelector<HTMLElement>('[aria-selected="true"] button') ?? bodyRef.current?.querySelector<HTMLElement>("button") ?? true}
+      // preventScroll: Base UI's own focus() would scroll a short body past the month navigation and presets (#528).
+      initialFocus={() => {
+        const target = bodyRef.current?.querySelector<HTMLElement>('[data-initial-focus="true"]') ?? bodyRef.current?.querySelector<HTMLElement>('[aria-selected="true"] button') ?? bodyRef.current?.querySelector<HTMLElement>("button");
+        if (!target) return true;
+        target.focus({ preventScroll: true });
+        return false;
+      }}
       className={cn("w-auto max-w-[calc(100vw-2*var(--space-4))] gap-0 overflow-hidden rounded-[var(--radius-card)] p-0", className)}
     >
       <PopupAnchorContext.Provider value={{ zoneId, bodyRef }}>{children}</PopupAnchorContext.Provider>
@@ -219,7 +231,7 @@ export function DateTimeField(props: DateTimeFieldProps) {
           </span>
           <CalendarIcon aria-hidden className="size-4 shrink-0 text-foreground-secondary" />
         </PopoverTrigger>
-        <DateTimePopoverContent label={label} align={props.popupAlign ?? "start"} positionerClassName={props.positionerClassName}>
+        <DateTimePopoverContent label={label} align={props.popupAlign ?? "start"} positionerClassName={props.positionerClassName} popupCollisionAvoidance={props.popupCollisionAvoidance} popupCollisionPadding={props.popupCollisionPadding}>
           {props.variant === "date"
             ? <DatePopup label={label} value={props.value} clearable={clearable} onApply={props.onApply} onClose={() => setOpen(false)} />
             : props.variant === "range"

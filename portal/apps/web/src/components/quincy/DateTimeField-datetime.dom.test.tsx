@@ -524,4 +524,19 @@ describe("DateTimeField date-time: seeding a draft", () => {
       expect(queries).toContain("(width < 40rem)");
     } finally { window.matchMedia = original; }
   });
+
+  it("focuses the selected day without scrolling the popup body, so the month navigation stays in view (#528)", async () => {
+    const calls: Array<{ el: Element; options: FocusOptions | undefined }> = [];
+    const original = HTMLElement.prototype.focus;
+    HTMLElement.prototype.focus = function (this: HTMLElement, options?: FocusOptions) { calls.push({ el: this, options }); return original.call(this, options); };
+    try {
+      await mount({ value: stored("2027-01-15T09:00") });
+      await open();
+    } finally { HTMLElement.prototype.focus = original; }
+    const selected = popup()!.querySelector<HTMLElement>('[aria-selected="true"] button')!;
+    expect(document.activeElement).toBe(selected);
+    const focusing = calls.filter((call) => call.el === selected);
+    expect(focusing.length).toBeGreaterThan(0);
+    expect(focusing.every((call) => call.options?.preventScroll === true)).toBe(true);
+  });
 });

@@ -31,6 +31,9 @@ import { ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon } from "lucide-react
  *    the whole tree. A controlled `month` therefore destroyed the focused month/year `<select>` on
  *    each change and focus fell to `<body>`. They are module-level (`DayButton` memoised on
  *    `locale`) so identity is stable.
+ * 5. **No re-focus of an already-focused day (#528).** `focus()` on the active element is a no-op in
+ *    a browser, but it is a second, scrollable focus call the popup's `preventScroll` initial focus
+ *    cannot see; skipping it keeps the one non-scrolling call the only one.
  *
  * No Positioner/Popup (`z-50` does not apply), no Portal, and no `outline-hidden` token, so none
  * of `reui/popover.tsx`'s other conformance edits apply. Nothing composes it yet: #205 may replace
@@ -220,7 +223,7 @@ function CalendarDayButton({
 
   const ref = React.useRef<HTMLButtonElement>(null)
   React.useEffect(() => {
-    if (modifiers.focused) ref.current?.focus()
+    if (modifiers.focused && document.activeElement !== ref.current) ref.current?.focus()
   }, [modifiers.focused])
 
   return (
