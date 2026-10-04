@@ -187,7 +187,7 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
             <KanbanItemHandle
               // The street is the card's accessible name and the stretched hit area (`after:`), whose own
               // focus ring is drawn on the pseudo-element so it frames the whole card, not just the text.
-              className="serif text-base tracking-tight leading-snug [text-wrap:pretty] no-underline text-inherit [touch-action:manipulation] after:absolute after:inset-0 focus-visible:!outline-none focus-visible:after:outline-2 focus-visible:after:outline-[var(--ink-900)] focus-visible:after:-outline-offset-2"
+              className="serif text-base tracking-tight leading-snug [text-wrap:pretty] no-underline text-inherit [touch-action:manipulation] after:absolute after:inset-0 focus-visible:!outline-none focus-visible:after:outline-2 focus-visible:after:outline-[var(--focus-ring)] focus-visible:after:-outline-offset-2"
               cursor={!dragDisabled}
               {...LINK_ATTRIBUTE_OVERRIDES}
               render={<InternalLink ref={(element: HTMLAnchorElement | null) => handleRef?.(project.id, element)} to={href} data-testid="board-card" data-focus-key={`card:${project.id}`} />}

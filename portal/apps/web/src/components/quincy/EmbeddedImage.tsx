@@ -21,7 +21,7 @@ export function EmbeddedImage({ mediaId }: { mediaId: string }) {
       {/* The review Lightbox's language: an inverse (dark) stage, the image edge to edge, and the close button on a scrim chip only as large as the button, so a light image never hides it and the photo is not darkened. */}
       <DialogContent data-surface="inverse" data-testid="embedded-image-dialog" className="max-h-[90dvh] max-w-[calc(100%-2rem)] gap-0 overflow-hidden bg-background p-0 text-foreground ring-0 sm:max-w-[min(90vw,64rem)]">
         <DialogTitle className="sr-only">Image</DialogTitle>
-        <DialogDescription className="sr-only">The image as posted in the discussion.</DialogDescription>
+        <DialogDescription className="sr-only">The image as posted.</DialogDescription>
         <div data-testid="embedded-image-scrim" aria-hidden="true" className="pointer-events-none absolute top-0 right-0 size-[var(--space-7)] bg-[var(--scrim-overlay)]" />
         <img src={src} alt="Embedded image, full size" className="mx-auto block max-h-[90dvh] w-full object-contain" />
       </DialogContent>

@@ -2,7 +2,10 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
 import { createDb, schema } from "@quincy/db";
-import { NOTICE_BODY_MAX_LENGTH, NOTICE_RICH_TEXT_JSON_MAX_BYTES, NOTICE_RICH_TEXT_PROFILE, richTextDocByteLength, legacyBodyToRichTextDoc, normalizeRichTextMentionLabels, parseRichTextDoc, richTextMentionIds, richTextPlainText, type RichTextDoc } from "@quincy/shared";
+import {
+  EMBEDDED_IMAGE_CONTENT_TYPES, EMBEDDED_MEDIA_MAX_BYTES, NOTICE_BODY_MAX_LENGTH, NOTICE_RICH_TEXT_JSON_MAX_BYTES, NOTICE_RICH_TEXT_PROFILE, externalEmbeddedMediaCompleteSchema, externalEmbeddedMediaPresignSchema,
+  noticeEmbeddedMediaObjectKey, richTextDocByteLength, legacyBodyToRichTextDoc, normalizeRichTextMentionLabels, parseRichTextDoc, richTextMediaIds, richTextMentionIds, richTextPlainText, type RichTextDoc,
+} from "@quincy/shared";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import type { AppEnv } from "../env";
@@ -10,7 +13,9 @@ import { requireCapability } from "../middleware/capability";
 import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { notifyNoticeBoardMentions } from "../lib/notifications";
-import { createNoticeBoardPost } from "../lib/notice-board-service";
+import { NoticeBoardMediaConflictError, createNoticeBoardPost, deleteNoticeBoardPost, editNoticeBoardPost } from "../lib/notice-board-service";
+import { enqueueEmbeddedMediaCleanup, getEmbeddedMedia, preflightOwnedMedia, purgeDetachedOwnerMedia, verifyUploadedEmbeddedObject } from "../lib/embedded-media";
+import { abortMultipart, createMultipartPresign } from "../lib/r2s3";
 import { advanceNoticeBoardReadMarker, getNoticeBoardReadState, type NoticeBoardReadState } from "../lib/notice-board-read-state";
 import { jsonInput } from "./helpers";
 
@@ -18,6 +23,8 @@ const optionalQuery = <T extends z.ZodTypeAny>(schema: T) => z.preprocess((value
 const postsQuery = z.object({ limit: optionalQuery(z.coerce.number().int().min(1).max(50)) });
 const postInput = z.object({ content: z.unknown() });
 const postId = z.string().uuid();
+const mediaPresignInput = z.object({ contentType: z.enum(EMBEDDED_IMAGE_CONTENT_TYPES), bytes: z.number().int().min(1).max(EMBEDDED_MEDIA_MAX_BYTES) }).strict();
+const mediaCompleteInput = z.object({ parts: z.array(z.object({ partNumber: z.number().int().positive(), etag: z.string().min(1) }).strict()).optional() }).strict();
 
 export type NoticePost = { id: string; authorId: string; authorName: string; body: string; content: RichTextDoc; createdAt: string; editedAt: string | null };
 type NoticeBoardMutationResponse = { post: NoticePost; readState: NoticeBoardReadState };
@@ -48,7 +55,7 @@ async function findPost(db: ReturnType<typeof createDb>, id: string) {
     .where(eq(schema.noticeBoardPosts.id, id)).get();
 }
 
-async function normalizedContent(db: ReturnType<typeof createDb>, input: unknown): Promise<{ content: RichTextDoc; body: string; mentionIds: string[] } | null> {
+async function normalizedContent(db: ReturnType<typeof createDb>, input: unknown): Promise<{ content: RichTextDoc; body: string; mentionIds: string[]; mediaIds: string[] } | null> {
   let parsed: RichTextDoc;
   try { parsed = parseRichTextDoc(input, NOTICE_RICH_TEXT_PROFILE); } catch { return null; }
   const mentionIds = richTextMentionIds(parsed);
@@ -63,7 +70,7 @@ async function normalizedContent(db: ReturnType<typeof createDb>, input: unknown
   const body = richTextPlainText(content).trim();
   // Re-check the byte cap here: a label rewritten to the current name can be longer than the one sent.
   if (!body || body.length > NOTICE_BODY_MAX_LENGTH || richTextDocByteLength(content) > NOTICE_RICH_TEXT_JSON_MAX_BYTES) return null;
-  return { content, body, mentionIds };
+  return { content, body, mentionIds, mediaIds: richTextMediaIds(content) };
 }
 
 export const noticeBoardRoutes = new Hono<AppEnv>();
@@ -109,7 +116,9 @@ noticeBoardRoutes.post("/notice-board/posts", terminalRoute("/notice-board/posts
   if (!prepared) return c.json({ error: "Invalid notice content or mention target" }, 400);
   const id = newId(); const wallClockMs = Date.now(); const createdAt = new Date(wallClockMs); const user = c.get("user");
   const mentions = prepared.mentionIds.map((mentionedUserId) => ({ id: newId(), postId: id, mentionedUserId, createdAt }));
-  await createNoticeBoardPost(c.env.DB, { id, authorId: user.id, body: prepared.body, contentJson: JSON.stringify(prepared.content), mentions, wallClockMs });
+  if (!await preflightOwnedMedia(c.env.DB, { ownerKind: "notice_post", ownerId: id, projectId: null, uploaderId: user.id, ids: prepared.mediaIds })) return c.json({ error: "An image in this notice is unavailable.", code: "invalid_media" }, 400);
+  try { await createNoticeBoardPost(c.env.DB, { id, authorId: user.id, body: prepared.body, contentJson: JSON.stringify(prepared.content), mentions, wallClockMs, media: { authorId: user.id, ids: prepared.mediaIds } }); }
+  catch (error) { if (error instanceof NoticeBoardMediaConflictError) return c.json({ error: "An image in this notice is no longer available. Remove it and try again.", code: "media_conflict" }, 409); throw error; }
   await audit(c.env, user, "notice_board.post", "notice_board_post", id);
   await notifyNoticeBoardMentions(c.env, { actorId: user.id, authorName: user.name, body: prepared.body, mentions });
   const post = await findPost(db, id);
@@ -136,12 +145,11 @@ noticeBoardRoutes.patch("/notice-board/posts/:id", terminalRoute("/notice-board/
   const createdAt = new Date();
   const added = prepared.mentionIds.filter((mentionedUserId) => !existingIds.has(mentionedUserId))
     .map((mentionedUserId) => ({ id: newId(), postId: id, mentionedUserId, createdAt }));
-  const edits = [
-    db.update(schema.noticeBoardPosts).set({ body: prepared.body, contentJson: JSON.stringify(prepared.content), editedAt: createdAt }).where(eq(schema.noticeBoardPosts.id, id)),
-    ...removed.map((map) => db.delete(schema.noticeBoardPostMentions).where(eq(schema.noticeBoardPostMentions.id, map.id))),
-    ...added.map((map) => db.insert(schema.noticeBoardPostMentions).values(map)),
-  ];
-  await db.batch(edits as [never, ...never[]]);
+  if (!await preflightOwnedMedia(c.env.DB, { ownerKind: "notice_post", ownerId: id, projectId: null, uploaderId: user.id, ids: prepared.mediaIds })) return c.json({ error: "An image in this notice is unavailable.", code: "invalid_media" }, 400);
+  let edited: Awaited<ReturnType<typeof editNoticeBoardPost>>;
+  try { edited = await editNoticeBoardPost(c.env.DB, { id, authorId: user.id, body: prepared.body, contentJson: JSON.stringify(prepared.content), editedAt: createdAt, removeMentionIds: removed.map((map) => map.id), addMentions: added, media: { authorId: user.id, ids: prepared.mediaIds } }); }
+  catch (error) { if (error instanceof NoticeBoardMediaConflictError) return c.json({ error: "An image in this notice is no longer available. Remove it and try again.", code: "media_conflict" }, 409); throw error; }
+  if (!edited.updated) return c.json({ error: "Post not found" }, 404);
   await audit(c.env, user, "notice_board.edit", "notice_board_post", id);
   await notifyNoticeBoardMentions(c.env, { actorId: user.id, authorName: user.name, body: prepared.body, mentions: added });
   const post = await findPost(db, id);
@@ -158,7 +166,74 @@ noticeBoardRoutes.delete("/notice-board/posts/:id", terminalRoute("/notice-board
   // An impersonated Admin intentionally acts as the effective author here — see the
   // impersonation caveat on this rule in AGENTS.md.
   if (post.authorId !== user.id) return c.json({ error: "Forbidden: only the author can delete this post." }, 403);
-  await db.delete(schema.noticeBoardPosts).where(eq(schema.noticeBoardPosts.id, id));
+  if (!await deleteNoticeBoardPost(c.env.DB, { id, authorId: user.id })) return c.json({ error: "Post not found" }, 404);
   await audit(c.env, user, "notice_board.delete", "notice_board_post", id);
+  // The batch left the post's media detached and due now: delete the objects, then the rows, best effort. The daily sweep is the backstop (#496).
+  await purgeDetachedOwnerMedia(c.env, "notice_post", id);
   return c.json({ ok: true });
+}));
+
+/**
+ * Embedded media on the Notice board (#496). Registered here, beside the posts, so the `/notice-board/*` capability gate above
+ * covers every one of them. The object lives under a Notice-board prefix and is owned by its post through the D1 row.
+ */
+const mediaUuid = z.string().uuid();
+const mediaStray = (c: Context<AppEnv>) => c.json({ error: "Media upload not found" }, 404);
+
+noticeBoardRoutes.post("/notice-board/embedded-media", terminalRoute("/notice-board/embedded-media", async (c) => {
+  const data = await jsonInput(c, mediaPresignInput); if (data instanceof Response) return data;
+  const user = c.get("user"); const mediaId = newId(); const key = noticeEmbeddedMediaObjectKey(mediaId); const now = Date.now();
+  await c.env.DB.prepare(`
+    INSERT INTO embedded_media (id, owner_kind, owner_id, project_id, uploader_id, kind, content_type, bytes, original_key, state, created_at, updated_at)
+    VALUES (?, 'notice_post', NULL, NULL, ?, 'image', ?, ?, ?, 'uploading', ?, ?)
+  `).bind(mediaId, user.id, data.contentType, data.bytes, key, now, now).run();
+  const release = () => c.env.DB.prepare("DELETE FROM embedded_media WHERE id = ? AND state = 'uploading'").bind(mediaId).run();
+  let multipart: Awaited<ReturnType<typeof createMultipartPresign>>;
+  try { multipart = await createMultipartPresign(c.env, key, data.bytes, data.contentType); }
+  catch (error) { await release(); throw error; }
+  if (!multipart) {
+    // Dev has no R2 S3 credentials: steer the browser to the direct-PUT route (Miniflare R2).
+    if (c.env.APP_ENV === "dev") return c.json(externalEmbeddedMediaPresignSchema.parse({ mediaId, devDirect: true }));
+    await release();
+    return c.json({ error: "R2 S3 upload credentials are not configured" }, 503);
+  }
+  // A sweep claim may have taken the reservation while R2 was starting the upload: then no URLs go out.
+  const stored = await c.env.DB.prepare("UPDATE embedded_media SET upload_id = ? WHERE id = ? AND state = 'uploading'").bind(multipart.uploadId, mediaId).run();
+  if ((stored.meta.changes ?? 0) !== 1) {
+    try { await abortMultipart(c.env, key, multipart.uploadId); } catch { await enqueueEmbeddedMediaCleanup(c.env.DB, [{ key, uploadId: multipart.uploadId, projectId: null }]); }
+    await release();
+    return c.json({ error: "This upload can no longer be accepted", code: "media_unavailable" }, 409);
+  }
+  await audit(c.env, user, "embedded_media.presign", "embedded_media", mediaId, { scope: "notice_board", bytes: data.bytes, contentType: data.contentType });
+  return c.json(externalEmbeddedMediaPresignSchema.parse({ mediaId, uploadId: multipart.uploadId, partUrls: multipart.partUrls, partBytes: multipart.partBytes }));
+}));
+
+noticeBoardRoutes.put("/notice-board/embedded-media/:mediaId/direct", terminalRoute("/notice-board/embedded-media/:mediaId/direct", async (c) => {
+  if (c.env.APP_ENV !== "dev") return c.json({ error: "Direct uploads are available only in dev" }, 404);
+  const mediaId = c.req.param("mediaId"); if (!mediaUuid.safeParse(mediaId).success) return c.json({ error: "Invalid media upload" }, 400);
+  const row = await getEmbeddedMedia(c.env.DB, mediaId);
+  if (!row || row.ownerKind !== "notice_post" || row.uploaderId !== c.get("user").id || row.state !== "uploading") return c.json({ error: "Media upload is unavailable" }, 404);
+  await c.env.MEDIA.put(row.originalKey, c.req.raw.body, { httpMetadata: { contentType: row.contentType } });
+  return c.body(null, 204);
+}));
+
+noticeBoardRoutes.post("/notice-board/embedded-media/:mediaId/complete", terminalRoute("/notice-board/embedded-media/:mediaId/complete", async (c) => {
+  const mediaId = c.req.param("mediaId"); if (!mediaUuid.safeParse(mediaId).success) return c.json({ error: "Invalid media upload" }, 400);
+  const data = await jsonInput(c, mediaCompleteInput); if (data instanceof Response) return data;
+  const user = c.get("user"); const row = await getEmbeddedMedia(c.env.DB, mediaId);
+  // A row that is gone is not ours to clean up: a sweep claim queued its own keys. R2 is touched only after this route claims the row itself.
+  if (!row || row.ownerKind !== "notice_post" || row.uploaderId !== user.id) return mediaStray(c);
+  if (row.state === "pending") return c.json(externalEmbeddedMediaCompleteSchema.parse({ mediaId, state: "pending" }));
+  if (row.state !== "uploading") return c.json({ error: "This media is already in use", code: "media_not_uploading" }, 409);
+  const verdict = await verifyUploadedEmbeddedObject(c.env, row, data.parts);
+  if (!verdict.ok) return c.json(verdict.body, verdict.status);
+  const promoted = await c.env.DB.prepare("UPDATE embedded_media SET state = 'pending', updated_at = ? WHERE id = ? AND state = 'uploading'").bind(Date.now(), mediaId).run();
+  if ((promoted.meta.changes ?? 0) !== 1) {
+    const current = await getEmbeddedMedia(c.env.DB, mediaId);
+    if (!current) return mediaStray(c);
+    if (current.state !== "pending") return c.json({ error: "This media is already in use", code: "media_not_uploading" }, 409);
+  } else {
+    await audit(c.env, user, "embedded_media.upload", "embedded_media", mediaId, { scope: "notice_board", bytes: row.bytes, contentType: row.contentType });
+  }
+  return c.json(externalEmbeddedMediaCompleteSchema.parse({ mediaId, state: "pending" }));
 }));

@@ -22,7 +22,7 @@ import {
   serializeProjectComment,
 } from "../lib/project-comments";
 import { jsonInput } from "./helpers";
-import { deleteEmbeddedMediaObjects, embeddedMediaFromRaw } from "../lib/embedded-media";
+import { purgeDetachedOwnerMedia } from "../lib/embedded-media";
 import { resolveVisibleProject } from "../lib/visible-project-scope";
 import { assignedSubtaskCounts } from "../lib/external-project-query";
 import { EXTERNAL_API_RESPONSE_SCHEMAS, ROLE_LABELS, externalCommentListResponseSchema, externalCommentSchema } from "@quincy/shared";
@@ -151,10 +151,7 @@ projectCommentsRoutes.delete("/projects/:projectId/comments/:commentId", termina
   const result = await deleteProjectComment(c.env.DB, { projectId, commentId, actorId: currentUser.id, auditPrincipal: currentUser, occurredAt: new Date() });
   c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
   // The batch left the comment's media detached and due now. Delete the objects, then the rows, best effort: the daily sweep is the backstop (#493).
-  try {
-    const owned = (await c.env.DB.prepare("SELECT * FROM embedded_media WHERE owner_kind = 'project_comment' AND owner_id = ? AND state = 'detached'").bind(commentId).all<Parameters<typeof embeddedMediaFromRaw>[0]>()).results.map(embeddedMediaFromRaw);
-    if (owned.length && await deleteEmbeddedMediaObjects(c.env, owned)) await c.env.DB.batch(owned.map((row) => c.env.DB.prepare("DELETE FROM embedded_media WHERE id = ? AND state = 'detached' AND owner_id = ?").bind(row.id, commentId)));
-  } catch { /* the sweep reclaims rows left behind */ }
+  await purgeDetachedOwnerMedia(c.env, "project_comment", commentId);
   return c.json({ ok: true });
 }));
 

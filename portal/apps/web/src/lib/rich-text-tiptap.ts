@@ -248,7 +248,7 @@ export function createRichTextEditorExtensions(preset: RichTextEditorPreset = "c
     Mention.configure({ HTMLAttributes: { class: "rich-text__mention" }, suggestion: { items: () => [] } }),
     ListItemHeadingCommandBoundary,
     ListNestingBoundary,
-    ...(preset === "composer" ? [EmbeddedImage] : []),
+    EmbeddedImage,
     ...(preset === "document" ? documentExtensions() : []),
   ];
 }

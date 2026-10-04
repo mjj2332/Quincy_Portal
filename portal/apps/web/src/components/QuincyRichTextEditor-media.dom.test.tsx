@@ -67,9 +67,11 @@ describe("the image node's stored contract", () => {
     editor.destroy();
   });
 
-  it("has no image node in the document preset (the Notice board stays text)", () => {
+  it("has the image node in the document preset too (the Notice board takes images, #496), and still builds none from pasted HTML", () => {
     const editor = new Editor({ extensions: createRichTextEditorExtensions("document") });
-    expect(editor.schema.nodes.image).toBeUndefined();
+    expect(editor.schema.nodes.image).toBeDefined();
+    editor.commands.insertContent('<p>x</p><img src="https://evil.test/a.png">');
+    expect(JSON.stringify(editor.getJSON())).not.toContain('"image"');
     editor.destroy();
   });
 });
@@ -80,7 +82,7 @@ describe("inserting an image", () => {
     upload.mockImplementation(() => new Promise<string>((resolve) => { finish = resolve; }));
     const host = mount(<Harness />);
     await choose(host, [png()]);
-    expect(upload).toHaveBeenCalledWith("p1", expect.any(File), expect.any(Function));
+    expect(upload).toHaveBeenCalledWith({ projectId: "p1" }, expect.any(File), expect.any(Function));
     expect(uploadingNow).toBe(true);
     expect(host.querySelector('[data-testid="rich-text-upload-tray"]')?.textContent).toContain("Uploading a.png");
     expect(JSON.stringify(latest)).not.toContain('"image"');

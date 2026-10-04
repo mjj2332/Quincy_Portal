@@ -1,8 +1,9 @@
 import { and, desc, eq, lt, or } from "drizzle-orm";
 import { buildProjectActivityStatements, createDb, schema } from "@quincy/db";
-import { EMBEDDED_MEDIA_MAX_PER_POST, EMBEDDED_MEDIA_RETENTION_MS, NOTIFICATION_OUTBOX_EVENT_TYPE, ROLE_LABELS, staffPathFor, type RichTextDoc, type Role } from "@quincy/shared";
+import { NOTIFICATION_OUTBOX_EVENT_TYPE, ROLE_LABELS, staffPathFor, type RichTextDoc, type Role } from "@quincy/shared";
 import type { ProjectActivityIntent } from "@quincy/shared";
 import { newId } from "./ids";
+import { isMediaGuardFailure, ownedMediaStatements, preflightOwnedMedia } from "./embedded-media";
 import { auditMeta, type AuditPrincipal } from "./audit";
 
 const readMarkerUpsertSql = `
@@ -309,66 +310,20 @@ function mentionOutboxStatements(
 }
 
 
-/**
- * Pre-checks a comment's desired images before the batch (#493) so an obvious mistake is a clean 400. It is only advisory:
- * the batch's own statements are the authority and re-validate every id in SQL, so a concurrent edit, delete or sweep
- * between this read and the batch can never leave a retained image detached. More than ten, or a duplicate, is refused.
- */
+/** Pre-checks a comment's desired images (advisory, see `preflightOwnedMedia`) so an obvious mistake is a clean 400. */
 export async function resolveCommentMedia(db: D1Database, input: { projectId: string; authorId: string; commentId: string; mediaIds: string[]; now?: number }): Promise<CommentMediaChanges | null> {
-  const now = input.now ?? Date.now();
-  if (input.mediaIds.length > EMBEDDED_MEDIA_MAX_PER_POST || new Set(input.mediaIds).size !== input.mediaIds.length) return null;
-  if (input.mediaIds.length) {
-    const placeholders = input.mediaIds.map(() => "?").join(", ");
-    const found = (await db.prepare(`SELECT id, state, owner_id, uploader_id, project_id, owner_kind, created_at, detached_at FROM embedded_media WHERE id IN (${placeholders})`).bind(...input.mediaIds).all<OwnedMediaRow>()).results;
-    const byId = new Map(found.map((row) => [row.id, row]));
-    const cutoff = now - EMBEDDED_MEDIA_RETENTION_MS;
-    for (const id of input.mediaIds) {
-      const row = byId.get(id);
-      if (!row || row.project_id !== input.projectId || row.owner_kind !== "project_comment") return null;
-      const fresh = row.state === "pending" && row.owner_id === null && row.uploader_id === input.authorId && Number(row.created_at) > cutoff;
-      const mine = row.owner_id === input.commentId && (row.state === "attached" || (row.state === "detached" && Number(row.detached_at) > cutoff));
-      if (!fresh && !mine) return null;
-    }
-  }
-  return { authorId: input.authorId, ids: input.mediaIds };
+  const ok = await preflightOwnedMedia(db, { ownerKind: "project_comment", ownerId: input.commentId, projectId: input.projectId, uploaderId: input.authorId, ids: input.mediaIds, now: input.now });
+  return ok ? { authorId: input.authorId, ids: input.mediaIds } : null;
 }
 
-type OwnedMediaRow = { id: string; state: "pending" | "attached" | "detached" | "uploading"; owner_id: string | null; uploader_id: string; project_id: string | null; owner_kind: string; created_at: number; detached_at: number | null };
-
-/**
- * The media statements of a save, appended after every other statement so positional results stay valid and fenced on
- * the winner's audit row (lessons #364). They are self-validating: every wanted id is attached by one UPDATE whose WHERE
- * accepts only a fresh pending upload of this author in this Project, or a row this comment already owns (attached, or
- * detached under seven days), then everything else this comment owns is detached, then a guard statement violates a CHECK
- * (rolling the whole batch back) if the wanted ids are not all attached to this comment. A save that lost the fence is skipped.
- */
+/** The comment's media statements, fenced on the winner's audit row (lessons #364); see `ownedMediaStatements`. */
 function mediaStatements(db: D1Database, projectId: string, commentId: string, media: CommentMediaChanges, now: number, auditId: string): D1PreparedStatement[] {
-  const fence = "EXISTS (SELECT 1 FROM audit_log WHERE id = ?)";
-  const cutoff = now - EMBEDDED_MEDIA_RETENTION_MS;
-  const ids = media.ids; const marks = ids.map(() => "?").join(", ");
-  const statements = ids.map((id) => db.prepare(`
-    UPDATE embedded_media SET state = 'attached', owner_id = ?, detached_at = NULL, updated_at = ?
-    WHERE id = ? AND owner_kind = 'project_comment' AND project_id = ? AND ${fence}
-      AND ((state = 'pending' AND owner_id IS NULL AND uploader_id = ? AND created_at > ?)
-        OR (owner_id = ? AND (state = 'attached' OR (state = 'detached' AND detached_at > ?))))
-  `).bind(commentId, now, id, projectId, auditId, media.authorId, cutoff, commentId, cutoff));
-  statements.push(db.prepare(`
-    UPDATE embedded_media SET state = 'detached', detached_at = ?, updated_at = ?
-    WHERE owner_kind = 'project_comment' AND owner_id = ? AND state = 'attached' ${ids.length ? `AND id NOT IN (${marks})` : ""} AND ${fence}
-  `).bind(now, now, commentId, ...ids, auditId));
-  if (ids.length) {
-    statements.push(db.prepare(`
-      INSERT INTO embedded_media (id, owner_kind, uploader_id, kind, content_type, bytes, original_key, state, created_at, updated_at)
-      SELECT ?, 'project_comment', ?, 'image', 'guard', 0, ?, 'uploading', ?, ?
-      WHERE ${fence} AND (SELECT COUNT(*) FROM embedded_media WHERE owner_kind = 'project_comment' AND owner_id = ? AND state = 'attached' AND id IN (${marks})) <> ?
-    `).bind(`guard-${auditId}`, media.authorId, `guard/${auditId}`, now, now, auditId, commentId, ...ids, ids.length));
-  }
-  return statements;
+  return ownedMediaStatements(db, { ownerKind: "project_comment", ownerId: commentId, projectId, uploaderId: media.authorId, ids: media.ids, now, fence: { sql: "EXISTS (SELECT 1 FROM audit_log WHERE id = ?)", binds: [auditId] }, guardId: auditId });
 }
 
 /** A batch that tripped the media guard failed on its CHECK: report it as a conflict, and rethrow anything else. */
 function rethrowMediaConflict(error: unknown, media: CommentMediaChanges | undefined): never {
-  if (media?.ids.length && /CHECK constraint failed/i.test(error instanceof Error ? `${error.message} ${String((error as { cause?: unknown }).cause ?? "")}` : String(error))) throw new CommentMediaConflictError();
+  if (isMediaGuardFailure(error, media?.ids)) throw new CommentMediaConflictError();
   throw error;
 }
 

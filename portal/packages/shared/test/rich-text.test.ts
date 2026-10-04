@@ -368,9 +368,15 @@ describe("image node (#493)", () => {
   const image = (mediaId: unknown, extra: Record<string, unknown> = {}) => ({ type: "image", attrs: { mediaId, ...extra } });
   const withImages = (...nodes: unknown[]) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Look" }] }, ...nodes] });
 
-  it("is rejected by default and by the notice profile, so the Notice board still 400s on an image", () => {
+  it("is rejected by the default comment profile, and accepted at the top level by the notice profile (#496)", () => {
     expect(() => parseRichTextDoc(withImages(image(mediaA)))).toThrow(RichTextValidationError);
-    expect(() => parseRichTextDoc(withImages(image(mediaA)), NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+    const input = withImages(image(mediaA), image(mediaB));
+    expect(parseRichTextDoc(input, NOTICE_RICH_TEXT_PROFILE)).toEqual(input);
+    expect(richTextMediaIds(parseRichTextDoc(input, NOTICE_RICH_TEXT_PROFILE))).toEqual([mediaA, mediaB]);
+    const inCell = { type: "doc", content: [{ type: "table", content: [{ type: "tableRow", content: [{ type: "tableCell", content: [image(mediaA)] }] }] }] };
+    expect(() => parseRichTextDoc(inCell, NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+    const inList = { type: "doc", content: [{ type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "x" }] }, image(mediaA)] }] }] };
+    expect(() => parseRichTextDoc(inList, NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
   });
 
   it("is accepted under the comment media profile, referenced by id only, and read back in document order", () => {

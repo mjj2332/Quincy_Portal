@@ -32,7 +32,7 @@ export type RichTextTreeNode = RichTextBlock | RichTextListItem | RichTextTaskIt
 export type RichTextDoc = { type: "doc"; content: RichTextBlock[] };
 
 export const RICH_TEXT_JSON_MAX_BYTES = 32 * 1024;
-/** The Notice board's document preset (#492): longer posts, so a wider JSON cap and character cap. */
+/** The Notice board's document preset (#492, images #496): longer posts, so a wider JSON cap and character cap. */
 export const NOTICE_RICH_TEXT_JSON_MAX_BYTES = 64 * 1024;
 export const NOTICE_BODY_MAX_LENGTH = 10_000;
 export const RICH_TEXT_MAX_NESTING = 8;
@@ -46,8 +46,8 @@ export const STAFF_NAME_MAX_LENGTH = 200;
  */
 export type RichTextProfile = { readonly maxBytes: number; readonly allowTables: boolean; readonly allowAlign: boolean; readonly allowHighlight: boolean; readonly allowMedia: boolean };
 export const COMMENT_RICH_TEXT_PROFILE: RichTextProfile = { maxBytes: RICH_TEXT_JSON_MAX_BYTES, allowTables: false, allowAlign: false, allowHighlight: false, allowMedia: false };
-export const NOTICE_RICH_TEXT_PROFILE: RichTextProfile = { maxBytes: NOTICE_RICH_TEXT_JSON_MAX_BYTES, allowTables: true, allowAlign: true, allowHighlight: true, allowMedia: false };
-/** Project discussion (#493): the comment profile plus embedded images. The Notice board stays off. */
+export const NOTICE_RICH_TEXT_PROFILE: RichTextProfile = { maxBytes: NOTICE_RICH_TEXT_JSON_MAX_BYTES, allowTables: true, allowAlign: true, allowHighlight: true, allowMedia: true };
+/** Project discussion (#493): the comment profile plus embedded images. The Notice board's profile takes images too (#496). */
 export const COMMENT_MEDIA_RICH_TEXT_PROFILE: RichTextProfile = { ...COMMENT_RICH_TEXT_PROFILE, allowMedia: true };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

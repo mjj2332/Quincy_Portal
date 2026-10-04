@@ -267,6 +267,18 @@ describe("concurrent saves reconcile media inside the winning batch", () => {
     expect(await mediaRow(claimed)).toMatchObject({ state: "detached", owner_id: claimedId, detached_at: 0 });
   });
 
+  it("an image node only attaches a row whose kind is image, even for a save that skipped the preflight", async () => {
+    const preview = (await seedMedia({ kind: "preview_image" })).id; const commentId = crypto.randomUUID();
+    await expect(createProjectComment(database.DB, { id: commentId, projectId: ids.project, authorId: ids.member, body: "[image]", contentJson: JSON.stringify(imageDoc(preview)), mentions: [], wallClockMs: Date.now(), occurredAt: new Date(), media: { authorId: ids.member, ids: [preview] } })).rejects.toBeInstanceOf(CommentMediaConflictError);
+    expect(await mediaRow(preview)).toMatchObject({ state: "pending", owner_id: null });
+    expect(await database.DB.prepare("SELECT count(*) AS n FROM project_comments WHERE id = ?").bind(commentId).first()).toEqual({ n: 0 });
+  });
+
+  it("the preflight refuses a row that is not an image with a 400", async () => {
+    const preview = (await seedMedia({ kind: "preview_image" })).id;
+    expect((await post("member", imageDoc(preview))).status).toBe(400);
+  });
+
   it("two creates racing for one pending image: exactly one wins and the loser creates no comment", async () => {
     const id = await media();
     const make = (commentId: string) => createProjectComment(database.DB, { id: commentId, projectId: ids.project, authorId: ids.member, body: "[image]", contentJson: JSON.stringify(imageDoc(id)), mentions: [], wallClockMs: Date.now(), occurredAt: new Date(), media: { authorId: ids.member, ids: [id] } });
