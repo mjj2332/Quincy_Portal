@@ -40,7 +40,7 @@ export async function enqueueEmbeddedMediaCleanup(db: D1Database, entries: Clean
   if (!entries.length) return;
   await db.batch(entries.map((entry) => db.prepare(`
     INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) VALUES (?, ?, ?, ?)
-    ON CONFLICT(storage_key) DO UPDATE SET project_id = COALESCE(embedded_media_cleanup.project_id, excluded.project_id), upload_id = COALESCE(embedded_media_cleanup.upload_id, excluded.upload_id)
+    ON CONFLICT(storage_key) DO UPDATE SET project_id = COALESCE(embedded_media_cleanup.project_id, excluded.project_id), upload_id = COALESCE(embedded_media_cleanup.upload_id, excluded.upload_id), queued_at = MAX(embedded_media_cleanup.queued_at + 1, excluded.queued_at)
   `).bind(entry.key, entry.uploadId ?? null, entry.projectId ?? null, now)));
 }
 
@@ -64,7 +64,7 @@ async function claimUploadingMedia(db: D1Database, mediaId: string): Promise<boo
     db.prepare(`
       INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at)
       SELECT original_key, upload_id, project_id, ? FROM embedded_media WHERE id = ? AND state = 'uploading'
-      ON CONFLICT(storage_key) DO UPDATE SET project_id = COALESCE(embedded_media_cleanup.project_id, excluded.project_id), upload_id = COALESCE(embedded_media_cleanup.upload_id, excluded.upload_id)
+      ON CONFLICT(storage_key) DO UPDATE SET project_id = COALESCE(embedded_media_cleanup.project_id, excluded.project_id), upload_id = COALESCE(embedded_media_cleanup.upload_id, excluded.upload_id), queued_at = MAX(embedded_media_cleanup.queued_at + 1, excluded.queued_at)
     `).bind(Date.now(), mediaId),
     db.prepare("DELETE FROM embedded_media WHERE id = ? AND state = 'uploading'").bind(mediaId),
   ]);

@@ -221,6 +221,24 @@ describe("PUT …/poster (#494)", () => {
     expect(await database.MEDIA.head(written)).toBeNull(); expect(await queued(written)).toBeNull();
   });
 
+  it("never loses ownership of a late poster: the sweep drained its queue entry and the cancel removed the row while the PUT was pending, then R2 refuses the delete, so the key is queued again", async () => {
+    const { id } = await pending();
+    let written = "";
+    const racing = wrapMedia((target, property) => {
+      if (property === "delete") return async () => { throw new Error("R2 down"); };
+      if (property === "put") return async (key: string, ...rest: unknown[]) => {
+        written = key; const result = await (target.put as (...a: unknown[]) => Promise<unknown>).call(target, key, ...rest);
+        await database.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ?").bind(key).run();
+        await database.DB.prepare("DELETE FROM embedded_media WHERE id = ?").bind(id).run();
+        return result;
+      };
+      return undefined;
+    });
+    expect((await putPoster("member", id, jpegBytes(64), racing)).status).toBe(409);
+    expect(await database.MEDIA.head(written)).not.toBeNull();
+    expect(await queued(written)).not.toBeNull();
+  });
+
   it("leaves no orphan when the Project cascades away mid-write: with R2 refusing the delete, the key waits in the cleanup queue", async () => {
     const projectId = crypto.randomUUID(); const now = Date.now();
     await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Cascade', 'editing_autohdr', 0, ?, ?)").bind(projectId, now, now).run();
@@ -405,6 +423,17 @@ describe("GET /media/embedded/:mediaId Range (#494)", () => {
       const response = await get(`/media/embedded/${id}`, "member", { range: "bytes=0-9", "if-range": ifRange });
       expect(response.status, ifRange).toBe(200); expect((await consume(response)).byteLength, ifRange).toBe(size);
     }
+  });
+
+  it("evaluates If-Range before the range is checked: a stale validator with an unsatisfiable range is the whole body, not a 416", async () => {
+    const { id } = await seedMedia({ kind: "video", state: "attached", bytes: size, object: bytes });
+    const full = await get(`/media/embedded/${id}`, "member"); await consume(full); const etag = full.headers.get("etag")!;
+    for (const ifRange of ['"stale"', `W/${etag}`, "Wed, 21 Oct 2015 07:28:00 GMT"]) {
+      const response = await get(`/media/embedded/${id}`, "member", { range: `bytes=${size + 10}-`, "if-range": ifRange });
+      expect(response.status, ifRange).toBe(200); expect((await consume(response)).byteLength, ifRange).toBe(size);
+    }
+    const fresh = await get(`/media/embedded/${id}`, "member", { range: `bytes=${size + 10}-`, "if-range": etag });
+    expect(fresh.status).toBe(416); await consume(fresh);
   });
 
   it("applies the same access rules to a ranged read: a refused viewer never gets a 206, an uploader sees a pending video, an assigned External editor an attached one", async () => {

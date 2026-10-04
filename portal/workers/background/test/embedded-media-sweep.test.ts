@@ -288,3 +288,27 @@ describe("embedded media sweep claims keys it deletes (#494)", () => {
     expect(await objectExists(posterKey)).toBe(false);
   });
 });
+
+describe("embedded media sweep dequeues only the entry it drained (#494)", () => {
+  // The app worker's `enqueueEmbeddedMediaCleanup` upsert, as the poster route's failed-adoption path runs it.
+  const REENQUEUE = `INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) VALUES (?, ?, ?, ?)
+    ON CONFLICT(storage_key) DO UPDATE SET project_id = COALESCE(embedded_media_cleanup.project_id, excluded.project_id), upload_id = COALESCE(embedded_media_cleanup.upload_id, excluded.upload_id), queued_at = MAX(embedded_media_cleanup.queued_at + 1, excluded.queued_at)`;
+
+  it("keeps an entry that was re-queued while the drain was between deleting the object and dequeuing it, and reclaims the new object next run", async () => {
+    const key = `projects/${projectId}/embedded-media/${crypto.randomUUID()}/poster-race`;
+    await database.MEDIA.put(key, "jpeg");
+    await database.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) VALUES (?, NULL, ?, ?)").bind(key, projectId, now).run();
+    // The sweep deleted the object and is paused before its dequeue: meanwhile the late poster PUT lands, adoption loses, its delete fails and the key is queued again (same millisecond).
+    const paused = wrapMedia((target, property) => property === "delete" ? async (keys: string | string[]) => {
+      await target.delete(keys);
+      await database.MEDIA.put(key, "jpeg-late");
+      await database.DB.prepare(REENQUEUE).bind(key, null, projectId, now).run();
+    } : undefined);
+    expect(await sweepEmbeddedMedia(paused as never, now)).toMatchObject({ drained: 0 });
+    expect(await queueRow(key)).not.toBeNull();
+    expect(await objectExists(key)).toBe(true);
+    expect(await sweepEmbeddedMedia(env, now + 1)).toMatchObject({ drained: 1 });
+    expect(await queueRow(key)).toBeNull();
+    expect(await objectExists(key)).toBe(false);
+  });
+});

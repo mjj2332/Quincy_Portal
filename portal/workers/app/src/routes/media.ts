@@ -229,8 +229,10 @@ mediaRoutes.get("/embedded/:mediaId", terminalRoute("/embedded/:mediaId", async 
     const meta = await c.env.MEDIA.head(row.originalKey);
     if (!meta) return c.json({ error: "Media object not found" }, 404);
     const parsed = parseByteRange(rangeHeader, meta.size);
-    if (parsed.kind === "unsatisfiable") return new Response(null, { status: 416, headers: { "content-range": `bytes */${meta.size}` } });
-    if (parsed.kind === "partial" && ifRangeAllows(c.req.header("if-range"), meta.httpEtag)) {
+    // If-Range comes first (RFC 9110 §13.1.5): a validator that does not match means the range is ignored, so the whole body is sent, even when the range could not have been satisfied.
+    const rangeApplies = ifRangeAllows(c.req.header("if-range"), meta.httpEtag);
+    if (parsed.kind === "unsatisfiable" && rangeApplies) return new Response(null, { status: 416, headers: { "content-range": `bytes */${meta.size}` } });
+    if (parsed.kind === "partial" && rangeApplies) {
       object = await c.env.MEDIA.get(row.originalKey, { range: { offset: parsed.offset, length: parsed.length } });
       status = 206; length = parsed.length; contentRange = `bytes ${parsed.offset}-${parsed.offset + parsed.length - 1}/${meta.size}`;
     } else object = await c.env.MEDIA.get(row.originalKey);

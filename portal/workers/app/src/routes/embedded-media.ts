@@ -149,8 +149,10 @@ embeddedMediaRoutes.put("/projects/:projectId/embedded-media/:mediaId/poster", t
     c.env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ? AND (SELECT poster_key FROM embedded_media WHERE id = ?) = ?").bind(posterKey, mediaId, posterKey),
   ]);
   if ((results[0]!.meta.changes ?? 0) === 1) return c.body(null, 204);
-  // Lost: nothing references the object. Delete it and unqueue it; if R2 refuses, the queued key is the sweep's.
-  try { await c.env.MEDIA.delete(posterKey); await c.env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ?").bind(posterKey).run(); } catch { /* the queue owns it */ }
+  // Lost: nothing references the object. Delete it and unqueue it. The sweep may have drained the queue entry while the PUT was pending,
+  // so a refused delete queues the key again: ownership is never dropped until the object is confirmed gone.
+  try { await c.env.MEDIA.delete(posterKey); await c.env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ?").bind(posterKey).run(); }
+  catch { await enqueueEmbeddedMediaCleanup(c.env.DB, [{ key: posterKey, projectId }]); }
   return c.json({ error: "This video can no longer take a poster", code: "poster_unavailable" }, 409);
 }));
 
