@@ -61,8 +61,8 @@
      TB8-09: reads the --border-hover alias, not the raw ramp directly — same reason. */
   --color-border-hover: var(--border-hover);
   /* TB8-07: the ink left-rule that marks the active/selected row in a person picker.
-     Two consumers — the checklist assignee popover and the mention autocomplete — which is
-     why it is a theme alias rather than an arbitrary value repeated at both sites. */
+     Consumer: the checklist assignee popover (the mention autocomplete moved to the
+     shared bg-accent active row in #514), kept as a theme alias rather than an arbitrary value. */
   --color-border-strong: var(--border-strong);
   /* The ink surface a primary control takes on hover.
      TB8-09: reads the --primary-hover alias, not --ink-700 directly — same reason. */

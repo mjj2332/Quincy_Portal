@@ -265,8 +265,10 @@ button { font-family: var(--font-sans); }
 .project-header__control { min-width: 0; display: grid; align-content: start; gap: var(--space-2); padding-inline: var(--space-4); border-inline-start: 1px solid var(--border-hairline); }
 .project-header__control:first-child { padding-inline-start: 0; border-inline-start: 0; }
 .project-header__control:last-child { padding-inline-end: 0; }
-.project-header__tabs { min-width: 0; overflow-x: auto; }
-.project-header__tabs [role="tablist"] { height: auto; }
+.project-header__tabs { min-width: 0; overflow-x: auto; scroll-padding-inline: var(--space-2); }
+/* #514: the strip scrolls, so it clips its overflow; the first/last tab's focus ring (outside the tab) was cut at the
+   clip edge. The padding is the fix; scroll-padding makes an auto-revealed tab land with the same margin. */
+.project-header__tabs [role="tablist"] { height: auto; padding-inline: var(--space-2); }
 .project-header__tabs [role="tab"] { min-height: 44px; /* WCAG 2.5.5 Enhanced target, not a spacing token */ flex: none; }
 /* #206/#213: the control row wraps by the HEADER's width, not the viewport's — the shell rail (a 72px
    icon column, or none below 772px) changes the room a viewport offers. A container query

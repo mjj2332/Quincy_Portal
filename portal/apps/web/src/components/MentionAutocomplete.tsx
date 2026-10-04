@@ -46,19 +46,22 @@ export const MentionAutocomplete = forwardRef<MentionAutocompleteHandle, {
   }, [activeId, listboxId, onAccessibilityChange, query]);
 
   if (query === null) return null;
-  return <div className="min-w-0 max-w-full overflow-hidden [border-style:solid] border-[length:var(--border-width-hair)] border-border bg-card shadow-[var(--shadow-md)]">
+  return <div data-slot="mention-content" className="min-w-0 max-w-full overflow-hidden [border-style:solid] border-[length:var(--border-width-hair)] border-border bg-card shadow-[var(--shadow-md)]">
     {state === "loading" && <div className="p-[var(--space-2)] [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" role="status">Finding staff…</div>}
     {state === "error" && <div className="p-[var(--space-2)] [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" role="alert">Staff suggestions are unavailable.</div>}
     {state === "idle" && <ul id={listboxId} className="m-0 p-[var(--space-1)] list-none" role="listbox" aria-label="Mention suggestions">
       {users.map((user, index) => <li id={`${listboxId}-${user.id}`} key={user.id} role="option" aria-selected={index === activeIndex}>
         <button
           type="button"
+          data-slot="mention-option"
           data-active={index === activeIndex ? "true" : undefined}
-          className="flex items-baseline justify-between gap-[var(--space-3)] w-full text-left min-w-0 min-h-[44px] px-[var(--space-3)] py-[var(--space-2)] bg-transparent border-0 [border-left-style:solid] border-l-[length:var(--border-width-bold)] border-l-transparent text-foreground [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] cursor-pointer hover:bg-secondary active:bg-surface-sunken data-[active=true]:border-l-border-strong focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]"
+          onMouseEnter={() => setActiveIndex(index)}
+          onMouseMove={() => setActiveIndex(index)}
+          className="group flex items-baseline justify-between gap-[var(--space-3)] w-full text-left min-w-0 min-h-[44px] px-[var(--space-3)] py-[var(--space-2)] bg-transparent border-0 rounded-md text-foreground [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] cursor-pointer data-[active=true]:bg-accent data-[active=true]:text-accent-foreground active:bg-surface-sunken focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]"
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => onSelect(user)}
         >
-          <span className="min-w-0 truncate">{user.name}</span><small className="shrink-0 [font:inherit] text-foreground-secondary">{ROLE_LABELS[user.role]}</small>
+          <span className="min-w-0 truncate">{user.name}</span><small className="shrink-0 [font:inherit] text-foreground-secondary group-data-[active=true]:text-accent-foreground">{ROLE_LABELS[user.role]}</small>
         </button>
       </li>)}
       {!users.length && <li className="p-[var(--space-2)] [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" role="status">No active staff found.</li>}
