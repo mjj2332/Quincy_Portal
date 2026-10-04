@@ -48,7 +48,7 @@ export function NewShootSchedule({ shootDate, street, deadline, onDeadlineChange
   const note = deadline.kind === "manual"
     ? undefined
     : deadline.cleared
-      ? "Cleared: the Automatic Deadline will be set from the shoot date."
+      ? "Cleared — back to the Automatic Deadline."
       : preview ? undefined : "Set automatically from the shoot date once one is picked.";
 
   const apply = (next: DateTimeApply) => {
@@ -77,7 +77,11 @@ export function NewShootSchedule({ shootDate, street, deadline, onDeadlineChange
     />
     <Field>
       <FieldLabel>Priority</FieldLabel>
-      <PriorityStars priority={priority} canPrioritize street={street.trim() || "new shoot"} onPriorityChange={onPriorityChange} />
+      {/* The star cell is a 36px (44px coarse / <=641px) hit box around an 18px glyph; the negative
+          margin is half that difference so the first glyph lines up with the label. */}
+      <div className="-ml-[var(--space-2)] pointer-coarse:-ml-[var(--space-3)] max-[641px]:-ml-[var(--space-3)]" data-testid="new-shoot-priority-row">
+        <PriorityStars priority={priority} canPrioritize street={street.trim() || "new shoot"} onPriorityChange={onPriorityChange} />
+      </div>
     </Field>
   </>;
 }

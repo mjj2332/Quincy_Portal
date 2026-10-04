@@ -401,6 +401,12 @@ describe("adornment and description (#488)", () => {
     expect(accessibleName()).toContain("Automatic");
   });
 
+  it("pulls the adornment wrapper up by a spacing token so it cannot grow the trigger", async () => {
+    await mountWith({ adornment: <span>Automatic</span> });
+    const wrapper = document.getElementById(`${trigger().id.replace(/-trigger$/, "")}-adornment`) ?? trigger().querySelector('[data-testid="datetime-adornment"]');
+    expect(wrapper?.className).toContain("-my-[var(--space-1)]");
+  });
+
   it("wires a description to the trigger as its accessible description, and adds nothing without one", async () => {
     await mountWith({ description: "Set from the shoot date." });
     expect(accessibleDescription()).toBe("Set from the shoot date.");

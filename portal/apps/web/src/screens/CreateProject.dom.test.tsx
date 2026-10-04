@@ -322,7 +322,7 @@ describe("CreateProject Deadline and Priority (#488)", () => {
     await setDeadline({ time: "10:00" });
     expect(host.textContent).not.toContain("Cleared");
     await setDeadline({ shortcut: "No date" });
-    expect(host.querySelector('[role="status"]')?.textContent).toContain("the Automatic Deadline will be set from the shoot date");
+    expect(host.querySelector('[role="status"]')?.textContent).toContain("Cleared — back to the Automatic Deadline.");
     expect(deadlineText()).toContain("Mon 5 Oct 2026");
     expect(deadlineText()).toContain("Automatic");
     await submit();

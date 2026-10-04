@@ -215,7 +215,7 @@ export function DateTimeField(props: DateTimeFieldProps) {
         >
           <span className="flex min-w-0 flex-wrap items-center gap-x-[var(--space-2)] gap-y-[var(--space-1)]">
             <span id={valueId} className={cn("min-w-0 [overflow-wrap:anywhere]", display === null && "text-muted-foreground")}>{display ?? placeholder}</span>
-            {hasAdornment && <span id={adornmentId} className="shrink-0">{props.adornment}</span>}
+            {hasAdornment && <span id={adornmentId} className="-my-[var(--space-1)] shrink-0" data-testid="datetime-adornment">{props.adornment}</span>}
           </span>
           <CalendarIcon aria-hidden className="size-4 shrink-0 text-foreground-secondary" />
         </PopoverTrigger>
