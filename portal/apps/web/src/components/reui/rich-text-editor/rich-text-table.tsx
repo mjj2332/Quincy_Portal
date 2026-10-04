@@ -18,15 +18,20 @@
 //    helper line, with 8px clearance. The bar may therefore cross the frame's bottom border (owner
 //    decision #535); it never covers the toolbar, the character counter or the helper: the floor is the top of
 //    the first rendered element below the frame (`tableBubbleFloors`). Hosts with none of them (e.g. the edit
-//    composer below 90% of the limit) keep the surface as the boundary. When even that fails the bar keeps
-//    `top-start` and shift clamps it.
-// 7. The zone the bar may occupy is chosen per positioning pass (`tableBubbleZone`): between the neighbouring
-//    blocks when the bar fits above or below the active ROW (`readActiveRowRect`, `readTableNeighbours`), else
-//    the wide zone of edit 6, and the bar's outer padding is gone (`rich-text-bubble-bar.tsx`), so it fits above
-//    row 2 of a first-block table (#535).
-// 8. The bar's controls are `RichTextTableControls`, shared with `RichTextTableTools`: below 721px the same
-//    controls render as the FIRST group of the formatting toolbar instead (`QuincyRichTextEditor`), because
-//    a floating bar has no room around a table on a phone (#535). The two never mount together.
+//    composer below 90% of the limit) keep the surface as the boundary.
+// 7. The zone the bar may occupy is chosen per positioning pass (`tableBubbleZone`) from the neighbouring blocks
+//    (`readActiveRowRect`, `readTableNeighbours`), and there is NO wide tier: the bar never covers a neighbouring
+//    block or the active row. Tiers: clean (8px gap, inside the viewport), tight (the roomier side, a gap under 8px),
+//    offscreen (the viewport cuts the room, the blocks allow it: root boundary "document"), none (no room). The
+//    offset is derivable and carries the same gap as the flip/shift padding. Under "none" the bar stays MOUNTED but
+//    inert, hidden from assistive tech and invisible (`RichTextBubbleBar` `inactive`; we do not touch Tiptap's own
+//    inline visibility), `onTierChange` tells the host, which shows the same controls as the toolbar's table group
+//    (edit 8), so exactly one control set is usable. The bar's outer padding is gone (`rich-text-bubble-bar.tsx`),
+//    so it fits above row 2 of a first-block table (#535).
+// 8. The bar's controls are `RichTextTableControls`, shared with `RichTextTableTools`: below 721px, or whenever the
+//    bar's tier is "none", the same controls render as the FIRST group of the formatting toolbar instead
+//    (`QuincyRichTextEditor`), because a floating bar has no room around the table (#535). Below 721px the bar is
+//    unmounted; at "none" it is inert, so the two are never both usable.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react"
 import { findParentNodeClosestToPos, type Editor } from "@tiptap/react"
 import { BubbleMenu } from "@tiptap/react/menus"
@@ -48,7 +53,7 @@ import {
 } from "@/components/reui/tooltip"
 import { RICH_TEXT_TABLE_MAX_COLUMNS, RICH_TEXT_TABLE_MAX_ROWS } from "@quincy/shared"
 import { tableDimensions } from "@/lib/rich-text-tiptap"
-import { readFloorTop, readVisualOffset, tableBubbleAnchor, tableBubbleOptions } from "./rich-text-table-position"
+import { readFloorTop, readVisualOffset, tableBubbleAnchor, tableBubbleOptions, type TableBubbleTier } from "./rich-text-table-position"
 import { RichTextBubbleBar, focusFirstToolbarStop, fromOwnDom } from "./rich-text-bubble-bar"
 import type { RichTextSlashItem } from "./rich-text-slash-menu"
 import { useRichTextSelector } from "./rich-text-state"
@@ -204,6 +209,10 @@ interface RichTextTableBubbleProps {
    * down to the highest of them (#535).
    */
   tableBubbleFloors?: ReadonlyArray<RefObject<HTMLElement | null> | undefined>
+  /** The tier the host last heard (null outside a table): "none" makes the bar inert, the host shows the toolbar group. */
+  tier?: TableBubbleTier | null
+  /** Fired when the bar's tier changes while the caret is in a table. */
+  onTierChange?: (tier: TableBubbleTier) => void
 }
 
 interface RichTextTableControlsProps {
@@ -308,6 +317,8 @@ export function RichTextTableBubble({
   editor,
   onDeleteTable,
   tableBubbleFloors,
+  tier = null,
+  onTierChange,
 }: RichTextTableBubbleProps) {
   // The anchor and the zone share ONE rect (row/cell union, `tableBubbleAnchor`); re-resolved on each pass.
   const readAnchor = useCallback(() => {
@@ -333,16 +344,31 @@ export function RichTextTableBubble({
     }
   }, [editor, readAnchor])
 
+  // Options are rebuilt when the caret enters or leaves a table, so the tier's "only on change" memory starts over.
+  const inTable = useRichTextSelector(editor, (current) => current?.isActive("table") ?? false)
+  const onTierChangeRef = useRef(onTierChange)
+
+  useLayoutEffect(() => {
+    onTierChangeRef.current = onTierChange
+  }, [onTierChange])
+
   const options = useMemo(
-    () =>
-      tableBubbleOptions({
+    () => {
+      void inTable
+
+      return tableBubbleOptions({
         surface: () => editor.view.dom.getBoundingClientRect(),
         floorTop: () => readFloorTop(...(tableBubbleFloors ?? []).map((ref) => ref?.current)),
         neighbours: () => readTableNeighbours(editor),
         row: () => readAnchor() ?? readActiveRowRect(editor),
         visualOffset: () => readVisualOffset(),
-      }),
-    [editor, tableBubbleFloors, readAnchor]
+        // A late pass after the caret left the table must not resurrect the group.
+        onTier: (next) => {
+          if (editor.isActive("table")) onTierChangeRef.current?.(next)
+        },
+      })
+    },
+    [editor, tableBubbleFloors, readAnchor, inTable]
   )
 
   return (
@@ -359,6 +385,8 @@ export function RichTextTableBubble({
         pluginKey={TABLE_BUBBLE_KEY}
         label="Table"
         testId="rich-text-table-bubble"
+        inactive={tier === "none"}
+        tier={tier ?? undefined}
       >
         <RichTextTableControls editor={editor} onDeleteTable={onDeleteTable} />
       </RichTextBubbleBar>

@@ -37,6 +37,7 @@ import { RICH_TEXT_BASIC_SLASH_ITEMS, RICH_TEXT_SLASH_KEY, RichTextSlashCommand 
 import { useRichTextState } from "./reui/rich-text-editor/rich-text-state";
 import { editorOwnsBubbleBar } from "./reui/rich-text-editor/rich-text-bubble-bar";
 import { RICH_TEXT_TABLE_SLASH_ITEM, RichTextTableBubble, RichTextTableTools } from "./reui/rich-text-editor/rich-text-table";
+import type { TableBubbleTier } from "./reui/rich-text-editor/rich-text-table-position";
 import {
   RICH_TEXT_PHONE_QUERY,
   RichTextButton,
@@ -240,13 +241,17 @@ export function QuincyRichTextEditor({
   });
   editorRef.current = editor;
   const state = useRichTextState(editor);
-  // Below 721px the table controls are a toolbar group and the floating bar is not mounted (#535).
+  // Below 721px the table controls are a toolbar group and the floating bar is not mounted; on a desktop the group
+  // takes over too when the bar has no room around the table (tier "none": the bar stays mounted but inert) (#535).
   const phone = useMediaQuery(RICH_TEXT_PHONE_QUERY);
-  const phoneRef = useRef(phone);
+  const [reportedTier, setTableTier] = useState<TableBubbleTier | null>(null);
+  const tableTier = state.inTable ? reportedTier : null;
+  const tableInToolbar = phone || tableTier === "none";
+  const toolbarRef = useRef(tableInToolbar);
   const refocusRef = useRef(false);
-  // The presentation holding focus is about to unmount: note it while the DOM still shows it (render runs before commit).
-  if (phoneRef.current !== phone) {
-    phoneRef.current = phone;
+  // The presentation holding focus is about to stop being usable: note it while the DOM still shows it (render runs before commit).
+  if (toolbarRef.current !== tableInToolbar) {
+    toolbarRef.current = tableInToolbar;
     // Only focus inside THIS editor's own toolbar group or bar counts: another mounted editor must not claim it.
     const active = document.activeElement;
     const own = active?.closest('[data-testid="rich-text-table-tools"]') != null && wrapperRef.current?.contains(active) === true
@@ -257,7 +262,9 @@ export function QuincyRichTextEditor({
     if (!refocusRef.current) return;
     refocusRef.current = false;
     if (editorRef.current && !editorRef.current.isDestroyed) editorRef.current.commands.focus();
-  }, [phone]);
+  }, [tableInToolbar]);
+  // Leaving the table forgets the tier; the bar's options are rebuilt on entering, so it is reported afresh.
+  useEffect(() => { if (!state.inTable) setTableTier(null); }, [state.inTable]);
   // The derived outline rail (document preset only; `null` keeps the composer's selector idle).
   const outline = useRichTextOutline(isDocument ? editor : null);
   const activeHeading = useRichTextActiveHeading(isDocument ? editor : null, pageRef, outline);
@@ -389,7 +396,7 @@ export function QuincyRichTextEditor({
       <InputGroupAddon align="block-start" className="p-[var(--space-1)] cursor-default">
         <RichTextToolbar aria-label="Formatting" className="w-full min-w-0 gap-[var(--space-2)]">
           {/* On a phone the table controls lead the scrolling toolbar; they stay while the editor is busy, disabled. */}
-          {isDocument && phone && state.inTable && <RichTextTableTools editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} disabled={disabled || !state.editable} />}
+          {isDocument && tableInToolbar && state.inTable && <RichTextTableTools editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} disabled={disabled || !state.editable} />}
           <RichTextToolbarGroup label="Text style">
             <RichTextToggle label="Bold" shortcut={["mod", "B"]} pressed={state.bold} disabled={off(state.canBold)} onToggle={() => editor.chain().focus().toggleBold().run()}><span aria-hidden="true" className="font-bold">B</span></RichTextToggle>
             <RichTextToggle label="Italic" shortcut={["mod", "I"]} pressed={state.italic} disabled={off(state.canItalic)} onToggle={() => editor.chain().focus().toggleItalic().run()}><span aria-hidden="true" className="italic">I</span></RichTextToggle>
@@ -446,7 +453,7 @@ export function QuincyRichTextEditor({
       </div>
     </InputGroup>
     {isDocument && <>
-      {!phone && <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} tableBubbleFloors={tableBubbleFloors} />}
+      {!phone && <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} tableBubbleFloors={tableBubbleFloors} tier={tableTier} onTierChange={setTableTier} />}
       <DeleteTableDialog editor={editor} open={deleteTableOpen} onOpenChange={setDeleteTableOpen} />
     </>}
     {picking !== null && <Input

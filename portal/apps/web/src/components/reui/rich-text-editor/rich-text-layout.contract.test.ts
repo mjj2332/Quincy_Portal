@@ -23,17 +23,23 @@ describe("rich-text editor layout contracts", () => {
     // flip and shift are derivable: they read the bar's real height from floating-ui's state, never a constant.
     const state = { placement: "top-start", rects: { reference: {}, floating: { x: 0, y: 0, width: 280, height: 38 } } } as never;
     expect(options.placement).toBe("top-start");
-    expect(options.offset).toBe(8);
+    // The offset is derivable too: the gap is 8 here, and less in the tight tier (the same gap feeds the padding).
+    expect(typeof options.offset).toBe("function");
+    expect(options.offset(state)).toBe(8);
     const flipOptions = options.flip(state);
     expect(flipOptions.fallbackPlacements).toEqual(["bottom-start"]);
-    expect(flipOptions.fallbackStrategy).toBe("initialPlacement");
-    expect(flipOptions.padding).toBe(8);
-    // One boundary for both, rebuilt per pass; its edges equal the final bar's limits (padding 8 and offset 8 cancel).
+    // "bestFit", never "initialPlacement": a candidate that overflows is judged by its overflow, not forced.
+    expect(flipOptions.fallbackStrategy).toBe("bestFit");
+    expect(flipOptions.rootBoundary).toBe("viewport");
+    expect(flipOptions.padding).toEqual({ top: 8, bottom: 8, left: 8, right: 8 });
+    // One boundary for both, rebuilt per pass; its edges equal the final bar's limits (padding and offset are the same gap).
     expect(flipOptions.boundary).toEqual(options.shift(state).boundary);
     expect(flipOptions.boundary.top).toBe(500);
     expect(flipOptions.boundary.bottom).toBe(685);
-    expect(options.shift(state).crossAxis).toBe(true);
-    expect(options.shift(state).padding).toBe(8);
+    // Horizontal only: a vertical shift would move the bar off its gap, or onto the row.
+    expect(options.shift(state).crossAxis).toBe(false);
+    expect(options.shift(state).padding).toEqual({ top: 8, bottom: 8, left: 8, right: 8 });
+    expect(options.shift(state).rootBoundary).toBe("viewport");
   });
 
   it("the phone path is gated by a JS query that agrees with the Tailwind max-[721px] variant at exactly 721px", () => {
@@ -44,16 +50,26 @@ describe("rich-text editor layout contracts", () => {
   });
 
   it("the floating table bar's surface has no outer padding (the bar is 38px, so it fits above row 2 of a first-block table)", () => {
-    const surface = /data-testid=\{testId\}\s+className="([^"]*)"/.exec(read("rich-text-bubble-bar.tsx"))?.[1];
+    const surface = /data-testid=\{testId\}[^>]*?className=\{cn\("([^"]*)"/s.exec(read("rich-text-bubble-bar.tsx"))?.[1];
     expect(surface).toBeDefined();
     expect(surface!.split(/\s+/)).not.toContain("p-1");
   });
 
-  it("mounts the floating table bar only when the phone path is off, and the toolbar group only on the phone", () => {
+  it("mounts the floating table bar only when the phone path is off, and the toolbar group on the phone or when the bar has no room (tier none)", () => {
     const source = readFileSync(new URL("../../QuincyRichTextEditor.tsx", import.meta.url), "utf8");
     expect(source).toContain("useMediaQuery(RICH_TEXT_PHONE_QUERY)");
     expect(source).toMatch(/!phone && <RichTextTableBubble/);
-    expect(source).toMatch(/phone && state\.inTable && <RichTextTableTools/);
+    expect(source).toMatch(/const tableInToolbar = phone \|\| tableTier === "none"/);
+    expect(source).toMatch(/tableInToolbar && state\.inTable && <RichTextTableTools/);
+  });
+
+  it("the bar stays mounted but inert, hidden from assistive tech and invisible when the toolbar group takes over (tier none), and exposes its tier", () => {
+    const bar = read("rich-text-bubble-bar.tsx");
+    expect(bar).toMatch(/inert=\{inactive/);
+    expect(bar).toMatch(/aria-hidden=\{inactive/);
+    expect(bar).toContain("data-tier={tier}");
+    expect(bar).toMatch(/inactive && "invisible"/);
+    expect(read("rich-text-table.tsx")).toMatch(/inactive=\{tier === "none"\}/);
   });
 
   it("outline rows read as menu items: sentence case, no tracking, --text-sm", () => {

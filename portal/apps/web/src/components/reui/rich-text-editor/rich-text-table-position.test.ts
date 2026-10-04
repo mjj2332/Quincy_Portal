@@ -7,6 +7,7 @@ import {
   tableBubbleBoundary,
   tableBubbleOptions,
   tableBubbleZone,
+  type TableBubbleTier,
 } from "./rich-text-table-position";
 
 const rect = (top: number, bottom: number, left = 20, right = 340) => ({ top, bottom, left, right });
@@ -91,12 +92,14 @@ describe("table bar placement (floating-ui computePosition)", () => {
   const platform = {
     getElementRects: async () => ({ reference: cell, floating: { x: 0, y: 0, ...BAR } }),
     getDimensions: async () => BAR,
-    getClippingRect: async ({ boundary }: { boundary: unknown }) => {
+    getClippingRect: async ({ boundary, rootBoundary }: { boundary: unknown; rootBoundary?: unknown }) => {
       const b = boundary as { top: number; left: number; right: number; bottom: number };
-      const top = Math.max(b.top, VIEWPORT.top);
-      const left = Math.max(b.left, VIEWPORT.left);
-      const right = Math.min(b.right, VIEWPORT.right);
-      const bottom = Math.min(b.bottom, VIEWPORT.bottom);
+      // "document" does not clip at the viewport (the page extends past it); "viewport" does.
+      const root = rootBoundary === "document" ? { top: -1e6, left: 0, right: VIEWPORT.right, bottom: 1e6 } : VIEWPORT;
+      const top = Math.max(b.top, root.top);
+      const left = Math.max(b.left, root.left);
+      const right = Math.min(b.right, root.right);
+      const bottom = Math.min(b.bottom, root.bottom);
       return { x: left, y: top, width: right - left, height: bottom - top };
     },
   } as unknown as Platform;
@@ -111,6 +114,7 @@ describe("table bar placement (floating-ui computePosition)", () => {
     row?: ReturnType<typeof rect>;
     viewport?: { top: number; bottom: number };
     visualOffset?: { x: number; y: number };
+    onTier?: (tier: TableBubbleTier) => void;
   }
 
   // The row defaults to the cell's own vertical extent (a one-line row); the viewport is tall enough to never cut.
@@ -124,6 +128,7 @@ describe("table bar placement (floating-ui computePosition)", () => {
     row = rect(cellOverride.y, cellOverride.y + cellOverride.height),
     viewport = { top: 0, bottom: 844 },
     visualOffset,
+    onTier,
   }: PlaceInput) {
     const options = tableBubbleOptions({
       surface: () => surfaceRect,
@@ -132,6 +137,7 @@ describe("table bar placement (floating-ui computePosition)", () => {
       row: () => row,
       viewport: () => viewport,
       ...(visualOffset ? { visualOffset: () => visualOffset } : {}),
+      ...(onTier ? { onTier } : {}),
     });
     const result = await computePosition(
       cellOverride as never,
@@ -171,19 +177,22 @@ describe("table bar placement (floating-ui computePosition)", () => {
     expect(result.barBottom).toBeLessThanOrEqual(helperTop - TABLE_BUBBLE_GAP);
   });
 
-  it("keeps top-start when the bar would end within 8px of the helper (offset is applied after flip)", async () => {
-    // cell bottom 624 -> a below placement ends at 624 + 54 + 8 = 686, past helperTop - 8 = 685
+  it("when the full 8px gap would end within 8px of the helper, drops below TIGHT (gap < 8) and still clears the helper", async () => {
+    // cell bottom 624; the floor is helperTop - 8 = 685. Above: 553.75 - 500 = 53.75 (< 54). Below: 685 - 624 = 61 (< 62).
+    // The roomier side is below, with 61 - 54 - 0.5 = 6.5px of gap: the bar ends at 684.5.
     const lowCell = { x: 20, y: 553.75, width: 300, height: 70.25 };
     const result = await place(693, lowCell);
-    expect(result.placement).toBe("top-start");
+    expect(result.placement).toBe("bottom-start");
+    expect(result.barTop - 624).toBeCloseTo(6.5, 5);
+    expect(result.barTop - 624).toBeLessThan(TABLE_BUBBLE_GAP);
+    expect(result.barBottom).toBeLessThanOrEqual(693 - TABLE_BUBBLE_GAP);
   });
 
-  it("keeps top-start when neither side fits (the degrade case: shift clamps to the surface top)", async () => {
-    const result = await place(660);
-    expect(result.placement).toBe("top-start");
-    expect(result.barTop).toBe(500);
-    // Documented, not endorsed: the gap to the row is lost here (#535). The zone rules make this a rare geometry.
-    expect(550.5 - result.barBottom).toBeLessThan(TABLE_BUBBLE_GAP);
+  it("reports tier none when neither side fits (no clamping onto the row; the host shows the toolbar group)", async () => {
+    // floor = 660 - 8 = 652: above 50.5 (< 54), below 652 - 620.75 = 31.25. Neither fits, not even tight.
+    const tiers: string[] = [];
+    await placeWith({ helperTop: 660, onTier: (tier) => tiers.push(tier) });
+    expect(tiers).toEqual(["none"]);
   });
 
   // Geometry measured in the browser (#535 round 7): a 54px bar. Kept as math cases; the bar is now 38px (no outer padding).
@@ -232,7 +241,7 @@ describe("tableBubbleZone", () => {
 
   it("uses the clean zone (below the previous block, above the next one) when the bar fits above the row", () => {
     const zone = tableBubbleZone({ ...base, row: rect(560, 600), barHeight: 38, prevBottom: 480, nextTop: 640 });
-    expect(zone).toEqual({ top: 480, bottom: 640, tier: "clean" });
+    expect(zone).toEqual({ top: 480, bottom: 640, tier: "clean", gap: G, root: "viewport" });
   });
 
   it("uses the clean zone when only the bottom fits", () => {
@@ -242,9 +251,30 @@ describe("tableBubbleZone", () => {
     expect(zone).toMatchObject({ top: 490, bottom: 640 });
   });
 
-  it("falls back to the wide zone for a single-row table between two paragraphs", () => {
+  it("a single-row table between two paragraphs has no room anywhere: tier none, and the bar is never widened over a block", () => {
     const zone = tableBubbleZone({ ...base, row: rect(520, 560), barHeight: 38, prevBottom: 515, nextTop: 565 });
-    expect(zone).toEqual({ top: 400, bottom: 700, tier: "wide" });
+    // The limits stay the blocks' edges (515 / 565): there is no wide zone any more.
+    expect(zone).toEqual({ top: 515, bottom: 565, tier: "none", gap: G, root: "viewport" });
+  });
+
+  it("takes the roomier side TIGHT (gap under 8, EPS clear) when neither side has 8px to spare", () => {
+    // The measured #535 case: 41.2 above, 33.2 below, a 37.6px bar.
+    const zone = tableBubbleZone({
+      ...base, surface: rect(421.51, 584.71), row: rect(490.71, 523.51), barHeight: 37.6, prevBottom: 449.51, nextTop: 556.71,
+    });
+    expect(zone.tier).toBe("tight");
+    expect(zone.gap).toBeCloseTo(41.2 - 37.6 - 0.5, 5);
+    expect(zone.gap).toBeGreaterThan(0);
+    expect(zone.gap).toBeLessThan(G);
+  });
+
+  it("is none when the roomier side leaves under 0.5px of clearance", () => {
+    expect(tableBubbleZone({ ...base, row: rect(520, 560), barHeight: 38, prevBottom: 481.6, nextTop: 565 }).tier).toBe("none");
+    expect(tableBubbleZone({ ...base, row: rect(520, 560), barHeight: 38, prevBottom: 481.4, nextTop: 565 }).tier).toBe("tight");
+  });
+
+  it("an unmeasured bar (height 0) is judged clean, so the toolbar never flickers in before the bar is laid out", () => {
+    expect(tableBubbleZone({ ...base, row: rect(520, 560), barHeight: 0, prevBottom: 515, nextTop: 565 }).tier).toBe("clean");
   });
 
   it("never lets the clean ceiling rise above the surface or the clean floor drop below the wide floor", () => {
@@ -264,10 +294,10 @@ describe("tableBubbleZone", () => {
     expect(zone.tier).toBe("clean");
   });
 
-  it("counts a viewport that cuts below the row as 'does not fit below'", () => {
+  it("counts a viewport that cuts below the row as 'does not fit below': the blocks allow it, so the bar goes partly offscreen", () => {
     const zone = tableBubbleZone({ ...base, row: rect(420, 460), barHeight: 38, nextTop: 520, viewport: { top: 0, bottom: 480 } });
-    // Top: 420 - 46 = 374 < 400; bottom: 460 + 46 = 506 > 480. Neither fits: wide.
-    expect(zone.tier).toBe("wide");
+    // Visible: top 420 - 400 = 20, bottom min(520, 480) - 460 = 20: neither fits, even tight. Blocks: bottom 520 - 460 = 60 >= 46.
+    expect(zone).toEqual({ top: 400, bottom: 520, tier: "offscreen", gap: G, root: "document" });
   });
 });
 
@@ -285,16 +315,18 @@ describe("tableBubbleAnchor", () => {
 describe("table bar zone placement (floating-ui computePosition)", () => {
   const G = TABLE_BUBBLE_GAP;
   const VIEWPORT = { top: 0, left: 0, right: 1200, bottom: 900 };
-  const platformFor = (reference: unknown, bar: { width: number; height: number }) =>
+  const platformFor = (reference: unknown, bar: { width: number; height: number }, viewportBottom = VIEWPORT.bottom) =>
     ({
       getElementRects: async () => ({ reference, floating: { x: 0, y: 0, ...bar } }),
       getDimensions: async () => bar,
-      getClippingRect: async ({ boundary }: { boundary: unknown }) => {
+      getClippingRect: async ({ boundary, rootBoundary }: { boundary: unknown; rootBoundary?: unknown }) => {
         const b = boundary as { top: number; left: number; right: number; bottom: number };
-        const top = Math.max(b.top, VIEWPORT.top);
-        const left = Math.max(b.left, VIEWPORT.left);
-        const right = Math.min(b.right, VIEWPORT.right);
-        const bottom = Math.min(b.bottom, VIEWPORT.bottom);
+        // The viewport the scene is run with (`viewportBottom`), or the whole document for "document".
+        const root = rootBoundary === "document" ? { top: -1e6, left: 0, right: VIEWPORT.right, bottom: 1e6 } : { ...VIEWPORT, bottom: viewportBottom };
+        const top = Math.max(b.top, root.top);
+        const left = Math.max(b.left, root.left);
+        const right = Math.min(b.right, root.right);
+        const bottom = Math.min(b.bottom, root.bottom);
         return { x: left, y: top, width: right - left, height: bottom - top };
       },
     }) as unknown as Platform;
@@ -316,6 +348,7 @@ describe("table bar zone placement (floating-ui computePosition)", () => {
     const bar = { width: 280, height: scene.barHeight };
     // Production feeds ONE rect to both the anchor and the zone maths: the row/cell union.
     const anchor = tableBubbleAnchor(scene.row, scene.cell ?? scene.row);
+    const tiers: TableBubbleTier[] = [];
     const reference = { x: 40, y: anchor.top, width: 200, height: anchor.bottom - anchor.top };
     const options = tableBubbleOptions({
       surface: () => scene.surface,
@@ -323,14 +356,15 @@ describe("table bar zone placement (floating-ui computePosition)", () => {
       neighbours: () => ({ prevBottom: scene.prevBottom ?? null, nextTop: scene.nextTop ?? null }),
       row: () => anchor,
       viewport: () => scene.viewport ?? { top: 0, bottom: 900 },
+      onTier: (tier) => tiers.push(tier),
       ...(scene.visualOffset ? { visualOffset: () => scene.visualOffset! } : {}),
     });
     const result = await computePosition(reference as never, {} as never, {
       placement: options.placement,
-      platform: platformFor(reference, bar),
+      platform: platformFor(reference, bar, scene.viewport?.bottom ?? VIEWPORT.bottom),
       middleware: [flip(options.flip as never), shift(options.shift as never), offset(options.offset)],
     });
-    return { placement: result.placement, top: result.y, bottom: result.y + bar.height };
+    return { placement: result.placement, top: result.y, bottom: result.y + bar.height, tiers, gap: result.placement.startsWith("top") ? anchor.top - result.y - bar.height : result.y - anchor.bottom };
   }
 
   const overlap = (a: { top: number; bottom: number }, b: { top: number; bottom: number }) =>
@@ -346,11 +380,9 @@ describe("table bar zone placement (floating-ui computePosition)", () => {
     expect(result.top).toBeGreaterThanOrEqual(480);
   });
 
-  it("A: a 46px bar (the old padded bar) does not fit above row 2 and is clamped, losing the gap", async () => {
+  it("A: a 46px bar (the old padded bar) has 46px above row 2 and 40px below: no clearance anywhere, so tier none instead of a clamp onto the row", async () => {
     const result = await run({ ...firstBlock, barHeight: 46 });
-    expect(result.placement).toBe("top-start");
-    expect(result.top).toBe(480);
-    expect(firstBlock.row.top - result.bottom).toBeLessThan(G);
+    expect(result.tiers).toEqual(["none"]);
   });
 
   it("B: a middle row never overlaps the previous block, and the bar stays 8px clear of the row", async () => {
@@ -388,24 +420,133 @@ describe("table bar zone placement (floating-ui computePosition)", () => {
     expect(overlap(result, rect(600, 640))).toBe(0);
   });
 
-  it("a rowspan cell taller than its row: zone and anchor agree, so the bar clears both the row and the cell", async () => {
-    // Clean zone 500-640, row 530-560, spanning cell 530-630, bar 38. Judged on the union (530-630) neither side
-    // fits the clean zone, so the zone widens to the helper line and floating-ui drops the bar below the cell.
-    // (Judged on the row alone the zone said "below fits", floating-ui rejected it against the longer cell,
-    // fell back above and clamped to 500-538: 8px over the row.)
+  it("a rowspan cell taller than its row: zone and anchor agree (one union rect), and with no room around it the tier is none", async () => {
+    // Zone 500-640, row 530-560, spanning cell 530-630, bar 38. Judged on the union (530-630): 30px above, 10px
+    // below. (Judged on the row alone the zone said "below fits" while floating-ui judged the longer cell.) The old
+    // rule widened the zone to the helper line and dropped the bar below the cell over the next block; there is no
+    // wide tier now, so the host shows the toolbar group.
     const row = rect(530, 560);
     const cell = rect(530, 630);
     const result = await run({ surface: rect(500, 640), row, cell, barHeight: 38, prevBottom: 500, nextTop: 640, floorTop: 760 });
+    expect(result.tiers).toEqual(["none"]);
+  });
+
+  it("a rowspan cell with room below: the bar clears both the row and the cell, below the union", async () => {
+    const row = rect(530, 560);
+    const cell = rect(530, 630);
+    const result = await run({ surface: rect(500, 760), row, cell, barHeight: 38, prevBottom: 500, nextTop: 760 });
     expect(overlap(result, row)).toBe(0);
     expect(overlap(result, cell)).toBe(0);
     expect(result.placement).toBe("bottom-start");
     expect(result.top - 630).toBe(G);
   });
 
-  it("a single-row table between two paragraphs uses the wide zone and still keeps clear of the row", async () => {
+  it("a single-row table between two paragraphs has no room anywhere: tier none, reported once", async () => {
     const result = await run({ surface: rect(400, 760), row: rect(520, 560), barHeight: 38, prevBottom: 515, nextTop: 565 });
-    expect(overlap(result, rect(520, 560))).toBe(0);
+    expect(result.tiers).toEqual(["none"]);
+  });
+
+  it("C (measured): the middle row with 41.2px above and 33.2px below takes the TIGHT top: no overlap with the previous block or the row, 0 < gap < 8", async () => {
+    const prev = { top: 400, bottom: 449.51 };
+    const next = { top: 556.71, bottom: 600 };
+    const row = rect(490.71, 523.51);
+    const result = await run({ surface: rect(421.51, 584.71), row, barHeight: 37.6, prevBottom: prev.bottom, nextTop: next.top, viewport: { top: 0, bottom: 800 } });
+    expect(result.tiers).toEqual(["tight"]);
     expect(result.placement).toBe("top-start");
+    expect(overlap(result, prev)).toBe(0);
+    expect(overlap(result, next)).toBe(0);
+    expect(overlap(result, row)).toBe(0);
+    expect(result.gap).toBeGreaterThan(0);
+    expect(result.gap).toBeLessThan(G);
+    expect(result.gap).toBeCloseTo(3.1, 5);
+  });
+
+  describe("B (measured): a middle row near the viewport's bottom", () => {
+    const prev = { top: 600, bottom: 673 };
+    const row = rect(715, 760); // 42px above, 45 below at best
+    const scene = { surface: rect(560, 850), row, barHeight: 37.6, prevBottom: prev.bottom, nextTop: 830, floorTop: 866 };
+
+    it("a 800px viewport leaves 40px below: the bar goes tight on top, clear of the previous block", async () => {
+      const result = await run({ ...scene, viewport: { top: 0, bottom: 800 } });
+      expect(result.tiers).toEqual(["tight"]);
+      expect(result.placement).toBe("top-start");
+      expect(overlap(result, prev)).toBe(0);
+      expect(overlap(result, row)).toBe(0);
+      expect(result.gap).toBeLessThan(G);
+    });
+
+    it("a 900px viewport has the room below: clean bottom-start with the full 8px gap, above the helper's floor", async () => {
+      const result = await run({ ...scene, viewport: { top: 0, bottom: 900 } });
+      expect(result.tiers).toEqual(["clean"]);
+      expect(result.placement).toBe("bottom-start");
+      expect(result.gap).toBe(G);
+      expect(result.bottom).toBeLessThanOrEqual(866 - G);
+    });
+  });
+
+  it("the viewport cuts the visible room but the blocks allow it: tier offscreen on the document root, gap 8, never clamped onto the row", async () => {
+    // Row 420-460, next block at 520, viewport bottom 480: 20px visible each way, 60px of block room below.
+    const row = rect(420, 460);
+    const result = await run({ surface: rect(400, 700), row, barHeight: 38, nextTop: 520, viewport: { top: 0, bottom: 480 } });
+    expect(result.tiers).toEqual(["offscreen"]);
+    expect(result.placement).toBe("bottom-start");
+    expect(result.gap).toBe(G);
+    expect(result.top).toBe(468);
+    expect(overlap(result, row)).toBe(0);
+    expect(result.bottom).toBeGreaterThan(480); // partly scrolled out, as intended
+    const options = tableBubbleOptions({
+      surface: () => rect(400, 700), floorTop: () => null, neighbours: () => ({ prevBottom: null, nextTop: 520 }),
+      row: () => row, viewport: () => ({ top: 0, bottom: 480 }),
+    });
+    const state = { placement: "top-start", rects: { reference: {}, floating: { x: 0, y: 0, width: 280, height: 38 } } } as never;
+    expect(options.flip(state).rootBoundary).toBe("document");
+    expect(options.shift(state).rootBoundary).toBe("document");
+  });
+
+  it("deterministic sweep: whatever the row position, bar height, neighbours and viewport, a shown bar never overlaps the previous block, the next block or the row, stays inside [surface top, helper - 8], and keeps the full 8px gap whenever 8px fits", async () => {
+    const SURFACE = rect(400, 700);
+    const FLOOR_TOP = 780; // 72px under the frame: the helper
+    let shown = 0;
+    let none = 0;
+    for (const barHeight of [37.6, 38, 54]) {
+      for (const rowHeight of [34, 40]) {
+        for (const rowTop of [440, 470, 500, 530, 560, 590, 620, 650]) {
+          for (const above of [null, 4, 20, 42, 80]) { // distance from the previous block's bottom to the row top
+            for (const below of [null, 4, 20, 42, 80]) { // distance from the row bottom to the next block's top
+              for (const viewportBottom of [500, 600, 700, 900]) {
+                const row = rect(rowTop, rowTop + rowHeight);
+                const prev = above === null ? null : { top: rowTop - above - 30, bottom: rowTop - above };
+                const next = below === null ? null : { top: rowTop + rowHeight + below, bottom: rowTop + rowHeight + below + 30 };
+                const label = JSON.stringify({ barHeight, rowTop, rowHeight, above, below, viewportBottom });
+                const result = await run({
+                  surface: SURFACE, row, barHeight, prevBottom: prev?.bottom ?? null, nextTop: next?.top ?? null,
+                  floorTop: FLOOR_TOP, viewport: { top: 0, bottom: viewportBottom },
+                });
+                const tier = result.tiers.at(-1)!;
+                expect(result.tiers.length, label).toBe(1); // the tier is stable across middleware passes
+                if (tier === "none") { none += 1; continue; }
+                shown += 1;
+                if (prev) expect(overlap(result, prev), `prev ${label}`).toBe(0);
+                if (next) expect(overlap(result, next), `next ${label}`).toBe(0);
+                expect(overlap(result, row), `row ${label}`).toBe(0);
+                expect(result.top, `surface top ${label}`).toBeGreaterThanOrEqual(SURFACE.top);
+                expect(result.bottom, `helper ${label}`).toBeLessThanOrEqual(FLOOR_TOP - G);
+                const ceil = prev ? Math.max(SURFACE.top, prev.bottom) : SURFACE.top;
+                const floor = Math.min(Math.max(SURFACE.bottom, FLOOR_TOP - G), next ? next.top : Infinity);
+                const fits8 = (top: number, bottom: number) => row.top - top >= barHeight + G || bottom - row.bottom >= barHeight + G;
+                const visibleRoom = Math.max(row.top - Math.max(ceil, 0), Math.min(floor, viewportBottom) - row.bottom);
+                if (fits8(Math.max(ceil, 0), Math.min(floor, viewportBottom))) { expect(tier, `clean ${label}`).toBe("clean"); expect(result.gap, `clean ${label}`).toBeCloseTo(G, 9); }
+                else if (visibleRoom - barHeight >= 0.5) { expect(tier, label).toBe("tight"); expect(result.gap, label).toBeLessThan(G); expect(result.gap, label).toBeGreaterThanOrEqual(0); }
+                else if (fits8(ceil, floor)) { expect(tier, `offscreen ${label}`).toBe("offscreen"); expect(result.gap, `offscreen ${label}`).toBeCloseTo(G, 9); }
+                else { expect(tier, label).toBe("offscreen"); expect(result.gap, label).toBeLessThan(G); expect(result.gap, label).toBeGreaterThanOrEqual(0); }
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(shown).toBeGreaterThan(200);
+    expect(none).toBeGreaterThan(20);
   });
 
   it("a viewport that cuts above the row moves the bar below it", async () => {
@@ -430,7 +571,9 @@ describe("table bar zone placement (floating-ui computePosition)", () => {
   });
 
   it("reads the bar height from the floating rect, never a constant", () => {
+    const tiers: TableBubbleTier[] = [];
     const options = tableBubbleOptions({
+      onTier: (tier) => tiers.push(tier),
       surface: () => rect(480, 700),
       floorTop: () => null,
       neighbours: () => ({ prevBottom: 500, nextTop: null }),
@@ -438,10 +581,14 @@ describe("table bar zone placement (floating-ui computePosition)", () => {
       viewport: () => ({ top: 0, bottom: 900 }),
     });
     const withHeight = (height: number) => ({ placement: "top-start", rects: { reference: {}, floating: { x: 0, y: 0, width: 280, height } } });
-    // 38px: 526 - 8 - 38 = 480 < 500 (previous block), but the bottom fits: the clean zone (ceiling 500).
+    // 38px: 526 - 8 - 38 = 480 < 500 (previous block), but the bottom fits: clean (ceiling 500).
     expect(options.flip(withHeight(38) as never).boundary.top).toBe(500);
-    // 400px fits neither side: the wide zone (ceiling = the surface top, 480).
-    expect(options.flip(withHeight(400) as never).boundary.top).toBe(480);
+    expect(tiers).toEqual(["clean"]);
+    // 400px fits neither side: tier none. There is no wide zone: the ceiling stays the previous block's bottom.
+    expect(options.flip(withHeight(400) as never).boundary.top).toBe(500);
+    expect(tiers).toEqual(["clean", "none"]);
+    // Offset and padding follow the same pass: a 38px bar at 26px above / 140 below gets the full 8.
+    expect(options.offset(withHeight(38) as never)).toBe(8);
   });
 
   it("adds the visualViewport offset AFTER deciding the zone", () => {
