@@ -1,7 +1,7 @@
 import { automaticDeadlineFor, PROJECT_DEADLINE_DEFAULT_REMINDER_OFFSETS } from "@quincy/shared";
 import { DateTimeField, type DateTimeApply, type DateTimeStored } from "@/components/quincy/DateTimeField";
 import { PriorityStars } from "@/components/quincy/PriorityStars";
-import { StatusPill } from "@/components/quincy/StatusPill";
+import { AutomaticDeadlineMark, AUTOMATIC_DEADLINE_NEW_SHOOT_NOTE } from "@/components/AutomaticDeadlineMark";
 import { Field, FieldLabel } from "@/components/reui/field";
 
 /**
@@ -70,7 +70,8 @@ export function NewShootSchedule({ shootDate, street, deadline, onDeadlineChange
       placeholder="Select a date and time"
       value={stored}
       reminders={{ offsets }}
-      adornment={automaticPreview ? <StatusPill tone="neutral">Automatic</StatusPill> : undefined}
+      adornment={automaticPreview ? <AutomaticDeadlineMark /> : undefined}
+      facts={automaticPreview ? <p className="[font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">{AUTOMATIC_DEADLINE_NEW_SHOOT_NOTE}</p> : undefined}
       description={note}
       descriptionRole={deadline.kind === "automatic" && deadline.cleared ? "status" : undefined}
       onApply={apply}
