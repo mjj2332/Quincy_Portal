@@ -333,7 +333,8 @@ export function ProjectHeader({
 
     {/* The entry button sits beside the scroller, not inside it: at phone width the tabs scroll sideways and it must stay in view. */}
     <div className="flex min-w-0 items-center gap-[var(--space-2)]">
-    <div className="project-header__tabs flex min-w-0 flex-1 items-center gap-[var(--space-2)]" ref={tabsRef}>
+    {/* The scroller clips its overflow on both axes: the padding (cancelled by the negative margin) keeps the focus ring and the count chip inside it. */}
+    <div className="project-header__tabs -my-[var(--space-1)] flex min-w-0 flex-1 items-center gap-[var(--space-2)] p-[var(--space-1)]" ref={tabsRef}>
       <Tabs value={activeTab} onValueChange={(next) => { if (typeof next === "string" && next !== activeTab) onActiveTabChange(next as WorkspaceTab); }}>
         <TabsList variant="line" aria-label="Workspace">
           {availableTabs.map((tab) => { const collection = project.collections.find((item) => item.kind === tab); return (

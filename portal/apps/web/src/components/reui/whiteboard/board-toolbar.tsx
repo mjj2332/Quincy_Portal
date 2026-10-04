@@ -214,7 +214,7 @@ export function BoardToolbar({
         {/* The one group boundary: board actions before it, the view after. */}
         <Separator
           orientation="vertical"
-          className="h-4 data-vertical:self-center"
+          className="h-4 data-[orientation=vertical]:self-center"
         />
         <PanelToggle
           label="Board panel"

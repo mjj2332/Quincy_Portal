@@ -5156,7 +5156,6 @@ remove the legacy readers) still applies.
 - **Calendar `sameFilters` compares the tree by canonical spelling**, so the server's verbatim echo of `appliedFilters.tree` is not read as a change (no `history.replace` loop).
 - **Phone stacking, not truncation.** Under the `@max-[26rem]/track` container breakpoint a rule row wraps onto lines: combinator + handle/menu, then field and operator side by side at explicit half-line bases (`basis-[calc(50%-0.1875rem)] shrink-0`), then the value on its own full line (`basis-full`). Two failed attempts first: a fixed `--filter-*-width` basis with `grow` still SHRANK the cells (grow only shares free space), and `basis-auto` collapsed them to their padding, because every cell is an `@container/cell` size container and a size container's content size resolves to ~0. On a size container, never size by content: give it an explicit basis. The Dashboard's cell widths are 8.5rem / 10rem / 8.5rem (field / operator / value): inside a nested group every cell shrinks, and below about 10rem the operator "is not any of" lost its last letters even at 1280 (measure after the popover's zoom-in finishes, or a live check reads a mid-animation layout). The negated operator reads "is not any of" via `LABELS.negated`; the popup is `100vw - 2 * --space-4` wide with `collisionPadding={16}`; the trigger badge stays visible on the phone.
 
-<<<<<<< HEAD
 
 ## The Project whiteboard's socket and shell (#498)
 
@@ -5169,7 +5168,6 @@ remove the legacy readers) still applies.
 - **Esc belongs to the board.** `hasOpenInnerLayer` treats `[data-quincy-whiteboard]` as an open layer so Esc inside the canvas never closes the sheet.
 - **Vite's `/api` proxy needs `ws: true` and the Origin rewrite on `proxyReqWs`**, or `npm run dev` refuses the whiteboard's handshake exactly as it once refused every mutation (#191).
 - **DOM tests stub `WebSocket` like `fetch`.** `no-unmocked-fetch.ts` records and refuses a real socket; mock `lib/whiteboard-socket` instead.
-=======
 ## Auto-move to Edited review records an arrival; one pass moves it (#486)
 
 An Editor Output import and a Portal Edited upload only record `projects.edited_arrived_at`; the per-minute `reconcileEditedArrivals` pass is the single place the move happens, through `commitAutomaticStage` with the closed `edited_arrival_quiet` premise. AutoHDR finals and a human import therefore converge on one compare-and-set and one `edited_landed`.
@@ -5206,4 +5204,3 @@ An Editor Output import and a Portal Edited upload only record `projects.edited_
 - **A vendored `<form>` inside a portalled popover still bubbles synthetic submit through the editor's React ancestors.** `stopPropagation` in the form's own handler.
 - **`no-scrollbar` / `scroll-fade-x` are not utilities in this Tailwind**: the vendor toolbar scrolled with visible scrollbars and no fade until they were replaced with the legacy phone mask.
 - **Run the editor tests against both editors (`describe.each`) until the legacy one is retired (#492).** Steps that differ (link dialog vs popover, `<select>` vs menu) go through translator helpers; the translated cases are listed in the PR.
->>>>>>> origin/main

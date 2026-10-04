@@ -41,6 +41,8 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
   // The editor's own API is empty by the time the board unmounts; the last change it reported is not.
   const elementsRef = useRef<ReadonlyArray<SavedElement>>([]);
   const closeFailed = useRef(false);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const leftByClose = useRef(false);
   const accessFailureRef = useRef(onAccessFailure);
   accessFailureRef.current = onAccessFailure;
 
@@ -78,6 +80,18 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
     };
   }, [projectId]);
 
+  // The sheet focuses its popup when it opens, and a deep link mounts the board after that (and the entry
+  // button that opened it is hidden now): focus lands on the way out of the board instead.
+  useEffect(() => {
+    closeButtonRef.current?.focus({ preventScroll: true });
+    return () => {
+      // Close hands the Workspace back; its entry button is what the user came from. Only the Close button
+      // asks for this: Esc or navigation leave focus to whatever took over.
+      if (!leftByClose.current) return;
+      document.querySelector<HTMLElement>('[data-testid="project-whiteboard-open"]')?.focus({ preventScroll: true });
+    };
+  }, []);
+
   const save = useCallback(async () => { await saverRef.current?.flush(); }, []);
 
   const mode: WhiteboardMode = init?.mode ?? (archivedHint ? "view" : "edit");
@@ -93,19 +107,22 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
         return;
       }
     }
+    leftByClose.current = true;
     onClose();
   }, [mode, onClose]);
   const initialData = useMemo(() => (init ? { elements: init.elements as never } : undefined), [init]);
   const statusLabel = connection === "reconnecting" ? "Reconnecting" : saveStatus === "saving" ? "Saving" : saveStatus === "error" ? "Not saved" : saveStatus === "unsaved" ? "Unsaved changes" : "Saved";
 
   return (
-    <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-[var(--space-3)] px-[var(--space-6)] py-[var(--space-5)] max-[721px]:p-[var(--space-4)] h-[calc(100dvh-var(--space-8))] max-[721px]:h-[calc(100dvh-var(--impersonation-banner-height,0px))] min-h-[28rem]" data-testid="project-whiteboard" data-quincy-whiteboard aria-label={`Whiteboard for ${street}`}>
+    <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-[var(--space-3)] px-[var(--space-6)] py-[var(--space-5)] max-[721px]:p-[var(--space-4)] h-[calc(100dvh-var(--space-5)*2-2px)] [[data-impersonating]_&]:h-[calc(100dvh-var(--impersonation-banner-height)-var(--space-5)*2-2px)] max-[721px]:h-dvh max-[721px]:[[data-impersonating]_&]:h-[calc(100dvh-var(--impersonation-banner-height))] min-h-[28rem]" data-testid="project-whiteboard" data-quincy-whiteboard aria-label={`Whiteboard for ${street}`}>
       <div className="flex flex-wrap items-center gap-[var(--space-2)]">
-        <Button type="button" variant="ghost" onClick={() => void requestClose()} data-testid="project-whiteboard-close"><ArrowLeftIcon className="size-3.5" aria-hidden="true" data-icon="inline-start" />Close whiteboard</Button>
-        <h2 className="serif [font:var(--type-h3)] me-auto min-w-0 truncate">{street}</h2>
+        <Button ref={closeButtonRef} type="button" variant="ghost" onClick={() => void requestClose()} data-testid="project-whiteboard-close"><ArrowLeftIcon className="size-3.5" aria-hidden="true" data-icon="inline-start" />Close whiteboard</Button>
+        <h2 className="serif [font:var(--type-h3)] min-w-0 truncate">{street}</h2>
+        <div className="ms-auto flex flex-wrap items-center gap-[var(--space-2)]">
         {mode === "view" && <Badge variant="primary-light" data-testid="project-whiteboard-view-only">View only</Badge>}
         {(deleted || mode !== "view") && <span className="[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" role="status" data-testid="project-whiteboard-status">{deleted ? "Deleted" : statusLabel}</span>}
         <CopyProjectLinkButton projectId={projectId} tab="collaboration" whiteboard />
+        </div>
       </div>
       <div className="min-h-0 relative border-solid border-[length:var(--border-width-hair)] border-border bg-card">
         {deleted

@@ -112,19 +112,21 @@ const onRequestClose = vi.fn();
 const onOpenWhiteboard = vi.fn();
 const onCloseWhiteboard = vi.fn();
 
+const sheetUi = (props: { whiteboardOpen?: boolean } = {}): ReactNode => (
+  <QuincyQueryProvider key="test" principalId="test-user" role={authState.role as Role}>
+    <ProjectSheet open kind="project" sheetKey="project:p1" backdropHref="/" onRequestClose={onRequestClose}>
+      <ProjectWorkspace projectId="p1" onArrivalConsumed={() => undefined} whiteboardOpen={props.whiteboardOpen} onOpenWhiteboard={onOpenWhiteboard} onCloseWhiteboard={onCloseWhiteboard} />
+    </ProjectSheet>
+    <ConfirmModalHost />
+  </QuincyQueryProvider>
+);
+const rerenderSheet = (props: { whiteboardOpen?: boolean }) => act(async () => { root!.render(sheetUi(props)); await Promise.resolve(); });
+
 async function renderSheet(props: { whiteboardOpen?: boolean } = {}) {
   const host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  const ui: ReactNode = (
-    <QuincyQueryProvider key="test" principalId="test-user" role={authState.role as Role}>
-      <ProjectSheet open kind="project" sheetKey="project:p1" backdropHref="/" onRequestClose={onRequestClose}>
-        <ProjectWorkspace projectId="p1" onArrivalConsumed={() => undefined} whiteboardOpen={props.whiteboardOpen} onOpenWhiteboard={onOpenWhiteboard} onCloseWhiteboard={onCloseWhiteboard} />
-      </ProjectSheet>
-      <ConfirmModalHost />
-    </QuincyQueryProvider>
-  );
-  await act(async () => { root!.render(ui); await Promise.resolve(); });
+  await act(async () => { root!.render(sheetUi(props)); await Promise.resolve(); });
   await flushUntil(() => tab("Collaboration") !== undefined, "the Workspace tabs inside the sheet");
   return host;
 }
@@ -176,6 +178,51 @@ describe("the whiteboard entry button (#498)", () => {
     expect(button.parentElement!.previousElementSibling!.contains(tab("Collaboration")!)).toBe(true);
     await click(button);
     expect(onOpenWhiteboard).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("whiteboard focus and layout (#498 design review)", () => {
+  it("a deep link lands focus on Close whiteboard, not the sheet popup", async () => {
+    await renderSheet({ whiteboardOpen: true });
+    await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
+    expect(document.activeElement).toBe(document.querySelector('[data-testid="project-whiteboard-close"]'));
+  });
+
+  it("closing the board returns focus to the entry button", async () => {
+    await renderSheet({ whiteboardOpen: true });
+    await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
+    await click(document.querySelector('[data-testid="project-whiteboard-close"]')!);
+    expect(onCloseWhiteboard).toHaveBeenCalled();
+    await rerenderSheet({ whiteboardOpen: false });
+    await flush(3);
+    expect(boardRoot()).toBeNull();
+    expect(document.activeElement).toBe(openButton());
+  });
+
+  it("the section only subtracts the banner while impersonating (the token is always defined)", async () => {
+    await renderSheet({ whiteboardOpen: true });
+    const cls = boardRoot()!.className;
+    expect(cls).not.toMatch(/(^|\s)(max-\[721px\]:)?h-\[calc\(100dvh-var\(--impersonation-banner-height,0px\)\)\]/);
+    expect(cls).toContain("[[data-impersonating]_&]:h-[calc(100dvh-var(--impersonation-banner-height)-var(--space-5)*2-2px)]");
+    expect(cls).toContain("max-[721px]:[[data-impersonating]_&]:h-[calc(100dvh-var(--impersonation-banner-height))]");
+  });
+
+  it("the right-hand group, not the heading, takes the free space", async () => {
+    await renderSheet({ whiteboardOpen: true });
+    const heading = boardRoot()!.querySelector("h2")!;
+    expect(heading.className).not.toContain("me-auto");
+    expect(heading.nextElementSibling!.className).toContain("ms-auto");
+    expect(heading.nextElementSibling!.querySelector('[data-testid="project-whiteboard-status"]')).not.toBeNull();
+  });
+
+  it("the tab scroller carries inline/block padding so the focus ring and count chip are not clipped", async () => {
+    await renderSheet();
+    // The scroller is the tablist's nearest ancestor that clips: it is the one carrying the padding.
+    const header = document.querySelector('[data-testid="project-header"]')!;
+    let node: HTMLElement | null = tab("Collaboration")!.closest('[role="tablist"]')!.parentElement;
+    const padded: string[] = [];
+    while (node && node !== header) { if (node.className.includes?.("p-[var(--space-1)]")) padded.push(node.className); node = node.parentElement; }
+    expect(padded).toHaveLength(1);
   });
 });
 

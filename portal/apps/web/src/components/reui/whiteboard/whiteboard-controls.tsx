@@ -239,6 +239,13 @@ const ICONS = {
 }
 
 /** One square toggle with its name and key in a tooltip. */
+// Phone sets `--wb-control-size:44px` on the board root (`whiteboard-theme.ts`); every custom control reads it,
+// so the strip is 32px on desktop and 44px at <=721px, uniform (#498). `size="icon"` (`size-8`) and the toggle's
+// `h-8 min-w-8` sit in the same tailwind-merge groups, so these win.
+const CONTROL_SQUARE = "size-[var(--wb-control-size,2rem)]"
+const CONTROL_TOGGLE =
+  "h-[var(--wb-control-size,2rem)] min-w-[var(--wb-control-size,2rem)]"
+
 function ToggleItem({
   value,
   label,
@@ -266,7 +273,7 @@ function ToggleItem({
             aria-label={label}
             aria-keyshortcuts={ariaShortcut(keys)}
             disabled={disabled}
-            className="px-0"
+            className={cn("px-0", CONTROL_TOGGLE)}
           />
         }
       >
@@ -313,6 +320,7 @@ function IconButton({
             disabled={disabled}
             focusableWhenDisabled
             className={cn(
+              CONTROL_SQUARE,
               "aria-disabled:pointer-events-none aria-disabled:opacity-50",
               className
             )}
@@ -394,7 +402,7 @@ const Tools = memo(function Tools({
                   <ToggleGroupItem
                     value={MORE}
                     aria-label="More tools"
-                    className="px-0"
+                    className={cn("px-0", CONTROL_TOGGLE)}
                   />
                 }
               />
@@ -502,6 +510,7 @@ const BoardMenu = memo(function BoardMenu({
                 <Button
                   variant="outline"
                   size="icon"
+                  className={CONTROL_SQUARE}
                   aria-label="Board menu"
                 />
               }
@@ -612,7 +621,7 @@ function Zoom({
                   <Button
                     variant="outline"
                     aria-label={`Zoom ${percent}%, zoom options`}
-                    className="h-8 min-w-16 tabular-nums"
+                    className="min-h-[var(--wb-control-size,2rem)] min-w-16 tabular-nums"
                   />
                 }
               />
@@ -957,6 +966,7 @@ function MoreMenu({
                 <Button
                   variant="outline"
                   size="icon"
+                  className={CONTROL_SQUARE}
                   aria-label="More options"
                 />
               }
@@ -1037,6 +1047,7 @@ function Actions({ actions }: { actions: readonly WhiteboardAction[] }) {
               <Button
                 variant="outline"
                 size="icon"
+                className={CONTROL_SQUARE}
                 aria-label={action.label}
                 disabled={action.disabled}
                 onClick={action.onSelect}
@@ -1068,7 +1079,7 @@ function Actions({ actions }: { actions: readonly WhiteboardAction[] }) {
                 value={action.id}
                 aria-label={action.label}
                 disabled={action.disabled}
-                className="px-0"
+                className={cn("px-0", CONTROL_TOGGLE)}
               />
             }
           >
