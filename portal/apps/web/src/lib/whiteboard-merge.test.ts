@@ -227,3 +227,26 @@ describe("an element under interaction keeps its identity through a re-key (#499
     expect(held).toMatchObject({ index: "a3", version: 2, versionNonce: 50 });
   });
 });
+
+describe("a remote winner the renderer drops (a live 0x0 element, #499)", () => {
+  const zero = (version: number, nonce: number) => rect("a", version, nonce, { width: 0, height: 0 });
+  const big = (version: number, nonce: number) => rect("a", version, nonce, { width: 250, height: 167 });
+
+  it("claims its index and takes the local copy with it: the scene is what a fresh load shows", () => {
+    const scene = merge(loaded([big(8, 100)]), [zero(9, 200)]);
+    expect(scene.find((element) => element.id === "a")).toBeUndefined();
+  });
+
+  it("under interaction the local copy is kept (the replay settles it after the gesture)", () => {
+    const local = loaded([big(8, 100)]);
+    const held = local[0]!;
+    const scene = mergeRemote(local, [zero(9, 200)] as never, fns, none, new Set(["a"]));
+    expect(find(scene, "a")).toBe(held);
+    expect(held).toMatchObject({ version: 8, versionNonce: 100, width: 250 });
+  });
+
+  it("a local copy that beats the dropped winner is kept", () => {
+    const scene = merge(loaded([big(10, 300)]), [zero(9, 200)]);
+    expect(find(scene, "a")).toMatchObject({ version: 10, versionNonce: 300, width: 250 });
+  });
+});

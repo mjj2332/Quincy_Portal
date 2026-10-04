@@ -105,7 +105,7 @@ vi.mock("../lib/whiteboard-socket", () => ({
   },
 }));
 vi.mock("../components/reui/whiteboard/whiteboard", () => ({
-  Whiteboard: (props: { readOnly?: boolean; imageTool?: boolean; theme?: string; onSave?: () => Promise<void>; onReady?: (controller: unknown) => void; onElements?: (e: unknown[]) => void }) => { board.props = props; props.onElements?.(board.scene); props.onReady?.({ api: { getSceneElementsIncludingDeleted: () => board.scene }, applyRemote: () => board.scene, adoptRevisions: () => undefined, setCollaborators: () => undefined }); return <div data-testid="whiteboard-stand-in" tabIndex={0}>board</div>; },
+  Whiteboard: (props: { readOnly?: boolean; imageTool?: boolean; theme?: string; onSave?: () => Promise<void>; onReady?: (controller: unknown) => void; onElements?: (e: unknown[]) => void }) => { board.props = props; props.onElements?.(board.scene); props.onReady?.({ api: { getSceneElementsIncludingDeleted: () => board.scene, getAppState: () => ({ editingTextElement: null, resizingElement: null, newElement: null }) }, applyRemote: () => board.scene, adoptRevisions: () => undefined, setCollaborators: () => undefined }); return <div data-testid="whiteboard-stand-in" tabIndex={0}>board</div>; },
 }));
 
 const onRequestClose = vi.fn();

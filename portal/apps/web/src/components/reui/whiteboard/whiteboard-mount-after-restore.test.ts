@@ -63,7 +63,7 @@ function mountBoard(rows: Array<Record<string, unknown>>, mode: "edit" | "view")
     merge: () => (remote, hold) => controller.applyRemote(remote, (element) => hold(element as unknown as SavedElement)) as unknown as SavedElement[],
     setScene: (scene) => { seen = scene; },
     getScene: () => seen,
-    interacting: () => false,
+    interactingIds: () => new Set<string>(),
   });
   function Harness({ paused }: { paused: boolean }) {
     const options = useRef({ onSave: async () => { if (modeNow === "view") return "skipped" as const; await saver.flush(); }, changeDelay: 10, autosaveDelay: 100, onSaveStatusChange: (status: string) => statuses.push(status) } as never);

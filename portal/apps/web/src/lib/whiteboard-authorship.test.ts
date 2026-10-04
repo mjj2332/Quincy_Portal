@@ -42,7 +42,7 @@ function tab(initial: Array<Record<string, unknown>>, rows: Map<string, El>) {
     merge: () => (remote, hold) => { scene = mergeRemote(scene, remote as never, fns, (element) => hold(element as SavedElement)); return scene; },
     setScene: () => undefined,
     getScene: () => scene,
-    interacting: () => false,
+    interactingIds: () => new Set<string>(),
   });
   return { saver, applier, sent, get scene() { return scene; }, set scene(next: El[]) { scene = next; } };
 }

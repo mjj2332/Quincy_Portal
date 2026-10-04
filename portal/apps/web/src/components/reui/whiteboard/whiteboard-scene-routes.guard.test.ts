@@ -38,6 +38,7 @@ const ROUTES: Array<{ elements: string; why: string }> = [
   { elements: "elements: scene as never,", why: "adoptRevisions: the first load only, puts the server's revisions back in place after the editor's own restore bumped them" },
   { elements: "elements: [...api.getSceneElementsIncludingDeleted(), ...placed],", why: "library insert: new copies (new ids) authored by newElementWith, appended; replaces nothing" },
   { elements: "elements: rewrapped.map((element) =>", why: "font re-measure: the editor's own restore, a re-measured element takes newElementWith(…, {}, true)" },
+  { elements: "elements: unfinished as never,", why: "unfinalized-element sweep: drops live zero-size elements and authors nothing; the vanish observer then authors their deletion (the editor-style delete, never the saver)" },
   { elements: "elements: kept as never,", why: "unsupported-element sweep: removes images the server refuses; they were never stored" },
 ];
 

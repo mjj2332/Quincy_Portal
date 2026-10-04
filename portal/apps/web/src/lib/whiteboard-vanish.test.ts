@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createVanishObserver } from "./whiteboard-vanish";
+import { createVanishObserver, unfinalized } from "./whiteboard-vanish";
 import type { SavedElement } from "./whiteboard-saver";
 
 /** #499: the observer that turns "the editor dropped it with no tombstone" into the editor's own deletion. No Excalidraw: `deletion` stands in for `newElementWith`. */
@@ -83,5 +83,32 @@ describe("vanish observer", () => {
     h.observer.stop();
     h.observer.observe([]);
     expect(h.installed).toEqual([]);
+  });
+
+  it("forget(ids): an id the scene never took (a remote winner the renderer dropped) is not a deletion, and the author never authors one", () => {
+    const h = harness();
+    h.observer.observe([el("a", 8)]);
+    h.observer.forget(["a"]);
+    h.observer.observe([]);
+    expect(h.installed).toEqual([]);
+  });
+
+  it("an element that was only ever seen at zero size is deleted with a restorable 1x1 at its x/y, so a restore does not drop the tombstone", () => {
+    const h = harness();
+    h.observer.observe([el("a", 9, { width: 0, height: 0, x: 40, y: 20 })]);
+    h.observer.observe([]);
+    expect(h.installed[0]).toMatchObject([{ id: "a", isDeleted: true, version: 10, width: 1, height: 1, x: 40, y: 20 }]);
+  });
+});
+
+describe("unfinalized: live, invisibly small elements nothing holds (#499)", () => {
+  it("names a live 0x0 element, and not a deleted one or a one-point line a gesture holds", () => {
+    const elements = [el("a", 9, { width: 0, height: 0 }), el("b", 4, { width: 0, height: 0, isDeleted: true }), el("c", 2, { type: "line", points: [[0, 0]], width: 0, height: 0 }), el("d", 1)];
+    expect(unfinalized(elements, new Set(["c"]))).toEqual(["a"]);
+  });
+
+  it("an element a gesture holds is not named, and a one-point line nothing holds is", () => {
+    const elements = [el("a", 9, { width: 0, height: 0 }), el("c", 2, { type: "line", points: [[0, 0]], width: 0, height: 0 })];
+    expect(unfinalized(elements, new Set(["a"]))).toEqual(["c"]);
   });
 });

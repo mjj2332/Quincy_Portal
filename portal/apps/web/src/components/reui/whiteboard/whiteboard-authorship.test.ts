@@ -26,6 +26,7 @@ beforeAll(async () => {
 });
 
 const rect = (id: string, version: number, versionNonce: number, extra: Record<string, unknown> = {}) => ({ id, type: "rectangle", x: 0, y: 0, width: 10, height: 10, index: "a0", version, versionNonce, isDeleted: false, seed: 1, ...extra });
+const canvasHolding = (state: Record<string, unknown>): ReadonlySet<string> => new Set(Object.values({ resizing: state.resizingElement, editing: state.editingTextElement, drawing: state.newElement }).flatMap((held) => (held ? [(held as { id: string }).id] : [])));
 const frozen = (elements: readonly SavedElement[]): SavedElement[] => elements.map((element) => Object.freeze({ ...element }) as SavedElement);
 
 /** One tab: a fake editor, the production controller on it, and the Portal's own parts, wired as `ProjectWhiteboard` and the canvas wire them. */
@@ -34,10 +35,11 @@ function board(initial: Array<Record<string, unknown>>, rows = new Map<string, E
   for (const element of elements) rows.set(element.id, { ...element });
   const tracker = createChangeTracker();
   tracker.seed(elements);
+  const appState: Record<string, unknown> = { editingTextElement: null, resizingElement: null, newElement: null, multiElement: null, editingLinearElement: null };
   const api = {
     getSceneElementsIncludingDeleted: () => elements,
     getSceneElements: () => elements.filter((element) => element.isDeleted !== true),
-    getAppState: () => ({ editingTextElement: null, resizingElement: null, newElement: null }),
+    getAppState: () => appState,
     updateScene: (update: { elements?: El[] }) => { if (update.elements) elements = update.elements; },
     addFiles: () => undefined,
     getFiles: () => ({}),
@@ -68,7 +70,8 @@ function board(initial: Array<Record<string, unknown>>, rows = new Map<string, E
     merge: () => (remote, hold) => controller.applyRemote(remote, (element) => hold(element as unknown as SavedElement)) as unknown as SavedElement[],
     setScene: (scene) => { seen = scene; },
     getScene: () => seen,
-    interacting: () => false,
+    interactingIds: () => canvasHolding(appState),
+    forget: (ids) => vanish.forget(ids),
     settle: () => vanish.observe(seen),
   });
   vanish.observe(seen);                            // the editor's first change event, at load
@@ -84,12 +87,15 @@ function board(initial: Array<Record<string, unknown>>, rows = new Map<string, E
       seen = scene as unknown as SavedElement[];
       vanish.observe(seen);
       applier.replay();
+      // The canvas's handleChange: an unfinalized element is reported once (so the observer has seen it), then dropped through updateScene.
+      const kept = canvas.sweepUnfinalized(scene as never, appState as never);
+      if (kept) { elements = kept as unknown as El[]; continue; }
       if (tracker.classify(scene, hash) === "local") { state.dirty = true; state.dirtied += 1; }
       if (elements === scene) return;
     }
   };
   return {
-    api, controller, saver, applier, sent, rows, state, emit, rowsOf,
+    api, controller, saver, applier, sent, rows, state, emit, rowsOf, appState,
     get scene() { return elements; },
     set scene(next: El[]) { elements = next; },
     holdAcks: (on: boolean) => { holdAcks = on; },
@@ -201,5 +207,43 @@ describe("Sol 14 #2: an unreported local edit beside a remote loser stays the pe
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(statuses.at(-1)).toBe("saved");
     expect(w.rows.get("e")).toMatchObject({ version: 2, versionNonce: 10, x: 5 });
+  });
+});
+
+describe("a live zero-size element is finalized as a deletion by the author's editor, never on load (#499)", () => {
+  it("stored v8 250x167, reported live v9 0x0: the editor drops it and authors the deletion v10 with the last valid geometry; the 0x0 revision is never sent", async () => {
+    const w = board([rect("a", 8, 80, { width: 250, height: 167 })]);
+    const held = w.find("a")!;
+    Object.assign(held, { version: 9, versionNonce: 90, width: 0, height: 0 });         // a resize mutates the editor's own object in place, with no tombstone
+    w.emit();
+    expect(w.find("a")).toMatchObject({ isDeleted: true, version: 10, width: 250, height: 167 });
+    expect(w.state.dirty).toBe(true);
+    await w.saver.flush();
+    expect(w.sent).toEqual([expect.objectContaining({ id: "a", isDeleted: true, version: 10, width: 250, height: 167 })]);
+    expect(w.sent.some((element) => element.width === 0)).toBe(false);
+  });
+
+  it("while a gesture holds it (resizingElement) nothing is authored; the gesture ending finalizes it", async () => {
+    const w = board([rect("a", 8, 80, { width: 250, height: 167 })]);
+    const held = w.find("a")!;
+    w.appState.resizingElement = held;
+    Object.assign(held, { version: 9, versionNonce: 90, width: 0, height: 0 });
+    w.emit();
+    expect(w.find("a")).toMatchObject({ isDeleted: false, version: 9, width: 0 });
+    w.appState.resizingElement = null;
+    w.emit();
+    expect(w.find("a")).toMatchObject({ isDeleted: true, version: 10, width: 250, height: 167 });
+    await w.saver.flush();
+    expect(w.sent).toEqual([expect.objectContaining({ id: "a", isDeleted: true, version: 10 })]);
+  });
+
+  it("an element the server holds that this editor only ever saw at zero size is deleted with a restorable 1x1 tombstone", async () => {
+    const w = board([]);
+    w.saver.serverHas(["a"]);
+    w.scene = [rect("a", 9, 90, { width: 0, height: 0, x: 40, y: 20 }) as unknown as El];
+    w.emit();
+    expect(w.find("a")).toMatchObject({ isDeleted: true, version: 10, width: 1, height: 1, x: 40, y: 20 });
+    await w.saver.flush();
+    expect(w.sent).toEqual([expect.objectContaining({ id: "a", isDeleted: true, width: 1, height: 1 })]);
   });
 });

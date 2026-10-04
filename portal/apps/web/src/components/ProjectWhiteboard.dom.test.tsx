@@ -39,6 +39,7 @@ const board = vi.hoisted(() => ({
   adopted: [] as Array<{ arrived: unknown[]; appliedBefore: number }>,
   localApplied: [] as unknown[][],
   editingId: null as string | null,
+  dropsZero: false,
 }));
 vi.mock("../lib/whiteboard-socket", () => ({
   openWhiteboardSocket: (_projectId: string, handlers: unknown) => {
@@ -57,8 +58,11 @@ const controller = () => ({
   applyRemote: (remote: Array<Record<string, unknown>>) => {
     board.log.push("applyRemote"); board.applied.push(remote);
     // Like Excalidraw's reconcile: an element being edited here is not replaced by a remote one.
-    const taken = remote.filter((entry) => entry.id !== board.editingId);
+    let taken = remote.filter((entry) => entry.id !== board.editingId);
+    // #499: Excalidraw's restoreElements drops a live 0x0 element, and the merge then takes the local copy it beat out of the scene (a fresh load shows neither).
+    const zero = (entry: Record<string, unknown>) => board.dropsZero && entry.width === 0 && entry.height === 0 && entry.isDeleted !== true;
     const ids = new Set(taken.map((entry) => entry.id));
+    taken = taken.filter((entry) => !zero(entry));
     board.scene = [...board.scene.filter((entry) => !ids.has(entry.id)), ...taken];
     return board.scene;
   },
@@ -97,7 +101,7 @@ async function mount() {
 }
 
 beforeEach(() => {
-  Object.assign(board, { log: [], handlers: null, scene: [], send: null, sentBatches: [], sentPresence: [], deferReady: false, props: null, collaborators: [], applied: [], initMode: "edit", initPeers: [], initElements: [], adopted: [], localApplied: [], editingId: null });
+  Object.assign(board, { log: [], handlers: null, scene: [], send: null, sentBatches: [], sentPresence: [], deferReady: false, props: null, collaborators: [], applied: [], initMode: "edit", initPeers: [], initElements: [], adopted: [], localApplied: [], editingId: null, dropsZero: false });
   onAccessFailure.mockReset(); onClose.mockReset();
 });
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); await Promise.resolve(); }); root = null; document.body.replaceChildren(); });
@@ -124,6 +128,20 @@ describe("an element the editor drops with no tombstone is deleted by the person
     await act(async () => { root!.unmount(); await Promise.resolve(); }); root = null;
     props.onElements!([]);                                            // the unmounting editor reports an empty scene
     expect(board.localApplied).toEqual([]);
+  });
+});
+
+describe("a remote winner the renderer drops (a live 0x0 element, #499)", () => {
+  it("is merged once however many change events follow, and neither deleted by this tab nor sent", async () => {
+    board.dropsZero = true;
+    board.initElements = [el("a", 8, { width: 250, height: 167 })]; board.scene = [el("a", 8, { width: 250, height: 167 })];
+    await mount();
+    await act(async () => { handlers().onElements([el("a", 9, { width: 0, height: 0 })]); });
+    for (let change = 0; change < 3; change += 1) board.props!.onElements!(board.scene);          // the editor's change events
+    expect(board.applied).toHaveLength(1);
+    expect(board.localApplied).toEqual([]);
+    await act(async () => { await board.props!.onSave!(); });
+    expect(board.sentBatches.flat()).toEqual([]);
   });
 });
 

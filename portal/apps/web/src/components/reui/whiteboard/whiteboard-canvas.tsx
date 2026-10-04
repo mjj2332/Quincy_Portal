@@ -74,6 +74,7 @@ import { cn } from "@/lib/utils"
 import { createChangeTracker } from "@/lib/whiteboard-changes"
 import { adoptArrivedRevisions, interactingIds, mergeRemote } from "@/lib/whiteboard-merge"
 import { planSceneDrop, pasteIsUnsupported, withoutUnsupported, type ServerHold } from "@/lib/whiteboard-saver"
+import { unfinalized } from "@/lib/whiteboard-vanish"
 
 import "@excalidraw/excalidraw/index.css"
 
@@ -795,6 +796,26 @@ function toCollaborator(person: WhiteboardCollaborator): Collaborator {
 /** This board's editor element, where its keys and focus live. */
 const boardElement = (root: HTMLElement | null) =>
   root?.querySelector<HTMLElement>(".excalidraw-container") ?? null
+
+/**
+ * QUINCY ADDITION #499: the scene without its unfinalized elements (live, invisibly small, nothing holding them), or null when it has
+ * none. Excalidraw finalizes a zero-size element when a pointer gesture ends; one that gets here by any other path would be sent as an
+ * ordinary edit and dropped by every other tab's restore. `handleChange` reports the scene once, then drops them through updateScene,
+ * and the vanish observer authors their deletion. An element a gesture holds (drawing, resizing, text editing, a multi-point line in
+ * progress) is left alone.
+ */
+export function sweepUnfinalized(
+  elements: readonly OrderedExcalidrawElement[],
+  appState: AppState
+): readonly OrderedExcalidrawElement[] | null {
+  const holding = new Set<string>(interactingIds(appState))
+  const drawing = appState.multiElement?.id
+  const lineEdit = appState.editingLinearElement?.elementId
+  if (drawing) holding.add(drawing)
+  if (lineEdit) holding.add(lineEdit)
+  const stray = new Set(unfinalized(elements as never, holding))
+  return stray.size === 0 ? null : elements.filter((element) => !stray.has(element.id))
+}
 
 type ControllerHost = {
   root: () => HTMLDivElement | null
@@ -1786,6 +1807,17 @@ export function WhiteboardCanvas({
           latest.current.onToast?.("Images on the whiteboard arrive in a later update")
           return
         }
+      }
+      // QUINCY ADDITION #499: an unfinalized zero-size element is reported once (so its observer has seen it), then dropped; the
+      // update is another change event, where the observer authors its deletion.
+      const unfinished = sweepUnfinalized(elements, appState)
+      if (unfinished) {
+        latest.current.onElements?.(elements)
+        apiRef.current?.updateScene({
+          elements: unfinished as never,
+          captureUpdate: CaptureUpdateAction.NEVER,
+        })
+        return
       }
       latest.current.onElements?.(elements)
       // QUINCY ADDITION #499: a changed selection is presence too.

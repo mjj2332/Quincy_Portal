@@ -50,9 +50,19 @@ export function interactingIds(appState: { editingTextElement?: { id: string } |
  * is not applied now, but it is the server's, so its index is still claimed, and the local copy shown meanwhile yields. `hold` says what the server holds of each local element (the saver's `hold`). The caller installs the
  * result with `updateScene` (which re-runs Excalidraw's index repair, a no-op by then).
  */
-export function mergeRemote<E extends Revisioned>(local: readonly E[], remote: readonly Revisioned[], fns: MergeFns<E>, hold: (element: E) => ServerHold, interacting: ReadonlySet<string> = new Set()): E[] {
-  const arrived = new Map<string, Revision & { index: string | undefined }>(remote.map((element) => [element.id, { version: element.version, versionNonce: element.versionNonce, index: indexOf(element) }]));
+export function mergeRemote<E extends Revisioned>(allLocal: readonly E[], remote: readonly Revisioned[], fns: MergeFns<E>, hold: (element: E) => ServerHold, interacting: ReadonlySet<string> = new Set()): E[] {
   const restored = fns.restore(remote);
+  // A remote winner the renderer DROPS (`restoreElements` discards a live 0x0 element, and a 0x0 tombstone) is still the server's: it
+  // claims its index, and a local copy it beats is not on the board any more, exactly as on a fresh load. Under interaction the local
+  // copy stays (the gesture holds it) and the replay settles it once the gesture ends. Nothing here is deferred: the renderer will
+  // never take that revision, so waiting for it would only re-run the merge forever.
+  const restoredIds = new Set(restored.map((element) => element.id));
+  const localOf = new Map(allLocal.map((element) => [element.id, element]));
+  const dropped = remote.filter((element) => !restoredIds.has(element.id) && whiteboardIncomingWins(localOf.get(element.id), element));
+  const omitted = new Set(dropped.filter((element) => !interacting.has(element.id)).map((element) => element.id));
+  const droppedHeld = new Set(dropped.filter((element) => interacting.has(element.id) && localOf.has(element.id)).map((element) => element.id));
+  const local = omitted.size === 0 ? allLocal : allLocal.filter((element) => !omitted.has(element.id));
+  const arrived = new Map<string, Revision & { index: string | undefined }>(remote.map((element) => [element.id, { version: element.version, versionNonce: element.versionNonce, index: indexOf(element) }]));
   const restoredObjects = new Set<object>(restored);
   for (const element of restored) {
     const revision = arrived.get(element.id);
@@ -74,7 +84,7 @@ export function mergeRemote<E extends Revisioned>(local: readonly E[], remote: r
     return mine !== undefined && index !== undefined && mine.version === element.version && mine.versionNonce === element.versionNonce;
   }).map((element) => [element.id, element]));
   const winning = restored.filter((element) => { const mine = localById.get(element.id); return !mine || whiteboardIncomingWins(mine, element) || corrections.has(element.id); });
-  const skipped = new Set(winning.filter((element) => interacting.has(element.id) && localById.has(element.id) && !corrections.has(element.id)).map((element) => element.id));
+  const skipped = new Set([...winning.filter((element) => interacting.has(element.id) && localById.has(element.id) && !corrections.has(element.id)).map((element) => element.id), ...droppedHeld]);
   const incomingTaken = winning.filter((element) => !skipped.has(element.id));
   const superseded = new Set(incomingTaken.map((element) => element.id));
   const held = new Map<E, ServerHold>();
@@ -83,6 +93,7 @@ export function mergeRemote<E extends Revisioned>(local: readonly E[], remote: r
   const withState = (state: ServerHold["state"]) => local.filter((element) => held.get(element)?.state === state);
   const space = new IndexSpace();
   for (const element of winning) space.claim(indexOf(element), element.id);      // skipped ones too: the server's index, applied when the edit ends
+  for (const element of dropped) space.claim(indexOf(element), element.id);      // and the ones the renderer will never take
   for (const element of withState("stored")) space.claim(indexOf(element), element.id);
 
   // In-flight, then unsent or edited ones: those whose index is free keep it (so nothing moves that need not), and each one in

@@ -5,7 +5,7 @@ import { normaliseRows, orderStored, reconcileRows, whiteboardElementSchema, whi
 import { adoptArrivedRevisions, interactingIds, mergeRemote, type MergeFns } from "./whiteboard-merge";
 import { createRemoteApplier } from "./whiteboard-remote";
 import { createWhiteboardSaver, type SavedElement, type ServerHold, type WhiteboardSaver } from "./whiteboard-saver";
-import { createVanishObserver, type VanishObserver } from "./whiteboard-vanish";
+import { createVanishObserver, unfinalized, type VanishObserver } from "./whiteboard-vanish";
 
 /**
  * #499: the gate for stacking-order convergence. A seeded, randomised MODEL of the whole whiteboard: the real stored-row
@@ -56,6 +56,7 @@ type Step =
   | { op: "reorder"; c: number; id: string; pos: number; nonce: number; to?: string }
   | { op: "delete"; c: number; id: string; nonce: number }
   | { op: "vanish"; c: number; id: string }
+  | { op: "shrink"; c: number; id: string; nonce: number }
   | { op: "import"; c: number; id: string; nonce: number; x: number }
   | { op: "flush"; c: number }
   | { op: "process"; c: number }
@@ -147,7 +148,8 @@ class World {
       merge: () => (remote, hold) => this.mergeInto(index, client, remote as StoredElement[], hold) as unknown as SavedElement[],
       setScene: () => undefined,
       getScene: () => client.scene as unknown as SavedElement[],
-      interacting: () => client.interacting !== null,
+      interactingIds: () => new Set(client.interacting === null ? [] : [client.interacting]),
+      forget: (ids) => client.vanish.forget(ids),
       settle: () => client.vanish.observe(client.scene),
     });
     const init = orderStored(this.store.all());
@@ -203,7 +205,8 @@ class World {
     for (const was of before) {
       const now = client.scene.find((element) => element.id === was.id);
       const inc = incoming.get(was.id);
-      if (!now) { this.violations.push(`client ${c}: ${was.id} vanished in a merge`); continue; }
+      // A winner the renderer drops (a zero-size element) takes the local copy it beats off the board, as a fresh load would (unless a gesture holds it).
+      if (!now) { if (!(inc !== undefined && inc.width === 0 && inc.height === 0 && inc.isDeleted !== true && !resizing.has(was.id) && whiteboardIncomingWins(was, inc))) this.violations.push(`client ${c}: ${was.id} vanished in a merge`); continue; }
       const replaced = inc !== undefined && !resizing.has(was.id) && whiteboardIncomingWins(was, inc);
       if (replaced) { if (now.version !== inc.version || now.versionNonce !== inc.versionNonce) this.violations.push(`client ${c}: ${was.id} should have taken the incoming v${inc.version}/${inc.versionNonce} but holds v${now.version}/${now.versionNonce}`); continue; }
       if (now.version !== was.version || now.versionNonce !== was.versionNonce) this.violations.push(`client ${c}: a merge changed ${was.id}'s revision v${was.version}/${was.versionNonce} -> v${now.version}/${now.versionNonce}`);
@@ -225,7 +228,7 @@ class World {
     const before = this.clients.map((client) => new Map(client.scene.map((element) => [element.id, `${element.version}:${element.versionNonce}`])));
     this.expectedDeletion = null;
     const done = await this.run(step);
-    for (const client of this.clients) { client.vanish.observe(client.scene); client.applier.replay(); }           // the editor's change event
+    for (const client of this.clients) this.changeEvent(client);           // the editor's change event
     await tick();
     const expected = this.expectedDeletion as World["expectedDeletion"];
     if (expected) {
@@ -236,6 +239,20 @@ class World {
     // No live revision changes except by an authoring step or by a merge accepting an authored one: whatever a client holds now, somebody authored.
     this.clients.forEach((client, c) => { for (const element of client.scene) { const key = `${element.version}:${element.versionNonce}`; if (before[c]!.get(element.id) !== key && !this.authoredRevisions.has(`${element.id}:${key}`)) this.violations.push(`client ${c}: ${element.id} moved to v${element.version}/${element.versionNonce}, which nobody authored`); } });
     return done;
+  }
+
+  /**
+   * The editor's change event, as the canvas and the shell run it: the shell observes the scene and replays what was deferred, and an
+   * unfinalized (live, invisibly small) element nothing holds is reported once and then dropped through updateScene, which is
+   * another change event (`sweepUnfinalized` in the canvas). The vanish observer then authors its deletion.
+   */
+  private changeEvent(client: Client) {
+    client.vanish.observe(client.scene); client.applier.replay();
+    client.vanish.observe(client.scene);          // a replay's merge goes through updateScene, whose own change event the shell observes before the next action
+    const stray = new Set(unfinalized(client.scene, new Set(client.interacting === null ? [] : [client.interacting])));
+    if (stray.size === 0) return;
+    client.scene = client.scene.filter((element) => !stray.has(element.id));
+    client.vanish.observe(client.scene); client.applier.replay();
   }
 
   /** What a person's edit lands on: while a gesture holds an element, the held object itself (as Excalidraw's pointer handlers do), else the scene's copy. */
@@ -303,6 +320,16 @@ class World {
         for (const entry of client.log) if (entry.id === step.id) entry.superseded = true;   // the person removed it: what they authored before is no longer theirs to have kept
         return true;
       }
+      case "shrink": {
+        // A resize to zero size that leaves the element in the scene (no pointer-up finalize): the editor mutates its own object in place.
+        const element = client.scene.find((candidate) => candidate.id === step.id);
+        if (!element || element.isDeleted || client.held?.id === step.id || client.interacting === step.id) return false;
+        Object.assign(element, { width: 0, height: 0, version: element.version + 1, versionNonce: step.nonce });
+        this.author(client, element);
+        this.expectedDeletion = { c: step.c, id: step.id, version: client.saver.mayHold(step.id) ? element.version + 1 : null };
+        for (const entry of client.log) if (entry.id === step.id) entry.superseded = true;   // the 0x0 revision is never anyone's content to keep
+        return true;
+      }
       case "flush": { client.saver.flush().catch(() => undefined); return true; }
       case "process": {
         const message = client.outbound.shift();
@@ -343,7 +370,7 @@ class World {
   async drain() {
     for (let round = 0; round < 400; round += 1) {
       const before = this.messages;
-      for (const client of this.clients) { client.interacting = null; client.held = null; client.vanish.observe(client.scene); client.applier.replay(); }     // the person lets go
+      for (const client of this.clients) { client.interacting = null; client.held = null; this.changeEvent(client); }     // the person lets go
       for (let c = 0; c < this.clients.length; c += 1) { this.clients[c]!.saver.flush().catch(() => undefined); await tick(); }
       let moved = true;
       while (moved) {
@@ -466,6 +493,7 @@ function generate(world: World, rng: () => number): Step {
   if (roll < 0.36 && client.scene.length > 1) return { op: "reorder", c, id: client.scene[Math.floor(rng() * client.scene.length)]!.id, pos: Math.floor(rng() * 8), nonce };
   if (roll < 0.39 && live.length > 0) return { op: "delete", c, id: pickLive().id, nonce };
   if (roll < 0.42 && live.length > 0) return { op: "vanish", c, id: pickLive().id };
+  if (roll < 0.43 && live.length > 0) return { op: "shrink", c, id: pickLive().id, nonce };
   if (roll < 0.44) return { op: "import", c, id: ids[Math.floor(rng() * ids.length)]!, nonce, x };
   if (roll < 0.53) return { op: "flush", c };
   if (roll < 0.75) { const busy = world.clients.map((other, i) => (other.outbound.length > 0 ? i : -1)).filter((i) => i >= 0); if (busy.length > 0) return { op: "process", c: busy[Math.floor(rng() * busy.length)]! }; }
@@ -656,5 +684,14 @@ describe("model: named scenarios from the Sol and Codex reviews (#499)", () => {
     ]));
     expect(idsOf(world, 0)).toEqual(["b", "0", "c", "a"]);
     expect(new Set(world.clients.map((client) => client.scene.map((element) => element.id).join()))).toHaveProperty("size", 1);
+  });
+
+  it("#499 zero size: a rectangle shrunk to a live 0x0 (no pointer-up) is deleted by its own editor, the 0x0 revision is never stored, and every tab shows what a fresh load shows", async () => {
+    const world = await play("shrink", { clients: 3, ids: ["a", "b"], initial: [row("a", { kind: "fixed", index: "a0" }, 5), row("b", { kind: "fixed", index: "a1" }, 6)] }, script([
+      { op: "shrink", c: 0, id: "a", nonce: 77 }, flush(0), process_(0), deliver(0, 2), deliver(1, 2), deliver(2, 2),
+    ]));
+    expect(world.rows.get("a")).toMatchObject({ isDeleted: true, version: 3 });
+    expect(world.rows.get("a")).toMatchObject({ width: 10, height: 10 });
+    for (const client of world.clients) expect(client.scene.filter((element) => element.id === "a" && element.isDeleted !== true)).toEqual([]);
   });
 });

@@ -94,7 +94,8 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
       setScene: (scene) => { elementsRef.current = scene; },
       getScene: () => elementsRef.current,
       settle: () => vanish.observe(elementsRef.current),
-      interacting: () => { const controller = controllerRef.current; return controller ? interactingIds(controller.api.getAppState()).size > 0 : false; },
+      interactingIds: () => { const controller = controllerRef.current; return controller ? interactingIds(controller.api.getAppState()) : new Set<string>(); },
+      forget: (ids) => vanish.forget(ids),
     });
     const applyRemote = remoteApplier.apply;
     drainRemote.current = () => { remoteApplier.drain(); showPeers(); };

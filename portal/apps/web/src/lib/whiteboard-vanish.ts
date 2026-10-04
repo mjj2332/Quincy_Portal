@@ -22,12 +22,25 @@ export type VanishObserver = {
   observe: (scene: readonly SavedElement[]) => void;
   /** The board is going away: its scene is empty and nothing it dropped is a deletion. */
   stop: () => void;
+  /** The scene never took these ids (a remote winner the renderer dropped): they are the server's, so this tab must never author a deletion for them. */
+  forget: (ids: readonly string[]) => void;
 };
 
 type Geometry = { width: number; height: number; points?: unknown };
 const asNumber = (value: unknown) => (typeof value === "number" ? value : undefined);
 /** Excalidraw's own test (`isInvisiblySmallElement`): a linear element needs two points, any other a width or a height. */
 const invisible = (element: SavedElement) => (Array.isArray(element.points) ? element.points.length < 2 : asNumber(element.width) === 0 && asNumber(element.height) === 0);
+
+/**
+ * The ids of live elements the editor holds at an invisible size (a width and height of 0, or a line of fewer than two points) that
+ * no gesture holds. `holding` is the ids a pointer gesture is still drawing, resizing or editing (the canvas adds the multi-point
+ * line being drawn). Excalidraw finalizes such an element itself when a pointer gesture ends; one that reaches here by any other
+ * path was never finalized, would be sent as an ordinary edit, and is dropped by every other tab's restore. The canvas drops it from
+ * the scene and the observer then authors its deletion like any other vanish.
+ */
+export function unfinalized(elements: readonly SavedElement[], holding: ReadonlySet<string>): string[] {
+  return elements.filter((element) => element.isDeleted !== true && !holding.has(element.id) && invisible(element)).map((element) => element.id);
+}
 
 export function createVanishObserver({ mayHold, deletion, install, ready = () => true }: {
   /** Could the server hold a revision of this id? (The saver's `mayHold`.) One it never could needs no deletion. */
@@ -67,12 +80,14 @@ export function createVanishObserver({ mayHold, deletion, install, ready = () =>
       const deletions = gone.map((last) => {
         const wanted = typeof last.index === "string" ? last.index : undefined;
         const index = space.claim(wanted, last.id) ? wanted : space.place(wanted, last.id);
-        const valid = invisible(last) ? lastValid.get(last.id) : undefined;
+        // Never seen at a valid size (it arrived at zero size): a restorable 1x1 (a line gets two points) at its own x/y, since restore also drops a zero-size tombstone.
+        const valid = invisible(last) ? lastValid.get(last.id) ?? (Array.isArray(last.points) ? { width: 1, height: 1, points: [[0, 0], [1, 1]] } : { width: 1, height: 1 }) : undefined;
         return deletion(last, { ...(index === undefined ? {} : { index }), ...(valid ?? {}) });
       });
       for (const last of absent) lastValid.delete(last.id);
       remember(install(deletions) ?? deletions);
     },
     stop() { stopped = true; },
+    forget(ids) { for (const id of ids) { lastScene.delete(id); lastValid.delete(id); } },
   };
 }
