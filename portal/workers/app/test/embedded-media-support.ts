@@ -47,15 +47,15 @@ export function jpegBytes(size = 64): Uint8Array { const bytes = new Uint8Array(
 
 export const mediaKey = (projectId: string, mediaId: string) => `projects/${projectId}/embedded-media/${mediaId}/original`;
 
-export type MediaRowInput = { id?: string; projectId?: string; uploader?: string; state?: "uploading" | "pending" | "attached" | "detached"; ownerId?: string | null; bytes?: number; contentType?: string; detachedAt?: number | null; createdAt?: number; uploadId?: string | null; object?: Uint8Array | null };
+export type MediaRowInput = { id?: string; kind?: "image" | "video" | "preview_image"; projectId?: string; uploader?: string; state?: "uploading" | "pending" | "attached" | "detached"; ownerId?: string | null; bytes?: number; contentType?: string; detachedAt?: number | null; createdAt?: number; uploadId?: string | null; object?: Uint8Array | null };
 /** Inserts a row and (unless `object: null`) its stored object, in the state a test needs. */
 export async function seedMedia(input: MediaRowInput = {}) {
   const id = input.id ?? crypto.randomUUID(); const projectId = input.projectId ?? ids.project; const state = input.state ?? "pending";
   const ownerId = input.ownerId === undefined ? (state === "attached" || state === "detached" ? crypto.randomUUID() : null) : input.ownerId;
   const detachedAt = input.detachedAt === undefined ? (state === "detached" ? Date.now() : null) : input.detachedAt;
   const bytes = input.bytes ?? 64; const key = mediaKey(projectId, id); const createdAt = input.createdAt ?? Date.now();
-  await database.DB.prepare("INSERT INTO embedded_media (id, owner_kind, owner_id, project_id, uploader_id, kind, content_type, bytes, original_key, upload_id, state, detached_at, created_at, updated_at) VALUES (?, 'project_comment', ?, ?, ?, 'image', ?, ?, ?, ?, ?, ?, ?, ?)")
-    .bind(id, ownerId, projectId, input.uploader ?? ids.member, input.contentType ?? "image/png", bytes, key, input.uploadId ?? null, state, detachedAt, createdAt, createdAt).run();
+  await database.DB.prepare("INSERT INTO embedded_media (id, owner_kind, owner_id, project_id, uploader_id, kind, content_type, bytes, original_key, upload_id, state, detached_at, created_at, updated_at) VALUES (?, 'project_comment', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .bind(id, ownerId, projectId, input.uploader ?? ids.member, input.kind ?? "image", input.contentType ?? "image/png", bytes, key, input.uploadId ?? null, state, detachedAt, createdAt, createdAt).run();
   if (input.object !== null) await database.MEDIA.put(key, input.object ?? pngBytes(bytes), { httpMetadata: { contentType: input.contentType ?? "image/png" } });
   return { id, key };
 }
