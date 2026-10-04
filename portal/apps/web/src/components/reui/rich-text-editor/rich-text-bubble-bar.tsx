@@ -4,6 +4,10 @@
 //    `--shadow-md`), the same one `reui/dropdown-menu` and `quincy/menu-surface.ts` draw: a floating
 //    bar is an overlay, and `card` is the Portal's committed CONTENT surface (ADR 0002 / 0014).
 // 2. `testId` prop, forwarded to the surface: tests select a Quincy-owned id, not a `data-slot`.
+// 3. The surface has no outer `p-1`: the toolbar scroller already pads itself by `--space-1`, so the card was
+//    8px taller than its controls (~46px against ~38px) and did not fit above row 2 of a first-block table (#535).
+// 4. `focusFirstToolbarStop` and `fromOwnDom` are exported: the phone table group (`RichTextTableTools`) reuses
+//    the Alt+F10 / Escape behaviour instead of copying the selectors.
 import {
   useEffect,
   useLayoutEffect,
@@ -33,8 +37,19 @@ export function setRichTextBubble(
   }
 }
 
+/** Focuses the roving tab stop inside `root`, else its first enabled control; false when it has none. */
+export function focusFirstToolbarStop(root: ParentNode): boolean {
+  const stop =
+    root.querySelector<HTMLElement>(FIRST_STOP) ??
+    root.querySelector<HTMLElement>(ANY_STOP)
+
+  if (!stop) return false
+  stop.focus()
+  return true
+}
+
 // Menus and popovers portal out, yet React still bubbles their events here.
-function fromOwnDom(event: { target: EventTarget; currentTarget: Element }) {
+export function fromOwnDom(event: { target: EventTarget; currentTarget: Element }) {
   return (
     event.target instanceof Node && event.currentTarget.contains(event.target)
   )
@@ -106,13 +121,8 @@ export function RichTextBubbleBar({
 
       if (!event.altKey || event.key !== "F10" || !bar?.isConnected) return
 
-      const stop =
-        bar.querySelector<HTMLElement>(FIRST_STOP) ??
-        bar.querySelector<HTMLElement>(ANY_STOP)
-
-      if (!stop) return
+      if (!focusFirstToolbarStop(bar)) return
       event.preventDefault()
-      stop.focus()
     }
 
     editor.on("blur", handleBlur)
@@ -149,7 +159,7 @@ export function RichTextBubbleBar({
     <div
       ref={barRef}
       data-testid={testId}
-      className="border border-border bg-popover p-1 text-popover-foreground shadow-[var(--shadow-md)]"
+      className="border border-border bg-popover text-popover-foreground shadow-[var(--shadow-md)]"
       onPointerDownCapture={handlePointerDown}
       onKeyDown={handleKeyDown}
     >

@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import { exitSuggestion } from "@tiptap/suggestion";
 import { ChevronDownIcon, ImageIcon, ListChecksIcon, ListIcon, ListOrderedIcon, Redo2Icon, TableIcon, Undo2Icon } from "lucide-react";
 import { RICH_TEXT_JSON_MAX_BYTES, richTextDocByteLength, richTextMediaIds, richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { cn } from "../lib/utils";
+import { useMediaQuery } from "../lib/use-media-query";
 import { EMBEDDED_IMAGE_ACCEPT, EMBEDDED_MEDIA_MAX_PER_POST, embeddedImageProblem, uploadEmbeddedImage } from "../lib/embedded-media";
 import {
   createRichTextEditorExtensions,
@@ -34,8 +35,9 @@ import { RichTextLinkPopover } from "./reui/rich-text-editor/rich-text-link";
 import { RichTextOutlineRail, scrollToRichTextHeading, useRichTextActiveHeading, useRichTextOutline } from "./reui/rich-text-editor/rich-text-outline";
 import { RICH_TEXT_BASIC_SLASH_ITEMS, RICH_TEXT_SLASH_KEY, RichTextSlashCommand } from "./reui/rich-text-editor/rich-text-slash-menu";
 import { useRichTextState } from "./reui/rich-text-editor/rich-text-state";
-import { RICH_TEXT_TABLE_SLASH_ITEM, RichTextTableBubble } from "./reui/rich-text-editor/rich-text-table";
+import { RICH_TEXT_TABLE_SLASH_ITEM, RichTextTableBubble, RichTextTableTools } from "./reui/rich-text-editor/rich-text-table";
 import {
+  RICH_TEXT_PHONE_QUERY,
   RichTextButton,
   RichTextToggle,
   RichTextToolbar,
@@ -237,6 +239,20 @@ export function QuincyRichTextEditor({
   });
   editorRef.current = editor;
   const state = useRichTextState(editor);
+  // Below 721px the table controls are a toolbar group and the floating bar is not mounted (#535).
+  const phone = useMediaQuery(RICH_TEXT_PHONE_QUERY);
+  const phoneRef = useRef(phone);
+  const refocusRef = useRef(false);
+  // The presentation holding focus is about to unmount: note it while the DOM still shows it (render runs before commit).
+  if (phoneRef.current !== phone) {
+    phoneRef.current = phone;
+    refocusRef.current = document.activeElement?.closest('[data-testid="rich-text-table-tools"], [data-testid="rich-text-table-bubble"]') != null;
+  }
+  useLayoutEffect(() => {
+    if (!refocusRef.current) return;
+    refocusRef.current = false;
+    if (editorRef.current && !editorRef.current.isDestroyed) editorRef.current.commands.focus();
+  }, [phone]);
   // The derived outline rail (document preset only; `null` keeps the composer's selector idle).
   const outline = useRichTextOutline(isDocument ? editor : null);
   const activeHeading = useRichTextActiveHeading(isDocument ? editor : null, pageRef, outline);
@@ -367,6 +383,8 @@ export function QuincyRichTextEditor({
     <InputGroup data-testid="rich-text-field" className={FIELD_GROUP} data-disabled={disabled || undefined}>
       <InputGroupAddon align="block-start" className="p-[var(--space-1)] cursor-default">
         <RichTextToolbar aria-label="Formatting" className="w-full min-w-0 gap-[var(--space-2)]">
+          {/* On a phone the table controls lead the scrolling toolbar; they stay while the editor is busy, disabled. */}
+          {isDocument && phone && state.inTable && <RichTextTableTools editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} disabled={disabled || !state.editable} />}
           <RichTextToolbarGroup label="Text style">
             <RichTextToggle label="Bold" shortcut={["mod", "B"]} pressed={state.bold} disabled={off(state.canBold)} onToggle={() => editor.chain().focus().toggleBold().run()}><span aria-hidden="true" className="font-bold">B</span></RichTextToggle>
             <RichTextToggle label="Italic" shortcut={["mod", "I"]} pressed={state.italic} disabled={off(state.canItalic)} onToggle={() => editor.chain().focus().toggleItalic().run()}><span aria-hidden="true" className="italic">I</span></RichTextToggle>
@@ -423,7 +441,7 @@ export function QuincyRichTextEditor({
       </div>
     </InputGroup>
     {isDocument && <>
-      <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} tableBubbleFloors={tableBubbleFloors} />
+      {!phone && <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} tableBubbleFloors={tableBubbleFloors} />}
       <DeleteTableDialog editor={editor} open={deleteTableOpen} onOpenChange={setDeleteTableOpen} />
     </>}
     {picking !== null && <Input
