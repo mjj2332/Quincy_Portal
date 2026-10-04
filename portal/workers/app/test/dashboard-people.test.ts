@@ -34,7 +34,7 @@ const overdueOpen = id(8); //  Deadline past, not delivered
 const overdueDelivered = id(9); //  Deadline past, delivered
 const overdueArchived = id(10); //  Deadline past, archived
 const futureDeadline = id(11); //  Deadline in the future
-const dstDeadline = id(12); //  Deadline 2026-10-04T23:30 Sydney (the DST day)
+const dstDeadline = id(12); //  Deadline 2099-10-04T23:30 Sydney (the DST day)
 const externalOwn = id(13); //  External's: Editor external + subtask for the teammate
 const externalStrangerTask = id(14); //  External's: subtask assigned to a stranger (not on the team)
 const externalNoEditorSelf = id(15); //  External's (as a team member, not an Editor? no: Editor) + nothing
@@ -134,8 +134,8 @@ beforeAll(async () => {
   await insertProject(futureDeadline, "11 People Street");
   await deadline(futureDeadline, Date.now() + 90 * 24 * hour, "2099-01-01T09:00", 660);
   await insertProject(dstDeadline, "12 People Street");
-  // 2026-10-04 is the Sydney DST change day: 23:30 local is 12:30Z the same UTC day, 11 hours ahead.
-  await deadline(dstDeadline, Date.UTC(2026, 9, 4, 12, 30), "2026-10-04T23:30", 660);
+  // 2099-10-04 is the Sydney DST change day: 23:30 local is 12:30Z the same UTC day, 11 hours ahead.
+  await deadline(dstDeadline, Date.UTC(2099, 9, 4, 12, 30), "2099-10-04T23:30", 660);
 
   await insertProject(externalOwn, "13 External People Street");
   await member(externalOwn, externalId, "editor");

@@ -162,7 +162,7 @@ describe("with project_subtasks.assignee_id dropped", () => {
   });
 
   it("schedules reminder occurrences without the dropped column", async () => {
-    const created = await request(base, tokens.editor, "POST", { title: "Due in the dropped world", assigneeIds: [photographerId, externalId], schedule: range("2026-11-02", "2026-11-06") });
+    const created = await request(base, tokens.editor, "POST", { title: "Due in the dropped world", assigneeIds: [photographerId, externalId], schedule: range("2099-11-02", "2099-11-06") });
     expect(created.status).toBe(201);
     const { id } = await created.json() as { id: string };
     // Occurrences are keyed by the Subtask, not by an assignee: the recipients are resolved from the relation when one fires.
