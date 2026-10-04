@@ -10,6 +10,6 @@
   },
   "devDependencies": {
     "@babel/parser": "7.29.8",
-    "happy-dom": "20.11.1"
+    "happy-dom": "20.11.2"
   }
 }
