@@ -539,4 +539,28 @@ describe("DateTimeField date-time: seeding a draft", () => {
     expect(focusing.length).toBeGreaterThan(0);
     expect(focusing.every((call) => call.options?.preventScroll === true)).toBe(true);
   });
+
+  it("reads a collision-padding callback on each open, not at mount, so a late shell header counts (#528)", async () => {
+    const header = (bottom: number) => {
+      document.querySelector(".shell-header")?.remove();
+      const el = document.createElement("header");
+      el.className = "shell-header";
+      el.getBoundingClientRect = () => ({ bottom }) as DOMRect;
+      document.body.append(el);
+    };
+    const padding = vi.fn(() => ({ top: (document.querySelector<HTMLElement>(".shell-header")?.getBoundingClientRect().bottom ?? 0) + 16 }));
+    await act(async () => { root.render(<DateTimeField variant="date-time" id="deadline" label="Deadline" value={null} popupCollisionPadding={padding} onApply={vi.fn()} />); await Promise.resolve(); });
+    // Cold mount: no shell header yet, and the closed field must not have asked.
+    expect(padding).not.toHaveBeenCalled();
+    header(50);
+    await open();
+    expect(padding).toHaveBeenCalledTimes(1);
+    expect(padding).toHaveReturnedWith({ top: 66 });
+    await click(popupButton(popup()!, "Cancel")!);
+    expect(popup()).toBeNull();
+    header(92); // impersonation banner appears
+    await open();
+    expect(padding).toHaveBeenCalledTimes(2);
+    expect(padding).toHaveLastReturnedWith({ top: 108 });
+  });
 });

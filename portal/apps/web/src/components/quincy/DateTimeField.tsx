@@ -54,7 +54,7 @@ type CommonProps = {
   descriptionRole?: "status";
   /** Replaces the popup's collision policy (see `resolveDateTimePopupPlacement`); omitted keeps the default. */
   popupCollisionAvoidance?: PopupCollisionAvoidance;
-  /** Replaces the popup's 16px viewport padding. A function is read once, when the popup opens. */
+  /** Replaces the popup's 16px viewport padding. A function is called each time the popup opens (after the DOM has committed), never while it is closed. */
   popupCollisionPadding?: PopupCollisionPadding | (() => PopupCollisionPadding);
 };
 
@@ -164,16 +164,14 @@ function usePopupAnchor(): { zoneId: string; bodyRef: Ref<HTMLDivElement> } {
  * opening focus on the selected day (so no shortcut reads as selected) else the first control.
  * Provides the zone id and body ref the popup's frame needs.
  */
-export function DateTimePopoverContent({ label, className, children, popupCollisionAvoidance, popupCollisionPadding, ...props }: Omit<ComponentProps<typeof PopoverContent>, "aria-label" | "aria-describedby" | "initialFocus" | "collisionAvoidance" | "collisionPadding"> & { label: string; popupCollisionAvoidance?: PopupCollisionAvoidance; popupCollisionPadding?: PopupCollisionPadding | (() => PopupCollisionPadding) }) {
+export function DateTimePopoverContent({ label, className, children, popupCollisionAvoidance, popupCollisionPadding, ...props }: Omit<ComponentProps<typeof PopoverContent>, "aria-label" | "aria-describedby" | "initialFocus" | "collisionAvoidance" | "collisionPadding"> & { label: string; popupCollisionAvoidance?: PopupCollisionAvoidance; popupCollisionPadding?: PopupCollisionPadding }) {
   const zoneId = useId();
   const bodyRef = useRef<HTMLDivElement>(null);
   // Below sm the popup may cover its trigger: "shift" on y gives --available-height the whole
   // viewport (minus padding) instead of the sliver above or below the field (#447).
   const narrow = useMediaQuery("(width < 40rem)");
-  // The content mounts on open, so this reads the shell header once per open (#528).
-  const [padding] = useState(() => typeof popupCollisionPadding === "function" ? popupCollisionPadding() : popupCollisionPadding);
   // ~530-680px tall: if it fits neither side, stay above/below and scroll the body rather than opening sideways.
-  const { collisionAvoidance, collisionPadding } = resolveDateTimePopupPlacement({ narrow, avoidance: popupCollisionAvoidance, padding });
+  const { collisionAvoidance, collisionPadding } = resolveDateTimePopupPlacement({ narrow, avoidance: popupCollisionAvoidance, padding: popupCollisionPadding });
   return (
     <PopoverContent
       align="start"
@@ -200,6 +198,12 @@ export function DateTimeField(props: DateTimeFieldProps) {
   const { id, label, placeholder = "Select a date", disabled } = props;
   const clearable = props.variant === "range" ? false : (props.clearable ?? false);
   const [open, setOpen] = useState(false);
+  // Resolved per open, not at field mount: the content element exists while closed, and a cold load has no shell header yet (#528).
+  const [openPadding, setOpenPadding] = useState<PopupCollisionPadding | undefined>(undefined);
+  const onOpenChange = (next: boolean) => {
+    if (next) setOpenPadding(typeof props.popupCollisionPadding === "function" ? props.popupCollisionPadding() : props.popupCollisionPadding);
+    setOpen(next);
+  };
   const labelId = `${id}-label`;
   const valueId = `${id}-value`;
   const adornmentId = `${id}-adornment`;
@@ -215,7 +219,7 @@ export function DateTimeField(props: DateTimeFieldProps) {
   return (
     <Field>
       <FieldLabel id={labelId} htmlFor={id}>{label}</FieldLabel>
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover open={open} onOpenChange={onOpenChange}>
         <PopoverTrigger
           id={id}
           type="button"
@@ -231,7 +235,7 @@ export function DateTimeField(props: DateTimeFieldProps) {
           </span>
           <CalendarIcon aria-hidden className="size-4 shrink-0 text-foreground-secondary" />
         </PopoverTrigger>
-        <DateTimePopoverContent label={label} align={props.popupAlign ?? "start"} positionerClassName={props.positionerClassName} popupCollisionAvoidance={props.popupCollisionAvoidance} popupCollisionPadding={props.popupCollisionPadding}>
+        <DateTimePopoverContent label={label} align={props.popupAlign ?? "start"} positionerClassName={props.positionerClassName} popupCollisionAvoidance={props.popupCollisionAvoidance} popupCollisionPadding={openPadding}>
           {props.variant === "date"
             ? <DatePopup label={label} value={props.value} clearable={clearable} onApply={props.onApply} onClose={() => setOpen(false)} />
             : props.variant === "range"
