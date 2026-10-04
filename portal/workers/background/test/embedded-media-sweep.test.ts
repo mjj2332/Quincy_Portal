@@ -97,14 +97,33 @@ describe("embedded media sweep (#493)", () => {
     expect(await exists(stuck.id)).toBe(false);
   });
 
-  it("deletes a row only if it is still in the state the sweep read", async () => {
+  it("skips a row that was attached between the sweep's read and its claim, leaving the object alone", async () => {
     const row = await seed({ state: "pending", createdAt: now - 8 * day });
-    const racing = { ...env, MEDIA: new Proxy(database.MEDIA, { get: (target, property) => {
-      if (property === "delete") return async (keys: string | string[]) => { await database.DB.prepare("UPDATE embedded_media SET state = 'attached', owner_id = ? WHERE id = ?").bind(crypto.randomUUID(), row.id).run(); return target.delete(keys); };
+    const racing = { ...env, DB: new Proxy(database.DB, { get: (target, property) => {
+      if (property !== "prepare") { const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value; }
+      return (sql: string) => {
+        const statement = target.prepare(sql);
+        if (!sql.includes("ORDER BY id LIMIT")) return statement;
+        return { bind: (...values: unknown[]) => { const bound = statement.bind(...values); return { all: async () => {
+          const read = await bound.all();
+          await database.DB.prepare("UPDATE embedded_media SET state = 'attached', owner_id = ? WHERE id = ?").bind(crypto.randomUUID(), row.id).run();
+          return read;
+        } }; } };
+      };
+    } }) };
+    expect(await sweepEmbeddedMedia(racing as unknown as typeof env, now)).toMatchObject({ scanned: 1, reclaimed: 0, failed: 0 });
+    expect(await exists(row.id)).toBe(true); expect(await objectExists(row.keys[0]!)).toBe(true);
+  });
+
+  it("claims an expired row before deleting objects: the row is unattachable (detached, due now, owned by itself) while R2 is still working", async () => {
+    const row = await seed({ state: "pending", createdAt: now - 8 * day });
+    let seen: unknown = null;
+    const watching = { ...env, MEDIA: new Proxy(database.MEDIA, { get: (target, property) => {
+      if (property === "delete") return async (keys: string | string[]) => { seen = await database.DB.prepare("SELECT state, detached_at, owner_id FROM embedded_media WHERE id = ?").bind(row.id).first(); return target.delete(keys); };
       const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value;
     } }) };
-    expect(await sweepEmbeddedMedia(racing, now)).toMatchObject({ reclaimed: 0 });
-    expect(await exists(row.id)).toBe(true);
+    expect(await sweepEmbeddedMedia(watching, now)).toMatchObject({ reclaimed: 1 });
+    expect(seen).toEqual({ state: "detached", detached_at: 0, owner_id: row.id });
   });
 
   it("takes at most 100 rows a run, and a rerun finishes the rest and then does nothing", async () => {

@@ -3,7 +3,7 @@ import { makeSignature } from "better-auth/crypto";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createAuth } from "../src/auth";
 import { app } from "../src/index";
-import { createProjectComment, deleteProjectComment } from "../src/lib/project-comments";
+import { CommentMediaConflictError, createProjectComment, deleteProjectComment, editProjectComment } from "../src/lib/project-comments";
 import type { Env } from "../src/env";
 import { baseEnv, database, ids, imageDoc, mediaKey, mediaRow, pngBytes, request, seedFixture, seedMedia, tokens } from "./embedded-media-support";
 
@@ -155,7 +155,7 @@ describe("deleting a comment with images", () => {
 describe("the library create", () => {
   it("attaches the media it is given only when the comment lands", async () => {
     const id = await media(); const commentId = crypto.randomUUID(); const now = new Date();
-    await createProjectComment(database.DB, { id: commentId, projectId: ids.project, authorId: ids.member, body: "[image]", contentJson: JSON.stringify(imageDoc(id)), mentions: [], wallClockMs: now.getTime(), occurredAt: now, media: { attach: [id], reattach: [], detach: [] } });
+    await createProjectComment(database.DB, { id: commentId, projectId: ids.project, authorId: ids.member, body: "[image]", contentJson: JSON.stringify(imageDoc(id)), mentions: [], wallClockMs: now.getTime(), occurredAt: now, media: { authorId: ids.member, ids: [id] } });
     expect(await mediaRow(id)).toMatchObject({ state: "attached", owner_id: commentId });
   });
 });
@@ -186,6 +186,52 @@ describe("Project hard delete", () => {
     expect(await mediaRow(kept.id)).not.toBeNull(); expect(await database.MEDIA.head(kept.key)).not.toBeNull();
     expect(calls.some((call) => call.startsWith("DELETE ") && call.includes("uploadId=s3-upload-9") && call.includes(`embedded-media/${uploading.id}/original`))).toBe(true);
     expect(await mediaCount()).toBeGreaterThan(0);
+  });
+});
+
+describe("concurrent saves reconcile media inside the winning batch", () => {
+  const editLib = (commentId: string, content: unknown, ids_: string[], text = "x") => editProjectComment(database.DB, { projectId: ids.project, commentId, actorId: ids.member, body: text, contentJson: JSON.stringify(content), removeMentionIds: [], addMentions: [], mentionIds: [], editedAt: new Date(), occurredAt: new Date(), media: { authorId: ids.member, ids: ids_ } });
+
+  it("a stale save that retains an image another edit just removed re-attaches it, so it is never left detached", async () => {
+    const [a, b] = [await media(), await media()];
+    const comment = await created(await post("member", imageDoc(a, b)));
+    // Edit Y removes b, then edit X (prepared while b was attached) lands with b still in its doc.
+    expect((await request(`${commentsPath()}/${comment.id}`, "member", "PATCH", { content: imageDoc(a) })).status).toBe(200);
+    expect((await mediaRow(b))?.state).toBe("detached");
+    await editLib(comment.id, imageDoc(a, b), [a, b], "Photos changed");
+    for (const id of [a, b]) expect(await mediaRow(id), id).toMatchObject({ state: "attached", owner_id: comment.id, detached_at: null });
+    expect((await request(`/media/embedded/${b}`, "admin")).status).toBe(200);
+  });
+
+  it("rolls the whole save back with a conflict when a retained image is gone, and the comment is unchanged", async () => {
+    const [a, b] = [await media(), await media()];
+    const comment = await created(await post("member", imageDoc(a, b)));
+    await database.DB.prepare("DELETE FROM embedded_media WHERE id = ?").bind(b).run();
+    const before = await database.DB.prepare("SELECT body, content_json, edited_at FROM project_comments WHERE id = ?").bind(comment.id).first();
+    await expect(editLib(comment.id, imageDoc(a, b), [a, b], "Changed text")).rejects.toBeInstanceOf(CommentMediaConflictError);
+    expect(await database.DB.prepare("SELECT body, content_json, edited_at FROM project_comments WHERE id = ?").bind(comment.id).first()).toEqual(before);
+    expect(await mediaRow(a)).toMatchObject({ state: "attached", owner_id: comment.id });
+    expect(await database.DB.prepare("SELECT count(*) AS n FROM embedded_media WHERE id LIKE 'guard-%'").first()).toEqual({ n: 0 });
+  });
+
+  it("a row the sweep has claimed (detached at 0, owned by its own id) can never be attached, even by a save that skipped the preflight", async () => {
+    const claimedId = crypto.randomUUID(); const claimed = (await seedMedia({ id: claimedId, state: "detached", ownerId: claimedId, detachedAt: 0 })).id;
+    await expect(createProjectComment(database.DB, { id: crypto.randomUUID(), projectId: ids.project, authorId: ids.member, body: "[image]", contentJson: JSON.stringify(imageDoc(claimed)), mentions: [], wallClockMs: Date.now(), occurredAt: new Date(), media: { authorId: ids.member, ids: [claimed] } })).rejects.toBeInstanceOf(CommentMediaConflictError);
+    expect(await mediaRow(claimed)).toMatchObject({ state: "detached", owner_id: claimedId, detached_at: 0 });
+  });
+
+  it("two creates racing for one pending image: exactly one wins and the loser creates no comment", async () => {
+    const id = await media();
+    const make = (commentId: string) => createProjectComment(database.DB, { id: commentId, projectId: ids.project, authorId: ids.member, body: "[image]", contentJson: JSON.stringify(imageDoc(id)), mentions: [], wallClockMs: Date.now(), occurredAt: new Date(), media: { authorId: ids.member, ids: [id] } });
+    const [one, two] = [crypto.randomUUID(), crypto.randomUUID()];
+    const results = await Promise.allSettled([make(one), make(two)]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const loser = results.find((result) => result.status === "rejected") as PromiseRejectedResult;
+    expect(loser.reason).toBeInstanceOf(CommentMediaConflictError);
+    const owner = (await mediaRow(id))!.owner_id as string;
+    expect([one, two]).toContain(owner);
+    const other = owner === one ? two : one;
+    expect(await database.DB.prepare("SELECT count(*) AS n FROM project_comments WHERE id = ?").bind(other).first()).toEqual({ n: 0 });
   });
 });
 void pngBytes;

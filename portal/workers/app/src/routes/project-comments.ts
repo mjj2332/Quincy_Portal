@@ -11,6 +11,7 @@ import { projectMentionableUsers } from "../lib/project-collaboration";
 import { projectStageForRole } from "./stages";
 import {
   advanceProjectCommentReadMarker,
+  CommentMediaConflictError,
   createProjectComment,
   deleteProjectComment,
   editProjectComment,
@@ -116,7 +117,7 @@ projectCommentsRoutes.post("/projects/:projectId/comments", terminalRoute("/proj
   const mentions = prepared.mentionIds.map((mentionedUserId) => ({ id: newId(), commentId: id, mentionedUserId, createdAt }));
   // Images are checked before the batch: each must be the author's own finished upload in this Project (#493).
   const media = await resolveCommentMedia(c.env.DB, { projectId, authorId: currentUser.id, commentId: id, mediaIds: prepared.mediaIds }); if (!media) return c.json({ error: "An image in this comment is unavailable.", code: "invalid_media" }, 400);
-  const result = await createProjectComment(c.env.DB, { id, projectId, authorId: currentUser.id, auditPrincipal: currentUser, body: prepared.body, contentJson: JSON.stringify(prepared.content), mentions, wallClockMs: createdAt.getTime(), occurredAt: createdAt, media });
+  const result = await createProjectComment(c.env.DB, { id, projectId, authorId: currentUser.id, auditPrincipal: currentUser, body: prepared.body, contentJson: JSON.stringify(prepared.content), mentions, wallClockMs: createdAt.getTime(), occurredAt: createdAt, media }).catch((error) => error instanceof CommentMediaConflictError ? null : Promise.reject(error)); if (!result) return c.json({ error: "An image in this comment is no longer available. Remove it and try again.", code: "media_conflict" }, 409);
   c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
   if (!result.comment) return c.json({ error: "Comment could not be created" }, 500);
   return c.json(c.get("user").role === "external_editor" ? externalCommentSchema.parse(serializeProjectComment(result.comment)) : serializeProjectComment(result.comment), 201);
@@ -134,7 +135,7 @@ projectCommentsRoutes.patch("/projects/:projectId/comments/:commentId", terminal
   const maps = await db.select().from(schema.projectCommentMentions).where(eq(schema.projectCommentMentions.commentId, commentId)).all(); const wanted = new Set(prepared.mentionIds); const existingIds = new Set(maps.map((map) => map.mentionedUserId)); const createdAt = new Date();
   const added = prepared.mentionIds.filter((mentionedUserId) => !existingIds.has(mentionedUserId)).map((mentionedUserId) => ({ id: newId(), commentId, mentionedUserId, createdAt }));
   const media = await resolveCommentMedia(c.env.DB, { projectId, authorId: currentUser.id, commentId, mediaIds: prepared.mediaIds }); if (!media) return c.json({ error: "An image in this comment is unavailable.", code: "invalid_media" }, 400);
-  const result = await editProjectComment(c.env.DB, { projectId, commentId, actorId: currentUser.id, auditPrincipal: currentUser, body: prepared.body, contentJson: JSON.stringify(prepared.content), removeMentionIds: maps.filter((map) => !wanted.has(map.mentionedUserId)).map((map) => map.id), addMentions: added, mentionIds: prepared.mentionIds, editedAt: createdAt, occurredAt: createdAt, media });
+  const result = await editProjectComment(c.env.DB, { projectId, commentId, actorId: currentUser.id, auditPrincipal: currentUser, body: prepared.body, contentJson: JSON.stringify(prepared.content), removeMentionIds: maps.filter((map) => !wanted.has(map.mentionedUserId)).map((map) => map.id), addMentions: added, mentionIds: prepared.mentionIds, editedAt: createdAt, occurredAt: createdAt, media }).catch((error) => error instanceof CommentMediaConflictError ? null : Promise.reject(error)); if (!result) return c.json({ error: "An image in this comment is no longer available. Remove it and try again.", code: "media_conflict" }, 409);
   c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
   if (!result.comment) return c.json({ error: "Comment could not be updated" }, 500);
   return c.json(c.get("user").role === "external_editor" ? externalCommentSchema.parse(serializeProjectComment(result.comment)) : serializeProjectComment(result.comment));

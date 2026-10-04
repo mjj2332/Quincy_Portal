@@ -10,7 +10,7 @@ import type { AppEnv } from "../env";
 import { hasProjectCollaborationAccess } from "../middleware/capability";
 import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
-import { completeMultipart, createMultipartPresign, validateMultipartParts } from "../lib/r2s3";
+import { abortMultipart, completeMultipart, createMultipartPresign, validateMultipartParts } from "../lib/r2s3";
 import { deleteEmbeddedMediaObjects, getEmbeddedMedia } from "../lib/embedded-media";
 import { jsonInput } from "./helpers";
 
@@ -51,7 +51,15 @@ embeddedMediaRoutes.post("/projects/:projectId/embedded-media", terminalRoute("/
     await release();
     return c.json({ error: "R2 S3 upload credentials are not configured" }, 503);
   }
-  await c.env.DB.prepare("UPDATE embedded_media SET upload_id = ? WHERE id = ? AND state = 'uploading'").bind(multipart.uploadId, mediaId).run();
+  // The reservation and the Project may have gone while R2 was starting the upload (archive, hard delete, a sweep claim): then no URLs go out.
+  const stored = await c.env.DB.prepare(`
+    UPDATE embedded_media SET upload_id = ? WHERE id = ? AND state = 'uploading' AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)
+  `).bind(multipart.uploadId, mediaId, projectId).run();
+  if ((stored.meta.changes ?? 0) !== 1) {
+    try { await abortMultipart(c.env, key, multipart.uploadId); } catch { /* R2 aborts a stale multipart upload by itself */ }
+    await release();
+    return c.json({ error: "This project can no longer accept media", code: "project_unavailable" }, 409);
+  }
   await audit(c.env, user, "embedded_media.presign", "embedded_media", mediaId, { projectId, bytes: data.bytes, contentType: data.contentType });
   return c.json(externalEmbeddedMediaPresignSchema.parse({ mediaId, uploadId: multipart.uploadId, partUrls: multipart.partUrls, partBytes: multipart.partBytes }));
 }));
@@ -95,9 +103,9 @@ embeddedMediaRoutes.post("/projects/:projectId/embedded-media/:mediaId/complete"
   }
   const head = await c.env.MEDIA.head(row.originalKey);
   if (!head) return c.json({ error: "The file has not finished uploading", code: "upload_missing" }, 400);
+  // The row goes only after the object is gone: if R2 refuses the delete the row stays, so the upload can be retried and the sweep can find the object.
   const reject = async (message: string) => {
-    await deleteEmbeddedMediaObjects(c.env, [row]);
-    await c.env.DB.prepare("DELETE FROM embedded_media WHERE id = ? AND state = 'uploading'").bind(mediaId).run();
+    if (await deleteEmbeddedMediaObjects(c.env, [row])) await c.env.DB.prepare("DELETE FROM embedded_media WHERE id = ? AND state = 'uploading'").bind(mediaId).run();
     return c.json({ error: message, code: "media_rejected" }, 400);
   };
   if (head.size !== row.bytes) return reject("The uploaded file is not the size that was reserved");
@@ -106,10 +114,16 @@ embeddedMediaRoutes.post("/projects/:projectId/embedded-media/:mediaId/complete"
   const sniffed = first ? sniffEmbeddedImageType(new Uint8Array(await first.arrayBuffer())) : null;
   if (sniffed !== row.contentType) return reject("The uploaded file is not a JPEG, PNG or WebP image");
 
-  const promoted = await c.env.DB.prepare("UPDATE embedded_media SET state = 'pending', updated_at = ? WHERE id = ? AND state = 'uploading'").bind(Date.now(), mediaId).run();
+  // Fenced on the Project still being live and unarchived: R2 was awaited above, so the Project may have been deleted or archived meanwhile.
+  const promoted = await c.env.DB.prepare("UPDATE embedded_media SET state = 'pending', updated_at = ? WHERE id = ? AND state = 'uploading' AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)").bind(Date.now(), mediaId, projectId).run();
   if ((promoted.meta.changes ?? 0) !== 1) {
     const current = await getEmbeddedMedia(c.env.DB, mediaId);
     if (!current) return stray();
+    if (current.state === "uploading") {
+      // Lost to the Project's lifecycle, not to another writer: nothing will ever own this object.
+      if (await deleteEmbeddedMediaObjects(c.env, [current])) await c.env.DB.prepare("DELETE FROM embedded_media WHERE id = ? AND state = 'uploading'").bind(mediaId).run();
+      return c.json({ error: "This project can no longer accept media", code: "project_unavailable" }, 409);
+    }
     if (current.state !== "pending") return c.json({ error: "This media is already in use", code: "media_not_uploading" }, 409);
   } else {
     await audit(c.env, user, "embedded_media.upload", "embedded_media", mediaId, { projectId, bytes: row.bytes, contentType: row.contentType });

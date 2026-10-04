@@ -87,6 +87,24 @@ describe("POST /projects/:id/embedded-media (presign)", () => {
     expect(await rowCount()).toBe(before);
   });
 
+  it("aborts the multipart upload and hands out no URLs when the reservation is gone by the time R2 answers", async () => {
+    const calls = stubS3((_url, init) => init?.method === "DELETE" ? new Response(null, { status: 204 }) : undefined);
+    // The reservation disappears after R2 has started the upload and before the route stores the upload id.
+    const racing: Env = { ...S3_ENV, DB: new Proxy(S3_ENV.DB, { get: (target, property) => {
+      if (property !== "prepare") { const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value; }
+      return (sql: string) => {
+        const statement = target.prepare(sql);
+        if (!sql.includes("SET upload_id")) return statement;
+        return { bind: (...values: unknown[]) => { const bound = statement.bind(...values); return { run: async () => { await target.prepare("DELETE FROM embedded_media WHERE state = 'uploading' AND bytes = 7777").run(); return bound.run(); } }; } };
+      };
+    } }) };
+    const before = await rowCount();
+    const response = await presign(racing, "member", { contentType: "image/png", bytes: 7777 });
+    expect(response.status).toBe(409);
+    expect(calls.some((call) => call.method === "DELETE" && call.url.includes("uploadId=s3-upload-1"))).toBe(true);
+    expect(await rowCount()).toBe(before);
+  });
+
   it("dev: answers devDirect and accepts the bytes only from the uploader, with the stored content type", async () => {
     const response = await presign(DEV_ENV, "member", { contentType: "image/jpeg", bytes: 40 });
     expect(response.status).toBe(200); const body = externalEmbeddedMediaPresignSchema.parse(await response.json());
@@ -130,6 +148,39 @@ describe("POST /projects/:id/embedded-media/:mediaId/complete", () => {
       if (label === "content type") await database.MEDIA.put(key, pngBytes(64), { httpMetadata: { contentType: "image/png" } });
       expect((await complete("member", id)).status, label).toBe(400);
       expect(await mediaRow(id), label).toBeNull(); expect(await database.MEDIA.head(key), label).toBeNull();
+    }
+  });
+
+  it("keeps the row (so the sweep can find the object) when a rejection cannot delete the object, and removes both once R2 recovers", async () => {
+    const { id, key } = await seedMedia({ state: "uploading", bytes: 99, object: pngBytes(64) });
+    const failing: Env = { ...baseEnv, MEDIA: new Proxy(baseEnv.MEDIA, { get: (target, property) => {
+      if (property === "delete") return async () => { throw new Error("R2 down"); };
+      const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value;
+    } }) };
+    expect((await complete("member", id, {}, ids.project, failing)).status).toBe(400);
+    expect(await mediaRow(id)).toMatchObject({ state: "uploading" }); expect(await database.MEDIA.head(key)).not.toBeNull();
+    expect((await complete("member", id)).status).toBe(400);
+    expect(await mediaRow(id)).toBeNull(); expect(await database.MEDIA.head(key)).toBeNull();
+  });
+
+  it("does not promote, and deletes the object and the row, when the Project is archived or deleted while R2 is being read", async () => {
+    for (const lifecycle of ["archive", "delete"] as const) {
+      const projectId = crypto.randomUUID(); const now = Date.now();
+      await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Racy', 'editing_autohdr', 0, ?, ?)").bind(projectId, now, now).run();
+      await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, ids.member, now).run();
+      const { id, key } = await seedMedia({ state: "uploading", projectId });
+      // The lifecycle change lands after the route's earlier checks, during its R2 reads.
+      const racing: Env = { ...baseEnv, MEDIA: new Proxy(baseEnv.MEDIA, { get: (target, property) => {
+        if (property === "get") return async (...args: Parameters<R2Bucket["get"]>) => {
+          const result = await (target.get as (...a: unknown[]) => Promise<unknown>).call(target, ...args);
+          await database.DB.prepare(lifecycle === "archive" ? "UPDATE projects SET archived_at = ? WHERE id = ?" : "DELETE FROM projects WHERE id = ? AND ? > 0").bind(...(lifecycle === "archive" ? [Date.now(), projectId] : [projectId, 1])).run();
+          return result;
+        };
+        const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value;
+      } }) };
+      const response = await complete("member", id, {}, projectId, racing);
+      expect(response.status, lifecycle).toBe(lifecycle === "archive" ? 409 : 404);
+      expect(await mediaRow(id), lifecycle).toBeNull(); expect(await database.MEDIA.head(key), lifecycle).toBeNull();
     }
   });
 

@@ -17,10 +17,9 @@ function isMissingUpload(error: unknown): boolean {
 /**
  * Reclaims embedded media nobody owns (#493): media edited out of a post a week ago or longer (a deleted
  * post's media is detached at 0, so due now), and media uploaded but never posted. An attached row is never
- * touched. Objects go first and the row is then deleted only if it is still in the state read, so a failed
- * R2 delete keeps the row for the next run and a row that changed state in between is left alone. The attach
- * and re-attach statements in the API carry the same seven-day boundary, so a row the sweep takes can no
- * longer be attached. At most 100 rows a run.
+ * touched. Each row is claimed first (flipped to detached at 0 under the same expiry predicate, which no API
+ * attach statement accepts), then its objects go, then the row: a claim lost to a concurrent attach is skipped, and a failed
+ * R2 delete keeps the claimed row for the next run. At most 100 rows a run.
  */
 export async function sweepEmbeddedMedia(env: Pick<Env, "DB" | "MEDIA">, now = Date.now()): Promise<{ scanned: number; reclaimed: number; failed: number }> {
   const cutoff = now - EMBEDDED_MEDIA_RETENTION_MS;
@@ -33,13 +32,22 @@ export async function sweepEmbeddedMedia(env: Pick<Env, "DB" | "MEDIA">, now = D
   let reclaimed = 0; let failed = 0;
   for (const row of rows.results) {
     try {
+      // Claim first: flip the row into 'detached' at 0 (due now; an unowned row takes its own id as owner, which the table's CHECK requires and no comment can match), with the same expiry predicate the read used. Every attach
+      // predicate in the API needs 'pending' or an owner and a fresh timestamp, so a claimed row can no longer be attached. A lost claim
+      // means the row changed under us (attached, or already taken): skip it.
+      const claim = await env.DB.prepare(`
+        UPDATE embedded_media SET state = 'detached', detached_at = 0, owner_id = COALESCE(owner_id, id), updated_at = ?
+        WHERE id = ? AND ((state = 'detached' AND detached_at <= ?) OR (state IN ('uploading', 'pending') AND created_at <= ?))
+      `).bind(now, row.id, cutoff, cutoff).run();
+      if ((claim.meta.changes ?? 0) !== 1) continue;
       if (row.state === "uploading" && row.uploadId) {
         // Best effort: R2 aborts a stale multipart upload by itself after seven days.
         try { await env.MEDIA.resumeMultipartUpload(row.originalKey, row.uploadId).abort(); }
         catch (error) { if (!isMissingUpload(error)) console.error("Embedded media multipart abort failed", { mediaId: row.id, error: error instanceof Error ? error.message.slice(0, 160) : "unknown" }); }
       }
+      // Objects, then the row: a failed R2 delete throws before the row goes, and the claimed row is retried next run.
       await env.MEDIA.delete([row.originalKey, row.displayKey, row.posterKey].filter((key): key is string => Boolean(key)));
-      const deleted = await env.DB.prepare("DELETE FROM embedded_media WHERE id = ? AND state = ?").bind(row.id, row.state).run();
+      const deleted = await env.DB.prepare("DELETE FROM embedded_media WHERE id = ? AND state = 'detached' AND detached_at = 0").bind(row.id).run();
       if ((deleted.meta.changes ?? 0) === 1) reclaimed += 1;
     } catch (error) {
       failed += 1;
