@@ -179,10 +179,10 @@ describe("POST /projects/:id/embedded-media/:mediaId/complete", () => {
     expect(await queued(key)).toMatchObject({ storageKey: key, projectId: ids.project, attempts: 0 });
   });
 
-  it("queues the object when the row vanished (a sweep claim) while R2 was being read and the delete then fails", async () => {
+  it("leaves the object and the queue alone when the row vanished while R2 was being read: whoever removed the row owns the bytes", async () => {
     const { id, key } = await seedMedia({ state: "uploading", object: pngBytes(64) });
     const racing: Env = { ...baseEnv, MEDIA: new Proxy(baseEnv.MEDIA, { get: (target, property) => {
-      if (property === "delete") return async () => { throw new Error("R2 down"); };
+      if (property === "delete") return async () => { throw new Error("complete must not touch R2 without owning the row"); };
       if (property === "get") return async (...args: Parameters<R2Bucket["get"]>) => {
         const result = await (target.get as (...a: unknown[]) => Promise<unknown>).call(target, ...args);
         await database.DB.prepare("DELETE FROM embedded_media WHERE id = ?").bind(id).run();
@@ -191,14 +191,70 @@ describe("POST /projects/:id/embedded-media/:mediaId/complete", () => {
       const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value;
     } }) };
     expect((await complete("member", id, {}, ids.project, racing)).status).toBe(404);
-    expect(await queued(key)).toMatchObject({ projectId: ids.project });
+    expect(await database.MEDIA.head(key)).not.toBeNull(); expect(await queued(key)).toBeNull();
   });
 
-  it("queues the stray object when the Project is gone and the delete fails", async () => {
+  it("a completion that loses the promotion to a concurrent winner leaves the live image and the queue untouched", async () => {
+    const { id, key } = await seedMedia({ state: "uploading", object: pngBytes(64) });
+    const owner = crypto.randomUUID();
+    // Another completion promotes and a comment attaches the image after this completion's checks, while it is reading R2.
+    const racing: Env = { ...baseEnv, MEDIA: new Proxy(baseEnv.MEDIA, { get: (target, property) => {
+      if (property === "delete") return async () => { throw new Error("a losing completion must not delete a live image"); };
+      if (property === "get") return async (...args: Parameters<R2Bucket["get"]>) => {
+        const result = await (target.get as (...a: unknown[]) => Promise<unknown>).call(target, ...args);
+        await database.DB.prepare("UPDATE embedded_media SET state = 'attached', owner_id = ? WHERE id = ?").bind(owner, id).run();
+        return result;
+      };
+      const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value;
+    } }) };
+    expect((await complete("member", id, {}, ids.project, racing)).status).toBe(409);
+    expect(await mediaRow(id)).toMatchObject({ state: "attached", owner_id: owner });
+    expect(await database.MEDIA.head(key)).not.toBeNull(); expect(await queued(key)).toBeNull();
+    expect((await request(`/media/embedded/${id}`, "admin")).status).toBe(200);
+  });
+
+  it("claims the row before deleting: if another writer attaches it between the lost promotion's re-read and the cleanup, R2 is never touched", async () => {
+    const projectId = crypto.randomUUID(); const now = Date.now();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Claim', 'editing_autohdr', 0, ?, ?)").bind(projectId, now, now).run();
+    await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, ids.member, now).run();
+    const { id, key } = await seedMedia({ state: "uploading", projectId });
+    const owner = crypto.randomUUID(); let reads = 0;
+    const racing: Env = {
+      ...baseEnv,
+      // The Project is archived while R2 is read, so the promotion is lost and the row still reads as uploading.
+      MEDIA: new Proxy(baseEnv.MEDIA, { get: (target, property) => {
+        if (property === "delete") return async () => { throw new Error("must not delete an object the completion no longer owns"); };
+        if (property === "get") return async (...args: Parameters<R2Bucket["get"]>) => {
+          const result = await (target.get as (...a: unknown[]) => Promise<unknown>).call(target, ...args);
+          await database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), projectId).run();
+          return result;
+        };
+        const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value;
+      } }),
+      DB: new Proxy(baseEnv.DB, { get: (target, property) => {
+        if (property !== "prepare") { const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value; }
+        return (sql: string) => {
+          const statement = target.prepare(sql);
+          if (!sql.startsWith("SELECT * FROM embedded_media WHERE id")) return statement;
+          return { bind: (...values: unknown[]) => { const bound = statement.bind(...values); return { first: async () => {
+            const read = await bound.first(); reads += 1;
+            // The re-read after the lost promotion sees 'uploading'. Then another writer takes the row, before the cleanup claims it.
+            if (reads === 2) await database.DB.prepare("UPDATE embedded_media SET state = 'attached', owner_id = ? WHERE id = ?").bind(owner, id).run();
+            return read;
+          } }; } };
+        };
+      } }),
+    };
+    expect((await complete("member", id, {}, projectId, racing)).status).toBe(409);
+    expect(await mediaRow(id)).toMatchObject({ state: "attached", owner_id: owner });
+    expect(await database.MEDIA.head(key)).not.toBeNull(); expect(await queued(key)).toBeNull();
+  });
+
+  it("does not touch R2 when the Project is gone: the hard delete already queued the key", async () => {
     const projectId = crypto.randomUUID(); const mediaId = crypto.randomUUID(); const key = mediaKey(projectId, mediaId);
     await database.MEDIA.put(key, pngBytes(64), { httpMetadata: { contentType: "image/png" } });
     expect((await complete("admin", mediaId, {}, projectId, failingDelete())).status).toBe(404);
-    expect(await queued(key)).toMatchObject({ projectId });
+    expect(await database.MEDIA.head(key)).not.toBeNull(); expect(await queued(key)).toBeNull();
   });
 
   it("does not promote, and deletes the object and the row, when the Project is archived or deleted while R2 is being read", async () => {
@@ -218,7 +274,9 @@ describe("POST /projects/:id/embedded-media/:mediaId/complete", () => {
       } }) };
       const response = await complete("member", id, {}, projectId, racing);
       expect(response.status, lifecycle).toBe(lifecycle === "archive" ? 409 : 404);
-      expect(await mediaRow(id), lifecycle).toBeNull(); expect(await database.MEDIA.head(key), lifecycle).toBeNull();
+      expect(await mediaRow(id), lifecycle).toBeNull();
+      // Archive: this completion claims the row and deletes the object. Delete: the row went with the Project, whose hard delete owns the bytes.
+      if (lifecycle === "archive") expect(await database.MEDIA.head(key)).toBeNull(); else expect(await database.MEDIA.head(key)).not.toBeNull();
     }
   });
 
@@ -244,11 +302,11 @@ describe("POST /projects/:id/embedded-media/:mediaId/complete", () => {
     expect((await complete("member", archived.id, {}, ids.archivedProject)).status).toBe(409);
   });
 
-  it("deletes the stray object and answers 404 when the row is gone because the Project was deleted mid-upload", async () => {
+  it("answers 404 and leaves the object when the row is gone because the Project was deleted mid-upload", async () => {
     const projectId = crypto.randomUUID(); const mediaId = crypto.randomUUID(); const key = mediaKey(projectId, mediaId);
     await database.MEDIA.put(key, pngBytes(64), { httpMetadata: { contentType: "image/png" } });
     expect((await complete("admin", mediaId, {}, projectId)).status).toBe(404);
-    expect(await database.MEDIA.head(key)).toBeNull();
+    expect(await database.MEDIA.head(key)).not.toBeNull();
   });
 
   it("does not delete the object of a row that still exists under a different state", async () => {

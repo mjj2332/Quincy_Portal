@@ -208,6 +208,34 @@ describe("Project hard delete keeps cleanup ownership of what it could not abort
   });
 });
 
+describe("Project hard delete dequeues only what it resolved (#493)", () => {
+  it("keeps a queue entry that was already there, and one queued concurrently during the purge, while dequeuing the keys it deleted", async () => {
+    const projectId = crypto.randomUUID(); const now = Date.now();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, archived_at, created_at, updated_at) VALUES (?, 'Doomed3', 'editing_autohdr', 0, ?, ?, ?)").bind(projectId, now, now, now).run();
+    const attached = await seedMedia({ projectId, state: "attached" });
+    const earlyKey = mediaKey(projectId, crypto.randomUUID()); const lateKey = mediaKey(projectId, crypto.randomUUID());
+    await database.MEDIA.put(earlyKey, pngBytes(8)); await database.MEDIA.put(lateKey, pngBytes(8));
+    // A sweep queued this one earlier with an abort that failed: only a later drain may resolve it.
+    await database.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) VALUES (?, 'u-early', ?, ?)").bind(earlyKey, projectId, now - 1000).run();
+    const racing: Env = { ...baseEnv, MEDIA: new Proxy(baseEnv.MEDIA, { get: (target, property) => {
+      if (property === "list") return async (...args: Parameters<R2Bucket["list"]>) => {
+        const result = await (target.list as (...a: unknown[]) => Promise<unknown>).call(target, ...args);
+        // A completion queues its key while the purge is listing.
+        await database.DB.prepare("INSERT OR IGNORE INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) VALUES (?, NULL, ?, ?)").bind(lateKey, projectId, Date.now() - 1).run();
+        return result;
+      };
+      const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value;
+    } }) };
+    const context = await createAuth(racing).$context;
+    const cookie = `${context.authCookies.sessionToken.name}=${tokens.admin}.${await makeSignature(tokens.admin, baseEnv.BETTER_AUTH_SECRET ?? "dev-only-replace-better-auth-secret-32-bytes")}`;
+    const response = await app.fetch(new Request(`https://portal.test/api/projects/${projectId}`, { method: "DELETE", headers: { cookie, origin: baseEnv.APP_ORIGIN } }), racing, createExecutionContext());
+    expect(response.status).toBe(200);
+    const left = (await database.DB.prepare("SELECT storage_key AS k FROM embedded_media_cleanup WHERE project_id = ? ORDER BY k").bind(projectId).all<{ k: string }>()).results.map((row) => row.k);
+    expect(left).toEqual([earlyKey, lateKey].sort());
+    expect(left).not.toContain(attached.key);
+  });
+});
+
 describe("concurrent saves reconcile media inside the winning batch", () => {
   const editLib = (commentId: string, content: unknown, ids_: string[], text = "x") => editProjectComment(database.DB, { projectId: ids.project, commentId, actorId: ids.member, body: text, contentJson: JSON.stringify(content), removeMentionIds: [], addMentions: [], mentionIds: [], editedAt: new Date(), occurredAt: new Date(), media: { authorId: ids.member, ids: ids_ } });
 

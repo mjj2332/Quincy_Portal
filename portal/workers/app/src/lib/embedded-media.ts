@@ -43,13 +43,26 @@ export async function enqueueEmbeddedMediaCleanup(db: D1Database, entries: Clean
 }
 
 /**
- * Deletes one object nobody owns. If R2 refuses, the key goes to the cleanup queue instead, so a caller never
- * returns with the object neither deleted nor owned. Returns whether the object is already gone.
+ * Claim-first discard of an object whose completion could not finish (a rejection, a Project that went away). One batch deletes the
+ * still-`uploading` row and queues its keys under that same claim, so the object is deleted only by the one writer that owned the row:
+ * a row someone else has since promoted, attached or removed is never touched, and neither is its object. Once the claim is won the
+ * object is deleted and its queue entry dropped. If R2 refuses, the entry stays for the drain. Returns whether the claim was won.
  */
-export async function discardEmbeddedMediaObject(env: Pick<Env, "DB" | "MEDIA">, key: string, projectId: string | null): Promise<boolean> {
-  if (await deleteEmbeddedMediaObjects(env, [{ originalKey: key, displayKey: null, posterKey: null }])) return true;
-  await enqueueEmbeddedMediaCleanup(env.DB, [{ key, projectId }]);
-  return false;
+export async function claimAndDiscardUploadingMedia(env: Pick<Env, "DB" | "MEDIA">, row: Pick<EmbeddedMediaRow, "id" | "originalKey" | "uploadId" | "projectId">): Promise<boolean> {
+  const now = Date.now();
+  const results = await env.DB.batch([
+    env.DB.prepare(`
+      INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at)
+      SELECT original_key, upload_id, project_id, ? FROM embedded_media WHERE id = ? AND state = 'uploading'
+      ON CONFLICT(storage_key) DO UPDATE SET project_id = COALESCE(embedded_media_cleanup.project_id, excluded.project_id), upload_id = COALESCE(embedded_media_cleanup.upload_id, excluded.upload_id)
+    `).bind(now, row.id),
+    env.DB.prepare("DELETE FROM embedded_media WHERE id = ? AND state = 'uploading'").bind(row.id),
+  ]);
+  if ((results[1]!.meta.changes ?? 0) !== 1) return false;
+  if (await deleteEmbeddedMediaObjects(env, [{ originalKey: row.originalKey, displayKey: null, posterKey: null }])) {
+    await env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ?").bind(row.originalKey).run();
+  }
+  return true;
 }
 
 /** Every object a row can own. Best effort: returns whether R2 accepted the deletes. */

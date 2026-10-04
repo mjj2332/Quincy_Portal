@@ -1295,9 +1295,16 @@ projectsRoutes.delete("/projects/:id", terminalRoute("/projects/:id", async (c) 
     c.env.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) SELECT poster_key, NULL, project_id, ? FROM embedded_media WHERE project_id = ? AND poster_key IS NOT NULL ON CONFLICT(storage_key) DO NOTHING").bind(deletedAt, id),
     c.env.DB.prepare("DELETE FROM projects WHERE id = ?").bind(id),
   ]);
-  // The abort and the prefix purge succeeded for everything except the unresolved uploads, so only those keep their queue rows.
-  const kept = unresolvedUploadKeys.length ? ` AND storage_key NOT IN (${unresolvedUploadKeys.map(() => "?").join(",")})` : "";
-  await c.env.DB.prepare(`DELETE FROM embedded_media_cleanup WHERE project_id = ?${kept}`).bind(id, ...unresolvedUploadKeys).run();
+  // Dequeue only what THIS request resolved: a key it queued in the batch above (queued_at = deletedAt), whose object the purge deleted,
+  // and whose upload (if any) it aborted. Entries queued by anyone else (a sweep whose abort failed, a completion mid-purge) and uploads
+  // whose abort failed here all stay for the drain. Never a Project-wide delete.
+  const deletedKeys = new Set(keys); const unresolved = new Set(unresolvedUploadKeys);
+  const mine = (await c.env.DB.prepare("SELECT storage_key FROM embedded_media_cleanup WHERE project_id = ? AND queued_at = ?").bind(id, deletedAt).all<{ storage_key: string }>()).results
+    .map((row) => row.storage_key).filter((key) => deletedKeys.has(key) && !unresolved.has(key));
+  for (let index = 0; index < mine.length; index += 50) {
+    const chunk = mine.slice(index, index + 50);
+    await c.env.DB.prepare(`DELETE FROM embedded_media_cleanup WHERE queued_at = ? AND storage_key IN (${chunk.map(() => "?").join(",")})`).bind(deletedAt, ...chunk).run();
+  }
   return c.json({ ok: true, deletedObjects: keys.length });
 }));
 const stageHandler = async (c: Context<AppEnv>) => {
