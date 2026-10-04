@@ -287,6 +287,14 @@ describe("NotificationPreferences", () => {
       expect(combobox.className).toContain("max-[721px]:min-h-[44px]");
     });
 
+    it("gives every cadence option a 44px touch target at phone width", async () => {
+      const host = await renderLoaded();
+      await act(async () => { trigger(host).click(); await Promise.resolve(); await Promise.resolve(); });
+      const options = [...document.querySelectorAll<HTMLElement>('[role="listbox"] [role="option"]')];
+      expect(options.length).toBeGreaterThan(0);
+      for (const element of options) expect(element.className, element.textContent ?? "").toContain("max-[721px]:min-h-[44px]");
+    });
+
     it("shows the stored cadence, with Twice daily as the default", async () => {
       const host = await renderLoaded();
       expect(trigger(host).textContent).toContain("Twice daily (8:00 am and 2:00 pm)");

@@ -192,7 +192,7 @@ export function NotificationPreferences() {
                   <SelectValue>{(value: string | null) => cadenceLabel(value ?? cadence)}</SelectValue>
                 </SelectTrigger>
                 <SelectContent className="w-auto min-w-(--anchor-width) max-w-(--available-width)">
-                  {CADENCE_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
+                  {CADENCE_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value} className="max-[721px]:min-h-[44px]">{option.label}</SelectItem>)}
                 </SelectContent>
               </Select>
               {saving.digest && <span className="text-muted-foreground">Saving…</span>}
