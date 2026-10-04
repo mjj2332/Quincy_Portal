@@ -25,16 +25,9 @@ export interface ElementStore {
 
 /** What one batch did. `winners` are the rows that beat their stored copy, in STORED form (to relay to everyone else);
  * `losers` the stored rows that beat the sender's elements (sent back before the ack); `rewritten` the subset of winners
- * the server stored under a different index than the sender gave them (also sent back to the sender, who must adopt it). */
+ * the server stored under a different index than the sender gave them, at the revision the sender gave them (also sent back
+ * to the sender, whose copy of that revision takes the index). */
 export type Reconciliation = { winners: StoredElement[]; losers: StoredElement[]; rewritten: StoredElement[] };
-
-/**
- * The nonce of a row the SERVER re-keyed. It is the largest a client can have drawn, so the row loses every version tie
- * (the lower nonce wins, both in `whiteboardIncomingWins` and in Excalidraw's `shouldDiscardRemoteElement`): a genuine
- * edit a person made at the same version beats it on the client, is sent again, and the server keeps its content and
- * re-keys it again at a higher version. A re-key is a layout decision, so it must never cost anyone an edit.
- */
-export const WHITEBOARD_SERVER_NONCE = 2 ** 31 - 1;
 
 const BASE62 = /^[0-9A-Za-z]+$/;
 /** A fractional index `generateKeyBetween` accepts (it rejects a trailing zero and an invalid integer head, but not a stray
@@ -96,9 +89,16 @@ export class IndexSpace {
   }
 }
 
-/** The stored form of an element the server re-keyed: a revision of the server's own that loses every tie. */
+/**
+ * The stored form of an element the server re-keyed: the SAME authored revision at a new index. An index is layout, not
+ * content: who wins an element is decided by the authored `version`/`versionNonce` alone, exactly as Excalidraw's
+ * `reconcileElements` decides it (a synthetic revision overrode a concurrent edit's nonce tiebreak and brought a deleted
+ * element back). The correction reaches clients as the stored row: one whose revision equals its own copy's takes the index
+ * without making an edit; one that holds a different revision ignores it, and the revision it holds will be decided, and
+ * re-keyed again if need be, when it arrives here.
+ */
 function rekeyed(element: StoredElement, index: string): StoredElement {
-  return { ...element, index, version: Math.min(element.version + 1, Number.MAX_SAFE_INTEGER), versionNonce: WHITEBOARD_SERVER_NONCE };
+  return { ...element, index };
 }
 
 /**

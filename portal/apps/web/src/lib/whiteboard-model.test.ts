@@ -73,7 +73,7 @@ class Client {
   pending = new Map<number, { resolve: () => void; reject: (error: Error) => void }>();
   /** Every (id, nonce) a person authored on this client: the ONLY things a flush may transmit. */
   authored = new Set<string>();
-  log: Array<{ id: string; version: number; content: string }> = [];
+  log: Array<{ id: string; version: number; content: string; nonce: number; deleted: boolean }> = [];
   seq = 0;
   /** The element being resized right now: Excalidraw keeps the local copy and the applier defers remote winners for it. */
   interacting: string | null = null;
@@ -94,7 +94,9 @@ class World {
   readonly clients: Client[] = [];
   readonly violations: string[] = [];
   /** Revisions authored on the server itself (legacy rows): they are genuine content too. */
-  readonly serverAuthored: Array<{ id: string; version: number; content: string }> = [];
+  readonly serverAuthored: Array<{ id: string; version: number; content: string; nonce: number; deleted: boolean }> = [];
+  /** The id most recently authored by anyone: the generator aims concurrent edits, deletes and reorders at it so nonce tiebreaks actually happen. */
+  hot: string | undefined;
   messages = 0;
   /** Batches the server has committed. */
   processed = 0;
@@ -139,7 +141,7 @@ class World {
       const index = row.index.kind === "dup" ? taken[row.index.pick % Math.max(taken.length, 1)] ?? "a0" : row.index.kind === "fixed" ? row.index.index : row.index.kind === "missing" ? undefined : row.index.value;
       const stored = { ...rect(row.id, 1, row.nonce, { x: row.x }), ...(index === undefined ? {} : { index }) } as StoredElement;
       this.rows.set(row.id, stored);
-      this.serverAuthored.push({ id: row.id, version: 1, content: contentOf(stored) });
+      this.serverAuthored.push({ id: row.id, version: 1, content: contentOf(stored), nonce: row.nonce, deleted: false });
     }
     // The wake normalises, then tells every open socket. A row that was already unique changes nothing, but the clients in this
     // model have never seen a row inserted behind their back, so the rows inserted here reach them as stored too.
@@ -151,7 +153,8 @@ class World {
 
   private author(client: Client, element: El) {
     client.authored.add(`${element.id}:${element.versionNonce}`);
-    client.log.push({ id: element.id, version: element.version, content: contentOf(element) });
+    client.log.push({ id: element.id, version: element.version, content: contentOf(element), nonce: element.versionNonce, deleted: element.isDeleted === true });
+    this.hot = element.id;
   }
 
   /** The controller's `applyRemote`: merge with Excalidraw's own restore and reconcile, checking what a merge may never do. */
@@ -173,7 +176,8 @@ class World {
       if (replaced) { if (now.version !== inc.version || now.versionNonce !== inc.versionNonce) this.violations.push(`client ${c}: ${was.id} should have taken the incoming v${inc.version}/${inc.versionNonce} but holds v${now.version}/${now.versionNonce}`); continue; }
       if (now.version !== was.version || now.versionNonce !== was.versionNonce) this.violations.push(`client ${c}: a merge changed ${was.id}'s revision v${was.version}/${was.versionNonce} -> v${now.version}/${now.versionNonce}`);
       const deferred = inc !== undefined && resizing.has(was.id) && whiteboardIncomingWins(was, inc);   // its copy shown meanwhile is mid-edit and yields to the server's index
-      if (was.pinned && !deferred && now.index !== was.index) this.violations.push(`client ${c}: a merge moved the pinned ${was.id} from ${was.index} to ${now.index}`);
+      const corrected = inc !== undefined && inc.version === was.version && inc.versionNonce === was.versionNonce && inc.index === now.index;   // the server's index for this very revision
+      if (was.pinned && !deferred && !corrected && now.index !== was.index) this.violations.push(`client ${c}: a merge moved the pinned ${was.id} from ${was.index} to ${now.index}`);
     }
     for (const element of client.scene) {
       const inc = incoming.get(element.id);
@@ -335,6 +339,16 @@ class World {
         if (held.index !== row.index || held.version !== row.version || held.versionNonce !== row.versionNonce || contentOf(held) !== contentOf(row)) found.push(`client ${c} holds ${row.id} as ${held.index} v${held.version} ${contentOf(held)}, stored is ${String(row.index)} v${row.version} ${contentOf(row)}`);
       }
     });
+    // Content is decided by the AUTHORED revisions alone, as Excalidraw's own reconcile decides it: whatever a server re-key
+    // did to an index, the winner of every id (nonce, deleted) is the one reconcile picks from everything any person authored.
+    const authored = new Map<string, Array<{ id: string; version: number; versionNonce: number; isDeleted: boolean; index: string }>>();
+    for (const entry of [...this.clients.flatMap((client) => client.log), ...this.serverAuthored]) authored.set(entry.id, [...(authored.get(entry.id) ?? []), { id: entry.id, version: entry.version, versionNonce: entry.nonce, isDeleted: entry.deleted, index: "a0" }]);
+    for (const [id, revisions] of authored) {
+      const stored = this.rows.get(id);
+      if (!stored) continue;
+      const pick = revisions.reduce((best, next) => reconcileFn([best] as never, [next] as never, { editingTextElement: null, resizingElement: null, newElement: null } as never)[0] as typeof best);
+      if (stored.versionNonce !== pick.versionNonce || stored.isDeleted !== pick.isDeleted) found.push(`stored ${id} is nonce ${stored.versionNonce} deleted=${String(stored.isDeleted)} but Excalidraw's reconcile of the authored revisions picks nonce ${pick.versionNonce} deleted=${String(pick.isDeleted)}`);
+    }
     // No genuine pending edit lost: a client's latest authored revision survives unless another person's concurrent-or-later revision with the stored content beat it.
     this.clients.forEach((client, c) => {
       const latest = new Map<string, { id: string; version: number; content: string }>();
@@ -374,7 +388,8 @@ function generate(world: World, rng: () => number): Step {
   const client = world.clients[c]!;
   const roll = rng();
   const live = client.scene.filter((element) => !element.isDeleted);
-  const pickLive = () => live[Math.floor(rng() * live.length)]!;
+  const aimed = world.hot === undefined ? undefined : live.find((element) => element.id === world.hot);
+  const pickLive = () => (aimed && rng() < 0.5 ? aimed : live[Math.floor(rng() * live.length)]!);
   if (roll < 0.14) {
     const free = ids.filter((id) => !client.scene.some((element) => element.id === id));
     const id = free[Math.floor(rng() * free.length)];
@@ -526,6 +541,17 @@ describe("model: named scenarios from the Sol and Codex reviews (#499)", () => {
       process_(1), deliver(1, 2), flush(1), process_(1), deliver(1, 3), deliver(0, 4), deliver(2, 3),
     ]));
     expect(world.rows.get("0")).toMatchObject({ x: 2, isDeleted: false });
+  });
+
+  it("Sol round 9: A reorders e into x's index (v2/nonce 50, re-keyed by the server) while B deletes e (v2/nonce 40): the deletion wins in storage and on every tab", async () => {
+    const world = await play("sol9", { clients: 3, ids: ["e", "y", "x"], initial: [row("e", { kind: "fixed", index: "a0" }, 5), row("y", { kind: "fixed", index: "a1" }, 6)] }, script([
+      create(2, "x", "a2", 12), flush(2), process_(2),                       // C's x reaches the server before A or B hear of it
+      reorder(0, "e", 0, 50, "a2"), { op: "delete", c: 1, id: "e", nonce: 40 },
+      flush(0), flush(1), process_(0), process_(1),
+      deliver(0, 4), deliver(1, 4), deliver(2, 4),
+    ]));
+    expect(world.rows.get("e")).toMatchObject({ isDeleted: true, version: 2, versionNonce: 40 });
+    for (const client of world.clients) expect(client.scene.find((element) => element.id === "e")).toMatchObject({ isDeleted: true, versionNonce: 40 });
   });
 
   it("Sol round 7: while a is being resized, newer a and b arrive (b takes a's old index); the deferred a is replayed and a later 0 still lands where a fresh load puts it", async () => {

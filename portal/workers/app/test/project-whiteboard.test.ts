@@ -205,7 +205,7 @@ describe("server-side write guards", () => {
     await client.next();
     // An element with no usable index is given one at the end of the board (#499), and sent back to its sender before the ack.
     client.send(batch(1, element("a", 1, 1, { index: "a1" }), element("b", 1, 2, { index: "a2" }), element("c", 1, 3, { index: "a3" }), { ...element("noindex", 1, 4), index: undefined }, element("bad", 1, 5, { index: 7 })));
-    expect(await client.next()).toMatchObject({ type: "elements", elements: [{ id: "noindex", version: 2 }, { id: "bad", version: 2 }] });
+    expect(await client.next()).toMatchObject({ type: "elements", elements: [{ id: "noindex", version: 1 }, { id: "bad", version: 1 }] });
     expect(await client.next()).toEqual({ type: "ack", seq: 1 });
     await save(client, 2, element("c", 2, 9, { index: "Zz" })); // sent to back
     client.ws.close(1000);
@@ -791,7 +791,6 @@ describe("write authorization against refreshAccess (#499, epoch at invocation)"
 // ----------------------------------------------------------------------------------------------------------------------
 // #499: the server guarantees unique, valid stored indices (the model test runs the same rules, `whiteboard-index.ts`, over
 // a Map; these pin the SQLite adapter and the Durable Object around it).
-const SERVER_NONCE = 2 ** 31 - 1;
 const BASE62 = /^[0-9A-Za-z]+$/;
 const indexesOf = (projectId: string) => runInDurableObject(stubFor(projectId), async (_instance, state) => state.storage.sql.exec("SELECT id, json_extract(json, '$.index') AS idx, version, version_nonce FROM elements ORDER BY id").toArray().map((row) => ({ id: row.id as string, index: row.idx as unknown, version: row.version as number, nonce: row.version_nonce as number })));
 const expectUnique = (rows: Array<{ index: unknown }>) => { const indices = rows.map((row) => row.index); expect(indices.every((index) => typeof index === "string" && BASE62.test(index))).toBe(true); expect(new Set(indices).size).toBe(indices.length); };
@@ -803,11 +802,11 @@ describe("stored indices are unique (#499)", () => {
     const a = await join(project, "member"); const b = await join(project, "member2");
     a.client.send(batch(1, element("a", 1, 10, { index: "a0" }))); expect(await a.client.next()).toEqual({ type: "ack", seq: 1 }); await b.client.next();
     b.client.send(batch(1, element("b", 1, 20, { index: "a0", x: 7 })));
-    const rewritten = { id: "b", index: "a1", x: 7, version: 2, versionNonce: SERVER_NONCE };
+    const rewritten = { id: "b", index: "a1", x: 7, version: 1, versionNonce: 20 };   // the SAME authored revision, at the stored index
     expect(await b.client.next()).toMatchObject({ type: "elements", elements: [rewritten] });
     expect(await b.client.next()).toEqual({ type: "ack", seq: 1 });
     expect(await a.client.next()).toMatchObject({ type: "elements", elements: [rewritten] });          // peers receive what was STORED, not what was sent
-    expect(await indexesOf(project)).toEqual([expect.objectContaining({ id: "a", index: "a0" }), expect.objectContaining({ id: "b", index: "a1", version: 2, nonce: SERVER_NONCE })]);
+    expect(await indexesOf(project)).toEqual([expect.objectContaining({ id: "a", index: "a0" }), expect.objectContaining({ id: "b", index: "a1", version: 1, nonce: 20 })]);
     a.client.ws.close(1000); b.client.ws.close(1000);
   });
 
@@ -815,7 +814,7 @@ describe("stored indices are unique (#499)", () => {
     const project = await newProject();
     const a = await join(project, "member"); const b = await join(project, "member2");
     a.client.send(batch(1, element("x", 1, 1, { index: "a0" }), element("y", 1, 2, { index: "a0" }), element("z", 1, 3, { index: "a0" })));
-    expect(await a.client.next()).toMatchObject({ type: "elements", elements: [{ id: "y", index: "a1", version: 2 }, { id: "z", index: "a0V", version: 2 }] });
+    expect(await a.client.next()).toMatchObject({ type: "elements", elements: [{ id: "y", index: "a1", version: 1 }, { id: "z", index: "a0V", version: 1 }] });
     expect(await a.client.next()).toEqual({ type: "ack", seq: 1 });
     expect(await b.client.next()).toMatchObject({ elements: [{ id: "x", index: "a0", version: 1 }, { id: "y", index: "a1" }, { id: "z", index: "a0V" }] });
     expectUnique(await indexesOf(project));
@@ -831,21 +830,19 @@ describe("stored indices are unique (#499)", () => {
     a.client.ws.close(1000);
   });
 
-  it("a re-keyed row loses every version tie: the sender's genuine edit at the same version wins and is re-keyed again, content kept", async () => {
+  it("a re-key keeps the authored revision: the sender's correction carries it, and a concurrent deletion with the lower nonce still wins (Sol round 9)", async () => {
     const project = await newProject();
-    const a = await join(project, "member");
-    await save(a.client, 1, element("a", 1, 10, { index: "a0" }));
-    a.client.send(batch(2, element("b", 1, 20, { index: "a0", x: 1 })));
-    expect(await a.client.next()).toMatchObject({ elements: [{ id: "b", version: 2, versionNonce: SERVER_NONCE, x: 1 }] }); await a.client.next();
-    // The sender edited b to v2 before it saw the correction: its nonce is lower than the server's, so it wins the tie.
-    a.client.send(batch(3, element("b", 2, SERVER_NONCE - 1, { index: "a0", x: 2 })));
-    expect(await a.client.next()).toMatchObject({ elements: [{ id: "b", version: 3, versionNonce: SERVER_NONCE, x: 2, index: "a1" }] });
-    expect(await a.client.next()).toEqual({ type: "ack", seq: 3 });
-    expect(await storedRow(project, "b")).toMatchObject({ x: 2, version: 3 });
-    // An edit that ties on version AND carries the server's nonce is no better than the row it ties with: nothing changes.
-    await save(a.client, 4, element("b", 3, SERVER_NONCE, { index: "a1", x: 99 }));
-    expect(await storedRow(project, "b")).toMatchObject({ x: 2, version: 3 });
-    a.client.ws.close(1000);
+    const a = await join(project, "member"); const b = await join(project, "member2");
+    await save(a.client, 1, element("e", 1, 10, { index: "a0" }), element("y", 1, 11, { index: "a1" }), element("x", 1, 12, { index: "a2" }));
+    await b.client.drain();
+    a.client.send(batch(2, element("e", 2, 50, { index: "a2", x: 5 })));                                 // collides with x
+    expect(await a.client.next()).toMatchObject({ type: "elements", elements: [{ id: "e", index: "a3", version: 2, versionNonce: 50, x: 5 }] });
+    expect(await a.client.next()).toEqual({ type: "ack", seq: 2 });
+    b.client.send(batch(1, { ...element("e", 2, 40, { index: "a0" }), isDeleted: true }));            // concurrent delete, lower nonce
+    await b.client.drain();
+    expect(await storedRow(project, "e")).toMatchObject({ isDeleted: true, version: 2, versionNonce: 40 });
+    expectUnique(await indexesOf(project));
+    a.client.ws.close(1000); b.client.ws.close(1000);
   });
 
   it("stores a missing, malformed or empty index as a valid unique one and keeps the element's content", async () => {
@@ -853,7 +850,7 @@ describe("stored indices are unique (#499)", () => {
     const a = await join(project, "member");
     a.client.send(batch(1, { ...element("m1", 1, 1, { x: 11 }), index: undefined }, element("m2", 1, 2, { x: 12, index: "!!" }), element("m3", 1, 3, { x: 13, index: "a0 " }), element("m4", 1, 4, { x: 14, index: 7 }), element("m5", 1, 5, { x: 15, index: "" }), element("m6", 1, 6, { x: 16, index: "a00" })));
     const back = await a.client.next() as { type: "elements"; elements: Array<Record<string, unknown>> };
-    expect(back.elements.map((entry) => [entry.id, entry.x, entry.version])).toEqual([["m1", 11, 2], ["m2", 12, 2], ["m3", 13, 2], ["m4", 14, 2], ["m5", 15, 2], ["m6", 16, 2]]);
+    expect(back.elements.map((entry) => [entry.id, entry.x, entry.version])).toEqual([["m1", 11, 1], ["m2", 12, 1], ["m3", 13, 1], ["m4", 14, 1], ["m5", 15, 1], ["m6", 16, 1]]);
     expect(await a.client.next()).toEqual({ type: "ack", seq: 1 });
     expectUnique(await indexesOf(project));
     a.client.ws.close(1000);
@@ -884,7 +881,7 @@ describe("stored indices are unique (#499)", () => {
     const told = await a.client.next() as { type: "elements"; elements: Array<Record<string, unknown>> };
     expect(told.type).toBe("elements");
     expect(told.elements.map((entry) => entry.id).sort()).toEqual(["q", "r", "s"]);                      // p kept a0 (lowest id), t was already unique
-    expect(told.elements.every((entry) => entry.version === 2 && entry.versionNonce === SERVER_NONCE)).toBe(true);
+    expect(told.elements.every((entry) => entry.version === 1)).toBe(true);
     expectUnique(await indexesOf(project));
     expect(await a.client.drain()).toEqual([]);
     // An already-unique table is a scan, not a rewrite: the next wake changes and announces nothing.

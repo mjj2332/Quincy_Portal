@@ -216,4 +216,14 @@ describe("an element under interaction keeps its identity through a re-key (#499
     expect(held.index).toBe("a0");
     expect(held).toMatchObject({ version: 1, versionNonce: 50 });
   });
+
+  it("an index correction (the server's row at the SAME revision) re-keys in place and changes no revision; one for another revision is ignored", () => {
+    let scene = loaded([rect("e", 2, 50, { index: "a2" })]);
+    const held = scene[0]!;
+    scene = mergeWhile(scene, [rect("e", 2, 50, { index: "a3" })], { newElement: held });
+    expect(find(scene, "e")).toBe(held);
+    expect(held).toMatchObject({ index: "a3", version: 2, versionNonce: 50 });
+    scene = mergeWhile(scene, [rect("e", 1, 9, { index: "a7" })], { newElement: held });          // an older revision: not a correction for this copy
+    expect(held).toMatchObject({ index: "a3", version: 2, versionNonce: 50 });
+  });
 });

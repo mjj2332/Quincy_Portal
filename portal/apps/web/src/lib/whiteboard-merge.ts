@@ -14,7 +14,7 @@ import type { ServerHold } from "./whiteboard-saver";
  * since), against a stored one. The merge moves THAT one, before Excalidraw sees it, with the same key generator the server
  * uses and no change of revision. Who keeps an index, in this order: incoming elements; local elements that are exactly what
  * the server holds ("stored"); local elements SENT and not yet acknowledged, at the index they were sent with ("in-flight":
- * the server keeps that index unless it answers, before the ack, with a re-keyed copy, so a local move of one is only
+ * the server keeps that index unless it answers, before the ack, with the stored row at a new index (same revision), so a local move of one is only
  * provisional and the next merge that frees the index undoes it); and last the unsent or edited ones. Whatever is in the
  * way goes just above what it hit, and the saver sends it with its new index. Excalidraw's own repair then has nothing to
  * do. Every revision is also put back afterwards, as a guard.
@@ -63,8 +63,18 @@ export function mergeRemote<E extends Revisioned>(local: readonly E[], remote: r
 
   // Who keeps their index, in priority order (see the header).
   const localById = new Map(local.map((element) => [element.id, element]));
-  const winning = restored.filter((element) => { const mine = localById.get(element.id); return !mine || whiteboardIncomingWins(mine, element); });
-  const skipped = new Set(winning.filter((element) => interacting.has(element.id) && localById.has(element.id)).map((element) => element.id));
+  // An INDEX CORRECTION: the server holds exactly this revision, at the index it sends (a re-key sent back at the revision it
+  // was authored with, a reconnect's stored rows, or the stored form of a revision this copy was sent as). A copy of exactly that
+  // revision takes the server's index, claims it first (an in-flight copy must not undo a provisional move back onto an index the
+  // server has given away), and changes nothing else (never a revision, so never an edit); one that holds
+  // another revision ignores it, and the revision it holds is decided, and re-keyed again if need be, when it reaches the server.
+  const corrections = new Map(restored.filter((element) => {
+    const mine = localById.get(element.id);
+    const index = indexOf(element);
+    return mine !== undefined && index !== undefined && mine.version === element.version && mine.versionNonce === element.versionNonce;
+  }).map((element) => [element.id, element]));
+  const winning = restored.filter((element) => { const mine = localById.get(element.id); return !mine || whiteboardIncomingWins(mine, element) || corrections.has(element.id); });
+  const skipped = new Set(winning.filter((element) => interacting.has(element.id) && localById.has(element.id) && !corrections.has(element.id)).map((element) => element.id));
   const incomingTaken = winning.filter((element) => !skipped.has(element.id));
   const superseded = new Set(incomingTaken.map((element) => element.id));
   const held = new Map<E, ServerHold>();
@@ -98,6 +108,7 @@ export function mergeRemote<E extends Revisioned>(local: readonly E[], remote: r
     else if (sent !== indexOf(element)) moved.set(element, rekeyed(element, sent!));   // undoes an earlier provisional move
   }
   for (const element of withState("none")) { wanted.set(element, indexOf(element)); if (!space.claim(indexOf(element), element.id)) blocked.push(element); }
+  for (const [id, correction] of corrections) { const mine = localById.get(id)!; if (indexOf(mine) !== indexOf(correction)) moved.set(mine, rekeyed(mine, indexOf(correction)!)); }   // in place for what a gesture holds
   for (const element of blocked) moved.set(element, rekeyed(element, space.place(wanted.get(element), element.id)));
   const before = new Map<object, Revision>();
   const inputs = local.map((element) => {
