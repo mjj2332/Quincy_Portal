@@ -366,7 +366,7 @@ export function QuincyRichTextEditor({
           <RichTextToolbarGroup label="Blocks">
             <DropdownMenu>
               <DropdownMenuTrigger
-                render={<Button variant="ghost" size="sm" aria-label="Heading" disabled={off(state.canHeading)} data-toolbar-item="" data-testid="rich-text-heading-menu" className="min-w-[112px] justify-between max-[721px]:h-11" />}
+                render={<Button variant="ghost" size="sm" aria-label="Heading" disabled={off(state.canHeading)} data-toolbar-item="" data-testid="rich-text-heading-menu" className="min-w-[8.5rem] justify-between max-[721px]:h-11" />}
               >
                 {HEADING_LABEL[state.blockType]}
                 <ChevronDownIcon aria-hidden="true" />

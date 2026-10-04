@@ -106,7 +106,7 @@ function readTable(editor: Editor | null): TableSnapshot {
 
 const TABLE_BUBBLE_KEY = "richTextTableBubble"
 
-const TABLE_BUBBLE_OPTIONS = { placement: "top-start", offset: 4 } as const
+const TABLE_BUBBLE_OPTIONS = { placement: "bottom-start", offset: 4 } as const
 
 function showInTable({
   editor,
