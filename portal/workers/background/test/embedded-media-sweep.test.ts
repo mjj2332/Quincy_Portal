@@ -5,6 +5,7 @@ import { sweepEmbeddedMedia } from "../src/embedded-media-sweep";
 const database = env as unknown as { DB: D1Database; MEDIA: R2Bucket };
 declare const __PORTAL_MIGRATION_SQL__: string;
 const day = 24 * 60 * 60 * 1000;
+const LEASE = 10 * 60 * 1000;
 const now = 1_800_000_000_000;
 const projectId = "c1111111-1111-4111-8111-111111111111";
 const userId = "c2222222-2222-4222-8222-222222222222";
@@ -29,7 +30,7 @@ async function seed(input: Seed) {
 }
 const exists = async (id: string) => (await database.DB.prepare("SELECT 1 AS one FROM embedded_media WHERE id = ?").bind(id).first()) !== null;
 const objectExists = async (key: string) => (await database.MEDIA.head(key)) !== null;
-const queueRow = (key: string) => database.DB.prepare("SELECT storage_key AS storageKey, upload_id AS uploadId, project_id AS projectId, attempts FROM embedded_media_cleanup WHERE storage_key = ?").bind(key).first<{ storageKey: string; uploadId: string | null; projectId: string | null; attempts: number }>();
+const queueRow = (key: string) => database.DB.prepare("SELECT storage_key AS storageKey, upload_id AS uploadId, project_id AS projectId, attempts, claimed_until AS claimedUntil FROM embedded_media_cleanup WHERE storage_key = ?").bind(key).first<{ storageKey: string; uploadId: string | null; projectId: string | null; attempts: number; claimedUntil: number | null }>();
 const queueSize = async () => (await database.DB.prepare("SELECT count(*) AS n FROM embedded_media_cleanup").first<{ n: number }>())!.n;
 const wrapMedia = (override: (target: R2Bucket, property: string | symbol) => unknown) => ({ ...env, MEDIA: new Proxy(database.MEDIA, { get: (target, property) => {
   const custom = override(target, property); if (custom !== undefined) return custom;
@@ -126,13 +127,13 @@ describe("embedded media sweep (#493)", () => {
     for (const key of stuck.keys) { expect(await queueRow(key)).toBeNull(); expect(await objectExists(key)).toBe(false); }
   });
 
-  it("moves an expired uploading row to the queue in one step instead of deleting its objects, and drains it (claiming the entry before the abort) in the same run", async () => {
+  it("moves an expired uploading row to the queue in one step instead of deleting its objects, and drains it in the same run", async () => {
     const row = await seed({ state: "uploading", createdAt: now - 8 * day, uploadId: "s3-upload-2" });
     let queuedWhileAborting: unknown = "not seen";
     const watching = wrapMedia((_t, property) => property === "resumeMultipartUpload" ? (_key: string, _uploadId: string) => ({ abort: async () => { queuedWhileAborting = await queueRow(row.keys[0]!); } }) : undefined);
     expect(await sweepEmbeddedMedia(watching as typeof env, now)).toMatchObject({ scanned: 1, reclaimed: 1, drained: 1 });
-    // Claim-first: the sweep owns the entry by deleting it before it aborts, so a poster adoption can no longer fence on it.
-    expect(queuedWhileAborting).toBeNull();
+    // The entry stays (leased, not deleted) while the abort runs, so ownership is durable.
+    expect(queuedWhileAborting).toMatchObject({ uploadId: "s3-upload-2", projectId, claimedUntil: now + LEASE });
     expect(await exists(row.id)).toBe(false); expect(await objectExists(row.keys[0]!)).toBe(false); expect(await queueSize()).toBe(0);
   });
 
@@ -253,44 +254,94 @@ describe("embedded media sweep claims keys it deletes (#494)", () => {
   });
 });
 
-describe("embedded media sweep dequeues only the entry it drained (#494)", () => {
+describe("embedded media sweep leases a queue entry and deletes it only after the cleanup succeeded (#494)", () => {
   // The app worker's `enqueueEmbeddedMediaCleanup` upsert, as the poster route's failed-adoption path runs it.
   const REENQUEUE = `INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) VALUES (?, ?, ?, ?)
-    ON CONFLICT(storage_key) DO UPDATE SET project_id = COALESCE(embedded_media_cleanup.project_id, excluded.project_id), upload_id = COALESCE(embedded_media_cleanup.upload_id, excluded.upload_id), queued_at = MAX(embedded_media_cleanup.queued_at + 1, excluded.queued_at)`;
-
-  it("keeps an entry that was re-queued while the drain was between deleting the object and dequeuing it, and reclaims the new object next run", async () => {
-    const key = `projects/${projectId}/embedded-media/${crypto.randomUUID()}/poster-race`;
+    ON CONFLICT(storage_key) DO UPDATE SET project_id = COALESCE(embedded_media_cleanup.project_id, excluded.project_id), upload_id = COALESCE(embedded_media_cleanup.upload_id, excluded.upload_id), queued_at = MAX(embedded_media_cleanup.queued_at + 1, excluded.queued_at), claimed_until = NULL`;
+  const queueKey = async (suffix: string, entry: { uploadId?: string | null; attempts?: number; claimedUntil?: number | null } = {}) => {
+    const key = `projects/${projectId}/embedded-media/${crypto.randomUUID()}/${suffix}`;
     await database.MEDIA.put(key, "jpeg");
-    await database.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) VALUES (?, NULL, ?, ?)").bind(key, projectId, now).run();
-    // The sweep deleted the object and is paused before its dequeue: meanwhile the late poster PUT lands, adoption loses, its delete fails and the key is queued again (same millisecond).
+    await database.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at, attempts, claimed_until) VALUES (?, ?, ?, ?, ?, ?)").bind(key, entry.uploadId ?? null, projectId, now, entry.attempts ?? 0, entry.claimedUntil ?? null).run();
+    return key;
+  };
+  const failingDelete = (extra?: (target: R2Bucket, property: string | symbol) => unknown) => wrapMedia((target, property) => extra?.(target, property) ?? (property === "delete" ? async () => { throw new Error("R2 down"); } : undefined));
+  /** Makes the database refuse the best-effort lease release, the second failure of the scenario Sol reproduced. */
+  const refusingRelease = (base: ReturnType<typeof wrapMedia>) => ({ ...base, DB: new Proxy(database.DB, { get: (target, property) => {
+    if (property !== "prepare") { const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value; }
+    return (sql: string) => { if (/SET claimed_until = NULL/.test(sql)) throw new Error("D1 down"); return target.prepare(sql); };
+  } }) });
+
+  it("(a) keeps the entry, leased, when the R2 delete fails and the lease release fails too, and the next sweep after the lease expires reclaims it", async () => {
+    const key = await queueKey("poster-stuck");
+    expect(await sweepEmbeddedMedia(refusingRelease(failingDelete()) as never, now)).toMatchObject({ drained: 0 });
+    expect(await queueRow(key)).toMatchObject({ projectId, attempts: 1, claimedUntil: now + LEASE });
+    expect(await objectExists(key)).toBe(true);
+    // Still inside the lease: nobody else touches it.
+    expect(await sweepEmbeddedMedia(env, now + 1)).toMatchObject({ drained: 0 });
+    expect(await queueRow(key)).toMatchObject({ attempts: 1, claimedUntil: now + LEASE }); expect(await objectExists(key)).toBe(true);
+    // Once the lease is past, the entry is claimable again and the object goes.
+    expect(await sweepEmbeddedMedia(env, now + LEASE + 1)).toMatchObject({ drained: 1 });
+    expect(await queueRow(key)).toBeNull(); expect(await objectExists(key)).toBe(false);
+  });
+
+  it("releases the lease when the cleanup fails, with the attempt counted, so the next sweep retries at once", async () => {
+    const key = await queueKey("poster-retry");
+    expect(await sweepEmbeddedMedia(failingDelete() as never, now)).toMatchObject({ drained: 0 });
+    expect(await queueRow(key)).toMatchObject({ attempts: 1, claimedUntil: null }); expect(await objectExists(key)).toBe(true);
+    expect(await sweepEmbeddedMedia(env, now)).toMatchObject({ drained: 1 });
+    expect(await queueRow(key)).toBeNull(); expect(await objectExists(key)).toBe(false);
+  });
+
+  it("(e) concurrent sweeps: only one claims the entry, so the object is deleted once", async () => {
+    const key = await queueKey("poster-concurrent");
+    const deleted: unknown[] = [];
+    const counting = wrapMedia((target, property) => property === "delete" ? async (keys: unknown) => { deleted.push(keys); await new Promise((resolve) => setTimeout(resolve, 20)); return target.delete(keys as string); } : undefined);
+    const results = await Promise.all([sweepEmbeddedMedia(counting as never, now), sweepEmbeddedMedia(counting as never, now)]);
+    expect(deleted).toEqual([key]);
+    expect(results.reduce((total, result) => total + result.drained, 0)).toBe(1);
+    expect(await queueRow(key)).toBeNull(); expect(await objectExists(key)).toBe(false);
+  });
+
+  it("skips an entry another sweep holds a lease on, without counting an attempt", async () => {
+    const key = await queueKey("poster-leased", { claimedUntil: now + 1000 });
+    expect(await sweepEmbeddedMedia(env, now)).toMatchObject({ drained: 0 });
+    expect(await queueRow(key)).toMatchObject({ attempts: 0, claimedUntil: now + 1000 }); expect(await objectExists(key)).toBe(true);
+  });
+
+  it("(f) keeps the upload id through a failed abort, and aborts with it on the retry", async () => {
+    const key = await queueKey("original", { uploadId: "u-9" });
+    const aborts: Array<[string, string]> = [];
+    const refused = wrapMedia((_t, property) => property === "resumeMultipartUpload" ? () => ({ abort: async () => { throw new Error("R2 down"); } }) : undefined);
+    expect(await sweepEmbeddedMedia(refused as never, now)).toMatchObject({ drained: 0 });
+    expect(await queueRow(key)).toMatchObject({ uploadId: "u-9", attempts: 1, claimedUntil: null }); expect(await objectExists(key)).toBe(true);
+    const working = wrapMedia((_t, property) => property === "resumeMultipartUpload" ? (k: string, uploadId: string) => ({ abort: async () => { aborts.push([k, uploadId]); } }) : undefined);
+    expect(await sweepEmbeddedMedia(working as never, now)).toMatchObject({ drained: 1 });
+    expect(aborts).toEqual([[key, "u-9"]]);
+    expect(await queueRow(key)).toBeNull(); expect(await objectExists(key)).toBe(false);
+  });
+
+  it("keeps an entry that was re-queued while the sweep held its lease (the re-queue clears the lease), and reclaims the new object next run", async () => {
+    const key = await queueKey("poster-race");
     const paused = wrapMedia((target, property) => property === "delete" ? async (keys: string | string[]) => {
       await target.delete(keys);
       await database.MEDIA.put(key, "jpeg-late");
       await database.DB.prepare(REENQUEUE).bind(key, null, projectId, now).run();
     } : undefined);
-    // Claim-first: this run claimed the entry it read and deleted that object; the re-queue is a new entry for the new object.
-    expect(await sweepEmbeddedMedia(paused as never, now)).toMatchObject({ drained: 1 });
-    expect(await queueRow(key)).not.toBeNull();
-    expect(await objectExists(key)).toBe(true);
+    expect(await sweepEmbeddedMedia(paused as never, now)).toMatchObject({ drained: 0 });
+    expect(await queueRow(key)).toMatchObject({ claimedUntil: null }); expect(await objectExists(key)).toBe(true);
     expect(await sweepEmbeddedMedia(env, now + 1)).toMatchObject({ drained: 1 });
-    expect(await queueRow(key)).toBeNull();
-    expect(await objectExists(key)).toBe(false);
+    expect(await queueRow(key)).toBeNull(); expect(await objectExists(key)).toBe(false);
   });
-});
 
-describe("embedded media sweep claims a queue entry before deleting its object (#494)", () => {
-  it("leaves a poster alone when its adoption won between the sweep's read and its claim: the entry is gone, so the claim loses and nothing is deleted", async () => {
+  it("(c) leaves a poster alone when its adoption won between the sweep's read and its claim: the entry is gone, so the claim matches nothing", async () => {
     const stale = await seed({ state: "pending", createdAt: now });
-    const key = `projects/${projectId}/embedded-media/${stale.id}/poster-live`;
-    await database.MEDIA.put(key, "jpeg");
-    await database.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) VALUES (?, NULL, ?, ?)").bind(key, projectId, now).run();
-    // The poster PUT's adoption batch lands after the sweep has read the entry and before it claims it: it sets the row's poster and removes the entry.
+    const key = await queueKey("poster-live");
     let adopted = false;
     const racing = { ...env, DB: new Proxy(database.DB, { get: (target, property) => {
       if (property !== "prepare") { const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value; }
       return (sql: string) => {
         const statement = target.prepare(sql);
-        if (!/^\s*DELETE FROM embedded_media_cleanup/.test(sql) || adopted) return statement;
+        if (!/^\s*UPDATE embedded_media_cleanup SET claimed_until/.test(sql)) return statement;
         return new Proxy(statement, { get: (inner, k) => {
           if (k !== "bind") { const v = Reflect.get(inner, k); return typeof v === "function" ? v.bind(inner) : v; }
           return (...values: unknown[]) => { const bound = inner.bind(...values); return new Proxy(bound, { get: (b, kk) => {
@@ -307,15 +358,5 @@ describe("embedded media sweep claims a queue entry before deleting its object (
     expect(adopted).toBe(true);
     expect(await objectExists(key)).toBe(true);
     expect(await database.DB.prepare("SELECT poster_key AS k FROM embedded_media WHERE id = ?").bind(stale.id).first<{ k: string }>()).toEqual({ k: key });
-  });
-
-  it("re-queues an entry whose object R2 refused to delete, with a counted attempt, so ownership is never lost between the claim and the delete", async () => {
-    const key = `projects/${projectId}/embedded-media/${crypto.randomUUID()}/poster-stuck`;
-    await database.MEDIA.put(key, "jpeg");
-    await database.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at, attempts) VALUES (?, 'u-1', ?, ?, 2)").bind(key, projectId, now).run();
-    const failing = wrapMedia((_t, property) => property === "delete" ? async () => { throw new Error("R2 down"); } : property === "resumeMultipartUpload" ? () => ({ abort: async () => undefined }) : undefined);
-    expect(await sweepEmbeddedMedia(failing as never, now)).toMatchObject({ drained: 0 });
-    expect(await queueRow(key)).toMatchObject({ uploadId: "u-1", projectId, attempts: 3 });
-    expect(await objectExists(key)).toBe(true);
   });
 });

@@ -4,6 +4,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { externalEmbeddedMediaPresignSchema } from "@quincy/shared";
 import { createAuth } from "../src/auth";
 import { app } from "../src/index";
+import { enqueueEmbeddedMediaCleanup } from "../src/lib/embedded-media";
 import { CommentMediaConflictError, createProjectComment, editProjectComment } from "../src/lib/project-comments";
 import type { Env } from "../src/env";
 import { baseEnv, cookie, database, ids, imageDoc, jpegBytes, mediaKey, mediaRow, mp4Bytes, pngBytes, request, seedFixture, seedMedia, tokens, type Who } from "./embedded-media-support";
@@ -239,7 +240,7 @@ describe("PUT …/poster (#494)", () => {
     expect(await queued(written)).not.toBeNull();
   });
 
-  it("does not adopt a poster whose cleanup entry the sweep claimed while the PUT was pending: the object is deleted and the row keeps no poster", async () => {
+  it("does not adopt a poster whose cleanup entry the sweep claimed, cleaned and dequeued while the PUT was pending: the object is deleted and the row keeps no poster", async () => {
     const { id } = await pending();
     let written = "";
     const racing = wrapMedia((target, property) => property === "put" ? async (key: string, ...rest: unknown[]) => {
@@ -250,6 +251,52 @@ describe("PUT …/poster (#494)", () => {
     expect((await putPoster("member", id, jpegBytes(64), racing)).status).toBe(409);
     expect((await mediaRow(id))!.poster_key).toBeNull();
     expect(await database.MEDIA.head(written)).toBeNull(); expect(await queued(written)).toBeNull();
+  });
+
+  it("refuses to adopt a poster whose cleanup entry the sweep holds a lease on, even an expired one: the object is deleted, no orphan", async () => {
+    for (const claimedUntil of [Date.now() + 600_000, 1]) {
+      const { id } = await pending();
+      let written = "";
+      const racing = wrapMedia((target, property) => property === "put" ? async (key: string, ...rest: unknown[]) => {
+        written = key; const result = await (target.put as (...a: unknown[]) => Promise<unknown>).call(target, key, ...rest);
+        await database.DB.prepare("UPDATE embedded_media_cleanup SET claimed_until = ? WHERE storage_key = ?").bind(claimedUntil, key).run();
+        return result;
+      } : undefined);
+      expect((await putPoster("member", id, jpegBytes(64), racing)).status, String(claimedUntil)).toBe(409);
+      expect((await mediaRow(id))!.poster_key).toBeNull();
+      expect(await database.MEDIA.head(written)).toBeNull(); expect(await queued(written)).toBeNull();
+    }
+  });
+
+  it("when a claimed poster is refused and R2 will not delete it, the key is re-queued unclaimed with a newer queued_at, so a sweep's own dequeue cannot remove it", async () => {
+    const { id } = await pending();
+    let written = ""; let leaseHeld = 0;
+    const racing = wrapMedia((target, property) => {
+      if (property === "delete") return async () => { throw new Error("R2 down"); };
+      if (property === "put") return async (key: string, ...rest: unknown[]) => {
+        written = key; const result = await (target.put as (...a: unknown[]) => Promise<unknown>).call(target, key, ...rest);
+        leaseHeld = Date.now() + 600_000;
+        await database.DB.prepare("UPDATE embedded_media_cleanup SET claimed_until = ? WHERE storage_key = ?").bind(leaseHeld, key).run();
+        return result;
+      };
+      return undefined;
+    });
+    expect((await putPoster("member", id, jpegBytes(64), racing)).status).toBe(409);
+    expect(await database.MEDIA.head(written)).not.toBeNull();
+    const entry = await database.DB.prepare("SELECT claimed_until AS claimedUntil FROM embedded_media_cleanup WHERE storage_key = ?").bind(written).first<{ claimedUntil: number | null }>();
+    expect(entry).toEqual({ claimedUntil: null });
+    // The sweep that held the lease finishes and tries to dequeue under its own lease value: it matches nothing, so the entry survives.
+    const dequeue = await database.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ? AND claimed_until = ?").bind(written, leaseHeld).run();
+    expect(dequeue.meta.changes).toBe(0);
+    expect(await queued(written)).not.toBeNull();
+  });
+
+  it("a poster adopted before any sweep claims it leaves no queue entry for a sweep to take", async () => {
+    const { id } = await pending();
+    expect((await putPoster("member", id, jpegBytes(64))).status).toBe(204);
+    const posterKey = (await mediaRow(id))!.poster_key as string;
+    expect(await queued(posterKey)).toBeNull();
+    expect(await database.MEDIA.head(posterKey)).not.toBeNull();
   });
 
   it("leaves no orphan when the Project cascades away mid-write: with R2 refusing the delete, the key waits in the cleanup queue", async () => {
@@ -307,6 +354,17 @@ describe("POST …/abort (#494)", () => {
     expect((await abort("member", id, failing)).status).toBe(204);
     expect(await mediaRow(id)).toBeNull();
     expect(await queued(key)).toMatchObject({ uploadId: "stuck-upload", projectId: ids.project });
+  });
+
+  it("leaves the queue entry alone when a sweep took a lease on it while the cancel's own delete was running", async () => {
+    const { id, key } = await seedMedia({ kind: "video", state: "uploading", uploadId: null });
+    const sweeping = wrapMedia((target, property) => property === "delete" ? async (keys: string | string[]) => {
+      await database.DB.prepare("UPDATE embedded_media_cleanup SET claimed_until = ? WHERE storage_key = ?").bind(Date.now() + 600_000, key).run();
+      return target.delete(keys);
+    } : undefined);
+    expect((await abort("member", id, sweeping)).status).toBe(204);
+    expect(await mediaRow(id)).toBeNull();
+    expect(await queued(key)).not.toBeNull();
   });
 
   it("treats an upload R2 no longer knows as already dead", async () => {
@@ -562,5 +620,14 @@ describe("a comment with a video (#494)", () => {
     expect(await mediaRow(id)).toMatchObject({ state: "pending", owner_id: null });
     const presignResponse = await appRequest(S3_ENV, "/api/notice-board/embedded-media", "member", "POST", { contentType: "video/mp4", bytes: 1000 });
     expect(presignResponse.status).toBe(400);
+  });
+});
+
+describe("enqueueEmbeddedMediaCleanup and the lease (#494)", () => {
+  it("re-queueing a key bumps queued_at and clears any lease on it, keeping its upload id", async () => {
+    const key = `projects/${ids.project}/embedded-media/${crypto.randomUUID()}/original`;
+    await database.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at, attempts, claimed_until) VALUES (?, 'u-1', ?, 1000, 2, ?)").bind(key, ids.project, 9_999_999_999_999).run();
+    await enqueueEmbeddedMediaCleanup(database.DB, [{ key, projectId: ids.project }], 1000);
+    expect(await database.DB.prepare("SELECT upload_id AS uploadId, queued_at AS queuedAt, attempts, claimed_until AS claimedUntil FROM embedded_media_cleanup WHERE storage_key = ?").bind(key).first()).toEqual({ uploadId: "u-1", queuedAt: 1001, attempts: 2, claimedUntil: null });
   });
 });

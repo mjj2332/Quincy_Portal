@@ -40,7 +40,7 @@ export async function enqueueEmbeddedMediaCleanup(db: D1Database, entries: Clean
   if (!entries.length) return;
   await db.batch(entries.map((entry) => db.prepare(`
     INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) VALUES (?, ?, ?, ?)
-    ON CONFLICT(storage_key) DO UPDATE SET project_id = COALESCE(embedded_media_cleanup.project_id, excluded.project_id), upload_id = COALESCE(embedded_media_cleanup.upload_id, excluded.upload_id), queued_at = MAX(embedded_media_cleanup.queued_at + 1, excluded.queued_at)
+    ON CONFLICT(storage_key) DO UPDATE SET project_id = COALESCE(embedded_media_cleanup.project_id, excluded.project_id), upload_id = COALESCE(embedded_media_cleanup.upload_id, excluded.upload_id), queued_at = MAX(embedded_media_cleanup.queued_at + 1, excluded.queued_at), claimed_until = NULL
   `).bind(entry.key, entry.uploadId ?? null, entry.projectId ?? null, now)));
 }
 
@@ -53,7 +53,7 @@ export async function enqueueEmbeddedMediaCleanup(db: D1Database, entries: Clean
 export async function claimAndDiscardUploadingMedia(env: Pick<Env, "DB" | "MEDIA">, row: Pick<EmbeddedMediaRow, "id" | "originalKey" | "uploadId" | "projectId">): Promise<boolean> {
   if (!await claimUploadingMedia(env.DB, row.id)) return false;
   if (await deleteEmbeddedMediaObjects(env, [{ originalKey: row.originalKey, displayKey: null, posterKey: null }])) {
-    await env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ?").bind(row.originalKey).run();
+    await env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ? AND claimed_until IS NULL").bind(row.originalKey).run();
   }
   return true;
 }
@@ -64,7 +64,7 @@ async function claimUploadingMedia(db: D1Database, mediaId: string): Promise<boo
     db.prepare(`
       INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at)
       SELECT original_key, upload_id, project_id, ? FROM embedded_media WHERE id = ? AND state = 'uploading'
-      ON CONFLICT(storage_key) DO UPDATE SET project_id = COALESCE(embedded_media_cleanup.project_id, excluded.project_id), upload_id = COALESCE(embedded_media_cleanup.upload_id, excluded.upload_id), queued_at = MAX(embedded_media_cleanup.queued_at + 1, excluded.queued_at)
+      ON CONFLICT(storage_key) DO UPDATE SET project_id = COALESCE(embedded_media_cleanup.project_id, excluded.project_id), upload_id = COALESCE(embedded_media_cleanup.upload_id, excluded.upload_id), queued_at = MAX(embedded_media_cleanup.queued_at + 1, excluded.queued_at), claimed_until = NULL
     `).bind(Date.now(), mediaId),
     db.prepare("DELETE FROM embedded_media WHERE id = ? AND state = 'uploading'").bind(mediaId),
   ]);
@@ -92,7 +92,7 @@ export async function claimAndAbortUploadingMedia(env: Pick<Env, "DB" | "MEDIA">
     catch (error) { dead = isMissingUpload(error); }
   }
   if (dead && await deleteEmbeddedMediaObjects(env, [{ originalKey: row.originalKey, displayKey: null, posterKey: null }])) {
-    await env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ?").bind(row.originalKey).run();
+    await env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ? AND claimed_until IS NULL").bind(row.originalKey).run();
   }
   return true;
 }

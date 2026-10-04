@@ -1360,7 +1360,7 @@ projectsRoutes.delete("/projects/:id", terminalRoute("/projects/:id", async (c) 
     .map((row) => row.storage_key).filter((key) => deletedKeys.has(key) && !unresolved.has(key));
   for (let index = 0; index < mine.length; index += 50) {
     const chunk = mine.slice(index, index + 50);
-    await c.env.DB.prepare(`DELETE FROM embedded_media_cleanup WHERE queued_at = ? AND storage_key IN (${chunk.map(() => "?").join(",")})`).bind(deletedAt, ...chunk).run();
+    await c.env.DB.prepare(`DELETE FROM embedded_media_cleanup WHERE queued_at = ? AND claimed_until IS NULL AND storage_key IN (${chunk.map(() => "?").join(",")})`).bind(deletedAt, ...chunk).run();
   }
   return c.json({ ok: true, deletedObjects: keys.length });
 }));
