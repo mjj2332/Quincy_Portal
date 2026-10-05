@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { createDb, schema } from "@quincy/db";
 import { eq } from "drizzle-orm";
-import { WHITEBOARD_VERSIONS_RETAINED, whiteboardRestoreRequestSchema, type WhiteboardMode, type WhiteboardVersionsResponse } from "@quincy/shared";
+import { isSupportedWhiteboardProtocol, WHITEBOARD_VERSIONS_RETAINED, whiteboardRestoreRequestSchema, type WhiteboardMode, type WhiteboardVersionsResponse } from "@quincy/shared";
 import type { AppEnv } from "../env";
 import { hasProjectCollaborationAccess } from "../middleware/capability";
 import { terminalRoute } from "../lib/terminal-route";
@@ -17,7 +17,7 @@ export const projectWhiteboardRoutes = new Hono<AppEnv>();
  * #498 (ADR 0017): the Project whiteboard's WebSocket upgrade. Authorisation happens HERE, before
  * a Durable Object is ever addressed, so a refused request creates none:
  *   session (the `api` router's `requireSession`) -> Origin -> collaboration access -> Project row
- *   -> Upgrade header -> mode from the Project's archived state.
+ *   -> Upgrade header -> protocol (#501) -> mode from the Project's archived state.
  * The Origin check is explicit because `requireAppOrigin` only guards unsafe methods and a
  * WebSocket handshake is a GET: without it any site could open a socket with the user's cookie.
  * The Durable Object receives identity, mode and the display name (URI-encoded: a header is a
@@ -37,6 +37,8 @@ projectWhiteboardRoutes.get("/projects/:projectId/whiteboard/socket", terminalRo
   const project = await createDb(c.env.DB).select({ archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
   if (!project) return c.json({ error: "Project not found" }, 404);
   if (c.req.header("Upgrade")?.toLowerCase() !== "websocket") return c.json({ error: "Expected a WebSocket upgrade" }, 426);
+  // #501: a tab loaded before images and videos existed would sweep every image element and author its deletion for everyone, so it never joins.
+  if (!isSupportedWhiteboardProtocol(c.req.query("protocol"))) return c.json({ error: "This page is out of date. Reload it to open the whiteboard.", code: "client_outdated" }, 426);
   const mode: WhiteboardMode = project.archivedAt ? "view" : "edit";
   const stub = c.env.PROJECT_WHITEBOARD.get(c.env.PROJECT_WHITEBOARD.idFromName(projectId));
   return stub.fetch(new Request("https://whiteboard.internal/socket", {

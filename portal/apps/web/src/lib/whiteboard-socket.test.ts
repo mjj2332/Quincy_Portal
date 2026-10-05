@@ -33,11 +33,11 @@ afterEach(() => vi.useRealTimers());
 describe("whiteboard socket", () => {
   it("connects to the wss route and hands the first init to the board", () => {
     const { handlers, current } = setup();
-    expect(current().url).toBe("wss://portal.example/api/projects/p1/whiteboard/socket");
+    expect(current().url).toBe("wss://portal.example/api/projects/p1/whiteboard/socket?protocol=2");
     current().open(); current().receive(init("edit", [{ id: "a" }]));
     expect(handlers.onInit).toHaveBeenCalledWith({ mode: "edit", generation: 1, elements: [{ id: "a" }], sessionId: "s1", peers: [] }, false);
     expect(handlers.onConnection).toHaveBeenLastCalledWith("open");
-    expect(whiteboardSocketUrl("p1", "http://localhost:5173")).toBe("ws://localhost:5173/api/projects/p1/whiteboard/socket");
+    expect(whiteboardSocketUrl("p1", "http://localhost:5173")).toBe("ws://localhost:5173/api/projects/p1/whiteboard/socket?protocol=2");
   });
 
   it("resolves a send on its ack and rejects it when the board rejects", async () => {

@@ -16,8 +16,11 @@ import { abortEmbeddedMedia, claimAndDiscardUploadingMedia, discardUnreferencedO
 import { jsonInput } from "./helpers";
 
 const uuid = z.string().uuid();
-/** A Project's discussion takes images and videos (#494); each kind has its own size cap. */
-const presignInput = z.object({ contentType: z.enum([...EMBEDDED_IMAGE_CONTENT_TYPES, ...EMBEDDED_VIDEO_CONTENT_TYPES]), bytes: z.number().int().min(1) }).strict()
+/**
+ * A Project's discussion takes images and videos (#494); each kind has its own size cap. `owner` (#501) says what the upload is for:
+ * the discussion (the default) or the Project's whiteboard. A whiteboard upload takes the same types and sizes and is never attachable to a comment.
+ */
+const presignInput = z.object({ contentType: z.enum([...EMBEDDED_IMAGE_CONTENT_TYPES, ...EMBEDDED_VIDEO_CONTENT_TYPES]), bytes: z.number().int().min(1), owner: z.enum(["discussion", "whiteboard"]).optional() }).strict()
   .superRefine((value, context) => { if (value.bytes > embeddedMediaMaxBytes(embeddedMediaKindFor(value.contentType)!)) context.addIssue({ code: "custom", path: ["bytes"], message: "File is too large" }); });
 const completeInput = z.object({ parts: z.array(z.object({ partNumber: z.number().int().positive(), etag: z.string().min(1) }).strict()).optional() }).strict();
 
@@ -39,11 +42,12 @@ embeddedMediaRoutes.post("/projects/:projectId/embedded-media", terminalRoute("/
   const data = await jsonInput(c, presignInput); if (data instanceof Response) return data;
   const user = c.get("user"); const mediaId = newId(); const key = embeddedMediaObjectKey(projectId, mediaId); const now = Date.now();
   const kind = embeddedMediaKindFor(data.contentType)!;
+  const ownerKind = data.owner === "whiteboard" ? "whiteboard" : "project_comment";
   // Fenced on the Project still being live, so a reservation never lands in an archived Project.
   const reserved = await c.env.DB.prepare(`
     INSERT INTO embedded_media (id, owner_kind, owner_id, project_id, uploader_id, kind, content_type, bytes, original_key, state, created_at, updated_at)
-    SELECT ?, 'project_comment', NULL, id, ?, ?, ?, ?, ?, 'uploading', ?, ? FROM projects WHERE id = ? AND archived_at IS NULL
-  `).bind(mediaId, user.id, kind, data.contentType, data.bytes, key, now, now, projectId).run();
+    SELECT ?, ?, NULL, id, ?, ?, ?, ?, ?, 'uploading', ?, ? FROM projects WHERE id = ? AND archived_at IS NULL
+  `).bind(mediaId, ownerKind, user.id, kind, data.contentType, data.bytes, key, now, now, projectId).run();
   if ((reserved.meta.changes ?? 0) !== 1) return c.json({ error: "Archived projects cannot accept media", code: "project_archived" }, 409);
   const release = () => c.env.DB.prepare("DELETE FROM embedded_media WHERE id = ? AND state = 'uploading'").bind(mediaId).run();
   let multipart: Awaited<ReturnType<typeof createMultipartPresign>>;
@@ -65,7 +69,7 @@ embeddedMediaRoutes.post("/projects/:projectId/embedded-media", terminalRoute("/
     await release();
     return c.json({ error: "This project can no longer accept media", code: "project_unavailable" }, 409);
   }
-  await audit(c.env, user, "embedded_media.presign", "embedded_media", mediaId, { projectId, bytes: data.bytes, contentType: data.contentType });
+  await audit(c.env, user, "embedded_media.presign", "embedded_media", mediaId, { projectId, bytes: data.bytes, contentType: data.contentType, ownerKind });
   return c.json(externalEmbeddedMediaPresignSchema.parse({ mediaId, uploadId: multipart.uploadId, partUrls: multipart.partUrls, partBytes: multipart.partBytes }));
 }));
 
@@ -74,6 +78,8 @@ embeddedMediaRoutes.put("/projects/:projectId/embedded-media/:mediaId/direct", t
   const projectId = c.req.param("projectId"); const mediaId = c.req.param("mediaId");
   if (!uuid.safeParse(projectId).success || !uuid.safeParse(mediaId).success) return c.json({ error: "Invalid media upload" }, 400);
   const project = await collaborationGate(c, projectId); if (project instanceof Response) return project;
+  // A reservation made before the Project was archived takes no bytes afterwards (as `complete` and the poster refuse too).
+  if (project.archivedAt) return c.json({ error: "Archived projects cannot accept media", code: "project_archived" }, 409);
   const row = await getEmbeddedMedia(c.env.DB, mediaId);
   if (!row || row.projectId !== projectId || row.uploaderId !== c.get("user").id || row.state !== "uploading") return c.json({ error: "Media upload is unavailable" }, 404);
   await c.env.MEDIA.put(row.originalKey, c.req.raw.body, { httpMetadata: { contentType: row.contentType } });

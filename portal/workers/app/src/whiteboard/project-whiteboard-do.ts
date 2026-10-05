@@ -69,7 +69,8 @@ const failure = (status: Extract<RestoreResult, { ok: false }>["status"], code: 
  * a winning batch marks the board dirty INSIDE its transaction, the last socket to leave asks for a snapshot (through the alarm),
  * `alarm()` runs whatever is due, and `restoreVersion` swaps the scene for a snapshot's rows under `blockConcurrencyWhile`. A restore
  * bumps the board GENERATION; a batch that does not carry the current generation is refused, so a restored scene is never merged
- * with an older tab's edits. Media arrives with #501.
+ * with an older tab's edits. Board images and videos (#501) are `image` elements that REFERENCE embedded media (a UUID fileId and
+ * `customData.quincyMedia.kind`): this object validates their shape only and never relays bytes, and snapshot.ts attaches and detaches the media rows.
  *
  * Uses the hibernation API: sockets are accepted through `ctx.acceptWebSocket`, so the object can
  * be evicted while clients stay connected.

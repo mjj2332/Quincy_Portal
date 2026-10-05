@@ -52,7 +52,7 @@ export function mp4Bytes(size = 4096, brand = "isom"): Uint8Array { const bytes 
 export const mediaKey = (projectId: string, mediaId: string) => `projects/${projectId}/embedded-media/${mediaId}/original`;
 export const noticeMediaKey = (mediaId: string) => `notice-board/embedded-media/${mediaId}/original`;
 
-export type MediaRowInput = { id?: string; ownerKind?: "project_comment" | "notice_post"; kind?: "image" | "video" | "preview_image"; projectId?: string; uploader?: string; state?: "uploading" | "pending" | "attached" | "detached"; ownerId?: string | null; bytes?: number; contentType?: string; detachedAt?: number | null; createdAt?: number; uploadId?: string | null; object?: Uint8Array | null; poster?: boolean };
+export type MediaRowInput = { id?: string; ownerKind?: "project_comment" | "notice_post" | "whiteboard"; kind?: "image" | "video" | "preview_image"; projectId?: string; uploader?: string; state?: "uploading" | "pending" | "attached" | "detached"; ownerId?: string | null; bytes?: number; contentType?: string; detachedAt?: number | null; createdAt?: number; uploadId?: string | null; object?: Uint8Array | null; poster?: boolean };
 /** Inserts a row and (unless `object: null`) its stored object, in the state a test needs. */
 export async function seedMedia(input: MediaRowInput = {}) {
   const id = input.id ?? crypto.randomUUID(); const notice = input.ownerKind === "notice_post"; const projectId = notice ? null : (input.projectId ?? ids.project); const state = input.state ?? "pending";
