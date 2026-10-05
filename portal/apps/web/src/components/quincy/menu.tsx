@@ -42,6 +42,12 @@ const PANEL = cn(
 export const MENU_ITEM =
   "flex items-center w-full min-h-[32px] max-[721px]:min-h-[44px] px-[var(--space-3)] py-[var(--space-2)] cursor-pointer " +
   "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground " +
+  // The global unlayered `:focus-visible` outline (tokens/base.css:25) paints on the focused item with a
+  // 2px OUTWARD offset; the panel's `overflow-auto` clips three sides, leaving a stray bar under the row.
+  // Draw it INSIDE the row instead (the `reui/select.tsx` item pattern, #522): `!` is needed because the
+  // unlayered rule beats layered utilities, and never `outline-none` — that is suppression. The
+  // highlight fill stays the active indicator.
+  "focus-visible:!-outline-offset-2 " +
   "data-[highlighted]:bg-secondary";
 
 export type MenuProps = {

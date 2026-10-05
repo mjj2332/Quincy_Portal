@@ -41,7 +41,7 @@ export function NoticeDeleteDialog({ open, excerpt, deleting, error, onConfirm, 
       <AlertDialogContent size="sm" data-testid="notice-delete-confirm" initialFocus={cancelRef} finalFocus={finalFocus}>
         <AlertDialogHeader>
           <AlertDialogTitle>Delete notice?</AlertDialogTitle>
-          <AlertDialogDescription>
+          <AlertDialogDescription className="text-foreground-secondary">
             {subject} will be removed from the Notice board for everyone, with any images in it. This can't be undone.
           </AlertDialogDescription>
         </AlertDialogHeader>

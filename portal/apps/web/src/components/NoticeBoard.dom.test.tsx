@@ -385,6 +385,22 @@ describe("NoticeBoard disclosure and polling", () => {
       expect(document.activeElement).toBe(document.querySelector('[data-testid="notice-delete-cancel"]'));
     });
 
+    it("uses AA-contrast secondary text for the description, not the muted default", async () => {
+      apiGetMock.mockImplementation(listing([oldPost]));
+      const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
+      await chooseNoticeAction(host, "A", "Delete", advance);
+      const description = document.getElementById(dialog()!.getAttribute("aria-describedby")!)!;
+      expect(description.className).toContain("text-foreground-secondary");
+    });
+
+    it("lets the \u22ef trigger overhang the header instead of stretching the row", async () => {
+      apiGetMock.mockImplementation(listing([oldPost]));
+      const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
+      const cls = triggerOf(host, "A")!.className;
+      expect(cls).toContain("-my-[calc((28px_-_1.2*var(--text-xs))/2)]");
+      expect(cls).toContain("max-[721px]:-my-[calc((44px_-_1.2*var(--text-xs))/2)]");
+    });
+
     it("Cancel and Escape send no DELETE and return focus to that notice's trigger", async () => {
       apiGetMock.mockImplementation(listing([oldPost]));
       const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);

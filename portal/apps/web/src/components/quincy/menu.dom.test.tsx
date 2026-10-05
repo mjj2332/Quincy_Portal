@@ -1,7 +1,7 @@
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Menu } from "./menu";
+import { Menu, MENU_ITEM } from "./menu";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 
 // The accessibility contract for the app's shared `Menu` primitive (TB8-02 §8, criterion 14),
@@ -316,5 +316,10 @@ describe("Menu accessibility contract", () => {
     await click(trigger);
     expect(menu()).not.toBeNull();
     expect(items().map((item) => item.textContent)).toEqual(["Alpha"]);
+  });
+
+  it("MENU_ITEM draws the focus outline inside the row so the panel's overflow cannot clip it", () => {
+    expect(MENU_ITEM).toContain("focus-visible:!-outline-offset-2");
+    expect(MENU_ITEM).not.toMatch(/outline-(none|hidden)/);
   });
 });

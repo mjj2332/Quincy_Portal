@@ -27,6 +27,13 @@ const COMPOSER_FOOT = "flex flex-wrap items-center justify-between gap-[var(--sp
 // emission order (§2.2, Sol r1 #5 — this exact bug shipped once already in TB8-07).
 const MENTION_HINT = cn(META_TEXT, "!normal-case", "flex-[1_1_12rem] min-w-0");
 
+// The "⋯" trigger's hit area (28px, 44px at <=721px: `ICON_BUTTON`'s min-h) is taller than the author line
+// (`--type-eyebrow` = `--text-xs` at 1.2 line-height), and would stretch the header, making own notices
+// taller than others'. A negative block margin of half the difference lets it overhang the row instead:
+// the row stays one author-line tall, the trigger keeps its full hit area, centred on that line.
+const TRIGGER_OVERHANG =
+  "-my-[calc((28px_-_1.2*var(--text-xs))/2)] max-[721px]:-my-[calc((44px_-_1.2*var(--text-xs))/2)]";
+
 const EMPTY_DOC: RichTextDoc = { type: "doc", content: [{ type: "paragraph" }] };
 type NoticeBoardMutation = "create" | "edit" | "delete";
 
@@ -279,7 +286,7 @@ function NoticeItem({ post, isOwn, isEditing, isBusy, articleRef, restoreTrigger
         <time dateTime={post.createdAt} className={META_TEXT}>{relativeTime(post.createdAt)}</time>
         {post.editedAt && <span title={post.editedAt} className={META_TEXT}>edited</span>}
       </div>
-      {isOwn && !isEditing && <Menu triggerLabel={`Actions for notice by ${post.authorName}`} label="Notice actions" triggerClassName={cn(ICON_BUTTON, "shrink-0 self-center")} triggerTestId="notice-board-actions" finalFocus={menuFinalFocus} onOpenChange={(open) => { if (open) { deletePending.current = false; editPending.current = false; } }} trigger={<span aria-hidden="true">⋯</span>}>
+      {isOwn && !isEditing && <Menu triggerLabel={`Actions for notice by ${post.authorName}`} label="Notice actions" triggerClassName={cn(ICON_BUTTON, "shrink-0 self-center", TRIGGER_OVERHANG)} triggerTestId="notice-board-actions" finalFocus={menuFinalFocus} onOpenChange={(open) => { if (open) { deletePending.current = false; editPending.current = false; } }} trigger={<span aria-hidden="true">⋯</span>}>
         <MenuPrimitive.Item className={MENU_ITEM} disabled={isBusy} onClick={() => { focusEditorOnEdit.current = true; editPending.current = true; onEditStart(); }}>Edit</MenuPrimitive.Item>
         <MenuPrimitive.Item className={cn(MENU_ITEM, "text-destructive")} disabled={isBusy} onClick={() => { deletePending.current = true; onDeleteRequest(); }}>Delete</MenuPrimitive.Item>
       </Menu>}
