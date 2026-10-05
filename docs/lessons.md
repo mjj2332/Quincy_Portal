@@ -5610,3 +5610,18 @@ Tags: whiteboard · #501
 - **`insertMedia` sets `status: "saved"`** (`newImageElement` defaults to `"pending"`), appends with one undoable `updateScene`, THEN `addFiles` (the editor scans the scene for uncached images), and never touches selection or scroll. Its `updateScene({ elements })` is listed in `whiteboard-scene-routes.guard.test.ts` under its own expression: reusing the `insert` route's text would make the guard's found list one longer than its expected list.
 - **Excalidraw does not report what a click hit in view mode, and a pasted image FILE is handled before `onPaste`.** So a video click is the controller's own hit test (`videoAt`, only observing: edit mode still selects) and a pasted file is taken at the document's capture phase, while focus is inside the board and not in a text field. Dropped files route through `planSceneDrop`.
 - **The Image tool slot is the host's.** `tools.image` stays false (it caps files at 4 MiB, downsizes to 1440 px, hashes the fileId, takes SVG/GIF and no video); the toolbar's Image toggle is relabelled "Image or video" and calls the host. The editor's key 9 does nothing now, so the tooltip and the shortcuts dialog no longer advertise it.
+
+## Folding two vitest configs into projects removes each suite's own executed-tests gate (2026-10-05)
+Tags: testing-guards, deploy-ci
+
+- `apps/web` had `vitest.config.ts` (unit) and `vitest.dom.config.ts` (DOM), each run by its own CI
+  step, so `requireExecutedTests` failed a DOM run that executed nothing. Merged into one config
+  with `test.projects` [unit, dom], one run executes both and the whole-run check is satisfied by
+  `unit` alone — an empty or all-skipped `dom` project went green. Sol caught it in review.
+- `portal/packages/shared/src/testing/require-executed-tests.ts` now also requires every project to
+  execute a test in a full run (no file filter, no `--project` narrowing);
+  `test/require-executed-tests.test.ts` covers it with a two-project fixture.
+- `vitest-timeouts.guard.test.ts` checked only the root config's budgets; it now requires each
+  inline project to set `extends: true` or both shared budgets.
+- `.gitattributes` gives `docs/lessons.md` `merge=union` for local merges and rebases. GitHub's
+  merge button ignores it, so a conflict there still needs resolving by hand.
