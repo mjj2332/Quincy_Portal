@@ -31,7 +31,7 @@ export function validateMultipartParts(bytes: number, parts: { partNumber: numbe
 function xmlEscape(value: string) {
   return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character]!);
 }
-export async function createMultipartPresign(env: Env, key: string, bytes: number, contentType?: string, partBytes = PART_BYTES) {
+export async function createMultipartPresign(env: Env, key: string, bytes: number, contentType?: string, partBytes = PART_BYTES, expiresSeconds = PRESIGN_EXPIRES_SECONDS) {
   // Local Wrangler binds MEDIA to Miniflare's R2 simulator. Never presign against the
   // remote S3 endpoint in that mode, even if stale R2 credentials remain in .dev.vars:
   // completion verifies the object through the local MEDIA binding.
@@ -48,7 +48,7 @@ export async function createMultipartPresign(env: Env, key: string, bytes: numbe
     const parts = expectedPartCount(bytes, effectivePartBytes);
     const partUrls = await Promise.all(Array.from({ length: parts }, (_, index) => {
       const n = index + 1;
-      const query = new URLSearchParams({ partNumber: String(n), uploadId, "X-Amz-Expires": String(PRESIGN_EXPIRES_SECONDS) });
+      const query = new URLSearchParams({ partNumber: String(n), uploadId, "X-Amz-Expires": String(expiresSeconds) });
       return aws.sign(new Request(`${endpoint(env, key)}?${query}`, { method: "PUT" }), { aws: { signQuery: true } }).then((r) => r.url);
     }));
     return { uploadId, key, partUrls, partBytes: effectivePartBytes };

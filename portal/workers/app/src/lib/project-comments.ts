@@ -39,9 +39,10 @@ export type ProjectCommentReadState = {
 };
 
 /** The images a comment's save wants (#493): the batch itself validates and reconciles them, `resolveCommentMedia` only pre-checks. */
-export type CommentMediaChanges = { authorId: string; ids: string[] };
+/** `ids` is every media node; `videoIds` the subset that are video nodes (every other id is an image). */
+export type CommentMediaChanges = { authorId: string; ids: string[]; videoIds?: string[] };
 /** Thrown when the winning save's images are no longer all attachable (an image was swept, expired or taken); the whole save is rolled back. */
-export class CommentMediaConflictError extends Error { constructor() { super("An image in this comment is no longer available"); this.name = "CommentMediaConflictError"; } }
+export class CommentMediaConflictError extends Error { constructor() { super("An image or video in this comment is no longer available"); this.name = "CommentMediaConflictError"; } }
 
 export type CreateProjectCommentInput = {
   id: string;
@@ -311,14 +312,14 @@ function mentionOutboxStatements(
 
 
 /** Pre-checks a comment's desired images (advisory, see `preflightOwnedMedia`) so an obvious mistake is a clean 400. */
-export async function resolveCommentMedia(db: D1Database, input: { projectId: string; authorId: string; commentId: string; mediaIds: string[]; now?: number }): Promise<CommentMediaChanges | null> {
-  const ok = await preflightOwnedMedia(db, { ownerKind: "project_comment", ownerId: input.commentId, projectId: input.projectId, uploaderId: input.authorId, ids: input.mediaIds, now: input.now });
-  return ok ? { authorId: input.authorId, ids: input.mediaIds } : null;
+export async function resolveCommentMedia(db: D1Database, input: { projectId: string; authorId: string; commentId: string; mediaIds: string[]; videoIds?: string[]; now?: number }): Promise<CommentMediaChanges | null> {
+  const ok = await preflightOwnedMedia(db, { ownerKind: "project_comment", ownerId: input.commentId, projectId: input.projectId, uploaderId: input.authorId, ids: input.mediaIds, videoIds: input.videoIds, now: input.now });
+  return ok ? { authorId: input.authorId, ids: input.mediaIds, videoIds: input.videoIds } : null;
 }
 
 /** The comment's media statements, fenced on the winner's audit row (lessons #364); see `ownedMediaStatements`. */
 function mediaStatements(db: D1Database, projectId: string, commentId: string, media: CommentMediaChanges, now: number, auditId: string): D1PreparedStatement[] {
-  return ownedMediaStatements(db, { ownerKind: "project_comment", ownerId: commentId, projectId, uploaderId: media.authorId, ids: media.ids, now, fence: { sql: "EXISTS (SELECT 1 FROM audit_log WHERE id = ?)", binds: [auditId] }, guardId: auditId });
+  return ownedMediaStatements(db, { ownerKind: "project_comment", ownerId: commentId, projectId, uploaderId: media.authorId, ids: media.ids, videoIds: media.videoIds, now, fence: { sql: "EXISTS (SELECT 1 FROM audit_log WHERE id = ?)", binds: [auditId] }, guardId: auditId });
 }
 
 /** A batch that tripped the media guard failed on its CHECK: report it as a conflict, and rethrow anything else. */

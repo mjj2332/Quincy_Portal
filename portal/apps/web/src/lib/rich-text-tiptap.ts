@@ -11,7 +11,7 @@ import { ListItem, TaskItem, TaskList } from "@tiptap/extension-list";
 import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table";
 import { TableMap } from "@tiptap/pm/tables";
 import { TextAlign } from "@tiptap/extension-text-align";
-import { embeddedMediaUrl } from "./embedded-media";
+import { embeddedMediaPosterUrl, embeddedMediaUrl } from "./embedded-media";
 import { RICH_TEXT_HIGHLIGHT_COLORS, RICH_TEXT_MAX_NESTING, RICH_TEXT_TABLE_MAX_COLUMNS, RICH_TEXT_TABLE_MAX_ROWS, type RichTextDoc } from "@quincy/shared";
 
 // The Tiptap <-> stored RichTextDoc contract for `QuincyRichTextEditor`, in its two presets:
@@ -45,6 +45,7 @@ export function toTiptap(doc: RichTextDoc): Record<string, unknown> {
     };
     if (valueNode.type === "mention") return { type: "mention", attrs: { ...(valueNode.attrs as Record<string, unknown>) } };
     if (valueNode.type === "image") return { type: "image", attrs: { mediaId: (valueNode.attrs as Record<string, unknown> | undefined)?.mediaId } };
+    if (valueNode.type === "video") return { type: "video", attrs: { mediaId: (valueNode.attrs as Record<string, unknown> | undefined)?.mediaId } };
     if (valueNode.type === "heading" || valueNode.type === "taskItem") return { type: valueNode.type, attrs: { ...(valueNode.attrs as Record<string, unknown>) }, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
     if (valueNode.type === "paragraph" && valueNode.attrs) return { type: "paragraph", attrs: tiptapTextAlign(valueNode.attrs as Record<string, unknown>), ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
     if (valueNode.type === "tableCell" || valueNode.type === "tableHeader") {
@@ -179,6 +180,25 @@ export const EmbeddedImage = TiptapNode.create({
   },
 });
 
+/**
+ * An embedded video (#494): an atom that names stored media by id, exactly like the image. No `parseHTML` rule, so a pasted `<video>`
+ * never becomes a node. In the editor it is a muted, inline preview with its poster and no controls (playing happens in the posted
+ * comment); it only preloads metadata, so a comment with several videos does not pull them all down.
+ */
+export const EmbeddedVideo = TiptapNode.create({
+  name: "video",
+  group: "block",
+  atom: true,
+  draggable: true,
+  selectable: true,
+  addAttributes() { return { mediaId: { default: null } }; },
+  parseHTML() { return []; },
+  renderHTML({ node, HTMLAttributes }) {
+    const mediaId = String(node.attrs.mediaId ?? "");
+    return ["video", mergeAttributes(HTMLAttributes, { src: embeddedMediaUrl(mediaId), poster: embeddedMediaPosterUrl(mediaId), preload: "metadata", muted: "", playsinline: "", "data-media-id": mediaId, class: "rich-text__embedded-video" })];
+  },
+});
+
 /** Rows x columns of a table node, spans included (what the server's limits count). */
 export function tableDimensions(table: ProseMirrorNode): { rows: number; columns: number } {
   const map = TableMap.get(table);
@@ -249,6 +269,7 @@ export function createRichTextEditorExtensions(preset: RichTextEditorPreset = "c
     ListItemHeadingCommandBoundary,
     ListNestingBoundary,
     EmbeddedImage,
+    ...(preset === "composer" ? [EmbeddedVideo] : []),
     ...(preset === "document" ? documentExtensions() : []),
   ];
 }
@@ -277,6 +298,10 @@ export function tiptapToRichTextDoc(value: unknown): RichTextDoc {
     if (valueNode.type === "image") {
       const attrs = valueNode.attrs as Record<string, unknown> | undefined;
       return { type: "image", attrs: { mediaId: attrs?.mediaId } };
+    }
+    if (valueNode.type === "video") {
+      const attrs = valueNode.attrs as Record<string, unknown> | undefined;
+      return { type: "video", attrs: { mediaId: attrs?.mediaId } };
     }
     if (valueNode.type === "heading") {
       const attrs = valueNode.attrs as Record<string, unknown> | undefined;

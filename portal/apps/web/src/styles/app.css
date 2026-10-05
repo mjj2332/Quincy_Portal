@@ -417,6 +417,9 @@ button { font-family: var(--font-sans); }
 .rich-text__embedded-image { display: block; max-width: 100%; max-height: 24rem; height: auto; margin: 0; border-radius: var(--radius-xs); border: var(--border-width-hair) solid var(--border); object-fit: contain; background: var(--surface-sunken); }
 .rich-text__editor-content img.rich-text__embedded-image { margin: var(--space-2) 0; }
 .rich-text__editor-content img.rich-text__embedded-image.ProseMirror-selectednode { outline: var(--border-width-hair) solid var(--accent); outline-offset: 0; }
+.rich-text__embedded-video { display: block; max-width: 100%; max-height: 24rem; height: auto; margin: 0; border-radius: var(--radius-xs); border: var(--border-width-hair) solid var(--border); object-fit: contain; background: var(--surface-sunken); }
+.rich-text__editor-content video.rich-text__embedded-video { margin: var(--space-2) 0; }
+.rich-text__editor-content video.rich-text__embedded-video.ProseMirror-selectednode { outline: var(--border-width-hair) solid var(--accent); outline-offset: 0; }
 .rich-text__table-scroll, .rich-text__editor-content .tableWrapper { margin: 8px 0 0; overflow-x: auto; }
 .rich-text table, .rich-text__editor-content table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: var(--text-sm); }
 .rich-text th, .rich-text td, .rich-text__editor-content th, .rich-text__editor-content td { position: relative; min-width: 0; padding: 6px 10px; border: var(--border-width-hair) solid var(--border-hairline); text-align: start; vertical-align: top; }

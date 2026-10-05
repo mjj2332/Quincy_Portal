@@ -108,7 +108,7 @@ describe("inserting an image", () => {
     await choose(host, [new File(["x"], "doc.pdf", { type: "application/pdf" }), png("big.png", 25 * 1024 * 1024 + 1), png("eleventh.png")]);
     expect(upload).not.toHaveBeenCalled();
     const alerts = Array.from(host.querySelectorAll('[role="alert"]')).map((node) => node.textContent);
-    expect(alerts[0]).toContain("not a JPEG, PNG or WebP"); expect(alerts[1]).toContain("larger than 25 MB"); expect(alerts[2]).toContain("10 images at most");
+    expect(alerts[0]).toContain("not a JPEG, PNG or WebP"); expect(alerts[1]).toContain("larger than 25 MB"); expect(alerts[2]).toContain("10 images and videos at most");
   });
 
   it("does not offer images when the editor has no media target", () => {
@@ -335,5 +335,36 @@ describe("an upload that lands while the author is composing", () => {
     act(() => { editor.view.dispatch(editor.view.state.tr.insertText(" ok")); });
     expect(latest.content.filter((node) => node.type === "image")).toHaveLength(1);
     expect(JSON.stringify(latest)).toContain("QA 547 repro ok");
+  });
+});
+
+describe("upload problems while sibling uploads land (#494)", () => {
+  const ids = Array.from({ length: 10 }, (_, index) => `44444444-4444-4444-8444-44444444444${index === 9 ? "a" : index}`);
+  async function pasteEleven() {
+    const resolvers: Array<(id: string) => void> = [];
+    upload.mockImplementation(() => new Promise<string>((resolve) => { resolvers.push(resolve); }));
+    const host = mount(<Harness />);
+    const editor = tiptapOf(host);
+    act(() => { editor.commands.focus("end"); });
+    act(() => { const event = new Event("paste", { bubbles: true, cancelable: true }) as Event & { clipboardData: unknown }; event.clipboardData = { files: Array.from({ length: 11 }, (_, index) => png(`p${index}.png`)), getData: () => "", types: ["Files"] }; editor.view.dom.dispatchEvent(event); });
+    await settle();
+    expect(resolvers).toHaveLength(10);
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("10 images and videos at most");
+    return { host, editor, resolvers };
+  }
+
+  it("keeps the cap message visible after the sibling uploads' own insertions land", async () => {
+    const { host, resolvers } = await pasteEleven();
+    for (const [index, resolve] of resolvers.entries()) { await act(async () => { resolve(ids[index]!); }); await settle(); }
+    expect(latest.content.filter((node) => node.type === "image")).toHaveLength(10);
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("10 images and videos at most");
+  });
+
+  it("still clears the message on the author's next edit", async () => {
+    const { host, editor, resolvers } = await pasteEleven();
+    for (const [index, resolve] of resolvers.entries()) { await act(async () => { resolve(ids[index]!); }); await settle(); }
+    expect(host.querySelector('[role="alert"]')).not.toBeNull();
+    act(() => { editor.view.dispatch(editor.view.state.tr.insertText("x")); });
+    expect(host.querySelector('[role="alert"]')).toBeNull();
   });
 });

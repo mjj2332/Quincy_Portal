@@ -200,6 +200,8 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "POST", path: "/api/projects/:projectId/embedded-media", class: "scoped" },
   { method: "PUT", path: "/api/projects/:projectId/embedded-media/:mediaId/direct", class: "scoped" },
   { method: "POST", path: "/api/projects/:projectId/embedded-media/:mediaId/complete", class: "scoped" },
+  { method: "PUT", path: "/api/projects/:projectId/embedded-media/:mediaId/poster", class: "scoped" },
+  { method: "POST", path: "/api/projects/:projectId/embedded-media/:mediaId/abort", class: "scoped" },
   { method: "GET", path: "/api/projects/:projectId/activity", class: "scoped", externalSurface: "activity" },
   { method: "GET", path: "/api/projects/:projectId/activity/", class: "scoped", externalSurface: "activity" },
   { method: "POST", path: "/api/projects/:projectId/subtasks/:subtaskId/reorder", class: "scoped" },
@@ -236,6 +238,7 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "GET", path: "/media/annotation/:annotationId", class: "scoped" },
   { method: "GET", path: "/media/asset/:assetId/:variant", class: "scoped" },
   { method: "GET", path: "/media/embedded/:mediaId", class: "scoped" },
+  { method: "GET", path: "/media/embedded/:mediaId/poster", class: "scoped" },
   { method: "ALL", path: "/media", class: "terminal-fallback" },
 ] as const satisfies readonly LegacySecurityRouteRegistrationSeed[];
 

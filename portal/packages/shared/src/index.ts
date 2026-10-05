@@ -17,6 +17,7 @@ export * from "./dashboard-order";
 export * from "./board-order";
 export * from "./rich-text";
 export * from "./embedded-media";
+export * from "./http-range";
 export * from "./email-text";
 export * from "./notification-outbox";
 export * from "./notification-types";

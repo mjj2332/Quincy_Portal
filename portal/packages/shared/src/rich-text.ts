@@ -26,7 +26,10 @@ export type RichTextTableRow = { type: "tableRow"; content: RichTextTableCell[] 
 export type RichTextTable = { type: "table"; content: RichTextTableRow[] };
 /** An image placed in a post (#493). It names stored media by id and never carries a URL or bytes. */
 export type RichTextImage = { type: "image"; attrs: { mediaId: string } };
-export type RichTextBlock = RichTextParagraph | RichTextHeading | RichTextBulletList | RichTextOrderedList | RichTextTaskList | RichTextTable | RichTextImage;
+/** A video placed in a post (#494). Like an image it names stored media by id and never carries a URL or bytes. */
+export type RichTextVideo = { type: "video"; attrs: { mediaId: string } };
+export type RichTextMediaNode = RichTextImage | RichTextVideo;
+export type RichTextBlock = RichTextParagraph | RichTextHeading | RichTextBulletList | RichTextOrderedList | RichTextTaskList | RichTextTable | RichTextImage | RichTextVideo;
 /** Every node a tree walk can meet. */
 export type RichTextTreeNode = RichTextBlock | RichTextListItem | RichTextTaskItem | RichTextTableRow | RichTextTableCell | RichTextInline;
 export type RichTextDoc = { type: "doc"; content: RichTextBlock[] };
@@ -44,11 +47,11 @@ export const STAFF_NAME_MAX_LENGTH = 200;
  * What a surface may store. The default is the comment profile (Project discussion, #491); the
  * Notice board's document profile is a strict superset (#492), so an old row always still parses.
  */
-export type RichTextProfile = { readonly maxBytes: number; readonly allowTables: boolean; readonly allowAlign: boolean; readonly allowHighlight: boolean; readonly allowMedia: boolean };
-export const COMMENT_RICH_TEXT_PROFILE: RichTextProfile = { maxBytes: RICH_TEXT_JSON_MAX_BYTES, allowTables: false, allowAlign: false, allowHighlight: false, allowMedia: false };
-export const NOTICE_RICH_TEXT_PROFILE: RichTextProfile = { maxBytes: NOTICE_RICH_TEXT_JSON_MAX_BYTES, allowTables: true, allowAlign: true, allowHighlight: true, allowMedia: true };
-/** Project discussion (#493): the comment profile plus embedded images. The Notice board's profile takes images too (#496). */
-export const COMMENT_MEDIA_RICH_TEXT_PROFILE: RichTextProfile = { ...COMMENT_RICH_TEXT_PROFILE, allowMedia: true };
+export type RichTextProfile = { readonly maxBytes: number; readonly allowTables: boolean; readonly allowAlign: boolean; readonly allowHighlight: boolean; readonly allowMedia: boolean; readonly allowVideo: boolean };
+export const COMMENT_RICH_TEXT_PROFILE: RichTextProfile = { maxBytes: RICH_TEXT_JSON_MAX_BYTES, allowTables: false, allowAlign: false, allowHighlight: false, allowMedia: false, allowVideo: false };
+export const NOTICE_RICH_TEXT_PROFILE: RichTextProfile = { maxBytes: NOTICE_RICH_TEXT_JSON_MAX_BYTES, allowTables: true, allowAlign: true, allowHighlight: true, allowMedia: true, allowVideo: false };
+/** Project discussion (#493, #494): the comment profile plus embedded images and videos. The Notice board's profile takes images too (#496), never video. */
+export const COMMENT_MEDIA_RICH_TEXT_PROFILE: RichTextProfile = { ...COMMENT_RICH_TEXT_PROFILE, allowMedia: true, allowVideo: true };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const encoder = new TextEncoder();
@@ -232,6 +235,14 @@ function parseBlock(value: unknown, depth: number, profile: RichTextProfile, ite
     if (typeof attrs.mediaId !== "string" || !UUID.test(attrs.mediaId)) throw new RichTextValidationError("Image media id must be a UUID");
     return { type: "image", attrs: { mediaId: attrs.mediaId } };
   }
+  if (node.type === "video") {
+    if (!profile.allowMedia || !profile.allowVideo || depth > 0 || itemKind || insideListItem) throw new RichTextValidationError("Unsupported rich-text node");
+    onlyKeys(node, ["type", "attrs"], "Video");
+    const attrs = record(node.attrs, "Video attributes");
+    onlyKeys(attrs, ["mediaId"], "Video attributes");
+    if (typeof attrs.mediaId !== "string" || !UUID.test(attrs.mediaId)) throw new RichTextValidationError("Video media id must be a UUID");
+    return { type: "video", attrs: { mediaId: attrs.mediaId } };
+  }
   if (node.type === "table") {
     if (!profile.allowTables || depth > 0) throw new RichTextValidationError("Unsupported rich-text node");
     return parseTable(node, profile);
@@ -289,7 +300,7 @@ export function parseRichTextDoc(value: unknown, profile: RichTextProfile = COMM
   if (!content.length || content.some((item) => item.type === "listItem" || item.type === "taskItem")) throw new RichTextValidationError("Rich-text document must contain paragraphs or lists");
   const parsed = { type: "doc" as const, content: content as RichTextBlock[] };
   const mediaIds = richTextMediaIds(parsed);
-  if (new Set(mediaIds).size !== mediaIds.length) throw new RichTextValidationError("An image may be placed only once in a document");
+  if (new Set(mediaIds).size !== mediaIds.length) throw new RichTextValidationError("A media item may be placed only once in a document");
   if (!richTextPlainText(parsed).trim()) throw new RichTextValidationError("Rich-text document must not be empty");
   return parsed;
 }
@@ -301,11 +312,13 @@ export function richTextDocByteLength(doc: RichTextDoc): number {
 
 /** What an image reads as wherever the document is shown as text (a notification body, a search). */
 export const RICH_TEXT_IMAGE_PLACEHOLDER = "[image]";
+export const RICH_TEXT_VIDEO_PLACEHOLDER = "[video]";
 
 function textFromBlock(block: RichTextBlock | RichTextListItem | RichTextTaskItem | RichTextTableRow | RichTextTableCell): string {
   // Cells are tab-separated and rows newline-separated, so a table reads as plain text in a
   // notification and counts toward the character limit the way it reads.
   if (block.type === "image") return RICH_TEXT_IMAGE_PLACEHOLDER;
+  if (block.type === "video") return RICH_TEXT_VIDEO_PLACEHOLDER;
   if (block.type === "table") return block.content.map((row) => row.content.map((cell) => cell.content.map(textFromBlock).filter(Boolean).join("\n")).join("\t")).join("\n");
   if (block.type === "paragraph" || block.type === "heading") return (block.content ?? []).map((node) => node.type === "text" ? node.text : node.type === "hardBreak" ? "\n" : node.attrs.label).join("");
   if (block.type === "listItem") return (block.content ?? []).map(textFromBlock).filter(Boolean).join("\n");
@@ -322,7 +335,7 @@ export function richTextMentionIds(doc: RichTextDoc): string[] {
   const ids: string[] = [];
   const visit = (node: RichTextTreeNode) => {
     if (node.type === "mention") { if (!ids.includes(node.attrs.id)) ids.push(node.attrs.id); return; }
-    if (node.type === "text" || node.type === "hardBreak" || node.type === "image") return;
+    if (node.type === "text" || node.type === "hardBreak" || node.type === "image" || node.type === "video") return;
     if (node.type === "paragraph" || node.type === "heading") { for (const child of node.content ?? []) visit(child); return; }
     for (const child of node.content ?? []) visit(child);
   };
@@ -330,11 +343,16 @@ export function richTextMentionIds(doc: RichTextDoc): string[] {
   return ids;
 }
 
-/** Returns the media ids an image node names, in document order. */
+/** Returns the media an image or video node names, with each node's kind, in document order. */
+export function richTextMediaRefs(doc: RichTextDoc): Array<{ id: string; kind: "image" | "video" }> {
+  const refs: Array<{ id: string; kind: "image" | "video" }> = [];
+  for (const block of doc.content) if (block.type === "image" || block.type === "video") refs.push({ id: block.attrs.mediaId, kind: block.type });
+  return refs;
+}
+
+/** Returns the media ids an image or video node names, in document order. */
 export function richTextMediaIds(doc: RichTextDoc): string[] {
-  const ids: string[] = [];
-  for (const block of doc.content) if (block.type === "image") ids.push(block.attrs.mediaId);
-  return ids;
+  return richTextMediaRefs(doc).map((ref) => ref.id);
 }
 
 /** Replaces untrusted display labels after the server has resolved eligible users. */
@@ -348,6 +366,7 @@ export function normalizeRichTextMentionLabels(doc: RichTextDoc, namesById: Read
     if (node.type === "text") return node.marks ? { ...node, marks: node.marks.map((mark) => ({ ...mark })) } : { ...node };
     if (node.type === "hardBreak") return { ...node };
     if (node.type === "image") return { type: "image", attrs: { mediaId: node.attrs.mediaId } };
+    if (node.type === "video") return { type: "video", attrs: { mediaId: node.attrs.mediaId } };
     if (node.type === "paragraph") return { type: "paragraph", ...(node.attrs ? { attrs: { ...node.attrs } } : {}), ...(node.content ? { content: node.content.map(normalize) as RichTextInline[] } : {}) };
     if (node.type === "heading") return { type: "heading", attrs: { ...node.attrs }, ...(node.content ? { content: node.content.map(normalize) as RichTextInline[] } : {}) };
     if (node.type === "taskItem") return { type: "taskItem", attrs: { ...node.attrs }, content: node.content.map(normalize) as RichTextTaskItem["content"] };
