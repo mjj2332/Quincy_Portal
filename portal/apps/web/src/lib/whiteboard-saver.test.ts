@@ -136,6 +136,14 @@ describe("whiteboard saver", () => {
     expect(planSceneDrop([], true)).toBe("ignore");
   });
 
+  it("routes a HEIC the browser reports without an image type to the media pipeline, not Excalidraw (#495)", () => {
+    // Windows browsers, and some drags, give a .heic no type or application/octet-stream; Excalidraw then shows "Couldn't load invalid file".
+    const f = (name: string, type = "") => new File(["x"], name, { type });
+    expect(planSceneDrop([f("IMG_1.HEIC")], false)).toEqual({ media: [expect.any(File)] });
+    expect(planSceneDrop([f("IMG_2.heif", "application/octet-stream")], false)).toEqual({ media: [expect.any(File)] });
+    expect(planSceneDrop([f("IMG_3.heic", "image/heic")], false)).toEqual({ media: [expect.any(File)] });
+  });
+
   it("never authors a deletion: an element absent from the scene sends nothing (vanish is the editor's, whiteboard-vanish.ts)", async () => {
     let scene = [el("a", 2), el("b", 1)];
     const sent: SavedElement[][] = [];
