@@ -5626,6 +5626,7 @@ Tags: testing-guards, deploy-ci
 - `.gitattributes` gives `docs/lessons.md` `merge=union` for local merges and rebases. GitHub's
   merge button ignores it, so a conflict there still needs resolving by hand.
 ## #527 The Project discussion is read-only on an archived Project
+Tags: permissions · #527
 
 - **Create is gated on ONE row, the audit row, written first.** The audit insert is `SELECT ... WHERE EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)`; the comment insert, every mention insert and everything after (outbox, ledger, activity, media) are `WHERE EXISTS (SELECT 1 FROM audit_log WHERE id = ?)`. Fencing only the comment insert does not work: the mention inserts would then violate their foreign key on the missing comment and the whole batch would throw instead of skipping. The leading block is still audit + comment + mentions + read marker, so `activityStatementStart` keeps its value (a test pins the broad outbox ids).
 - **Edit and delete fence in the statement itself** (`COMMENT_ARCHIVE_FENCE` on the UPDATE / DELETE); their audit rows were already `WHERE changes() = 1`. A check made only before the write is beaten by an archive landing in between (#446), so the routes check up front AND the batch fences.
