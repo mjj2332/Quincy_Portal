@@ -357,8 +357,12 @@ async function invalidateNoticeBoardQueries(queryClient: QueryClient) {
 }
 
 export async function deleteNoticeBoardPost(queryClient: QueryClient, id: string) {
-  await apiDelete<{ ok: true }>(`/api/notice-board/posts/${encodeURIComponent(id)}`);
-  await invalidateNoticeBoardQueries(queryClient);
+  // Refetch on failure too: a 404 (deleted elsewhere) or any other error must not leave a stale list.
+  try {
+    await apiDelete<{ ok: true }>(`/api/notice-board/posts/${encodeURIComponent(id)}`);
+  } finally {
+    await invalidateNoticeBoardQueries(queryClient);
+  }
 }
 
 type PresentationArgs = {

@@ -38,6 +38,12 @@ const PANEL = cn(
   "opacity-0 translate-y-[var(--space-1)] data-open:opacity-100 data-open:translate-y-0",
 );
 
+/** The shared row style for a `MenuPrimitive.Item` (Discussion's and the Notice board's "⋯" menus). */
+export const MENU_ITEM =
+  "flex items-center w-full min-h-[32px] max-[721px]:min-h-[44px] px-[var(--space-3)] py-[var(--space-2)] cursor-pointer " +
+  "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground " +
+  "data-[highlighted]:bg-secondary";
+
 export type MenuProps = {
   /**
    * Required unless `triggerRender` is given — #122's `triggerRender` supplies its own content
@@ -88,8 +94,9 @@ export type MenuProps = {
    * Where focus goes when the menu closes (Base UI `Popup.finalFocus`): return an element to focus
    * it, or `undefined`/`null` for the default (back to the trigger). For a menu item that swaps the
    * surface for an editor, so focus lands in the editor instead of being stolen back by the trigger.
+   * Return `false` to not move focus at all: a pending hand-off to a dialog that now owns focus (#463).
    */
-  finalFocus?: () => HTMLElement | null | undefined;
+  finalFocus?: () => HTMLElement | null | undefined | false;
 };
 
 /**

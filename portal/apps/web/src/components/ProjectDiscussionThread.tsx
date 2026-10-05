@@ -32,7 +32,7 @@ import { Notice } from "./quincy/Notice";
 import { InitialsAvatar } from "./quincy/InitialsAvatar";
 import { CollaborationTimestamp } from "./quincy/CollaborationTimestamp";
 import { ICON_BUTTON } from "./quincy/icon-button";
-import { Menu, MenuPrimitive } from "./quincy/menu";
+import { MENU_ITEM, Menu, MenuPrimitive } from "./quincy/menu";
 
 export type ProjectDiscussionAccessFailureResource = "comments" | "comment-read-marker" | "nested-comment";
 
@@ -53,11 +53,6 @@ export type ProjectDiscussionThreadProps = {
 const emptyDoc = (): RichTextDoc => ({ type: "doc", content: [{ type: "paragraph" }] });
 
 const COMMENT_LIMIT = 10_000;
-
-const MENU_ITEM =
-  "flex items-center w-full min-h-[32px] max-[721px]:min-h-[44px] px-[var(--space-3)] py-[var(--space-2)] cursor-pointer " +
-  "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground " +
-  "data-[highlighted]:bg-secondary";
 
 type CommentItemProps = {
   comment: Comment;

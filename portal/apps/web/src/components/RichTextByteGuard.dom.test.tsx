@@ -23,6 +23,7 @@ import { NoticeBoard } from "./NoticeBoard";
 import { ProjectCollaborationPanel } from "./ProjectCollaborationPanel";
 import { QuincyQueryProvider } from "../lib/query-client";
 import { chooseCommentAction } from "../testing/comment-menu";
+import { chooseNoticeAction } from "../testing/notice-menu";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const ownPost = { id: "post-own", authorId: "user-me", authorName: "Me", body: "Existing", content: accepted, createdAt: "2026-08-20T00:00:00.000Z", editedAt: null };
@@ -46,7 +47,7 @@ describe("rich-text serialized-width submit guards", () => {
     mocks.apiGet.mockResolvedValue({ posts: [ownPost] }); const host = mount(); await render(<NoticeBoard currentUserId="user-me" />);
     await click(button(host, "Use oversized formatting")); expect(button(host, "Post notice").disabled).toBe(true);
     await click(button(host, "Use accepted formatting")); expect(button(host, "Post notice").disabled).toBe(false); await click(button(host, "Post notice")); expect(mocks.apiPost).toHaveBeenCalledWith("/api/notice-board/posts", { content: noticeAccepted });
-    await click(button(host, "Edit")); const edit = host.querySelector('[data-slot="notice-board-edit-composer"]')!;
+    await chooseNoticeAction(host, "Me", "Edit", (ms) => new Promise((resolve) => setTimeout(resolve, ms))); const edit = host.querySelector('[data-slot="notice-board-edit-composer"]')!;
     await click(button(edit as HTMLElement, "Use oversized formatting")); expect(button(edit as HTMLElement, "Save").disabled).toBe(true);
     await click(button(edit as HTMLElement, "Use accepted formatting")); expect(button(edit as HTMLElement, "Save").disabled).toBe(false); await click(button(edit as HTMLElement, "Save"));
     expect(mocks.apiPatch).toHaveBeenCalledWith(`/api/notice-board/posts/${ownPost.id}`, { content: noticeAccepted });

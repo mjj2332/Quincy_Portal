@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClientProvider, focusManager } from "@tanstack/react-query";
 import { NoticeBoard, type NoticeBoardPost } from "./NoticeBoard";
 import { createQuincyQueryClient } from "../lib/query-client";
+import { ApiError } from "../lib/api";
+import { cancelNoticeDelete, chooseNoticeAction, confirmNoticeDelete } from "../testing/notice-menu";
 
 const apiGetMock = vi.fn<(path: string) => Promise<unknown>>();
 const apiPostMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
@@ -173,7 +175,7 @@ describe("NoticeBoard disclosure and polling", () => {
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
     await flush();
     expect(host.querySelector('[data-slot="notice-board-post"] u')?.textContent).toBe("Under"); expect(host.querySelector('[data-slot="notice-board-post"] s')?.textContent).toBe(" strike");
-    await click(host.querySelector<HTMLButtonElement>('[data-slot="notice-board-edit"]')!);
+    await chooseNoticeAction(host, "A", "Edit", advance);
     await appendToEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "!");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
     expect(apiPatchMock).toHaveBeenCalledWith(`/api/notice-board/posts/${marked.id}`, { content: { type: "doc", content: [{ type: "paragraph", content: [
@@ -191,7 +193,7 @@ describe("NoticeBoard disclosure and polling", () => {
     });
     const host = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
-    expect(host.querySelector('button[aria-expanded]:not([data-toolbar-item])')).toBeNull();
+    expect(host.querySelector('button[aria-expanded]:not([data-toolbar-item]):not([data-testid="notice-board-actions"])')).toBeNull();
     expect(apiGetMock).toHaveBeenCalledWith("/api/notice-board/posts?limit=50");
     expect(apiGetMock.mock.calls.some(([path]) => path.includes("latest"))).toBe(false);
     await advance(30_000);
@@ -277,9 +279,13 @@ describe("NoticeBoard disclosure and polling", () => {
     const host = mount();
     await render(<NoticeBoard currentUserId="user-b" />);
     expect(window.localStorage.getItem("quincy:dashboard:noticeboard:seen:user-b")).toBeNull();
-    expect(host.querySelectorAll('[data-slot="notice-board-delete"]')).toHaveLength(1);
-    expect(host.querySelectorAll('[data-slot="notice-board-edit"]')).toHaveLength(1);
-    await click(host.querySelector('[data-slot="notice-board-delete"]')!);
+    expect(host.querySelectorAll('[data-testid="notice-board-actions"]')).toHaveLength(1);
+    expect(host.querySelector('[aria-label="Actions for notice by A"]')).toBeNull();
+    await chooseNoticeAction(host, "B", "Delete", advance);
+    // Choosing Delete only asks: nothing is sent until the dialog is confirmed.
+    expect(apiDeleteMock).not.toHaveBeenCalled();
+    await confirmNoticeDelete(advance);
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1);
     expect(apiDeleteMock).toHaveBeenCalledWith("/api/notice-board/posts/post-new");
   });
 
@@ -287,7 +293,7 @@ describe("NoticeBoard disclosure and polling", () => {
     apiGetMock.mockResolvedValue({ posts: [oldPost] });
     const host = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
-    await click(host.querySelector('[data-slot="notice-board-edit"]')!);
+    await chooseNoticeAction(host, "A", "Edit", advance);
     expect(host.textContent).toContain("Save");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Cancel")!);
     expect(apiPatchMock).not.toHaveBeenCalled();
@@ -299,7 +305,7 @@ describe("NoticeBoard disclosure and polling", () => {
     apiGetMock.mockImplementation(async (path: string) => path.includes("read-state") ? { marker: null, latest: null, unreadCount: 0 } : { posts: [withCard], hasMore: false, nextCursor: null });
     const host = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit")!);
+    await chooseNoticeAction(host, "A", "Edit", advance);
     expect(host.querySelector('[data-testid="link-preview-card-editor"]')).not.toBeNull();
     await appendToEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "!");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
@@ -315,7 +321,7 @@ describe("NoticeBoard disclosure and polling", () => {
     apiPatchMock.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     const host = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit")!);
+    await chooseNoticeAction(host, "A", "Edit", advance);
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
     const remove = host.querySelector<HTMLButtonElement>('[data-testid="link-preview-remove"]')!;
     expect(remove.disabled).toBe(true);
@@ -334,21 +340,149 @@ describe("NoticeBoard disclosure and polling", () => {
     const postFor = (id: string) => [...host.querySelectorAll<HTMLElement>('[data-slot="notice-board-post"]')]
       .find((article) => article.querySelector("header span")?.textContent === (id === oldPost.id ? oldPost.authorName : newPost.authorName))!;
     const buttonsIn = (article: HTMLElement) => [...article.querySelectorAll<HTMLButtonElement>("button")].map((button) => button.textContent);
-    await click(postFor(oldPost.id).querySelector('[data-slot="notice-board-edit"]')!);
+    await chooseNoticeAction(host, "A", "Edit", advance);
     const editing = host.querySelector<HTMLElement>('[data-slot="notice-board-edit-composer"]')!.closest<HTMLElement>('[data-slot="notice-board-post"]')!;
-    expect(editing.querySelector('[data-slot="notice-board-edit"]')).toBeNull();
-    expect(editing.querySelector('[data-slot="notice-board-delete"]')).toBeNull();
+    expect(editing.querySelector('[data-testid="notice-board-actions"]')).toBeNull();
     expect(buttonsIn(editing)).toEqual(expect.arrayContaining(["Cancel", "Save"]));
-    // the other authored post keeps its own actions
-    expect(postFor(newPost.id).querySelector('[data-slot="notice-board-edit"]')).not.toBeNull();
-    expect(host.querySelectorAll('[data-slot="notice-board-edit"]')).toHaveLength(1);
-    expect(host.querySelectorAll('[data-slot="notice-board-delete"]')).toHaveLength(1);
+    // the other authored post keeps its own trigger
+    expect(postFor(newPost.id).querySelector('[data-testid="notice-board-actions"]')).not.toBeNull();
+    expect(host.querySelectorAll('[data-testid="notice-board-actions"]')).toHaveLength(1);
     await click([...editing.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Cancel")!);
     const restored = postFor(oldPost.id);
-    expect(restored.querySelector('[data-slot="notice-board-edit"]')).not.toBeNull();
-    expect(restored.querySelector('[data-slot="notice-board-delete"]')).not.toBeNull();
+    expect(restored.querySelector('[data-testid="notice-board-actions"]')).not.toBeNull();
     expect(buttonsIn(restored)).not.toContain("Save");
-    expect(host.querySelectorAll('[data-slot="notice-board-edit"]')).toHaveLength(2);
+    expect(host.querySelectorAll('[data-testid="notice-board-actions"]')).toHaveLength(2);
+    // Cancel hands focus back to the trigger that opened the edit.
+    expect(document.activeElement).toBe(restored.querySelector('[data-testid="notice-board-actions"]'));
+  });
+
+  describe("delete confirmation (#523)", () => {
+    const ownNewPost: NoticeBoardPost = { ...newPost, authorId: "user-a", authorName: "B" };
+    const listing = (posts: NoticeBoardPost[]) => (path: string) => Promise.resolve(path.includes("read-") ? { marker: null, latest: null, unreadCount: 0 } : { posts, hasMore: false, nextCursor: null });
+    const dialog = () => document.querySelector<HTMLElement>('[data-testid="notice-delete-confirm"]');
+    const triggerOf = (host: HTMLElement, name: string) => host.querySelector<HTMLElement>(`[aria-label="Actions for notice by ${name}"]`);
+
+    it("opens the dialog on Delete without calling the API, naming the notice, with focus on Cancel", async () => {
+      apiGetMock.mockImplementation(listing([oldPost]));
+      const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
+      await chooseNoticeAction(host, "A", "Delete", advance);
+      expect(apiDeleteMock).not.toHaveBeenCalled();
+      expect(dialog()).not.toBeNull();
+      expect(dialog()!.textContent).toContain("Delete notice?");
+      expect(dialog()!.textContent).toContain("“Old notice”");
+      expect(document.activeElement).toBe(document.querySelector('[data-testid="notice-delete-cancel"]'));
+    });
+
+    it("Cancel and Escape send no DELETE and return focus to that notice's trigger", async () => {
+      apiGetMock.mockImplementation(listing([oldPost]));
+      const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
+      await chooseNoticeAction(host, "A", "Delete", advance);
+      await cancelNoticeDelete(advance);
+      expect(dialog()).toBeNull();
+      expect(document.activeElement).toBe(triggerOf(host, "A"));
+      await chooseNoticeAction(host, "A", "Delete", advance);
+      await act(async () => { document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Escape" })); await Promise.resolve(); });
+      await advance(300);
+      expect(dialog()).toBeNull();
+      expect(apiDeleteMock).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(triggerOf(host, "A"));
+    });
+
+    it("confirming deletes exactly once and moves focus to the next surviving trigger, never body", async () => {
+      let posts = [ownNewPost, oldPost];
+      apiGetMock.mockImplementation((path) => listing(posts)(path));
+      apiDeleteMock.mockImplementation(async () => { posts = [oldPost]; return { ok: true }; });
+      const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
+      await chooseNoticeAction(host, "B", "Delete", advance);
+      await confirmNoticeDelete(advance);
+      expect(apiDeleteMock).toHaveBeenCalledTimes(1);
+      expect(apiDeleteMock).toHaveBeenCalledWith("/api/notice-board/posts/post-new");
+      expect(host.textContent).not.toContain("New notice");
+      expect(dialog()).toBeNull();
+      expect(document.activeElement).not.toBe(document.body);
+      expect(document.activeElement).toBe(triggerOf(host, "A"));
+    });
+
+    it("falls back to the composer when no other notice of yours survives, never body", async () => {
+      let posts = [oldPost];
+      apiGetMock.mockImplementation((path) => listing(posts)(path));
+      apiDeleteMock.mockImplementation(async () => { posts = []; return { ok: true }; });
+      const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
+      await chooseNoticeAction(host, "A", "Delete", advance);
+      await confirmNoticeDelete(advance);
+      expect(document.activeElement).not.toBe(document.body);
+      expect(document.activeElement!.closest('[data-slot="notice-board-composer"]')).not.toBeNull();
+      expect(document.activeElement!.getAttribute("contenteditable")).toBe("true");
+    });
+
+    it("holds the dialog while deleting: Deleting…, both buttons disabled, Escape ignored, composer locked", async () => {
+      apiGetMock.mockImplementation(listing([oldPost]));
+      let finish!: (value: unknown) => void;
+      apiDeleteMock.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+      const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
+      await chooseNoticeAction(host, "A", "Delete", advance);
+      await act(async () => { document.querySelector<HTMLElement>('[data-testid="notice-delete-confirm-action"]')!.click(); await Promise.resolve(); });
+      const action = document.querySelector<HTMLButtonElement>('[data-testid="notice-delete-confirm-action"]')!;
+      expect(action.textContent).toBe("Deleting…");
+      expect(action.disabled).toBe(true);
+      expect(document.querySelector<HTMLButtonElement>('[data-testid="notice-delete-cancel"]')!.disabled).toBe(true);
+      expect([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!.disabled).toBe(true);
+      await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Escape" })); await Promise.resolve(); });
+      await advance(300);
+      expect(dialog()).not.toBeNull();
+      expect(apiDeleteMock).toHaveBeenCalledTimes(1);
+      await act(async () => { finish({ ok: true }); await Promise.resolve(); await Promise.resolve(); });
+      await advance(300);
+    });
+
+    it("keeps the dialog open on a failed delete, shows the message beside the action, and allows Cancel", async () => {
+      apiGetMock.mockImplementation(listing([oldPost]));
+      apiDeleteMock.mockRejectedValue(new ApiError("Forbidden: only the author can delete this post.", 403));
+      const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
+      await chooseNoticeAction(host, "A", "Delete", advance);
+      await confirmNoticeDelete(advance);
+      const error = document.querySelector('[data-testid="notice-delete-error"]')!;
+      expect(dialog()).not.toBeNull();
+      expect(error.getAttribute("role")).toBe("alert");
+      expect(error.textContent).toBe("Forbidden: only the author can delete this post.");
+      expect(document.querySelector<HTMLButtonElement>('[data-testid="notice-delete-confirm-action"]')!.disabled).toBe(false);
+      expect(host.querySelector('[data-slot="notice-board-panel"] > [role="alert"]')).toBeNull();
+      await cancelNoticeDelete(advance);
+      expect(dialog()).toBeNull();
+      expect(document.activeElement).toBe(triggerOf(host, "A"));
+    });
+
+    it("treats a 404 as already gone: closes, refetches, shows no error", async () => {
+      let listCalls = 0;
+      apiGetMock.mockImplementation((path) => { if (!path.includes("read-")) listCalls += 1; return listing(listCalls > 1 ? [] : [oldPost])(path); });
+      apiDeleteMock.mockRejectedValue(new ApiError("Not found", 404));
+      const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
+      const before = listCalls;
+      await chooseNoticeAction(host, "A", "Delete", advance);
+      await confirmNoticeDelete(advance);
+      expect(dialog()).toBeNull();
+      expect(listCalls).toBeGreaterThan(before);
+      expect(document.querySelector('[data-testid="notice-delete-error"]')).toBeNull();
+      expect(host.querySelector('[role="alert"]')).toBeNull();
+      expect(host.querySelector('[data-slot="notice-board-post"]')).toBeNull();
+    });
+
+    it("opens the menu from the keyboard on Edit, so a stray Enter starts an edit and never deletes", async () => {
+      apiGetMock.mockImplementation(listing([oldPost]));
+      const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
+      const trigger = triggerOf(host, "A")!;
+      await act(async () => { trigger.focus(); trigger.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "ArrowDown" })); await Promise.resolve(); await Promise.resolve(); });
+      await advance(50);
+      const items = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+      expect(items.map((item) => item.textContent)).toEqual(["Edit", "Delete"]);
+      expect(document.activeElement).toBe(items[0]);
+      await act(async () => { items[0]!.click(); await Promise.resolve(); await Promise.resolve(); });
+      await advance(200);
+      expect(apiDeleteMock).not.toHaveBeenCalled();
+      expect(dialog()).toBeNull();
+      expect(document.activeElement!.closest('[data-slot="notice-board-edit-composer"]')).not.toBeNull();
+      expect(document.activeElement!.getAttribute("contenteditable")).toBe("true");
+    });
   });
 
   it("renders rich lists and safe external links", async () => {
@@ -389,7 +523,7 @@ describe("NoticeBoard disclosure and polling", () => {
     apiGetMock.mockResolvedValue({ posts: [oldPost] });
     const host = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
-    await click(host.querySelector('[data-slot="notice-board-edit"]')!);
+    await chooseNoticeAction(host, "A", "Edit", advance);
     const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
     await typeIntoEditor(editor, "Saved edit");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
@@ -405,7 +539,7 @@ describe("NoticeBoard disclosure and polling", () => {
     apiGetMock.mockResolvedValue({ posts: [{ ...oldPost, content }] });
     const host = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
-    await click(host.querySelector('[data-slot="notice-board-edit"]')!);
+    await chooseNoticeAction(host, "A", "Edit", advance);
     await appendToEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "!");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
     expect(apiPatchMock).toHaveBeenCalledWith("/api/notice-board/posts/post-old", { content: {
