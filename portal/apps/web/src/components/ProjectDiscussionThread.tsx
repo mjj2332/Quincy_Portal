@@ -32,7 +32,7 @@ import { Notice } from "./quincy/Notice";
 import { InitialsAvatar } from "./quincy/InitialsAvatar";
 import { CollaborationTimestamp } from "./quincy/CollaborationTimestamp";
 import { ICON_BUTTON } from "./quincy/icon-button";
-import { Menu, MenuPrimitive } from "./quincy/menu";
+import { MENU_ITEM, Menu, MenuPrimitive } from "./quincy/menu";
 import { ARCHIVED_NOTICE_CLASS } from "./archived-notice";
 
 export type ProjectDiscussionAccessFailureResource = "comments" | "comment-read-marker" | "nested-comment";
@@ -60,11 +60,6 @@ const COMMENT_LIMIT = 10_000;
 /** The server refused a write because the Project is archived (#527): a 409 with this code. Upload refusals are not this: they stay in-editor errors. */
 function isCommentArchivedRefusal(error: unknown) { return error instanceof ApiError && error.status === 409 && typeof error.details === "object" && error.details !== null && (error.details as { code?: unknown }).code === "comment_project_archived"; }
 const DISCUSSION_ARCHIVED_COPY = "Read-only while archived. Restore the project before commenting.";
-
-const MENU_ITEM =
-  "flex items-center w-full min-h-[32px] max-[721px]:min-h-[44px] px-[var(--space-3)] py-[var(--space-2)] cursor-pointer " +
-  "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground " +
-  "data-[highlighted]:bg-secondary";
 
 type CommentItemProps = {
   comment: Comment;

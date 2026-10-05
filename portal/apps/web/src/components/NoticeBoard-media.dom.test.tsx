@@ -8,6 +8,8 @@ import type { RichTextDoc } from "@quincy/shared";
 import { NoticeBoard, type NoticeBoardPost } from "./NoticeBoard";
 import { QuincyRichTextEditor } from "./QuincyRichTextEditor";
 import { createQuincyQueryClient } from "../lib/query-client";
+import { chooseNoticeAction, confirmNoticeDelete } from "../testing/notice-menu";
+const advanceTimers = (ms: number) => vi.advanceTimersByTimeAsync(ms);
 
 /** Notice board embedded media (#496): the composers, the upload locks, the failure paths and a posted image. */
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -76,7 +78,7 @@ describe("the Notice board composers take images", () => {
   it("shows the media tools in both the new-post and the edit composer", async () => {
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
     expect(composer(host).querySelector('[data-testid="rich-text-media-tools"]')).not.toBeNull();
-    await click(host.querySelector('[data-slot="notice-board-edit"]')!);
+    await chooseNoticeAction(host, "A", "Edit", advanceTimers);
     expect(editComposer(host).querySelector('[data-testid="rich-text-media-tools"]')).not.toBeNull();
     expect(editComposer(host).querySelector('img[data-media-id]')?.getAttribute("src")).toBe(`/media/embedded/${A}`);
   });
@@ -121,7 +123,7 @@ describe("the Notice board composers take images", () => {
   it("keeps the image when the post is edited, and sends it in the save", async () => {
     apiPatchMock.mockResolvedValue({ post: { ...ownPost, editedAt: "2026-07-28T00:01:00.000Z" }, readState });
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
-    await click(host.querySelector('[data-slot="notice-board-edit"]')!);
+    await chooseNoticeAction(host, "A", "Edit", advanceTimers);
     await click(buttonNamed(editComposer(host), "Save")); await flush();
     expect(apiPatchMock).toHaveBeenCalledTimes(1);
     expect(apiPatchMock.mock.calls[0]![0]).toBe("/api/notice-board/posts/post-own");
@@ -135,7 +137,7 @@ describe("the Notice board composers take images", () => {
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
     await choose(composer(host), [png("create.png")]);
     // The new-post upload does not hold the edit composer.
-    await click(host.querySelector('[data-slot="notice-board-edit"]')!);
+    await chooseNoticeAction(host, "A", "Edit", advanceTimers);
     expect(buttonNamed(editComposer(host), "Save").disabled).toBe(false);
     await choose(editComposer(host), [png("edit.png")]);
     expect(buttonNamed(editComposer(host), "Save").disabled).toBe(true);
@@ -153,11 +155,11 @@ describe("the Notice board composers take images", () => {
   it("clears the edit lock when the edit is cancelled mid-upload", async () => {
     upload.mockImplementation(() => new Promise<string>(() => undefined));
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
-    await click(host.querySelector('[data-slot="notice-board-edit"]')!);
+    await chooseNoticeAction(host, "A", "Edit", advanceTimers);
     await choose(editComposer(host), [png()]);
     expect(buttonNamed(editComposer(host), "Save").disabled).toBe(true);
     await click(buttonNamed(editComposer(host), "Cancel"));
-    await click(host.querySelector('[data-slot="notice-board-edit"]')!);
+    await chooseNoticeAction(host, "A", "Edit", advanceTimers);
     expect(buttonNamed(editComposer(host), "Save").disabled).toBe(false);
   });
 });
