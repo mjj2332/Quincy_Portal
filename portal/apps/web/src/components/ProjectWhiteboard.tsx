@@ -17,7 +17,8 @@ import { createVanishObserver, type VanishObserver } from "../lib/whiteboard-van
 import { toCollaborator } from "../lib/whiteboard-collaborators";
 import { pushToast } from "../lib/toast-store";
 import { ApiError } from "../lib/api";
-import { EMBEDDED_IMAGE_ACCEPT, EMBEDDED_VIDEO_ACCEPT, embeddedImageProblem, embeddedVideoContentType, embeddedVideoProblem, uploadEmbeddedImage, uploadEmbeddedVideo } from "../lib/embedded-media";
+import { EMBEDDED_VIDEO_ACCEPT, RenditionFailedError, abortEmbeddedImage, embeddedImageAccept, embeddedImageProblem, embeddedVideoContentType, embeddedVideoProblem, isEmbeddedHeicFile, uploadEmbeddedImage, uploadEmbeddedVideo } from "../lib/embedded-media";
+import { useEmbeddedHeicEnabled } from "../lib/use-embedded-heic";
 import { createMediaFileResolver, type MediaFileResolver, type ResolvedMedia } from "../lib/whiteboard-media-files";
 import { canvasMediaRenderer } from "../lib/whiteboard-media-render";
 import { whiteboardMediaRef } from "@quincy/shared";
@@ -93,6 +94,9 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
   const resolverRef = useRef<MediaFileResolver | null>(null);
   if (resolverRef.current === null) resolverRef.current = createMediaFileResolver({ renderer: canvasMediaRenderer });
   useEffect(() => () => resolverRef.current?.dispose(), []);
+  // #495: whether this person may upload HEIC; a ref because the upload callback below is memoised on the Project alone.
+  const heicEnabled = useEmbeddedHeicEnabled(true);
+  const heicRef = useRef(heicEnabled); heicRef.current = heicEnabled;
   const [uploads, setUploads] = useState<EmbeddedUpload[]>([]);
   const [uploadErrors, setUploadErrors] = useState<string[]>([]);
   const [picking, setPicking] = useState<{ n: number; at: WhiteboardScenePoint | undefined } | null>(null);
@@ -273,28 +277,32 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
     let placed = 0;
     for (const file of files) {
       const kind: "image" | "video" = embeddedVideoContentType(file) ? "video" : "image";
-      const problem = kind === "video" ? embeddedVideoProblem(file) : embeddedImageProblem(file);
+      const problem = kind === "video" ? embeddedVideoProblem(file) : embeddedImageProblem(file, heicRef.current);
       if (problem) { problems.push(problem); continue; }
       const cascade = placed; placed += 1;
       const key = ++uploadSeq.current;
       const name = file.name || (kind === "video" ? "Video" : "Image");
       const controller = new AbortController();
+      // A HEIC is converted to a JPEG by the server (#495): the browser cannot decode the original, so the board waits for that copy.
+      const heic = kind === "image" && isEmbeddedHeicFile(file);
+      let preparedId: string | null = null;
       let released = false; let cancelled = false;
       const release = () => {
         if (released) return; released = true;
         runningUploads.current.delete(key);
         if (mountedRef.current) setUploads((entries) => entries.filter((entry) => entry.key !== key));
       };
-      runningUploads.current.set(key, { cancel: () => { cancelled = true; controller.abort(); release(); } });
+      runningUploads.current.set(key, { cancel: () => { cancelled = true; controller.abort(); if (preparedId) void abortEmbeddedImage({ projectId, owner: "whiteboard" }, preparedId); release(); } });
       setUploads((entries) => [...entries, { key, name, percent: 0, kind }]);
       const onProgress = (percent: number) => { if (mountedRef.current && !released) setUploads((entries) => entries.map((entry) => entry.key === key ? { ...entry, percent } : entry)); };
-      const uploading = kind === "video" ? uploadEmbeddedVideo(projectId, file, { signal: controller.signal, onProgress, owner: "whiteboard" }) : uploadEmbeddedImage({ projectId, owner: "whiteboard" }, file, onProgress);
+      const onPhase = (_phase: "preparing", mediaId: string) => { preparedId = mediaId; if (mountedRef.current && !released) setUploads((entries) => entries.map((entry) => entry.key === key ? { ...entry, phase: "preparing" } : entry)); };
+      const uploading = kind === "video" ? uploadEmbeddedVideo(projectId, file, { signal: controller.signal, onProgress, owner: "whiteboard" }) : uploadEmbeddedImage({ projectId, owner: "whiteboard" }, file, onProgress, { signal: controller.signal, onPhase });
       void uploading
         .then(async (mediaId) => {
           if (cancelled || !mountedRef.current) return;
           const resolver = resolverRef.current!;
-          // An image this tab holds is decoded from the file; a video's poster is read back from the server like any viewer's.
-          let media: ResolvedMedia | null = kind === "image" ? await resolver.adoptImage(mediaId, file) : null;
+          // An image this tab holds is decoded from the file; a video's poster, and a HEIC's JPEG (the uploader shows what everyone else will), are read back from the server like any viewer's.
+          let media: ResolvedMedia | null = kind === "image" && !heic ? await resolver.adoptImage(mediaId, file) : null;
           if (!media) { const outcome = await resolver.resolve(mediaId, kind); media = outcome.ok ? outcome.media : null; }
           if (cancelled || !mountedRef.current) return;
           const live = controllerRef.current;
@@ -304,6 +312,7 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
         })
         .catch((reason) => {
           if (cancelled || (reason instanceof Error && reason.name === "AbortError")) return;
+          if (reason instanceof RenditionFailedError) { if (mountedRef.current) setUploadErrors((entries) => [...entries, `Couldn't prepare ${name}`]); return; }
           if (reason instanceof ApiError && reason.status === 409) { pushToast("Archived projects cannot accept media", "error"); return; }
           if (mountedRef.current) setUploadErrors((entries) => [...entries, `${name} could not be uploaded${reason instanceof Error && reason.message ? `: ${reason.message}` : "."}`]);
         })
@@ -347,7 +356,7 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
         <CopyProjectLinkButton projectId={projectId} tab="collaboration" whiteboard />
         </div>
         {picking !== null && <Input
-          key={picking.n} ref={pickerRef} type="file" multiple accept={`${EMBEDDED_IMAGE_ACCEPT},${EMBEDDED_VIDEO_ACCEPT}`} tabIndex={-1} aria-hidden="true" aria-label="Choose images or videos" data-testid="project-whiteboard-media-picker" className="sr-only"
+          key={picking.n} ref={pickerRef} type="file" multiple accept={`${embeddedImageAccept(heicEnabled)},${EMBEDDED_VIDEO_ACCEPT}`} tabIndex={-1} aria-hidden="true" aria-label="Choose images or videos" data-testid="project-whiteboard-media-picker" className="sr-only"
           onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); const at = picking.at; setPicking(null); if (files.length) uploadMedia(files, at); }}
           {...{ onCancel: () => setPicking(null) }}
         />}

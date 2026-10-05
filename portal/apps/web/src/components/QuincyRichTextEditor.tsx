@@ -5,7 +5,8 @@ import { ChevronDownIcon, ImageIcon, ListChecksIcon, ListIcon, ListOrderedIcon, 
 import { RICH_TEXT_JSON_MAX_BYTES, RICH_TEXT_MAX_LINK_PREVIEWS, richTextDocByteLength, richTextMediaIds, richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { cn } from "../lib/utils";
 import { useMediaQuery } from "../lib/use-media-query";
-import { EMBEDDED_IMAGE_ACCEPT, EMBEDDED_MEDIA_MAX_PER_POST, EMBEDDED_VIDEO_ACCEPT, embeddedImageProblem, embeddedVideoProblem, uploadEmbeddedImage, uploadEmbeddedVideo, type EmbeddedMediaScope } from "../lib/embedded-media";
+import { EMBEDDED_MEDIA_MAX_PER_POST, EMBEDDED_VIDEO_ACCEPT, RenditionFailedError, abortEmbeddedImage, embeddedImageAccept, embeddedImageProblem, embeddedVideoProblem, retryEmbeddedRendition, uploadEmbeddedImage, uploadEmbeddedVideo, type EmbeddedMediaScope } from "../lib/embedded-media";
+import { useEmbeddedHeicEnabled } from "../lib/use-embedded-heic";
 import { requestLinkPreview } from "../lib/link-previews";
 import {
   LinkPreview,
@@ -185,7 +186,11 @@ export function QuincyRichTextEditor({
   const onUploadingChangeRef = useRef(onUploadingChange); onUploadingChangeRef.current = onUploadingChange;
   const addImagesRef = useRef<(files: File[], at?: number, as?: "image" | "video") => void>(() => {});
   // Each running upload's way to stop and to give up its place (the busy count and the tray row), once, whichever of finishing and cancelling comes first.
-  const running = useRef(new Map<number, { controller: AbortController; release: () => void }>());
+  // `discard` tells the server to drop a HEIC that was being prepared (a Project has an abort route; the Notice board has none); `retry` re-queues a failed one.
+  const running = useRef(new Map<number, { controller: AbortController; release: () => void; discard: () => void; retry: () => void }>());
+  // Whether this person may upload HEIC (#495), read through a ref because the upload closure below is reassigned each render.
+  const heicEnabled = useEmbeddedHeicEnabled(media !== undefined);
+  const heicRef = useRef(heicEnabled); heicRef.current = heicEnabled;
   // Where each running upload will land: captured when it starts and mapped through every later transaction.
   const insertAt = useRef(new Map<number, number>());
   const [picking, setPicking] = useState<{ n: number; kind: "image" | "video" } | null>(null);
@@ -321,12 +326,14 @@ export function QuincyRichTextEditor({
     let slots = EMBEDDED_MEDIA_MAX_PER_POST - richTextMediaIds(tiptapToRichTextDoc(current.getJSON())).length - inFlight.current;
     for (const file of files) {
       const kind = as ?? (videos && isVideoFile(file) ? "video" : "image");
-      const problem = (kind === "video" ? embeddedVideoProblem(file) : embeddedImageProblem(file)) ?? (slots <= 0 ? `A post can hold ${EMBEDDED_MEDIA_MAX_PER_POST} ${videos ? "images and videos" : "images"} at most.` : null);
+      const problem = (kind === "video" ? embeddedVideoProblem(file) : embeddedImageProblem(file, heicRef.current)) ?? (slots <= 0 ? `A post can hold ${EMBEDDED_MEDIA_MAX_PER_POST} ${videos ? "images and videos" : "images"} at most.` : null);
       if (problem) { problems.push(problem); continue; }
       slots -= 1;
       const key = ++uploadSeq.current;
       const controller = new AbortController();
       let released = false; let cancelled = false;
+      // A HEIC the server is preparing (#495): its id, so Remove and unmount can abort it, and Retry can ask again. A failed one keeps its row and its place until Remove or a Retry that ends ready.
+      let preparedId: string | null = null; let keepRow = false;
       const release = () => {
         if (released) return; released = true;
         insertAt.current.delete(key); running.current.delete(key);
@@ -337,25 +344,38 @@ export function QuincyRichTextEditor({
         if (inFlight.current === 0) onUploadingChangeRef.current?.(false);
         setUploads((entries) => entries.filter((entry) => entry.key !== key));
       };
+      const discard = () => { if (preparedId) void abortEmbeddedImage(scope, preparedId); };
+      const setPhase = (phase: "uploading" | "preparing" | "failed") => { if (mountedRef.current && !released) setUploads((entries) => entries.map((entry) => entry.key === key ? { ...entry, phase } : entry)); };
+      const onPhase = (phase: "preparing", mediaId: string) => { preparedId = mediaId; setPhase(phase); };
+      const insert = (mediaId: string) => {
+        const live = editorRef.current;
+        if (cancelled || !mountedRef.current || !live) return;
+        const position = Math.min(insertAt.current.get(key) ?? live.state.doc.content.size, live.state.doc.content.size);
+        // insertContentAt selects inserted content by default; an async insert must leave the caret where the author is typing.
+        live.chain().command(({ tr }) => { tr.setMeta(UPLOAD_INSERT_META, true); return true; }).insertContentAt(position, { type: kind, attrs: { mediaId } }, { updateSelection: false }).run();
+      };
+      const follow = (work: Promise<string>) => {
+        keepRow = false;
+        void work
+          .then(insert)
+          .catch((reason) => {
+            if (cancelled || (reason instanceof Error && reason.name === "AbortError")) return;
+            if (reason instanceof RenditionFailedError) { preparedId = reason.mediaId; keepRow = true; setPhase("failed"); return; }
+            if (mountedRef.current) setUploadErrors((entries) => [...entries, `${file.name || (kind === "video" ? "Video" : "Image")} could not be uploaded${reason instanceof Error && reason.message ? `: ${reason.message}` : "."}`]);
+          })
+          .finally(() => { if (!keepRow) release(); });
+      };
       insertAt.current.set(key, at ?? current.state.selection.to);
       inFlight.current += 1; onUploadingChangeRef.current?.(true);
-      running.current.set(key, { controller, release: () => { cancelled = true; controller.abort(); release(); } });
+      running.current.set(key, {
+        controller,
+        release: () => { cancelled = true; controller.abort(); discard(); release(); },
+        discard,
+        retry: () => { if (!preparedId || released) return; setPhase("preparing"); follow(retryEmbeddedRendition(scope, preparedId, { signal: controller.signal, onPhase })); },
+      });
       setUploads((entries) => [...entries, { key, name: file.name || (kind === "video" ? "Video" : "Image"), percent: 0, kind }]);
       const onProgress = (percent: number) => { if (mountedRef.current && !released) setUploads((entries) => entries.map((entry) => entry.key === key ? { ...entry, percent } : entry)); };
-      const uploading = kind === "video" && "projectId" in scope ? uploadEmbeddedVideo(scope.projectId, file, { signal: controller.signal, onProgress }) : uploadEmbeddedImage(scope, file, onProgress);
-      void uploading
-        .then((mediaId) => {
-          const live = editorRef.current;
-          if (cancelled || !mountedRef.current || !live) return;
-          const position = Math.min(insertAt.current.get(key) ?? live.state.doc.content.size, live.state.doc.content.size);
-          // insertContentAt selects inserted content by default; an async insert must leave the caret where the author is typing.
-          live.chain().command(({ tr }) => { tr.setMeta(UPLOAD_INSERT_META, true); return true; }).insertContentAt(position, { type: kind, attrs: { mediaId } }, { updateSelection: false }).run();
-        })
-        .catch((reason) => {
-          if (cancelled || (reason instanceof Error && reason.name === "AbortError")) return;
-          if (mountedRef.current) setUploadErrors((entries) => [...entries, `${file.name || (kind === "video" ? "Video" : "Image")} could not be uploaded${reason instanceof Error && reason.message ? `: ${reason.message}` : "."}`]);
-        })
-        .finally(release);
+      follow(kind === "video" && "projectId" in scope ? uploadEmbeddedVideo(scope.projectId, file, { signal: controller.signal, onProgress }) : uploadEmbeddedImage(scope, file, onProgress, { signal: controller.signal, onPhase }));
     }
     setUploadErrors(problems);
   };
@@ -401,7 +421,7 @@ export function QuincyRichTextEditor({
   };
   useEffect(() => () => { for (const controller of previewControllers.current) controller.abort(); }, []);
   useEffect(() => () => {
-    for (const entry of [...running.current.values()]) entry.controller.abort();
+    for (const entry of [...running.current.values()]) { entry.controller.abort(); entry.discard(); }
     if (inFlight.current > 0) onUploadingChangeRef.current?.(false);
   }, []);
   // A video can take minutes: leaving the page would lose it, so the browser is asked to confirm. Images are over too fast to warn about.
@@ -552,11 +572,11 @@ export function QuincyRichTextEditor({
       <DeleteTableDialog editor={editor} open={deleteTableOpen} onOpenChange={setDeleteTableOpen} />
     </>}
     {picking !== null && <Input
-      key={picking.n} ref={pickerRef} type="file" multiple accept={picking.kind === "video" ? EMBEDDED_VIDEO_ACCEPT : EMBEDDED_IMAGE_ACCEPT} tabIndex={-1} aria-hidden="true" aria-label={picking.kind === "video" ? "Choose videos" : "Choose images"} data-testid={picking.kind === "video" ? "rich-text-video-picker" : "rich-text-image-picker"} className="sr-only"
+      key={picking.n} ref={pickerRef} type="file" multiple accept={picking.kind === "video" ? EMBEDDED_VIDEO_ACCEPT : embeddedImageAccept(heicEnabled)} tabIndex={-1} aria-hidden="true" aria-label={picking.kind === "video" ? "Choose videos" : "Choose images"} data-testid={picking.kind === "video" ? "rich-text-video-picker" : "rich-text-image-picker"} className="sr-only"
       onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); const kind = picking.kind; setPicking(null); if (files.length) addImagesRef.current(files, editor.state.selection.to, kind); }}
       {...{ onCancel: () => setPicking(null) }}
     />}
-    <EmbeddedUploadTray uploads={uploads} errors={uploadErrors} trayRef={trayRef} onCancel={(key) => running.current.get(key)?.release()} />
+    <EmbeddedUploadTray uploads={uploads} errors={uploadErrors} trayRef={trayRef} onCancel={(key) => running.current.get(key)?.release()} onRetry={(key) => running.current.get(key)?.retry()} />
     <MentionAutocomplete ref={menu} query={query} loadMentionables={loadMentionables} onSelect={selectMention} onDismiss={() => setMentionDismissed(true)} onAccessibilityChange={setMentionA11y} />
     {plainText.length >= limit * COUNTER_THRESHOLD && <div ref={counterRef} data-testid="rich-text-counter" className={cn("text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", plainText.length > limit && "!text-destructive")}>{plainText.length}/{limit}</div>}
     <div className={liveMessage ? "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive" : "sr-only"} aria-live="polite">{liveMessage}</div>

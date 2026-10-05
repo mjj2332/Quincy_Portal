@@ -13,7 +13,9 @@ const apiDeleteMock = vi.fn<(path: string) => Promise<unknown>>();
 const apiPatchMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
-  return { ...actual, apiGet: (path: string) => apiGetMock(path), apiPost: (path: string, body: unknown) => apiPostMock(path, body), apiDelete: (path: string) => apiDeleteMock(path), apiPatch: (path: string, body: unknown) => apiPatchMock(path, body) };
+  // The composer asks once whether HEIC is allowed (#495); that is not a freshness request, so it must not reach the counted mock.
+  return { ...actual,
+    apiGet: (path: string) => path === "/api/embedded-media/settings" ? Promise.resolve({ heic: false }) : apiGetMock(path), apiPost: (path: string, body: unknown) => apiPostMock(path, body), apiDelete: (path: string) => apiDeleteMock(path), apiPatch: (path: string, body: unknown) => apiPatchMock(path, body) };
 });
 
 const doc = (text: string) => ({ type: "doc" as const, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text }] }] });

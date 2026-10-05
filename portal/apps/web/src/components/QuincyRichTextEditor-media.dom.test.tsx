@@ -8,14 +8,18 @@ import { createRoot, type Root } from "react-dom/client";
 import { Editor } from "@tiptap/core";
 import { NodeSelection } from "@tiptap/pm/state";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { COMMENT_MEDIA_RICH_TEXT_PROFILE, parseRichTextDoc, type RichTextDoc } from "@quincy/shared";
+import { RenditionFailedError } from "../lib/embedded-media";
 import { createRichTextEditorExtensions, tiptapToRichTextDoc, toTiptap } from "../lib/rich-text-tiptap";
 import { QuincyRichTextEditor } from "./QuincyRichTextEditor";
 import { RichTextContent } from "./RichTextContent";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const upload = vi.hoisted(() => vi.fn());
-vi.mock("../lib/embedded-media", async (importOriginal) => ({ ...(await importOriginal<typeof import("../lib/embedded-media")>()), uploadEmbeddedImage: upload }));
+const heicSetting = vi.hoisted(() => vi.fn());
+const retryRendition = vi.hoisted(() => vi.fn());
+vi.mock("../lib/embedded-media", async (importOriginal) => ({ ...(await importOriginal<typeof import("../lib/embedded-media")>()), uploadEmbeddedImage: upload, fetchEmbeddedHeicSetting: heicSetting, retryEmbeddedRendition: retryRendition }));
 
 const A = "11111111-1111-4111-8111-111111111111";
 const B = "22222222-2222-4222-8222-222222222222";
@@ -34,21 +38,22 @@ function mount(ui: React.ReactElement) { const host = document.createElement("di
 const settle = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 const insertButton = (host: HTMLElement) => host.querySelector<HTMLButtonElement>('button[aria-label="Insert image"]');
 // The picker is the ReUI Input, mounted only while choosing: capture its click, give it the files, and fire its change.
-async function choose(host: HTMLElement, files: File[]) {
+async function choose(host: HTMLElement, files: File[], options: { accept?: string; tick?: () => Promise<void> } = {}) {
+  const tick = options.tick ?? settle;
   expect(host.querySelector('input[type="file"]')).toBeNull();
   const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => undefined);
   await act(async () => { insertButton(host)!.click(); });
   click.mockRestore();
   const picker = host.querySelector<HTMLInputElement>('input[data-testid="rich-text-image-picker"]')!;
-  expect(picker.accept).toBe("image/jpeg,image/png,image/webp"); expect(picker.multiple).toBe(true);
+  expect(picker.accept).toBe(options.accept ?? "image/jpeg,image/png,image/webp"); expect(picker.multiple).toBe(true);
   Object.defineProperty(picker, "files", { configurable: true, value: files });
   await act(async () => { picker.dispatchEvent(new Event("change", { bubbles: true })); });
-  await settle();
+  await tick();
   expect(host.querySelector('input[type="file"]')).toBeNull();
 }
 
-beforeEach(() => { latest = empty(); uploadingNow = false; upload.mockReset(); });
-afterEach(() => { act(() => root?.unmount()); root = null; document.body.innerHTML = ""; });
+beforeEach(() => { latest = empty(); uploadingNow = false; upload.mockReset(); heicSetting.mockReset(); heicSetting.mockResolvedValue(false); retryRendition.mockReset(); });
+afterEach(() => { act(() => root?.unmount()); root = null; document.body.innerHTML = ""; vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("the image node's stored contract", () => {
   it("round-trips through Tiptap and keeps only the media id", () => {
@@ -83,7 +88,7 @@ describe("inserting an image", () => {
     upload.mockImplementation(() => new Promise<string>((resolve) => { finish = resolve; }));
     const host = mount(<Harness />);
     await choose(host, [png()]);
-    expect(upload).toHaveBeenCalledWith({ projectId: "p1" }, expect.any(File), expect.any(Function));
+    expect(upload).toHaveBeenCalledWith({ projectId: "p1" }, expect.any(File), expect.any(Function), { signal: expect.any(AbortSignal), onPhase: expect.any(Function) });
     expect(uploadingNow).toBe(true);
     expect(host.querySelector('[data-testid="rich-text-upload-tray"]')?.textContent).toContain("Uploading a.png");
     expect(JSON.stringify(latest)).not.toContain('"image"');
@@ -366,5 +371,147 @@ describe("upload problems while sibling uploads land (#494)", () => {
     expect(host.querySelector('[role="alert"]')).not.toBeNull();
     act(() => { editor.view.dispatch(editor.view.state.tr.insertText("x")); });
     expect(host.querySelector('[role="alert"]')).toBeNull();
+  });
+});
+
+
+const HEIC_ACCEPT = "image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif";
+// Safari and Chrome often report no type at all for a HEIC, so the name is what identifies it.
+const heic = (name = "IMG_1.HEIC") => new File([new Uint8Array(100)], name, { type: "" });
+const tray = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-testid="rich-text-upload-tray"]');
+const trayButton = (host: HTMLElement, label: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === label);
+const imageCount = (id: string) => latest.content.filter((node) => node.type === "image" && node.attrs.mediaId === id).length;
+function mountWithSetting(ui: React.ReactElement) { return mount(<QueryClientProvider client={new QueryClient()}>{ui}</QueryClientProvider>); }
+type Drive = { phase: (phase: "preparing", mediaId: string) => void; finish: (id: string) => void; fail: (reason: unknown) => void; signal: AbortSignal };
+function driveUpload(): Drive {
+  const drive = {} as Drive;
+  upload.mockImplementation((_scope: unknown, _file: File, _progress: unknown, options: { onPhase: Drive["phase"]; signal: AbortSignal }) => {
+    drive.phase = options.onPhase; drive.signal = options.signal;
+    return new Promise<string>((resolve, reject) => { drive.finish = resolve; drive.fail = reject; });
+  });
+  return drive;
+}
+
+describe("HEIC images (#495)", () => {
+  it("offers HEIC in the picker only once the setting is on, and sends a HEIC with no reported type", async () => {
+    heicSetting.mockResolvedValue(true); upload.mockResolvedValue(A);
+    const host = mountWithSetting(<Harness />); await settle();
+    await choose(host, [heic()], { accept: HEIC_ACCEPT });
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect((upload.mock.calls[0]![1] as File).name).toBe("IMG_1.HEIC");
+  });
+
+  it("refuses a pasted HEIC with the unsupported-type message when the setting is off, without uploading", async () => {
+    const host = mountWithSetting(<Harness />); await settle();
+    const surface = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    const paste = new Event("paste", { bubbles: true, cancelable: true }) as Event & { clipboardData?: unknown };
+    paste.clipboardData = { files: [heic()], getData: () => "", types: ["Files"] };
+    await act(async () => { surface.dispatchEvent(paste); }); await settle();
+    expect(upload).not.toHaveBeenCalled();
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("is not a JPEG, PNG or WebP image");
+  });
+
+  it("accepts a pasted HEIC once the setting is on", async () => {
+    heicSetting.mockResolvedValue(true); upload.mockResolvedValue(A);
+    const host = mountWithSetting(<Harness />); await settle();
+    const surface = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    const paste = new Event("paste", { bubbles: true, cancelable: true }) as Event & { clipboardData?: unknown };
+    paste.clipboardData = { files: [heic("shot.heif")], getData: () => "", types: ["Files"] };
+    await act(async () => { surface.dispatchEvent(paste); }); await settle();
+    expect(upload).toHaveBeenCalledTimes(1);
+  });
+
+  it("goes uploading, then preparing, then inserts the image exactly once when it is ready", async () => {
+    heicSetting.mockResolvedValue(true); const drive = driveUpload();
+    const host = mountWithSetting(<Harness />); await settle();
+    await choose(host, [heic()], { accept: HEIC_ACCEPT });
+    expect(tray(host)?.textContent).toContain("Uploading IMG_1.HEIC");
+    await act(async () => { drive.phase("preparing", A); });
+    expect(tray(host)?.textContent).toContain("Preparing IMG_1.HEIC…");
+    expect(tray(host)?.querySelector('[role="progressbar"]')?.hasAttribute("aria-valuenow")).toBe(false);
+    expect(trayButton(host, "Remove")).toBeDefined();
+    expect(uploadingNow).toBe(true); expect(imageCount(A)).toBe(0);
+    await act(async () => { drive.finish(A); }); await settle();
+    expect(imageCount(A)).toBe(1);
+    expect(uploadingNow).toBe(false); expect(tray(host)).toBeNull();
+  });
+
+  it("shows Retry and Remove when preparing fails, and a Retry that ends ready inserts the image", async () => {
+    heicSetting.mockResolvedValue(true); const drive = driveUpload();
+    let retried!: { finish: (id: string) => void; options: { onPhase: Drive["phase"]; signal: AbortSignal } };
+    retryRendition.mockImplementation((_scope: unknown, _id: string, options: { onPhase: Drive["phase"]; signal: AbortSignal }) => new Promise<string>((resolve) => { retried = { finish: resolve, options }; }));
+    const host = mountWithSetting(<Harness />); await settle();
+    await choose(host, [heic()], { accept: HEIC_ACCEPT });
+    await act(async () => { drive.phase("preparing", A); });
+    await act(async () => { drive.fail(new RenditionFailedError(A)); }); await settle();
+    expect(tray(host)?.textContent).toContain("Couldn't prepare IMG_1.HEIC");
+    expect(host.querySelector('[data-testid="rich-text-upload-tray"] [role="alert"]')).not.toBeNull();
+    expect(trayButton(host, "Retry")).toBeDefined(); expect(trayButton(host, "Remove")).toBeDefined();
+    expect(uploadingNow).toBe(true); expect(imageCount(A)).toBe(0);
+    await act(async () => { trayButton(host, "Retry")!.click(); }); await settle();
+    expect(retryRendition).toHaveBeenCalledWith({ projectId: "p1" }, A, { signal: drive.signal, onPhase: expect.any(Function) });
+    expect(tray(host)?.textContent).toContain("Preparing IMG_1.HEIC…");
+    await act(async () => { retried.finish(A); }); await settle();
+    expect(imageCount(A)).toBe(1); expect(uploadingNow).toBe(false); expect(tray(host)).toBeNull();
+  });
+
+  it("Remove while preparing stops the polling, tells the server to abort the Project upload, and inserts nothing", async () => {
+    heicSetting.mockResolvedValue(true); const drive = driveUpload();
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 })); vi.stubGlobal("fetch", fetchMock);
+    const host = mountWithSetting(<Harness />); await settle();
+    await choose(host, [heic()], { accept: HEIC_ACCEPT });
+    await act(async () => { drive.phase("preparing", A); });
+    await act(async () => { trayButton(host, "Remove")!.click(); }); await settle();
+    expect(drive.signal.aborted).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(`/api/projects/p1/embedded-media/${A}/abort`, expect.objectContaining({ method: "POST" }));
+    expect(tray(host)).toBeNull(); expect(uploadingNow).toBe(false); expect(imageCount(A)).toBe(0);
+  });
+
+  it("Remove on a failed row aborts the upload too", async () => {
+    heicSetting.mockResolvedValue(true); const drive = driveUpload();
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 })); vi.stubGlobal("fetch", fetchMock);
+    const host = mountWithSetting(<Harness />); await settle();
+    await choose(host, [heic()], { accept: HEIC_ACCEPT });
+    await act(async () => { drive.phase("preparing", A); });
+    await act(async () => { drive.fail(new RenditionFailedError(A)); }); await settle();
+    await act(async () => { trayButton(host, "Remove")!.click(); }); await settle();
+    expect(fetchMock).toHaveBeenCalledWith(`/api/projects/p1/embedded-media/${A}/abort`, expect.objectContaining({ method: "POST" }));
+    expect(tray(host)).toBeNull(); expect(uploadingNow).toBe(false);
+  });
+
+  it("unmounting while preparing stops the polling and aborts the Project upload", async () => {
+    heicSetting.mockResolvedValue(true); const drive = driveUpload();
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 })); vi.stubGlobal("fetch", fetchMock);
+    const host = mountWithSetting(<Harness />); await settle();
+    await choose(host, [heic()], { accept: HEIC_ACCEPT });
+    await act(async () => { drive.phase("preparing", A); });
+    act(() => root!.unmount()); root = null;
+    expect(drive.signal.aborted).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(`/api/projects/p1/embedded-media/${A}/abort`, expect.objectContaining({ method: "POST" }));
+  });
+
+  it("counts a preparing upload toward the per-post cap", async () => {
+    heicSetting.mockResolvedValue(true); const drive = driveUpload();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 204 }))); // the unmount abort
+    const host = mountWithSetting(<Harness initial={withImages(...Array.from({ length: 9 }, (_, index) => `33333333-3333-4333-8333-33333333333${index}`))} />); await settle();
+    await choose(host, [heic()], { accept: HEIC_ACCEPT });
+    await act(async () => { drive.phase("preparing", A); });
+    await choose(host, [png("eleventh.png")], { accept: HEIC_ACCEPT });
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('[data-testid="rich-text-upload-tray"] [role="alert"]')?.textContent).toContain("10 images and videos at most");
+  });
+
+  it("says it is taking a while once a HEIC has been preparing for 60 seconds", async () => {
+    vi.useFakeTimers();
+    heicSetting.mockResolvedValue(true); const drive = driveUpload();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 204 }))); // the unmount abort
+    const tick = () => act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const host = mountWithSetting(<Harness />); await tick();
+    await choose(host, [heic()], { accept: HEIC_ACCEPT, tick });
+    await act(async () => { drive.phase("preparing", A); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(59_000); });
+    expect(tray(host)?.textContent).toContain("Preparing IMG_1.HEIC…"); expect(tray(host)?.textContent).not.toContain("Still preparing");
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    expect(tray(host)?.textContent).toContain("Still preparing IMG_1.HEIC… this can take a few minutes");
   });
 });
