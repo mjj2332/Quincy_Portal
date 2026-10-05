@@ -172,7 +172,7 @@ export async function preflightOwnedMedia(db: D1Database, input: OwnedMediaOwner
  * self-validating: every wanted id is attached by one UPDATE whose WHERE accepts only a fresh pending image upload of this
  * uploader in this scope, or a row this owner already owns (attached, or detached under seven days), then everything else the
  * owner holds is detached, then a guard statement violates a CHECK (rolling the whole batch back) if the wanted ids are not all
- * attached to this owner. A node names its kind (`videoIds` are the video nodes, every other id an image): the attach and the guard both
+ * attached to this owner. A link preview's image (`preview_image`, #497) is never touched here: `linkPreviewStatements` owns it. A node names its kind (`videoIds` are the video nodes, every other id an image): the attach and the guard both
  * require the stored row to be of that kind, so a video node cannot take an image row, nor the reverse. A save that lost the fence is skipped.
  */
 export function ownedMediaStatements(db: D1Database, input: OwnedMediaOwner & { uploaderId: string; ids: string[]; videoIds?: string[]; now: number; fence: { sql: string; binds: unknown[] }; guardId: string }): D1PreparedStatement[] {
@@ -191,7 +191,7 @@ export function ownedMediaStatements(db: D1Database, input: OwnedMediaOwner & { 
   `).bind(input.ownerId, now, id, input.ownerKind, ...scopeBinds, kindOf(id), ...fence.binds, input.uploaderId, cutoff, input.ownerId, cutoff));
   statements.push(db.prepare(`
     UPDATE embedded_media SET state = 'detached', detached_at = ?, updated_at = ?
-    WHERE owner_kind = ? AND owner_id = ? AND state = 'attached' ${ids.length ? `AND id NOT IN (${marks})` : ""} AND ${fence.sql}
+    WHERE owner_kind = ? AND owner_id = ? AND state = 'attached' AND kind <> 'preview_image' ${ids.length ? `AND id NOT IN (${marks})` : ""} AND ${fence.sql}
   `).bind(now, now, input.ownerKind, input.ownerId, ...ids, ...fence.binds));
   if (ids.length) {
     statements.push(db.prepare(`
@@ -250,4 +250,40 @@ export async function verifyUploadedEmbeddedObject(env: Env, row: EmbeddedMediaR
   // A video's declared type is the browser's guess from the file extension, so any MP4 or MOV container is accepted whichever it declared.
   if (row.kind === "video" ? !sniffed : sniffed !== row.contentType) return reject(row.kind === "video" ? "The uploaded file is not an MP4 or MOV video" : "The uploaded file is not a JPEG, PNG or WebP image");
   return { ok: true };
+}
+
+/**
+ * Gives up an R2 object nothing references (a video poster, a link preview image): on a lost adoption and on an adoption that threw. Deletes the object, then its queue
+ * entry (a leftover entry is harmless, the sweep deletes an already-gone object). If R2 refuses, the key is queued again with the
+ * lease cleared. Accepted residual gap: when the R2 delete AND that following D1 write both fail back to back, the object is an orphan
+ * nothing tracks. That is logged loudly with the key (see docs/lessons.md) and left to a future R2 prefix reconciliation.
+ */
+export async function discardUnreferencedObject(env: Pick<Env, "DB" | "MEDIA">, posterKey: string, projectId: string | null): Promise<void> {
+  let deleted = false;
+  try { await env.MEDIA.delete(posterKey); deleted = true; } catch { /* queued below */ }
+  if (deleted) {
+    try { await env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ?").bind(posterKey).run(); } catch { /* the sweep drops the entry of a gone object */ }
+    return;
+  }
+  try { await enqueueEmbeddedMediaCleanup(env.DB, [{ key: posterKey, projectId }]); }
+  catch (error) { console.error("Embedded object ORPHANED: the R2 delete and the re-queue both failed, the object needs manual cleanup", { key: posterKey, projectId, error: error instanceof Error ? error.message : String(error) }); }
+}
+
+/**
+ * Decides, after an adoption batch threw, what to do with the object it was meant to adopt (a video poster, a link preview image).
+ * A throw can follow a commit, so the outcome comes from reading the row, in three: `adopted` (the row references the object, it is
+ * live and stays), `discarded` (confirmed not adopted, so the object is deleted, re-queued if R2 refuses, see `discardUnreferencedObject`),
+ * or `unknown` (the read threw too). Unknown deletes nothing and queues nothing, since either could destroy a live object: the object
+ * stays, an unadopted queue entry is still the sweep's to reclaim, and the key is logged with the batch's error.
+ */
+export async function settleThrownAdoption(env: Pick<Env, "DB" | "MEDIA">, input: { key: string; projectId: string | null; mediaId: string; what: string; isAdopted: () => Promise<boolean>; error: unknown }): Promise<"adopted" | "discarded" | "unknown"> {
+  let adopted: boolean;
+  try { adopted = await input.isAdopted(); }
+  catch {
+    console.error(`${input.what} adoption outcome UNKNOWN: the batch threw and the verification read failed, the object was kept (a leak is possible, accepted gap #549)`, { key: input.key, mediaId: input.mediaId, projectId: input.projectId, error: input.error instanceof Error ? input.error.message : String(input.error) });
+    return "unknown";
+  }
+  if (adopted) return "adopted";
+  await discardUnreferencedObject(env, input.key, input.projectId);
+  return "discarded";
 }

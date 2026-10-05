@@ -381,6 +381,66 @@ export const embeddedMedia = sqliteTable(
 );
 
 /**
+ * Link previews (#497): the card a post shows for a link. A post stores only `previewId`, and the server fills the rest in when it
+ * serves the post. `ownerId` is NULL while the preview is pending and polymorphic once owned, so a post and its previews move
+ * together inside one batch in application code. `projectId` cascades. `imageMediaId` is the `preview_image` row, cleared when it goes.
+ * `requesterId` is who asked for the fetch: the per-person hourly limit is counted from these rows.
+ */
+export const linkPreviews = sqliteTable(
+  "link_previews",
+  {
+    id: id(),
+    ownerKind: text("owner_kind", { enum: ["project_comment", "notice_post"] as const }).notNull(),
+    ownerId: text("owner_id"),
+    projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+    requesterId: text("requester_id").notNull().references(() => user.id),
+    url: text("url").notNull(),
+    title: text("title"),
+    description: text("description"),
+    siteName: text("site_name"),
+    imageMediaId: text("image_media_id").references(() => embeddedMedia.id, { onDelete: "set null" }),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    index("link_previews_owner_idx").on(t.ownerKind, t.ownerId),
+    index("link_previews_requester_created_idx").on(t.requesterId, t.createdAt),
+    index("link_previews_pending_idx").on(t.createdAt).where(sql`${t.ownerId} IS NULL`),
+    index("link_previews_project_idx").on(t.projectId),
+    index("link_previews_image_idx").on(t.imageMediaId),
+    check("link_previews_owner_kind_check", sql`${t.ownerKind} IN ('project_comment','notice_post')`),
+    check("link_previews_project_check", sql`(${t.ownerKind} = 'notice_post') = (${t.projectId} IS NULL)`),
+  ],
+);
+
+/**
+ * Every fetch the server starts for a link preview (#497), kept whether or not it made a card and never removed when a card goes: the
+ * per-person limit of 30 an hour is counted here, in one INSERT that writes nothing at the limit. The partial unique index lets one fetch
+ * per person, place and address be in flight at a time. `contextId` is a Project id or `notice_board`. Swept after a day.
+ */
+export const linkPreviewAttempts = sqliteTable(
+  "link_preview_attempts",
+  {
+    id: id(),
+    requesterId: text("requester_id").notNull().references(() => user.id),
+    ownerKind: text("owner_kind", { enum: ["project_comment", "notice_post"] as const }).notNull(),
+    contextId: text("context_id").notNull(),
+    url: text("url").notNull(),
+    status: text("status", { enum: ["fetching", "done", "failed"] as const }).notNull(),
+    previewId: text("preview_id"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    index("link_preview_attempts_requester_created_idx").on(t.requesterId, t.createdAt),
+    index("link_preview_attempts_created_idx").on(t.createdAt),
+    uniqueIndex("link_preview_attempts_in_flight_idx").on(t.requesterId, t.ownerKind, t.contextId, t.url).where(sql`${t.status} = 'fetching'`),
+    check("link_preview_attempts_owner_kind_check", sql`${t.ownerKind} IN ('project_comment','notice_post')`),
+    check("link_preview_attempts_status_check", sql`${t.status} IN ('fetching','done','failed')`),
+  ],
+);
+
+/**
  * Durable cleanup queue for embedded-media R2 objects and multipart uploads that no `embedded_media` row owns
  * any more (#493). `projectId` deliberately has no foreign key: the Project is usually already gone. A row
  * leaves only after its object is deleted (and its multipart upload is terminal).

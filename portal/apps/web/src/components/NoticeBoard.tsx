@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useId, useRef, useState, type FormEvent } from "react";
 import { NOTICE_BODY_MAX_LENGTH, NOTICE_RICH_TEXT_JSON_MAX_BYTES, richTextDocByteLength, richTextPlainText, type RichTextDoc } from "@quincy/shared";
+import { stripLinkPreviewDisplay } from "../lib/rich-text-tiptap";
 import { createNoticeBoardPost, deleteNoticeBoardPost, editNoticeBoardPost, useNoticeBoardPostsQuery, useNoticeBoardPresentation, useNoticeBoardReadStateQuery } from "../lib/notice-board-data";
 import { apiGet } from "../lib/api";
 import { cn } from "@/lib/utils";
@@ -85,7 +86,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
 
   // Over either cap the editor says so and the action is disabled: the server (the notice profile)
   // would answer 400, and the character counter reads the same untrimmed plain text.
-  const overCap = (doc: RichTextDoc) => richTextDocByteLength(doc) > NOTICE_RICH_TEXT_JSON_MAX_BYTES || richTextPlainText(doc).length > NOTICE_BODY_MAX_LENGTH;
+  const overCap = (doc: RichTextDoc) => richTextDocByteLength(stripLinkPreviewDisplay(doc)) > NOTICE_RICH_TEXT_JSON_MAX_BYTES || richTextPlainText(doc).length > NOTICE_BODY_MAX_LENGTH;
   const postingOverBytes = overCap(content);
   const editingOverBytes = overCap(editingContent);
   const queryError = postsQuery.error ?? readStateQuery.error;
@@ -120,7 +121,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
   async function submit(event?: FormEvent) {
     event?.preventDefault(); if (postingOverBytes || composerUploading || !beginNoticeBoardMutation("create")) return;
     try {
-      await createNoticeBoardPost(queryClient, content);
+      await createNoticeBoardPost(queryClient, stripLinkPreviewDisplay(content));
       setContent(EMPTY_DOC); clearMutationError("create");
     } catch (reason) {
       setMutationError("create", reason, "The post could not be published.");
@@ -130,7 +131,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
   async function saveEdit(id: string) {
     if (editingOverBytes || editUploading || !beginNoticeBoardMutation("edit")) return;
     try {
-      await editNoticeBoardPost(queryClient, id, editingContent);
+      await editNoticeBoardPost(queryClient, id, stripLinkPreviewDisplay(editingContent));
       setEditingId(null); setEditingContent(EMPTY_DOC); clearMutationError("edit");
     } catch (reason) {
       setMutationError("edit", reason, "The post could not be updated.");
@@ -145,7 +146,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
   }
 
   const renderEditComposer = (id: string) => <div data-slot="notice-board-edit-composer" className={EDIT_COMPOSER}>
-    <QuincyRichTextEditor preset="document" value={editingContent} onChange={setEditingContent} limit={NOTICE_BODY_MAX_LENGTH} maxBytes={NOTICE_RICH_TEXT_JSON_MAX_BYTES} disabled={isBusy} loadMentionables={loadMentionables} placeholder="Edit notice…" onSubmit={() => void saveEdit(id)} media={{ noticeBoard: true }} onUploadingChange={setEditUploading} />
+    <QuincyRichTextEditor preset="document" value={editingContent} onChange={setEditingContent} limit={NOTICE_BODY_MAX_LENGTH} maxBytes={NOTICE_RICH_TEXT_JSON_MAX_BYTES} disabled={isBusy} loadMentionables={loadMentionables} placeholder="Edit notice…" onSubmit={() => void saveEdit(id)} media={{ noticeBoard: true }} linkPreviews={{ noticeBoard: true }} onUploadingChange={setEditUploading} />
     <div className={COMPOSER_FOOT}><button className={buttonClasses("secondary")} type="button" disabled={isBusy} onClick={() => { setEditingId(null); setEditingContent(EMPTY_DOC); }}>Cancel</button><button className={buttonClasses("primary")} type="button" disabled={isBusy || editingOverBytes || editUploading} onClick={() => void saveEdit(id)}>{isSaving ? "Saving…" : "Save"}</button></div>
   </div>;
 
@@ -191,7 +192,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
           {renderEditComposer(editingId)}
         </article>}
       </div>
-      <form data-slot="notice-board-composer" className={CREATE_COMPOSER} onSubmit={(event) => void submit(event)}><label className="sr-only" htmlFor={`${panelId}-body`}>Write a notice</label><QuincyRichTextEditor preset="document" id={`${panelId}-body`} value={content} onChange={setContent} limit={NOTICE_BODY_MAX_LENGTH} maxBytes={NOTICE_RICH_TEXT_JSON_MAX_BYTES} disabled={isBusy} loadMentionables={loadMentionables} placeholder="Write a notice for the team…" onSubmit={() => void submit()} media={{ noticeBoard: true }} onUploadingChange={setComposerUploading} tableBubbleFloor={mentionHintRef} /><div className={COMPOSER_FOOT}><span ref={mentionHintRef} className={MENTION_HINT}>Use @ to mention active staff</span><button className={buttonClasses("primary")} type="submit" disabled={isBusy || postingOverBytes || composerUploading}>{isPosting ? "Posting…" : "Post notice"}</button></div></form>
+      <form data-slot="notice-board-composer" className={CREATE_COMPOSER} onSubmit={(event) => void submit(event)}><label className="sr-only" htmlFor={`${panelId}-body`}>Write a notice</label><QuincyRichTextEditor preset="document" id={`${panelId}-body`} value={content} onChange={setContent} limit={NOTICE_BODY_MAX_LENGTH} maxBytes={NOTICE_RICH_TEXT_JSON_MAX_BYTES} disabled={isBusy} loadMentionables={loadMentionables} placeholder="Write a notice for the team…" onSubmit={() => void submit()} media={{ noticeBoard: true }} linkPreviews={{ noticeBoard: true }} onUploadingChange={setComposerUploading} tableBubbleFloor={mentionHintRef} /><div className={COMPOSER_FOOT}><span ref={mentionHintRef} className={MENTION_HINT}>Use @ to mention active staff</span><button className={buttonClasses("primary")} type="submit" disabled={isBusy || postingOverBytes || composerUploading}>{isPosting ? "Posting…" : "Post notice"}</button></div></form>
     </div>
   </section>;
 }

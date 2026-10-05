@@ -2,16 +2,19 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject }
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import { exitSuggestion } from "@tiptap/suggestion";
 import { ChevronDownIcon, ImageIcon, ListChecksIcon, ListIcon, ListOrderedIcon, Redo2Icon, TableIcon, Undo2Icon, VideoIcon } from "lucide-react";
-import { RICH_TEXT_JSON_MAX_BYTES, richTextDocByteLength, richTextMediaIds, richTextPlainText, type RichTextDoc } from "@quincy/shared";
+import { RICH_TEXT_JSON_MAX_BYTES, RICH_TEXT_MAX_LINK_PREVIEWS, richTextDocByteLength, richTextMediaIds, richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { cn } from "../lib/utils";
 import { useMediaQuery } from "../lib/use-media-query";
 import { EMBEDDED_IMAGE_ACCEPT, EMBEDDED_MEDIA_MAX_PER_POST, EMBEDDED_VIDEO_ACCEPT, embeddedImageProblem, embeddedVideoProblem, uploadEmbeddedImage, uploadEmbeddedVideo, type EmbeddedMediaScope } from "../lib/embedded-media";
+import { requestLinkPreview } from "../lib/link-previews";
 import {
+  LinkPreview,
   createRichTextEditorExtensions,
   type RichTextEditorPreset,
   itemContainerDepth,
   mentionQuery,
   shouldBlockListIndent,
+  stripLinkPreviewDisplay,
   tiptapToRichTextDoc,
   toTiptap,
 } from "../lib/rich-text-tiptap";
@@ -20,6 +23,7 @@ import { Button } from "./reui/button";
 import { Input } from "./reui/input";
 import { Progress, ProgressValue } from "./reui/progress";
 import { Notice } from "./quincy/Notice";
+import { LinkPreviewWithView } from "./quincy/LinkPreviewEditorNode";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -101,6 +105,9 @@ export type QuincyRichTextEditorProps = {
   preset: RichTextEditorPreset;
   value: RichTextDoc;
   onChange: (value: RichTextDoc) => void;
+  // `onChange` carries what each link preview card shows (title, description, site, address, image) beside its id, because whatever a
+  // host keeps outside the editor (a draft, an edit in progress) has to redraw the card when the editor is mounted again. The id alone
+  // is what is stored, so a host strips with `stripLinkPreviewDisplay` at the point it submits and wherever it measures size.
   limit: number;
   /** The stored-JSON cap the surface's server profile enforces (default: the comment cap). */
   maxBytes?: number;
@@ -111,6 +118,8 @@ export type QuincyRichTextEditorProps = {
   onSubmit?: () => void;
   /** Turns on embedded images (#493, #496): the toolbar button, paste and drop upload into this Project or the Notice board. A Project also takes video (#494). */
   media?: EmbeddedMediaScope;
+  /** Turns on link previews (#497): applying a link asks the server for the page's card and inserts it after the link's block. */
+  linkPreviews?: EmbeddedMediaScope;
   /** Reports whether an image is still uploading, so the host can hold Post / Save until it lands. */
   onUploadingChange?: (uploading: boolean) => void;
   /** The host's helper line under the editor; the table bar may extend down to it (#535). Omit for none. */
@@ -137,6 +146,7 @@ export function QuincyRichTextEditor({
   id,
   onSubmit,
   media,
+  linkPreviews,
   onUploadingChange,
   tableBubbleFloor,
 }: QuincyRichTextEditorProps) {
@@ -170,6 +180,9 @@ export function QuincyRichTextEditor({
   const inFlight = useRef(0);
   const mountedRef = useRef(true);
   const mediaRef = useRef(media); mediaRef.current = media;
+  const linkPreviewsRef = useRef(linkPreviews); linkPreviewsRef.current = linkPreviews;
+  // Bumped when the host replaces the content, so an answer that was in flight for the old content is dropped.
+  const contentEpoch = useRef(0);
   const onUploadingChangeRef = useRef(onUploadingChange); onUploadingChangeRef.current = onUploadingChange;
   const addImagesRef = useRef<(files: File[], at?: number, as?: "image" | "video") => void>(() => {});
   // Each running upload's way to stop and to give up its place (the busy count and the tray row), once, whichever of finishing and cancelling comes first.
@@ -179,7 +192,7 @@ export function QuincyRichTextEditor({
   const [picking, setPicking] = useState<{ n: number; kind: "image" | "video" } | null>(null);
   const pickerRef = useRef<HTMLInputElement>(null);
   const extensions = useMemo(() => [
-    ...createRichTextEditorExtensions(preset),
+    ...createRichTextEditorExtensions(preset).map((extension) => extension === LinkPreview ? LinkPreviewWithView : extension),
     ...(preset === "document" ? [RichTextSlashCommand.configure({ items: [...RICH_TEXT_BASIC_SLASH_ITEMS, RICH_TEXT_TABLE_SLASH_ITEM] })] : []),
   ], [preset]);
   const editor = useEditor({
@@ -226,7 +239,7 @@ export function QuincyRichTextEditor({
           const plainText = richTextPlainText(doc);
           // Never submit while an image is still uploading: the post would go without it.
           if (inFlight.current > 0) { event.preventDefault(); return true; }
-          if (plainText.trim().length > 0 && plainText.length <= limitRef.current && richTextDocByteLength(doc) <= maxBytesRef.current && !disabledRef.current) {
+          if (plainText.trim().length > 0 && plainText.length <= limitRef.current && richTextDocByteLength(stripLinkPreviewDisplay(doc)) <= maxBytesRef.current && !disabledRef.current) {
             event.preventDefault();
             onSubmitRef.current?.();
             return true;
@@ -236,12 +249,16 @@ export function QuincyRichTextEditor({
       },
     },
     onUpdate: ({ editor: next, transaction }) => {
-      const doc = tiptapToRichTextDoc(next.getJSON());
+      const doc = tiptapToRichTextDoc(next.getJSON(), { keepPreviewDisplay: true });
       const serialised = JSON.stringify(doc);
       // Tiptap/ProseMirror can dispatch a no-op transaction (e.g. from a blur triggered by a
       // submit button click) that reports the same content as before. Propagating it anyway can
       // clobber a concurrent external reset (e.g. the composer clearing after a successful post)
       // that lands between this event and the next render.
+      // A card that was shown and is gone now was removed by the author: remember it so a late answer does not bring it back.
+      const nowShown = new Set<string>(); next.state.doc.forEach((child) => { if (child.type.name === "linkPreview") nowShown.add(String(child.attrs.url ?? "")); });
+      for (const url of shownPreviews.current) if (!nowShown.has(url)) removedPreviews.current.set(url, ++uploadSeq.current);
+      shownPreviews.current = nowShown;
       if (serialised === valueRef.current) return;
       valueRef.current = serialised; onChangeRef.current(doc);
       // Only the author's own edits retire an upload problem: a sibling upload landing is not one, and must not hide a problem shown for another file.
@@ -343,6 +360,47 @@ export function QuincyRichTextEditor({
     }
     setUploadErrors(problems);
   };
+  // A link was just applied: ask for its card and put it after the link's top-level block. The place is carried through later
+  // edits like an upload's, and a late answer (the content was replaced, the editor unmounted, three cards already, the same address
+  // already carded) is dropped. No card, a refusal or a failure all leave the link a link.
+  const hasLink = (doc: { descendants: (callback: (child: { marks: ReadonlyArray<{ type: { name: string }; attrs: Record<string, unknown> }> }) => boolean | void) => void }, href: string) => {
+    let found = false;
+    doc.descendants((child) => { if (child.marks.some((mark) => mark.type.name === "link" && mark.attrs.href === href)) found = true; return !found; });
+    return found;
+  };
+  const hasPreviewId = (doc: { forEach: (callback: (child: { type: { name: string }; attrs: Record<string, unknown> }) => void) => void }, previewId: string) => {
+    let found = false; doc.forEach((child) => { if (child.type.name === "linkPreview" && child.attrs.previewId === previewId) found = true; }); return found;
+  };
+  const previewControllers = useRef(new Set<AbortController>());
+  // One request per address at a time, and the addresses whose card the author removed (with when), so a late answer cannot put it back.
+  const pendingPreviews = useRef(new Set<string>());
+  const removedPreviews = useRef(new Map<string, number>());
+  const shownPreviews = useRef(new Set<string>());
+  const offerLinkPreview = (href: string) => {
+    const scope = linkPreviewsRef.current; const current = editorRef.current;
+    if (!scope || !current || disabledRef.current) return;
+    const cards = () => { const found: string[] = []; current.state.doc.forEach((child) => { if (child.type.name === "linkPreview") found.push(String(child.attrs.url ?? "")); }); return found; };
+    if (cards().length >= RICH_TEXT_MAX_LINK_PREVIEWS || cards().includes(href) || pendingPreviews.current.has(href)) return;
+    const pending = pendingPreviews.current; pending.add(href);
+    const key = ++uploadSeq.current; const epoch = contentEpoch.current;
+    const { $to } = current.state.selection;
+    insertAt.current.set(key, $to.depth >= 1 ? $to.after(1) : $to.pos);
+    const controller = new AbortController(); previewControllers.current.add(controller);
+    void requestLinkPreview(scope, href, controller.signal).then((card) => {
+      const live = editorRef.current;
+      if (!card || controller.signal.aborted || !mountedRef.current || !live || epoch !== contentEpoch.current) return;
+      // The link may have been undone or replaced while the page was fetched: the card belongs to a link that is still there.
+      if (!hasLink(live.state.doc, href)) return;
+      if ((removedPreviews.current.get(card.url) ?? 0) > key || (removedPreviews.current.get(href) ?? 0) > key) return;
+      if (cards().length >= RICH_TEXT_MAX_LINK_PREVIEWS || cards().includes(card.url) || hasPreviewId(live.state.doc, card.previewId)) return;
+      const size = live.state.doc.content.size;
+      const mapped = Math.min(insertAt.current.get(key) ?? size, size);
+      const $at = live.state.doc.resolve(mapped);
+      // insertContentAt selects inserted content by default: the arriving card must not take the author's selection, or the next keystroke deletes it.
+      live.chain().insertContentAt($at.depth >= 1 ? $at.after(1) : mapped, { type: "linkPreview", attrs: card }, { updateSelection: false }).run();
+    }).catch(() => undefined).finally(() => { pending.delete(href); insertAt.current.delete(key); previewControllers.current.delete(controller); });
+  };
+  useEffect(() => () => { for (const controller of previewControllers.current) controller.abort(); }, []);
   useEffect(() => () => {
     for (const entry of [...running.current.values()]) entry.controller.abort();
     if (inFlight.current > 0) onUploadingChangeRef.current?.(false);
@@ -391,8 +449,9 @@ export function QuincyRichTextEditor({
     if (serialised !== valueRef.current) {
       // The host replaced the content (a post cleared the composer, or an edit began): an earlier upload error is stale.
       setUploadErrors((entries) => (entries.length ? [] : entries));
+      contentEpoch.current += 1; shownPreviews.current = new Set(); removedPreviews.current = new Map(); pendingPreviews.current = new Set();
       const applied = editor.commands.setContent(toTiptap(value), { emitUpdate: false });
-      if (applied && JSON.stringify(tiptapToRichTextDoc(editor.getJSON())) === serialised) valueRef.current = serialised;
+      if (applied && JSON.stringify(tiptapToRichTextDoc(editor.getJSON(), { keepPreviewDisplay: true })) === serialised) valueRef.current = serialised;
     }
   }, [editor, value]);
   useEffect(() => {
@@ -408,7 +467,7 @@ export function QuincyRichTextEditor({
   if (!editor) return null;
 
   const plainText = richTextPlainText(value);
-  const overBytes = richTextDocByteLength(value) > maxBytes;
+  const overBytes = richTextDocByteLength(stripLinkPreviewDisplay(value)) > maxBytes;
   const selectMention = (user: MentionableUser) => {
     const activeQuery = query ?? "";
     const from = editor.state.selection.from - activeQuery.length - 1;
@@ -456,7 +515,7 @@ export function QuincyRichTextEditor({
                 </DropdownMenuRadioGroup>
               </DropdownMenuContent>
             </DropdownMenu>
-            <RichTextLinkPopover editor={editor} state={state} disabled={disabled} testId="rich-text-link-popover" open={linkOpen} onOpenChange={setLinkOpen} />
+            <RichTextLinkPopover editor={editor} state={state} disabled={disabled} testId="rich-text-link-popover" open={linkOpen} onOpenChange={setLinkOpen} onApplied={offerLinkPreview} />
             <RichTextToggle label="Bullet list" pressed={state.bulletList} disabled={off(state.canBulletList) || state.atListNestingLimit} onToggle={() => editor.chain().focus().toggleBulletList().run()}><ListIcon aria-hidden="true" /></RichTextToggle>
             <RichTextToggle label="Ordered list" pressed={state.orderedList} disabled={off(state.canOrderedList) || state.atListNestingLimit} onToggle={() => editor.chain().focus().toggleOrderedList().run()}><ListOrderedIcon aria-hidden="true" /></RichTextToggle>
             <RichTextToggle label="Checklist" pressed={state.taskList} disabled={off(state.canTaskList) || state.atListNestingLimit} onToggle={() => editor.chain().focus().toggleTaskList().run()}><ListChecksIcon aria-hidden="true" /></RichTextToggle>

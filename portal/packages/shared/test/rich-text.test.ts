@@ -12,6 +12,7 @@ import {
   normalizeRichTextMentionLabels,
   parseRichTextDoc,
   richTextDocByteLength,
+  richTextLinkPreviewIds,
   richTextMediaIds,
   richTextMediaRefs,
   richTextMentionIds,
@@ -473,5 +474,62 @@ describe("video node (#494)", () => {
     expect(richTextPlainText(parseRichTextDoc(withNodes(video(mediaA), image(mediaB)), COMMENT_MEDIA_RICH_TEXT_PROFILE))).toBe("Look\n[video]\n[image]");
     expect(normalizeRichTextMentionLabels(only, new Map())).toEqual(only);
     expect(richTextMentionIds(only)).toEqual([]);
+  });
+});
+
+describe("link preview node (#497)", () => {
+  const idA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const idB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const idC = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const idD = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  const card = (previewId: unknown, extra: Record<string, unknown> = {}) => ({ type: "linkPreview", attrs: { previewId, ...extra } });
+  const withNodes = (...nodes: unknown[]) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "See ", marks: [] }, { type: "text", text: "this", marks: [{ type: "link", href: "https://example.test/a" }] }] }, ...nodes] });
+
+  it("is accepted under the comment media and notice profiles, never the default comment profile", () => {
+    const input = withNodes(card(idA));
+    expect(parseRichTextDoc(input, COMMENT_MEDIA_RICH_TEXT_PROFILE)).toEqual(input);
+    expect(parseRichTextDoc(input, NOTICE_RICH_TEXT_PROFILE)).toEqual(input);
+    expect(() => parseRichTextDoc(input)).toThrow(RichTextValidationError);
+  });
+
+  it("is top level only and an exact node", () => {
+    const bad = [
+      withNodes(card("not-a-uuid")),
+      withNodes(card(undefined)),
+      withNodes({ type: "linkPreview" }),
+      withNodes({ type: "linkPreview", attrs: { previewId: idA }, content: [] }),
+      withNodes({ type: "linkPreview", attrs: { previewId: idA }, src: "x" }),
+      withNodes(card(idA, { href: "https://evil.test" })),
+      { type: "doc", content: [{ type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "x" }] }, card(idA)] }] }] },
+      { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "x" }, card(idA)] }] },
+    ];
+    for (const value of bad) {
+      expect(() => parseRichTextDoc(value, COMMENT_MEDIA_RICH_TEXT_PROFILE), JSON.stringify(value)).toThrow(RichTextValidationError);
+      expect(() => parseRichTextDoc(value, NOTICE_RICH_TEXT_PROFILE), JSON.stringify(value)).toThrow(RichTextValidationError);
+    }
+  });
+
+  it("allows three cards and refuses a fourth or a repeated id", () => {
+    expect(richTextLinkPreviewIds(parseRichTextDoc(withNodes(card(idA), card(idB), card(idC)), COMMENT_MEDIA_RICH_TEXT_PROFILE))).toEqual([idA, idB, idC]);
+    expect(() => parseRichTextDoc(withNodes(card(idA), card(idB), card(idC), card(idD)), COMMENT_MEDIA_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+    expect(() => parseRichTextDoc(withNodes(card(idA), card(idA)), NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+  });
+
+  it("drops the display fields a served document carries, so a forged title is never stored", () => {
+    const served = withNodes(card(idA, { url: "https://example.test/a", title: "Forged", description: "Forged", siteName: "Forged", imageMediaId: idB }));
+    expect(parseRichTextDoc(served, COMMENT_MEDIA_RICH_TEXT_PROFILE)).toEqual(withNodes(card(idA)));
+    expect(parseRichTextDoc(withNodes(card(idA, { title: null, imageMediaId: null })), NOTICE_RICH_TEXT_PROFILE)).toEqual(withNodes(card(idA)));
+  });
+
+  it("adds nothing to plain text, mention ids or media ids, and survives mention-label normalisation", () => {
+    const doc = parseRichTextDoc(withNodes(card(idA), { type: "image", attrs: { mediaId: idB } }), COMMENT_MEDIA_RICH_TEXT_PROFILE);
+    expect(richTextPlainText(doc)).toBe("See this\n[image]");
+    expect(richTextMentionIds(doc)).toEqual([]);
+    expect(richTextMediaIds(doc)).toEqual([idB]);
+    expect(normalizeRichTextMentionLabels(doc, new Map())).toEqual(doc);
+  });
+
+  it("never makes a document with only a card valid, because the link text is what counts", () => {
+    expect(() => parseRichTextDoc({ type: "doc", content: [card(idA)] }, COMMENT_MEDIA_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
   });
 });

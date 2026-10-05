@@ -12,7 +12,7 @@ import { hasProjectCollaborationAccess } from "../middleware/capability";
 import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { abortMultipart, createMultipartPresign, PART_BYTES, PRESIGN_EXPIRES_SECONDS } from "../lib/r2s3";
-import { abortEmbeddedMedia, claimAndDiscardUploadingMedia, enqueueEmbeddedMediaCleanup, getEmbeddedMedia, verifyUploadedEmbeddedObject } from "../lib/embedded-media";
+import { abortEmbeddedMedia, claimAndDiscardUploadingMedia, discardUnreferencedObject, enqueueEmbeddedMediaCleanup, getEmbeddedMedia, settleThrownAdoption, verifyUploadedEmbeddedObject } from "../lib/embedded-media";
 import { jsonInput } from "./helpers";
 
 const uuid = z.string().uuid();
@@ -26,7 +26,7 @@ export const embeddedMediaRoutes = new Hono<AppEnv>();
 type Project = { id: string; archivedAt: Date | null };
 
 /** The collaboration gate shared by the three routes: 403 for staff, 404 for an External editor (as the comment routes do). */
-async function collaborationGate(c: Context<AppEnv>, projectId: string): Promise<Project | Response> {
+export async function collaborationGate(c: Context<AppEnv>, projectId: string): Promise<Project | Response> {
   if (!await hasProjectCollaborationAccess(c, projectId)) return c.get("user").role === "external_editor" ? c.json({ error: "Project not found" }, 404) : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const project = await createDb(c.env.DB).select({ id: schema.projects.id, archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
   return project ?? c.json({ error: "Project not found" }, 404);
@@ -154,39 +154,16 @@ embeddedMediaRoutes.put("/projects/:projectId/embedded-media/:mediaId/poster", t
       c.env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ? AND queued_at = ? AND claimed_until IS NULL AND (SELECT poster_key FROM embedded_media WHERE id = ?) = ?").bind(posterKey, queuedAt, mediaId, posterKey),
     ]);
   } catch (error) {
-    // A throw can still follow a commit, so decide from the row, in three outcomes: adopted (the row references the key: it is live, keep it),
-    // confirmed not adopted (discard), or unknown (the read threw too). Unknown deletes nothing and queues nothing: a delete or a queue entry
-    // could destroy a live poster. The object stays, an unadopted entry (if any) is still the sweep's to reclaim, and the key is logged.
-    const verdict = await getEmbeddedMedia(c.env.DB, mediaId).then((current) => (current?.posterKey === posterKey ? "adopted" : "not_adopted") as "adopted" | "not_adopted", () => "unknown" as const);
-    if (verdict === "adopted") return c.body(null, 204);
-    if (verdict === "unknown") {
-      console.error("Embedded poster adoption outcome UNKNOWN: the batch threw and the verification read failed, the object was kept (a leak is possible, accepted gap #549)", { key: posterKey, mediaId, projectId, error: error instanceof Error ? error.message : String(error) });
-      throw error;
-    }
-    await discardPoster(c.env, posterKey, projectId); throw error;
+    // A throw can still follow a commit: adopted keeps the object (204), unknown keeps it too (500), only a confirmed miss discards it.
+    const outcome = await settleThrownAdoption(c.env, { key: posterKey, projectId, mediaId, what: "Embedded poster", error, isAdopted: async () => (await getEmbeddedMedia(c.env.DB, mediaId))?.posterKey === posterKey });
+    if (outcome === "adopted") return c.body(null, 204);
+    throw error;
   }
   if ((results[0]!.meta.changes ?? 0) === 1) return c.body(null, 204);
   // Lost: nothing references the object, and a sweep's claim on its entry can never be undone (adoption needs an unclaimed entry).
-  await discardPoster(c.env, posterKey, projectId);
+  await discardUnreferencedObject(c.env, posterKey, projectId);
   return c.json({ error: "This video can no longer take a poster", code: "poster_unavailable" }, 409);
 }));
-
-/**
- * Gives up a poster object nothing references: on a lost adoption and on an adoption that threw. Deletes the object, then its queue
- * entry (a leftover entry is harmless, the sweep deletes an already-gone object). If R2 refuses, the key is queued again with the
- * lease cleared. Accepted residual gap: when the R2 delete AND that following D1 write both fail back to back, the object is an orphan
- * nothing tracks. That is logged loudly with the key (see docs/lessons.md) and left to a future R2 prefix reconciliation.
- */
-async function discardPoster(env: Pick<Env, "DB" | "MEDIA">, posterKey: string, projectId: string): Promise<void> {
-  let deleted = false;
-  try { await env.MEDIA.delete(posterKey); deleted = true; } catch { /* queued below */ }
-  if (deleted) {
-    try { await env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ?").bind(posterKey).run(); } catch { /* the sweep drops the entry of a gone object */ }
-    return;
-  }
-  try { await enqueueEmbeddedMediaCleanup(env.DB, [{ key: posterKey, projectId }]); }
-  catch (error) { console.error("Embedded poster ORPHANED: the R2 delete and the re-queue both failed, the object needs manual cleanup", { key: posterKey, projectId, error: error instanceof Error ? error.message : String(error) }); }
-}
 
 /** A cancelled upload (#494): see `abortEmbeddedMedia`. The uploader's alone, in any Project state, since cleaning up is never harmful. */
 embeddedMediaRoutes.post("/projects/:projectId/embedded-media/:mediaId/abort", terminalRoute("/projects/:projectId/embedded-media/:mediaId/abort", async (c) => {

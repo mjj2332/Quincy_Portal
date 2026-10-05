@@ -50,6 +50,7 @@ import { reconcileSubtaskReminderOccurrences, scanSubtaskReminderOccurrences } f
 import { runEmailDigests } from "./email-digest";
 import { sweepExternalEditedUploads } from "./external-upload-sweep";
 import { sweepEmbeddedMedia } from "./embedded-media-sweep";
+import { fetchLinkPreview as readLinkPreview, type LinkPreviewFetchResult } from "./link-preview-fetch";
 import { processExternalRoleCachePurges } from "./external-role-cache-purge";
 import { sweepStuckManualPublishes } from "./manual-publish-recovery";
 import { isBoardSchemaMaintenanceError, requireBoardSchemaReady } from "./lib/board-schema";
@@ -788,6 +789,16 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
     await requireBoardSchemaReady(this.env);
     const id = this.env.TONOMO_PROCESSOR.idFromName("tonomo");
     await this.env.TONOMO_PROCESSOR.get(id).drain();
+  }
+
+  /**
+   * Link preview (#497): fetches the page behind a link and returns the card's text and, when it has one, the image bytes (at most 5 MiB,
+   * well inside the 32 MiB a Workers RPC payload may carry). The app Worker owns every row and object: this method only reads the web.
+   * `blockedHosts` is the Portal's own host, which a preview must never fetch.
+   */
+  async fetchLinkPreview(url: string, blockedHosts: string[] = []): Promise<LinkPreviewFetchResult> {
+    // Native fetch must not be called as an object method (docs/lessons.md): wrap it.
+    return readLinkPreview(url, { fetch: (...args) => fetch(...args), blockedHosts });
   }
 
   /** Operator-only, bounded page. It never runs on deploy and requires a deliberate prod flag. */
