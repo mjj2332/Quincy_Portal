@@ -112,6 +112,7 @@ export function createMediaFileResolver({ renderer, fetch: fetchImpl, now = Date
       cache.delete(id);                                            // transient: nothing is remembered, nothing was added
       const attempts = (failures.get(id)?.attempts ?? 0) + 1;
       failures.set(id, { attempts, nextAt: now() + backoffMs(attempts) });
+      waiting.delete(id);                                          // no longer in flight, so the retry timer may count it
       scheduleRetry();
       return outcome;
     });
@@ -119,9 +120,16 @@ export function createMediaFileResolver({ renderer, fetch: fetchImpl, now = Date
     return attempt;
   }
 
+  /** Arms ONE timer for the earliest retry among refs that are still on the board, unresolved, idle and under the cap. Re-run after every ensure and every failure. */
   function scheduleRetry() {
-    if (disposed || timer !== undefined) return;
-    const due = [...failures.values()].filter((entry) => entry.attempts < MAX_ATTEMPTS).map((entry) => entry.nextAt);
+    if (timer !== undefined) { clearTimeout(timer); timer = undefined; }
+    if (disposed) return;
+    const due: number[] = [];
+    for (const { id } of lastRefs) {
+      const entry = failures.get(id);
+      if (!entry || entry.attempts >= MAX_ATTEMPTS || waiting.has(id) || sink?.has(id)) continue;
+      due.push(entry.nextAt);
+    }
     if (due.length === 0) return;
     timer = setTimeout(() => { timer = undefined; ensure(lastRefs.map(({ id, kind }) => ({ type: "image", fileId: id, customData: { quincyMedia: { kind } } }))); }, Math.max(0, Math.min(...due) - now()));
   }
@@ -141,6 +149,7 @@ export function createMediaFileResolver({ renderer, fetch: fetchImpl, now = Date
       if (ref) refs.set(ref.id, ref.kind);
     }
     lastRefs = [...refs].map(([id, kind]) => ({ id, kind }));
+    for (const id of [...failures.keys()]) if (!refs.has(id)) failures.delete(id);   // no longer on the board: it must not keep the timer alive
     for (const [id, kind] of refs) {
       if (sink?.has(id) || waiting.has(id)) continue;
       const failed = failures.get(id);
@@ -148,6 +157,7 @@ export function createMediaFileResolver({ renderer, fetch: fetchImpl, now = Date
       waiting.add(id);
       void resolve(id, kind).then((outcome) => deliver(id, outcome));
     }
+    scheduleRetry();
   }
 
   return {

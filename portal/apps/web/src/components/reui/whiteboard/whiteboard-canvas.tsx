@@ -843,6 +843,13 @@ type ControllerHost = {
   refusedMedia?: (count: number) => void
 }
 
+/** Whether an element hides what is beneath its footprint for a click (images, text, opaque shapes). Frames, lines, arrows, freedraw and transparent shapes are mostly empty or drawn behind. */
+function occludesVideo(element: { type: string; backgroundColor?: string }): boolean {
+  if (element.type === "image" || element.type === "text") return true
+  if (element.type === "rectangle" || element.type === "diamond" || element.type === "ellipse") return element.backgroundColor !== undefined && element.backgroundColor !== "transparent"
+  return false
+}
+
 export function createController(
   api: ExcalidrawImperativeAPI,
   { root, arm, panel, library, editable, remoteApplied, edited, knownMedia, uploadedMedia, refusedMedia }: ControllerHost
@@ -1055,7 +1062,8 @@ export function createController(
       for (let index = elements.length - 1; index >= 0; index -= 1) {
         const element = elements[index]!
         const ref = whiteboardMediaRef(element as unknown as Record<string, unknown>)
-        if (ref?.kind !== "video") continue
+        const isVideo = ref?.kind === "video"
+        if (!isVideo && !occludesVideo(element)) continue
         // The point in the element's own frame (undo its rotation about its centre).
         const dx = point.x - (element.x + element.width / 2)
         const dy = point.y - (element.y + element.height / 2)
@@ -1064,8 +1072,10 @@ export function createController(
         const rx = dx * cos - dy * sin
         const ry = dx * sin + dy * cos
         if (Math.abs(rx) > element.width / 2 || Math.abs(ry) > element.height / 2) continue
+        // The topmost element under the point decides: anything opaque above a video's badge hides it.
+        if (!isVideo) return null
         // Editing: only the play badge opens it (a click anywhere else selects, drags, resizes). Viewing: the whole element.
-        if (edit && Math.hypot(rx, ry) > Math.min(element.width, element.height) * BADGE_HIT_RADIUS) continue
+        if (edit && Math.hypot(rx, ry) > Math.min(element.width, element.height) * BADGE_HIT_RADIUS) return null
         return ref.id
       }
       return null

@@ -113,6 +113,20 @@ describe("videoAt and selectedVideo (#501)", () => {
     expect(skipped.controller.videoAt(300, 200)).toBeNull();
   });
 
+  it("the topmost element under the point decides: an opaque image over the badge hides the video, a transparent shape does not, a video above an image wins", () => {
+    const image = { id: "i", type: "image", fileId: IMG, customData: { quincyMedia: { kind: "image" } }, x: 250, y: 150, width: 100, height: 100, angle: 0, isDeleted: false };
+    const covered = setup({ editable: false, elements: [videoEl("v"), image] });
+    expect(covered.controller.videoAt(300, 200)).toBeNull();                         // the image sits over the badge
+    expect(covered.controller.videoAt(150, 120)).toBe(VID);                          // away from the image the video is still hit
+    const glass = { id: "r", type: "rectangle", backgroundColor: "transparent", x: 250, y: 150, width: 100, height: 100, angle: 0, isDeleted: false };
+    expect(setup({ editable: false, elements: [videoEl("v"), glass] }).controller.videoAt(300, 200)).toBe(VID);
+    expect(setup({ editable: false, elements: [videoEl("v"), { ...glass, backgroundColor: "#ffffff" }] }).controller.videoAt(300, 200)).toBeNull();
+    const frame = { ...glass, type: "frame", backgroundColor: "#ffffff" };
+    expect(setup({ editable: false, elements: [videoEl("v"), frame] }).controller.videoAt(300, 200)).toBe(VID);
+    const above = setup({ elements: [image, videoEl("v")] });
+    expect(above.controller.videoAt(300, 200)).toBe(VID);                            // video over image
+  });
+
   it("selectedVideo is the media id of exactly one selected video, else null", () => {
     const one = setup({ elements: [videoEl("v")], appState: { selectedElementIds: { v: true } } });
     expect(one.controller.selectedVideo()).toBe(VID);

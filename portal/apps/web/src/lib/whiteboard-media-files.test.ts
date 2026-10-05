@@ -55,6 +55,32 @@ describe("the board media resolver (#501)", () => {
     expect(fetchStub).toHaveBeenCalledTimes(3);
   });
 
+  it("staggered failures: the timer rearms for the later retry, so a ref that was not yet due when the first timer fired is still delivered", async () => {
+    fetchStub.mockImplementation(async (input) => {
+      if (fetchStub.mock.calls.filter(([url]) => url === input).length === 1) throw new TypeError("offline");   // each id fails once, then succeeds
+      return reply(200);
+    });
+    const resolver = make(); const editor = sink(); resolver.attach(editor);
+    resolver.ensure([imageEl(IMG)]); await settle();                      // A fails at t=0 (retry due at 2s)
+    await vi.advanceTimersByTimeAsync(500);
+    resolver.ensure([imageEl(IMG), imageEl(VID)]); await settle();         // B fails at t=0.5s (retry due at 2.5s)
+    expect(editor.held.size).toBe(0);
+    await vi.advanceTimersByTimeAsync(1_500); await settle();              // t=2s: A is retried; B is not yet due
+    expect(editor.held.has(IMG)).toBe(true);
+    expect(editor.held.has(VID)).toBe(false);
+    await vi.advanceTimersByTimeAsync(600); await settle();                // t=2.6s: with no further ensure, the rearmed timer retries B
+    expect(editor.held.get(VID)?.dataURL).toMatch(/^data:image\//);
+  });
+
+  it("a failure for an id the scene no longer references does not keep the retry timer alive", async () => {
+    fetchStub.mockRejectedValue(new TypeError("offline"));
+    const resolver = make(); resolver.attach(sink());
+    resolver.ensure([imageEl(IMG)]); await settle();
+    resolver.ensure([]);                                                   // the element was deleted
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(fetchStub).toHaveBeenCalledTimes(1);
+  });
+
   it("stops retrying after a bounded number of attempts", async () => {
     fetchStub.mockRejectedValue(new TypeError("offline"));
     const resolver = make(); resolver.attach(sink());
