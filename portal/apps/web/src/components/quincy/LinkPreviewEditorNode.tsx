@@ -5,6 +5,12 @@ import { LinkPreview } from "../../lib/rich-text-tiptap";
 import { Button } from "../reui/button";
 import { LinkPreviewCard } from "./LinkPreviewCard";
 
+/** Tiptap's `focus` command defers to the next frame. An enclosing dialog's focus manager parks focus on its popup the moment the focused Remove button leaves the DOM, so the editor takes focus synchronously (its selection is already where the card was) and the command then settles scroll and selection. */
+function returnFocus(editor: NodeViewProps["editor"]) {
+  if (!editor.isDestroyed) editor.view.focus();
+  editor.commands.focus();
+}
+
 function LinkPreviewEditorView({ node, deleteNode, editor }: NodeViewProps) {
   // The editor goes non-editable while a Save is in flight, which only a transaction announces: follow it, so Remove cannot take out a card the request already holds.
   const [editable, setEditable] = useState(editor.isEditable);
@@ -18,7 +24,7 @@ function LinkPreviewEditorView({ node, deleteNode, editor }: NodeViewProps) {
     <LinkPreviewCard
       testId="link-preview-card-editor"
       attrs={{ previewId: attrs.previewId, url: attrs.url, title: attrs.title ?? null, description: attrs.description ?? null, siteName: attrs.siteName ?? null, imageMediaId: attrs.imageMediaId ?? null }}
-      actions={<Button type="button" variant="ghost" size="icon-xs" data-testid="link-preview-remove" aria-label="Remove link preview" className="absolute top-[var(--space-1)] right-[var(--space-1)] max-[721px]:size-11" disabled={!editable} onClick={() => { if (!editor.isEditable) return; deleteNode(); editor.commands.focus(); }}><XIcon aria-hidden="true" /></Button>}
+      actions={<Button type="button" variant="ghost" size="icon-xs" data-testid="link-preview-remove" aria-label="Remove link preview" className="absolute top-[var(--space-1)] right-[var(--space-1)] max-[721px]:size-11" disabled={!editable} onClick={() => { if (!editor.isEditable) return; deleteNode(); returnFocus(editor); }}><XIcon aria-hidden="true" /></Button>}
     />
   </NodeViewWrapper>;
 }

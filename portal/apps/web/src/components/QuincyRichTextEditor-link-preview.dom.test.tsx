@@ -1,11 +1,14 @@
 import { act, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Editor } from "@tiptap/core";
+import { closeHistory } from "@tiptap/pm/history";
+import { NodeSelection } from "@tiptap/pm/state";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { COMMENT_MEDIA_RICH_TEXT_PROFILE, NOTICE_RICH_TEXT_PROFILE, parseRichTextDoc, richTextPlainText, type LinkPreviewCard, type RichTextDoc } from "@quincy/shared";
 import { ProjectCommentDraftsProvider, useProjectCommentDraft } from "../lib/project-comment-drafts";
 import { createRichTextEditorExtensions, stripLinkPreviewDisplay, tiptapToRichTextDoc, toTiptap } from "../lib/rich-text-tiptap";
 import { QuincyRichTextEditor } from "./QuincyRichTextEditor";
+import { ProjectSheet } from "./quincy/ProjectSheet";
 import { RichTextContent } from "./RichTextContent";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -357,5 +360,69 @@ describe("a posted card (#497)", () => {
     act(() => { host.querySelector("img")!.dispatchEvent(new Event("error")); });
     expect(host.querySelector('[data-testid="link-preview-image"]')).toBeNull();
     expect(host.querySelector('[data-testid="link-preview-card"]')).not.toBeNull();
+  });
+});
+
+const tiptapOf = (host: HTMLElement) => (host.querySelector('[contenteditable="true"]') as unknown as { editor: Editor }).editor;
+async function applyToSelection(host: HTMLElement, href: string) {
+  await click(host.querySelector('[aria-label="Link"]')!);
+  const input = document.querySelector<HTMLInputElement>('[data-testid="rich-text-link-popover"] input')!;
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, href); input.dispatchEvent(new Event("input", { bubbles: true })); });
+  await click(document.querySelector('[data-testid="rich-text-link-popover"] [aria-label="Apply link"]')!);
+}
+
+describe("a card that lands while the author is composing (#548)", () => {
+  it("keeps the author's selection and the card when the author types on after it arrives", async () => {
+    let finish!: (card: LinkPreviewCard) => void;
+    request.mockImplementation(() => new Promise<LinkPreviewCard>((resolve) => { finish = resolve; }));
+    const host = await mount(plain("QA 548 mid home after text"));
+    const editor = tiptapOf(host);
+    await act(async () => { editor.commands.focus(); editor.commands.setTextSelection({ from: 12, to: 17 }); });
+    await applyToSelection(host, "https://github.com/");
+    const before = { from: editor.state.selection.from, to: editor.state.selection.to };
+    await act(async () => { finish(cardFor(P1, "https://github.com/")); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(cards(host)).toHaveLength(1);
+    // insertContentAt selects inserted content by default: a NodeSelection on the card means the next keystroke deletes it.
+    expect(editor.state.selection).not.toBeInstanceOf(NodeSelection);
+    expect({ from: editor.state.selection.from, to: editor.state.selection.to }).toEqual(before);
+    act(() => { editor.view.dispatch(editor.view.state.tr.insertText("x")); });
+    expect(cards(host)).toHaveLength(1);
+    expect(storedPreviews()).toHaveLength(1);
+    expect(richTextPlainText(latest)).toContain("QA 548 mid xafter text");
+  });
+});
+
+describe("Remove keeps the author's undo reachable (#548)", () => {
+  async function removeThenUndo(host: HTMLElement) {
+    await apply(host, "https://example.test/a");
+    expect(cards(host)).toHaveLength(1);
+    // Fast edits share one undo group; the author's Remove is its own step in real use.
+    await act(async () => { const live = tiptapOf(host); live.view.dispatch(closeHistory(live.state.tr)); });
+    const remove = host.querySelector<HTMLElement>('[data-testid="link-preview-remove"]')!;
+    // A real pointer press focuses the button before the click; the focus manager of an enclosing dialog reacts to that button going away.
+    await act(async () => { remove.focus(); });
+    // Same tick as the press: a dialog's focus manager parks focus on its popup once the button leaves the DOM, so the editor must already hold it.
+    remove.click();
+    expect(document.activeElement).toBe(host.querySelector('[contenteditable="true"]'));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
+    expect(cards(host)).toHaveLength(0);
+    expect(document.activeElement).toBe(host.querySelector('[contenteditable="true"]'));
+    // Cmd+Z reaches the editor only while it holds focus.
+    await act(async () => { tiptapOf(host).commands.undo(); });
+    await settle();
+    expect(cards(host)).toHaveLength(1);
+  }
+
+  it("focuses the editor and undo restores the card", async () => {
+    request.mockResolvedValue(cardFor(P1, "https://example.test/a"));
+    await removeThenUndo(await mount(plain()));
+  });
+
+  it("does so inside the Project sheet, whose focus manager parks focus on the popup when the focused button unmounts", async () => {
+    request.mockResolvedValue(cardFor(P1, "https://example.test/a"));
+    const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
+    await act(async () => root!.render(<ProjectSheet open kind="project" sheetKey="p:1" backdropHref="/" onRequestClose={() => {}}><div data-testid="editor-in-sheet"><Harness initial={plain()} preset="composer" scope={{ projectId: "p1" }} /></div></ProjectSheet>));
+    await settle();
+    await removeThenUndo(document.querySelector<HTMLElement>('[data-testid="editor-in-sheet"]')!);
   });
 });

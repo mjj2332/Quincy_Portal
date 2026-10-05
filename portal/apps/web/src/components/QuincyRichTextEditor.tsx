@@ -396,7 +396,8 @@ export function QuincyRichTextEditor({
       const size = live.state.doc.content.size;
       const mapped = Math.min(insertAt.current.get(key) ?? size, size);
       const $at = live.state.doc.resolve(mapped);
-      live.chain().insertContentAt($at.depth >= 1 ? $at.after(1) : mapped, { type: "linkPreview", attrs: card }).run();
+      // insertContentAt selects inserted content by default: the arriving card must not take the author's selection, or the next keystroke deletes it.
+      live.chain().insertContentAt($at.depth >= 1 ? $at.after(1) : mapped, { type: "linkPreview", attrs: card }, { updateSelection: false }).run();
     }).catch(() => undefined).finally(() => { pending.delete(href); insertAt.current.delete(key); previewControllers.current.delete(controller); });
   };
   useEffect(() => () => { for (const controller of previewControllers.current) controller.abort(); }, []);
