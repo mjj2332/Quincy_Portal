@@ -3,6 +3,7 @@
  * the `test` job in `.github/workflows/portal.yml`.
  *
  * Two suites sat outside CI for months without anyone noticing: `apps/web/vitest.dom.config.ts`
+ * (since folded into `apps/web/vitest.config.ts` as its `dom` project)
  * (the entire component and screen surface — the rail, the Board, the Calendar, the routing
  * agreement) and `packages/db/vitest.config.ts` (including a guard written specifically to fail
  * the build when a new `INSERT INTO projects` site appears). Everything passed locally, so the

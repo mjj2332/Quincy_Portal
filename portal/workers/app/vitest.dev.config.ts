@@ -16,5 +16,5 @@ export default defineConfig({
   plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" }, miniflare: { bindings: { TRANSFORM_SOURCE_SECRET: "test-transform-source-secret-32-bytes", APP_ENV: "dev", R2_ACCOUNT_ID: "", R2_S3_ACCESS_KEY_ID: "", R2_S3_SECRET_ACCESS_KEY: "" }, workers: [{ name: "quincy-portal-background", modules: true, script: "import { WorkerEntrypoint } from 'cloudflare:workers'; export default class QuincyBackground extends WorkerEntrypoint { async processTonomoEvents() {} }" }] } })],
   // Direct R2 PUT is the only dev-only behavior. Keep production redirect assertions out of
   // this config even though they share the API test module.
-  test: { reporters: ["default", requireExecutedTests("workers/app/vitest.dev.config.ts")], testTimeout: TEST_TIMEOUT_MS, hookTimeout: HOOK_TIMEOUT_MS, include: ["test/api.test.ts"], testNamePattern: "reserves direct R2 document uploads" },
+  test: { globalSetup: ["./vitest.global-setup.ts"], reporters: ["default", requireExecutedTests("workers/app/vitest.dev.config.ts")], testTimeout: TEST_TIMEOUT_MS, hookTimeout: HOOK_TIMEOUT_MS, include: ["test/api.test.ts"], testNamePattern: "reserves direct R2 document uploads" },
 });

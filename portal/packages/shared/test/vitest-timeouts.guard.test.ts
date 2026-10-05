@@ -5,7 +5,7 @@
  * Four CI failures in one day were timeouts with zero failing assertions (#188). The 5s default
  * `testTimeout` is not a budget anyone chose for this repo; it is vitest's out-of-the-box value,
  * and it was never sized against a runner measured at 3x to 22x slower than a local disk across
- * every suite — `apps/web/vitest.dom.config.ts` worst at 22x, where a test taking 228ms locally
+ * every suite — apps/web's DOM suite (then `vitest.dom.config.ts`, now a project of `vitest.config.ts`) worst at 22x, where a test taking 228ms locally
  * already sits at the 5s edge. The 10s default `hookTimeout` is exposed to the same multiplier,
  * and a `beforeAll` applying migrations is exactly the hook that pays it.
  *
@@ -37,7 +37,9 @@ describe("vitest timeout budgets", () => {
   it("discovers the configs at all", () => {
     // A guard that silently finds nothing is worse than absent, because it reads as protection
     // in review (#158).
-    expect(configs.length).toBeGreaterThanOrEqual(8);
+    // Seven: apps/web's DOM suite became a `dom` project inside apps/web/vitest.config.ts, so the
+    // old eight files are now seven. Both projects inherit this config's timeouts (`extends: true`).
+    expect(configs.length).toBeGreaterThanOrEqual(7);
   });
 
   it("sets both budgets in every resolved config", async () => {
@@ -56,6 +58,29 @@ describe("vitest timeout budgets", () => {
       wrong,
       `Must set \`testTimeout: TEST_TIMEOUT_MS\` and \`hookTimeout: HOOK_TIMEOUT_MS\` from packages/shared/src/testing/vitest-timeouts.ts:\n${wrong.map((entry) => `  - ${entry}`).join("\n")}`,
     ).toEqual([]);
+  });
+
+  it("lets no inline project override either budget", async () => {
+    // `extends: true` inherits the root budgets, but a project can still set its own and the root
+    // check above would not see it.
+    const overriding: string[] = [];
+    for (const config of configs) {
+      const resolved = (await import(pathToFileURL(join(portalRoot, config)).href)).default as {
+        test?: { projects?: unknown };
+      };
+      const projects = resolved.test?.projects;
+      if (!Array.isArray(projects)) continue;
+      for (const project of projects) {
+        if (typeof project !== "object" || project === null) continue;
+        const test = (project as { test?: { name?: string; testTimeout?: unknown; hookTimeout?: unknown } }).test;
+        for (const [key, shared] of [["testTimeout", TEST_TIMEOUT_MS], ["hookTimeout", HOOK_TIMEOUT_MS]] as const) {
+          if (test?.[key] !== undefined && test[key] !== shared) {
+            overriding.push(`${config} project "${test.name ?? "?"}" sets ${key}: ${String(test[key])}`);
+          }
+        }
+      }
+    }
+    expect(overriding, `Projects must inherit the shared budgets:\n${overriding.map((entry) => `  - ${entry}`).join("\n")}`).toEqual([]);
   });
 
   it("keeps the budgets inside the range the measurement justifies", () => {

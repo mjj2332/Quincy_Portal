@@ -1,7 +1,7 @@
 /**
  * #219 (PR A) stage 2, step 2 — `gantt.tsx`'s new `nudgeEvent` instance API method: the keyboard
  * equivalent of a pointer move/resize gesture, callable directly (no bar, no keydown) via
- * `<Gantt apiRef>`. DOM suite (`vitest.dom.config.ts`) only because `apiRef` is populated in a
+ * `<Gantt apiRef>`. DOM suite (the `dom` project in `vitest.config.ts`) only because `apiRef` is populated in a
  * `useEffect`, which needs a real React commit; nothing here selects DOM elements at all.
  */
 import { act, type ReactNode } from "react";

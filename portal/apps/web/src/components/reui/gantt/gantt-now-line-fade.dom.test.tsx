@@ -23,7 +23,7 @@
  * against the today column, not `/45` against canvas — see the third `it()` below for the full
  * reasoning and the real-screenshot-derived margin behind the hard `>= 50` floor it asserts.
  *
- * This suite runs happy-dom with no CSS pipeline (`vitest.dom.config.ts` loads no stylesheet), so
+ * This suite runs happy-dom with no CSS pipeline (the `dom` project in `vitest.config.ts` loads no stylesheet), so
  * there is no `getComputedStyle` to ask — same approach `gantt-bar-completed-hue.dom.test.tsx`
  * already uses for a resolved-colour assertion: read the real token source as text, resolve the
  * `var()` chain by hand, and alpha-composite the percentage the gradient's own class list names,

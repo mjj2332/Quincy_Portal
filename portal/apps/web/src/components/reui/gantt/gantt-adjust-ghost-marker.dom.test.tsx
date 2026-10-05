@@ -160,7 +160,7 @@ function ghostEl(): HTMLElement | null {
  * ancestors already composited, it never overrides it). A class-string assertion on the bar ALONE
  * cannot see that; `dr2-219a-report.md` HIGH #1 measured the painted result pixel-identical to an
  * empty grid cell. `effectiveOpacity` below answers the question a browser would instead: this suite
- * runs happy-dom with no CSS pipeline (`vitest.dom.config.ts` loads no stylesheet), so
+ * runs happy-dom with no CSS pipeline (the `dom` project in `vitest.config.ts` loads no stylesheet), so
  * `getComputedStyle` cannot see Tailwind's generated rules either — the only source of truth left is
  * the same class-string + data-attribute pairing a real cascade would resolve, walked one ancestor at
  * a time and multiplied. Deliberately narrow: it only models a bare `opacity-N` utility optionally

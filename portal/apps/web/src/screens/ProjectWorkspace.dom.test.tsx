@@ -109,7 +109,7 @@ async function flush(times = 10) {
  * assertions ("no workspace reads were started") at least as strong as under the old fixed wait,
  * which is the property that makes this a safe substitution rather than a loosened one.
  *
- * The 3s default is deliberately *below* vitest's 5s `testTimeout` (`vitest.dom.config.ts` sets no
+ * The 3s default is deliberately *below* vitest's 5s `testTimeout` (the `dom` project in `vitest.config.ts` sets no
  * override, so the default applies). At 5s the two race and vitest wins, so the failure surfaces as
  * a bare "Test timed out in 5000ms" and this helper's `label` — the whole diagnostic value — is
  * never printed. Verified by probe. Keep this margin if either number changes.

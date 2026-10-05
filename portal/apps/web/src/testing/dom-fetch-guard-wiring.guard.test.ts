@@ -1,13 +1,13 @@
 /**
  * Wiring guard for the DOM suite's network guard.
  *
- * `src/testing/no-unmocked-fetch.ts` only does anything while `vitest.dom.config.ts` lists it in
+ * `src/testing/no-unmocked-fetch.ts` only does anything while the `dom` project in `vitest.config.ts` lists it in
  * `setupFiles`. Delete that one line and all 94 DOM files still pass, silently — the guard becomes
  * decorative in exactly the way #158's unrun suites were, and for the same reason: nothing fails.
- * `vitest.dom.config.ts` is also outside `tsconfig.json`'s `include`, so a typo in the path is not
+ * `vitest.config.ts` is also outside `tsconfig.json`'s `include`, so a typo in the path is not
  * a type error either; it just means no setup file.
  *
- * This file is `.test.ts`, so it runs in the NODE suite (`vitest.config.ts`), which is where a test
+ * This file is `.test.ts`, so it runs in the `unit` project (node environment), which is where a test
  * that reads config as text belongs — the same split `test-seam.guard.test.ts` uses. It renders
  * nothing.
  *
@@ -18,14 +18,16 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const setupFile = "./src/testing/no-unmocked-fetch.ts";
-const configPath = fileURLToPath(new URL("../../vitest.dom.config.ts", import.meta.url));
+const configPath = fileURLToPath(new URL("../../vitest.config.ts", import.meta.url));
 const setupPath = fileURLToPath(new URL("./no-unmocked-fetch.ts", import.meta.url));
 
 describe("DOM suite network guard wiring", () => {
-  it("is listed in vitest.dom.config.ts's setupFiles", () => {
+  it("is listed in the dom project's setupFiles", () => {
     const config = readFileSync(configPath, "utf8");
-    const setupFiles = /setupFiles:\s*\[([^\]]*)\]/.exec(config)?.[1];
-    expect(setupFiles, "vitest.dom.config.ts declares no setupFiles").toBeDefined();
+    // Only the `dom` project's block counts: a setupFiles entry on the unit project would not guard DOM tests.
+    const domProject = config.slice(config.indexOf('name: "dom"'));
+    const setupFiles = /setupFiles:\s*\[([^\]]*)\]/.exec(domProject)?.[1];
+    expect(setupFiles, "vitest.config.ts declares no setupFiles").toBeDefined();
     expect(setupFiles).toContain(setupFile);
   });
 
