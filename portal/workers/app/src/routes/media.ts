@@ -197,6 +197,10 @@ mediaRoutes.get("/annotation/:annotationId", terminalRoute("/annotation/:annotat
  * Embedded media (#493). An attached image follows its post: anyone who can collaborate on the Project
  * may read it, an assigned External editor included. A Notice board image (#496) needs the Notice board capability. Until it is attached (and after it is edited out)
  * only the person who uploaded it can see it. Every refusal is `no-store` through the /media default. A video (#494) follows exactly the same rules.
+ * A Project whiteboard's media (#501) is the exception: any state but `uploading` is readable by anyone who can collaborate on the ROW's Project
+ * (an assigned External editor included), because the board attaches on snapshot, 30 s after a peer placed it, and an undone image is detached
+ * while it can still come back. Access follows the row's Project, never the board that references it, so an id placed on another Project's board
+ * shows only to people who already see its own Project.
  * Returns the row when the caller may read it, or the refusal.
  */
 async function readableEmbeddedMedia(c: Context<AppEnv>, mediaId: string): Promise<NonNullable<Awaited<ReturnType<typeof getEmbeddedMedia>>> | Response> {
@@ -208,6 +212,9 @@ async function readableEmbeddedMedia(c: Context<AppEnv>, mediaId: string): Promi
     // Admin impersonating one, is told nothing exists). Then an attached image follows its post; pending and detached ones are the uploader's.
     if (!roleHasCapability(user.role, "viewNoticeBoard")) return c.json({ error: "Media not found" }, 404);
     if (row.state !== "attached" && row.uploaderId !== user.id) return c.json({ error: "Media not found" }, 404);
+  } else if (row.ownerKind === "whiteboard") {
+    if (!row.projectId) return c.json({ error: "Media not found" }, 404);
+    if (!await hasProjectCollaborationAccess(c, row.projectId)) return user.role === "external_editor" ? c.json({ error: "Media not found" }, 404) : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   } else if (row.state === "attached") {
     if (!row.projectId) return c.json({ error: "Media not found" }, 404);
     if (!await hasProjectCollaborationAccess(c, row.projectId)) return user.role === "external_editor" ? c.json({ error: "Media not found" }, 404) : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);

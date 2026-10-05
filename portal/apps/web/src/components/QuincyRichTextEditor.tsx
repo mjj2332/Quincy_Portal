@@ -21,8 +21,7 @@ import {
 import { MentionAutocomplete, type MentionAutocompleteHandle, type MentionableUser } from "./MentionAutocomplete";
 import { Button } from "./reui/button";
 import { Input } from "./reui/input";
-import { Progress, ProgressValue } from "./reui/progress";
-import { Notice } from "./quincy/Notice";
+import { EmbeddedUploadTray, type EmbeddedUpload } from "./quincy/EmbeddedUploadTray";
 import { LinkPreviewWithView } from "./quincy/LinkPreviewEditorNode";
 import {
   DropdownMenu,
@@ -126,7 +125,7 @@ export type QuincyRichTextEditorProps = {
   tableBubbleFloor?: RefObject<HTMLElement | null>;
 };
 
-type UploadingMedia = { key: number; name: string; percent: number; kind: "image" | "video" };
+type UploadingMedia = EmbeddedUpload;
 
 /** A file this editor would send down the video path: a Project's discussion only, and by what the file says it is. */
 const isVideoFile = (file: Pick<File, "type" | "name">) => file.type.startsWith("video/") || /\.(?:mp4|mov)$/i.test(file.name);
@@ -557,13 +556,7 @@ export function QuincyRichTextEditor({
       onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); const kind = picking.kind; setPicking(null); if (files.length) addImagesRef.current(files, editor.state.selection.to, kind); }}
       {...{ onCancel: () => setPicking(null) }}
     />}
-    {(uploads.length > 0 || uploadErrors.length > 0) && <div ref={trayRef} data-testid="rich-text-upload-tray" className="grid gap-[var(--space-2)]">
-      {uploads.map((entry) => <div key={entry.key} className="flex flex-wrap items-center justify-between gap-[var(--space-1)]">
-        <Progress value={entry.percent} aria-label={`Uploading ${entry.name}`} className="flex min-w-0 flex-1 flex-wrap items-baseline gap-[var(--space-1)]"><span className="[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary [overflow-wrap:anywhere]">Uploading {entry.name}…</span><ProgressValue data-testid="upload-progress-value" className="[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" /></Progress>
-        {entry.kind === "video" && <Button type="button" variant="ghost" aria-label={`Cancel upload of ${entry.name}`} onClick={() => running.current.get(entry.key)?.release()}>Cancel</Button>}
-      </div>)}
-      {uploadErrors.map((message, index) => <Notice key={index} tone="critical" role="alert">{message}</Notice>)}
-    </div>}
+    <EmbeddedUploadTray uploads={uploads} errors={uploadErrors} trayRef={trayRef} onCancel={(key) => running.current.get(key)?.release()} />
     <MentionAutocomplete ref={menu} query={query} loadMentionables={loadMentionables} onSelect={selectMention} onDismiss={() => setMentionDismissed(true)} onAccessibilityChange={setMentionA11y} />
     {plainText.length >= limit * COUNTER_THRESHOLD && <div ref={counterRef} data-testid="rich-text-counter" className={cn("text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", plainText.length > limit && "!text-destructive")}>{plainText.length}/{limit}</div>}
     <div className={liveMessage ? "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive" : "sr-only"} aria-live="polite">{liveMessage}</div>

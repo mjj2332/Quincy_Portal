@@ -1,4 +1,4 @@
-import { WHITEBOARD_MAX_ELEMENTS_PER_MESSAGE, WHITEBOARD_MAX_MESSAGE_BYTES } from "@quincy/shared";
+import { WHITEBOARD_MAX_ELEMENTS_PER_MESSAGE, WHITEBOARD_MAX_MESSAGE_BYTES, whiteboardMediaRef } from "@quincy/shared";
 
 /** What the server holds of one scene element: exactly this revision, acknowledged ("stored": its index is the server's);
  * this revision, sent and not yet acknowledged ("in-flight": the index it was SENT with is the one the server will keep,
@@ -27,28 +27,49 @@ export type WhiteboardSaver = {
 
 // Room for the `{"type":"elements","seq":N,"elements":[]}` envelope around the batch.
 const ENVELOPE_BYTES = 256;
-/** Element types the server refuses (until images ship). Tombstones count: the whole batch is rejected. */
-export const isUnsupportedElement = (element: object): boolean => "type" in element && element.type === "image";
-/** A paste carrying an element the whiteboard cannot store is refused whole, before it reaches the scene. */
-export const pasteIsUnsupported = (data: { elements?: readonly { type?: unknown }[] }) => data.elements?.some(isUnsupportedElement) === true;
 /**
- * Whatever route an unsupported element took onto the board (file open, library insert, drag-drop,
+ * #501: the only `image` elements the server stores are Quincy media: a UUID `fileId` plus `customData.quincyMedia.kind`. An image
+ * without that shape (a foreign Excalidraw image with a hashed fileId or a data URL) is refused, tombstones included: the whole
+ * batch is rejected. A WELL-FORMED media element is never unsupported, whatever its id: a peer's freshly placed image has an id this
+ * client has never seen, and sweeping it would make the vanish observer delete it for everyone.
+ */
+export const isUnsupportedElement = (element: object): boolean => "type" in element && element.type === "image" && whiteboardMediaRef(element as Record<string, unknown>) === null;
+/** #501: a well-formed media element whose media this board does not hold (the id is not referenced by this board and was not uploaded in this session): it came from another board or file. */
+export const isForeignMedia = (element: object, known: (mediaId: string) => boolean): boolean => {
+  const ref = whiteboardMediaRef(element as Record<string, unknown>);
+  return ref !== null && !known(ref.id);
+};
+/** A paste carrying an element the whiteboard cannot store is refused whole, before it reaches the scene. With `known`, media from another board is refused too (a LOCAL entry point only: remote elements are never judged by it). */
+export const pasteIsUnsupported = (data: { elements?: readonly object[] }, known?: (mediaId: string) => boolean) => data.elements?.some((element) => isUnsupportedElement(element) || (known !== undefined && isForeignMedia(element, known))) === true;
+/**
+ * Whatever route a malformed image took onto the board (file open, library insert, drag-drop,
  * paste, scene replace), it ends up in the scene. Returns the scene without those elements (the same
  * array when there are none), so a post-insert sweep can remove them and the board never shows
- * something that silently would not save.
+ * something that silently would not save. Never removes a well-formed media element (see `isUnsupportedElement`).
  */
 export function withoutUnsupported<T extends { type?: unknown; isDeleted?: boolean }>(elements: readonly T[]): { kept: readonly T[]; removed: number } {
   const kept = elements.filter((element) => !isUnsupportedElement(element));
   const removed = elements.filter((element) => isUnsupportedElement(element) && !element.isDeleted).length;
   return { kept: removed === 0 ? elements : kept, removed };
 }
+/** #501: the scene-file load path's filter: media elements this board does not hold are dropped before they reach the scene. */
+export function withoutForeignMedia<T extends { type?: unknown }>(elements: readonly T[], known: (mediaId: string) => boolean): { kept: readonly T[]; removed: number } {
+  const kept = elements.filter((element) => !isForeignMedia(element, known));
+  return { kept, removed: elements.length - kept.length };
+}
+const MEDIA_FILE_NAME = /\.(jpe?g|png|webp|mp4|mov)$/i;
+/** A dropped or pasted file the board's media pipeline should look at (the pipeline's own checks give the reason for a refusal). */
+export const isMediaCandidate = (file: Pick<File, "type" | "name">): boolean => (file.type ?? "").startsWith("image/") || (file.type ?? "").startsWith("video/") || MEDIA_FILE_NAME.test(file.name ?? "");
 /** What to do with files dropped on the board: a scene or library file is loaded through the controller
- * (which tombstones what it replaces), and every file is refused in view-only mode. Anything else is Excalidraw's. */
-export function planSceneDrop(files: Iterable<File>, viewOnly: boolean): "ignore" | "refuse" | { load: File } {
+ * (which tombstones what it replaces), image and video files go to the media pipeline (#501), and every file is refused
+ * in view-only mode. Anything else is Excalidraw's. */
+export function planSceneDrop(files: Iterable<File>, viewOnly: boolean): "ignore" | "refuse" | { load: File } | { media: File[] } {
   const all = [...files];
   if (viewOnly) return all.length > 0 ? "refuse" : "ignore";   // nothing may be dropped on a view-only board
   const file = all.find((item) => /\.(excalidraw|excalidrawlib|json)$/i.test(item.name));
-  return file ? { load: file } : "ignore";
+  if (file) return { load: file };
+  const media = all.filter(isMediaCandidate);
+  return media.length > 0 ? { media } : "ignore";
 }
 /**
  * #499: after a remote batch is reconciled into the scene, which of those remote elements is now what the

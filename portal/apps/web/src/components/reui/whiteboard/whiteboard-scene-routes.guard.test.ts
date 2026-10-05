@@ -37,9 +37,10 @@ const ROUTES: Array<{ elements: string; why: string }> = [
   { elements: "elements: tombstones(api.getSceneElementsIncludingDeleted()),", why: "clear: every element deleted with newElementWith, as the editor's own Clear does" },
   { elements: "elements: scene as never,", why: "adoptRevisions: the first load only, puts the server's revisions back in place after the editor's own restore bumped them" },
   { elements: "elements: [...api.getSceneElementsIncludingDeleted(), ...placed],", why: "library insert: new copies (new ids) authored by newElementWith, appended; replaces nothing" },
+  { elements: "elements: [...api.getSceneElementsIncludingDeleted(), ...placedMedia],", why: "insertMedia (#501): ONE brand new image element (new id), authored by convertToExcalidrawElements from a skeleton, appended; replaces nothing" },
   { elements: "elements: rewrapped.map((element) =>", why: "font re-measure: the editor's own restore, a re-measured element takes newElementWith(…, {}, true)" },
   { elements: "elements: unfinished as never,", why: "unfinalized-element sweep: drops live zero-size elements and authors nothing; the vanish observer then authors their deletion (the editor-style delete, never the saver)" },
-  { elements: "elements: kept as never,", why: "unsupported-element sweep: removes images the server refuses; they were never stored" },
+  { elements: "elements: kept as never,", why: "unsupported-element sweep: removes MALFORMED images the server refuses (never a well-formed media element, #501); they were never stored" },
 ];
 
 describe("every route that puts elements on the whiteboard authors its own revisions (#499)", () => {

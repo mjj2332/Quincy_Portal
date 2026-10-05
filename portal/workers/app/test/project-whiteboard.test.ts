@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { WhiteboardServerMessage } from "@quincy/shared";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
+import { database, baseEnv, authSecret, adminId, memberId, outsiderId, externalId, member2Id, unicodeId, unicodeName, liveProject, otherProject, archivedProject, deleteProject, hiddenProject, archiveLater, orderProject, missingProject, tokens, executeSql, cookie, upgrade, connect, defaultIndexes, defaultIndex, element, batch, initOf, save, saveLosing, storedRow, storedIds, stubFor, byId, type Client, type Options, type Who, type Members, staff, newProject, api, type Init, join, INTERVAL, farFuture, type Tunable, setClock, alarmAt, fire, type VersionRow, versionsOf, objectKeys, type Envelope, envelopeOf, storedRows, byIdSorted, sleep, type Wrap, inject, intercept, failOnce, gate, touchesVersions, touchesAudit, cycle , seedWhiteboardWorld } from "./whiteboard-support";
 
 /**
  * #498: the Project whiteboard's Durable Object reached through the app worker's WebSocket
@@ -13,83 +14,7 @@ import type { Env } from "../src/env";
  * all in the path) and assert what a client receives and what is stored. The one internal
  * assertion is that hard delete leaves the DO's element table empty.
  */
-const database = env as unknown as { DB: D1Database };
-const baseEnv = env as unknown as Env;
-const authSecret = baseEnv.BETTER_AUTH_SECRET ?? "dev-only-replace-better-auth-secret-32-bytes";
-declare const __PORTAL_MIGRATION_SQL__: string; declare const __PORTAL_SEED_SQL__: string;
-
-const adminId = "11111111-1111-4111-8111-111111111111";
-const memberId = "22222222-2222-4222-8222-222222222222";
-const outsiderId = "33333333-3333-4333-8333-333333333333";
-const externalId = "44444444-4444-4444-8444-444444444444";
-const member2Id = "55555555-5555-4555-8555-555555555555";
-const unicodeId = "66666666-6666-4666-8666-666666666666";
-const unicodeName = "Zo\u00eb \u5c71\u7530 \ud83c\udfa8";
-const liveProject = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-const otherProject = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-const archivedProject = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
-const deleteProject = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
-const hiddenProject = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
-const archiveLater = "99999999-9999-4999-8999-999999999999";
-const orderProject = "88888888-8888-4888-8888-888888888888";
-const missingProject = "ffffffff-ffff-4fff-8fff-ffffffffffff";
-const tokens = { admin: "wb-admin-token", member: "wb-member-token", outsider: "wb-outsider-token", external: "wb-external-token", member2: "wb-member2-token", unicode: "wb-unicode-token", imposter: "wb-imposter-token" } as const;
-
-async function executeSql(sql: string) { for (const chunk of sql.split("--> statement-breakpoint")) for (const statement of chunk.split("\n").filter((line) => !line.trim().startsWith("--")).join("\n").split(";")) { const flat = statement.replace(/\s+/g, " ").trim(); if (flat) await database.DB.exec(`${flat};`); } }
-async function cookie(token: string) { const context = await createAuth(baseEnv).$context; return `${context.authCookies.sessionToken.name}=${token}.${await makeSignature(token, authSecret)}`; }
-
-type Who = keyof typeof tokens;
-type Options = { who?: Who | null; origin?: string | null; upgrade?: boolean; headers?: Record<string, string> };
-async function upgrade(projectId: string, options: Options = {}) {
-  const headers = new Headers(options.headers);
-  if (options.upgrade !== false) headers.set("Upgrade", "websocket");
-  if (options.origin !== null) headers.set("Origin", options.origin ?? baseEnv.APP_ORIGIN);
-  if (options.who !== null) headers.set("cookie", await cookie(tokens[options.who ?? "member"]));
-  return workerSelf.fetch(`https://portal.test/api/projects/${projectId}/whiteboard/socket`, { headers });
-}
-
-/** A connected client: every server message is queued, and `next` waits for one. */
-type Client = { ws: WebSocket; next: () => Promise<WhiteboardServerMessage>; send: (message: unknown) => void; closed: Promise<{ code: number }>; drain: (ms?: number) => Promise<WhiteboardServerMessage[]> };
-async function connect(projectId: string, options: Options = {}): Promise<Client> {
-  const response = await upgrade(projectId, options);
-  expect(response.status, "upgrade status").toBe(101);
-  const ws = response.webSocket!;
-  expect(ws).toBeTruthy();
-  const queue: WhiteboardServerMessage[] = []; const waiters: Array<(message: WhiteboardServerMessage) => void> = [];
-  ws.addEventListener("message", (event) => { const message = JSON.parse(event.data as string) as WhiteboardServerMessage; const waiter = waiters.shift(); if (waiter) waiter(message); else queue.push(message); });
-  const closed = new Promise<{ code: number }>((resolve) => ws.addEventListener("close", (event) => resolve({ code: event.code })));
-  ws.accept();
-  return {
-    ws, closed,
-    next: () => new Promise((resolve, reject) => { const queued = queue.shift(); if (queued) return resolve(queued); const timer = setTimeout(() => reject(new Error("timed out waiting for a server message")), 3000); waiters.push((message) => { clearTimeout(timer); resolve(message); }); }),
-    send: (message) => ws.send(typeof message === "string" ? message : JSON.stringify(message)),
-    drain: async (ms = 150) => { await new Promise((resolve) => setTimeout(resolve, ms)); return queue.splice(0); },
-  };
-}
-// #499: the server keeps stored indices unique, so an element with no index (or a taken one) is re-keyed and sent back to its sender. Excalidraw always
-// gives an element an index; each id here gets its own, in first-use order, unless a test passes one.
-const defaultIndexes = new Map<string, string>(); let lastDefaultIndex: string | null = null;
-const defaultIndex = (id: string) => { let key = defaultIndexes.get(id); if (!key) { key = generateKeyBetween(lastDefaultIndex, null); lastDefaultIndex = key; defaultIndexes.set(id, key); } return key; };
-const element = (id: string, version: number, versionNonce: number, extra: Record<string, unknown> = {}) => ({ id, type: "rectangle", version, versionNonce, isDeleted: false, x: 0, y: 0, index: defaultIndex(id), ...extra });
-const batch = (seq: number, ...elements: unknown[]) => ({ type: "elements", seq, generation: 1, elements });
-async function initOf(projectId: string, options: Options = {}) { const client = await connect(projectId, options); const init = await client.next(); client.ws.close(1000); return init as Extract<WhiteboardServerMessage, { type: "init" }>; }
-async function save(client: Client, seq: number, ...elements: unknown[]) { client.send(batch(seq, ...elements)); expect(await client.next()).toEqual({ type: "ack", seq, generation: 1 }); }
-/** A batch the sender LOSES: the stored row comes back first (so it converges), then the ack. */
-async function saveLosing(client: Client, seq: number, ...elements: unknown[]) { client.send(batch(seq, ...elements)); expect(await client.next()).toMatchObject({ type: "elements" }); expect(await client.next()).toEqual({ type: "ack", seq, generation: 1 }); }
-const storedRow = (projectId: string, id: string) => runInDurableObject(stubFor(projectId), async (_instance, state) => state.storage.sql.exec("SELECT json FROM elements WHERE id = ?", id).toArray().map((row) => JSON.parse(row.json as string) as Record<string, unknown>)[0]);
-const storedIds = (projectId: string) => runInDurableObject(stubFor(projectId), async (_instance, state) => state.storage.sql.exec("SELECT id, version, version_nonce FROM elements").toArray().map((row) => ({ id: row.id as string, version: row.version as number, nonce: row.version_nonce as number })));
-const stubFor = (projectId: string) => baseEnv.PROJECT_WHITEBOARD.get(baseEnv.PROJECT_WHITEBOARD.idFromName(projectId));
-const byId = (init: { elements: Array<Record<string, unknown>> }) => Object.fromEntries(init.elements.map((entry) => [entry.id as string, entry]));
-
-beforeAll(async () => {
-  await executeSql(__PORTAL_MIGRATION_SQL__); await executeSql(__PORTAL_SEED_SQL__); const now = Date.now();
-  await database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'").run();   // the archive/restore routes sit behind the Board contract
-  for (const [id, role] of [[adminId, "admin"], [memberId, "editor"], [outsiderId, "editor"], [externalId, "external_editor"], [member2Id, "editor"], [unicodeId, "editor"]]) await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, authorization_epoch, created_at, updated_at) VALUES (?, ?, ?, 1, ?, 1, 0, ?, ?)").bind(id, id === unicodeId ? unicodeName : `${role} ${id.slice(0, 4)}`, `${id}@example.test`, role, now, now).run();
-  for (const [who, userId] of [["admin", adminId], ["member", memberId], ["outsider", outsiderId], ["external", externalId], ["member2", member2Id], ["unicode", unicodeId]] as const) await database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").bind(`wb-${who}`, now + 3_600_000, tokens[who], userId, now, now).run();
-  for (const [id, street] of [[liveProject, "Whiteboard Street"], [otherProject, "Other Street"], [archivedProject, "Archived Street"], [deleteProject, "Delete Street"], [hiddenProject, "Hidden Street"], [archiveLater, "Archive Later Street"], [orderProject, "Order Street"]]) await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, ?, 'editing_autohdr', 0, ?, ?)").bind(id, street, now, now).run();
-  await database.DB.prepare("UPDATE projects SET archived_at = ?, archived_by = ? WHERE id IN (?, ?)").bind(now, adminId, archivedProject, deleteProject).run();
-  for (const [userId, project, role] of [[memberId, liveProject, "editor"], [memberId, otherProject, "editor"], [memberId, archivedProject, "editor"], [memberId, deleteProject, "editor"], [memberId, archiveLater, "editor"], [memberId, orderProject, "editor"], [externalId, liveProject, "editor"]] as const) await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), project, userId, role, now).run();
-});
+beforeAll(seedWhiteboardWorld);
 
 describe("project whiteboard WebSocket route", () => {
   it("upgrades a collaborator's request through the full middleware stack and sends the empty scene", async () => {
@@ -101,6 +26,17 @@ describe("project whiteboard WebSocket route", () => {
   it("lets an admin and an assigned External editor open the board", async () => {
     expect((await initOf(liveProject, { who: "admin" })).mode).toBe("edit");
     expect((await initOf(liveProject, { who: "external" })).mode).toBe("edit");
+  });
+
+  it("refuses a socket that does not declare protocol 2 (#501): a tab loaded before media existed never joins, and no Durable Object is created", async () => {
+    const before = (await listDurableObjectIds(baseEnv.PROJECT_WHITEBOARD)).length;
+    for (const protocol of [null, "", "1", "0", "abc", "-2", "1.9", "2abc", "NaN"]) {
+      const response = await upgrade(liveProject, { protocol });
+      expect(response.status, `protocol=${String(protocol)}`).toBe(426);
+      expect(await response.json()).toMatchObject({ code: "client_outdated" });
+    }
+    expect((await listDurableObjectIds(baseEnv.PROJECT_WHITEBOARD)).length).toBe(before);
+    for (const protocol of ["2", "3", "02"]) { const accepted = await connect(liveProject, { protocol }); expect(await accepted.next()).toMatchObject({ type: "init", mode: "edit" }); accepted.ws.close(1000); }
   });
 
   it("refuses without an upgrade and creates no Durable Object for any refusal", async () => {
@@ -164,11 +100,25 @@ describe("project whiteboard WebSocket route", () => {
     forged.ws.close(1000);
   });
 
-  it("rejects an image element and closes on malformed or oversized frames", async () => {
+  it("stores and relays a Quincy media image element (#501), rejects one that references no media, and closes on malformed or oversized frames", async () => {
     const client = await connect(liveProject);
     await client.next();
-    client.send(batch(9, element("img", 1, 1, { type: "image", fileId: "f" })));
-    expect(await client.next()).toEqual({ type: "rejected", seq: 9, reason: "invalid", generation: 1 });
+    const mediaId = crypto.randomUUID(); const videoId = crypto.randomUUID();
+    const media = (id: string, fileId: string, kind: string) => element(id, 1, 1, { type: "image", fileId, status: "saved", customData: { quincyMedia: { kind } } });
+    await save(client, 8, media("img", mediaId, "image"), media("vid", videoId, "video"));
+    expect(await storedRow(liveProject, "img")).toMatchObject({ type: "image", fileId: mediaId, customData: { quincyMedia: { kind: "image" } } });
+    expect(await storedRow(liveProject, "vid")).toMatchObject({ fileId: videoId, customData: { quincyMedia: { kind: "video" } } });
+    for (const [seq, bad] of [
+      [9, element("img", 2, 1, { type: "image", fileId: "f" })],                                                                // not a UUID, no kind
+      [10, element("img", 2, 1, { type: "image", fileId: mediaId })],                                                          // no customData
+      [11, element("img", 2, 1, { type: "image", fileId: mediaId, customData: { quincyMedia: { kind: "audio" } } })],          // unknown kind
+      [12, element("img", 2, 1, { type: "image", fileId: "data:image/png;base64,AAAA", customData: { quincyMedia: { kind: "image" } } })],
+      [13, { ...media("img", mediaId, "image"), fileId: undefined }],
+    ] as const) {
+      client.send(batch(seq, bad));
+      expect(await client.next(), `seq ${seq}`).toEqual({ type: "rejected", seq, reason: "invalid", generation: 1 });
+    }
+    expect(await storedRow(liveProject, "img")).toMatchObject({ version: 1, fileId: mediaId });
     client.send("{not json");
     expect((await client.closed).code).toBe(4400);
     const big = await connect(liveProject);
@@ -245,25 +195,8 @@ describe("hard delete clears the board", () => {
 
 // ---- #499: live co-editing, presence and access changes -------------------------------------------------
 
-type Members = ReadonlyArray<readonly [string, string]>;
-const staff: Members = [[memberId, "editor"], [member2Id, "editor"], [unicodeId, "editor"]];
-/** A fresh Project (so one test's sockets never meet another's) with the given team. */
-async function newProject(members: Members = staff, archived = false): Promise<string> {
-  const id = crypto.randomUUID(); const now = Date.now();
-  await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at, archived_at) VALUES (?, 'Live Street', 'editing_autohdr', 0, ?, ?, ?)").bind(id, now, now, archived ? now : null).run();
-  for (const [userId, role] of members) await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), id, userId, role, now).run();
-  return id;
-}
-async function api(who: Who, method: "POST" | "DELETE", path: string, body?: unknown) {
-  const headers = new Headers({ cookie: await cookie(tokens[who]), origin: baseEnv.APP_ORIGIN });
-  if (body !== undefined) headers.set("content-type", "application/json");
-  return workerSelf.fetch(`https://portal.test${path}`, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-}
 const cycleOf = async (projectId: string, userId: string) => (await database.DB.prepare("SELECT id FROM project_members WHERE project_id = ? AND user_id = ?").bind(projectId, userId).first<{ id: string }>())!.id;
 const removeEditor = async (projectId: string, userId: string) => api("admin", "DELETE", `/api/projects/${projectId}/editors/${userId}`, { membershipCycle: await cycleOf(projectId, userId), clearSubtaskAssignments: false, confirmedAssignmentCount: 0, confirmAccessLoss: true });
-type Init = Extract<WhiteboardServerMessage, { type: "init" }>;
-/** Connects and returns the client with its own `init` already read. */
-async function join(projectId: string, who: Who = "member") { const client = await connect(projectId, { who }); const init = await client.next() as Init; return { client, init }; }
 const presence = (overrides: Record<string, unknown> = {}) => ({ type: "presence", pointer: { x: 10, y: 20 }, button: "up", selectedIds: [], ...overrides });
 
 describe("live relay between two sockets (#499)", () => {
@@ -939,44 +872,6 @@ describe("stored indices are unique (#499)", () => {
 // The durable-object clock is overridden with a time FAR in the future, so the REAL alarm never fires while a test runs: the tests arm and fire
 // the alarm by hand (`runDurableObjectAlarm`) and assert what `getAlarm()` says. Tests that leave the clock alone use the real one.
 
-const INTERVAL = 30_000;
-const farFuture = () => Date.now() + 3_600_000;
-type Tunable = { clock: () => number; env: Record<string, unknown> };
-const setClock = (projectId: string, at: number) => runInDurableObject(stubFor(projectId), async (instance) => { (instance as unknown as Tunable).clock = () => at; });
-const alarmAt = (projectId: string) => runInDurableObject(stubFor(projectId), async (_instance, state) => state.storage.getAlarm());
-const fire = (projectId: string) => runDurableObjectAlarm(stubFor(projectId));
-type VersionRow = { id: string; ordinal: number; generation: number; sceneRevision: number; reason: string; state: string; elementCount: number; byteCount: number; sha: string; r2Key: string; createdBy: string | null };
-const versionsOf = async (projectId: string) => (await database.DB.prepare("SELECT id, ordinal, generation, scene_revision AS sceneRevision, reason, state, element_count AS elementCount, byte_count AS byteCount, scene_sha256 AS sha, r2_key AS r2Key, created_by AS createdBy FROM project_whiteboard_versions WHERE project_id = ? ORDER BY ordinal").bind(projectId).all<VersionRow>()).results;
-const objectKeys = async (projectId: string) => (await baseEnv.MEDIA.list({ prefix: `projects/${projectId}/whiteboard/versions/` })).objects.map((entry) => entry.key).sort();
-type Envelope = { schema: number; projectId: string; versionId: string; generation: number; reason: string; elements: Array<Record<string, unknown>> };
-const envelopeOf = async (key: string) => JSON.parse(await (await baseEnv.MEDIA.get(key))!.text()) as Envelope;
-const storedRows = (projectId: string) => runInDurableObject(stubFor(projectId), async (_instance, state) => state.storage.sql.exec("SELECT json FROM elements ORDER BY id").toArray().map((row) => JSON.parse(row.json as string) as Record<string, unknown>));
-const byIdSorted = (rows: Array<Record<string, unknown>>) => [...rows].sort((left, right) => String(left.id) < String(right.id) ? -1 : 1);
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/** Swaps one binding of a live Durable Object for a wrapped one (eviction undoes it). */
-type Wrap = (real: any) => unknown; // eslint-disable-line @typescript-eslint/no-explicit-any
-const inject = (projectId: string, name: "MEDIA" | "DB", wrap: Wrap) => runInDurableObject(stubFor(projectId), async (instance) => {
-  const holder = instance as unknown as Tunable; const wrapped = wrap(holder.env[name]);
-  holder.env = new Proxy(holder.env, { get: (target, key) => key === name ? wrapped : Reflect.get(target, key) });
-});
-const intercept = (method: string, behave: (args: unknown[], run: () => unknown) => unknown): Wrap => (real) => new Proxy(real, {
-  get: (target, key) => { const value = Reflect.get(target, key); if (typeof value !== "function") return value; return key === method ? (...args: unknown[]) => behave(args, () => value.apply(target, args)) : value.bind(target); },
-});
-const failOnce = (method: string, when: (args: unknown[]) => boolean = () => true, times = 1): Wrap => { let left = times; return intercept(method, (args, run) => { if (left > 0 && when(args)) { left -= 1; throw new Error(`injected ${method} failure`); } return run(); }); };
-/** Holds a binding call open. `reached` is polled (a continuation resumed from inside the Durable Object could not touch the test's own sockets). */
-const gate = (method: string) => { let release!: () => void; let hit = false; const open = new Promise<void>((resolve) => { release = resolve; }); return { reached: () => vi.waitFor(() => expect(hit).toBe(true), { timeout: 5000 }), release, wrap: intercept(method, async (_args, run) => { hit = true; await open; return run(); }) }; };
-const touchesVersions = (args: unknown[]) => /project_whiteboard_versions/i.test(String(args[0]));
-const touchesAudit = (args: unknown[]) => /audit_log/i.test(String(args[0])) && /insert/i.test(String(args[0]));
-
-/** One snapshot cycle: an edit at `at`, then the alarm at the +30 s deadline. */
-async function cycle(project: string, client: Client, step: number, base: number, seqBase = 0) {
-  const at = base + step * 100_000;
-  await setClock(project, at);
-  await save(client, seqBase + step + 1, element(`e${step}`, 1, step + 1));
-  await setClock(project, at + INTERVAL);
-  await fire(project);
-}
 
 describe("version snapshots: cadence (#500)", () => {
   it("arms an alarm exactly 30 s after the first winning change; presence, a duplicate and a losing batch arm nothing", async () => {

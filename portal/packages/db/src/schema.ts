@@ -481,6 +481,8 @@ export const projectWhiteboardVersions = sqliteTable(
     byteCount: integer("byte_count").notNull(),
     elementCount: integer("element_count").notNull(),
     state: text("state", { enum: ["ready", "pruning"] as const }).notNull().default("ready"),
+    /** #501: JSON array of the embedded media ids the snapshot references (written in the same INSERT as the row). */
+    mediaIds: text("media_ids").notNull().default("[]"),
   },
   (t) => [
     uniqueIndex("project_whiteboard_versions_r2_key_unique").on(t.r2Key),
@@ -494,6 +496,7 @@ export const projectWhiteboardVersions = sqliteTable(
     check("project_whiteboard_versions_byte_count_check", sql`typeof(${t.byteCount}) = 'integer' AND ${t.byteCount} >= 0`),
     check("project_whiteboard_versions_element_count_check", sql`typeof(${t.elementCount}) = 'integer' AND ${t.elementCount} >= 0`),
     check("project_whiteboard_versions_state_check", sql`${t.state} IN ('ready','pruning')`),
+    check("project_whiteboard_versions_media_ids_check", sql`json_valid(${t.mediaIds}) AND json_type(${t.mediaIds}) = 'array'`),
   ],
 );
 

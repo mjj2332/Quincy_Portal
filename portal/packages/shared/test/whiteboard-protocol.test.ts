@@ -11,6 +11,8 @@ import {
   whiteboardIncomingWins,
   whiteboardServerMessageSchema,
   whiteboardSocketPath,
+  WHITEBOARD_PROTOCOL,
+  isSupportedWhiteboardProtocol,
 } from "../src/whiteboard-protocol";
 
 const element = (overrides: Record<string, unknown> = {}) => ({ id: "a", type: "rectangle", version: 1, versionNonce: 5, isDeleted: false, x: 0, y: 0, ...overrides });
@@ -23,7 +25,7 @@ describe("whiteboard protocol", () => {
     expect(parsed.elements[0]).toMatchObject({ id: "a", x: 0, y: 0 });
   });
 
-  it("rejects image elements, bad versions, empty or oversized ids, and over-long batches", () => {
+  it("rejects image elements that reference no media (#501), bad versions, empty or oversized ids, and over-long batches", () => {
     for (const bad of [element({ type: "image" }), element({ version: 1.5 }), element({ version: -1 }), element({ versionNonce: "x" }), element({ isDeleted: "no" }), element({ id: "" }), element({ id: "x".repeat(65) })]) {
       expect(whiteboardClientMessageSchema.safeParse(message([bad])).success).toBe(false);
     }
@@ -46,8 +48,15 @@ describe("whiteboard protocol", () => {
     expect(whiteboardIncomingWins({ version: 2, versionNonce: 9 }, { version: 2, versionNonce: 9 })).toBe(false);
   });
 
-  it("builds the socket path", () => {
-    expect(whiteboardSocketPath("p1")).toBe("/api/projects/p1/whiteboard/socket");
+  it("builds the socket path, always declaring the client's protocol (#501)", () => {
+    expect(whiteboardSocketPath("p1")).toBe("/api/projects/p1/whiteboard/socket?protocol=2");
+    expect(whiteboardSocketPath("a b")).toBe("/api/projects/a%20b/whiteboard/socket?protocol=2");
+    expect(WHITEBOARD_PROTOCOL).toBe(2);
+  });
+
+  it("accepts only a declared protocol of at least the current one (#501)", () => {
+    for (const ok of ["2", "3", "02", "99"]) expect(isSupportedWhiteboardProtocol(ok), ok).toBe(true);
+    for (const bad of [undefined, null, "", "1", "0", "-2", "1.9", "2abc", " 2", "abc", "9999999"]) expect(isSupportedWhiteboardProtocol(bad), String(bad)).toBe(false);
   });
 
   it("closes a revoked connection with 4403, distinct from deleted and malformed", () => {

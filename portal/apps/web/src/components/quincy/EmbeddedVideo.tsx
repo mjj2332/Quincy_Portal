@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { cn } from "@/lib/utils";
 import { embeddedMediaPosterUrl, embeddedMediaUrl } from "../../lib/embedded-media";
 import { buttonVariants } from "../reui/button";
 
@@ -9,14 +10,14 @@ import { buttonVariants } from "../reui/button";
  * on the viewer's browser: the decision is made here, per viewer, from the element's own `error` event, and a file that cannot play
  * (ProRes, say) offers itself as a download instead of a dead player. Neither ReUI nor base-nova has a media-playback component.
  */
-export function EmbeddedVideo({ mediaId }: { mediaId: string }) {
+export function EmbeddedVideo({ mediaId, className, videoClassName }: { mediaId: string; className?: string; videoClassName?: string }) {
   const [failed, setFailed] = useState(false);
   const src = embeddedMediaUrl(mediaId);
   if (failed) return <div data-testid="embedded-video-unavailable" className="my-[var(--space-2)] grid justify-items-start gap-[var(--space-2)] rounded-[var(--radius-xs)] border-[length:var(--border-width-hair)] border-solid border-border bg-surface-sunken p-[var(--space-3)]">
     <p className="m-0 text-foreground-secondary [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">This video can't play in this browser.</p>
     <a href={`${src}?download=1`} download className={buttonVariants({ variant: "outline", size: "default" })}>Download video</a>
   </div>;
-  return <div data-testid="embedded-video" className="my-[var(--space-2)]">
-    <video controls preload="metadata" playsInline poster={embeddedMediaPosterUrl(mediaId)} src={src} aria-label="Embedded video" onError={() => setFailed(true)} className="rich-text__embedded-video" />
+  return <div data-testid="embedded-video" className={cn("my-[var(--space-2)]", className)}>
+    <video controls preload="metadata" playsInline poster={embeddedMediaPosterUrl(mediaId)} src={src} aria-label="Embedded video" onError={() => setFailed(true)} className={cn("rich-text__embedded-video", videoClassName)} />
   </div>;
 }

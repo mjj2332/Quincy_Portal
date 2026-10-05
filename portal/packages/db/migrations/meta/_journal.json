@@ -435,6 +435,13 @@
       "when": 1789600000000,
       "tag": "0061_project_whiteboard_versions",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "6",
+      "when": 1789610000000,
+      "tag": "0062_project_whiteboard_version_media",
+      "breakpoints": true
     }
   ]
 }

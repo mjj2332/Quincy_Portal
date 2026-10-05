@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { whiteboardMediaRef } from "./whiteboard-media";
 
 /**
  * #498: the wire contract between a Project whiteboard's browser and its Durable Object
@@ -54,9 +55,9 @@ export const whiteboardElementSchema = z.object({
   version: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   versionNonce: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   isDeleted: z.boolean(),
-}).passthrough().refine((element) => element.type !== "image", {
-  // Embedded media arrives with #501; until then nothing may reference a file the board cannot serve.
-  message: "image elements are not supported yet",
+}).passthrough().superRefine((element, context) => {
+  // #501: an image element is a reference to embedded media (see whiteboard-media.ts). Its `status` is Excalidraw's own and is not validated.
+  if (element.type === "image" && !whiteboardMediaRef(element)) context.addIssue({ code: "custom", message: "an image element must reference embedded media (a UUID fileId and customData.quincyMedia.kind)" });
 });
 export type WhiteboardElement = z.infer<typeof whiteboardElementSchema>;
 
@@ -122,9 +123,21 @@ export function whiteboardIncomingWins(
   return incoming.versionNonce < stored.versionNonce;
 }
 
-/** The Project whiteboard's socket path (relative to the API origin). */
+/**
+ * #501: the wire protocol a client speaks. A tab loaded before images and videos existed sweeps every image element it sees and
+ * would author their deletion for everyone, so the upgrade route refuses a socket that does not declare `?protocol=` at least this.
+ * Bump it when an older client could damage the board by joining.
+ */
+export const WHITEBOARD_PROTOCOL = 2;
+
+/** The Project whiteboard's socket path (relative to the API origin). It always carries the client's protocol. */
 export function whiteboardSocketPath(projectId: string): string {
-  return `/api/projects/${encodeURIComponent(projectId)}/whiteboard/socket`;
+  return `/api/projects/${encodeURIComponent(projectId)}/whiteboard/socket?protocol=${WHITEBOARD_PROTOCOL}`;
+}
+
+/** True when the `protocol` query value a socket upgrade declared is one this server accepts. */
+export function isSupportedWhiteboardProtocol(value: string | undefined | null): boolean {
+  return typeof value === "string" && /^\d{1,6}$/.test(value) && Number(value) >= WHITEBOARD_PROTOCOL;
 }
 
 // ---- #500: version history over HTTP --------------------------------------------------------------------------------

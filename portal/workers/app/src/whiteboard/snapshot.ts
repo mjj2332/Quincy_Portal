@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { WHITEBOARD_SNAPSHOT_INTERVAL_MS, WHITEBOARD_VERSIONS_RETAINED, whiteboardElementSchema, type WhiteboardVersionReason } from "@quincy/shared";
+import { EMBEDDED_MEDIA_RETENTION_MS, WHITEBOARD_SNAPSHOT_INTERVAL_MS, WHITEBOARD_VERSIONS_RETAINED, whiteboardElementSchema, whiteboardMediaIds, type WhiteboardVersionReason } from "@quincy/shared";
 import type { Env } from "../env";
 import { auditMeta } from "../lib/audit";
 
@@ -242,6 +242,8 @@ export class Snapshots {
       this.sql.exec("UPDATE wb_state SET snapshot_due_at = NULL, leave_pending = 0, pending_version_id = ?, pending_reason = ? WHERE id = 1", versionId, reason);
     }
     const sha = await sceneSha256(rows);
+    // #501: the media this capture holds, written into the SAME INSERT as the index row (see the retention section).
+    const mediaIds = whiteboardMediaIds(rows);
     if (abandoned()) return { status: "aborted" };
 
     if (cadence && this.row().last_sha === sha) {
@@ -268,9 +270,9 @@ export class Snapshots {
         ordinal = this.row().next_ordinal;
         try {
           await this.env.DB.prepare(
-          `INSERT INTO project_whiteboard_versions (id, project_id, r2_key, ordinal, generation, scene_revision, created_at, created_by, reason, scene_sha256, byte_count, element_count, state)
-           VALUES (?, ?, ?, ?, ?, ?, ?, (SELECT id FROM user WHERE id = ?), ?, ?, ?, ?, 'ready') ON CONFLICT(id) DO NOTHING`,
-        ).bind(versionId, projectId, key, ordinal, this.row().generation, revision, createdAt, createdBy, reason, sha, bytes.byteLength, rows.filter((row) => row.isDeleted !== true).length).run();
+          `INSERT INTO project_whiteboard_versions (id, project_id, r2_key, ordinal, generation, scene_revision, created_at, created_by, reason, scene_sha256, byte_count, element_count, state, media_ids)
+           VALUES (?, ?, ?, ?, ?, ?, ?, (SELECT id FROM user WHERE id = ?), ?, ?, ?, ?, 'ready', ?) ON CONFLICT(id) DO NOTHING`,
+        ).bind(versionId, projectId, key, ordinal, this.row().generation, revision, createdAt, createdBy, reason, sha, bytes.byteLength, rows.filter((row) => row.isDeleted !== true).length, JSON.stringify(mediaIds)).run();
         } catch (error) {
           // A backup is not retried under this key (its id is fresh each time), so an object whose row never landed would leak. Delete it,
           // but only once the index is confirmed not to hold the row (the INSERT may have committed with its response lost).
@@ -342,11 +344,48 @@ export class Snapshots {
         await this.env.MEDIA.delete(row.key);
         await this.env.DB.prepare("DELETE FROM project_whiteboard_versions WHERE id = ? AND state = 'pruning'").bind(row.id).run();
       }
+      // #501: media attach and detach ride the prune's durable retry (`prune_retry_at`): a throw here lands in the catch below.
+      await this.reconcileMedia(projectId, token);
       this.sql.exec("UPDATE wb_state SET prune_retry_at = NULL, prune_attempts = 0 WHERE id = 1");
     } catch (error) {
       console.error("whiteboard prune failed", { event: "project_whiteboard_prune_failed", projectId, message: error instanceof Error ? error.message : String(error) });
       this.sql.exec("UPDATE wb_state SET prune_retry_at = ?, prune_attempts = prune_attempts + 1 WHERE id = 1", this.host.clock() + backoff(this.row().prune_attempts));
     }
+  }
+
+  /**
+   * #501: a board image or video is an `embedded_media` row of owner_kind `whiteboard` whose owner is the Project. The row is `pending`
+   * after upload and is attached only when a snapshot holds it: attached means the live scene or any of the kept ready versions
+   * (`media_ids`) references it, detached means none does (the daily sweep reclaims it 7 days later, and a re-added element
+   * re-attaches it before then). Both are decided in one D1 batch with every id list bound as ONE JSON value through `json_each` (D1
+   * allows 100 bound parameters a query). `detached_at > cutoff` excludes the sweep's claim marker (0) and anything older than 7 days,
+   * exactly as `ownedMediaStatements` does, and `created_at > cutoff` matches the sweep's expiry of a pending row. The scope is this
+   * Project's rows only, so another Project's id (or a comment's image) placed on this board is neither attached nor detached.
+   * Every statement is idempotent, and a throw is retried by the prune retry.
+   */
+  private async reconcileMedia(projectId: string, token: number): Promise<void> {
+    if (this.host.fence() !== token) return;
+    const live = JSON.stringify(whiteboardMediaIds(
+      this.sql.exec<{ json: string }>("SELECT json FROM elements WHERE is_deleted = 0 AND json_extract(json, '$.type') = 'image'").toArray().map((row) => JSON.parse(row.json) as SceneRow),
+    ));
+    const now = this.host.clock();
+    const cutoff = now - EMBEDDED_MEDIA_RETENTION_MS;
+    const kept = "SELECT j.value FROM project_whiteboard_versions v, json_each(v.media_ids) j WHERE v.project_id = ? AND v.state = 'ready'";
+    await this.env.DB.batch([
+      this.env.DB.prepare(`
+        UPDATE embedded_media SET state = 'attached', owner_id = ?, detached_at = NULL, updated_at = ?
+        WHERE owner_kind = 'whiteboard' AND project_id = ? AND kind IN ('image', 'video')
+          AND ((state = 'pending' AND owner_id IS NULL AND created_at > ?)
+            OR (state = 'detached' AND owner_id = ? AND detached_at > ?))
+          AND (id IN (SELECT value FROM json_each(?)) OR id IN (${kept}))
+      `).bind(projectId, now, projectId, cutoff, projectId, cutoff, live, projectId),
+      this.env.DB.prepare(`
+        UPDATE embedded_media SET state = 'detached', detached_at = ?, updated_at = ?
+        WHERE owner_kind = 'whiteboard' AND project_id = ? AND state = 'attached'
+          AND id NOT IN (SELECT value FROM json_each(?))
+          AND id NOT IN (${kept})
+      `).bind(now, now, projectId, live, projectId),
+    ]);
   }
 
   // ---- restore --------------------------------------------------------------------------------------------------------
