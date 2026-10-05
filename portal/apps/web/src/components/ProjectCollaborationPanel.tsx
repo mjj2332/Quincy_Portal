@@ -130,6 +130,7 @@ export function ProjectCollaborationPanel({ projectId, presented = true, view, o
     currentUserId={currentUserId}
     presented={presented && activeView === "discussion"}
     consumeDiscussion403={false}
+    archived={archived}
     onAccessFailure={onAccessFailure}
     onUnreadCountChange={handleUnreadCount}
   >{renderDiscussion}</ProjectDiscussionThread>;
