@@ -34,13 +34,24 @@ describe("overlay stacking contract", () => {
     expect(overlay).toMatch(/\bforceRender\b/);
   });
 
-  it("the sheet overlay and content use the dialog token, never the registry's bare z-50 (a sheet opened from the Project Workspace sheet must stack above it; #500)", () => {
+  it("the base sheet keeps the registry's z-50: raising it would lift every sheet (calendar dialogs, the mobile sidebar) above the impersonation banner's Exit (#531, #500)", () => {
     const src = read("../components/reui/sheet.tsx");
     const overlay = src.slice(src.indexOf("function SheetOverlay"), src.indexOf("function SheetContent"));
     const content = src.slice(src.indexOf("function SheetContent"), src.indexOf("function SheetHeader"));
     for (const part of [overlay, content]) {
-      expect(part).toContain("z-[var(--z-dialog)]");
-      expect(part).not.toMatch(/\bz-50\b/);
+      expect(part).toMatch(/\bz-50\b/);
+      expect(part).not.toContain("--z-dialog");
+    }
+  });
+
+  it("the whiteboard History sheet (opened from inside the Project Workspace sheet, --z-dialog) passes the dialog token to its popup and scrim, and starts below the banner while impersonating (#500, #531)", () => {
+    const src = read("../components/reui/whiteboard/board-panel.tsx");
+    const sheet = src.slice(src.indexOf("<Sheet open"), src.indexOf("</SheetContent>"));
+    const popupClass = /\n\s*className="([^"]*)"/.exec(sheet)?.[1] ?? "";
+    const overlayClass = /overlayProps=\{\{[^}]*className: "([^"]*)"/.exec(sheet)?.[1] ?? "";
+    for (const [name, cls] of [["popup", popupClass], ["scrim", overlayClass]] as const) {
+      expect(cls, name).toContain("z-[var(--z-dialog)]");
+      expect(cls, name).toContain("top-[var(--impersonation-banner-height)]");
     }
   });
 

@@ -6,7 +6,7 @@
  * Tailwind `shadow-*`, focus ring widths -- see `reui-skin.guard.test.ts`), and `noUncheckedIndexedAccess`
  * narrowing. `"dark": boolean` is quoted only so the guard's `dark:` matcher does not read a type as a variant.
  *
- * This file: The Frames / Library / History panel. Edits (additive): #500 `rowAttrs` on `PanelRow` (data attributes for a host's test seam and hooks) and `forceRender` on the sheet's scrim (nested under the shell's Dialog Root); a `title` prop replaces the demo title; `panes` is now `Partial<...>` and a tab with no pane is not rendered, because History arrives with #500. `dark:` row fills and a focus ring width dropped (Skin guard). #500 browser pass: `RowAction` and the tab triggers reach 44px at <=721px; the sheet's width is set under the same `data-[side=right]:` variant as the registry's `w-3/4`, so it replaces it.
+ * This file: The Frames / Library / History panel. Edits (additive): #500 `rowAttrs` on `PanelRow` (data attributes for a host's test seam and hooks) and `forceRender` on the sheet's scrim (nested under the shell's Dialog Root); a `title` prop replaces the demo title; `panes` is now `Partial<...>` and a tab with no pane is not rendered, because History arrives with #500. `dark:` row fills and a focus ring width dropped (Skin guard). #500 browser pass: `RowAction` and the tab triggers reach 44px at <=721px; the sheet's width is set under the same `data-[side=right]:` variant as the registry's `w-3/4`, so it replaces it. #500 stacking: the sheet passes `z-[var(--z-dialog)]` (and the impersonation top offset) itself; the base `reui/sheet` stays z-50.
  */
 import { Fragment, useEffect, useRef, useState } from "react"
 import { IconTile } from "@/components/reui/icon-tile"
@@ -531,10 +531,13 @@ export function BoardPanel({
         <SheetContent
           side="right"
           // #500: the Portal's shell wraps every page in a Base UI Dialog Root, so this sheet is nested and would skip its scrim (see reui/sheet.tsx, #221).
-          overlayProps={{ forceRender: true }}
+          // `z-[var(--z-dialog)]` is passed here, not set on the base sheet: only this sheet opens from inside the Workspace sheet (--z-dialog), and the
+          // base sheet stays z-50 so no other sheet rises above the impersonation banner (z-76). Popup and scrim start below the banner while
+          // impersonating, like `ProjectSheet`/`RailSheet`; the sheet is portaled to body, so the shell's `.app--impersonating` is matched with :has().
+          overlayProps={{ forceRender: true, className: "z-[var(--z-dialog)] [body:has(.app--impersonating)_&]:top-[var(--impersonation-banner-height)] [body:has(.app--impersonating)_&]:before:absolute [body:has(.app--impersonating)_&]:before:content-[''] [body:has(.app--impersonating)_&]:before:inset-x-0 [body:has(.app--impersonating)_&]:before:bottom-full [body:has(.app--impersonating)_&]:before:h-[var(--impersonation-banner-height)]" }}
           // The sheet opens on its active tab, so keyboard focus starts inside it.
           initialFocus={() => sheetFocus?.() ?? tabRef.current ?? true}
-          className="data-[side=right]:w-[min(20rem,calc(100%-3rem))] gap-0"
+          className="z-[var(--z-dialog)] data-[side=right]:w-[min(20rem,calc(100%-3rem))] [body:has(.app--impersonating)_&]:data-[side=right]:top-[var(--impersonation-banner-height)] [body:has(.app--impersonating)_&]:data-[side=right]:h-auto [body:has(.app--impersonating)_&]:data-[side=right]:bottom-0 gap-0"
         >
           <SheetHeader className="border-b">
             <SheetTitle>{title}</SheetTitle>
