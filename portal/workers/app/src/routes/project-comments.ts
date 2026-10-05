@@ -91,7 +91,7 @@ projectCommentsRoutes.get("/projects/:projectId/collaboration-summary", terminal
   if (c.get("user").role === "external_editor" && !await resolveVisibleProject(c.env, c.get("user"), projectId)) return c.json({ error: "Project not found" }, 404);
   if (!await hasProjectCollaborationAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const db = createDb(c.env.DB);
-  const project = await db.select({ id: schema.projects.id, street: schema.projects.street, stageKey: schema.projects.stageKey }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
+  const project = await db.select({ id: schema.projects.id, street: schema.projects.street, stageKey: schema.projects.stageKey, archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
   if (!project) return c.json({ error: "Project not found" }, 404);
   const members = await db.select({ id: schema.projectMembers.id, userId: schema.projectMembers.userId, roleOnProject: schema.projectMembers.roleOnProject, name: schema.user.name, email: schema.user.email, globalRole: schema.user.role, active: schema.user.active })
     .from(schema.projectMembers).innerJoin(schema.user, eq(schema.projectMembers.userId, schema.user.id)).where(eq(schema.projectMembers.projectId, projectId)).orderBy(schema.projectMembers.roleOnProject, schema.user.name, schema.user.id).all();
@@ -108,7 +108,8 @@ projectCommentsRoutes.get("/projects/:projectId/collaboration-summary", terminal
     }));
   }
   return c.json({
-    project: { id: project.id, street: project.street, stageKey: projectStageForRole(project, c.get("user").role).stageKey },
+    // Staff only (#527): the collaboration-only view needs the archive state. The External shape above is strict and carries no such field.
+    project: { id: project.id, street: project.street, stageKey: projectStageForRole(project, c.get("user").role).stageKey, archived: project.archivedAt != null },
     members: members.map((member) => ({ id: member.id, userId: member.userId, roleOnProject: member.roleOnProject, name: member.name, active: Boolean(member.active) })),
   });
 }));

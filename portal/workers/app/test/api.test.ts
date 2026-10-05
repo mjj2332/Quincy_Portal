@@ -874,6 +874,7 @@ describe("staff app API", () => {
     expect(collaboration.status).toBe(200);
     const collaborationBody = EXTERNAL_API_RESPONSE_SCHEMAS.collaboration.parse(await collaboration.json()) as { project: { id: string }; members: Array<Record<string, unknown>> };
     expect(collaborationBody.project.id).toBe(assigned);
+    expect(Object.keys(collaborationBody.project)).not.toContain("archived");
     expect(collaborationBody.members).toEqual(expect.arrayContaining([expect.objectContaining({ id: externalEditorId, membershipCycleId: expect.any(String), assignedSubtaskCount: 0 })]));
     expect(collaborationBody.members.flatMap((member) => Object.keys(member))).not.toContain("userId");
     const me = await SELF.fetch("https://portal.test/api/me", { headers: { cookie: externalCookie } });
@@ -1549,7 +1550,13 @@ describe("staff app API", () => {
     expect(authorized.status).toBe(200);
     const summary = await authorized.json() as { project: Record<string, unknown>; members: Array<Record<string, unknown>> };
     expect(Object.keys(summary).sort()).toEqual(["members", "project"]);
-    expect(Object.keys(summary.project).sort()).toEqual(["id", "stageKey", "street"]);
+    expect(Object.keys(summary.project).sort()).toEqual(["archived", "id", "stageKey", "street"]);
+    expect(summary.project.archived).toBe(false);
+    // #527: the staff summary follows the Project's archive state, so the collaboration-only discussion renders read-only up front.
+    await database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), project.id).run();
+    const archivedSummary = await (await jsonRequest(`/api/projects/${project.id}/collaboration-summary`, await sessionCookie(firstPhotographerToken), "GET")).json() as { project: { archived: boolean } };
+    expect(archivedSummary.project.archived).toBe(true);
+    await database.DB.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").bind(project.id).run();
     expect(summary.project).toMatchObject({ id: project.id, street: expect.stringContaining("Collaboration-safe summary") });
     expect(summary.members).toHaveLength(2);
     for (const member of summary.members) expect(Object.keys(member).sort()).toEqual(["active", "id", "name", "roleOnProject", "userId"]);

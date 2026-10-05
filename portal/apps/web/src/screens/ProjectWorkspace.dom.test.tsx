@@ -53,7 +53,7 @@ function projectFixture(id = "p1") {
 }
 
 function collaborationSummaryFixture(id = "p1") {
-  return { project: { id, street: id === "p1" ? "12 Example St" : "34 Second Street", stageKey: "raw_review" as const }, members: [] };
+  return { project: { id, street: id === "p1" ? "12 Example St" : "34 Second Street", stageKey: "raw_review" as const, archived: false }, members: [] };
 }
 
 function deferredPromise<T>() {
@@ -1420,6 +1420,27 @@ describe("ProjectWorkspace collaboration relocation", () => {
       expect(shown).not.toHaveBeenCalledWith("raw");
     });
 
+    it("renders the collaboration-only discussion read-only up front when the Project is archived, and clears it on Restore (#527)", async () => {
+      let archived = true;
+      apiGetMock.mockImplementation((path: string) => {
+        if (path === "/api/projects/p1") return Promise.reject(new ApiError("Forbidden", 403));
+        if (path.includes("/collaboration-summary")) { const summary = collaborationSummaryFixture(); return Promise.resolve({ ...summary, project: { ...summary.project, archived } }); }
+        if (path.includes("/comments?limit=50")) return Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [] });
+        if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
+        if (path.includes("mentionable-users")) return Promise.resolve({ users: [] });
+        return Promise.resolve({});
+      });
+      let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+      await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>);
+      await flushUntil(() => host.querySelector('[data-testid="discussion-archived-notice"]') !== null, "the archived notice, with no 409 needed");
+      expect(host.querySelector('[data-testid="project-collaboration-only"]')).not.toBeNull();
+      expect(host.querySelector("[data-testid=discussion-composer]")).toBeNull();
+      archived = false;
+      await queryClient!.invalidateQueries({ queryKey: projectDataKeys.collaborationSummary("p1"), exact: true, refetchType: "active" });
+      await flushUntil(() => host.querySelector("[data-testid=discussion-composer]") !== null, "the composer after Restore");
+      expect(host.querySelector('[data-testid="discussion-archived-notice"]')).toBeNull();
+    });
+
     it("follows a late Collection denial back to Collaboration", async () => {
       mockUrlTabProject({ editedForbidden: true });
       const shown = vi.fn();
@@ -2012,7 +2033,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
       if (path.includes("/assets?collection=video")) return Promise.resolve({ assets: [] });
       if (path.includes("/links")) return Promise.resolve({ links: [{ id: "66666666-6666-4666-8666-666666666666", url: "https://example.com/delivered-copy", label: "Delivered copy", source: "manual", position: 1024, createdAt: "2026-08-01T00:00:00.000Z" }] });
       if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
-      if (path.includes("/collaboration-summary")) return Promise.resolve({ project: { id: externalProjectId, street: "External Collections", stageKey: "editing" }, members: [] });
+      if (path.includes("/collaboration-summary")) return Promise.resolve({ project: { id: externalProjectId, street: "External Collections", stageKey: "editing", archived: false }, members: [] });
       if (path.includes("/comments?")) return Promise.resolve({ project: { id: externalProjectId, street: "External Collections" }, comments: [] });
       if (path.includes("comment-read-marker")) return Promise.resolve({ projectId: externalProjectId, marker: null, latest: null, unreadCount: 0 });
       if (path.includes("/subtasks")) return Promise.resolve({ subtasks: [] });

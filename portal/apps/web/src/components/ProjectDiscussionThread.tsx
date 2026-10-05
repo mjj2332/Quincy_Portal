@@ -42,7 +42,7 @@ export type ProjectDiscussionThreadProps = {
   currentUserId?: string;
   presented?: boolean;
   consumeDiscussion403?: boolean;
-  /** The Project is archived: the discussion is read-only (#527). Absent on the collaboration-only view, which goes read-only on the server's first refusal there. */
+  /** The Project is archived: the discussion is read-only (#527). The collaboration-only view reads it from the staff collaboration summary. */
   archived?: boolean;
   onAccessFailure?: (error: unknown, resource: ProjectDiscussionAccessFailureResource) => void;
   onUnreadCountChange?: (count: number) => void;
@@ -272,7 +272,7 @@ export function ProjectDiscussionThread({
   /** Handles an archived refusal of a Post, Save or Delete: the thread goes read-only, nothing is optimistic, and the header and Checklist catch up. */
   function enterArchived(inThread: boolean) {
     focusAfterFlip.current = { inThread }; setLatched(true); setMutationError(undefined);
-    void invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true });
+    void invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "collaboration-summary" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true });
   }
 
   async function submit() {

@@ -302,7 +302,8 @@ export function usePassiveRawAssetsQuery(projectId: string, enabled: boolean, ro
 export type ProjectInvalidation = { projectId: string; resources: ProjectDataResource[] };
 
 export type ProjectCollaborationSummary = {
-  project: { id: string; street: string; stageKey: ProjectDetail["stageKey"] };
+  /** `archived` is staff-only (#527); the External Editor shape never carries it. */
+  project: { id: string; street: string; stageKey: ProjectDetail["stageKey"]; archived: boolean };
   members: Array<Pick<ProjectMember, "id" | "userId" | "roleOnProject" | "name" | "active">>;
 };
 export type ProjectAssignmentCandidate = { id: string; name: string; email: string; globalRole: "admin" | "photographer" | "editor" | "external_editor"; active: true };
@@ -314,7 +315,7 @@ function isProjectCollaborationSummary(value: unknown, projectId: string): value
   const summary = value as Record<string, unknown>;
   if (Object.keys(summary).sort().join(",") !== "members,project" || !summary.project || typeof summary.project !== "object" || Array.isArray(summary.project) || !Array.isArray(summary.members)) return false;
   const project = summary.project as Record<string, unknown>;
-  if (Object.keys(project).sort().join(",") !== "id,stageKey,street" || project.id !== projectId || typeof project.street !== "string" || typeof project.stageKey !== "string" || !(project.stageKey === "editing" || isStageKey(project.stageKey))) return false;
+  if (Object.keys(project).sort().join(",") !== "archived,id,stageKey,street" || typeof project.archived !== "boolean" || project.id !== projectId || typeof project.street !== "string" || typeof project.stageKey !== "string" || !(project.stageKey === "editing" || isStageKey(project.stageKey))) return false;
   return summary.members.every((value) => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return false;
     const member = value as Record<string, unknown>;

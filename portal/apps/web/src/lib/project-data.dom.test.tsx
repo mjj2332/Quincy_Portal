@@ -13,7 +13,7 @@ vi.mock("./api", async (importOriginal) => ({ ...(await importOriginal<typeof im
 vi.mock("./auth", () => ({ useSession: () => ({ data: { user: { id: "u1", role: "editor" } }, isPending: false }) }));
 
 const summary: ProjectCollaborationSummary = {
-  project: { id: "p", street: "Private Lane", stageKey: "raw_review" },
+  project: { id: "p", street: "Private Lane", stageKey: "raw_review", archived: false },
   members: [{ id: "m1", userId: "u1", roleOnProject: "editor", name: "Editor", active: true }],
 };
 

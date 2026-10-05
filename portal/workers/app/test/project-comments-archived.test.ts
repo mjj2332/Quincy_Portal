@@ -14,19 +14,25 @@ type Actor = "admin" | "member" | "external";
 const ARCHIVED = { error: "Archived projects are read-only; the discussion can't be changed.", code: "comment_project_archived" };
 
 /** Runs the real app. `racingArchive` swaps in a D1 whose first multi-statement batch archives that Project, then runs the real batch. */
-async function call(who: Who, method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown, racingArchive?: string) {
+async function call(who: Who, method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown, racingArchive?: string, archiveAfter?: string) {
   const waits: Promise<unknown>[] = [];
   const executionContext = { waitUntil: (promise: Promise<unknown>) => { waits.push(promise); }, passThroughOnException: () => undefined, props: undefined } as unknown as ExecutionContext;
   const race = { flipped: 0 };
-  const db = racingArchive ? new Proxy(database.DB, {
+  const db = racingArchive || archiveAfter ? new Proxy(database.DB, {
     get(target, property) {
       if (property === "batch") {
         return async (statements: D1PreparedStatement[]) => {
-          if (!race.flipped && statements.length >= 2) {
+          if (racingArchive && !race.flipped && statements.length >= 2) {
             race.flipped += 1;
             await target.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), racingArchive).run();
           }
-          return target.batch(statements);
+          const results = await target.batch(statements);
+          // The archive lands right after the real batch resolved: the write committed, and its results are the real ones.
+          if (archiveAfter && !race.flipped && statements.length >= 2) {
+            race.flipped += 1;
+            await target.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), archiveAfter).run();
+          }
+          return results;
         };
       }
       const value = Reflect.get(target, property, target);
@@ -204,6 +210,54 @@ describe("an archived Project's discussion (#527)", () => {
         expect(await footprint(f.projectId)).toEqual(before);
       });
     }
+  });
+
+  describe("when the archive lands right after the write committed, before the helper returns", () => {
+    // The refusal means "the write did not happen": a write that committed is reported as the success it is.
+    const rowCount = async (sql: string, ...binds: unknown[]) => (await database.DB.prepare(sql).bind(...binds).first<{ n: number }>())?.n ?? 0;
+
+    it("post is 201 with its comment, mention, audit, activity and outbox rows committed", async () => {
+      const f = await seedProject(false);
+      const before = await footprint(f.projectId);
+      const { response, flipped } = await call("member", "POST", commentsPath(f.projectId), { content: mentionDoc("Landed") }, undefined, f.projectId);
+      expect(flipped).toBe(1);
+      expect(response.status).toBe(201);
+      const { id } = await response.json() as { id: string };
+      const after = await footprint(f.projectId);
+      expect(after.comments).toHaveLength(before.comments.length + 1);
+      expect(await rowCount("SELECT COUNT(*) AS n FROM project_comment_mentions WHERE comment_id = ?", id)).toBe(1);
+      expect(await rowCount("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'project_comment.create' AND target_id = ?", id)).toBe(1);
+      expect(after.activity.length).toBeGreaterThan(before.activity.length);
+      expect(after.outbox.length).toBeGreaterThan(before.outbox.length);
+    });
+
+    it("edit is 200 with the new body, audit, activity and outbox rows committed", async () => {
+      const f = await seedProject(false);
+      const before = await footprint(f.projectId);
+      const { response, flipped } = await call("admin", "PATCH", commentsPath(f.projectId, f.byAdmin), { content: mentionDoc("Edited as it archived") }, undefined, f.projectId);
+      expect(flipped).toBe(1);
+      expect(response.status).toBe(200);
+      const after = await footprint(f.projectId);
+      expect(await rowCount("SELECT COUNT(*) AS n FROM project_comments WHERE id = ? AND body LIKE 'Edited as it archived%'", f.byAdmin)).toBe(1);
+      expect(await rowCount("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'project_comment.edit' AND target_id = ?", f.byAdmin)).toBe(1);
+      expect(after.activity.length).toBeGreaterThan(before.activity.length);
+      expect(after.outbox.length).toBeGreaterThan(before.outbox.length);
+    });
+
+    it("delete is a success with the comment gone, audit and activity committed, and its media still cleaned up", async () => {
+      const f = await seedProject(false);
+      const before = await footprint(f.projectId);
+      const { response, flipped } = await call("member", "DELETE", commentsPath(f.projectId, f.byMember), undefined, undefined, f.projectId);
+      expect(flipped).toBe(1);
+      expect(response.status).toBeLessThan(300);
+      const after = await footprint(f.projectId);
+      expect(after.comments).toHaveLength(before.comments.length - 1);
+      expect(await rowCount("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'project_comment.delete' AND target_id = ?", f.byMember)).toBe(1);
+      expect(after.activity.length).toBeGreaterThan(before.activity.length);
+      // Detached media cleanup still runs: the row and the stored object are gone.
+      expect(await mediaRow(f.attached)).toBeFalsy();
+      expect(await database.MEDIA.head(mediaKey(f.projectId, f.attached))).toBeNull();
+    });
   });
 
   it("still reads the broad outbox ids by position after the audit row moved to the front of the create batch", async () => {
