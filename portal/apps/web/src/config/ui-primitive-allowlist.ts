@@ -23,7 +23,7 @@ export const UI_PRIMITIVE_ALLOWLIST: Record<string, UiPrimitiveAllowance> = {
   "components/Lightbox.tsx": { count: 28, ledger: "baseline (#262)" },
   "components/MentionAutocomplete.tsx": { count: 3, ledger: "baseline (#262)" },
   "components/Modal.tsx": { count: 1, ledger: "baseline (#262)" },
-  "components/NoticeBoard.tsx": { count: 5, ledger: "baseline (#262)" },
+  "components/NoticeBoard.tsx": { count: 3, ledger: "baseline (#262); #523 moved Edit/Delete into quincy/menu" },
   "components/PhotoGrid.tsx": { count: 18, ledger: "baseline (#262)" },
   "components/ProductionEventCalendarDialogs.tsx": { count: 1, ledger: "baseline (#262)" },
   "components/ProductionEventCalendarRail.tsx": { count: 1, ledger: "baseline (#262)" },

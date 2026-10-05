@@ -68,13 +68,12 @@ jobs:
       - run: npx vitest run --config workers/app/vitest.dev.config.ts
       - run: npx vitest run --config workers/webhook-ingress/vitest.config.ts
       - run: npx vitest run --config workers/background/vitest.config.ts
-      - run: npx vitest run --config apps/web/vitest.config.ts
-      # The DOM suite (85 files / 980 tests) is the most expensive of the eight on the CI
-      # runner at ~135s, but only narrowly ahead of workers/app at ~120s — splitting it into
-      # its own job or sharding it would not shorten this job without splitting that one too,
-      # so it is appended here (#158). Revisit if the job keeps growing. Measure on the runner,
+      # apps/web/vitest.config.ts runs two projects (unit + dom: 144 + 215 files). The DOM project
+      # is the most expensive suite on the CI runner at ~135s, only narrowly ahead of workers/app
+      # at ~120s — splitting it into its own job or sharding it would not shorten this job without
+      # splitting that one too (#158). Revisit if the job keeps growing. Measure on the runner,
       # not locally: a dev machine's parallelism runs this suite in ~7s and hides the cost.
-      - run: npx vitest run --config apps/web/vitest.dom.config.ts
+      - run: npx vitest run --config apps/web/vitest.config.ts
 
   build-web:
     needs: install

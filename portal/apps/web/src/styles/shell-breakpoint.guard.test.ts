@@ -37,7 +37,8 @@ const srcDir = join(stylesDir, "..");
 /**
  * Every file #112 gives the shell, named explicitly rather than discovered by a directory walk —
  * this comment is what names them as the #112 shell files, so a reader hitting this list knows
- * why RailedShell/ShellHeader/RailSheet/NotificationBell are here despite not existing yet.
+ * why each is listed. All seven exist (`components/quincy/` and `lib/`); the list is explicit so
+ * a new shell file must be added here by hand.
  */
 const SHELL_FILES: readonly { path: string; kind: "script" | "css" }[] = [
   { path: "lib/shell-rail.ts", kind: "script" },

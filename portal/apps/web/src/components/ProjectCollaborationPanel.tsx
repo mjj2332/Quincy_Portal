@@ -42,7 +42,7 @@ type ProjectCollaborationPanelProps = {
   /** Background jobs for the Activity "System" source. The Workspace passes them only to an admin; without them the Project | System control is not rendered. */
   jobs?: readonly Job[];
   onRetryJob?: (jobId: string) => void;
-  /** The Project is archived: the Checklist rail is read-only (#450). Absent on the collaboration-only view, which has no archive state; the rail goes read-only on the server's first refusal there. */
+  /** The Project is archived: the Checklist rail is read-only (#450).  The collaboration-only view reads it from the staff collaboration summary. */
   archived?: boolean;
 };
 
@@ -130,6 +130,7 @@ export function ProjectCollaborationPanel({ projectId, presented = true, view, o
     currentUserId={currentUserId}
     presented={presented && activeView === "discussion"}
     consumeDiscussion403={false}
+    archived={archived}
     onAccessFailure={onAccessFailure}
     onUnreadCountChange={handleUnreadCount}
   >{renderDiscussion}</ProjectDiscussionThread>;

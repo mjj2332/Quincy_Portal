@@ -6,6 +6,8 @@ import { ApiError } from "../lib/api";
 import { createQuincyQueryClient } from "../lib/query-client";
 import { createNoticeBoardPost, noticeBoardDataKeys, useNoticeBoardPresentation, type NoticeBoardReadState } from "../lib/notice-board-data";
 import { NoticeBoard, type NoticeBoardPost } from "./NoticeBoard";
+import { chooseNoticeAction, confirmNoticeDelete } from "../testing/notice-menu";
+const advanceTimers = (ms: number) => vi.advanceTimersByTimeAsync(ms);
 
 const apiGetMock = vi.fn<(path: string) => Promise<unknown>>();
 const apiPostMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
@@ -32,6 +34,8 @@ class TestIntersectionObserver {
   observe(target: Element) { this.target = target; }
   disconnect() { this.target = null; }
   takeRecords(): IntersectionObserverEntry[] { return []; }
+  /** Base UI's Menu positioning (floating-ui) creates observers too, so "the last one" can be a dead one (#523). */
+  get live() { return this.target !== null; }
   emit(intersecting: boolean) {
     if (!this.target) return;
     const bounds = { width: 200, height: 40, top: 20, right: 220, bottom: 60, left: 20, x: 20, y: 20, toJSON: () => ({}) } as DOMRectReadOnly;
@@ -95,7 +99,7 @@ function mount() {
   const host = document.createElement("div"); document.body.append(host); root = createRoot(host); return host;
 }
 
-function emit(intersecting: boolean) { TestIntersectionObserver.instances.at(-1)?.emit(intersecting); }
+function emit(intersecting: boolean) { TestIntersectionObserver.instances.filter((instance) => instance.live).at(-1)?.emit(intersecting); }
 
 function PresentationProbe({ onSuccess }: { onSuccess: () => void }) {
   const presentation = useNoticeBoardPresentation({
@@ -202,7 +206,7 @@ describe("Notice Board presentation freshness", () => {
     const host = mount(); await render(<NoticeBoard currentUserId="user-b" />);
     expect(host.querySelector('[data-slot="notice-board-unread-indicator"]')).not.toBeNull();
     deletionObserved = true;
-    await click(host.querySelector('[data-slot="notice-board-delete"]')!);
+    await chooseNoticeAction(host, "B", "Delete", advanceTimers); await confirmNoticeDelete(advanceTimers);
     expect(apiDeleteMock).toHaveBeenCalledWith(`/api/notice-board/posts/${newPost.id}`);
     expect(queryClient!.getQueryData<NoticeBoardReadState>(noticeBoardDataKeys.readState)).toEqual(afterDelete);
     expect(host.querySelector('[data-slot="notice-board-unread-indicator"]')).toBeNull();
@@ -252,7 +256,7 @@ describe("Notice Board presentation freshness", () => {
       return Promise.resolve({ posts: postDeletedElsewhere ? [] : [oldPost] });
     });
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
-    await click(host.querySelector('[data-slot="notice-board-edit"]')!);
+    await chooseNoticeAction(host, "A", "Edit", advanceTimers);
     await typeIntoEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "Draft after remote delete");
     postDeletedElsewhere = true;
     await queryClient!.invalidateQueries({ queryKey: noticeBoardDataKeys.posts, exact: true, refetchType: "active" });
@@ -271,8 +275,8 @@ describe("Notice Board presentation freshness", () => {
       return Promise.resolve({ posts: [remoteEdit ? remotelyEdited : oldPost] });
     });
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
-    expect(host.querySelector('button[aria-expanded]:not([data-toolbar-item])')).toBeNull();
-    await click(host.querySelector('[data-slot="notice-board-edit"]')!);
+    expect(host.querySelector('button[aria-expanded]:not([data-toolbar-item]):not([data-testid="notice-board-actions"])')).toBeNull();
+    await chooseNoticeAction(host, "A", "Edit", advanceTimers);
     await typeIntoEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "Keep this edit draft");
     const editorsAfterEdit = host.querySelectorAll<HTMLElement>('[contenteditable="true"]');
     const editEditor = editorsAfterEdit[0]!;
@@ -315,7 +319,7 @@ describe("Notice Board presentation freshness", () => {
     failPresentation = true;
     emit(false); await flush(); emit(true); await flush();
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("temporary list failure");
-    expect(host.querySelector('button[aria-expanded]:not([data-toolbar-item])')).toBeNull();
+    expect(host.querySelector('button[aria-expanded]:not([data-toolbar-item]):not([data-testid="notice-board-actions"])')).toBeNull();
     assertCreateComposerPreserved();
     failPresentation = false;
     emit(false); await flush(); emit(true); await flush();
@@ -410,7 +414,7 @@ describe("Notice Board presentation freshness", () => {
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
     emit(true); await flush();
     expect(listCalls).toBeGreaterThanOrEqual(2);
-    await click(host.querySelector('[data-slot="notice-board-edit"]')!);
+    await chooseNoticeAction(host, "A", "Edit", advanceTimers);
     await typeIntoEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "Edited");
     apiPatchMock.mockResolvedValue({ post: edited, readState: state(0, marker(oldPost.id, oldPost.createdAt), edited) });
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
@@ -429,7 +433,7 @@ describe("Notice Board presentation freshness", () => {
     apiPostMock.mockImplementationOnce(() => new Promise((resolve) => { resolveCreate = resolve; }));
     apiPatchMock.mockResolvedValue({ post: edited, readState: state(0, marker(oldPost.id, oldPost.createdAt), edited) });
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
-    await click(host.querySelector('[data-slot="notice-board-edit"]')!);
+    await chooseNoticeAction(host, "A", "Edit", advanceTimers);
     const editEditor = host.querySelector<HTMLElement>('[data-slot="notice-board-edit-composer"] [contenteditable="true"]')!;
     const createEditor = host.querySelector<HTMLElement>('form[data-slot="notice-board-composer"] [contenteditable="true"]')!;
     await typeIntoEditor(editEditor, "Edited");
@@ -460,7 +464,7 @@ describe("Notice Board presentation freshness", () => {
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
     const createEditor = host.querySelector<HTMLElement>('form[data-slot="notice-board-composer"] [contenteditable="true"]')!;
     await typeIntoEditor(createEditor, "Created");
-    await click(host.querySelector('[data-slot="notice-board-edit"]')!);
+    await chooseNoticeAction(host, "A", "Edit", advanceTimers);
     const editEditor = host.querySelector<HTMLElement>('[data-slot="notice-board-edit-composer"] [contenteditable="true"]')!;
     await typeIntoEditor(editEditor, "Edited");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
@@ -569,7 +573,7 @@ describe("Notice Board presentation freshness", () => {
     });
     apiPatchMock.mockImplementationOnce(() => new Promise((resolve) => { resolveEdit = resolve; }));
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
-    await click(host.querySelector('[data-slot="notice-board-edit"]')!);
+    await chooseNoticeAction(host, "A", "Edit", advanceTimers);
     await typeIntoEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "Edited");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
     expect(apiPatchMock).toHaveBeenCalledTimes(1);
@@ -641,7 +645,7 @@ describe("Notice Board presentation freshness", () => {
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!);
     expect(readStateCalls).toBe(initialReadStateCalls);
     expect(queryClient!.getQueryData<NoticeBoardPost[]>(noticeBoardDataKeys.posts)?.[0]?.id).toBe(created.id);
-    await click(host.querySelector('[data-slot="notice-board-edit"]')!);
+    await chooseNoticeAction(host, "A", "Edit", advanceTimers);
     await typeIntoEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "Edited");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
     expect(readStateCalls).toBe(initialReadStateCalls);
@@ -655,7 +659,7 @@ describe("Notice Board presentation freshness", () => {
       listCalls += 1; return Promise.resolve({ posts: listCalls === 1 ? [oldPost] : [] });
     });
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
-    await click(host.querySelector('[data-slot="notice-board-delete"]')!);
+    await chooseNoticeAction(host, "A", "Delete", advanceTimers); await confirmNoticeDelete(advanceTimers);
     expect(listCalls).toBeGreaterThanOrEqual(2);
     expect(readStateCalls).toBeGreaterThanOrEqual(2);
     expect(host.querySelector('[data-slot="notice-board-post"]')).toBeNull();

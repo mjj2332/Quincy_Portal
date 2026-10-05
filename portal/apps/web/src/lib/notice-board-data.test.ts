@@ -1,7 +1,9 @@
 import { QueryClient } from "@tanstack/react-query";
+import { ApiError } from "./api";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createNoticeBoardPost,
+  deleteNoticeBoardPost,
   editNoticeBoardPost,
   noticeBoardDataKeys,
   noticeBoardPostsQueryOptions,
@@ -13,6 +15,7 @@ import {
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string, options?: unknown) => Promise<unknown>>());
 const apiPostMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
 const apiPatchMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
+const apiDeleteMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 vi.mock("./api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./api")>();
   return {
@@ -20,6 +23,7 @@ vi.mock("./api", async (importOriginal) => {
     apiGet: (path: string, options?: unknown) => apiGetMock(path, options),
     apiPost: (path: string, body: unknown) => apiPostMock(path, body),
     apiPatch: (path: string, body: unknown) => apiPatchMock(path, body),
+    apiDelete: (path: string) => apiDeleteMock(path),
   };
 });
 
@@ -255,5 +259,48 @@ describe("Notice Board posts ordering", () => {
 
     await expect(poll).rejects.toMatchObject({ name: "AbortError" });
     expect(queryClient.getQueryData<NoticeBoardPost[]>(noticeBoardDataKeys.posts)).toEqual([createdPost]);
+  });
+});
+
+describe("Notice Board delete (#523)", () => {
+  afterEach(() => { apiDeleteMock.mockReset(); });
+
+  it("still refetches both queries when the delete is rejected, then rethrows", async () => {
+    const queryClient = new QueryClient();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    apiDeleteMock.mockRejectedValue(new Error("Not found"));
+    await expect(deleteNoticeBoardPost(queryClient, "post-old")).rejects.toThrow("Not found");
+    expect(apiDeleteMock).toHaveBeenCalledWith("/api/notice-board/posts/post-old");
+    expect(invalidate.mock.calls.map(([filters]) => (filters as { queryKey: unknown }).queryKey)).toEqual([noticeBoardDataKeys.posts, noticeBoardDataKeys.readState]);
+  });
+
+  it("evicts the deleted post from the cache and keeps it out when a poll that began before the delete resolves late", async () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(noticeBoardDataKeys.posts, [createdPost, oldPost]);
+    let resolveDelete!: (value: unknown) => void;
+    let resolvePoll!: (value: { posts: NoticeBoardPost[] }) => void;
+    apiDeleteMock.mockImplementationOnce(() => new Promise((resolve) => { resolveDelete = resolve; }));
+    const removal = deleteNoticeBoardPost(queryClient, createdPost.id);
+    await flushMicrotasks();
+    apiGetMock.mockImplementationOnce(() => new Promise((resolve) => { resolvePoll = resolve; }));
+    const poll = runPostsQuery(queryClient);
+    resolvePoll({ posts: [createdPost, oldPost] }); // fetched before the server applied the delete
+    await flushMicrotasks();
+    resolveDelete({ ok: true });
+    apiGetMock.mockRejectedValue(new Error("down")); // the follow-up refetch fails
+    await removal;
+    await expect(poll).resolves.toEqual([oldPost]);
+    expect(queryClient.getQueryData<NoticeBoardPost[]>(noticeBoardDataKeys.posts)).toEqual([oldPost]);
+  });
+
+  it("evicts on a 404 and leaves the cache alone on any other failure", async () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(noticeBoardDataKeys.posts, [createdPost, oldPost]);
+    apiDeleteMock.mockRejectedValueOnce(new ApiError("Forbidden", 403));
+    await expect(deleteNoticeBoardPost(queryClient, createdPost.id)).rejects.toThrow("Forbidden");
+    expect(queryClient.getQueryData<NoticeBoardPost[]>(noticeBoardDataKeys.posts)).toEqual([createdPost, oldPost]);
+    apiDeleteMock.mockRejectedValueOnce(new ApiError("Not found", 404));
+    await expect(deleteNoticeBoardPost(queryClient, createdPost.id)).rejects.toThrow("Not found");
+    expect(queryClient.getQueryData<NoticeBoardPost[]>(noticeBoardDataKeys.posts)).toEqual([oldPost]);
   });
 });

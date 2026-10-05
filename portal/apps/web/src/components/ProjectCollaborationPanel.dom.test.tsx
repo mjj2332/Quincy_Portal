@@ -420,6 +420,13 @@ describe("ProjectCollaborationPanel", () => {
     expect(host.textContent).not.toContain("Add an item"); expect(host.querySelector('[aria-label="Actions for Call client"]')).toBeNull();
   });
 
+  it("passes archived through to the discussion, which then has no composer and says so (#527)", async () => {
+    apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : path.includes("subtask-assignee-options") ? Promise.resolve({ candidates: [] }) : Promise.resolve(comments()));
+    const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} archived />);
+    expect(host.querySelector('[data-testid="discussion-archived-notice"]')?.textContent).toBe("Read-only while archived. Restore the project before commenting.");
+    expect(host.querySelector('[data-testid="discussion-composer"]')).toBeNull();
+  });
+
   it("keeps the panel mounted when checklist title, all popovers, and composer Escape consume the event", async () => {
     const subtask = { reminders: subtaskReminders(), id: "task-1", title: "Call client", done: false, position: 1024, assignees: [], assignmentVersion: 0, dueDate: null, createdBy: "user", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-17T00:00:00.000Z" };
     apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [subtask] }) : path.includes("subtask-assignee-options") ? Promise.resolve({ candidates: [] }) : Promise.resolve(comments()));

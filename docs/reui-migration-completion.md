@@ -125,8 +125,9 @@ of a masked test loss here — the reconciliation above is.
 
 ## Verification standard
 
-`vitest.dom.config.ts` is **not** run by CI (`.github/workflows/portal.yml` runs the web node
-config only), so a green CI badge is not evidence for criterion 8. The DOM suite is run locally.
+CI runs the DOM suite: `apps/web/vitest.config.ts` has a `dom` project (formerly
+`vitest.dom.config.ts`), and `.github/workflows/portal.yml` runs that config. Locally,
+`cd portal/apps/web && npx vitest run --project dom` runs it alone.
 
 Criterion 9 is a real-browser pass. `docs/lessons.md` (TB5B) records that happy-dom cannot exercise
 sensors, real geometry or focus timing, so a green suite is not evidence of visual consistency.

@@ -96,7 +96,7 @@ describe("project data key and request seam", () => {
   it("reads the safe collaboration summary and rejects a response after its generation tombstone", async () => {
     const queryClient = client();
     const options = projectCollaborationSummaryQueryOptions("a/b");
-    const summary = { project: { id: "a/b", street: "Marker Lane", stageKey: "raw_review" as const }, members: [] };
+    const summary = { project: { id: "a/b", street: "Marker Lane", stageKey: "raw_review" as const, archived: false }, members: [] };
     apiGetMock.mockResolvedValueOnce(summary);
     await options.queryFn({ signal: new AbortController().signal, client: queryClient, queryKey: options.queryKey, meta: undefined });
     expect(apiGetMock).toHaveBeenCalledWith("/api/projects/a%2Fb/collaboration-summary", expect.anything());
@@ -114,7 +114,7 @@ describe("project data key and request seam", () => {
   it("rejects malformed collaboration summaries instead of fabricating a successful fallback", async () => {
     const queryClient = client();
     const options = projectCollaborationSummaryQueryOptions("p");
-    apiGetMock.mockResolvedValueOnce({ project: { id: "p", street: "Missing members", stageKey: "raw_review" }, members: "not-an-array" });
+    apiGetMock.mockResolvedValueOnce({ project: { id: "p", street: "Missing members", stageKey: "raw_review", archived: false }, members: "not-an-array" });
     await expect(options.queryFn({ signal: new AbortController().signal, client: queryClient, queryKey: options.queryKey, meta: undefined })).rejects.toThrow("Invalid collaboration summary response");
     queryClient.clear();
   });
@@ -363,7 +363,7 @@ describe("project membership mutation ledger", () => {
   async function seedSummaryAndDetail(queryClient: QueryClient, projectId = "p") {
     const existing = member("cycle-existing", "existing", "editor");
     queryClient.setQueryData(projectDataKeys.detail(projectId), { ...detail(projectId), members: [existing] });
-    queryClient.setQueryData(projectDataKeys.collaborationSummary(projectId), { project: { id: projectId, street: projectId, stageKey: "raw_review" as const }, members: [] });
+    queryClient.setQueryData(projectDataKeys.collaborationSummary(projectId), { project: { id: projectId, street: projectId, stageKey: "raw_review" as const, archived: false }, members: [] });
     return existing;
   }
 
@@ -431,7 +431,7 @@ describe("tombstone purge", () => {
   it.each([401, 403, 404] as const)("blocks a late collaboration-summary response after a %s access loss", async (status) => {
     const queryClient = client(); new ProjectQueryRuntime(queryClient);
     const key = projectDataKeys.collaborationSummary("p");
-    const summary = { project: { id: "p", street: "Private Lane", stageKey: "raw_review" as const }, members: [] };
+    const summary = { project: { id: "p", street: "Private Lane", stageKey: "raw_review" as const, archived: false }, members: [] };
     queryClient.setQueryData(key, summary);
     let resolve!: (value: typeof summary) => void;
     apiGetMock.mockReturnValueOnce(new Promise<typeof summary>((done) => { resolve = done; }));

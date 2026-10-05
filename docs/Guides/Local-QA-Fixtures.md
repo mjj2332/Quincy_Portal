@@ -167,6 +167,19 @@ check in step 3 closes, so teardown deliberately does not do it. They are FK-les
 **local** database. They are harmless to a later `apply`, `verify` or teardown sweep, none of which
 look at them, and they are exactly what the same delete leaves behind in production.
 
+## What a new table or column must touch
+
+Run `npx vitest run --config packages/db/vitest.config.ts qa-seed` (from `portal/`) after the
+migration; each failure below names its own fix. Paths are relative to `portal/packages/db/`.
+
+| You added | Where it must be named | What fails if it is not |
+|---|---|---|
+| A table with an FK into the fixture graph | nothing by hand: `qa-seed/teardown-graph.ts` introspects FK edges. A FK parent outside the graph goes in `SHARED_PARENT_TABLES` (`teardown-graph.ts:121`) | `test/qa-seed-teardown-graph.test.ts` (unreachable FK parent) |
+| An `*_id` column with no FK that holds an entity id | `NO_FK_ID_COLUMNS` (`qa-seed/teardown-graph.ts:81`, entry shape at `:62`; the list is in `teardown-graph.ts`, not `sql.ts`) | `test/qa-seed-no-fk-columns.guard.test.ts` (unclassified column); a non-entity id goes in that file's `NOT_ENTITY_REFERENCES` with a reason |
+| A new `audit_log.target_type` literal written anywhere in `workers/` or `packages/db/src/` | `PROJECT_DESCENDANT_AUDIT_TYPES` (`test/qa-seed-app-rows.ts:90`, a row under a project) or `GLOBAL_AUDIT_TYPES` (`:99`, never a project descendant); a descendant type also needs its target row in `targetFor` (`:268`) | `test/qa-seed-teardown-used.test.ts:98` ("plants an audit_log row for every target_type the app writes"), scanner at `qa-seed-app-rows.ts:73` |
+| A table the app writes rows into against a fixture project | a row group in `appRows` (`test/qa-seed-app-rows.ts:150`, groups listed at `:147`) | `test/qa-seed-teardown-used.test.ts` exactness (a surviving or over-deleted row) |
+| A column on a table `apply` writes | nothing by hand: `verify` compares every live column. An intentional skip goes in `VERIFY_EXCLUDED_COLUMNS` (`qa-seed/cli.mjs:473`) with a reason | `test/qa-seed-verify-columns.guard.test.ts` |
+
 ## Browser passes against the fixture
 
 - Record the **anchor** and **tier** (printed by `apply`, readable again via `verify`) in the pass

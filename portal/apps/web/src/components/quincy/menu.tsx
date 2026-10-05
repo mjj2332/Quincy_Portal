@@ -38,6 +38,19 @@ const PANEL = cn(
   "opacity-0 translate-y-[var(--space-1)] data-open:opacity-100 data-open:translate-y-0",
 );
 
+/** The shared row style for a `MenuPrimitive.Item` (Discussion's and the Notice board's "⋯" menus). */
+export const MENU_ITEM =
+  "flex items-center w-full min-h-[32px] max-[721px]:min-h-[44px] px-[var(--space-3)] py-[var(--space-2)] cursor-pointer " +
+  "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground " +
+  // The global unlayered `:focus-visible` outline (tokens/base.css:25) paints on the focused item with a
+  // 2px OUTWARD offset; the panel's `overflow-auto` clips three sides, leaving a stray bar under the row.
+  // Draw it INSIDE the row instead, inset 4px like the `reui/select.tsx` item (#522) so a band of fill
+  // separates it from the panel hairline: `!` is needed because the unlayered rule beats layered
+  // utilities, and never `outline-none` — that is suppression. The ink colour stays: `--accent-on`
+  // (select's ring) is paper on paper here and would vanish.
+  "focus-visible:!-outline-offset-4 " +
+  "data-[highlighted]:bg-secondary";
+
 export type MenuProps = {
   /**
    * Required unless `triggerRender` is given — #122's `triggerRender` supplies its own content
@@ -88,8 +101,9 @@ export type MenuProps = {
    * Where focus goes when the menu closes (Base UI `Popup.finalFocus`): return an element to focus
    * it, or `undefined`/`null` for the default (back to the trigger). For a menu item that swaps the
    * surface for an editor, so focus lands in the editor instead of being stolen back by the trigger.
+   * Return `false` to not move focus at all: a pending hand-off to a dialog that now owns focus (#463).
    */
-  finalFocus?: () => HTMLElement | null | undefined;
+  finalFocus?: () => HTMLElement | null | undefined | false;
 };
 
 /**

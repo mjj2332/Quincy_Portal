@@ -53,7 +53,7 @@ function projectFixture(id = "p1") {
 }
 
 function collaborationSummaryFixture(id = "p1") {
-  return { project: { id, street: id === "p1" ? "12 Example St" : "34 Second Street", stageKey: "raw_review" as const }, members: [] };
+  return { project: { id, street: id === "p1" ? "12 Example St" : "34 Second Street", stageKey: "raw_review" as const, archived: false }, members: [] };
 }
 
 function deferredPromise<T>() {
@@ -109,7 +109,7 @@ async function flush(times = 10) {
  * assertions ("no workspace reads were started") at least as strong as under the old fixed wait,
  * which is the property that makes this a safe substitution rather than a loosened one.
  *
- * The 3s default is deliberately *below* vitest's 5s `testTimeout` (`vitest.dom.config.ts` sets no
+ * The 3s default is deliberately *below* vitest's 5s `testTimeout` (the `dom` project in `vitest.config.ts` sets no
  * override, so the default applies). At 5s the two race and vitest wins, so the failure surfaces as
  * a bare "Test timed out in 5000ms" and this helper's `label` — the whole diagnostic value — is
  * never printed. Verified by probe. Keep this margin if either number changes.
@@ -1420,6 +1420,73 @@ describe("ProjectWorkspace collaboration relocation", () => {
       expect(shown).not.toHaveBeenCalledWith("raw");
     });
 
+    it("renders the collaboration-only discussion read-only up front when the Project is archived, and clears it on Restore (#527)", async () => {
+      let archived = true;
+      apiGetMock.mockImplementation((path: string) => {
+        if (path === "/api/projects/p1") return Promise.reject(new ApiError("Forbidden", 403));
+        if (path.includes("/collaboration-summary")) { const summary = collaborationSummaryFixture(); return Promise.resolve({ ...summary, project: { ...summary.project, archived } }); }
+        if (path.includes("/comments?limit=50")) return Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [] });
+        if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
+        if (path.includes("mentionable-users")) return Promise.resolve({ users: [] });
+        return Promise.resolve({});
+      });
+      let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+      await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>);
+      await flushUntil(() => host.querySelector('[data-testid="discussion-archived-notice"]') !== null, "the archived notice, with no 409 needed");
+      expect(host.querySelector('[data-testid="project-collaboration-only"]')).not.toBeNull();
+      expect(host.querySelector("[data-testid=discussion-composer]")).toBeNull();
+      archived = false;
+      await queryClient!.invalidateQueries({ queryKey: projectDataKeys.collaborationSummary("p1"), exact: true, refetchType: "active" });
+      await flushUntil(() => host.querySelector("[data-testid=discussion-composer]") !== null, "the composer after Restore");
+      expect(host.querySelector('[data-testid="discussion-archived-notice"]')).toBeNull();
+    });
+
+    describe("a detail 403 after the full workspace mounted (#527)", () => {
+      async function mountThenLoseDetail(summary: "ok" | "403" | "404") {
+        let detailForbidden = false;
+        apiGetMock.mockImplementation((path: string) => {
+          if (path === "/api/projects/p1") return detailForbidden ? Promise.reject(new ApiError("Forbidden: you are not assigned to this project", 403)) : Promise.resolve(projectFixture());
+          if (path.includes("/collaboration-summary")) {
+            if (detailForbidden && summary === "403") return Promise.reject(new ApiError("Forbidden", 403));
+            if (detailForbidden && summary === "404") return Promise.reject(new ApiError("Not found", 404));
+            const base = collaborationSummaryFixture(); return Promise.resolve({ ...base, project: { ...base.project, archived: detailForbidden } });
+          }
+          if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1")] });
+          if (path.includes("ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+          if (path.includes("comments")) return Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [] });
+          if (path.includes("annotations")) return Promise.resolve({ annotations: [] });
+          if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
+          if (path.includes("mentionable-users")) return Promise.resolve({ users: [] });
+          return Promise.resolve({});
+        });
+        let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+        await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>);
+        await flushUntil(() => host.querySelector('[data-testid="project-collaboration-only"]') === null && workspaceTab(host, "Collaboration") !== undefined, "the full workspace");
+        detailForbidden = true;
+        await act(async () => { await queryClient!.invalidateQueries({ queryKey: projectDataKeys.detail("p1"), exact: true, refetchType: "active" }); });
+      }
+
+      it("falls back to the collaboration-only view, with the discussion read-only, when collaboration access remains", async () => {
+        await mountThenLoseDetail("ok");
+        await flushUntil(() => host.querySelector('[data-testid="project-collaboration-only"]') !== null && host.querySelector('[data-testid="discussion-archived-notice"]') !== null, "the collaboration-only view with the read-only discussion");
+        expect(host.textContent).not.toContain("Project unavailable.");
+        expect(host.querySelector("[data-testid=discussion-composer]")).toBeNull();
+      });
+
+      it("keeps the unavailable state when the collaboration summary is also gone (404)", async () => {
+        await mountThenLoseDetail("404");
+        await flushUntil(() => host.textContent!.includes("Project unavailable."), "the unavailable state");
+        expect(host.querySelector('[data-testid="project-collaboration-only"]')).toBeNull();
+      });
+
+      it("shows no discussion when the collaboration summary is also forbidden (403)", async () => {
+        await mountThenLoseDetail("403");
+        await flushUntil(() => collaborationUnavailableSection(host) !== null, "collaboration unavailable");
+        expect(host.querySelector('[data-testid="discussion-archived-notice"]')).toBeNull();
+        expect(host.querySelector("[data-testid=discussion-composer]")).toBeNull();
+      });
+    });
+
     it("follows a late Collection denial back to Collaboration", async () => {
       mockUrlTabProject({ editedForbidden: true });
       const shown = vi.fn();
@@ -2012,7 +2079,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
       if (path.includes("/assets?collection=video")) return Promise.resolve({ assets: [] });
       if (path.includes("/links")) return Promise.resolve({ links: [{ id: "66666666-6666-4666-8666-666666666666", url: "https://example.com/delivered-copy", label: "Delivered copy", source: "manual", position: 1024, createdAt: "2026-08-01T00:00:00.000Z" }] });
       if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
-      if (path.includes("/collaboration-summary")) return Promise.resolve({ project: { id: externalProjectId, street: "External Collections", stageKey: "editing" }, members: [] });
+      if (path.includes("/collaboration-summary")) return Promise.resolve({ project: { id: externalProjectId, street: "External Collections", stageKey: "editing", archived: false }, members: [] });
       if (path.includes("/comments?")) return Promise.resolve({ project: { id: externalProjectId, street: "External Collections" }, comments: [] });
       if (path.includes("comment-read-marker")) return Promise.resolve({ projectId: externalProjectId, marker: null, latest: null, unreadCount: 0 });
       if (path.includes("/subtasks")) return Promise.resolve({ subtasks: [] });

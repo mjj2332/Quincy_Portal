@@ -165,7 +165,7 @@ function installApiMocks() {
     if (path.includes("/subtasks")) return Promise.resolve({ subtasks: [], projectDefaultRange: { start: { localCivil: "2026-09-01T09:00", fold: 0 }, end: { localCivil: "2026-09-01T17:00", fold: 0 } } });
     if (path.includes("/mentionable-users")) return Promise.resolve({ users: [] });
     if (path.includes("/activity")) return Promise.resolve({ events: [], nextCursor: null });
-    if (path.includes("/collaboration-summary")) return Promise.resolve({ project: { id: PROJECT_ID, street: "12 Example St", stageKey: "raw_review" }, members: [] });
+    if (path.includes("/collaboration-summary")) return Promise.resolve({ project: { id: PROJECT_ID, street: "12 Example St", stageKey: "raw_review", archived: false }, members: [] });
     if (path === "/api/stages") return Promise.resolve({ stages: [] });
     if (path.includes("/jobs")) return Promise.resolve({ jobs: [] });
     return Promise.resolve({});

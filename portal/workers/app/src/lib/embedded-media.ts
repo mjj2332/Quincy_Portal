@@ -162,7 +162,7 @@ export async function preflightOwnedMedia(db: D1Database, input: OwnedMediaOwner
 }
 
 /**
- * The media statements of a save, appended after every other statement so positional results stay valid and fenced on the
+ * The media statements of a save, appended after every statement whose result is read by position (a trailing archived-snapshot SELECT may follow them, #527) and fenced on the
  * winner (`fence`: an EXISTS clause that is true only while this save still owns the right to write, lessons #364). They are
  * self-validating: every wanted id is attached by one UPDATE whose WHERE accepts only a fresh pending image upload of this
  * uploader in this scope, or a row this owner already owns (attached, or detached under seven days), then everything else the
