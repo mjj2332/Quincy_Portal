@@ -17,6 +17,15 @@ import { pushToast } from "../lib/toast-store";
 
 const STALE_MESSAGE = "The board changed since this list loaded. The list is refreshed, so check it and try again.";
 
+const OFFLINE_SUFFIX = " Check your connection and try again.";
+
+/** What the person reads for a failed request: a server's own sentence for a 4xx, plain copy for a dropped connection or a server fault, never the raw `Failed to fetch`. */
+function failureMessage(error: unknown, fallback: string): string {
+  if (!(error instanceof ApiError)) return fallback;
+  if (error.status === 0) return fallback + OFFLINE_SUFFIX;
+  return error.status >= 500 ? fallback : error.message;
+}
+
 /**
  * #500: the Project whiteboard's History (ADR 0017). The ReUI `whiteboard-1` panel (`reui/whiteboard/board-panel`) with only its `history`
  * pane, as a sheet; `ProjectWhiteboard` lazy-loads this file the first time History is opened. Versions are the server's automatic snapshots.
@@ -44,6 +53,8 @@ export function WhiteboardHistoryPanel({ projectId, title, open, onOpenChange, r
   const tabRef = useRef<HTMLButtonElement | null>(null);
   const restoreButtons = useRef(new Map<string, HTMLButtonElement | null>());
   const cancelRef = useRef<HTMLButtonElement | null>(null);
+  /** The row whose Restore opened the confirmation: `confirming` is already null when the dialog's focus returns, so the id is kept here. */
+  const confirmedFromRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     const token = ++loadToken.current;
@@ -55,7 +66,7 @@ export function WhiteboardHistoryPanel({ projectId, title, open, onOpenChange, r
       setState({ status: "ready", versions: response.versions });
     } catch (error) {
       if (token !== loadToken.current) return;
-      setState({ status: "error", message: error instanceof ApiError ? error.message : "The history could not be loaded." });
+      setState({ status: "error", message: failureMessage(error, "The history could not be loaded.") });
     }
   }, [projectId]);
 
@@ -77,7 +88,7 @@ export function WhiteboardHistoryPanel({ projectId, title, open, onOpenChange, r
         pushToast(STALE_MESSAGE, "error");
         void load();
       } else {
-        pushToast(error instanceof Error ? error.message : "The board could not be restored.", "error");
+        pushToast(failureMessage(error, "The board could not be restored."), "error");
       }
     } finally {
       setRestoring(false);
@@ -103,7 +114,7 @@ export function WhiteboardHistoryPanel({ projectId, title, open, onOpenChange, r
             <HistoryTab
               state={state}
               readOnly={readOnly}
-              onRestore={setConfirming}
+              onRestore={(version) => { confirmedFromRef.current = version.id; setConfirming(version); }}
               onRetry={() => void load()}
               restoreRef={(id) => (node) => { restoreButtons.current.set(id, node); }}
             />
@@ -114,7 +125,7 @@ export function WhiteboardHistoryPanel({ projectId, title, open, onOpenChange, r
         <AlertDialogContent
           data-testid="whiteboard-restore-confirm"
           initialFocus={cancelRef}
-          finalFocus={() => (confirming ? restoreButtons.current.get(confirming.id) : null) ?? tabRef.current}
+          finalFocus={() => (confirmedFromRef.current ? restoreButtons.current.get(confirmedFromRef.current) : null) ?? tabRef.current}
         >
           <AlertDialogHeader>
             <AlertDialogTitle>Restore this version?</AlertDialogTitle>

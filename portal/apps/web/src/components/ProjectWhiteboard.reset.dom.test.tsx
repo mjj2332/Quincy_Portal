@@ -83,7 +83,17 @@ describe("ProjectWhiteboard: board reset (#500)", () => {
     expect(h.boards).toHaveLength(2);
     expect(live()[0]!.props.initialData!.elements.map((element) => element.id)).toEqual(["keep"]);
     expect(h.controllers.at(-1)!.adoptRevisions).toHaveBeenCalledWith([expect.objectContaining({ id: "keep" })]);
+    expect(h.toasts).toEqual(["Board restored"]);
+  });
+
+  it("a client with an unsaved edit is told it was replaced; with a clean board it just reads \"Board restored\"", async () => {
+    await mount();
+    await act(async () => { (live()[0]!.props.onSaveStatusChange as unknown as (s: string) => void)("unsaved"); });
+    await act(async () => { h.handlers!.onReset!({ generation: 2, elements: [el("keep", 1)] }); });
     expect(h.toasts).toEqual(["Board restored — your unsaved changes were replaced"]);
+    // The reset cleared it: the next reset, with nothing pending, is plain.
+    await act(async () => { h.handlers!.onReset!({ generation: 3, elements: [el("keep", 1)] }); });
+    expect(h.toasts.at(-1)).toBe("Board restored");
   });
 
   it("discards a pending save: the old editor's teardown flush sends nothing, and the saver seeds from the restored scene", async () => {
@@ -167,6 +177,7 @@ describe("ProjectWhiteboard: History (#500)", () => {
     await click(historyButton());
     await click(document.body.querySelector('[data-testid="fake-start"]'));
     await click(document.body.querySelector('[data-testid="fake-fail"]'));
+    await act(async () => { (live()[0]!.props.onSaveStatusChange as unknown as (s: string) => void)("saving"); });
     await act(async () => { h.handlers!.onReset!({ generation: 2, elements: [el("keep", 1)] }); });
     expect(h.toasts).toEqual(["Board restored — your unsaved changes were replaced"]);
   });

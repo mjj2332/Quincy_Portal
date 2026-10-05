@@ -11,6 +11,7 @@
  * count); loading is the panel's `PanelRowSkeletons`, empty and error are `reui/empty`. A view-only board omits the Restore action
  * entirely (no `actions`, not a disabled button). There is no preview before restore: the confirmation lives in the host.
  */
+import { initials } from "@/lib/initials"
 import type { WhiteboardVersionReason, WhiteboardVersionSummary } from "@quincy/shared"
 
 import {
@@ -50,12 +51,9 @@ const REASONS: Record<WhiteboardVersionReason, { label: string; icon: React.Reac
 
 const RESTORE_ICON = <RotateCcwIcon aria-hidden="true" />
 
-const initials = (name: string) =>
-  name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]!.toUpperCase()).join("") || "?"
-
 const TIME = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" })
 
-/** Who and when as meta line parts; first names, so a row with Restore still reads whole. */
+/** Who and when as meta line parts. The whole name, the one the avatar's initials come from (`lib/initials`); a long one slides like any row text. */
 function byline(version: WhiteboardVersionSummary) {
   const who = version.createdBy?.name.trim() ? version.createdBy.name : null
   return [
@@ -63,7 +61,7 @@ function byline(version: WhiteboardVersionSummary) {
       <Avatar className="size-4 shrink-0" aria-hidden="true">
         <AvatarFallback className="text-[8px]">{who ? initials(who) : "A"}</AvatarFallback>
       </Avatar>
-      {who ? who.split(/\s+/)[0] : "Automatic"}
+      {who ?? "Automatic"}
     </span>,
     TIME.format(version.createdAt),
     `${version.elementCount} element${version.elementCount === 1 ? "" : "s"}`,

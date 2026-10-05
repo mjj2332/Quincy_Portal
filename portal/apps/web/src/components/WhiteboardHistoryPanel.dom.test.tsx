@@ -132,4 +132,60 @@ describe("WhiteboardHistoryPanel (#500)", () => {
     expect(h.get).toHaveBeenCalledTimes(1);
     expect(h.toasts).toContainEqual(["An Archived Project's board cannot be restored.", "error"]);
   });
+
+  it("Cancel and Escape return focus to that row's Restore button, not the sheet's tab (#500 browser pass)", async () => {
+    h.get.mockResolvedValue(listing());
+    await render(props());
+    const restoreFor = () => document.body.querySelector<HTMLElement>('[data-version-id="v-mid"] [aria-label^="Restore "]')!;
+    await click(restoreFor());
+    await click(byId("whiteboard-restore-confirm-cancel"));
+    expect(document.activeElement).toBe(restoreFor());
+    await click(restoreFor());
+    await act(async () => { byId("whiteboard-restore-confirm")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await Promise.resolve(); });
+    await flush();
+    expect(byId("whiteboard-restore-confirm")).toBeNull();
+    expect(document.activeElement).toBe(restoreFor());
+  });
+
+  it("touch: the Restore action and the History tab are 44px at <=721px (#500 browser pass)", async () => {
+    h.get.mockResolvedValue(listing());
+    await render(props());
+    const restore = document.body.querySelector<HTMLElement>('[aria-label^="Restore "]')!;
+    expect(restore.className).toContain("max-[721px]:min-h-[44px]");
+    expect(restore.className).toContain("max-[721px]:min-w-[44px]");
+    const tab = [...document.body.querySelectorAll<HTMLElement>('[role="tab"]')].find((node) => node.textContent === "History")!;
+    expect(tab.className).toContain("max-[721px]:h-11");
+    expect(tab.parentElement!.className).toContain("max-[721px]:group-data-[orientation=horizontal]/tabs:h-[3.125rem]");
+  });
+
+  it("the sheet's own width wins over the registry's w-3/4 (320px, capped to the viewport) (#500 browser pass)", async () => {
+    h.get.mockResolvedValue(listing());
+    await render(props());
+    const sheet = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(sheet.className).toContain("data-[side=right]:w-[min(20rem,calc(100%-3rem))]");
+    expect(sheet.className).not.toContain("data-[side=right]:w-3/4");
+  });
+
+  it("a network failure shows a human message, never the raw fetch error (#500 browser pass)", async () => {
+    h.get.mockRejectedValue(new ApiError("Failed to fetch", 0, new TypeError("Failed to fetch")));
+    await render(props());
+    const text = byId("whiteboard-history-error")!.textContent!;
+    expect(text).not.toContain("Failed to fetch");
+    expect(text).toMatch(/connection/i);
+    // and a restore that fails the same way toasts the same way
+    h.get.mockResolvedValue(listing());
+    await click(byId("whiteboard-history-retry"));
+    h.post.mockRejectedValue(new ApiError("Failed to fetch", 0, new TypeError("Failed to fetch")));
+    await click(document.body.querySelector<HTMLElement>('[data-version-id="v-new"] [aria-label^="Restore "]'));
+    await click(byId("whiteboard-restore-confirm-action"));
+    expect(h.toasts.map(([message]) => message).join("|")).not.toContain("Failed to fetch");
+  });
+
+  it("the byline's avatar initials come from the same name it shows (QA Test Account: QT, full name) (#500 browser pass)", async () => {
+    h.get.mockResolvedValue({ generation: 1, versions: [version("v1", 1_000_000, "interval", 1, "QA Test Account")] });
+    await render(props());
+    const row = document.body.querySelector<HTMLElement>('[data-testid="whiteboard-version-row"]')!;
+    expect(row.textContent).toContain("QA Test Account");
+    expect(row.textContent).toContain("QT");
+  });
 });

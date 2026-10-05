@@ -34,6 +34,16 @@ describe("overlay stacking contract", () => {
     expect(overlay).toMatch(/\bforceRender\b/);
   });
 
+  it("the sheet overlay and content use the dialog token, never the registry's bare z-50 (a sheet opened from the Project Workspace sheet must stack above it; #500)", () => {
+    const src = read("../components/reui/sheet.tsx");
+    const overlay = src.slice(src.indexOf("function SheetOverlay"), src.indexOf("function SheetContent"));
+    const content = src.slice(src.indexOf("function SheetContent"), src.indexOf("function SheetHeader"));
+    for (const part of [overlay, content]) {
+      expect(part).toContain("z-[var(--z-dialog)]");
+      expect(part).not.toMatch(/\bz-50\b/);
+    }
+  });
+
   /** #531: the Impersonation banner must stay readable under a Project sheet / rail sheet scrim. */
   describe("impersonation banner (#531)", () => {
     const banner = read("../components/ImpersonationBanner.tsx");

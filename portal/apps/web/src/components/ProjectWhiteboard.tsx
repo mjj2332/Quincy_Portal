@@ -44,7 +44,10 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
 }) {
   const [init, setInit] = useState<WhiteboardInit | null>(null);
   const [connection, setConnection] = useState<WhiteboardConnection>("connecting");
-  const [saveStatus, setSaveStatus] = useState<WhiteboardSaveStatus>("saved");
+  const [saveStatus, setSaveStatusState] = useState<WhiteboardSaveStatus>("saved");
+  /** The latest save status, readable from the socket effect: a reset says "replaced" only when an edit was actually pending. */
+  const saveStatusRef = useRef<WhiteboardSaveStatus>("saved");
+  const setSaveStatus = useCallback((status: WhiteboardSaveStatus) => { saveStatusRef.current = status; setSaveStatusState(status); }, []);
   const [deleted, setDeleted] = useState(false);
   // #499: the mode the server last set (init, then `mode` frames), which moves without a reconnect.
   // #500: the editor remounts (a new key) when a restored version replaces the board; `generationRef` is the board generation this tab holds.
@@ -133,9 +136,10 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
       session.saver.seed(next.elements as unknown as SavedElement[]);
       epochRef.current += 1;
       setInit((previous) => (previous ? { ...previous, generation: next.generation, elements: next.elements } : previous));
+      const discardedEdit = saveStatusRef.current !== "saved";    // unsaved, saving or failed: an edit of this person's is being thrown away
       setSaveStatus("saved");
       setEpoch(epochRef.current);
-      pushToast(restoreStartedRef.current ? "Board restored" : "Board restored — your unsaved changes were replaced");
+      pushToast(restoreStartedRef.current || !discardedEdit ? "Board restored" : "Board restored — your unsaved changes were replaced");
       restoreStartedRef.current = false;
     };
     const opened = openWhiteboardSocket(projectId, {
