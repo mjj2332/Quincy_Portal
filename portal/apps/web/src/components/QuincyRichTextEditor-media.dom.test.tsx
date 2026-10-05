@@ -428,7 +428,7 @@ describe("HEIC images (#495)", () => {
     expect(tray(host)?.textContent).toContain("Uploading IMG_1.HEIC");
     await act(async () => { drive.phase("preparing", A); });
     expect(tray(host)?.textContent).toContain("Preparing IMG_1.HEIC…");
-    expect(tray(host)?.querySelector('[role="progressbar"]')?.hasAttribute("aria-valuenow")).toBe(false);
+    expect(tray(host)?.querySelector('[role="progressbar"]')).toBeNull();
     expect(trayButton(host, "Remove")).toBeDefined();
     expect(uploadingNow).toBe(true); expect(imageCount(A)).toBe(0);
     await act(async () => { drive.finish(A); }); await settle();
@@ -465,6 +465,49 @@ describe("HEIC images (#495)", () => {
     expect(drive.signal.aborted).toBe(true);
     expect(fetchMock).toHaveBeenCalledWith(`/api/projects/p1/embedded-media/${A}/abort`, expect.objectContaining({ method: "POST" }));
     expect(tray(host)).toBeNull(); expect(uploadingNow).toBe(false); expect(imageCount(A)).toBe(0);
+  });
+
+  it("the preparing row shows a spinner status, not an empty progress track", async () => {
+    heicSetting.mockResolvedValue(true); const drive = driveUpload(); vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 204 })));
+    const host = mountWithSetting(<Harness />); await settle();
+    await choose(host, [heic()], { accept: HEIC_ACCEPT });
+    await act(async () => { drive.phase("preparing", A); });
+    const status = tray(host)!.querySelector<HTMLElement>('[role="status"][aria-label="Preparing IMG_1.HEIC"]');
+    expect(status).not.toBeNull();
+    expect(status!.querySelector('[data-slot="spinner"]')).not.toBeNull();
+    expect(status!.textContent).toContain("Preparing IMG_1.HEIC…");
+    expect(tray(host)!.querySelector('[role="progressbar"]')).toBeNull();
+  });
+
+  it("Retry moves focus to the new preparing row's Remove button", async () => {
+    heicSetting.mockResolvedValue(true); const drive = driveUpload();
+    retryRendition.mockImplementation(() => new Promise<string>(() => undefined)); vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 204 })));
+    const host = mountWithSetting(<Harness />); await settle();
+    await choose(host, [heic()], { accept: HEIC_ACCEPT });
+    await act(async () => { drive.phase("preparing", A); });
+    await act(async () => { drive.fail(new RenditionFailedError(A)); }); await settle();
+    const retry = trayButton(host, "Retry")!; retry.focus(); expect(document.activeElement).toBe(retry);
+    await act(async () => { retry.click(); }); await settle();
+    expect(document.activeElement).toBe(trayButton(host, "Remove")); expect(document.activeElement?.getAttribute("aria-label")).toBe("Remove IMG_1.HEIC");
+  });
+
+  it("Remove on a preparing row, and on a failed row, moves focus to the editor", async () => {
+    heicSetting.mockResolvedValue(true); const drive = driveUpload();
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 })); vi.stubGlobal("fetch", fetchMock);
+    const host = mountWithSetting(<Harness />); await settle();
+    const surface = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    await choose(host, [heic()], { accept: HEIC_ACCEPT });
+    await act(async () => { drive.phase("preparing", A); });
+    const remove = trayButton(host, "Remove")!; remove.focus(); expect(document.activeElement).toBe(remove);
+    await act(async () => { remove.click(); }); await settle();
+    expect(tray(host)).toBeNull(); expect(document.activeElement).toBe(surface);
+    const second = driveUpload();
+    await choose(host, [heic("IMG_2.HEIC")], { accept: HEIC_ACCEPT });
+    await act(async () => { second.phase("preparing", B); });
+    await act(async () => { second.fail(new RenditionFailedError(B)); }); await settle();
+    const failedRemove = trayButton(host, "Remove")!; failedRemove.focus(); expect(document.activeElement).toBe(failedRemove);
+    await act(async () => { failedRemove.click(); }); await settle();
+    expect(tray(host)).toBeNull(); expect(document.activeElement).toBe(surface);
   });
 
   it("Remove on a failed row aborts the upload too", async () => {

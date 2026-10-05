@@ -576,7 +576,7 @@ export function QuincyRichTextEditor({
       onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); const kind = picking.kind; setPicking(null); if (files.length) addImagesRef.current(files, editor.state.selection.to, kind); }}
       {...{ onCancel: () => setPicking(null) }}
     />}
-    <EmbeddedUploadTray uploads={uploads} errors={uploadErrors} trayRef={trayRef} onCancel={(key) => running.current.get(key)?.release()} onRetry={(key) => running.current.get(key)?.retry()} />
+    <EmbeddedUploadTray uploads={uploads} errors={uploadErrors} trayRef={trayRef} onCancel={(key) => { running.current.get(key)?.release(); editorRef.current?.commands.focus(); }} onRetry={(key) => running.current.get(key)?.retry()} />
     <MentionAutocomplete ref={menu} query={query} loadMentionables={loadMentionables} onSelect={selectMention} onDismiss={() => setMentionDismissed(true)} onAccessibilityChange={setMentionA11y} />
     {plainText.length >= limit * COUNTER_THRESHOLD && <div ref={counterRef} data-testid="rich-text-counter" className={cn("text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", plainText.length > limit && "!text-destructive")}>{plainText.length}/{limit}</div>}
     <div className={liveMessage ? "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive" : "sr-only"} aria-live="polite">{liveMessage}</div>

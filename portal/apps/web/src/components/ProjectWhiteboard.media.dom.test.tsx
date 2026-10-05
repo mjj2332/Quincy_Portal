@@ -344,4 +344,15 @@ describe("HEIC images on the board (#495)", () => {
     expect(fetchStub).toHaveBeenCalledWith(`/api/projects/p1/embedded-media/${IMG}/abort`, expect.objectContaining({ method: "POST" }));
     expect(board.insertions).toEqual([]); expect(trayText(host)).toBe("");
   });
+
+  it("Remove on a preparing row moves focus to the board instead of dropping it to the page", async () => {
+    heicSetting.mockResolvedValue(true); const drive = driveUpload();
+    const host = await mount(); await settle(5);
+    await pick(host, [heic()]);
+    await act(async () => { drive.phase("preparing", IMG); });
+    const remove = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Remove")!;
+    remove.focus(); expect(document.activeElement).toBe(remove);
+    await act(async () => { remove.click(); }); await settle(5);
+    expect(document.activeElement).toBe(host.querySelector('[data-testid="project-whiteboard-board"]'));
+  });
 });

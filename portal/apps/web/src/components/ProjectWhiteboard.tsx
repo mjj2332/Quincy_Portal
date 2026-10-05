@@ -104,6 +104,7 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
   const [playing, setPlaying] = useState<string | null>(null);
   const [selectedVideo, setSelectedVideo] = useState<string | null>(null);
   const uploadSeq = useRef(0);
+  const boardRef = useRef<HTMLDivElement>(null);
   const runningUploads = useRef(new Map<number, { cancel: () => void }>());
   const mountedRef = useRef(true);
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; for (const entry of [...runningUploads.current.values()]) entry.cancel(); }; }, []);
@@ -361,8 +362,8 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
           {...{ onCancel: () => setPicking(null) }}
         />}
       </div>
-      <div className="min-h-0 relative border-solid border-[length:var(--border-width-hair)] border-border bg-card">
-        <EmbeddedUploadTray uploads={uploads} errors={uploadErrors} onCancel={(key) => runningUploads.current.get(key)?.cancel()} testId="project-whiteboard-upload-tray" className="absolute inset-x-[var(--space-4)] bottom-[calc(var(--space-4)+var(--space-7)+var(--space-2))] z-20 mx-auto grid max-w-[28rem] gap-[var(--space-2)] rounded-lg border-solid border-[length:var(--border-width-hair)] border-border bg-card p-[var(--space-3)] shadow-sm" />
+      <div ref={boardRef} tabIndex={-1} data-testid="project-whiteboard-board" className="min-h-0 relative border-solid border-[length:var(--border-width-hair)] border-border bg-card outline-none">
+        <EmbeddedUploadTray uploads={uploads} errors={uploadErrors} onCancel={(key) => { runningUploads.current.get(key)?.cancel(); boardRef.current?.focus(); }} testId="project-whiteboard-upload-tray" className="absolute inset-x-[var(--space-4)] bottom-[calc(var(--space-4)+var(--space-7)+var(--space-2))] z-20 mx-auto grid max-w-[28rem] gap-[var(--space-2)] rounded-lg border-solid border-[length:var(--border-width-hair)] border-border bg-card p-[var(--space-3)] shadow-sm" />
         {deleted
           ? <p className="p-[var(--space-5)]" role="alert">This project's whiteboard was deleted.</p>
           : initialData
