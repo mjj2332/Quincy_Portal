@@ -92,3 +92,34 @@ run_codex_readonly() {
   [ -s "$out" ] || { echo "empty report: read the tail of $log" >&2; return 4; }
   return 0
 }
+
+# Physical (symlink- and ..-free) absolute path. A path that does not exist yet resolves through
+# its nearest existing ancestor, so a not-yet-created serve dir is still compared by identity.
+phys_path() {
+  local p="$1" tail=""
+  while [ ! -d "$p" ]; do
+    tail="/$(basename "$p")$tail"
+    p=$(dirname "$p")
+  done
+  p=$(cd "$p" && pwd -P); echo "${p%/}$tail"
+}
+
+# True when physical paths $1 and $2 are equal, or one contains the other.
+paths_overlap() {
+  case "$1/" in "$2"/*) return 0 ;; esac
+  case "$2/" in "$1"/*) return 0 ;; esac
+  return 1
+}
+
+# Agy evidence. A pass's screenshots are <evid>/<prefix>-*.png (agy-common-rules.md).
+#   evidence_existing <evid> <prefix>           files already carrying the prefix (a rerun hazard)
+#   evidence_shots <evid> <prefix> <marker>     this pass's files: prefix match, newer than marker
+#   evidence_dupes <evid> <prefix> <marker>     md5 values shared by 2+ of this pass's files
+# Each prints nothing, and returns 0, when the selection is empty.
+evidence_existing() { find "$1" -maxdepth 1 -type f -name "$2-*.png" 2>/dev/null | sort || true; }
+evidence_shots() { find "$1" -maxdepth 1 -type f -name "$2-*.png" -newer "$3" 2>/dev/null | sort || true; }
+evidence_dupes() {
+  local shots
+  shots=$(evidence_shots "$1" "$2" "$3")
+  [ -z "$shots" ] || printf '%s\n' "$shots" | tr '\n' '\0' | xargs -0 md5 -r | awk '{print $1}' | sort | uniq -d
+}

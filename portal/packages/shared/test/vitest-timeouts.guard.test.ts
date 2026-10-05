@@ -60,9 +60,10 @@ describe("vitest timeout budgets", () => {
     ).toEqual([]);
   });
 
-  it("lets no inline project override either budget", async () => {
+  it("lets no inline project override either budget, and none fall back to vitest defaults", async () => {
     // `extends: true` inherits the root budgets, but a project can still set its own and the root
-    // check above would not see it.
+    // check above would not see it. Without `extends: true` a project that sets nothing silently
+    // runs on vitest's defaults, so each project must either extend the root or set both budgets.
     const overriding: string[] = [];
     for (const config of configs) {
       const resolved = (await import(pathToFileURL(join(portalRoot, config)).href)).default as {
@@ -73,6 +74,9 @@ describe("vitest timeout budgets", () => {
       for (const project of projects) {
         if (typeof project !== "object" || project === null) continue;
         const test = (project as { test?: { name?: string; testTimeout?: unknown; hookTimeout?: unknown } }).test;
+        if ((project as { extends?: unknown }).extends !== true && (test?.testTimeout !== TEST_TIMEOUT_MS || test?.hookTimeout !== HOOK_TIMEOUT_MS)) {
+          overriding.push(`${config} project "${test?.name ?? "?"}" neither sets \`extends: true\` nor both shared budgets, so it runs on vitest defaults`);
+        }
         for (const [key, shared] of [["testTimeout", TEST_TIMEOUT_MS], ["hookTimeout", HOOK_TIMEOUT_MS]] as const) {
           if (test?.[key] !== undefined && test[key] !== shared) {
             overriding.push(`${config} project "${test.name ?? "?"}" sets ${key}: ${String(test[key])}`);

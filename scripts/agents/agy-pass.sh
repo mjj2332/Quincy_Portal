@@ -73,6 +73,13 @@ case "$ID_BEFORE" in
 esac
 BUNDLE=$(served_bundle)
 
+# A rerun must not inherit an earlier pass's screenshots: refuse when this prefix is already used.
+OLD_SHOTS=$(evidence_existing "$EVID" "$PREFIX")
+if [ -n "$OLD_SHOTS" ]; then
+  echo "$OLD_SHOTS" | head -5 >&2
+  die "files with prefix $PREFIX- already exist in $EVID; use a new --prefix (r2, r3 ...) or a fresh out-dir"
+fi
+
 # Render the brief.
 if [ "$RAW" = 1 ]; then cat "$BODY" > "$BRIEF.tmp"
 else { cat "$TPL/agy-brief-head.md"; echo; cat "$TPL/agy-common-rules.md"; echo; cat "$BODY"; } > "$BRIEF.tmp"; fi
@@ -83,6 +90,9 @@ rm -f "$BRIEF.tmp"
 if grep -q '__[A-Z]*__' "$BRIEF"; then grep -n '__[A-Z]*__' "$BRIEF" >&2; die "unreplaced placeholder in $BRIEF"; fi
 
 MODEL="gemini-3.8-flash-medium"
+MARKER="$OUT/.pass-start"
+touch "$MARKER"
+sleep 1  # -newer compares whole seconds on some filesystems
 START=$(date +%s)
 {
   echo "<!-- header written by scripts/agents/agy-pass.sh -->"
@@ -111,9 +121,10 @@ END=$(date +%s)
 # Post-run checks, appended to the report.
 PROBLEMS=0
 ID_AFTER=$(server_identity || true)
-DUPES=$(cd "$EVID" && ls ./*.png > /dev/null 2>&1 && md5 -r ./*.png | sort | awk '{print $1}' | uniq -d || true)
-NSHOTS=$(ls "$EVID"/*.png 2>/dev/null | wc -l | tr -d ' ')
-FIRST=$(ls "$EVID"/*.png 2>/dev/null | head -1 || true)
+SHOTS=$(evidence_shots "$EVID" "$PREFIX" "$MARKER")
+DUPES=$(evidence_dupes "$EVID" "$PREFIX" "$MARKER" || true)
+NSHOTS=$(printf '%s' "$SHOTS" | grep -c . || true)
+FIRST=$(printf '%s\n' "$SHOTS" | head -1)
 {
   echo
   echo "---"
@@ -121,7 +132,8 @@ FIRST=$(ls "$EVID"/*.png 2>/dev/null | head -1 || true)
   echo "- agy exit $RC after $(( (END - START) / 60 )) min; stderr \`$LOG\` ($(wc -l < "$LOG" | tr -d ' ') lines)"
   echo "- Server (after): \`$ID_AFTER\`"
   [ "$ID_AFTER" = "$ID_BEFORE" ] || echo "- **Server changed during the pass**: the pass may be void."
-  echo "- Screenshots: $NSHOTS in \`$EVID\`"
+  echo "- Screenshots: $NSHOTS new \`$PREFIX-*.png\` in \`$EVID\`"
+  [ "$NSHOTS" -gt 0 ] || echo "- **No screenshots were saved by this pass.**"
   [ -z "$DUPES" ] || echo "- **Byte-identical screenshots** (md5): $(echo "$DUPES" | tr '\n' ' ')"
   [ -z "$FIRST" ] || echo "- \`file\` on one: $(file -b "$FIRST")"
   grep -q 'no output produced' "$LOG" && echo "- **stderr: a tool needed the \"command\" permission and was denied** (agy-cli.md §silent failure modes)"

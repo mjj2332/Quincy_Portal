@@ -38,11 +38,12 @@ Options:
   --takeover      stop a :$QA_PORT server that another checkout started (ask the owner first:
                   another session may be mid-QA on it)
   --reseed        refresh the serve worktree's D1 copy from the main checkout
-  --prepare-only  do steps 1, 2, 4-7 without touching :$QA_PORT
+  --prepare-only  do steps 1, 2, 4-7 without touching :$QA_PORT (refused while the serve worktree
+                  itself is serving :$QA_PORT)
   --scratch DIR   where logs go (default: \$SCRATCH, else the serve worktree's git dir)
   -h, --help      this text
 
-Exit: 0 served (or prepared), 1 failure, 2 port owned by another checkout.
+Exit: 0 served (or prepared), 1 failure or refusal, 2 port owned by another checkout.
 EOF
 }
 
@@ -64,13 +65,30 @@ done
 REPO=$(repo_root)
 MAIN=$(main_checkout)
 [ -n "$MAIN" ] || die "cannot find the main checkout from git worktree list"
-case "$SERVE_WT" in "$MAIN"|"$MAIN"/*) die "the serve worktree must not be the main checkout" ;; esac
+# Compare physical paths and git identity, never literal strings: a symlink or `..` alias of the
+# main checkout must not pass. A serve dir that does not exist yet resolves through its parent.
+MAIN=$(phys_path "$MAIN")
+REPO=$(phys_path "$REPO")
+SERVE_WT=$(phys_path "$SERVE_WT")
+if paths_overlap "$SERVE_WT" "$MAIN"; then die "the serve worktree $SERVE_WT is the main checkout or inside it ($MAIN)"; fi
+if paths_overlap "$SERVE_WT" "$REPO"; then die "the serve worktree $SERVE_WT overlaps the checkout you ran this from ($REPO)"; fi
+if [ -e "$SERVE_WT/.git" ]; then
+  SERVE_TOP=$(git -C "$SERVE_WT" rev-parse --show-toplevel 2>/dev/null || true)
+  [ -n "$SERVE_TOP" ] || die "$SERVE_WT is not a git checkout"
+  [ "$(phys_path "$SERVE_TOP")" != "$MAIN" ] || die "the serve worktree resolves to the main checkout ($MAIN)"
+fi
 
 git -C "$REPO" fetch -q origin || echo "warn: git fetch origin failed; using local refs" >&2
 SHA=$(git -C "$REPO" rev-parse --verify -q "$REF^{commit}") || die "unknown ref $REF"
 
 # 3 first: who owns the port? Decide before doing any work.
 OLD_PID=$(listener_pid || true)
+if [ "$PREPARE_ONLY" = 1 ] && [ -n "$OLD_PID" ]; then
+  case "$(proc_cwd "$OLD_PID")" in
+    "$SERVE_WT"|"$SERVE_WT"/*)
+      die "refusing --prepare-only: :$QA_PORT is served from $SERVE_WT (pid $OLD_PID); it would switch, rebuild and migrate under the running server. Run without --prepare-only to restart it." ;;
+  esac
+fi
 if [ "$PREPARE_ONLY" = 0 ] && [ -n "$OLD_PID" ]; then
   OLD_CWD=$(proc_cwd "$OLD_PID")
   case "$OLD_CWD" in
@@ -173,6 +191,10 @@ SRC_D1="$MAIN/portal/$D1_SUB"
 DST_D1="$PORTAL/$D1_SUB"
 if [ "$RESEED" = 1 ] || [ ! -d "$DST_D1" ]; then
   if [ -d "$SRC_D1" ]; then
+    # Never rm the destination when it is, contains or sits inside the source (symlinked .wrangler).
+    if paths_overlap "$(phys_path "$SRC_D1")" "$(phys_path "$DST_D1")"; then
+      die "local D1 source and destination overlap ($(phys_path "$SRC_D1") vs $(phys_path "$DST_D1")); not copying"
+    fi
     echo "==> copying local D1 from the main checkout (sqlite3 .backup)"
     rm -rf "$DST_D1"
     mkdir -p "$DST_D1"

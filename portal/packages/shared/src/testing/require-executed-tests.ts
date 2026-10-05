@@ -24,7 +24,7 @@
  * step carrying any extra flag no longer counts as running its config, and it asserts the absence
  * of `--reporter` directly so the failure says why. A local run with `--reporter` is on you.
  */
-import type { Reporter, TestModule } from "vitest/node";
+import type { Reporter, TestModule, Vitest } from "vitest/node";
 
 /** Tests that reached a terminal state. Skipped and pending tests do not count. */
 export function executedTestCount(modules: readonly TestModule[]): number {
@@ -37,22 +37,59 @@ export function executedTestCount(modules: readonly TestModule[]): number {
   return executed;
 }
 
+/**
+ * Per-project rule: in a *full* run (no file filter, no test-name pattern) of a config with more
+ * than one project, every configured project must execute a test. Without it a fully skipped or
+ * empty project hides behind a sibling that ran. `--project <name>` narrows `vitest.projects`
+ * itself, so a single-project run is checked against just that project; a file filter is a
+ * deliberate narrowing and keeps the whole-run rule only.
+ */
 export class RequireExecutedTests implements Reporter {
+  private vitest: Vitest | undefined;
+
   constructor(private readonly configName: string) {}
 
-  onTestRunEnd(modules: readonly TestModule[], _errors: unknown, reason: string) {
-    // A run that already failed reports its own reason; never overwrite it.
-    if (reason !== "passed" || executedTestCount(modules) > 0) return;
-    console.error(
-      `\n${this.configName} executed no tests.\n` +
-        `${modules.length} file(s) were collected and every test in them was skipped, so this run ` +
-        `proved nothing. Either the selection (include / testNamePattern) matches nothing, or a ` +
-        `runtime gate left every test skipped. Fix the selection or delete the config — do not ` +
-        `silence this.\n`,
-    );
+  onInit(vitest: Vitest) {
+    this.vitest = vitest;
+  }
+
+  private fail(message: string) {
+    console.error(`\n${this.configName} ${message}\n`);
     // Set rather than throw: vitest does not catch reporter errors, and it assigns the
     // process exit code before reporters run, so a throw here surfaces as a startup error.
     process.exitCode = 1;
+  }
+
+  onTestRunEnd(modules: readonly TestModule[], _errors: unknown, reason: string) {
+    // A run that already failed reports its own reason; never overwrite it.
+    if (reason !== "passed") return;
+    if (executedTestCount(modules) === 0) {
+      this.fail(
+        `executed no tests.\n` +
+          `${modules.length} file(s) were collected and every test in them was skipped, so this run ` +
+          `proved nothing. Either the selection (include / testNamePattern) matches nothing, or a ` +
+          `runtime gate left every test skipped. Fix the selection or delete the config — do not ` +
+          `silence this.`,
+      );
+      return;
+    }
+    const vitest = this.vitest;
+    if (!vitest) return;
+    const filtered =
+      ((vitest as unknown as { filenamePattern?: string[] }).filenamePattern?.length ?? 0) > 0 ||
+      Boolean(vitest.config.testNamePattern);
+    const names = vitest.projects.map((project) => project.name);
+    if (filtered || names.length < 2) return;
+    const empty = names.filter(
+      (name) => executedTestCount(modules.filter((module) => module.project.name === name)) === 0,
+    );
+    if (empty.length > 0) {
+      this.fail(
+        `project(s) ${empty.map((name) => `"${name}"`).join(", ")} executed no tests.\n` +
+          `A full run needs executed tests in each configured project; another project running tests ` +
+          `does not cover for them. Fix the project's include / runtime gate, or remove the project.`,
+      );
+    }
   }
 }
 
