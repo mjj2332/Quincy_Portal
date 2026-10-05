@@ -100,7 +100,6 @@ const SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
       { label: "Line", keys: [["L"], ["6"]] },
       { label: "Draw", keys: [["P"], ["7"]] },
       { label: "Text", keys: [["T"], ["8"]] },
-      { label: "Image", keys: [["9"]] },
       { label: "Eraser", keys: [["E"], ["0"]] },
       { label: "Frame", keys: [["F"]] },
       { label: "Laser Pointer", keys: [["K"]] },

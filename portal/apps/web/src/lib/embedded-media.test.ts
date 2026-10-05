@@ -28,4 +28,12 @@ describe("uploadEmbeddedImage scopes (#496)", () => {
     expect(apiPost.mock.calls.map((call) => call[0])).toEqual(["/api/notice-board/embedded-media", `/api/notice-board/embedded-media/${ID}/complete`]);
     expect(uploadMultipartFile.mock.calls[0]![2]).toBe(`/api/notice-board/embedded-media/${ID}/direct`);
   });
+
+  it("names the whiteboard as the owner in the presign body (#501), and sends no owner for a discussion upload", async () => {
+    await uploadEmbeddedImage({ projectId: "p 1", owner: "whiteboard" }, file);
+    expect(apiPost.mock.calls[0]![1]).toEqual({ contentType: file.type, bytes: file.size, owner: "whiteboard" });
+    apiPost.mockClear();
+    await uploadEmbeddedImage({ projectId: "p 1" }, file);
+    expect(apiPost.mock.calls[0]![1]).toEqual({ contentType: file.type, bytes: file.size });
+  });
 });

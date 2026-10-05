@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { WHITEBOARD_MAX_ELEMENTS_PER_MESSAGE, WHITEBOARD_MAX_MESSAGE_BYTES } from "@quincy/shared";
-import { appliedFromRemote, createWhiteboardSaver, pasteIsUnsupported, withoutUnsupported, planSceneDrop, type SavedElement } from "./whiteboard-saver";
+import { appliedFromRemote, createWhiteboardSaver, pasteIsUnsupported, withoutForeignMedia, withoutUnsupported, planSceneDrop, type SavedElement } from "./whiteboard-saver";
+
+const MEDIA_ID = "11111111-1111-4111-8111-111111111111";
+const OTHER_ID = "22222222-2222-4222-8222-222222222222";
+const media = (id: string, kind: "image" | "video" = "image", extra: Record<string, unknown> = {}) => ({ id: `el-${id}`, type: "image", fileId: id, customData: { quincyMedia: { kind } }, ...extra });
 
 const el = (id: string, version: number, extra: Record<string, unknown> = {}): SavedElement => ({ id, version, versionNonce: version * 7, ...extra });
 const deferred = () => { let resolve!: () => void; let reject!: (e: Error) => void; const promise = new Promise<void>((res, rej) => { resolve = res; reject = rej; }); return { promise, resolve, reject }; };
@@ -79,32 +83,57 @@ describe("whiteboard saver", () => {
     expect(calls).toBe(1);
   });
 
-  it("never sends an image element, tombstones included", async () => {
-    const scene = [el("a", 1), el("img", 1, { type: "image", isDeleted: true })];
+  it("never sends a malformed image element, tombstones included, and sends a well-formed media element like any other (#501)", async () => {
+    const scene = [el("a", 1), el("img", 1, { type: "image", isDeleted: true }), el("foreign", 1, { type: "image", fileId: "abc123hash", customData: { quincyMedia: { kind: "image" } } }), { ...el("pic", 1), ...media(MEDIA_ID), id: "pic" }, { ...el("gone", 2), ...media(OTHER_ID, "video", { isDeleted: true }), id: "gone" }];
     const sent: SavedElement[][] = [];
     const saver = createWhiteboardSaver({ getElements: () => scene, send: async (batch) => { sent.push([...batch]); } });
     await saver.flush();
-    expect(sent.flat().map((e) => e.id)).toEqual(["a"]);
+    expect(sent.flat().map((e) => e.id).sort()).toEqual(["a", "gone", "pic"]);
   });
 
-  it("refuses a paste that carries an image", () => {
+  it("refuses a paste that carries a malformed image, and media this board does not hold, but only where a `known` test is given", () => {
     expect(pasteIsUnsupported({ elements: [{ type: "rectangle" }, { type: "image" }] })).toBe(true);
     expect(pasteIsUnsupported({ elements: [{ type: "rectangle" }] })).toBe(false);
     expect(pasteIsUnsupported({})).toBe(false);
+    const known = (id: string) => id === MEDIA_ID;
+    expect(pasteIsUnsupported({ elements: [media(MEDIA_ID)] }, known)).toBe(false);          // this board's own media: copy and paste works
+    expect(pasteIsUnsupported({ elements: [media(OTHER_ID)] }, known)).toBe(true);            // another board's media: refused at the local entry point
+    expect(pasteIsUnsupported({ elements: [media(OTHER_ID)] })).toBe(false);                  // without a test (remote elements never pass here) it is a well-formed element
   });
 
-  // File open, library insert and drag-drop all land in the scene, where the sweep removes them.
-  it.each(["file open", "library insert", "drag-drop"])("sweeps an image that arrived by %s", () => {
+  // File open, library insert and drag-drop all land in the scene, where the sweep removes what the server would refuse.
+  it.each(["file open", "library insert", "drag-drop"])("sweeps a malformed image that arrived by %s", () => {
     const scene = [{ id: "r", type: "rectangle" }, { id: "i", type: "image" }];
     const { kept, removed } = withoutUnsupported(scene);
     expect(removed).toBe(1);
     expect(kept.map((e) => e.id)).toEqual(["r"]);
   });
 
+  it("the change-event sweep NEVER removes a well-formed media element, even one whose fileId this client has never seen (a peer's new image)", () => {
+    const scene = [{ id: "r", type: "rectangle" }, media(OTHER_ID), media(MEDIA_ID, "video")];
+    expect(withoutUnsupported(scene)).toEqual({ kept: scene, removed: 0 });
+  });
+
+  it("the scene-file filter drops media this board does not hold and keeps the rest", () => {
+    const scene = [{ id: "r", type: "rectangle" }, media(MEDIA_ID), media(OTHER_ID)];
+    const { kept, removed } = withoutForeignMedia(scene, (id) => id === MEDIA_ID);
+    expect(removed).toBe(1);
+    expect(kept.map((e) => e.id)).toEqual(["r", `el-${MEDIA_ID}`]);
+  });
+
   it("leaves a scene without images untouched, and ignores already-deleted images in the count", () => {
     const scene = [{ id: "r", type: "rectangle" }];
     expect(withoutUnsupported(scene)).toEqual({ kept: scene, removed: 0 });
     expect(withoutUnsupported([{ id: "i", type: "image", isDeleted: true }]).removed).toBe(0);
+  });
+
+  it("routes dropped files: a scene file loads, image and video files go to the media pipeline, anything else is Excalidraw's, view-only refuses all", () => {
+    const f = (name: string, type = "") => new File(["x"], name, { type });
+    expect(planSceneDrop([f("a.excalidraw")], false)).toEqual({ load: expect.any(File) });
+    expect(planSceneDrop([f("a.png", "image/png"), f("b.mov"), f("c.pdf")], false)).toEqual({ media: [expect.any(File), expect.any(File)] });
+    expect(planSceneDrop([f("c.pdf")], false)).toBe("ignore");
+    expect(planSceneDrop([f("a.png", "image/png")], true)).toBe("refuse");
+    expect(planSceneDrop([], true)).toBe("ignore");
   });
 
   it("never authors a deletion: an element absent from the scene sends nothing (vanish is the editor's, whiteboard-vanish.ts)", async () => {
@@ -147,7 +176,7 @@ describe("whiteboard saver", () => {
     expect(planSceneDrop([{ name: "photo.png" } as File], true)).toBe("refuse");   // every file, any extension
     expect(planSceneDrop([{ name: "board.json" } as File], false)).toEqual({ load: { name: "board.json" } });
     expect(planSceneDrop([{ name: "lib.excalidrawlib" } as File], false)).toEqual({ load: { name: "lib.excalidrawlib" } });
-    expect(planSceneDrop([{ name: "photo.png" } as File], false)).toBe("ignore");
+    expect(planSceneDrop([{ name: "photo.png" } as File], false)).toEqual({ media: [{ name: "photo.png" }] });   // #501: an image goes to the media pipeline
   });
 
   it("re-sends a deletion whose ack was lost as it was, and an element that came back at its acked revision is sent again unchanged", async () => {

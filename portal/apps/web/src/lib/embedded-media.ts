@@ -34,8 +34,8 @@ export function embeddedImageProblem(file: Pick<File, "type" | "size" | "name">)
 
 export const EMBEDDED_IMAGE_ACCEPT = EMBEDDED_IMAGE_CONTENT_TYPES.join(",");
 
-/** Where an upload belongs: a Project's discussion, or the Notice board (#496). */
-export type EmbeddedMediaScope = { projectId: string } | { noticeBoard: true };
+/** Where an upload belongs: a Project's discussion, the Notice board (#496), or a Project's whiteboard (#501: `owner`, which the server stores as the row's owner kind). */
+export type EmbeddedMediaScope = { projectId: string; owner?: "whiteboard" } | { noticeBoard: true };
 
 function mediaBase(scope: EmbeddedMediaScope): string {
   return "noticeBoard" in scope ? "/api/notice-board/embedded-media" : `/api/projects/${encodeURIComponent(scope.projectId)}/embedded-media`;
@@ -44,7 +44,8 @@ function mediaBase(scope: EmbeddedMediaScope): string {
 /** presign, then bytes straight to R2, then complete. Resolves with the media id once the server accepts the file. */
 export async function uploadEmbeddedImage(scope: EmbeddedMediaScope, file: File, onProgress?: (percent: number) => void): Promise<string> {
   const base = mediaBase(scope);
-  const presign = externalEmbeddedMediaPresignSchema.parse(await apiPost<unknown, { contentType: string; bytes: number }>(base, { contentType: file.type, bytes: file.size }));
+  const owner = "projectId" in scope && scope.owner ? { owner: scope.owner } : {};
+  const presign = externalEmbeddedMediaPresignSchema.parse(await apiPost<unknown, { contentType: string; bytes: number; owner?: "whiteboard" }>(base, { contentType: file.type, bytes: file.size, ...owner }));
   const completed = await uploadMultipartFile(
     file,
     { key: presign.mediaId, ...(presign.uploadId ? { uploadId: presign.uploadId } : {}), ...(presign.partUrls ? { partUrls: presign.partUrls } : {}), ...(presign.partBytes ? { partBytes: presign.partBytes } : {}), ...(presign.devDirect ? { devDirect: true } : {}) },
@@ -87,13 +88,13 @@ const abortError = () => Object.assign(new Error("Upload cancelled"), { name: "A
  * id. A cancelled or failed upload tells the server to abort, so no reservation or object is left behind; the abort request is
  * `keepalive`, so it survives the page closing. A cancel rejects as an `AbortError`.
  */
-export async function uploadEmbeddedVideo(projectId: string, file: File, options: { signal?: AbortSignal; onProgress?: (percent: number) => void } = {}): Promise<string> {
-  const { signal, onProgress } = options;
+export async function uploadEmbeddedVideo(projectId: string, file: File, options: { signal?: AbortSignal; onProgress?: (percent: number) => void; owner?: "whiteboard" } = {}): Promise<string> {
+  const { signal, onProgress, owner } = options;
   const contentType = embeddedVideoContentType(file);
   if (!contentType) throw new Error(`${file.name || "This file"} is not an MP4 or MOV video.`);
   if (signal?.aborted) throw abortError();
   const base = mediaBase({ projectId });
-  const presign = externalEmbeddedMediaPresignSchema.parse(await apiPost<unknown, { contentType: string; bytes: number }>(base, { contentType, bytes: file.size }));
+  const presign = externalEmbeddedMediaPresignSchema.parse(await apiPost<unknown, { contentType: string; bytes: number; owner?: "whiteboard" }>(base, { contentType, bytes: file.size, ...(owner ? { owner } : {}) }));
   const mediaUrl = `${base}/${encodeURIComponent(presign.mediaId)}`;
   let abortSent: Promise<unknown> | null = null;
   const abortOnServer = () => abortSent ??= fetch(`${mediaUrl}/abort`, { method: "POST", credentials: "include", keepalive: true, headers: { "content-type": "application/json" }, body: "{}" }).catch(() => undefined);

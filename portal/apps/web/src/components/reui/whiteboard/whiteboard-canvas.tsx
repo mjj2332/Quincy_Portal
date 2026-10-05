@@ -6,7 +6,7 @@
  * Tailwind `shadow-*`, focus ring widths -- see `reui-skin.guard.test.ts`), and `noUncheckedIndexedAccess`
  * narrowing. `"dark": boolean` is quoted only so the guard's `dark:` matcher does not read a type as a variant.
  *
- * This file: The Excalidraw canvas and chrome host. Imports `@excalidraw/excalidraw/index.css`, which is UNLAYERED (see docs/lessons.md, #498): it only loads with this lazy chunk. Unchanged apart from the mechanical edits and the QUINCY ADDITIONs marked inline (#498: image tool off; #499: `applyRemote` and `adoptRevisions` (revisions never change across an index move), collaborator `colorKey`, `onPresence`).
+ * This file: The Excalidraw canvas and chrome host. Imports `@excalidraw/excalidraw/index.css`, which is UNLAYERED (see docs/lessons.md, #498): it only loads with this lazy chunk. Unchanged apart from the mechanical edits and the QUINCY ADDITIONs marked inline (#498: image tool off; #501: the host's Image or video tool, media insert, video click, paste and drop of media files, foreign-media refusal at local entry points; #499: `applyRemote` and `adoptRevisions` (revisions never change across an index move), collaborator `colorKey`, `onPresence`).
  */
 /**
  * The editor behind <Whiteboard>: the only runtime import of Excalidraw (MIT,
@@ -46,6 +46,7 @@ import {
   serializeAsJSON,
   serializeLibraryAsJSON,
   UserIdleState,
+  viewportCoordsToSceneCoords,
   WelcomeScreen,
 } from "@excalidraw/excalidraw"
 import type { ExcalidrawElementSkeleton } from "@excalidraw/excalidraw/data/transform"
@@ -73,7 +74,8 @@ import type {
 import { cn } from "@/lib/utils"
 import { createChangeTracker } from "@/lib/whiteboard-changes"
 import { adoptArrivedRevisions, interactingIds, mergeRemote } from "@/lib/whiteboard-merge"
-import { planSceneDrop, pasteIsUnsupported, withoutUnsupported, type ServerHold } from "@/lib/whiteboard-saver"
+import { isMediaCandidate, pasteIsUnsupported, planSceneDrop, withoutForeignMedia, withoutUnsupported, type ServerHold } from "@/lib/whiteboard-saver"
+import { whiteboardMediaRef } from "@quincy/shared"
 import { unfinalized } from "@/lib/whiteboard-vanish"
 
 import "@excalidraw/excalidraw/index.css"
@@ -362,6 +364,10 @@ function fitElements(
 
 const FRAME_PADDING = 40
 const INSERT_GAP = 80
+/** QUINCY #501: screen pixels between the files of one multi-file insert. */
+const INSERT_CASCADE = 28
+/** QUINCY #501: the play badge's disc is ~11% of the short edge (see lib/whiteboard-media-render.ts); a click this far (as a fraction of the short edge) from the centre opens the video, a little generous for a fingertip. */
+const BADGE_HIT_RADIUS = 0.13
 // Excalidraw's inset between a shape and its label.
 const BOUND_TEXT_PADDING = 5
 const LABEL_SHAPES = new Set(["rectangle", "ellipse", "diamond"])
@@ -829,11 +835,17 @@ type ControllerHost = {
   remoteApplied: (hash: number, taken: readonly { id: string; version: number; versionNonce: number }[]) => void
   /** QUINCY ADDITION #499: has the person already changed this element since the load? */
   edited?: (element: { id: string; version: number; versionNonce: number }) => boolean
+  /** QUINCY ADDITION #501: does this board hold the media (an element references it, deleted ones included, or it was uploaded in this session)? */
+  knownMedia?: (mediaId: string) => boolean
+  /** QUINCY ADDITION #501: media this session put on the board, so a paste of it counts as known even after its element is purged. */
+  uploadedMedia?: (mediaId: string) => void
+  /** QUINCY ADDITION #501: media elements from another board were refused on a scene file load. */
+  refusedMedia?: (count: number) => void
 }
 
 export function createController(
   api: ExcalidrawImperativeAPI,
-  { root, arm, panel, library, editable, remoteApplied, edited }: ControllerHost
+  { root, arm, panel, library, editable, remoteApplied, edited, knownMedia, uploadedMedia, refusedMedia }: ControllerHost
 ): WhiteboardController {
   const libraryItem = (id: string) => library().find((item) => item.id === id)
   // QUINCY ADDITION #499: canonical (server / authored) index per element, apart from the one the renderer repaired it to.
@@ -915,12 +927,15 @@ export function createController(
         hostPanel?.("library")
         return "library"
       }
+      // QUINCY #501: a scene file is a LOCAL entry point. Media this board does not hold came from another board and is dropped; the file's
+      // own image data is never used (the resolver supplies every media file, so a crafted file cannot paint pixels under a media id).
+      const { kept, removed } = knownMedia
+        ? withoutForeignMedia(result.data.elements, knownMedia)
+        : { kept: result.data.elements, removed: 0 }
+      if (removed > 0) refusedMedia?.(removed)
       replaceContent(
         api,
-        {
-          elements: result.data.elements,
-          files: Object.values(result.data.files),
-        },
+        { elements: kept as typeof result.data.elements, files: [] },
         true
       )
       scrollTo()
@@ -983,6 +998,84 @@ export function createController(
         elements: tombstones(api.getSceneElementsIncludingDeleted()),
         captureUpdate: CaptureUpdateAction.IMMEDIATELY,
       })
+    },
+    // QUINCY ADDITION #501: a board image or video is an `image` element that REFERENCES an Embedded media row. It is built the way the
+    // editor builds an image (a skeleton through convertToExcalidrawElements, `status: "saved"` because newImageElement defaults to
+    // "pending"), appended as one undoable change, and only then is its file added (the editor scans the scene for uncached images).
+    insertMedia: ({ fileId, kind, file, width, height, at, cascade }) => {
+      if (!editable()) return null
+      arm()
+      const state = api.getAppState()
+      // About 40% of the view's short side, never above the media's natural size.
+      const fit = (Math.min(state.width, state.height) * 0.4) / state.zoom.value
+      const scale = Math.min(1, fit / Math.max(width, height, 1))
+      const w = Math.max(1, Math.round(width * scale))
+      const h = Math.max(1, Math.round(height * scale))
+      // Several files from one choice fan out from the same point, a step apart, so none hides another.
+      const base = at ?? viewCentre(state)
+      const step = (cascade ?? 0) * (INSERT_CASCADE / state.zoom.value)
+      const centre = { x: base.x + step, y: base.y + step }
+      const [element] = convertToExcalidrawElements(
+        [
+          {
+            type: "image",
+            fileId: fileId as FileId,
+            status: "saved",
+            customData: { quincyMedia: { kind } },
+            x: centre.x - w / 2,
+            y: centre.y - h / 2,
+            width: w,
+            height: h,
+          },
+        ],
+        { regenerateIds: false }
+      )
+      if (!element) return null
+      uploadedMedia?.(fileId)
+      const placedMedia = [element]
+      api.updateScene({
+        elements: [...api.getSceneElementsIncludingDeleted(), ...placedMedia],
+        captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+      })
+      api.addFiles([toBinaryFile(file)])
+      return element.id
+    },
+    addMediaFiles: (files) => {
+      const held = api.getFiles()
+      const missing = files.filter((file) => !(file.id in held))
+      if (missing.length) api.addFiles(missing.map(toBinaryFile))
+    },
+    videoAt: (clientX, clientY) => {
+      const state = api.getAppState()
+      const edit = editable()
+      const tool = state.activeTool.type
+      if (edit && tool !== "selection" && tool !== "hand") return null
+      const point = viewportCoordsToSceneCoords({ clientX, clientY }, state)
+      const elements = api.getSceneElements()
+      for (let index = elements.length - 1; index >= 0; index -= 1) {
+        const element = elements[index]!
+        const ref = whiteboardMediaRef(element as unknown as Record<string, unknown>)
+        if (ref?.kind !== "video") continue
+        // The point in the element's own frame (undo its rotation about its centre).
+        const dx = point.x - (element.x + element.width / 2)
+        const dy = point.y - (element.y + element.height / 2)
+        const cos = Math.cos(-element.angle)
+        const sin = Math.sin(-element.angle)
+        const rx = dx * cos - dy * sin
+        const ry = dx * sin + dy * cos
+        if (Math.abs(rx) > element.width / 2 || Math.abs(ry) > element.height / 2) continue
+        // Editing: only the play badge opens it (a click anywhere else selects, drags, resizes). Viewing: the whole element.
+        if (edit && Math.hypot(rx, ry) > Math.min(element.width, element.height) * BADGE_HIT_RADIUS) continue
+        return ref.id
+      }
+      return null
+    },
+    selectedVideo: () => {
+      const live = new Map(api.getSceneElements().map((element) => [element.id, element]))
+      const ids = Object.keys(api.getAppState().selectedElementIds).filter((id) => live.has(id))
+      const only = ids.length === 1 ? live.get(ids[0]!) : undefined
+      const ref = only ? whiteboardMediaRef(only as unknown as Record<string, unknown>) : null
+      return ref?.kind === "video" ? ref.id : null
     },
     scrollTo,
     exportImage: async (options) => {
@@ -1657,6 +1750,8 @@ export function WhiteboardCanvas({
   onElements,
   onPresence,
   onReady,
+  mediaTool,
+  onVideoOpen,
   readOnly = false,
   viewOnlyIndicator = true,
   onReadOnlyChange,
@@ -1719,6 +1814,8 @@ export function WhiteboardCanvas({
     onLibraryChange,
     onToast,
     onReadOnlyChange,
+    mediaTool,
+    onVideoOpen,
     viewOnly,
     viewOnlyLocked,
   })
@@ -1739,6 +1836,8 @@ export function WhiteboardCanvas({
       onLibraryChange,
       onToast,
       onReadOnlyChange,
+      mediaTool,
+      onVideoOpen,
       viewOnly,
       viewOnlyLocked,
     }
@@ -1793,25 +1892,46 @@ export function WhiteboardCanvas({
   const imageToolRef = useRef(imageTool)
   imageToolRef.current = imageTool
 
+  // QUINCY #501: media this session put on the board, so a paste of it is known even after its element was purged.
+  const uploadedMediaRef = useRef(new Set<string>())
+  /** Does this board hold the media: an element references it (deleted ones included) or it was uploaded here. Judges LOCAL entry points only (paste, scene file); a remote element is never refused by it. */
+  const knownMedia = useCallback((mediaId: string) => {
+    if (uploadedMediaRef.current.has(mediaId)) return true
+    const elements = apiRef.current?.getSceneElementsIncludingDeleted() ?? []
+    return elements.some(
+      (element) =>
+        whiteboardMediaRef(element as unknown as Record<string, unknown>)?.id === mediaId
+    )
+  }, [])
+  /** Where a viewport point is on the board, for placing a dropped or pasted file. */
+  const scenePointAt = useCallback((clientX: number, clientY: number) => {
+    const state = apiRef.current?.getAppState()
+    return state ? viewportCoordsToSceneCoords({ clientX, clientY }, state) : undefined
+  }, [])
+
   // Quincy (#498): the image tool is off, but a paste from another scene carries image elements the
-  // server refuses; refuse the paste here, before they are inserted.
+  // server refuses; refuse the paste here, before they are inserted. #501: a well-formed media element is
+  // refused too when this board does not hold its media (it came from another board); this board's own is copied as usual.
   const handlePaste = useCallback(
     (data: { elements?: readonly { type?: unknown }[] }) => {
       if (imageTool) return true
-      if (pasteIsUnsupported(data)) {
-        latest.current.onToast?.("Images on the whiteboard arrive in a later update")
+      if (pasteIsUnsupported(data, knownMedia)) {
+        latest.current.onToast?.("That image or video cannot be pasted here. Add images and videos with the Image or video tool.")
         return false
       }
       return true
     },
-    [imageTool]
+    [imageTool, knownMedia]
   )
 
   // onChange also fires on pointer moves; only a new element hash counts.
   const handleChange = useCallback(
     (elements: readonly OrderedExcalidrawElement[], appState: AppState) => {
       // Quincy (#498): images that arrived by file open, library insert or drag-drop (paste is refused
-      // earlier) are swept out before they show or are reported, with the same toast.
+      // earlier) are swept out before they show or are reported, with the same toast. #501: only MALFORMED images
+      // (no media id, a hashed Excalidraw fileId); a well-formed media element is NEVER swept, whatever its id,
+      // because this runs for REMOTE merges too: a peer's new image has an id this client has never seen, and
+      // sweeping it would have the vanish observer delete it for everyone.
       if (!imageToolRef.current) {
         const { kept, removed } = withoutUnsupported(elements)
         if (removed > 0) {
@@ -1819,7 +1939,7 @@ export function WhiteboardCanvas({
             elements: kept as never,
             captureUpdate: CaptureUpdateAction.NEVER,
           })
-          latest.current.onToast?.("Images on the whiteboard arrive in a later update")
+          latest.current.onToast?.("Add images and videos with the Image or video tool.")
           return
         }
       }
@@ -2018,7 +2138,10 @@ export function WhiteboardCanvas({
     (tool: WhiteboardTool, pickedWith: PickedWith) => {
       const current = apiRef.current
       if (!current) return
-      if (tool === "image") {
+      if (tool === "image" && latest.current.mediaTool) {
+        // QUINCY #501: the host chooses the files and uploads them (the editor's own image tool is off). The tool never becomes active.
+        latest.current.mediaTool.onPick(viewCentre(current.getAppState()))
+      } else if (tool === "image") {
         // Opens the file picker; touch and keyboard picks drop the image mid-view.
         current.setActiveTool({
           type: "image",
@@ -2199,10 +2322,14 @@ export function WhiteboardCanvas({
             changesRef.current.remoteApplied(hash, [], taken)
           },
           edited: (element) => changesRef.current.editedSinceLoad(element),
+          knownMedia,
+          uploadedMedia: (mediaId) => uploadedMediaRef.current.add(mediaId),
+          refusedMedia: () =>
+            latest.current.onToast?.("Images and videos from another board cannot be opened here."),
         })
       )
     },
-    [arm, hostPanel, libraryOf, rootOf]
+    [arm, hostPanel, knownMedia, libraryOf, rootOf]
   )
 
   // Quincy (#498): a dropped scene file would replace the canvas without tombstoning what it replaces.
@@ -2213,13 +2340,69 @@ export function WhiteboardCanvas({
     const onDrop = (event: DragEvent) => {
       const plan = planSceneDrop(event.dataTransfer?.files ?? [], latest.current.viewOnly)
       if (plan === "ignore") return
+      // QUINCY #501: image and video files belong to the host's media pipeline, and only where it has one.
+      if (typeof plan === "object" && "media" in plan && !latest.current.mediaTool) return
       event.preventDefault()
       event.stopPropagation()
       if (plan === "refuse") return
+      if ("media" in plan) {
+        latest.current.mediaTool?.onFiles(plan.media, scenePointAt(event.clientX, event.clientY))
+        return
+      }
       void controller.load(plan.load).catch(() => latest.current.onToast?.("That file could not be opened."))
     }
     root.addEventListener("drop", onDrop, true)
     return () => root.removeEventListener("drop", onDrop, true)
+  }, [rootRef, controller, scenePointAt])
+
+  // QUINCY ADDITION #501: a pasted image or video FILE. Excalidraw handles a pasted image file before it calls onPaste (and, with its
+  // image tool off, only errors), so it is taken at the document's capture phase, which is where the editor listens. Only while
+  // focus is inside this board and not in a text field; anything else falls through.
+  useEffect(() => {
+    const root = rootRef.current
+    if (!root || !controller) return
+    const onPasteFiles = (event: ClipboardEvent) => {
+      const tool = latest.current.mediaTool
+      if (!tool || latest.current.viewOnly) return
+      const active = document.activeElement
+      if (!active || !root.contains(active)) return
+      if (active instanceof HTMLElement && (active.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName))) return
+      const files = Array.from(event.clipboardData?.files ?? []).filter(isMediaCandidate)
+      if (files.length === 0) return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      const state = apiRef.current?.getAppState()
+      tool.onFiles(files, pointerRef.current ?? (state ? viewCentre(state) : undefined))
+    }
+    document.addEventListener("paste", onPasteFiles, true)
+    return () => document.removeEventListener("paste", onPasteFiles, true)
+  }, [rootRef, controller])
+
+  // QUINCY ADDITION #501: a click (not a drag) on a video element asks the host to play it. Excalidraw does not report what a click hit in
+  // view mode, so this is the controller's own hit test. It only observes: nothing is stopped, so in edit mode the click still selects.
+  useEffect(() => {
+    const root = rootRef.current
+    if (!root || !controller) return
+    let started: { x: number; y: number; id: string } | null = null
+    const onCanvas = (event: PointerEvent) => event.target instanceof HTMLCanvasElement && boardElement(root)?.contains(event.target) === true
+    const onDown = (event: PointerEvent) => {
+      started = null
+      if (event.button !== 0 || !event.isPrimary || !onCanvas(event) || !latest.current.onVideoOpen) return
+      const id = controller.videoAt(event.clientX, event.clientY)
+      if (id) started = { x: event.clientX, y: event.clientY, id }
+    }
+    const onUp = (event: PointerEvent) => {
+      const down = started
+      started = null
+      if (!down || event.button !== 0 || Math.hypot(event.clientX - down.x, event.clientY - down.y) >= 5) return
+      if (controller.videoAt(event.clientX, event.clientY) === down.id) latest.current.onVideoOpen?.(down.id)
+    }
+    root.addEventListener("pointerdown", onDown, true)
+    root.addEventListener("pointerup", onUp, true)
+    return () => {
+      root.removeEventListener("pointerdown", onDown, true)
+      root.removeEventListener("pointerup", onUp, true)
+    }
   }, [rootRef, controller])
 
   // Anything the user does inside the board makes later edits unsaved work.
@@ -2443,6 +2626,7 @@ export function WhiteboardCanvas({
         viewOnlyLocked={viewOnlyLocked}
         viewOnlyIndicator={viewOnlyIndicator}
         imageTool={imageTool}
+        mediaToolLabel={mediaTool?.label}
         platform={platform}
         menu={menu}
         actions={actions}

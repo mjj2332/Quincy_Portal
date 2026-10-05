@@ -10,6 +10,7 @@
  * QUINCY ADDITION #499 (additive; nothing existing changes): `WhiteboardCollaborator.colorKey`, the controller's
  * `applyRemote` and the `onPresence` prop, so the Project whiteboard can show live cursors and merge other people's edits.
  * QUINCY ADDITION #500 (additive): the `discardSave` prop, so a board reset drops a pending save instead of flushing it on teardown.
+ * QUINCY ADDITION #501 (additive): the `mediaTool` and `onVideoOpen` props and the controller's `insertMedia`, `addMediaFiles`, `videoAt` and `selectedVideo`, so the Project whiteboard can hold Embedded media (an image element that REFERENCES a media row; Excalidraw's own image tool stays off).
  * Left out of the install on purpose: `share-popover` (public view-only links: ADR 0017 / #483 forbid them),
  * `review-board` (the demo composition -- `components/ProjectWhiteboard.tsx` is the Portal's), `page`, `presence`
  * (#499) and `history-tab` (#500). New production dependencies: `@excalidraw/excalidraw` (pinned 0.18.1) and `motion`.
@@ -84,6 +85,18 @@ export type WhiteboardContent = {
   /** Authored content, converted once with the ids and seeds you give it. */
   skeleton?: readonly ExcalidrawElementSkeleton[]
   files?: readonly WhiteboardFile[]
+}
+
+/** QUINCY ADDITION #501: a point in scene coordinates. */
+export type WhiteboardScenePoint = { x: number; y: number }
+
+/** QUINCY ADDITION #501: the host's "Image or video" tool. It takes the toolbar's Image slot (the editor's own image tool stays off), and drop and paste of files route to it. */
+export type WhiteboardMediaTool = {
+  label: string
+  /** The toolbar button: the host chooses files and inserts them where it likes (the view centre when `at` is omitted). */
+  onPick: (at?: WhiteboardScenePoint) => void
+  /** Image or video files dropped on the board or pasted into it; `at` is the drop or pointer position. Never called in view-only mode. */
+  onFiles: (files: File[], at?: WhiteboardScenePoint) => void
 }
 
 export type WhiteboardLibraryItem = {
@@ -242,6 +255,14 @@ export type WhiteboardController = {
    * The editor's own restore of `initialData` repairs fractional-index clashes by bumping revisions; call this once the
    * board is ready with what the server sent, so nothing the server already holds reads as an edit. */
   adoptRevisions: (arrived: ReadonlyArray<{ id: string; version: number; versionNonce: number; index?: string | null }>) => void
+  /** QUINCY ADDITION #501: puts an image or video element on the board: an `image` element with `fileId` = the Embedded media id and `customData.quincyMedia.kind`, `status: "saved"`, sized to fit the view (never above natural size) and centred on `at` (the view centre by default), appended as one undoable change, then `file` (a LOADED data URL, never a URL that can fail) is added. Does not select it or scroll. Returns the element id, or null when the board is view-only. */
+  insertMedia: (media: { fileId: string; kind: "image" | "video"; file: WhiteboardFile; width: number; height: number; at?: WhiteboardScenePoint; /** How many steps (28 screen pixels each) the element sits down and right of `at`: the second and later file of one choice. */ cascade?: number }) => string | null
+  /** QUINCY ADDITION #501: hands the editor files it holds no data for (a no-op for one it already has). */
+  addMediaFiles: (files: readonly WhiteboardFile[]) => void
+  /** QUINCY ADDITION #501: the media id of the topmost video element under a viewport point that a click should open: the whole element in view-only mode, only its play badge in edit mode with the selection or hand tool. */
+  videoAt: (clientX: number, clientY: number) => string | null
+  /** QUINCY ADDITION #501: the media id of the video that is the one and only selected element, else null. */
+  selectedVideo: () => string | null
   /** Selects the given elements, replacing the selection. */
   select: (ids: readonly string[]) => void
   /** Your panel through onPanelRequest when it is set, else the editor's own library sidebar. */
@@ -336,6 +357,10 @@ export type WhiteboardProps = {
   /** #498 (additive): false removes the Image tool and its editor entry point. The Portal turns it
    * off until Embedded media (#501) can serve what an image element would reference. Default true. */
   imageTool?: boolean
+  /** QUINCY ADDITION #501: the host's Image or video tool (see WhiteboardMediaTool). Omit it in view-only mode. */
+  mediaTool?: WhiteboardMediaTool
+  /** QUINCY ADDITION #501: a click on a video element (see `videoAt`) asks the host to play it. */
+  onVideoOpen?: (mediaId: string) => void
   /** Accessible name of the canvas region; default "Whiteboard". */
   label?: string
   className?: string
@@ -564,7 +589,7 @@ export function Whiteboard({
           actions={props.actions?.length}
           zoom={zoom}
           viewOnly={props.readOnly}
-          imageTool={props.imageTool}
+          imageTool={(props.imageTool ?? true) || props.mediaTool !== undefined}
           className="absolute inset-0 z-10"
         />
       ) : null}

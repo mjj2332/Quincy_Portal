@@ -173,3 +173,11 @@ describe("uploadEmbeddedVideo (#494)", () => {
     await expect(uploadEmbeddedVideo("p 1", video(), {})).rejects.toThrow("Part 2 could not be uploaded.");
   });
 });
+
+describe("a whiteboard video (#501)", () => {
+  it("names the whiteboard as the owner in the presign body and uploads under the same Project routes", async () => {
+    await expect(uploadEmbeddedVideo("p 1", video(), { owner: "whiteboard" })).resolves.toBe(ID);
+    expect(apiPost.mock.calls[0]![0]).toBe(base);
+    expect(apiPost.mock.calls[0]![1]).toEqual({ contentType: "video/mp4", bytes: 1000, owner: "whiteboard" });
+  });
+});

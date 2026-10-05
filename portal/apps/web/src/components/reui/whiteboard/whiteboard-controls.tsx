@@ -144,6 +144,7 @@ export function adjacentFrames(
 /** aria-keyshortcuts for a combination: Mod is Control, or Meta on Apple keyboards.
  * "+" and "-" name the separator itself there, so those combinations go unlisted. */
 function ariaShortcut(keys: readonly string[]) {
+  if (keys.length === 0) return undefined
   if (keys.some((key) => key === "+" || key === "-")) return undefined
   const combo = (mod: string) =>
     keys.map((key) => (key === "Mod" ? mod : key)).join("+")
@@ -341,12 +342,14 @@ function IconButton({
 const Tools = memo(function Tools({
   tool,
   imageTool,
+  mediaToolLabel,
   platform,
   menuFocus,
   onTool,
 }: {
   tool: string
   imageTool: boolean
+  mediaToolLabel?: string
   platform: ShortcutPlatform
   menuFocus: MenuFocus
   onTool: (tool: WhiteboardTool, pickedWith: PickedWith) => void
@@ -382,17 +385,23 @@ const Tools = memo(function Tools({
       }}
       className="bg-background"
     >
-      {TOOLS.filter((item) => imageTool || item.id !== "image").map((item) => (
-        <ToggleItem
-          key={item.id}
-          value={item.id}
-          label={item.label}
-          keys={[item.key]}
-          icon={item.icon}
-          side="bottom"
-          platform={platform}
-        />
-      ))}
+      {TOOLS.filter(
+        (item) => imageTool || mediaToolLabel !== undefined || item.id !== "image"
+      ).map((item) => {
+        // QUINCY ADDITION #501: the host's media tool takes the Image slot, with its own name and no key (the editor's key 9 is its own image tool, which is off).
+        const hostMedia = item.id === "image" && !imageTool && mediaToolLabel !== undefined
+        return (
+          <ToggleItem
+            key={item.id}
+            value={item.id}
+            label={hostMedia ? mediaToolLabel : item.label}
+            keys={hostMedia ? [] : [item.key]}
+            icon={item.icon}
+            side="bottom"
+            platform={platform}
+          />
+        )
+      })}
       <DropdownMenu>
         <Tooltip>
           <TooltipTrigger
@@ -1102,6 +1111,8 @@ export type WhiteboardChromeProps = {
   viewOnlyIndicator?: boolean
   /** #498: false hides the Image tool. */
   imageTool: boolean
+  /** QUINCY ADDITION #501: the host's "Image or video" tool: shows the Image slot, relabelled, when the editor's own image tool is off. */
+  mediaToolLabel?: string
   platform: ShortcutPlatform
   menu?: readonly WhiteboardMenuGroup[]
   actions?: readonly WhiteboardAction[]
@@ -1135,6 +1146,7 @@ export const WhiteboardChrome = memo(function WhiteboardChrome({
   viewOnlyLocked,
   viewOnlyIndicator = true,
   imageTool,
+  mediaToolLabel,
   platform,
   menu,
   actions,
@@ -1177,6 +1189,7 @@ export const WhiteboardChrome = memo(function WhiteboardChrome({
     <Tools
       tool={state.tool}
       imageTool={imageTool}
+      mediaToolLabel={mediaToolLabel}
       platform={platform}
       menuFocus={menuFocus}
       onTool={onTool}
