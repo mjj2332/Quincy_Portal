@@ -7,7 +7,7 @@ import { PHOTOGRAPHER_VISIBLE_STAGES, type Role } from "@quincy/shared";
  * `test/project-search.test.ts`'s SHA-256 fixture. Never inline a copy of this logic elsewhere —
  * a project-visibility rule with two independent spellings is exactly the kind of drift that has
  * previously shipped an authorization bug in this repo (see `docs/lessons.md`, Hono middleware
- * leak entry). `Role` (CONTEXT-MAP.md single-definition rule, fix-218-r5 #2) comes from
+ * leak entry). `Role` (GLOSSARY-MAP.md single-definition rule, fix-218-r5 #2) comes from
  * `@quincy/shared` — this file must not re-declare the role union locally.
  */
 

@@ -1,8 +1,8 @@
-# Context Map
+# Glossary Map
 
 ## Contexts
 
-- [Quincy production domain](./portal/packages/shared/CONTEXT.md): the projects, stages,
+- [Quincy production domain](./portal/packages/shared/GLOSSARY.md): the projects, stages,
   people and ratings the pipeline is built around.
 
 ## Relationships

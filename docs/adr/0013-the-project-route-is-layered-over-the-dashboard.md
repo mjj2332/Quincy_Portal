@@ -4,7 +4,7 @@ status: accepted
 
 # The Project route is layered over the Dashboard, not swapped for it
 
-The glossary's **Project sheet** (`portal/packages/shared/CONTEXT.md`) is the Project workspace
+The glossary's **Project sheet** (`portal/packages/shared/GLOSSARY.md`) is the Project workspace
 floating over the Dashboard: dismissing it returns to the same Dashboard view underneath, with its
 scroll, search, filters and opener intact. Until #366 `/projects/:id` was a full page — a sibling
 leaf that unmounted the Dashboard, which then re-mounted cold on return.

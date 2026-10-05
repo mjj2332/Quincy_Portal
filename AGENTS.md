@@ -163,7 +163,7 @@ Default canonical labels (needs-triage, needs-info, ready-for-agent, ready-for-h
 
 ### Domain docs
 
-Multi-context: root `CONTEXT-MAP.md` + one `CONTEXT.md` per workspace package under `portal/`. See `docs/agents/domain.md`.
+Multi-context: root `GLOSSARY-MAP.md` + one `GLOSSARY.md` per workspace package under `portal/`. See `docs/agents/domain.md`.
 
 A UI browser pass is stage 1 of two: a Claude design reviewer reads its output next. Save every
 screenshot as a file in one folder, named per viewport and open state, and give every PASS/FAIL row
