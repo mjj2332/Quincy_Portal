@@ -1,6 +1,6 @@
 # Codex CLI mechanics (Sol / Terra / Luna / Astra)
 
-Loaded on demand from `Subagent-Orchestration.md` §3. Updated 2026-09-30.
+Loaded on demand from `Subagent-Orchestration.md` §3. Updated 2026-10-05.
 
 `codex exec` runs the real Codex CLI as an OS subprocess via `Bash` — OpenAI's model, its own
 sandbox, output read back from a file. It is not the `Agent` tool.
@@ -45,7 +45,21 @@ them into the pipe rather than interpolating any of them into a quoted argument:
 | `--output-last-message <file>` | Write only the final report to a clean file |
 | `-m <model>` | Override the default model for one invocation |
 | `-c model_reasoning_effort=high` | Set reasoning effort (Sol `high`, Luna `xhigh` — §1) |
-| `-c 'sandbox_workspace_write.network_access=true'` | Allow network from a workspace-write sandbox (needed for MCP calls) |
+| `-c 'sandbox_workspace_write.network_access=true'` | Allow network from a workspace-write sandbox (needed for MCP calls); the owner's local config already sets it — see Network below |
+
+## Network and GitHub
+
+Network follows the sandbox:
+
+- **`workspace-write`: online.** The owner's local `.codex/config.toml` sets
+  `[sandbox_workspace_write] network_access = true` (2026-10-05), so `curl` and an authenticated
+  `gh` reach GitHub. The file is untracked, so on another machine pass the `-c` flag above.
+- **`read-only`: offline, always.** No config switch opens it. Sol reviews, planning runs and every
+  `/codex:rescue` without `--write` land here, and `gh issue view` fails with a connection error.
+
+So the orchestrator owns the lookup for a read-only run: fetch the issue, its parent spec and any
+PR text with `gh` before dispatch, and paste them into the brief. A brief is complete when Codex
+needs no network to read the requirements.
 
 
 ## Resuming a session

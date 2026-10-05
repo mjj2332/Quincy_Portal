@@ -119,7 +119,8 @@ and Codex-as-peer goes through `/codex:rescue --background`.
   Antigravity IDE's built-in browser agent is not usable headlessly, the print-mode shutdown hang
   (a long run whose report never lands, recoverable from the conversation DB), and the silent
   no-op failure modes (a cheerful "done" with zero effect and zero error output).
-- **Codex (Sol/Luna/Terra/Astra): [codex-cli.md](codex-cli.md)** — invocation, flags, the MCP
+- **Codex (Sol/Luna/Terra/Astra), and Codex-as-peer: [codex-cli.md](codex-cli.md)** — invocation,
+  flags, network (a read-only run is offline, so its brief carries the issue text), the MCP
   write-approval failure mode (§6), Codex browser control outside the pass, and the reason a
   Lightbox or photo-preview check cannot run on local dev at all.
 
