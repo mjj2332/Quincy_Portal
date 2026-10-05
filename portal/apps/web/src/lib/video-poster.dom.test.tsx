@@ -103,26 +103,32 @@ describe("captureVideoPoster (#494)", () => {
     await expect(captureVideoPoster(file)).resolves.toBeNull();
   });
 
-  it("with requestVideoFrameCallback, draws only once a frame has been presented", async () => {
-    const result = captureVideoPoster(file); await flush();
-    let present: (() => void) | undefined;
-    video.requestVideoFrameCallback = (callback) => { present = callback; return 1; };
-    video.emit("loadedmetadata"); await flush(); video.emit("seeked"); await flush();
-    expect(present).toBeDefined(); expect(canvas.drew).toHaveLength(0);
-    present!();
-    await expect(result).resolves.toBeInstanceOf(Blob); expect(canvas.drew).toHaveLength(1); expect(revoked).toEqual(created);
+  it("does not wait for requestVideoFrameCallback even when the browser has it (Chrome never fires it for a detached paused video)", async () => {
+    const result = captureVideoPoster(file, 8000); await flush();
+    let called = false;
+    video.requestVideoFrameCallback = () => { called = true; return 1; };
+    video.emit("loadedmetadata"); await flush(); video.emit("seeked");
+    await vi.advanceTimersByTimeAsync(10);
+    await expect(result).resolves.toBeInstanceOf(Blob); expect(called).toBe(false); expect(canvas.drew).toHaveLength(1); expect(revoked).toEqual(created);
   });
 
-  it("answers null when no frame is ever presented before the timeout", async () => {
-    const result = captureVideoPoster(file, 3000); await flush();
-    video.requestVideoFrameCallback = () => 1;
-    video.emit("loadedmetadata"); await flush(); video.emit("seeked"); await vi.advanceTimersByTimeAsync(3000);
-    await expect(result).resolves.toBeNull(); expect(canvas.drew).toHaveLength(0); expect(revoked).toEqual(created);
+  it("retries once after a pause when the first draw is blank, and keeps the painted retry", async () => {
+    const result = captureVideoPoster(file); await flush(); canvas.alpha = 0;
+    video.emit("loadedmetadata"); await flush(); video.emit("seeked"); await flush();
+    expect(canvas.drew).toHaveLength(1);
+    canvas.alpha = 255; await vi.advanceTimersByTimeAsync(300);
+    await expect(result).resolves.toBeInstanceOf(Blob); expect(canvas.drew).toHaveLength(2); expect(revoked).toEqual(created);
+  });
+
+  it("answers null when the draw is blank twice", async () => {
+    const result = captureVideoPoster(file); await flush(); canvas.alpha = 0;
+    video.emit("loadedmetadata"); await flush(); video.emit("seeked"); await vi.advanceTimersByTimeAsync(300);
+    await expect(result).resolves.toBeNull(); expect(canvas.drew).toHaveLength(2); expect(revoked).toEqual(created);
   });
 
   it("answers null instead of uploading a blank when nothing was painted (every sampled pixel transparent)", async () => {
     const result = captureVideoPoster(file); await flush(); canvas.alpha = 0;
-    video.emit("loadedmetadata"); await flush(); video.emit("seeked");
+    video.emit("loadedmetadata"); await flush(); video.emit("seeked"); await vi.advanceTimersByTimeAsync(300);
     await expect(result).resolves.toBeNull(); expect(revoked).toEqual(created);
   });
 
@@ -132,7 +138,7 @@ describe("captureVideoPoster (#494)", () => {
     await expect(result).resolves.toBeInstanceOf(Blob);
   });
 
-  it("without requestVideoFrameCallback and readyState below 2, waits for loadeddata before drawing", async () => {
+  it("with readyState below 2, waits for loadeddata before drawing", async () => {
     const result = captureVideoPoster(file); await flush(); video.readyState = 1;
     video.emit("loadedmetadata"); await flush(); video.emit("seeked"); await flush();
     expect(canvas.drew).toHaveLength(0);

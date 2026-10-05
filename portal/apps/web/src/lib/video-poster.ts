@@ -16,11 +16,13 @@ function isPainted(context: CanvasRenderingContext2D, width: number, height: num
 /**
  * Captures a poster frame from a video file in the browser (#494), best effort. A file this browser cannot decode (ProRes, say)
  * answers null and the upload goes ahead without a poster; nothing here ever throws, and the object URL is always revoked.
- * It seeks to the earlier of one second and a tenth of the duration (a first frame is often black), waits for a frame to be
- * presented (`seeked` alone is not enough: a hidden or occluded page, or a first decode, can fire it with nothing on screen),
- * draws the frame to a canvas no larger than 1280 on the long edge and exports a JPEG at 0.8. A canvas that is still fully
- * transparent after the draw was never painted, and answers null rather than uploading a blank poster; an opaque black frame is
- * a real frame and is kept.
+ * It seeks to the earlier of one second and a tenth of the duration (a first frame is often black), draws on `seeked` (once
+ * readyState reaches 2, else after `loadeddata`) to a canvas no larger than 1280 on the long edge and exports a JPEG at 0.8.
+ * `requestVideoFrameCallback` is deliberately NOT used: a detached, paused, muted video (this one) never presents a frame in
+ * Chrome, so the callback never fires (measured: nothing after 3 s at readyState 4) and every upload would sit out the timeout
+ * with no poster; drawing straight after `seeked` produced a correct frame in real Chrome. A canvas still fully transparent
+ * after the draw was never painted: it is redrawn once after ~250 ms, and if still blank answers null rather than uploading a
+ * blank poster. An opaque black frame is a real frame and is kept.
  */
 export function captureVideoPoster(file: File, timeoutMs = 8000): Promise<Blob | null> {
   return new Promise((resolve) => {
@@ -51,11 +53,11 @@ export function captureVideoPoster(file: File, timeoutMs = 8000): Promise<Blob |
       if (capturing || settled) return;
       capturing = true;
       try {
-        if (typeof video.requestVideoFrameCallback === "function") { video.requestVideoFrameCallback(onFrameReady); return; }
         if (video.readyState < 2) { video.addEventListener("loadeddata", onFrameReady); return; }
       } catch { finish(null); return; }
       onFrameReady();
     };
+    let retried = false;
     const onFrameReady = () => {
       if (settled) return;
       try {
@@ -67,7 +69,10 @@ export function captureVideoPoster(file: File, timeoutMs = 8000): Promise<Blob |
         const context = canvas.getContext("2d");
         if (!context) { finish(null); return; }
         context.drawImage(video, 0, 0, canvas.width, canvas.height);
-        if (!isPainted(context, canvas.width, canvas.height)) { finish(null); return; }
+        if (!isPainted(context, canvas.width, canvas.height)) {
+          if (retried) { finish(null); return; }
+          retried = true; setTimeout(onFrameReady, 250); return;
+        }
         canvas.toBlob((blob) => finish(blob && blob.size > 0 ? blob : null), "image/jpeg", 0.8);
       } catch { finish(null); }
     };
