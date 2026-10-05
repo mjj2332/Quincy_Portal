@@ -288,8 +288,9 @@ describe("terminal route manifest", () => {
         method: "POST", headers: { cookie, "content-type": "application/json", origin: baseEnv.APP_ORIGIN },
         body: JSON.stringify({ expected: { stageKey: "editing", boardRevision: 0 }, targetStageKey: "editing", placement: { kind: "append" } }),
       });
-      expect(boardPosition.status).toBe(403);
-      await expect(boardPosition.json()).resolves.toEqual({ error: "Forbidden", capability: "prioritizeProjects" });
+      // Retired in #475: no route, so the generic /api/* fallback answers, whatever the role.
+      expect(boardPosition.status).toBe(404);
+      await expect(boardPosition.json()).resolves.toEqual({ error: "Not found" });
       for (const path of ["archive", "restore"]) {
         const response = await SELF.fetch(`https://portal.test/api/projects/${manifestProjectId}/${path}`, { method: "POST", headers: { cookie, origin: baseEnv.APP_ORIGIN } });
         expect(response.status).toBe(403);

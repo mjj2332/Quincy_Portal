@@ -5,7 +5,7 @@ import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
 import { boardContractEnabled, boardSchemaVariant, buildAutomaticDeadlineBundle, buildAutomaticDeadlineMoveBundle, buildDeadlineSuppressionBundle, buildProjectActivityStatements, buildSubtaskReminderMaterialization, buildSubtaskReminderSuppression, createDb, selectEffectiveDefaultEditorIds, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
 import { and, asc, desc, eq, exists, gt, inArray, isNotNull, isNull, lte, notExists, sql } from "drizzle-orm";
-import { automaticDeadlineFor, capDashboardSearchText, compareBoardCards, COLLECTION_KINDS, DASHBOARD_PROJECTS_FILTER_QUERY_NAMES, dashboardFilterArchivedMode, dashboardFilterHasArchivedLeaf, dashboardFilterHasPriorityLeaf, dashboardFilterTreeOf, dashboardProjectsFilterQuerySchema, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchemaForProject, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, PROJECT_DEADLINE_ZONE, planDeadlineOccurrences, projectActivityDeepLink, roleHasCapability, stripUnsafeText, type CollectionKind, type DashboardFilter, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
+import { automaticDeadlineFor, capDashboardSearchText, compareBoardCards, COLLECTION_KINDS, DASHBOARD_PROJECTS_FILTER_QUERY_NAMES, dashboardFilterArchivedMode, dashboardFilterHasArchivedLeaf, dashboardFilterHasPriorityLeaf, dashboardFilterTreeOf, dashboardProjectsFilterQuerySchema, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchema, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, PROJECT_DEADLINE_ZONE, planDeadlineOccurrences, projectActivityDeepLink, roleHasCapability, stripUnsafeText, type CollectionKind, type DashboardFilter, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, hasProjectAccessForUser, requireCapability } from "../middleware/capability";
@@ -53,6 +53,12 @@ const downloadSelectionInput = z.object({
     }),
 }).strict();
 const idCheck = (v: string) => z.string().uuid().safeParse(v).success;
+/** #475: the `between` placement is retired with the position it wrote; a stale tab that still sends it reloads. */
+function isRetiredBetweenPlacement(body: unknown): boolean {
+  if (typeof body !== "object" || body === null) return false;
+  const placement = (body as { placement?: unknown }).placement;
+  return typeof placement === "object" && placement !== null && (placement as { kind?: unknown }).kind === "between";
+}
 function isExactLegacyStageBody(body: unknown): body is { stageKey: string } {
   return typeof body === "object" && body !== null && !Array.isArray(body)
     && Object.keys(body).length === 1 && Object.prototype.hasOwnProperty.call(body, "stageKey")
@@ -194,6 +200,7 @@ async function details(db: ReturnType<typeof createDb>, d1: D1Database, projectI
   }, role);
 }
 
+/** Deprecated: the web derives the order itself (#470, #475). Still emitted for stale tabs until #476 removes it from the wire. */
 function authorizedInternalBoardOrder(rows: Array<{ project: { id: string; stageKey: string; street: string; priority: number | null; shootDate: string | null } }>, role: Role): Partial<Record<StageTransportKey, string[]>> {
   const groups = new Map<StageTransportKey, Array<{ id: string; street: string; priority: number | null; shootDate: string | null }>>();
   for (const { project } of rows) {
@@ -284,7 +291,7 @@ function createProjectResponse(data: z.infer<typeof createProjectFields>, id: st
     id, street: data.street, suburb: data.suburb ?? null, postcode: data.postcode ?? null,
     agencyName: data.agencyName ?? null, agentName: data.agentName ?? null, agentEmail: data.agentEmail ?? null, agentPhone: data.agentPhone ?? null,
     agencyId: data.agencyId ?? null, agentId: data.agentId ?? null, shootDate: data.shootDate ?? null, timeWindow: data.timeWindow ?? null,
-    stageKey: "awaiting_raw", priority: data.priority ?? null, boardPosition: 0, boardRevision: 0, orderNo: data.orderNo ?? null, orderId: data.orderId ?? null,
+    stageKey: "awaiting_raw", priority: data.priority ?? null, boardRevision: 0, orderNo: data.orderNo ?? null, orderId: data.orderId ?? null,
     invoiceAmount: data.invoiceAmount ?? null, paymentStatus: data.paymentStatus ?? null, notes: data.notes ?? null, productionNotes: data.productionNotes ?? null,
     rawFolderLink: data.rawFolderLink ?? null, rawFolderPath: data.rawFolderPath ?? null, coverAssetId: null, effectiveCoverAssetId: null,
     archivedAt: null, archivedBy: null, members: memberships,
@@ -329,7 +336,7 @@ async function createProjectAtomically(c: Context<AppEnv>, data: z.infer<typeof 
   const projectInsert = raw.prepare(`
     INSERT INTO projects (
       id, street, suburb, postcode, agency_name, agent_name, agent_email, agent_phone,
-      agency_id, agent_id, shoot_date, time_window, stage_key, board_position,
+      agency_id, agent_id, shoot_date, time_window, stage_key,
       board_revision,
       order_no, order_id, invoice_amount, payment_status, notes, production_notes, raw_folder_link, raw_folder_path,
       created_at, updated_at, priority,
@@ -337,13 +344,12 @@ async function createProjectAtomically(c: Context<AppEnv>, data: z.infer<typeof 
       deadline_reminder_offsets_json, deadline_version, deadline_source
     )
     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_raw',
-      (SELECT COALESCE(MAX(board_position) + 1024, 0) FROM projects WHERE stage_key = 'awaiting_raw' AND archived_at IS NULL AND id != ?),
       0,
       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
       ?, ?, ?, ?, ?, ?, ?, ?
     WHERE ${eligibilityPredicates.length ? eligibilityPredicates.join(" AND ") : "1 = 1"}
     RETURNING id
-  `).bind(...fieldValues.slice(0, 12), projectId, ...fieldValues.slice(12), ...slots.flatMap((slot) => [slot.userId, ...PROJECT_ASSIGNMENT_ELIGIBLE_ROLES[slot.roleOnProject]]));
+  `).bind(...fieldValues, ...slots.flatMap((slot) => [slot.userId, ...PROJECT_ASSIGNMENT_ELIGIBLE_ROLES[slot.roleOnProject]]));
   const collectionRecords = services.map((kind) => ({ id: newId(), kind }));
   const collectionStatements = collectionRecords.map((collection) => raw.prepare(`
     INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at)
@@ -489,7 +495,7 @@ projectsRoutes.get("/projects", terminalRoute("/projects", async (c) => {
     : await base.where(archivedFilter).orderBy(...dashboardProjectOrder).all();
   // `orderedRows` stays UNFILTERED: it feeds `authorizedInternalBoardOrder` below and `total`,
   // both of which describe the full authorised set regardless of `q`, Stage or Priority. Filtering
-  // it here would make `boardRank` a rank-within-the-filtered-set and corrupt drag positions.
+  // it here would make the deprecated per-Stage order a rank within the filtered set.
   const orderedRows = orderDashboardStreetTies(rows);
   const matchingIds = search === "" ? null : await matchingInternalProjectIds(c.env.DB, orderedRows.map(({ project }) => project.id), search);
   // #429, #461: the whole filter tree (Stage, Priority, Archived, People, Unassigned, My tasks, Overdue, the date
@@ -536,10 +542,10 @@ projectsRoutes.get("/project-assignment-candidates", terminalRoute("/project-ass
 projectsRoutes.post("/projects", requireCapability("createProject"), terminalRoute("/projects", async (c) => {
   const variant = await boardSchemaVariant(c.env.DB);
   if (variant === "pre_0037") return boardSchemaMaintenance(c);
-  // Creation is an INSERT of a new row (append at Stage bottom, board_revision 0). It does not
-  // mutate an existing Board row, so it is not flag-gated: the studio must be able to onboard
-  // shoots throughout the flag-OFF rollout window. Stage move / reorder / archive / restore stay
-  // flag-gated because they change existing rows' position/revision.
+  // Creation is an INSERT of a new row (board_revision 0; the Board order is derived from data, so
+  // no position is written). It does not mutate an existing Board row, so it is not flag-gated: the
+  // studio must be able to onboard shoots throughout the flag-OFF rollout window. Stage move /
+  // archive / restore stay flag-gated because they change existing rows' revision.
   const data = await jsonInput(c, createProjectFields); if (data instanceof Response) return data;
   // #488: defence in depth. Only Admin holds `createProject` today, so neither branch is reachable over HTTP yet; they keep
   // create from becoming a way round the Priority and Deadline capabilities if `createProject` is ever granted more widely.
@@ -576,9 +582,9 @@ projectsRoutes.post("/projects/:id/priority", terminalRoute("/projects/:id/prior
   const data = await jsonInput(c, priorityInput); if (data instanceof Response) return data;
   const db = createDb(c.env.DB);
   const target = await c.env.DB.prepare(`
-    SELECT id, stage_key AS stageKey, priority, board_position AS boardPosition, board_revision AS boardRevision
+    SELECT id, stage_key AS stageKey, priority, board_revision AS boardRevision
     FROM projects WHERE id = ? AND archived_at IS NULL
-  `).bind(id).first<{ id: string; stageKey: StageKey; priority: number | null; boardPosition: number; boardRevision: number }>();
+  `).bind(id).first<{ id: string; stageKey: StageKey; priority: number | null; boardRevision: number }>();
   if (!target) return c.json({ error: "Project not found" }, 404);
   if (target.priority === data.priority) return c.json({ priority: target.priority, boardRevision: target.boardRevision });
   const now = Date.now();
@@ -594,9 +600,9 @@ projectsRoutes.post("/projects/:id/priority", terminalRoute("/projects/:id/prior
     UPDATE projects
     SET priority = ?1, updated_at = ?2
     WHERE id = ?3 AND archived_at IS NULL AND priority IS NOT ?1
-      AND stage_key = ?4 AND board_position IS ?5 AND board_revision = ?6
+      AND stage_key = ?4 AND board_revision = ?5
     RETURNING priority, board_revision
-  `).bind(data.priority, now, id, target.stageKey, target.boardPosition, target.boardRevision);
+  `).bind(data.priority, now, id, target.stageKey, target.boardRevision);
   const result = await c.env.DB.batch([updateStatement, auditStatement, ...activityStatements.statements]);
   const rawUpdated = firstD1<{ priority: number | null; boardRevision?: number; board_revision?: number }>(result[0]);
   const updated = rawUpdated && {
@@ -604,8 +610,8 @@ projectsRoutes.post("/projects/:id/priority", terminalRoute("/projects/:id/prior
     boardRevision: rawUpdated.boardRevision ?? rawUpdated.board_revision,
   };
   if (!updated || updated.boardRevision === undefined || !rowsFromD1(result[1]).length) {
-    const current = await c.env.DB.prepare("SELECT priority, stage_key AS stageKey, board_position AS boardPosition, board_revision AS boardRevision FROM projects WHERE id = ? AND archived_at IS NULL").bind(id).first<{ priority: number | null; stageKey: StageKey; boardPosition: number; boardRevision: number }>();
-    if (current && current.priority === data.priority && current.stageKey === target.stageKey && current.boardPosition === target.boardPosition && current.boardRevision === target.boardRevision) return c.json({ priority: current.priority, boardRevision: current.boardRevision });
+    const current = await c.env.DB.prepare("SELECT priority, stage_key AS stageKey, board_revision AS boardRevision FROM projects WHERE id = ? AND archived_at IS NULL").bind(id).first<{ priority: number | null; stageKey: StageKey; boardRevision: number }>();
+    if (current && current.priority === data.priority && current.stageKey === target.stageKey && current.boardRevision === target.boardRevision) return c.json({ priority: current.priority, boardRevision: current.boardRevision });
     return c.json({ error: "Project changed while priority was being updated", code: "project_priority_conflict" }, 409);
   }
   const publicationIds = rowsFromD1<{ id: string }>(result[2 + activityStatements.broadOutboxIndex]).map((row) => row.id);
@@ -613,15 +619,6 @@ projectsRoutes.post("/projects/:id/priority", terminalRoute("/projects/:id/prior
   return c.json(updated);
 }));
 
-// Retired by #470: the Board sorts by data, so there is no manual position to write. A stale tab
-// (or a script) that still posts here gets the same reload-required conflict as the legacy Stage
-// body, and nothing is written. The capability check stays ahead of it so a role that never held
-// the command keeps its constant denial.
-projectsRoutes.post("/projects/:id/board-position", terminalRoute("/projects/:id/board-position", async (c) => {
-  const id = c.req.param("id"); if (!idCheck(id)) return c.json({ error: "Invalid project id" }, 400);
-  if (!roleHasCapability(c.get("user").role, "prioritizeProjects")) return c.json({ error: "Forbidden", capability: "prioritizeProjects" }, 403);
-  return c.json({ error: "Reload the application before moving this project.", code: "stage_contract_reload_required" }, 409);
-}));
 /** #455. An archived Project's details are read-only; Restore first. */
 const DETAILS_ARCHIVED_BODY = { error: "Archived projects are read-only; restore the project to edit its details.", code: "details_project_archived" } as const;
 /** #455. Sync is refused on an archived Project (the consumer is fenced too). */
@@ -1270,7 +1267,7 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
       return classifyLoser(null);
     }
     const result = await c.env.DB.batch([
-      c.env.DB.prepare("UPDATE projects SET archived_at = NULL, archived_by = NULL, board_position = (SELECT COALESCE(MAX(board_position) + 1024, 0) FROM projects WHERE stage_key = ? AND archived_at IS NULL AND id != ?), board_revision = board_revision + 1, updated_at = ? WHERE id = ? AND archived_at IS NOT NULL AND stage_key = ? AND board_revision = ? RETURNING id").bind(source.stageKey, id, now.getTime(), id, source.stageKey, source.boardRevision),
+      c.env.DB.prepare("UPDATE projects SET archived_at = NULL, archived_by = NULL, board_revision = board_revision + 1, updated_at = ? WHERE id = ? AND archived_at IS NOT NULL AND stage_key = ? AND board_revision = ? RETURNING id").bind(now.getTime(), id, source.stageKey, source.boardRevision),
       c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project.restore', 'project', ?, ?, ? WHERE changes() = 1 RETURNING id").bind(restoreAuditId, c.get("user").id, id, auditMeta(c.get("user")), now.getTime()),
       ...restoreActivityStatements.statements,
       // Recompute the future Subtask reminders of the restored Project (#424). Only fire times still ahead are written.
@@ -1380,10 +1377,10 @@ const stageHandler = async (c: Context<AppEnv>) => {
   let body: unknown;
   try { body = await c.req.json(); }
   catch { return c.json({ error: "Invalid JSON" }, 400); }
-  if (isExactLegacyStageBody(body)) {
+  if (isExactLegacyStageBody(body) || isRetiredBetweenPlacement(body)) {
     return c.json({ error: "Reload the application before moving this project.", code: "stage_contract_reload_required" }, 409);
   }
-  const parsed = moveProjectStageRequestSchemaForProject(id).safeParse(body);
+  const parsed = moveProjectStageRequestSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: "Invalid input", details: parsed.error.flatten() }, 400);
   const result = await moveProjectStage({ env: c.env, principal: c.get("user"), projectId: id, request: parsed.data as MoveProjectStageRequest });
   if (result.kind === "moved") {

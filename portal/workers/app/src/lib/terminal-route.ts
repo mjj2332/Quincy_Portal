@@ -157,7 +157,6 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "POST", path: "/api/projects/:id/autohdr-coverage", class: "withheld" },
   { method: "GET", path: "/api/projects/:id/autohdr-history", class: "withheld" },
   { method: "GET", path: "/api/projects/:id/autohdr-status", class: "withheld" },
-  { method: "POST", path: "/api/projects/:id/board-position", class: "withheld" },
   { method: "POST", path: "/api/projects/:id/cover", class: "withheld" },
   { method: "PUT", path: "/api/projects/:id/deadline", class: "withheld" },
   // These scoped collection routes are assignment-scoped; the untagged entries intentionally

@@ -30,7 +30,6 @@ type ProjectRow = {
   editedUploadAvailable: boolean;
   boardRevision: number;
   priority: number | null;
-  boardPosition: number;
 };
 
 type ServiceRow = { projectId: string; id: string; kind: string; status: string; expectedCount: number | null; receivedCount: number };
@@ -92,7 +91,6 @@ function toProjectRow(row: Awaited<ReturnType<typeof projectRows>>[number]): { p
       editedUploadAvailable: Boolean(row.editedUploadAvailable),
       boardRevision: Number("boardRevision" in row ? row.boardRevision ?? 0 : 0),
       priority: row.priority,
-      boardPosition: Number(row.boardPosition),
     },
     service: row.serviceId ? {
       projectId: row.serviceProjectId!, id: row.serviceId, kind: row.serviceKind!, status: row.serviceStatus!,

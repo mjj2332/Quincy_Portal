@@ -6,12 +6,11 @@ import {
   composeStageBundle,
   createDb,
   deriveStageFinalizerIntent,
-  buildNonCompactingStageWinner,
+  buildStageWinner,
   buildStageShootDateFill,
   buildWorkflowTail,
   schema,
   shootDateFillLanded,
-  type ExpectedTargetPlacementRow,
 } from "@quincy/db";
 import { and, eq, sql } from "drizzle-orm";
 import { enqueueRenditionSafely, parseXmpRating, XMP_SCAN_BYTES, xmpRatingToStars } from "@quincy/shared";
@@ -263,20 +262,14 @@ export async function finalizeIngest(
       const source = await env.DB.prepare(
         "SELECT board_revision AS boardRevision FROM projects WHERE id = ? AND stage_key = 'awaiting_raw' AND archived_at IS NULL",
       ).bind(input.projectId).first<{ boardRevision: number }>();
-      const target = await env.DB.prepare(
-        "SELECT id AS projectId, stage_key AS stageKey, board_position AS boardPosition, board_revision AS boardRevision FROM projects WHERE stage_key = 'raw_review' AND archived_at IS NULL AND id <> ? ORDER BY board_position, id",
-      ).bind(input.projectId).all<ExpectedTargetPlacementRow>();
       if (source) {
         const auditId = crypto.randomUUID();
-        const stage = buildNonCompactingStageWinner({
+        const stage = buildStageWinner({
           db: env.DB,
           projectId: input.projectId,
           from: "awaiting_raw",
           to: "raw_review",
           oldBoardRevision: source.boardRevision,
-          expectedTarget: target.results,
-          expectedTargetRowCount: target.results.length,
-          placement: "append",
           auditId,
           actorId: null,
           auditMetaJson: JSON.stringify({
@@ -304,22 +297,20 @@ export async function finalizeIngest(
         const results = await env.DB.batch(bundle.statements);
         const winnerRows = results[bundle.indexes.stage.winner]?.results ?? [];
         const winner = winnerRows.length === 1
-          ? winnerRows[0] as { id?: string; stage_key?: string; board_position?: number; board_revision?: number }
+          ? winnerRows[0] as { id?: string; stage_key?: string; board_revision?: number }
           : undefined;
         const markerRows = results[bundle.indexes.stage.auditMarker]?.results ?? [];
         const marker = markerRows.length === 1 ? markerRows[0] as { id?: string } : undefined;
         if (winner
           && winner.id === input.projectId
           && winner.stage_key === "raw_review"
-          && typeof winner.board_position === "number"
-          && Number.isFinite(winner.board_position)
           && typeof winner.board_revision === "number"
           && Number.isInteger(winner.board_revision)
           && winner.board_revision === source.boardRevision + 1
           && marker?.id === auditId) {
           const finalizer = deriveStageFinalizerIntent([{
             kind: "winner",
-            row: { projectId: winner.id, stageKey: winner.stage_key as "raw_review", boardPosition: winner.board_position, boardRevision: winner.board_revision },
+            row: { projectId: winner.id, stageKey: winner.stage_key as "raw_review", boardRevision: winner.board_revision },
             auditId: marker.id,
             legacyWorkflowNotification: "raw_ready",
           }]);

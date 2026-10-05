@@ -133,12 +133,6 @@ function project(id: string, stageKey: ProjectSummary["stageKey"], overrides: Pa
     deadlineAt: null,
     deadlineLocalCivil: null,
     deadlineZone: null,
-    // The Dashboard derives these from the payload's `orderedProjectIdsByStage` for every project
-    // it hands either Board (`lib/dashboard-projects.ts:48-50`), so a fixture without them is not a
-    // state the app can reach. Priority eligibility reads them (#98); the missing-map case below
-    // strips them deliberately.
-    boardMapPresent: true,
-    boardRank: 0,
     ...overrides,
   };
 }
@@ -736,21 +730,16 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     expect(props.onBoardMove).not.toHaveBeenCalled();
   });
 
-  it("offers editable Priority with the Board mutation flag off, but not without board-map evidence (#98)", async () => {
-    // Priority must NOT depend on `boardMutationEnabled` — that is the movement flag. This is the
-    // regression #98 names, and this is the only seam that can express the second half: the
-    // Dashboard always supplies map evidence whenever this Board is on screen
-    // (`lib/dashboard-projects.ts:48-50`), so a missing-map Dashboard state does not exist.
-    await renderBoard({ boardMutationEnabled: false, canPrioritize: true });
-    expect(host.querySelector('[role="radiogroup"]'), "Priority is gated on the movement flag again").not.toBeNull();
+  it("offers editable Priority with the Board mutation flag off and no map fields at all; only the capability, a terminal Stage or an archived card make it read-only (#98, #475)", async () => {
+    // Priority must NOT depend on `boardMutationEnabled` — that is the movement flag — and, since the Board
+    // order is derived from the data (#470, #475), it does not depend on any server order map either.
+    await renderBoard({ boardMutationEnabled: false, canPrioritize: true, projects: [project("source", "awaiting_raw", { priority: 2 })] });
+    expect(host.querySelector('[data-testid="board-card-address"]'), "no card rendered — the assertions below would be vacuous").not.toBeNull();
+    expect(host.querySelector('[role="radiogroup"]'), "Priority is gated on the movement flag or a map again").not.toBeNull();
 
-    // Same props, map evidence stripped from every project: read-only stars, no radiogroup.
-    await renderBoard({
-      boardMutationEnabled: false,
-      canPrioritize: true,
-      projects: [project("source", "awaiting_raw", { boardMapPresent: undefined, boardRank: undefined, priority: 2 })],
-    });
-    expect(host.querySelector('[data-testid="board-card-address"]'), "no card rendered — the assertion below would be vacuous").not.toBeNull();
+    // Without the capability the stars are read-only: no radiogroup, a static image.
+    await renderBoard({ boardMutationEnabled: true, canPrioritize: false, projects: [project("source", "awaiting_raw", { priority: 2 })] });
+    expect(host.querySelector('[data-testid="board-card-address"]')).not.toBeNull();
     expect(host.querySelector('[role="radiogroup"]')).toBeNull();
     expect(host.querySelector('[data-testid="board-card-priority"] [role="img"]')).not.toBeNull();
   });
@@ -1336,8 +1325,8 @@ describe("ProjectKanbanBoard2 — reorder animation and the star-click guard (#3
   });
 
   it("does not fly a card that changed column", async () => {
-    await renderBoard({ projects: [project("a", "awaiting_raw", { boardRank: 0 }), project("b", "awaiting_raw", { boardRank: 1 })] });
-    await renderBoard({ projects: [project("a", "raw_review", { boardRank: 0 }), project("b", "awaiting_raw", { boardRank: 1 })] });
+    await renderBoard({ projects: [project("a", "awaiting_raw", {}), project("b", "awaiting_raw", {})] });
+    await renderBoard({ projects: [project("a", "raw_review", {}), project("b", "awaiting_raw", {})] });
     expect(played().map((entry) => entry.id)).not.toContain("a");
   });
 
@@ -1592,8 +1581,8 @@ describe("Board card on ReUI frame (#432)", () => {
 describe("KanbanCard2 — ⋯ and right-click menus (#432)", () => {
   const column = () => [
     project("top", "awaiting_raw", {}),
-    project("mid", "awaiting_raw", { boardRank: 1 }),
-    project("low", "awaiting_raw", { boardRank: 2 }),
+    project("mid", "awaiting_raw", {}),
+    project("low", "awaiting_raw", {}),
   ];
   const wrap = (id: string) => [...host.querySelectorAll('[data-testid="board-card-wrap"]')].find((node) => node.querySelector(`[data-focus-key="card:${id}"]`));
   const labels = () => menuItems().map((node) => node.textContent);

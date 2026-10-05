@@ -2,8 +2,8 @@ import {
   boardContractEnabled,
   boardSchemaVariant,
   buildDeadlineSuppressionBundle,
-  buildNonCompactingStageWinner,
   buildStageActivityBundle,
+  buildStageWinner,
   buildStageShootDateFill,
   buildWorkflowTail,
   composeStageBundle,
@@ -31,9 +31,7 @@ import { newId } from "./ids";
 import type { AppEnv, SessionUser } from "../env";
 import { ensurePipelineStages } from "../routes/stages";
 import {
-  planBoardPlacement,
   readBoardProject,
-  readBoardRows,
   readVisibleBoardRows,
 } from "./project-board-order";
 
@@ -106,17 +104,16 @@ async function resolveStageVisibleProject(input: MoveProjectStageInput) {
 }
 
 function finalizerFromResults(results: D1Result<unknown>[], projectId: string, auditIndex: number, winnerIndex: number, activityIndex: number) {
-  const winner = (results[winnerIndex]?.results ?? []).find((item) => (item as { id?: unknown }).id === projectId) as { id?: string; stage_key?: StageKey; stageKey?: StageKey; board_position?: number; boardPosition?: number; board_revision?: number; boardRevision?: number } | undefined;
+  const winner = (results[winnerIndex]?.results ?? []).find((item) => (item as { id?: unknown }).id === projectId) as { id?: string; stage_key?: StageKey; stageKey?: StageKey; board_revision?: number; boardRevision?: number } | undefined;
   const marker = results[auditIndex]?.results?.[0] as { id?: string } | undefined;
   if (!winner?.id || !marker?.id) return null;
   const stageKey = winner.stageKey ?? winner.stage_key;
-  const boardPosition = winner.boardPosition ?? winner.board_position;
   const boardRevision = winner.boardRevision ?? winner.board_revision;
-  if (!stageKey || boardPosition === undefined || boardRevision === undefined) return null;
+  if (!stageKey || boardRevision === undefined) return null;
   const publicationIds = (results[activityIndex]?.results ?? []).map((item) => (item as { id?: unknown }).id).filter((id): id is string => typeof id === "string");
   return deriveStageFinalizerIntent([{
     kind: "winner",
-    row: { projectId: winner.id, stageKey, boardPosition, boardRevision },
+    row: { projectId: winner.id, stageKey, boardRevision },
     auditId: marker.id,
     publicationIds,
   }]);
@@ -144,8 +141,9 @@ export async function moveProjectStage(input: MoveProjectStageInput): Promise<Mo
     return { kind: "conflict", current };
   }
 
-  // The Board is sorted by data (#470), so a same-Stage request has nothing to change whatever
-  // placement a stale tab attached to it. The source CAS above already rejected a stale card.
+  // The Board is sorted by data (#470), so a same-Stage request has nothing to change. The source
+  // CAS above already rejected a stale card. A retired `between` placement never reaches here: the
+  // route answers it with 409 stage_contract_reload_required before parsing (#475).
   if (targetStageKey === project.stageKey) {
     const visibleRows = await readVisibleBoardRows(db, principal, project.stageKey);
     return { kind: "no_change", response: responseFor(project, principal.role, project.stageKey, visibleRows, false) };
@@ -167,16 +165,12 @@ export async function moveProjectStage(input: MoveProjectStageInput): Promise<Mo
     };
   }
 
-  const destinationRows = await readBoardRows(db, targetStageKey);
-  // Always an append, whatever placement the request carried (a stale tab may still send `between`).
-  const placement = planBoardPlacement({ target: project, destinationRows, request: { targetStageKey } });
   const auditId = newId();
   const activityId = newId();
   const now = input.now ?? Date.now();
-  const stage = buildNonCompactingStageWinner({
+  const stage = buildStageWinner({
     db, projectId: project.id, sourceStageKey: project.stageKey, targetStageKey,
-    oldBoardRevision: project.boardRevision, expectedTarget: placement.expectedTarget,
-    placement: "append", exactBoardPosition: placement.boardPosition,
+    oldBoardRevision: project.boardRevision,
     auditId, actorId: principal.id, auditAction: "stage.set",
     auditMetaJson: auditMeta(principal, { from: project.stageKey, to: targetStageKey }) ?? "{}", now,
   });

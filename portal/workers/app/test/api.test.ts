@@ -2774,6 +2774,42 @@ describe("staff app API", () => {
     await expect(listed.json()).resolves.toMatchObject({ assets: [expect.objectContaining({ id: assetId })] });
   });
 
+  it("a direct RAW upload advances the Project, reports success, and sends raw_ready with no invariant failure (#475)", async () => {
+    const cookie = await sessionCookie(adminToken);
+    const projectId = crypto.randomUUID();
+    const collectionId = crypto.randomUUID();
+    const assetId = crypto.randomUUID();
+    const now = Date.now();
+    // A non-empty raw_review column with positions the move must not touch.
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, board_revision, created_at, updated_at) VALUES (?, ?, 'raw_review', 4096, 3, ?, ?)").bind(crypto.randomUUID(), "RAW review neighbour", now, now),
+      database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, board_revision, created_at, updated_at) VALUES (?, ?, 'awaiting_raw', 55, 2, ?, ?)").bind(projectId, `RAW ingest outcome ${projectId}`, now, now),
+      database.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'raw', 'empty', 0, ?, ?)").bind(collectionId, projectId, now, now),
+    ]);
+    const key = `projects/${projectId}/raw/${assetId}/outcome.jpg`;
+    await authEnv.MEDIA.put(key, "outcome-jpeg", { httpMetadata: { contentType: "image/jpeg" } });
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const response = await SELF.fetch("https://portal.test/api/uploads/complete", {
+        method: "POST", headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ projectId, key, originalFilename: "outcome.jpg", collection: "raw" }),
+      });
+      expect(response.status).toBe(201);
+      await expect(database.DB.prepare("SELECT stage_key, board_position, board_revision FROM projects WHERE id = ?").bind(projectId).first())
+        .resolves.toEqual({ stage_key: "raw_review", board_position: 55, board_revision: 3 });
+      // Reported outcome and follow-ups, not just the row: the raw_ready notification went out and the
+      // finalizer's invariant check did not trip.
+      const notified = await database.DB.prepare("SELECT count(*) AS count FROM notifications WHERE project_id = ? AND type = 'raw_ready'").bind(projectId).first<{ count: number }>();
+      expect(notified!.count).toBeGreaterThan(0);
+      const filled = await database.DB.prepare("SELECT shoot_date FROM projects WHERE id = ?").bind(projectId).first<{ shoot_date: string | null }>();
+      expect(filled?.shoot_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      const messages = errors.mock.calls.map((call) => String(call[0]));
+      expect(messages.filter((message) => /invariant failure/i.test(message))).toEqual([]);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
   it("leaves a held Shoot date (canonical or text) untouched when a direct RAW upload advances the Project", async () => {
     const cookie = await sessionCookie(adminToken);
     for (const held of ["2026-09-15", "TBC next week"]) {
@@ -3873,7 +3909,7 @@ describe("staff app API", () => {
   // by a hair and failed as a timeout rather than an assertion.
   }, 30_000);
 
-  it("answers a same-Stage placement from an Editor or External Editor as an unchanged no-op, without mutation (#470)", async () => {
+  it("answers a retired between placement from an Editor or External Editor with the reload-required 409, without mutation (#475)", async () => {
     const adminCookie = await sessionCookie(adminToken);
     const projectIds: string[] = [];
     for (const label of ["first", "second", "third"]) {
@@ -3898,7 +3934,7 @@ describe("staff app API", () => {
       },
     };
     const footprint = async () => Promise.all([
-      database.DB.prepare("SELECT stage_key AS stageKey, board_position AS boardPosition, board_revision AS boardRevision FROM projects WHERE id IN (?, ?, ?) ORDER BY board_position, id").bind(target, before, after).all().then((result) => result.results),
+      database.DB.prepare("SELECT stage_key AS stageKey, board_revision AS boardRevision FROM projects WHERE id IN (?, ?, ?) ORDER BY id").bind(target, before, after).all().then((result) => result.results),
       database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ?").bind(target).first(),
       database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(target).first(),
       database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(target).first(),
@@ -3906,8 +3942,8 @@ describe("staff app API", () => {
     const beforeFootprint = await footprint();
     for (const cookie of [await sessionCookie(editorToken), await sessionCookie(externalEditorToken)]) {
       const response = await jsonRequest(`/api/projects/${target}/stage`, cookie, "POST", placementBody);
-      expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toMatchObject({ changed: false, project: { projectId: target, boardRevision: 0 } });
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({ code: "stage_contract_reload_required" });
       expect(await footprint()).toEqual(beforeFootprint);
     }
   });

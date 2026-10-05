@@ -5169,6 +5169,20 @@ remove the legacy readers) still applies.
 - **Phone stacking, not truncation.** Under the `@max-[26rem]/track` container breakpoint a rule row wraps onto lines: combinator + handle/menu, then field and operator side by side at explicit half-line bases (`basis-[calc(50%-0.1875rem)] shrink-0`), then the value on its own full line (`basis-full`). Two failed attempts first: a fixed `--filter-*-width` basis with `grow` still SHRANK the cells (grow only shares free space), and `basis-auto` collapsed them to their padding, because every cell is an `@container/cell` size container and a size container's content size resolves to ~0. On a size container, never size by content: give it an explicit basis. The Dashboard's cell widths are 8.5rem / 10rem / 8.5rem (field / operator / value): inside a nested group every cell shrinks, and below about 10rem the operator "is not any of" lost its last letters even at 1280 (measure after the popover's zoom-in finishes, or a live check reads a mid-animation layout). The negated operator reads "is not any of" via `LABELS.negated`; the popup is `100vw - 2 * --space-4` wide with `collisionPadding={16}`; the trigger badge stays visible on the phone.
 
 
+## Board order Stage B: stop writing `board_position` (#475)
+
+- **Nothing writes `board_position` any more; the Board order is derived from the data (#470).** A Stage move is a mover-only
+  `UPDATE` (stage, `board_revision`), with no whole-column fence, no compaction and no renumbering. The column stays in the schema
+  and `project_board_order_0037_rollback` is untouched: dropping either is a later migration, not this change.
+- **Four callers used to read `board_position` off the `RETURNING` row** (`ingest.ts`, `automatic-stage.ts`, `project-stage.ts`,
+  `deriveStageFinalizerIntent`). With the write gone the column is not in the row, so each caller's *reported outcome* and its
+  follow-ups (raw_ready notification, finalizer, shoot-date fill) are asserted in tests, not only the DB state: a caller that
+  silently read `undefined` as "no change" would pass a DB-only test and skip its side effects.
+- **The web seam stopped reading the server order map too.** `boardMapPresent` / `boardRank` / `authorizedBoardOrder` are gone from
+  `ProjectSummary` and `BoardModel`, so Priority editability no longer depends on map evidence; the old "missing-map" test was
+  replaced by one proving editability with no map fields at all.
+- **`fence-rework-normative-sql.md` was re-pinned (characterisation, not a guard)** because the SQL it records no longer exists.
+
 ## The Project whiteboard's socket and shell (#498)
 
 - **A WebSocket upgrade is a GET, so `requireAppOrigin` never sees it.** The route checks `Origin === APP_ORIGIN` itself; without it any site could open a socket with the user's cookie. Access (session, collaboration, Project row) is decided BEFORE a Durable Object is addressed, so a refused request creates none.

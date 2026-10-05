@@ -127,7 +127,7 @@ export type ApplyPlan = {
 
 const PROJECT_COLUMNS = [
   "id", "street", "suburb", "postcode", "agency_name", "agent_name", "agent_email", "agent_phone",
-  "agency_id", "agent_id", "shoot_date", "time_window", "stage_key", "board_position", "board_revision",
+  "agency_id", "agent_id", "shoot_date", "time_window", "stage_key", "board_revision",
   "order_no", "order_id", "invoice_amount", "payment_status", "notes", "production_notes", "raw_folder_link", "raw_folder_path",
   "cover_asset_id", "archived_at", "archived_by", "edited_arrived_at", "edited_arrival_attempts", "edited_arrival_retry_at",
   "deadline_local_civil", "deadline_zone", "deadline_utc_offset_minutes", "deadline_fold", "deadline_at", "deadline_reminder_offsets_json", "deadline_version", "deadline_source",
@@ -135,14 +135,10 @@ const PROJECT_COLUMNS = [
 ];
 
 /**
- * `board_position` is a live subquery, not a literal — this is the exact expression
- * `createProjectAtomically` binds in `workers/app/src/routes/projects.ts` (`~:320-321`), so a
- * fixture project appended to a stage that already holds real rows still lands after them, and two
- * fixture projects targeting the same stage in the same apply batch see each other's rows (D1
- * `batch()` is sequential within one transaction).
+ * `board_position` is not written (#475): the Board order is derived from the data, so a fixture project
+ * takes the column's DEFAULT 0, exactly like `createProjectAtomically`.
  */
 function projectInsertStatement(dataset: QaFixtureDataset, project: QaFixtureDataset["projects"][number]): string {
-  const boardPositionExpr = `(SELECT COALESCE(MAX(board_position) + 1024, 0) FROM projects WHERE stage_key = ${sqlText(project.stageKey, "stage key")} AND archived_at IS NULL AND id != ${sqlId(project.id, "project id")})`;
   const deadline = project.deadline;
   const values = [
     sqlId(project.id, "project id"),
@@ -154,7 +150,6 @@ function projectInsertStatement(dataset: QaFixtureDataset, project: QaFixtureDat
     sqlNullableText(project.shootDate, "shoot date"),
     "NULL",
     sqlText(project.stageKey, "stage key"),
-    boardPositionExpr,
     sqlInt(project.boardRevision, "board revision"),
     "NULL", "NULL", "NULL", "NULL",
     sqlText(project.notes, "notes"),

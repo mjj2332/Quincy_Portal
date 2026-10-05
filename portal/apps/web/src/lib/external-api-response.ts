@@ -1,10 +1,8 @@
 import {
   EXTERNAL_API_RESPONSE_SCHEMAS,
-  authorizedBoardRank,
   type ExternalApiSurface,
   type ExternalProjectDetailDto,
   type ExternalProjectSummaryDto,
-  type AuthorizedBoardOrder,
 } from "@quincy/shared";
 import { apiGet } from "./api";
 
@@ -23,7 +21,6 @@ export async function externalApiGet<S extends ExternalApiSurface>(surface: S, p
 
 export function externalProjectSummaryToDashboard(
   project: ExternalProjectSummaryDto,
-  orderedProjectIdsByStage?: AuthorizedBoardOrder,
   contractEnabled = false,
 ) {
   const raw = project.services.find((service) => service.kind === "raw");
@@ -41,9 +38,6 @@ export function externalProjectSummaryToDashboard(
     expectedCount: raw?.expectedCount ?? null,
     priority: null,
     editors: project.editors,
-    boardRank: authorizedBoardRank(project.id, project.stageKey, orderedProjectIdsByStage),
-    boardMapPresent: Object.keys(orderedProjectIdsByStage ?? {}).length > 0,
-    authorizedBoardOrder: orderedProjectIdsByStage,
     boardContractEnabled: contractEnabled,
     boardRevision: project.boardRevision,
     deadlineAt: project.deadline?.deadline?.instant ? Date.parse(project.deadline.deadline.instant) : null,

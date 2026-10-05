@@ -460,6 +460,29 @@ describe("Dropbox RAW arrival fills an empty Shoot date", () => {
     expect(editorReconcileSends(environment)).toEqual([[expect.objectContaining({ projectId: context.projectId })]]);
   });
 
+  it("produces the raw_ready notification for the Project after the auto-advance (#475)", async () => {
+    const context = await fixture({ stage: "awaiting_raw" });
+    const memberId = crypto.randomUUID();
+    const now = Date.now();
+    await bindings.DB.batch([
+      bindings.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, authorization_epoch, created_at, updated_at) VALUES (?, 'RAW Notify Photographer', ?, 1, 'photographer', 1, 0, ?, ?)").bind(memberId, `${memberId}@example.test`, now, now),
+      bindings.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'photographer', ?)").bind(crypto.randomUUID(), context.projectId, memberId, now),
+    ]);
+    configureDropbox([fileFor(context, "hash-b")]);
+    await syncProjectRawFolder(localEnv(), context.projectId);
+    const stage = await bindings.DB.prepare("SELECT stage_key FROM projects WHERE id = ?").bind(context.projectId).first<{ stage_key: string }>();
+    expect(stage?.stage_key).toBe("raw_review");
+    const notified = await bindings.DB.prepare("SELECT user_id FROM notifications WHERE project_id = ? AND type = 'raw_ready'").bind(context.projectId).all<{ user_id: string }>();
+    expect(notified.results.map((row) => row.user_id)).toContain(memberId);
+  });
+
+  it("produces no raw_ready notification when the Project was already past Awaiting RAW (#475)", async () => {
+    const context = await fixture({ stage: "raw_review" });
+    configureDropbox([fileFor(context, "hash-b")]);
+    await syncProjectRawFolder(localEnv(), context.projectId);
+    expect(await bindings.DB.prepare("SELECT count(*) AS count FROM notifications WHERE project_id = ? AND type = 'raw_ready'").bind(context.projectId).first()).toEqual({ count: 0 });
+  });
+
   it("does not queue the Editor reconcile when Editor automation is off", async () => {
     const context = await fixture({ stage: "awaiting_raw" });
     configureDropbox([fileFor(context, "hash-b")]);

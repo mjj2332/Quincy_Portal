@@ -169,7 +169,6 @@ export const projects = sqliteTable(
     timeWindow: text("time_window"),
     stageKey: text("stage_key").notNull().default("awaiting_raw"),
     priority: integer("priority"),
-    boardPosition: real("board_position").notNull().default(0),
     boardRevision: integer("board_revision").notNull().default(0),
     orderNo: text("order_no"),
     orderId: text("order_id"),

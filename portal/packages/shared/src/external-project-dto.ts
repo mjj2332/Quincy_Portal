@@ -187,13 +187,14 @@ export const externalProjectExportSchema = z.object({
 
 const externalBoardProjectionSchema = z.object({
   contractEnabled: z.boolean(),
+  // Deprecated (#475), removed in #476: optional so a stale tab and a rolled-back Worker both still parse.
   orderedProjectIdsByStage: z.object({
     awaiting_raw: z.array(uuid).optional(),
     raw_review: z.array(uuid).optional(),
     editing: z.array(uuid).optional(),
     edited_review: z.array(uuid).optional(),
     delivered: z.array(uuid).optional(),
-  }).strict(),
+  }).strict().optional(),
 }).strict();
 
 /** #217 -- present only when the request carried a `q`. Mirrors `/api/projects`'s own envelope

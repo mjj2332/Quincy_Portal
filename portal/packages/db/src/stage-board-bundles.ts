@@ -55,9 +55,6 @@ export type ComposedStageBundleIndexes = {
   shootDateFill?: ShootDateFillIndexes;
 };
 export type CommittedStageFinalizerIntent = { publicationIds: string[]; legacyWorkflowNotification?: "raw_ready" | "sent_to_editing" | "edited_landed"; };
-export type ExpectedTargetPlacementRow = { projectId: string; stageKey: StageKey; boardPosition: number; boardRevision: number; };
-export type ExpectedTargetCompactionRow = ExpectedTargetPlacementRow & { newBoardPosition: number; };
-export type ChangedCompactionRow = { projectId: string; oldStageKey: StageKey; oldBoardPosition: number; oldBoardRevision: number; newBoardPosition: number; isTarget: 0 | 1; };
 export type StageWinnerInput = {
   db: D1Database;
   projectId: string;
@@ -67,9 +64,6 @@ export type StageWinnerInput = {
   targetStageKey?: StageKey;
   oldBoardRevision?: number;
   targetOldBoardRevision?: number;
-  expectedTargetJson?: string;
-  expectedTarget?: readonly ExpectedTargetPlacementRow[] | readonly ExpectedTargetCompactionRow[];
-  expectedTargetRowCount?: number;
   workflowPremise?: GuardedTransitionPrerequisite;
   auditId: string;
   actorId?: string | null;
@@ -81,9 +75,7 @@ export type StageWinnerInput = {
   now?: number;
   updatedAt?: number;
 };
-export type NonCompactingStageWinnerInput = StageWinnerInput & { placement: "append" | "exact"; boardPosition?: number; exactBoardPosition?: number; position?: number; };
-export type CompactingStageWinnerInput = StageWinnerInput & { expectedTargetJson?: string; expectedTarget?: readonly ExpectedTargetCompactionRow[]; changedPlanJson?: string; changedPlan?: readonly ChangedCompactionRow[]; expectedChangedRowCount?: number; };
-export type StageWinnerResultRow = { projectId: string; stageKey: StageKey; boardPosition: number; boardRevision: number; };
+export type StageWinnerResultRow = { projectId: string; stageKey: StageKey; boardRevision: number; };
 export type StageFinalizerWinnerResult = { kind: "winner"; row: StageWinnerResultRow; auditId: string; publicationIds?: readonly string[]; legacyWorkflowNotification?: CommittedStageFinalizerIntent["legacyWorkflowNotification"]; } | { kind: "loser" | "no_op" | "conflict" | "inconsistent"; };
 const EXPECTED_KEYS = {
   none: ["kind"],
@@ -1062,453 +1054,34 @@ WHERE
 `; }
 export const NORMATIVE_TERMINAL_ASSERTION_SQL = terminalAssertionSql({ kind: "none" }, { kind: "none" });
 export const NORMATIVE_OWNERSHIP_ASSERTION_SQL = ownershipAssertionSql();
-export const NON_COMPACTING_EXACT_SQL = String.raw`WITH
-expected_target AS (
-  SELECT
-    json_extract(value, '$.projectId') AS project_id,
-    json_type(value, '$.projectId') AS project_id_type,
-    json_extract(value, '$.stageKey') AS stage_key,
-    json_type(value, '$.stageKey') AS stage_key_type,
-    CAST(json_extract(value, '$.boardPosition') AS REAL) AS board_position,
-    json_type(value, '$.boardPosition') AS board_position_type,
-    CAST(json_extract(value, '$.boardRevision') AS INTEGER) AS board_revision,
-    json_type(value, '$.boardRevision') AS board_revision_type
-  FROM json_each(
-    CASE WHEN json_valid(?1) THEN ?1 ELSE '[]' END
-  )
-),
-${workflowPremiseCte(10, 5, 7)},
+export const STAGE_MOVE_SQL = String.raw`WITH
+${workflowPremiseCte(7, 3, 5)},
 fence AS MATERIALIZED (
   SELECT 1 AS ok
   WHERE EXISTS (
     SELECT 1
     FROM feature_flags
-    WHERE key = ?2
+    WHERE key = ?1
       AND enabled = 1
-  )
-  AND json_valid(?1)
-  AND (SELECT COUNT(*) FROM expected_target) = ?3
-  AND (SELECT COUNT(DISTINCT project_id) FROM expected_target) = ?3
-  AND NOT EXISTS (
-    SELECT 1
-    FROM expected_target
-    WHERE project_id_type <> 'text'
-       OR stage_key_type <> 'text'
-       OR stage_key IS NOT ?4
-       OR board_position_type NOT IN ('integer', 'real')
-       OR board_revision_type <> 'integer'
-       OR board_revision < 0
-       OR board_revision > 9007199254740991
-  )
-  AND (
-    SELECT COUNT(*)
-    FROM projects
-    WHERE stage_key = ?4
-      AND archived_at IS NULL
-      AND id <> ?5
-  ) = ?3
-  AND (
-    SELECT COUNT(*)
-    FROM expected_target e
-    JOIN projects p
-      ON p.id = e.project_id
-     AND p.id <> ?5
-    WHERE p.stage_key = e.stage_key
-      AND p.board_position IS e.board_position
-      AND p.board_revision = e.board_revision
-      AND p.archived_at IS NULL
-  ) = ?3
-  AND NOT EXISTS (
-    SELECT 1
-    FROM expected_target e
-    LEFT JOIN projects p
-      ON p.id = e.project_id
-     AND p.id <> ?5
-    WHERE p.id IS NULL
-       OR p.stage_key IS NOT e.stage_key
-       OR p.board_position IS NOT e.board_position
-       OR p.board_revision IS NOT e.board_revision
-       OR p.archived_at IS NOT NULL
-  )
-  AND NOT EXISTS (
-    SELECT 1
-    FROM projects p
-    LEFT JOIN expected_target e
-      ON e.project_id = p.id
-    WHERE p.stage_key = ?4
-      AND p.archived_at IS NULL
-      AND p.id <> ?5
-      AND e.project_id IS NULL
   )
   AND EXISTS (SELECT 1 FROM workflow_premise)
 )
 UPDATE projects AS p
 SET
-  stage_key = ?4,
-  board_position = ?8,
+  stage_key = ?2,
   board_revision = p.board_revision + 1,
-  edited_arrived_at = CASE WHEN ?4 IN ('edited_review', 'delivered') THEN NULL ELSE p.edited_arrived_at END,
-  edited_arrival_attempts = CASE WHEN ?4 IN ('edited_review', 'delivered') THEN 0 ELSE p.edited_arrival_attempts END,
-  edited_arrival_retry_at = CASE WHEN ?4 IN ('edited_review', 'delivered') THEN NULL ELSE p.edited_arrival_retry_at END,
-  updated_at = ?9
+  edited_arrived_at = CASE WHEN ?2 IN ('edited_review', 'delivered') THEN NULL ELSE p.edited_arrived_at END,
+  edited_arrival_attempts = CASE WHEN ?2 IN ('edited_review', 'delivered') THEN 0 ELSE p.edited_arrival_attempts END,
+  edited_arrival_retry_at = CASE WHEN ?2 IN ('edited_review', 'delivered') THEN NULL ELSE p.edited_arrival_retry_at END,
+  updated_at = ?6
 FROM fence
-WHERE p.id = ?5
-  AND p.stage_key = ?6
-  AND p.board_revision = ?7
+WHERE p.id = ?3
+  AND p.stage_key = ?4
+  AND p.board_revision = ?5
   AND p.archived_at IS NULL
 RETURNING
   id,
   stage_key,
-  board_position,
-  board_revision;
-`;
-export const APPEND_STAGE_BOTTOM_SQL = String.raw`SELECT COALESCE(MAX(board_position) + 1024, 0)
-FROM projects
-WHERE stage_key = ?1
-  AND archived_at IS NULL
-  AND id <> ?2
-`;
-export const NON_COMPACTING_APPEND_SQL = String.raw`WITH
-expected_target AS (
-  SELECT
-    json_extract(value, '$.projectId') AS project_id,
-    json_type(value, '$.projectId') AS project_id_type,
-    json_extract(value, '$.stageKey') AS stage_key,
-    json_type(value, '$.stageKey') AS stage_key_type,
-    CAST(json_extract(value, '$.boardPosition') AS REAL) AS board_position,
-    json_type(value, '$.boardPosition') AS board_position_type,
-    CAST(json_extract(value, '$.boardRevision') AS INTEGER) AS board_revision,
-    json_type(value, '$.boardRevision') AS board_revision_type
-  FROM json_each(
-    CASE WHEN json_valid(?1) THEN ?1 ELSE '[]' END
-  )
-),
-${workflowPremiseCte(10, 5, 7)},
-fence AS MATERIALIZED (
-  SELECT 1 AS ok
-  WHERE EXISTS (
-    SELECT 1
-    FROM feature_flags
-    WHERE key = ?2
-      AND enabled = 1
-  )
-  AND json_valid(?1)
-  AND (SELECT COUNT(*) FROM expected_target) = ?3
-  AND (SELECT COUNT(DISTINCT project_id) FROM expected_target) = ?3
-  AND NOT EXISTS (
-    SELECT 1
-    FROM expected_target
-    WHERE project_id_type <> 'text'
-       OR stage_key_type <> 'text'
-       OR stage_key IS NOT ?4
-       OR board_position_type NOT IN ('integer', 'real')
-       OR board_revision_type <> 'integer'
-       OR board_revision < 0
-       OR board_revision > 9007199254740991
-  )
-  AND (
-    SELECT COUNT(*)
-    FROM projects
-    WHERE stage_key = ?4
-      AND archived_at IS NULL
-      AND id <> ?5
-  ) = ?3
-  AND (
-    SELECT COUNT(*)
-    FROM expected_target e
-    JOIN projects p
-      ON p.id = e.project_id
-     AND p.id <> ?5
-    WHERE p.stage_key = e.stage_key
-      AND p.board_position IS e.board_position
-      AND p.board_revision = e.board_revision
-      AND p.archived_at IS NULL
-  ) = ?3
-  AND NOT EXISTS (
-    SELECT 1
-    FROM expected_target e
-    LEFT JOIN projects p
-      ON p.id = e.project_id
-     AND p.id <> ?5
-    WHERE p.id IS NULL
-       OR p.stage_key IS NOT e.stage_key
-       OR p.board_position IS NOT e.board_position
-       OR p.board_revision IS NOT e.board_revision
-       OR p.archived_at IS NOT NULL
-  )
-  AND NOT EXISTS (
-    SELECT 1
-    FROM projects p
-    LEFT JOIN expected_target e
-      ON e.project_id = p.id
-    WHERE p.stage_key = ?4
-      AND p.archived_at IS NULL
-      AND p.id <> ?5
-      AND e.project_id IS NULL
-  )
-  AND EXISTS (SELECT 1 FROM workflow_premise)
-)
-UPDATE projects AS p
-SET
-  stage_key = ?4,
-  board_position = (
-    SELECT COALESCE(MAX(board_position) + 1024, 0)
-    FROM projects
-    WHERE stage_key = ?4
-      AND archived_at IS NULL
-      AND id <> ?5
-  ),
-  board_revision = p.board_revision + 1,
-  edited_arrived_at = CASE WHEN ?4 IN ('edited_review', 'delivered') THEN NULL ELSE p.edited_arrived_at END,
-  edited_arrival_attempts = CASE WHEN ?4 IN ('edited_review', 'delivered') THEN 0 ELSE p.edited_arrival_attempts END,
-  edited_arrival_retry_at = CASE WHEN ?4 IN ('edited_review', 'delivered') THEN NULL ELSE p.edited_arrival_retry_at END,
-  updated_at = ?9
-FROM fence
-WHERE p.id = ?5
-  AND p.stage_key = ?6
-  AND p.board_revision = ?7
-  AND p.archived_at IS NULL
-RETURNING
-  id,
-  stage_key,
-  board_position,
-  board_revision;
-`;
-export const COMPACTING_SQL = String.raw`WITH
-expected_target AS (
-  SELECT
-    json_extract(value, '$.projectId') AS project_id,
-    json_type(value, '$.projectId') AS project_id_type,
-    json_extract(value, '$.stageKey') AS stage_key,
-    json_type(value, '$.stageKey') AS stage_key_type,
-    CAST(json_extract(value, '$.boardPosition') AS REAL) AS board_position,
-    json_type(value, '$.boardPosition') AS board_position_type,
-    CAST(json_extract(value, '$.boardRevision') AS INTEGER) AS board_revision,
-    json_type(value, '$.boardRevision') AS board_revision_type,
-    CAST(json_extract(value, '$.newBoardPosition') AS REAL) AS new_board_position,
-    json_type(value, '$.newBoardPosition') AS new_board_position_type
-  FROM json_each(
-    CASE WHEN json_valid(?1) THEN ?1 ELSE '[]' END
-  )
-),
-changed_plan AS (
-  SELECT
-    json_extract(value, '$.projectId') AS project_id,
-    json_type(value, '$.projectId') AS project_id_type,
-    json_extract(value, '$.oldStageKey') AS old_stage_key,
-    json_type(value, '$.oldStageKey') AS old_stage_key_type,
-    CAST(json_extract(value, '$.oldBoardPosition') AS REAL) AS old_board_position,
-    json_type(value, '$.oldBoardPosition') AS old_board_position_type,
-    CAST(json_extract(value, '$.oldBoardRevision') AS INTEGER) AS old_board_revision,
-    json_type(value, '$.oldBoardRevision') AS old_board_revision_type,
-    CAST(json_extract(value, '$.newBoardPosition') AS REAL) AS new_board_position,
-    json_type(value, '$.newBoardPosition') AS new_board_position_type,
-    CAST(json_extract(value, '$.isTarget') AS INTEGER) AS is_target,
-    json_type(value, '$.isTarget') AS is_target_type
-  FROM json_each(
-    CASE WHEN json_valid(?2) THEN ?2 ELSE '[]' END
-  )
-),
-required_changed AS (
-  SELECT ?7 AS project_id
-  UNION ALL
-  SELECT project_id
-  FROM expected_target
-  WHERE new_board_position IS NOT board_position
-),
-planned_destination AS (
-  SELECT project_id, new_board_position
-  FROM expected_target
-  UNION ALL
-  SELECT project_id, new_board_position
-  FROM changed_plan
-  WHERE is_target = 1
-),
-ordered_destination AS (
-  SELECT
-    project_id,
-    new_board_position,
-    ROW_NUMBER() OVER (
-      ORDER BY new_board_position, project_id
-    ) - 1 AS desired_rank
-  FROM planned_destination
-),
-${workflowPremiseCte(11, 7, 9)},
-fence AS MATERIALIZED (
-  SELECT 1 AS ok
-  WHERE EXISTS (
-    SELECT 1
-    FROM feature_flags
-    WHERE key = ?3
-      AND enabled = 1
-  )
-  AND json_valid(?1)
-  AND json_valid(?2)
-
-  AND (SELECT COUNT(*) FROM expected_target) = ?5
-  AND (SELECT COUNT(DISTINCT project_id) FROM expected_target) = ?5
-  AND NOT EXISTS (
-    SELECT 1
-    FROM expected_target
-    WHERE project_id_type <> 'text'
-       OR stage_key_type <> 'text'
-       OR stage_key IS NOT ?6
-       OR board_position_type NOT IN ('integer', 'real')
-       OR board_revision_type <> 'integer'
-       OR board_revision < 0
-       OR board_revision > 9007199254740991
-       OR new_board_position_type NOT IN ('integer', 'real')
-  )
-
-  AND (
-    SELECT COUNT(*)
-    FROM projects
-    WHERE stage_key = ?6
-      AND archived_at IS NULL
-      AND id <> ?7
-  ) = ?5
-  AND (
-    SELECT COUNT(*)
-    FROM expected_target e
-    JOIN projects p
-      ON p.id = e.project_id
-     AND p.id <> ?7
-    WHERE p.stage_key = e.stage_key
-      AND p.board_position IS e.board_position
-      AND p.board_revision = e.board_revision
-      AND p.archived_at IS NULL
-  ) = ?5
-  AND NOT EXISTS (
-    SELECT 1
-    FROM expected_target e
-    LEFT JOIN projects p
-      ON p.id = e.project_id
-     AND p.id <> ?7
-    WHERE p.id IS NULL
-       OR p.stage_key IS NOT e.stage_key
-       OR p.board_position IS NOT e.board_position
-       OR p.board_revision IS NOT e.board_revision
-       OR p.archived_at IS NOT NULL
-  )
-  AND NOT EXISTS (
-    SELECT 1
-    FROM projects p
-    LEFT JOIN expected_target e
-      ON e.project_id = p.id
-    WHERE p.stage_key = ?6
-      AND p.archived_at IS NULL
-      AND p.id <> ?7
-      AND e.project_id IS NULL
-  )
-
-  AND (SELECT COUNT(*) FROM changed_plan) = ?4
-  AND (SELECT COUNT(DISTINCT project_id) FROM changed_plan) = ?4
-  AND NOT EXISTS (
-    SELECT 1
-    FROM changed_plan
-    WHERE project_id_type <> 'text'
-       OR old_stage_key_type <> 'text'
-       OR old_board_position_type NOT IN ('integer', 'real')
-       OR old_board_revision_type <> 'integer'
-       OR old_board_revision < 0
-       OR old_board_revision > 9007199254740991
-       OR new_board_position_type NOT IN ('integer', 'real')
-       OR is_target_type <> 'integer'
-       OR is_target NOT IN (0, 1)
-  )
-  AND (
-    SELECT COUNT(*)
-    FROM changed_plan
-    WHERE is_target = 1
-  ) = 1
-  AND EXISTS (
-    SELECT 1
-    FROM changed_plan
-    WHERE is_target = 1
-      AND project_id = ?7
-      AND old_stage_key = ?8
-      AND old_board_revision = ?9
-  )
-
-  AND (SELECT COUNT(*) FROM required_changed) = ?4
-  AND NOT EXISTS (
-    SELECT 1
-    FROM required_changed r
-    LEFT JOIN changed_plan c
-      ON c.project_id = r.project_id
-    WHERE c.project_id IS NULL
-  )
-  AND NOT EXISTS (
-    SELECT 1
-    FROM changed_plan c
-    LEFT JOIN required_changed r
-      ON r.project_id = c.project_id
-    WHERE r.project_id IS NULL
-  )
-  AND NOT EXISTS (
-    SELECT 1
-    FROM changed_plan c
-    WHERE c.is_target = 0
-      AND NOT EXISTS (
-        SELECT 1
-        FROM expected_target e
-        WHERE e.project_id = c.project_id
-          AND e.stage_key = c.old_stage_key
-          AND e.board_position IS c.old_board_position
-          AND e.board_revision = c.old_board_revision
-          AND e.new_board_position IS c.new_board_position
-      )
-  )
-
-  AND (SELECT COUNT(*) FROM planned_destination) = ?5 + 1
-  AND (
-    SELECT COUNT(DISTINCT project_id)
-    FROM planned_destination
-  ) = ?5 + 1
-  AND (
-    SELECT COUNT(DISTINCT new_board_position)
-    FROM planned_destination
-  ) = ?5 + 1
-  AND NOT EXISTS (
-    SELECT 1
-    FROM ordered_destination
-    WHERE new_board_position IS NOT CAST(desired_rank * 1024 AS REAL)
-  )
-
-  AND (
-    SELECT COUNT(*)
-    FROM changed_plan c
-    JOIN projects p
-      ON p.id = c.project_id
-    WHERE p.stage_key = c.old_stage_key
-      AND p.board_position IS c.old_board_position
-      AND p.board_revision = c.old_board_revision
-      AND p.archived_at IS NULL
-  ) = ?4
-  AND EXISTS (SELECT 1 FROM workflow_premise)
-)
-UPDATE projects AS p
-SET
-  stage_key = CASE
-    WHEN c.is_target = 1 THEN ?6
-    ELSE p.stage_key
-  END,
-  board_position = c.new_board_position,
-  board_revision = p.board_revision + 1,
-  edited_arrived_at = CASE WHEN c.is_target = 1 AND ?6 IN ('edited_review', 'delivered') THEN NULL ELSE p.edited_arrived_at END,
-  edited_arrival_attempts = CASE WHEN c.is_target = 1 AND ?6 IN ('edited_review', 'delivered') THEN 0 ELSE p.edited_arrival_attempts END,
-  edited_arrival_retry_at = CASE WHEN c.is_target = 1 AND ?6 IN ('edited_review', 'delivered') THEN NULL ELSE p.edited_arrival_retry_at END,
-  updated_at = ?10
-FROM changed_plan c, fence
-WHERE p.id = c.project_id
-  AND p.stage_key = c.old_stage_key
-  AND p.board_position IS c.old_board_position
-  AND p.board_revision = c.old_board_revision
-  AND p.archived_at IS NULL
-RETURNING
-  id,
-  stage_key,
-  board_position,
   board_revision;
 `;
 const AUDIT_MARKER_SQL = String.raw`INSERT INTO audit_log (
@@ -1599,15 +1172,6 @@ RETURNING
   project_id,
   stage_entry_board_revision;
 `;
-function jsonRows(jsonValue: string | undefined, rows: readonly unknown[] | undefined): { json: string; count: number; } {
-  if (jsonValue !== undefined) {
-    let count = 0;
-    try { const parsed: unknown = JSON.parse(jsonValue); count = Array.isArray(parsed) ? parsed.length : 0; } catch {}
-    return { json: jsonValue, count };
-  }
-  const value = rows ?? [];
-  return { json: JSON.stringify(value), count: value.length };
-}
 function stageValues(input: StageWinnerInput): { from: StageKey; to: StageKey; oldRevision: number; } {
   const from = input.sourceStageKey ?? input.from;
   const to = input.targetStageKey ?? input.to;
@@ -1624,26 +1188,12 @@ function winnerBundle(winner: D1PreparedStatement, audit: D1PreparedStatement): 
     indexes: { winner: 0, auditMarker: 1 }
   };
 }
-export function buildNonCompactingStageWinner(input: NonCompactingStageWinnerInput): PreparedStatementBundle<StageWinnerIndexes> {
+export function buildStageWinner(input: StageWinnerInput): PreparedStatementBundle<StageWinnerIndexes> {
   const { from, to, oldRevision } = stageValues(input);
-  const expected = jsonRows(input.expectedTargetJson, input.expectedTarget);
-  const count = input.expectedTargetRowCount ?? expected.count;
+  if (from === to) throw new Error("Stage winner requires a different destination Stage");
   const updatedAt = input.updatedAt ?? input.now ?? Date.now();
   const premise = compileGuardedTransitionPrerequisite(input.workflowPremise ?? { kind: "none" });
-  const position = input.boardPosition ?? input.exactBoardPosition ?? input.position;
-  if (input.placement === "exact" && position === undefined) throw new Error("Exact Stage placement requires boardPosition");
-  const values = input.placement === "append" ? [expected.json, BOARD_CONTRACT_FLAG, count, to, input.projectId, from, oldRevision, null, updatedAt, premise] : [expected.json, BOARD_CONTRACT_FLAG, count, to, input.projectId, from, oldRevision, position, updatedAt, premise];
-  return winnerBundle(input.db.prepare(input.placement === "append" ? NON_COMPACTING_APPEND_SQL : NON_COMPACTING_EXACT_SQL).bind(...values), input.db.prepare(AUDIT_MARKER_SQL).bind(...auditValues(input, from, to, 1)));
-}
-export function buildCompactingStageWinner(input: CompactingStageWinnerInput): PreparedStatementBundle<StageWinnerIndexes> {
-  const { from, to, oldRevision } = stageValues(input);
-  const expected = jsonRows(input.expectedTargetJson, input.expectedTarget);
-  const changed = jsonRows(input.changedPlanJson, input.changedPlan);
-  const expectedCount = input.expectedTargetRowCount ?? expected.count;
-  const changedCount = input.expectedChangedRowCount ?? changed.count;
-  const updatedAt = input.updatedAt ?? input.now ?? Date.now();
-  const premise = compileGuardedTransitionPrerequisite(input.workflowPremise ?? { kind: "none" });
-  return winnerBundle(input.db.prepare(COMPACTING_SQL).bind(expected.json, changed.json, BOARD_CONTRACT_FLAG, changedCount, expectedCount, to, input.projectId, from, oldRevision, updatedAt, premise), input.db.prepare(AUDIT_MARKER_SQL).bind(...auditValues(input, from, to, changedCount)));
+  return winnerBundle(input.db.prepare(STAGE_MOVE_SQL).bind(BOARD_CONTRACT_FLAG, to, input.projectId, from, oldRevision, updatedAt, premise), input.db.prepare(AUDIT_MARKER_SQL).bind(...auditValues(input, from, to, 1)));
 }
 export type StageActivityBundleInput = { db: D1Database; projectId: string; activityId: string; actorId: string; occurredAt?: number; createdAt?: number; winnerAuditId: string; excludeRecipientId?: string; };
 export function buildStageActivityBundle(input: StageActivityBundleInput): PreparedStatementBundle<ActivityBundleIndexes> {
@@ -1975,21 +1525,19 @@ export function composeStageBundle(input: {
   };
 }
 export function deriveStageFinalizerIntent(winnerResults: readonly StageFinalizerWinnerResult[]): CommittedStageFinalizerIntent | undefined {
-  const validWinner = (result: StageFinalizerWinnerResult): result is Extract<StageFinalizerWinnerResult, { kind: "winner"; }> =>( result.kind === "winner" && Boolean(result.auditId) && Boolean(result.row?.projectId) && Boolean(result.row?.stageKey) && Number.isFinite(result.row.boardPosition) && Number.isInteger(result.row.boardRevision) && result.row.boardRevision >= 0 && (result.publicationIds === undefined || result.publicationIds.every(id => typeof id === "string" && id.length > 0)) && (result.legacyWorkflowNotification === undefined || ["raw_ready", "sent_to_editing", "edited_landed"].includes(result.legacyWorkflowNotification)));
+  const validWinner = (result: StageFinalizerWinnerResult): result is Extract<StageFinalizerWinnerResult, { kind: "winner"; }> =>( result.kind === "winner" && Boolean(result.auditId) && Boolean(result.row?.projectId) && Boolean(result.row?.stageKey) && Number.isInteger(result.row.boardRevision) && result.row.boardRevision >= 0 && (result.publicationIds === undefined || result.publicationIds.every(id => typeof id === "string" && id.length > 0)) && (result.legacyWorkflowNotification === undefined || ["raw_ready", "sent_to_editing", "edited_landed"].includes(result.legacyWorkflowNotification)));
   if (winnerResults.length === 0 || winnerResults.some(result => !validWinner(result))) return undefined;
   const first = winnerResults[0];
   if (!first || !validWinner(first)) return undefined;
   for (const result of winnerResults.slice(1)) {
-    if (!validWinner(result) || result.auditId !== first.auditId || result.row.projectId !== first.row.projectId || result.row.stageKey !== first.row.stageKey || result.row.boardPosition !== first.row.boardPosition || result.row.boardRevision !== first.row.boardRevision || result.legacyWorkflowNotification !== first.legacyWorkflowNotification) { return undefined; }
+    if (!validWinner(result) || result.auditId !== first.auditId || result.row.projectId !== first.row.projectId || result.row.stageKey !== first.row.stageKey || result.row.boardRevision !== first.row.boardRevision || result.legacyWorkflowNotification !== first.legacyWorkflowNotification) { return undefined; }
   }
   return {
     publicationIds: [...new Set(winnerResults.flatMap(result => validWinner(result) ? result.publicationIds ?? [] : []))],
     ...(first.legacyWorkflowNotification ? { legacyWorkflowNotification: first.legacyWorkflowNotification } : {})
   };
 }
-export const NORMATIVE_NON_COMPACTING_EXACT_SQL = NON_COMPACTING_EXACT_SQL;
-export const NORMATIVE_NON_COMPACTING_APPEND_SQL = NON_COMPACTING_APPEND_SQL;
-export const NORMATIVE_COMPACTING_SQL = COMPACTING_SQL;
+export const NORMATIVE_STAGE_MOVE_SQL = STAGE_MOVE_SQL;
 export const NORMATIVE_AUDIT_MARKER_SQL = AUDIT_MARKER_SQL;
 export const NORMATIVE_HANDOFF_EDITING_ENTRY_TOKEN_SQL = HANDOFF_EDITING_ENTRY_TOKEN_SQL;
 export const NORMATIVE_JOB_EDITING_ENTRY_TOKEN_SQL = JOB_EDITING_ENTRY_TOKEN_SQL;
