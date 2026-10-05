@@ -28,7 +28,9 @@ import { ApiError, apiGet } from "./api";
  */
 
 export type WhiteboardConnection = "connecting" | "open" | "reconnecting" | "closed";
-export type WhiteboardInit = { mode: WhiteboardMode; elements: Array<Record<string, unknown>>; sessionId: string; peers: WhiteboardPeer[] };
+export type WhiteboardInit = { mode: WhiteboardMode; generation: number; elements: Array<Record<string, unknown>>; sessionId: string; peers: WhiteboardPeer[] };
+/** #500: a version was restored. The authoritative scene of the new generation. */
+export type WhiteboardReset = { generation: number; elements: Array<Record<string, unknown>> };
 export type WhiteboardPresenceState = Omit<WhiteboardPresenceMessage, "type" | "selectedIds"> & { selectedIds: readonly string[] };
 
 export type WhiteboardSocketHandlers = {
@@ -46,11 +48,19 @@ export type WhiteboardSocketHandlers = {
   onPeerLeft: (sessionId: string) => void;
   /** #499: the Project was archived or restored (view-only or editable), with no reconnect. */
   onMode: (mode: WhiteboardMode) => void;
+  /**
+   * #500: the board was restored to a version. From here on every batch carries the new generation, and the server refuses
+   * the old one, so the board must drop its own edits and load this scene. Phase C wires the board's reset; until it does a
+   * restore leaves a connected tab refused (its sends reject), never merged with the restored scene.
+   */
+  onReset?: (reset: WhiteboardReset) => void;
 };
 
 export type WhiteboardSocket = {
-  /** Resolves once the server has durably stored the batch; rejects if it could not. */
-  send: (elements: readonly unknown[]) => Promise<void>;
+  /** Resolves once the server has durably stored the batch; rejects if it could not. #500: with `generation`, the batch was
+   * sealed for that board generation and is refused here (nothing is sent) once the board has moved on, so a save from before
+   * a restore can never be stamped with the restored generation. */
+  send: (elements: readonly unknown[], generation?: number) => Promise<void>;
   /** #499: shares this client's pointer and selection; dropped unless the socket is open. */
   sendPresence: (state: WhiteboardPresenceState) => void;
   /** Waits (briefly) for in-flight saves, then closes. Safe to call more than once. */
@@ -99,6 +109,7 @@ export function openWhiteboardSocket(projectId: string, handlers: WhiteboardSock
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
   let seq = 0;
+  let generation = 0;           // #500: the board's current generation, from `init` and `reset`; stamped on every batch
   let presenceTimer: ReturnType<typeof setTimeout> | undefined;
   let presenceWaiting: WhiteboardPresenceState | null = null;
   const pending = new Map<number, { resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
@@ -131,11 +142,18 @@ export function openWhiteboardSocket(projectId: string, handlers: WhiteboardSock
       if (!parsed.success) return;
       const message = parsed.data;
       if (message.type === "init") {
+        generation = message.generation;
         handlers.onConnection("open");
-        handlers.onInit({ mode: message.mode, elements: message.elements, sessionId: message.sessionId, peers: message.peers }, initCount > 0);
+        handlers.onInit({ mode: message.mode, generation: message.generation, elements: message.elements, sessionId: message.sessionId, peers: message.peers }, initCount > 0);
         initCount += 1;
+      } else if (message.type === "reset") {
+        generation = message.generation;
+        handlers.onReset?.({ generation: message.generation, elements: message.elements });
       } else if (message.type === "elements") {
-        handlers.onElements(message.elements);
+        // #500: a relay of another generation is never merged. An older one is a straggler; a newer one means this socket missed
+        // the `reset`, so it reconnects and takes the scene from the next `init`.
+        if (message.generation === generation) handlers.onElements(message.elements);
+        else if (message.generation > generation) behind(current);
       } else if (message.type === "presence") {
         const { type: _type, ...peer } = message;
         handlers.onPresence(peer);
@@ -148,7 +166,8 @@ export function openWhiteboardSocket(projectId: string, handlers: WhiteboardSock
         if (entry) { clearTimeout(entry.timer); pending.delete(message.seq); entry.resolve(); finishIfDrained(); }
       } else if (message.seq !== undefined) {
         const entry = pending.get(message.seq);
-        if (entry) { clearTimeout(entry.timer); pending.delete(message.seq); entry.reject(new Error(message.reason === "view-only" ? "This board is view-only." : message.reason === "stale" ? "The board was changing; the change will be sent again." : "The board rejected the change.")); finishIfDrained(); }
+        if (message.reason === "generation" && message.generation > generation) behind(current);
+        if (entry) { clearTimeout(entry.timer); pending.delete(message.seq); entry.reject(new Error(message.reason === "view-only" ? "This board is view-only." : message.reason === "stale" ? "The board was changing; the change will be sent again." : message.reason === "generation" ? "The board was restored to an earlier version, so this change was not applied." : "The board rejected the change.")); finishIfDrained(); }
       }
     }) as (event: never) => void);
     current.addEventListener("close", ((event: { code: number }) => {
@@ -162,6 +181,9 @@ export function openWhiteboardSocket(projectId: string, handlers: WhiteboardSock
       void afterDrop(everOpened);
     }) as (event: never) => void);
   };
+
+  /** #500: the server is on a newer generation than this socket knows. Drop the connection; the reconnect's `init` is the new scene. */
+  const behind = (current: SocketLike) => { if (socket === current) { try { current.close(1000); } catch { /* already closed */ } } };
 
   const afterDrop = async (hadOpened: boolean) => {
     handlers.onConnection("reconnecting");
@@ -222,14 +244,15 @@ export function openWhiteboardSocket(projectId: string, handlers: WhiteboardSock
         }, PRESENCE_INTERVAL_MS);
       } else presenceWaiting = state;
     },
-    send(elements) {
+    send(elements, sealedFor) {
       const current = socket;
       if (stopped || closing || !current || current.readyState !== OPEN) return Promise.reject(new Error("The whiteboard is not connected."));
+      if (sealedFor !== undefined && sealedFor !== generation) return Promise.reject(new Error("The board was restored to an earlier version, so this change was not applied."));
       const id = seq++;
       return new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => { pending.delete(id); reject(new Error("The whiteboard did not confirm the save.")); }, SEND_TIMEOUT_MS);
         pending.set(id, { resolve, reject, timer });
-        try { current.send(JSON.stringify({ type: "elements", seq: id, elements })); }
+        try { current.send(JSON.stringify({ type: "elements", seq: id, generation, elements })); }
         catch (error) { clearTimeout(timer); pending.delete(id); reject(error instanceof Error ? error : new Error("The whiteboard could not send.")); }
       });
     },

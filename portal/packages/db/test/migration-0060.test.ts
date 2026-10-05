@@ -51,7 +51,7 @@ describe("migration 0060 adds link previews (#497)", () => {
     const journal = JSON.parse(readFileSync(new URL("../migrations/meta/_journal.json", import.meta.url), "utf8")) as { entries: Array<{ idx: number; tag: string }> };
     const entry = journal.entries.find((item) => item.tag === MIGRATION.replace(/\.sql$/, ""));
     expect(entry).toBeDefined();
-    expect(entry!.idx).toBe(journal.entries.length - 1);
+    expect(entry!.idx).toBe(60);
   });
 
   it("applies on top of 0059 as a plain batch and creates no rows", () => {

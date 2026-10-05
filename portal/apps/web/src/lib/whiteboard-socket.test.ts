@@ -17,7 +17,7 @@ class FakeSocket {
   private emit(type: string, event: unknown) { for (const listener of this.listeners.get(type) ?? []) listener(event as never); }
 }
 
-const init = (mode: "edit" | "view" = "edit", elements: unknown[] = [], peers: unknown[] = []) => ({ type: "init", mode, sessionId: "s1", elements, peers });
+const init = (mode: "edit" | "view" = "edit", elements: unknown[] = [], peers: unknown[] = []) => ({ type: "init", mode, generation: 1, sessionId: "s1", elements, peers });
 
 function setup(probe: WhiteboardSocketDeps["probeAccess"] = async () => ({})) {
   FakeSocket.instances = [];
@@ -35,7 +35,7 @@ describe("whiteboard socket", () => {
     const { handlers, current } = setup();
     expect(current().url).toBe("wss://portal.example/api/projects/p1/whiteboard/socket");
     current().open(); current().receive(init("edit", [{ id: "a" }]));
-    expect(handlers.onInit).toHaveBeenCalledWith({ mode: "edit", elements: [{ id: "a" }], sessionId: "s1", peers: [] }, false);
+    expect(handlers.onInit).toHaveBeenCalledWith({ mode: "edit", generation: 1, elements: [{ id: "a" }], sessionId: "s1", peers: [] }, false);
     expect(handlers.onConnection).toHaveBeenLastCalledWith("open");
     expect(whiteboardSocketUrl("p1", "http://localhost:5173")).toBe("ws://localhost:5173/api/projects/p1/whiteboard/socket");
   });
@@ -44,11 +44,11 @@ describe("whiteboard socket", () => {
     const { socket, current } = setup();
     current().open(); current().receive(init());
     const saved = socket.send([{ id: "a" }]);
-    expect(JSON.parse(current().sent[0]!)).toEqual({ type: "elements", seq: 0, elements: [{ id: "a" }] });
-    current().receive({ type: "ack", seq: 0 });
+    expect(JSON.parse(current().sent[0]!)).toEqual({ type: "elements", seq: 0, generation: 1, elements: [{ id: "a" }] });
+    current().receive({ type: "ack", seq: 0, generation: 1 });
     await expect(saved).resolves.toBeUndefined();
     const refused = socket.send([{ id: "b" }]);
-    current().receive({ type: "rejected", seq: 1, reason: "view-only" });
+    current().receive({ type: "rejected", seq: 1, reason: "view-only", generation: 1 });
     await expect(refused).rejects.toThrow("view-only");
   });
 
@@ -58,6 +58,35 @@ describe("whiteboard socket", () => {
     current().open(); current().receive(init());
     const late = socket.send([]); const assertion = expect(late).rejects.toThrow("did not confirm");
     await vi.advanceTimersByTimeAsync(10_001); await assertion;
+  });
+
+  it("stamps every batch with the board's generation, and follows a reset to the new one (#500)", async () => {
+    const { socket, current } = setup();
+    current().open(); current().receive({ ...init(), generation: 4 });
+    void socket.send([{ id: "a" }]);
+    expect(JSON.parse(current().sent[0]!)).toMatchObject({ seq: 0, generation: 4 });
+    current().receive({ type: "reset", generation: 5, elements: [{ id: "z", version: 1 }] });
+    void socket.send([{ id: "b" }]);
+    expect(JSON.parse(current().sent[1]!)).toMatchObject({ seq: 1, generation: 5 });
+  });
+
+  it("hands a reset to the board's onReset handler with the new generation and the authoritative scene (#500)", () => {
+    FakeSocket.instances = [];
+    const onReset = vi.fn();
+    const handlers = { onInit: vi.fn(), onConnection: vi.fn(), onDeleted: vi.fn(), onAccessFailure: vi.fn(), onElements: vi.fn(), onPresence: vi.fn(), onPeerLeft: vi.fn(), onMode: vi.fn(), onReset } satisfies WhiteboardSocketHandlers;
+    openWhiteboardSocket("p1", handlers, { createSocket: (url) => new FakeSocket(url), probeAccess: async () => ({}), origin: () => "https://portal.example" });
+    const socket = FakeSocket.instances.at(-1)!;
+    socket.open(); socket.receive(init());
+    socket.receive({ type: "reset", generation: 2, elements: [{ id: "z", version: 1 }] });
+    expect(onReset).toHaveBeenCalledWith({ generation: 2, elements: [{ id: "z", version: 1 }] });
+  });
+
+  it("tells the board a generation rejection means the board was restored, and does not retry silently (#500)", async () => {
+    const { socket, current } = setup();
+    current().open(); current().receive(init());
+    const refused = socket.send([{ id: "a" }]);
+    current().receive({ type: "rejected", seq: 0, reason: "generation", generation: 2 });
+    await expect(refused).rejects.toThrow("restored");
   });
 
   it("stops for good on the deleted close code", () => {
@@ -76,7 +105,7 @@ describe("whiteboard socket", () => {
     await vi.advanceTimersByTimeAsync(1_000);
     expect(FakeSocket.instances).toHaveLength(2);
     current().open(); current().receive(init("view"));
-    expect(handlers.onInit).toHaveBeenLastCalledWith({ mode: "view", elements: [], sessionId: "s1", peers: [] }, true);
+    expect(handlers.onInit).toHaveBeenLastCalledWith({ mode: "view", generation: 1, elements: [], sessionId: "s1", peers: [] }, true);
   });
 
   it("asks the API why a connect that never opened failed, and hands the answer on", async () => {
@@ -109,7 +138,7 @@ describe("whiteboard socket", () => {
     const saved = busy.socket.send([{ id: "a" }]);
     busy.socket.close();
     expect(busy.current().closedWith).toBeNull();
-    busy.current().receive({ type: "ack", seq: 0 });
+    busy.current().receive({ type: "ack", seq: 0, generation: 1 });
     await saved;
     expect(busy.current().closedWith).toBe(1000);
 
@@ -125,7 +154,7 @@ describe("whiteboard socket", () => {
   it("hands relayed elements, presence, departures and mode changes to the board, in order", () => {
     const { handlers, current } = setup();
     current().open(); current().receive(init());
-    current().receive({ type: "elements", elements: [{ id: "b", version: 2 }] });
+    current().receive({ type: "elements", generation: 1, elements: [{ id: "b", version: 2 }] });
     const peer = { sessionId: "s2", userId: "u2", name: "Ana", pointer: { x: 1, y: 2 }, button: "up", selectedIds: ["b"] };
     current().receive({ type: "presence", ...peer });
     current().receive({ type: "peer-left", sessionId: "s2" });
@@ -229,4 +258,40 @@ describe("whiteboard socket", () => {
       expect(FakeSocket.instances).toHaveLength(2);
     });
   });
+describe("whiteboard socket: board generation (#500)", () => {
+  it("refuses a batch sealed for an older generation after a reset, and sends nothing", async () => {
+    const { socket, current } = setup();
+    current().open(); current().receive(init());
+    current().receive({ type: "reset", generation: 2, elements: [{ id: "r" }] });
+    const before = current().sent.length;
+    await expect(socket.send([{ id: "stale" }], 1)).rejects.toThrow("restored");
+    expect(current().sent.length).toBe(before);
+    const fresh = socket.send([{ id: "fresh" }], 2);
+    expect(JSON.parse(current().sent.at(-1)!)).toMatchObject({ generation: 2, elements: [{ id: "fresh" }] });
+    current().receive({ type: "ack", seq: 0, generation: 2 });
+    await expect(fresh).resolves.toBeUndefined();
+  });
+
+  it("never delivers an elements relay of another generation; a newer one means a missed reset, so it reconnects for the init", () => {
+    const { handlers, current } = setup();
+    current().open(); current().receive(init());
+    current().receive({ type: "elements", generation: 0, elements: [{ id: "old" }] });
+    expect(handlers.onElements).not.toHaveBeenCalled();
+    expect(current().closedWith).toBeNull();
+    const first = current();
+    first.receive({ type: "elements", generation: 3, elements: [{ id: "new" }] });
+    expect(handlers.onElements).not.toHaveBeenCalled();
+    expect(first.closedWith).not.toBeNull();
+  });
+
+  it("reconnects when a rejection names a generation ahead of its own (it missed the reset)", async () => {
+    const { socket, current } = setup();
+    current().open(); current().receive(init());
+    const first = current();
+    const saved = socket.send([{ id: "a" }], 1);
+    first.receive({ type: "rejected", seq: 0, reason: "generation", generation: 2 });
+    await expect(saved).rejects.toThrow("restored");
+    expect(first.closedWith).not.toBeNull();
+  });
+});
 });

@@ -459,6 +459,44 @@ export const embeddedMediaCleanup = sqliteTable(
   (t) => [index("embedded_media_cleanup_queued_idx").on(t.queuedAt)],
 );
 
+/**
+ * Project whiteboard versions (#500): the index of immutable snapshots of a Project's whiteboard. The scene lives in the
+ * Project's Durable Object and each snapshot's bytes in R2 at `r2Key`, so this is metadata only, and a row is written only
+ * after its object exists. `ordinal` is the Project's own monotonic counter. `state` is `pruning` while an object beyond the
+ * newest 30 is being deleted. `projectId` cascades (the objects are purged by prefix first); `createdBy` clears if the user goes.
+ */
+export const projectWhiteboardVersions = sqliteTable(
+  "project_whiteboard_versions",
+  {
+    id: id(),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    r2Key: text("r2_key").notNull(),
+    ordinal: integer("ordinal").notNull(),
+    generation: integer("generation").notNull(),
+    sceneRevision: integer("scene_revision").notNull(),
+    createdAt: integer("created_at").notNull(),
+    createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
+    reason: text("reason", { enum: ["interval", "last_leave", "pre_restore"] as const }).notNull(),
+    sceneSha256: text("scene_sha256").notNull(),
+    byteCount: integer("byte_count").notNull(),
+    elementCount: integer("element_count").notNull(),
+    state: text("state", { enum: ["ready", "pruning"] as const }).notNull().default("ready"),
+  },
+  (t) => [
+    uniqueIndex("project_whiteboard_versions_r2_key_unique").on(t.r2Key),
+    uniqueIndex("project_whiteboard_versions_project_ordinal_unique").on(t.projectId, t.ordinal),
+    index("project_whiteboard_versions_project_state_ordinal_idx").on(t.projectId, t.state, desc(t.ordinal)),
+    check("project_whiteboard_versions_ordinal_check", sql`typeof(${t.ordinal}) = 'integer' AND ${t.ordinal} >= 0`),
+    check("project_whiteboard_versions_generation_check", sql`typeof(${t.generation}) = 'integer' AND ${t.generation} >= 0`),
+    check("project_whiteboard_versions_scene_revision_check", sql`typeof(${t.sceneRevision}) = 'integer' AND ${t.sceneRevision} >= 0`),
+    check("project_whiteboard_versions_created_at_check", sql`typeof(${t.createdAt}) = 'integer' AND ${t.createdAt} >= 0`),
+    check("project_whiteboard_versions_reason_check", sql`${t.reason} IN ('interval','last_leave','pre_restore')`),
+    check("project_whiteboard_versions_byte_count_check", sql`typeof(${t.byteCount}) = 'integer' AND ${t.byteCount} >= 0`),
+    check("project_whiteboard_versions_element_count_check", sql`typeof(${t.elementCount}) = 'integer' AND ${t.elementCount} >= 0`),
+    check("project_whiteboard_versions_state_check", sql`${t.state} IN ('ready','pruning')`),
+  ],
+);
+
 export const projectCommentMentions = sqliteTable(
   "project_comment_mentions",
   {

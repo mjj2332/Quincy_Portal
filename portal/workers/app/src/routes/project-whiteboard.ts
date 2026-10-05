@@ -2,13 +2,14 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { createDb, schema } from "@quincy/db";
 import { eq } from "drizzle-orm";
-import type { WhiteboardMode } from "@quincy/shared";
+import { WHITEBOARD_VERSIONS_RETAINED, whiteboardRestoreRequestSchema, type WhiteboardMode, type WhiteboardVersionsResponse } from "@quincy/shared";
 import type { AppEnv } from "../env";
 import { hasProjectCollaborationAccess } from "../middleware/capability";
 import { terminalRoute } from "../lib/terminal-route";
 import { WHITEBOARD_MODE_HEADER, WHITEBOARD_NAME_HEADER, WHITEBOARD_PROJECT_HEADER, WHITEBOARD_USER_HEADER } from "../whiteboard/project-whiteboard-do";
 
 const projectIdSchema = z.string().uuid();
+const versionIdSchema = z.string().uuid();
 
 export const projectWhiteboardRoutes = new Hono<AppEnv>();
 
@@ -41,4 +42,64 @@ projectWhiteboardRoutes.get("/projects/:projectId/whiteboard/socket", terminalRo
   return stub.fetch(new Request("https://whiteboard.internal/socket", {
     headers: { Upgrade: "websocket", [WHITEBOARD_USER_HEADER]: user.id, [WHITEBOARD_MODE_HEADER]: mode, [WHITEBOARD_PROJECT_HEADER]: projectId, [WHITEBOARD_NAME_HEADER]: encodeURIComponent(user.name) },
   }));
+}));
+
+/**
+ * #500: the same access decision as the socket (collaboration access; an External editor who may not see the Project is told
+ * 404, never 403), shared by both version routes. A refused request creates no Durable Object.
+ */
+async function deniedWhiteboardAccess(c: Parameters<typeof hasProjectCollaborationAccess>[0], projectId: string) {
+  if (await hasProjectCollaborationAccess(c, projectId)) return null;
+  return c.get("user").role === "external_editor"
+    ? { status: 404 as const, body: { error: "Project not found" } }
+    : { status: 403 as const, body: { error: "Forbidden: you are not assigned to this project" } };
+}
+
+/**
+ * #500: the board's history, newest first. Anyone with collaboration access may browse it, an Archived Project's included (the
+ * board is view-only there, restoring is not). Only `ready` versions are offered: a `pruning` one is on its way out.
+ */
+projectWhiteboardRoutes.get("/projects/:projectId/whiteboard/versions", terminalRoute("/projects/:projectId/whiteboard/versions", async (c) => {
+  const parsed = projectIdSchema.safeParse(c.req.param("projectId"));
+  if (!parsed.success) return c.json({ error: "Invalid project id" }, 400);
+  const projectId = parsed.data;
+  const denied = await deniedWhiteboardAccess(c, projectId);
+  if (denied) return c.json(denied.body, denied.status);
+  const project = await createDb(c.env.DB).select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
+  if (!project) return c.json({ error: "Project not found" }, 404);
+  const rows = (await c.env.DB.prepare(
+    `SELECT v.id AS id, v.created_at AS createdAt, v.created_by AS createdById, u.name AS createdByName, v.reason AS reason, v.element_count AS elementCount, v.byte_count AS byteCount
+     FROM project_whiteboard_versions v LEFT JOIN user u ON u.id = v.created_by
+     WHERE v.project_id = ? AND v.state = 'ready' ORDER BY v.ordinal DESC LIMIT ?`,
+  ).bind(projectId, WHITEBOARD_VERSIONS_RETAINED).all<{ id: string; createdAt: number; createdById: string | null; createdByName: string | null; reason: "interval" | "last_leave" | "pre_restore"; elementCount: number; byteCount: number }>()).results;
+  const stub = c.env.PROJECT_WHITEBOARD.get(c.env.PROJECT_WHITEBOARD.idFromName(projectId));
+  const generation = await stub.currentGeneration();
+  const body: WhiteboardVersionsResponse = {
+    generation,
+    versions: rows.map((row) => ({ id: row.id, createdAt: row.createdAt, createdBy: row.createdById === null ? null : { id: row.createdById, name: row.createdByName ?? "" }, reason: row.reason, elementCount: row.elementCount, byteCount: row.byteCount })),
+  };
+  return c.json(body);
+}));
+
+/**
+ * #500: restores a version. The route authorises (collaboration access, as above) and validates; the Durable Object then re-checks
+ * access and archive state, backs the current scene up, swaps the rows and bumps the generation (see `restoreVersion`). The effective
+ * user (an Admin impersonating someone acts AS them, with `impersonatedBy` kept for the audit) is the actor: there is no Admin override.
+ */
+projectWhiteboardRoutes.post("/projects/:projectId/whiteboard/versions/:versionId/restore", terminalRoute("/projects/:projectId/whiteboard/versions/:versionId/restore", async (c) => {
+  const project = projectIdSchema.safeParse(c.req.param("projectId"));
+  const version = versionIdSchema.safeParse(c.req.param("versionId"));
+  if (!project.success) return c.json({ error: "Invalid project id" }, 400);
+  if (!version.success) return c.json({ error: "Invalid version id" }, 400);
+  const denied = await deniedWhiteboardAccess(c, project.data);
+  if (denied) return c.json(denied.body, denied.status);
+  let json: unknown;
+  try { json = await c.req.json(); } catch { return c.json({ error: "Invalid request body" }, 400); }
+  const body = whiteboardRestoreRequestSchema.safeParse(json);
+  if (!body.success) return c.json({ error: "Invalid request body" }, 400);
+  const user = c.get("user");
+  const stub = c.env.PROJECT_WHITEBOARD.get(c.env.PROJECT_WHITEBOARD.idFromName(project.data));
+  const result = await stub.restoreVersion({ projectId: project.data, versionId: version.data, expectedGeneration: body.data.expectedGeneration, requestId: body.data.requestId, actor: { id: user.id, impersonatedBy: user.impersonatedBy } });
+  if (result.ok) return c.json(result);
+  return c.json({ error: result.message, code: result.code, ...(result.generation === undefined ? {} : { generation: result.generation }) }, result.status);
 }));

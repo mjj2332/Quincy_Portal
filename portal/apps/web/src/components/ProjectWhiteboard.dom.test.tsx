@@ -131,6 +131,38 @@ describe("an element the editor drops with no tombstone is deleted by the person
   });
 });
 
+describe("unmounting sends close on the socket once the final flush settles (#500)", () => {
+  const unmountWithUnsavedEdit = async () => {
+    await mount();
+    board.props!.onElements!([el("fresh", 1)]);                       // an edit not yet saved: the unmount flush has something to send
+    vi.useFakeTimers();
+    await act(async () => { root!.unmount(); await Promise.resolve(); }); root = null;
+  };
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("closes only after the in-flight save settles", async () => {
+    let finish: () => void = () => undefined;
+    board.send = () => new Promise<void>((resolve) => { finish = resolve; });
+    await unmountWithUnsavedEdit();
+    expect(board.log).toContain("send");
+    expect(board.log).not.toContain("close");                         // the flush is still waiting on its ack
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(board.log).not.toContain("close");
+    finish();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(board.log.filter((entry) => entry === "close")).toHaveLength(1);
+  });
+
+  it("still closes when the save ack never arrives, bounded by the 10s final-flush timeout", async () => {
+    board.send = () => new Promise<void>(() => undefined);            // never acknowledged
+    await unmountWithUnsavedEdit();
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(board.log).not.toContain("close");
+    await vi.advanceTimersByTimeAsync(2);
+    expect(board.log.filter((entry) => entry === "close")).toHaveLength(1);
+  });
+});
+
 describe("a remote winner the renderer drops (a live 0x0 element, #499)", () => {
   it("is merged once however many change events follow, and neither deleted by this tab nor sent", async () => {
     board.dropsZero = true;
