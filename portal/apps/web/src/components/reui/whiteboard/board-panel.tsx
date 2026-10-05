@@ -6,7 +6,7 @@
  * Tailwind `shadow-*`, focus ring widths -- see `reui-skin.guard.test.ts`), and `noUncheckedIndexedAccess`
  * narrowing. `"dark": boolean` is quoted only so the guard's `dark:` matcher does not read a type as a variant.
  *
- * This file: The Frames / Library / History panel. Edits (additive): a `title` prop replaces the demo title; `panes` is now `Partial<...>` and a tab with no pane is not rendered, because History arrives with #500. `dark:` row fills and a focus ring width dropped (Skin guard).
+ * This file: The Frames / Library / History panel. Edits (additive): #500 `rowAttrs` on `PanelRow` (data attributes for a host's test seam and hooks) and `forceRender` on the sheet's scrim (nested under the shell's Dialog Root); a `title` prop replaces the demo title; `panes` is now `Partial<...>` and a tab with no pane is not rendered, because History arrives with #500. `dark:` row fills and a focus ring width dropped (Skin guard).
  */
 import { Fragment, useEffect, useRef, useState } from "react"
 import { IconTile } from "@/components/reui/icon-tile"
@@ -315,7 +315,10 @@ export function PanelRow({
   onDragStart,
   onSelect,
   onHighlight,
+  rowAttrs,
 }: {
+  /** #500: extra attributes for the row (a host's data-testid and ids). */
+  rowAttrs?: Record<`data-${string}`, string>
   icon: React.ReactNode
   title: string
   badge?: React.ReactNode
@@ -339,6 +342,7 @@ export function PanelRow({
       size="xs"
       role="listitem"
       data-current={current || undefined}
+      {...rowAttrs}
       draggable={draggable || undefined}
       onDragStart={onDragStart}
       className={cn(
@@ -525,6 +529,8 @@ export function BoardPanel({
       <Sheet open={!docked && sheetOpen} onOpenChange={onSheetOpenChange}>
         <SheetContent
           side="right"
+          // #500: the Portal's shell wraps every page in a Base UI Dialog Root, so this sheet is nested and would skip its scrim (see reui/sheet.tsx, #221).
+          overlayProps={{ forceRender: true }}
           // The sheet opens on its active tab, so keyboard focus starts inside it.
           initialFocus={() => sheetFocus?.() ?? tabRef.current ?? true}
           className="w-[min(20rem,calc(100%-3rem))] gap-0"

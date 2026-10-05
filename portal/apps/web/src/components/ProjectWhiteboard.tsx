@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeftIcon } from "lucide-react";
+import { ArrowLeftIcon, HistoryIcon } from "lucide-react";
 import type { WhiteboardMode, WhiteboardPeer } from "@quincy/shared";
 import { Button } from "@/components/reui/button";
 import { Badge } from "@/components/reui/badge";
@@ -16,6 +16,8 @@ import { pushToast } from "../lib/toast-store";
 
 // The ReUI block lazy-loads Excalidraw itself (`whiteboard.tsx` imports `whiteboard-canvas` on demand); this
 // second `lazy` keeps even the block's own chunk out of the Workspace until the board opens (#498).
+// #500: the History sheet (the ReUI panel, its History tab and the restore confirmation) loads the first time it is opened.
+const WhiteboardHistoryPanel = lazy(() => import("./WhiteboardHistoryPanel").then((module) => ({ default: module.WhiteboardHistoryPanel })));
 const Whiteboard = lazy(() => import("./reui/whiteboard/whiteboard").then((module) => ({ default: module.Whiteboard })));
 
 
@@ -51,6 +53,10 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
   const generationRef = useRef(0);
   /** True from the moment a restore is seen until the new editor has committed: the old editor's teardown must not flush. */
   const resettingRef = useRef(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+  /** This person started a restore and its `reset` has not been seen yet: their own reset reads "Board restored", not "your changes were replaced". */
+  const restoreStartedRef = useRef(false);
   const [liveMode, setLiveMode] = useState<WhiteboardMode | null>(null);
   const modeRef = useRef<WhiteboardMode>(archivedHint ? "view" : "edit");
   const lastPresenceRef = useRef<WhiteboardPresence>({ pointer: null, button: "up", selectedIds: [] });
@@ -129,7 +135,8 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
       setInit((previous) => (previous ? { ...previous, generation: next.generation, elements: next.elements } : previous));
       setSaveStatus("saved");
       setEpoch(epochRef.current);
-      pushToast("Board restored — your unsaved changes were replaced");
+      pushToast(restoreStartedRef.current ? "Board restored" : "Board restored — your unsaved changes were replaced");
+      restoreStartedRef.current = false;
     };
     const opened = openWhiteboardSocket(projectId, {
       onInit: (next, reconnect) => {
@@ -230,6 +237,7 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
         <div className="ms-auto flex flex-wrap items-center gap-[var(--space-2)]">
         {mode === "view" && <Badge variant="primary-light" data-testid="project-whiteboard-view-only">View only</Badge>}
         {(deleted || mode !== "view") && <span className="[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" role="status" data-testid="project-whiteboard-status">{deleted ? "Deleted" : statusLabel}</span>}
+        <Button type="button" variant="ghost" data-testid="project-whiteboard-history" aria-haspopup="dialog" onClick={() => { setHistoryLoaded(true); setHistoryOpen(true); }}><HistoryIcon className="size-3.5" aria-hidden="true" data-icon="inline-start" />History</Button>
         <CopyProjectLinkButton projectId={projectId} tab="collaboration" whiteboard />
         </div>
       </div>
@@ -264,6 +272,19 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
             )
             : <p className="p-[var(--space-5)]" role="status">Connecting to the whiteboard.</p>}
       </div>
+      {historyLoaded && (
+        <Suspense fallback={null}>
+          <WhiteboardHistoryPanel
+            projectId={projectId}
+            title={street}
+            open={historyOpen}
+            onOpenChange={setHistoryOpen}
+            readOnly={mode === "view"}
+            onRestoreStarted={() => { restoreStartedRef.current = true; }}
+            onRestoreFailed={() => { restoreStartedRef.current = false; }}
+          />
+        </Suspense>
+      )}
     </section>
   );
 }

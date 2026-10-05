@@ -16,6 +16,7 @@ const h = vi.hoisted(() => ({
   handlers: null as null | Record<string, (...args: unknown[]) => void>,
   socket: { send: vi.fn((..._args: unknown[]) => Promise.resolve()), sendPresence: vi.fn(), close: vi.fn() },
   opened: 0,
+  panels: [] as Array<{ open: boolean; readOnly: boolean }>,
   toasts: [] as string[],
   controllers: [] as Array<{ adoptRevisions: ReturnType<typeof vi.fn>; setCollaborators: ReturnType<typeof vi.fn> } & Record<string, unknown>>,
 }));
@@ -24,6 +25,12 @@ vi.mock("../lib/whiteboard-socket", () => ({
   openWhiteboardSocket: (_project: string, handlers: Record<string, (...args: unknown[]) => void>) => { h.opened += 1; h.handlers = handlers; return h.socket; },
 }));
 vi.mock("../lib/toast-store", () => ({ pushToast: (message: string) => { h.toasts.push(message); } }));
+vi.mock("./WhiteboardHistoryPanel", () => ({
+  WhiteboardHistoryPanel: (props: { open: boolean; readOnly: boolean; onRestoreStarted: () => void; onRestoreFailed: () => void }) => {
+    h.panels.push({ open: props.open, readOnly: props.readOnly });
+    return props.open ? <div data-testid="fake-history"><button type="button" data-testid="fake-start" onClick={props.onRestoreStarted} /><button type="button" data-testid="fake-fail" onClick={props.onRestoreFailed} /></div> : null;
+  },
+}));
 vi.mock("./quincy/CopyProjectLinkButton", () => ({ CopyProjectLinkButton: () => null }));
 vi.mock("./reui/whiteboard/whiteboard", () => ({
   Whiteboard: (props: BoardProps) => {
@@ -53,7 +60,7 @@ const init = (generation: number, elements: unknown[], peers: unknown[] = []) =>
 let host: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
-  h.boards.length = 0; h.handlers = null; h.opened = 0; h.toasts.length = 0; h.controllers.length = 0;
+  h.boards.length = 0; h.panels.length = 0; h.handlers = null; h.opened = 0; h.toasts.length = 0; h.controllers.length = 0;
   h.socket.send.mockClear(); h.socket.close.mockClear();
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
 });
@@ -124,5 +131,43 @@ describe("ProjectWhiteboard: board reset (#500)", () => {
     await act(async () => { h.handlers!.onInit!(init(1, [el("a", 2)]), true); });
     expect(h.boards).toHaveLength(1);
     expect(h.toasts).toEqual([]);
+  });
+});
+
+describe("ProjectWhiteboard: History (#500)", () => {
+  const historyButton = () => document.body.querySelector<HTMLButtonElement>('[data-testid="project-whiteboard-history"]');
+  const click = async (element: Element | null) => { await act(async () => { (element as HTMLElement).click(); }); };
+
+  it("does not load or render the history panel until the History button is used, then opens it", async () => {
+    await mount();
+    expect(h.panels).toHaveLength(0);
+    expect(historyButton()).not.toBeNull();
+    await click(historyButton());
+    expect(h.panels.at(-1)).toEqual({ open: true, readOnly: false });
+    expect(document.body.querySelector('[data-testid="fake-history"]')).not.toBeNull();
+  });
+
+  it("a view-only board tells the panel to omit Restore", async () => {
+    await mount();
+    await act(async () => { h.handlers!.onMode!("view"); });
+    await click(historyButton());
+    expect(h.panels.at(-1)).toEqual({ open: true, readOnly: true });
+  });
+
+  it("the person who restored sees \"Board restored\" when the reset frame beats the response", async () => {
+    await mount();
+    await click(historyButton());
+    await click(document.body.querySelector('[data-testid="fake-start"]'));
+    await act(async () => { h.handlers!.onReset!({ generation: 2, elements: [el("keep", 1)] }); });
+    expect(h.toasts).toEqual(["Board restored"]);
+  });
+
+  it("a failed restore clears the flag, so the next reset (someone else's) reads as replaced changes", async () => {
+    await mount();
+    await click(historyButton());
+    await click(document.body.querySelector('[data-testid="fake-start"]'));
+    await click(document.body.querySelector('[data-testid="fake-fail"]'));
+    await act(async () => { h.handlers!.onReset!({ generation: 2, elements: [el("keep", 1)] }); });
+    expect(h.toasts).toEqual(["Board restored — your unsaved changes were replaced"]);
   });
 });
