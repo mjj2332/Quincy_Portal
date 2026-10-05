@@ -58,7 +58,10 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
   // Captured when the dialog opens: `order` lets the dialog (and the focus hand-off) survive a refetch that drops the post.
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; excerpt: string; order: string[] } | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const lastDeleteTarget = useRef<{ id: string; order: string[] } | null>(null); // the close hand-off runs after `deleteTarget` is cleared
+  const lastDeleteTarget = useRef<{ id: string; order: string[]; deleted: boolean } | null>(null); // the close hand-off runs after `deleteTarget` is cleared
+  // The id whose own Cancel/Save just ended its edit: only that notice's "⋯" takes focus back, never one
+  // whose edit was merely replaced by another notice's Edit.
+  const restoreTriggerFor = useRef<string | null>(null);
   const sectionRef = useRef<HTMLElement>(null);
   const postsQuery = useNoticeBoardPostsQuery(true);
   const readStateQuery = useNoticeBoardReadStateQuery();
@@ -128,7 +131,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
     if (editingOverBytes || editUploading || !beginNoticeBoardMutation("edit")) return;
     try {
       await editNoticeBoardPost(queryClient, id, stripLinkPreviewDisplay(editingContent));
-      setEditingId(null); setEditingContent(EMPTY_DOC); clearMutationError("edit");
+      restoreTriggerFor.current = id; setEditingId(null); setEditingContent(EMPTY_DOC); clearMutationError("edit");
     } catch (reason) {
       setMutationError("edit", reason, "The post could not be updated.");
     } finally { finishNoticeBoardMutation("edit"); }
@@ -137,25 +140,28 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
   const requestDelete = (post: NoticeBoardPost) => {
     const text = richTextPlainText(post.content).trim();
     const target = { id: post.id, excerpt: text.length > 60 ? `${text.slice(0, 60)}…` : text, order: posts.map((candidate) => candidate.id) };
-    lastDeleteTarget.current = target;
+    lastDeleteTarget.current = { id: target.id, order: target.order, deleted: false };
     setDeleteError(null);
     setDeleteTarget(target);
   };
+
+  const markDeleted = () => { if (lastDeleteTarget.current) lastDeleteTarget.current.deleted = true; };
 
   // Sends the captured id only, never another notice. A 404 means it is already gone: close, no error.
   async function confirmDelete() {
     if (!deleteTarget || !beginNoticeBoardMutation("delete")) return;
     try {
       await deleteNoticeBoardPost(queryClient, deleteTarget.id);
-      setDeleteTarget(null); setDeleteError(null);
+      markDeleted(); setDeleteTarget(null); setDeleteError(null);
     } catch (reason) {
-      if (reason instanceof ApiError && reason.status === 404) { setDeleteTarget(null); setDeleteError(null); }
+      if (reason instanceof ApiError && reason.status === 404) { markDeleted(); setDeleteTarget(null); setDeleteError(null); }
       else setDeleteError(reason instanceof Error ? reason.message : "The notice could not be deleted. Try again.");
     } finally { finishNoticeBoardMutation("delete"); }
   }
 
   // Resolved when the dialog closes; never `undefined`, so focus never falls to body. Cancel/Escape: the
-  // notice's own "⋯". After a delete: the next surviving "⋯", then the previous, then the composer.
+  // notice's own "⋯". After a delete (success or 404, even if the refetch since failed and the cached list
+  // still holds it): the next surviving "⋯", then the previous, then the composer; never the deleted notice's.
   function deleteFinalFocus(): HTMLElement | true {
     const root = sectionRef.current;
     const target = lastDeleteTarget.current;
@@ -163,13 +169,13 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
     const triggerOf = (id: string) => [...root.querySelectorAll<HTMLElement>("[data-post-id]")].find((node) => node.dataset.postId === id)?.querySelector<HTMLElement>('[data-testid="notice-board-actions"]') ?? null;
     const at = target.order.indexOf(target.id);
     const successors = [...target.order.slice(at + 1), ...target.order.slice(0, at).reverse()];
-    for (const id of [target.id, ...successors]) { const trigger = triggerOf(id); if (trigger) return trigger; }
+    for (const id of target.deleted ? successors : [target.id, ...successors]) { const trigger = triggerOf(id); if (trigger) return trigger; }
     return root.querySelector<HTMLElement>('[data-slot="notice-board-composer"] [contenteditable="true"]') ?? true;
   }
 
   const renderEditComposer = (id: string) => <div data-slot="notice-board-edit-composer" className={EDIT_COMPOSER}>
     <QuincyRichTextEditor preset="document" value={editingContent} onChange={setEditingContent} limit={NOTICE_BODY_MAX_LENGTH} maxBytes={NOTICE_RICH_TEXT_JSON_MAX_BYTES} disabled={isBusy} loadMentionables={loadMentionables} placeholder="Edit notice…" onSubmit={() => void saveEdit(id)} media={{ noticeBoard: true }} linkPreviews={{ noticeBoard: true }} onUploadingChange={setEditUploading} />
-    <div className={COMPOSER_FOOT}><button className={buttonClasses("secondary")} type="button" disabled={isBusy} onClick={() => { setEditingId(null); setEditingContent(EMPTY_DOC); }}>Cancel</button><button className={buttonClasses("primary")} type="button" disabled={isBusy || editingOverBytes || editUploading} onClick={() => void saveEdit(id)}>{isSaving ? "Saving…" : "Save"}</button></div>
+    <div className={COMPOSER_FOOT}><button className={buttonClasses("secondary")} type="button" disabled={isBusy} onClick={() => { restoreTriggerFor.current = id; setEditingId(null); setEditingContent(EMPTY_DOC); }}>Cancel</button><button className={buttonClasses("primary")} type="button" disabled={isBusy || editingOverBytes || editUploading} onClick={() => void saveEdit(id)}>{isSaving ? "Saving…" : "Save"}</button></div>
   </div>;
 
   const hasUnread = (readState?.unreadCount ?? 0) > 0;
@@ -192,6 +198,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
           isEditing={editingId === post.id}
           isBusy={isBusy}
           articleRef={post.id === posts[0]?.id ? presentation.anchorRef : undefined}
+          restoreTriggerFor={restoreTriggerFor}
           onEditStart={() => { setEditingId(post.id); setEditingContent(post.content); }}
           onDeleteRequest={() => requestDelete(post)}
           editor={editingId === post.id ? renderEditComposer(post.id) : null}
@@ -213,6 +220,7 @@ type NoticeItemProps = {
   isEditing: boolean;
   isBusy: boolean;
   articleRef: Ref<HTMLElement> | undefined;
+  restoreTriggerFor: { current: string | null };
   onEditStart: () => void;
   onDeleteRequest: () => void;
   /** The edit composer, shown in place of the body while this notice is being edited. */
@@ -225,7 +233,7 @@ type NoticeItemProps = {
  * confirmation dialog. The menu is hidden while the notice is being edited, so Delete never sits
  * beside Save. Author-only is unchanged: `isOwn` comes from the effective user.
  */
-function NoticeItem({ post, isOwn, isEditing, isBusy, articleRef, onEditStart, onDeleteRequest, editor }: NoticeItemProps) {
+function NoticeItem({ post, isOwn, isEditing, isBusy, articleRef, restoreTriggerFor, onEditStart, onDeleteRequest, editor }: NoticeItemProps) {
   const ownRef = useRef<HTMLElement | null>(null);
   const setRefs = useCallback((node: HTMLElement | null) => {
     ownRef.current = node;
@@ -241,10 +249,11 @@ function NoticeItem({ post, isOwn, isEditing, isBusy, articleRef, onEditStart, o
   const menuFinalFocus = useCallback((): false | undefined => (deletePending.current ? false : undefined), []);
   const wasEditing = useRef(false);
   useEffect(() => {
-    // Leaving the in-place editor (Cancel or a saved edit) hands focus back to the "⋯" that opened it.
-    if (wasEditing.current && !isEditing) focusActions();
+    // Leaving the in-place editor by this notice's own Cancel or a saved edit hands focus back to the "⋯"
+    // that opened it. Leaving because another notice's Edit began must not, or it steals that editor's focus.
+    if (wasEditing.current && !isEditing && restoreTriggerFor.current === post.id) { restoreTriggerFor.current = null; focusActions(); }
     wasEditing.current = isEditing;
-  }, [focusActions, isEditing]);
+  }, [focusActions, isEditing, post.id, restoreTriggerFor]);
   useEffect(() => {
     if (!isEditing || !focusEditorOnEdit.current) return;
     let frame = 0; let attempts = 0;

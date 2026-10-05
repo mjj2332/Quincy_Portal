@@ -1,4 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
+import { ApiError } from "./api";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createNoticeBoardPost,
@@ -271,5 +272,35 @@ describe("Notice Board delete (#523)", () => {
     await expect(deleteNoticeBoardPost(queryClient, "post-old")).rejects.toThrow("Not found");
     expect(apiDeleteMock).toHaveBeenCalledWith("/api/notice-board/posts/post-old");
     expect(invalidate.mock.calls.map(([filters]) => (filters as { queryKey: unknown }).queryKey)).toEqual([noticeBoardDataKeys.posts, noticeBoardDataKeys.readState]);
+  });
+
+  it("evicts the deleted post from the cache and keeps it out when a poll that began before the delete resolves late", async () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(noticeBoardDataKeys.posts, [createdPost, oldPost]);
+    let resolveDelete!: (value: unknown) => void;
+    let resolvePoll!: (value: { posts: NoticeBoardPost[] }) => void;
+    apiDeleteMock.mockImplementationOnce(() => new Promise((resolve) => { resolveDelete = resolve; }));
+    const removal = deleteNoticeBoardPost(queryClient, createdPost.id);
+    await flushMicrotasks();
+    apiGetMock.mockImplementationOnce(() => new Promise((resolve) => { resolvePoll = resolve; }));
+    const poll = runPostsQuery(queryClient);
+    resolvePoll({ posts: [createdPost, oldPost] }); // fetched before the server applied the delete
+    await flushMicrotasks();
+    resolveDelete({ ok: true });
+    apiGetMock.mockRejectedValue(new Error("down")); // the follow-up refetch fails
+    await removal;
+    await expect(poll).resolves.toEqual([oldPost]);
+    expect(queryClient.getQueryData<NoticeBoardPost[]>(noticeBoardDataKeys.posts)).toEqual([oldPost]);
+  });
+
+  it("evicts on a 404 and leaves the cache alone on any other failure", async () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(noticeBoardDataKeys.posts, [createdPost, oldPost]);
+    apiDeleteMock.mockRejectedValueOnce(new ApiError("Forbidden", 403));
+    await expect(deleteNoticeBoardPost(queryClient, createdPost.id)).rejects.toThrow("Forbidden");
+    expect(queryClient.getQueryData<NoticeBoardPost[]>(noticeBoardDataKeys.posts)).toEqual([createdPost, oldPost]);
+    apiDeleteMock.mockRejectedValueOnce(new ApiError("Not found", 404));
+    await expect(deleteNoticeBoardPost(queryClient, createdPost.id)).rejects.toThrow("Not found");
+    expect(queryClient.getQueryData<NoticeBoardPost[]>(noticeBoardDataKeys.posts)).toEqual([oldPost]);
   });
 });

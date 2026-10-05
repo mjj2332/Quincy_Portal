@@ -356,11 +356,35 @@ async function invalidateNoticeBoardQueries(queryClient: QueryClient) {
   ]);
 }
 
+function evictDeletedPost(queryClient: QueryClient, id: string, requestSequence: number) {
+  const store = noticeBoardSequenceStore(queryClient).posts;
+  const current = queryClient.getQueryData<NoticeBoardPost[]>(noticeBoardDataKeys.posts);
+  if (requestSequence < store.accepted || !current) return;
+  queryClient.setQueryData<NoticeBoardPost[]>(noticeBoardDataKeys.posts, current.filter((item) => item.id !== id));
+  store.accepted = requestSequence;
+}
+
+/**
+ * Takes the same posts fence as create/edit (so the same INVARIANT applies: `NoticeBoard.tsx` holds
+ * one shared mutation lock around it). A confirmed delete, or a 404 (already gone), evicts the id from
+ * the cached list before the refetch, so a failed refetch cannot leave the deleted post visible.
+ */
 export async function deleteNoticeBoardPost(queryClient: QueryClient, id: string) {
-  // Refetch on failure too: a 404 (deleted elsewhere) or any other error must not leave a stale list.
+  await queryClient.cancelQueries({ queryKey: noticeBoardDataKeys.posts, exact: true });
+  // This allocation deliberately sits directly before apiDelete dispatch.
+  const postsSequence = nextNoticeBoardSequence(queryClient, "posts");
+  const mutationFence = beginPostsMutation(queryClient, postsSequence);
+  let gone = false;
   try {
     await apiDelete<{ ok: true }>(`/api/notice-board/posts/${encodeURIComponent(id)}`);
+    gone = true;
+  } catch (error) {
+    gone = error instanceof ApiError && error.status === 404;
+    throw error;
   } finally {
+    if (gone) evictDeletedPost(queryClient, id, postsSequence);
+    settlePostsMutation(queryClient, mutationFence, gone ? "succeeded" : "failed");
+    // Refetch on failure too: any error must not leave a stale list.
     await invalidateNoticeBoardQueries(queryClient);
   }
 }
