@@ -7,7 +7,7 @@ export const DEFAULT_EMAIL_DIGEST_CADENCE: EmailDigestCadence = "twice_daily";
 
 /**
  * Types that always email immediately (subject to their own reminder switches) and never wait for a
- * digest. Matches the Email digest glossary entry in CONTEXT.md.
+ * digest. Matches the Email digest glossary entry in GLOSSARY.md.
  */
 export const EMAIL_DIGEST_EXEMPT_TYPES: ReadonlySet<string> = new Set([
   "subtask_reminder",
