@@ -30,8 +30,8 @@ describe("link preview card design (#497)", () => {
     // `inherit` in a ::selection takes the PARENT's ::selection colour (the global paper-050), not the element's colour: explicit tokens only.
     expect(sel).not.toMatch(/inherit|currentColor/i);
     expect(sel).toMatch(/color:\s*var\(--text-primary\)/);
-    expect(ruleBody(".rich-text__editor-content .rich-text__link-preview [data-slot=item-description]::selection")).toMatch(/color:\s*var\(--text-secondary\)/);
-    expect(ruleBody(".rich-text__editor-content .rich-text__link-preview [data-slot=link-preview-meta]::selection")).toMatch(/color:\s*var\(--text-secondary\)/);
+    expect(ruleBody(".rich-text__editor-content .rich-text__link-preview [data-slot=item-description]::selection")).toMatch(/color:\s*var\(--foreground-secondary\)/);
+    expect(ruleBody(".rich-text__editor-content .rich-text__link-preview [data-slot=link-preview-meta]::selection")).toMatch(/color:\s*var\(--foreground-secondary\)/);
     expect(card).toContain('data-slot="link-preview-meta"');
     expect(ruleBody(".rich-text__editor-content .ProseMirror-selectednode [data-slot=item]")).toMatch(/outline:\s*var\(--border-width-hair\) solid var\(--accent\)/);
   });
