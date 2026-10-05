@@ -256,6 +256,10 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
   }, []);
 
   const mode: WhiteboardMode = liveMode ?? init?.mode ?? (archivedHint ? "view" : "edit");
+  // #501: Play video rides the board's own floating action slot (over the canvas), so a selection change never reflows the header.
+  const playAction = useMemo(() => (mode === "edit" && selectedVideo !== null
+    ? [{ id: "play-video", label: "Play video", icon: <PlayIcon aria-hidden="true" />, onSelect: () => setPlaying(selectedVideo) }]
+    : undefined), [mode, selectedVideo]);
 
   /**
    * #501: every file goes through the Embedded media pipeline on its own (presign, bytes straight to R2, complete; a video's poster is
@@ -339,7 +343,6 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
         <div className="ms-auto flex flex-wrap items-center gap-[var(--space-2)]">
         {mode === "view" && <Badge variant="primary-light" data-testid="project-whiteboard-view-only">View only</Badge>}
         {(deleted || mode !== "view") && <span className="[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" role="status" data-testid="project-whiteboard-status">{deleted ? "Deleted" : statusLabel}</span>}
-        {mode === "edit" && selectedVideo !== null && <Button type="button" variant="ghost" data-testid="project-whiteboard-play-video" onClick={() => setPlaying(selectedVideo)}><PlayIcon className="size-3.5" aria-hidden="true" data-icon="inline-start" />Play video</Button>}
         <Button type="button" variant="ghost" data-testid="project-whiteboard-history" aria-haspopup="dialog" onClick={() => { setHistoryLoaded(true); setHistoryOpen(true); }}><HistoryIcon className="size-3.5" aria-hidden="true" data-icon="inline-start" />History</Button>
         <CopyProjectLinkButton projectId={projectId} tab="collaboration" whiteboard />
         </div>
@@ -348,9 +351,9 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
           onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); const at = picking.at; setPicking(null); if (files.length) uploadMedia(files, at); }}
           {...{ onCancel: () => setPicking(null) }}
         />}
-        <EmbeddedUploadTray uploads={uploads} errors={uploadErrors} onCancel={(key) => runningUploads.current.get(key)?.cancel()} testId="project-whiteboard-upload-tray" className="grid w-full gap-[var(--space-2)]" />
       </div>
       <div className="min-h-0 relative border-solid border-[length:var(--border-width-hair)] border-border bg-card">
+        <EmbeddedUploadTray uploads={uploads} errors={uploadErrors} onCancel={(key) => runningUploads.current.get(key)?.cancel()} testId="project-whiteboard-upload-tray" className="absolute inset-x-[var(--space-4)] bottom-[calc(var(--space-4)+var(--space-7)+var(--space-2))] z-20 mx-auto grid max-w-[28rem] gap-[var(--space-2)] border-solid border-[length:var(--border-width-hair)] border-border bg-card p-[var(--space-3)] shadow-sm" />
         {deleted
           ? <p className="p-[var(--space-5)]" role="alert">This project's whiteboard was deleted.</p>
           : initialData
@@ -370,6 +373,7 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
                     background="grid"
                     mediaTool={mediaTool}
                     onVideoOpen={setPlaying}
+                    actions={playAction}
                     onReady={(controller) => {
                       if (epochRef.current !== epoch) return;
                       controllerRef.current = controller; controller.adoptRevisions((init?.elements ?? []) as unknown as SavedElement[]); drainRemote.current();

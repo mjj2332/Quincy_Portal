@@ -101,6 +101,16 @@ describe("videoAt and selectedVideo (#501)", () => {
     expect(hand.controller.videoAt(300, 200)).toBe(VID);
   });
 
+  it("keeps a zoom-independent minimum play target while editing (22 CSS px)", () => {
+    // videoEl is 400x200 centred on scene (300,200): the scene badge radius is 0.13 * 200 = 26. At zoom 0.25 the floor is 22 / 0.25 = 88 scene units.
+    const out = setup({ elements: [videoEl("v")], appState: { zoom: { value: 0.25 } } });
+    // Scene (300 + 60, 200) is 60 scene units (15 CSS px) off centre: outside the scene radius, inside the CSS-pixel floor.
+    expect(out.controller.videoAt(360 * 0.25, 200 * 0.25)).toBe(VID);
+    expect(out.controller.videoAt(300 * 0.25 + 30, 200 * 0.25)).toBeNull();        // 30 CSS px away: beyond the floor
+    const full = setup({ elements: [videoEl("v")] });
+    expect(full.controller.videoAt(360, 200)).toBeNull();                          // at zoom 1 the scene radius (26) still rules
+  });
+
   it("follows the viewport (scroll and zoom) and the element's rotation, and skips deleted videos and images", () => {
     const moved = setup({ editable: false, elements: [videoEl("v")], appState: { scrollX: -100, scrollY: 0, zoom: { value: 2 } } });
     // Scene (300,200) sits at screen ((300 + scrollX) * zoom) = 400, 400.

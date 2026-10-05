@@ -245,12 +245,15 @@ describe("playing a board video (#501)", () => {
     board.initElements = [media(VID, "video"), media(IMG)]; board.scene = [media(VID, "video"), media(IMG)];
     await mount();
     const presence = (selectedIds: string[]) => act(async () => { board.props!.onPresence({ pointer: null, button: "up", selectedIds }); });
-    const button = () => document.querySelector<HTMLButtonElement>('[data-testid="project-whiteboard-play-video"]');
-    expect(button()).toBeNull();
-    await presence([`el-${IMG}`]); expect(button()).toBeNull();                              // an image is not playable
-    await presence([`el-${VID}`, `el-${IMG}`]); expect(button()).toBeNull();                 // two selected
-    await presence([`el-${VID}`]); expect(button()?.textContent).toContain("Play video");
-    await act(async () => { button()!.click(); });
+    // The action rides the board's own floating slot (`actions`), never the header, so it cannot reflow the page.
+    const action = () => (board.props!.actions as Array<{ id: string; label: string; onSelect: () => void }> | undefined)?.find((entry) => entry.label === "Play video");
+    const button = action;
+    expect(document.querySelector('[data-testid="project-whiteboard"] [data-testid="project-whiteboard-play-video"]')).toBeNull();
+    expect(button()).toBeUndefined();
+    await presence([`el-${IMG}`]); expect(button()).toBeUndefined();                              // an image is not playable
+    await presence([`el-${VID}`, `el-${IMG}`]); expect(button()).toBeUndefined();                 // two selected
+    await presence([`el-${VID}`]); expect(button()?.label).toBe("Play video");
+    await act(async () => { button()!.onSelect(); });
     expect(document.querySelector('[data-testid="embedded-video"] video')?.getAttribute("src")).toBe(`/media/embedded/${VID}`);
   });
 
@@ -258,7 +261,7 @@ describe("playing a board video (#501)", () => {
     board.initMode = "view"; board.initElements = [media(VID, "video")]; board.scene = [media(VID, "video")];
     await mount();
     await act(async () => { board.props!.onPresence({ pointer: null, button: "up", selectedIds: [`el-${VID}`] }); });
-    expect(document.querySelector('[data-testid="project-whiteboard-play-video"]')).toBeNull();
+    expect(board.props!.actions).toBeUndefined();
     await act(async () => { board.props!.onVideoOpen(VID); });
     expect(document.querySelector('[data-testid="embedded-video"]')).not.toBeNull();
   });

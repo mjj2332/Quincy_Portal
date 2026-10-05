@@ -368,6 +368,8 @@ const INSERT_GAP = 80
 const INSERT_CASCADE = 28
 /** QUINCY #501: the play badge's disc is ~11% of the short edge (see lib/whiteboard-media-render.ts); a click this far (as a fraction of the short edge) from the centre opens the video, a little generous for a fingertip. */
 const BADGE_HIT_RADIUS = 0.13
+/** QUINCY #501: the play badge's hit radius never shrinks below this many CSS pixels, so a zoomed-out board still has a fingertip-sized target. */
+const BADGE_MIN_HIT_PX = 22
 // Excalidraw's inset between a shape and its label.
 const BOUND_TEXT_PADDING = 5
 const LABEL_SHAPES = new Set(["rectangle", "ellipse", "diamond"])
@@ -1075,7 +1077,7 @@ export function createController(
         // The topmost element under the point decides: anything opaque above a video's badge hides it.
         if (!isVideo) return null
         // Editing: only the play badge opens it (a click anywhere else selects, drags, resizes). Viewing: the whole element.
-        if (edit && Math.hypot(rx, ry) > Math.min(element.width, element.height) * BADGE_HIT_RADIUS) return null
+        if (edit && Math.hypot(rx, ry) > Math.max(Math.min(element.width, element.height) * BADGE_HIT_RADIUS, BADGE_MIN_HIT_PX / state.zoom.value)) return null
         return ref.id
       }
       return null
@@ -2151,6 +2153,8 @@ export function WhiteboardCanvas({
       if (tool === "image" && latest.current.mediaTool) {
         // QUINCY #501: the host chooses the files and uploads them (the editor's own image tool is off). The tool never becomes active.
         latest.current.mediaTool.onPick(viewCentre(current.getAppState()))
+        // The picker is the whole action: hand the tool back to selection so it does not stay highlighted after the picker closes.
+        current.setActiveTool({ type: "selection" })
       } else if (tool === "image") {
         // Opens the file picker; touch and keyboard picks drop the image mid-view.
         current.setActiveTool({

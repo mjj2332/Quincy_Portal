@@ -34,12 +34,13 @@ const fitWithin = (width: number, height: number, edge: number) => {
   return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
 };
 
-/** The play badge: a scrim disc (radius ~11% of the short edge, at least 24 px) with a triangle, centred. */
+/** The play badge: an inverse-surface disc (~80% opaque, radius ~11% of the short edge, at least 24 px) with a light ring and triangle, centred. */
 function drawBadge(context: CanvasRenderingContext2D, width: number, height: number) {
   const radius = Math.max(24, Math.min(width, height) * 0.11);
   const x = width / 2; const y = height / 2;
   context.beginPath(); context.arc(x, y, radius, 0, Math.PI * 2);
-  context.fillStyle = token("--scrim-overlay", "GrayText"); context.fill();
+  context.save(); context.globalAlpha = 0.8; context.fillStyle = token("--bg-inverse", "GrayText"); context.fill(); context.restore();
+  context.lineWidth = Math.max(2, radius * 0.06); context.strokeStyle = token("--text-on-inverse", "Canvas"); context.stroke();
   context.beginPath();
   const side = radius * 0.9;
   context.moveTo(x - side * 0.3, y - side * 0.5);
@@ -83,7 +84,9 @@ export const canvasMediaRenderer: MediaRenderer = {
     const { canvas, context } = newCanvas(UNAVAILABLE_TILE.width, UNAVAILABLE_TILE.height);
     context.fillStyle = token("--surface-sunken", "Canvas"); context.fillRect(0, 0, canvas.width, canvas.height);
     context.fillStyle = token("--foreground-secondary", "GrayText");
-    context.font = `${token("--weight-regular", "400")} 28px ${token("--font-sans", "sans-serif")}`;
+    // The --text-xl step, scaled with the bitmap (the tile's reference width is UNAVAILABLE_TILE.width).
+    const size = (Number.parseFloat(token("--text-xl", "28px")) || 28) * (canvas.width / UNAVAILABLE_TILE.width);
+    context.font = `${token("--weight-regular", "400")} ${size}px ${token("--font-sans", "sans-serif")}`;
     context.textAlign = "center"; context.textBaseline = "middle";
     context.fillText("Media unavailable", canvas.width / 2, canvas.height / 2);
     return finish(canvas, "image/png");
