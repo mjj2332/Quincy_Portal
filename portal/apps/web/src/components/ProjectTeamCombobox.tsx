@@ -95,9 +95,9 @@ export const TEAM_CHIP =
   "flex h-[calc(--spacing(5.25))] w-fit items-center justify-center gap-1.5 rounded-[var(--radius-pill)] " +
   "bg-muted px-1.5 text-xs font-medium whitespace-nowrap text-foreground has-disabled:pointer-events-none " +
   "has-disabled:cursor-not-allowed has-disabled:opacity-50 has-data-[slot=combobox-chip-remove]:pr-0 " +
-  // 44px touch target at the narrow breakpoint (spec §10.5, docs/lessons.md:1333). This repo's
+  // 44px touch target at the narrow breakpoint (spec §10.5, docs/lessons.md § "A hover-reveal affordance has no touch equivalent"). This repo's
   // `≤720px` spelling is `max-[721px]:`, not `max-[720px]:` — `max-[720px]:` alone compiles to
-  // `width < 720`, excluding exactly 720 (docs/lessons.md:1141-1146).
+  // `width < 720`, excluding exactly 720 (docs/lessons.md § "Three CSS traps a Tailwind convergence").
   "max-[721px]:min-h-[44px]";
 
 /** #514: header chips may carry a long collision label (full name + email). They never outgrow their container and wrap

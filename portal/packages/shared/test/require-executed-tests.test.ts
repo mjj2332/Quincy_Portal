@@ -52,6 +52,41 @@ describe("require-executed-tests, against a real vitest run", () => {
   });
 });
 
+const multiConfig = fileURLToPath(new URL("./fixtures/fixture-multi-project.config.ts", import.meta.url));
+
+function runMulti(...args: string[]): { status: number; output: string } {
+  try {
+    const output = execFileSync(process.execPath, [vitestCli, "run", "--config", multiConfig, ...args], {
+      encoding: "utf8", stdio: "pipe", timeout: 120_000,
+    });
+    return { status: 0, output };
+  } catch (error) {
+    const failure = error as { status?: number; stdout?: string; stderr?: string };
+    return { status: failure.status ?? -1, output: `${failure.stdout ?? ""}${failure.stderr ?? ""}` };
+  }
+}
+
+describe("require-executed-tests, per project", () => {
+  it("fails a full run in which one of two projects executes nothing, naming it", () => {
+    const { status, output } = runMulti();
+    expect(output).toContain('project(s) "idle" executed no tests');
+    expect(output).not.toContain('"ran"');
+    expect(status).toBe(1);
+  });
+
+  it("does not trip on a file-filtered run", () => {
+    const { status, output } = runMulti("passing.fixture.ts");
+    expect(output).not.toContain("executed no tests");
+    expect(status).toBe(0);
+  });
+
+  it("does not trip on a single-project run", () => {
+    const { status, output } = runMulti("--project", "ran");
+    expect(output).not.toContain("executed no tests");
+    expect(status).toBe(0);
+  });
+});
+
 describe("executedTestCount", () => {
   const moduleWith = (passed: number, failed: number) => ({
     children: {

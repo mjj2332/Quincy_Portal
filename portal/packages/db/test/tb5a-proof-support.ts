@@ -58,7 +58,8 @@ export function applyThrough(db: SqliteDatabase, through: number): void {
  * and SQLite resolves a column at prepare time, so the winner cannot run on a schema without it. */
 export const PROOF_ADDITIONAL_MIGRATIONS = ["0054_project_edited_arrival.sql"] as const;
 
-export function applyAllMigrations(db: SqliteDatabase): void {
+/** Migrations 0001-0037 plus PROOF_ADDITIONAL_MIGRATIONS — NOT every migration (see `applyThrough`). */
+export function applyBoardProofSchema(db: SqliteDatabase): void {
   applyThrough(db, 37);
   for (const name of PROOF_ADDITIONAL_MIGRATIONS) applyMigration(db, name);
 }

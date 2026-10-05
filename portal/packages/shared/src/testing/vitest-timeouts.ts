@@ -5,7 +5,7 @@
  * neither survives its CI runner. Measured across all eight configs on one green run, CI is
  * between 3x and 22x slower than a local disk, and the ordering does not follow the runtime:
  *
- *   apps/web/vitest.dom.config.ts      7.49s -> 164.72s   22.0x
+ *   apps/web dom project (was vitest.dom.config.ts) 7.49s -> 164.72s   22.0x
  *   packages/db/vitest.config.ts       2.17s ->  23.83s   11.0x
  *   apps/web/vitest.config.ts          1.42s ->  15.34s   10.8x
  *   workers/background                11.97s -> 116.09s    9.7x

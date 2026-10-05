@@ -6,7 +6,7 @@
     "dev": "vite",
     "build": "tsc -p tsconfig.json && vite build",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run --config vitest.config.ts && vitest run --config vitest.dom.config.ts"
+    "test": "vitest run --config vitest.config.ts"
   },
   "devDependencies": {
     "@babel/parser": "7.29.8",

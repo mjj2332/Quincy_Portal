@@ -57,6 +57,7 @@ export default defineConfig({
     }),
   ],
   test: {
+    globalSetup: ["./vitest.global-setup.ts"],
     reporters: ["default", requireExecutedTests("workers/app/vitest.config.ts")],
     testTimeout: TEST_TIMEOUT_MS,
     hookTimeout: HOOK_TIMEOUT_MS,

@@ -153,10 +153,14 @@ unmeasured on a full pass: hold its first run against the huashu column.
 
 Preconditions, each checked before spawning (Agy starts none of them — see the shutdown hang above):
 
-1. `wrangler dev` on 8787 serving the build under test. It serves whichever checkout started it,
-   normally the main checkout; with the owner's OK, detach that checkout to the branch under test
-   (`git checkout --detach <branch>`), rebuild web (`npm run build -w @quincy/web`), and restore
-   `main` afterwards. A worktree cannot run its own server (no `.dev.vars`, no local D1 session).
+1. `wrangler dev` on 8787 serving the build under test, started by
+   `scripts/agents/serve-branch.sh <ref>` and by nothing else. It serves from the dedicated
+   worktree `~/quincy-wt/serve`, never the main checkout, so no other session's checkout moves
+   under a pass. It links the main checkout's `.dev.vars` by path, copies its local D1 once (the
+   owner's sign-in lives in D1's `session` table, so it keeps working), applies the ref's
+   migrations to that copy, and prints `ref HEAD pid cwd bundle`. If another checkout already
+   serves 8787 the script exits 2: another session may be mid-QA, so ask the owner before
+   `--takeover`. `scripts/agents/preflight.sh` shows who serves 8787 at any time.
 2. The owner's everyday Chrome is signed in to `http://localhost:8787`, and the huashu extension
    is connected: a huashu `tabs` list answers. If calls fail, the owner clicks the extension icon →
    Reconnect (a CLI/extension version mismatch warns but works).
@@ -164,6 +168,12 @@ Preconditions, each checked before spawning (Agy starts none of them — see the
 4. The page under test is **hard-reloaded** at the start of the brief, and Agy reports the loaded
    `index-*.js` name alongside the one the server now serves. A tab left open across a rebuild
    runs the old bundle, and a pass against it is void (#255 pass G).
+
+`scripts/agents/agy-pass.sh <pass-body.md> <repo>/qa-evidence/<pass>` runs this whole section:
+it assembles the brief from `docs/subagents/templates/agy-brief-head.md` + `agy-common-rules.md` +
+the pass body, writes the server's pid, cwd, HEAD and bundle at the top of `report.md`, runs the
+command below, and appends the post-run checks (server unchanged, duplicate screenshots, `file`,
+the stderr signatures). `--help` for the options. The command it runs:
 
 ```bash
 agy --model gemini-3.8-flash-medium --mode accept-edits --effort medium \
@@ -173,7 +183,8 @@ agy --model gemini-3.8-flash-medium --mode accept-edits --effort medium \
   -p "$(cat "$SCRATCH/browser-pass.md")" > report.md 2> run.log
 ```
 
-- Launch it with `Bash` `run_in_background: true`. `-p` stays last.
+- Launch it with `Bash` `run_in_background: true`. `-p` stays last. The `Bash(agy:*)` allowance
+  below does not cover `scripts/agents/agy-pass.sh`; it runs once the owner allows that command.
 - **Permission.** The owner added `Bash(agy:*)` to `.claude/settings.local.json` (2026-09-28). It
   matches only a command line that *starts* with `agy`: a wrapper that waits for a previous run
   (`while …; do sleep; done; agy …`) is not covered and is refused. Queue a second run by launching
@@ -190,9 +201,15 @@ agy --model gemini-3.8-flash-medium --mode accept-edits --effort medium \
 - **Screenshots.** `screenshot` with an absolute `savePath` under `qa-evidence/<pass>/screens/` and
   `full: true`. Without the flag huashu writes a 60%-scale JPEG under the `.png` name (2026-09-28,
   2304×1336). Confirm the files exist and check one with `file` after the run.
-- **`[NO_TAB]`** on a tab huashu just opened: open a fresh tab and retry once. If it recurs, the
-  owner reloads the extension (`chrome://extensions` → reload); runs that hit it printed the
-  extension v1.2.0 / CLI v1.2.1 mismatch warning.
+- **`[NO_TAB]`** on a tab huashu just opened: first check whether the extension is connected from
+  two Chrome profiles — the cause on 2026-10-05, after 14 failed calls and three round-trips with
+  the owner. `grep '个 Chrome 实例连着' ~/.huashu-chrome/bridge.log | tail -1` prints the bridge's
+  "2 Chrome instances connected" warning, naming where commands are routed; it is live when it is
+  newer than the last `扩展断开` (extension disconnected) line. `scripts/agents/preflight.sh` makes
+  that comparison (its `huashu-2x` line). Fix: the owner disables huashu in the second profile
+  (`chrome://extensions` in that profile) or closes that profile. Only then: open a fresh tab and
+  retry once, and if it recurs the owner reloads the extension (`chrome://extensions` → reload).
+  The extension v1.2.0 / CLI v1.2.1 mismatch warning also printed on those runs; it warns but works.
 - **Drags.** huashu has no drag tool. The brief supplies an `eval` that dispatches `pointerdown`,
   stepped `pointermove`s and (after the screenshot) `pointerup` on the real bar or grip; the
   keyboard Adjust path (Space, arrows, M/S/E, Enter/Escape) is the fallback when a synthetic drag

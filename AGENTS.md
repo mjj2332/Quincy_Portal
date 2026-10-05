@@ -48,8 +48,8 @@ if you miss it: `lib/staff-history.ts` gives the router a **read-only** history.
 URL and never writes it, because `Transitioner` canonicalises the URL on mount with no opt-out
 (it rewrote `/%61dmin` to `/admin` and mounted the real Admin screen). So a `useNavigate()`,
 `<Link>`, or `router.navigate(...)` anywhere in the app **silently does nothing**. Navigation goes
-through `InternalLink` / `locationStore()`. See `docs/lessons.md:1368-1380` and
-`lib/routing-transport.guard.test.ts`, which makes that a build failure rather than a bug report.
+through `InternalLink` / `locationStore()`. See docs/lessons.md § "A router that owns the URL will
+canonicalise it" and `lib/routing-transport.guard.test.ts`, which makes that a build failure.
 
 The original `prototype/` design export was retired in #48. What was worth keeping is
 archived under `docs/archive/` — **historical, explicitly not authoritative**.
@@ -57,10 +57,20 @@ archived under `docs/archive/` — **historical, explicitly not authoritative**.
 ## Read first
 
 `docs/lessons.md` collects real bugs from this build — read it before touching auth, Hono
-routing, or the review lightbox, and keep it current as you work.
+routing, or the review lightbox, and keep it current as you work. Find entries with
+`node scripts/lessons-index.mjs <tag|#NNN|text>`; every new section gets a `Tags:` line from
+`docs/lessons-tags.md`. Cite a lesson by its heading text, never a line number.
 
-
-
+- **Shell is macOS zsh:** `sed -i ''`, quote globs or use `rg -g`, `perl -e 'alarm N; exec @ARGV'`
+  for time limits.
+- **Test & verify:** `docs/agents/runbook.md` — single-file runs, workspace names, and the
+  touching-X-read-Y table. `npm run verify` (from `portal/`) runs everything CI runs.
+- **Area maps:** `docs/maps/README.md` — notifications, queues, routes, Project sheet, date/time
+  controls, new tables, Base UI, tokens. Read the matching map before exploring.
+- **Orchestration tooling:** `scripts/agents/` (`preflight.sh`, `serve-branch.sh`, `sol-review.sh`,
+  `codex-plan.sh`, `agy-pass.sh`) and brief templates in `docs/subagents/templates/`. QA serves a
+  branch only through `serve-branch.sh`, never from the main checkout. Settled plans go to the
+  issue or `docs/plans/`. Production D1 and session cookies: `docs/agents/production-data.md`.
 
 Authority order when docs conflict: `docs/PRD/PRD.md` → `Personas.md` / `Sitemap.md`.
 
@@ -86,13 +96,9 @@ The component registry in `portal/apps/web/components.json` is:
 https://proxy.collectui.pro/api/r/reui/{style}/{name}.json
 ```
 
-**This is deliberate and owner-chosen. Leave it alone.** ReUI's own docs and its MCP both
-advertise `https://reui.io/r/{style}/{name}.json` as the canonical registry, so an agent
-comparing the repo against the documentation will read ours as a mistake and try to "fix" it.
-It is not a mistake. Changing it needs the owner's say-so, not a tidy-up commit.
-
-The same applies to the MCP server URL: the ReUI docs say `mcp.reui.io`, and the owner's local
-config points at the `proxy.collectui.pro` equivalent.
+**Deliberate and owner-chosen; changing it needs the owner's say-so.** ReUI's docs and MCP advertise
+`https://reui.io/r/…` and `mcp.reui.io`; ours (and the owner's MCP config) use the
+`proxy.collectui.pro` equivalents on purpose.
 
 Also on this pipeline:
 
@@ -100,8 +106,8 @@ Also on this pipeline:
   *beside* `components.json` — the shadcn CLI looks for `.env.local` in its own working directory,
   so a key at the repo root will not be found. `components.json` refers to it as
   `${REUI_LICENSE_KEY}`, which the CLI expands. **Never inline the key itself.**
-- `portal/apps/web/src/config/reui-registry.guard.test.ts` enforces the two rules above. If it
-  fails, do not edit the guard — revert whatever changed the registry URL or inlined a key.
+- `portal/apps/web/src/config/reui-registry.guard.test.ts` enforces both rules; when it fails,
+  revert the change that tripped it and keep the guard as is.
 - `.mcp.json` is gitignored because MCP client configs *cannot* expand `${VAR}` and so must carry
   a raw bearer token. The token-free equivalents in `.cursor/mcp.json` and `opencode.json` are
   committed. If you add an MCP config, check it for credentials before staging.
@@ -113,8 +119,8 @@ Also on this pipeline:
 
 **Before adopting another ReUI block, read `docs/reui-block-adoption.md`.** The Board (#76, shipped
 across #80–#83) is the reference adoption: what it actually cost, the traps in order, and how to
-estimate the next one. Two decisions it settled are ADRs, not preferences — `card` is the Portal's
-committed ReUI surface (`docs/adr/0002`), and the five-star priority control is Quincy-owned rather
+estimate the next one. Two decisions are ADRs, not preferences — `frame` is the Portal's committed
+ReUI surface (`docs/adr/0014`, superseding 0002's `card`), and the five-star priority control is Quincy-owned rather
 than the registry's `rating` (`docs/adr/0003`), so do not "restore" it to `components/reui/`.
 
 ## Reuse ReUI before building UI

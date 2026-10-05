@@ -74,10 +74,22 @@ the whole tree:
 - **ReUI MCP first** (`mcp__ReUI__*`, Ultimate plan): `search` → `get_component` / `get_examples`
   → `validate_usage`. It serves the current registry, so it is the source for finding an item and
   reading its API. The server is the `proxy.collectui.pro` equivalent of `mcp.reui.io`.
-- **`tmp/ReUI_Full_Source_Code/` as the fallback**, when the MCP is unavailable: the full ReUI
-  source (`reui-blocks-main/blocks/<name>/`, `reui-icons-main/`, `reui-templates-main/<template>/`),
-  a snapshot that can lag the registry. Gitignored and on the owner's machine only; a worktree,
-  remote session or CI run has MCP and nothing else.
+- **Current source of one item: `npx shadcn@latest view @reui/<name>`, run from `tmp/ReUI-Test-1`**
+  (the base-nova sandbox; its `components.json` names the `@reui` registry, and the CLI finds the
+  licence itself). It prints the item as the registry serves it today: files, `dependencies`,
+  `registryDependencies` (verified 2026-10-05 on `solution-crm-7`). Use it for any item the snapshot
+  below lacks, and whenever the snapshot and the MCP disagree. Read it for source and dependencies;
+  install only through `add` (above).
+- **`tmp/ReUI_Full_Source_Code/` as the offline fallback**, when neither works. Snapshot of
+  2026-09-13 (`reui-blocks-main/` dated 2026-09-09); it lags the registry and lacks newer items,
+  e.g. `solution-crm-7` (it stops at `solution-crm-6`). Layout:
+  - `reui-blocks-main/blocks/<name>/` — blocks (`sheet-2`, `stats-14`, `filters`, …)
+  - `reui-blocks-main/solutions/<name>/` — solution blocks (`solution-crm-1` … `-6`, …)
+  - `reui-blocks-main/components/`, `reui-blocks-main/hooks/` — what blocks import
+  - `reui-icons-main/`, `reui-templates-main/<template>/`
+
+  Gitignored and on the owner's machine only; a worktree, remote session or CI run has the MCP and
+  nothing else.
 - **`reui-templates-main/tempo-tasks` is the app shell's reference.** The #109 design canvas is
   "Tempo's layout in Quincy's palette"; its `src/features/app-shell/` composes base-nova `sidebar`,
   `sheet` and `breadcrumb` into the shell, header and right panel.

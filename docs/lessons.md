@@ -232,6 +232,7 @@
   AutoHDR control in the SPA is not enforcement, because callers can bypass the UI.
 
 ## Image renditions / Cloudflare Images (2026-07-21)
+Tags: media-renditions, workers-runtime
 
 - **Don't fire N concurrent live transforms of large originals.** Thumbnails were served by
   a per-view `/cdn-cgi/image/` transform whose SOURCE is the full 6–33 MB original. A project
@@ -269,6 +270,7 @@
   Cache Reserve does NOT store resized transform variants (only originals).
 
 ## Recurring drizzle/D1 error-shape trap (2026-07-21)
+Tags: d1-migrations
 
 - **A D1 `UNIQUE constraint failed` message lives in `error.cause`, not `error.message`.** The
   installed drizzle wraps the D1 error in `DrizzleQueryError`; `.message` is just
@@ -279,6 +281,7 @@
   trust the top-level shape of a drizzle/D1 result or error; verify empirically.)
 
 ## Verification (2026-07-21)
+Tags: qa-browser, deploy-ci
 
 - **Verify the real authenticated app in a browser once the user logs in.** After the user
   signed into `quincy.flamingfire.my`, `mcp__claude-in-chrome__*` (their logged-in Chrome, NOT
@@ -289,6 +292,7 @@
   report "tests couldn't start." Run the suites yourself before trusting a green claim.
 
 ## Renditions + transforms deploy (2026-07-21, session 2)
+Tags: media-renditions, deploy-ci
 
 - **`err=9401 "Transformation origin is not in allowed origins list"` is a Cloudflare
   control-plane setting, not code.** Images → Transformations → **Sources** must list the
@@ -340,6 +344,7 @@
   `source_raw_asset_id = null` (lose nothing) and gate any auto stage-advance on real matches.
 
 ## Manual edited Dropbox publication (2026-07-24)
+Tags: dropbox
 
 - **A durable R2 upload is not yet a published edited asset.** A manual Edited JPEG first lands
   under its immutable R2 key with `publish_status='pending'`; only a successful Dropbox overwrite
@@ -412,6 +417,7 @@
   must remain ready while its retry job records the failure.
 
 ## Rendition DLQ silent backlog (2026-07-24)
+Tags: queues-workflows, media-renditions
 
 - **`TRANSFORM_SOURCE_SECRET` must be set identically in both Workers, and nothing enforces
   that.** `workers/app` signs (well, verifies — see `src/lib/transform-source.ts`) and
@@ -441,6 +447,7 @@
   pass rather than adding infrastructure speculatively.
 
 ## A dormant Workflow-id bug that only a feature flag could expose (2026-07-25)
+Tags: queues-workflows
 
 - **Cloudflare Workflow instance ids must match `^[a-zA-Z0-9_][a-zA-Z0-9-_]*$` — `:` is
   rejected outright at `create()`** with `(instance.invalid_id) Instance has invalid id`, no
@@ -462,6 +469,7 @@
   repairing (it's reused verbatim on retry) before re-sending.
 
 ## Workers plan tier was the root cause of a whole day of "bugs" (2026-07-25)
+Tags: workers-runtime, deploy-ci
 
 **Resolved by upgrading to Workers Paid.** This entry is kept because the *diagnostic* failure
 was expensive: three wrong root causes were shipped before the plan page was ever opened.
@@ -495,6 +503,7 @@ was expensive: three wrong root causes were shipped before the plan page was eve
   10,000 but far over Free's 50. Rely on the continuation/re-enqueue path for the remainder.
 
 ## Dropbox 429 burst amplification + Tonomo formatted_address fallback (2026-07-25)
+Tags: dropbox
 
 - **A cursor-reset re-list can turn "one new file" into a Dropbox traffic-limit ban.** One
   AutoHDR image landing in Dropbox produced `[dropbox:transient] Dropbox files/download failed
@@ -536,6 +545,7 @@ was expensive: three wrong root causes were shipped before the plan page was eve
   formatted string can be used directly with no component parsing.
 
 ## Capture manifests + manual RAW Dropbox mirrors (2026-07-24)
+Tags: dropbox
 
 - **Collection lifetime totals cannot verify a newly selected browser batch.** A collection with
   ten older assets plus a new one-file upload must report `1/1`, not `1/11`. **Rule:** carry the
@@ -675,6 +685,7 @@ was expensive: three wrong root causes were shipped before the plan page was eve
   execute them, and telling it not to try avoids this exact trap.
 
 ## Rich-text link marks silently lost on edit-load, not just on submit (2026-08-18)
+Tags: rich-text
 
 - **A one-way JSON clone is not a schema translation, even when both shapes look almost
   identical.** The portable `RichTextDoc` contract stores a link mark flat —
@@ -707,6 +718,7 @@ was expensive: three wrong root causes were shipped before the plan page was eve
   `docs/plans/`, retired 2026-09-04 — see `git log` for that history if needed.)
 
 ## `ON CONFLICT DO NOTHING` needs its status code checked client-side, not just server-side (2026-08-18)
+Tags: d1-migrations, workers-runtime
 
 - **A dedup endpoint that returns 200-vs-201 to distinguish "already existed" from "created" is
   only useful if a caller actually reads it.** `POST /projects/:id/links`
@@ -727,6 +739,7 @@ was expensive: three wrong root causes were shipped before the plan page was eve
   for every other caller) rather than re-deriving status from the response body's shape.
 
 ## Presigned provider uploads have two separate trust boundaries (2026-08-24)
+Tags: permissions, workers-runtime
 
 - **Keep the provider credential on the Worker that owns the outbound operation.** The AutoHDR
   button is initiated through the app Worker, but the background Worker reads R2 and performs the
@@ -744,6 +757,7 @@ was expensive: three wrong root causes were shipped before the plan page was eve
   though AutoHDR already accepted the paid work.
 
 ## Base UI `Input` without a `Field.Root` shares one module-level ref across every instance (2026-08-25)
+Tags: reui-vendor
 
 - **Discovered while investigating a false-positive TB1 QA finding**, not a real bug in the
   shipped code — recorded here so it doesn't become one. `@base-ui-react`'s `Input` resolves its
@@ -766,6 +780,7 @@ was expensive: three wrong root causes were shipped before the plan page was eve
   combination, rather than assuming today's "it's just a no-op" analysis still holds.
 
 ## `RichTextEditor` propagated no-op Tiptap transactions, silently reverting external resets (2026-08-25)
+Tags: rich-text
 
 - **Real bug, found in TB3 manual QA and fixed** (`2cba9a1`). Tiptap/ProseMirror can dispatch a
   transaction whose resulting document is byte-identical to the one already committed — one
@@ -791,6 +806,7 @@ was expensive: three wrong root causes were shipped before the plan page was eve
   exact class of bug is structurally invisible to jsdom-based tests.
 
 ## Local `wrangler dev` (`quincy-app-worker-dev`) crashes intermittently under sustained request load (2026-08-25)
+Tags: workers-runtime, agent-tooling
 
 - **Observed repeatedly during TB3 manual QA** — the local app Worker dev server (`wrangler dev`
   via `.claude/launch.json`'s `quincy-app-worker-dev` config) died outright (process gone, `ps aux`
@@ -842,6 +858,7 @@ was expensive: three wrong root causes were shipped before the plan page was eve
   just because the thing being proxied to treats them the same way.
 
 ## dnd-kit Kanban interaction timing in a real browser (TB5B)
+Tags: board-dnd, qa-browser
 
 TB5B's dnd-kit rewrite shipped with green happy-dom / Node suites, but happy-dom cannot exercise
 PointerSensor / TouchSensor / KeyboardSensor activation, real collision geometry, autoscroll,
@@ -877,6 +894,7 @@ This follows the existing TipTap lessons: native listener / event timing and scr
 can pass happy-dom while failing Chrome.
 
 ## A circular import in `@quincy/shared` that only `vite serve` catches (2026-08-30)
+Tags: testing-guards, agent-tooling
 
 - **Symptom:** `npm run dev -w @quincy/web` (or the `quincy-web-dev` launch config) rendered a
   blank page. Console: `Uncaught ReferenceError: Cannot access 'externalAssetSchema' before
@@ -905,6 +923,7 @@ can pass happy-dom while failing Chrome.
   leaf module instead.
 
 ## Kanban cross-column drag white-screened the app — reflow / measurement feedback loop (2026-08-31)
+Tags: board-dnd · #185
 
 - **Symptom (shipped in TB5B):** on a board with two or more cards in a column, a pointer or
   keyboard drag toward another card white-screened the whole SPA. Console: `Minified React error
@@ -945,6 +964,7 @@ can pass happy-dom while failing Chrome.
   `ProjectKanbanBoard` / dnd-kit config.
 
 ## Floating-UI focus restoration on Escape must be synchronous — a primitive-level invariant, not a one-off fix (TB8-02)
+Tags: focus-overlays
 
 - **Rule:** any popover/menu built on `@floating-ui/react` that owns its own Escape handling
   must call `.focus()` on the reference/trigger element **synchronously**, in the same handler —
@@ -972,6 +992,7 @@ can pass happy-dom while failing Chrome.
   settles."
 
 ## Two ways a green test quietly stops proving anything (TB8-04, 2026-09-02)
+Tags: testing-guards
 
 Both were found while building TB8-04. Neither is about the feature under test; both are about
 assertions that *looked* precise and weren't.
@@ -1004,6 +1025,7 @@ never on a substring of the tag. The same trap applies to `readonly`, `checked`,
 `hidden`, `open`, `invalid`, and `selected`.
 
 ## `@cloudflare/vitest-pool-workers` leaked `SELF.fetch` dispatch — the `workers/app` timing flake (2026-09-03)
+Tags: testing-guards, workers-runtime
 
 **Symptom.** One test in `workers/app/test/api.test.ts` — "manages and edits manual collection
 links while preserving immutable Tonomo links" (`:3160`) — intermittently failed
@@ -1058,6 +1080,7 @@ exist in this config — it belonged to the older `poolOptions.workers` API, not
 Vite plugin — which is why writes accumulate across tests in one file.
 
 ## Asserting a transient loading state is a race unless the test holds the window open (2026-09-03)
+Tags: testing-guards
 
 Found while verifying the fix above: a *second*, unrelated flake in
 `apps/web/src/screens/ProjectWorkspace.dom.test.tsx` ("uses the comments probe for a 403
@@ -1114,6 +1137,7 @@ per-workspace summaries, never by its exit code — and keep running
 `npx vitest run --config packages/shared/vitest.config.ts` separately, as `AGENTS.md` says.
 
 ## Three CSS traps a Tailwind convergence walks straight into (TB8-04, 2026-09-03)
+Tags: css-tokens
 
 All three shipped into a branch that passed typecheck, build, every unit test and a DOM test
 suite. All three were caught only by measuring computed style in a real browser. The common
@@ -1180,6 +1204,7 @@ matching trap: Tailwind opacity modifiers (`bg-signal-positive/8`) compute to `c
 colour space and alpha to the actual painted sRGB pixel.
 
 ## The unlayered-cascade trap has a second door: `tokens/base.css`, via shorthand (TB8-05, 2026-09-03)
+Tags: css-tokens
 
 `docs/subagents/Subagent-Orchestration.md` §7 states the cascade rule in terms of `app.css` — legacy
 rules there beat Tailwind utilities because `index.css` imports it outside any layer. TB8-05 hit
@@ -1232,6 +1257,7 @@ component of that shorthand needs `!`. Verify by reading the *computed* value at
 in the state that matters (`:focus-visible` can be forced), never by reading the class list.
 
 ## A grep gate that cannot fail is not a gate — twice in two releases (TB8-05, 2026-09-03)
+Tags: testing-guards
 
 TB8-04 shipped a verification gate that passed vacuously; TB8-05 authored **two more** and a test
 that did the same, so this is a pattern, not an accident:
@@ -1255,6 +1281,7 @@ non-zero exit, remove it, confirm zero — for greps and assertions alike. A gat
 falsified is decoration. Budget this as part of writing the gate, not as a later audit.
 
 ## A media query outside the range you read will invert your finding (TB8-06, 2026-09-03)
+Tags: css-tokens, qa-browser
 
 TB8-06's draft plan led with a touch-target defect: the Kanban board's drag handle (36px), reorder
 arrows (28×26) and move-to button (30px) were "the board's primary reorder affordances and its
@@ -1278,6 +1305,7 @@ deletions the plan's own line numbers were stale by 60-70 lines anyway — so se
 only durable habit.
 
 ## A shorthand always resets its longhands, and Tailwind's emission order is not your class order (TB8-06, 2026-09-03)
+Tags: css-tokens
 
 Three separate defects in one release, all the same shape:
 
@@ -1301,6 +1329,7 @@ utilities in *its* property order, so a utility can lose to a shorthand it appea
 markup. Confirm in the built stylesheet, comparing byte offsets, rather than reasoning about it.
 
 ## An undefined custom property in an inherited property falls back to `inherit`, not to the declaration above it (TB8-07, 2026-09-04)
+Tags: css-tokens
 
 `app.css` had, on consecutive lines:
 
@@ -1333,6 +1362,7 @@ first — had been rendering as plain body text since it shipped. It looked deli
   for exactly this "caution as text" case.
 
 ## A hover-reveal affordance has no touch equivalent, so it does not degrade — it fails (TB8-07, 2026-09-04)
+Tags: css-tokens, qa-browser
 
 The subtask row hid its schedule and assignee triggers at `opacity: .06` (**1.10:1** — visually
 absent) and revealed them on `:hover` / `:focus-within`. On a desktop that reads as a tidy,
@@ -1352,6 +1382,7 @@ at the smallest supported viewport, not the one you are developing on.
 
 
 ## A trap documented in prose keeps shipping; a trap in a test does not (2026-09-04)
+Tags: testing-guards
 
 Three defect families in this repo have each shipped **more than once**, and one of them shipped
 *after* being written up in a comment in the very file that then violated it — `ui/button.tsx`
@@ -1387,6 +1418,7 @@ no review had ever reported. Both are recorded as TB8-10 D-09/D-10, in a baselin
 build if an entry is fixed but not deleted**, so the lists can only shrink.
 
 ## A percentage min-width inside a wrapping flex container is circular, and moving the element is what reveals it (TB8-10A, 2026-09-04)
+Tags: css-tokens
 
 The Dashboard search field carried `min-w-[min(100%,300px)]`. That is fine in a roomy container and
 was fine for as long as the field lived in the page header. Moved into the board's control strip —
@@ -1419,6 +1451,7 @@ should check the property that actually distinguishes the hypotheses — here, t
 margin — not a proxy for it.
 
 ## A router that owns the URL will canonicalise it, and canonical is not the same as valid (#52, 2026-09-08)
+Tags: routing · #52
 
 Porting navigation to TanStack Router looked like a pure transport swap until the new route-tree
 test caught `/%61dmin` rendering the **real Admin screen**, with the browser URL rewritten to
@@ -1473,6 +1506,7 @@ check cannot pass vacuously.
   structure is not ceremony; here it was the only thing standing between this and production.
 
 ## An asymmetric guard exempts the one root nothing else checks (#56, 2026-09-09)
+Tags: testing-guards, reui-vendor · #56
 
 Guard A of `config/reui-migration.guard.test.ts` held a root to the purity standard — no legacy
 `components/ui/` primitive left in its closure — only once that root's own closure reached a
@@ -1503,6 +1537,7 @@ so nothing in the guard's design ever held it to the standard at all.
   from a green guard whose preconditions you have not re-read.
 
 ## Two identical-looking `opacity-50` overrides, resolved in two different places (#98, 2026-09-11)
+Tags: css-tokens, board-dnd · #98
 
 `reui/kanban.tsx` washes out both a disabled column (`:698`) and a disabled item (`:821`) with the
 same unconditional `disabled && "opacity-50"`. The new Board overrides both, and the two fixes look
@@ -1543,6 +1578,7 @@ outright so there is no ghost to protect either way.
   silent regression — the ghost just stops appearing.
 
 ## The normal path answered 409 and no test had ever seen it (#98, 2026-09-11)
+Tags: board-dnd, testing-guards · #98
 
 Every cross-Stage move on real data answers `409 stage_confirmation_required`
 (`workers/app/src/routes/projects.ts:1122`) before it answers 200, so the two-step confirm is the
@@ -1565,6 +1601,7 @@ first attempt to hold a write open failed because the confirmation is an in-app 
   assertion proves the server-side gate is still reachable from this screen.
 
 ## `onDragEnd` runs before `onMove`, so "clear the drag state" clears it too early (#98, 2026-09-11)
+Tags: board-dnd · #98
 
 The vendored ReUI Kanban calls the consumer's `onDragEnd` and then resolves the move and calls
 `onMove`. Both run inside one synchronous `handleDragEnd` invocation. That makes two
@@ -1595,6 +1632,7 @@ because it asserted `document.activeElement`.
   the handler ran.
 
 ## `RestoreFocus` is keyboard-only, so turning it off is also a scroll fix (#98, 2026-09-11)
+Tags: focus-overlays, board-dnd · #98
 
 dnd-kit's `RestoreFocus` looks like a general "put focus back after a drag" feature. It is not: it
 fires **only for keyboard drags**, and it calls a plain `.focus()` with no options. Three consequences
@@ -1614,6 +1652,7 @@ before assuming what it covers. "Restores focus" meant "restores focus for one o
 methods, in a way that can scroll the page".
 
 ## The hovered card is not the successor when you drag downwards (#99, 2026-09-11)
+Tags: board-dnd · #99
 
 A drop is stored as "before project X", so the Board has to turn the primitive's `overIndex` into a
 successor id. The obvious reading is that the hovered card is the successor (`event.over.id`). That is
@@ -1640,6 +1679,7 @@ same container up, same container down) and pin the downward one with a test fir
 case in which the obvious answer is wrong.
 
 ## A focus test can pass because something else restored focus (#99, 2026-09-11)
+Tags: focus-overlays, testing-guards · #99
 
 The Move-to chooser closes by refocusing its trigger with `focus({ preventScroll: true })`. Its
 Cancel and Escape tests asserted `document.activeElement === trigger`. Deleting the refocus left both
@@ -1655,6 +1695,7 @@ with `{ preventScroll: true }`. That goes red when the refocus is removed.
 Revert your line and watch the test. If it stays green, assert what only your line contributes.
 
 ## A NUL byte made `grep` report nothing, and nothing looked wrong (#99, 2026-09-11)
+Tags: agent-tooling, testing-guards · #99
 
 A template-literal separator was typed as a raw NUL character. The code compiled and every test
 passed. But `grep` now treated `board.tsx` as a binary file, so `grep -n` and `grep -c` against it
@@ -1667,6 +1708,7 @@ the file. Check `file <path>` or use `grep -a`. Separators in keys should be vis
 (`|`), never control characters.
 
 ## A workspace with no `test` script is silently absent from "the full suite" (#83, 2026-09-12)
+Tags: testing-guards, deploy-ci · #83
 
 `portal/package.json`'s `test` is `npm run test --workspaces --if-present`. `packages/shared` had a
 `typecheck` script and no `test` script, so its 20 files and 145 tests — including the entire staff
@@ -1678,6 +1720,7 @@ greener world. `--if-present` is what makes the omission silent.
 tests, it needs a `test` script, or `--if-present` quietly excludes it forever.
 
 ## The vendored board hard-codes the measuring strategy a shipped white-screen banned (#83, 2026-09-12)
+Tags: board-dnd, reui-vendor · #83
 
 The #185 entry above ends with a rule: *pair any live-reordering board with
 `MeasuringStrategy.BeforeDragging`, not `Always`.* The old Board obeyed it explicitly. Its
@@ -1698,6 +1741,7 @@ this one are the `Always` assertion on the captured `DndContext` props and the
 multi-card real-browser drag stays mandatory for any change under dnd-kit config.
 
 ## An `aria-label` is not a test id, and renaming one can void an absence assertion (#83, 2026-09-12)
+Tags: testing-guards, board-dnd · #83
 
 The new Board shipped behind a flag as `aria-label="Project pipeline board (kanban2)"`. The issue
 licensed keeping `kanban2` in internal filenames and test ids, and the suffix looked like exactly
@@ -1712,6 +1756,7 @@ accessible name. And when you rename any string another test asserts the ABSENCE
 be re-proved red — absence assertions fail silently upwards.
 
 ## Two orders, one list: the authorized map is not the displayed order (#83, 2026-09-12)
+Tags: board-dnd, permissions · #83
 
 `moveToPositionOptions` built the Move to… list from the authorized Board map. Correct for placement,
 wrong for presentation: under Priority or shoot-date sort the column renders in sorted order, so the
@@ -1729,6 +1774,7 @@ positions shown to a person is presentation. And port an old suite assertion-for
 regression it catches is the reason it was worth porting.
 
 ## A browser "regression" that was the server's read order, and the fixture that revealed it (#83, 2026-09-12)
+Tags: qa-browser, board-dnd · #83
 
 A browser acceptance pass blocked the #83 cutover: a cross-Stage drop onto a middle card sent
 `between(Target C, Target D)` — in both the unconfirmed request and the confirmed retry — and the card
@@ -1763,6 +1809,7 @@ test keep the tiered comparator on purpose, because that is how the migration no
 back then.
 
 ## Two reviewers, one bug, opposite fixes — and the behaviour you replaced is the tiebreaker (#110, 2026-09-12)
+Tags: agent-tooling, testing-guards · #110
 
 Consolidating four per-screen `useState` toast arrays into one module-level store moved a lifetime
 question out of React and into our own hands, and the two reviews caught it from opposite sides.
@@ -1790,6 +1837,7 @@ evidence neither has the whole failure mode: find the rule that explains both re
 writing either patch.
 
 ## A `new Set()` of filenames cannot catch the duplicate it exists to catch (#110, 2026-09-12)
+Tags: testing-guards · #110
 
 The consolidated toast surface must be rendered exactly once per screen — two viewports means every
 toast renders and announces twice. The test written to pin that collected filenames containing
@@ -1810,6 +1858,7 @@ running the mutation that should turn it red is the only thing that tells you wh
 actually asked.
 
 ## `Extract` on a union you do not own can quietly resolve to `never` (#111, 2026-09-13)
+Tags: reui-vendor · #111
 
 `screens/Dashboard.tsx` re-derived a route type of its own, instead of importing the shared one:
 `Extract<DashboardRouteArm, { dashboardView: "list" | "kanban" }>`. That worked while the shared
@@ -1834,6 +1883,7 @@ operator that matches nothing degrades to `never` without complaint, and the err
 causes will point at the use site, not at the change that broke it.
 
 ## A 404 on `@reui/<name>` sent two tickets looking in the wrong registry (#111, #112, 2026-09-13)
+Tags: reui-vendor · #111, #112
 
 #111's spec said to install the ReUI sidebar. `@reui/sidebar`, `@reui/sheet` and `@reui/tooltip`
 all returned HTTP 404 while `@reui/kanban` and `@reui/badge` returned 200 on the same key, and #111
@@ -1857,6 +1907,7 @@ decision still pending.
 Only when both miss is the component absent, and that is a scope decision for the spec's author.
 
 ## Three guards in one branch read documentation prose as code (#111, 2026-09-13)
+Tags: testing-guards · #111
 
 `docs/lessons.md` already records one gate that scanned comment text as if it were the code it was
 checking. #111 hit the same trap three more times, in one branch.
@@ -1888,6 +1939,7 @@ decide up front whether it should see comments, and strip them if it should not 
 should see them by design, say so where the guard is defined.
 
 ## A lazy Suspense boundary does not retry after the update that made it reachable (#111, 2026-09-13)
+Tags: routing · #111
 
 `screens/Dashboard-calendar-intent.dom.test.tsx` asserted the Calendar surface rendered after
 landing on the bare `/?view=calendar` intent. It never got past the Suspense fallback,
@@ -1925,6 +1977,7 @@ harness's timing, check the fixture is actually valid against the schema the rea
 enforces — an invalid fixture that silently retries forever looks exactly like a timing problem.
 
 ## Vite only replaces `import.meta.env` when it sees a literal member access (#111, 2026-09-13)
+Tags: deploy-ci · #111
 
 `portal/apps/web/src/lib/app-router.tsx` first read the navigation-rail flag by passing the whole
 `import.meta.env` object into a predicate that indexed it with a variable key. It worked in
@@ -1952,6 +2005,7 @@ line that looks equivalent. And compare a string-valued env flag against its exa
 never for truthiness.
 
 ## Tonomo changed envelopes and Editor Dropbox cutover (2026-09-13)
+Tags: dropbox, scheduling
 
 The recent missing-address poison events were not missing addresses: `action: "changed"`
 wraps a full order under `order`, while the outer `id` identifies the appointment rather than
@@ -1976,6 +2030,7 @@ cannot prove that these studio DNGs render. Keep original bytes immutable, valid
 embedded encoding and size, and prove real preview decoding before activation.
 
 ## Adopting base-nova's sidebar: five couplings to file names and comment text, not all of them guards (#122, 2026-09-14)
+Tags: reui-vendor, routing · #122
 
 #122 replaced `components/reui/sidebar.tsx` wholesale — #111's hand-trimmed, provider-less copy for
 base-nova's full primitive (`docs/adr/0005-…`). None of the guards this touches read intent; they
@@ -2022,7 +2077,7 @@ tests.
 the rail's rows painting the wrong text colour — an inactive row computed `--text-primary` instead
 of `--text-secondary`. Every row here renders as `InternalLink`, a real `<a>`, and `styles/tokens/
 base.css:21` declares `a { color: inherit }`, imported UNLAYERED (`index.css`) the same way the
-outline shorthand and the focus ring already documented above (`docs/lessons.md:1181-1219`) are —
+outline shorthand and the focus ring already documented above (`docs/lessons.md § "The unlayered-cascade trap has a second door"`) are —
 so it beats any LAYERED `text-*` utility on an anchor regardless of merge order or specificity, and
 the row inherited the sidebar's own `--sidebar-foreground` instead. Same fix as those two: the `!`
 important modifier on the text-colour utilities, not moving `base.css` into a layer. A row rendered
@@ -2051,6 +2106,7 @@ Escape-returns-focus assertion going red the moment `RailSheet` gained a `finalF
 `onOpenChange` instead. Root Menu collision avoidance has no axis fallback; pick `side` explicitly.
 
 ## Tonomo's created webhook carries a display date, and null-fill never upgrades it (2026-09-14)
+Tags: scheduling
 
 **Symptom:** Editor folder candidate discovery treated every one of these projects as
 `needs_review` with "Invalid shoot date", and the hourly awaiting-RAW reconciliation silently
@@ -2081,6 +2137,7 @@ several hourly runs instead of one; the constant was restored to 100 once the ba
 (2026-09-14).
 
 ## A guard that checks a class is present cannot see that its layout rule was deleted (#113, 2026-09-15)
+Tags: testing-guards, css-tokens · #113
 
 **Symptom:** the rail bell's unread badge rendered as an inline pill beside the icon rather than
 overlaid on its corner, with the whole DOM suite green.
@@ -2097,6 +2154,7 @@ an `app.css` rule is deleted in favour of utilities, the commit that deletes it 
 declaration went, and a test should pin the utilities that carry layout, not just paint.
 
 ## The Positioner's OffsetFunction gets sizes, not positions (#113, 2026-09-15)
+Tags: focus-overlays, reui-vendor · #113
 
 Base UI's `sideOffset`/`alignOffset` callbacks receive `{ side, align, anchor: { width, height },
 positioner: { width, height } }` and nothing about where the anchor is. To align a panel's top with
@@ -2106,6 +2164,7 @@ runs and reads the trigger's rect, and the arithmetic is a pure exported functio
 tests; the pixel result is a browser check.
 
 ## The bell's narrow-header grid keys off `placement`, not a breakpoint; a decorative thumbnail must silence its own placeholder's `role="status"` (#114, 2026-09-15)
+Tags: notifications, css-tokens · #114
 
 `shell-breakpoint.guard.test.ts` forbids `sm:`/`md:`/`lg:`/`max-[…]`/`min-[…]` in
 `NotificationBell.tsx` and its extracted `NotificationList.tsx` — "one collapse breakpoint, JS-owned"
@@ -2123,6 +2182,7 @@ a loaded `<img>` out of the tree the same way) — hiding the wrapper, not patch
 since other callers still want its live region.
 
 ## Renaming the scaffold's child folders broke resume of a half-built tree (2026-09-15)
+Tags: dropbox
 
 **Symptom (caught in review, not production):** with `EDITOR_INPUT_FOLDER` changed from `Input`
 to `0. Input`, a mapping still `pending` that had already recorded `<root>/Input` would, on its
@@ -2145,6 +2205,7 @@ plain `Input` child, and asserts the resumed tree keeps it and never creates `0.
 path), never by re-deriving the path from a constant that can change between deploys.
 
 ## Two write paths reach `notifications`, so `ledger → outbox.actor_id` exists only for some types (#116, 2026-09-15)
+Tags: notifications · #116
 
 `packages/db/src/notifications.ts#emitNotifications` inserts a `notifications` row directly, with no
 `notification_outbox` row and no ledger row; the durable path (`workers/background/src/notification-delivery.ts`)
@@ -2169,6 +2230,7 @@ every channel admission, not only in the resolver. Building the tests surfaced #
 arm had never delivered at all.
 
 ## Cookie-session scripts must send an `Origin` header or every mutation is a 403 (2026-09-15)
+Tags: auth, agent-tooling
 
 **Symptom:** `scripts/bulk-archive-delete-sep-2026.mjs --live`, modelled line for line on the July
 2026 script, passed its dry run (GETs only) and then stopped on the very first archive POST with
@@ -2188,6 +2250,7 @@ mutating requests, and a dry run that only issues GETs does not prove the live p
 Copy the `api()` helper from the September script, not the July one.
 
 ## A list ordered by `(a, b)` but paged on `a` alone silently loses rows (#115, 2026-09-15)
+Tags: search-filters · #115
 
 `GET /notifications` ordered by `created_at DESC, id DESC` and filtered the cursor with
 `created_at < ?`. Two rows written in the same millisecond straddling a page boundary: the first is
@@ -2200,6 +2263,7 @@ regression fixture must share a timestamp on purpose — with distinct timestamp
 unobservable, which is exactly why it survived.
 
 ## Tonomo's RAW folder path is not stable, and the Portal froze its first copy (2026-09-15)
+Tags: dropbox
 
 **Symptom:** 26 active projects reported `path/not_found` for their stored `raw_folder_path` on the
 day Editor auto-creation went live. For 12 of them Tonomo's later webhooks carried a different
@@ -2223,6 +2287,7 @@ writing it, fence the write on the value you read, and nudge every consumer that
 Dropbox deltas.
 
 ## A ready Editor mapping owns RAW intake, so a missing Tonomo folder is not a reason to skip the tree (2026-09-15)
+Tags: dropbox
 
 **Symptom:** 26 active projects were silently skipped by the scaffold because `get_metadata` on
 their stored Tonomo RAW path returned `path/not_found`; the reconcile job finished "done" with no
@@ -2259,6 +2324,7 @@ own address. Tonomo webhook payloads are stored as posted, and Tonomo posts a on
 as often as a bare object, so any SQL over `webhook_events.payload_json` unwraps `$[0]` first.
 
 ## A missing path turned the Dropbox connection red (2026-09-15)
+Tags: dropbox
 
 **Symptom:** minutes after the owner reconnected Dropbox with `sharing.read`, Admin → Integrations
 showed the connection in `error` with `[dropbox:configuration] Dropbox /files/get_metadata failed
@@ -2278,6 +2344,7 @@ is still recorded.
 answer is expected belongs to the caller, as `list_folder`'s `allowNotFound` already did.
 
 ## A canonical shoot date was frozen, so Tonomo reschedules never reached the Portal (2026-09-15)
+Tags: scheduling
 
 **Symptom:** a Project rescheduled in Tonomo kept its original `shoot_date`, and its Editor tree sat
 under the old day folder with a `done` reconcile job and no note.
@@ -2304,6 +2371,7 @@ is ordered by processing, not by when Tonomo made the change. Moving a Dropbox t
 update: anything keyed by path (Edited assets, pinned publish destinations) must follow first.
 
 ## The rail and the Dashboard computed "which view is showing" independently, and drifted (#119, 2026-09-15)
+Tags: routing, search-filters · #119
 
 **Symptom:** with Projects archived, clicking the rail's Kanban pushed `/?view=kanban` and marked
 Kanban current, while the screen kept rendering the archived List. Separately, an explicit List
@@ -2330,6 +2398,7 @@ reads that publication rather than re-deriving or re-coercing it, or the two wil
 different inputs and disagree.
 
 ## #147 fixed only future Tonomo reschedules; the historic ones needed a one-off backfill (2026-09-15)
+Tags: scheduling, d1-migrations · #147
 
 **Symptom:** after #147 shipped, 10 active Projects still showed shoot dates that their latest
 Tonomo event had already moved.
@@ -2347,6 +2416,7 @@ wrote. Say in the PR whether historic rows need a backfill, and give it an age t
 events.
 
 ## Display what the RAW-sync consumer reads, not what it could recompute (#155, 2026-09-16)
+Tags: dropbox · #155
 
 **Symptom:** once a project's Editor folder mapping goes `ready`, RAW sync reads only its Input
 roots and the RAW-scope monitor stops watching the Tonomo folder — but the project page kept
@@ -2377,6 +2447,7 @@ individual's. It needs one real click by the owner before this is provably corre
 plausibly correct.
 
 ## A Calendar or Board unmount left the Dashboard's controls stuck disabled (#152, 2026-09-16)
+Tags: gantt-calendar, board-dnd · #152
 
 **Symptom:** starting a Calendar deadline drop or a Kanban drag, then pressing Back or clicking a
 different rail child mid-interaction, left List/Kanban/Calendar disabled and Archived a silent
@@ -2406,6 +2477,7 @@ effect that would have told the parent. And a component that hands a callback to
 library must fence that callback against firing after unmount, since the library's own teardown is
 not guaranteed to run first.
 ## `move_v2` needed its own error vocabulary and its own response shape, not `get_metadata`'s or `create_folder_v2`'s (#153)
+Tags: dropbox · #153
 
 **Symptom:** wiring `/files/move_v2` the same way the two existing Dropbox endpoints were wired
 would have reintroduced #148 for a new endpoint, and mistyped a routine response.
@@ -2442,6 +2514,7 @@ endpoint's response shape (a bare folder, a union) carries over to the next just
 return something with an `id` and a `path_lower`.
 
 ## The commit after an irreversible external change is the one that must not retry forever (#153)
+Tags: dropbox, queues-workflows · #153
 
 **Symptom:** if the D1 batch that records an Editor folder move failed *after* Dropbox had already
 moved the tree, the mapping stayed `moving` — which correctly fences editor sync, manual publishing
@@ -2466,6 +2539,7 @@ step needs a bounded number of attempts and an escalation a human can see — no
 it is the one state that will not fix itself and will not announce itself.
 
 ## An Editor tree move needed a version fence, not a path fence, and a human upload has no signal before the move commits (#153)
+Tags: dropbox · #153
 
 **Symptom:** an early design for the reschedule move fenced every writer on `root_path_key` alone,
 and treated a run of Dropbox's `list_folder` at claim time as sufficient proof the tree was quiet.
@@ -2498,6 +2572,7 @@ let the sweep adopt what it finds.
 
 
 ## A passing test that opens a real socket — the origin happy-dom hands you is a real one (#167)
+Tags: testing-guards · #167
 
 **What happened:** adding the DOM suite to CI (#158) surfaced `ECONNREFUSED ::1:3000` in every run.
 Eight of the 94 files were opening real TCP connections to `localhost:3000` — around forty per run —
@@ -2535,6 +2610,7 @@ instrument: it is not running when the call happens. And a guard that lives in a
 deleted line from decorative — guard the wiring too (`dom-fetch-guard-wiring.guard.test.ts`).
 
 ## A staged rollout leaves two states, and dev was stuck in the older one (#160)
+Tags: deploy-ci, d1-migrations · #160
 
 `0037_project_board_order_contract` seeded `tb5a_board_contract_enabled` at `0`. That was correct:
 the Board contract shipped off and production was flipped on deliberately afterwards. What nobody
@@ -2598,6 +2674,7 @@ complaining. Be honest about what the guards prove: they gate the wiring, not yo
 Nothing in CI can assert your local database has the flag on; only a browser pass closes that.
 
 ## A green CI step that runs nothing is worse than a missing one (#170)
+Tags: testing-guards, deploy-ci · #170
 
 `.github/workflows/portal.yml` ran `npx vitest run --config workers/app/vitest.dev.config.ts` for
 almost two months. The step passed every time and executed nothing: `133 skipped, 0 passed`. That
@@ -2666,6 +2743,7 @@ process's exit code, because every part of a gate like this can look right while
 0. That is precisely how #170 survived review for two months.
 
 ## A timeout is a budget someone chose, and nobody had chosen this one (#188)
+Tags: queues-workflows, testing-guards · #188
 
 Four CI failures in one day were timeouts with **zero failing assertions**: the gated
 `api.test.ts` document-direct test (#170), `tb5a-migration-proof.test.ts` (#181), the notice-toast
@@ -2717,6 +2795,7 @@ what the budget should be for the machine that actually runs it. Measure before 
 class rather than the instance, and bound the answer from both ends.
 
 ## A failure handler outside `step.do` is not durable, and "the row now matches" is not "my write landed" (#154)
+Tags: queues-workflows · #154
 
 `ManualEditedPublish` did its failure bookkeeping in a plain `catch`. If that write threw, or the
 instance died before reaching it, the job stayed `running` and the Edited asset `pending` forever —
@@ -2749,6 +2828,7 @@ advances; and a guard that checks state rather than your own write's effect is a
 passes.
 
 ## A latch is only half-built until something a human reads says it is set (#163)
+Tags: notifications, queues-workflows · #163
 
 #153 and the provisioning freeze both latched correctly and wrote their reasons down carefully —
 into `move_note`, `feature_flags` and `audit_log`, none of which any screen read. A stuck project was
@@ -2773,12 +2853,13 @@ Things the reviews caught before the build, each of which would have shipped a w
 Separately, a trap in the web test tooling: `npx vitest run src/…/X.dom.test.tsx` in `apps/web`
 uses `vitest.config.ts`, which includes only `*.test.ts`. On its own it prints "No test files
 found"; alongside any `.test.ts` file it runs those and reports green with the DOM file silently
-skipped. DOM tests need `--config vitest.dom.config.ts` (the `test` script runs both).
+skipped. (Fixed since: `apps/web/vitest.config.ts` has `unit` and `dom` projects, so a path finds either; `--project dom` selects the DOM suite.)
 
 **Rule:** when you add a latch, add the place a human sees it in the same change — and when you
 read one, ask what it actually stops, and whether it can outlive the reason it was set.
 
 ## A dev proxy that forwards the browser's Origin unchanged fails every exact-Origin check (#191)
+Tags: auth, workers-runtime · #191
 
 **Symptom:** in `npm run dev` (Vite on `:5173`), every POST/PUT/PATCH/DELETE returned
 `403 {"error":"Forbidden: invalid request origin"}`. Reads worked, so the app looked healthy until a
@@ -2799,6 +2880,7 @@ for the pages it serves itself, never for every request, or the proxy launders a
 into a trusted one.
 
 ## A bounded page is only bounded if every row on it can move (#194)
+Tags: search-filters · #194
 
 The minute cron's move-recovery select took 10 `moving` rows with an expired lease, oldest first. A
 commit-stuck mapping (`move_commit_attempts` at the limit) always matches that, and
@@ -2822,6 +2904,7 @@ never true for NULL, so a lease with no expiry could never be taken over.
 there isn't one, the row doesn't belong in the select.
 
 ## One column can only watch one thing, and a report nobody can clear is not a latch (#195)
+Tags: queues-workflows, dropbox · #195
 
 #153 kept the orphan-upload watch in `editor_folder_mappings.moved_from_path`. A second reschedule
 inside the 30-minute window overwrote it, and the first old root stopped being watched without any
@@ -2856,6 +2939,7 @@ What the blind plan reviews caught:
 window you care about. And before a report goes on a screen, decide what clears it.
 
 ## A focusable child inside a composite that owns keydown is a trap until you say otherwise (#206)
+Tags: focus-overlays · #206
 
 The Team chip's × is a real `<button>`, but Base UI ships it with `tabIndex=-1` and expects
 removal to come from the chip's own Backspace/Delete path. #204 rejects that path on purpose
@@ -2898,6 +2982,7 @@ tabbable, read the parent's keydown for what it does with keys it does not handl
 is rarely the answer.
 
 ## A ticket without the design file builds the ticket, not the design (#213)
+Tags: agent-tooling · #213
 
 Five header tickets (#202–#206) shipped, each with Sol's diff review, Luna's browser pass and a
 spec/standards code review, and the result still did not look like the prototype the owner had
@@ -2971,6 +3056,7 @@ crumb and hairline from 2a):
   content-sized, or a one-member team gets a one-chip-wide list.
 
 ## The shell search (#217): a debounce and a popstate race, an envelope that must stay unfiltered, and an escape sequence that stopped being text
+Tags: search-filters, routing · #217
 
 Four defects from replacing the Dashboard's own search field with a single rail-owned store and
 server-side `q`, each the kind this file exists for because none showed up in a type error.
@@ -3027,6 +3113,7 @@ server-side `q`, each the kind this file exists for because none showed up in a 
   bytes on disk are what was intended.
 
 ## A module-singleton store outlives whatever mounted it — scope its reset to the identity that owns it, not the component that happened to create it (#217 fix round 3)
+Tags: search-filters · #217
 
 Sol's whole-branch review, after the shell search (#217) had already shipped several rounds of
 debounce/race fixes (the section above): `lib/dashboard-search-store.ts` is a module-level
@@ -3065,6 +3152,7 @@ across two earlier rounds) into something structurally impossible to conflate: u
 ONLY unregister the component ever triggers.
 
 ## An effect-only fix to a module singleton's identity scoping still has a gap: the render that shows the stale value happens before the effect that would clear it (#217 fix round 4, item 3)
+Tags: search-filters · #217
 
 Round 3's fix above (`PrincipalFreshnessBoundary` resetting `dashboard-search-store.ts` on every
 principal change) closed the "no Dashboard mounted to run the reset" gap, but it is still a
@@ -3106,6 +3194,7 @@ test) has had a chance to run — inside one ordinary `act(() => {...})` call, n
 needed.
 
 ## `<StrictMode>`'s mount-cleanup-mount replay can cancel state that predates the component it replays (#217 fix round 4, item 4)
+Tags: search-filters · #217
 
 `Dashboard.tsx`'s writer-registration effect (previous section) registers once per mount and
 cancels the shared store's pending debounce on its own cleanup — correct for a genuine unmount.
@@ -3138,6 +3227,7 @@ asymmetry it was working around (a fire with no writer used to silently update l
 longer exists.
 
 ## A mocked-fetch DOM suite hid a client/route id mismatch in both directions (#226)
+Tags: testing-guards · #226
 
 The Calendar's checklist event/unscheduled-entry `id` is a `checklist:`-prefixed ENTITY id —
 FullCalendar/DOM ids, focus descriptors, `data-event-id`/`data-unscheduled-id`, optimistic
@@ -3168,6 +3258,7 @@ PATCH the subtasks route with the id verbatim, expect 400 for the raw id and 200
 one) — a unit test on either side alone can drift with the other without failing.
 
 ## A copy of URL state in a store is a seam that finds a new bug every review round — delete the copy, not the bug (#217 build)
+Tags: routing, search-filters · #217
 
 The shell search's committed query lived in two places at once: the URL (`q` on bare/List/Kanban/
 calendar-intent, and the calendar facet's own `q`) and a `query` field the shared store also kept,
@@ -3219,6 +3310,7 @@ does not have yet — and even that copy needs exactly one function that reconci
 authoritative source on every change, not one adoption path per call site.
 
 ## A cache key that omits one of the query's inputs patches an entry nobody is looking at (#230)
+Tags: search-filters · #230
 
 `Dashboard.tsx`'s `dashboardKey` (~:291, feeding `updateProjects`'s `setQueryData` writes) was built
 from `currentUserId`/`role`/`authorizationEpoch`/`viewingArchived` only — no `q` — while the
@@ -3279,6 +3371,7 @@ rendered `<select>` says nothing about the cache key, so "did the optimistic/con
 write land in the right place" is `queryClient.getQueryData` on the exact key.
 
 ## An optimistic value has to outlive its own request (#232)
+Tags: search-filters · #232
 
 The optimistic priority write went into the query cache, but the Dashboard renders the accepted
 snapshot, whose accept effect defers for the whole POST, so the control showed the old value for
@@ -3301,6 +3394,7 @@ block in `Dashboard-priority-coordinator.dom.test.tsx`; the revert-trap, re-edit
 third-party-wins tests each fail when their guard is removed.
 
 ## A captured key or a captured timestamp is only as fresh as the render that captured it (#230, Sol review round 2)
+Tags: search-filters · #230
 
 Three more bugs in this same fan-out/accept machinery, all one shape: something captured a value from
 "the current key" at one point in time and kept trusting it after the world moved on.
@@ -3407,6 +3501,7 @@ the guard; that's expected and does not weaken the sweep, since the failing majo
 what proves the guard matters.
 
 ## A key-equality guard is ABA-blind; read provenance from the cache entry, not the observer's result (#230, item 1)
+Tags: search-filters · #230
 
 The round-2 fix above (`if (dashboardKeyStringRef.current !== refreshKey || result.isPlaceholderData)
 return;`) still had a gap: it re-checks the key AFTER the refetch settles, but only ever inspects
@@ -3456,6 +3551,7 @@ the way test (m)'s `Date.now` collision was confirmed above) before spending a s
 trying to catch it there.
 
 ## Tailwind v4 preflight makes a bare `border`/`border-b` paint near-black — fixed at the cause in PR B, after two rounds of fixing it at the call site (#219, 2026-09-20)
+Tags: css-tokens · #219
 
 `gantt-nav.tsx`'s toolbar and `gantt-view.tsx`'s tree/timeline splitter both shipped a bare
 `border-b`/`border` with no colour utility beside it, and both painted near-black instead of the
@@ -3515,6 +3611,7 @@ the same commit, and say so where the detector used to live. Reinstating it now 
 deleting the compat rule first.
 
 ## `outline-none` + `focus-visible:ring-*` still adds a second focus indicator — the fourth, fifth and sixth time (#219, 2026-09-20)
+Tags: css-tokens, focus-overlays · #219
 
 `styles/tokens/reui.css:160-166` already records this correction twice over (`reui/badge.tsx`
 correction 2, `reui/button.tsx` divergence 5): `styles/tokens/base.css:25` declares an unlayered
@@ -3543,6 +3640,7 @@ keypress the chip shows `outline: 2px solid rgb(10,10,10)` at `outline-offset: 2
 offset is why `overflow-hidden` cannot clip it: the outline paints outside the box.
 
 ## A guard widened to make a build pass is a guard that has already failed once (#219, 2026-09-20)
+Tags: testing-guards · #219
 
 `test-seam.guard.test.ts`'s Guard F (`DATA_SLOT_SELECTOR`) required quotes around an attribute
 selector's value — `[data-slot="x"]` — and so was blind to the equally-valid unquoted CSS form,
@@ -3567,6 +3665,7 @@ same "prove a gate can fail before trusting it" rule `## A grep gate that cannot
 gate` names, applied to a guard's *matcher* as well as its presence.
 
 ## A guard's matcher must be validated against forms that actually exist (#219, 2026-09-20)
+Tags: testing-guards · #219
 
 PR A's skin-guard Detector 3 matched a hex literal inside a Tailwind arbitrary value only when
 the `#` came immediately after `[` or after a type hint (`bg-[#0a0a0a]`, `bg-[color:#fff]`). The
@@ -3588,6 +3687,7 @@ The generalisation: when you port a detector to a second tree, run it against th
 confirm it can still FAIL there. A detector that has only ever been green is untested.
 
 ## A detector scoped to the wrong element is vacuous (#219, 2026-09-20)
+Tags: testing-guards · #219
 
 PR A's Detector 7 forbids `destructive` on the now-indicator by matching the element that
 carries `data-slot="event-calendar-now-indicator"` and testing its opening tag. In the calendar
@@ -3603,6 +3703,7 @@ The generalisation: a detector carries an implicit claim about where the thing i
 appear. Re-check that claim in every tree you port it to, and pin both directions with fixtures.
 
 ## Wall-clock minutes and elapsed minutes are different units; mixing them breaks only on DST days (#219, 2026-09-20)
+Tags: scheduling, gantt-calendar · #219
 
 The vendored calendar computed a day's lower/upper render bounds as
 `Math.min(dayEndHour * 60, getDayTotalMinutes(day, timeZone))`. `dayEndHour * 60` is WALL-CLOCK
@@ -3644,6 +3745,7 @@ such height or top at all. Assert that geometry on `renderToStaticMarkup` output
 `style` attribute is a string no CSS parser has touched.
 
 ## A typed config key can be silently dropped by a runtime allow-list (#219, 2026-09-21)
+Tags: reui-vendor, gantt-calendar · #219
 
 `@reui/event-calendar` resolves its view configuration through `VIEW_CONFIG_KEYS`, an explicit
 array of key names, and copies only those keys into the context its views read. The TYPE
@@ -3669,6 +3771,7 @@ cheaper check passes.
 the key from the list turns three of its five cases red.
 
 ## A consumer `eventClassName` must override every state the vendor tints; tailwind-merge only drops same-variant utilities (2026-09-28)
+Tags: gantt-calendar, reui-vendor
 
 **Symptom.** A selected Deadline chip drew ink-900/30 under paper-050 text (2.03:1), and a hovered
 Deadline row in the agenda went paper-050 on paper-100 (1.07:1). Both class strings looked right
@@ -3697,6 +3800,7 @@ chips may never be baselined. The pattern test in `lib/production-event-calendar
 covers the class strings themselves.
 
 ## A consumer allow-list keyed only on path, over a restricted set with more than one member, grants ALL of them (#220, 2026-09-21)
+Tags: permissions, gantt-calendar · #220
 
 `harness-reachability.guard.test.ts`'s detector (ii) polices two vendored trees at once
 (`components/reui/gantt/`, `components/reui/event-calendar/`) through one list,
@@ -3733,6 +3837,7 @@ still share the SAME wrong assumption as the code it exercises if both were writ
 reasoning at the same time.
 
 ## A render-override prop gated on its own PRESENCE, not its per-call return value, is global even when you only meant it for one case (#220, 2026-09-21)
+Tags: gantt-calendar, reui-vendor · #220
 
 `gantt-bar.tsx` computes `consumerOwnsContent = children !== undefined || !!viewConfig.renderEvent`
 — true the moment `<Gantt renderEvent={...}>` is passed AT ALL, gating BOTH the automatic
@@ -3761,6 +3866,7 @@ inside the override for every case you are not actually changing, rather than as
 override can stay silent for the common path.
 
 ## A production guard checked once at the top proves nothing about the statement that runs last (#220 follow-on, 2026-09-21)
+Tags: testing-guards, d1-migrations · #220
 
 Building the local QA scheduling fixture (`portal/packages/db/qa-seed/`), the obvious design was a
 single preflight check — "does this database look like local dev?" — before running a batch of
@@ -3791,6 +3897,7 @@ already knows how to reject, run that exact validator at generation time rather 
 its rules by hand.
 
 ## `spawnSync`'s default `maxBuffer` fails silently as the child's own crash, not as a clear "buffer exceeded" (#220 follow-on, 2026-09-21)
+Tags: testing-guards, agent-tooling · #220
 
 The same fixture's transport (`cli.mjs`) spawns a `tsx`-run generator and captures its JSON output
 via `child_process.spawnSync(..., { stdio: ["ignore", "pipe", "inherit"] })` with no explicit
@@ -3808,6 +3915,7 @@ via an `EPIPE` that looks like the child's own bug.** The failure mode is maxima
 specifically because the error surfaces from the wrong process.
 
 ## Local D1 caps a compound SELECT at 5 terms, and `wrangler --json` puts the error on stdout (#220 follow-on, 2026-09-26)
+Tags: d1-migrations · #220
 
 The QA fixture's graph-driven teardown built its post-delete checks as one `UNION ALL` of per-table
 `COUNT(*)`s, 40 terms per statement. Every `node:sqlite` test passed. The first real run against a
@@ -3835,6 +3943,7 @@ real `wrangler d1 execute --local --persist-to <scratch>` before trusting it.
 
 
 ## A test that hard-codes dates must pin `Date` to them — and "which tests do?" is measured, not read (2026-09-26)
+Tags: testing-guards, scheduling
 
 `event-calendar-done-dim.dom.test.tsx` fixed `ANCHOR = 2026-09-21T02:00Z` and a done chip on
 2026-09-23 that it asserts is "future". The vendored ReUI calendar derives `data-past` from the real
@@ -3889,6 +3998,7 @@ from the first run:
   by design — shifting only JS cannot pass them. Leave them unpinned.
 
 ## A test that asserts a server count must count the way the server does (2026-09-27)
+Tags: testing-guards
 
 The QA fixture's draw-cap tier (`packages/db/qa-seed/`) exists to push the Gantt past
 `PRODUCTION_GANTT_DRAW_CAP`. Its coverage test asserted `2130 > 2000` and passed — while the real
@@ -3906,6 +4016,7 @@ were delivered. The fixture would have shipped unable to show the draw cap at al
   few children done during a browser pass cannot quietly drop it back under.
 
 ## A test harness that rebuilds the setup by hand hides the step the real setup forgot (#252, 2026-09-27)
+Tags: testing-guards · #252
 
 `db:migrate:local` (`packages/db/setup-local.mjs`) applied migrations, the Board flag and the QA
 capability fence, but never `seed/0001_seed.sql`. A fresh local D1 had no pipeline stages and no
@@ -3936,6 +4047,7 @@ fixture guide as a "known gap" with a manual workaround instead of being fixed.
   the scratch-database command.
 
 ## A banner that says "narrow your filter" must be tested against the controls the surface renders; a legend comes from the role-aware stage set (#255, #254, 2026-09-27)
+Tags: search-filters · #255, #254
 
 The Gantt's draw-cap notice told users to "narrow your filter" for a whole release while the Gantt
 rendered no filter controls at all — its filters were hard-wired to defaults (#255). Every test of
@@ -3952,6 +4064,7 @@ the notice checked that it appeared, none checked that the thing it asked for wa
   same options the filters bar offers, and drops `Delivered` unless delivered projects are shown.
 
 ## A URL-backed chip bar keeps its own query: an unfinished chip has no URL spelling (#255, 2026-09-27)
+Tags: search-filters, routing · #255
 
 The Gantt's filters moved from a reused checkbox panel to a ReUI `Filters` chip row
 (`components/ProductionGanttFiltersBar.tsx`). A checkbox is always a complete value, so the panel
@@ -3979,6 +4092,7 @@ any other edit wiped it.
   `Element.prototype.getAnimations` stub.
 
 ## Sibling retained dialogs must namespace their open-token keys (#221 PR C, 2026-09-27)
+Tags: focus-overlays, gantt-calendar · #221
 
 `useOpenToken` returns a small integer that starts at 0 and bumps on each open, and the retained-dialog
 pattern uses it as the dialog's `key`. Two retained dialogs rendered as siblings each reach token `1`
@@ -3994,6 +4108,7 @@ dialog had been opened once.
   fixed in #221 PR C, because it is out of scope.
 
 ## `overflow: hidden` is still a scroll container; a registry `data-horizontal:` variant matches nothing under Base UI (2026-09-28)
+Tags: css-tokens, reui-vendor
 
 The Gantt's `gantt-view` wrapper measured 145–445px wider in `scrollWidth` than its own width, and
 `bar.scrollIntoView({inline})` slid the whole view sideways — resource column cropped to
@@ -4021,6 +4136,7 @@ The Gantt's `gantt-view` wrapper measured 145–445px wider in `scrollWidth` tha
   the ancestor's `scrollWidth` finds it in one pass.
 
 ## A cascade-only delete misses every table whose id column has no FK (2026-09-28)
+Tags: d1-migrations
 
 **Symptom:** after the late-September bulk archive-then-delete, D1 held 349 `notification_delivery_ledger`,
 322 `notification_outbox` and 527 `rendition_dlq_events` rows for projects and assets that no longer
@@ -4046,6 +4162,7 @@ test for a delete path has to create the orphan through the real producer (archi
 it proves nothing.
 
 ## A controlled calendar drawn from `query.data` unmounts on every navigation; draw from the accepted baseline (#222, 2026-09-28)
+Tags: gantt-calendar · #222
 
 Round 2 of the event-calendar renderer mounted `<EventCalendar>` only when `query.data` existed. Every
 prev / next / view / filter change is a new query key, so `query.data` went `undefined` for one fetch
@@ -4068,6 +4185,7 @@ scroll and focus. The FullCalendar renderer never had this because it drew from 
   a Deadline has none before its confirmation) and the controller owns every announcement.
 
 ## Two surfaces, one advisory rule: the out-of-range schedule warning lives only in `lib/schedule-bounds.ts` (#288, 2026-09-28)
+Tags: scheduling · #288
 
 The Gantt and the event-calendar renderer each had their own "outside the project window" check:
 the Gantt's `scheduleWindowWarnings` (shoot date, else the Sydney created date; a `due_only` checked at
@@ -4088,6 +4206,7 @@ different copy). The same drag warned on one surface and not the other.
   that never send `bounds=1` are unaffected.
 
 ## Flipping a renderer default strands the old path unless its value is honoured explicitly (#223, 2026-09-28)
+Tags: gantt-calendar · #223
 
 #222 read the Calendar renderer as "exactly `"event-calendar"` opts in; anything else is the default".
 Flipping `CALENDAR_RENDERER_DEFAULT` alone would have made FullCalendar unreachable: no stored value
@@ -4106,6 +4225,7 @@ could select it any more, so the promised per-browser opt-out would not exist.
   identity × StrictMode replay per query).
 
 ## A stale lazy chunk after a deploy took down the whole shell; every `lazy()` view needs a boundary (#292, 2026-09-28)
+Tags: deploy-ci, routing · #292
 
 **Symptom:** a tab left open across a deploy (or a rollback) switched to the Gantt or Calendar and the
 entire app shell was replaced by TanStack's error screen: rail, header and view switcher all gone.
@@ -4134,6 +4254,7 @@ error: React 19's default `onCaughtError` still logs it.
   `import(...).then(...)` rejects.
 
 ## An Undo's refetch is a settle refetch: a failure must enter recovery, not announce success (#291, 2026-09-28)
+Tags: search-filters · #291
 
 `runUndo` in `lib/use-scheduling-commands.tsx` awaited `refetchAuthoritative()` after a successful
 compensating write, ignored the result, and announced "Change undone.". On the Gantt this was hidden:
@@ -4154,6 +4275,7 @@ compensating write, ignored the result, and announced "Change undone.". On the G
   identity), because the Calendar's `calendarResetKey` has no identity in it.
 
 ## The `producer` skip covers a surface's every in-tab query, not just the one it refetches (#295, 2026-09-29)
+Tags: search-filters · #295
 
 `invalidateProjectSurfaces(..., producer: "calendar")` skips in-tab invalidation of every query on
 the `production-calendar` prefix, on the assumption that the producing surface refetches its own
@@ -4178,6 +4300,7 @@ old time after a save or an Undo until its own 30s interval or a remount.
   one and asserts exactly one main-range GET and one rail GET per save; turning the skip off fails it.
 
 ## Retiring a renderer: its files were still load-bearing, and its stylesheet was never loaded (#224, 2026-09-29)
+Tags: gantt-calendar · #224
 
 Deleting FullCalendar looked like `rm` plus test legs. Three things made it a two-commit job.
 
@@ -4213,6 +4336,7 @@ Deleting FullCalendar looked like `rm` plus test legs. Three things made it a tw
 
 
 ## A test written against an adapter can pin an invariant only that adapter could break (2026-09-29)
+Tags: testing-guards · #224
 
 `submitDeadlineProposal` was the FullCalendar handlers' entry point into the scheduling controller,
 and it outlived FullCalendar (#224) with no production caller. Two tests in
@@ -4235,6 +4359,7 @@ point `ProductionEventCalendar` uses, showed that neither invariant could be wri
   unreachable.
 
 ## A data barrier is not a UI lock; split them, and build a move's baseline from the pre-overlay list (#306, 2026-09-29)
+Tags: board-dnd · #306
 
 `interactionBlocked` in `Dashboard.tsx` did two jobs. It deferred accepting refetched data, and it
 disabled the view switcher, the sort and (via the Board's `movementLocked`) every card's movement.
@@ -4267,6 +4392,7 @@ freezing the whole Board.
   the relaxation exposes. Both #306 baseline tests in `Dashboard-priority-coordinator` were mutation-checked.
 
 ## dnd-kit does not animate a reorder outside a drag; the Board owns that FLIP (#304, 2026-09-29)
+Tags: board-dnd · #304
 
 - **Symptom:** under Priority sort, the optimistic overlay (#232) re-sorted a card in one frame. The
   card left the pointer, and a quick second click at the same spot hit another project's stars.
@@ -4298,6 +4424,7 @@ freezing the whole Board.
   checked in the browser pass.
 
 ## TanStack resets the scroll after every notified render, even with restoration off (#266, 2026-09-29)
+Tags: routing · #266
 
 - **Symptom:** on a phone, changing a Gantt or Calendar filter, or committing a search, threw the
   reader back to the top of the Dashboard (`scrollY` 433 → 0). The #255 empty-state Clear focused
@@ -4365,6 +4492,7 @@ remove the legacy readers) still applies.
   concurrent writer corrupting a schedule column can no longer do so; only moves between valid ranges are reachable.
 
 ## `?collaboration=open` is frozen by stored activity deep links; Collection tabs got `?tab=` (#337, 2026-09-29)
+Tags: routing, notifications · #337
 
 - **Context:** #337 made every Project notification open the Workspace tab it is about. The obvious
   shape was one uniform `?tab=<workspace tab>` parameter, with `?tab=collaboration` replacing
@@ -4393,6 +4521,7 @@ remove the legacy readers) still applies.
   ref callbacks stable (`ProjectHeader.tsx`'s `tabRefCallbacks`).
 
 ## Server-Timing / D1 metering (#361)
+Tags: workers-runtime, d1-migrations · #361
 
 - **Never build the metered `env` or `DB` per request.** `getAuth` (#360) and `boardSchemaVariant`
   cache on the identity of `env` and `env.DB`; a fresh wrapper per request silently rebuilds
@@ -4407,6 +4536,7 @@ remove the legacy readers) still applies.
   to get it (object rows collapse duplicate column names in joins). `d1-meta` is the coverage counter.
 
 ## Thumbnails moved from `no-store` to `private, max-age=300` (#362, 2026-09-30)
+Tags: media-renditions · #362
 
 - **Change:** an authorised `thumb`/`web` rendition served from `GET /media/asset/:assetId/:variant`
   (stored-rendition branches for staff and External Editor) now carries
@@ -4435,6 +4565,7 @@ remove the legacy readers) still applies.
   `Dashboard-cover-lazy.dom.test.tsx` flushes the idle trigger, so it fails if background preloading returns.
 
 ## No triggers in migrations (2026-09-30, #364)
+Tags: d1-migrations · #364
 
 - **The worker test harness loads migration SQL by splitting on `;` (after dropping `--` lines),
   so a `CREATE TRIGGER ... BEGIN ...; END;` cannot be loaded and would break every worker suite.**
@@ -4449,6 +4580,7 @@ remove the legacy readers) still applies.
   invariant in the worker test.
 
 ## Polling the query cache does not prove a component rendered it (2026-09-30)
+Tags: testing-guards
 
 - **`PrincipalFreshnessBoundary.dom.test.tsx` flaked on main CI (run 36680115640, line 149,
   `expected false to be true`).** Its tests waited until the first access snapshot was in the
@@ -4468,6 +4600,7 @@ remove the legacy readers) still applies.
   poll only move the race.
 
 ## Every reader of a relation-backed assignment moves together (2026-09-30, #368)
+Tags: d1-migrations, permissions · #368
 
 - **Every reader of a relation-backed assignment must move in the PR that makes a second assignee
   possible. The channel admission SQL (`notification-delivery.ts`, staff `legacyAdmission` and the
@@ -4490,6 +4623,7 @@ remove the legacy readers) still applies.
   conflict); test in `project-subtask-command.test.ts` by gating both `batch` calls on a barrier.
 
 ## The Project sheet: four traps (#366, 2026-09-30)
+Tags: focus-overlays, css-tokens · #366
 
 - **A nested `Dialog.Root` renders no backdrop unless `forceRender` is set.** `RailedShell` wraps the
   whole content column in its own `<Sheet>` Root, so the Project sheet's Root is nested, and
@@ -4511,6 +4645,7 @@ remove the legacy readers) still applies.
   and `detail`); `detail: 1` in a DOM test is realism, not a requirement.
 
 ## Discussion restyle: three traps (#376, 2026-09-30)
+Tags: css-tokens, rich-text · #376
 
 - **`InputGroup`'s `has-disabled:bg-surface-sunken` is a deep `:has(:disabled)`, not "the input is
   disabled".** The rich-text field puts the toolbar inside the group, and Undo/Redo are disabled on
@@ -4535,6 +4670,7 @@ remove the legacy readers) still applies.
   `collaboration-timestamp-absolute`) are `data-testid`s on Quincy-owned elements.
 
 ## Activity feed vs notification copy (#378, 2026-09-30)
+Tags: notifications · #378
 
 - **The actor prefix belongs to notifications only.** `renderProjectActivityNotification(…, actorName)`
   prefixes `"${actorName} — "`; a notification has no `actor` field, so it needs it. The Activity feed
@@ -4558,10 +4694,11 @@ remove the legacy readers) still applies.
   production.
 
 ## DOM tests must not depend on in-file order (#389)
+Tags: testing-guards · #389
 
 - **Replay an order failure with the seed.** Run the DOM suite shuffled:
-  `npx vitest run --config apps/web/vitest.dom.config.ts --sequence.shuffle --sequence.seed=<n>`
-  (from `portal/`). Vitest prints `Running tests with seed "<n>"`; pass that `<n>` to reproduce a
+  `npx vitest run --project dom --sequence.shuffle --sequence.seed=<n>`
+  (from `portal/apps/web`). Vitest prints `Running tests with seed "<n>"`; pass that `<n>` to reproduce a
   failure exactly. The default reporter lists tests in declaration order, not execution order.
 - **State that outlives a test** is the usual cause: module-level timestamps in vendored code
   (the event-calendar gesture-suppression windows swallow a slot click within 250-300ms of a
@@ -4571,6 +4708,7 @@ remove the legacy readers) still applies.
   test its own precondition; do not loosen the assertion.
 
 ## Tonomo re-created deleted Projects (order tombstones, 0051)
+Tags: scheduling, d1-migrations
 
 - **Cause.** Tonomo sends a webhook whenever anything changes on an order. `findProject` matched only
   `projects.order_id`, so deleting a Project (`DELETE /projects/:id`) lost the order id and the next webhook
@@ -4591,6 +4729,7 @@ remove the legacy readers) still applies.
   and address links are not affected. Move the constant, not the logic.
 
 ## Gantt landing row (#414, #415): no `scrollIntoView`, and pagination decides the landing
+Tags: gantt-calendar · #414, #415
 
 - **Place the row by writing `scrollTop`, never `scrollIntoView`.** `scrollGanttRowToTop`
   (`ProductionGantt.tsx`) reads the timeline row's rect against the viewport and the sticky timeline
@@ -4617,6 +4756,7 @@ remove the legacy readers) still applies.
   vendor viewport by a `dataset.slot` read rather than a `[data-slot]` selector (test-seam guard F).
 
 ## Icon-only rail (#426): what retiring the expanded rail left behind
+Tags: css-tokens, reui-vendor · #426
 
 - **Retiring a state retires its guards' targets, not the guards.** The expanded/collapsed split took
   the `quincy:shell:rail` preference, `isRailShortcut`, the vendor-patched ⌘B handler and the 260px rule
@@ -4640,6 +4780,7 @@ remove the legacy readers) still applies.
   1405px; update the comment and the media query together.
 
 ## Dashboard tabs, toolbar search and view rename (#427)
+Tags: search-filters · #427
 
 - **Renaming a persisted route value keeps the old spelling readable.** Views are `table`/`board`/
   `timeline`/`calendar`; `list`/`kanban`/`gantt` still parse (to the new route, Timeline facets
@@ -4672,6 +4813,7 @@ remove the legacy readers) still applies.
   the focus-restore path (only a `:focus-visible` one is), or the global ring paints on a mouse click.
 
 ## #428 Shared Dashboard Filter (Stage, Priority, Archived)
+Tags: search-filters · #428
 
 - **The filter is the URL's, and only two route helpers touch it.** `dashboardFilterOf(route)` projects the
   `{ stageKeys, priorities, archived }` out of whichever arm carries it (Table/Board `filter`, Timeline `gantt`,
@@ -4715,6 +4857,7 @@ remove the legacy readers) still applies.
   from it (`productionStageFilterOptions`).
 
 ## #422 Deadline uses the date-time popup
+Tags: scheduling · #422
 
 - **The Deadline editor is the popup, not a form beside it.** `ProjectDeadlineControl` is now a mutation
   adapter (version, 409, Clear confirm, Resume, query owner) around `DateTimePopup`; the header and the
@@ -4742,6 +4885,7 @@ remove the legacy readers) still applies.
   quietened once the draft differs; the three-line reminder summary is read-only only.
 
 ## #423 Every Subtask end is a moment
+Tags: scheduling · #423
 
 - **A shared popup that serves two callers must keep Cancel and close apart.** The range popup's
   `onClose` runs after a successful Apply and on Cancel; the Checklist keeps a failed save's draft for the
@@ -4778,6 +4922,7 @@ remove the legacy readers) still applies.
   failing ALTER undoes the UPDATE.
 
 ## #429 People, dates, Overdue and My tasks in the shared Filter
+Tags: search-filters · #429
 
 - **`mine=1` changed meaning.** It is "People = me" in every view: Table/Board = I am an Editor or assigned an OPEN
   Subtask; Calendar/Timeline Deadline items = I am an Editor, Subtask items = assigned to me. It used to mean Subtasks
@@ -4808,6 +4953,7 @@ remove the legacy readers) still applies.
   Calendar state, so a test that passes `calendar={...editorIds}` with a bare location silently loses the Editor.
 
 ## #431 Dashboard Table on the ReUI data-grid
+Tags: reui-vendor · #431
 
 - **`manualPagination: true` is mandatory.** The vendored grid's default page size is ten; without it the Table
   silently shows ten Projects. Sorting is `manualSorting` too: `sortTableRows` (pure, in
@@ -4834,6 +4980,7 @@ remove the legacy readers) still applies.
   at render and never stored, so a saved choice survives a role or width change.
 
 ## #424 Subtask reminders fire
+Tags: scheduling, notifications · #424
 
 - **Decide the recipients when the reminder fires, not when it is scheduled.** The occurrence row is keyed by the Subtask
   and its `schedule_version`, never by an assignee, and the fire batch joins the assignee relation. Storing recipients at
@@ -4854,6 +5001,7 @@ remove the legacy readers) still applies.
 
 
 ## #430 Calendar and Timeline join the shared Filter and Display
+Tags: gantt-calendar, search-filters · #430
 
 - **Display content per view.** Calendar: Layers (Project deadlines / Subtasks) then Show (delivered Projects / completed Subtasks). Timeline: Show only. Board and Table are unchanged. `completed=` and `delivered=` are real server filters on both views, so they keep a control (Show) rather than going URL-only; the Calendar's Show is a deliberate departure from the issue's "Layers only".
 - **No parser or serialiser change.** Old Calendar and Timeline URLs resolve byte-identically (cold-URL tests in `Dashboard-calendar` and `Dashboard-gantt`). Display writes go through `navigateCalendar` / `navigateGantt`, so every toggle pushes.
@@ -4865,6 +5013,7 @@ remove the legacy readers) still applies.
 - Follow-up (not done): `useFilterQueryBinding`'s `forWrite`, `noticeFor`, `reconcile` options have no caller left.
 
 ## #432 Board cards on `frame`
+Tags: board-dnd, reui-vendor · #432
 
 - **dnd-kit's post-drag click suppression only calls `stopPropagation`.** With the card's link as the drag handle,
   the click that follows a drag still reaches the anchor's default action and does a full page load. The Board adds a
@@ -4893,6 +5042,7 @@ remove the legacy readers) still applies.
   figures sum to the Dashboard header's. The card used to colour them red on date alone.
 
 ## #447 Date popup on a phone
+Tags: scheduling, qa-browser · #447
 
 - **`collisionAvoidance` `side: "shift"` gives `--available-height` the whole viewport.** With the default `flip`, Base UI's
   `size()` measures the sliver above or below the trigger (~165px at 375x812), so a tall popup's body had a tiny scroll
@@ -4906,6 +5056,7 @@ remove the legacy readers) still applies.
   calculation; `min-w-0` plus a `block truncate` eyebrow then clips it. The full text stays in the DOM and in the `aria-label`.
 
 ## #450 Checklist rail is read-only on an archived Project
+Tags: permissions · #450
 
 - **The rail knows it is archived from a prop, and from a latch after a 409.** `ProjectWorkspace` passes
   `archived={Boolean(project.archivedAt)}` down; a write refused with 409 `subtask_project_archived` (#448) latches the rail
@@ -4930,6 +5081,7 @@ remove the legacy readers) still applies.
   (`subtask-add-<id>`) no longer exists.
 
 ## #452 Archived Projects get a read-only TEAM field, and the header Stage reads as a value
+Tags: permissions · #452
 
 - **One refusal code for every membership write: 409 `membership_project_archived`.** Both add routes and both remove routes
   (`/photographers/:userId`, `/editors/:userId`) refuse on an archived Project, whatever else is true of the request. It supersedes
@@ -4981,6 +5133,7 @@ remove the legacy readers) still applies.
   (the sheet's focus manager); a connected, enabled control outside the rail (the comment editor) the user moved to keeps focus.
 
 ## Team picker list clipped by the vendor chips `min-w` variant (#456)
+Tags: reui-vendor, css-tokens · #456
 
 - **Override the plain property, not the variant.** `reui/combobox.tsx` floors the popup with `data-[chips=true]:min-w-(--anchor-width)`.
   twMerge keeps it next to a consumer `min-w-[...]` (different variant), and it wins on specificity (0,2,0 vs 0,1,0), so the popup
@@ -4990,6 +5143,7 @@ remove the legacy readers) still applies.
 - The chips input is `w-[12ch]` (was 6ch, too narrow for "Add…"); it does not grow on focus because the box is the popup's anchor.
 
 ## #459 An archived Project's cover is read-only, and the legacy dropbox-sync route is gone
+Tags: permissions, dropbox · #459
 
 - **One refusal: 409 `cover_project_archived` on `POST /projects/:id/cover`, for a set and a clear alike.** Order: 400 bad id, 403 access, 403 capability, 400 input, 404 Project, then archived (which wins over the asset 404), then the asset check. The write is one `DB.batch` read by position: `[0]` the `UPDATE ... WHERE archived_at IS NULL RETURNING id`, `[1]` the audit INSERT fenced on `changes() = 1` (same `project.cover.set` action, `auditMeta` keeps `impersonatedBy`), `[2]` a trailing `SELECT archived_at` snapshot. Never reorder them. If `[0]` returned no row, the snapshot classifies it: archived is 409, row gone is 404, and a row that is present and not archived is a retryable 409 `cover_conflict` (archived then restored inside the write; the real batch is atomic, so the test re-takes the snapshot after the restore to reach it).
 - **An unknown Project id is 403, not 404, for an Admin.** `hasProjectAccess` resolves a visible Project first, so the 404 branch only fires on a Project deleted between that check and the batch. The #459 plan said 404; the code says 403 and the test pins it.
@@ -4997,6 +5151,7 @@ remove the legacy readers) still applies.
 - **Web follows #450/#452.** `CollectionTabView` latches on a 409 with the code (checked first in `updateCover`, no toast), refetches detail and activity, and drops the latch when `archivedAt` goes set to unset. `canSetCover` is false while archived, so an archived-on-load Project never shows the control. The status notice appears only while latched. `PhotoGrid.onSetCover` resolves `"archived"`; the grid captures at click time whether focus was inside the tile, and a layout effect keyed on `canSetCover` going false moves focus to the tile only if focus was lost (`<body>`, disabled, disconnected, or an ancestor containing the tile). Never on load.
 - **`POST /projects/:id/dropbox-sync` was removed** (web stopped calling it in 85e15fe1), with its manifest entry and probe line. `/sync-dropbox` is the live route.
 ## #455 Archived Projects get a fully read-only header
+Tags: permissions · #455
 
 - **Two new refusal codes, both 409.** `PATCH /projects/:id` answers `details_project_archived` (checked right after the 404, before the services-blocked 409, and again in the batch-loser branch right after the re-read, before the match/services classification, so an archive that lands inside the batch is not reported as "changed while saving"). `POST /projects/:id/sync-dropbox` answers `dropbox_sync_project_archived` (the old precheck 409 had no code; the "nothing to sync" 409 is unaffected). Batch positions did not move. A missing id answers 403 for an Admin too (`hasProjectAccess` runs before the 404), so a "missing id is 404" test is wrong for this route. Deadline needed nothing: `deadline_project_archived` already existed.
 - **The header owns one latch: `null | "stage" | "deadline" | "dropbox"`.** `archived = Boolean(project.archivedAt) || latch !== null` flips the whole row (Stage, Team, Deadline, Dropbox, the details link) at once instead of one control per refusal. It clears when `archivedAt` goes truthy to falsy and when the Project id changes. Focus follows the #450/#452 rule: from a capture at request start (including a portalled popup), moved to the source's `role="group"` only if it was lost (`<body>`, disabled, disconnected, or an ancestor that contains the group); never on load.
@@ -5007,6 +5162,7 @@ remove the legacy readers) still applies.
 - **`EditProject` on an archived Project hides the form and Save** behind a `Notice tone="caution"`, keeps the Danger zone, and reads "Archived project". A Save refused as archived latches the same view, re-reads the Project (so Restore appears), invalidates the surfaces and shows no error. Focus goes to the heading only if it was in the form at Save. The "inside the form" check uses `closest("#edit-project-form")`: in jsdom `form.contains(ownControl)` answers false (the form wrapper is a Proxy whose identity differs between lookups), which a DOM test cannot tell from a real focus loss.
 - **The ui-primitive ratchet matches a literal `role="listbox"`.** The Stage capture needed "focus is in the Select's portalled popup" without writing that attribute, so it reads the trigger's `aria-controls` and checks the element it names.
 ## Calendar sheets: the vendored close collides with the header (#462)
+Tags: gantt-calendar, reui-vendor · #462
 
 - **Why the vendored close was replaced.** `reui/sheet`'s `showCloseButton` pins a 28px close at top/right 12px over the header, so the
   Schedule editor's long street and the rail sheet's title ran under it, and on phones the target was far below 44px. Both calendar
@@ -5019,6 +5175,7 @@ remove the legacy readers) still applies.
   `dashboard-fill.guard` rejects px heights in `ProductionEventCalendar.tsx`. Header `py-[var(--space-3)]` + 44px title = 68px.
 - Pinned before the change: one click and one Escape each fire `onCancel` once; the new tests assert the same.
 ## Team picker drew two focus indicators (#458)
+Tags: focus-overlays · #458
 
 - **A layered `outline-none` cannot beat the unlayered base rule.** `tokens/base.css:25-28` sets `:focus-visible { outline }` outside any
   layer, so `ComboboxChipsInput`'s `outline-none` lost and the input painted a square outline inside the `ComboboxChips` pill, which
@@ -5032,6 +5189,7 @@ remove the legacy readers) still applies.
   passes `min-h-[44px]`, the Gantt popover passes nothing and stays compact.
 
 ## Project sheet title ran under the close button (#460)
+Tags: css-tokens · #460
 
 - The sheet's close x is `position: absolute` (right `--space-4`, 44px) over the body, and `.project-header__identity > h2` had
   no inline-end clearance, so a long title slid beneath it. The fix is `padding-inline-end` on the h2 scoped to
@@ -5041,6 +5199,7 @@ remove the legacy readers) still applies.
   unbroken title wrap inside the reduced width. Pinned by CSS-text assertions in `styles/app-railed.test.ts`.
 
 ## Show in Calendar / Timeline from the Project sheet (#464)
+Tags: gantt-calendar, routing · #464
 
 - **`focus=<project id>` is a one-shot request, not view state.** It rides on the Timeline and Calendar-facet routes only (written last,
   after `q`; beside `calendar`, not inside `DashboardCalendarState`), so every pre-#464 URL stays byte-identical. The Dashboard
@@ -5074,6 +5233,7 @@ remove the legacy readers) still applies.
 
 
 ## Board order is derived, not stored (#470)
+Tags: board-dnd · #470
 
 - **One comparator, two sides.** `compareBoardCards` (shared, `board-order.ts`) orders a column: Priority 5 to 1 then unset, oldest
   Shoot date, street, id. The server builds `board.orderedProjectIdsByStage` with it per role (Priority is withheld from External
@@ -5087,6 +5247,7 @@ remove the legacy readers) still applies.
   moment. Tests must not assert client slot equals server array for that move.
 
 ## Calendar and Timeline item menu (#463)
+Tags: gantt-calendar · #463
 
 - **One controlled host, not a context menu.** The vendor chip and bar are `<button>`s the vendor renders, so nothing can wrap
   or nest in them, and `renderEventMenu` (the Gantt's per-bar ContextMenu) would open on Base UI's 500ms touch long-press over
@@ -5123,6 +5284,7 @@ remove the legacy readers) still applies.
 - **Test trap:** the vendor calendar ignores a click within 250ms of a drag end (a module flag an earlier test in the same file may
   set); wait it out before a grid click.
 ## Filter tree: OR, groups, negation across Projects, Calendar and Timeline (#461, PR A)
+Tags: search-filters · #461
 
 - **One compiler, an executable spec, and SQL that is a function of the tree's shape.** `evaluateDashboardFilterTree` (shared) is the
   spec; `workers/app/src/lib/dashboard-filter-sql.ts` is its only SQL form. Values never enter the text: every rule's values ride in ONE
@@ -5158,6 +5320,7 @@ remove the legacy readers) still applies.
 
 
 ## The Dashboard Filter is one popover over the tree (#461, PR B)
+Tags: search-filters · #461
 
 - **`{ ...state, ...filter }` leaks a stale tree.** A flat `DashboardFilter` has no `tree` / `order` keys, so spreading it over a state that carried a tree keeps the tree, and the serializer then writes `f` and drops the user's new flat edit. Every write goes through `applyDashboardFilter(base, filter)`, which drops `tree` / `order` from the base first. Pinned by a DOM test (tree, then a flat edit on the Calendar view, then no `f=` in the URL). `ganttFacetForWrite` / `writeCalendarState` take the filter as one value for the same reason.
 - **The role clamp must clamp the tree.** `clampDashboardFilter` runs the shared `clampDashboardFilterForRole` over the filter's tree (a flat filter is a flat AND): forbidden Priority / Archived leaves widen under AND and narrow under OR. A flat-field spread (`priorities: canFilterPriority ? ... : []`) left a pasted tree untouched.
@@ -5170,6 +5333,7 @@ remove the legacy readers) still applies.
 
 
 ## Board order Stage B: stop writing `board_position` (#475)
+Tags: board-dnd, d1-migrations · #475
 
 - **Nothing writes `board_position` any more; the Board order is derived from the data (#470).** A Stage move is a mover-only
   `UPDATE` (stage, `board_revision`), with no whole-column fence, no compaction and no renumbering. The column stays in the schema
@@ -5184,6 +5348,7 @@ remove the legacy readers) still applies.
 - **`fence-rework-normative-sql.md` was re-pinned (characterisation, not a guard)** because the SQL it records no longer exists.
 
 ## The Project whiteboard's socket and shell (#498)
+Tags: whiteboard, workers-runtime · #498
 
 - **A WebSocket upgrade is a GET, so `requireAppOrigin` never sees it.** The route checks `Origin === APP_ORIGIN` itself; without it any site could open a socket with the user's cookie. Access (session, collaboration, Project row) is decided BEFORE a Durable Object is addressed, so a refused request creates none.
 - **The Durable Object gets identity from headers on a FRESH `Request`.** Forwarding the browser's request would let a client set `x-wb-user` / `x-wb-mode`; `project-whiteboard.test.ts` pins that they are discarded.
@@ -5195,6 +5360,7 @@ remove the legacy readers) still applies.
 - **Vite's `/api` proxy needs `ws: true` and the Origin rewrite on `proxyReqWs`**, or `npm run dev` refuses the whiteboard's handshake exactly as it once refused every mutation (#191).
 - **DOM tests stub `WebSocket` like `fetch`.** `no-unmocked-fetch.ts` records and refuses a real socket; mock `lib/whiteboard-socket` instead.
 ## Auto-move to Edited review records an arrival; one pass moves it (#486)
+Tags: scheduling, board-dnd · #486
 
 An Editor Output import and a Portal Edited upload only record `projects.edited_arrived_at`; the per-minute `reconcileEditedArrivals` pass is the single place the move happens, through `commitAutomaticStage` with the closed `edited_arrival_quiet` premise. AutoHDR finals and a human import therefore converge on one compare-and-set and one `edited_landed`.
 
@@ -5207,6 +5373,7 @@ An Editor Output import and a Portal Edited upload only record `projects.edited_
 - **Notification rows are per recipient.** "Exactly one `edited_landed`" is one per active admin and member, so race tests compare against the recipient count, not `1`. The pass notifies only for a verified winner, with `edited_landed:<winning audit id>` as the source key.
 
 ## Automatic Deadline rides every Shoot-date write (#484)
+Tags: scheduling · #484
 
 - **Provenance is a stored column, never a value comparison.** `projects.deadline_source` (`automatic` / `manual` / `none`, migration 0055) is what says whether a Deadline was set by the system. A person's save always records `manual`, even at exactly the automatic value, so `saveProjectDeadlineSchedule` deliberately bypasses its "identical schedule is a no-op" shortcut when the stored source is `automatic` (the version bumps, a stale `expectedVersion` still conflicts). The read model reports a held Deadline whose stored source is not `automatic` as `manual`, which also covers the many test fixtures that insert `deadline_at` directly. The CHECK is not tied to `deadline_at` for the same reason. External DTOs never carry `source`: the strict External schema would 500 the whole detail, so `external-project-query.ts` strips it.
 - **One bundle, appended to the END of the batch that writes the date.** `buildAutomaticDeadlineBundle` (`packages/db/src/automatic-deadline.ts`) is the UPDATE (all eligibility in SQL: `deadline_at IS NULL`, `shoot_date` is the value just written, not archived, not Delivered), a system audit gated on `changes() = 1` directly after it, then one occurrence INSERT per reminder gated on that audit row. Gate the UPDATE on the caller's own winner audit row (`create`, `project.update`, the shoot-date fill audit), never on `changes()` of an earlier statement; Tonomo create/update write no audit row, so there the UPDATE's own predicates are the gate. Appending last keeps every existing positional `results[n]` valid, and in `composeStageBundle` the fill (now carrying the bundle) must stay last.
@@ -5214,11 +5381,13 @@ An Editor Output import and a Portal Edited upload only record `projects.edited_
 - **A backdated Automatic Deadline records every occurrence skipped, `due_now` included** (`planDeadlineOccurrences(..., { skipElapsedDueNow: true })`), so importing an old shoot never fires an immediate reminder. A person's save still keeps an elapsed `due_now` pending. Confirming an automatic Deadline at the same value is different: only provenance changes, so it is ONE compare-and-set (`confirmAutomaticDeadline`: `deadline_source = 'automatic'` and the expected version and the stored value) plus the audit row. It does NOT bump `deadline_version` and does not touch occurrences or the outbox. Do not "carry reminders forward" by bumping the version: the scanner claims an occurrence against the version it read and delivery admission compares the outbox payload's `scheduleVersion` with the project's, so a bump racing either one leaves a fired reminder with no delivery or suppresses an in-flight one. #485's reschedule rule must CAS on `deadline_source = 'automatic'` AND the version, so a concurrent confirm and reschedule serialise. The popup's Apply also submits an untouched draft for an automatic Deadline (`applyUntouched`), or the user could never confirm it.
 
 ## #487 — the Team combobox inside the New shoot `<form>`
+Tags: focus-overlays, reui-vendor · #487
 
 - Base UI's chips input lets Enter through to implicit form submission when no list item is highlighted (it says so in `ComboboxInput`), and the Project header never noticed because it is not inside a form. `ProjectTeamCollectCombobox` cancels the Enter default (`blockEnterSubmit`); a synthetic key event in a DOM test never submits, so `CreateProject.dom.test.tsx` asserts `defaultPrevented`.
 - Default editors are display-only on New shoot: the candidates endpoint flags them (`editors[].defaultEditor`) and the combobox locks their chip, but they are never put in `editorUserIds`. Sending them would make a Default editor deactivated between page load and Create a 422, which the server's default-editor rule deliberately never raises.
 
 ## #488 — Deadline and Priority on New shoot
+Tags: scheduling · #488
 
 - **A manual Deadline is written by the create INSERT itself, never by a second `saveProjectDeadlineSchedule` after it.** A second call can half-land (a Project with no Deadline after a 201), and with a shoot date it would also race the Automatic Deadline bundle. The INSERT gains the nine `priority` / `deadline_*` columns at the END of its column and SELECT lists, so the `fieldValues.slice(0, 12)` / `.slice(12)` bind split stays valid; the `schedule_saved` audit and the occurrences follow `projectAudit` in the batch, gated on it. A manual value and the automatic bundle are mutually exclusive.
 - **`createProjectFields` was non-strict, so `deadline` and `priority` were silently stripped until they were declared.** The nested `deadline` object is `.strict()` so a client cannot name a source: the only way to get `automatic` is to send null and let the server compute it.
@@ -5226,6 +5395,7 @@ An Editor Output import and a Portal Edited upload only record `projects.edited_
 - **`DateTimeField`'s `adornment` is part of the trigger's accessible name** (its id joins `aria-labelledby`), so "Automatic" is announced with the value instead of being a silent decoration.
 
 ## Email digest (#489)
+Tags: notifications · #489
 
 - **Staff default to a digest, so every test of the immediate email path must opt in.** A user with no `notification_preferences` row reads as Twice daily, so `notifyProject` / the outbox consumer defer the email. A test that asserts `EMAIL.send` fires must insert `email_digest_cadence = 'immediate'` for its recipient first (see `notifications.test.ts`, `subtask-assignee-column-dropped.test.ts`).
 - **Digest rows need a deterministic order in assertions.** Items created in one run share a millisecond and a random id; `ORDER BY created_at, id` made a test flaky. Order by `state, outcome_code` or assert the whole array.
@@ -5235,6 +5405,7 @@ An Editor Output import and a Portal Edited upload only record `projects.edited_
 - **A backdated Automatic Deadline records every occurrence skipped, `due_now` included** (`planDeadlineOccurrences(..., { skipElapsedDueNow: true })`), so importing an old shoot never fires an immediate reminder. A person's save still keeps an elapsed `due_now` pending. Confirming an automatic Deadline at the same value is different: only provenance changes, so it is ONE compare-and-set (`confirmAutomaticDeadline`: `deadline_source = 'automatic'` and the expected version and the stored value) plus the audit row. It does NOT bump `deadline_version` and does not touch occurrences or the outbox. Do not "carry reminders forward" by bumping the version: the scanner claims an occurrence against the version it read and delivery admission compares the outbox payload's `scheduleVersion` with the project's, so a bump racing either one leaves a fired reminder with no delivery or suppresses an in-flight one. #485's reschedule rule gates on `deadline_source = 'automatic'` (not on a pre-read version), so a concurrent confirm and reschedule serialise: the confirm flips the source and the move writes nothing. The popup's Apply also submits an untouched draft for an automatic Deadline (`applyUntouched`), or the user could never confirm it.
 
 ## Project activity in Email digests (#490)
+Tags: notifications · #490
 
 - **The digest item for activity is the tenth statement of `deliverBroadInApp`, appended LAST and gated on this batch's own `notification.delivery.delivered` audit row (a pre-generated id), never on `changes()`.** Indexes 0-8 and the `terminalOutcomes` check are asserted positionally; an earlier statement owns `changes()`. A replayed or suppressed occurrence writes no delivered audit, so it adds no item, and `ON CONFLICT (notification_id)` is the second fence.
 - **Activity items have `ledger_id` NULL on purpose.** A broad outbox has no email phase: an email ledger row would be re-pended by an admin replay and never drained, so the outbox could never complete. The outcome lives on the item. `CLAIMABLE_ITEM` and the legacy emitter already accept NULL.
@@ -5244,6 +5415,7 @@ An Editor Output import and a Portal Edited upload only record `projects.edited_
 - **A DOM test that picked the first checkbox by position broke when a second control joined the first card.** The tests now scope by the card's `aria-labelledby`; and `test-seam.guard` rejects a selector held in a constant, so write the literal at the call site.
 
 ## An Automatic Deadline follows a reschedule by a second bundle, not a rewrite (#485)
+Tags: scheduling · #485
 
 - **The move is its own bundle, `buildAutomaticDeadlineMoveBundle`, appended last, and it must NOT depend on a pre-read Deadline version.** A first cut CASed on the version the caller read; any concurrent write that bumped the version while staying automatic (a Resume, a second reschedule) made the move silently lose while the new shoot date committed, leaving the old Deadline behind for good. The UPDATE's own predicates are the whole rule: `shoot_date` is the date this write put on the row, `deadline_source = 'automatic'` (a concurrent person's save or confirm flips it to manual, which alone protects a person-set Deadline), a held Deadline, not archived, not Delivered, and the value differs. It bumps `deadline_version` in SQL and the occurrence INSERTs read `p.deadline_version` (and the replaced version, `- 1`) in SQL. A reschedule that resolves to the same Deadline (Saturday to Sunday) writes nothing. Offsets are untouched, because any offset change is a person's save and makes the Deadline manual. Append it whenever the date changes; do not decide "set or move" from a pre-read.
 - **Fence the date write, or a lost race strands the Deadline.** Tonomo's returning-date UPDATE is fenced on the `shoot_date` snapshot it read and THROWS on a lost fence so the queue retries; writing over a newer date would leave its Deadline behind, and redelivery cannot repair it once the date already matches.
@@ -5253,6 +5425,7 @@ An Editor Output import and a Portal Edited upload only record `projects.edited_
 - **The shoot-date fill appends the move too, and still takes no version (#510).** `buildShootDateFillBundle` (stage-move trigger only) appends `buildAutomaticDeadlineMoveBundle` after the #484 set bundle, gated on the fill's own audit row, reason `shoot_date_fill`; `ShootDateFillIndexes.automaticDeadlineMove` records its position and every earlier index is unchanged. Set and move are mutually exclusive on `deadline_at` (the set needs it NULL, the move needs it held), and if the set lands the move's `deadline_local_civil IS NOT` predicate makes it a no-op. The original ticket asked for a pre-read `deadline_version` CAS plumbed through `project-stage.ts`, `automatic-stage.ts` and ingest; that is the #485 first-cut bug (a concurrent automatic-staying bump silently loses the move and strands the old Deadline), so it was deliberately not adopted and no caller changed. All three fill callers (manual Stage move, RAW reconciliation, direct-upload ingest) inherit the move.
 
 ## The Project discussion composer is `QuincyRichTextEditor` on vendored `rich-text-editor-2` (#491)
+Tags: rich-text, reui-vendor · #491
 
 - **Never import the vendor's extension set.** `createRichTextExtensions` enables h1, blockquote, code, codeBlock, hr, alignment, highlight and StarterKit v3's default `autolink` / `linkOnPaste`; autolink turns a typed `a@b.com` into a `mailto:` mark and `parseRichTextDoc` rejects that with a 400. The composer builds on `lib/rich-text-tiptap.ts` (relocated from the legacy editor), and `RichTextEditor.dom.test.tsx` pins the Link extension's resolved options with a stock-StarterKit control so the assertion can fail.
 - **The vendor's selectors call commands our schema removed.** `can().toggleCode()` throws (`code: false`), `setHeading({ level: 1 })` is always false with levels [2, 3], and `storage.characterCount` is undefined. `reui/rich-text-editor/rich-text-state.ts` is trimmed to what the schema can express.
@@ -5262,6 +5435,7 @@ An Editor Output import and a Portal Edited upload only record `projects.edited_
 - **Run the editor tests against both editors (`describe.each`) until the legacy one is retired (#492).** Steps that differ (link dialog vs popover, `<select>` vs menu) go through translator helpers; the translated cases are listed in the PR.
 
 ## The Project whiteboard goes live (#499)
+Tags: whiteboard · #499
 
 - **An `ack` alone is not convergence.** `scene-store.reconcile()` returns the winners (relayed to every other socket) AND the stored rows that beat the sender's batch; the sender gets those back BEFORE its `ack`. A retried batch (same version and nonce) is neither a win nor a loss, so it is acked and never relayed or "corrected".
 - **Notifications carry nothing, the Durable Object rereads.** `refreshAccess()` rereads the Project and each connected user's access (`hasProjectCollaborationAccessForUser`) and applies mode flips / 4403 closes. It is serialised through a promise chain: two RPCs in flight could otherwise apply an older read last. Call it AFTER the SQL batch commits, awaited, never inside it, and also on `already_done` (a retry heals a lost notification). Every element batch rechecks the same state, so a notification that never arrives cannot let a write through; a mode a refresh set during the batch's await wins over the batch's own older read.
@@ -5315,6 +5489,7 @@ An Editor Output import and a Portal Edited upload only record `projects.edited_
 - **Invisibly-small live elements are finalized as deletions by the author's editor, never on load.** A shrink that leaves a live 0x0 element with no pointer-up finalize would be sent as an ordinary edit. The canvas's `handleChange` reports the scene once, drops such elements (`unfinalized`, minus anything a gesture holds) through `updateScene`, and the vanish observer authors the deletion with the last valid geometry (a restorable 1x1 when it never saw one). A stored live 0x0 row is already "not on the board" for every tab, so there is deliberately no load-time cleanup: authorship needs a user action, every tab would race with different nonces, and a view-only tab cannot send.
 
 ## 2026-10-04 — Embedded images in Project discussion (#493)
+Tags: rich-text · #493
 
 - An embedded image is a stored-document node that names media by id (`{type:"image",attrs:{mediaId}}`); the editor's Tiptap `EmbeddedImage` has no `parseHTML`, so a pasted `<img>` or `data:` URL never becomes a node, and both `toTiptap` and `tiptapToRichTextDoc` need an explicit image branch or the attr is dropped.
 - A comment's media statements are appended after every statement whose result is read by position (since #527 a trailing archived-snapshot SELECT follows them) and fenced on the winner's audit row, so positional batch results stay valid and a lost race attaches nothing. They are self-validating in SQL (every wanted id is attached by an UPDATE whose WHERE accepts only a fresh pending upload of this author, or a row this comment already owns; the rest is detached; a guard INSERT violating `bytes > 0` rolls the whole batch back when the attached count is short, surfaced as `CommentMediaConflictError` / 409). The route's pre-read (`resolveCommentMedia`) is advisory only: state read before the batch is stale by the time it runs. Delete marks the media detached with `detached_at = 0` (due now) in the same batch; the route then deletes objects and rows best-effort and the daily sweep is the backstop.
@@ -5326,6 +5501,7 @@ An Editor Output import and a Portal Edited upload only record `projects.edited_
 - jsdom has no layout: ProseMirror's `handleDrop` never runs unless `document.elementFromPoint` / `caretPositionFromPoint` are stubbed.
 
 ## Embedded images on the Notice board (#496)
+Tags: rich-text · #496
 
 - **A post is created after its images are uploaded, so the R2 key cannot carry the post id.** Notice media sits under `notice-board/embedded-media/<mediaId>/original` (outside `projects/`, so a Project hard delete never touches it) and the post owns it through the D1 row (`owner_kind='notice_post'`, `owner_id`). Deleting a post is a D1 operation, never a key-prefix delete.
 - **The Notice profile must take images on the read path too.** `storedContent` falls back to the plain-text document on a parse failure, so a profile that writes images but whose read profile does not shows every image post as plain text (the same failure #492 hit for tables). `NOTICE_RICH_TEXT_PROFILE.allowMedia` is set on the profile itself, once.
@@ -5335,6 +5511,7 @@ An Editor Output import and a Portal Edited upload only record `projects.edited_
 - **The new-post and edit composers keep separate upload locks**; Ctrl/Cmd+Enter goes through `submit()` / `saveEdit()`, which refuse while their own composer uploads.
 
 ## A date popup opened under the sticky top bar with its month navigation scrolled away (#528)
+Tags: focus-overlays, css-tokens · #528
 
 - **`collisionPadding` is measured from the viewport, not from the sticky shell header.** On New shoot the Deadline sits low in "Add details now" and its form (shortcuts, calendar, time column, reminders, the #509 note) is taller than the room above or below it, so the desktop `{ fallbackAxisSide: "none" }` policy flipped it above the field, where `--popover` (z 90) painted over the 50px top bar (z 75), and `--available-height` capped the body so it scrolled. Source-confirmed; the browser pass confirms the geometry (popup top >= header bottom + 16, month navigation and Today / Tomorrow visible with the body at `scrollTop` 0).
 - **Fix, scoped to New shoot's Deadline.** `DateTimeField` takes `popupCollisionAvoidance` / `popupCollisionPadding`, resolved `override ?? default` by `resolveDateTimePopupPlacement` (an `undefined` override never erases the #447 phone policy). New shoot passes `{ side: "shift", align: "shift", fallbackAxisSide: "none" }` and a top padding of `shellChromeBottom() + 16`, read once when the popup opens (it includes the impersonation banner). It may cover its own trigger. `fallbackAxisSide: "none"` stays (#422).
@@ -5342,10 +5519,12 @@ An Editor Output import and a Portal Edited upload only record `projects.edited_
 - **Other date popups keep the default policy** (Project header Deadline, Timeline cell, shoot date, Calendar Move dialog); extending the shift to them is a separate, measured change.
 
 ## `reui/select` popup takes the overlay treatment, and its item ring is inset with `!` on colour and offset (#522)
+Tags: reui-vendor, focus-overlays · #522
 
 The vendored Select popup shipped `ring-1 ring-foreground/10`, no shadow and no inner padding, so the highlighted row ran edge to edge and its outward `:focus-visible` ring was clipped by `overflow-x-hidden`, while the `focus:bg-accent` fill painted a second indicator. It now matches `reui/dropdown-menu` and `quincy/menu` (`border border-border`, `shadow-[var(--shadow-md)]`, `rounded-none`, `p-1` on the List so scroll arrows stay flush). The item draws the global ring inside the fill: `focus-visible:!outline-[color:var(--accent-on)] focus-visible:!-outline-offset-4`. Both need `!` because `tokens/base.css:25` is an unlayered `outline` shorthand that resets colour and offset; `outline-none` is suppression and guard 3 tracks it. Pinned as source text in `styles/design-system-guards.test.ts` (happy-dom resolves no cascade); the built CSS is the proof the utilities were emitted.
 
 ## The Notice-board table bar: zone per pass, phone group, and one breakpoint (#535)
+Tags: css-tokens, search-filters · #535
 
 - **A boundary's edges are the final bar's limits.** Tiptap 3.30.2 orders flip -> shift -> offset, so flip/shift judge the bar BEFORE the 8px offset; their `padding: 8` and the offset's 8 cancel, which makes the boundary rect's edges equal where the bar finally sits. `tableBubbleZone` (`rich-text-table-position.ts`) therefore computes the fits (`row.top - 8 - H >= ceiling`, `row.bottom + 8 + H <= floor`) in final-position terms and adds the WebKit visualViewport offset to the rect afterwards, never before.
 - **Protect the ROW, not the cell, and read the bar's height from floating-ui.** The old boundary was one rect (surface top down to the helper), so a middle row could be covered by clamping or the bar could land on the neighbouring paragraph. `flip`/`shift`/`offset` are derivable options reading `state.rects.floating.height` and fresh neighbour rects on every pass, so the answer does not depend on which placement floating-ui is trying (it resets per pass).
@@ -5358,12 +5537,14 @@ The vendored Select popup shipped `ring-1 ring-foreground/10`, no shadow and no 
 - **Escape from a Base UI control does not bubble.** A `button` / tooltip trigger handles Escape and stops it, so a bubble-phase `onKeyDown` on the wrapper never saw it: the phone group listens in the capture phase (`onKeyDownCapture`, with the `fromOwnDom` guard so portalled menu events are ignored). Tiptap's `commands.focus()` lands on the next animation frame; await it in tests.
 
 ## A finished upload selected the inserted image, so the next keystroke replaced it
+Tags: rich-text · #494
 
 - **Tiptap's `insertContentAt` selects the inserted content by default.** An embedded-image upload completes asynchronously, so the insert landed a `NodeSelection` on the whole image while the author was still typing; the next keystroke replaced the image with a paragraph (seen in real Chrome).
 - **Async inserts must pass `{ updateSelection: false }`** as the third argument so the caret stays where the author is typing. Pinned by `QuincyRichTextEditor-media.dom.test.tsx` ("keeps the image when the author types on after it lands"). Behaviour change: a just-uploaded image is no longer selected, so Backspace right after an upload no longer deletes it.
 - **Video uploads share that one insert call (#494).** Images and videos complete through the same `insertContentAt(..., { updateSelection: false })`; the video case is pinned by `QuincyRichTextEditor-video.dom.test.tsx` ("keeps the video when the author types on after it lands").
 
 ## 2026-10-05 — Video in Project discussion (#494)
+Tags: rich-text, media-renditions · #494
 
 - **`fetch` cannot report upload bytes, so a video's parts go over XHR.** `uploadMultipartFile` takes an opt-in `UploadControl` (`signal`, `onBytes`); a caller that passes none keeps the fetch path unchanged. Cancel aborts the part in flight, starts no further part and rejects as an `AbortError`; the editor then tells the server (abort route) so no reservation is left.
 - **The poster is captured in the uploader's browser, best effort.** `captureVideoPoster` seeks to min(1s, 10% of duration), draws at most 1280 on the long edge and exports a JPEG. A file the browser cannot decode (ProRes) answers `null` and the video posts without a poster; capture runs alongside the byte upload and never delays it.
@@ -5376,6 +5557,7 @@ The vendored Select popup shipped `ring-1 ring-foreground/10`, no shadow and no 
 - **A finished upload's own insertion must not clear upload problems (#494).** `QuincyRichTextEditor`'s `onUpdate` clears `uploadErrors` on every doc change, and an async upload completes with `insertContentAt`, which is a doc change: the cap or type problem shown for one file vanished as soon as a sibling upload landed. The upload insertion transaction carries `UPLOAD_INSERT_META` and `onUpdate` skips the clear for it; only the author's own edits (and a host content replacement or a new pick) clear errors.
 
 ## 2026-10-05 — Link previews in discussion and Notice board (#497)
+Tags: rich-text · #497
 
 - **A card node stores its id and nothing else.** The editor node carries the display fields only so it can draw; `tiptapToRichTextDoc` strips it to `{ previewId }` and the server's `fillLinkPreviews` fills title, description, site, URL and image back in from its own row. Both the Tiptap mappings are explicit (an attribute with no mapping silently disappears, #493), and a request that carries a forged title has it dropped on save.
 - **The fetch lives in the background worker, and the checks still run twice.** The deployed `global_fetch_strictly_public` flag keeps a fetch off private networks, but local development has no such protection, so `checkPreviewTarget` runs on the address, on every redirect hop (followed by hand, three at most) and on the image. The fetch is injected as `(...a) => fetch(...a)` (the Workers illegal-invocation lesson above), under one deadline that covers every await, and the first 1 MiB of HTML is parsed.
@@ -5390,6 +5572,7 @@ The vendored Select popup shipped `ring-1 ring-foreground/10`, no shadow and no 
 - **`::selection { color: inherit }` inherits the parent's `::selection`, not the element's colour (#497).** With Chrome's highlight inheritance the card's "transparent, inherit" rule resolved to the global paper-050 selection text, so a selected card stayed paper-on-white. Give each slot the explicit token its normal colour uses (`--text-primary`, `--text-secondary`); the contract test in `styles/link-preview-card.design.test.ts` rejects `inherit`/`currentColor` there. And a card in the composer is `interactive={false}` (no `<a>`), so a click only selects the node instead of opening a tab.
 
 ## Whiteboard versions, server half: snapshots, the single alarm and restore (#500, Phase S)
+Tags: whiteboard, workers-runtime · #500
 
 - **A snapshot is an R2 object plus a D1 index row, written in that order.** `project_whiteboard_versions` (migration 0061; 0059 and 0060 are reserved by open PRs, so it lands after them or is renumbered at merge) is metadata only, and a `ready` row is inserted only after its object exists. Prune is mark `pruning`, delete the object (a missing one counts as deleted), delete the row, so a failure leaves a `pruning` row for the next alarm and the listing never offers it.
 - **Dirty is a revision, not a flag.** `scene_revision` rises inside the SAME `transactionSync` as the winning rows (`reconcile`'s `afterWrite`), `published_revision` is what a capture covered, and a publication clears dirtiness only THROUGH the revision it captured. An edit that lands during the R2 PUT or the D1 insert stays dirty, and arms its own deadline because the capture cleared `snapshot_due_at`.
@@ -5402,6 +5585,7 @@ The vendored Select popup shipped `ring-1 ring-foreground/10`, no shadow and no 
 - **Purge raises a fence first.** `purge()` sets it before closing sockets; an operation that sees it move abandons itself (and deletes a key it already PUT), and the purge drains what was running before it deletes the storage. A purge that is not followed by the Project's deletion leaves a working board, because the fence is a counter, not a flag.
 
 ## Whiteboard versions, client half: a restore resets the editor (#500, Phase C)
+Tags: whiteboard · #500
 
 - A `reset` frame, or a reconnect's `init` on a newer generation, REMOUNTS the editor (`key` = reset count) on the restored scene; it is never merged. Merging would let a stale tab's higher element versions beat the restored rows. The socket, the peers and the collaborators stay.
 - The saver, vanish observer and remote applier are one *session per generation* (`startSession` in `ProjectWhiteboard.tsx`): `saver.seed` only adds, so reusing one carries `transmitted`/in-flight state across a restore. Each session seals its saves for its own generation (`socket.send(batch, generation)` refuses a mismatch without sending), so an old editor's late save is never stamped with the restored generation.
@@ -5409,6 +5593,7 @@ The vendored Select popup shipped `ring-1 ring-foreground/10`, no shadow and no 
 - An `elements` relay (or a rejection) of a NEWER generation than the socket knows means the socket missed the `reset`: it closes and the reconnect's `init` carries the scene. Relays of another generation are never delivered.
 
 ## Whiteboard media, server half: attach on snapshot and the stale-tab gate (#501, Phase S)
+Tags: whiteboard, media-renditions · #501
 
 - **A board image is a reference, not bytes.** An `image` element whose `fileId` is an `embedded_media` id plus `customData.quincyMedia.kind`; the schema checks the shape only and ownership is enforced by the attach SQL's Project scope and the read rule. A well-formed element for a row the viewer cannot read just renders "unavailable".
 - **Attach and detach are one D1 batch per published snapshot, folded into `prune()`.** The retry is `prune_retry_at` (a throw lands in prune's catch), because `CREATE TABLE IF NOT EXISTS wb_state` would never add a column to a live object. Every id list is ONE JSON bind through `json_each(?)` (D1 allows 100 binds). The kept set is `project_whiteboard_versions.media_ids` (0062), written in the same INSERT as the row, so no snapshot object is ever re-read. `detached_at > cutoff` is what keeps the sweep's claim marker (0) from being re-attached.
@@ -5418,6 +5603,7 @@ The vendored Select popup shipped `ring-1 ring-foreground/10`, no shadow and no 
 - **In a test, `runInDurableObject` wakes a purged object and its constructor recreates `wb_state`**: assert the purge on `elements` (as the #498 test does), never on `wb_state`.
 
 ## Whiteboard media, web half: the resolver, the sweep and the click (#501, Phase W)
+Tags: whiteboard · #501
 
 - **The change-event sweep must never remove a well-formed Quincy media element.** `handleChange` also runs for REMOTE merges; a peer's new image has a `fileId` this client has never seen, and sweeping it makes the vanish observer author `isDeleted: true` for everyone. `isUnsupportedElement` is now "an `image` WITHOUT a UUID `fileId` and `customData.quincyMedia.kind`" (a foreign Excalidraw image), and the refusal of another board's media lives only at LOCAL entry points: paste (`pasteIsUnsupported(data, known)`), the scene-file load (`withoutForeignMedia` inside `controller.load`, which also drops the file's own image data) and the library (images stay excluded). `known` = an element of this board references the id (deleted included) or it was uploaded in this session.
 - **Never give Excalidraw a URL that can fail.** A load error makes `updateImageCache` rewrite the element with `status: "error"`, a version bump the saver ships to everyone as THIS viewer's edit; and `addFiles` skips an id it already holds, so a placeholder can never be swapped for the real file in that editor. `lib/whiteboard-media-files.ts` resolves every reference into a loaded data URL first: transient failure (network, 5xx) adds nothing and retries bounded; 404/403 adds a drawn "Media unavailable" bitmap; a video is its poster with the play badge baked in (a poster 404 is asked again with a one-byte range on the video to tell "no poster" from "no video"). The cache lives in `ProjectWhiteboard` (a ref), because a restore remounts the editor: `onReady` attaches the new editor and `ensure` re-adds from the cache with no request.
@@ -5425,7 +5611,22 @@ The vendored Select popup shipped `ring-1 ring-foreground/10`, no shadow and no 
 - **Excalidraw does not report what a click hit in view mode, and a pasted image FILE is handled before `onPaste`.** So a video click is the controller's own hit test (`videoAt`, only observing: edit mode still selects) and a pasted file is taken at the document's capture phase, while focus is inside the board and not in a text field. Dropped files route through `planSceneDrop`.
 - **The Image tool slot is the host's.** `tools.image` stays false (it caps files at 4 MiB, downsizes to 1440 px, hashes the fileId, takes SVG/GIF and no video); the toolbar's Image toggle is relabelled "Image or video" and calls the host. The editor's key 9 does nothing now, so the tooltip and the shortcuts dialog no longer advertise it.
 
+## Folding two vitest configs into projects removes each suite's own executed-tests gate (2026-10-05)
+Tags: testing-guards, deploy-ci
+
+- `apps/web` had `vitest.config.ts` (unit) and `vitest.dom.config.ts` (DOM), each run by its own CI
+  step, so `requireExecutedTests` failed a DOM run that executed nothing. Merged into one config
+  with `test.projects` [unit, dom], one run executes both and the whole-run check is satisfied by
+  `unit` alone — an empty or all-skipped `dom` project went green. Sol caught it in review.
+- `portal/packages/shared/src/testing/require-executed-tests.ts` now also requires every project to
+  execute a test in a full run (no file filter, no `--project` narrowing);
+  `test/require-executed-tests.test.ts` covers it with a two-project fixture.
+- `vitest-timeouts.guard.test.ts` checked only the root config's budgets; it now requires each
+  inline project to set `extends: true` or both shared budgets.
+- `.gitattributes` gives `docs/lessons.md` `merge=union` for local merges and rebases. GitHub's
+  merge button ignores it, so a conflict there still needs resolving by hand.
 ## #527 The Project discussion is read-only on an archived Project
+Tags: permissions · #527
 
 - **Create is gated on ONE row, the audit row, written first.** The audit insert is `SELECT ... WHERE EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)`; the comment insert, every mention insert and everything after (outbox, ledger, activity, media) are `WHERE EXISTS (SELECT 1 FROM audit_log WHERE id = ?)`. Fencing only the comment insert does not work: the mention inserts would then violate their foreign key on the missing comment and the whole batch would throw instead of skipping. The leading block is still audit + comment + mentions + read marker, so `activityStatementStart` keeps its value (a test pins the broad outbox ids).
 - **Edit and delete fence in the statement itself** (`COMMENT_ARCHIVE_FENCE` on the UPDATE / DELETE); their audit rows were already `WHERE changes() = 1`. A check made only before the write is beaten by an archive landing in between (#446), so the routes check up front AND the batch fences.

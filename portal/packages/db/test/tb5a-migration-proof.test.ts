@@ -15,7 +15,7 @@ import {
   FIXTURE_NOW,
   MIGRATION_NAME,
   apply0037Transactionally,
-  applyAllMigrations,
+  applyBoardProofSchema,
   applyMigration,
   applyThrough,
   enableBoardContract,
@@ -303,7 +303,7 @@ describe("TB5A Slice 8 consolidated migration and SQL proof", { timeout: 30_000 
     const db = localSqlite();
     try {
       db.exec("PRAGMA foreign_keys = ON");
-      applyAllMigrations(db);
+      applyBoardProofSchema(db);
       enableBoardContract(db);
       seedContractProject(db, { id: "target", stageKey: "raw_review", boardPosition: 7, boardRevision: 5 });
       seedContractProject(db, { id: "sibling", stageKey: "edited_review", boardPosition: 1024, boardRevision: 3 });

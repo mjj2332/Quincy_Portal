@@ -5,7 +5,7 @@
  * migration execution, even though it works fine against local Miniflare/node:sqlite — a
  * real production migration attempt (0020) failed on `DROP TABLE projects` with
  * `FOREIGN KEY constraint failed`, and on local D1 the same shape reports SUCCESS while
- * silently cascade-deleting every child row instead (docs/lessons.md:27-62). `drizzle-kit
+ * silently cascade-deleting every child row instead (docs/lessons.md, top section, "`PRAGMA foreign_keys=OFF` does not reliably persist"). `drizzle-kit
  * generate`'s default table-rebuild form for a schema change requiring a `CHECK` — open
  * with `PRAGMA foreign_keys=OFF`, `CREATE TABLE __new_<table>`, copy rows, `DROP TABLE
  * <table>`, `ALTER TABLE __new_<table> RENAME TO <table>`, `PRAGMA foreign_keys=ON` — is
@@ -39,7 +39,7 @@ function readMigration(name: string): string {
 
 const FIX_HINT =
   "Use an `ALTER TABLE ... ADD COLUMN ... CHECK(...)` / `DROP COLUMN` / `RENAME COLUMN` " +
-  "swap instead of a table rebuild — see docs/lessons.md:27-62.";
+  "swap instead of a table rebuild — see docs/lessons.md (top section, 'PRAGMA foreign_keys=OFF does not reliably persist').";
 
 describe("guard: no migration disables foreign-key enforcement", () => {
   it("contains no `PRAGMA ... foreign_keys` or `legacy_alter_table` statement, case-insensitively", () => {

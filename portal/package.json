@@ -15,6 +15,7 @@
     "build": "npm run build -w @quincy/web",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
+    "verify": "node scripts/verify.mjs",
     "db:generate": "npm run generate -w @quincy/db --",
     "db:migrate:local": "npm run migrate:local -w @quincy/db --",
     "db:qa:apply": "npm run qa:apply -w @quincy/db --",

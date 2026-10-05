@@ -180,7 +180,7 @@ describe("the rail's active-row paint matches base-nova's boolean-presence data-
  * Luna fix (#122 P1, live Chrome pass): the rail's rows render as `InternalLink` — real `<a>`
  * elements — and `styles/tokens/base.css:21`'s `a { color: inherit }` is imported UNLAYERED
  * (`index.css`), so it beats every LAYERED Tailwind `text-*` utility on an anchor regardless of
- * specificity — a third door on the same unlayered-cascade trap `docs/lessons.md:1181-1219`
+ * specificity — a third door on the same unlayered-cascade trap `docs/lessons.md § "The unlayered-cascade trap has a second door"`
  * already names two of (an outline shorthand, then a focus ring). Measured: an inactive row
  * computed `--text-primary` (inherited from the sidebar's own `--sidebar-foreground`) instead of
  * `--text-secondary`. The fix is the same one that trap already prescribes — the `!` important
