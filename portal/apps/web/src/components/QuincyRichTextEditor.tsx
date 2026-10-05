@@ -255,7 +255,7 @@ export function QuincyRichTextEditor({
     // Only focus inside THIS editor's own toolbar group or bar counts: another mounted editor must not claim it.
     const active = document.activeElement;
     const own = active?.closest('[data-testid="rich-text-table-tools"]') != null && wrapperRef.current?.contains(active) === true
-      || (active?.closest('[data-testid="rich-text-table-bubble"]') != null && editorRef.current != null && editorOwnsBubbleBar(editorRef.current, active));
+      || (editorRef.current != null && editorOwnsBubbleBar(editorRef.current, active));
     refocusRef.current = own;
   }
   useLayoutEffect(() => {

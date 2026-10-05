@@ -49,6 +49,15 @@ describe("rich-text editor layout contracts", () => {
     expect(read("rich-text-table.tsx")).toContain("max-[721px]:size-11");
   });
 
+  it("the toolbar's scroll-fade mask applies at every width (the desktop tier-none fallback overflows too); only touch targets are phone-only", () => {
+    const source = read("rich-text-toolbar.tsx");
+    for (const fade of ["end", "start", "both"]) {
+      expect(source).toContain(` data-[fade=${fade}]:[mask-image:`);
+      expect(source).not.toContain(`max-[721px]:data-[fade=${fade}]`);
+    }
+    expect(read("rich-text-table.tsx")).toContain("max-[721px]:size-11");
+  });
+
   it("the floating table bar's surface has no outer padding (the bar is 38px, so it fits above row 2 of a first-block table)", () => {
     const surface = /data-testid=\{testId\}[^>]*?className=\{cn\("([^"]*)"/s.exec(read("rich-text-bubble-bar.tsx"))?.[1];
     expect(surface).toBeDefined();

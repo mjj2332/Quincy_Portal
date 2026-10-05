@@ -1678,6 +1678,48 @@ describe("table bar with no room falls back to the toolbar group (#535)", () => 
     expect(tools(host)!.contains(addRow[0]!)).toBe(true);
   });
 
+  it("at tier none Tiptap's OUTER bubble element leaves the tab order too: inert, aria-hidden, tabindex -1 (reverse Tab cannot land on it)", async () => {
+    const host = mount(); const editor = await renderDoc(host, oneRow());
+    await caretIn(editor, "Mon");
+    await waitForCondition(() => tools(host) !== null, "toolbar table group");
+    const wrapper = bubble()!.parentElement!;
+    expect(wrapper.hasAttribute("inert")).toBe(true);
+    expect(wrapper.getAttribute("aria-hidden")).toBe("true");
+    expect(wrapper.tabIndex).toBe(-1);
+  });
+
+  it("when the bar is usable again the outer element is back in the tab order (tabindex 0, not inert, not aria-hidden)", async () => {
+    roomy = true;
+    const host = mount(); const editor = await renderDoc(host, oneRow());
+    await caretIn(editor, "Mon");
+    await waitForCondition(() => bubble() !== null, "floating table bar");
+    const wrapper = bubble()!.parentElement!;
+    expect(wrapper.hasAttribute("inert")).toBe(false);
+    expect(wrapper.hasAttribute("aria-hidden")).toBe(false);
+    expect(wrapper.tabIndex).toBe(0);
+    roomy = false;
+    await caretIn(editor, "Terry");
+    await waitForCondition(() => tools(host) !== null, "toolbar table group once cramped");
+    expect(wrapper.tabIndex).toBe(-1);
+    expect(wrapper.hasAttribute("inert")).toBe(true);
+  });
+
+  it("focus resting on the outer bubble element during a tier change is not stranded: it moves to the editor or the toolbar group", async () => {
+    roomy = true;
+    const host = mount(); const editor = await renderDoc(host, oneRow());
+    await caretIn(editor, "Mon");
+    await waitForCondition(() => bubble() !== null, "floating table bar");
+    const wrapper = bubble()!.parentElement!;
+    await act(async () => { wrapper.focus(); await Promise.resolve(); });
+    expect(document.activeElement).toBe(wrapper);
+    roomy = false;
+    await act(async () => { tiptapOf(editor).commands.setTextSelection(posOf(tiptapOf(editor), "Terry")); await Promise.resolve(); await Promise.resolve(); });
+    await waitForCondition(() => tools(host) !== null, "toolbar table group once cramped");
+    const active = document.activeElement;
+    expect(active).not.toBe(wrapper);
+    expect(active === editor || editor.contains(active) || tools(host)!.contains(active)).toBe(true);
+  });
+
   it("Alt+F10 from the text lands in the toolbar group, not in the inert bar", async () => {
     const host = mount(); const editor = await renderDoc(host, oneRow());
     await caretIn(editor, "Mon");

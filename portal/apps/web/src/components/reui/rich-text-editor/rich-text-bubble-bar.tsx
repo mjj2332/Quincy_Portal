@@ -11,8 +11,11 @@
 // 6. `inactive` keeps the bar mounted but inert (focus cannot enter it, `focusFirstToolbarStop` refuses an inert
 //    root), `aria-hidden` and `invisible`: the table bar's "no room" state, where the same controls render as the
 //    toolbar's table group instead (#535). `tier` is the Quincy test hook `data-tier`.
-// 5. Each mounted bar is registered against its editor (`editorOwnsBubbleBar`): a bubble portals out of the
+// 5. Each mounted bar's OUTER element (Tiptap's BubbleMenu wrapper, `tabIndex = 0` set once in its constructor and
+//    never rewritten) is registered against its editor (`editorOwnsBubbleBar`): a bubble portals out of the
 //    editor's own DOM, so "is this focus in MY bar" cannot be answered by containment alone (#535).
+// 7. While `inactive` that wrapper is ALSO inert, `aria-hidden` and `tabindex=-1` (restored to 0 when active again):
+//    otherwise reverse Tab lands on the empty wrapper, and focus held there across a tier change is unowned (#535).
 import {
   useEffect,
   useLayoutEffect,
@@ -112,13 +115,30 @@ export function RichTextBubbleBar({
   useLayoutEffect(() => {
     const bar = barRef.current
     if (!bar) return
+    // Register the outer wrapper: it contains the bar and is itself focusable.
+    const owner = bar.parentElement ?? bar
     const bars = barsByEditor.get(editor) ?? new Set<HTMLElement>()
-    bars.add(bar)
+    bars.add(owner)
     barsByEditor.set(editor, bars)
     return () => {
-      bars.delete(bar)
+      bars.delete(owner)
     }
   }, [editor])
+
+  // Tiptap's wrapper keeps its own tab stop; take it out of the tab order and the a11y tree while the bar is inactive.
+  useLayoutEffect(() => {
+    const wrapper = barRef.current?.parentElement
+    if (!wrapper) return
+    if (inactive) {
+      wrapper.setAttribute("inert", "")
+      wrapper.setAttribute("aria-hidden", "true")
+      wrapper.tabIndex = -1
+    } else {
+      wrapper.removeAttribute("inert")
+      wrapper.removeAttribute("aria-hidden")
+      wrapper.tabIndex = 0
+    }
+  }, [inactive])
 
   useEffect(() => {
     const { dom } = editor.view
