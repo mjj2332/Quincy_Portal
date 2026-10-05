@@ -442,6 +442,13 @@
       "when": 1789610000000,
       "tag": "0062_project_whiteboard_version_media",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "6",
+      "when": 1789700000000,
+      "tag": "0063_embedded_media_heic_rendition",
+      "breakpoints": true
     }
   ]
 }

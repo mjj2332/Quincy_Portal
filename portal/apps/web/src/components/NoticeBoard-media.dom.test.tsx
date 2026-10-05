@@ -8,13 +8,16 @@ import type { RichTextDoc } from "@quincy/shared";
 import { NoticeBoard, type NoticeBoardPost } from "./NoticeBoard";
 import { QuincyRichTextEditor } from "./QuincyRichTextEditor";
 import { createQuincyQueryClient } from "../lib/query-client";
+import { RenditionFailedError } from "../lib/embedded-media";
 import { chooseNoticeAction, confirmNoticeDelete } from "../testing/notice-menu";
 const advanceTimers = (ms: number) => vi.advanceTimersByTimeAsync(ms);
 
 /** Notice board embedded media (#496): the composers, the upload locks, the failure paths and a posted image. */
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const upload = vi.hoisted(() => vi.fn());
-vi.mock("../lib/embedded-media", async (importOriginal) => ({ ...(await importOriginal<typeof import("../lib/embedded-media")>()), uploadEmbeddedImage: upload }));
+const heicSetting = vi.hoisted(() => vi.fn());
+const retryRendition = vi.hoisted(() => vi.fn());
+vi.mock("../lib/embedded-media", async (importOriginal) => ({ ...(await importOriginal<typeof import("../lib/embedded-media")>()), uploadEmbeddedImage: upload, fetchEmbeddedHeicSetting: heicSetting, retryEmbeddedRendition: retryRendition }));
 const apiGetMock = vi.fn<(path: string) => Promise<unknown>>();
 const apiPostMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
 const apiPatchMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
@@ -65,13 +68,13 @@ beforeEach(() => {
   Object.defineProperty(window, "localStorage", { configurable: true, value: { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, String(value)); }, removeItem: (key: string) => { values.delete(key); }, clear: () => { values.clear(); } } });
   Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
   focusManager.setFocused(true);
-  upload.mockReset(); apiGetMock.mockReset(); apiPostMock.mockReset(); apiPatchMock.mockReset();
+  upload.mockReset(); heicSetting.mockReset(); heicSetting.mockResolvedValue(false); retryRendition.mockReset(); apiGetMock.mockReset(); apiPostMock.mockReset(); apiPatchMock.mockReset();
   queryClient = createQuincyQueryClient();
   apiGetMock.mockImplementation((path) => Promise.resolve(path.includes("read-marker") ? readState : { posts: [ownPost] }));
 });
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); await Promise.resolve(); });
-  root = null; queryClient?.clear(); queryClient = null; document.body.replaceChildren(); vi.useRealTimers();
+  root = null; queryClient?.clear(); queryClient = null; document.body.replaceChildren(); vi.useRealTimers(); vi.unstubAllGlobals();
 });
 
 describe("the Notice board composers take images", () => {
@@ -193,5 +196,100 @@ describe("dropping an image on a table", () => {
     expect(nodes.some((node) => node.type === "image")).toBe(true);
     expect(JSON.stringify(nodes.find((node) => node.type === "table"))).not.toContain('"image"');
     void tiptapOf;
+  });
+});
+
+describe("HEIC images on the Notice board (#495)", () => {
+  const heic = (name = "IMG_1.HEIC") => new File([new Uint8Array(100)], name, { type: "" });
+  type Drive = { phase: (phase: "preparing", mediaId: string) => void; finish: (id: string) => void; fail: (reason: unknown) => void; signal: AbortSignal };
+  function driveUploads(): Drive[] {
+    const drives: Drive[] = [];
+    upload.mockImplementation((_scope: unknown, _file: File, _progress: unknown, options: { onPhase: Drive["phase"]; signal: AbortSignal }) => {
+      const drive = { phase: options.onPhase, signal: options.signal } as Drive; drives.push(drive);
+      return new Promise<string>((resolve, reject) => { drive.finish = resolve; drive.fail = reject; });
+    });
+    return drives;
+  }
+  const trayOf = (scope: ParentNode) => scope.querySelector<HTMLElement>('[data-testid="rich-text-upload-tray"]');
+  const imagesIn = (scope: ParentNode, id: string) => scope.querySelectorAll(`img[data-media-id="${id}"]`).length;
+
+  it("goes uploading, preparing, then inserts the image exactly once at ready", async () => {
+    heicSetting.mockResolvedValue(true); const drives = driveUploads();
+    const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
+    await choose(composer(host), [heic()]);
+    expect(trayOf(composer(host))?.textContent).toContain("Uploading IMG_1.HEIC");
+    await act(async () => { drives[0]!.phase("preparing", B); }); await flush();
+    expect(trayOf(composer(host))?.textContent).toContain("Preparing IMG_1.HEIC…");
+    expect(buttonNamed(composer(host), "Post notice").disabled).toBe(true);
+    expect(imagesIn(composer(host), B)).toBe(0);
+    await act(async () => { drives[0]!.finish(B); }); await flush();
+    expect(imagesIn(composer(host), B)).toBe(1);
+    expect(trayOf(composer(host))).toBeNull(); expect(buttonNamed(composer(host), "Post notice").disabled).toBe(false);
+  });
+
+  it("shows Retry and Remove when preparing fails; Retry that ends ready inserts the image", async () => {
+    heicSetting.mockResolvedValue(true); const drives = driveUploads();
+    let finishRetry!: (id: string) => void;
+    retryRendition.mockImplementation(() => new Promise<string>((resolve) => { finishRetry = resolve; }));
+    const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
+    await choose(composer(host), [heic()]);
+    await act(async () => { drives[0]!.phase("preparing", B); });
+    await act(async () => { drives[0]!.fail(new RenditionFailedError(B)); }); await flush();
+    expect(trayOf(composer(host))?.textContent).toContain("Couldn't prepare IMG_1.HEIC");
+    expect(buttonNamed(composer(host), "Remove")).toBeDefined();
+    await click(buttonNamed(composer(host), "Retry"));
+    expect(retryRendition).toHaveBeenCalledWith({ noticeBoard: true }, B, { signal: drives[0]!.signal, onPhase: expect.any(Function) });
+    expect(trayOf(composer(host))?.textContent).toContain("Preparing IMG_1.HEIC…");
+    await act(async () => { finishRetry(B); }); await flush();
+    expect(imagesIn(composer(host), B)).toBe(1);
+  });
+
+  it("Remove forgets the row without calling any abort route (the Notice board has none)", async () => {
+    heicSetting.mockResolvedValue(true); const drives = driveUploads();
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 })); vi.stubGlobal("fetch", fetchMock);
+    const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
+    await choose(composer(host), [heic()]);
+    await act(async () => { drives[0]!.phase("preparing", B); });
+    await click(buttonNamed(composer(host), "Remove")); await flush();
+    expect(drives[0]!.signal.aborted).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(trayOf(composer(host))).toBeNull(); expect(buttonNamed(composer(host), "Post notice").disabled).toBe(false);
+  });
+
+  it("stops polling when the board unmounts", async () => {
+    heicSetting.mockResolvedValue(true); const drives = driveUploads();
+    const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
+    await choose(composer(host), [heic()]);
+    await act(async () => { drives[0]!.phase("preparing", B); });
+    await act(async () => { root!.unmount(); }); root = null;
+    expect(drives[0]!.signal.aborted).toBe(true);
+  });
+
+  it("counts a preparing upload toward the cap", async () => {
+    heicSetting.mockResolvedValue(true); const drives = driveUploads();
+    const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
+    await choose(composer(host), Array.from({ length: 10 }, (_, index) => heic(`IMG_${index}.HEIC`)));
+    for (const drive of drives) await act(async () => { drive.phase("preparing", B); });
+    await choose(composer(host), [png("eleventh.png")]);
+    expect(upload).toHaveBeenCalledTimes(10);
+    expect(composer(host).querySelector('[data-testid="rich-text-upload-tray"] [role="alert"]')?.textContent).toContain("A post can hold 10 images at most.");
+  });
+
+  it("says it is taking a while after 60 seconds of preparing", async () => {
+    heicSetting.mockResolvedValue(true); const drives = driveUploads();
+    const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
+    await choose(composer(host), [heic()]);
+    await act(async () => { drives[0]!.phase("preparing", B); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(59_000); });
+    expect(trayOf(composer(host))?.textContent).not.toContain("Still preparing");
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    expect(trayOf(composer(host))?.textContent).toContain("Still preparing IMG_1.HEIC… this can take a few minutes");
+  });
+
+  it("refuses a HEIC with the unsupported-type message while the setting is off", async () => {
+    const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
+    await choose(composer(host), [heic()]);
+    expect(upload).not.toHaveBeenCalled();
+    expect(composer(host).querySelector('[role="alert"]')?.textContent).toContain("is not a JPEG, PNG or WebP image");
   });
 });

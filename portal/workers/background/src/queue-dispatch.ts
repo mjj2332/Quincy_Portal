@@ -13,6 +13,11 @@ export type QueueBody =
   | { queue: typeof NOTIFICATION_QUEUE_NAME; body: NotificationOutboxMessage }
   | { queue: typeof NOTIFICATION_DLQ_QUEUE_NAME; body: NotificationOutboxMessage };
 
+/** A rendition-queue body that names an `embedded_display` run but carries no usable generation: it cannot be fenced, so the consumers ack it and write nothing. */
+export function isEmbeddedDisplayWithoutGeneration(body: unknown): boolean {
+  return !!body && typeof body === "object" && (body as { type?: unknown }).type === "embedded_display";
+}
+
 /** Runtime boundary for five queues sharing one Worker. Queue name, not a body discriminator,
  * decides which concurrency policy applies. A rendition body on ingest is invalid and retried. */
 export function parseQueueBody(queue: string, body: unknown): QueueBody | null {
@@ -23,6 +28,8 @@ export function parseQueueBody(queue: string, body: unknown): QueueBody | null {
     return parsed ? { queue, body: parsed } : null;
   }
   if (queue === RENDITION_QUEUE_NAME || queue === RENDITION_DLQ_QUEUE_NAME) {
+    // The generation is required: a message without one (none was ever deployed) does not parse, and the consumer acks it with no write.
+    if (value.type === "embedded_display") return typeof value.mediaId === "string" && value.mediaId.length > 0 && typeof value.generation === "number" && Number.isSafeInteger(value.generation) ? { queue, body: { type: "embedded_display", mediaId: value.mediaId, generation: value.generation } } : null;
     return value.type === "generate_renditions" && typeof value.assetId === "string" && value.assetId.length > 0
       ? { queue, body: { type: "generate_renditions", assetId: value.assetId } }
       : null;

@@ -17,7 +17,8 @@ import { createVanishObserver, type VanishObserver } from "../lib/whiteboard-van
 import { toCollaborator } from "../lib/whiteboard-collaborators";
 import { pushToast } from "../lib/toast-store";
 import { ApiError } from "../lib/api";
-import { EMBEDDED_IMAGE_ACCEPT, EMBEDDED_VIDEO_ACCEPT, embeddedImageProblem, embeddedVideoContentType, embeddedVideoProblem, uploadEmbeddedImage, uploadEmbeddedVideo } from "../lib/embedded-media";
+import { EMBEDDED_VIDEO_ACCEPT, RenditionFailedError, abortEmbeddedImage, retryEmbeddedRendition, embeddedImageAccept, embeddedImageProblem, embeddedVideoContentType, embeddedVideoProblem, isEmbeddedHeicFile, uploadEmbeddedImage, uploadEmbeddedVideo } from "../lib/embedded-media";
+import { useEmbeddedHeicEnabled } from "../lib/use-embedded-heic";
 import { createMediaFileResolver, type MediaFileResolver, type ResolvedMedia } from "../lib/whiteboard-media-files";
 import { canvasMediaRenderer } from "../lib/whiteboard-media-render";
 import { whiteboardMediaRef } from "@quincy/shared";
@@ -93,6 +94,9 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
   const resolverRef = useRef<MediaFileResolver | null>(null);
   if (resolverRef.current === null) resolverRef.current = createMediaFileResolver({ renderer: canvasMediaRenderer });
   useEffect(() => () => resolverRef.current?.dispose(), []);
+  // #495: whether this person may upload HEIC; a ref because the upload callback below is memoised on the Project alone.
+  const heicEnabled = useEmbeddedHeicEnabled(true);
+  const heicRef = useRef(heicEnabled); heicRef.current = heicEnabled;
   const [uploads, setUploads] = useState<EmbeddedUpload[]>([]);
   const [uploadErrors, setUploadErrors] = useState<string[]>([]);
   const [picking, setPicking] = useState<{ n: number; at: WhiteboardScenePoint | undefined } | null>(null);
@@ -100,7 +104,8 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
   const [playing, setPlaying] = useState<string | null>(null);
   const [selectedVideo, setSelectedVideo] = useState<string | null>(null);
   const uploadSeq = useRef(0);
-  const runningUploads = useRef(new Map<number, { cancel: () => void }>());
+  const boardRef = useRef<HTMLDivElement>(null);
+  const runningUploads = useRef(new Map<number, { cancel: () => void; retry: () => void }>());
   const mountedRef = useRef(true);
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; for (const entry of [...runningUploads.current.values()]) entry.cancel(); }; }, []);
   useEffect(() => { if (picking !== null) pickerRef.current?.click(); }, [picking]);
@@ -273,28 +278,35 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
     let placed = 0;
     for (const file of files) {
       const kind: "image" | "video" = embeddedVideoContentType(file) ? "video" : "image";
-      const problem = kind === "video" ? embeddedVideoProblem(file) : embeddedImageProblem(file);
+      const problem = kind === "video" ? embeddedVideoProblem(file) : embeddedImageProblem(file, heicRef.current);
       if (problem) { problems.push(problem); continue; }
       const cascade = placed; placed += 1;
       const key = ++uploadSeq.current;
       const name = file.name || (kind === "video" ? "Video" : "Image");
       const controller = new AbortController();
-      let released = false; let cancelled = false;
+      // A HEIC is converted to a JPEG by the server (#495): the browser cannot decode the original, so the board waits for that copy.
+      const heic = kind === "image" && isEmbeddedHeicFile(file);
+      let preparedId: string | null = null;
+      let released = false; let cancelled = false; let keepRow = false;
       const release = () => {
         if (released) return; released = true;
         runningUploads.current.delete(key);
         if (mountedRef.current) setUploads((entries) => entries.filter((entry) => entry.key !== key));
       };
-      runningUploads.current.set(key, { cancel: () => { cancelled = true; controller.abort(); release(); } });
+      const setPhase = (phase: "uploading" | "preparing" | "failed") => { if (mountedRef.current && !released) setUploads((entries) => entries.map((entry) => entry.key === key ? { ...entry, phase } : entry)); };
+      const onPhase = (_phase: "preparing", mediaId: string) => { preparedId = mediaId; setPhase("preparing"); };
       setUploads((entries) => [...entries, { key, name, percent: 0, kind }]);
       const onProgress = (percent: number) => { if (mountedRef.current && !released) setUploads((entries) => entries.map((entry) => entry.key === key ? { ...entry, percent } : entry)); };
-      const uploading = kind === "video" ? uploadEmbeddedVideo(projectId, file, { signal: controller.signal, onProgress, owner: "whiteboard" }) : uploadEmbeddedImage({ projectId, owner: "whiteboard" }, file, onProgress);
-      void uploading
+      const uploading = () => kind === "video" ? uploadEmbeddedVideo(projectId, file, { signal: controller.signal, onProgress, owner: "whiteboard" }) : uploadEmbeddedImage({ projectId, owner: "whiteboard" }, file, onProgress, { signal: controller.signal, onPhase });
+      // A failed HEIC keeps its row (Retry, Remove) and its place until Remove or a Retry that ends ready; every other ending releases it.
+      const follow = (work: Promise<string>) => {
+        keepRow = false;
+        void work
         .then(async (mediaId) => {
           if (cancelled || !mountedRef.current) return;
           const resolver = resolverRef.current!;
-          // An image this tab holds is decoded from the file; a video's poster is read back from the server like any viewer's.
-          let media: ResolvedMedia | null = kind === "image" ? await resolver.adoptImage(mediaId, file) : null;
+          // An image this tab holds is decoded from the file; a video's poster, and a HEIC's JPEG (the uploader shows what everyone else will), are read back from the server like any viewer's.
+          let media: ResolvedMedia | null = kind === "image" && !heic ? await resolver.adoptImage(mediaId, file) : null;
           if (!media) { const outcome = await resolver.resolve(mediaId, kind); media = outcome.ok ? outcome.media : null; }
           if (cancelled || !mountedRef.current) return;
           const live = controllerRef.current;
@@ -304,10 +316,18 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
         })
         .catch((reason) => {
           if (cancelled || (reason instanceof Error && reason.name === "AbortError")) return;
+          if (reason instanceof RenditionFailedError) { preparedId = reason.mediaId; keepRow = true; setPhase("failed"); return; }
           if (reason instanceof ApiError && reason.status === 409) { pushToast("Archived projects cannot accept media", "error"); return; }
           if (mountedRef.current) setUploadErrors((entries) => [...entries, `${name} could not be uploaded${reason instanceof Error && reason.message ? `: ${reason.message}` : "."}`]);
         })
-        .finally(release);
+        .finally(() => { if (!keepRow) release(); });
+      };
+      const discard = () => { if (preparedId) void abortEmbeddedImage({ projectId, owner: "whiteboard" }, preparedId); };
+      runningUploads.current.set(key, {
+        cancel: () => { cancelled = true; controller.abort(); discard(); release(); },
+        retry: () => { if (!preparedId || released) return; setPhase("preparing"); follow(retryEmbeddedRendition({ projectId, owner: "whiteboard" }, preparedId, { signal: controller.signal, onPhase })); },
+      });
+      follow(uploading());
     }
     setUploadErrors(problems);
   }, [projectId]);
@@ -347,13 +367,13 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
         <CopyProjectLinkButton projectId={projectId} tab="collaboration" whiteboard />
         </div>
         {picking !== null && <Input
-          key={picking.n} ref={pickerRef} type="file" multiple accept={`${EMBEDDED_IMAGE_ACCEPT},${EMBEDDED_VIDEO_ACCEPT}`} tabIndex={-1} aria-hidden="true" aria-label="Choose images or videos" data-testid="project-whiteboard-media-picker" className="sr-only"
+          key={picking.n} ref={pickerRef} type="file" multiple accept={`${embeddedImageAccept(heicEnabled)},${EMBEDDED_VIDEO_ACCEPT}`} tabIndex={-1} aria-hidden="true" aria-label="Choose images or videos" data-testid="project-whiteboard-media-picker" className="sr-only"
           onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); const at = picking.at; setPicking(null); if (files.length) uploadMedia(files, at); }}
           {...{ onCancel: () => setPicking(null) }}
         />}
       </div>
-      <div className="min-h-0 relative border-solid border-[length:var(--border-width-hair)] border-border bg-card">
-        <EmbeddedUploadTray uploads={uploads} errors={uploadErrors} onCancel={(key) => runningUploads.current.get(key)?.cancel()} testId="project-whiteboard-upload-tray" className="absolute inset-x-[var(--space-4)] bottom-[calc(var(--space-4)+var(--space-7)+var(--space-2))] z-20 mx-auto grid max-w-[28rem] gap-[var(--space-2)] rounded-lg border-solid border-[length:var(--border-width-hair)] border-border bg-card p-[var(--space-3)] shadow-sm" />
+      <div ref={boardRef} tabIndex={-1} data-testid="project-whiteboard-board" className="min-h-0 relative border-solid border-[length:var(--border-width-hair)] border-border bg-card focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]">
+        <EmbeddedUploadTray uploads={uploads} errors={uploadErrors} onCancel={(key) => { runningUploads.current.get(key)?.cancel(); boardRef.current?.focus(); }} onRetry={(key) => runningUploads.current.get(key)?.retry()} testId="project-whiteboard-upload-tray" className="absolute inset-x-[var(--space-4)] bottom-[calc(var(--space-4)+var(--space-7)+var(--space-2))] z-20 mx-auto grid max-w-[28rem] gap-[var(--space-2)] rounded-lg border-solid border-[length:var(--border-width-hair)] border-border bg-card p-[var(--space-3)] shadow-sm" />
         {deleted
           ? <p className="p-[var(--space-5)]" role="alert">This project's whiteboard was deleted.</p>
           : initialData

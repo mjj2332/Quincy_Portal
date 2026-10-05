@@ -128,6 +128,11 @@ function sha256Hex(bytes: Uint8Array): Promise<string> {
 
 function transformUrl(origin: string, key: string, variant: RenditionVariant, secret: string | undefined, principalId: string, authorizationEpoch: number): Promise<string> {
   const spec = RENDITION_SPECS[variant];
+  return signedTransformUrl(origin, key, `width=${spec.maxEdge},height=${spec.maxEdge},fit=scale-down,quality=${spec.quality},format=webp`, secret, principalId, authorizationEpoch);
+}
+
+/** The Image Transformations URL for `key` with `options` (the part after `/cdn-cgi/image/`), over a freshly signed `/__transform-source` URL. */
+export function signedTransformUrl(origin: string, key: string, options: string, secret: string | undefined, principalId: string, authorizationEpoch: number): Promise<string> {
   return issueTransformSource(secret, key, principalId, authorizationEpoch).then((issued) => {
     if (!issued) throw new Error("TRANSFORM_SOURCE_SECRET is required for rendition generation");
     const source = new URL(`/__transform-source/${key.split("/").map(encodeURIComponent).join("/")}`, origin);
@@ -136,14 +141,14 @@ function transformUrl(origin: string, key: string, variant: RenditionVariant, se
     source.searchParams.set("p", principalId);
     source.searchParams.set("ae", String(authorizationEpoch));
     source.searchParams.set("sig", issued.signature);
-    return new URL(`/cdn-cgi/image/width=${spec.maxEdge},height=${spec.maxEdge},fit=scale-down,quality=${spec.quality},format=webp/${source.href}`, origin).href;
+    return new URL(`/cdn-cgi/image/${options}/${source.href}`, origin).href;
   });
 }
 
-type RenditionGenerationEnv = Pick<Env, "APP_ORIGIN" | "TRANSFORM_SOURCE_SECRET" | "TRANSFORM_SOURCE_PRINCIPAL_ID" | "TRANSFORM_SOURCE_AUTHORIZATION_EPOCH" | "MEDIA"> & { DB?: D1Database };
+export type RenditionGenerationEnv = Pick<Env, "APP_ORIGIN" | "TRANSFORM_SOURCE_SECRET" | "TRANSFORM_SOURCE_PRINCIPAL_ID" | "TRANSFORM_SOURCE_AUTHORIZATION_EPOCH" | "MEDIA"> & { DB?: D1Database };
 type TransformPrincipal = { id: string; authorizationEpoch: number };
 
-async function resolveTransformPrincipal(env: RenditionGenerationEnv): Promise<TransformPrincipal> {
+export async function resolveTransformPrincipal(env: RenditionGenerationEnv): Promise<TransformPrincipal> {
   // Production calls use the D1-backed default dependency. Select a current active internal
   // principal so the app-side source wrapper can perform its required epoch read; never sign
   // with the reserved system actor or a stale deployment-time epoch. Injected test fetchers keep

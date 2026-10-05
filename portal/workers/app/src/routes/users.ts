@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
 import { createDb, schema } from "@quincy/db";
 import { desc, eq } from "drizzle-orm";
-import { PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, ROLES } from "@quincy/shared";
+import { EMBEDDED_HEIC_UPLOADS_FLAG, PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, ROLES } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { requireCapability } from "../middleware/capability";
@@ -14,6 +14,7 @@ import { jsonInput } from "./helpers";
 const input = z.object({ email: z.string().email(), name: z.string().min(1).max(200), role: z.enum(ROLES) });
 const patchInput = input.partial().omit({ email: true }).extend({ active: z.boolean().optional(), defaultEditor: z.boolean().optional() });
 const impersonationSettingsInput = z.object({ enabled: z.boolean() }).strict();
+const embeddedHeicSettingsInput = z.object({ enabled: z.boolean() }).strict();
 const provisioningFreezeInput = z.object({ frozen: z.literal(false) }).strict();
 /** Set by the background worker when the bounded zone purge exhausts (#161); only an admin release clears it. */
 const EXTERNAL_PROVISIONING_FROZEN_FLAG = "external_editor_provisioning_frozen";
@@ -51,6 +52,26 @@ usersRoutes.patch("/users/impersonation-settings", terminalRoute("/users/imperso
       .bind(data.enabled ? 1 : 0, user.id, now, USER_IMPERSONATION_FLAG),
     c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
       .bind(newId(), user.id, "user.impersonation_toggle", "feature_flag", USER_IMPERSONATION_FLAG, auditMeta(user, { enabled: data.enabled }), now),
+  ]);
+  return c.json({ enabled: data.enabled });
+}));
+/** HEIC for everyone (#495): the flag is seeded off, and flipping it is this audited PATCH (no Admin UI in this slice). Admins can upload HEIC either way. */
+usersRoutes.get("/users/embedded-heic-settings", terminalRoute("/users/embedded-heic-settings", async (c) => {
+  const row = await createDb(c.env.DB).select({ enabled: schema.featureFlags.enabled })
+    .from(schema.featureFlags).where(eq(schema.featureFlags.key, EMBEDDED_HEIC_UPLOADS_FLAG)).get();
+  return c.json({ enabled: row?.enabled === true });
+}));
+usersRoutes.patch("/users/embedded-heic-settings", terminalRoute("/users/embedded-heic-settings", async (c) => {
+  const data = await jsonInput(c, embeddedHeicSettingsInput); if (data instanceof Response) return data;
+  const existing = await createDb(c.env.DB).select({ key: schema.featureFlags.key }).from(schema.featureFlags)
+    .where(eq(schema.featureFlags.key, EMBEDDED_HEIC_UPLOADS_FLAG)).get();
+  if (!existing) return c.json({ error: "The HEIC setting is unavailable" }, 500);
+  const user = c.get("user"); const now = Date.now();
+  await c.env.DB.batch([
+    c.env.DB.prepare("UPDATE feature_flags SET enabled = ?, updated_by = ?, updated_at = ? WHERE key = ?")
+      .bind(data.enabled ? 1 : 0, user.id, now, EMBEDDED_HEIC_UPLOADS_FLAG),
+    c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .bind(newId(), user.id, "embedded_media.heic_toggle", "feature_flag", EMBEDDED_HEIC_UPLOADS_FLAG, auditMeta(user, { enabled: data.enabled }), now),
   ]);
   return c.json({ enabled: data.enabled });
 }));

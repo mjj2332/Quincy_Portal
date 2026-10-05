@@ -370,7 +370,9 @@ describe("NoticeBoard disclosure and polling", () => {
 
   describe("delete confirmation (#523)", () => {
     const ownNewPost: NoticeBoardPost = { ...newPost, authorId: "user-a", authorName: "B" };
-    const listing = (posts: NoticeBoardPost[]) => (path: string) => Promise.resolve(path.includes("read-") ? { marker: null, latest: null, unreadCount: 0 } : { posts, hasMore: false, nextCursor: null });
+    // The composer also asks `/embedded-media/settings` (#495); it is not a list fetch.
+    const isSettings = (path: string) => path.includes("embedded-media/settings");
+    const listing = (posts: NoticeBoardPost[]) => (path: string) => Promise.resolve(isSettings(path) ? { heic: false } : path.includes("read-") ? { marker: null, latest: null, unreadCount: 0 } : { posts, hasMore: false, nextCursor: null });
     const dialog = () => document.querySelector<HTMLElement>('[data-testid="notice-delete-confirm"]');
     const triggerOf = (host: HTMLElement, name: string) => host.querySelector<HTMLElement>(`[aria-label="Actions for notice by ${name}"]`);
 
@@ -484,7 +486,7 @@ describe("NoticeBoard disclosure and polling", () => {
 
     it("treats a 404 as already gone: closes, refetches, shows no error", async () => {
       let listCalls = 0;
-      apiGetMock.mockImplementation((path) => { if (!path.includes("read-")) listCalls += 1; return listing(listCalls > 1 ? [] : [oldPost])(path); });
+      apiGetMock.mockImplementation((path) => { if (!path.includes("read-") && !isSettings(path)) listCalls += 1; return listing(listCalls > 1 ? [] : [oldPost])(path); });
       apiDeleteMock.mockRejectedValue(new ApiError("Not found", 404));
       const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
       const before = listCalls;

@@ -247,14 +247,19 @@ export const externalEmbeddedMediaPresignSchema = z.object({
   partBytes: z.number().int().positive().optional(),
   devDirect: z.literal(true).optional(),
 }).strict();
-export const externalEmbeddedMediaCompleteSchema = z.object({ mediaId: uuid, state: z.literal("pending") }).strict();
+/** `rendition` (#495) is present only for a HEIC image: `pending` while its JPEG display copy is being made. Absent for every other upload. */
+export const externalEmbeddedMediaCompleteSchema = z.object({ mediaId: uuid, state: z.literal("pending"), rendition: z.enum(["not_required", "pending", "ready", "failed"]).optional() }).strict();
+/** The uploader's view of a HEIC image's display copy (#495): the status only, never the failure text or a key. */
+export const externalEmbeddedMediaRenditionSchema = z.object({ mediaId: uuid, status: z.enum(["not_required", "pending", "ready", "failed"]) }).strict();
+/** Whether this person may upload HEIC (#495). */
+export const externalEmbeddedMediaSettingsSchema = z.object({ heic: z.boolean() }).strict();
 
 export type ExternalApiSurface =
   | "me" | "notification-preferences" | "project-list" | "project-detail" | "asset-list" | "annotation-list"
   | "annotation-mutation" | "collection-links" | "ingest-status" | "stages" | "collaboration" | "checklist" | "comment-list"
   | "comment-mutation" | "comment-read-state" | "mentionable" | "notifications" | "notification-mutation"
   | "review-mutation" | "external-upload" | "external-upload-complete" | "access-snapshot" | "activity" | "calendar" | "gantt" | "export" | "subtask-assignee-options"
-  | "embedded-media-presign" | "embedded-media-complete" | "link-preview";
+  | "embedded-media-presign" | "embedded-media-complete" | "embedded-media-rendition" | "embedded-media-settings" | "link-preview";
 
 export const EXTERNAL_API_RESPONSE_SCHEMAS: Readonly<Record<ExternalApiSurface, z.ZodTypeAny>> = {
   me: externalMeResponseSchema,
@@ -286,6 +291,8 @@ export const EXTERNAL_API_RESPONSE_SCHEMAS: Readonly<Record<ExternalApiSurface, 
   "subtask-assignee-options": externalSubtaskAssigneeOptionsResponseSchema,
   "embedded-media-presign": externalEmbeddedMediaPresignSchema,
   "embedded-media-complete": externalEmbeddedMediaCompleteSchema,
+  "embedded-media-rendition": externalEmbeddedMediaRenditionSchema,
+  "embedded-media-settings": externalEmbeddedMediaSettingsSchema,
   "link-preview": linkPreviewResponseSchema,
 };
 

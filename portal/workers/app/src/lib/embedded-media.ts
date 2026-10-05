@@ -1,6 +1,11 @@
-import { EMBEDDED_MEDIA_MAX_PER_POST, EMBEDDED_MEDIA_RETENTION_MS, sniffEmbeddedMediaType } from "@quincy/shared";
+import { EMBEDDED_MEDIA_MAX_PER_POST, EMBEDDED_MEDIA_RETENTION_MS, isEmbeddedHeicContentType, sniffEmbeddedMediaType, sniffHeifImage, type EmbeddedRenditionStatus } from "@quincy/shared";
+import { enqueueEmbeddedMediaCleanup } from "@quincy/db";
 import { completeMultipart, validateMultipartParts } from "./r2s3";
 import type { Env } from "../env";
+
+/** The cleanup queue and the adoption helpers moved to `@quincy/db` (#495) so the background Worker runs the same code. Re-exported so call sites do not change. */
+const UPLOAD_SNIFF_BYTES = 4096;
+export { discardUnreferencedObject, enqueueEmbeddedMediaCleanup, settleThrownAdoption, type CleanupEntry } from "@quincy/db";
 
 /** Embedded media (#493): the D1 row plus the helpers every writer of it shares. */
 export type EmbeddedMediaState = "uploading" | "pending" | "attached" | "detached";
@@ -8,12 +13,15 @@ export type EmbeddedMediaRow = {
   id: string; ownerKind: "project_comment" | "notice_post" | "whiteboard"; ownerId: string | null; projectId: string | null; uploaderId: string;
   kind: "image" | "video" | "preview_image"; contentType: string; bytes: number; originalKey: string; displayKey: string | null; posterKey: string | null;
   uploadId: string | null; state: EmbeddedMediaState; detachedAt: number | null; createdAt: number; updatedAt: number;
+  /** HEIC display copy (#495). `not_required` for every other upload. */
+  renditionStatus: EmbeddedRenditionStatus; displayContentType: string | null; renditionError: string | null;
 };
 
 type RawRow = {
   id: string; owner_kind: EmbeddedMediaRow["ownerKind"]; owner_id: string | null; project_id: string | null; uploader_id: string; kind: EmbeddedMediaRow["kind"];
   content_type: string; bytes: number; original_key: string; display_key: string | null; poster_key: string | null; upload_id: string | null;
   state: EmbeddedMediaState; detached_at: number | null; created_at: number; updated_at: number;
+  rendition_status: EmbeddedRenditionStatus; display_content_type: string | null; rendition_error: string | null;
 };
 
 export function embeddedMediaFromRaw(raw: RawRow): EmbeddedMediaRow {
@@ -21,27 +29,13 @@ export function embeddedMediaFromRaw(raw: RawRow): EmbeddedMediaRow {
     id: raw.id, ownerKind: raw.owner_kind, ownerId: raw.owner_id, projectId: raw.project_id, uploaderId: raw.uploader_id, kind: raw.kind,
     contentType: raw.content_type, bytes: Number(raw.bytes), originalKey: raw.original_key, displayKey: raw.display_key, posterKey: raw.poster_key,
     uploadId: raw.upload_id, state: raw.state, detachedAt: raw.detached_at === null ? null : Number(raw.detached_at), createdAt: Number(raw.created_at), updatedAt: Number(raw.updated_at),
+    renditionStatus: raw.rendition_status, displayContentType: raw.display_content_type, renditionError: raw.rendition_error,
   };
 }
 
 export async function getEmbeddedMedia(db: D1Database, mediaId: string): Promise<EmbeddedMediaRow | null> {
   const raw = await db.prepare("SELECT * FROM embedded_media WHERE id = ?").bind(mediaId).first<RawRow>();
   return raw ? embeddedMediaFromRaw(raw) : null;
-}
-
-export type CleanupEntry = { key: string; uploadId?: string | null; projectId?: string | null };
-
-/**
- * Hands R2 objects (and the multipart uploads that may still create them) to the durable cleanup queue
- * (`embedded_media_cleanup`), which the background sweep drains. Idempotent: a key already queued keeps its row,
- * and gains an upload id if it had none.
- */
-export async function enqueueEmbeddedMediaCleanup(db: D1Database, entries: CleanupEntry[], now = Date.now()): Promise<void> {
-  if (!entries.length) return;
-  await db.batch(entries.map((entry) => db.prepare(`
-    INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) VALUES (?, ?, ?, ?)
-    ON CONFLICT(storage_key) DO UPDATE SET project_id = COALESCE(embedded_media_cleanup.project_id, excluded.project_id), upload_id = COALESCE(embedded_media_cleanup.upload_id, excluded.upload_id), queued_at = MAX(embedded_media_cleanup.queued_at + 1, excluded.queued_at), claimed_until = NULL
-  `).bind(entry.key, entry.uploadId ?? null, entry.projectId ?? null, now)));
 }
 
 /**
@@ -140,7 +134,7 @@ export async function deleteEmbeddedMediaObjects(env: Pick<Env, "MEDIA">, rows: 
 /** What owns a set of embedded media: a Project comment (inside its Project) or a Notice board post (no Project). */
 export type OwnedMediaOwner = { ownerKind: "project_comment" | "notice_post"; ownerId: string; projectId: string | null };
 
-type OwnedMediaRow = { id: string; state: EmbeddedMediaState; owner_id: string | null; uploader_id: string; project_id: string | null; owner_kind: string; kind: string; created_at: number; detached_at: number | null };
+type OwnedMediaRow = { id: string; state: EmbeddedMediaState; owner_id: string | null; uploader_id: string; project_id: string | null; owner_kind: string; kind: string; created_at: number; detached_at: number | null; rendition_status: EmbeddedRenditionStatus };
 
 /**
  * Pre-checks the images a save wants before its batch so an obvious mistake is a clean 400. It is only advisory: the batch's
@@ -153,13 +147,14 @@ export async function preflightOwnedMedia(db: D1Database, input: OwnedMediaOwner
   if (input.ids.length > EMBEDDED_MEDIA_MAX_PER_POST || new Set(input.ids).size !== input.ids.length) return false;
   if (!input.ids.length) return true;
   const placeholders = input.ids.map(() => "?").join(", ");
-  const found = (await db.prepare(`SELECT id, state, owner_id, uploader_id, project_id, owner_kind, kind, created_at, detached_at FROM embedded_media WHERE id IN (${placeholders})`).bind(...input.ids).all<OwnedMediaRow>()).results;
+  const found = (await db.prepare(`SELECT id, state, owner_id, uploader_id, project_id, owner_kind, kind, created_at, detached_at, rendition_status FROM embedded_media WHERE id IN (${placeholders})`).bind(...input.ids).all<OwnedMediaRow>()).results;
   const byId = new Map(found.map((row) => [row.id, row]));
   const cutoff = now - EMBEDDED_MEDIA_RETENTION_MS;
   for (const id of input.ids) {
     const row = byId.get(id);
     if (!row || row.project_id !== input.projectId || row.owner_kind !== input.ownerKind || row.kind !== (videos.has(id) ? "video" : "image")) return false;
-    const fresh = row.state === "pending" && row.owner_id === null && row.uploader_id === input.uploaderId && Number(row.created_at) > cutoff;
+    // A HEIC image whose display copy is not ready cannot be posted (#495): no reader ever meets a processing or failed image.
+    const fresh = row.state === "pending" && row.owner_id === null && row.uploader_id === input.uploaderId && Number(row.created_at) > cutoff && (row.rendition_status === "not_required" || row.rendition_status === "ready");
     const mine = row.owner_id === input.ownerId && (row.state === "attached" || (row.state === "detached" && Number(row.detached_at) > cutoff));
     if (!fresh && !mine) return false;
   }
@@ -186,7 +181,7 @@ export function ownedMediaStatements(db: D1Database, input: OwnedMediaOwner & { 
   const statements = ids.map((id) => db.prepare(`
     UPDATE embedded_media SET state = 'attached', owner_id = ?, detached_at = NULL, updated_at = ?
     WHERE id = ? AND owner_kind = ? AND ${scope} AND kind = ? AND ${fence.sql}
-      AND ((state = 'pending' AND owner_id IS NULL AND uploader_id = ? AND created_at > ?)
+      AND ((state = 'pending' AND owner_id IS NULL AND uploader_id = ? AND created_at > ? AND rendition_status IN ('not_required', 'ready'))
         OR (owner_id = ? AND (state = 'attached' OR (state = 'detached' AND detached_at > ?))))
   `).bind(input.ownerId, now, id, input.ownerKind, ...scopeBinds, kindOf(id), ...fence.binds, input.uploaderId, cutoff, input.ownerId, cutoff));
   statements.push(db.prepare(`
@@ -245,45 +240,13 @@ export async function verifyUploadedEmbeddedObject(env: Env, row: EmbeddedMediaR
   };
   if (head.size !== row.bytes) return reject("The uploaded file is not the size that was reserved");
   if (head.httpMetadata?.contentType !== row.contentType) return reject("The uploaded file is not the type that was reserved");
-  const first = await env.MEDIA.get(row.originalKey, { range: { offset: 0, length: 16 } });
-  const sniffed = first ? sniffEmbeddedMediaType(row.kind === "video" ? "video" : "image", new Uint8Array(await first.arrayBuffer())) : null;
+  // 4096 bytes: a `ftyp` box lists its brands after the 16 bytes the other sniffers need, and the sniffers read the whole box (a real one is under 100 bytes). A box larger than this read is refused (Sol r2 P1).
+  const first = await env.MEDIA.get(row.originalKey, { range: { offset: 0, length: UPLOAD_SNIFF_BYTES } });
+  const headBytes = first ? new Uint8Array(await first.arrayBuffer()) : new Uint8Array();
+  // A HEIC row: any HEVC HEIF container is accepted whichever of heic/heif was declared (the browser's guess from the extension). A JPEG declared as HEIC, or a HEIC declared as JPEG, is refused.
+  if (isEmbeddedHeicContentType(row.contentType)) { if (row.kind !== "image" || !sniffHeifImage(headBytes)) return reject("The uploaded file is not a HEIC image"); return { ok: true }; }
+  const sniffed = sniffEmbeddedMediaType(row.kind === "video" ? "video" : "image", headBytes);
   // A video's declared type is the browser's guess from the file extension, so any MP4 or MOV container is accepted whichever it declared.
   if (row.kind === "video" ? !sniffed : sniffed !== row.contentType) return reject(row.kind === "video" ? "The uploaded file is not an MP4 or MOV video" : "The uploaded file is not a JPEG, PNG or WebP image");
   return { ok: true };
-}
-
-/**
- * Gives up an R2 object nothing references (a video poster, a link preview image): on a lost adoption and on an adoption that threw. Deletes the object, then its queue
- * entry (a leftover entry is harmless, the sweep deletes an already-gone object). If R2 refuses, the key is queued again with the
- * lease cleared. Accepted residual gap: when the R2 delete AND that following D1 write both fail back to back, the object is an orphan
- * nothing tracks. That is logged loudly with the key (see docs/lessons.md) and left to a future R2 prefix reconciliation.
- */
-export async function discardUnreferencedObject(env: Pick<Env, "DB" | "MEDIA">, posterKey: string, projectId: string | null): Promise<void> {
-  let deleted = false;
-  try { await env.MEDIA.delete(posterKey); deleted = true; } catch { /* queued below */ }
-  if (deleted) {
-    try { await env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ?").bind(posterKey).run(); } catch { /* the sweep drops the entry of a gone object */ }
-    return;
-  }
-  try { await enqueueEmbeddedMediaCleanup(env.DB, [{ key: posterKey, projectId }]); }
-  catch (error) { console.error("Embedded object ORPHANED: the R2 delete and the re-queue both failed, the object needs manual cleanup", { key: posterKey, projectId, error: error instanceof Error ? error.message : String(error) }); }
-}
-
-/**
- * Decides, after an adoption batch threw, what to do with the object it was meant to adopt (a video poster, a link preview image).
- * A throw can follow a commit, so the outcome comes from reading the row, in three: `adopted` (the row references the object, it is
- * live and stays), `discarded` (confirmed not adopted, so the object is deleted, re-queued if R2 refuses, see `discardUnreferencedObject`),
- * or `unknown` (the read threw too). Unknown deletes nothing and queues nothing, since either could destroy a live object: the object
- * stays, an unadopted queue entry is still the sweep's to reclaim, and the key is logged with the batch's error.
- */
-export async function settleThrownAdoption(env: Pick<Env, "DB" | "MEDIA">, input: { key: string; projectId: string | null; mediaId: string; what: string; isAdopted: () => Promise<boolean>; error: unknown }): Promise<"adopted" | "discarded" | "unknown"> {
-  let adopted: boolean;
-  try { adopted = await input.isAdopted(); }
-  catch {
-    console.error(`${input.what} adoption outcome UNKNOWN: the batch threw and the verification read failed, the object was kept (a leak is possible, accepted gap #549)`, { key: input.key, mediaId: input.mediaId, projectId: input.projectId, error: input.error instanceof Error ? input.error.message : String(input.error) });
-    return "unknown";
-  }
-  if (adopted) return "adopted";
-  await discardUnreferencedObject(env, input.key, input.projectId);
-  return "discarded";
 }

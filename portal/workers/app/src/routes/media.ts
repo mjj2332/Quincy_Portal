@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
 import { createDb, schema } from "@quincy/db";
 import { and, eq, isNull } from "drizzle-orm";
-import { isEmbeddedMediaContentType, ifRangeAllows, parseByteRange, DNG_CONTENT_TYPE, RENDITION_SPECS, RENDITION_SPEC_VERSION, TRANSFORM_CACHE_VERSION, dngPreviewKey, rawMediaContentType } from "@quincy/shared";
+import { isEmbeddedHeicContentType, isEmbeddedMediaContentType, ifRangeAllows, parseByteRange, DNG_CONTENT_TYPE, RENDITION_SPECS, RENDITION_SPEC_VERSION, TRANSFORM_CACHE_VERSION, dngPreviewKey, rawMediaContentType } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, hasProjectCollaborationAccess } from "../middleware/capability";
@@ -228,25 +228,34 @@ mediaRoutes.get("/embedded/:mediaId", terminalRoute("/embedded/:mediaId", async 
   const mediaId = c.req.param("mediaId");
   if (!z.string().uuid().safeParse(mediaId).success) return c.json({ error: "Invalid media id" }, 400);
   const row = await readableEmbeddedMedia(c, mediaId); if (row instanceof Response) return row;
+  // A HEIC image (#495) is served as its JPEG display copy and never as the original: pending is 409 (the whiteboard resolver retries it), failed is a final 404.
+  let objectKey = row.originalKey; let storedType = row.contentType;
+  // Defence in depth: a HEIC row that somehow says `not_required` would otherwise stream the original.
+  if (row.kind === "image" && row.renditionStatus === "not_required" && isEmbeddedHeicContentType(row.contentType)) return c.json({ error: "Media not found" }, 404);
+  if (row.kind === "image" && row.renditionStatus !== "not_required") {
+    if (row.renditionStatus === "pending") return c.json({ error: "This image is still being prepared", code: "rendition_pending" }, 409, { "retry-after": "5" });
+    if (row.renditionStatus === "failed" || !row.displayKey || !row.displayContentType) return c.json({ error: "This image could not be prepared", code: "rendition_failed" }, 404);
+    objectKey = row.displayKey; storedType = row.displayContentType;
+  }
   // A single byte range is served (#494): a browser plays a video by asking for pieces of it, and cannot seek without. `head` gives
   // the size and ETag, then the parser decides; the body is a second, ranged read, so no behaviour depends on how R2 treats a range it cannot satisfy.
   let object: R2ObjectBody | null; let status = 200; let contentRange: string | undefined; let length: number | undefined;
   const rangeHeader = c.req.header("range");
   if (rangeHeader) {
-    const meta = await c.env.MEDIA.head(row.originalKey);
+    const meta = await c.env.MEDIA.head(objectKey);
     if (!meta) return c.json({ error: "Media object not found" }, 404);
     const parsed = parseByteRange(rangeHeader, meta.size);
     // If-Range comes first (RFC 9110 §13.1.5): a validator that does not match means the range is ignored, so the whole body is sent, even when the range could not have been satisfied.
     const rangeApplies = ifRangeAllows(c.req.header("if-range"), meta.httpEtag);
     if (parsed.kind === "unsatisfiable" && rangeApplies) return new Response(null, { status: 416, headers: { "content-range": `bytes */${meta.size}` } });
     if (parsed.kind === "partial" && rangeApplies) {
-      object = await c.env.MEDIA.get(row.originalKey, { range: { offset: parsed.offset, length: parsed.length } });
+      object = await c.env.MEDIA.get(objectKey, { range: { offset: parsed.offset, length: parsed.length } });
       status = 206; length = parsed.length; contentRange = `bytes ${parsed.offset}-${parsed.offset + parsed.length - 1}/${meta.size}`;
-    } else object = await c.env.MEDIA.get(row.originalKey);
-  } else object = await c.env.MEDIA.get(row.originalKey);
+    } else object = await c.env.MEDIA.get(objectKey);
+  } else object = await c.env.MEDIA.get(objectKey);
   if (!object) return c.json({ error: "Media object not found" }, 404);
   const headers: Record<string, string> = {
-    "content-type": isEmbeddedMediaContentType(row.contentType) ? row.contentType : "application/octet-stream",
+    "content-type": isEmbeddedMediaContentType(storedType) ? storedType : "application/octet-stream",
     "content-length": String(length ?? object.size),
     "accept-ranges": "bytes",
     ...EMBEDDED_RESPONSE_HEADERS,

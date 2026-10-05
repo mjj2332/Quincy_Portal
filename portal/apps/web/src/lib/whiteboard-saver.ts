@@ -57,7 +57,8 @@ export function withoutForeignMedia<T extends { type?: unknown }>(elements: read
   const kept = elements.filter((element) => !isForeignMedia(element, known));
   return { kept, removed: elements.length - kept.length };
 }
-const MEDIA_FILE_NAME = /\.(jpe?g|png|webp|mp4|mov)$/i;
+// HEIC (#495) by name too: a browser may report a .heic with no type, and the pipeline gives the refusal when HEIC is off.
+const MEDIA_FILE_NAME = /\.(jpe?g|png|webp|heic|heif|mp4|mov)$/i;
 /** A dropped or pasted file the board's media pipeline should look at (the pipeline's own checks give the reason for a refusal). */
 export const isMediaCandidate = (file: Pick<File, "type" | "name">): boolean => (file.type ?? "").startsWith("image/") || (file.type ?? "").startsWith("video/") || MEDIA_FILE_NAME.test(file.name ?? "");
 /** What to do with files dropped on the board: a scene or library file is loaded through the controller

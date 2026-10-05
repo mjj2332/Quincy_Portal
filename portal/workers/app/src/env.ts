@@ -1,4 +1,4 @@
-import type { NotificationOutboxMessage, Role } from "@quincy/shared";
+import type { NotificationOutboxMessage, RenditionMessage, Role } from "@quincy/shared";
 import type { ProjectWhiteboardDO } from "./whiteboard/project-whiteboard-do";
 import type { QuincyBackground } from "../../background/src/rpc-types";
 
@@ -9,7 +9,7 @@ export interface Env {
   INGEST_QUEUE: Queue;
   NOTIFICATION_QUEUE: Queue<NotificationOutboxMessage>;
   /** Bound only after the rendition queue has been provisioned and the red gate is green. */
-  RENDITION_QUEUE?: Queue<{ type: "generate_renditions"; assetId: string }>;
+  RENDITION_QUEUE?: Queue<RenditionMessage>;
   BACKGROUND: Service<QuincyBackground>;
   ASSETS: Fetcher;
   /** #498: one Project whiteboard Durable Object per Project, named by the Project id. */

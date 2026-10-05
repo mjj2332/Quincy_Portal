@@ -2,7 +2,9 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WhiteboardMode } from "@quincy/shared";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError } from "../lib/api";
+import { RenditionFailedError } from "../lib/embedded-media";
 import { ProjectWhiteboard } from "./ProjectWhiteboard";
 
 /**
@@ -62,7 +64,9 @@ vi.mock("./reui/whiteboard/whiteboard", () => ({
 }));
 const uploadImage = vi.hoisted(() => vi.fn());
 const uploadVideo = vi.hoisted(() => vi.fn());
-vi.mock("../lib/embedded-media", async (importOriginal) => ({ ...(await importOriginal<typeof import("../lib/embedded-media")>()), uploadEmbeddedImage: uploadImage, uploadEmbeddedVideo: uploadVideo }));
+const heicSetting = vi.hoisted(() => vi.fn());
+const retryRendition = vi.hoisted(() => vi.fn());
+vi.mock("../lib/embedded-media", async (importOriginal) => ({ ...(await importOriginal<typeof import("../lib/embedded-media")>()), uploadEmbeddedImage: uploadImage, uploadEmbeddedVideo: uploadVideo, retryEmbeddedRendition: retryRendition, fetchEmbeddedHeicSetting: heicSetting }));
 vi.mock("../lib/whiteboard-media-render", () => ({
   canvasMediaRenderer: {
     image: async (blob: Blob) => ({ dataURL: `data:image/png;image-${blob.size}`, mimeType: "image/png", width: 400, height: 300 }),
@@ -83,14 +87,14 @@ const mp4 = (name = "a.mp4") => new File([new Uint8Array(100)], name, { type: "v
 
 async function mount() {
   const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
-  await act(async () => { root!.render(<ProjectWhiteboard projectId="p1" street="12 Example St" onClose={() => undefined} onAccessFailure={() => undefined} />); await Promise.resolve(); });
+  await act(async () => { root!.render(<QueryClientProvider client={new QueryClient()}><ProjectWhiteboard projectId="p1" street="12 Example St" onClose={() => undefined} onAccessFailure={() => undefined} /></QueryClientProvider>); await Promise.resolve(); });
   for (let i = 0; i < 20 && !document.querySelector('[data-testid="whiteboard-stand-in"]'); i += 1) await settle();
   return host;
 }
 
 beforeEach(() => {
   Object.assign(board, { handlers: null, scene: [], sentBatches: [], localApplied: [], props: null, controllers: [], initMode: "edit", initElements: [], insertions: [], insertResult: "el-new" });
-  uploadImage.mockReset(); uploadVideo.mockReset(); toasts.push.mockReset(); fetchStub.mockReset();
+  uploadImage.mockReset(); uploadVideo.mockReset(); retryRendition.mockReset(); heicSetting.mockReset(); heicSetting.mockResolvedValue(false); toasts.push.mockReset(); fetchStub.mockReset();
   vi.stubGlobal("fetch", fetchStub);
   fetchStub.mockResolvedValue(new Response("x", { status: 200, headers: { "content-type": "image/png" } }));
 });
@@ -120,7 +124,7 @@ describe("the media tool and the picker (#501)", () => {
     await act(async () => { picker.dispatchEvent(new Event("change", { bubbles: true })); });
     await settle(5);
     expect(host.querySelector('input[type="file"]')).toBeNull();
-    expect(uploadImage).toHaveBeenCalledWith({ projectId: "p1", owner: "whiteboard" }, expect.any(File), expect.any(Function));
+    expect(uploadImage).toHaveBeenCalledWith({ projectId: "p1", owner: "whiteboard" }, expect.any(File), expect.any(Function), { signal: expect.any(AbortSignal), onPhase: expect.any(Function) });
     expect(board.insertions).toEqual([expect.objectContaining({ fileId: IMG, kind: "image", at: { x: 120, y: 80 }, cascade: 0, width: 400, height: 300, file: expect.objectContaining({ id: IMG, dataURL: expect.stringMatching(/^data:image\//) }) })]);
     expect(fetchStub).not.toHaveBeenCalled();                           // the bytes this tab holds are decoded locally
   });
@@ -203,7 +207,7 @@ describe("what the board's media elements resolve to (#501)", () => {
       fetchStub.mockRejectedValueOnce(new TypeError("offline")).mockResolvedValue(new Response("x", { status: 200, headers: { "content-type": "image/png" } }));
       board.initElements = [media(IMG)]; board.scene = [media(IMG)];
       const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
-      await act(async () => { root!.render(<ProjectWhiteboard projectId="p1" street="12 Example St" onClose={() => undefined} onAccessFailure={() => undefined} />); await vi.advanceTimersByTimeAsync(10); });
+      await act(async () => { root!.render(<QueryClientProvider client={new QueryClient()}><ProjectWhiteboard projectId="p1" street="12 Example St" onClose={() => undefined} onAccessFailure={() => undefined} /></QueryClientProvider>); await vi.advanceTimersByTimeAsync(10); });
       await act(async () => { await vi.advanceTimersByTimeAsync(10); });
       const controller = board.controllers[0] as FakeController;
       expect(controller.addMediaFiles).not.toHaveBeenCalled();
@@ -264,5 +268,141 @@ describe("playing a board video (#501)", () => {
     expect(board.props!.actions).toBeUndefined();
     await act(async () => { board.props!.onVideoOpen(VID); });
     expect(document.querySelector('[data-testid="embedded-video"]')).not.toBeNull();
+  });
+});
+
+describe("HEIC images on the board (#495)", () => {
+  const heic = (name = "IMG_1.HEIC") => new File([new Uint8Array(100)], name, { type: "" });
+  type Drive = { phase: (phase: "preparing", mediaId: string) => void; finish: (id: string) => void; fail: (reason: unknown) => void; signal: AbortSignal };
+  function driveUpload(): Drive {
+    const drive = {} as Drive;
+    uploadImage.mockImplementation((_scope: unknown, _file: File, _progress: unknown, options: { onPhase: Drive["phase"]; signal: AbortSignal }) => {
+      drive.phase = options.onPhase; drive.signal = options.signal;
+      return new Promise<string>((resolve, reject) => { drive.finish = resolve; drive.fail = reject; });
+    });
+    return drive;
+  }
+  async function pick(host: HTMLElement, files: File[]) {
+    const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => undefined);
+    await act(async () => { board.props!.mediaTool.onPick({ x: 10, y: 10 }); });
+    click.mockRestore();
+    const picker = host.querySelector<HTMLInputElement>('[data-testid="project-whiteboard-media-picker"]')!;
+    Object.defineProperty(picker, "files", { configurable: true, value: files });
+    await act(async () => { picker.dispatchEvent(new Event("change", { bubbles: true })); });
+    await settle(5);
+    return picker;
+  }
+  const trayText = (host: HTMLElement) => host.querySelector('[data-testid="project-whiteboard-upload-tray"]')?.textContent ?? "";
+
+  it("offers HEIC in the picker only when the setting is on", async () => {
+    heicSetting.mockResolvedValue(true);
+    const host = await mount(); await settle(5);
+    const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => undefined);
+    await act(async () => { board.props!.mediaTool.onPick({ x: 1, y: 1 }); });
+    click.mockRestore();
+    expect(host.querySelector<HTMLInputElement>('[data-testid="project-whiteboard-media-picker"]')!.accept).toContain(".heic");
+  });
+
+  it("refuses a HEIC with the unsupported-type message while the setting is off", async () => {
+    const host = await mount(); await settle(5);
+    await act(async () => { board.props!.mediaTool.onFiles([heic()]); });
+    expect(uploadImage).not.toHaveBeenCalled();
+    expect(trayText(host)).toContain("is not a JPEG, PNG or WebP image");
+  });
+
+  it("places nothing before ready, never decodes the local HEIC, and shows the server's JPEG once ready", async () => {
+    heicSetting.mockResolvedValue(true); const drive = driveUpload();
+    const host = await mount(); await settle(5);
+    await pick(host, [heic()]);
+    await act(async () => { drive.phase("preparing", IMG); });
+    expect(trayText(host)).toContain("Preparing IMG_1.HEIC…");
+    expect(board.insertions).toEqual([]); expect(fetchStub).not.toHaveBeenCalled();
+    await act(async () => { drive.finish(IMG); }); await settle(5);
+    expect(fetchStub).toHaveBeenCalledWith(`/media/embedded/${IMG}`, expect.anything());
+    expect(board.insertions).toEqual([expect.objectContaining({ fileId: IMG, kind: "image", at: { x: 10, y: 10 } })]);
+    expect(trayText(host)).toBe("");
+  });
+
+  const button = (host: HTMLElement, label: string) => host.querySelector<HTMLButtonElement>(`[data-testid="project-whiteboard-upload-tray"] button[aria-label="${label}"]`);
+  async function failedRow() {
+    heicSetting.mockResolvedValue(true); const drive = driveUpload();
+    const host = await mount(); await settle(5);
+    await pick(host, [heic()]);
+    await act(async () => { drive.phase("preparing", IMG); });
+    await act(async () => { drive.fail(new RenditionFailedError(IMG)); }); await settle(5);
+    return { host, drive };
+  }
+
+  it("a failed preparation keeps its row with Retry and Remove and places nothing", async () => {
+    const { host } = await failedRow();
+    expect(host.querySelector('[data-testid="project-whiteboard-upload-tray"] [role="alert"]')?.textContent).toContain("Couldn't prepare IMG_1.HEIC");
+    expect(button(host, "Retry preparing IMG_1.HEIC")).not.toBeNull();
+    expect(button(host, "Remove IMG_1.HEIC")).not.toBeNull();
+    expect(board.insertions).toEqual([]);
+    expect(trayText(host)).not.toContain("Preparing");
+  });
+
+  it("Retry goes back to preparing, hands focus to Remove, and inserts once at ready", async () => {
+    const { host } = await failedRow();
+    let ready!: (id: string) => void; let phase!: (p: "preparing", id: string) => void;
+    retryRendition.mockImplementation((_scope: unknown, id: string, options: { onPhase: typeof phase }) => { phase = options.onPhase; return new Promise<string>((resolve) => { ready = resolve; }); });
+    await act(async () => { button(host, "Retry preparing IMG_1.HEIC")!.click(); }); await settle(5);
+    expect(retryRendition).toHaveBeenCalledWith({ projectId: "p1", owner: "whiteboard" }, IMG, expect.anything());
+    expect(trayText(host)).toContain("Preparing IMG_1.HEIC…");
+    expect(button(host, "Retry preparing IMG_1.HEIC")).toBeNull();
+    expect(document.activeElement).toBe(button(host, "Remove IMG_1.HEIC"));
+    expect(board.insertions).toEqual([]);
+    await act(async () => { ready(IMG); }); await settle(5);
+    expect(board.insertions).toEqual([expect.objectContaining({ fileId: IMG, kind: "image" })]);
+    expect(trayText(host)).toBe("");
+  });
+
+  it("Retry that fails again returns to the failed row", async () => {
+    const { host } = await failedRow();
+    retryRendition.mockRejectedValue(new RenditionFailedError(IMG));
+    await act(async () => { button(host, "Retry preparing IMG_1.HEIC")!.click(); }); await settle(5);
+    expect(button(host, "Retry preparing IMG_1.HEIC")).not.toBeNull();
+    expect(board.insertions).toEqual([]);
+  });
+
+  it("Remove on a failed row aborts the upload, drops the row and focuses the board", async () => {
+    const { host } = await failedRow();
+    const remove = button(host, "Remove IMG_1.HEIC")!;
+    remove.focus();
+    await act(async () => { remove.click(); }); await settle(5);
+    expect(fetchStub).toHaveBeenCalledWith(`/api/projects/p1/embedded-media/${IMG}/abort`, expect.objectContaining({ method: "POST" }));
+    expect(trayText(host)).toBe("");
+    expect(board.insertions).toEqual([]);
+    expect(document.activeElement).toBe(host.querySelector('[data-testid="project-whiteboard-board"]'));
+  });
+
+  it("the board's focus ring is the inset one, not the outer global outline", async () => {
+    const host = await mount();
+    const cls = host.querySelector('[data-testid="project-whiteboard-board"]')!.className;
+    expect(cls).not.toContain("outline-none");
+    expect(cls).toContain("focus-visible:!outline-offset-[-2px]");
+  });
+
+  it("Remove on a preparing row stops the polling and aborts the upload", async () => {
+    heicSetting.mockResolvedValue(true); const drive = driveUpload();
+    const host = await mount(); await settle(5);
+    await pick(host, [heic()]);
+    await act(async () => { drive.phase("preparing", IMG); });
+    const remove = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Remove")!;
+    await act(async () => { remove.click(); }); await settle(5);
+    expect(drive.signal.aborted).toBe(true);
+    expect(fetchStub).toHaveBeenCalledWith(`/api/projects/p1/embedded-media/${IMG}/abort`, expect.objectContaining({ method: "POST" }));
+    expect(board.insertions).toEqual([]); expect(trayText(host)).toBe("");
+  });
+
+  it("Remove on a preparing row moves focus to the board instead of dropping it to the page", async () => {
+    heicSetting.mockResolvedValue(true); const drive = driveUpload();
+    const host = await mount(); await settle(5);
+    await pick(host, [heic()]);
+    await act(async () => { drive.phase("preparing", IMG); });
+    const remove = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Remove")!;
+    remove.focus(); expect(document.activeElement).toBe(remove);
+    await act(async () => { remove.click(); }); await settle(5);
+    expect(document.activeElement).toBe(host.querySelector('[data-testid="project-whiteboard-board"]'));
   });
 });

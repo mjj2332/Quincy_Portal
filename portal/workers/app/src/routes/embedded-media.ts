@@ -3,8 +3,8 @@ import { z } from "zod";
 import { createDb, schema } from "@quincy/db";
 import { eq } from "drizzle-orm";
 import {
-  EMBEDDED_IMAGE_CONTENT_TYPES, EMBEDDED_POSTER_MAX_BYTES, EMBEDDED_VIDEO_CONTENT_TYPES, EMBEDDED_VIDEO_PART_URL_TTL_SECONDS, embeddedMediaKindFor, embeddedMediaMaxBytes, embeddedMediaObjectKey,
-  embeddedMediaPosterKey, externalEmbeddedMediaCompleteSchema, externalEmbeddedMediaPresignSchema, isJpeg,
+  EMBEDDED_HEIC_CONTENT_TYPES, EMBEDDED_IMAGE_CONTENT_TYPES, EMBEDDED_POSTER_MAX_BYTES, EMBEDDED_VIDEO_CONTENT_TYPES, EMBEDDED_VIDEO_PART_URL_TTL_SECONDS, embeddedMediaKindFor, embeddedMediaMaxBytes, embeddedMediaObjectKey,
+  embeddedMediaPosterKey, enqueueEmbeddedDisplaySafely, externalEmbeddedMediaCompleteSchema, externalEmbeddedMediaPresignSchema, externalEmbeddedMediaSettingsSchema, isEmbeddedHeicContentType, isJpeg, renditionsEnabled,
 } from "@quincy/shared";
 import { terminalRoute } from "../lib/terminal-route";
 import type { AppEnv, Env } from "../env";
@@ -13,14 +13,16 @@ import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { abortMultipart, createMultipartPresign, PART_BYTES, PRESIGN_EXPIRES_SECONDS } from "../lib/r2s3";
 import { abortEmbeddedMedia, claimAndDiscardUploadingMedia, discardUnreferencedObject, enqueueEmbeddedMediaCleanup, getEmbeddedMedia, settleThrownAdoption, verifyUploadedEmbeddedObject } from "../lib/embedded-media";
+import { heicGate, heicUploadsAllowed, isHeicRow, renditionStatusResponse, retryRendition } from "../lib/embedded-heic";
 import { jsonInput } from "./helpers";
 
 const uuid = z.string().uuid();
 /**
  * A Project's discussion takes images and videos (#494); each kind has its own size cap. `owner` (#501) says what the upload is for:
  * the discussion (the default) or the Project's whiteboard. A whiteboard upload takes the same types and sizes and is never attachable to a comment.
+ * HEIC and HEIF (#495) are images with a JPEG display copy made after upload: `heicGate` refuses them for everyone but an Admin until the owner turns the flag on.
  */
-const presignInput = z.object({ contentType: z.enum([...EMBEDDED_IMAGE_CONTENT_TYPES, ...EMBEDDED_VIDEO_CONTENT_TYPES]), bytes: z.number().int().min(1), owner: z.enum(["discussion", "whiteboard"]).optional() }).strict()
+const presignInput = z.object({ contentType: z.enum([...EMBEDDED_IMAGE_CONTENT_TYPES, ...EMBEDDED_HEIC_CONTENT_TYPES, ...EMBEDDED_VIDEO_CONTENT_TYPES]), bytes: z.number().int().min(1), owner: z.enum(["discussion", "whiteboard"]).optional() }).strict()
   .superRefine((value, context) => { if (value.bytes > embeddedMediaMaxBytes(embeddedMediaKindFor(value.contentType)!)) context.addIssue({ code: "custom", path: ["bytes"], message: "File is too large" }); });
 const completeInput = z.object({ parts: z.array(z.object({ partNumber: z.number().int().positive(), etag: z.string().min(1) }).strict()).optional() }).strict();
 
@@ -40,14 +42,16 @@ embeddedMediaRoutes.post("/projects/:projectId/embedded-media", terminalRoute("/
   const project = await collaborationGate(c, projectId); if (project instanceof Response) return project;
   if (project.archivedAt) return c.json({ error: "Archived projects cannot accept media", code: "project_archived" }, 409);
   const data = await jsonInput(c, presignInput); if (data instanceof Response) return data;
+  const heic = isEmbeddedHeicContentType(data.contentType);
+  if (heic) { const refused = await heicGate(c); if (refused) return refused; }
   const user = c.get("user"); const mediaId = newId(); const key = embeddedMediaObjectKey(projectId, mediaId); const now = Date.now();
   const kind = embeddedMediaKindFor(data.contentType)!;
   const ownerKind = data.owner === "whiteboard" ? "whiteboard" : "project_comment";
   // Fenced on the Project still being live, so a reservation never lands in an archived Project.
   const reserved = await c.env.DB.prepare(`
-    INSERT INTO embedded_media (id, owner_kind, owner_id, project_id, uploader_id, kind, content_type, bytes, original_key, state, created_at, updated_at)
-    SELECT ?, ?, NULL, id, ?, ?, ?, ?, ?, 'uploading', ?, ? FROM projects WHERE id = ? AND archived_at IS NULL
-  `).bind(mediaId, ownerKind, user.id, kind, data.contentType, data.bytes, key, now, now, projectId).run();
+    INSERT INTO embedded_media (id, owner_kind, owner_id, project_id, uploader_id, kind, content_type, bytes, original_key, state, created_at, updated_at, rendition_status)
+    SELECT ?, ?, NULL, id, ?, ?, ?, ?, ?, 'uploading', ?, ?, ? FROM projects WHERE id = ? AND archived_at IS NULL
+  `).bind(mediaId, ownerKind, user.id, kind, data.contentType, data.bytes, key, now, now, heic ? "pending" : "not_required", projectId).run();
   if ((reserved.meta.changes ?? 0) !== 1) return c.json({ error: "Archived projects cannot accept media", code: "project_archived" }, 409);
   const release = () => c.env.DB.prepare("DELETE FROM embedded_media WHERE id = ? AND state = 'uploading'").bind(mediaId).run();
   let multipart: Awaited<ReturnType<typeof createMultipartPresign>>;
@@ -100,14 +104,19 @@ embeddedMediaRoutes.post("/projects/:projectId/embedded-media/:mediaId/complete"
   const user = c.get("user"); const row = await getEmbeddedMedia(c.env.DB, mediaId);
   if (!row) return stray();
   if (row.projectId !== projectId || row.uploaderId !== user.id) return c.json({ error: "Media upload not found" }, 404);
-  if (row.state === "pending") return c.json(externalEmbeddedMediaCompleteSchema.parse({ mediaId, state: "pending" }));
+  const heic = isHeicRow(row);
+  // The same gate as the presign, on the person completing it now (#495): a flag turned off in between, or renditions switched off, stops the upload here.
+  if (heic) { const refused = await heicGate(c); if (refused) return refused; }
+  const completed = (rendition: string) => c.json(externalEmbeddedMediaCompleteSchema.parse({ mediaId, state: "pending", ...(heic ? { rendition } : {}) }));
+  if (row.state === "pending") return completed(row.renditionStatus);
   if (row.state !== "uploading") return c.json({ error: "This media is already in use", code: "media_not_uploading" }, 409);
 
   const verdict = await verifyUploadedEmbeddedObject(c.env, row, data.parts);
   if (!verdict.ok) return c.json(verdict.body, verdict.status);
 
   // Fenced on the Project still being live and unarchived: R2 was awaited above, so the Project may have been deleted or archived meanwhile.
-  const promoted = await c.env.DB.prepare("UPDATE embedded_media SET state = 'pending', updated_at = ? WHERE id = ? AND state = 'uploading' AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)").bind(Date.now(), mediaId, projectId).run();
+  const promotedAt = Date.now();
+  const promoted = await c.env.DB.prepare("UPDATE embedded_media SET state = 'pending', updated_at = ?, rendition_requested_at = CASE WHEN rendition_status = 'pending' THEN ? ELSE NULL END WHERE id = ? AND state = 'uploading' AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)").bind(promotedAt, promotedAt, mediaId, projectId).run();
   if ((promoted.meta.changes ?? 0) !== 1) {
     const current = await getEmbeddedMedia(c.env.DB, mediaId);
     if (!current) return stray();
@@ -119,8 +128,10 @@ embeddedMediaRoutes.post("/projects/:projectId/embedded-media/:mediaId/complete"
     if (current.state !== "pending") return c.json({ error: "This media is already in use", code: "media_not_uploading" }, 409);
   } else {
     await audit(c.env, user, "embedded_media.upload", "embedded_media", mediaId, { projectId, bytes: row.bytes, contentType: row.contentType });
+    // Only the promotion winner sends, so a repeated or racing complete queues the conversion once. A lost send is re-sent by the minute cron.
+    if (heic) await enqueueEmbeddedDisplaySafely(c.env, mediaId, "complete", promotedAt);
   }
-  return c.json(externalEmbeddedMediaCompleteSchema.parse({ mediaId, state: "pending" }));
+  return completed("pending");
 }));
 
 /**
@@ -185,3 +196,28 @@ embeddedMediaRoutes.post("/projects/:projectId/embedded-media/:mediaId/abort", t
   if (outcome === "in_use") return c.json({ error: "This media is already in use", code: "media_not_uploading" }, 409);
   return c.body(null, 204);
 }));
+
+/** The uploader's view of a HEIC image's display copy (#495): the composer polls it. Uploader-only, in any Project state. */
+async function ownRenditionRow(c: Context<AppEnv>, projectId: string, mediaId: string) {
+  if (!uuid.safeParse(projectId).success || !uuid.safeParse(mediaId).success) return c.json({ error: "Invalid media upload" }, 400);
+  const live = await createDb(c.env.DB).select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
+  if (!live) return c.json({ error: "Media upload not found" }, 404);
+  const project = await collaborationGate(c, projectId); if (project instanceof Response) return project;
+  const row = await getEmbeddedMedia(c.env.DB, mediaId);
+  if (!row || row.projectId !== projectId || row.uploaderId !== c.get("user").id || row.kind !== "image" || row.state === "uploading") return c.json({ error: "Media upload not found" }, 404);
+  return row;
+}
+
+embeddedMediaRoutes.get("/projects/:projectId/embedded-media/:mediaId/rendition", terminalRoute("/projects/:projectId/embedded-media/:mediaId/rendition", async (c) => {
+  const row = await ownRenditionRow(c, c.req.param("projectId"), c.req.param("mediaId")); if (row instanceof Response) return row;
+  return renditionStatusResponse(c, row);
+}));
+
+embeddedMediaRoutes.post("/projects/:projectId/embedded-media/:mediaId/rendition/retry", terminalRoute("/projects/:projectId/embedded-media/:mediaId/rendition/retry", async (c) => {
+  const row = await ownRenditionRow(c, c.req.param("projectId"), c.req.param("mediaId")); if (row instanceof Response) return row;
+  return retryRendition(c, row);
+}));
+
+/** Whether this person may upload HEIC (#495), for the picker. The effective user, so an impersonating Admin is told what the staff member would be. */
+embeddedMediaRoutes.get("/embedded-media/settings", terminalRoute("/embedded-media/settings", async (c) =>
+  c.json(externalEmbeddedMediaSettingsSchema.parse({ heic: renditionsEnabled(c.env) && await heicUploadsAllowed(c.env, c.get("user")) }))));

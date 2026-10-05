@@ -49,10 +49,33 @@ export function jpegBytes(size = 64): Uint8Array { const bytes = new Uint8Array(
 /** A body that starts with a real `ftyp` box (brand `isom`, or `qt  ` for QuickTime) and is `size` bytes long. */
 export function mp4Bytes(size = 4096, brand = "isom"): Uint8Array { const bytes = new Uint8Array(size); bytes.set([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, ...[...brand].map((c) => c.charCodeAt(0))]); for (let i = 24; i < size; i += 1) bytes[i] = i % 251; return bytes; }
 
+/** A body that opens with an extended-size `ftyp` box (size field 1, 64-bit largesize, major brand at byte 16) naming `brands` (the first is the major brand), `size` bytes long. */
+export function extendedFtypBytes(brands: string[], size = 4096): Uint8Array {
+  const text = (value: string) => [...value].map((c) => c.charCodeAt(0));
+  const total = 24 + (brands.length - 1) * 4; const bytes = new Uint8Array(size);
+  bytes.set([0, 0, 0, 1, ...text("ftyp"), 0, 0, 0, 0, 0, 0, total >> 8, total & 0xff, ...text(brands[0]!), 0, 0, 0, 0, ...brands.slice(1).flatMap(text)]);
+  for (let i = total; i < size; i += 1) bytes[i] = (i * 7) % 251;
+  return bytes;
+}
+
+/** A body that opens with a real Samsung `ftypheic` box (`mif1`, `heic` compatible brands, `mdat` before `meta`) and is `size` bytes long. */
+export function heicBytes(size = 4096): Uint8Array { const bytes = new Uint8Array(size); bytes.set([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63, 0, 0, 0, 0, 0x6d, 0x69, 0x66, 0x31, 0x68, 0x65, 0x69, 0x63]); for (let i = 24; i < size; i += 1) bytes[i] = (i * 7) % 251; return bytes; }
+/** A JPEG whose marker segments are real (SOI, JFIF, optional EXIF or XMP, SOF0, SOS, EOI): enough for the display check, standing in for what Image Transformations returns. */
+export function displayJpeg(options: { width?: number; height?: number; exif?: boolean; xmp?: boolean } = {}): Uint8Array {
+  const { width = 640, height = 480 } = options;
+  const text = (value: string) => [...value].map((c) => c.charCodeAt(0));
+  const segment = (marker: number, payload: number[]) => [0xff, marker, (payload.length + 2) >> 8, (payload.length + 2) & 0xff, ...payload];
+  return new Uint8Array([0xff, 0xd8, ...segment(0xe0, [...text("JFIF\0"), 1, 1, 0, 0, 1, 0, 1, 0, 0]),
+    ...(options.exif ? segment(0xe1, [...text("Exif\0\0"), 0x4d, 0x4d, 0, 0x2a, 0, 0, 0, 8]) : []),
+    ...(options.xmp ? segment(0xe1, [...text("http://ns.adobe.com/xap/1.0/\0"), 60, 120]) : []),
+    ...segment(0xc0, [8, height >> 8, height & 0xff, width >> 8, width & 0xff, 3, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1]),
+    ...segment(0xda, [3, 1, 0, 2, 0x11, 3, 0x11, 0, 63, 0]), 9, 8, 7, 6, 5, 4, 3, 2, 1, 0xff, 0xd9]);
+}
+
 export const mediaKey = (projectId: string, mediaId: string) => `projects/${projectId}/embedded-media/${mediaId}/original`;
 export const noticeMediaKey = (mediaId: string) => `notice-board/embedded-media/${mediaId}/original`;
 
-export type MediaRowInput = { id?: string; ownerKind?: "project_comment" | "notice_post" | "whiteboard"; kind?: "image" | "video" | "preview_image"; projectId?: string; uploader?: string; state?: "uploading" | "pending" | "attached" | "detached"; ownerId?: string | null; bytes?: number; contentType?: string; detachedAt?: number | null; createdAt?: number; uploadId?: string | null; object?: Uint8Array | null; poster?: boolean };
+export type MediaRowInput = { id?: string; ownerKind?: "project_comment" | "notice_post" | "whiteboard"; kind?: "image" | "video" | "preview_image"; projectId?: string; uploader?: string; state?: "uploading" | "pending" | "attached" | "detached"; ownerId?: string | null; bytes?: number; contentType?: string; detachedAt?: number | null; createdAt?: number; uploadId?: string | null; object?: Uint8Array | null; poster?: boolean; renditionStatus?: "not_required" | "pending" | "ready" | "failed"; display?: Uint8Array };
 /** Inserts a row and (unless `object: null`) its stored object, in the state a test needs. */
 export async function seedMedia(input: MediaRowInput = {}) {
   const id = input.id ?? crypto.randomUUID(); const notice = input.ownerKind === "notice_post"; const projectId = notice ? null : (input.projectId ?? ids.project); const state = input.state ?? "pending";
@@ -60,8 +83,10 @@ export async function seedMedia(input: MediaRowInput = {}) {
   const detachedAt = input.detachedAt === undefined ? (state === "detached" ? Date.now() : null) : input.detachedAt;
   const video = input.kind === "video"; const contentType = input.contentType ?? (video ? "video/mp4" : "image/png");
   const bytes = input.bytes ?? 64; const key = notice ? noticeMediaKey(id) : mediaKey(projectId!, id); const createdAt = input.createdAt ?? Date.now();
-  await database.DB.prepare("INSERT INTO embedded_media (id, owner_kind, owner_id, project_id, uploader_id, kind, content_type, bytes, original_key, poster_key, upload_id, state, detached_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-    .bind(id, input.ownerKind ?? "project_comment", ownerId, projectId, input.uploader ?? ids.member, input.kind ?? "image", contentType, bytes, key, input.poster ? `${key.replace(/original$/, "")}poster-seed` : null, input.uploadId ?? null, state, detachedAt, createdAt, createdAt).run();
+  const displayKey = input.display ? `${key.replace(/original$/, "")}display-seed.jpg` : null;
+  await database.DB.prepare("INSERT INTO embedded_media (id, owner_kind, owner_id, project_id, uploader_id, kind, content_type, bytes, original_key, poster_key, upload_id, state, detached_at, created_at, updated_at, rendition_status, display_key, display_content_type, display_bytes, rendition_requested_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .bind(id, input.ownerKind ?? "project_comment", ownerId, projectId, input.uploader ?? ids.member, input.kind ?? "image", contentType, bytes, key, input.poster ? `${key.replace(/original$/, "")}poster-seed` : null, input.uploadId ?? null, state, detachedAt, createdAt, createdAt, input.renditionStatus ?? "not_required", displayKey, input.display ? "image/jpeg" : null, input.display ? input.display.byteLength : null, input.renditionStatus === "pending" ? createdAt : null).run();
+  if (input.display) await database.MEDIA.put(displayKey!, input.display, { httpMetadata: { contentType: "image/jpeg" } });
   if (input.poster) await database.MEDIA.put(`${key.replace(/original$/, "")}poster-seed`, jpegBytes(32), { httpMetadata: { contentType: "image/jpeg" } });
   if (input.object !== null) await database.MEDIA.put(key, input.object ?? (video ? mp4Bytes(bytes) : pngBytes(bytes)), { httpMetadata: { contentType } });
   return { id, key };

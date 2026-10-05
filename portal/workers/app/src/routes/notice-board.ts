@@ -3,8 +3,8 @@ import type { Context } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
 import { createDb, schema } from "@quincy/db";
 import {
-  EMBEDDED_IMAGE_CONTENT_TYPES, EMBEDDED_MEDIA_MAX_BYTES, NOTICE_BODY_MAX_LENGTH, NOTICE_RICH_TEXT_JSON_MAX_BYTES, NOTICE_RICH_TEXT_PROFILE, externalEmbeddedMediaCompleteSchema, externalEmbeddedMediaPresignSchema,
-  noticeEmbeddedMediaObjectKey, richTextDocByteLength, legacyBodyToRichTextDoc, linkPreviewRequestSchema, linkPreviewResponseSchema, normalizeRichTextMentionLabels, parseRichTextDoc, richTextLinkPreviewIds, richTextMediaIds, richTextMentionIds, richTextPlainText, type RichTextDoc,
+  EMBEDDED_HEIC_CONTENT_TYPES, EMBEDDED_IMAGE_CONTENT_TYPES, EMBEDDED_MEDIA_MAX_BYTES, NOTICE_BODY_MAX_LENGTH, NOTICE_RICH_TEXT_JSON_MAX_BYTES, NOTICE_RICH_TEXT_PROFILE, externalEmbeddedMediaCompleteSchema, externalEmbeddedMediaPresignSchema,
+  enqueueEmbeddedDisplaySafely, isEmbeddedHeicContentType, noticeEmbeddedMediaObjectKey, richTextDocByteLength, legacyBodyToRichTextDoc, linkPreviewRequestSchema, linkPreviewResponseSchema, normalizeRichTextMentionLabels, parseRichTextDoc, richTextLinkPreviewIds, richTextMediaIds, richTextMentionIds, richTextPlainText, type RichTextDoc,
 } from "@quincy/shared";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
@@ -16,6 +16,7 @@ import { notifyNoticeBoardMentions } from "../lib/notifications";
 import { NoticeBoardMediaConflictError, createNoticeBoardPost, deleteNoticeBoardPost, editNoticeBoardPost } from "../lib/notice-board-service";
 import { enqueueEmbeddedMediaCleanup, getEmbeddedMedia, preflightOwnedMedia, purgeDetachedOwnerMedia, verifyUploadedEmbeddedObject } from "../lib/embedded-media";
 import { abortMultipart, createMultipartPresign } from "../lib/r2s3";
+import { heicGate, isHeicRow, renditionStatusResponse, retryRendition } from "../lib/embedded-heic";
 import { advanceNoticeBoardReadMarker, getNoticeBoardReadState, type NoticeBoardReadState } from "../lib/notice-board-read-state";
 import { requestLinkPreview, fillLinkPreviews, preflightLinkPreviews } from "../lib/link-previews";
 import { jsonInput } from "./helpers";
@@ -25,7 +26,7 @@ const optionalQuery = <T extends z.ZodTypeAny>(schema: T) => z.preprocess((value
 const postsQuery = z.object({ limit: optionalQuery(z.coerce.number().int().min(1).max(50)) });
 const postInput = z.object({ content: z.unknown() });
 const postId = z.string().uuid();
-const mediaPresignInput = z.object({ contentType: z.enum(EMBEDDED_IMAGE_CONTENT_TYPES), bytes: z.number().int().min(1).max(EMBEDDED_MEDIA_MAX_BYTES) }).strict();
+const mediaPresignInput = z.object({ contentType: z.enum([...EMBEDDED_IMAGE_CONTENT_TYPES, ...EMBEDDED_HEIC_CONTENT_TYPES]), bytes: z.number().int().min(1).max(EMBEDDED_MEDIA_MAX_BYTES) }).strict();
 const mediaCompleteInput = z.object({ parts: z.array(z.object({ partNumber: z.number().int().positive(), etag: z.string().min(1) }).strict()).optional() }).strict();
 
 export type NoticePost = { id: string; authorId: string; authorName: string; body: string; content: RichTextDoc; createdAt: string; editedAt: string | null };
@@ -188,11 +189,14 @@ const mediaStray = (c: Context<AppEnv>) => c.json({ error: "Media upload not fou
 
 noticeBoardRoutes.post("/notice-board/embedded-media", terminalRoute("/notice-board/embedded-media", async (c) => {
   const data = await jsonInput(c, mediaPresignInput); if (data instanceof Response) return data;
+  // HEIC (#495): an Admin only until the owner turns the flag on, and refused loudly when renditions are off.
+  const heic = isEmbeddedHeicContentType(data.contentType);
+  if (heic) { const refused = await heicGate(c); if (refused) return refused; }
   const user = c.get("user"); const mediaId = newId(); const key = noticeEmbeddedMediaObjectKey(mediaId); const now = Date.now();
   await c.env.DB.prepare(`
-    INSERT INTO embedded_media (id, owner_kind, owner_id, project_id, uploader_id, kind, content_type, bytes, original_key, state, created_at, updated_at)
-    VALUES (?, 'notice_post', NULL, NULL, ?, 'image', ?, ?, ?, 'uploading', ?, ?)
-  `).bind(mediaId, user.id, data.contentType, data.bytes, key, now, now).run();
+    INSERT INTO embedded_media (id, owner_kind, owner_id, project_id, uploader_id, kind, content_type, bytes, original_key, state, created_at, updated_at, rendition_status)
+    VALUES (?, 'notice_post', NULL, NULL, ?, 'image', ?, ?, ?, 'uploading', ?, ?, ?)
+  `).bind(mediaId, user.id, data.contentType, data.bytes, key, now, now, heic ? "pending" : "not_required").run();
   const release = () => c.env.DB.prepare("DELETE FROM embedded_media WHERE id = ? AND state = 'uploading'").bind(mediaId).run();
   let multipart: Awaited<ReturnType<typeof createMultipartPresign>>;
   try { multipart = await createMultipartPresign(c.env, key, data.bytes, data.contentType); }
@@ -229,19 +233,40 @@ noticeBoardRoutes.post("/notice-board/embedded-media/:mediaId/complete", termina
   const user = c.get("user"); const row = await getEmbeddedMedia(c.env.DB, mediaId);
   // A row that is gone is not ours to clean up: a sweep claim queued its own keys. R2 is touched only after this route claims the row itself.
   if (!row || row.ownerKind !== "notice_post" || row.uploaderId !== user.id) return mediaStray(c);
-  if (row.state === "pending") return c.json(externalEmbeddedMediaCompleteSchema.parse({ mediaId, state: "pending" }));
+  const heic = isHeicRow(row);
+  if (heic) { const refused = await heicGate(c); if (refused) return refused; }
+  const completed = (rendition: string) => c.json(externalEmbeddedMediaCompleteSchema.parse({ mediaId, state: "pending", ...(heic ? { rendition } : {}) }));
+  if (row.state === "pending") return completed(row.renditionStatus);
   if (row.state !== "uploading") return c.json({ error: "This media is already in use", code: "media_not_uploading" }, 409);
   const verdict = await verifyUploadedEmbeddedObject(c.env, row, data.parts);
   if (!verdict.ok) return c.json(verdict.body, verdict.status);
-  const promoted = await c.env.DB.prepare("UPDATE embedded_media SET state = 'pending', updated_at = ? WHERE id = ? AND state = 'uploading'").bind(Date.now(), mediaId).run();
+  const promotedAt = Date.now();
+  const promoted = await c.env.DB.prepare("UPDATE embedded_media SET state = 'pending', updated_at = ?, rendition_requested_at = CASE WHEN rendition_status = 'pending' THEN ? ELSE NULL END WHERE id = ? AND state = 'uploading'").bind(promotedAt, promotedAt, mediaId).run();
   if ((promoted.meta.changes ?? 0) !== 1) {
     const current = await getEmbeddedMedia(c.env.DB, mediaId);
     if (!current) return mediaStray(c);
     if (current.state !== "pending") return c.json({ error: "This media is already in use", code: "media_not_uploading" }, 409);
   } else {
     await audit(c.env, user, "embedded_media.upload", "embedded_media", mediaId, { scope: "notice_board", bytes: row.bytes, contentType: row.contentType });
+    if (heic) await enqueueEmbeddedDisplaySafely(c.env, mediaId, "complete", promotedAt);
   }
-  return c.json(externalEmbeddedMediaCompleteSchema.parse({ mediaId, state: "pending" }));
+  return completed("pending");
+}));
+
+/** The uploader's view of a HEIC image's display copy (#495), and its retry. Uploader-only: the composer polls it before the image can go in a post. */
+const ownNoticeRenditionRow = async (c: Context<AppEnv>, mediaId: string) => {
+  if (!mediaUuid.safeParse(mediaId).success) return c.json({ error: "Invalid media upload" }, 400);
+  const row = await getEmbeddedMedia(c.env.DB, mediaId);
+  if (!row || row.ownerKind !== "notice_post" || row.uploaderId !== c.get("user").id || row.kind !== "image" || row.state === "uploading") return mediaStray(c);
+  return row;
+};
+noticeBoardRoutes.get("/notice-board/embedded-media/:mediaId/rendition", terminalRoute("/notice-board/embedded-media/:mediaId/rendition", async (c) => {
+  const row = await ownNoticeRenditionRow(c, c.req.param("mediaId")); if (row instanceof Response) return row;
+  return renditionStatusResponse(c, row);
+}));
+noticeBoardRoutes.post("/notice-board/embedded-media/:mediaId/rendition/retry", terminalRoute("/notice-board/embedded-media/:mediaId/rendition/retry", async (c) => {
+  const row = await ownNoticeRenditionRow(c, c.req.param("mediaId")); if (row instanceof Response) return row;
+  return retryRendition(c, row);
 }));
 
 /** Link previews on the Notice board (#497). Registered here, beside the posts, so the `/notice-board/*` capability gate covers it: an External editor gets 403. */
