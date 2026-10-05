@@ -1098,6 +1098,20 @@ describe("version snapshots: a board whose Project was never remembered (#500)",
     expect(await versionsOf(project)).toEqual([]);
   });
 
+  it("restarts snapshotting when admission finally remembers the Project of an already-dirty board", async () => {
+    const project = await newProject(); const t0 = farFuture();
+    await plant(project, legacyRows);
+    await evictDurableObject(stubFor(project));
+    await setClock(project, t0);                                                    // wakes: normalised, dirty, no Project
+    await setClock(project, t0 + 1_000_000); await fire(project);                  // the alarm spends the deadlines
+    expect(await alarmAt(project)).toBeNull();
+    const { client } = await join(project);                                         // admission remembers the Project
+    expect(await alarmAt(project)).not.toBeNull();
+    await setClock(project, t0 + 2_000_000); await fire(project);
+    expect(await versionsOf(project)).toMatchObject([{ reason: "interval", elementCount: 2 }]);
+    client.ws.close(1000);
+  });
+
   it("remembers the Project from a socket that survived the wake, so the normalised board is snapshotted", async () => {
     const project = await newProject(); const t0 = farFuture();
     const { client } = await join(project);
@@ -1140,6 +1154,31 @@ describe("version snapshots: publication, retries and retention (#500)", () => {
     const rows = await versionsOf(project);
     expect(rows).toMatchObject([{ ordinal: 1, state: "ready" }]);
     expect(await objectKeys(project)).toEqual([rows[0]!.r2Key]);
+    client.ws.close(1000);
+  });
+
+  it("a retry that adopts a committed row marks only what that row holds published: an edit made since stays dirty and gets its own version", async () => {
+    const project = await newProject(); const t0 = farFuture(); await setClock(project, t0);
+    const { client } = await join(project);
+    await save(client, 1, element("first", 1, 1));
+    // The INSERT commits, but its response is lost.
+    await inject(project, "DB", intercept("prepare", (args, run) => {
+      const statement = run() as { bind: (...values: unknown[]) => { run: () => Promise<unknown> } };
+      if (!(touchesVersions(args) && /insert/i.test(String(args[0])))) return statement;
+      return { bind: (...values: unknown[]) => { const bound = statement.bind(...values); return { run: async () => { await bound.run(); throw new Error("injected lost response"); } }; } };
+    }));
+    await setClock(project, t0 + INTERVAL); await fire(project);
+    expect(await versionsOf(project)).toHaveLength(1);
+    await save(client, 2, element("second", 1, 2));                                 // an edit lands before the retry
+    const retry = await alarmAt(project); expect(retry).not.toBeNull();
+    await setClock(project, retry!); await fire(project);                           // adopts the committed row
+    expect(await versionsOf(project)).toHaveLength(1);
+    expect(await alarmAt(project)).not.toBeNull();                                  // the newer edit is still due
+    await setClock(project, retry! + 10 * INTERVAL); await fire(project);
+    const rows = await versionsOf(project);
+    expect(rows).toHaveLength(2);
+    const ids = (await envelopeOf(rows[1]!.r2Key)).elements.map((entry) => entry.id);
+    expect(ids).toContain("second");
     client.ws.close(1000);
   });
 
@@ -1457,6 +1496,16 @@ describe("POST whiteboard version restore (#500)", () => {
     await save(client, 9, element("still-works", 1, 1));                              // the object was not reset: same socket, same generation
     const retried = await api("member", "POST", restorePath(project, v1.id), body);
     expect(retried.status).toBe(200);
+    client.ws.close(1000);
+  });
+
+  it("deletes the backup's R2 object when its index insert fails, so a retry leaves no orphan", async () => {
+    const { project, client, v1 } = await boardWithHistory();
+    const before = await objectKeys(project);
+    await inject(project, "DB", failOnce("prepare", (args) => touchesVersions(args) && /insert/i.test(String(args[0]))));
+    const failed = await api("member", "POST", restorePath(project, v1.id), restoreBody());
+    expect(failed.status).toBe(502);
+    expect(await objectKeys(project)).toEqual(before);
     client.ws.close(1000);
   });
 

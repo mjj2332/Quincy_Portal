@@ -134,6 +134,7 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
     if (!state.access) return new Response("Forbidden", { status: 403 });
     ensureSchema(this.ctx.storage);
     this.snapshots.rememberProject(projectId);
+    this.snapshots.ensureDeadline();
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
     this.ctx.acceptWebSocket(server);

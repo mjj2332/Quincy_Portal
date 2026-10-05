@@ -251,24 +251,35 @@ export class Snapshots {
 
     try {
       const key = versionKey(projectId, versionId);
-      const adopted = cadence && before.pending_version_id ? await this.env.DB.prepare("SELECT ordinal FROM project_whiteboard_versions WHERE id = ?").bind(versionId).first<{ ordinal: number }>() : null;
+      const adopted = cadence && before.pending_version_id ? await this.env.DB.prepare("SELECT ordinal, scene_revision AS revision, scene_sha256 AS sha FROM project_whiteboard_versions WHERE id = ?").bind(versionId).first<{ ordinal: number; revision: number; sha: string }>() : null;
       if (abandoned()) return { status: "aborted" };
       let ordinal: number;
+      let published = { revision, sha };
       if (adopted) {
-        // A previous attempt got as far as the index: the object and the row already agree.
+        // A previous attempt got as far as the index: the object and the row already agree. What counts as published is what THAT
+        // attempt captured (the row's revision and hash), not this attempt's recapture: an edit made since stays dirty.
         ordinal = adopted.ordinal;
+        published = { revision: adopted.revision, sha: adopted.sha };
       } else {
         const createdAt = this.host.clock();
         const bytes = encoder.encode(JSON.stringify({ schema: 1, projectId, versionId, generation: this.row().generation, sceneRevision: revision, createdAt, reason, elements: rows }));
         await this.env.MEDIA.put(key, bytes, { httpMetadata: { contentType: "application/json" } });
         if (abandoned()) { await this.env.MEDIA.delete(key).catch(() => undefined); return { status: "aborted" }; }
         ordinal = this.row().next_ordinal;
-        await this.env.DB.prepare(
+        try {
+          await this.env.DB.prepare(
           `INSERT INTO project_whiteboard_versions (id, project_id, r2_key, ordinal, generation, scene_revision, created_at, created_by, reason, scene_sha256, byte_count, element_count, state)
            VALUES (?, ?, ?, ?, ?, ?, ?, (SELECT id FROM user WHERE id = ?), ?, ?, ?, ?, 'ready') ON CONFLICT(id) DO NOTHING`,
         ).bind(versionId, projectId, key, ordinal, this.row().generation, revision, createdAt, createdBy, reason, sha, bytes.byteLength, rows.filter((row) => row.isDeleted !== true).length).run();
+        } catch (error) {
+          // A backup is not retried under this key (its id is fresh each time), so an object whose row never landed would leak. Delete it,
+          // but only once the index is confirmed not to hold the row (the INSERT may have committed with its response lost).
+          if (!cadence) await this.deleteIfUnindexed(versionId, key);
+          throw error;
+        }
       }
-      this.finish({ revision, sha, ordinal, cadence });
+      this.finish({ revision: published.revision, sha: published.sha, ordinal, cadence });
+      if (adopted) this.ensureDeadline();
       await this.prune();
       return { status: "published", versionId };
     } catch (error) {
@@ -279,6 +290,23 @@ export class Snapshots {
       if (/ordinal/i.test(error instanceof Error ? error.message : "")) await this.resyncOrdinal(projectId);
       return { status: "aborted" };
     }
+  }
+
+  /** Best effort: removes an R2 object whose index row is confirmed absent. Never throws (the caller rethrows the original error). */
+  private async deleteIfUnindexed(versionId: string, key: string): Promise<void> {
+    try {
+      const row = await this.env.DB.prepare("SELECT id FROM project_whiteboard_versions WHERE id = ?").bind(versionId).first<{ id: string }>();
+      if (!row) await this.env.MEDIA.delete(key);
+    } catch { /* leave it: an unconfirmed object is safer kept than deleted */ }
+  }
+
+  /** A board that is dirty relative to its last published snapshot, with no deadline pending, gets one (`now + 30 s`) and the alarm is armed. */
+  ensureDeadline(): void {
+    this.ensureSchema();
+    const state = this.row();
+    if (!state.project_id || state.scene_revision <= state.published_revision || state.snapshot_due_at !== null || state.retry_at !== null) return;
+    this.sql.exec("UPDATE wb_state SET snapshot_due_at = ? WHERE id = 1", this.host.clock() + WHITEBOARD_SNAPSHOT_INTERVAL_MS);
+    this.rearm();
   }
 
   /** Marks a capture published: dirty clears only THROUGH `revision`, so a later edit stays dirty. */
