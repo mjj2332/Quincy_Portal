@@ -23,6 +23,7 @@ function LinkPreviewEditorView({ node, deleteNode, editor }: NodeViewProps) {
   return <NodeViewWrapper className="rich-text__link-preview" data-testid="link-preview-node" contentEditable={false}>
     <LinkPreviewCard
       testId="link-preview-card-editor"
+      interactive={false}
       attrs={{ previewId: attrs.previewId, url: attrs.url, title: attrs.title ?? null, description: attrs.description ?? null, siteName: attrs.siteName ?? null, imageMediaId: attrs.imageMediaId ?? null }}
       actions={<Button type="button" variant="ghost" size="icon-sm" data-testid="link-preview-remove" aria-label="Remove link preview" className="absolute top-[var(--space-1)] right-[var(--space-1)] pointer-coarse:size-11 max-[721px]:size-11" disabled={!editable} onClick={() => { if (!editor.isEditable) return; deleteNode(); returnFocus(editor); }}><XIcon aria-hidden="true" /></Button>}
     />

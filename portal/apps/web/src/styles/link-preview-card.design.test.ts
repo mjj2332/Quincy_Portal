@@ -27,7 +27,12 @@ describe("link preview card design (#497)", () => {
     expect(node).toContain("rich-text__link-preview");
     const sel = ruleBody(".rich-text__editor-content .rich-text__link-preview ::selection");
     expect(sel).toMatch(/background:\s*transparent/);
-    expect(sel).toMatch(/color:\s*inherit/);
+    // `inherit` in a ::selection takes the PARENT's ::selection colour (the global paper-050), not the element's colour: explicit tokens only.
+    expect(sel).not.toMatch(/inherit|currentColor/i);
+    expect(sel).toMatch(/color:\s*var\(--text-primary\)/);
+    expect(ruleBody(".rich-text__editor-content .rich-text__link-preview [data-slot=item-description]::selection")).toMatch(/color:\s*var\(--text-secondary\)/);
+    expect(ruleBody(".rich-text__editor-content .rich-text__link-preview [data-slot=link-preview-meta]::selection")).toMatch(/color:\s*var\(--text-secondary\)/);
+    expect(card).toContain('data-slot="link-preview-meta"');
     expect(ruleBody(".rich-text__editor-content .ProseMirror-selectednode [data-slot=item]")).toMatch(/outline:\s*var\(--border-width-hair\) solid var\(--accent\)/);
   });
   it("2: the card keeps text colour, no underline, and normal paragraph rhythm", () => {
@@ -49,5 +54,7 @@ describe("link preview card design (#497)", () => {
   });
   it("5: the card is square like Portal cards", () => {
     expect(card).toContain("rounded-[var(--radius-xs)]");
+    // The image container (ItemMedia, vendored `rounded-sm` 4px) takes the same 2px radius, passed through its className so tailwind-merge lets it win.
+    expect(card).toMatch(/<ItemMedia variant="image" className="[^"]*rounded-\[var\(--radius-xs\)\]/);
   });
 });

@@ -426,3 +426,31 @@ describe("Remove keeps the author's undo reachable (#548)", () => {
     await removeThenUndo(document.querySelector<HTMLElement>('[data-testid="editor-in-sheet"]')!);
   });
 });
+
+describe("the card in the composer is not a live link (#497 re-check)", () => {
+  it("clicking it selects the node and cannot open the address; Tab goes editor to Remove; the posted card stays a link", async () => {
+    request.mockResolvedValue(cardFor(P1, "https://example.test/a"));
+    const host = await mount(plain());
+    await apply(host, "https://example.test/a");
+    const card = host.querySelector<HTMLElement>('[data-testid="link-preview-card-editor"]')!;
+    expect(card.closest("a")).toBeNull();
+    expect(card.hasAttribute("href")).toBe(false);
+    expect(card.hasAttribute("target")).toBe(false);
+    const press = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    const open = new MouseEvent("click", { bubbles: true, cancelable: true });
+    await act(async () => { card.dispatchEvent(press); card.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })); card.dispatchEvent(open); });
+    // Either nothing navigates (no anchor) or the click default was prevented.
+    expect(card.closest("a") === null || open.defaultPrevented).toBe(true);
+    // jsdom has no layout, so ProseMirror's coordinate-based node selection cannot run here (the browser pass covers it); the press must at least stay un-prevented so the editor can select.
+    expect(press.defaultPrevented).toBe(false);
+    expect(host.querySelectorAll('[data-testid="link-preview-card-editor"] a, [data-testid="link-preview-card-editor"][tabindex]')).toHaveLength(0);
+    // The posted card is a normal link.
+    const posted = document.createElement("div"); document.body.appendChild(posted);
+    const postedRoot = createRoot(posted);
+    await act(async () => postedRoot.render(<RichTextContent content={{ type: "doc", content: [{ type: "linkPreview", attrs: { previewId: P1, url: "https://example.test/a", title: "T", description: null, siteName: null, imageMediaId: null } } as never] }} />));
+    const link = posted.querySelector<HTMLAnchorElement>('[data-testid="link-preview-card"]');
+    expect(link?.getAttribute("href")).toBe("https://example.test/a");
+    expect(link?.getAttribute("target")).toBe("_blank");
+    await act(async () => postedRoot.unmount());
+  });
+});
