@@ -72,10 +72,10 @@ export function sniffEmbeddedImageType(head: Uint8Array): EmbeddedImageContentTy
 }
 
 /**
- * The 4-character brands of an `ftyp` box: the major brand and every compatible brand, read from the bytes available (at most the box).
+ * The 4-character brands of an `ftyp` box: the major brand and every compatible brand. The whole box must be in the bytes supplied.
  * Both box headers are parsed: the normal one (4-byte size, major brand at 8) and the extended one (size field 1, a 64-bit largesize at 8, major brand at 16).
  * Null when the bytes are not an `ftyp` box, or when the brand table cannot be parsed (a size too small to hold the major brand and minor version,
- * or fewer bytes than that header): a caller that needs to refuse an unreadable table treats null as a refusal.
+ * or fewer bytes than that header) or when the declared box is larger than the bytes supplied: a caller that needs to refuse an unreadable table treats null as a refusal.
  */
 function ftypBrands(head: Uint8Array): string[] | null {
   if (head.length < 8) return null;
@@ -88,6 +88,8 @@ function ftypBrands(head: Uint8Array): string[] | null {
     major = 16; boxSize = word(8) * 2 ** 32 + word(12);
   }
   if (boxSize < major + 8 || head.length < major + 8) return null; // the major brand and the minor version must both fit
+  // A box larger than the bytes supplied has a brand table the caller never saw: a HEIC brand past the read would pass as an MP4 (#495). Refuse it rather than judge half a table.
+  if (boxSize > head.length) return null;
   const end = Math.min(boxSize, head.length);
   const brandAt = (at: number) => String.fromCharCode(head[at]!, head[at + 1]!, head[at + 2]!, head[at + 3]!);
   const brands: string[] = [brandAt(major)];
@@ -102,7 +104,7 @@ const HEIF_FAMILY_BRANDS: ReadonlySet<string> = new Set([...HEIC_BRANDS, "mif1",
 
 /**
  * True when the bytes open with an `ftyp` box naming an HEVC HEIF image: the major brand or any compatible brand is `heic`, `heix`, `heim`,
- * `heis`, `hevc`, `hevx`, `hevm` or `hevs`. Read at least 64 bytes: the box is 24 bytes for a Samsung photo and longer for an iPhone's. AVIF
+ * `heis`, `hevc`, `hevx`, `hevm` or `hevs`. Pass the whole box (the upload check reads 4096 bytes): it is 24 bytes for a Samsung photo and longer for an iPhone's, and a box cut off by the bytes supplied is refused. AVIF
  * and a bare `mif1` / `msf1` (no HEVC brand) are refused.
  */
 export function sniffHeifImage(head: Uint8Array): boolean {

@@ -371,6 +371,7 @@ export const embeddedMedia = sqliteTable(
     renditionAttempts: integer("rendition_attempts").notNull().default(0),
     renditionLeaseUntil: integer("rendition_lease_until"),
     renditionRequestedAt: integer("rendition_requested_at"),
+    renditionResentAt: integer("rendition_resent_at"),
     renditionError: text("rendition_error"),
   },
   (t) => [

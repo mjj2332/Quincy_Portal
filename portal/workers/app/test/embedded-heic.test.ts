@@ -27,8 +27,10 @@ const setFlag = (enabled: boolean) => database.DB.prepare("UPDATE feature_flags 
 const queued = async (key: string) => database.DB.prepare("SELECT storage_key FROM embedded_media_cleanup WHERE storage_key = ?").bind(key).first();
 const cleanupCount = async () => (await database.DB.prepare("SELECT count(*) AS n FROM embedded_media_cleanup").first<{ n: number }>())!.n;
 const jpegFetch = (jpeg: Uint8Array = displayJpeg(), headers: Record<string, string> = { "content-type": "image/jpeg", "cf-resized": "internal=ok" }, status = 200) => vi.fn(async () => new Response(status === 200 ? jpeg : "nope", { status, headers }));
-const convert = (id: string, fetchImpl: typeof fetch = jpegFetch() as unknown as typeof fetch, extra: Partial<Parameters<typeof generateEmbeddedDisplay>[2]> = {}) =>
-  generateEmbeddedDisplay({ DB: database.DB, MEDIA: database.MEDIA }, id, { fetch: fetchImpl, transformUrl: async (key) => `https://transform.test/${key}`, ...extra });
+/** The generation a queue message for this row carries: its `rendition_requested_at`. */
+const generationOf = async (id: string) => ((await mediaRow(id))?.rendition_requested_at ?? 0) as number;
+const convert = async (id: string, fetchImpl: typeof fetch = jpegFetch() as unknown as typeof fetch, extra: Partial<Parameters<typeof generateEmbeddedDisplay>[2]> = {}) =>
+  generateEmbeddedDisplay({ DB: database.DB, MEDIA: database.MEDIA }, id, { fetch: fetchImpl, transformUrl: async (key) => `https://transform.test/${key}`, generation: await generationOf(id), ...extra });
 const heicRow = (extra: Parameters<typeof seedMedia>[0] = {}) => seedMedia({ contentType: "image/heic", object: heicBytes(), bytes: 4096, renditionStatus: "pending", ...extra });
 const readyHeic = (extra: Parameters<typeof seedMedia>[0] = {}) => seedMedia({ contentType: "image/heic", object: heicBytes(), bytes: 4096, renditionStatus: "ready", display: displayJpeg(), ...extra });
 
@@ -141,6 +143,13 @@ describe("completing a HEIC upload (#495)", () => {
 
   it("rejects a HEIC behind an extended-size ftyp declared as an MP4 video, and never serves it as an original (Sol P1-1)", async () => {
     const { id, key } = await seedMedia({ state: "uploading", kind: "video", contentType: "video/mp4", object: extendedFtypBytes(["heic", "mif1", "heic"]), bytes: 4096 });
+    const response = await complete("member", id);
+    expect(response.status).toBe(400); expect(await response.json()).toMatchObject({ code: "media_rejected" });
+    expect(await mediaRow(id)).toBeNull(); expect(await database.MEDIA.head(key)).toBeNull();
+  });
+
+  it("rejects a 68-byte extended ftyp declared as MP4 whose heic brand sits past the first 64 bytes, and never serves it (Sol r2 P1)", async () => {
+    const { id, key } = await seedMedia({ state: "uploading", kind: "video", contentType: "video/mp4", object: extendedFtypBytes(["isom", ...Array<string>(10).fill("mp41"), "heic"]), bytes: 4096 });
     const response = await complete("member", id);
     expect(response.status).toBe(400); expect(await response.json()).toMatchObject({ code: "media_rejected" });
     expect(await mediaRow(id)).toBeNull(); expect(await database.MEDIA.head(key)).toBeNull();
@@ -307,7 +316,7 @@ describe("the display copy conversion (#495)", () => {
     const second = await heicRow({ state: "pending" });
     const deletingAgain = vi.fn(async () => { await database.DB.prepare("DELETE FROM embedded_media WHERE id = ?").bind(second.id).run(); return new Response(displayJpeg(), { headers: { "content-type": "image/jpeg", "cf-resized": "internal=ok" } }); });
     const refusing = { DB: database.DB, MEDIA: new Proxy(database.MEDIA, { get: (target, property) => { if (property === "delete") return async () => { throw new Error("R2 down"); }; const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value; } }) as R2Bucket };
-    expect(await generateEmbeddedDisplay(refusing, second.id, { fetch: deletingAgain as unknown as typeof fetch, transformUrl: async (key) => key })).toBe("lost");
+    expect(await generateEmbeddedDisplay(refusing, second.id, { fetch: deletingAgain as unknown as typeof fetch, transformUrl: async (key) => key, generation: await generationOf(second.id) })).toBe("lost");
     expect(await database.DB.prepare("SELECT storage_key FROM embedded_media_cleanup WHERE storage_key LIKE ?").bind(`%/${second.id}/display-%`).first()).not.toBeNull();
   });
 
@@ -320,7 +329,7 @@ describe("the display copy conversion (#495)", () => {
       if (property === "put") return async (...args: Parameters<R2Bucket["put"]>) => { const result = await target.put(...args); await database.DB.prepare("UPDATE embedded_media_cleanup SET claimed_until = ? WHERE storage_key = ?").bind(Date.now() + 600_000, String(args[0])).run(); lostTo += 1; return result; };
       const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value;
     } }) as R2Bucket;
-    expect(await generateEmbeddedDisplay({ DB: database.DB, MEDIA: media }, id, { fetch: claimed as unknown as typeof fetch, transformUrl: async (key) => key })).toBe("lost");
+    expect(await generateEmbeddedDisplay({ DB: database.DB, MEDIA: media }, id, { fetch: claimed as unknown as typeof fetch, transformUrl: async (key) => key, generation: await generationOf(id) })).toBe("lost");
     expect(lostTo).toBe(1);
     expect(await mediaRow(id)).toMatchObject({ rendition_status: "pending", display_key: null });
   });
@@ -333,14 +342,14 @@ describe("the display copy conversion (#495)", () => {
       const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value;
     } }) as D1Database;
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    expect(await generateEmbeddedDisplay({ DB: flaky, MEDIA: database.MEDIA }, id, { fetch: jpegFetch() as unknown as typeof fetch, transformUrl: async (key) => key })).toBe("ready");
+    expect(await generateEmbeddedDisplay({ DB: flaky, MEDIA: database.MEDIA }, id, { fetch: jpegFetch() as unknown as typeof fetch, transformUrl: async (key) => key, generation: await generationOf(id) })).toBe("ready");
     expect(batches).toBe(1); expect(await mediaRow(id)).toMatchObject({ rendition_status: "ready" });
     const second = await heicRow({ state: "pending" });
     const failing = new Proxy(database.DB, { get: (target, property) => {
       if (property === "batch") return async () => { throw new Error("D1 down"); };
       const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value;
     } }) as D1Database;
-    await expect(generateEmbeddedDisplay({ DB: failing, MEDIA: database.MEDIA }, second.id, { fetch: jpegFetch() as unknown as typeof fetch, transformUrl: async (key) => key })).rejects.toThrow("D1 down");
+    await expect(generateEmbeddedDisplay({ DB: failing, MEDIA: database.MEDIA }, second.id, { fetch: jpegFetch() as unknown as typeof fetch, transformUrl: async (key) => key, generation: await generationOf(second.id) })).rejects.toThrow("D1 down");
     expect(await mediaRow(second.id)).toMatchObject({ rendition_status: "pending", display_key: null, rendition_lease_until: 0 });
     expect(await database.DB.prepare("SELECT 1 FROM embedded_media_cleanup WHERE storage_key LIKE ?").bind(`%/${second.id}/display-%`).first()).toBeNull();
     error.mockRestore();
@@ -377,7 +386,7 @@ describe("the display copy conversion (#495)", () => {
     } }) as R2Bucket;
     for (const deleteFails of [false, true]) {
       const { id } = await heicRow({ state: "pending" });
-      await expect(generateEmbeddedDisplay({ DB: database.DB, MEDIA: committing(deleteFails) }, id, { fetch: jpegFetch() as unknown as typeof fetch, transformUrl: async (key) => key })).rejects.toThrow("could not be stored");
+      await expect(generateEmbeddedDisplay({ DB: database.DB, MEDIA: committing(deleteFails) }, id, { fetch: jpegFetch() as unknown as typeof fetch, transformUrl: async (key) => key, generation: await generationOf(id) })).rejects.toThrow("could not be stored");
       expect(await orphans(id), `deleteFails=${deleteFails}`).toEqual({ objects: deleteFails ? 1 : 0, missing: [] });
       expect(await mediaRow(id)).toMatchObject({ rendition_status: "pending", display_key: null, rendition_lease_until: 0 });
     }
@@ -394,7 +403,7 @@ describe("the display copy conversion (#495)", () => {
       if (branch === "attempt cap") await database.DB.prepare("UPDATE embedded_media SET rendition_attempts = 4 WHERE id = ?").bind(id).run();
       const inject = { on: true };
       const output = branch === "permanent" ? displayJpeg({ exif: true }) : displayJpeg();
-      await expect(generateEmbeddedDisplay({ DB: failing(inject), MEDIA: database.MEDIA }, id, { fetch: jpegFetch(output) as unknown as typeof fetch, transformUrl: async (key) => key })).rejects.toThrow("D1 transient");
+      await expect(generateEmbeddedDisplay({ DB: failing(inject), MEDIA: database.MEDIA }, id, { fetch: jpegFetch(output) as unknown as typeof fetch, transformUrl: async (key) => key, generation: await generationOf(id) })).rejects.toThrow("D1 transient");
       expect(await mediaRow(id), branch).toMatchObject({ rendition_status: "pending", rendition_lease_until: 0 });
       inject.on = false;
       // The redelivery is not a no-op any more: it claims the row and settles it.

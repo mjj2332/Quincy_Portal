@@ -20,7 +20,7 @@ import { fanOutDropboxKicks } from "./dropbox/webhook";
 import { canMutateRenditionBackfill } from "./backfill-gate";
 import { safeRenditionFailure } from "./rendition-diagnostics";
 import { NOTIFICATION_DLQ_QUEUE_NAME, NOTIFICATION_QUEUE_NAME } from "@quincy/shared";
-import { parseQueueBody, RENDITION_DLQ_QUEUE_NAME } from "./queue-dispatch";
+import { isEmbeddedDisplayWithoutGeneration, parseQueueBody, RENDITION_DLQ_QUEUE_NAME, RENDITION_QUEUE_NAME } from "./queue-dispatch";
 import { AutoHdrSend } from "./workflows/autohdr";
 import { AutoHdrApiSend } from "./workflows/autohdr-api-send";
 import { AutoHdrFetch } from "./workflows/autohdr-fetch";
@@ -876,13 +876,19 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
           message.ack();
           continue;
         }
+        // An embedded_display message without a generation (none was ever deployed) cannot be fenced: ack it and write nothing, not even the asset DLQ record below.
+        if (!parsed && isEmbeddedDisplayWithoutGeneration(rawBody)) {
+          console.error("Embedded display message without a generation; acked", { queue: batch.queue, mediaId: (rawBody as { mediaId?: unknown }).mediaId });
+          message.ack();
+          continue;
+        }
         if (parsed && parsed.body.type === "embedded_display") {
           // A HEIC embedded image (#495) that exhausted its retries. rendition_dlq_events and its replay are keyed by asset, so no row is written there:
           // the media row's own `failed` status is where this becomes visible, to its uploader as a Retry.
           const mediaId = parsed.body.mediaId;
-          // Fenced on the message's generation: DLQ, then the uploader's Retry (a new pending run), then this old message redelivered must not fail the new run. A message with no generation predates the fence and is not fenced.
-          const generation = parsed.body.generation ?? null;
-          const failed = await this.env.DB.prepare("UPDATE embedded_media SET rendition_status = 'failed', rendition_error = 'dlq', rendition_lease_until = NULL, updated_at = ? WHERE id = ? AND rendition_status = 'pending' AND (? IS NULL OR rendition_requested_at = ?)").bind(Date.now(), mediaId, generation, generation).run();
+          // Fenced on the message's generation: DLQ, then the uploader's Retry (a new pending run), then this old message redelivered must not fail the new run.
+          const generation = parsed.body.generation;
+          const failed = await this.env.DB.prepare("UPDATE embedded_media SET rendition_status = 'failed', rendition_error = 'dlq', rendition_lease_until = NULL, updated_at = ? WHERE id = ? AND rendition_status = 'pending' AND rendition_requested_at = ?").bind(Date.now(), mediaId, generation).run();
           console.error("Embedded display DLQ message", { queue: batch.queue, mediaId, failedRow: failed.meta.changes === 1 });
           message.ack();
           continue;
@@ -902,6 +908,11 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
     for (const message of batch.messages) {
       try {
         const parsed = parseQueueBody(batch.queue, message.body);
+        if (!parsed && batch.queue === RENDITION_QUEUE_NAME && isEmbeddedDisplayWithoutGeneration(message.body)) {
+          console.error("Embedded display message without a generation; acked", { queue: batch.queue, mediaId: (message.body as { mediaId?: unknown }).mediaId });
+          message.ack();
+          continue;
+        }
         if (!parsed) throw new Error(`Invalid queue body for ${batch.queue}`);
         switch (parsed.body.type) {
           case "editor_reconcile":
@@ -944,7 +955,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
           case "embedded_display":
             // Same red gate as the asset renditions: never ack while the consumer is off, so the message reaches the DLQ rather than vanishing.
             if (!renditionsEnabled(this.env)) throw new Error("Rendition consumer is disabled");
-            await generateEmbeddedDisplayCopy(this.env, parsed.body.mediaId, undefined, parsed.body.generation);
+            await generateEmbeddedDisplayCopy(this.env, parsed.body.mediaId, parsed.body.generation);
             message.ack();
             break;
           case "dropbox_sync":

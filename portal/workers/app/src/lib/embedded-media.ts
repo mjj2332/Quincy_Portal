@@ -4,6 +4,7 @@ import { completeMultipart, validateMultipartParts } from "./r2s3";
 import type { Env } from "../env";
 
 /** The cleanup queue and the adoption helpers moved to `@quincy/db` (#495) so the background Worker runs the same code. Re-exported so call sites do not change. */
+const UPLOAD_SNIFF_BYTES = 4096;
 export { discardUnreferencedObject, enqueueEmbeddedMediaCleanup, settleThrownAdoption, type CleanupEntry } from "@quincy/db";
 
 /** Embedded media (#493): the D1 row plus the helpers every writer of it shares. */
@@ -239,8 +240,8 @@ export async function verifyUploadedEmbeddedObject(env: Env, row: EmbeddedMediaR
   };
   if (head.size !== row.bytes) return reject("The uploaded file is not the size that was reserved");
   if (head.httpMetadata?.contentType !== row.contentType) return reject("The uploaded file is not the type that was reserved");
-  // 64 bytes: a HEIC `ftyp` box lists its brands after the 16 bytes the other sniffers need (an iPhone's is longer than 24 bytes).
-  const first = await env.MEDIA.get(row.originalKey, { range: { offset: 0, length: 64 } });
+  // 4096 bytes: a `ftyp` box lists its brands after the 16 bytes the other sniffers need, and the sniffers read the whole box (a real one is under 100 bytes). A box larger than this read is refused (Sol r2 P1).
+  const first = await env.MEDIA.get(row.originalKey, { range: { offset: 0, length: UPLOAD_SNIFF_BYTES } });
   const headBytes = first ? new Uint8Array(await first.arrayBuffer()) : new Uint8Array();
   // A HEIC row: any HEVC HEIF container is accepted whichever of heic/heif was declared (the browser's guess from the extension). A JPEG declared as HEIC, or a HEIC declared as JPEG, is refused.
   if (isEmbeddedHeicContentType(row.contentType)) { if (row.kind !== "image" || !sniffHeifImage(headBytes)) return reject("The uploaded file is not a HEIC image"); return { ok: true }; }

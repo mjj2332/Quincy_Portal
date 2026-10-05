@@ -2,7 +2,7 @@
 -- rendition_status says whether a JPEG display copy is needed and how far it has got. It is separate from state, which already means uploaded but not attached.
 -- not_required is every existing row and every JPEG, PNG or WebP upload. pending, ready and failed belong to a HEIC row, whose JPEG is written into the display_key column that nothing used until now.
 -- display_content_type, display_bytes, display_width and display_height describe that JPEG.
--- rendition_attempts and rendition_lease_until fence the background Worker that converts it. rendition_requested_at is when the work was last queued, and the minute cron re-sends a pending row whose message was lost.
+-- rendition_attempts and rendition_lease_until fence the background Worker that converts it. rendition_requested_at is when the work was queued and is the generation of its queue message: only complete and Retry write it. rendition_resent_at is when the minute cron last re-sent a pending row whose message was lost, kept apart so a resend never invalidates the message already in flight.
 -- rendition_error is a short reason a row failed.
 -- The feature flag opens HEIC to everyone. It is seeded off, so only an Admin can upload HEIC until the owner flips it. The seed never re-asserts a live value.
 -- Additive only. No trigger and no semicolon inside a comment: the worker test harness splits this file on semicolons.
@@ -21,6 +21,8 @@ ALTER TABLE embedded_media ADD COLUMN rendition_attempts integer NOT NULL DEFAUL
 ALTER TABLE embedded_media ADD COLUMN rendition_lease_until integer;
 --> statement-breakpoint
 ALTER TABLE embedded_media ADD COLUMN rendition_requested_at integer;
+--> statement-breakpoint
+ALTER TABLE embedded_media ADD COLUMN rendition_resent_at integer;
 --> statement-breakpoint
 ALTER TABLE embedded_media ADD COLUMN rendition_error text;
 --> statement-breakpoint
