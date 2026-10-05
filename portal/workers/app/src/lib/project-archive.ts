@@ -1,4 +1,7 @@
+import { eq } from "drizzle-orm";
+import { createDb, schema } from "@quincy/db";
 import type { StageKey } from "@quincy/shared";
+import type { AppEnv } from "../env";
 
 export type ProjectArchiveSource = { stageKey: StageKey; boardRevision: number };
 export type ProjectArchiveCurrent = {
@@ -33,4 +36,16 @@ export function classifyProjectArchiveLoser(input: {
   }
   if (input.archived && input.hasActiveUpload) return { kind: "active_upload" };
   return { kind: "conflict", current: input.current };
+}
+
+/** The mutation batches end with `SELECT archived_at FROM projects`: whether the Project was archived when the primary write ran. */
+export const ARCHIVED_SNAPSHOT_SQL = "SELECT archived_at FROM projects WHERE id = ?";
+export function archivedInSnapshot(result: unknown): boolean {
+  const row = ((result as { results?: Array<{ archived_at: number | null }> } | undefined)?.results ?? [])[0];
+  return row !== undefined && row.archived_at !== null;
+}
+
+export async function projectIsArchived(env: AppEnv["Bindings"], projectId: string): Promise<boolean> {
+  const row = await createDb(env.DB).select({ archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
+  return row?.archivedAt != null;
 }

@@ -83,6 +83,7 @@ _Avoid_: Status, state, column, phase
 A Project withdrawn from active work, and restorable. The Dashboard hides Archived Projects;
 only an Admin can include them, or show nothing else, through the Archived filter (Hide /
 Include / Only), in any Dashboard view. On the Board an Archived Project is shown but never moved.
+Its Checklist, Team, Deadline and Project discussion are read-only (the discussion can still be read, and a person's read marker still advances), and its whiteboard is view-only.
 _Avoid_: Status, deleted, closed
 
 **Filter tree** (#461):

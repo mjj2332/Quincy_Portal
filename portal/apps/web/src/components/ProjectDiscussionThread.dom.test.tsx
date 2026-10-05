@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError } from "../lib/api";
 import { ProjectDiscussionThread } from "./ProjectDiscussionThread";
 import { chooseCommentAction } from "../testing/comment-menu";
+import { ARCHIVED_NOTICE_CLASS } from "./archived-notice";
 
 const state = vi.hoisted(() => ({
   sessionUser: { id: "user-me", role: "editor" as string, impersonatedBy: undefined as string | undefined },
@@ -24,6 +25,7 @@ const replaceMock = vi.hoisted(() => vi.fn());
 const removeMock = vi.hoisted(() => vi.fn());
 const confirmMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)));
 const terminateMock = vi.hoisted(() => vi.fn());
+const invalidateSurfacesMock = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: state.sessionUser } }) }));
 vi.mock("../lib/api", async (importOriginal) => {
@@ -34,6 +36,7 @@ vi.mock("../lib/confirm", () => ({ confirm: confirmMock }));
 vi.mock("../lib/project-data", () => ({
   classifyProjectAccessError: (error: unknown) => error instanceof ApiError && error.status === 403 ? { scope: "collaboration" } : null,
   projectCollaborationDataGeneration: () => "generation",
+  invalidateProjectSurfaces: invalidateSurfacesMock,
   useProjectAccessTermination: () => terminateMock,
 }));
 vi.mock("../lib/project-comments", () => ({
@@ -83,7 +86,7 @@ beforeEach(() => {
   apiPostMock.mockReset().mockResolvedValue({ ...ownComment, id: "comment-posted", content: doc("Posted") });
   apiPatchMock.mockReset().mockResolvedValue({ ...ownComment, content: doc("Edited"), editedAt: "2026-08-17T00:02:00.000Z" });
   apiDeleteMock.mockReset().mockResolvedValue({ ok: true });
-  invalidateMock.mockClear(); prependMock.mockClear(); replaceMock.mockClear(); removeMock.mockClear(); confirmMock.mockClear(); terminateMock.mockClear();
+  invalidateMock.mockClear(); prependMock.mockClear(); replaceMock.mockClear(); removeMock.mockClear(); confirmMock.mockClear(); terminateMock.mockClear(); invalidateSurfacesMock.mockClear();
   state.commentsQuery = queryState();
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
@@ -275,5 +278,98 @@ describe("ProjectDiscussionThread", () => {
     await click(host.querySelector<HTMLElement>(`[data-testid="submit-project-comment-${projectId}"]`)!); await flush();
     expect(onAccessFailure).toHaveBeenCalledWith(expect.any(ApiError), "comments");
     expect(terminateMock).toHaveBeenCalledTimes(1);
+  });
+
+  describe("an archived Project (#527)", () => {
+    const COPY = "Read-only while archived. Restore the project before commenting.";
+    const refusal = () => new ApiError("Archived projects are read-only; the discussion can't be changed.", 409, { code: "comment_project_archived" });
+    const notice = () => host.querySelector<HTMLElement>('[data-testid="discussion-archived-notice"]');
+    const composerValue = () => state.editors.find((editor) => editor.id === `project-comment-${projectId}`)?.value;
+
+    it("has no composer and no comment menu, shows the notice, and keeps the comments readable", async () => {
+      render({ archived: true }); await flush();
+      expect(host.querySelector("[data-testid=discussion-composer]")).toBeNull();
+      expect(host.querySelector('[aria-label^="Actions for comment by"]')).toBeNull();
+      expect(notice()?.textContent).toBe(COPY);
+      expect(notice()?.className).toBe(ARCHIVED_NOTICE_CLASS);
+      // base.css resets `p { margin: 0 }` outside any @layer, which beats a margin utility on the <p>; the gap lives on the wrapper.
+      expect(notice()?.parentElement?.className).toBe("mb-[var(--space-5)]");
+      expect(host.querySelector("[data-testid=discussion-comments]")?.textContent).toContain("Own comment");
+      expect(host.querySelector("[data-testid=discussion-comments]")?.textContent).toContain("Other comment");
+    });
+
+    it("turns read-only, with no error and the draft kept, when a Post is refused; moves focus to the notice only when it was lost", async () => {
+      apiPostMock.mockRejectedValueOnce(refusal());
+      render(); await flush();
+      await typeComposer("Draft to keep");
+      const surface = host.querySelector<HTMLElement>('[contenteditable="true"]')!; surface.focus();
+      await click(host.querySelector<HTMLElement>(`[data-testid="submit-project-comment-${projectId}"]`)!); await flush();
+      expect(host.querySelector("[data-testid=discussion-composer]")).toBeNull();
+      expect(notice()?.textContent).toBe(COPY);
+      expect(host.querySelector('[role="alert"]')).toBeNull();
+      expect(document.activeElement).toBe(notice());
+      expect(host.querySelector('[aria-label^="Actions for comment by"]')).toBeNull();
+      expect(invalidateSurfacesMock).toHaveBeenCalledWith(client, expect.objectContaining({ projectId, resources: expect.arrayContaining([{ kind: "detail" }]) }));
+      expect(prependMock).not.toHaveBeenCalled();
+      // Restore: the composer returns holding the draft that was refused.
+      render({ archived: true }); await flush(); render({ archived: false }); await flush();
+      expect(composerValue()).toEqual(doc("Draft to keep"));
+      expect(host.querySelector('[aria-label="Actions for comment by Me"]')).not.toBeNull();
+    });
+
+    it("leaves focus alone when a connected, enabled control elsewhere has it", async () => {
+      apiPostMock.mockRejectedValueOnce(refusal());
+      const outside = document.createElement("button"); document.body.append(outside);
+      render(); await flush();
+      await typeComposer("Elsewhere");
+      outside.focus();
+      await click(host.querySelector<HTMLElement>(`[data-testid="submit-project-comment-${projectId}"]`)!); await flush();
+      expect(notice()).not.toBeNull();
+      expect(document.activeElement).toBe(outside);
+    });
+
+    it("turns read-only when an edit Save is refused, ending the edit", async () => {
+      apiPatchMock.mockRejectedValueOnce(refusal());
+      render(); await flush();
+      await chooseCommentAction(host, "Me", "Edit");
+      const editSubmit = [...host.querySelector("article")!.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Submit");
+      await act(async () => { editSubmit!.click(); await Promise.resolve(); }); await flush();
+      expect(notice()?.textContent).toBe(COPY);
+      expect(host.querySelector('[contenteditable="true"]')).toBeNull();
+      expect(host.querySelector('[role="alert"]')).toBeNull();
+      expect(host.querySelector('[aria-label^="Actions for comment by"]')).toBeNull();
+    });
+
+    it("turns read-only when a Delete is refused", async () => {
+      apiDeleteMock.mockRejectedValueOnce(refusal());
+      render(); await flush();
+      await chooseCommentAction(host, "Me", "Delete"); await flush();
+      expect(notice()?.textContent).toBe(COPY);
+      expect(host.querySelector('[role="alert"]')).toBeNull();
+      expect(removeMock).not.toHaveBeenCalled();
+      expect(host.querySelector("[data-testid=discussion-comments]")?.textContent).toContain("Own comment");
+    });
+
+    it("drops an open edit, sending no write, when the Project turns archived through the prop", async () => {
+      render(); await flush();
+      await chooseCommentAction(host, "Me", "Edit");
+      expect(host.querySelector("article")!.querySelector('[contenteditable="true"]')).not.toBeNull();
+      render({ archived: true }); await flush();
+      expect(host.querySelector('[contenteditable="true"]')).toBeNull();
+      expect(notice()?.textContent).toBe(COPY);
+      expect(apiPatchMock).not.toHaveBeenCalled();
+      expect(apiPostMock).not.toHaveBeenCalled();
+    });
+
+    it("keeps a plain 409 as an error and does not switch the thread", async () => {
+      apiPostMock.mockRejectedValueOnce(new ApiError("An image in this comment is no longer available.", 409, { code: "media_conflict" }));
+      render(); await flush();
+      await typeComposer("Has a stale image");
+      await click(host.querySelector<HTMLElement>(`[data-testid="submit-project-comment-${projectId}"]`)!); await flush();
+      expect(host.querySelector('[role="alert"]')?.textContent).toContain("no longer available");
+      expect(notice()).toBeNull();
+      expect(host.querySelector("[data-testid=discussion-composer]")).not.toBeNull();
+      expect(invalidateSurfacesMock).not.toHaveBeenCalled();
+    });
   });
 });
