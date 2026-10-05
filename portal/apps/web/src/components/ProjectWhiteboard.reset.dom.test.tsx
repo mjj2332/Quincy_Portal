@@ -18,13 +18,14 @@ const h = vi.hoisted(() => ({
   opened: 0,
   panels: [] as Array<{ open: boolean; readOnly: boolean }>,
   toasts: [] as string[],
+  tones: [] as Array<string | undefined>,
   controllers: [] as Array<{ adoptRevisions: ReturnType<typeof vi.fn>; setCollaborators: ReturnType<typeof vi.fn> } & Record<string, unknown>>,
 }));
 
 vi.mock("../lib/whiteboard-socket", () => ({
   openWhiteboardSocket: (_project: string, handlers: Record<string, (...args: unknown[]) => void>) => { h.opened += 1; h.handlers = handlers; return h.socket; },
 }));
-vi.mock("../lib/toast-store", () => ({ pushToast: (message: string) => { h.toasts.push(message); } }));
+vi.mock("../lib/toast-store", () => ({ pushToast: (message: string, tone?: string) => { h.toasts.push(message); h.tones.push(tone); } }));
 vi.mock("./WhiteboardHistoryPanel", () => ({
   WhiteboardHistoryPanel: (props: { open: boolean; readOnly: boolean; onRestoreStarted: () => void; onRestoreFailed: () => void }) => {
     h.panels.push({ open: props.open, readOnly: props.readOnly });
@@ -60,7 +61,7 @@ const init = (generation: number, elements: unknown[], peers: unknown[] = []) =>
 let host: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
-  h.boards.length = 0; h.panels.length = 0; h.handlers = null; h.opened = 0; h.toasts.length = 0; h.controllers.length = 0;
+  h.boards.length = 0; h.panels.length = 0; h.handlers = null; h.opened = 0; h.toasts.length = 0; h.tones.length = 0; h.controllers.length = 0;
   h.socket.send.mockClear(); h.socket.close.mockClear();
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
 });
@@ -91,9 +92,11 @@ describe("ProjectWhiteboard: board reset (#500)", () => {
     await act(async () => { (live()[0]!.props.onSaveStatusChange as unknown as (s: string) => void)("unsaved"); });
     await act(async () => { h.handlers!.onReset!({ generation: 2, elements: [el("keep", 1)] }); });
     expect(h.toasts).toEqual(["Board restored — your unsaved changes were replaced"]);
+    expect(h.tones).toEqual(["caution"]);                          // a warning about work that was thrown away
     // The reset cleared it: the next reset, with nothing pending, is plain.
     await act(async () => { h.handlers!.onReset!({ generation: 3, elements: [el("keep", 1)] }); });
     expect(h.toasts.at(-1)).toBe("Board restored");
+    expect(h.tones.at(-1)).toBeUndefined();                        // plain restore keeps the default tone
   });
 
   it("discards a pending save: the old editor's teardown flush sends nothing, and the saver seeds from the restored scene", async () => {

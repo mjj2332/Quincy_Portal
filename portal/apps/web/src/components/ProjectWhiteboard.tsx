@@ -139,7 +139,8 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
       const discardedEdit = saveStatusRef.current !== "saved";    // unsaved, saving or failed: an edit of this person's is being thrown away
       setSaveStatus("saved");
       setEpoch(epochRef.current);
-      pushToast(restoreStartedRef.current || !discardedEdit ? "Board restored" : "Board restored — your unsaved changes were replaced");
+      if (restoreStartedRef.current || !discardedEdit) pushToast("Board restored");
+      else pushToast("Board restored — your unsaved changes were replaced", "caution");   // work was thrown away: advisory, not plain success
       restoreStartedRef.current = false;
     };
     const opened = openWhiteboardSocket(projectId, {

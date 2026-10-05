@@ -52,6 +52,17 @@ describe("WhiteboardHistoryPanel (#500)", () => {
     expect(rows[2]!.textContent).toContain("2 elements");
   });
 
+  it("puts the element count in the title's badge slot, not in the meta line, so a narrow row cannot push it out", async () => {
+    h.get.mockResolvedValue(listing());
+    await render(props());
+    const row = document.body.querySelector<HTMLElement>('[data-testid="whiteboard-version-row"][data-version-id="v-new"]')!;
+    const count = row.querySelector<HTMLElement>('[data-testid="whiteboard-version-count"]');
+    expect(count).not.toBeNull();
+    expect(count!.textContent).toBe("7 elements");
+    expect(count!.closest("p")).toBeNull();                      // the meta line is the row's <p> description
+    expect(row.querySelector("p")!.textContent).not.toContain("elements");
+  });
+
   it("shows loading rows, then the empty state when there is no history yet", async () => {
     let resolve!: (value: unknown) => void;
     h.get.mockReturnValue(new Promise((r) => { resolve = r; }));

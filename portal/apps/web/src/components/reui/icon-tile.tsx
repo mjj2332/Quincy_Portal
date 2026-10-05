@@ -1,5 +1,5 @@
 /**
- * ReUI `@reui/icon-tile` (new primitive for the whiteboard set). Mechanical edits; the nova `dark:` variants and `after:shadow-xs` stripped (Skin guard).
+ * ReUI `@reui/icon-tile` (new primitive for the whiteboard set). Mechanical edits; the nova `dark:` variants and `after:shadow-xs` stripped (Skin guard). VENDORED-EDIT (#500): the `elevated` glyph is `text-muted-foreground`, not `text-accent-foreground` (paper-050 on the paper-100 chip, ~1.05:1, hid the History and Library reason icons).
  */
 import { mergeProps } from "@base-ui/react/merge-props"
 import { useRender } from "@base-ui/react/use-render"
@@ -40,7 +40,7 @@ const iconTileVariants = cva(
         outline: "border border-border bg-background",
         /** Raised muted fill with a background-colored ring. Reads as a physical chip. */
         elevated:
-          "border-2 border-background bg-muted text-accent-foreground shadow-[0_1px_3px_0_rgb(0_0_0/0.14)]",
+          "border-2 border-background bg-muted text-muted-foreground shadow-[0_1px_3px_0_rgb(0_0_0/0.14)]",
         /**
          * Tinted double container: an opacity-filled outer ring with no border
          * around a bordered inner card, all derived from `currentColor`. The

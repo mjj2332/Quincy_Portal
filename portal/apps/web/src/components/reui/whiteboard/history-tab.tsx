@@ -64,8 +64,16 @@ function byline(version: WhiteboardVersionSummary) {
       {who ?? "Automatic"}
     </span>,
     TIME.format(version.createdAt),
-    `${version.elementCount} element${version.elementCount === 1 ? "" : "s"}`,
   ]
+}
+
+/** The element count rides the title's badge slot, not the meta line, so a 320px row that truncates the byline cannot push it out. */
+function countBadge(version: WhiteboardVersionSummary) {
+  return (
+    <span data-testid="whiteboard-version-count" className="text-xs font-normal text-muted-foreground tabular-nums">
+      {`${version.elementCount} element${version.elementCount === 1 ? "" : "s"}`}
+    </span>
+  )
 }
 
 export type HistoryState =
@@ -137,6 +145,7 @@ export function HistoryTab({
               rowAttrs={{ "data-testid": "whiteboard-version-row", "data-version-id": version.id }}
               icon={reason.icon}
               title={reason.label}
+              badge={countBadge(version)}
               meta={byline(version)}
               actions={
                 readOnly ? undefined : (
