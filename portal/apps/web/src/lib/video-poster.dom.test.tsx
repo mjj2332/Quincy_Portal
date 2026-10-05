@@ -5,7 +5,8 @@ type Handler = () => void;
 /** A video element with the parts the capture touches, driven by the test. happy-dom does not decode media. */
 class FakeVideo {
   muted = false; playsInline = false; preload = ""; src = ""; videoWidth = 1920; videoHeight = 1080; duration = 30; currentTime = 0; attrs: Record<string, string> = {};
-  listeners = new Map<string, Handler[]>(); loaded = false; pauses = 0;
+  listeners = new Map<string, Handler[]>(); loaded = false; pauses = 0; readyState = 4;
+  requestVideoFrameCallback?: (callback: () => void) => number;
   setAttribute(name: string, value: string) { this.attrs[name] = value; }
   addEventListener(type: string, handler: Handler) { this.listeners.set(type, [...(this.listeners.get(type) ?? []), handler]); }
   removeEventListener(type: string, handler: Handler) { this.listeners.set(type, (this.listeners.get(type) ?? []).filter((item) => item !== handler)); }
@@ -17,7 +18,14 @@ class FakeVideo {
 class FakeCanvas {
   width = 0; height = 0; drew: unknown[] = [];
   blob: Blob | null = new Blob([new Uint8Array([0xff, 0xd8, 0xff])], { type: "image/jpeg" }); lastEncode: { type?: string; quality?: number } = {};
-  getContext() { return { drawImage: (...args: unknown[]) => { this.drew.push(args); } }; }
+  /** The alpha of every pixel getImageData reports: 255 is painted, 0 is nothing drawn. */
+  alpha = 255;
+  getContext() {
+    return {
+      drawImage: (...args: unknown[]) => { this.drew.push(args); },
+      getImageData: () => ({ data: new Uint8ClampedArray([0, 0, 0, this.alpha]) }),
+    };
+  }
   toBlob(callback: (blob: Blob | null) => void, type?: string, quality?: number) { this.lastEncode = { type, quality }; callback(this.blob); }
 }
 
@@ -93,5 +101,42 @@ describe("captureVideoPoster (#494)", () => {
   it("answers null when the file's URL cannot even be made", async () => {
     vi.spyOn(URL, "createObjectURL").mockImplementation(() => { throw new Error("blocked"); });
     await expect(captureVideoPoster(file)).resolves.toBeNull();
+  });
+
+  it("with requestVideoFrameCallback, draws only once a frame has been presented", async () => {
+    const result = captureVideoPoster(file); await flush();
+    let present: (() => void) | undefined;
+    video.requestVideoFrameCallback = (callback) => { present = callback; return 1; };
+    video.emit("loadedmetadata"); await flush(); video.emit("seeked"); await flush();
+    expect(present).toBeDefined(); expect(canvas.drew).toHaveLength(0);
+    present!();
+    await expect(result).resolves.toBeInstanceOf(Blob); expect(canvas.drew).toHaveLength(1); expect(revoked).toEqual(created);
+  });
+
+  it("answers null when no frame is ever presented before the timeout", async () => {
+    const result = captureVideoPoster(file, 3000); await flush();
+    video.requestVideoFrameCallback = () => 1;
+    video.emit("loadedmetadata"); await flush(); video.emit("seeked"); await vi.advanceTimersByTimeAsync(3000);
+    await expect(result).resolves.toBeNull(); expect(canvas.drew).toHaveLength(0); expect(revoked).toEqual(created);
+  });
+
+  it("answers null instead of uploading a blank when nothing was painted (every sampled pixel transparent)", async () => {
+    const result = captureVideoPoster(file); await flush(); canvas.alpha = 0;
+    video.emit("loadedmetadata"); await flush(); video.emit("seeked");
+    await expect(result).resolves.toBeNull(); expect(revoked).toEqual(created);
+  });
+
+  it("keeps a genuinely black but opaque frame", async () => {
+    const result = captureVideoPoster(file); await flush(); canvas.alpha = 255;
+    video.emit("loadedmetadata"); await flush(); video.emit("seeked");
+    await expect(result).resolves.toBeInstanceOf(Blob);
+  });
+
+  it("without requestVideoFrameCallback and readyState below 2, waits for loadeddata before drawing", async () => {
+    const result = captureVideoPoster(file); await flush(); video.readyState = 1;
+    video.emit("loadedmetadata"); await flush(); video.emit("seeked"); await flush();
+    expect(canvas.drew).toHaveLength(0);
+    video.readyState = 2; video.emit("loadeddata");
+    await expect(result).resolves.toBeInstanceOf(Blob); expect(canvas.drew).toHaveLength(1);
   });
 });
