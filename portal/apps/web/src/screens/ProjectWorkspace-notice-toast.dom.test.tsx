@@ -106,7 +106,7 @@ beforeEach(() => {
   apiGetMock.mockImplementation((path: string) => {
     if (path === "/api/projects/p1" || path === "/api/projects/p2") return Promise.resolve(projectFixture(path.endsWith("p2") ? "p2" : "p1"));
     if (path.includes("/assets")) return Promise.resolve({ assets: [workspaceAsset("a1")] });
-    if (path.includes("/collaboration-summary")) return Promise.resolve({ project: { id: "p1", street: "12 Example St", stageKey: "raw_review" }, members: [] });
+    if (path.includes("/collaboration-summary")) return Promise.resolve({ project: { id: "p1", street: "12 Example St", stageKey: "raw_review", archived: false }, members: [] });
     if (path.includes("/comments?")) return Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [] });
     if (path.includes("/subtasks")) return Promise.resolve({ subtasks: [] });
     if (path.includes("/mentionable-users")) return Promise.resolve({ users: [] });

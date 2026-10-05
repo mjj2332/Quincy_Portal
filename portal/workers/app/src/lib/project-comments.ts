@@ -6,6 +6,7 @@ import { newId } from "./ids";
 import { isMediaGuardFailure, ownedMediaStatements, preflightOwnedMedia } from "./embedded-media";
 import { fillLinkPreviews, linkPreviewStatements, preflightLinkPreviews } from "./link-previews";
 import { auditMeta, type AuditPrincipal } from "./audit";
+import { ARCHIVED_SNAPSHOT_SQL, archivedInSnapshot } from "./project-archive";
 
 const readMarkerUpsertSql = `
 INSERT INTO project_comment_read_markers (
@@ -44,6 +45,12 @@ export type ProjectCommentReadState = {
 export type CommentMediaChanges = { authorId: string; ids: string[]; videoIds?: string[]; /** The link preview cards (#497): the batch takes the author's pending ones and drops the rest. */ previewIds?: string[] };
 /** Thrown when the winning save's images are no longer all attachable (an image was swept, expired or taken); the whole save is rolled back. */
 export class CommentMediaConflictError extends Error { constructor() { super("An image or video in this comment is no longer available"); this.name = "CommentMediaConflictError"; } }
+
+/** Thrown when the Project was archived before the save's batch ran (#527); nothing was written. */
+export class CommentProjectArchivedError extends Error { constructor() { super("The project is archived"); this.name = "CommentProjectArchivedError"; } }
+
+/** Fences an edit or delete of a comment on its Project still being unarchived, inside the same statement (lessons #446, #527). */
+const COMMENT_ARCHIVE_FENCE = " AND EXISTS (SELECT 1 FROM projects p WHERE p.id = project_comments.project_id AND p.archived_at IS NULL)";
 
 export type CreateProjectCommentInput = {
   id: string;
@@ -363,32 +370,40 @@ export async function createProjectComment(db: D1Database, input: CreateProjectC
   assertUniqueMentions(input.mentions);
   const activity = createProjectCommentActivityIntent({ type: "created", projectId: input.projectId, actorId: input.authorId, commentId: input.id, occurredAt: input.occurredAt });
   const snapshots = await mentionOccurrenceSnapshots(db, input.projectId, input.mentions);
+  const auditId = newId();
   const insert = db.prepare(`
     INSERT INTO project_comments (id, project_id, author_id, body, content_json, created_at)
-    VALUES (?, ?, ?, ?, ?, MAX(
+    SELECT ?, ?, ?, ?, ?, MAX(
       ?,
       COALESCE((SELECT MAX(created_at) FROM project_comments WHERE project_id = ?), 0) + 1,
       COALESCE((SELECT MAX(last_read_comment_created_at)
         FROM project_comment_read_markers WHERE project_id = ?), 0) + 1
-    ))
-  `).bind(input.id, input.projectId, input.authorId, input.body, input.contentJson, input.wallClockMs, input.projectId, input.projectId);
+    )
+    WHERE EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
+  `).bind(input.id, input.projectId, input.authorId, input.body, input.contentJson, input.wallClockMs, input.projectId, input.projectId, auditId);
   const mentions = input.mentions.map((mention) => db.prepare(`
     INSERT INTO project_comment_mentions (id, comment_id, mentioned_user_id, created_at)
-    VALUES (?, ?, ?, ?)
-  `).bind(mention.id, mention.commentId, mention.mentionedUserId, mention.createdAt.getTime()));
+    SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
+  `).bind(mention.id, mention.commentId, mention.mentionedUserId, mention.createdAt.getTime(), auditId));
   const marker = db.prepare(readMarkerUpsertSql).bind(input.authorId, input.occurredAt.getTime(), input.projectId, input.id);
-  const auditId = newId();
+  // The audit row is the batch's single gate (#527): it exists only while the Project is unarchived, and the comment, its mentions and
+  // everything after are fenced on it. Fencing only the comment insert would leave the mention inserts to fail their foreign key.
   const audit = db.prepare(`
     INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
-    VALUES (?, ?, 'project_comment.create', 'project_comment', ?, ?, ?)
-  `).bind(auditId, input.auditPrincipal?.id ?? input.authorId, input.id, auditMeta(input.auditPrincipal ?? { id: input.authorId, impersonatedBy: null }), input.occurredAt.getTime());
+    SELECT ?, ?, 'project_comment.create', 'project_comment', ?, ?, ?
+    WHERE EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)
+  `).bind(auditId, input.auditPrincipal?.id ?? input.authorId, input.id, auditMeta(input.auditPrincipal ?? { id: input.authorId, impersonatedBy: null }), input.occurredAt.getTime(), input.projectId);
   const outbox = mentionOutboxStatements(db, input.projectId, input.authorId, activity, input.mentions, snapshots, input.occurredAt.getTime(), auditId);
   const activityStatements = buildProjectActivityStatements({ db, intent: activity, winnerAuditId: auditId, createdAt: input.occurredAt.getTime() });
+  // Leading block: audit, comment insert, mentions, read marker (the audit row moved to the front in #527; the count is unchanged).
   const activityStatementStart = 1 + mentions.length + 2 + outbox.statements.length;
   const media = mediaStatements(db, input.projectId, input.id, input.media ?? { authorId: input.authorId, ids: [] }, input.occurredAt.getTime(), auditId, false);
-  const results = await db.batch([insert, ...mentions, marker, audit, ...outbox.statements, ...activityStatements.statements, ...media]).catch((error) => rethrowMediaConflict(error, input.media));
+  const results = await db.batch([audit, insert, ...mentions, marker, ...outbox.statements, ...activityStatements.statements, ...media, db.prepare(ARCHIVED_SNAPSHOT_SQL).bind(input.projectId)]).catch((error) => rethrowMediaConflict(error, input.media));
   const comment = await findProjectComment(createDb(db), input.projectId, input.id);
-  if (!comment) throw new Error("Comment could not be created");
+  if (!comment) {
+    if (archivedInSnapshot(results.at(-1))) throw new CommentProjectArchivedError();
+    throw new Error("Comment could not be created");
+  }
   const broad = rows<{ id: string }>(results[activityStatementStart + activityStatements.broadOutboxIndex] as D1Result<{ id: string }>).map((row) => row.id);
   return { comment, activity, notificationOutboxIds: [...outbox.outboxIds, ...broad] };
 }
@@ -416,7 +431,7 @@ export async function editProjectComment(db: D1Database, input: EditProjectComme
     UPDATE project_comments
     SET body = ?, content_json = ?, edited_at = ?
     WHERE id = ? AND project_id = ?
-      AND (body IS NOT ? OR content_json IS NOT ? OR ${mentionChanged})
+      AND (body IS NOT ? OR content_json IS NOT ? OR ${mentionChanged})${COMMENT_ARCHIVE_FENCE}
   `).bind(input.body, input.contentJson, input.editedAt.getTime(), input.commentId, input.projectId, input.body, input.contentJson, ...mentionChangedBindings)];
   statements.push(db.prepare(`
     INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
@@ -432,8 +447,10 @@ export async function editProjectComment(db: D1Database, input: EditProjectComme
   const activityStatements = buildProjectActivityStatements({ db, intent: activity, winnerAuditId: auditId, createdAt: input.occurredAt.getTime() });
   const activityStatementStart = statements.length + outbox.statements.length;
   const media = mediaStatements(db, input.projectId, input.commentId, input.media ?? { authorId: input.actorId, ids: [] }, input.editedAt.getTime(), auditId, true);
-  const results = await db.batch([...statements, ...outbox.statements, ...activityStatements.statements, ...media]).catch((error) => rethrowMediaConflict(error, input.media));
+  const results = await db.batch([...statements, ...outbox.statements, ...activityStatements.statements, ...media, db.prepare(ARCHIVED_SNAPSHOT_SQL).bind(input.projectId)]).catch((error) => rethrowMediaConflict(error, input.media));
   if ((results[0]?.meta.changes ?? 0) !== 1) {
+    // Archived wins over the same-state no-op (#527): an identical save on an archived Project is refused too.
+    if (archivedInSnapshot(results.at(-1))) throw new CommentProjectArchivedError();
     // A rebuilt request whose complete canonical body/content/mention state is still current is
     // the bounded retry identity for this command. It is a successful no-op: no new audit,
     // activity, mention delivery, or broad outbox was admitted by the marker gate.
@@ -449,7 +466,7 @@ export async function editProjectComment(db: D1Database, input: EditProjectComme
 
 export async function deleteProjectComment(db: D1Database, input: DeleteProjectCommentInput): Promise<ProjectCommentMutationResult> {
   const activity = createProjectCommentActivityIntent({ type: "deleted", projectId: input.projectId, actorId: input.actorId, commentId: input.commentId, occurredAt: input.occurredAt });
-  const deletion = db.prepare("DELETE FROM project_comments WHERE id = ? AND project_id = ?").bind(input.commentId, input.projectId);
+  const deletion = db.prepare(`DELETE FROM project_comments WHERE id = ? AND project_id = ?${COMMENT_ARCHIVE_FENCE}`).bind(input.commentId, input.projectId);
   const auditId = newId();
   const audit = db.prepare(`
     INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
@@ -462,12 +479,15 @@ export async function deleteProjectComment(db: D1Database, input: DeleteProjectC
   // owner has no foreign key). The route then deletes the objects and rows, and the daily sweep is the backstop.
   const media = db.prepare("UPDATE embedded_media SET state = 'detached', detached_at = 0, updated_at = ? WHERE owner_kind = 'project_comment' AND owner_id = ? AND state IN ('attached', 'detached') AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)").bind(input.occurredAt.getTime(), input.commentId, auditId);
   const previews = db.prepare("DELETE FROM link_previews WHERE owner_kind = 'project_comment' AND owner_id = ? AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)").bind(input.commentId, auditId);
-  const results = await db.batch([deletion, audit, ...activityStatements.statements, media, previews]);
+  const results = await db.batch([deletion, audit, ...activityStatements.statements, media, previews, db.prepare(ARCHIVED_SNAPSHOT_SQL).bind(input.projectId)]);
   // The JS-level .meta.changes on the DELETE includes cascade-deleted
   // project_comment_mentions rows (ON DELETE CASCADE), so the outer check must accept any
   // positive value. The SQL-level changes() function used by the audit guard excludes those
   // cascades, so its exact-one guard is correct here, as it is for create and edit.
-  if ((results[0]?.meta.changes ?? 0) < 1) throw new Error("Comment could not be deleted");
+  if ((results[0]?.meta.changes ?? 0) < 1) {
+    if (archivedInSnapshot(results.at(-1))) throw new CommentProjectArchivedError();
+    throw new Error("Comment could not be deleted");
+  }
   const broad = rows<{ id: string }>(results[activityStatementStart + activityStatements.broadOutboxIndex] as D1Result<{ id: string }>).map((row) => row.id);
   return { activity, notificationOutboxIds: broad };
 }

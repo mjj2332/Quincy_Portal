@@ -29,6 +29,7 @@ import {
 } from "@quincy/shared";
 import type { AppEnv, SessionUser } from "../env";
 import { auditMeta } from "./audit";
+import { ARCHIVED_SNAPSHOT_SQL, archivedInSnapshot, projectIsArchived } from "./project-archive";
 import { newId } from "./ids";
 import { notifySubtaskAssignee } from "./notifications";
 import { serializeSubtaskSchedule } from "./subtask-schedule";
@@ -111,13 +112,6 @@ function rowsFromD1<T>(result: unknown): T[] { return ((result as { results?: T[
 /** The archived refusal: staff see it, an External Editor cannot see an archived Project at all (#446). */
 function archivedOutcome(principal: Pick<SessionUser, "role">): ProjectSubtaskCommandResult {
   return principal.role === "external_editor" ? { outcome: "not_found", target: "project" } : { outcome: "project_archived" };
-}
-
-/** The mutation batches end with `SELECT archived_at FROM projects`: whether the Project was archived when the primary write ran. */
-export const ARCHIVED_SNAPSHOT_SQL = "SELECT archived_at FROM projects WHERE id = ?";
-export function archivedInSnapshot(result: unknown): boolean {
-  const row = rowsFromD1<{ archived_at: number | null }>(result)[0];
-  return row !== undefined && row.archived_at !== null;
 }
 
 function subtaskQuery(db: ReturnType<typeof createDb>, projectId: string, subtaskId?: string) {
@@ -258,11 +252,6 @@ export function projectDefaultRangeInput(project: { shootDate: string | null; cr
 export async function projectDefaultRangeDtoFor(env: AppEnv["Bindings"], projectId: string): Promise<ProjectDefaultRangeDto | null> {
   const project = await createDb(env.DB).select({ shootDate: schema.projects.shootDate, createdAt: schema.projects.createdAt, deadlineLocalCivil: schema.projects.deadlineLocalCivil, deadlineAt: schema.projects.deadlineAt, deadlineFold: schema.projects.deadlineFold }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
   return project ? defaultSubtaskRangeDto(projectDefaultRangeInput(project)) : null;
-}
-
-export async function projectIsArchived(env: AppEnv["Bindings"], projectId: string): Promise<boolean> {
-  const row = await createDb(env.DB).select({ archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
-  return row?.archivedAt != null;
 }
 
 async function authorizedProject(env: AppEnv["Bindings"], principal: SessionUser, projectId: string) {

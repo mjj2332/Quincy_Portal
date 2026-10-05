@@ -143,7 +143,7 @@ describe("ProjectWorkspace toast surface (#110 AC3)", () => {
   it("puts a toast raised from the collaboration-only view state inside a container with aria-live=\"polite\" (#110 fix round item 3)", async () => {
     apiGetMock.mockImplementation((path: string) => {
       if (path === "/api/projects/p1") return Promise.reject(new ApiError("Forbidden", 403));
-      if (path.includes("/collaboration-summary")) return Promise.resolve({ project: { id: "p1", street: "12 Example St", stageKey: "raw_review" }, members: [] });
+      if (path.includes("/collaboration-summary")) return Promise.resolve({ project: { id: "p1", street: "12 Example St", stageKey: "raw_review", archived: false }, members: [] });
       if (path.includes("/comments?")) return Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [] });
       if (path.includes("/subtasks")) return Promise.resolve({ subtasks: [] });
       if (path.includes("/mentionable-users")) return Promise.resolve({ users: [] });
@@ -179,7 +179,7 @@ describe("ProjectWorkspace toast surface (#110 AC3)", () => {
     const probeGate = deferredPromise<void>();
     apiGetMock.mockImplementation((path: string) => {
       if (path === "/api/projects/p1") return Promise.reject(new ApiError("Forbidden", 403));
-      if (path.includes("/collaboration-summary")) return probeGate.promise.then(() => ({ project: { id: "p1", street: "12 Example St", stageKey: "raw_review" }, members: [] }));
+      if (path.includes("/collaboration-summary")) return probeGate.promise.then(() => ({ project: { id: "p1", street: "12 Example St", stageKey: "raw_review", archived: false }, members: [] }));
       if (path.includes("/comments?")) return probeGate.promise.then(() => ({ project: { id: "p1", street: "12 Example St" }, comments: [] }));
       if (path.includes("/subtasks")) return Promise.resolve({ subtasks: [] });
       if (path.includes("/mentionable-users")) return Promise.resolve({ users: [] });

@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefCallback } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { RICH_TEXT_JSON_MAX_BYTES, richTextDocByteLength, richTextPlainText, type RichTextDoc } from "@quincy/shared";
-import { apiDelete, apiGet, apiPatch, apiPost } from "../lib/api";
+import { ApiError, apiDelete, apiGet, apiPatch, apiPost } from "../lib/api";
 import { externalApiGet } from "../lib/external-api-response";
 import { useSession } from "../lib/auth";
 import {
@@ -15,7 +15,7 @@ import {
   type Comment,
   type CommentResponse,
 } from "../lib/project-comments";
-import { classifyProjectAccessError, projectCollaborationDataGeneration, useProjectAccessTermination } from "../lib/project-data";
+import { classifyProjectAccessError, invalidateProjectSurfaces, projectCollaborationDataGeneration, useProjectAccessTermination } from "../lib/project-data";
 import { stripLinkPreviewDisplay } from "../lib/rich-text-tiptap";
 import { useProjectCommentDraft } from "../lib/project-comment-drafts";
 import { RichTextContent } from "./RichTextContent";
@@ -33,6 +33,7 @@ import { InitialsAvatar } from "./quincy/InitialsAvatar";
 import { CollaborationTimestamp } from "./quincy/CollaborationTimestamp";
 import { ICON_BUTTON } from "./quincy/icon-button";
 import { Menu, MenuPrimitive } from "./quincy/menu";
+import { ARCHIVED_NOTICE_CLASS } from "./archived-notice";
 
 export type ProjectDiscussionAccessFailureResource = "comments" | "comment-read-marker" | "nested-comment";
 
@@ -41,6 +42,8 @@ export type ProjectDiscussionThreadProps = {
   currentUserId?: string;
   presented?: boolean;
   consumeDiscussion403?: boolean;
+  /** The Project is archived: the discussion is read-only (#527). The collaboration-only view reads it from the staff collaboration summary. */
+  archived?: boolean;
   onAccessFailure?: (error: unknown, resource: ProjectDiscussionAccessFailureResource) => void;
   onUnreadCountChange?: (count: number) => void;
   children?: (discussion: {
@@ -54,6 +57,10 @@ const emptyDoc = (): RichTextDoc => ({ type: "doc", content: [{ type: "paragraph
 
 const COMMENT_LIMIT = 10_000;
 
+/** The server refused a write because the Project is archived (#527): a 409 with this code. Upload refusals are not this: they stay in-editor errors. */
+function isCommentArchivedRefusal(error: unknown) { return error instanceof ApiError && error.status === 409 && typeof error.details === "object" && error.details !== null && (error.details as { code?: unknown }).code === "comment_project_archived"; }
+const DISCUSSION_ARCHIVED_COPY = "Read-only while archived. Restore the project before commenting.";
+
 const MENU_ITEM =
   "flex items-center w-full min-h-[32px] max-[721px]:min-h-[44px] px-[var(--space-3)] py-[var(--space-2)] cursor-pointer " +
   "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground " +
@@ -62,6 +69,7 @@ const MENU_ITEM =
 type CommentItemProps = {
   comment: Comment;
   isOwn: boolean;
+  readOnly: boolean;
   now: number;
   saving: boolean;
   editing: RichTextDoc | undefined;
@@ -82,7 +90,7 @@ type CommentItemProps = {
  * Edit / Delete are author-only exactly as before — `isOwn` is derived from the effective session
  * user by the caller (the impersonated user while an Admin impersonates), and the server enforces it.
  */
-function CommentItem({ comment, isOwn, now, saving, editing, editingOverBytes, projectId, loadMentionables, onEditStart, onEditChange, onEditCancel, onEditSave, onDelete }: CommentItemProps) {
+function CommentItem({ comment, isOwn, readOnly, now, saving, editing, editingOverBytes, projectId, loadMentionables, onEditStart, onEditChange, onEditCancel, onEditSave, onDelete }: CommentItemProps) {
   const articleRef = useRef<HTMLElement>(null);
   const focusActions = useCallback(() => { articleRef.current?.querySelector<HTMLElement>('[data-testid="comment-actions"]')?.focus(); }, []);
   // Set when Edit is chosen from the "⋯" menu: the menu's close would otherwise return focus to the
@@ -117,7 +125,7 @@ function CommentItem({ comment, isOwn, now, saving, editing, editingOverBytes, p
       <CollaborationTimestamp instant={comment.createdAt} now={now} mode="relative" />
       {comment.editedAt && <span className={cn(META_TEXT, "!normal-case")}>· Edited</span>}
     </header>
-    {isOwn ? <Menu triggerLabel={`Actions for comment by ${comment.author.name}`} label="Comment actions" triggerClassName={ICON_BUTTON} triggerTestId="comment-actions" finalFocus={focusEditor} trigger={<span aria-hidden="true">⋯</span>}>
+    {isOwn && !readOnly ? <Menu triggerLabel={`Actions for comment by ${comment.author.name}`} label="Comment actions" triggerClassName={ICON_BUTTON} triggerTestId="comment-actions" finalFocus={focusEditor} trigger={<span aria-hidden="true">⋯</span>}>
       <MenuPrimitive.Item className={MENU_ITEM} disabled={isEditing || saving} onClick={() => { focusEditorOnClose.current = true; onEditStart(comment); }}>Edit</MenuPrimitive.Item>
       <MenuPrimitive.Item className={cn(MENU_ITEM, "text-destructive")} disabled={saving} onClick={() => { void onDelete(comment).finally(focusActions); }}>Delete</MenuPrimitive.Item>
     </Menu> : <span aria-hidden="true" />}
@@ -148,6 +156,7 @@ export function ProjectDiscussionThread({
   currentUserId: providedCurrentUserId,
   presented = true,
   consumeDiscussion403 = true,
+  archived = false,
   onAccessFailure,
   onUnreadCountChange,
   children,
@@ -164,6 +173,15 @@ export function ProjectDiscussionThread({
   const [editing, setEditing] = useState<{ id: string; content: RichTextDoc }>();
   const [mutationError, setMutationError] = useState<string>();
   const [discussionDeniedFor, setDiscussionDeniedFor] = useState<string>();
+  // A write refused as archived latches the thread read-only until the `archived` prop catches up (the detail refetch it triggers), and clears on Restore (#527).
+  const [latched, setLatched] = useState(false);
+  const readOnly = archived || latched;
+  const priorArchived = useRef(archived);
+  const priorReadOnly = useRef(readOnly);
+  const focusAfterFlip = useRef<{ inThread: boolean } | null>(null);
+  const composerRef = useRef<HTMLFormElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const noticeRef = useRef<HTMLParagraphElement>(null);
   const consumeOrForward = useCallback((reason: unknown, resource: ProjectDiscussionAccessFailureResource) => {
     // "nested-comment" (an edit/delete rejection) is deliberately excluded from local
     // consumption: the server checks membership before authorship, and both failures surface as
@@ -204,6 +222,18 @@ export function ProjectDiscussionThread({
   const listDenied = Boolean(consumeDiscussion403 && listError && isDiscussionOnlyForbidden(listError));
   const discussionDenied = listDenied || discussionDeniedFor === projectId;
 
+  useEffect(() => { if (priorArchived.current && !archived) setLatched(false); priorArchived.current = archived; }, [archived]);
+  // Turning read-only (by the latch or by the prop arriving with a refetch) drops an open edit and its error: the controls that own them are gone.
+  // The composer's draft is kept, in state and in storage, and returns after Restore.
+  useLayoutEffect(() => { const was = priorReadOnly.current; priorReadOnly.current = readOnly; if (was || !readOnly) return; setEditing(undefined); setMutationError(undefined); }, [readOnly]);
+  // A refusal removes the focused control (the saving editor is disabled, then unmounted): focus the notice, but only when focus was genuinely lost
+  // (body, disabled, disconnected, or an ancestor of the thread). A connected, enabled control elsewhere keeps it, and nothing moves on load (#450/#452).
+  useLayoutEffect(() => {
+    const flip = focusAfterFlip.current; if (!latched || !flip) return;
+    focusAfterFlip.current = null;
+    const active = document.activeElement; const notice = noticeRef.current;
+    if (!active || active === document.body || active.matches(":disabled") || (flip.inThread && (!active.isConnected || (notice !== null && active.contains(notice))))) notice?.focus();
+  }, [latched]);
   useEffect(() => { void presentation.drain(commentsData, readStateQuery.data); }, [commentsData, presentation, readStateQuery.data]);
   useEffect(() => {
     onUnreadCountChange?.(unreadCount);
@@ -238,10 +268,18 @@ export function ProjectDiscussionThread({
   const postingPlainText = richTextPlainText(content);
   const canPost = !saving && !composerUploading && !postingOverBytes && postingPlainText.trim() !== "" && postingPlainText.length <= COMMENT_LIMIT;
 
+  const focusInThread = () => { const active = document.activeElement; return active !== null && (composerRef.current?.contains(active) === true || listRef.current?.contains(active) === true); };
+  /** Handles an archived refusal of a Post, Save or Delete: the thread goes read-only, nothing is optimistic, and the header and Checklist catch up. */
+  function enterArchived(inThread: boolean) {
+    focusAfterFlip.current = { inThread }; setLatched(true); setMutationError(undefined);
+    void invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "collaboration-summary" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true });
+  }
+
   async function submit() {
     if (!canPost) return;
     const mutationProjectId = projectId;
     const submitted = content;
+    const inThread = focusInThread();
     setSaving(true); setMutationError(undefined);
     try {
       const comment = await apiPost<Comment, { content: RichTextDoc }>(`/api/projects/${encodeURIComponent(projectId)}/comments`, { content: stripLinkPreviewDisplay(submitted) });
@@ -254,6 +292,7 @@ export function ProjectDiscussionThread({
       void invalidateProjectCommentResources(queryClient, projectId, ["comments", "comment-read-marker", "activity"]);
     } catch (reason) {
       if (presentation.isCurrent(mutationProjectId)) {
+        if (isCommentArchivedRefusal(reason)) { enterArchived(inThread); return; }
         consumeOrForward(reason, "comments");
         setMutationError(errorMessage(reason, "Comment could not be posted."));
       }
@@ -265,6 +304,7 @@ export function ProjectDiscussionThread({
   async function saveEdit() {
     if (!editing || saving || editingOverBytes) return;
     const mutationProjectId = projectId;
+    const inThread = focusInThread();
     setSaving(true); setMutationError(undefined);
     try {
       const comment = await apiPatch<Comment, { content: RichTextDoc }>(`/api/projects/${encodeURIComponent(projectId)}/comments/${encodeURIComponent(editing.id)}`, { content: stripLinkPreviewDisplay(editing.content) });
@@ -274,6 +314,7 @@ export function ProjectDiscussionThread({
       void invalidateProjectCommentResources(queryClient, projectId, ["comments", "activity"]);
     } catch (reason) {
       if (presentation.isCurrent(mutationProjectId)) {
+        if (isCommentArchivedRefusal(reason)) { enterArchived(inThread); return; }
         consumeOrForward(reason, "nested-comment");
         setMutationError(errorMessage(reason, "Comment could not be updated."));
       }
@@ -285,6 +326,7 @@ export function ProjectDiscussionThread({
   async function remove(comment: Comment) {
     if (!await confirm({ title: "Delete comment?", message: "Delete this comment?", confirmLabel: "Delete", danger: true })) return;
     const mutationProjectId = projectId;
+    const inThread = focusInThread();
     setSaving(true); setMutationError(undefined);
     try {
       await apiDelete(`/api/projects/${encodeURIComponent(projectId)}/comments/${encodeURIComponent(comment.id)}`);
@@ -294,6 +336,7 @@ export function ProjectDiscussionThread({
       void invalidateProjectCommentResources(queryClient, projectId, ["comments", "comment-read-marker", "activity"]);
     } catch (reason) {
       if (presentation.isCurrent(mutationProjectId)) {
+        if (isCommentArchivedRefusal(reason)) { enterArchived(inThread); return; }
         consumeOrForward(reason, "nested-comment");
         setMutationError(errorMessage(reason, "Comment could not be deleted."));
       }
@@ -302,7 +345,7 @@ export function ProjectDiscussionThread({
     }
   }
 
-  const composer = <form data-testid="discussion-composer" className="flex items-start gap-[var(--space-3)] mb-[var(--space-5)]" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+  const composer = <form ref={composerRef} data-testid="discussion-composer" className="flex items-start gap-[var(--space-3)] mb-[var(--space-5)]" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
     {typeof viewerName === "string" && viewerName !== "" && <InitialsAvatar name={viewerName} className="mt-[var(--space-1)] max-[721px]:hidden" />}
     <div className="grid gap-[var(--space-2)] min-w-0 flex-1">
       <label className="sr-only" htmlFor={`project-comment-${projectId}`}>Write a comment</label>
@@ -314,13 +357,14 @@ export function ProjectDiscussionThread({
   const contentMarkup = <>
     {listError && !discussionDenied && <Notice tone="critical" role="alert">{errorMessage(listError, "Comments could not be loaded.")}</Notice>}
     {mutationError && !discussionDenied && <Notice tone="critical" role="alert">{mutationError}</Notice>}
-    {!discussionDenied && !listLoading && composer}
+    {!discussionDenied && !listLoading && (readOnly ? <div className="mb-[var(--space-5)]"><p ref={noticeRef} tabIndex={-1} className={ARCHIVED_NOTICE_CLASS} data-testid="discussion-archived-notice">{DISCUSSION_ARCHIVED_COPY}</p></div> : composer)}
     <div ref={presentation.anchorRef} data-testid="discussion-read-anchor" className="w-px h-px m-0 overflow-hidden" aria-hidden="true" />
     {discussionDenied ? <EmptyState role="status" size="compact" title="No discussion access." /> : listLoading ? <EmptyState role="status" size="compact" title="Loading comments…" /> : <>
-      <div data-testid="discussion-comments" className="grid">{comments.length ? comments.map((comment) => <CommentItem
+      <div ref={listRef} data-testid="discussion-comments" className="grid">{comments.length ? comments.map((comment) => <CommentItem
         key={comment.id}
         comment={comment}
         isOwn={comment.author.id === currentUserId}
+        readOnly={readOnly}
         now={now}
         saving={saving}
         editing={editing?.id === comment.id ? editing.content : undefined}
