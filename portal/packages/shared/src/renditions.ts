@@ -1,4 +1,7 @@
-export type RenditionMessage = { type: "generate_renditions"; assetId: string };
+export type AssetRenditionMessage = { type: "generate_renditions"; assetId: string };
+/** The JPEG display copy of a HEIC embedded image (#495). Shares the rendition queue and its DLQ. */
+export type EmbeddedDisplayMessage = { type: "embedded_display"; mediaId: string };
+export type RenditionMessage = AssetRenditionMessage | EmbeddedDisplayMessage;
 
 type RenditionQueue = { send(message: RenditionMessage): Promise<unknown> };
 export type RenditionQueueEnv = { RENDITIONS_ENABLED?: boolean; RENDITION_QUEUE?: RenditionQueue };
@@ -23,6 +26,22 @@ export async function enqueueRenditionSafely(env: RenditionQueueEnv, assetId: st
     return true;
   } catch (error) {
     console.error("Rendition enqueue failed; the asset remains eligible for backfill", { assetId, source, error });
+    return false;
+  }
+}
+
+/** Hands a HEIC row to the rendition queue. Best effort like `enqueueRenditionSafely`: a lost send is repaired by the minute cron's recovery of stale `pending` rows. */
+export async function enqueueEmbeddedDisplaySafely(env: RenditionQueueEnv, mediaId: string, source: string): Promise<boolean> {
+  if (!renditionsEnabled(env)) return false;
+  if (!env.RENDITION_QUEUE) {
+    console.error("Embedded display enqueue skipped: RENDITIONS_ENABLED is true but no queue binding is configured", { mediaId, source });
+    return false;
+  }
+  try {
+    await env.RENDITION_QUEUE.send({ type: "embedded_display", mediaId });
+    return true;
+  } catch (error) {
+    console.error("Embedded display enqueue failed; the recovery cron re-sends a stale pending row", { mediaId, source, error });
     return false;
   }
 }

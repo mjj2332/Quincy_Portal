@@ -11,6 +11,8 @@ import { dbFor } from "./lib/db";
 import { createJob, setJobStatus } from "./lib/jobs";
 import type { DropboxSyncMessage, IngestMessage } from "./messages";
 import { generateRenditions } from "./renditions";
+import { generateEmbeddedDisplayCopy } from "./embedded-display";
+import { recoverEmbeddedRenditions } from "./embedded-display-recovery";
 import { publishStatusAfterWorkflowCreateFailure } from "./manual-edited-renditions";
 import { deleteBatch, deleteBatchCheck, isDropboxPathNotFound, type DropboxDeleteBatchCheckResult, type DropboxDeleteBatchResult } from "./dropbox/client";
 import { renewRawReconciliationClaim, syncProjectRawFolder } from "./dropbox/sync";
@@ -168,6 +170,12 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
         console.log("Manual publish stuck sweep", recoveredManualPublishes);
       } catch (error) {
         console.error("Manual publish stuck sweep failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+      }
+      try {
+        const recovered = await recoverEmbeddedRenditions(this.env, controller.scheduledTime);
+        if (recovered.resent || recovered.failed) console.log("Embedded display recovery", recovered);
+      } catch (error) {
+        console.error("Embedded display recovery failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
       }
       try {
         // Outside the Editor automation flag: a Portal Edited upload counts as an arrival too (#486).
@@ -868,6 +876,15 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
           message.ack();
           continue;
         }
+        if (parsed && parsed.body.type === "embedded_display") {
+          // A HEIC embedded image (#495) that exhausted its retries. rendition_dlq_events and its replay are keyed by asset, so no row is written there:
+          // the media row's own `failed` status is where this becomes visible, to its uploader as a Retry.
+          const mediaId = parsed.body.mediaId;
+          const failed = await this.env.DB.prepare("UPDATE embedded_media SET rendition_status = 'failed', rendition_error = 'dlq', rendition_lease_until = NULL, updated_at = ? WHERE id = ? AND rendition_status = 'pending'").bind(Date.now(), mediaId).run();
+          console.error("Embedded display DLQ message", { queue: batch.queue, mediaId, failedRow: failed.meta.changes === 1 });
+          message.ack();
+          continue;
+        }
         const assetId = fallbackAssetId;
         console.error("Rendition DLQ message has an unrecognized body", { queue: batch.queue, assetId });
         await db.insert(renditionDlqEvents).values({
@@ -922,6 +939,12 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
             await generateRenditions(this.env, parsed.body.assetId);
             message.ack();
             break;
+          case "embedded_display":
+            // Same red gate as the asset renditions: never ack while the consumer is off, so the message reaches the DLQ rather than vanishing.
+            if (!renditionsEnabled(this.env)) throw new Error("Rendition consumer is disabled");
+            await generateEmbeddedDisplayCopy(this.env, parsed.body.mediaId);
+            message.ack();
+            break;
           case "dropbox_sync":
             await syncProjectRawFolder(
               this.env,
@@ -974,6 +997,8 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
           queue: batch.queue,
           type: body && typeof body === "object" ? (body as { type?: unknown }).type : "invalid",
           assetId: body && typeof body === "object" && typeof (body as { assetId?: unknown }).assetId === "string" ? (body as { assetId: string }).assetId : undefined,
+          mediaId: body && typeof body === "object" && typeof (body as { mediaId?: unknown }).mediaId === "string" ? (body as { mediaId: string }).mediaId : undefined,
+          embeddedFailure: batch.queue === "quincy-renditions" && body && typeof body === "object" && (body as { type?: unknown }).type === "embedded_display" ? (error instanceof Error ? error.message.slice(0, 200) : "unknown") : undefined,
           renditionFailure,
         });
         message.retry();

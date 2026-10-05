@@ -121,6 +121,20 @@ export {
   type NotificationType
 } from "./notifications";
 export { NOTIFICATION_TYPES } from "@quincy/shared";
+export {
+  EMBEDDED_DISPLAY_LEASE_MS,
+  EMBEDDED_DISPLAY_MAX_ATTEMPTS,
+  EMBEDDED_DISPLAY_MAX_BYTES,
+  EmbeddedDisplayTransientError,
+  discardUnreferencedObject,
+  enqueueEmbeddedMediaCleanup,
+  generateEmbeddedDisplay,
+  settleThrownAdoption,
+  type CleanupEntry,
+  type EmbeddedDisplayDeps,
+  type EmbeddedDisplayOutcome,
+  type EmbeddedMediaStores,
+} from "./embedded-media-lifecycle";
 export type Database = ReturnType<typeof createDb>;
 
 export function createDb(d1: D1Database) {
