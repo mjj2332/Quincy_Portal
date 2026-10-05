@@ -1200,7 +1200,7 @@ const FRAME_KEYS: Partial<Record<string, -1 | 1>> = {
 
 type AutosaveOptions = Pick<
   WhiteboardCanvasProps,
-  "onChange" | "onSave" | "onSaveStatusChange"
+  "onChange" | "onSave" | "onSaveStatusChange" | "discardSave"
 > & { changeDelay: number; autosaveDelay: number }
 
 // QUINCY ADDITION #499: a failed or refused save (the server answers `stale` while an access change is landing) is
@@ -1257,6 +1257,12 @@ export function useAutosave(
     const current = apiRef.current
     const save = options.current.onSave
     if (!current || !save || !dirtyRef.current) return
+    // QUINCY ADDITION #500: the host is replacing this board's scene (a version was restored): what is pending is not sent.
+    if (options.current.discardSave?.()) {
+      dirtyRef.current = false
+      finalSceneRef.current = null
+      return
+    }
     if (pausedRef.current && !closedRef.current) {
       report("unsaved")
       return
@@ -1352,6 +1358,12 @@ export function useAutosave(
       window.clearTimeout(saveTimer.current)
       window.clearTimeout(retryTimer.current)
       const current = apiRef.current
+      // QUINCY ADDITION #500: a board reset discards the pending edit; the teardown flush is exactly what would resurrect it.
+      if (options.current.discardSave?.()) {
+        dirtyRef.current = false
+        finalSceneRef.current = null
+        return
+      }
       if (dirtyRef.current && current) {
         finalSceneRef.current = readScene(current)
       }
@@ -1641,6 +1653,7 @@ export function WhiteboardCanvas({
   onSave,
   autosaveDelay = 1500,
   onSaveStatusChange,
+  discardSave,
   onElements,
   onPresence,
   onReady,
@@ -1695,6 +1708,7 @@ export function WhiteboardCanvas({
     onChange,
     onSave,
     onSaveStatusChange,
+    discardSave,
     onElements,
     onPresence,
     onReady,
@@ -1714,6 +1728,7 @@ export function WhiteboardCanvas({
       onChange,
       onSave,
       onSaveStatusChange,
+      discardSave,
       onElements,
       onPresence,
       onReady,

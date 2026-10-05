@@ -45,6 +45,12 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
   const [saveStatus, setSaveStatus] = useState<WhiteboardSaveStatus>("saved");
   const [deleted, setDeleted] = useState(false);
   // #499: the mode the server last set (init, then `mode` frames), which moves without a reconnect.
+  // #500: the editor remounts (a new key) when a restored version replaces the board; `generationRef` is the board generation this tab holds.
+  const [epoch, setEpoch] = useState(0);
+  const epochRef = useRef(0);
+  const generationRef = useRef(0);
+  /** True from the moment a restore is seen until the new editor has committed: the old editor's teardown must not flush. */
+  const resettingRef = useRef(false);
   const [liveMode, setLiveMode] = useState<WhiteboardMode | null>(null);
   const modeRef = useRef<WhiteboardMode>(archivedHint ? "view" : "edit");
   const lastPresenceRef = useRef<WhiteboardPresence>({ pointer: null, button: "up", selectedIds: [] });
@@ -67,54 +73,83 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
   useEffect(() => {
     // This effect's own socket: a final flush that runs after a remount must not use the new one.
     let socket: WhiteboardSocket | null = null;
-    const saver = createWhiteboardSaver({
-      getElements: () => elementsRef.current,
-      send: (batch) => socket?.send(batch) ?? Promise.reject(new Error("The whiteboard is not connected.")),
-    });
-    // An element the editor dropped with no tombstone (a resize to zero size) is deleted the way the editor deletes, as soon as the change is seen:
-    // the deletion goes on the board as the person's own change (so autosave sends it), and the saver only ever sends what the scene holds.
-    const vanish = createVanishObserver({
-      mayHold: saver.mayHold,
-      ready: () => controllerRef.current !== null,
-      deletion: (last, patch) => controllerRef.current!.author(last as never, { isDeleted: true, ...patch }) as unknown as SavedElement,
-      install: (deletions) => { elementsRef.current = controllerRef.current!.applyLocal(deletions, (element) => saver.hold(element as unknown as SavedElement)) as unknown as SavedElement[]; return elementsRef.current; },
-    });
-    vanishRef.current = vanish;
-    saverRef.current = saver;
     const peers = new Map<string, WhiteboardPeer>();
     let frameHandle: number | undefined;
     const showPeers = () => {
       if (frameHandle !== undefined) return;                // a cursor moves up to 30 times a second: draw once a frame
       frameHandle = frame(() => { frameHandle = undefined; controllerRef.current?.setCollaborators([...peers.values()].map(toCollaborator)); });
     };
-    // Merging, recording what the board took as stored, and deferring winners the editor skipped: `lib/whiteboard-remote.ts`.
-    const remoteApplier = createRemoteApplier({
-      saver,
-      merge: () => { const controller = controllerRef.current; return controller ? (remote, hold) => controller.applyRemote(remote, (element) => hold(element as unknown as SavedElement)) as unknown as SavedElement[] : null; },
-      setScene: (scene) => { elementsRef.current = scene; },
-      getScene: () => elementsRef.current,
-      settle: () => vanish.observe(elementsRef.current),
-      interactingIds: () => { const controller = controllerRef.current; return controller ? interactingIds(controller.api.getAppState()) : new Set<string>(); },
-      forget: (ids) => vanish.forget(ids),
-    });
-    const applyRemote = remoteApplier.apply;
-    drainRemote.current = () => { remoteApplier.drain(); showPeers(); };
-    replayRemote.current = remoteApplier.replay;
+    /**
+     * #500: everything that belongs to ONE board generation: the saver (what the server holds), the vanish observer, and the remote applier
+     * with its queued and deferred batches. A restore throws the whole session away and starts another on the restored scene, so nothing the
+     * old one tracked (pending acks, retries, buffered batches) can reach the new board. The transport and the peers stay.
+     * `seal.generation` is what every save of this session is sealed for: the socket refuses it once the board has moved on.
+     */
+    const startSession = (seal: { generation: number | undefined }) => {
+      const saver = createWhiteboardSaver({
+        getElements: () => elementsRef.current,
+        send: (batch) => socket?.send(batch, seal.generation) ?? Promise.reject(new Error("The whiteboard is not connected.")),
+      });
+      // An element the editor dropped with no tombstone (a resize to zero size) is deleted the way the editor deletes, as soon as the change is seen:
+      // the deletion goes on the board as the person's own change (so autosave sends it), and the saver only ever sends what the scene holds.
+      const vanish = createVanishObserver({
+        mayHold: saver.mayHold,
+        ready: () => controllerRef.current !== null,
+        deletion: (last, patch) => controllerRef.current!.author(last as never, { isDeleted: true, ...patch }) as unknown as SavedElement,
+        install: (deletions) => { elementsRef.current = controllerRef.current!.applyLocal(deletions, (element) => saver.hold(element as unknown as SavedElement)) as unknown as SavedElement[]; return elementsRef.current; },
+      });
+      vanishRef.current = vanish;
+      saverRef.current = saver;
+      // Merging, recording what the board took as stored, and deferring winners the editor skipped: `lib/whiteboard-remote.ts`.
+      const remoteApplier = createRemoteApplier({
+        saver,
+        merge: () => { const controller = controllerRef.current; return controller ? (remote, hold) => controller.applyRemote(remote, (element) => hold(element as unknown as SavedElement)) as unknown as SavedElement[] : null; },
+        setScene: (scene) => { elementsRef.current = scene; },
+        getScene: () => elementsRef.current,
+        settle: () => vanish.observe(elementsRef.current),
+        interactingIds: () => { const controller = controllerRef.current; return controller ? interactingIds(controller.api.getAppState()) : new Set<string>(); },
+        forget: (ids) => vanish.forget(ids),
+      });
+      drainRemote.current = () => { remoteApplier.drain(); showPeers(); };
+      replayRemote.current = remoteApplier.replay;
+      return { saver, vanish, seal, applyRemote: remoteApplier.apply };
+    };
+    let session = startSession({ generation: undefined });
+    /** #500: a version was restored (a `reset` frame, or a reconnect's `init` on a newer generation): the editor remounts on the restored scene. */
+    const resetBoard = (next: { generation: number; elements: Array<Record<string, unknown>> }) => {
+      if (next.generation <= generationRef.current) return;      // a straggler of a generation this board has already left
+      generationRef.current = next.generation;
+      resettingRef.current = true;                               // the old editor's teardown must not flush what the restore replaced
+      session.vanish.stop();
+      elementsRef.current = next.elements as unknown as SavedElement[];
+      controllerRef.current = null;
+      session = startSession({ generation: next.generation });
+      session.saver.seed(next.elements as unknown as SavedElement[]);
+      epochRef.current += 1;
+      setInit((previous) => (previous ? { ...previous, generation: next.generation, elements: next.elements } : previous));
+      setSaveStatus("saved");
+      setEpoch(epochRef.current);
+      pushToast("Board restored — your unsaved changes were replaced");
+    };
     const opened = openWhiteboardSocket(projectId, {
       onInit: (next, reconnect) => {
         modeRef.current = next.mode; setLiveMode(next.mode);
         peers.clear(); for (const peer of next.peers) peers.set(peer.sessionId, peer); showPeers();
-        if (!reconnect) { setInit(next); saver.seed(next.elements as unknown as SavedElement[]); elementsRef.current = next.elements as unknown as SavedElement[]; return; }
+        if (!reconnect) { generationRef.current = next.generation; session.seal.generation = next.generation; setInit(next); session.saver.seed(next.elements as unknown as SavedElement[]); elementsRef.current = next.elements as unknown as SavedElement[]; return; }
+        // #500: the board was restored while this tab was away. Merging would let its newer element versions beat the restored scene,
+        // so the editor is replaced by the restored scene instead.
+        if (next.generation !== generationRef.current) { resetBoard(next); return; }
         // A reconnect keeps the board the user is looking at: what happened while away is merged into it first (the
         // server's copy of anything newer wins, anything only we have stays), and only then does what was not
         // acknowledged before the drop go out again, now above what it was merged with.
-        applyRemote(next.elements);
-        if (next.mode === "edit") saver.flush().catch(() => setSaveStatus("error"));
+        session.applyRemote(next.elements);
+        if (next.mode === "edit") session.saver.flush().catch(() => setSaveStatus("error"));
       },
       onConnection: setConnection,
       onDeleted: () => { setDeleted(true); pushToast("This project's whiteboard was deleted.", "error"); },
       onAccessFailure: (error) => accessFailureRef.current(error),
-      onElements: applyRemote,
+      onElements: (elements) => session.applyRemote(elements as Array<Record<string, unknown>>),
+      onReset: resetBoard,
       onPresence: (peer) => { peers.set(peer.sessionId, peer); showPeers(); },
       onPeerLeft: (sessionId) => { peers.delete(sessionId); showPeers(); },
       onMode: (next) => {
@@ -125,11 +160,11 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
     socket = opened;
     socketRef.current = opened;
     return () => {
-      vanish.stop();                                        // the editor is going away: whatever it no longer holds was not deleted
+      session.vanish.stop();                                // the editor is going away: whatever it no longer holds was not deleted
       // Best effort for closes that bypass the Close button (Esc, tab switch, navigation): send what is
       // left, then let the socket wait briefly for the acks. The Close button itself waits and reports.
       // The flush may queue behind a save in flight, so the socket closes only once it settles (bounded).
-      const finalFlush = saver.flush().catch(() => undefined);
+      const finalFlush = session.saver.flush().catch(() => undefined);
       let timer: ReturnType<typeof setTimeout> | undefined;
       const bound = new Promise<void>((resolve) => { timer = setTimeout(resolve, FINAL_FLUSH_TIMEOUT_MS); });
       void Promise.race([finalFlush, bound]).then(() => { clearTimeout(timer); opened.close(); });
@@ -160,7 +195,12 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
 
   // View-only boards never send: the server would refuse, and the refusal would read as a failed save.
   // The autosave is told so ("skipped"), not shown a success: the edit stays dirty and goes out when the board is editable again.
-  const save = useCallback(async (): Promise<WhiteboardSaveOutcome> => { if (modeRef.current === "view") return "skipped"; await saverRef.current?.flush(); }, []);
+  const saveFor = useCallback((editor: number) => async (): Promise<WhiteboardSaveOutcome> => {
+    if (epochRef.current !== editor || modeRef.current === "view") return "skipped";   // #500: an editor the restore replaced saves nothing
+    await saverRef.current?.flush();
+  }, []);
+  const discardSave = useCallback(() => resettingRef.current, []);
+  useEffect(() => { resettingRef.current = false; }, [epoch]);
   const sharePresence = useCallback((presence: WhiteboardPresence) => { lastPresenceRef.current = presence; socketRef.current?.sendPresence(presence); }, []);
 
   const mode: WhiteboardMode = liveMode ?? init?.mode ?? (archivedHint ? "view" : "edit");
@@ -201,6 +241,7 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
               <ViewLoadBoundary viewLabel="whiteboard">
                 <Suspense fallback={<p className="p-[var(--space-5)]" role="status">Loading whiteboard.</p>}>
                   <Whiteboard
+                    key={epoch}
                     className="absolute inset-0"
                     theme="light"
                     name={street}
@@ -210,11 +251,12 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
                     viewOnlyIndicator={false}
                     imageTool={false}
                     background="grid"
-                    onReady={(controller) => { controllerRef.current = controller; controller.adoptRevisions((init?.elements ?? []) as unknown as SavedElement[]); drainRemote.current(); }}
+                    onReady={(controller) => { if (epochRef.current !== epoch) return; controllerRef.current = controller; controller.adoptRevisions((init?.elements ?? []) as unknown as SavedElement[]); drainRemote.current(); }}
                     onPresence={sharePresence}
-                    onElements={(elements) => { elementsRef.current = elements as ReadonlyArray<SavedElement>; vanishRef.current?.observe(elementsRef.current); replayRemote.current(); }}
-                    onSave={save}
-                    onSaveStatusChange={setSaveStatus}
+                    onElements={(elements) => { if (epochRef.current !== epoch) return; elementsRef.current = elements as ReadonlyArray<SavedElement>; vanishRef.current?.observe(elementsRef.current); replayRemote.current(); }}
+                    onSave={saveFor(epoch)}
+                    discardSave={discardSave}
+                    onSaveStatusChange={(status) => { if (epochRef.current === epoch) setSaveStatus(status); }}
                     onToast={pushToast}
                   />
                 </Suspense>

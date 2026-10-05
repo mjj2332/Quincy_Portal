@@ -14,11 +14,11 @@ let useAutosave: typeof import("./whiteboard-canvas").useAutosave;
 beforeAll(async () => { HTMLCanvasElement.prototype.getContext = (() => ({})) as never; ({ useAutosave } = await import("./whiteboard-canvas")); });
 const fakeApi = { getSceneElementsIncludingDeleted: () => [], getFiles: () => ({}), getAppState: () => ({}) } as never;
 
-function mount(onSave: () => Promise<void | "skipped">, paused = false) {
+function mount(onSave: () => Promise<void | "skipped">, paused = false, discardSave?: () => boolean) {
   let dirty: () => void = () => undefined;
   const statuses: string[] = [];
   function Harness({ paused: isPaused }: { paused: boolean }) {
-    const options = useRef({ onSave, changeDelay: 10, autosaveDelay: 100, onSaveStatusChange: (status: string) => statuses.push(status) } as never);
+    const options = useRef({ onSave, changeDelay: 10, autosaveDelay: 100, discardSave, onSaveStatusChange: (status: string) => statuses.push(status) } as never);
     const { markDirty } = useAutosave(fakeApi, options, isPaused);
     useEffect(() => { dirty = markDirty; }, [markDirty]);
     return null;
@@ -140,5 +140,41 @@ describe("autosave while the board is view-only (#499)", () => {
     board.setPaused(false);                                  // the resume effect flushes now; the armed retry must not resend
     await advance(120_000);
     expect(onSave).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("autosave discard (#500)", () => {
+  it("drops a pending edit instead of flushing it when the editor is torn down for a board reset", async () => {
+    const onSave = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+    let resetting = false;
+    const board = mount(onSave, false, () => resetting);
+    board.edit();                                            // an edit the restored scene replaces...
+    resetting = true;
+    act(() => root!.unmount()); root = null;                 // ...and the editor goes away: the teardown flush must be skipped
+    await advance(120_000);
+    expect(onSave).not.toHaveBeenCalled();
+    expect(board.statuses).not.toContain("saving");
+  });
+
+  it("still flushes on an ordinary teardown", async () => {
+    const onSave = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+    const board = mount(onSave, false, () => false);
+    board.edit();
+    act(() => root!.unmount()); root = null;
+    await advance(10);
+    expect(onSave).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry or timer-flush a discarded edit", async () => {
+    const onSave = vi.fn<() => Promise<void>>().mockRejectedValue(new Error("stale"));
+    let resetting = false;
+    const board = mount(onSave, false, () => resetting);
+    board.edit();
+    await advance(100);                                      // failed once, retry armed
+    const calls = onSave.mock.calls.length;
+    resetting = true;
+    act(() => root!.unmount()); root = null;
+    await advance(120_000);
+    expect(onSave.mock.calls.length).toBe(calls);
   });
 });

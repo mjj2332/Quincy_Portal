@@ -258,4 +258,40 @@ describe("whiteboard socket", () => {
       expect(FakeSocket.instances).toHaveLength(2);
     });
   });
+describe("whiteboard socket: board generation (#500)", () => {
+  it("refuses a batch sealed for an older generation after a reset, and sends nothing", async () => {
+    const { socket, current } = setup();
+    current().open(); current().receive(init());
+    current().receive({ type: "reset", generation: 2, elements: [{ id: "r" }] });
+    const before = current().sent.length;
+    await expect(socket.send([{ id: "stale" }], 1)).rejects.toThrow("restored");
+    expect(current().sent.length).toBe(before);
+    const fresh = socket.send([{ id: "fresh" }], 2);
+    expect(JSON.parse(current().sent.at(-1)!)).toMatchObject({ generation: 2, elements: [{ id: "fresh" }] });
+    current().receive({ type: "ack", seq: 0, generation: 2 });
+    await expect(fresh).resolves.toBeUndefined();
+  });
+
+  it("never delivers an elements relay of another generation; a newer one means a missed reset, so it reconnects for the init", () => {
+    const { handlers, current } = setup();
+    current().open(); current().receive(init());
+    current().receive({ type: "elements", generation: 0, elements: [{ id: "old" }] });
+    expect(handlers.onElements).not.toHaveBeenCalled();
+    expect(current().closedWith).toBeNull();
+    const first = current();
+    first.receive({ type: "elements", generation: 3, elements: [{ id: "new" }] });
+    expect(handlers.onElements).not.toHaveBeenCalled();
+    expect(first.closedWith).not.toBeNull();
+  });
+
+  it("reconnects when a rejection names a generation ahead of its own (it missed the reset)", async () => {
+    const { socket, current } = setup();
+    current().open(); current().receive(init());
+    const first = current();
+    const saved = socket.send([{ id: "a" }], 1);
+    first.receive({ type: "rejected", seq: 0, reason: "generation", generation: 2 });
+    await expect(saved).rejects.toThrow("restored");
+    expect(first.closedWith).not.toBeNull();
+  });
+});
 });

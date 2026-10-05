@@ -9,6 +9,7 @@
  * This file: The editor wrapper: lazy-loads `whiteboard-canvas` (so Excalidraw never reaches the entry chunk), the skeleton, error state and theme. Unchanged apart from the mechanical edits and the additions marked QUINCY ADDITION below.
  * QUINCY ADDITION #499 (additive; nothing existing changes): `WhiteboardCollaborator.colorKey`, the controller's
  * `applyRemote` and the `onPresence` prop, so the Project whiteboard can show live cursors and merge other people's edits.
+ * QUINCY ADDITION #500 (additive): the `discardSave` prop, so a board reset drops a pending save instead of flushing it on teardown.
  * Left out of the install on purpose: `share-popover` (public view-only links: ADR 0017 / #483 forbid them),
  * `review-board` (the demo composition -- `components/ProjectWhiteboard.tsx` is the Portal's), `page`, `presence`
  * (#499) and `history-tab` (#500). New production dependencies: `@excalidraw/excalidraw` (pinned 0.18.1) and `motion`.
@@ -289,6 +290,9 @@ export type WhiteboardProps = {
   /** Milliseconds of idle before onSave; default 1500. */
   autosaveDelay?: number
   onSaveStatusChange?: (status: WhiteboardSaveStatus) => void
+  /** QUINCY ADDITION #500: true while the host is replacing this editor's scene (a version was restored). The autosave then
+   * drops its pending edit instead of flushing it, including the flush an unmount makes. Read at flush time; keep it stable. */
+  discardSave?: () => boolean
   /** Fires once the scene has loaded. */
   onReady?: (controller: WhiteboardController) => void
   /** View only: nobody edits the board, though controller methods still write (gate your own actions).
