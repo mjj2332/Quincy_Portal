@@ -140,7 +140,7 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
     this.ctx.acceptWebSocket(server);
     const attachment: Attachment = { userId, mode: state.archived ? "view" : "edit", projectId, sessionId: crypto.randomUUID(), name };
     server.serializeAttachment(attachment);
-    const peers = this.attachments().filter((other) => other.attachment.sessionId !== attachment.sessionId).map((other) => this.presence.peer(other.attachment));
+    const peers = this.attachments().filter((other) => other.attachment.sessionId !== attachment.sessionId && other.ws.readyState === OPEN).map((other) => this.presence.peer(other.attachment));
     this.send(server, { type: "init", mode: attachment.mode, generation: this.snapshots.generation(), sessionId: attachment.sessionId, elements: readElements(this.ctx.storage), peers });
     return new Response(null, { status: 101, webSocket: client });
   }

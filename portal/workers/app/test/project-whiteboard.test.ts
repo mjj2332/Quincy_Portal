@@ -799,6 +799,21 @@ describe("write authorization against refreshAccess (#499, epoch at invocation)"
     a.client.ws.close(1000);
   });
 
+  it("admission does not report a closing socket as a peer: its peer-left was already broadcast, so a joiner would keep a ghost", async () => {
+    const project = await newProject();
+    const a = await join(project, "member");
+    await runInDurableObject(stubFor(project), async (_instance, state) => {
+      const real = state.getWebSockets();
+      const attachment = real[0]!.deserializeAttachment();
+      const closing = { readyState: 2, deserializeAttachment: () => ({ ...attachment, sessionId: "closing-ghost", mode: "view" }), serializeAttachment: () => undefined, send: () => { throw new Error("socket is closing"); }, close: () => undefined } as unknown as WebSocket;
+      (state as unknown as { getWebSockets: () => WebSocket[] }).getWebSockets = () => [closing, ...real];
+    });
+    const late = await join(project, "member2");
+    expect(late.init.peers.map((peer) => peer.sessionId)).toEqual([a.init.sessionId]);
+    expect(late.init.peers.some((peer) => peer.sessionId === "closing-ghost")).toBe(false);
+    a.client.ws.close(1000); late.client.ws.close(1000);
+  });
+
   it("keeps the refresh queue alive after a refresh fails: later refreshes and writes still work", async () => {
     const project = await newProject();
     const a = await join(project, "member");
