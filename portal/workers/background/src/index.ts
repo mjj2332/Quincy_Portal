@@ -880,7 +880,9 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
           // A HEIC embedded image (#495) that exhausted its retries. rendition_dlq_events and its replay are keyed by asset, so no row is written there:
           // the media row's own `failed` status is where this becomes visible, to its uploader as a Retry.
           const mediaId = parsed.body.mediaId;
-          const failed = await this.env.DB.prepare("UPDATE embedded_media SET rendition_status = 'failed', rendition_error = 'dlq', rendition_lease_until = NULL, updated_at = ? WHERE id = ? AND rendition_status = 'pending'").bind(Date.now(), mediaId).run();
+          // Fenced on the message's generation: DLQ, then the uploader's Retry (a new pending run), then this old message redelivered must not fail the new run. A message with no generation predates the fence and is not fenced.
+          const generation = parsed.body.generation ?? null;
+          const failed = await this.env.DB.prepare("UPDATE embedded_media SET rendition_status = 'failed', rendition_error = 'dlq', rendition_lease_until = NULL, updated_at = ? WHERE id = ? AND rendition_status = 'pending' AND (? IS NULL OR rendition_requested_at = ?)").bind(Date.now(), mediaId, generation, generation).run();
           console.error("Embedded display DLQ message", { queue: batch.queue, mediaId, failedRow: failed.meta.changes === 1 });
           message.ack();
           continue;
@@ -942,7 +944,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
           case "embedded_display":
             // Same red gate as the asset renditions: never ack while the consumer is off, so the message reaches the DLQ rather than vanishing.
             if (!renditionsEnabled(this.env)) throw new Error("Rendition consumer is disabled");
-            await generateEmbeddedDisplayCopy(this.env, parsed.body.mediaId);
+            await generateEmbeddedDisplayCopy(this.env, parsed.body.mediaId, undefined, parsed.body.generation);
             message.ack();
             break;
           case "dropbox_sync":

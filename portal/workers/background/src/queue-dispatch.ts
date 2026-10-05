@@ -23,7 +23,7 @@ export function parseQueueBody(queue: string, body: unknown): QueueBody | null {
     return parsed ? { queue, body: parsed } : null;
   }
   if (queue === RENDITION_QUEUE_NAME || queue === RENDITION_DLQ_QUEUE_NAME) {
-    if (value.type === "embedded_display") return typeof value.mediaId === "string" && value.mediaId.length > 0 ? { queue, body: { type: "embedded_display", mediaId: value.mediaId } } : null;
+    if (value.type === "embedded_display") return typeof value.mediaId === "string" && value.mediaId.length > 0 ? { queue, body: { type: "embedded_display", mediaId: value.mediaId, ...(typeof value.generation === "number" && Number.isSafeInteger(value.generation) ? { generation: value.generation } : {}) } } : null;
     return value.type === "generate_renditions" && typeof value.assetId === "string" && value.assetId.length > 0
       ? { queue, body: { type: "generate_renditions", assetId: value.assetId } }
       : null;

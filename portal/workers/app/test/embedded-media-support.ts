@@ -49,6 +49,15 @@ export function jpegBytes(size = 64): Uint8Array { const bytes = new Uint8Array(
 /** A body that starts with a real `ftyp` box (brand `isom`, or `qt  ` for QuickTime) and is `size` bytes long. */
 export function mp4Bytes(size = 4096, brand = "isom"): Uint8Array { const bytes = new Uint8Array(size); bytes.set([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, ...[...brand].map((c) => c.charCodeAt(0))]); for (let i = 24; i < size; i += 1) bytes[i] = i % 251; return bytes; }
 
+/** A body that opens with an extended-size `ftyp` box (size field 1, 64-bit largesize, major brand at byte 16) naming `brands` (the first is the major brand), `size` bytes long. */
+export function extendedFtypBytes(brands: string[], size = 4096): Uint8Array {
+  const text = (value: string) => [...value].map((c) => c.charCodeAt(0));
+  const total = 24 + (brands.length - 1) * 4; const bytes = new Uint8Array(size);
+  bytes.set([0, 0, 0, 1, ...text("ftyp"), 0, 0, 0, 0, 0, 0, total >> 8, total & 0xff, ...text(brands[0]!), 0, 0, 0, 0, ...brands.slice(1).flatMap(text)]);
+  for (let i = total; i < size; i += 1) bytes[i] = (i * 7) % 251;
+  return bytes;
+}
+
 /** A body that opens with a real Samsung `ftypheic` box (`mif1`, `heic` compatible brands, `mdat` before `meta`) and is `size` bytes long. */
 export function heicBytes(size = 4096): Uint8Array { const bytes = new Uint8Array(size); bytes.set([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63, 0, 0, 0, 0, 0x6d, 0x69, 0x66, 0x31, 0x68, 0x65, 0x69, 0x63]); for (let i = 24; i < size; i += 1) bytes[i] = (i * 7) % 251; return bytes; }
 /** A JPEG whose marker segments are real (SOI, JFIF, optional EXIF or XMP, SOF0, SOS, EOI): enough for the display check, standing in for what Image Transformations returns. */

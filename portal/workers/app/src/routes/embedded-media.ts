@@ -129,7 +129,7 @@ embeddedMediaRoutes.post("/projects/:projectId/embedded-media/:mediaId/complete"
   } else {
     await audit(c.env, user, "embedded_media.upload", "embedded_media", mediaId, { projectId, bytes: row.bytes, contentType: row.contentType });
     // Only the promotion winner sends, so a repeated or racing complete queues the conversion once. A lost send is re-sent by the minute cron.
-    if (heic) await enqueueEmbeddedDisplaySafely(c.env, mediaId, "complete");
+    if (heic) await enqueueEmbeddedDisplaySafely(c.env, mediaId, "complete", promotedAt);
   }
   return completed("pending");
 }));

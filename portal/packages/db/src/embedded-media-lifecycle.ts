@@ -72,6 +72,12 @@ export type EmbeddedDisplayDeps = {
   fetch: typeof fetch;
   now?: () => number;
   newNonce?: () => string;
+  /**
+   * The `rendition_requested_at` the queue message was sent for (its generation). A Retry and the recovery cron each write a new value, so a message
+   * from an older generation claims nothing. Absent for a message sent before generations existed: it is not fenced at the claim, but every later
+   * write is still fenced on the value the claim saw.
+   */
+  generation?: number | null;
 };
 
 /**
@@ -135,19 +141,28 @@ export async function generateEmbeddedDisplay(env: EmbeddedMediaStores, mediaId:
   const claim = await env.DB.prepare(`
     UPDATE embedded_media SET rendition_lease_until = ?, rendition_attempts = rendition_attempts + 1
     WHERE id = ? AND rendition_status = 'pending' AND state IN ('pending', 'attached') AND (rendition_lease_until IS NULL OR rendition_lease_until < ?)
+      AND (? IS NULL OR rendition_requested_at = ?)
     RETURNING original_key, project_id, rendition_attempts, rendition_requested_at
-  `).bind(claimedAt + EMBEDDED_DISPLAY_LEASE_MS, mediaId, claimedAt).all<ClaimedRow>();
+  `).bind(claimedAt + EMBEDDED_DISPLAY_LEASE_MS, mediaId, claimedAt, deps.generation ?? null, deps.generation ?? null).all<ClaimedRow>();
   const row = claim.results[0];
   if (!row) return "noop";
-  const attempts = row.rendition_attempts; const projectId = row.project_id;
+  const attempts = row.rendition_attempts; const projectId = row.project_id; const generation = row.rendition_requested_at;
+  // Every write after the claim is fenced on the attempt count AND the generation the claim saw: a Retry resets the attempts to 0, so a stale run
+  // and the new run can hold the same count, and only `rendition_requested_at` tells them apart (`IS` so a NULL generation matches itself).
 
-  const fail = async (reason: string): Promise<EmbeddedDisplayOutcome> => {
-    await env.DB.prepare("UPDATE embedded_media SET rendition_status = 'failed', rendition_error = ?, rendition_lease_until = NULL, updated_at = ? WHERE id = ? AND rendition_status = 'pending' AND rendition_attempts = ?").bind(reason, now(), mediaId, attempts).run();
-    return "failed";
-  };
   const release = async () => {
-    try { await env.DB.prepare("UPDATE embedded_media SET rendition_lease_until = 0 WHERE id = ? AND rendition_status = 'pending' AND rendition_attempts = ?").bind(mediaId, attempts).run(); }
+    try { await env.DB.prepare("UPDATE embedded_media SET rendition_lease_until = 0 WHERE id = ? AND rendition_status = 'pending' AND rendition_attempts = ? AND rendition_requested_at IS ?").bind(mediaId, attempts, generation).run(); }
     catch { /* the lease lapses on its own */ }
+  };
+  const fail = async (reason: string): Promise<EmbeddedDisplayOutcome> => {
+    try {
+      await env.DB.prepare("UPDATE embedded_media SET rendition_status = 'failed', rendition_error = ?, rendition_lease_until = NULL, updated_at = ? WHERE id = ? AND rendition_status = 'pending' AND rendition_attempts = ? AND rendition_requested_at IS ?").bind(reason, now(), mediaId, attempts, generation).run();
+    } catch (error) {
+      // A transient D1 error must not strand the row: an unreleased lease makes the redelivery a no-op that acks, and the image would sit pending until the cron.
+      await release();
+      throw error;
+    }
+    return "failed";
   };
   if (attempts > EMBEDDED_DISPLAY_MAX_ATTEMPTS) return fail("attempts");
 
@@ -184,7 +199,8 @@ export async function generateEmbeddedDisplay(env: EmbeddedMediaStores, mediaId:
   catch (error) { await release(); throw new EmbeddedDisplayTransientError(`The cleanup entry could not be queued: ${shortError(error)}`); }
   try { await env.MEDIA.put(displayKey, body, { httpMetadata: { contentType: "image/jpeg" } }); }
   catch (error) {
-    try { await env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ?").bind(displayKey).run(); } catch { /* the sweep drops the entry of an object that was never written */ }
+    // A PUT that throws may still have committed (the acknowledgement was lost), so the object is deleted, and its entry only goes once that succeeded: if R2 refuses, the entry stays queued for the drain.
+    await discardUnreferencedObject(env, displayKey, projectId);
     await release();
     throw new EmbeddedDisplayTransientError(`The display copy could not be stored: ${shortError(error)}`);
   }
@@ -193,9 +209,9 @@ export async function generateEmbeddedDisplay(env: EmbeddedMediaStores, mediaId:
     results = await env.DB.batch([
       env.DB.prepare(`
         UPDATE embedded_media SET display_key = ?, display_content_type = 'image/jpeg', display_bytes = ?, display_width = ?, display_height = ?, rendition_status = 'ready', rendition_lease_until = NULL, rendition_error = NULL, updated_at = ?
-        WHERE id = ? AND rendition_status = 'pending' AND display_key IS NULL AND state IN ('pending', 'attached') AND rendition_attempts = ?
+        WHERE id = ? AND rendition_status = 'pending' AND display_key IS NULL AND state IN ('pending', 'attached') AND rendition_attempts = ? AND rendition_requested_at IS ?
           AND EXISTS (SELECT 1 FROM embedded_media_cleanup WHERE storage_key = ? AND queued_at = ? AND claimed_until IS NULL)
-      `).bind(displayKey, body.byteLength, width, height, now(), mediaId, attempts, displayKey, queuedAt),
+      `).bind(displayKey, body.byteLength, width, height, now(), mediaId, attempts, generation, displayKey, queuedAt),
       env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ? AND queued_at = ? AND claimed_until IS NULL AND (SELECT display_key FROM embedded_media WHERE id = ?) = ?").bind(displayKey, queuedAt, mediaId, displayKey),
     ]);
   } catch (error) {

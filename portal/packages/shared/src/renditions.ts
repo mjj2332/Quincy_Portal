@@ -1,6 +1,11 @@
 export type AssetRenditionMessage = { type: "generate_renditions"; assetId: string };
 /** The JPEG display copy of a HEIC embedded image (#495). Shares the rendition queue and its DLQ. */
-export type EmbeddedDisplayMessage = { type: "embedded_display"; mediaId: string };
+export type EmbeddedDisplayMessage = {
+  type: "embedded_display";
+  mediaId: string;
+  /** The row's `rendition_requested_at` when this message was sent. A Retry and the recovery cron write a new one, so a message from an older run (a stale DLQ redelivery) cannot touch the newer run. */
+  generation?: number;
+};
 export type RenditionMessage = AssetRenditionMessage | EmbeddedDisplayMessage;
 
 type RenditionQueue = { send(message: RenditionMessage): Promise<unknown> };
@@ -31,14 +36,14 @@ export async function enqueueRenditionSafely(env: RenditionQueueEnv, assetId: st
 }
 
 /** Hands a HEIC row to the rendition queue. Best effort like `enqueueRenditionSafely`: a lost send is repaired by the minute cron's recovery of stale `pending` rows. */
-export async function enqueueEmbeddedDisplaySafely(env: RenditionQueueEnv, mediaId: string, source: string): Promise<boolean> {
+export async function enqueueEmbeddedDisplaySafely(env: RenditionQueueEnv, mediaId: string, source: string, generation?: number): Promise<boolean> {
   if (!renditionsEnabled(env)) return false;
   if (!env.RENDITION_QUEUE) {
     console.error("Embedded display enqueue skipped: RENDITIONS_ENABLED is true but no queue binding is configured", { mediaId, source });
     return false;
   }
   try {
-    await env.RENDITION_QUEUE.send({ type: "embedded_display", mediaId });
+    await env.RENDITION_QUEUE.send({ type: "embedded_display", mediaId, ...(generation === undefined ? {} : { generation }) });
     return true;
   } catch (error) {
     console.error("Embedded display enqueue failed; the recovery cron re-sends a stale pending row", { mediaId, source, error });

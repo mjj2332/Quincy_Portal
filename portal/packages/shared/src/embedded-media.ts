@@ -71,15 +71,27 @@ export function sniffEmbeddedImageType(head: Uint8Array): EmbeddedImageContentTy
   return null;
 }
 
-/** The 4-character brands of an `ftyp` box: the major brand and every compatible brand, read from the bytes available (at most the box). Null when it is not an `ftyp` box. */
+/**
+ * The 4-character brands of an `ftyp` box: the major brand and every compatible brand, read from the bytes available (at most the box).
+ * Both box headers are parsed: the normal one (4-byte size, major brand at 8) and the extended one (size field 1, a 64-bit largesize at 8, major brand at 16).
+ * Null when the bytes are not an `ftyp` box, or when the brand table cannot be parsed (a size too small to hold the major brand and minor version,
+ * or fewer bytes than that header): a caller that needs to refuse an unreadable table treats null as a refusal.
+ */
 function ftypBrands(head: Uint8Array): string[] | null {
-  if (head.length < 16) return null;
+  if (head.length < 8) return null;
   if (head[4] !== 0x66 || head[5] !== 0x74 || head[6] !== 0x79 || head[7] !== 0x70) return null;
-  const size = ((head[0]! << 24) | (head[1]! << 16) | (head[2]! << 8) | head[3]!) >>> 0;
-  if (size < 16) return null; // 0 (to end of file) and 1 (64-bit size) are not used by a real HEIF `ftyp`
-  const end = Math.min(size, head.length);
-  const brands: string[] = [String.fromCharCode(head[8]!, head[9]!, head[10]!, head[11]!)];
-  for (let offset = 16; offset + 4 <= end; offset += 4) brands.push(String.fromCharCode(head[offset]!, head[offset + 1]!, head[offset + 2]!, head[offset + 3]!));
+  const word = (at: number) => ((head[at]! << 24) | (head[at + 1]! << 16) | (head[at + 2]! << 8) | head[at + 3]!) >>> 0;
+  const size = word(0);
+  let major = 8; let boxSize = size;
+  if (size === 1) {
+    if (head.length < 16) return null;
+    major = 16; boxSize = word(8) * 2 ** 32 + word(12);
+  }
+  if (boxSize < major + 8 || head.length < major + 8) return null; // the major brand and the minor version must both fit
+  const end = Math.min(boxSize, head.length);
+  const brandAt = (at: number) => String.fromCharCode(head[at]!, head[at + 1]!, head[at + 2]!, head[at + 3]!);
+  const brands: string[] = [brandAt(major)];
+  for (let offset = major + 8; offset + 4 <= end; offset += 4) brands.push(brandAt(offset));
   return brands;
 }
 
@@ -114,8 +126,10 @@ export function sniffEmbeddedVideoType(head: Uint8Array): EmbeddedVideoContentTy
   const size = ((head[0]! << 24) | (head[1]! << 16) | (head[2]! << 8) | head[3]!) >>> 0;
   if (size !== 1 && size < 8) return null;
   // HEIC and AVIF stills share the `ftyp` box with MP4, so a photo declared as a video would otherwise be stored as one (#495).
-  if (ftypBrands(head)?.some((brand) => HEIF_FAMILY_BRANDS.has(brand))) return null;
-  return head[8] === 0x71 && head[9] === 0x74 && head[10] === 0x20 && head[11] === 0x20 ? "video/quicktime" : "video/mp4";
+  // A box whose brand table cannot be parsed is refused: accepting it would let a HEIC hide behind a header the parser skips.
+  const brands = ftypBrands(head);
+  if (!brands || brands.some((brand) => HEIF_FAMILY_BRANDS.has(brand))) return null;
+  return brands[0] === "qt  " ? "video/quicktime" : "video/mp4";
 }
 
 export const isJpeg = (head: Uint8Array): boolean => head.length >= 3 && head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff;
@@ -135,19 +149,23 @@ export function noticeEmbeddedMediaObjectKey(mediaId: string): string {
 export type JpegInspection = { width: number; height: number; metadata: boolean };
 
 /**
- * Reads a JPEG's marker segments up to the start of scan: its size from the first SOF marker, and whether any EXIF or XMP segment (APP1) is present.
- * Returns null when the bytes are not a well-formed JPEG header (no SOI, a truncated segment, no SOF before SOS, a zero size). It is not a decoder:
+ * Reads a JPEG's whole marker stream to its EOI: its size from the first SOF marker, and whether any EXIF or XMP segment (APP1) is present anywhere,
+ * including after scan data (a progressive JPEG carries markers between scans). Inside entropy-coded data `FF00` stuffing, `FFD0`-`FFD7` restart
+ * markers and `FF` fill bytes are data; any other `FFxx` ends the scan and is parsed as a marker.
+ * Returns null when the bytes are not a well-formed, complete JPEG (no SOI, a truncated segment, no SOF, no SOS, no EOI, a zero size). It is not a decoder:
  * Cloudflare's `cf-resized` header remains the decode gate. A HEIC display copy must come back with `metadata: false` so GPS and camera data never reach a reader (#495).
  */
 export function inspectJpeg(bytes: Uint8Array): JpegInspection | null {
   if (!isJpeg(bytes)) return null;
-  let offset = 2; let size: { width: number; height: number } | null = null; let metadata = false;
-  while (offset + 4 <= bytes.length) {
+  let offset = 2; let size: { width: number; height: number } | null = null; let metadata = false; let scanned = false; let ended = false;
+  while (offset + 2 <= bytes.length) {
     if (bytes[offset] !== 0xff) return null;
     const marker = bytes[offset + 1]!;
     if (marker === 0xff) { offset += 1; continue; } // fill byte
+    if (marker === 0xd9) { ended = true; break; } // EOI
     if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) { offset += 2; continue; } // standalone markers
-    if (marker === 0xd9) return null; // EOI before a scan
+    if (marker === 0x00) return null; // FF00 outside scan data
+    if (offset + 4 > bytes.length) return null;
     const length = (bytes[offset + 2]! << 8) | bytes[offset + 3]!;
     if (length < 2 || offset + 2 + length > bytes.length) return null;
     const data = offset + 4;
@@ -159,10 +177,21 @@ export function inspectJpeg(bytes: Uint8Array): JpegInspection | null {
       if (length < 8 || size) return null;
       size = { height: (bytes[data + 1]! << 8) | bytes[data + 2]!, width: (bytes[data + 3]! << 8) | bytes[data + 4]! };
     }
-    if (marker === 0xda) break; // start of scan: the entropy-coded data follows, no metadata segments after it
     offset += 2 + length;
+    if (marker === 0xda) {
+      if (!size) return null; // a scan before any frame header
+      scanned = true;
+      // Entropy-coded data: stuffing, restart markers and fill bytes are data, any other FFxx is the next marker.
+      while (offset + 1 < bytes.length) {
+        if (bytes[offset] !== 0xff) { offset += 1; continue; }
+        const next = bytes[offset + 1]!;
+        if (next === 0x00 || (next >= 0xd0 && next <= 0xd7)) { offset += 2; continue; }
+        if (next === 0xff) { offset += 1; continue; }
+        break;
+      }
+    }
   }
-  if (!size || size.width <= 0 || size.height <= 0) return null;
+  if (!ended || !scanned || !size || size.width <= 0 || size.height <= 0) return null;
   return { ...size, metadata };
 }
 

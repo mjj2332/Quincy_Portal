@@ -248,7 +248,7 @@ noticeBoardRoutes.post("/notice-board/embedded-media/:mediaId/complete", termina
     if (current.state !== "pending") return c.json({ error: "This media is already in use", code: "media_not_uploading" }, 409);
   } else {
     await audit(c.env, user, "embedded_media.upload", "embedded_media", mediaId, { scope: "notice_board", bytes: row.bytes, contentType: row.contentType });
-    if (heic) await enqueueEmbeddedDisplaySafely(c.env, mediaId, "complete");
+    if (heic) await enqueueEmbeddedDisplaySafely(c.env, mediaId, "complete", promotedAt);
   }
   return completed("pending");
 }));

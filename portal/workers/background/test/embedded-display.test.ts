@@ -68,6 +68,13 @@ const consoleLog = vi.spyOn(console, "log").mockImplementation(() => undefined);
 afterEach(() => { consoleError.mockClear(); consoleLog.mockClear(); });
 
 describe("queue dispatch for the embedded_display message", () => {
+  it("carries the generation through when it is a finite integer, and drops it otherwise (Sol P2-4)", () => {
+    for (const queue of [RENDITION_QUEUE_NAME, RENDITION_DLQ_QUEUE_NAME]) {
+      expect(parseQueueBody(queue, { type: "embedded_display", mediaId: "m-1", generation: 1_800_000_000_000 })).toEqual({ queue, body: { type: "embedded_display", mediaId: "m-1", generation: 1_800_000_000_000 } });
+      expect(parseQueueBody(queue, { type: "embedded_display", mediaId: "m-1", generation: "x" })).toEqual({ queue, body: { type: "embedded_display", mediaId: "m-1" } });
+    }
+  });
+
   it("accepts it on the rendition queue and its dead-letter queue, and nowhere else", () => {
     expect(parseQueueBody(RENDITION_QUEUE_NAME, { type: "embedded_display", mediaId: "m-1" })).toEqual({ queue: RENDITION_QUEUE_NAME, body: { type: "embedded_display", mediaId: "m-1" } });
     expect(parseQueueBody(RENDITION_DLQ_QUEUE_NAME, { type: "embedded_display", mediaId: "m-1" })).toEqual({ queue: RENDITION_DLQ_QUEUE_NAME, body: { type: "embedded_display", mediaId: "m-1" } });
@@ -94,6 +101,14 @@ describe("the embedded_display consumer", () => {
     expect([...body]).toEqual([...output]);
     expect([...new Uint8Array(await (await database.MEDIA.get(key))!.arrayBuffer())].slice(4, 8)).toEqual([0x66, 0x74, 0x79, 0x70]); // the HEIC original is untouched
     expect(await database.DB.prepare("SELECT count(*) AS n FROM embedded_media_cleanup").first()).toEqual({ n: 0 });
+  });
+
+  it("acks without converting a message from an older generation, and converts one that matches (Sol P2-4)", async () => {
+    const { id } = await seed({ requestedAt: now + minute }); const calls = stubFetch(() => new Response(jpeg(), { headers: edgeOk }));
+    const stale = await deliver(RENDITION_QUEUE_NAME, { type: "embedded_display", mediaId: id, generation: now });
+    expect(stale.ack).toHaveBeenCalledOnce(); expect(calls).toHaveLength(0); expect(await row(id)).toMatchObject({ rendition_status: "pending", rendition_attempts: 0 });
+    const current = await deliver(RENDITION_QUEUE_NAME, { type: "embedded_display", mediaId: id, generation: now + minute });
+    expect(current.ack).toHaveBeenCalledOnce(); expect(calls).toHaveLength(1); expect(await row(id)).toMatchObject({ rendition_status: "ready" });
   });
 
   it("acks a duplicate delivery with no fetch", async () => {
@@ -179,6 +194,21 @@ describe("the rendition dead-letter queue and embedded_display", () => {
     expect(consoleError).toHaveBeenCalledWith("Embedded display DLQ message", expect.objectContaining({ mediaId: id, failedRow: true }));
   });
 
+  it("does not fail a new run on a stale DLQ redelivery: DLQ, then Retry, then the old DLQ message again leaves the row pending (Sol P2-4)", async () => {
+    const { id } = await seed({ requestedAt: now });
+    const first = await deliver(RENDITION_DLQ_QUEUE_NAME, { type: "embedded_display", mediaId: id, generation: now });
+    expect(first.ack).toHaveBeenCalledOnce(); expect(await row(id)).toMatchObject({ rendition_status: "failed", rendition_error: "dlq" });
+    // Retry, exactly as the uploader's route writes it: back to pending with a fresh generation.
+    await database.DB.prepare("UPDATE embedded_media SET rendition_status = 'pending', rendition_attempts = 0, rendition_lease_until = NULL, rendition_error = NULL, rendition_requested_at = ? WHERE id = ? AND rendition_status = 'failed'").bind(now + minute, id).run();
+    const stale = await deliver(RENDITION_DLQ_QUEUE_NAME, { type: "embedded_display", mediaId: id, generation: now });
+    expect(stale.ack).toHaveBeenCalledOnce();
+    expect(await row(id)).toMatchObject({ rendition_status: "pending", rendition_error: null, rendition_requested_at: now + minute });
+    expect(consoleError).toHaveBeenCalledWith("Embedded display DLQ message", expect.objectContaining({ mediaId: id, failedRow: false }));
+    // The new generation's own DLQ message does fail it.
+    await deliver(RENDITION_DLQ_QUEUE_NAME, { type: "embedded_display", mediaId: id, generation: now + minute });
+    expect(await row(id)).toMatchObject({ rendition_status: "failed", rendition_error: "dlq" });
+  });
+
   it("is a no-op for a missing row and for one that is already ready", async () => {
     const ready = await seed({ status: "ready", display: true });
     for (const mediaId of [crypto.randomUUID(), ready.id]) { const delivered = await deliver(RENDITION_DLQ_QUEUE_NAME, { type: "embedded_display", mediaId }); expect(delivered.ack).toHaveBeenCalledOnce(); }
@@ -199,7 +229,7 @@ describe("the recovery cron", () => {
   it("re-sends a stale pending row once, and bumps its requested time so an overlapping run sends nothing", async () => {
     const stale = await seed({ requestedAt: now - 11 * minute });
     expect(await recoverEmbeddedRenditions(queueEnv(), now)).toEqual({ resent: 1, failed: 0 });
-    expect(sent).toEqual([{ type: "embedded_display", mediaId: stale.id }]);
+    expect(sent).toEqual([{ type: "embedded_display", mediaId: stale.id, generation: now }]);
     expect((await row(stale.id))!.rendition_requested_at).toBe(now);
     expect(await recoverEmbeddedRenditions(queueEnv(), now + minute)).toEqual({ resent: 0, failed: 0 });
     expect(sent).toHaveLength(1);
@@ -215,13 +245,13 @@ describe("the recovery cron", () => {
   it("takes a row whose lease has expired, and one that is attached", async () => {
     const expired = await seed({ requestedAt: now - 30 * minute, lease: now - minute }); const attached = await seed({ requestedAt: now - 29 * minute, state: "attached" });
     expect(await recoverEmbeddedRenditions(queueEnv(), now)).toEqual({ resent: 2, failed: 0 });
-    expect(sent).toEqual([{ type: "embedded_display", mediaId: expired.id }, { type: "embedded_display", mediaId: attached.id }]);
+    expect(sent).toEqual([{ type: "embedded_display", mediaId: expired.id, generation: now }, { type: "embedded_display", mediaId: attached.id, generation: now }]);
   });
 
   it("stays within ten rows a run, oldest first", async () => {
     const seeded = []; for (let index = 0; index < 13; index += 1) seeded.push(await seed({ requestedAt: now - (60 - index) * minute }));
     expect((await recoverEmbeddedRenditions(queueEnv(), now)).resent).toBe(10);
-    expect(sent).toEqual(seeded.slice(0, 10).map((item) => ({ type: "embedded_display", mediaId: item.id })));
+    expect(sent).toEqual(seeded.slice(0, 10).map((item) => ({ type: "embedded_display", mediaId: item.id, generation: now })));
   });
 
   it("fails a row past the attempt cap instead of re-sending it", async () => {

@@ -43,7 +43,7 @@ export async function retryRendition(c: Context<AppEnv>, row: EmbeddedMediaRow):
     WHERE id = ? AND rendition_status = 'failed' AND state IN ('pending', 'attached') AND uploader_id = ?
   `).bind(now, now, row.id, row.uploaderId).run();
   if ((reset.meta.changes ?? 0) === 1) {
-    await enqueueEmbeddedDisplaySafely(c.env, row.id, "retry");
+    await enqueueEmbeddedDisplaySafely(c.env, row.id, "retry", now);
     return c.json(externalEmbeddedMediaRenditionSchema.parse({ mediaId: row.id, status: "pending" }));
   }
   const current = await c.env.DB.prepare("SELECT rendition_status AS status FROM embedded_media WHERE id = ?").bind(row.id).first<{ status: string }>();

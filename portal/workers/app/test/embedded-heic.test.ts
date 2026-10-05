@@ -6,7 +6,7 @@ import { externalEmbeddedMediaCompleteSchema, externalEmbeddedMediaPresignSchema
 import { createAuth } from "../src/auth";
 import { app } from "../src/index";
 import type { Env } from "../src/env";
-import { baseEnv, database, displayJpeg, heicBytes, ids, imageDoc, jpegBytes, mediaRow, mp4Bytes, noticeMediaKey, request, seedFixture, seedMedia, tokens, type Who } from "./embedded-media-support";
+import { baseEnv, database, displayJpeg, extendedFtypBytes, heicBytes, ids, imageDoc, jpegBytes, mediaRow, mp4Bytes, noticeMediaKey, request, seedFixture, seedMedia, tokens, type Who } from "./embedded-media-support";
 
 /** HEIC images in Embedded media (#495), server half: the gate, the upload, the display copy, serving, the attach gate, retry, deletion. */
 const S3_ENV: Env = { ...baseEnv, R2_ACCOUNT_ID: "acct", R2_S3_ACCESS_KEY_ID: "key", R2_S3_SECRET_ACCESS_KEY: "secret" };
@@ -109,7 +109,7 @@ describe("completing a HEIC upload (#495)", () => {
       expect(externalEmbeddedMediaCompleteSchema.parse(await response.json())).toEqual({ mediaId: id, state: "pending", rendition: "pending" });
       expect(await mediaRow(id)).toMatchObject({ state: "pending", rendition_status: "pending" });
       expect((await mediaRow(id))!.rendition_requested_at).toEqual(expect.any(Number));
-      expect(sends.filter((message) => (message as { mediaId: string }).mediaId === id)).toEqual([{ type: "embedded_display", mediaId: id }]);
+      expect(sends.filter((message) => (message as { mediaId: string }).mediaId === id)).toEqual([{ type: "embedded_display", mediaId: id, generation: (await mediaRow(id))!.rendition_requested_at }]);
       const again = await complete("admin", id); expect(again.status).toBe(200);
       expect(externalEmbeddedMediaCompleteSchema.parse(await again.json()).rendition).toBe("pending");
       expect(sends.filter((message) => (message as { mediaId: string }).mediaId === id)).toHaveLength(1);
@@ -139,6 +139,20 @@ describe("completing a HEIC upload (#495)", () => {
     }
   });
 
+  it("rejects a HEIC behind an extended-size ftyp declared as an MP4 video, and never serves it as an original (Sol P1-1)", async () => {
+    const { id, key } = await seedMedia({ state: "uploading", kind: "video", contentType: "video/mp4", object: extendedFtypBytes(["heic", "mif1", "heic"]), bytes: 4096 });
+    const response = await complete("member", id);
+    expect(response.status).toBe(400); expect(await response.json()).toMatchObject({ code: "media_rejected" });
+    expect(await mediaRow(id)).toBeNull(); expect(await database.MEDIA.head(key)).toBeNull();
+  });
+
+  it("still accepts a real extended-size MP4 and a real QuickTime file (Sol P1-1)", async () => {
+    for (const [contentType, brands] of [["video/mp4", ["isom", "iso2", "mp41"]], ["video/quicktime", ["qt  "]]] as const) {
+      const { id } = await seedMedia({ state: "uploading", kind: "video", contentType, object: extendedFtypBytes([...brands]), bytes: 4096 });
+      expect((await complete("member", id)).status, contentType).toBe(200);
+    }
+  });
+
   it("still accepts a real MP4 whose compatible brands are video brands", async () => {
     const { id } = await seedMedia({ state: "uploading", kind: "video", contentType: "video/mp4", object: mp4Bytes(4096, "isom"), bytes: 4096 });
     expect((await complete("member", id)).status).toBe(200);
@@ -159,7 +173,7 @@ describe("completing a HEIC upload (#495)", () => {
     const { id } = await heicRow({ ownerKind: "notice_post", state: "uploading", uploader: ids.admin });
     const response = await call(QUEUE_ENV, `${NOTICE_MEDIA}/${id}/complete`, "admin", "POST", {});
     expect(response.status).toBe(200); expect(externalEmbeddedMediaCompleteSchema.parse(await response.json()).rendition).toBe("pending");
-    expect(sends).toEqual([{ type: "embedded_display", mediaId: id }]);
+    expect(sends).toEqual([{ type: "embedded_display", mediaId: id, generation: (await mediaRow(id))!.rendition_requested_at }]);
     await setFlag(false);
     const member = await heicRow({ ownerKind: "notice_post", state: "uploading" });
     expect((await call(QUEUE_ENV, `${NOTICE_MEDIA}/${member.id}/complete`, "member", "POST", {})).status).toBe(403);
@@ -332,6 +346,64 @@ describe("the display copy conversion (#495)", () => {
     error.mockRestore();
   });
 
+  it("fences the lifecycle writes on the requested time: a Retry while an old run is in flight makes the old run lose (Sol P2-4)", async () => {
+    const { id } = await heicRow({ state: "pending" });
+    const retried = vi.fn(async () => { await database.DB.prepare("UPDATE embedded_media SET rendition_requested_at = rendition_requested_at + 1000, rendition_attempts = 1, rendition_lease_until = ? WHERE id = ?").bind(Date.now() + 600_000, id).run(); return new Response(displayJpeg(), { headers: { "content-type": "image/jpeg", "cf-resized": "internal=ok" } }); });
+    expect(await convert(id, retried as unknown as typeof fetch)).toBe("lost");
+    expect(await mediaRow(id)).toMatchObject({ rendition_status: "pending", display_key: null });
+    expect(await database.DB.prepare("SELECT 1 FROM embedded_media_cleanup WHERE storage_key LIKE ?").bind(`%/${id}/display-%`).first()).toBeNull();
+  });
+
+  it("refuses to claim a row for a message from an older generation (Sol P2-4)", async () => {
+    const { id } = await heicRow({ state: "pending" }); const stub = jpegFetch();
+    const requested = (await mediaRow(id))!.rendition_requested_at as number | null;
+    expect(await convert(id, stub as unknown as typeof fetch, { generation: (requested ?? 0) - 1 })).toBe("noop");
+    expect(stub).not.toHaveBeenCalled();
+    expect(await mediaRow(id)).toMatchObject({ rendition_attempts: 0 });
+  });
+
+  it("never leaves an object without a cleanup entry when the R2 PUT commits and then throws (Sol P2-5)", async () => {
+    const prefix = (id: string) => `projects/${ids.project}/embedded-media/${id}/display-`;
+    const orphans = async (id: string) => {
+      const objects = (await database.MEDIA.list({ prefix: prefix(id) })).objects;
+      const missing: string[] = [];
+      for (const object of objects) if (!await queued(object.key)) missing.push(object.key);
+      return { objects: objects.length, missing };
+    };
+    const committing = (deleteFails: boolean) => new Proxy(database.MEDIA, { get: (target, property) => {
+      if (property === "put") return async (...args: Parameters<R2Bucket["put"]>) => { await target.put(...args); throw new Error("ack lost"); };
+      if (property === "delete" && deleteFails) return async () => { throw new Error("R2 down"); };
+      const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value;
+    } }) as R2Bucket;
+    for (const deleteFails of [false, true]) {
+      const { id } = await heicRow({ state: "pending" });
+      await expect(generateEmbeddedDisplay({ DB: database.DB, MEDIA: committing(deleteFails) }, id, { fetch: jpegFetch() as unknown as typeof fetch, transformUrl: async (key) => key })).rejects.toThrow("could not be stored");
+      expect(await orphans(id), `deleteFails=${deleteFails}`).toEqual({ objects: deleteFails ? 1 : 0, missing: [] });
+      expect(await mediaRow(id)).toMatchObject({ rendition_status: "pending", display_key: null, rendition_lease_until: 0 });
+    }
+  });
+
+  it("releases the lease when fail() hits a transient D1 error, on the permanent branch and on the attempt cap, so a redelivery can retry (Sol P2-6)", async () => {
+    const failing = (inject: { on: boolean }) => new Proxy(database.DB, { get: (target, property) => {
+      if (property === "prepare") return (sql: string) => { if (inject.on && sql.includes("rendition_status = 'failed'")) throw new Error("D1 transient"); return target.prepare(sql); };
+      const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value;
+    } }) as D1Database;
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    for (const branch of ["permanent", "attempt cap"] as const) {
+      const { id } = await heicRow({ state: "pending" });
+      if (branch === "attempt cap") await database.DB.prepare("UPDATE embedded_media SET rendition_attempts = 4 WHERE id = ?").bind(id).run();
+      const inject = { on: true };
+      const output = branch === "permanent" ? displayJpeg({ exif: true }) : displayJpeg();
+      await expect(generateEmbeddedDisplay({ DB: failing(inject), MEDIA: database.MEDIA }, id, { fetch: jpegFetch(output) as unknown as typeof fetch, transformUrl: async (key) => key })).rejects.toThrow("D1 transient");
+      expect(await mediaRow(id), branch).toMatchObject({ rendition_status: "pending", rendition_lease_until: 0 });
+      inject.on = false;
+      // The redelivery is not a no-op any more: it claims the row and settles it.
+      expect(await convert(id, jpegFetch(output) as unknown as typeof fetch), branch).toBe("failed");
+      expect(await mediaRow(id), branch).toMatchObject({ rendition_status: "failed" });
+    }
+    error.mockRestore();
+  });
+
   it("puts a Notice board display copy under the Notice-board prefix", async () => {
     const { id } = await heicRow({ ownerKind: "notice_post", state: "pending", uploader: ids.member });
     expect(await convert(id)).toBe("ready");
@@ -399,7 +471,8 @@ describe("the uploader's status and retry routes (#495)", () => {
     const response = await call(QUEUE_ENV, `${statusPath(id)}/retry`, "member", "POST", {});
     expect(response.status).toBe(200); expect(await response.json()).toEqual({ mediaId: id, status: "pending" });
     expect(await mediaRow(id)).toMatchObject({ rendition_status: "pending", rendition_attempts: 0, rendition_error: null, rendition_lease_until: null });
-    expect(sends).toEqual([{ type: "embedded_display", mediaId: id }]);
+    expect(sends).toEqual([{ type: "embedded_display", mediaId: id, generation: (await mediaRow(id))!.rendition_requested_at }]);
+    expect(sends[0]).toMatchObject({ generation: expect.any(Number) });
     expect((await call(QUEUE_ENV, `${statusPath(id)}/retry`, "member", "POST", {})).status).toBe(200);
     expect(sends).toHaveLength(1);
     expect(await convert(id)).toBe("ready");
@@ -422,7 +495,7 @@ describe("the uploader's status and retry routes (#495)", () => {
     expect(await (await call(QUEUE_ENV, path, "member", "GET")).json()).toEqual({ mediaId: id, status: "failed" });
     expect((await call(QUEUE_ENV, path, "admin", "GET")).status).toBe(404); expect((await call(QUEUE_ENV, `${path}/retry`, "other", "POST", {})).status).toBe(404);
     expect((await call(QUEUE_ENV, `${path}/retry`, "member", "POST", {})).status).toBe(200);
-    expect(sends).toEqual([{ type: "embedded_display", mediaId: id }]);
+    expect(sends).toEqual([{ type: "embedded_display", mediaId: id, generation: (await mediaRow(id))!.rendition_requested_at }]);
     expect((await call(QUEUE_ENV, `${NOTICE_MEDIA}/${crypto.randomUUID()}/rendition`, "member", "GET")).status).toBe(404);
     expect((await call(QUEUE_ENV, `${NOTICE_MEDIA}/${id}/rendition`, "external", "GET")).status).toBe(403);
   });

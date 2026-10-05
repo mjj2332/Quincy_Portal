@@ -96,11 +96,18 @@ describe("embedded video limits and keys (#494)", () => {
 
 describe("video sniffing (#494)", () => {
   const box = (size: number[], type: string, brand: string) => bytes(...size, ...[...type].map((c) => c.charCodeAt(0)), ...[...brand].map((c) => c.charCodeAt(0)), 0, 0, 0, 0);
+  /** An extended-size ftyp: size field 1, then the 64-bit largesize, then the major brand, the minor version and the compatible brands. */
+  const extended = (major: string, ...compatible: string[]) => {
+    const text = (value: string) => [...value].map((c) => c.charCodeAt(0));
+    const total = 24 + compatible.length * 4;
+    return bytes(0, 0, 0, 1, ...text("ftyp"), 0, 0, 0, 0, 0, 0, total >> 8, total & 0xff, ...text(major), 0, 0, 0, 0, ...compatible.flatMap(text));
+  };
   it("names an MP4 or QuickTime container from the ftyp box", () => {
     expect(sniffEmbeddedVideoType(box([0, 0, 0, 0x18], "ftyp", "isom"))).toBe("video/mp4");
     expect(sniffEmbeddedVideoType(box([0, 0, 0, 0x20], "ftyp", "mp42"))).toBe("video/mp4");
     expect(sniffEmbeddedVideoType(box([0, 0, 0, 0x14], "ftyp", "qt  "))).toBe("video/quicktime");
-    expect(sniffEmbeddedVideoType(box([0, 0, 0, 1], "ftyp", "isom"))).toBe("video/mp4");
+    expect(sniffEmbeddedVideoType(extended("isom", "iso2", "mp41"))).toBe("video/mp4");
+    expect(sniffEmbeddedVideoType(extended("qt  "))).toBe("video/quicktime");
   });
 
   it("refuses a missing ftyp (including legacy ftyp-less QuickTime), a bad box size and a truncated header", () => {
@@ -175,6 +182,29 @@ describe("HEIC sniffing and types (#495)", () => {
     const wide = ftyp("heic"); wide.set([0, 0, 0, 8]); expect(sniffHeifImage(wide)).toBe(false);
   });
 
+  const extendedFtyp = (major: string, ...compatible: string[]) => {
+    const text = (value: string) => [...value].map((c) => c.charCodeAt(0));
+    const total = 24 + compatible.length * 4;
+    return new Uint8Array([0, 0, 0, 1, ...text("ftyp"), 0, 0, 0, 0, 0, 0, total >> 8, total & 0xff, ...text(major), 0, 0, 0, 0, ...compatible.flatMap(text)]);
+  };
+
+  it("reads the brands of an extended-size ftyp (size 1, 64-bit largesize), so a HEIC cannot hide behind one (Sol P1-1)", () => {
+    expect(sniffHeifImage(extendedFtyp("heic", "mif1"))).toBe(true);
+    expect(sniffHeifImage(extendedFtyp("mif1", "miaf", "heic"))).toBe(true);
+    expect(sniffHeifImage(extendedFtyp("isom", "mp41"))).toBe(false);
+    for (const [major, ...rest] of [["heic", "mif1"], ["mif1", "heic"], ["isom", "iso2", "hevc"], ["avif", "mif1"]] as const) expect(sniffEmbeddedVideoType(extendedFtyp(major, ...rest)), `${major} ${rest.join(" ")}`).toBeNull();
+    expect(sniffEmbeddedVideoType(extendedFtyp("isom", "iso2", "mp41"))).toBe("video/mp4");
+  });
+
+  it("refuses as a video an ftyp whose brand table cannot be parsed (Sol P1-1)", () => {
+    const sixteen = bytes(0, 0, 0, 1, 0x66, 0x74, 0x79, 0x70, 0, 0, 0, 0, 0, 0, 0, 0x18); // extended header with no brand bytes
+    expect(sniffEmbeddedVideoType(sixteen)).toBeNull();
+    const shortLarge = extendedFtyp("isom"); shortLarge.set([0, 0, 0, 0, 0, 0, 0, 20], 8); // largesize below the 24 byte minimum
+    expect(sniffEmbeddedVideoType(shortLarge)).toBeNull();
+    expect(sniffEmbeddedVideoType(ftyp("isom").subarray(0, 14))).toBeNull(); // normal box cut inside the brand table header
+    expect(sniffEmbeddedVideoType(bytes(0, 0, 0, 12, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d))).toBeNull(); // size 12 cannot hold major + version
+  });
+
   it("does not read a brand past the box (the mdat that follows is not a compatible brand)", () => {
     const head = ftyp("isom", "iso2"); head.set([0x68, 0x65, 0x69, 0x63], 20); // `heic` bytes after a 20-byte box
     head.set([0, 0, 0, 20]);
@@ -202,6 +232,33 @@ describe("JPEG inspection (#495)", () => {
   it("flags an EXIF or an XMP APP1 segment", () => {
     expect(inspectJpeg(jpeg(segment(0xe1, [...text("Exif\0\0"), 0x4d, 0x4d, 0, 0x2a]), sof(10, 20)))).toEqual({ width: 10, height: 20, metadata: true });
     expect(inspectJpeg(jpeg(segment(0xe1, [...text("http://ns.adobe.com/xap/1.0/\0"), 60, 120]), sof(10, 20)))?.metadata).toBe(true);
+  });
+
+  it("finds an EXIF or XMP APP1 that sits after the first SOS, between scans (Sol P1-2)", () => {
+    const scan = segment(0xda, [3, 1, 0, 2, 0x11, 3, 0x11, 0, 63, 0]);
+    const build = (between: number[]) => new Uint8Array([0xff, 0xd8, ...sof(10, 20), ...scan, 1, 2, 0xff, 0x00, 0xff, 0xd3, 3, ...between, ...scan, 4, 5, 0xff, 0xd9]);
+    expect(inspectJpeg(build(segment(0xe1, [...text("Exif\0\0"), 0x4d, 0x4d, 0, 0x2a])))).toEqual({ width: 10, height: 20, metadata: true });
+    expect(inspectJpeg(build(segment(0xe1, [...text("http://ns.adobe.com/xap/1.0/\0"), 60, 120])))?.metadata).toBe(true);
+    expect(inspectJpeg(build(segment(0xfe, [1, 2, 3])))).toEqual({ width: 10, height: 20, metadata: false });
+  });
+
+  it("does not take stuffed FF00 or RSTn bytes in scan data for markers, and a truncated segment after a scan is invalid (Sol P1-2)", () => {
+    const scan = segment(0xda, [3, 1, 0, 2, 0x11, 3, 0x11, 0, 63, 0]);
+    const data = [0xff, 0x00, 0xff, 0xd0, 0xff, 0xd7, 0xff, 0xff, 0xff, 0x00, 7];
+    expect(inspectJpeg(new Uint8Array([0xff, 0xd8, ...sof(10, 20), ...scan, ...data, 0xff, 0xd9]))).toEqual({ width: 10, height: 20, metadata: false });
+    expect(inspectJpeg(new Uint8Array([0xff, 0xd8, ...sof(10, 20), ...scan, 1, 2, 0xff, 0xe1, 0x00, 0x20, 1, 2]))).toBeNull();
+  });
+
+  it("refuses a truncated JPEG: no SOS, no EOI, or cut inside a later segment (Sol P2-3)", () => {
+    const scan = segment(0xda, [3, 1, 0, 2, 0x11, 3, 0x11, 0, 63, 0]);
+    const afterSof = new Uint8Array([0xff, 0xd8, ...sof(10, 20)]);
+    expect(inspectJpeg(afterSof)).toBeNull();
+    expect(inspectJpeg(new Uint8Array([...afterSof, 0xff]))).toBeNull();
+    expect(inspectJpeg(new Uint8Array([...afterSof, ...scan]))).toBeNull(); // SOS but no entropy data or EOI
+    expect(inspectJpeg(new Uint8Array([...afterSof, ...scan, 1, 2, 3]))).toBeNull();
+    expect(inspectJpeg(new Uint8Array([...afterSof, ...segment(0xe1, [...text("Exif\0\0"), 1, 2, 3, 4]).slice(0, 9)]))).toBeNull(); // inside a later segment
+    expect(inspectJpeg(new Uint8Array([...afterSof, 0xff, 0xd9]))).toBeNull(); // EOI with no scan
+    expect(inspectJpeg(new Uint8Array([0xff, 0xd8, ...sof(10, 20), ...scan, 1, 2, 3, 0xff, 0xd9]))).toEqual({ width: 10, height: 20, metadata: false });
   });
 
   it("takes progressive SOF2 and refuses a non-JPEG, a missing or zero size, and a truncated segment", () => {

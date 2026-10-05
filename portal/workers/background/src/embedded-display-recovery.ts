@@ -30,7 +30,7 @@ export async function recoverEmbeddedRenditions(env: Pick<Env, "DB" | "RENDITION
     }
     const claimed = await env.DB.prepare("UPDATE embedded_media SET rendition_requested_at = ? WHERE id = ? AND rendition_status = 'pending' AND rendition_requested_at = ?").bind(now, row.id, row.requestedAt).run();
     if ((claimed.meta.changes ?? 0) !== 1) continue;
-    if (await enqueueEmbeddedDisplaySafely(env, row.id, "recovery")) resent += 1;
+    if (await enqueueEmbeddedDisplaySafely(env, row.id, "recovery", now)) resent += 1;
   }
   return { resent, failed };
 }

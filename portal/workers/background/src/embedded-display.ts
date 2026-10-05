@@ -13,9 +13,10 @@ type DisplayEnv = Pick<Env, "APP_ORIGIN" | "TRANSFORM_SOURCE_SECRET" | "TRANSFOR
  * Each attempt signs a fresh source URL, so each is one billed transformation: the attempt cap bounds that.
  * `fetch` is wrapped, never passed bare (an unbound `fetch` throws "Illegal invocation").
  */
-export function generateEmbeddedDisplayCopy(env: DisplayEnv, mediaId: string, fetchImpl: typeof fetch = (...args) => fetch(...args)): Promise<EmbeddedDisplayOutcome> {
+export function generateEmbeddedDisplayCopy(env: DisplayEnv, mediaId: string, fetchImpl: typeof fetch = (...args) => fetch(...args), generation?: number): Promise<EmbeddedDisplayOutcome> {
   return generateEmbeddedDisplay(env, mediaId, {
     fetch: fetchImpl,
+    generation,
     transformUrl: async (key) => {
       const principal = await resolveTransformPrincipal(env);
       return signedTransformUrl(env.APP_ORIGIN, key, DISPLAY_OPTIONS, env.TRANSFORM_SOURCE_SECRET, principal.id, principal.authorizationEpoch);
