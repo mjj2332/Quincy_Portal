@@ -22,7 +22,7 @@ export function LinkPreviewCard({ attrs, actions, testId = "link-preview-card", 
       {showImage && <ItemMedia variant="image" className="rounded-[var(--radius-xs)] size-16 group-data-[size=sm]/item:size-16 max-[721px]:size-12 max-[721px]:group-data-[size=sm]/item:size-12">
         <img data-testid="link-preview-image" src={embeddedMediaUrl(attrs.imageMediaId!)} alt="" loading="lazy" decoding="async" onError={() => setImageFailed(true)} />
       </ItemMedia>}
-      <ItemContent className={actions ? "min-w-0 pr-[var(--space-5)] max-[721px]:pr-11" : "min-w-0"}>
+      <ItemContent className={actions ? "min-w-0 pr-[var(--space-5)] max-[721px]:pr-11 pointer-coarse:pr-11" : "min-w-0"}>
         {attrs.siteName && <span data-slot="link-preview-meta" className="text-xs text-foreground-secondary">{attrs.siteName}</span>}
         <ItemTitle className="line-clamp-2 break-words">{attrs.title ?? hostAndPath(attrs.url)}</ItemTitle>
         {attrs.description && <ItemDescription className="text-foreground-secondary">{attrs.description}</ItemDescription>}

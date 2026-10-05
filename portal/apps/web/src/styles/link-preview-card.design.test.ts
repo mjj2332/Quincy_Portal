@@ -46,7 +46,7 @@ describe("link preview card design (#497)", () => {
     expect(node).toContain('size="icon-sm"');
     expect(node).toContain("pointer-coarse:size-11");
     expect(node).not.toContain('size="icon-xs"');
-    expect(card).toMatch(/actions\s*&&[^\n]*pr-\[var\(--space-5\)\][^\n]*max-\[721px\]:pr-11|actions\s*\?[^\n]*pr-\[var\(--space-5\)\][^\n]*max-\[721px\]:pr-11/);
+    expect(card).toMatch(/actions\s*\?[^\n]*pr-\[var\(--space-5\)\][^\n]*max-\[721px\]:pr-11[^\n]*pointer-coarse:pr-11/);
   });
   it("4: the image overrides the Item's size=sm 32px, on desktop and phone", () => {
     expect(card).toContain("size-16 group-data-[size=sm]/item:size-16");
