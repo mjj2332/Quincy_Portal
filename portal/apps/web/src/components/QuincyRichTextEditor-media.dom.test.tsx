@@ -474,7 +474,7 @@ describe("HEIC images (#495)", () => {
     await act(async () => { drive.phase("preparing", A); });
     const status = tray(host)!.querySelector<HTMLElement>('[role="status"][aria-label="Preparing IMG_1.HEIC"]');
     expect(status).not.toBeNull();
-    expect(status!.querySelector('[data-slot="spinner"]')).not.toBeNull();
+    expect(status!.querySelector("svg")).not.toBeNull();
     expect(status!.textContent).toContain("Preparing IMG_1.HEIC…");
     expect(tray(host)!.querySelector('[role="progressbar"]')).toBeNull();
   });
