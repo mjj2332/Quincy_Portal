@@ -18,11 +18,11 @@ export function LinkPreviewCard({ attrs, actions, testId = "link-preview-card" }
   if (!attrs.url) return null;
   const showImage = Boolean(attrs.imageMediaId) && !imageFailed;
   return <div className="relative my-[var(--space-2)]">
-    <Item variant="outline" size="sm" data-testid={testId} className="flex-nowrap items-start" render={<a href={attrs.url} target="_blank" rel="noopener noreferrer nofollow" />}>
-      {showImage && <ItemMedia variant="image" className="size-16">
+    <Item variant="outline" size="sm" data-testid={testId} className="flex-nowrap items-start rounded-[var(--radius-xs)]" render={<a href={attrs.url} target="_blank" rel="noopener noreferrer nofollow" />}>
+      {showImage && <ItemMedia variant="image" className="size-16 group-data-[size=sm]/item:size-16 max-[721px]:size-12 max-[721px]:group-data-[size=sm]/item:size-12">
         <img data-testid="link-preview-image" src={embeddedMediaUrl(attrs.imageMediaId!)} alt="" loading="lazy" decoding="async" onError={() => setImageFailed(true)} />
       </ItemMedia>}
-      <ItemContent className="min-w-0">
+      <ItemContent className={actions ? "min-w-0 pr-[var(--space-5)] max-[721px]:pr-11" : "min-w-0"}>
         {attrs.siteName && <span className="text-xs text-foreground-secondary">{attrs.siteName}</span>}
         <ItemTitle className="line-clamp-2 break-words">{attrs.title ?? hostAndPath(attrs.url)}</ItemTitle>
         {attrs.description && <ItemDescription className="text-foreground-secondary">{attrs.description}</ItemDescription>}
