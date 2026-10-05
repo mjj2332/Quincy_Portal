@@ -180,7 +180,12 @@ export class Snapshots {
       try {
         if (this.host.fence() < 0) return;
         const state = this.row();
-        if (!state.project_id) return;
+        if (!state.project_id) {
+          // Nothing says which Project this board belongs to, so there is nowhere to publish. Spend the deadlines (the revisions stay, so
+          // the board is still dirty and the next admission remembers the Project and arms a fresh one) instead of re-arming them forever.
+          this.sql.exec("UPDATE wb_state SET snapshot_due_at = NULL, leave_pending = 0, retry_at = NULL, prune_retry_at = NULL, audit_retry_at = NULL WHERE id = 1");
+          return;
+        }
         const now = this.host.clock();
         if ((state.snapshot_due_at !== null && state.snapshot_due_at <= now) || (state.retry_at !== null && state.retry_at <= now)) await this.publishCadence();
         const after = this.row();

@@ -105,6 +105,9 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
     ctx.blockConcurrencyWhile(async () => {
       ensureSchema(this.ctx.storage);
       this.snapshots.ensureSchema();
+      // A board that predates this state has no remembered Project; a socket that survived the wake names it.
+      const survivor = this.attachments()[0];
+      if (survivor) this.snapshots.rememberProject(survivor.attachment.projectId);
       const changed = normaliseIndices(this.ctx.storage, () => this.snapshots.markDirty(null));
       if (changed.length > 0) { this.snapshots.rearm(); this.broadcast({ type: "elements", generation: this.snapshots.generation(), elements: changed }, ""); }
     });

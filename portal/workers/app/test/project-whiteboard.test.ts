@@ -1084,6 +1084,33 @@ describe("version snapshots: the last person to leave (#500)", () => {
   });
 });
 
+describe("version snapshots: a board whose Project was never remembered (#500)", () => {
+  const legacyRows = [{ ...element("p", 1, 1), index: "a0" }, { ...element("q", 1, 2), index: "a0" }];
+
+  it("does not loop the alarm when nothing says which Project the board belongs to", async () => {
+    const project = await newProject(); const t0 = farFuture();
+    await plant(project, legacyRows);
+    await evictDurableObject(stubFor(project));
+    await setClock(project, t0);                                                    // wakes: the table is normalised and the board marked dirty
+    expect(await alarmAt(project)).not.toBeNull();
+    await setClock(project, t0 + 1_000_000); await fire(project);
+    expect(await alarmAt(project)).toBeNull();                                      // spent, not re-armed for the same past deadline
+    expect(await versionsOf(project)).toEqual([]);
+  });
+
+  it("remembers the Project from a socket that survived the wake, so the normalised board is snapshotted", async () => {
+    const project = await newProject(); const t0 = farFuture();
+    const { client } = await join(project);
+    await plant(project, legacyRows);
+    await runInDurableObject(stubFor(project), async (_instance, state) => { state.storage.sql.exec("UPDATE wb_state SET project_id = NULL"); });
+    await evictDurableObject(stubFor(project));
+    await stubFor(project).refreshAccess();                                        // wakes the object; the hibernated socket is still there
+    await setClock(project, t0 + 1_000_000); await fire(project);
+    expect(await versionsOf(project)).toMatchObject([{ reason: "interval", elementCount: 2 }]);
+    client.ws.close(1000);
+  });
+});
+
 describe("version snapshots: publication, retries and retention (#500)", () => {
   it("retries a failed R2 PUT with the same ordinal and leaves the board dirty meanwhile", async () => {
     const project = await newProject(); const t0 = farFuture(); await setClock(project, t0);
@@ -1197,7 +1224,10 @@ describe("version snapshots: hard delete (#500)", () => {
     const running = fire(project);
     await held.reached();
     const purging = stubFor(project).purge();
-    await sleep(50); held.release();
+    // Release only once the purge has raised its fence (it then waits on this very publication): under load the RPC can arrive late, and a
+    // publication that finished BEFORE the purge is a legitimate outcome (the route deletes the R2 prefix afterwards), not what this test is about.
+    await vi.waitFor(async () => expect(await runInDurableObject(stubFor(project), async (instance) => (instance as unknown as { purging: boolean }).purging)).toBe(true), { timeout: 5000 });
+    held.release();
     await Promise.all([running, purging]);
     expect(await objectKeys(project)).toEqual([]);
     expect(await alarmAt(project)).toBeNull();
