@@ -5,10 +5,23 @@ Loaded on demand from `Subagent-Orchestration.md` §3. Updated 2026-10-05.
 `codex exec` runs the real Codex CLI as an OS subprocess via `Bash` — OpenAI's model, its own
 sandbox, output read back from a file. It is not the `Agent` tool.
 
+**Use the scripts.** `scripts/agents/sol-review.sh <base> <head> <out.md> --spec <ticket.md>` runs
+a Sol review and `scripts/agents/codex-plan.sh <brief.md> <out.md>` a planning run, both exactly as
+below; `--help` on each. Brief templates: `docs/subagents/templates/` (`sol-brief.md`,
+`plan-brief.md`, `build-brief.md`). Each writes the final message to `<out.md>` and the raw
+transcript to `<out>.run.log` (hundreds of thousands of lines: grep it, never read it whole).
+
+The shape they run — prompt on **stdin**, never a positional argument, and a hard time limit:
+
 ```bash
-codex exec --sandbox read-only -m gpt-6.1-sol -c model_reasoning_effort=high "..."
+cat "$SCRATCH/brief.md" | perl -e 'alarm 2400; exec @ARGV' \
+  codex exec --sandbox read-only -m gpt-6.1-sol -c model_reasoning_effort=high \
+  --output-last-message "$SCRATCH/out.md" > "$SCRATCH/out.run.log" 2>&1
 ```
 
+The pipe closes stdin, so Codex cannot sit on `Reading additional input from stdin` (§Failure
+mode: silent stdin hang). `alarm` ends the run with exit 142, which is a timeout, never a verdict.
+The session id for a credit-wall resume is the `session id:` line near the top of the run log.
 
 **GPT-6-Astra** is available as the `gpt-6-astra` Codex model. Pass `-m gpt-6-astra` explicitly
 when Astra is required; the account default is not a reliable model selector. Codex models have
@@ -190,8 +203,8 @@ to edit, never the session's.
 
 Two set-up facts that cost a round when missed (#216, 2026-09-19):
 
-- **The dev server serves whichever checkout started it** — the recipe is in agy-cli.md §Browser
-  pass, precondition 1.
+- **The dev server serves whichever checkout started it.** Serve the branch under test with
+  `scripts/agents/serve-branch.sh <ref>` (agy-cli.md §Browser pass, precondition 1).
 - **Confirm the debug port answers before launching** (`curl -s http://127.0.0.1:9333/json/version`).
   A Chrome listening on 9222 that returns nothing is the everyday profile, which refuses remote
   debugging.

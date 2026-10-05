@@ -90,6 +90,14 @@ they are different agents, and the second is blind to the first's verdicts until
    marks every row *agree*/*disagree* and lists what the table missed. It returns Ship / Fix first,
    ranked defects, disagreements with evidence, and suggestions kept apart from defects.
 
+**Serving and the report header.** QA serves only through `scripts/agents/serve-branch.sh <ref>`,
+from the dedicated worktree `~/quincy-wt/serve` — never from the main checkout, whose branch other
+sessions switch (a pass once ran against a checkout that changed under it). Every browser-pass
+report, Agy's, Luna's and design-reviewer's, starts with the server's **pid, cwd, HEAD and bundle**
+(`index-*.js`), read before the pass and again after it; a pass whose server changed in between is
+void. `scripts/agents/agy-pass.sh` writes both into the report; `scripts/agents/preflight.sh`
+prints them on its `serve` line for any other runner.
+
 The session then gates both (§5): open the screenshots, confirm every disagreement one way or the
 other, and treat an unmeasured PASS as a FAIL. Defects go back through the fix loop and a fresh
 stage 1; suggestions go to the owner.
@@ -131,8 +139,22 @@ and Codex-as-peer goes through `/codex:rescue --background`.
 Applies to Codex/Agy subprocesses and to `Agent`-tool Claude subagents — not to this session
 planning or building inline (§1).
 
+0. **Check readiness.** `scripts/agents/preflight.sh` prints one PASS/FAIL line each for Codex
+   login, Agy, the huashu extension (including the two-profile `[NO_TAB]` cause), the debugging
+   Chromes on 9333/9334, who serves 8787 and `gh` auth. Read-only; no secrets printed.
 1. **Write the spec to a scratchpad file first** — never inline a whole task as a raw string. Keeps
-   prompts reviewable and reusable when a fix loop needs a second round.
+   prompts reviewable and reusable when a fix loop needs a second round. Start from
+   `docs/subagents/templates/`: `plan-brief.md`, `build-brief.md`, `sol-brief.md` (used by
+   `scripts/agents/sol-review.sh`), and `agy-brief-head.md` + `agy-common-rules.md` (assembled by
+   `scripts/agents/agy-pass.sh`). Codex runs go through `scripts/agents/codex-plan.sh` and
+   `sol-review.sh` ([codex-cli.md](codex-cli.md)).
+   - **Resume notes.** Every plan and build brief says: "Keep running notes (file:line findings,
+     decisions) in `<scratch>/notes-<task>.md`; on resume read it first and do not re-explore what
+     it records." A resumed or compacted agent otherwise replays 25–30 calls of exploration
+     (`docs/retros/2026-10-05.md` §8).
+   - **Settled plans leave the scratchpad.** Once the session synthesises a plan, it goes to the
+     issue as a comment (`gh issue comment <n> --body-file <plan.md>`) or to
+     `docs/plans/<issue>.md` — never only a tmp scratchpad, which the next session cannot find.
 2. **Launch in the background** (`Bash`, `run_in_background: true`), passing the spec as the
    subprocess prompt and capturing the final report to its own file, so orchestration continues
    and a notification arrives on exit. This holds for Agy too: its prompt is a `--print=`
