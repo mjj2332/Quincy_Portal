@@ -17,7 +17,7 @@ import { createVanishObserver, type VanishObserver } from "../lib/whiteboard-van
 import { toCollaborator } from "../lib/whiteboard-collaborators";
 import { pushToast } from "../lib/toast-store";
 import { ApiError } from "../lib/api";
-import { EMBEDDED_VIDEO_ACCEPT, RenditionFailedError, abortEmbeddedImage, embeddedImageAccept, embeddedImageProblem, embeddedVideoContentType, embeddedVideoProblem, isEmbeddedHeicFile, uploadEmbeddedImage, uploadEmbeddedVideo } from "../lib/embedded-media";
+import { EMBEDDED_VIDEO_ACCEPT, RenditionFailedError, abortEmbeddedImage, retryEmbeddedRendition, embeddedImageAccept, embeddedImageProblem, embeddedVideoContentType, embeddedVideoProblem, isEmbeddedHeicFile, uploadEmbeddedImage, uploadEmbeddedVideo } from "../lib/embedded-media";
 import { useEmbeddedHeicEnabled } from "../lib/use-embedded-heic";
 import { createMediaFileResolver, type MediaFileResolver, type ResolvedMedia } from "../lib/whiteboard-media-files";
 import { canvasMediaRenderer } from "../lib/whiteboard-media-render";
@@ -105,7 +105,7 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
   const [selectedVideo, setSelectedVideo] = useState<string | null>(null);
   const uploadSeq = useRef(0);
   const boardRef = useRef<HTMLDivElement>(null);
-  const runningUploads = useRef(new Map<number, { cancel: () => void }>());
+  const runningUploads = useRef(new Map<number, { cancel: () => void; retry: () => void }>());
   const mountedRef = useRef(true);
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; for (const entry of [...runningUploads.current.values()]) entry.cancel(); }; }, []);
   useEffect(() => { if (picking !== null) pickerRef.current?.click(); }, [picking]);
@@ -287,18 +287,21 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
       // A HEIC is converted to a JPEG by the server (#495): the browser cannot decode the original, so the board waits for that copy.
       const heic = kind === "image" && isEmbeddedHeicFile(file);
       let preparedId: string | null = null;
-      let released = false; let cancelled = false;
+      let released = false; let cancelled = false; let keepRow = false;
       const release = () => {
         if (released) return; released = true;
         runningUploads.current.delete(key);
         if (mountedRef.current) setUploads((entries) => entries.filter((entry) => entry.key !== key));
       };
-      runningUploads.current.set(key, { cancel: () => { cancelled = true; controller.abort(); if (preparedId) void abortEmbeddedImage({ projectId, owner: "whiteboard" }, preparedId); release(); } });
+      const setPhase = (phase: "uploading" | "preparing" | "failed") => { if (mountedRef.current && !released) setUploads((entries) => entries.map((entry) => entry.key === key ? { ...entry, phase } : entry)); };
+      const onPhase = (_phase: "preparing", mediaId: string) => { preparedId = mediaId; setPhase("preparing"); };
       setUploads((entries) => [...entries, { key, name, percent: 0, kind }]);
       const onProgress = (percent: number) => { if (mountedRef.current && !released) setUploads((entries) => entries.map((entry) => entry.key === key ? { ...entry, percent } : entry)); };
-      const onPhase = (_phase: "preparing", mediaId: string) => { preparedId = mediaId; if (mountedRef.current && !released) setUploads((entries) => entries.map((entry) => entry.key === key ? { ...entry, phase: "preparing" } : entry)); };
-      const uploading = kind === "video" ? uploadEmbeddedVideo(projectId, file, { signal: controller.signal, onProgress, owner: "whiteboard" }) : uploadEmbeddedImage({ projectId, owner: "whiteboard" }, file, onProgress, { signal: controller.signal, onPhase });
-      void uploading
+      const uploading = () => kind === "video" ? uploadEmbeddedVideo(projectId, file, { signal: controller.signal, onProgress, owner: "whiteboard" }) : uploadEmbeddedImage({ projectId, owner: "whiteboard" }, file, onProgress, { signal: controller.signal, onPhase });
+      // A failed HEIC keeps its row (Retry, Remove) and its place until Remove or a Retry that ends ready; every other ending releases it.
+      const follow = (work: Promise<string>) => {
+        keepRow = false;
+        void work
         .then(async (mediaId) => {
           if (cancelled || !mountedRef.current) return;
           const resolver = resolverRef.current!;
@@ -313,11 +316,18 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
         })
         .catch((reason) => {
           if (cancelled || (reason instanceof Error && reason.name === "AbortError")) return;
-          if (reason instanceof RenditionFailedError) { if (mountedRef.current) setUploadErrors((entries) => [...entries, `Couldn't prepare ${name}`]); return; }
+          if (reason instanceof RenditionFailedError) { preparedId = reason.mediaId; keepRow = true; setPhase("failed"); return; }
           if (reason instanceof ApiError && reason.status === 409) { pushToast("Archived projects cannot accept media", "error"); return; }
           if (mountedRef.current) setUploadErrors((entries) => [...entries, `${name} could not be uploaded${reason instanceof Error && reason.message ? `: ${reason.message}` : "."}`]);
         })
-        .finally(release);
+        .finally(() => { if (!keepRow) release(); });
+      };
+      const discard = () => { if (preparedId) void abortEmbeddedImage({ projectId, owner: "whiteboard" }, preparedId); };
+      runningUploads.current.set(key, {
+        cancel: () => { cancelled = true; controller.abort(); discard(); release(); },
+        retry: () => { if (!preparedId || released) return; setPhase("preparing"); follow(retryEmbeddedRendition({ projectId, owner: "whiteboard" }, preparedId, { signal: controller.signal, onPhase })); },
+      });
+      follow(uploading());
     }
     setUploadErrors(problems);
   }, [projectId]);
@@ -362,8 +372,8 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
           {...{ onCancel: () => setPicking(null) }}
         />}
       </div>
-      <div ref={boardRef} tabIndex={-1} data-testid="project-whiteboard-board" className="min-h-0 relative border-solid border-[length:var(--border-width-hair)] border-border bg-card outline-none">
-        <EmbeddedUploadTray uploads={uploads} errors={uploadErrors} onCancel={(key) => { runningUploads.current.get(key)?.cancel(); boardRef.current?.focus(); }} testId="project-whiteboard-upload-tray" className="absolute inset-x-[var(--space-4)] bottom-[calc(var(--space-4)+var(--space-7)+var(--space-2))] z-20 mx-auto grid max-w-[28rem] gap-[var(--space-2)] rounded-lg border-solid border-[length:var(--border-width-hair)] border-border bg-card p-[var(--space-3)] shadow-sm" />
+      <div ref={boardRef} tabIndex={-1} data-testid="project-whiteboard-board" className="min-h-0 relative border-solid border-[length:var(--border-width-hair)] border-border bg-card focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]">
+        <EmbeddedUploadTray uploads={uploads} errors={uploadErrors} onCancel={(key) => { runningUploads.current.get(key)?.cancel(); boardRef.current?.focus(); }} onRetry={(key) => runningUploads.current.get(key)?.retry()} testId="project-whiteboard-upload-tray" className="absolute inset-x-[var(--space-4)] bottom-[calc(var(--space-4)+var(--space-7)+var(--space-2))] z-20 mx-auto grid max-w-[28rem] gap-[var(--space-2)] rounded-lg border-solid border-[length:var(--border-width-hair)] border-border bg-card p-[var(--space-3)] shadow-sm" />
         {deleted
           ? <p className="p-[var(--space-5)]" role="alert">This project's whiteboard was deleted.</p>
           : initialData
