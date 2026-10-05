@@ -273,6 +273,23 @@ describe("user impersonation gate and official Better Auth flow", () => {
     expect((await request("/api/auth/admin/stop-impersonating", started.cookie, "POST", {})).status).toBe(200);
   });
 
+  it("refuses a project comment on an archived Project to an impersonating Admin, writing no audit row (#527)", async () => {
+    const adminCookie = await sessionCookie(adminToken);
+    expect((await setFlag(true, adminCookie)).status).toBe(200);
+    const started = await startImpersonation(photographerId, adminCookie);
+    expect(started.response.status).toBe(200);
+    const fixture = await createAnnotationFixture(adminCookie);
+    await database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), fixture.projectId).run();
+    const before = (await database.DB.prepare("SELECT count(*) AS n FROM audit_log WHERE action LIKE 'project_comment.%'").first<{ n: number }>())!.n;
+    const refused = await request(`/api/projects/${fixture.projectId}/comments`, started.cookie, "POST", {
+      content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Impersonated on archived" }] }] },
+    });
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ code: "comment_project_archived" });
+    expect((await database.DB.prepare("SELECT count(*) AS n FROM audit_log WHERE action LIKE 'project_comment.%'").first<{ n: number }>())!.n).toBe(before);
+    expect((await request("/api/auth/admin/stop-impersonating", started.cookie, "POST", {})).status).toBe(200);
+  });
+
   it("adds immutable provenance to a preference update made through an impersonated session", async () => {
     const adminCookie = await sessionCookie(adminToken);
     expect((await setFlag(true, adminCookie)).status).toBe(200);

@@ -18,6 +18,7 @@ import { projectMentionableUsers } from "../lib/project-collaboration";
 import { externalAssigneeProjection, hydrateProjectAssignees, hydrateSubtaskAssignees, type HydratedAssignee } from "../lib/subtask-assignees";
 import { resolveVisibleProject, visibleProjectWhere } from "../lib/visible-project-scope";
 import { jsonInput } from "./helpers";
+import { ARCHIVED_SNAPSHOT_SQL, archivedInSnapshot, projectIsArchived } from "../lib/project-archive";
 import { publishOutboxDetached } from "../lib/server-timing";
 import {
   finalizeProjectSubtaskCommandResult,
@@ -26,9 +27,6 @@ import {
   readSubtaskRemindersOf,
   saveProjectSubtask,
   serializeProjectSubtask,
-  ARCHIVED_SNAPSHOT_SQL,
-  projectIsArchived,
-  archivedInSnapshot,
   type ItemPatch,
 } from "../lib/project-subtasks";
 
