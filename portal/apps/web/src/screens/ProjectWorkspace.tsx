@@ -211,7 +211,10 @@ function ProjectWorkspaceView(props: ProjectWorkspaceProps) {
     else if (classification.scope === "collection") { const deniedKind = classification.collectionKind ?? kind; if (deniedKind) setCollectionDenied((current) => current.has(deniedKind) ? current : new Set(current).add(deniedKind)); if (activeTab === deniedKind) selectWorkspaceTab("collaboration"); }
     else if (classification.scope === "collaboration") { void purgeProjectCollaborationData(queryClient, projectId); setCollaborationUnavailable(true); }
     else if (resource === "collaboration-summary" && classification.scope === "project") { void purgeProjectCollaborationData(queryClient, projectId); setTerminal({ projectId, scope: "project", message: error instanceof Error ? error.message : "Project access is no longer available." }); }
-    else if (initial && resource === "detail" && error instanceof ApiError && error.status === 403) setInitialDetailProbe(true);
+    // A detail 403 means ordinary visibility is gone, not that collaboration access is: probe the collaboration summary and take the
+    // same decision whether it arrives on first load or after the workspace mounted (an archive removes a photographer's
+    // visibility mid-session). A failing probe falls through to the existing unavailable / collaboration-unavailable paths.
+    else if (resource === "detail" && error instanceof ApiError && error.status === 403) { setManualReadyFor(null); setDetailReadyFor(null); setInitialDetailProbe(true); } // un-ready the mounted workspace, so a failed probe lands where a first load would
     else setTerminal({ projectId, scope: "project", message: error instanceof Error ? error.message : "Project access is no longer available." });
   }, [activeTab, isCurrent, projectId, purgeProjectCollaborationData, queryClient, selectWorkspaceTab, terminateOnUnauthorized]);
 
@@ -467,10 +470,12 @@ function ProjectWorkspaceQueryOwner(props: QueryOwnerProps) {
   useEffect(() => { if (!detail.isSuccess || !detail.data) return; onDetailStageRef.current(props.run, detail.data.stageKey); }, [detail.data?.stageKey, detail.isSuccess, props.run]);
   useEffect(() => { if (detail.error) props.onAccessFailure(detail.error, "detail", undefined, !detail.data); }, [detail.data, detail.error, props]);
   useEffect(() => { if (collaborationSummary.error) props.onAccessFailure(collaborationSummary.error, "collaboration-summary", undefined, !collaborationSummary.data); }, [collaborationSummary.data, collaborationSummary.error, props]);
-  const initialCollaborationProbe = !detail.data && detail.error instanceof ApiError && detail.error.status === 403;
+  // A detail 403, on first load or on a refetch of a mounted workspace, hands the decision to the parent's collaboration probe; hold the loading state meanwhile.
+  const initialCollaborationProbe = detail.error instanceof ApiError && detail.error.status === 403;
   if ((detailClassification?.scope === "principal" || detailClassification?.scope === "project") && !initialCollaborationProbe) return <UnavailableProject message={detail.error instanceof Error ? detail.error.message : "Project unavailable."} />;
   if (collaborationClassification?.scope === "principal" || collaborationClassification?.scope === "project") return <UnavailableProject message={collaborationSummary.error instanceof Error ? collaborationSummary.error.message : "Project unavailable."} />;
-  if (!detail.data) return detail.error && !initialCollaborationProbe ? <main className={FULL_PAGE}><div className="empty"><span className="serif">Project data could not be loaded.</span><div role="alert">{detail.error.message}</div><button className={buttonClasses()} type="button" onClick={() => void detail.refetch()}>Retry</button></div></main> : <LoadingProject />;
+  if (initialCollaborationProbe) return <LoadingProject />;
+  if (!detail.data) return detail.error ? <main className={FULL_PAGE}><div className="empty"><span className="serif">Project data could not be loaded.</span><div role="alert">{detail.error.message}</div><button className={buttonClasses()} type="button" onClick={() => void detail.refetch()}>Retry</button></div></main> : <LoadingProject />;
   // Nothing below the detail mounts an asset query: the Collaboration tab reads no Collection, and a Collection tab's body mounts its own observer.
   if (!props.workspaceReady) return <LoadingProject />;
   return <WorkspaceBody detail={detail.data} detailReady={detail.isSuccess} {...props} />;

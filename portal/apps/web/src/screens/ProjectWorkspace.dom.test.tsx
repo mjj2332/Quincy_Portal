@@ -1441,6 +1441,52 @@ describe("ProjectWorkspace collaboration relocation", () => {
       expect(host.querySelector('[data-testid="discussion-archived-notice"]')).toBeNull();
     });
 
+    describe("a detail 403 after the full workspace mounted (#527)", () => {
+      async function mountThenLoseDetail(summary: "ok" | "403" | "404") {
+        let detailForbidden = false;
+        apiGetMock.mockImplementation((path: string) => {
+          if (path === "/api/projects/p1") return detailForbidden ? Promise.reject(new ApiError("Forbidden: you are not assigned to this project", 403)) : Promise.resolve(projectFixture());
+          if (path.includes("/collaboration-summary")) {
+            if (detailForbidden && summary === "403") return Promise.reject(new ApiError("Forbidden", 403));
+            if (detailForbidden && summary === "404") return Promise.reject(new ApiError("Not found", 404));
+            const base = collaborationSummaryFixture(); return Promise.resolve({ ...base, project: { ...base.project, archived: detailForbidden } });
+          }
+          if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1")] });
+          if (path.includes("ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+          if (path.includes("comments")) return Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [] });
+          if (path.includes("annotations")) return Promise.resolve({ annotations: [] });
+          if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
+          if (path.includes("mentionable-users")) return Promise.resolve({ users: [] });
+          return Promise.resolve({});
+        });
+        let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+        await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>);
+        await flushUntil(() => host.querySelector('[data-testid="project-collaboration-only"]') === null && workspaceTab(host, "Collaboration") !== undefined, "the full workspace");
+        detailForbidden = true;
+        await act(async () => { await queryClient!.invalidateQueries({ queryKey: projectDataKeys.detail("p1"), exact: true, refetchType: "active" }); });
+      }
+
+      it("falls back to the collaboration-only view, with the discussion read-only, when collaboration access remains", async () => {
+        await mountThenLoseDetail("ok");
+        await flushUntil(() => host.querySelector('[data-testid="project-collaboration-only"]') !== null && host.querySelector('[data-testid="discussion-archived-notice"]') !== null, "the collaboration-only view with the read-only discussion");
+        expect(host.textContent).not.toContain("Project unavailable.");
+        expect(host.querySelector("[data-testid=discussion-composer]")).toBeNull();
+      });
+
+      it("keeps the unavailable state when the collaboration summary is also gone (404)", async () => {
+        await mountThenLoseDetail("404");
+        await flushUntil(() => host.textContent!.includes("Project unavailable."), "the unavailable state");
+        expect(host.querySelector('[data-testid="project-collaboration-only"]')).toBeNull();
+      });
+
+      it("shows no discussion when the collaboration summary is also forbidden (403)", async () => {
+        await mountThenLoseDetail("403");
+        await flushUntil(() => collaborationUnavailableSection(host) !== null, "collaboration unavailable");
+        expect(host.querySelector('[data-testid="discussion-archived-notice"]')).toBeNull();
+        expect(host.querySelector("[data-testid=discussion-composer]")).toBeNull();
+      });
+    });
+
     it("follows a late Collection denial back to Collaboration", async () => {
       mockUrlTabProject({ editedForbidden: true });
       const shown = vi.fn();
