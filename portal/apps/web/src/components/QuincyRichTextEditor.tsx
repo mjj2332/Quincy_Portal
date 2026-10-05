@@ -116,6 +116,9 @@ type UploadingMedia = { key: number; name: string; percent: number; kind: "image
 /** A file this editor would send down the video path: a Project's discussion only, and by what the file says it is. */
 const isVideoFile = (file: Pick<File, "type" | "name">) => file.type.startsWith("video/") || /\.(?:mp4|mov)$/i.test(file.name);
 
+// Marks the transaction that inserts a finished upload, so onUpdate can tell it from the author typing.
+const UPLOAD_INSERT_META = "quincyUploadInsert";
+
 export function QuincyRichTextEditor({
   preset,
   value,
@@ -221,7 +224,7 @@ export function QuincyRichTextEditor({
         return false;
       },
     },
-    onUpdate: ({ editor: next }) => {
+    onUpdate: ({ editor: next, transaction }) => {
       const doc = tiptapToRichTextDoc(next.getJSON());
       const serialised = JSON.stringify(doc);
       // Tiptap/ProseMirror can dispatch a no-op transaction (e.g. from a blur triggered by a
@@ -229,7 +232,10 @@ export function QuincyRichTextEditor({
       // clobber a concurrent external reset (e.g. the composer clearing after a successful post)
       // that lands between this event and the next render.
       if (serialised === valueRef.current) return;
-      valueRef.current = serialised; onChangeRef.current(doc); setUploadErrors((entries) => (entries.length ? [] : entries)); setNestingBlocked(false); setMentionDismissed(false); setQuery(mentionQuery(next));
+      valueRef.current = serialised; onChangeRef.current(doc);
+      // Only the author's own edits retire an upload problem: a sibling upload landing is not one, and must not hide a problem shown for another file.
+      if (!transaction.getMeta(UPLOAD_INSERT_META)) setUploadErrors((entries) => (entries.length ? [] : entries));
+      setNestingBlocked(false); setMentionDismissed(false); setQuery(mentionQuery(next));
     },
     onSelectionUpdate: ({ editor: next }) => setQuery(mentionQuery(next)),
   });
@@ -292,7 +298,7 @@ export function QuincyRichTextEditor({
           if (cancelled || !mountedRef.current || !live) return;
           const position = Math.min(insertAt.current.get(key) ?? live.state.doc.content.size, live.state.doc.content.size);
           // insertContentAt selects inserted content by default; an async insert must leave the caret where the author is typing.
-          live.chain().insertContentAt(position, { type: kind, attrs: { mediaId } }, { updateSelection: false }).run();
+          live.chain().command(({ tr }) => { tr.setMeta(UPLOAD_INSERT_META, true); return true; }).insertContentAt(position, { type: kind, attrs: { mediaId } }, { updateSelection: false }).run();
         })
         .catch((reason) => {
           if (cancelled || (reason instanceof Error && reason.name === "AbortError")) return;
