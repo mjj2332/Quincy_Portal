@@ -4,6 +4,18 @@
 //    `--shadow-md`), the same one `reui/dropdown-menu` and `quincy/menu-surface.ts` draw: a floating
 //    bar is an overlay, and `card` is the Portal's committed CONTENT surface (ADR 0002 / 0014).
 // 2. `testId` prop, forwarded to the surface: tests select a Quincy-owned id, not a `data-slot`.
+// 3. The surface has no outer `p-1`: the toolbar scroller already pads itself by `--space-1`, so the card was
+//    8px taller than its controls (~46px against ~38px) and did not fit above row 2 of a first-block table (#535).
+// 4. `focusFirstToolbarStop` and `fromOwnDom` are exported: the phone table group (`RichTextTableTools`) reuses
+//    the Alt+F10 / Escape behaviour instead of copying the selectors.
+// 6. `inactive` keeps the bar mounted but inert (focus cannot enter it, `focusFirstToolbarStop` refuses an inert
+//    root), `aria-hidden` and `invisible`: the table bar's "no room" state, where the same controls render as the
+//    toolbar's table group instead (#535). `tier` is the Quincy test hook `data-tier`.
+// 5. Each mounted bar's OUTER element (Tiptap's BubbleMenu wrapper, `tabIndex = 0` set once in its constructor and
+//    never rewritten) is registered against its editor (`editorOwnsBubbleBar`): a bubble portals out of the
+//    editor's own DOM, so "is this focus in MY bar" cannot be answered by containment alone (#535).
+// 7. While `inactive` that wrapper is ALSO inert, `aria-hidden` and `tabindex=-1` (restored to 0 when active again):
+//    otherwise reverse Tab lands on the empty wrapper, and focus held there across a tier change is unowned (#535).
 import {
   useEffect,
   useLayoutEffect,
@@ -13,6 +25,8 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react"
 import type { Editor } from "@tiptap/react"
+
+import { cn } from "@/lib/utils"
 
 import { RichTextToolbar } from "./rich-text-toolbar"
 
@@ -33,11 +47,34 @@ export function setRichTextBubble(
   }
 }
 
+/** Focuses the roving tab stop inside `root`, else its first enabled control; false when it has none. */
+export function focusFirstToolbarStop(root: ParentNode): boolean {
+  // An inert subtree cannot take focus; saying so lets the caller's other handler (the toolbar group) run.
+  if (root instanceof Element && root.closest("[inert]")) return false
+
+  const stop =
+    root.querySelector<HTMLElement>(FIRST_STOP) ??
+    root.querySelector<HTMLElement>(ANY_STOP)
+
+  if (!stop) return false
+  stop.focus()
+  return true
+}
+
 // Menus and popovers portal out, yet React still bubbles their events here.
-function fromOwnDom(event: { target: EventTarget; currentTarget: Element }) {
+export function fromOwnDom(event: { target: EventTarget; currentTarget: Element }) {
   return (
     event.target instanceof Node && event.currentTarget.contains(event.target)
   )
+}
+
+const barsByEditor = new WeakMap<Editor, Set<HTMLElement>>()
+
+/** True when `node` sits inside a bubble bar mounted by this editor (not another editor's). */
+export function editorOwnsBubbleBar(editor: Editor, node: Node | null): boolean {
+  if (!node) return false
+  for (const bar of barsByEditor.get(editor) ?? []) if (bar.contains(node)) return true
+  return false
 }
 
 interface RichTextBubbleBarProps {
@@ -46,6 +83,10 @@ interface RichTextBubbleBarProps {
   label: string
   /** Keeps the bar up while a field of its own holds focus. */
   holdOpen?: boolean
+  /** The bar stays mounted but cannot be used or seen: another presentation of its controls is showing. */
+  inactive?: boolean
+  /** The table bar's placement tier, exposed as `data-tier` for browser measurement. */
+  tier?: string
   /** A Quincy-owned test id on the bar's surface (test-seam guard F bans vendor `data-slot` hooks). */
   testId?: string
   children: ReactNode
@@ -58,6 +99,8 @@ export function RichTextBubbleBar({
   pluginKey,
   label,
   holdOpen = false,
+  inactive = false,
+  tier,
   testId,
   children,
 }: RichTextBubbleBarProps) {
@@ -68,6 +111,34 @@ export function RichTextBubbleBar({
   useLayoutEffect(() => {
     holdRef.current = holdOpen
   }, [holdOpen])
+
+  useLayoutEffect(() => {
+    const bar = barRef.current
+    if (!bar) return
+    // Register the outer wrapper: it contains the bar and is itself focusable.
+    const owner = bar.parentElement ?? bar
+    const bars = barsByEditor.get(editor) ?? new Set<HTMLElement>()
+    bars.add(owner)
+    barsByEditor.set(editor, bars)
+    return () => {
+      bars.delete(owner)
+    }
+  }, [editor])
+
+  // Tiptap's wrapper keeps its own tab stop; take it out of the tab order and the a11y tree while the bar is inactive.
+  useLayoutEffect(() => {
+    const wrapper = barRef.current?.parentElement
+    if (!wrapper) return
+    if (inactive) {
+      wrapper.setAttribute("inert", "")
+      wrapper.setAttribute("aria-hidden", "true")
+      wrapper.tabIndex = -1
+    } else {
+      wrapper.removeAttribute("inert")
+      wrapper.removeAttribute("aria-hidden")
+      wrapper.tabIndex = 0
+    }
+  }, [inactive])
 
   useEffect(() => {
     const { dom } = editor.view
@@ -106,13 +177,8 @@ export function RichTextBubbleBar({
 
       if (!event.altKey || event.key !== "F10" || !bar?.isConnected) return
 
-      const stop =
-        bar.querySelector<HTMLElement>(FIRST_STOP) ??
-        bar.querySelector<HTMLElement>(ANY_STOP)
-
-      if (!stop) return
+      if (!focusFirstToolbarStop(bar)) return
       event.preventDefault()
-      stop.focus()
     }
 
     editor.on("blur", handleBlur)
@@ -149,7 +215,10 @@ export function RichTextBubbleBar({
     <div
       ref={barRef}
       data-testid={testId}
-      className="border border-border bg-popover p-1 text-popover-foreground shadow-[var(--shadow-md)]"
+      data-tier={tier}
+      inert={inactive || undefined}
+      aria-hidden={inactive || undefined}
+      className={cn("border border-border bg-popover text-popover-foreground shadow-[var(--shadow-md)]", inactive && "invisible")}
       onPointerDownCapture={handlePointerDown}
       onKeyDown={handleKeyDown}
     >

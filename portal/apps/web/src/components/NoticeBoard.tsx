@@ -54,6 +54,7 @@ function relativeTime(value: string): string {
 export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
   const queryClient = useQueryClient();
   const panelId = useId();
+  const mentionHintRef = useRef<HTMLSpanElement>(null); // the helper line the table bar may extend down to (#535)
   const [content, setContent] = useState<RichTextDoc>(EMPTY_DOC);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState<RichTextDoc>(EMPTY_DOC);
@@ -191,7 +192,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
           {renderEditComposer(editingId)}
         </article>}
       </div>
-      <form data-slot="notice-board-composer" className={CREATE_COMPOSER} onSubmit={(event) => void submit(event)}><label className="sr-only" htmlFor={`${panelId}-body`}>Write a notice</label><QuincyRichTextEditor preset="document" id={`${panelId}-body`} value={content} onChange={setContent} limit={NOTICE_BODY_MAX_LENGTH} maxBytes={NOTICE_RICH_TEXT_JSON_MAX_BYTES} disabled={isBusy} loadMentionables={loadMentionables} placeholder="Write a notice for the team…" onSubmit={() => void submit()} media={{ noticeBoard: true }} linkPreviews={{ noticeBoard: true }} onUploadingChange={setComposerUploading} /><div className={COMPOSER_FOOT}><span className={MENTION_HINT}>Use @ to mention active staff</span><button className={buttonClasses("primary")} type="submit" disabled={isBusy || postingOverBytes || composerUploading}>{isPosting ? "Posting…" : "Post notice"}</button></div></form>
+      <form data-slot="notice-board-composer" className={CREATE_COMPOSER} onSubmit={(event) => void submit(event)}><label className="sr-only" htmlFor={`${panelId}-body`}>Write a notice</label><QuincyRichTextEditor preset="document" id={`${panelId}-body`} value={content} onChange={setContent} limit={NOTICE_BODY_MAX_LENGTH} maxBytes={NOTICE_RICH_TEXT_JSON_MAX_BYTES} disabled={isBusy} loadMentionables={loadMentionables} placeholder="Write a notice for the team…" onSubmit={() => void submit()} media={{ noticeBoard: true }} linkPreviews={{ noticeBoard: true }} onUploadingChange={setComposerUploading} tableBubbleFloor={mentionHintRef} /><div className={COMPOSER_FOOT}><span ref={mentionHintRef} className={MENTION_HINT}>Use @ to mention active staff</span><button className={buttonClasses("primary")} type="submit" disabled={isBusy || postingOverBytes || composerUploading}>{isPosting ? "Posting…" : "Post notice"}</button></div></form>
     </div>
   </section>;
 }

@@ -100,6 +100,10 @@ export const TEAM_CHIP =
   // `width < 720`, excluding exactly 720 (docs/lessons.md:1141-1146).
   "max-[721px]:min-h-[44px]";
 
+/** #514: header chips may carry a long collision label (full name + email). They never outgrow their container and wrap
+ *  instead of truncating (the email is what tells two people apart); a short chip keeps TEAM_CHIP's fixed look as the minimum. */
+const TEAM_CHIP_FIT = "h-auto min-h-[calc(--spacing(5.25))] max-w-full min-w-0 whitespace-normal py-0.5";
+
 type TeamChipDataState = "idle" | "pending" | "error" | "conflict";
 
 /** Per-chip mutation-state styling (review fix #204 "visible per-chip state") — tokens only. */
@@ -125,6 +129,34 @@ function displayName(name: string, email: string) { return name || email; }
 function firstName(name: string, email: string) {
   const trimmed = displayName(name, email).trim();
   return trimmed.split(/\s+/)[0] ?? "";
+}
+/**
+ * #514: the visible header-chip label per userId. Computed over the FULL assigned value (before
+ * the "+N" collapse, so a hidden member still counts) and deduped by userId (a dual-role member is
+ * one person, not a collision): the first name when it is unique, the full name when another person
+ * shares the first name, the full name plus email when another person shares the full name too.
+ */
+export function teamChipLabels(people: ReadonlyArray<{ userId: string; name: string; email: string }>): Map<string, string> {
+  const unique = new Map<string, { userId: string; name: string; email: string }>();
+  for (const person of people) if (!unique.has(person.userId)) unique.set(person.userId, person);
+  const norm = (value: string) => value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+  const firsts = new Map<string, number>();
+  const fulls = new Map<string, number>();
+  for (const person of unique.values()) {
+    const first = norm(firstName(person.name, person.email));
+    const full = norm(displayName(person.name, person.email));
+    firsts.set(first, (firsts.get(first) ?? 0) + 1);
+    fulls.set(full, (fulls.get(full) ?? 0) + 1);
+  }
+  const labels = new Map<string, string>();
+  for (const person of unique.values()) {
+    const full = displayName(person.name, person.email).trim();
+    const label = (fulls.get(norm(full)) ?? 0) > 1 && person.name ? `${full} (${person.email})`
+      : (firsts.get(norm(firstName(person.name, person.email))) ?? 0) > 1 ? full
+      : firstName(person.name, person.email);
+    labels.set(person.userId, label);
+  }
+  return labels;
 }
 function initials(name: string, email: string) {
   const parts = displayName(name, email).trim().split(/\s+/).filter(Boolean);
@@ -248,14 +280,14 @@ function TeamChipStateIcon({ dataState }: { dataState: TeamChipDataState }) {
   return null;
 }
 
-function TeamChipContent({ option, dataState, roleTag, lockedLabel, fullName = false }: { option: TeamOption; dataState: TeamChipDataState; roleTag?: string; lockedLabel?: string; /** New shoot shows the whole name; the header keeps the first name. */ fullName?: boolean }) {
+function TeamChipContent({ option, dataState, roleTag, lockedLabel, fullName = false, label }: { option: TeamOption; label?: string; dataState: TeamChipDataState; roleTag?: string; lockedLabel?: string; /** New shoot shows the whole name; the header keeps the first name. */ fullName?: boolean }) {
   const name = displayName(option.name, option.email);
   return <>
     <Avatar size="sm" className="size-4">
       <AvatarFallback className="text-[length:var(--text-2xs)] leading-none">{initials(option.name, option.email)}</AvatarFallback>
     </Avatar>
-    <span className="[overflow-wrap:anywhere]">
-      {fullName ? name : firstName(option.name, option.email)}
+    <span className="min-w-0 [overflow-wrap:anywhere]">
+      <span data-slot="team-chip-label">{fullName ? name : (label ?? firstName(option.name, option.email))}</span>
       {/* Dual-role disambiguation (review fix #204): visible when this userId is displayed in
        *  both the photographer and editor roles, so the two chips are not identical text. */}
       {roleTag && <span className="ml-[var(--space-1)] text-[length:var(--text-2xs)] text-foreground-secondary">{roleTag}</span>}
@@ -291,7 +323,7 @@ function TeamMoreToggle({ hiddenCount, expanded, onToggle }: { hiddenCount: numb
 const NO_LOCKED_KEYS: Set<string> = new Set();
 
 type TeamGroup = { value: string; label: string; items: TeamOption[] };
-type TeamChipView = { dataState: TeamChipDataState; isPending: boolean; messageId: string | undefined; name: string; roleTag: string | undefined };
+type TeamChipView = { dataState: TeamChipDataState; isPending: boolean; messageId: string | undefined; name: string; roleTag: string | undefined; /** #514: header chips only; New shoot shows the whole name. */ label?: string };
 
 /** The picker shared by the Project header (persisted mode, per-change saves) and New shoot
  *  (collect mode, #487). Presentation only: callers own the value, the mutations and the chip
@@ -343,15 +375,15 @@ function TeamComboboxView({ groups, value, onValueChange, visible, hiddenCount, 
     {/* #213 follow-up: content-sized like prototype 2a's Team `.sel` (chips · Add… · chevron), not a
      *  box stretched to its cell — `w-fit` sizes to the chips and `max-w-full` still wraps them
      *  inside the cell. */}
-    <ComboboxChips ref={anchor} className={cn("w-fit max-w-full rounded-[var(--radius-pill)] max-[721px]:min-h-[44px]", formControl && "min-h-[38px] w-full rounded-[var(--radius-sm)]", rowClassName)}>
+    <ComboboxChips ref={anchor} className={cn("w-fit max-w-full rounded-[var(--radius-pill)] max-[721px]:rounded-[var(--radius-sm)] max-[721px]:min-h-[44px]", formControl && "min-h-[38px] w-full rounded-[var(--radius-sm)]", rowClassName)}>
       <ComboboxValue>
         {() => visible.map((option) => {
-          const { dataState, isPending, messageId, name, roleTag } = chipProps(option);
+          const { dataState, isPending, messageId, name, roleTag, label } = chipProps(option);
           const locked = lockedKeys.has(option.key);
           return <ComboboxChip
             key={option.key}
             showRemove={!locked}
-            className={cn(TEAM_CHIP, teamChipStateClasses(dataState), formControl && "max-[721px]:min-h-0")}
+            className={cn(TEAM_CHIP, TEAM_CHIP_FIT, teamChipStateClasses(dataState), formControl && "max-[721px]:min-h-0")}
             data-testid={`project-member-${option.key}`}
             data-state={dataState}
             aria-busy={isPending || undefined}
@@ -378,7 +410,7 @@ function TeamComboboxView({ groups, value, onValueChange, visible, hiddenCount, 
               onKeyDownCapture: (event) => { if (event.key === "Tab") event.stopPropagation(); },
             }}
           >
-            <TeamChipContent option={option} dataState={dataState} roleTag={locked ? undefined : roleTag} lockedLabel={locked ? "Default editor" : undefined} fullName={formControl} />
+            <TeamChipContent option={option} dataState={dataState} roleTag={locked ? undefined : roleTag} lockedLabel={locked ? "Default editor" : undefined} fullName={formControl} label={label} />
           </ComboboxChip>;
         })}
       </ComboboxValue>
@@ -395,7 +427,7 @@ function TeamComboboxView({ groups, value, onValueChange, visible, hiddenCount, 
      *  `w-`, not `min-w-` (#456): the vendor's `data-[chips=true]:min-w-(--anchor-width)` variant wins a
      *  `min-w-` on specificity, pinning the popup to the content-sized anchor. Overriding `w-` makes
      *  twMerge drop the vendor `w-(--anchor-width)`, and `max-w-` still caps it on small screens. */}
-    <ComboboxContent ref={contentRef} anchor={anchor} className="w-[max(var(--anchor-width),300px)] max-w-[calc(100vw-2*var(--space-4))]">
+    <ComboboxContent ref={contentRef} anchor={anchor} data-testid="project-team-options" className="w-[max(var(--anchor-width),300px)] max-w-[calc(100vw-2*var(--space-4))]">
       <ComboboxEmpty>No eligible people match.</ComboboxEmpty>
       <ComboboxList aria-label="Team candidates">
         {(group: (typeof groups)[number]) => <ComboboxGroup key={group.value} items={group.items}>
@@ -541,6 +573,8 @@ export function ProjectTeamCombobox({ projectId, members, canEdit, archived = fa
   for (const option of value) roleCountsByUserId.set(option.userId, (roleCountsByUserId.get(option.userId) ?? 0) + 1);
   const dualRoleUserIds = new Set([...roleCountsByUserId].filter(([, count]) => count > 1).map(([userId]) => userId));
 
+  const chipLabels = teamChipLabels(value);
+
   function chipProps(option: TeamOption) {
     const dataState = chipDataState(option);
     const state = mutationStates[option.key];
@@ -549,7 +583,7 @@ export function ProjectTeamCombobox({ projectId, members, canEdit, archived = fa
     const messageId = hasMessage ? `project-member-message-${option.key}` : undefined;
     const name = displayName(option.name, option.email);
     const roleTag = dualRoleUserIds.has(option.userId) ? shortRoleTag(option.role) : undefined;
-    return { dataState, isPending, messageId, name, roleTag };
+    return { dataState, isPending, messageId, name, roleTag, label: chipLabels.get(option.userId) };
   }
 
   return <div ref={rootRef} className="grid gap-[var(--space-3)]" data-testid="project-team-control">
@@ -578,16 +612,16 @@ export function ProjectTeamCombobox({ projectId, members, canEdit, archived = fa
     >
       {displayed.length ? <>
         {visible.map((option) => {
-          const { dataState, messageId, name, roleTag } = chipProps(option);
+          const { dataState, messageId, name, roleTag, label } = chipProps(option);
           return <span
             key={option.key}
             data-testid={`project-member-${option.key}`}
             data-state={dataState}
             aria-describedby={messageId}
             title={`${name} · ${ROLE_LABELS[option.role]}`}
-            className={cn(TEAM_CHIP, teamChipStateClasses(dataState), readOnly && "max-[721px]:min-h-0")}
+            className={cn(TEAM_CHIP, TEAM_CHIP_FIT, teamChipStateClasses(dataState), readOnly && "max-[721px]:min-h-0")}
           >
-            <TeamChipContent option={option} dataState={dataState} roleTag={roleTag} />
+            <TeamChipContent option={option} dataState={dataState} roleTag={roleTag} label={label} />
           </span>;
         })}
         <TeamMoreToggle hiddenCount={hiddenCount} expanded={effectiveExpanded} onToggle={() => setExpanded(!effectiveExpanded)} />

@@ -737,6 +737,14 @@ projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) =
   return c.json(await details(db, c.env.DB, id, c.get("user").role, variant, await boardContractEnabled(c.env.DB, variant), false, c.env));
 }));
 
+/** #499: tell the Project's whiteboard its Project or its team changed, after the change has committed. The object
+ * rereads what it needs, so this carries nothing stale; a failure is logged, not surfaced (the change is done, and every
+ * write the whiteboard accepts rechecks access itself). */
+async function refreshWhiteboardAccess(env: AppEnv["Bindings"], projectId: string): Promise<void> {
+  try { await env.PROJECT_WHITEBOARD.get(env.PROJECT_WHITEBOARD.idFromName(projectId)).refreshAccess(); }
+  catch (error) { console.error("Whiteboard access refresh failed", { projectId, error }); }
+}
+
 /** #452. An archived Project's Team is read-only. Role changes (users.ts) still count archived memberships as blockers: restore, remove the member, re-archive. */
 const MEMBERSHIP_ARCHIVED_BODY = { error: "Archived projects are read-only; the team can't be changed.", code: "membership_project_archived" } as const;
 
@@ -781,6 +789,7 @@ function projectMembershipRoute(roleOnProject: ProjectMemberRole, method: "put" 
     if (result.outcome === "project_archived") return c.json(MEMBERSHIP_ARCHIVED_BODY, 409);
     if (result.outcome === "confirmation_required") return c.json({ error: "Project access will be lost immediately; confirm final-role removal again", code: "subtask_assignment_confirmation_required", assignmentCount: result.assignmentCount, accessWillBeLost: result.accessWillBeLost, message: `Project access will be lost immediately. ${result.assignmentCount} checklist assignments will be cleared.`, currentMembership: result.currentMembership }, 422);
     if (result.notificationOutboxIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
+    await refreshWhiteboardAccess(c.env, projectId);
     return c.json({ outcome: "removed", removed: { membershipCycle: body!.membershipCycle, userId, roleOnProject }, subtaskAssignmentsCleared: result.subtaskAssignmentsCleared }, 200);
   }));
 }
@@ -1197,7 +1206,7 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
     const hasActiveUpload = archived && Boolean(await c.env.DB.prepare("SELECT id FROM document_uploads WHERE project_id = ? AND status IN ('pending', 'completing', 'aborting') LIMIT 1").bind(id).first<{ id: string }>());
     const outcome = classifyProjectArchiveLoser({ archived, source, current, hasActiveUpload });
     if (outcome.kind === "not_found") return c.json({ error: "Project not found" }, 404);
-    if (outcome.kind === "already_done") return c.json({ ok: true });
+    if (outcome.kind === "already_done") { await refreshWhiteboardAccess(c.env, id); return c.json({ ok: true }); }
     if (outcome.kind === "active_upload") return c.json({ error: "Active document uploads must be aborted before archiving." }, 409);
     return c.json({
       error: archived ? "Project changed while archiving." : "Project changed while restoring.",
@@ -1274,6 +1283,7 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
     const publicationIds = rowsFromD1<{ id: string }>(result[2 + restoreActivityStatements.broadOutboxIndex]).map((row) => row.id);
     if (publicationIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   }
+  await refreshWhiteboardAccess(c.env, id);
   return c.json({ ok: true });
 }));
 projectsRoutes.delete("/projects/:id", terminalRoute("/projects/:id", async (c) => {

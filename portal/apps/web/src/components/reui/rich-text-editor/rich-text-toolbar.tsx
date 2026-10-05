@@ -14,6 +14,12 @@
 // 5b. The phone fade mask follows scroll position (`data-fade` start/end/both/none) instead of staying on at the end.
 // 5c. The scroller carries `p-[var(--space-1)]` so the overflow clip does not cut the controls' focus
 //    outlines (3px ring + 2px offset); Undo/Redo are 44px at <=721px.
+// 5d. `RICH_TEXT_PHONE_QUERY` is the JS twin of this file's `max-[721px]:` variants (Tailwind emits
+//    `@media (width < 721px)`), so the editor can swap presentations at exactly the same width (#535). The fade is
+//    re-measured after every render, so it follows the controls that appear and disappear (the table group).
+// 7. The scroll-fade mask (`data-fade`) applies at EVERY width, not only <=721px: on a desktop the table group
+//    (tier "none" fallback) pushes Undo/Redo past the edge with the scrollbar hidden, so the fade is the only cue (#535).
+//    Touch targets stay phone-only.
 // 6. Roving tabindex is kept as-is: the toolbar is ONE tab stop (the legacy bar had ~12) and arrow
 //    keys / Home / End walk it. Intended; flagged to design-review.
 import {
@@ -37,6 +43,9 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/reui/tooltip"
+
+/** The phone breakpoint, matching Tailwind's `max-[721px]:` (NOT `(max-width: 721px)`, which also matches 721px). */
+export const RICH_TEXT_PHONE_QUERY = "(width < 721px)"
 
 // Every control carries this, so arrow keys can walk the bar in DOM order.
 const TOOLBAR_ITEM = "[data-toolbar-item]"
@@ -134,6 +143,8 @@ export function RichTextToolbar({
   // after every render instead of pointing at a disabled button.
   useLayoutEffect(() => {
     rove(activeRef.current)
+    // Children come and go (the phone table group), so the fade follows them; setFade bails out on an equal value.
+    measureFade()
   })
 
   // Fade only the side that has more content: scrolled to the end, the last control (Redo) is not faded.
@@ -186,7 +197,7 @@ export function RichTextToolbar({
       onFocus={handleFocus}
       onKeyDown={handleKeyDown}
       className={cn(
-        "flex items-center gap-1 p-[var(--space-1)] overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden max-[721px]:data-[fade=end]:[mask-image:linear-gradient(to_right,black_85%,transparent)] max-[721px]:data-[fade=start]:[mask-image:linear-gradient(to_left,black_85%,transparent)] max-[721px]:data-[fade=both]:[mask-image:linear-gradient(to_right,transparent,black_15%,black_85%,transparent)]",
+        "flex items-center gap-1 p-[var(--space-1)] overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden data-[fade=end]:[mask-image:linear-gradient(to_right,black_85%,transparent)] data-[fade=start]:[mask-image:linear-gradient(to_left,black_85%,transparent)] data-[fade=both]:[mask-image:linear-gradient(to_right,transparent,black_15%,black_85%,transparent)]",
         className
       )}
       {...props}

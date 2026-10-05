@@ -8,6 +8,7 @@ import { createRichTextEditorExtensions, exceedsTableLimit, shouldBlockListInden
 import { QuincyRichTextEditor } from "./QuincyRichTextEditor";
 import { RichTextContent } from "./RichTextContent";
 import { getActiveCellElement } from "./reui/rich-text-editor/rich-text-table";
+import { RICH_TEXT_PHONE_QUERY } from "./reui/rich-text-editor/rich-text-toolbar";
 
 let root: Root | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -1371,5 +1372,383 @@ describe("table bar anchor", () => {
       editor.destroy();
       element.remove();
     }
+  });
+});
+
+// #535: below 721px the table controls are a group at the START of the formatting toolbar (the floating bar
+// has no room on a phone); above it they stay in the floating bar. matchMedia is stubbed so the test drives
+// the breakpoint; happy-dom proves wiring, not layout.
+describe("table controls on a phone (#535)", () => {
+  beforeEach(() => { variant = "document"; });
+
+  let phone: boolean;
+  let mediaListeners: Set<() => void>;
+  beforeEach(() => {
+    phone = true;
+    mediaListeners = new Set();
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      media: query,
+      get matches() { return query === RICH_TEXT_PHONE_QUERY ? phone : false; },
+      addEventListener: (_type: string, listener: () => void) => { if (query === RICH_TEXT_PHONE_QUERY) mediaListeners.add(listener); },
+      removeEventListener: (_type: string, listener: () => void) => { mediaListeners.delete(listener); },
+      addListener: (listener: () => void) => { if (query === RICH_TEXT_PHONE_QUERY) mediaListeners.add(listener); },
+      removeListener: (listener: () => void) => { mediaListeners.delete(listener); },
+    }) as unknown as MediaQueryList);
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  const cell = (type: "tableCell" | "tableHeader", label: string): RichTextTableCell =>
+    ({ type, content: [{ type: "paragraph", content: [{ type: "text", text: label }] }] });
+  const grid = (): RichTextDoc => ({ type: "doc", content: [
+    { type: "table", content: [
+      { type: "tableRow", content: [cell("tableHeader", "Day"), cell("tableHeader", "Who")] },
+      { type: "tableRow", content: [cell("tableCell", "Mon"), cell("tableCell", "Terry")] },
+    ] },
+    { type: "paragraph", content: [{ type: "text", text: "after" }] },
+  ] });
+  const wideGrid = (cols: number, rows: number): RichTextDoc => ({ type: "doc", content: [{ type: "table", content: Array.from({ length: rows }, () => ({ type: "tableRow" as const, content: Array.from({ length: cols }, () => cell("tableCell", "x")) })) }] });
+
+  type Tiptap = Editor;
+  const tiptapOf = (editor: HTMLElement) => (editor as unknown as { editor: Tiptap }).editor;
+  const posOf = (tiptap: Tiptap, label: string) => {
+    let found = -1;
+    tiptap.state.doc.descendants((node, pos) => { if (node.isText && node.text === label) found = pos + 1; });
+    return found;
+  };
+  async function caretIn(editor: HTMLElement, label: string) {
+    await act(async () => { editor.focus(); tiptapOf(editor).commands.setTextSelection(posOf(tiptapOf(editor), label)); await Promise.resolve(); await Promise.resolve(); });
+  }
+  async function setPhone(next: boolean) {
+    phone = next;
+    await act(async () => { mediaListeners.forEach((listener) => listener()); await Promise.resolve(); await Promise.resolve(); });
+  }
+  async function renderWith(host: HTMLElement, value: RichTextDoc, disabled = false) {
+    await act(async () => {
+      root!.render(<EditorUnderTest value={value} onChange={vi.fn()} limit={2_000} disabled={disabled} loadMentionables={mentionables} />);
+      await Promise.resolve(); await Promise.resolve();
+    });
+    return host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+  }
+  const toolbar = (host: HTMLElement) => host.querySelector<HTMLElement>('[aria-label="Formatting"]')!;
+  const tools = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-testid="rich-text-table-tools"]');
+  const bubble = () => document.querySelector<HTMLElement>('[data-testid="rich-text-table-bubble"]');
+  const control = (host: HTMLElement, label: string) => tools(host)!.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!;
+  const rowCount = (host: HTMLElement) => host.querySelectorAll("tr").length;
+
+  it("puts the table group first in the formatting toolbar and mounts no floating bar", async () => {
+    const host = mount(); const editor = await renderWith(host, grid());
+    await caretIn(editor, "Mon");
+    expect(tools(host)).not.toBeNull();
+    expect(toolbar(host).firstElementChild).toBe(tools(host));
+    expect(tools(host)!.querySelector('[role="group"][aria-label="Table"]')).not.toBeNull();
+    expect(bubble()).toBeNull();
+  });
+
+  it("Add row below adds a row", async () => {
+    const host = mount(); const editor = await renderWith(host, grid());
+    await caretIn(editor, "Mon");
+    expect(rowCount(host)).toBe(2);
+    await click(control(host, "Add row below"));
+    expect(rowCount(host)).toBe(3);
+  });
+
+  it("the Header row toggle flips", async () => {
+    const host = mount(); const editor = await renderWith(host, grid());
+    await caretIn(editor, "Mon");
+    expect(control(host, "Header row").getAttribute("aria-pressed")).toBe("true");
+    await click(control(host, "Header row"));
+    expect(control(host, "Header row").getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("Delete > Delete Table opens the confirmation dialog", async () => {
+    const host = mount(); const editor = await renderWith(host, grid());
+    await caretIn(editor, "Mon");
+    await click(control(host, "Delete"));
+    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((entry) => entry.textContent?.includes("Delete Table"))!;
+    expect(item).toBeTruthy();
+    await click(item);
+    await waitForCondition(() => document.querySelector('[role="alertdialog"]') !== null, "delete table dialog");
+    expect(document.querySelector('[role="alertdialog"]')!.textContent).toContain("Delete Table?");
+  });
+
+  it("disables Add row / Add column at the 50 x 12 limits", async () => {
+    const host = mount(); const editor = await renderWith(host, wideGrid(12, 50));
+    await caretIn(editor, "x");
+    expect(control(host, "Add row below").disabled).toBe(true);
+    expect(control(host, "Add column right").disabled).toBe(true);
+    expect(control(host, "Header row").disabled).toBe(false);
+  });
+
+  it("when the editor is disabled every control is disabled and the group stays", async () => {
+    const host = mount(); const editor = await renderWith(host, grid());
+    await caretIn(editor, "Mon");
+    await renderWith(host, grid(), true);
+    expect(tools(host)).not.toBeNull();
+    const items = [...tools(host)!.querySelectorAll<HTMLElement>("[data-toolbar-item]")];
+    expect(items.length).toBe(4);
+    for (const item of items) expect(item.hasAttribute("disabled") || item.hasAttribute("data-disabled"), item.getAttribute("aria-label") ?? "").toBe(true);
+  });
+
+  it("the group disappears when the caret leaves the table", async () => {
+    const host = mount(); const editor = await renderWith(host, grid());
+    await caretIn(editor, "Mon");
+    expect(tools(host)).not.toBeNull();
+    await caretIn(editor, "after");
+    expect(tools(host)).toBeNull();
+  });
+
+  it("Alt+F10 in the text focuses the group's first enabled control, and Escape returns to the text", async () => {
+    const host = mount(); const editor = await renderWith(host, grid());
+    await caretIn(editor, "Mon");
+    const event = await keydown(editor, "F10", { altKey: true });
+    expect(event.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(control(host, "Add row below"));
+    await keydown(document.activeElement as HTMLElement, "Escape");
+    // Tiptap's focus command lands on the next animation frame.
+    await waitForCondition(() => document.activeElement === editor, "focus back in the text");
+    expect(document.activeElement).toBe(editor);
+  });
+
+  it("the toolbar's roving focus walks through the group into the rest of the toolbar and back", async () => {
+    const host = mount(); const editor = await renderWith(host, grid());
+    await caretIn(editor, "Mon");
+    const stops = [...toolbar(host).querySelectorAll<HTMLElement>("[data-toolbar-item]")];
+    expect(stops.filter((item) => item.tabIndex === 0).length).toBe(1);
+    expect(stops[0]).toBe(control(host, "Add row below"));
+    await act(async () => { control(host, "Delete").focus(); });
+    await keydown(control(host, "Delete"), "ArrowRight");
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Bold");
+    await keydown(document.activeElement as HTMLElement, "Home");
+    expect(document.activeElement).toBe(control(host, "Add row below"));
+  });
+
+  it("scrolls the toolbar back to the start when the group appears", async () => {
+    const host = mount(); const editor = await renderWith(host, grid());
+    await caretIn(editor, "after");
+    toolbar(host).scrollLeft = 120;
+    await caretIn(editor, "Mon");
+    expect(toolbar(host).scrollLeft).toBe(0);
+  });
+
+  it("off the phone the floating bar is present and the toolbar group is absent", async () => {
+    await setPhone(false);
+    const host = mount(); const editor = await renderWith(host, grid());
+    await caretIn(editor, "Mon");
+    await waitForCondition(() => bubble() !== null, "floating table bar");
+    expect(tools(host)).toBeNull();
+  });
+
+  it("swaps the two presentations when the breakpoint changes, both ways", async () => {
+    await setPhone(false);
+    const host = mount(); const editor = await renderWith(host, grid());
+    await caretIn(editor, "Mon");
+    await waitForCondition(() => bubble() !== null, "floating table bar");
+    await setPhone(true);
+    expect(tools(host)).not.toBeNull();
+    expect(bubble()).toBeNull();
+    await setPhone(false);
+    await waitForCondition(() => bubble() !== null, "floating table bar again");
+    expect(tools(host)).toBeNull();
+  });
+
+  it("returns focus to the text when the presentation holding it disappears", async () => {
+    const host = mount(); const editor = await renderWith(host, grid());
+    await caretIn(editor, "Mon");
+    await act(async () => { control(host, "Add row below").focus(); });
+    expect(document.activeElement).toBe(control(host, "Add row below"));
+    await setPhone(false);
+    await waitForCondition(() => document.activeElement === editor, "focus back in the text");
+    // And the other way: focus inside the floating bar when the phone path takes over.
+    await waitForCondition(() => bubble() !== null, "floating table bar");
+    await act(async () => { bubble()!.querySelector<HTMLElement>('[aria-label="Add row below"]')!.focus(); });
+    await setPhone(true);
+    await waitForCondition(() => document.activeElement === editor, "focus back in the text again");
+  });
+
+  it("with two editors mounted, only the one whose table control held focus takes it back", async () => {
+    const plain: RichTextDoc = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "elsewhere" }] }] };
+    const host = mount();
+    await act(async () => {
+      root!.render(<>
+        <EditorUnderTest value={grid()} onChange={vi.fn()} limit={2_000} loadMentionables={mentionables} />
+        <EditorUnderTest value={plain} onChange={vi.fn()} limit={2_000} loadMentionables={mentionables} />
+      </>);
+      await Promise.resolve(); await Promise.resolve();
+    });
+    const [first, second] = [...host.querySelectorAll<HTMLElement>('[contenteditable="true"]')];
+    await caretIn(first!, "Mon");
+    const add = host.querySelector<HTMLElement>('[data-testid="rich-text-table-tools"] [aria-label="Add row below"]')!;
+    await act(async () => { add.focus(); });
+    expect(document.activeElement).toBe(add);
+    await setPhone(false);
+    await waitForCondition(() => document.activeElement === first, "focus back in the first editor");
+    // Let every queued focus frame run: a second editor that also claimed focus would land after the first.
+    await act(async () => { for (let frame = 0; frame < 3; frame += 1) await new Promise((resolve) => requestAnimationFrame(() => resolve(null))); });
+    expect(document.activeElement).toBe(first);
+    expect(document.activeElement).not.toBe(second);
+  });
+});
+
+// #535 (tight fit): off the phone the floating bar never covers a neighbouring block or the row. When no side has
+// room (a one-row table between two paragraphs) the bar stays mounted but inert/invisible and the SAME controls
+// appear as the toolbar's table group, so exactly one usable control set exists. happy-dom has no layout, so the
+// geometry is stubbed per element: a 400-760 surface, a 520-560 row, a paragraph above (bottom 515) and below
+// (top 565) and a 38px bar.
+describe("table bar with no room falls back to the toolbar group (#535)", () => {
+  beforeEach(() => { variant = "document"; });
+
+  let roomy: boolean;
+  let originalRect: typeof Element.prototype.getBoundingClientRect;
+  let originalOffsetHeight: PropertyDescriptor | undefined;
+  beforeEach(() => {
+    roomy = false;
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      media: query, matches: false,
+      addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {},
+    }) as unknown as MediaQueryList);
+    originalRect = Element.prototype.getBoundingClientRect;
+    const box = (top: number, bottom: number) => ({ top, bottom, left: 20, right: 340, width: 320, height: bottom - top, x: 20, y: top, toJSON() { return {}; } }) as DOMRect;
+    Element.prototype.getBoundingClientRect = function (this: Element) {
+      if (this.matches('[contenteditable="true"]')) return box(400, 760);
+      if (["TR", "TD", "TH"].includes(this.tagName)) return box(520, 560);
+      if (this.tagName === "P") {
+        if (this.closest("td, th")) return box(520, 560);
+        if (this.textContent === "before") return box(roomy ? 200 : 480, roomy ? 300 : 515);
+        if (this.textContent === "after") return box(roomy ? 700 : 565, roomy ? 740 : 600);
+      }
+      return originalRect.call(this);
+    };
+    originalOffsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.matches('[data-testid="rich-text-table-bubble"]') || this.querySelector('[data-testid="rich-text-table-bubble"]') ? 38 : 0;
+      },
+    });
+    Object.defineProperty(document.documentElement, "clientHeight", { configurable: true, value: 900 });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    Element.prototype.getBoundingClientRect = originalRect;
+    if (originalOffsetHeight) Object.defineProperty(HTMLElement.prototype, "offsetHeight", originalOffsetHeight);
+    else delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetHeight;
+    delete (document.documentElement as unknown as Record<string, unknown>).clientHeight;
+  });
+
+  const cell = (type: "tableCell" | "tableHeader", label: string): RichTextTableCell =>
+    ({ type, content: [{ type: "paragraph", content: [{ type: "text", text: label }] }] });
+  const para = (text: string) => ({ type: "paragraph" as const, content: [{ type: "text" as const, text }] });
+  const oneRow = (): RichTextDoc => ({ type: "doc", content: [
+    para("before"),
+    { type: "table", content: [{ type: "tableRow", content: [cell("tableCell", "Mon"), cell("tableCell", "Terry")] }] },
+    para("after"),
+  ] });
+
+  const tiptapOf = (editor: HTMLElement) => (editor as unknown as { editor: Editor }).editor;
+  const posOf = (tiptap: Editor, label: string) => {
+    let found = -1;
+    tiptap.state.doc.descendants((node, pos) => { if (node.isText && node.text === label) found = pos + 1; });
+    return found;
+  };
+  async function caretIn(editor: HTMLElement, label: string) {
+    await act(async () => { editor.focus(); tiptapOf(editor).commands.setTextSelection(posOf(tiptapOf(editor), label)); await Promise.resolve(); await Promise.resolve(); });
+  }
+  async function renderDoc(host: HTMLElement, value: RichTextDoc) {
+    await act(async () => {
+      root!.render(<EditorUnderTest value={value} onChange={vi.fn()} limit={2_000} loadMentionables={mentionables} />);
+      await Promise.resolve(); await Promise.resolve();
+    });
+    return host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+  }
+  const tools = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-testid="rich-text-table-tools"]');
+  const bubble = () => document.querySelector<HTMLElement>('[data-testid="rich-text-table-bubble"]');
+  const usable = (label: string) => [...document.querySelectorAll<HTMLElement>(`[aria-label="${label}"]`)].filter((element) => !element.closest("[inert]") && element.closest("[aria-hidden='true']") === null);
+
+  it("a one-row table between two paragraphs: the bar is inert, invisible and tier none, the toolbar group carries the controls, and exactly one control set is usable", async () => {
+    const host = mount(); const editor = await renderDoc(host, oneRow());
+    await caretIn(editor, "Mon");
+    await waitForCondition(() => tools(host) !== null, "toolbar table group");
+    await waitForCondition(() => bubble() !== null, "floating table bar stays mounted");
+    expect(bubble()!.getAttribute("data-tier")).toBe("none");
+    expect(bubble()!.hasAttribute("inert")).toBe(true);
+    expect(bubble()!.getAttribute("aria-hidden")).toBe("true");
+    expect(bubble()!.className).toContain("invisible");
+    const addRow = usable("Add row below");
+    expect(addRow.length).toBe(1);
+    expect(tools(host)!.contains(addRow[0]!)).toBe(true);
+  });
+
+  it("at tier none Tiptap's OUTER bubble element leaves the tab order too: inert, aria-hidden, tabindex -1 (reverse Tab cannot land on it)", async () => {
+    const host = mount(); const editor = await renderDoc(host, oneRow());
+    await caretIn(editor, "Mon");
+    await waitForCondition(() => tools(host) !== null, "toolbar table group");
+    const wrapper = bubble()!.parentElement!;
+    expect(wrapper.hasAttribute("inert")).toBe(true);
+    expect(wrapper.getAttribute("aria-hidden")).toBe("true");
+    expect(wrapper.tabIndex).toBe(-1);
+  });
+
+  it("when the bar is usable again the outer element is back in the tab order (tabindex 0, not inert, not aria-hidden)", async () => {
+    roomy = true;
+    const host = mount(); const editor = await renderDoc(host, oneRow());
+    await caretIn(editor, "Mon");
+    await waitForCondition(() => bubble() !== null, "floating table bar");
+    const wrapper = bubble()!.parentElement!;
+    expect(wrapper.hasAttribute("inert")).toBe(false);
+    expect(wrapper.hasAttribute("aria-hidden")).toBe(false);
+    expect(wrapper.tabIndex).toBe(0);
+    roomy = false;
+    await caretIn(editor, "Terry");
+    await waitForCondition(() => tools(host) !== null, "toolbar table group once cramped");
+    expect(wrapper.tabIndex).toBe(-1);
+    expect(wrapper.hasAttribute("inert")).toBe(true);
+  });
+
+  it("focus resting on the outer bubble element during a tier change is not stranded: it moves to the editor or the toolbar group", async () => {
+    roomy = true;
+    const host = mount(); const editor = await renderDoc(host, oneRow());
+    await caretIn(editor, "Mon");
+    await waitForCondition(() => bubble() !== null, "floating table bar");
+    const wrapper = bubble()!.parentElement!;
+    await act(async () => { wrapper.focus(); await Promise.resolve(); });
+    expect(document.activeElement).toBe(wrapper);
+    roomy = false;
+    await act(async () => { tiptapOf(editor).commands.setTextSelection(posOf(tiptapOf(editor), "Terry")); await Promise.resolve(); await Promise.resolve(); });
+    await waitForCondition(() => tools(host) !== null, "toolbar table group once cramped");
+    const active = document.activeElement;
+    expect(active).not.toBe(wrapper);
+    expect(active === editor || editor.contains(active) || tools(host)!.contains(active)).toBe(true);
+  });
+
+  it("Alt+F10 from the text lands in the toolbar group, not in the inert bar", async () => {
+    const host = mount(); const editor = await renderDoc(host, oneRow());
+    await caretIn(editor, "Mon");
+    await waitForCondition(() => tools(host) !== null, "toolbar table group");
+    const event = await keydown(editor, "F10", { altKey: true });
+    expect(event.defaultPrevented).toBe(true);
+    const addRow = tools(host)!.querySelector<HTMLElement>('[aria-label="Add row below"]')!;
+    expect(document.activeElement).toBe(addRow);
+    // The bar lets go of its bubble once focus has left the text (it is not near the bar), so it may be gone.
+    expect(bubble()?.contains(document.activeElement) ?? false).toBe(false);
+  });
+
+  it("with room around the row the bar is the only control set (tier clean, no toolbar group), and the group returns after the caret leaves and re-enters a cramped table", async () => {
+    roomy = true;
+    const host = mount(); const editor = await renderDoc(host, oneRow());
+    await caretIn(editor, "Mon");
+    await waitForCondition(() => bubble() !== null, "floating table bar");
+    expect(bubble()!.getAttribute("data-tier")).toBe("clean");
+    expect(bubble()!.hasAttribute("inert")).toBe(false);
+    expect(tools(host)).toBeNull();
+    expect(usable("Add row below").length).toBe(1);
+    expect(bubble()!.contains(usable("Add row below")[0]!)).toBe(true);
+    // Cramped now: the group appears; leaving the table drops it; coming back brings it again (the tier is re-reported).
+    roomy = false;
+    await caretIn(editor, "Terry");
+    await waitForCondition(() => tools(host) !== null, "toolbar table group once cramped");
+    await caretIn(editor, "after");
+    await waitForCondition(() => tools(host) === null, "toolbar table group gone outside the table");
+    await caretIn(editor, "Mon");
+    await waitForCondition(() => tools(host) !== null, "toolbar table group back on re-entering the table");
   });
 });

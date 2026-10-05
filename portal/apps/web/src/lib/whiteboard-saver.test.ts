@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { WHITEBOARD_MAX_ELEMENTS_PER_MESSAGE, WHITEBOARD_MAX_MESSAGE_BYTES } from "@quincy/shared";
-import { createWhiteboardSaver, pasteIsUnsupported, withoutUnsupported, planSceneDrop, type SavedElement } from "./whiteboard-saver";
+import { appliedFromRemote, createWhiteboardSaver, pasteIsUnsupported, withoutUnsupported, planSceneDrop, type SavedElement } from "./whiteboard-saver";
 
 const el = (id: string, version: number, extra: Record<string, unknown> = {}): SavedElement => ({ id, version, versionNonce: version * 7, ...extra });
 const deferred = () => { let resolve!: () => void; let reject!: (e: Error) => void; const promise = new Promise<void>((res, rej) => { resolve = res; reject = rej; }); return { promise, resolve, reject }; };
@@ -107,72 +107,37 @@ describe("whiteboard saver", () => {
     expect(withoutUnsupported([{ id: "i", type: "image", isDeleted: true }]).removed).toBe(0);
   });
 
-  it("sends a tombstone for an element that vanished from the scene without one", async () => {
+  it("never authors a deletion: an element absent from the scene sends nothing (vanish is the editor's, whiteboard-vanish.ts)", async () => {
     let scene = [el("a", 2), el("b", 1)];
     const sent: SavedElement[][] = [];
     const saver = createWhiteboardSaver({ getElements: () => scene, send: async (batch) => { sent.push([...batch]); } });
     saver.seed(scene);
     scene = [el("c", 1)];                 // a scene file replaced the canvas: A and B are simply gone
     await saver.flush();
-    const sentById = new Map(sent.flat().map((e) => [e.id, e]));
-    expect(sentById.get("a")).toMatchObject({ isDeleted: true, version: 3 });
-    expect(sentById.get("b")).toMatchObject({ isDeleted: true, version: 2 });
-    expect(sentById.get("c")?.isDeleted).toBeUndefined();
-    sent.length = 0;
-    await saver.flush();                  // tombstones are recorded: nothing repeats
-    expect(sent).toHaveLength(0);
+    expect(sent.flat().map((e) => e.id)).toEqual(["c"]);
   });
 
-  it("tombstones a vanished element above a newer version still in flight", async () => {
-    let scene = [el("a", 2)];
-    const acks: Array<ReturnType<typeof deferred>> = []; const sent: SavedElement[][] = [];
-    const saver = createWhiteboardSaver({ getElements: () => scene, send: (batch) => { sent.push([...batch]); const d = deferred(); acks.push(d); return d.promise; } });
-    saver.seed(scene);
-    scene = [el("a", 5)];
-    const first = saver.flush();          // v5 in flight
-    scene = [];                           // then the canvas is replaced
-    const second = saver.flush();         // joins the first, then diffs
-    acks[0]!.resolve(); await first;
-    await Promise.resolve(); await Promise.resolve();
-    acks[1]!.resolve(); await second;
-    expect(sent.map((batch) => batch.map((e) => `${e.id}:${e.version}:${e.isDeleted === true}`))).toEqual([["a:5:false"], ["a:6:true"]]);
-  });
-
-  it("tombstones an element that was created and removed before its ack", async () => {
-    let scene = [el("n", 1)];
-    const acks: Array<ReturnType<typeof deferred>> = []; const sent: SavedElement[][] = [];
-    const saver = createWhiteboardSaver({ getElements: () => scene, send: (batch) => { sent.push([...batch]); const d = deferred(); acks.push(d); return d.promise; } });
-    const first = saver.flush();
-    scene = [];
-    const second = saver.flush();
-    acks[0]!.resolve(); await first;
-    await Promise.resolve(); await Promise.resolve();
-    acks[1]!.resolve(); await second;
-    expect(sent[1]).toMatchObject([{ id: "n", isDeleted: true, version: 2 }]);
-  });
-
-  it("re-sends an element re-imported at an old version above its synthetic tombstone", async () => {
-    let scene = [el("a", 4)];
-    const sent: SavedElement[][] = [];
-    const saver = createWhiteboardSaver({ getElements: () => scene, send: async (batch) => { sent.push([...batch]); } });
-    saver.seed(scene);
-    scene = [];
-    await saver.flush();                   // synthetic tombstone v5
-    scene = [el("a", 1, { versionNonce: 99 })];
-    await saver.flush();                   // older import must still win
-    expect(sent[0]).toMatchObject([{ id: "a", isDeleted: true, version: 5 }]);
-    expect(sent[1]).toMatchObject([{ id: "a", version: 6 }]);
-    expect(sent[1]![0]!.isDeleted).toBeUndefined();
-  });
-
-  it("retries a failed synthetic tombstone", async () => {
+  it("sends a deletion the scene holds exactly as the scene holds it, and a failed one again as it was", async () => {
     let scene = [el("a", 2)]; let fail = true; const sent: SavedElement[][] = [];
     const saver = createWhiteboardSaver({ getElements: () => scene, send: async (batch) => { sent.push([...batch]); if (fail) { fail = false; throw new Error("x"); } } });
-    saver.seed(scene); scene = [];
+    saver.seed(scene);
+    scene = [el("a", 3, { isDeleted: true, versionNonce: 31 })];
     await expect(saver.flush()).rejects.toThrow("x");
     await saver.flush();
     expect(sent).toHaveLength(2);
-    expect(sent[1]).toMatchObject([{ id: "a", isDeleted: true, version: 3 }]);
+    for (const batch of sent) expect(batch).toMatchObject([{ id: "a", isDeleted: true, version: 3, versionNonce: 31 }]);
+    await saver.flush();
+    expect(sent).toHaveLength(2);         // acknowledged: nothing repeats
+  });
+
+  it("sends an older scene re-imported over a deletion exactly as the scene numbers it (the import authors its own revision)", async () => {
+    let scene = [el("a", 5, { isDeleted: true })];
+    const sent: SavedElement[][] = [];
+    const saver = createWhiteboardSaver({ getElements: () => scene, send: async (batch) => { sent.push([...batch]); } });
+    saver.seed(scene);
+    scene = [el("a", 1, { versionNonce: 99 })];
+    await saver.flush();
+    expect(sent).toEqual([[{ id: "a", version: 1, versionNonce: 99 }]]);   // never raised: the server decides by the rule the editor uses
   });
 
   it("refuses a scene drop in view-only mode and plans a load in edit mode", () => {
@@ -185,16 +150,98 @@ describe("whiteboard saver", () => {
     expect(planSceneDrop([{ name: "photo.png" } as File], false)).toBe("ignore");
   });
 
-  it("re-sends an element that reappears after a tombstone whose ack was lost", async () => {
+  it("re-sends a deletion whose ack was lost as it was, and an element that came back at its acked revision is sent again unchanged", async () => {
     let scene = [el("a", 2)]; const sent: SavedElement[][] = []; let lose = false;
     const saver = createWhiteboardSaver({ getElements: () => scene, send: async (batch) => { sent.push([...batch]); if (lose) throw new Error("ack lost"); } });
     await saver.flush();                      // A v2 acked
-    scene = []; lose = true;
-    await expect(saver.flush()).rejects.toThrow();   // tombstone v3 transmitted, ack lost
+    scene = [el("a", 3, { isDeleted: true })]; lose = true;
+    await expect(saver.flush()).rejects.toThrow();   // deletion v3 transmitted, ack lost
     lose = false;
     scene = [el("a", 2)];                     // A is back, equal to its last ACKED state
     await saver.flush();
-    expect(sent.at(-1)).toMatchObject([{ id: "a", version: 4 }]);
-    expect(sent.at(-1)![0]!.isDeleted).toBeUndefined();
+    expect(sent.at(-1)).toEqual([{ id: "a", version: 2, versionNonce: 14 }]);   // the scene's own revision: a conflict is the server's rule to decide
+  });
+});
+
+describe("remote elements (#499)", () => {
+  it("does not echo an element that arrived from another person", async () => {
+    const scene = [el("mine", 1), el("theirs", 3)];
+    const send = vi.fn().mockResolvedValue(undefined);
+    const saver = createWhiteboardSaver({ getElements: () => scene, send });
+    saver.seed([el("mine", 1)]);
+    saver.adoptRemote([el("theirs", 3)]);
+    await saver.flush();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("does not escalate a version when a remote edit lands over a local one still in flight", async () => {
+    const scene = [el("a", 5)]; const sent: SavedElement[][] = []; const ack = deferred();
+    const saver = createWhiteboardSaver({ getElements: () => scene, send: (batch) => { sent.push([...batch]); return ack.promise; } });
+    const first = saver.flush();                                     // local v5 in flight
+    scene[0] = el("a", 6, { x: 99 });                                // the other person's v6 wins and is applied
+    saver.adoptRemote([scene[0]!]);
+    ack.resolve(); await first;
+    await saver.flush();
+    expect(sent.map((batch) => batch.map((entry) => entry.version))).toEqual([[5]]);   // v6 is never re-sent as v7
+  });
+
+  it("B8: a remote arrival during an in-flight save is not clobbered by the older ack, and the next local edit is sent once", async () => {
+    const scene = [el("a", 5)]; const sent: SavedElement[][] = []; const ack = deferred();
+    const saver = createWhiteboardSaver({ getElements: () => scene, send: (batch) => { sent.push([...batch]); return sent.length === 1 ? ack.promise : Promise.resolve(); } });
+    const first = saver.flush();                                     // local v5 in flight
+    scene[0] = el("a", 6, { x: 99 }); saver.adoptRemote([scene[0]!]);   // the other person's v6 arrives meanwhile
+    ack.resolve(); await first;                                      // the ack for v5 lands after v6 was adopted
+    await saver.flush();
+    expect(sent).toHaveLength(1);                                    // v6 stays recorded as stored; the ack did not make v5 the stored copy
+    scene[0] = el("a", 7, { x: 1 });
+    await saver.flush(); await saver.flush();
+    expect(sent.slice(1).map((batch) => batch.map((entry) => entry.version))).toEqual([[7]]);
+  });
+
+  it("sends the next local edit above the remote version without further escalation", async () => {
+    const scene = [el("a", 2)]; const sent: SavedElement[][] = [];
+    const saver = createWhiteboardSaver({ getElements: () => scene, send: async (batch) => { sent.push([...batch]); } });
+    saver.seed([el("a", 2)]);
+    scene[0] = el("a", 6); saver.adoptRemote([scene[0]!]);
+    scene[0] = el("a", 7, { x: 1 });                                  // a local edit on top of the remote v6
+    await saver.flush();
+    expect(sent).toEqual([[expect.objectContaining({ id: "a", version: 7 })]]);
+  });
+
+  it("writes no tombstone for a remote element it was never given", async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    const saver = createWhiteboardSaver({ getElements: () => [el("mine", 1)], send });
+    saver.seed([el("mine", 1)]);                                      // "theirs" is not in the scene and was never adopted
+    await saver.flush();
+    expect(send).not.toHaveBeenCalled();
+    expect(saver.mayHold("theirs")).toBe(false);
+    expect(saver.mayHold("mine")).toBe(true);
+  });
+
+  it("knows the server holds an id it only heard of (a remote revision the local copy beat), without holding a revision of it", () => {
+    const saver = createWhiteboardSaver({ getElements: () => [], send: async () => undefined });
+    expect(saver.mayHold("beaten")).toBe(false);
+    saver.serverHas(["beaten"]);
+    expect(saver.mayHold("beaten")).toBe(true);
+  });
+
+  it("sends a local delete of a remote element, as the scene authored it", async () => {
+    const scene = [el("theirs", 4)]; const sent: SavedElement[][] = [];
+    const saver = createWhiteboardSaver({ getElements: () => scene, send: async (batch) => { sent.push([...batch]); } });
+    saver.adoptRemote([el("theirs", 4)]);
+    scene[0] = el("theirs", 5, { isDeleted: true });
+    await saver.flush();
+    expect(sent[0]![0]).toMatchObject({ id: "theirs", isDeleted: true, version: 5 });
+  });
+});
+
+describe("appliedFromRemote (#499)", () => {
+  it("returns the scene elements that came from the remote batch, not the ones the local copy beat", () => {
+    const remote = [el("won", 3), el("lost", 2), el("absent", 1)];
+    const scene = [el("won", 3), el("lost", 5), el("mine", 1)];
+    expect(appliedFromRemote(remote, scene).map((entry) => entry.id)).toEqual(["won"]);
+  });
+  it("treats an equal version with a different nonce as not applied", () => {
+    expect(appliedFromRemote([{ id: "a", version: 2, versionNonce: 1 }], [{ id: "a", version: 2, versionNonce: 2 }])).toEqual([]);
   });
 });
