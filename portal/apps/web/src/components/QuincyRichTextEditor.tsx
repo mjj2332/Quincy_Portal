@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import { exitSuggestion } from "@tiptap/suggestion";
 import { ChevronDownIcon, ImageIcon, ListChecksIcon, ListIcon, ListOrderedIcon, Redo2Icon, TableIcon, Undo2Icon, VideoIcon } from "lucide-react";
 import { RICH_TEXT_JSON_MAX_BYTES, richTextDocByteLength, richTextMediaIds, richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { cn } from "../lib/utils";
+import { useMediaQuery } from "../lib/use-media-query";
 import { EMBEDDED_IMAGE_ACCEPT, EMBEDDED_MEDIA_MAX_PER_POST, EMBEDDED_VIDEO_ACCEPT, embeddedImageProblem, embeddedVideoProblem, uploadEmbeddedImage, uploadEmbeddedVideo, type EmbeddedMediaScope } from "../lib/embedded-media";
 import {
   createRichTextEditorExtensions,
@@ -34,8 +35,11 @@ import { RichTextLinkPopover } from "./reui/rich-text-editor/rich-text-link";
 import { RichTextOutlineRail, scrollToRichTextHeading, useRichTextActiveHeading, useRichTextOutline } from "./reui/rich-text-editor/rich-text-outline";
 import { RICH_TEXT_BASIC_SLASH_ITEMS, RICH_TEXT_SLASH_KEY, RichTextSlashCommand } from "./reui/rich-text-editor/rich-text-slash-menu";
 import { useRichTextState } from "./reui/rich-text-editor/rich-text-state";
-import { RICH_TEXT_TABLE_SLASH_ITEM, RichTextTableBubble } from "./reui/rich-text-editor/rich-text-table";
+import { editorOwnsBubbleBar } from "./reui/rich-text-editor/rich-text-bubble-bar";
+import { RICH_TEXT_TABLE_SLASH_ITEM, RichTextTableBubble, RichTextTableTools } from "./reui/rich-text-editor/rich-text-table";
+import type { TableBubbleTier } from "./reui/rich-text-editor/rich-text-table-position";
 import {
+  RICH_TEXT_PHONE_QUERY,
   RichTextButton,
   RichTextToggle,
   RichTextToolbar,
@@ -109,6 +113,8 @@ export type QuincyRichTextEditorProps = {
   media?: EmbeddedMediaScope;
   /** Reports whether an image is still uploading, so the host can hold Post / Save until it lands. */
   onUploadingChange?: (uploading: boolean) => void;
+  /** The host's helper line under the editor; the table bar may extend down to it (#535). Omit for none. */
+  tableBubbleFloor?: RefObject<HTMLElement | null>;
 };
 
 type UploadingMedia = { key: number; name: string; percent: number; kind: "image" | "video" };
@@ -132,6 +138,7 @@ export function QuincyRichTextEditor({
   onSubmit,
   media,
   onUploadingChange,
+  tableBubbleFloor,
 }: QuincyRichTextEditorProps) {
   const valueRef = useRef(JSON.stringify(value));
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
@@ -143,6 +150,10 @@ export function QuincyRichTextEditor({
   const editorRef = useRef<Editor | null>(null);
   const menu = useRef<MentionAutocompleteHandle>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  // Everything rendered under the frame that the table bar must not cover (#535): the upload tray, the counter, the host's helper.
+  const counterRef = useRef<HTMLDivElement>(null);
+  const trayRef = useRef<HTMLDivElement>(null);
+  const tableBubbleFloors = useMemo(() => [trayRef, counterRef, tableBubbleFloor], [tableBubbleFloor]);
   const [rawQuery, setQuery] = useState<string | null>(null);
   // #375: Esc / an outside press closes the mention list and it stays closed until the content
   // actually changes; the sheet's layer gate reads the list as open through `aria-expanded`.
@@ -241,6 +252,30 @@ export function QuincyRichTextEditor({
   });
   editorRef.current = editor;
   const state = useRichTextState(editor);
+  // Below 721px the table controls are a toolbar group and the floating bar is not mounted; on a desktop the group
+  // takes over too when the bar has no room around the table (tier "none": the bar stays mounted but inert) (#535).
+  const phone = useMediaQuery(RICH_TEXT_PHONE_QUERY);
+  const [reportedTier, setTableTier] = useState<TableBubbleTier | null>(null);
+  const tableTier = state.inTable ? reportedTier : null;
+  const tableInToolbar = phone || tableTier === "none";
+  const toolbarRef = useRef(tableInToolbar);
+  const refocusRef = useRef(false);
+  // The presentation holding focus is about to stop being usable: note it while the DOM still shows it (render runs before commit).
+  if (toolbarRef.current !== tableInToolbar) {
+    toolbarRef.current = tableInToolbar;
+    // Only focus inside THIS editor's own toolbar group or bar counts: another mounted editor must not claim it.
+    const active = document.activeElement;
+    const own = active?.closest('[data-testid="rich-text-table-tools"]') != null && wrapperRef.current?.contains(active) === true
+      || (editorRef.current != null && editorOwnsBubbleBar(editorRef.current, active));
+    refocusRef.current = own;
+  }
+  useLayoutEffect(() => {
+    if (!refocusRef.current) return;
+    refocusRef.current = false;
+    if (editorRef.current && !editorRef.current.isDestroyed) editorRef.current.commands.focus();
+  }, [tableInToolbar]);
+  // Leaving the table forgets the tier; the bar's options are rebuilt on entering, so it is reported afresh.
+  useEffect(() => { if (!state.inTable) setTableTier(null); }, [state.inTable]);
   // The derived outline rail (document preset only; `null` keeps the composer's selector idle).
   const outline = useRichTextOutline(isDocument ? editor : null);
   const activeHeading = useRichTextActiveHeading(isDocument ? editor : null, pageRef, outline);
@@ -396,6 +431,8 @@ export function QuincyRichTextEditor({
     <InputGroup data-testid="rich-text-field" className={FIELD_GROUP} data-disabled={disabled || undefined}>
       <InputGroupAddon align="block-start" className="p-[var(--space-1)] cursor-default">
         <RichTextToolbar aria-label="Formatting" className="w-full min-w-0 gap-[var(--space-2)]">
+          {/* On a phone the table controls lead the scrolling toolbar; they stay while the editor is busy, disabled. */}
+          {isDocument && tableInToolbar && state.inTable && <RichTextTableTools editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} disabled={disabled || !state.editable} />}
           <RichTextToolbarGroup label="Text style">
             <RichTextToggle label="Bold" shortcut={["mod", "B"]} pressed={state.bold} disabled={off(state.canBold)} onToggle={() => editor.chain().focus().toggleBold().run()}><span aria-hidden="true" className="font-bold">B</span></RichTextToggle>
             <RichTextToggle label="Italic" shortcut={["mod", "I"]} pressed={state.italic} disabled={off(state.canItalic)} onToggle={() => editor.chain().focus().toggleItalic().run()}><span aria-hidden="true" className="italic">I</span></RichTextToggle>
@@ -453,7 +490,7 @@ export function QuincyRichTextEditor({
       </div>
     </InputGroup>
     {isDocument && <>
-      <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} />
+      {!phone && <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} tableBubbleFloors={tableBubbleFloors} tier={tableTier} onTierChange={setTableTier} />}
       <DeleteTableDialog editor={editor} open={deleteTableOpen} onOpenChange={setDeleteTableOpen} />
     </>}
     {picking !== null && <Input
@@ -461,7 +498,7 @@ export function QuincyRichTextEditor({
       onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); const kind = picking.kind; setPicking(null); if (files.length) addImagesRef.current(files, editor.state.selection.to, kind); }}
       {...{ onCancel: () => setPicking(null) }}
     />}
-    {(uploads.length > 0 || uploadErrors.length > 0) && <div data-testid="rich-text-upload-tray" className="grid gap-[var(--space-2)]">
+    {(uploads.length > 0 || uploadErrors.length > 0) && <div ref={trayRef} data-testid="rich-text-upload-tray" className="grid gap-[var(--space-2)]">
       {uploads.map((entry) => <div key={entry.key} className="flex flex-wrap items-center justify-between gap-[var(--space-1)]">
         <Progress value={entry.percent} aria-label={`Uploading ${entry.name}`} className="flex min-w-0 flex-1 flex-wrap items-baseline gap-[var(--space-1)]"><span className="[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary [overflow-wrap:anywhere]">Uploading {entry.name}…</span><ProgressValue data-testid="upload-progress-value" className="[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" /></Progress>
         {entry.kind === "video" && <Button type="button" variant="ghost" aria-label={`Cancel upload of ${entry.name}`} onClick={() => running.current.get(entry.key)?.release()}>Cancel</Button>}
@@ -469,7 +506,7 @@ export function QuincyRichTextEditor({
       {uploadErrors.map((message, index) => <Notice key={index} tone="critical" role="alert">{message}</Notice>)}
     </div>}
     <MentionAutocomplete ref={menu} query={query} loadMentionables={loadMentionables} onSelect={selectMention} onDismiss={() => setMentionDismissed(true)} onAccessibilityChange={setMentionA11y} />
-    {plainText.length >= limit * COUNTER_THRESHOLD && <div data-testid="rich-text-counter" className={cn("text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", plainText.length > limit && "!text-destructive")}>{plainText.length}/{limit}</div>}
+    {plainText.length >= limit * COUNTER_THRESHOLD && <div ref={counterRef} data-testid="rich-text-counter" className={cn("text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", plainText.length > limit && "!text-destructive")}>{plainText.length}/{limit}</div>}
     <div className={liveMessage ? "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive" : "sr-only"} aria-live="polite">{liveMessage}</div>
   </div>;
 }
