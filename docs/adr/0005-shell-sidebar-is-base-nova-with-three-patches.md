@@ -13,7 +13,7 @@ state machine, `quincy/RailedShell.tsx`'s ⌘B listener, and a hand-rolled hover
 `quincy/NavigationRail.tsx` with its own Escape/blur/suppress-ref bookkeeping.
 
 #122 (`@reui/app-shell-3`) adopts base-nova's FULL `sidebar.tsx` — provider included — and deletes
-all of that hand-built machinery in favour of it. AGENTS.md's and `docs/lessons.md:1368-1380`'s
+all of that hand-built machinery in favour of it. AGENTS.md's and `docs/lessons.md § "A router that owns the URL will canonicalise it"`'s
 read-only history rule, the `quincy:` localStorage namespace (never a cookie), one JS-owned
 breakpoint (`styles/shell-breakpoint.guard.test.ts`), and the existing guard suite
 (`sidebar-token-bridge`, `no-document-cookie`) all still apply, unchanged — this ADR is about what

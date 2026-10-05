@@ -1,0 +1,2 @@
+# Append-only log: concurrent branches each add a section at the end; keep both on local merges/rebases.
+docs/lessons.md merge=union

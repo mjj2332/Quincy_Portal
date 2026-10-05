@@ -79,7 +79,7 @@ import type {
  * UI's `useRender`. `lib/routing-transport.guard.test.ts` makes this a build failure, not a bug
  * report — and note that it matches CALL SYNTAX in any file, comments included, so the paragraph
  * above deliberately names those APIs without writing them as calls. See AGENTS.md and
- * `docs/lessons.md:1368-1380`.
+ * `docs/lessons.md § "A router that owns the URL will canonicalise it"`.
  *
  * ## `data-state` on the rail
  *
@@ -103,7 +103,7 @@ import type {
  *
  * ## The flag name is not in this file
  *
- * #80's flag leaked `kanban2` into a user-visible `aria-label` (`docs/lessons.md:1689`). Nothing
+ * #80's flag leaked `kanban2` into a user-visible `aria-label` (docs/lessons.md § "An `aria-label` is not a test id"). Nothing
  * here reads or names the flag; the shell decides whether to mount this component at all, and the
  * DOM test asserts the rendered output contains neither the flag name nor `nav-rail`.
  */
@@ -154,7 +154,7 @@ function NavigationIcon({ icon }: { icon: StaffNavigationIcon }) {
 // UNLAYERED (`index.css`), so it beats any LAYERED Tailwind `text-*` utility regardless of merge
 // order or specificity: a measured inactive row computed `--text-primary` (inherited from the
 // sidebar's own `--sidebar-foreground`) instead of `--text-secondary`. This is a third door on the
-// same unlayered-cascade trap `docs/lessons.md:1181-1219` already names twice (an outline shorthand,
+// same unlayered-cascade trap `docs/lessons.md § "The unlayered-cascade trap has a second door"` already names twice (an outline shorthand,
 // then a focus ring) — the fix is the same one: the important modifier, not moving `base.css` into
 // a layer, which is cross-cutting and out of scope here.
 const ROW_PAINT = cn(
@@ -190,7 +190,7 @@ const SHEET_TOUCH_TARGET = "min-h-[44px]";
 // `!text-foreground` is load-bearing, not decorative: the preferences item renders as
 // `InternalLink`, a real `<a>`, and `styles/tokens/base.css` declares `a { color: inherit }`
 // UNLAYERED — that beats any LAYERED Tailwind `text-*` utility regardless of merge order, the same
-// trap `docs/lessons.md:1181-1219` names twice already. `data-active`/`data-highlighted` are
+// trap `docs/lessons.md § "The unlayered-cascade trap has a second door"` names twice already. `data-active`/`data-highlighted` are
 // presence-based, matching Base UI's own convention — never the string `"false"`.
 const ACCOUNT_MENU_ITEM = cn(
   "flex min-h-[44px] w-full items-center gap-[var(--space-2)] rounded-md border-0 bg-transparent",

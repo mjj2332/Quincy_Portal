@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 // node:sqlite honours `PRAGMA foreign_keys=OFF` correctly, so a migration test that just
 // replays 0040's SQL verbatim (including its own PRAGMA statements, if it had any) proves
 // nothing about D1, which does NOT honour that pragma in remote migration execution
-// (docs/lessons.md:27-62). To actually simulate D1's behaviour, this test strips every
+// (docs/lessons.md, top section, "`PRAGMA foreign_keys=OFF` does not reliably persist"). To actually simulate D1's behaviour, this test strips every
 // `PRAGMA` statement out of 0040's SQL before executing it, and re-asserts
 // `PRAGMA foreign_keys = ON` immediately beforehand. That is what makes this a sentinel:
 // if 0040 is ever regressed back to a table-rebuild (CREATE TABLE __new_projects ...,

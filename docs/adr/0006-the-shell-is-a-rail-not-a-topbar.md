@@ -47,7 +47,7 @@ rail. This ADR records the reversal where the next reader of the token comment w
 - The token layer's sidebar bridge (`reui.css`, "Sidebar roles") is now the shell's own paint, not a
   provisional bridge for a flagged experiment. Its earlier "no sidebar is planned" position is
   superseded by this ADR; the comment there points here.
-- `docs/lessons.md:1368-1380`'s read-only history rule, the `quincy:` localStorage namespace, and ADR
+- `docs/lessons.md § "A router that owns the URL will canonicalise it"`'s read-only history rule, the `quincy:` localStorage namespace, and ADR
   0005's three sidebar patches are unaffected.
 - Every remaining "the Topbar ships and this does not" comment was rewritten in the cutover commit.
   Prose that still names the Topbar does so as history.
