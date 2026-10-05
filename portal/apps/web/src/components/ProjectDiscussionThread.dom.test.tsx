@@ -157,6 +157,18 @@ describe("ProjectDiscussionThread", () => {
     expect(host.querySelector('[data-testid="editor-value-composer"]')?.textContent).toContain("Unsaved change");
   });
 
+  it("saves an edited comment's link preview cards as their ids alone, though the edit state keeps what the cards show, and measures the size without it (#497)", async () => {
+    render(); await flush();
+    await chooseCommentAction(host, "Me", "Edit");
+    const editor = () => state.editors.find((candidate) => candidate.id === undefined)!;
+    const card = { type: "linkPreview" as const, attrs: { previewId: "22222222-2222-4222-8222-222222222222", url: "https://example.test/a", title: "T".repeat(150), description: "D".repeat(300), siteName: "S", imageMediaId: null } };
+    await act(async () => { editor().onChange({ ...doc("Own comment"), content: [...doc("Own comment").content, card] }); await Promise.resolve(); });
+    expect(editor().value.content[1].attrs.url).toBe("https://example.test/a");
+    const editSubmit = [...host.querySelector("article")!.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Submit");
+    await act(async () => { editSubmit!.click(); await Promise.resolve(); });
+    expect(apiPatchMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/comments/${ownComment.id}`, { content: { ...doc("Own comment"), content: [...doc("Own comment").content, { type: "linkPreview", attrs: { previewId: card.attrs.previewId } }] } });
+  });
+
   it("moves focus into the edit editor after Edit is chosen from the menu, and back to the trigger on Cancel", async () => {
     render(); await flush();
     const trigger = host.querySelector<HTMLElement>('[aria-label="Actions for comment by Me"]')!;

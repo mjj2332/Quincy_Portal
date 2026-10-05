@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
 import { createDb, schema } from "@quincy/db";
 import { and, eq } from "drizzle-orm";
-import { COMMENT_MEDIA_RICH_TEXT_PROFILE, normalizeRichTextMentionLabels, parseRichTextDoc, richTextMediaIds, richTextMentionIds, richTextPlainText, type RichTextDoc } from "@quincy/shared";
+import { COMMENT_MEDIA_RICH_TEXT_PROFILE, normalizeRichTextMentionLabels, parseRichTextDoc, richTextLinkPreviewIds, richTextMediaRefs, richTextMentionIds, richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectCollaborationAccess } from "../middleware/capability";
@@ -21,6 +21,7 @@ import {
   listProjectComments,
   serializeProjectComment,
 } from "../lib/project-comments";
+import { fillLinkPreviews } from "../lib/link-previews";
 import { jsonInput } from "./helpers";
 import { purgeDetachedOwnerMedia } from "../lib/embedded-media";
 import { resolveVisibleProject } from "../lib/visible-project-scope";
@@ -53,7 +54,7 @@ async function ensureProjectAccessAndExists(c: Parameters<typeof hasProjectColla
   return project ?? null;
 }
 
-async function normalizedContent(env: AppEnv["Bindings"], projectId: string, input: unknown): Promise<{ content: RichTextDoc; body: string; mentionIds: string[]; mediaIds: string[] } | null> {
+async function normalizedContent(env: AppEnv["Bindings"], projectId: string, input: unknown): Promise<{ content: RichTextDoc; body: string; mentionIds: string[]; mediaIds: string[]; videoIds: string[]; previewIds: string[] } | null> {
   let parsed: RichTextDoc;
   try { parsed = parseRichTextDoc(input, COMMENT_MEDIA_RICH_TEXT_PROFILE); } catch { return null; }
   const mentionIds = richTextMentionIds(parsed);
@@ -63,8 +64,14 @@ async function normalizedContent(env: AppEnv["Bindings"], projectId: string, inp
   try {
     const content = normalizeRichTextMentionLabels(parsed, names);
     const body = richTextPlainText(content).trim();
-    return body && body.length <= COMMENT_BODY_MAX_LENGTH ? { content, body, mentionIds, mediaIds: richTextMediaIds(content) } : null;
+    return body && body.length <= COMMENT_BODY_MAX_LENGTH ? { content, body, mentionIds, ...mediaIdsOf(content), previewIds: richTextLinkPreviewIds(content) } : null;
   } catch { return null; }
+}
+
+/** The ids of a document's media nodes, and which of them are videos. */
+function mediaIdsOf(content: RichTextDoc): { mediaIds: string[]; videoIds: string[] } {
+  const refs = richTextMediaRefs(content);
+  return { mediaIds: refs.map((ref) => ref.id), videoIds: refs.filter((ref) => ref.kind === "video").map((ref) => ref.id) };
 }
 
 export const projectCommentsRoutes = new Hono<AppEnv>();
@@ -104,8 +111,9 @@ projectCommentsRoutes.get("/projects/:projectId/comments", terminalRoute("/proje
   const cursor = parsed.data.before ? parseCursor(parsed.data.before) : null; if (parsed.data.before && !cursor) return c.json({ error: "Invalid cursor" }, 400);
   const rows = await listProjectComments(createDb(c.env.DB), projectId, { limit: parsed.data.limit ?? MAX_LIMIT, before: cursor ? { createdAt: new Date(cursor.createdAt), id: cursor.id } : null });
   const oldest = rows.at(-1)?.comment;
-  if (c.get("user").role === "external_editor") return c.json(externalCommentListResponseSchema.parse({ project: access, comments: rows.map((row) => externalCommentSchema.parse(serializeProjectComment(row))), ...(oldest && rows.length === (parsed.data.limit ?? MAX_LIMIT) ? { nextCursor: encodeCursor(oldest) } : {}) }));
-  return c.json({ project: access, comments: rows.map(serializeProjectComment), ...(oldest && rows.length === (parsed.data.limit ?? MAX_LIMIT) ? { nextCursor: encodeCursor(oldest) } : {}) });
+  const filled = await fillLinkPreviews(c.env.DB, rows.map(serializeProjectComment));
+  if (c.get("user").role === "external_editor") return c.json(externalCommentListResponseSchema.parse({ project: access, comments: filled.map((comment) => externalCommentSchema.parse(comment)), ...(oldest && rows.length === (parsed.data.limit ?? MAX_LIMIT) ? { nextCursor: encodeCursor(oldest) } : {}) }));
+  return c.json({ project: access, comments: filled, ...(oldest && rows.length === (parsed.data.limit ?? MAX_LIMIT) ? { nextCursor: encodeCursor(oldest) } : {}) });
 }));
 
 projectCommentsRoutes.post("/projects/:projectId/comments", terminalRoute("/projects/:projectId/comments", async (c) => {
@@ -116,11 +124,12 @@ projectCommentsRoutes.post("/projects/:projectId/comments", terminalRoute("/proj
   const db = createDb(c.env.DB); const currentUser = c.get("user"); const id = newId(); const createdAt = new Date();
   const mentions = prepared.mentionIds.map((mentionedUserId) => ({ id: newId(), commentId: id, mentionedUserId, createdAt }));
   // Images are checked before the batch: each must be the author's own finished upload in this Project (#493).
-  const media = await resolveCommentMedia(c.env.DB, { projectId, authorId: currentUser.id, commentId: id, mediaIds: prepared.mediaIds }); if (!media) return c.json({ error: "An image in this comment is unavailable.", code: "invalid_media" }, 400);
+  const media = await resolveCommentMedia(c.env.DB, { projectId, authorId: currentUser.id, commentId: id, mediaIds: prepared.mediaIds, videoIds: prepared.videoIds, previewIds: prepared.previewIds }); if (!media) return c.json({ error: "An image, video or link preview in this comment is unavailable.", code: "invalid_media" }, 400);
   const result = await createProjectComment(c.env.DB, { id, projectId, authorId: currentUser.id, auditPrincipal: currentUser, body: prepared.body, contentJson: JSON.stringify(prepared.content), mentions, wallClockMs: createdAt.getTime(), occurredAt: createdAt, media }).catch((error) => error instanceof CommentMediaConflictError ? null : Promise.reject(error)); if (!result) return c.json({ error: "An image in this comment is no longer available. Remove it and try again.", code: "media_conflict" }, 409);
   c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
   if (!result.comment) return c.json({ error: "Comment could not be created" }, 500);
-  return c.json(c.get("user").role === "external_editor" ? externalCommentSchema.parse(serializeProjectComment(result.comment)) : serializeProjectComment(result.comment), 201);
+  const [created] = await fillLinkPreviews(c.env.DB, [serializeProjectComment(result.comment)]);
+  return c.json(c.get("user").role === "external_editor" ? externalCommentSchema.parse(created) : created, 201);
 }));
 
 projectCommentsRoutes.patch("/projects/:projectId/comments/:commentId", terminalRoute("/projects/:projectId/comments/:commentId", async (c) => {
@@ -134,11 +143,12 @@ projectCommentsRoutes.patch("/projects/:projectId/comments/:commentId", terminal
   const prepared = await normalizedContent(c.env, projectId, data.content); if (!prepared) return c.json({ error: "Invalid comment content or mention target" }, 400);
   const maps = await db.select().from(schema.projectCommentMentions).where(eq(schema.projectCommentMentions.commentId, commentId)).all(); const wanted = new Set(prepared.mentionIds); const existingIds = new Set(maps.map((map) => map.mentionedUserId)); const createdAt = new Date();
   const added = prepared.mentionIds.filter((mentionedUserId) => !existingIds.has(mentionedUserId)).map((mentionedUserId) => ({ id: newId(), commentId, mentionedUserId, createdAt }));
-  const media = await resolveCommentMedia(c.env.DB, { projectId, authorId: currentUser.id, commentId, mediaIds: prepared.mediaIds }); if (!media) return c.json({ error: "An image in this comment is unavailable.", code: "invalid_media" }, 400);
+  const media = await resolveCommentMedia(c.env.DB, { projectId, authorId: currentUser.id, commentId, mediaIds: prepared.mediaIds, videoIds: prepared.videoIds, previewIds: prepared.previewIds }); if (!media) return c.json({ error: "An image, video or link preview in this comment is unavailable.", code: "invalid_media" }, 400);
   const result = await editProjectComment(c.env.DB, { projectId, commentId, actorId: currentUser.id, auditPrincipal: currentUser, body: prepared.body, contentJson: JSON.stringify(prepared.content), removeMentionIds: maps.filter((map) => !wanted.has(map.mentionedUserId)).map((map) => map.id), addMentions: added, mentionIds: prepared.mentionIds, editedAt: createdAt, occurredAt: createdAt, media }).catch((error) => error instanceof CommentMediaConflictError ? null : Promise.reject(error)); if (!result) return c.json({ error: "An image in this comment is no longer available. Remove it and try again.", code: "media_conflict" }, 409);
   c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
   if (!result.comment) return c.json({ error: "Comment could not be updated" }, 500);
-  return c.json(c.get("user").role === "external_editor" ? externalCommentSchema.parse(serializeProjectComment(result.comment)) : serializeProjectComment(result.comment));
+  const [edited] = await fillLinkPreviews(c.env.DB, [serializeProjectComment(result.comment)]);
+  return c.json(c.get("user").role === "external_editor" ? externalCommentSchema.parse(edited) : edited);
 }));
 
 projectCommentsRoutes.delete("/projects/:projectId/comments/:commentId", terminalRoute("/projects/:projectId/comments/:commentId", async (c) => {

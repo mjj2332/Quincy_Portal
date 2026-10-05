@@ -46,19 +46,24 @@ export async function request(path: string, who: Who, method: "GET" | "POST" | "
 export function pngBytes(size = 64): Uint8Array { const bytes = new Uint8Array(size); bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]); return bytes; }
 export function jpegBytes(size = 64): Uint8Array { const bytes = new Uint8Array(size); bytes.set([0xff, 0xd8, 0xff, 0xe0]); return bytes; }
 
+/** A body that starts with a real `ftyp` box (brand `isom`, or `qt  ` for QuickTime) and is `size` bytes long. */
+export function mp4Bytes(size = 4096, brand = "isom"): Uint8Array { const bytes = new Uint8Array(size); bytes.set([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, ...[...brand].map((c) => c.charCodeAt(0))]); for (let i = 24; i < size; i += 1) bytes[i] = i % 251; return bytes; }
+
 export const mediaKey = (projectId: string, mediaId: string) => `projects/${projectId}/embedded-media/${mediaId}/original`;
 export const noticeMediaKey = (mediaId: string) => `notice-board/embedded-media/${mediaId}/original`;
 
-export type MediaRowInput = { id?: string; ownerKind?: "project_comment" | "notice_post"; kind?: "image" | "video" | "preview_image"; projectId?: string; uploader?: string; state?: "uploading" | "pending" | "attached" | "detached"; ownerId?: string | null; bytes?: number; contentType?: string; detachedAt?: number | null; createdAt?: number; uploadId?: string | null; object?: Uint8Array | null };
+export type MediaRowInput = { id?: string; ownerKind?: "project_comment" | "notice_post"; kind?: "image" | "video" | "preview_image"; projectId?: string; uploader?: string; state?: "uploading" | "pending" | "attached" | "detached"; ownerId?: string | null; bytes?: number; contentType?: string; detachedAt?: number | null; createdAt?: number; uploadId?: string | null; object?: Uint8Array | null; poster?: boolean };
 /** Inserts a row and (unless `object: null`) its stored object, in the state a test needs. */
 export async function seedMedia(input: MediaRowInput = {}) {
   const id = input.id ?? crypto.randomUUID(); const notice = input.ownerKind === "notice_post"; const projectId = notice ? null : (input.projectId ?? ids.project); const state = input.state ?? "pending";
   const ownerId = input.ownerId === undefined ? (state === "attached" || state === "detached" ? crypto.randomUUID() : null) : input.ownerId;
   const detachedAt = input.detachedAt === undefined ? (state === "detached" ? Date.now() : null) : input.detachedAt;
+  const video = input.kind === "video"; const contentType = input.contentType ?? (video ? "video/mp4" : "image/png");
   const bytes = input.bytes ?? 64; const key = notice ? noticeMediaKey(id) : mediaKey(projectId!, id); const createdAt = input.createdAt ?? Date.now();
-  await database.DB.prepare("INSERT INTO embedded_media (id, owner_kind, owner_id, project_id, uploader_id, kind, content_type, bytes, original_key, upload_id, state, detached_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-    .bind(id, input.ownerKind ?? "project_comment", ownerId, projectId, input.uploader ?? ids.member, input.kind ?? "image", input.contentType ?? "image/png", bytes, key, input.uploadId ?? null, state, detachedAt, createdAt, createdAt).run();
-  if (input.object !== null) await database.MEDIA.put(key, input.object ?? pngBytes(bytes), { httpMetadata: { contentType: input.contentType ?? "image/png" } });
+  await database.DB.prepare("INSERT INTO embedded_media (id, owner_kind, owner_id, project_id, uploader_id, kind, content_type, bytes, original_key, poster_key, upload_id, state, detached_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .bind(id, input.ownerKind ?? "project_comment", ownerId, projectId, input.uploader ?? ids.member, input.kind ?? "image", contentType, bytes, key, input.poster ? `${key.replace(/original$/, "")}poster-seed` : null, input.uploadId ?? null, state, detachedAt, createdAt, createdAt).run();
+  if (input.poster) await database.MEDIA.put(`${key.replace(/original$/, "")}poster-seed`, jpegBytes(32), { httpMetadata: { contentType: "image/jpeg" } });
+  if (input.object !== null) await database.MEDIA.put(key, input.object ?? (video ? mp4Bytes(bytes) : pngBytes(bytes)), { httpMetadata: { contentType } });
   return { id, key };
 }
 export const mediaRow = (id: string) => database.DB.prepare("SELECT * FROM embedded_media WHERE id = ?").bind(id).first<Record<string, unknown>>();

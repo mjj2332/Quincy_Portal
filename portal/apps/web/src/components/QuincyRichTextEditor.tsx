@@ -1,16 +1,20 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import { exitSuggestion } from "@tiptap/suggestion";
-import { ChevronDownIcon, ImageIcon, ListChecksIcon, ListIcon, ListOrderedIcon, Redo2Icon, TableIcon, Undo2Icon } from "lucide-react";
-import { RICH_TEXT_JSON_MAX_BYTES, richTextDocByteLength, richTextMediaIds, richTextPlainText, type RichTextDoc } from "@quincy/shared";
+import { ChevronDownIcon, ImageIcon, ListChecksIcon, ListIcon, ListOrderedIcon, Redo2Icon, TableIcon, Undo2Icon, VideoIcon } from "lucide-react";
+import { RICH_TEXT_JSON_MAX_BYTES, RICH_TEXT_MAX_LINK_PREVIEWS, richTextDocByteLength, richTextMediaIds, richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { cn } from "../lib/utils";
-import { EMBEDDED_IMAGE_ACCEPT, EMBEDDED_MEDIA_MAX_PER_POST, embeddedImageProblem, uploadEmbeddedImage, type EmbeddedMediaScope } from "../lib/embedded-media";
+import { useMediaQuery } from "../lib/use-media-query";
+import { EMBEDDED_IMAGE_ACCEPT, EMBEDDED_MEDIA_MAX_PER_POST, EMBEDDED_VIDEO_ACCEPT, embeddedImageProblem, embeddedVideoProblem, uploadEmbeddedImage, uploadEmbeddedVideo, type EmbeddedMediaScope } from "../lib/embedded-media";
+import { requestLinkPreview } from "../lib/link-previews";
 import {
+  LinkPreview,
   createRichTextEditorExtensions,
   type RichTextEditorPreset,
   itemContainerDepth,
   mentionQuery,
   shouldBlockListIndent,
+  stripLinkPreviewDisplay,
   tiptapToRichTextDoc,
   toTiptap,
 } from "../lib/rich-text-tiptap";
@@ -19,6 +23,7 @@ import { Button } from "./reui/button";
 import { Input } from "./reui/input";
 import { Progress, ProgressValue } from "./reui/progress";
 import { Notice } from "./quincy/Notice";
+import { LinkPreviewWithView } from "./quincy/LinkPreviewEditorNode";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,8 +39,11 @@ import { RichTextLinkPopover } from "./reui/rich-text-editor/rich-text-link";
 import { RichTextOutlineRail, scrollToRichTextHeading, useRichTextActiveHeading, useRichTextOutline } from "./reui/rich-text-editor/rich-text-outline";
 import { RICH_TEXT_BASIC_SLASH_ITEMS, RICH_TEXT_SLASH_KEY, RichTextSlashCommand } from "./reui/rich-text-editor/rich-text-slash-menu";
 import { useRichTextState } from "./reui/rich-text-editor/rich-text-state";
-import { RICH_TEXT_TABLE_SLASH_ITEM, RichTextTableBubble } from "./reui/rich-text-editor/rich-text-table";
+import { editorOwnsBubbleBar } from "./reui/rich-text-editor/rich-text-bubble-bar";
+import { RICH_TEXT_TABLE_SLASH_ITEM, RichTextTableBubble, RichTextTableTools } from "./reui/rich-text-editor/rich-text-table";
+import type { TableBubbleTier } from "./reui/rich-text-editor/rich-text-table-position";
 import {
+  RICH_TEXT_PHONE_QUERY,
   RichTextButton,
   RichTextToggle,
   RichTextToolbar,
@@ -97,6 +105,9 @@ export type QuincyRichTextEditorProps = {
   preset: RichTextEditorPreset;
   value: RichTextDoc;
   onChange: (value: RichTextDoc) => void;
+  // `onChange` carries what each link preview card shows (title, description, site, address, image) beside its id, because whatever a
+  // host keeps outside the editor (a draft, an edit in progress) has to redraw the card when the editor is mounted again. The id alone
+  // is what is stored, so a host strips with `stripLinkPreviewDisplay` at the point it submits and wherever it measures size.
   limit: number;
   /** The stored-JSON cap the surface's server profile enforces (default: the comment cap). */
   maxBytes?: number;
@@ -105,13 +116,23 @@ export type QuincyRichTextEditorProps = {
   placeholder?: string;
   id?: string;
   onSubmit?: () => void;
-  /** Turns on embedded images (#493, #496): the toolbar button, paste and drop upload into this Project or the Notice board. */
+  /** Turns on embedded images (#493, #496): the toolbar button, paste and drop upload into this Project or the Notice board. A Project also takes video (#494). */
   media?: EmbeddedMediaScope;
+  /** Turns on link previews (#497): applying a link asks the server for the page's card and inserts it after the link's block. */
+  linkPreviews?: EmbeddedMediaScope;
   /** Reports whether an image is still uploading, so the host can hold Post / Save until it lands. */
   onUploadingChange?: (uploading: boolean) => void;
+  /** The host's helper line under the editor; the table bar may extend down to it (#535). Omit for none. */
+  tableBubbleFloor?: RefObject<HTMLElement | null>;
 };
 
-type UploadingImage = { key: number; name: string; percent: number };
+type UploadingMedia = { key: number; name: string; percent: number; kind: "image" | "video" };
+
+/** A file this editor would send down the video path: a Project's discussion only, and by what the file says it is. */
+const isVideoFile = (file: Pick<File, "type" | "name">) => file.type.startsWith("video/") || /\.(?:mp4|mov)$/i.test(file.name);
+
+// Marks the transaction that inserts a finished upload, so onUpdate can tell it from the author typing.
+const UPLOAD_INSERT_META = "quincyUploadInsert";
 
 export function QuincyRichTextEditor({
   preset,
@@ -125,7 +146,9 @@ export function QuincyRichTextEditor({
   id,
   onSubmit,
   media,
+  linkPreviews,
   onUploadingChange,
+  tableBubbleFloor,
 }: QuincyRichTextEditorProps) {
   const valueRef = useRef(JSON.stringify(value));
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
@@ -137,6 +160,10 @@ export function QuincyRichTextEditor({
   const editorRef = useRef<Editor | null>(null);
   const menu = useRef<MentionAutocompleteHandle>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  // Everything rendered under the frame that the table bar must not cover (#535): the upload tray, the counter, the host's helper.
+  const counterRef = useRef<HTMLDivElement>(null);
+  const trayRef = useRef<HTMLDivElement>(null);
+  const tableBubbleFloors = useMemo(() => [trayRef, counterRef, tableBubbleFloor], [tableBubbleFloor]);
   const [rawQuery, setQuery] = useState<string | null>(null);
   // #375: Esc / an outside press closes the mention list and it stays closed until the content
   // actually changes; the sheet's layer gate reads the list as open through `aria-expanded`.
@@ -147,20 +174,25 @@ export function QuincyRichTextEditor({
   const [nestingBlocked, setNestingBlocked] = useState(false);
   const [deleteTableOpen, setDeleteTableOpen] = useState(false);
   const pageRef = useRef<HTMLDivElement>(null);
-  const [uploads, setUploads] = useState<UploadingImage[]>([]);
+  const [uploads, setUploads] = useState<UploadingMedia[]>([]);
   const [uploadErrors, setUploadErrors] = useState<string[]>([]);
   const uploadSeq = useRef(0);
   const inFlight = useRef(0);
   const mountedRef = useRef(true);
   const mediaRef = useRef(media); mediaRef.current = media;
+  const linkPreviewsRef = useRef(linkPreviews); linkPreviewsRef.current = linkPreviews;
+  // Bumped when the host replaces the content, so an answer that was in flight for the old content is dropped.
+  const contentEpoch = useRef(0);
   const onUploadingChangeRef = useRef(onUploadingChange); onUploadingChangeRef.current = onUploadingChange;
-  const addImagesRef = useRef<(files: File[], at?: number) => void>(() => {});
+  const addImagesRef = useRef<(files: File[], at?: number, as?: "image" | "video") => void>(() => {});
+  // Each running upload's way to stop and to give up its place (the busy count and the tray row), once, whichever of finishing and cancelling comes first.
+  const running = useRef(new Map<number, { controller: AbortController; release: () => void }>());
   // Where each running upload will land: captured when it starts and mapped through every later transaction.
   const insertAt = useRef(new Map<number, number>());
-  const [picking, setPicking] = useState<number | null>(null);
+  const [picking, setPicking] = useState<{ n: number; kind: "image" | "video" } | null>(null);
   const pickerRef = useRef<HTMLInputElement>(null);
   const extensions = useMemo(() => [
-    ...createRichTextEditorExtensions(preset),
+    ...createRichTextEditorExtensions(preset).map((extension) => extension === LinkPreview ? LinkPreviewWithView : extension),
     ...(preset === "document" ? [RichTextSlashCommand.configure({ items: [...RICH_TEXT_BASIC_SLASH_ITEMS, RICH_TEXT_TABLE_SLASH_ITEM] })] : []),
   ], [preset]);
   const editor = useEditor({
@@ -207,7 +239,7 @@ export function QuincyRichTextEditor({
           const plainText = richTextPlainText(doc);
           // Never submit while an image is still uploading: the post would go without it.
           if (inFlight.current > 0) { event.preventDefault(); return true; }
-          if (plainText.trim().length > 0 && plainText.length <= limitRef.current && richTextDocByteLength(doc) <= maxBytesRef.current && !disabledRef.current) {
+          if (plainText.trim().length > 0 && plainText.length <= limitRef.current && richTextDocByteLength(stripLinkPreviewDisplay(doc)) <= maxBytesRef.current && !disabledRef.current) {
             event.preventDefault();
             onSubmitRef.current?.();
             return true;
@@ -216,20 +248,51 @@ export function QuincyRichTextEditor({
         return false;
       },
     },
-    onUpdate: ({ editor: next }) => {
-      const doc = tiptapToRichTextDoc(next.getJSON());
+    onUpdate: ({ editor: next, transaction }) => {
+      const doc = tiptapToRichTextDoc(next.getJSON(), { keepPreviewDisplay: true });
       const serialised = JSON.stringify(doc);
       // Tiptap/ProseMirror can dispatch a no-op transaction (e.g. from a blur triggered by a
       // submit button click) that reports the same content as before. Propagating it anyway can
       // clobber a concurrent external reset (e.g. the composer clearing after a successful post)
       // that lands between this event and the next render.
+      // A card that was shown and is gone now was removed by the author: remember it so a late answer does not bring it back.
+      const nowShown = new Set<string>(); next.state.doc.forEach((child) => { if (child.type.name === "linkPreview") nowShown.add(String(child.attrs.url ?? "")); });
+      for (const url of shownPreviews.current) if (!nowShown.has(url)) removedPreviews.current.set(url, ++uploadSeq.current);
+      shownPreviews.current = nowShown;
       if (serialised === valueRef.current) return;
-      valueRef.current = serialised; onChangeRef.current(doc); setUploadErrors((entries) => (entries.length ? [] : entries)); setNestingBlocked(false); setMentionDismissed(false); setQuery(mentionQuery(next));
+      valueRef.current = serialised; onChangeRef.current(doc);
+      // Only the author's own edits retire an upload problem: a sibling upload landing is not one, and must not hide a problem shown for another file.
+      if (!transaction.getMeta(UPLOAD_INSERT_META)) setUploadErrors((entries) => (entries.length ? [] : entries));
+      setNestingBlocked(false); setMentionDismissed(false); setQuery(mentionQuery(next));
     },
     onSelectionUpdate: ({ editor: next }) => setQuery(mentionQuery(next)),
   });
   editorRef.current = editor;
   const state = useRichTextState(editor);
+  // Below 721px the table controls are a toolbar group and the floating bar is not mounted; on a desktop the group
+  // takes over too when the bar has no room around the table (tier "none": the bar stays mounted but inert) (#535).
+  const phone = useMediaQuery(RICH_TEXT_PHONE_QUERY);
+  const [reportedTier, setTableTier] = useState<TableBubbleTier | null>(null);
+  const tableTier = state.inTable ? reportedTier : null;
+  const tableInToolbar = phone || tableTier === "none";
+  const toolbarRef = useRef(tableInToolbar);
+  const refocusRef = useRef(false);
+  // The presentation holding focus is about to stop being usable: note it while the DOM still shows it (render runs before commit).
+  if (toolbarRef.current !== tableInToolbar) {
+    toolbarRef.current = tableInToolbar;
+    // Only focus inside THIS editor's own toolbar group or bar counts: another mounted editor must not claim it.
+    const active = document.activeElement;
+    const own = active?.closest('[data-testid="rich-text-table-tools"]') != null && wrapperRef.current?.contains(active) === true
+      || (editorRef.current != null && editorOwnsBubbleBar(editorRef.current, active));
+    refocusRef.current = own;
+  }
+  useLayoutEffect(() => {
+    if (!refocusRef.current) return;
+    refocusRef.current = false;
+    if (editorRef.current && !editorRef.current.isDestroyed) editorRef.current.commands.focus();
+  }, [tableInToolbar]);
+  // Leaving the table forgets the tier; the bar's options are rebuilt on entering, so it is reported afresh.
+  useEffect(() => { if (!state.inTable) setTableTier(null); }, [state.inTable]);
   // The derived outline rail (document preset only; `null` keeps the composer's selector idle).
   const outline = useRichTextOutline(isDocument ? editor : null);
   const activeHeading = useRichTextActiveHeading(isDocument ? editor : null, pageRef, outline);
@@ -248,42 +311,108 @@ export function QuincyRichTextEditor({
     return () => { editor.off("transaction", follow); };
   }, [editor]);
   // Each file uploads on its own; its node enters the document only once the server has accepted it, so
-  // a failed or abandoned upload leaves nothing behind. An upload still running when the editor unmounts is lost.
-  addImagesRef.current = (files: File[], at?: number) => {
+  // a failed, cancelled or abandoned upload leaves nothing behind. A video can be cancelled from its tray row, and an
+  // upload still running when the editor unmounts is cancelled (the server is told, so no reservation is left).
+  addImagesRef.current = (files: File[], at?: number, as?: "image" | "video") => {
     const scope = mediaRef.current;
     const current = editorRef.current;
     if (!scope || !current) return;
+    const videos = "projectId" in scope;
     const problems: string[] = [];
     let slots = EMBEDDED_MEDIA_MAX_PER_POST - richTextMediaIds(tiptapToRichTextDoc(current.getJSON())).length - inFlight.current;
     for (const file of files) {
-      const problem = embeddedImageProblem(file) ?? (slots <= 0 ? `A post can hold ${EMBEDDED_MEDIA_MAX_PER_POST} images at most.` : null);
+      const kind = as ?? (videos && isVideoFile(file) ? "video" : "image");
+      const problem = (kind === "video" ? embeddedVideoProblem(file) : embeddedImageProblem(file)) ?? (slots <= 0 ? `A post can hold ${EMBEDDED_MEDIA_MAX_PER_POST} ${videos ? "images and videos" : "images"} at most.` : null);
       if (problem) { problems.push(problem); continue; }
       slots -= 1;
       const key = ++uploadSeq.current;
+      const controller = new AbortController();
+      let released = false; let cancelled = false;
+      const release = () => {
+        if (released) return; released = true;
+        insertAt.current.delete(key); running.current.delete(key);
+        inFlight.current -= 1;
+        // An editor that has unmounted has already told its host it is no longer uploading, and the host may
+        // since be running a different editor's uploads: a late callback from this one must not touch that.
+        if (!mountedRef.current) return;
+        if (inFlight.current === 0) onUploadingChangeRef.current?.(false);
+        setUploads((entries) => entries.filter((entry) => entry.key !== key));
+      };
       insertAt.current.set(key, at ?? current.state.selection.to);
       inFlight.current += 1; onUploadingChangeRef.current?.(true);
-      setUploads((entries) => [...entries, { key, name: file.name || "Image", percent: 0 }]);
-      void uploadEmbeddedImage(scope, file, (percent) => { if (mountedRef.current) setUploads((entries) => entries.map((entry) => entry.key === key ? { ...entry, percent } : entry)); })
+      running.current.set(key, { controller, release: () => { cancelled = true; controller.abort(); release(); } });
+      setUploads((entries) => [...entries, { key, name: file.name || (kind === "video" ? "Video" : "Image"), percent: 0, kind }]);
+      const onProgress = (percent: number) => { if (mountedRef.current && !released) setUploads((entries) => entries.map((entry) => entry.key === key ? { ...entry, percent } : entry)); };
+      const uploading = kind === "video" && "projectId" in scope ? uploadEmbeddedVideo(scope.projectId, file, { signal: controller.signal, onProgress }) : uploadEmbeddedImage(scope, file, onProgress);
+      void uploading
         .then((mediaId) => {
           const live = editorRef.current;
-          if (!mountedRef.current || !live) return;
+          if (cancelled || !mountedRef.current || !live) return;
           const position = Math.min(insertAt.current.get(key) ?? live.state.doc.content.size, live.state.doc.content.size);
-          live.chain().insertContentAt(position, { type: "image", attrs: { mediaId } }).run();
+          // insertContentAt selects inserted content by default; an async insert must leave the caret where the author is typing.
+          live.chain().command(({ tr }) => { tr.setMeta(UPLOAD_INSERT_META, true); return true; }).insertContentAt(position, { type: kind, attrs: { mediaId } }, { updateSelection: false }).run();
         })
-        .catch((reason) => { if (mountedRef.current) setUploadErrors((entries) => [...entries, `${file.name || "Image"} could not be uploaded${reason instanceof Error && reason.message ? `: ${reason.message}` : "."}`]); })
-        .finally(() => {
-          insertAt.current.delete(key);
-          inFlight.current -= 1;
-          // An editor that has unmounted has already told its host it is no longer uploading, and the host may
-          // since be running a different editor's uploads: a late callback from this one must not touch that.
-          if (!mountedRef.current) return;
-          if (inFlight.current === 0) onUploadingChangeRef.current?.(false);
-          setUploads((entries) => entries.filter((entry) => entry.key !== key));
-        });
+        .catch((reason) => {
+          if (cancelled || (reason instanceof Error && reason.name === "AbortError")) return;
+          if (mountedRef.current) setUploadErrors((entries) => [...entries, `${file.name || (kind === "video" ? "Video" : "Image")} could not be uploaded${reason instanceof Error && reason.message ? `: ${reason.message}` : "."}`]);
+        })
+        .finally(release);
     }
     setUploadErrors(problems);
   };
-  useEffect(() => () => { if (inFlight.current > 0) onUploadingChangeRef.current?.(false); }, []);
+  // A link was just applied: ask for its card and put it after the link's top-level block. The place is carried through later
+  // edits like an upload's, and a late answer (the content was replaced, the editor unmounted, three cards already, the same address
+  // already carded) is dropped. No card, a refusal or a failure all leave the link a link.
+  const hasLink = (doc: { descendants: (callback: (child: { marks: ReadonlyArray<{ type: { name: string }; attrs: Record<string, unknown> }> }) => boolean | void) => void }, href: string) => {
+    let found = false;
+    doc.descendants((child) => { if (child.marks.some((mark) => mark.type.name === "link" && mark.attrs.href === href)) found = true; return !found; });
+    return found;
+  };
+  const hasPreviewId = (doc: { forEach: (callback: (child: { type: { name: string }; attrs: Record<string, unknown> }) => void) => void }, previewId: string) => {
+    let found = false; doc.forEach((child) => { if (child.type.name === "linkPreview" && child.attrs.previewId === previewId) found = true; }); return found;
+  };
+  const previewControllers = useRef(new Set<AbortController>());
+  // One request per address at a time, and the addresses whose card the author removed (with when), so a late answer cannot put it back.
+  const pendingPreviews = useRef(new Set<string>());
+  const removedPreviews = useRef(new Map<string, number>());
+  const shownPreviews = useRef(new Set<string>());
+  const offerLinkPreview = (href: string) => {
+    const scope = linkPreviewsRef.current; const current = editorRef.current;
+    if (!scope || !current || disabledRef.current) return;
+    const cards = () => { const found: string[] = []; current.state.doc.forEach((child) => { if (child.type.name === "linkPreview") found.push(String(child.attrs.url ?? "")); }); return found; };
+    if (cards().length >= RICH_TEXT_MAX_LINK_PREVIEWS || cards().includes(href) || pendingPreviews.current.has(href)) return;
+    const pending = pendingPreviews.current; pending.add(href);
+    const key = ++uploadSeq.current; const epoch = contentEpoch.current;
+    const { $to } = current.state.selection;
+    insertAt.current.set(key, $to.depth >= 1 ? $to.after(1) : $to.pos);
+    const controller = new AbortController(); previewControllers.current.add(controller);
+    void requestLinkPreview(scope, href, controller.signal).then((card) => {
+      const live = editorRef.current;
+      if (!card || controller.signal.aborted || !mountedRef.current || !live || epoch !== contentEpoch.current) return;
+      // The link may have been undone or replaced while the page was fetched: the card belongs to a link that is still there.
+      if (!hasLink(live.state.doc, href)) return;
+      if ((removedPreviews.current.get(card.url) ?? 0) > key || (removedPreviews.current.get(href) ?? 0) > key) return;
+      if (cards().length >= RICH_TEXT_MAX_LINK_PREVIEWS || cards().includes(card.url) || hasPreviewId(live.state.doc, card.previewId)) return;
+      const size = live.state.doc.content.size;
+      const mapped = Math.min(insertAt.current.get(key) ?? size, size);
+      const $at = live.state.doc.resolve(mapped);
+      // insertContentAt selects inserted content by default: the arriving card must not take the author's selection, or the next keystroke deletes it.
+      live.chain().insertContentAt($at.depth >= 1 ? $at.after(1) : mapped, { type: "linkPreview", attrs: card }, { updateSelection: false }).run();
+    }).catch(() => undefined).finally(() => { pending.delete(href); insertAt.current.delete(key); previewControllers.current.delete(controller); });
+  };
+  useEffect(() => () => { for (const controller of previewControllers.current) controller.abort(); }, []);
+  useEffect(() => () => {
+    for (const entry of [...running.current.values()]) entry.controller.abort();
+    if (inFlight.current > 0) onUploadingChangeRef.current?.(false);
+  }, []);
+  // A video can take minutes: leaving the page would lose it, so the browser is asked to confirm. Images are over too fast to warn about.
+  const uploadingVideo = uploads.some((entry) => entry.kind === "video");
+  useEffect(() => {
+    if (!uploadingVideo) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [uploadingVideo]);
   useEffect(() => {
     if (query === null) return;
     // Bubble phase on purpose: the Project sheet snapshots "is a layer open" at window-capture,
@@ -320,8 +449,9 @@ export function QuincyRichTextEditor({
     if (serialised !== valueRef.current) {
       // The host replaced the content (a post cleared the composer, or an edit began): an earlier upload error is stale.
       setUploadErrors((entries) => (entries.length ? [] : entries));
+      contentEpoch.current += 1; shownPreviews.current = new Set(); removedPreviews.current = new Map(); pendingPreviews.current = new Set();
       const applied = editor.commands.setContent(toTiptap(value), { emitUpdate: false });
-      if (applied && JSON.stringify(tiptapToRichTextDoc(editor.getJSON())) === serialised) valueRef.current = serialised;
+      if (applied && JSON.stringify(tiptapToRichTextDoc(editor.getJSON(), { keepPreviewDisplay: true })) === serialised) valueRef.current = serialised;
     }
   }, [editor, value]);
   useEffect(() => {
@@ -337,7 +467,7 @@ export function QuincyRichTextEditor({
   if (!editor) return null;
 
   const plainText = richTextPlainText(value);
-  const overBytes = richTextDocByteLength(value) > maxBytes;
+  const overBytes = richTextDocByteLength(stripLinkPreviewDisplay(value)) > maxBytes;
   const selectMention = (user: MentionableUser) => {
     const activeQuery = query ?? "";
     const from = editor.state.selection.from - activeQuery.length - 1;
@@ -351,7 +481,7 @@ export function QuincyRichTextEditor({
   };
   // The picker is mounted only while a choice is being made: a standing file input would be a second upload control on
   // every Project surface that renders the composer. It is the installed ReUI `Input`, clicked as soon as it mounts.
-  const chooseImages = () => setPicking((n) => (n ?? 0) + 1);
+  const choose = (kind: "image" | "video") => setPicking((previous) => ({ n: (previous?.n ?? 0) + 1, kind }));
   // The live region stays mounted so screen readers announce a message when it appears, but it takes no space while empty.
   const liveMessage = overBytes ? "This formatting is too large to save; remove list items or formatting." : nestingBlocked ? "Maximum list nesting is four levels" : "";
   const off = (can: boolean) => disabled || !can;
@@ -360,6 +490,8 @@ export function QuincyRichTextEditor({
     <InputGroup data-testid="rich-text-field" className={FIELD_GROUP} data-disabled={disabled || undefined}>
       <InputGroupAddon align="block-start" className="p-[var(--space-1)] cursor-default">
         <RichTextToolbar aria-label="Formatting" className="w-full min-w-0 gap-[var(--space-2)]">
+          {/* On a phone the table controls lead the scrolling toolbar; they stay while the editor is busy, disabled. */}
+          {isDocument && tableInToolbar && state.inTable && <RichTextTableTools editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} disabled={disabled || !state.editable} />}
           <RichTextToolbarGroup label="Text style">
             <RichTextToggle label="Bold" shortcut={["mod", "B"]} pressed={state.bold} disabled={off(state.canBold)} onToggle={() => editor.chain().focus().toggleBold().run()}><span aria-hidden="true" className="font-bold">B</span></RichTextToggle>
             <RichTextToggle label="Italic" shortcut={["mod", "I"]} pressed={state.italic} disabled={off(state.canItalic)} onToggle={() => editor.chain().focus().toggleItalic().run()}><span aria-hidden="true" className="italic">I</span></RichTextToggle>
@@ -383,7 +515,7 @@ export function QuincyRichTextEditor({
                 </DropdownMenuRadioGroup>
               </DropdownMenuContent>
             </DropdownMenu>
-            <RichTextLinkPopover editor={editor} state={state} disabled={disabled} testId="rich-text-link-popover" open={linkOpen} onOpenChange={setLinkOpen} />
+            <RichTextLinkPopover editor={editor} state={state} disabled={disabled} testId="rich-text-link-popover" open={linkOpen} onOpenChange={setLinkOpen} onApplied={offerLinkPreview} />
             <RichTextToggle label="Bullet list" pressed={state.bulletList} disabled={off(state.canBulletList) || state.atListNestingLimit} onToggle={() => editor.chain().focus().toggleBulletList().run()}><ListIcon aria-hidden="true" /></RichTextToggle>
             <RichTextToggle label="Ordered list" pressed={state.orderedList} disabled={off(state.canOrderedList) || state.atListNestingLimit} onToggle={() => editor.chain().focus().toggleOrderedList().run()}><ListOrderedIcon aria-hidden="true" /></RichTextToggle>
             <RichTextToggle label="Checklist" pressed={state.taskList} disabled={off(state.canTaskList) || state.atListNestingLimit} onToggle={() => editor.chain().focus().toggleTaskList().run()}><ListChecksIcon aria-hidden="true" /></RichTextToggle>
@@ -400,7 +532,8 @@ export function QuincyRichTextEditor({
           {media && <div data-testid="rich-text-media-tools" className="flex shrink-0 items-center gap-[var(--space-2)] max-[721px]:order-first max-[721px]:flex-row-reverse">
             <RichTextToolbarSeparator />
             <RichTextToolbarGroup label="Media">
-              <RichTextButton label="Insert image" disabled={disabled} onClick={chooseImages}><ImageIcon aria-hidden="true" /></RichTextButton>
+              <RichTextButton label="Insert image" disabled={disabled} onClick={() => choose("image")}><ImageIcon aria-hidden="true" /></RichTextButton>
+              {"projectId" in media && <RichTextButton label="Insert video" disabled={disabled} onClick={() => choose("video")}><VideoIcon aria-hidden="true" /></RichTextButton>}
             </RichTextToolbarGroup>
           </div>}
           <RichTextToolbarSeparator />
@@ -416,20 +549,23 @@ export function QuincyRichTextEditor({
       </div>
     </InputGroup>
     {isDocument && <>
-      <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} />
+      {!phone && <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} tableBubbleFloors={tableBubbleFloors} tier={tableTier} onTierChange={setTableTier} />}
       <DeleteTableDialog editor={editor} open={deleteTableOpen} onOpenChange={setDeleteTableOpen} />
     </>}
     {picking !== null && <Input
-      key={picking} ref={pickerRef} type="file" multiple accept={EMBEDDED_IMAGE_ACCEPT} tabIndex={-1} aria-hidden="true" aria-label="Choose images" data-testid="rich-text-image-picker" className="sr-only"
-      onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); setPicking(null); if (files.length) addImagesRef.current(files, editor.state.selection.to); }}
+      key={picking.n} ref={pickerRef} type="file" multiple accept={picking.kind === "video" ? EMBEDDED_VIDEO_ACCEPT : EMBEDDED_IMAGE_ACCEPT} tabIndex={-1} aria-hidden="true" aria-label={picking.kind === "video" ? "Choose videos" : "Choose images"} data-testid={picking.kind === "video" ? "rich-text-video-picker" : "rich-text-image-picker"} className="sr-only"
+      onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); const kind = picking.kind; setPicking(null); if (files.length) addImagesRef.current(files, editor.state.selection.to, kind); }}
       {...{ onCancel: () => setPicking(null) }}
     />}
-    {(uploads.length > 0 || uploadErrors.length > 0) && <div data-testid="rich-text-upload-tray" className="grid gap-[var(--space-2)]">
-      {uploads.map((entry) => <Progress key={entry.key} value={entry.percent} aria-label={`Uploading ${entry.name}`} className="flex flex-wrap items-baseline gap-[var(--space-1)]"><span className="[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary [overflow-wrap:anywhere]">Uploading {entry.name}…</span><ProgressValue data-testid="upload-progress-value" className="[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" /></Progress>)}
+    {(uploads.length > 0 || uploadErrors.length > 0) && <div ref={trayRef} data-testid="rich-text-upload-tray" className="grid gap-[var(--space-2)]">
+      {uploads.map((entry) => <div key={entry.key} className="flex flex-wrap items-center justify-between gap-[var(--space-1)]">
+        <Progress value={entry.percent} aria-label={`Uploading ${entry.name}`} className="flex min-w-0 flex-1 flex-wrap items-baseline gap-[var(--space-1)]"><span className="[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary [overflow-wrap:anywhere]">Uploading {entry.name}…</span><ProgressValue data-testid="upload-progress-value" className="[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" /></Progress>
+        {entry.kind === "video" && <Button type="button" variant="ghost" aria-label={`Cancel upload of ${entry.name}`} onClick={() => running.current.get(entry.key)?.release()}>Cancel</Button>}
+      </div>)}
       {uploadErrors.map((message, index) => <Notice key={index} tone="critical" role="alert">{message}</Notice>)}
     </div>}
     <MentionAutocomplete ref={menu} query={query} loadMentionables={loadMentionables} onSelect={selectMention} onDismiss={() => setMentionDismissed(true)} onAccessibilityChange={setMentionA11y} />
-    {plainText.length >= limit * COUNTER_THRESHOLD && <div data-testid="rich-text-counter" className={cn("text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", plainText.length > limit && "!text-destructive")}>{plainText.length}/{limit}</div>}
+    {plainText.length >= limit * COUNTER_THRESHOLD && <div ref={counterRef} data-testid="rich-text-counter" className={cn("text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", plainText.length > limit && "!text-destructive")}>{plainText.length}/{limit}</div>}
     <div className={liveMessage ? "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive" : "sr-only"} aria-live="polite">{liveMessage}</div>
   </div>;
 }

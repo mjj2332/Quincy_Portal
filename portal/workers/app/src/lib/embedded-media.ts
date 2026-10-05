@@ -1,4 +1,4 @@
-import { EMBEDDED_MEDIA_MAX_PER_POST, EMBEDDED_MEDIA_RETENTION_MS, sniffEmbeddedImageType } from "@quincy/shared";
+import { EMBEDDED_MEDIA_MAX_PER_POST, EMBEDDED_MEDIA_RETENTION_MS, sniffEmbeddedMediaType } from "@quincy/shared";
 import { completeMultipart, validateMultipartParts } from "./r2s3";
 import type { Env } from "../env";
 
@@ -40,7 +40,7 @@ export async function enqueueEmbeddedMediaCleanup(db: D1Database, entries: Clean
   if (!entries.length) return;
   await db.batch(entries.map((entry) => db.prepare(`
     INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) VALUES (?, ?, ?, ?)
-    ON CONFLICT(storage_key) DO UPDATE SET project_id = COALESCE(embedded_media_cleanup.project_id, excluded.project_id), upload_id = COALESCE(embedded_media_cleanup.upload_id, excluded.upload_id)
+    ON CONFLICT(storage_key) DO UPDATE SET project_id = COALESCE(embedded_media_cleanup.project_id, excluded.project_id), upload_id = COALESCE(embedded_media_cleanup.upload_id, excluded.upload_id), queued_at = MAX(embedded_media_cleanup.queued_at + 1, excluded.queued_at), claimed_until = NULL
   `).bind(entry.key, entry.uploadId ?? null, entry.projectId ?? null, now)));
 }
 
@@ -51,20 +51,80 @@ export async function enqueueEmbeddedMediaCleanup(db: D1Database, entries: Clean
  * object is deleted and its queue entry dropped. If R2 refuses, the entry stays for the drain. Returns whether the claim was won.
  */
 export async function claimAndDiscardUploadingMedia(env: Pick<Env, "DB" | "MEDIA">, row: Pick<EmbeddedMediaRow, "id" | "originalKey" | "uploadId" | "projectId">): Promise<boolean> {
-  const now = Date.now();
-  const results = await env.DB.batch([
-    env.DB.prepare(`
-      INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at)
-      SELECT original_key, upload_id, project_id, ? FROM embedded_media WHERE id = ? AND state = 'uploading'
-      ON CONFLICT(storage_key) DO UPDATE SET project_id = COALESCE(embedded_media_cleanup.project_id, excluded.project_id), upload_id = COALESCE(embedded_media_cleanup.upload_id, excluded.upload_id)
-    `).bind(now, row.id),
-    env.DB.prepare("DELETE FROM embedded_media WHERE id = ? AND state = 'uploading'").bind(row.id),
-  ]);
-  if ((results[1]!.meta.changes ?? 0) !== 1) return false;
+  if (!await claimUploadingMedia(env.DB, row.id)) return false;
   if (await deleteEmbeddedMediaObjects(env, [{ originalKey: row.originalKey, displayKey: null, posterKey: null }])) {
-    await env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ?").bind(row.originalKey).run();
+    await env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ? AND claimed_until IS NULL").bind(row.originalKey).run();
   }
   return true;
+}
+
+/** The claim itself: one batch queues the still-`uploading` row's key and upload id and deletes the row. True only for the writer whose delete took the row. */
+async function claimUploadingMedia(db: D1Database, mediaId: string): Promise<boolean> {
+  const results = await db.batch([
+    db.prepare(`
+      INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at)
+      SELECT original_key, upload_id, project_id, ? FROM embedded_media WHERE id = ? AND state = 'uploading'
+      ON CONFLICT(storage_key) DO UPDATE SET project_id = COALESCE(embedded_media_cleanup.project_id, excluded.project_id), upload_id = COALESCE(embedded_media_cleanup.upload_id, excluded.upload_id), queued_at = MAX(embedded_media_cleanup.queued_at + 1, excluded.queued_at), claimed_until = NULL
+    `).bind(Date.now(), mediaId),
+    db.prepare("DELETE FROM embedded_media WHERE id = ? AND state = 'uploading'").bind(mediaId),
+  ]);
+  return (results[1]!.meta.changes ?? 0) === 1;
+}
+
+/** R2 answers an upload it no longer knows (already aborted or completed) in several shapes; for an abort that is as good as done. */
+function isMissingUpload(error: unknown): boolean {
+  const value = error as { status?: unknown; code?: unknown; name?: unknown; message?: unknown } | null;
+  if (!value || typeof value !== "object") return false;
+  const text = [value.code, value.name, value.message].filter((item): item is string => typeof item === "string").join(" ");
+  return value.status === 404 || /NoSuchUpload|no such upload|upload (?:does not exist|was not found)|multipart upload (?:does not exist|not found)|already aborted|\(10024\)/i.test(text);
+}
+
+/**
+ * A cancelled upload (#494). Claim-first like a rejection, and the multipart upload is killed before its object is deleted: a part
+ * that lands after the delete could still complete the upload and resurrect the object (lessons). If R2 will not abort, the queue
+ * entry (which carries the upload id) stays and the sweep finishes the job. Returns whether the claim was won.
+ */
+export async function claimAndAbortUploadingMedia(env: Pick<Env, "DB" | "MEDIA">, row: Pick<EmbeddedMediaRow, "id" | "originalKey" | "uploadId" | "projectId">): Promise<boolean> {
+  if (!await claimUploadingMedia(env.DB, row.id)) return false;
+  let dead = true;
+  if (row.uploadId) {
+    try { await env.MEDIA.resumeMultipartUpload(row.originalKey, row.uploadId).abort(); }
+    catch (error) { dead = isMissingUpload(error); }
+  }
+  if (dead && await deleteEmbeddedMediaObjects(env, [{ originalKey: row.originalKey, displayKey: null, posterKey: null }])) {
+    await env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ? AND claimed_until IS NULL").bind(row.originalKey).run();
+  }
+  return true;
+}
+
+/**
+ * Cancels an upload that has no owner yet: a row still `uploading` (the multipart upload is aborted, then its object deleted), or one
+ * already `pending` whose completion won (claimed the way the sweep claims it, `detached` at 0, so nothing can attach it, then its
+ * objects and poster go). An attached or detached row belongs to a comment and is `in_use`. A lost claim re-reads the row once, because
+ * the writer that won may have promoted it.
+ */
+export async function abortEmbeddedMedia(env: Pick<Env, "DB" | "MEDIA">, row: EmbeddedMediaRow): Promise<"aborted" | "in_use" | "gone"> {
+  let current = row;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (current.state === "uploading") { if (await claimAndAbortUploadingMedia(env, current)) return "aborted"; }
+    else if (current.state === "pending" && current.ownerId === null) {
+      const claim = await env.DB.prepare(`
+        UPDATE embedded_media SET state = 'detached', detached_at = 0, owner_id = COALESCE(owner_id, id), updated_at = ?
+        WHERE id = ? AND state = 'pending' AND owner_id IS NULL
+        RETURNING original_key AS originalKey, display_key AS displayKey, poster_key AS posterKey
+      `).bind(Date.now(), current.id).all<Pick<EmbeddedMediaRow, "originalKey" | "displayKey" | "posterKey">>();
+      const claimed = claim.results[0];
+      if (claimed) {
+        if (!await deleteEmbeddedMediaObjects(env, [claimed])) await enqueueEmbeddedMediaCleanup(env.DB, [claimed.originalKey, claimed.displayKey, claimed.posterKey].filter((key): key is string => Boolean(key)).map((key) => ({ key, projectId: current.projectId })));
+        await env.DB.prepare("DELETE FROM embedded_media WHERE id = ? AND state = 'detached' AND detached_at = 0").bind(current.id).run();
+        return "aborted";
+      }
+    } else return "in_use";
+    const fresh = await getEmbeddedMedia(env.DB, current.id);
+    if (!fresh) return "gone";
+    current = fresh;
+  }
+  return "in_use";
 }
 
 /** Every object a row can own. Best effort: returns whether R2 accepted the deletes. */
@@ -87,7 +147,8 @@ type OwnedMediaRow = { id: string; state: EmbeddedMediaState; owner_id: string |
  * own statements (`ownedMediaStatements`) are the authority and re-validate every id in SQL, so a concurrent edit, delete or
  * sweep between this read and the batch can never leave a retained image detached. More than ten, or a duplicate, is refused.
  */
-export async function preflightOwnedMedia(db: D1Database, input: OwnedMediaOwner & { uploaderId: string; ids: string[]; now?: number }): Promise<boolean> {
+export async function preflightOwnedMedia(db: D1Database, input: OwnedMediaOwner & { uploaderId: string; ids: string[]; videoIds?: string[]; now?: number }): Promise<boolean> {
+  const videos = new Set(input.videoIds ?? []);
   const now = input.now ?? Date.now();
   if (input.ids.length > EMBEDDED_MEDIA_MAX_PER_POST || new Set(input.ids).size !== input.ids.length) return false;
   if (!input.ids.length) return true;
@@ -97,7 +158,7 @@ export async function preflightOwnedMedia(db: D1Database, input: OwnedMediaOwner
   const cutoff = now - EMBEDDED_MEDIA_RETENTION_MS;
   for (const id of input.ids) {
     const row = byId.get(id);
-    if (!row || row.project_id !== input.projectId || row.owner_kind !== input.ownerKind || row.kind !== "image") return false;
+    if (!row || row.project_id !== input.projectId || row.owner_kind !== input.ownerKind || row.kind !== (videos.has(id) ? "video" : "image")) return false;
     const fresh = row.state === "pending" && row.owner_id === null && row.uploader_id === input.uploaderId && Number(row.created_at) > cutoff;
     const mine = row.owner_id === input.ownerId && (row.state === "attached" || (row.state === "detached" && Number(row.detached_at) > cutoff));
     if (!fresh && !mine) return false;
@@ -111,30 +172,33 @@ export async function preflightOwnedMedia(db: D1Database, input: OwnedMediaOwner
  * self-validating: every wanted id is attached by one UPDATE whose WHERE accepts only a fresh pending image upload of this
  * uploader in this scope, or a row this owner already owns (attached, or detached under seven days), then everything else the
  * owner holds is detached, then a guard statement violates a CHECK (rolling the whole batch back) if the wanted ids are not all
- * attached to this owner. A save that lost the fence is skipped.
+ * attached to this owner. A link preview's image (`preview_image`, #497) is never touched here: `linkPreviewStatements` owns it. A node names its kind (`videoIds` are the video nodes, every other id an image): the attach and the guard both
+ * require the stored row to be of that kind, so a video node cannot take an image row, nor the reverse. A save that lost the fence is skipped.
  */
-export function ownedMediaStatements(db: D1Database, input: OwnedMediaOwner & { uploaderId: string; ids: string[]; now: number; fence: { sql: string; binds: unknown[] }; guardId: string }): D1PreparedStatement[] {
+export function ownedMediaStatements(db: D1Database, input: OwnedMediaOwner & { uploaderId: string; ids: string[]; videoIds?: string[]; now: number; fence: { sql: string; binds: unknown[] }; guardId: string }): D1PreparedStatement[] {
   const { fence, ids, now } = input;
+  const videos = new Set(input.videoIds ?? []);
+  const kindOf = (id: string) => (videos.has(id) ? "video" : "image");
   const cutoff = now - EMBEDDED_MEDIA_RETENTION_MS;
   const marks = ids.map(() => "?").join(", ");
   const scope = input.projectId === null ? "project_id IS NULL" : "project_id = ?";
   const scopeBinds = input.projectId === null ? [] : [input.projectId];
   const statements = ids.map((id) => db.prepare(`
     UPDATE embedded_media SET state = 'attached', owner_id = ?, detached_at = NULL, updated_at = ?
-    WHERE id = ? AND owner_kind = ? AND ${scope} AND kind = 'image' AND ${fence.sql}
+    WHERE id = ? AND owner_kind = ? AND ${scope} AND kind = ? AND ${fence.sql}
       AND ((state = 'pending' AND owner_id IS NULL AND uploader_id = ? AND created_at > ?)
         OR (owner_id = ? AND (state = 'attached' OR (state = 'detached' AND detached_at > ?))))
-  `).bind(input.ownerId, now, id, input.ownerKind, ...scopeBinds, ...fence.binds, input.uploaderId, cutoff, input.ownerId, cutoff));
+  `).bind(input.ownerId, now, id, input.ownerKind, ...scopeBinds, kindOf(id), ...fence.binds, input.uploaderId, cutoff, input.ownerId, cutoff));
   statements.push(db.prepare(`
     UPDATE embedded_media SET state = 'detached', detached_at = ?, updated_at = ?
-    WHERE owner_kind = ? AND owner_id = ? AND state = 'attached' ${ids.length ? `AND id NOT IN (${marks})` : ""} AND ${fence.sql}
+    WHERE owner_kind = ? AND owner_id = ? AND state = 'attached' AND kind <> 'preview_image' ${ids.length ? `AND id NOT IN (${marks})` : ""} AND ${fence.sql}
   `).bind(now, now, input.ownerKind, input.ownerId, ...ids, ...fence.binds));
   if (ids.length) {
     statements.push(db.prepare(`
       INSERT INTO embedded_media (id, owner_kind, uploader_id, kind, content_type, bytes, original_key, state, created_at, updated_at)
       SELECT ?, ?, ?, 'image', 'guard', 0, ?, 'uploading', ?, ?
-      WHERE ${fence.sql} AND (SELECT COUNT(*) FROM embedded_media WHERE owner_kind = ? AND owner_id = ? AND state = 'attached' AND id IN (${marks})) <> ?
-    `).bind(`guard-${input.guardId}`, input.ownerKind, input.uploaderId, `guard/${input.guardId}`, now, now, ...fence.binds, input.ownerKind, input.ownerId, ...ids, ids.length));
+      WHERE ${fence.sql} AND (SELECT COUNT(*) FROM embedded_media WHERE owner_kind = ? AND owner_id = ? AND state = 'attached' AND (${ids.map(() => "(id = ? AND kind = ?)").join(" OR ")})) <> ?
+    `).bind(`guard-${input.guardId}`, input.ownerKind, input.uploaderId, `guard/${input.guardId}`, now, now, ...fence.binds, input.ownerKind, input.ownerId, ...ids.flatMap((id) => [id, kindOf(id)]), ids.length));
   }
   return statements;
 }
@@ -182,7 +246,44 @@ export async function verifyUploadedEmbeddedObject(env: Env, row: EmbeddedMediaR
   if (head.size !== row.bytes) return reject("The uploaded file is not the size that was reserved");
   if (head.httpMetadata?.contentType !== row.contentType) return reject("The uploaded file is not the type that was reserved");
   const first = await env.MEDIA.get(row.originalKey, { range: { offset: 0, length: 16 } });
-  const sniffed = first ? sniffEmbeddedImageType(new Uint8Array(await first.arrayBuffer())) : null;
-  if (sniffed !== row.contentType) return reject("The uploaded file is not a JPEG, PNG or WebP image");
+  const sniffed = first ? sniffEmbeddedMediaType(row.kind === "video" ? "video" : "image", new Uint8Array(await first.arrayBuffer())) : null;
+  // A video's declared type is the browser's guess from the file extension, so any MP4 or MOV container is accepted whichever it declared.
+  if (row.kind === "video" ? !sniffed : sniffed !== row.contentType) return reject(row.kind === "video" ? "The uploaded file is not an MP4 or MOV video" : "The uploaded file is not a JPEG, PNG or WebP image");
   return { ok: true };
+}
+
+/**
+ * Gives up an R2 object nothing references (a video poster, a link preview image): on a lost adoption and on an adoption that threw. Deletes the object, then its queue
+ * entry (a leftover entry is harmless, the sweep deletes an already-gone object). If R2 refuses, the key is queued again with the
+ * lease cleared. Accepted residual gap: when the R2 delete AND that following D1 write both fail back to back, the object is an orphan
+ * nothing tracks. That is logged loudly with the key (see docs/lessons.md) and left to a future R2 prefix reconciliation.
+ */
+export async function discardUnreferencedObject(env: Pick<Env, "DB" | "MEDIA">, posterKey: string, projectId: string | null): Promise<void> {
+  let deleted = false;
+  try { await env.MEDIA.delete(posterKey); deleted = true; } catch { /* queued below */ }
+  if (deleted) {
+    try { await env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ?").bind(posterKey).run(); } catch { /* the sweep drops the entry of a gone object */ }
+    return;
+  }
+  try { await enqueueEmbeddedMediaCleanup(env.DB, [{ key: posterKey, projectId }]); }
+  catch (error) { console.error("Embedded object ORPHANED: the R2 delete and the re-queue both failed, the object needs manual cleanup", { key: posterKey, projectId, error: error instanceof Error ? error.message : String(error) }); }
+}
+
+/**
+ * Decides, after an adoption batch threw, what to do with the object it was meant to adopt (a video poster, a link preview image).
+ * A throw can follow a commit, so the outcome comes from reading the row, in three: `adopted` (the row references the object, it is
+ * live and stays), `discarded` (confirmed not adopted, so the object is deleted, re-queued if R2 refuses, see `discardUnreferencedObject`),
+ * or `unknown` (the read threw too). Unknown deletes nothing and queues nothing, since either could destroy a live object: the object
+ * stays, an unadopted queue entry is still the sweep's to reclaim, and the key is logged with the batch's error.
+ */
+export async function settleThrownAdoption(env: Pick<Env, "DB" | "MEDIA">, input: { key: string; projectId: string | null; mediaId: string; what: string; isAdopted: () => Promise<boolean>; error: unknown }): Promise<"adopted" | "discarded" | "unknown"> {
+  let adopted: boolean;
+  try { adopted = await input.isAdopted(); }
+  catch {
+    console.error(`${input.what} adoption outcome UNKNOWN: the batch threw and the verification read failed, the object was kept (a leak is possible, accepted gap #549)`, { key: input.key, mediaId: input.mediaId, projectId: input.projectId, error: input.error instanceof Error ? input.error.message : String(input.error) });
+    return "unknown";
+  }
+  if (adopted) return "adopted";
+  await discardUnreferencedObject(env, input.key, input.projectId);
+  return "discarded";
 }

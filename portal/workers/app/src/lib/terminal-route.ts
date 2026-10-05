@@ -138,6 +138,7 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "GET", path: "/api/notice-board/posts", class: "withheld" },
   { method: "POST", path: "/api/notice-board/posts", class: "withheld" },
   { method: "POST", path: "/api/notice-board/embedded-media", class: "withheld" },
+  { method: "POST", path: "/api/notice-board/link-previews", class: "withheld" },
   { method: "PUT", path: "/api/notice-board/embedded-media/:mediaId/direct", class: "withheld" },
   { method: "POST", path: "/api/notice-board/embedded-media/:mediaId/complete", class: "withheld" },
   { method: "GET", path: "/api/notification-preferences", class: "global-self" },
@@ -202,6 +203,9 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "POST", path: "/api/projects/:projectId/embedded-media", class: "scoped" },
   { method: "PUT", path: "/api/projects/:projectId/embedded-media/:mediaId/direct", class: "scoped" },
   { method: "POST", path: "/api/projects/:projectId/embedded-media/:mediaId/complete", class: "scoped" },
+  { method: "PUT", path: "/api/projects/:projectId/embedded-media/:mediaId/poster", class: "scoped" },
+  { method: "POST", path: "/api/projects/:projectId/embedded-media/:mediaId/abort", class: "scoped" },
+  { method: "POST", path: "/api/projects/:projectId/link-previews", class: "scoped" },
   { method: "GET", path: "/api/projects/:projectId/activity", class: "scoped", externalSurface: "activity" },
   { method: "GET", path: "/api/projects/:projectId/activity/", class: "scoped", externalSurface: "activity" },
   { method: "POST", path: "/api/projects/:projectId/subtasks/:subtaskId/reorder", class: "scoped" },
@@ -238,6 +242,7 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "GET", path: "/media/annotation/:annotationId", class: "scoped" },
   { method: "GET", path: "/media/asset/:assetId/:variant", class: "scoped" },
   { method: "GET", path: "/media/embedded/:mediaId", class: "scoped" },
+  { method: "GET", path: "/media/embedded/:mediaId/poster", class: "scoped" },
   { method: "ALL", path: "/media", class: "terminal-fallback" },
 ] as const satisfies readonly LegacySecurityRouteRegistrationSeed[];
 

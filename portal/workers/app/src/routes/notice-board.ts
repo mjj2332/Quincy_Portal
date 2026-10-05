@@ -4,7 +4,7 @@ import { terminalRoute } from "../lib/terminal-route";
 import { createDb, schema } from "@quincy/db";
 import {
   EMBEDDED_IMAGE_CONTENT_TYPES, EMBEDDED_MEDIA_MAX_BYTES, NOTICE_BODY_MAX_LENGTH, NOTICE_RICH_TEXT_JSON_MAX_BYTES, NOTICE_RICH_TEXT_PROFILE, externalEmbeddedMediaCompleteSchema, externalEmbeddedMediaPresignSchema,
-  noticeEmbeddedMediaObjectKey, richTextDocByteLength, legacyBodyToRichTextDoc, normalizeRichTextMentionLabels, parseRichTextDoc, richTextMediaIds, richTextMentionIds, richTextPlainText, type RichTextDoc,
+  noticeEmbeddedMediaObjectKey, richTextDocByteLength, legacyBodyToRichTextDoc, linkPreviewRequestSchema, linkPreviewResponseSchema, normalizeRichTextMentionLabels, parseRichTextDoc, richTextLinkPreviewIds, richTextMediaIds, richTextMentionIds, richTextPlainText, type RichTextDoc,
 } from "@quincy/shared";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
@@ -17,7 +17,9 @@ import { NoticeBoardMediaConflictError, createNoticeBoardPost, deleteNoticeBoard
 import { enqueueEmbeddedMediaCleanup, getEmbeddedMedia, preflightOwnedMedia, purgeDetachedOwnerMedia, verifyUploadedEmbeddedObject } from "../lib/embedded-media";
 import { abortMultipart, createMultipartPresign } from "../lib/r2s3";
 import { advanceNoticeBoardReadMarker, getNoticeBoardReadState, type NoticeBoardReadState } from "../lib/notice-board-read-state";
+import { requestLinkPreview, fillLinkPreviews, preflightLinkPreviews } from "../lib/link-previews";
 import { jsonInput } from "./helpers";
+import { ownHosts } from "./link-previews";
 
 const optionalQuery = <T extends z.ZodTypeAny>(schema: T) => z.preprocess((value) => value === "" ? undefined : value, schema.optional());
 const postsQuery = z.object({ limit: optionalQuery(z.coerce.number().int().min(1).max(50)) });
@@ -55,7 +57,7 @@ async function findPost(db: ReturnType<typeof createDb>, id: string) {
     .where(eq(schema.noticeBoardPosts.id, id)).get();
 }
 
-async function normalizedContent(db: ReturnType<typeof createDb>, input: unknown): Promise<{ content: RichTextDoc; body: string; mentionIds: string[]; mediaIds: string[] } | null> {
+async function normalizedContent(db: ReturnType<typeof createDb>, input: unknown): Promise<{ content: RichTextDoc; body: string; mentionIds: string[]; mediaIds: string[]; previewIds: string[] } | null> {
   let parsed: RichTextDoc;
   try { parsed = parseRichTextDoc(input, NOTICE_RICH_TEXT_PROFILE); } catch { return null; }
   const mentionIds = richTextMentionIds(parsed);
@@ -70,7 +72,7 @@ async function normalizedContent(db: ReturnType<typeof createDb>, input: unknown
   const body = richTextPlainText(content).trim();
   // Re-check the byte cap here: a label rewritten to the current name can be longer than the one sent.
   if (!body || body.length > NOTICE_BODY_MAX_LENGTH || richTextDocByteLength(content) > NOTICE_RICH_TEXT_JSON_MAX_BYTES) return null;
-  return { content, body, mentionIds, mediaIds: richTextMediaIds(content) };
+  return { content, body, mentionIds, mediaIds: richTextMediaIds(content), previewIds: richTextLinkPreviewIds(content) };
 }
 
 export const noticeBoardRoutes = new Hono<AppEnv>();
@@ -101,7 +103,7 @@ noticeBoardRoutes.get("/notice-board/posts", terminalRoute("/notice-board/posts"
   const rows = await createDb(c.env.DB).select({ post: schema.noticeBoardPosts, authorName: schema.user.name })
     .from(schema.noticeBoardPosts).innerJoin(schema.user, eq(schema.noticeBoardPosts.authorId, schema.user.id))
     .orderBy(desc(schema.noticeBoardPosts.createdAt), desc(schema.noticeBoardPosts.id)).limit(parsed.data.limit ?? 50).all();
-  return c.json({ posts: rows.map(serializePost) });
+  return c.json({ posts: await fillLinkPreviews(c.env.DB, rows.map(serializePost)) });
 }));
 
 noticeBoardRoutes.get("/notice-board/posts/latest", terminalRoute("/notice-board/posts/latest", async (c) => {
@@ -117,14 +119,16 @@ noticeBoardRoutes.post("/notice-board/posts", terminalRoute("/notice-board/posts
   const id = newId(); const wallClockMs = Date.now(); const createdAt = new Date(wallClockMs); const user = c.get("user");
   const mentions = prepared.mentionIds.map((mentionedUserId) => ({ id: newId(), postId: id, mentionedUserId, createdAt }));
   if (!await preflightOwnedMedia(c.env.DB, { ownerKind: "notice_post", ownerId: id, projectId: null, uploaderId: user.id, ids: prepared.mediaIds })) return c.json({ error: "An image in this notice is unavailable.", code: "invalid_media" }, 400);
-  try { await createNoticeBoardPost(c.env.DB, { id, authorId: user.id, body: prepared.body, contentJson: JSON.stringify(prepared.content), mentions, wallClockMs, media: { authorId: user.id, ids: prepared.mediaIds } }); }
+  if (!await preflightLinkPreviews(c.env.DB, { ownerKind: "notice_post", ownerId: id, projectId: null, requesterId: user.id, ids: prepared.previewIds })) return c.json({ error: "A link preview in this notice is unavailable.", code: "invalid_link_preview" }, 400);
+  try { await createNoticeBoardPost(c.env.DB, { id, authorId: user.id, body: prepared.body, contentJson: JSON.stringify(prepared.content), mentions, wallClockMs, media: { authorId: user.id, ids: prepared.mediaIds, previewIds: prepared.previewIds } }); }
   catch (error) { if (error instanceof NoticeBoardMediaConflictError) return c.json({ error: "An image in this notice is no longer available. Remove it and try again.", code: "media_conflict" }, 409); throw error; }
   await audit(c.env, user, "notice_board.post", "notice_board_post", id);
   await notifyNoticeBoardMentions(c.env, { actorId: user.id, authorName: user.name, body: prepared.body, mentions });
   const post = await findPost(db, id);
   if (!post) return c.json({ error: "Post could not be created" }, 500);
   const readState = await getNoticeBoardReadState(c.env.DB, user.id);
-  return c.json({ post: serializePost(post), readState } satisfies NoticeBoardMutationResponse, 201);
+  const [filled] = await fillLinkPreviews(c.env.DB, [serializePost(post)]);
+  return c.json({ post: filled!, readState } satisfies NoticeBoardMutationResponse, 201);
 }));
 
 noticeBoardRoutes.patch("/notice-board/posts/:id", terminalRoute("/notice-board/posts/:id", async (c) => {
@@ -146,8 +150,9 @@ noticeBoardRoutes.patch("/notice-board/posts/:id", terminalRoute("/notice-board/
   const added = prepared.mentionIds.filter((mentionedUserId) => !existingIds.has(mentionedUserId))
     .map((mentionedUserId) => ({ id: newId(), postId: id, mentionedUserId, createdAt }));
   if (!await preflightOwnedMedia(c.env.DB, { ownerKind: "notice_post", ownerId: id, projectId: null, uploaderId: user.id, ids: prepared.mediaIds })) return c.json({ error: "An image in this notice is unavailable.", code: "invalid_media" }, 400);
+  if (!await preflightLinkPreviews(c.env.DB, { ownerKind: "notice_post", ownerId: id, projectId: null, requesterId: user.id, ids: prepared.previewIds })) return c.json({ error: "A link preview in this notice is unavailable.", code: "invalid_link_preview" }, 400);
   let edited: Awaited<ReturnType<typeof editNoticeBoardPost>>;
-  try { edited = await editNoticeBoardPost(c.env.DB, { id, authorId: user.id, body: prepared.body, contentJson: JSON.stringify(prepared.content), editedAt: createdAt, removeMentionIds: removed.map((map) => map.id), addMentions: added, media: { authorId: user.id, ids: prepared.mediaIds } }); }
+  try { edited = await editNoticeBoardPost(c.env.DB, { id, authorId: user.id, body: prepared.body, contentJson: JSON.stringify(prepared.content), editedAt: createdAt, removeMentionIds: removed.map((map) => map.id), addMentions: added, media: { authorId: user.id, ids: prepared.mediaIds, previewIds: prepared.previewIds } }); }
   catch (error) { if (error instanceof NoticeBoardMediaConflictError) return c.json({ error: "An image in this notice is no longer available. Remove it and try again.", code: "media_conflict" }, 409); throw error; }
   if (!edited.updated) return c.json({ error: "Post not found" }, 404);
   await audit(c.env, user, "notice_board.edit", "notice_board_post", id);
@@ -155,7 +160,8 @@ noticeBoardRoutes.patch("/notice-board/posts/:id", terminalRoute("/notice-board/
   const post = await findPost(db, id);
   if (!post) return c.json({ error: "Post could not be updated" }, 500);
   const readState = await getNoticeBoardReadState(c.env.DB, user.id);
-  return c.json({ post: serializePost(post), readState } satisfies NoticeBoardMutationResponse);
+  const [filled] = await fillLinkPreviews(c.env.DB, [serializePost(post)]);
+  return c.json({ post: filled!, readState } satisfies NoticeBoardMutationResponse);
 }));
 
 noticeBoardRoutes.delete("/notice-board/posts/:id", terminalRoute("/notice-board/posts/:id", async (c) => {
@@ -236,4 +242,11 @@ noticeBoardRoutes.post("/notice-board/embedded-media/:mediaId/complete", termina
     await audit(c.env, user, "embedded_media.upload", "embedded_media", mediaId, { scope: "notice_board", bytes: row.bytes, contentType: row.contentType });
   }
   return c.json(externalEmbeddedMediaCompleteSchema.parse({ mediaId, state: "pending" }));
+}));
+
+/** Link previews on the Notice board (#497). Registered here, beside the posts, so the `/notice-board/*` capability gate covers it: an External editor gets 403. */
+noticeBoardRoutes.post("/notice-board/link-previews", terminalRoute("/notice-board/link-previews", async (c) => {
+  const data = await jsonInput(c, linkPreviewRequestSchema); if (data instanceof Response) return data;
+  const result = await requestLinkPreview(c.env, c.get("user"), { ownerKind: "notice_post", projectId: null }, data.url, ownHosts(c));
+  return result.status === 200 ? c.json(linkPreviewResponseSchema.parse(result.body)) : c.json(result.body, result.status);
 }));

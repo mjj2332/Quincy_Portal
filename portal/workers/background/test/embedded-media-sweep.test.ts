@@ -5,6 +5,7 @@ import { sweepEmbeddedMedia } from "../src/embedded-media-sweep";
 const database = env as unknown as { DB: D1Database; MEDIA: R2Bucket };
 declare const __PORTAL_MIGRATION_SQL__: string;
 const day = 24 * 60 * 60 * 1000;
+const LEASE = 10 * 60 * 1000;
 const now = 1_800_000_000_000;
 const projectId = "c1111111-1111-4111-8111-111111111111";
 const userId = "c2222222-2222-4222-8222-222222222222";
@@ -29,7 +30,7 @@ async function seed(input: Seed) {
 }
 const exists = async (id: string) => (await database.DB.prepare("SELECT 1 AS one FROM embedded_media WHERE id = ?").bind(id).first()) !== null;
 const objectExists = async (key: string) => (await database.MEDIA.head(key)) !== null;
-const queueRow = (key: string) => database.DB.prepare("SELECT storage_key AS storageKey, upload_id AS uploadId, project_id AS projectId, attempts FROM embedded_media_cleanup WHERE storage_key = ?").bind(key).first<{ storageKey: string; uploadId: string | null; projectId: string | null; attempts: number }>();
+const queueRow = (key: string) => database.DB.prepare("SELECT storage_key AS storageKey, upload_id AS uploadId, project_id AS projectId, attempts, claimed_until AS claimedUntil FROM embedded_media_cleanup WHERE storage_key = ?").bind(key).first<{ storageKey: string; uploadId: string | null; projectId: string | null; attempts: number; claimedUntil: number | null }>();
 const queueSize = async () => (await database.DB.prepare("SELECT count(*) AS n FROM embedded_media_cleanup").first<{ n: number }>())!.n;
 const wrapMedia = (override: (target: R2Bucket, property: string | symbol) => unknown) => ({ ...env, MEDIA: new Proxy(database.MEDIA, { get: (target, property) => {
   const custom = override(target, property); if (custom !== undefined) return custom;
@@ -42,7 +43,7 @@ beforeAll(async () => {
   await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'U', 'u@example.test', 1, 'editor', 1, ?, ?)").bind(userId, now, now).run();
   await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'S', 'editing_autohdr', 0, ?, ?)").bind(projectId, now, now).run();
 });
-beforeEach(async () => { await database.DB.exec("DELETE FROM embedded_media; DELETE FROM embedded_media_cleanup;"); });
+beforeEach(async () => { await database.DB.exec("DELETE FROM link_preview_attempts; DELETE FROM link_previews; DELETE FROM embedded_media; DELETE FROM embedded_media_cleanup;"); });
 const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
 afterAll(() => { consoleError.mockRestore(); });
 
@@ -68,6 +69,54 @@ describe("embedded media sweep covers Notice board media (#496)", () => {
     expect(await queueRow(stuck.keys[0]!)).toMatchObject({ projectId: null });
     failing = false; await sweepEmbeddedMedia(flaky as never, now + 1);
     expect(await queueRow(stuck.keys[0]!)).toBeNull(); expect(await objectExists(stuck.keys[0]!)).toBe(false);
+  });
+});
+
+describe("embedded media sweep covers link previews (#497)", () => {
+  type Preview = { createdAt: number; ownerId?: string | null; notice?: boolean; image?: { id: string } };
+  async function seedPreview(input: Preview) {
+    const id = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO link_previews (id, owner_kind, owner_id, project_id, requester_id, url, title, image_media_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'https://example.com/', 'T', ?, ?, ?)")
+      .bind(id, input.notice ? "notice_post" : "project_comment", input.ownerId ?? null, input.notice ? null : projectId, userId, input.image?.id ?? null, input.createdAt, input.createdAt).run();
+    return id;
+  }
+  const previewExists = async (id: string) => (await database.DB.prepare("SELECT 1 AS one FROM link_previews WHERE id = ?").bind(id).first()) !== null;
+
+  it("deletes previews nobody owns after seven days, and keeps fresh and owned ones", async () => {
+    const stale = await seedPreview({ createdAt: now - 7 * day });
+    const staleNotice = await seedPreview({ createdAt: now - 30 * day, notice: true });
+    const fresh = await seedPreview({ createdAt: now - 7 * day + 1 });
+    const owned = await seedPreview({ createdAt: now - 400 * day, ownerId: crypto.randomUUID() });
+    await sweepEmbeddedMedia(env, now);
+    expect(await previewExists(stale)).toBe(false); expect(await previewExists(staleNotice)).toBe(false);
+    expect(await previewExists(fresh)).toBe(true); expect(await previewExists(owned)).toBe(true);
+  });
+
+  it("reclaims the pending preview image the same run, which clears the card's image reference rather than blocking", async () => {
+    const image = await seed({ state: "pending", createdAt: now - 8 * day });
+    const stale = await seedPreview({ createdAt: now - 8 * day, image });
+    await sweepEmbeddedMedia(env, now);
+    expect(await previewExists(stale)).toBe(false);
+    expect(await exists(image.id)).toBe(false); expect(await objectExists(image.keys[0]!)).toBe(false);
+  });
+
+  it("leaves an owned preview whose image expired with no image, not a dangling reference", async () => {
+    const image = await seed({ state: "detached", detachedAt: now - 8 * day });
+    const owned = await seedPreview({ createdAt: now - 20 * day, ownerId: crypto.randomUUID(), image });
+    await sweepEmbeddedMedia(env, now);
+    expect(await exists(image.id)).toBe(false);
+    expect(await database.DB.prepare("SELECT image_media_id AS i FROM link_previews WHERE id = ?").bind(owned).first()).toEqual({ i: null });
+  });
+});
+
+describe("link preview attempts sweep (#497)", () => {
+  it("drops attempts a day old or older, whatever their status, and keeps newer ones", async () => {
+    const attempt = async (id: string, status: string, at: number) => database.DB.prepare("INSERT INTO link_preview_attempts (id, requester_id, owner_kind, context_id, url, status, created_at, updated_at) VALUES (?, ?, 'notice_post', 'notice_board', ?, ?, ?, ?)").bind(id, userId, `https://e.com/${id}`, status, at, at).run();
+    await attempt("old-done", "done", now - day); await attempt("old-fetching", "fetching", now - 2 * day); await attempt("old-failed", "failed", now - 30 * day);
+    await attempt("fresh", "done", now - day + 1);
+    await sweepEmbeddedMedia(env, now);
+    const left = (await database.DB.prepare("SELECT id FROM link_preview_attempts").all<{ id: string }>()).results.map((row) => row.id);
+    expect(left).toEqual(["fresh"]);
   });
 });
 
@@ -131,7 +180,8 @@ describe("embedded media sweep (#493)", () => {
     let queuedWhileAborting: unknown = "not seen";
     const watching = wrapMedia((_t, property) => property === "resumeMultipartUpload" ? (_key: string, _uploadId: string) => ({ abort: async () => { queuedWhileAborting = await queueRow(row.keys[0]!); } }) : undefined);
     expect(await sweepEmbeddedMedia(watching as typeof env, now)).toMatchObject({ scanned: 1, reclaimed: 1, drained: 1 });
-    expect(queuedWhileAborting).toMatchObject({ uploadId: "s3-upload-2", projectId });
+    // The entry stays (leased, not deleted) while the abort runs, so ownership is durable.
+    expect(queuedWhileAborting).toMatchObject({ uploadId: "s3-upload-2", projectId, claimedUntil: now + LEASE });
     expect(await exists(row.id)).toBe(false); expect(await objectExists(row.keys[0]!)).toBe(false); expect(await queueSize()).toBe(0);
   });
 
@@ -218,5 +268,186 @@ describe("embedded media sweep (#493)", () => {
     expect(await count()).toBe(1);
     expect(await sweepEmbeddedMedia(env, now)).toMatchObject({ scanned: 1, reclaimed: 1 });
     expect(await sweepEmbeddedMedia(env, now)).toEqual({ scanned: 0, reclaimed: 0, failed: 0, drained: 0 });
+  });
+});
+
+describe("embedded media sweep claims keys it deletes (#494)", () => {
+  /** Wraps the database so a poster lands between the sweep's read and its claim, the window a video upload's poster PUT can hit. */
+  const lateWriter = (afterReadBeforeClaim: () => Promise<void>) => ({ ...env, DB: new Proxy(database.DB, { get: (target, property) => {
+    if (property !== "prepare") { const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value; }
+    return (sql: string) => {
+      const statement = target.prepare(sql);
+      if (!/UPDATE embedded_media SET state = 'detached', detached_at = 0/.test(sql)) return statement;
+      return new Proxy(statement, { get: (inner, key) => {
+        if (key === "bind") return (...values: unknown[]) => { const bound = inner.bind(...values); return new Proxy(bound, { get: (b, k) => {
+          if (k === "run" || k === "all") return async () => { await afterReadBeforeClaim(); return (b as unknown as Record<string, () => Promise<unknown>>)[k as string]!(); };
+          const v = Reflect.get(b, k); return typeof v === "function" ? v.bind(b) : v;
+        } }); };
+        const v = Reflect.get(inner, key); return typeof v === "function" ? v.bind(inner) : v;
+      } });
+    };
+  } }) });
+
+  it("deletes a poster written after the sweep read the row but before it claimed it", async () => {
+    const stale = await seed({ state: "pending", createdAt: now - 8 * day });
+    const posterKey = `projects/${projectId}/embedded-media/${stale.id}/poster-late`;
+    const writer = lateWriter(async () => {
+      await database.MEDIA.put(posterKey, "jpeg");
+      await database.DB.prepare("UPDATE embedded_media SET poster_key = ? WHERE id = ?").bind(posterKey, stale.id).run();
+    });
+    expect(await sweepEmbeddedMedia(writer as never, now)).toMatchObject({ scanned: 1, reclaimed: 1 });
+    expect(await exists(stale.id)).toBe(false);
+    expect(await objectExists(stale.keys[0]!)).toBe(false);
+    expect(await objectExists(posterKey)).toBe(false);
+  });
+});
+
+describe("embedded media sweep leases a queue entry and deletes it only after the cleanup succeeded (#494)", () => {
+  // The app worker's `enqueueEmbeddedMediaCleanup` upsert, as the poster route's failed-adoption path runs it.
+  const REENQUEUE = `INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) VALUES (?, ?, ?, ?)
+    ON CONFLICT(storage_key) DO UPDATE SET project_id = COALESCE(embedded_media_cleanup.project_id, excluded.project_id), upload_id = COALESCE(embedded_media_cleanup.upload_id, excluded.upload_id), queued_at = MAX(embedded_media_cleanup.queued_at + 1, excluded.queued_at), claimed_until = NULL`;
+  const queueKey = async (suffix: string, entry: { uploadId?: string | null; attempts?: number; claimedUntil?: number | null } = {}) => {
+    const key = `projects/${projectId}/embedded-media/${crypto.randomUUID()}/${suffix}`;
+    await database.MEDIA.put(key, "jpeg");
+    await database.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at, attempts, claimed_until) VALUES (?, ?, ?, ?, ?, ?)").bind(key, entry.uploadId ?? null, projectId, now, entry.attempts ?? 0, entry.claimedUntil ?? null).run();
+    return key;
+  };
+  const failingDelete = (extra?: (target: R2Bucket, property: string | symbol) => unknown) => wrapMedia((target, property) => extra?.(target, property) ?? (property === "delete" ? async () => { throw new Error("R2 down"); } : undefined));
+  /** Makes the database refuse the best-effort lease release, the second failure of the scenario Sol reproduced. */
+  const refusingRelease = (base: ReturnType<typeof wrapMedia>) => ({ ...base, DB: new Proxy(database.DB, { get: (target, property) => {
+    if (property !== "prepare") { const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value; }
+    return (sql: string) => { if (/SET claimed_until = 0/.test(sql)) throw new Error("D1 down"); return target.prepare(sql); };
+  } }) });
+
+  it("(a) keeps the entry, leased, when the R2 delete fails and the lease release fails too, and the next sweep after the lease expires reclaims it", async () => {
+    const key = await queueKey("poster-stuck");
+    expect(await sweepEmbeddedMedia(refusingRelease(failingDelete()) as never, now)).toMatchObject({ drained: 0 });
+    expect(await queueRow(key)).toMatchObject({ projectId, attempts: 1, claimedUntil: now + LEASE });
+    expect(await objectExists(key)).toBe(true);
+    // Still inside the lease: nobody else touches it.
+    expect(await sweepEmbeddedMedia(env, now + 1)).toMatchObject({ drained: 0 });
+    expect(await queueRow(key)).toMatchObject({ attempts: 1, claimedUntil: now + LEASE }); expect(await objectExists(key)).toBe(true);
+    // Once the lease is past, the entry is claimable again and the object goes.
+    expect(await sweepEmbeddedMedia(env, now + LEASE + 1)).toMatchObject({ drained: 1 });
+    expect(await queueRow(key)).toBeNull(); expect(await objectExists(key)).toBe(false);
+  });
+
+  it("releases the lease to 0 (claimed before, expired, never NULL) when the cleanup fails, with the attempt counted, so the next sweep retries at once", async () => {
+    const key = await queueKey("poster-retry");
+    expect(await sweepEmbeddedMedia(failingDelete() as never, now)).toMatchObject({ drained: 0 });
+    expect(await queueRow(key)).toMatchObject({ attempts: 1, claimedUntil: 0 }); expect(await objectExists(key)).toBe(true);
+    expect(await sweepEmbeddedMedia(env, now)).toMatchObject({ drained: 1 });
+    expect(await queueRow(key)).toBeNull(); expect(await objectExists(key)).toBe(false);
+  });
+
+  it("(e) concurrent sweeps: only one claims the entry, so the object is deleted once", async () => {
+    const key = await queueKey("poster-concurrent");
+    const deleted: unknown[] = [];
+    const counting = wrapMedia((target, property) => property === "delete" ? async (keys: unknown) => { deleted.push(keys); await new Promise((resolve) => setTimeout(resolve, 20)); return target.delete(keys as string); } : undefined);
+    const results = await Promise.all([sweepEmbeddedMedia(counting as never, now), sweepEmbeddedMedia(counting as never, now)]);
+    expect(deleted).toEqual([key]);
+    expect(results.reduce((total, result) => total + result.drained, 0)).toBe(1);
+    expect(await queueRow(key)).toBeNull(); expect(await objectExists(key)).toBe(false);
+  });
+
+  it("skips an entry another sweep holds a lease on, without counting an attempt", async () => {
+    const key = await queueKey("poster-leased", { claimedUntil: now + 1000 });
+    expect(await sweepEmbeddedMedia(env, now)).toMatchObject({ drained: 0 });
+    expect(await queueRow(key)).toMatchObject({ attempts: 0, claimedUntil: now + 1000 }); expect(await objectExists(key)).toBe(true);
+  });
+
+  it("(f) keeps the upload id through a failed abort, and aborts with it on the retry", async () => {
+    const key = await queueKey("original", { uploadId: "u-9" });
+    const aborts: Array<[string, string]> = [];
+    const refused = wrapMedia((_t, property) => property === "resumeMultipartUpload" ? () => ({ abort: async () => { throw new Error("R2 down"); } }) : undefined);
+    expect(await sweepEmbeddedMedia(refused as never, now)).toMatchObject({ drained: 0 });
+    expect(await queueRow(key)).toMatchObject({ uploadId: "u-9", attempts: 1, claimedUntil: 0 }); expect(await objectExists(key)).toBe(true);
+    const working = wrapMedia((_t, property) => property === "resumeMultipartUpload" ? (k: string, uploadId: string) => ({ abort: async () => { aborts.push([k, uploadId]); } }) : undefined);
+    expect(await sweepEmbeddedMedia(working as never, now)).toMatchObject({ drained: 1 });
+    expect(aborts).toEqual([[key, "u-9"]]);
+    expect(await queueRow(key)).toBeNull(); expect(await objectExists(key)).toBe(false);
+  });
+
+  it("keeps an entry that was re-queued while the sweep held its lease (the re-queue clears the lease), and reclaims the new object next run", async () => {
+    const key = await queueKey("poster-race");
+    const paused = wrapMedia((target, property) => property === "delete" ? async (keys: string | string[]) => {
+      await target.delete(keys);
+      await database.MEDIA.put(key, "jpeg-late");
+      await database.DB.prepare(REENQUEUE).bind(key, null, projectId, now).run();
+    } : undefined);
+    expect(await sweepEmbeddedMedia(paused as never, now)).toMatchObject({ drained: 0 });
+    expect(await queueRow(key)).toMatchObject({ claimedUntil: null }); expect(await objectExists(key)).toBe(true);
+    expect(await sweepEmbeddedMedia(env, now + 1)).toMatchObject({ drained: 1 });
+    expect(await queueRow(key)).toBeNull(); expect(await objectExists(key)).toBe(false);
+  });
+
+  /** The poster route's adoption batch, as written in routes/embedded-media.ts. */
+  const adopt = (mediaId: string, key: string, queuedAt: number) => database.DB.batch([
+    database.DB.prepare("UPDATE embedded_media SET poster_key = ?, updated_at = ? WHERE id = ? AND state = 'pending' AND poster_key IS NULL AND EXISTS (SELECT 1 FROM embedded_media_cleanup WHERE storage_key = ? AND queued_at = ? AND claimed_until IS NULL)").bind(key, now, mediaId, key, queuedAt),
+    database.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ? AND queued_at = ? AND claimed_until IS NULL AND (SELECT poster_key FROM embedded_media WHERE id = ?) = ?").bind(key, queuedAt, mediaId, key),
+  ]);
+
+  it("(1) a claim permanently blocks adoption: S1 stalls past its lease, S2 reclaims, fails and releases, and the late poster adoption is still refused, so S1's delete cannot hit a live poster", async () => {
+    const stale = await seed({ state: "pending", createdAt: now });
+    const key = await queueKey("poster-stalled");
+    let resume!: () => void; const stall = new Promise<void>((resolve) => { resume = resolve; });
+    const s1Media = wrapMedia((target, property) => property === "delete" ? async (keys: string | string[]) => { await stall; return target.delete(keys); } : undefined);
+    const s1 = sweepEmbeddedMedia(s1Media as never, now);
+    await vi.waitFor(async () => { expect((await queueRow(key))?.claimedUntil).toBe(now + LEASE); });
+    expect(await sweepEmbeddedMedia(failingDelete() as never, now + LEASE + 1)).toMatchObject({ drained: 0 });
+    expect(await queueRow(key)).toMatchObject({ claimedUntil: 0, attempts: 2 });
+    const adopted = await adopt(stale.id, key, now);
+    expect(adopted[0]!.meta.changes).toBe(0);
+    resume(); await s1;
+    expect(await database.DB.prepare("SELECT poster_key AS k FROM embedded_media WHERE id = ?").bind(stale.id).first<{ k: string | null }>()).toEqual({ k: null });
+    // S1's stale dequeue (attempts 1) matched nothing, so the entry is still owned and the next sweep finishes it.
+    expect(await queueRow(key)).not.toBeNull();
+    expect(await sweepEmbeddedMedia(env, now + LEASE + 2)).toMatchObject({ drained: 1 });
+    expect(await queueRow(key)).toBeNull(); expect(await objectExists(key)).toBe(false);
+  });
+
+  it("(2) two sweeps with the same scheduled now do not share a claim identity: the first one's late dequeue matches nothing and the renewed entry survives", async () => {
+    const key = await queueKey("poster-same-now");
+    let s2: Promise<unknown> = Promise.resolve();
+    const s1Media = wrapMedia((target, property) => property === "delete" ? async (keys: string | string[]) => {
+      await target.delete(keys);
+      // The key is re-queued for a new object (bumps queued_at, clears the lease), and a second sweep with the very same now claims it and then fails to clean it, leaving its lease in place.
+      await database.MEDIA.put(key, "jpeg-late");
+      await database.DB.prepare(REENQUEUE).bind(key, null, projectId, now).run();
+      s2 = sweepEmbeddedMedia(refusingRelease(failingDelete()) as never, now);
+      await s2;
+    } : undefined);
+    expect(await sweepEmbeddedMedia(s1Media as never, now)).toMatchObject({ drained: 0 });
+    expect(await queueRow(key)).toMatchObject({ attempts: 2, claimedUntil: now + LEASE });
+    expect(await objectExists(key)).toBe(true);
+    expect(await sweepEmbeddedMedia(env, now + LEASE + 1)).toMatchObject({ drained: 1 });
+    expect(await queueRow(key)).toBeNull(); expect(await objectExists(key)).toBe(false);
+  });
+
+  it("(c) leaves a poster alone when its adoption won between the sweep's read and its claim: the entry is gone, so the claim matches nothing", async () => {
+    const stale = await seed({ state: "pending", createdAt: now });
+    const key = await queueKey("poster-live");
+    let adopted = false;
+    const racing = { ...env, DB: new Proxy(database.DB, { get: (target, property) => {
+      if (property !== "prepare") { const value = Reflect.get(target, property); return typeof value === "function" ? value.bind(target) : value; }
+      return (sql: string) => {
+        const statement = target.prepare(sql);
+        if (!/^\s*UPDATE embedded_media_cleanup SET claimed_until/.test(sql)) return statement;
+        return new Proxy(statement, { get: (inner, k) => {
+          if (k !== "bind") { const v = Reflect.get(inner, k); return typeof v === "function" ? v.bind(inner) : v; }
+          return (...values: unknown[]) => { const bound = inner.bind(...values); return new Proxy(bound, { get: (b, kk) => {
+            if (kk === "run" || kk === "all" || kk === "first") return async () => {
+              if (!adopted) { adopted = true; await target.prepare("UPDATE embedded_media SET poster_key = ? WHERE id = ?").bind(key, stale.id).run(); await target.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ?").bind(key).run(); }
+              return (b as unknown as Record<string, () => Promise<unknown>>)[kk as string]!();
+            };
+            const v = Reflect.get(b, kk); return typeof v === "function" ? v.bind(b) : v;
+          } }); };
+        } });
+      };
+    } }) };
+    expect(await sweepEmbeddedMedia(racing as never, now)).toMatchObject({ drained: 0 });
+    expect(adopted).toBe(true);
+    expect(await objectExists(key)).toBe(true);
+    expect(await database.DB.prepare("SELECT poster_key AS k FROM embedded_media WHERE id = ?").bind(stale.id).first<{ k: string }>()).toEqual({ k: key });
   });
 });

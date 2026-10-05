@@ -11,7 +11,7 @@ import { ListItem, TaskItem, TaskList } from "@tiptap/extension-list";
 import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table";
 import { TableMap } from "@tiptap/pm/tables";
 import { TextAlign } from "@tiptap/extension-text-align";
-import { embeddedMediaUrl } from "./embedded-media";
+import { embeddedMediaPosterUrl, embeddedMediaUrl } from "./embedded-media";
 import { RICH_TEXT_HIGHLIGHT_COLORS, RICH_TEXT_MAX_NESTING, RICH_TEXT_TABLE_MAX_COLUMNS, RICH_TEXT_TABLE_MAX_ROWS, type RichTextDoc } from "@quincy/shared";
 
 // The Tiptap <-> stored RichTextDoc contract for `QuincyRichTextEditor`, in its two presets:
@@ -45,6 +45,8 @@ export function toTiptap(doc: RichTextDoc): Record<string, unknown> {
     };
     if (valueNode.type === "mention") return { type: "mention", attrs: { ...(valueNode.attrs as Record<string, unknown>) } };
     if (valueNode.type === "image") return { type: "image", attrs: { mediaId: (valueNode.attrs as Record<string, unknown> | undefined)?.mediaId } };
+    if (valueNode.type === "video") return { type: "video", attrs: { mediaId: (valueNode.attrs as Record<string, unknown> | undefined)?.mediaId } };
+    if (valueNode.type === "linkPreview") return { type: "linkPreview", attrs: { ...(valueNode.attrs as Record<string, unknown>) } };
     if (valueNode.type === "heading" || valueNode.type === "taskItem") return { type: valueNode.type, attrs: { ...(valueNode.attrs as Record<string, unknown>) }, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
     if (valueNode.type === "paragraph" && valueNode.attrs) return { type: "paragraph", attrs: tiptapTextAlign(valueNode.attrs as Record<string, unknown>), ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
     if (valueNode.type === "tableCell" || valueNode.type === "tableHeader") {
@@ -179,6 +181,41 @@ export const EmbeddedImage = TiptapNode.create({
   },
 });
 
+/**
+ * An embedded video (#494): an atom that names stored media by id, exactly like the image. No `parseHTML` rule, so a pasted `<video>`
+ * never becomes a node. In the editor it is a muted, inline preview with its poster and no controls (playing happens in the posted
+ * comment); it only preloads metadata, so a comment with several videos does not pull them all down.
+ */
+export const EmbeddedVideo = TiptapNode.create({
+  name: "video",
+  group: "block",
+  atom: true,
+  draggable: true,
+  selectable: true,
+  addAttributes() { return { mediaId: { default: null } }; },
+  parseHTML() { return []; },
+  renderHTML({ node, HTMLAttributes }) {
+    const mediaId = String(node.attrs.mediaId ?? "");
+    return ["video", mergeAttributes(HTMLAttributes, { src: embeddedMediaUrl(mediaId), poster: embeddedMediaPosterUrl(mediaId), preload: "metadata", muted: "", playsinline: "", "data-media-id": mediaId, class: "rich-text__embedded-video" })];
+  },
+});
+
+/**
+ * A link preview card (#497): an atom that names a server-held preview by id. The display fields (address, title, description, site,
+ * image) are served by the server and live on the editor node only so the card can draw; `tiptapToRichTextDoc` strips them back to the
+ * id. No `parseHTML` rule, so pasted HTML never becomes a card: the only way in is the editor's own request after a link is applied.
+ */
+export const LinkPreview = TiptapNode.create({
+  name: "linkPreview",
+  group: "block",
+  atom: true,
+  draggable: false,
+  selectable: true,
+  addAttributes() { return { previewId: { default: null }, url: { default: null }, title: { default: null }, description: { default: null }, siteName: { default: null }, imageMediaId: { default: null } }; },
+  parseHTML() { return []; },
+  renderHTML({ node }) { return ["div", { "data-link-preview": String(node.attrs.previewId ?? ""), class: "rich-text__link-preview" }, String(node.attrs.title ?? node.attrs.url ?? "")]; },
+});
+
 /** Rows x columns of a table node, spans included (what the server's limits count). */
 export function tableDimensions(table: ProseMirrorNode): { rows: number; columns: number } {
   const map = TableMap.get(table);
@@ -249,12 +286,14 @@ export function createRichTextEditorExtensions(preset: RichTextEditorPreset = "c
     ListItemHeadingCommandBoundary,
     ListNestingBoundary,
     EmbeddedImage,
+    LinkPreview,
+    ...(preset === "composer" ? [EmbeddedVideo] : []),
     ...(preset === "document" ? documentExtensions() : []),
   ];
 }
 
 /** Removes TipTap-only attributes before data leaves the browser. */
-export function tiptapToRichTextDoc(value: unknown): RichTextDoc {
+export function tiptapToRichTextDoc(value: unknown, options: { keepPreviewDisplay?: boolean } = {}): RichTextDoc {
   const alignAttrs = (attrs: Record<string, unknown> | undefined) => {
     const align = attrs?.textAlign;
     return typeof align === "string" && align !== "left" ? { textAlign: align } : {};
@@ -278,6 +317,16 @@ export function tiptapToRichTextDoc(value: unknown): RichTextDoc {
       const attrs = valueNode.attrs as Record<string, unknown> | undefined;
       return { type: "image", attrs: { mediaId: attrs?.mediaId } };
     }
+    if (valueNode.type === "video") {
+      const attrs = valueNode.attrs as Record<string, unknown> | undefined;
+      return { type: "video", attrs: { mediaId: attrs?.mediaId } };
+    }
+    if (valueNode.type === "linkPreview") {
+      const attrs = valueNode.attrs as Record<string, unknown> | undefined;
+      // The stored form is the id alone. A local draft (`keepPreviewDisplay`) also keeps what the card shows, so reopening the composer can draw it.
+      if (options.keepPreviewDisplay) return { type: "linkPreview", attrs: { previewId: attrs?.previewId, url: attrs?.url, title: attrs?.title ?? null, description: attrs?.description ?? null, siteName: attrs?.siteName ?? null, imageMediaId: attrs?.imageMediaId ?? null } };
+      return { type: "linkPreview", attrs: { previewId: attrs?.previewId } };
+    }
     if (valueNode.type === "heading") {
       const attrs = valueNode.attrs as Record<string, unknown> | undefined;
       return { type: "heading", attrs: { level: attrs?.level, ...alignAttrs(attrs) }, ...children };
@@ -300,6 +349,12 @@ export function tiptapToRichTextDoc(value: unknown): RichTextDoc {
     return { type: valueNode.type, ...children };
   };
   return copy(value) as RichTextDoc;
+}
+
+/** The form a post is sent in: every card is its preview id alone, whatever a local draft kept for drawing it. */
+export function stripLinkPreviewDisplay(doc: RichTextDoc): RichTextDoc {
+  if (!doc.content.some((block) => block.type === "linkPreview" && Object.keys(block.attrs).length > 1)) return doc;
+  return { ...doc, content: doc.content.map((block) => block.type === "linkPreview" ? { type: "linkPreview" as const, attrs: { previewId: block.attrs.previewId } } : block) };
 }
 
 export function mentionQuery(editor: NonNullable<ReturnType<typeof useEditor>>): string | null {
