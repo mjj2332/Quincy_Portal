@@ -357,7 +357,7 @@ export function ProjectDiscussionThread({
   const contentMarkup = <>
     {listError && !discussionDenied && <Notice tone="critical" role="alert">{errorMessage(listError, "Comments could not be loaded.")}</Notice>}
     {mutationError && !discussionDenied && <Notice tone="critical" role="alert">{mutationError}</Notice>}
-    {!discussionDenied && !listLoading && (readOnly ? <p ref={noticeRef} tabIndex={-1} className={cn(ARCHIVED_NOTICE_CLASS, "mb-[var(--space-5)]")} data-testid="discussion-archived-notice">{DISCUSSION_ARCHIVED_COPY}</p> : composer)}
+    {!discussionDenied && !listLoading && (readOnly ? <div className="mb-[var(--space-5)]"><p ref={noticeRef} tabIndex={-1} className={ARCHIVED_NOTICE_CLASS} data-testid="discussion-archived-notice">{DISCUSSION_ARCHIVED_COPY}</p></div> : composer)}
     <div ref={presentation.anchorRef} data-testid="discussion-read-anchor" className="w-px h-px m-0 overflow-hidden" aria-hidden="true" />
     {discussionDenied ? <EmptyState role="status" size="compact" title="No discussion access." /> : listLoading ? <EmptyState role="status" size="compact" title="Loading comments…" /> : <>
       <div ref={listRef} data-testid="discussion-comments" className="grid">{comments.length ? comments.map((comment) => <CommentItem

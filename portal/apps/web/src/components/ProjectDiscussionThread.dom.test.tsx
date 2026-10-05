@@ -291,7 +291,9 @@ describe("ProjectDiscussionThread", () => {
       expect(host.querySelector("[data-testid=discussion-composer]")).toBeNull();
       expect(host.querySelector('[aria-label^="Actions for comment by"]')).toBeNull();
       expect(notice()?.textContent).toBe(COPY);
-      expect(notice()?.className).toBe(ARCHIVED_NOTICE_CLASS + " mb-[var(--space-5)]");
+      expect(notice()?.className).toBe(ARCHIVED_NOTICE_CLASS);
+      // base.css resets `p { margin: 0 }` outside any @layer, which beats a margin utility on the <p>; the gap lives on the wrapper.
+      expect(notice()?.parentElement?.className).toBe("mb-[var(--space-5)]");
       expect(host.querySelector("[data-testid=discussion-comments]")?.textContent).toContain("Own comment");
       expect(host.querySelector("[data-testid=discussion-comments]")?.textContent).toContain("Other comment");
     });
