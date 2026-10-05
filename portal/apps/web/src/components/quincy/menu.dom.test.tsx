@@ -319,7 +319,7 @@ describe("Menu accessibility contract", () => {
   });
 
   it("MENU_ITEM draws the focus outline inside the row so the panel's overflow cannot clip it", () => {
-    expect(MENU_ITEM).toContain("focus-visible:!-outline-offset-2");
+    expect(MENU_ITEM).toContain("focus-visible:!-outline-offset-4");
     expect(MENU_ITEM).not.toMatch(/outline-(none|hidden)/);
   });
 });

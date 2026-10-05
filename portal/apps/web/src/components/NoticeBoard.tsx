@@ -31,8 +31,11 @@ const MENTION_HINT = cn(META_TEXT, "!normal-case", "flex-[1_1_12rem] min-w-0");
 // (`--type-eyebrow` = `--text-xs` at 1.2 line-height), and would stretch the header, making own notices
 // taller than others'. A negative block margin of half the difference lets it overhang the row instead:
 // the row stays one author-line tall, the trigger keeps its full hit area, centred on that line.
+// At <=721px the 44px box overhangs 14.8px into the row's 16px padding, so the global focus outline (2px offset +
+// 2px stroke) would reach past it onto the divider; draw that ring inside the box there instead.
 const TRIGGER_OVERHANG =
-  "-my-[calc((28px_-_1.2*var(--text-xs))/2)] max-[721px]:-my-[calc((44px_-_1.2*var(--text-xs))/2)]";
+  "-my-[calc((28px_-_1.2*var(--text-xs))/2)] max-[721px]:-my-[calc((44px_-_1.2*var(--text-xs))/2)] " +
+  "max-[721px]:focus-visible:!-outline-offset-2";
 
 const EMPTY_DOC: RichTextDoc = { type: "doc", content: [{ type: "paragraph" }] };
 type NoticeBoardMutation = "create" | "edit" | "delete";

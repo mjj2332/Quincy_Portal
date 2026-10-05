@@ -399,6 +399,8 @@ describe("NoticeBoard disclosure and polling", () => {
       const cls = triggerOf(host, "A")!.className;
       expect(cls).toContain("-my-[calc((28px_-_1.2*var(--text-xs))/2)]");
       expect(cls).toContain("max-[721px]:-my-[calc((44px_-_1.2*var(--text-xs))/2)]");
+      // The phone overhang leaves under 2px of padding, so the focus ring is drawn inside the box (design review r2).
+      expect(cls).toContain("max-[721px]:focus-visible:!-outline-offset-2");
     });
 
     it("Cancel and Escape send no DELETE and return focus to that notice's trigger", async () => {

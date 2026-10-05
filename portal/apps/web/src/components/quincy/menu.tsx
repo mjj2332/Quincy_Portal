@@ -44,10 +44,11 @@ export const MENU_ITEM =
   "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground " +
   // The global unlayered `:focus-visible` outline (tokens/base.css:25) paints on the focused item with a
   // 2px OUTWARD offset; the panel's `overflow-auto` clips three sides, leaving a stray bar under the row.
-  // Draw it INSIDE the row instead (the `reui/select.tsx` item pattern, #522): `!` is needed because the
-  // unlayered rule beats layered utilities, and never `outline-none` — that is suppression. The
-  // highlight fill stays the active indicator.
-  "focus-visible:!-outline-offset-2 " +
+  // Draw it INSIDE the row instead, inset 4px like the `reui/select.tsx` item (#522) so a band of fill
+  // separates it from the panel hairline: `!` is needed because the unlayered rule beats layered
+  // utilities, and never `outline-none` — that is suppression. The ink colour stays: `--accent-on`
+  // (select's ring) is paper on paper here and would vanish.
+  "focus-visible:!-outline-offset-4 " +
   "data-[highlighted]:bg-secondary";
 
 export type MenuProps = {
