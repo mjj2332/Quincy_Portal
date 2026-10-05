@@ -73,11 +73,10 @@ export type EmbeddedDisplayDeps = {
   now?: () => number;
   newNonce?: () => string;
   /**
-   * The `rendition_requested_at` the queue message was sent for (its generation). A Retry and the recovery cron each write a new value, so a message
-   * from an older generation claims nothing. Absent for a message sent before generations existed: it is not fenced at the claim, but every later
-   * write is still fenced on the value the claim saw.
+   * The `rendition_requested_at` the queue message was sent for (its generation). Required. Only complete and a Retry write a new value, so a message
+   * from an older generation claims nothing. The recovery cron re-sends the same generation.
    */
-  generation?: number | null;
+  generation: number;
 };
 
 /**
@@ -141,9 +140,9 @@ export async function generateEmbeddedDisplay(env: EmbeddedMediaStores, mediaId:
   const claim = await env.DB.prepare(`
     UPDATE embedded_media SET rendition_lease_until = ?, rendition_attempts = rendition_attempts + 1
     WHERE id = ? AND rendition_status = 'pending' AND state IN ('pending', 'attached') AND (rendition_lease_until IS NULL OR rendition_lease_until < ?)
-      AND (? IS NULL OR rendition_requested_at = ?)
+      AND rendition_requested_at = ?
     RETURNING original_key, project_id, rendition_attempts, rendition_requested_at
-  `).bind(claimedAt + EMBEDDED_DISPLAY_LEASE_MS, mediaId, claimedAt, deps.generation ?? null, deps.generation ?? null).all<ClaimedRow>();
+  `).bind(claimedAt + EMBEDDED_DISPLAY_LEASE_MS, mediaId, claimedAt, deps.generation).all<ClaimedRow>();
   const row = claim.results[0];
   if (!row) return "noop";
   const attempts = row.rendition_attempts; const projectId = row.project_id; const generation = row.rendition_requested_at;

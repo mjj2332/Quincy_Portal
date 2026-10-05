@@ -95,7 +95,12 @@ describe("embedded video limits and keys (#494)", () => {
 });
 
 describe("video sniffing (#494)", () => {
-  const box = (size: number[], type: string, brand: string) => bytes(...size, ...[...type].map((c) => c.charCodeAt(0)), ...[...brand].map((c) => c.charCodeAt(0)), 0, 0, 0, 0);
+  /** A box whose declared size is the bytes supplied (zero padded past the brand and minor version), as the sniffers now require. */
+  const box = (size: number[], type: string, brand: string) => {
+    const head = bytes(...size, ...[...type].map((c) => c.charCodeAt(0)), ...[...brand].map((c) => c.charCodeAt(0)), 0, 0, 0, 0);
+    const declared = size[3]!;
+    return declared > head.length ? bytes(...head, ...Array<number>(declared - head.length).fill(0)) : head;
+  };
   /** An extended-size ftyp: size field 1, then the 64-bit largesize, then the major brand, the minor version and the compatible brands. */
   const extended = (major: string, ...compatible: string[]) => {
     const text = (value: string) => [...value].map((c) => c.charCodeAt(0));
@@ -118,6 +123,23 @@ describe("video sniffing (#494)", () => {
     expect(sniffEmbeddedVideoType(new Uint8Array())).toBeNull();
     expect(sniffEmbeddedVideoType(new TextEncoder().encode("<html><body>not a video</body></html>"))).toBeNull();
     expect(sniffEmbeddedVideoType(bytes(0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0))).toBeNull();
+  });
+
+  it("refuses a brand table cut off by the bytes supplied, in both header forms, and accepts the whole box (Sol r2 P1)", () => {
+    const text = (value: string) => [...value].map((c) => c.charCodeAt(0));
+    const brands = ["isom", ...Array<string>(10).fill("mp41"), "heic"]; // 68 bytes with the extended header: heic sits at offset 64
+    const wide = bytes(0, 0, 0, 1, ...text("ftyp"), 0, 0, 0, 0, 0, 0, 0, 68, ...text(brands[0]!), 0, 0, 0, 0, ...brands.slice(1).flatMap(text));
+    const plain = bytes(0, 0, 0, 68, ...text("ftyp"), ...text("isom"), 0, 0, 0, 0, ...Array<string>(12).fill("mp41").flatMap(text), ...text("heic")); // heic at offset 64
+    expect(wide).toHaveLength(68);
+    for (const whole of [wide, plain]) {
+      const cut = whole.subarray(0, 64);
+      expect(sniffEmbeddedVideoType(cut)).toBeNull(); expect(sniffHeifImage(cut)).toBe(false);
+      expect(sniffEmbeddedVideoType(whole)).toBeNull(); // the whole box names heic: a photo, never a video
+    }
+    expect(sniffHeifImage(wide)).toBe(true); expect(sniffHeifImage(plain)).toBe(true); expect(plain).toHaveLength(68);
+    const real = extended("isom", "iso2", "avc1", "mp41");
+    expect(sniffEmbeddedVideoType(real)).toBe("video/mp4"); expect(sniffEmbeddedVideoType(real.subarray(0, real.length - 1))).toBeNull();
+    expect(sniffEmbeddedVideoType(bytes(0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d, 0, 0, 0, 0))).toBeNull(); // declares 24 bytes, supplies 16
   });
 
   it("picks the sniffer by kind, and recognises a JPEG poster by its magic bytes only", () => {
@@ -174,7 +196,7 @@ describe("HEIC sniffing and types (#495)", () => {
     expect(sniffHeifImage(ftyp("mif1", "miaf"))).toBe(false);
     expect(sniffHeifImage(ftyp("msf1"))).toBe(false);
     expect(sniffHeifImage(ftyp("isom", "iso2", "mp41"))).toBe(false);
-    expect(sniffHeifImage(hex("00000018667479706865696300000000"))).toBe(true);
+    expect(sniffHeifImage(hex("000000186674797068656963000000000000000000000000"))).toBe(true);
     expect(sniffHeifImage(hex("000000186674797068656963"))).toBe(false);
     expect(sniffHeifImage(new Uint8Array())).toBe(false);
     expect(sniffHeifImage(bytes(0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))).toBe(false);

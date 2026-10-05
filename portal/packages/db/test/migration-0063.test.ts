@@ -37,7 +37,7 @@ describe("migration 0063 adds the HEIC display-copy columns and seeds the flag (
   it("is journaled as idx 63, additive only, and keeps the worker harness's splitting rules", () => {
     const sql = readFileSync(new URL(`../migrations/${MIGRATION}`, import.meta.url), "utf8");
     expect(sql).not.toMatch(/CREATE TRIGGER|DROP |DELETE |__new_|PRAGMA|UPDATE /i);
-    expect(sql.match(/ALTER TABLE embedded_media ADD COLUMN/g)).toHaveLength(9);
+    expect(sql.match(/ALTER TABLE embedded_media ADD COLUMN/g)).toHaveLength(10);
     expect(sql.match(/CREATE INDEX/g)).toHaveLength(1);
     // Settlement 9: one column-level CHECK on the status, and no cross-column CHECK.
     expect(sql.match(/CHECK/g)).toHaveLength(1);
@@ -58,8 +58,8 @@ describe("migration 0063 adds the HEIC display-copy columns and seeds the flag (
     applyThrough(db, 62);
     insertMedia(db, "old-1"); insertMedia(db, "old-2");
     applyMigration(db);
-    expect(db.prepare("SELECT id, rendition_status AS status, display_key AS displayKey, display_content_type AS ct, display_bytes AS bytes, rendition_attempts AS attempts, rendition_lease_until AS lease, rendition_requested_at AS requested, rendition_error AS error FROM embedded_media ORDER BY id").all())
-      .toEqual([{ id: "old-1", status: "not_required", displayKey: null, ct: null, bytes: null, attempts: 0, lease: null, requested: null, error: null }, { id: "old-2", status: "not_required", displayKey: null, ct: null, bytes: null, attempts: 0, lease: null, requested: null, error: null }]);
+    expect(db.prepare("SELECT id, rendition_status AS status, display_key AS displayKey, display_content_type AS ct, display_bytes AS bytes, rendition_attempts AS attempts, rendition_lease_until AS lease, rendition_requested_at AS requested, rendition_resent_at AS resent, rendition_error AS error FROM embedded_media ORDER BY id").all())
+      .toEqual([{ id: "old-1", status: "not_required", displayKey: null, ct: null, bytes: null, attempts: 0, lease: null, requested: null, resent: null, error: null }, { id: "old-2", status: "not_required", displayKey: null, ct: null, bytes: null, attempts: 0, lease: null, requested: null, resent: null, error: null }]);
     expect(db.prepare("SELECT key, enabled, updated_by AS updatedBy FROM feature_flags WHERE key = 'embedded_heic_uploads'").all()).toEqual([{ key: "embedded_heic_uploads", enabled: 0, updatedBy: null }]);
     expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     db.close();
