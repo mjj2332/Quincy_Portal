@@ -356,6 +356,18 @@ describe("NoticeBoard disclosure and polling", () => {
     expect(document.activeElement).toBe(restored.querySelector('[data-testid="notice-board-actions"]'));
   });
 
+  it("leaves focus in the editor after Edit from the menu, never on another notice's trigger (#523)", async () => {
+    apiGetMock.mockResolvedValue({ posts: [{ ...newPost, authorId: "user-a" }, oldPost] });
+    const host = mount();
+    await render(<NoticeBoard currentUserId="user-a" />);
+    await chooseNoticeAction(host, "A", "Edit", advance);
+    await act(async () => { await advance(500); });
+    const editing = host.querySelector<HTMLElement>('[data-slot="notice-board-edit-composer"]')!.closest<HTMLElement>('[data-slot="notice-board-post"]')!;
+    const active = document.activeElement as HTMLElement | null;
+    expect(active?.closest('[data-testid="notice-board-actions"]')).toBeNull();
+    expect(editing.querySelector('[contenteditable="true"]')?.contains(active)).toBe(true);
+  });
+
   describe("delete confirmation (#523)", () => {
     const ownNewPost: NoticeBoardPost = { ...newPost, authorId: "user-a", authorName: "B" };
     const listing = (posts: NoticeBoardPost[]) => (path: string) => Promise.resolve(path.includes("read-") ? { marker: null, latest: null, unreadCount: 0 } : { posts, hasMore: false, nextCursor: null });

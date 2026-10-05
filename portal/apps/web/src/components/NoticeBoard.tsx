@@ -246,7 +246,10 @@ function NoticeItem({ post, isOwn, isEditing, isBusy, articleRef, restoreTrigger
   const focusEditorOnEdit = useRef(false);
   // Set when Delete is chosen: the dialog now owns focus, so the menu's close must not move it (`false`).
   const deletePending = useRef(false);
-  const menuFinalFocus = useCallback((): false | undefined => (deletePending.current ? false : undefined), []);
+  // Set when Edit is chosen: Base UI's close hand-off would otherwise land on another notice's "⋯" (this
+  // one is unmounted) after the editor took focus, so the close must not move it (`false`).
+  const editPending = useRef(false);
+  const menuFinalFocus = useCallback((): false | undefined => (deletePending.current || editPending.current ? false : undefined), []);
   const wasEditing = useRef(false);
   useEffect(() => {
     // Leaving the in-place editor by this notice's own Cancel or a saved edit hands focus back to the "⋯"
@@ -276,8 +279,8 @@ function NoticeItem({ post, isOwn, isEditing, isBusy, articleRef, restoreTrigger
         <time dateTime={post.createdAt} className={META_TEXT}>{relativeTime(post.createdAt)}</time>
         {post.editedAt && <span title={post.editedAt} className={META_TEXT}>edited</span>}
       </div>
-      {isOwn && !isEditing && <Menu triggerLabel={`Actions for notice by ${post.authorName}`} label="Notice actions" triggerClassName={cn(ICON_BUTTON, "shrink-0 self-center")} triggerTestId="notice-board-actions" finalFocus={menuFinalFocus} onOpenChange={(open) => { if (open) deletePending.current = false; }} trigger={<span aria-hidden="true">⋯</span>}>
-        <MenuPrimitive.Item className={MENU_ITEM} disabled={isBusy} onClick={() => { focusEditorOnEdit.current = true; onEditStart(); }}>Edit</MenuPrimitive.Item>
+      {isOwn && !isEditing && <Menu triggerLabel={`Actions for notice by ${post.authorName}`} label="Notice actions" triggerClassName={cn(ICON_BUTTON, "shrink-0 self-center")} triggerTestId="notice-board-actions" finalFocus={menuFinalFocus} onOpenChange={(open) => { if (open) { deletePending.current = false; editPending.current = false; } }} trigger={<span aria-hidden="true">⋯</span>}>
+        <MenuPrimitive.Item className={MENU_ITEM} disabled={isBusy} onClick={() => { focusEditorOnEdit.current = true; editPending.current = true; onEditStart(); }}>Edit</MenuPrimitive.Item>
         <MenuPrimitive.Item className={cn(MENU_ITEM, "text-destructive")} disabled={isBusy} onClick={() => { deletePending.current = true; onDeleteRequest(); }}>Delete</MenuPrimitive.Item>
       </Menu>}
     </header>
