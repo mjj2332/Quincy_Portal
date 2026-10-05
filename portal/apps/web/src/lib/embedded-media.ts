@@ -156,23 +156,42 @@ export function abortEmbeddedImage(scope: EmbeddedMediaScope, mediaId: string): 
  * seconds, capped at 10) and resolves at `ready`, or rejects with a `RenditionFailedError` at `failed`. The `signal` stops the polling.
  */
 export async function uploadEmbeddedImage(scope: EmbeddedMediaScope, file: File, onProgress?: (percent: number) => void, options: EmbeddedImageUploadOptions = {}): Promise<string> {
+  const { signal } = options;
   const base = mediaBase(scope);
   const owner = "projectId" in scope && scope.owner ? { owner: scope.owner } : {};
   const contentType = embeddedImageContentType(file, true) ?? file.type;
+  if (signal?.aborted) throw abortError();
   const presign = externalEmbeddedMediaPresignSchema.parse(await apiPost<unknown, { contentType: string; bytes: number; owner?: "whiteboard" }>(base, { contentType, bytes: file.size, ...owner }));
-  const completed = await uploadMultipartFile(
-    file,
-    { key: presign.mediaId, ...(presign.uploadId ? { uploadId: presign.uploadId } : {}), ...(presign.partUrls ? { partUrls: presign.partUrls } : {}), ...(presign.partBytes ? { partBytes: presign.partBytes } : {}), ...(presign.devDirect ? { devDirect: true } : {}) },
-    `${base}/${encodeURIComponent(presign.mediaId)}/direct`,
-    onProgress,
-  );
-  const done = externalEmbeddedMediaCompleteSchema.parse(await apiPost<unknown, { parts?: { partNumber: number; etag: string }[] }>(`${base}/${encodeURIComponent(presign.mediaId)}/complete`, completed.parts ? { parts: completed.parts } : {}));
-  if (done.rendition === "failed") throw new RenditionFailedError(done.mediaId);
-  if (done.rendition === "pending") {
-    options.onPhase?.("preparing", done.mediaId);
-    return waitForRendition(scope, done.mediaId, options.signal);
+  // From here the helper owns the reservation: a cancel before the copy is `preparing` (the owner learns the id only then) aborts it here,
+  // even when presign answered after the owner went away. The Notice board has no abort route, so `abortEmbeddedImage` leaves that to the sweep.
+  const aborting = () => abortEmbeddedImage(scope, presign.mediaId);
+  const cancelled = new Promise<never>((_, reject) => { signal?.addEventListener("abort", () => reject(abortError()), { once: true }); });
+  cancelled.catch(() => undefined);
+  const unlessCancelled = <T,>(work: Promise<T>): Promise<T> => signal ? Promise.race([work, cancelled]) : work;
+  let preparing = false;
+  try {
+    if (signal?.aborted) throw abortError();
+    const completed = await unlessCancelled(uploadMultipartFile(
+      file,
+      { key: presign.mediaId, ...(presign.uploadId ? { uploadId: presign.uploadId } : {}), ...(presign.partUrls ? { partUrls: presign.partUrls } : {}), ...(presign.partBytes ? { partBytes: presign.partBytes } : {}), ...(presign.devDirect ? { devDirect: true } : {}) },
+      `${base}/${encodeURIComponent(presign.mediaId)}/direct`,
+      onProgress,
+      signal ? { signal } : undefined,
+    ));
+    if (signal?.aborted) throw abortError();
+    const done = externalEmbeddedMediaCompleteSchema.parse(await unlessCancelled(apiPost<unknown, { parts?: { partNumber: number; etag: string }[] }>(`${base}/${encodeURIComponent(presign.mediaId)}/complete`, completed.parts ? { parts: completed.parts } : {})));
+    if (signal?.aborted) throw abortError();
+    if (done.rendition === "failed") throw new RenditionFailedError(done.mediaId);
+    if (done.rendition === "pending") {
+      preparing = true;
+      options.onPhase?.("preparing", done.mediaId);
+      return waitForRendition(scope, done.mediaId, signal);
+    }
+    return done.mediaId;
+  } catch (error) {
+    if (!preparing && !(error instanceof RenditionFailedError) && signal?.aborted) await aborting();
+    throw error;
   }
-  return done.mediaId;
 }
 
 /** Where a Project video's poster frame is shown from. Id only, like the video. */

@@ -170,3 +170,56 @@ describe("polling a HEIC's display copy (#495)", () => {
     expect(apiPost).toHaveBeenCalledWith(`/api/notice-board/embedded-media/${ID}/rendition/retry`, {});
   });
 });
+
+describe("cancelling an image upload before it is preparing (#495)", () => {
+  const abortUrl = `/api/projects/p1/embedded-media/${ID}/abort`;
+  const aborts = (fetchMock: ReturnType<typeof vi.fn>) => fetchMock.mock.calls.filter((call) => String(call[0]).endsWith("/abort"));
+  const completes = () => apiPost.mock.calls.filter((call) => String(call[0]).endsWith("/complete"));
+  const deferred = <T,>() => { let resolve!: (value: T) => void; let reject!: (reason: unknown) => void; const promise = new Promise<T>((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
+  let fetchMock: ReturnType<typeof vi.fn>;
+  beforeEach(() => { fetchMock = vi.fn(async () => new Response(null, { status: 204 })); vi.stubGlobal("fetch", fetchMock); });
+
+  it("aborts the Project reservation when the signal fires during presign, even though presign answers after", async () => {
+    const presign = deferred<unknown>(); const controller = new AbortController(); const onPhase = vi.fn();
+    apiPost.mockImplementation(async (path: string) => path.endsWith("/complete") ? { mediaId: ID, state: "pending", rendition: "pending" } : presign.promise);
+    const outcome = uploadEmbeddedImage({ projectId: "p1" }, heicFile(), undefined, { signal: controller.signal, onPhase }).catch((error: unknown) => error);
+    controller.abort(); presign.resolve({ mediaId: ID, devDirect: true });
+    expect(await outcome).toMatchObject({ name: "AbortError" });
+    expect(fetchMock).toHaveBeenCalledWith(abortUrl, expect.objectContaining({ method: "POST" }));
+    expect(uploadMultipartFile).not.toHaveBeenCalled(); expect(completes()).toHaveLength(0); expect(onPhase).not.toHaveBeenCalled();
+  });
+
+  it("passes the signal to the byte upload and aborts the reservation when it fires during the upload", async () => {
+    const bytes = deferred<unknown>(); const controller = new AbortController(); const onPhase = vi.fn();
+    uploadMultipartFile.mockImplementation(() => bytes.promise);
+    const outcome = uploadEmbeddedImage({ projectId: "p1" }, heicFile(), undefined, { signal: controller.signal, onPhase }).catch((error: unknown) => error);
+    await vi.waitFor(() => expect(uploadMultipartFile).toHaveBeenCalled());
+    expect(uploadMultipartFile.mock.calls[0]![4]).toEqual(expect.objectContaining({ signal: controller.signal }));
+    controller.abort(); bytes.resolve({}); // an uploader that ignores the signal must still not lead to complete
+    expect(await outcome).toMatchObject({ name: "AbortError" });
+    expect(aborts(fetchMock)).toHaveLength(1); expect(fetchMock.mock.calls[0]![0]).toBe(abortUrl);
+    expect(completes()).toHaveLength(0); expect(onPhase).not.toHaveBeenCalled();
+  });
+
+  it("aborts the reservation the moment the signal fires during complete, and never reports preparing", async () => {
+    const complete = deferred<unknown>(); const controller = new AbortController(); const onPhase = vi.fn();
+    apiPost.mockImplementation(async (path: string) => path.endsWith("/complete") ? complete.promise : { mediaId: ID, devDirect: true });
+    const outcome = uploadEmbeddedImage({ projectId: "p1" }, heicFile(), undefined, { signal: controller.signal, onPhase }).catch((error: unknown) => error);
+    await vi.waitFor(() => expect(completes()).toHaveLength(1));
+    controller.abort();
+    expect(await outcome).toMatchObject({ name: "AbortError" });
+    expect(fetchMock).toHaveBeenCalledWith(abortUrl, expect.objectContaining({ method: "POST" }));
+    complete.resolve({ mediaId: ID, state: "pending", rendition: "pending" }); await Promise.resolve();
+    expect(onPhase).not.toHaveBeenCalled(); expect(apiGet).not.toHaveBeenCalled();
+  });
+
+  it("sends no abort for the Notice board, which has no abort route", async () => {
+    const controller = new AbortController();
+    uploadMultipartFile.mockImplementation(() => new Promise(() => undefined));
+    const outcome = uploadEmbeddedImage({ noticeBoard: true }, heicFile(), undefined, { signal: controller.signal }).catch((error: unknown) => error);
+    await vi.waitFor(() => expect(uploadMultipartFile).toHaveBeenCalled());
+    controller.abort();
+    expect(await outcome).toMatchObject({ name: "AbortError" });
+    expect(fetchMock).not.toHaveBeenCalled(); expect(completes()).toHaveLength(0);
+  });
+});
