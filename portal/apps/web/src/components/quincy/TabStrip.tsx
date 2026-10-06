@@ -28,7 +28,10 @@ const TAB_BASE =
   "cursor-pointer [font:var(--type-label)] uppercase tracking-[var(--tracking-wide)] " +
   "transition-[color,border-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] " +
   "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
-  "focus-visible:outline-ring focus-visible:outline-offset-2";
+  // #550: the ring is drawn INSIDE the tab. Outset (offset 2px) its bottom edge landed on the 2px active
+  // underline, which poked out past the ring's corners, and a 390 horizontal-scroll strip clips it. The
+  // at-rest twin keeps width/offset from animating on focus; `!` beats the unlayered `:focus-visible`.
+  "focus-visible:outline-ring -outline-offset-2 focus-visible:!-outline-offset-2";
 
 const TAB_IDLE = "border-b-transparent text-foreground-secondary hover:text-foreground hover:border-b-border-hover";
 const TAB_SELECTED = "border-b-primary text-foreground";

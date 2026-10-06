@@ -298,3 +298,27 @@ Every fixture subtask is unassigned (no `project_subtask_assignees` rows, `assig
 always the existing bootstrap admin, which the fixture never inserts, updates, or deletes. This
 means the Editor filter and assignee chips are not exercised by this fixture — that is deferred
 scope, not an oversight.
+
+### Picker people (#550): a separate, hand-applied local fixture
+
+`qa-seed` still has no users, and `seed/0001_seed.sql` runs in every environment, so neither carries these.
+`packages/db/local-fixtures/picker-people.sql` is a **local-only** file nothing runs automatically: not CI,
+not `migrate:local`, not `qa:apply`. It inserts five active users, one throwaway project and its five
+members, all with fixed `qa550-` ids:
+
+- two photographer/editor users both named **Jordan Lee** (different emails), so header chips show the email-suffix collision label;
+- two named **Alexandria Montgomery-Featherstonehaugh** with long emails, so the collision label wraps;
+- **Sam Rivera**, so the project has five members (the Team box collapses to "+N" and can wrap).
+
+The project is **550 Picker Polish Street**, id `qa550-project`. Run from `portal/packages/db`; the scripts
+are pinned to `--local` (add `--persist-to <dir>` after `--` to use a scratch D1):
+
+```sh
+npm run fixtures:picker-people:apply     # idempotent (INSERT OR IGNORE)
+npm run fixtures:picker-people:remove    # deletes by the qa550- ids only
+```
+
+Remove the fixture before `qa:verify`/`qa:apply` if you want an untouched `user` table. If the app attached
+rows to the project (activity, comments), the project delete is refused by its foreign keys; reset the local D1
+instead. `local-fixtures-picker-people.guard.test.ts` pins the `--local` flag, that no workflow or script runs
+the file, and that the SQL can only touch `qa550-` ids. It cannot stop a hand-typed `--remote`.

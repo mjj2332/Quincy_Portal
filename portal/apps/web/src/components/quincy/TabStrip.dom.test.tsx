@@ -110,4 +110,12 @@ describe("TabStrip", () => {
     const tabs = [...tablist.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
     expect(tabs.every((tab) => tab.getAttribute("type") === "button")).toBe(true);
   });
+
+  it("draws the focus ring inside the tab, at rest and on focus, so it never meets the 2px underline (#550)", async () => {
+    const tablist = await renderStrip("a", () => undefined);
+    const tokens = tablist.querySelector<HTMLButtonElement>('[role="tab"]')!.className.split(/\s+/);
+    expect(tokens).toContain("-outline-offset-2");
+    expect(tokens).toContain("focus-visible:!-outline-offset-2");
+    expect(tokens).not.toContain("focus-visible:outline-offset-2");
+  });
 });

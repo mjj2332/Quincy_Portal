@@ -299,6 +299,32 @@ function TeamChipContent({ option, dataState, roleTag, lockedLabel, fullName = f
   </>;
 }
 
+/** #550: whether the chips box holds more than one row, from the first and last child's measured box.
+ *  Children are vertically centred, so a same-row pair can differ by a few px; a different row differs by
+ *  at least a row's height, hence the half-height tolerance. */
+export function chipsBoxWraps(first: { top: number; height: number }, last: { top: number }): boolean {
+  return last.top - first.top >= Math.max(first.height / 2, 1);
+}
+
+/** #550: true while the box wraps; re-measured on mount, when the chips change and whenever the box resizes. */
+function useChipsBoxWrapped(box: HTMLElement | null, remeasureKey: string): boolean {
+  const [wrapped, setWrapped] = useState(false);
+  useLayoutEffect(() => {
+    if (!box) return;
+    const measure = () => {
+      const first = box.firstElementChild as HTMLElement | null;
+      const last = box.lastElementChild as HTMLElement | null;
+      setWrapped(!!first && !!last && first !== last && chipsBoxWraps({ top: first.offsetTop, height: first.offsetHeight }, { top: last.offsetTop }));
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [box, remeasureKey]);
+  return wrapped;
+}
+
 function TeamMoreToggle({ hiddenCount, expanded, onToggle }: { hiddenCount: number; expanded: boolean; onToggle: () => void }) {
   if (hiddenCount <= 0 && !expanded) return null;
   const label = expanded ? "Show fewer team members" : `Show ${hiddenCount} more team members`;
@@ -308,7 +334,9 @@ function TeamMoreToggle({ hiddenCount, expanded, onToggle }: { hiddenCount: numb
     // 44px target comes from the same transparent hit-area the chip × uses, whose ±10px inset is
     // sized for that ×'s 24px box — so this is 24px too (`size-6`-tall), not the chips' 21px, or
     // the sum would be 41. The narrow breakpoint keeps the real 44px height like the chips do.
-    className={cn(buttonClasses("text", { className: "min-h-0 h-6 py-0 px-1.5 shrink-0 !normal-case max-[721px]:min-h-[44px]" }), TEAM_CHIP_REMOVE_HIT_AREA)}
+    // #550: one quiet text-link for "+N" and "Show less". The ghost variant fills `aria-expanded`
+    // buttons (`aria-expanded:bg-muted`), which is what made "Show less" read as one more chip.
+    className={cn(buttonClasses("text", { className: "min-h-0 h-6 py-0 px-1.5 shrink-0 !normal-case max-[721px]:min-h-[44px] bg-transparent text-foreground-secondary hover:bg-transparent aria-expanded:bg-transparent hover:underline underline-offset-2" }), TEAM_CHIP_REMOVE_HIT_AREA)}
     aria-expanded={expanded}
     aria-label={label}
     // Base UI's Chips container opens the popup on most interaction inside it — this toggle
@@ -354,6 +382,10 @@ function TeamComboboxView({ groups, value, onValueChange, visible, hiddenCount, 
   inputId?: string;
 }) {
   const anchor = useComboboxAnchor();
+  // #550: the pill needs one row; a wrapped box switches to --radius-sm (measured, not by viewport).
+  const [box, setBox] = useState<HTMLDivElement | null>(null);
+  const boxRef = useCallback((node: HTMLDivElement | null) => { anchor.current = node; setBox(node); }, [anchor]);
+  const wrapped = useChipsBoxWrapped(box, `${visible.length}:${hiddenCount}:${expanded}`);
   return (
 <Combobox
     multiple
@@ -375,7 +407,7 @@ function TeamComboboxView({ groups, value, onValueChange, visible, hiddenCount, 
     {/* #213 follow-up: content-sized like prototype 2a's Team `.sel` (chips · Add… · chevron), not a
      *  box stretched to its cell — `w-fit` sizes to the chips and `max-w-full` still wraps them
      *  inside the cell. */}
-    <ComboboxChips ref={anchor} className={cn("w-fit max-w-full rounded-[var(--radius-pill)] max-[721px]:rounded-[var(--radius-sm)] max-[721px]:min-h-[44px]", formControl && "min-h-[38px] w-full rounded-[var(--radius-sm)]", rowClassName)}>
+    <ComboboxChips ref={boxRef} data-wrapped={wrapped ? "true" : undefined} className={cn("w-fit max-w-full rounded-[var(--radius-pill)] data-[wrapped=true]:rounded-[var(--radius-sm)] max-[721px]:min-h-[44px]", formControl && "min-h-[38px] w-full rounded-[var(--radius-sm)]", rowClassName)}>
       <ComboboxValue>
         {() => visible.map((option) => {
           const { dataState, isPending, messageId, name, roleTag, label } = chipProps(option);
