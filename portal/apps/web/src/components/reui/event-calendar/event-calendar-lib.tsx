@@ -63,6 +63,11 @@
  *    vendor code: `packTimedSegments` takes an optional `windowOf` accessor so a transition day
  *    can be packed by painted window; omitted, it behaves exactly as vendored. `setHours` is no
  *    longer imported. Cover: `event-calendar-dst.test.ts`, incl. a zone whose gap is AT midnight.
+ *
+ * 4. 2026-10-07, #614 PR B — ADDED `splitMonthRowCapacity` (+ `MonthRowBar`, `MonthRowCapacity`),
+ *    exported: the month week row's lane/overflow split, extracted pure. BEHAVIOUR CHANGE under
+ *    `autoFit` only; see `event-calendar-month-view.tsx` entry 4. Cover:
+ *    `event-calendar-month-capacity.test.ts`.
  */
 import { expandRecurrence } from "@/components/reui/event-calendar/event-calendar-recurrence"
 import type {
@@ -830,6 +835,113 @@ function resolveOffDay(
   return resolved.isOffDay?.(day) ?? false
 }
 
+/** One laned multi-day / all-day bar of a month week row (day-offset coordinates). */
+interface MonthRowBar {
+  key: string
+  lane: number
+  /** First covered day offset from the TRUE row start (0-6). */
+  colStart: number
+  colSpan: number
+}
+
+interface MonthRowCapacity {
+  /** Keys of the bars that stay drawn in the overlay, in input order. */
+  visibleBarKeys: string[]
+  /** Rows reserved by visible bars, per column (deepest covering lane + 1). */
+  reservedLanes: number[]
+  /** Keys of the bars hidden in each column; they list in that day's "+N more". */
+  hiddenBarKeysByCol: Set<string>[]
+  /** Rows left for timed chips AND the indicator, per column: max(0, cap - reservedLanes). */
+  timedSlots: number[]
+  /** Timed chips actually drawn, per column (autoFit gives one row to the indicator). */
+  shownTimed: number[]
+  /** Whether the column draws a "+N more" indicator row. */
+  showIndicator: boolean[]
+}
+
+/**
+ * The month week row's capacity split, pure so it can be tested without layout (#614 PR B).
+ *
+ * Vendored behaviour: bars at lane >= cap are hidden; a column's timed chips take
+ * `cap - reservedLanes` rows, and under `autoFit` one of those rows goes to "+N more" when
+ * anything overflows. Defect: autoFit could give up a timed row but never a bar lane, so at
+ * cap 1 a lane-0 bar left the indicator no row and the cell's overflow-hidden clipped it.
+ *
+ * Quincy rule, autoFit only: a bar in the last visible lane (cap - 1) is hidden when ANY column
+ * it covers would overflow (covering lanes + hidden bars + timed chips > cap), which frees that
+ * row for the indicator. Hidden bars list in "+N more" through `hiddenBarKeysByCol`. Lanes are
+ * packed, so bars of one lane never share a column and hiding one cannot change whether another
+ * lane-(cap-1) bar overflows - a single pass is exact. Invariant under autoFit, every column:
+ * reservedLanes + shownTimed + (showIndicator ? 1 : 0) <= cap. Without autoFit the split is the
+ * vendored one, unchanged.
+ *
+ * `offsets[col]` is the day offset of visible column `col` (a weekends-hidden row skips some).
+ */
+function splitMonthRowCapacity(input: {
+  cap: number
+  autoFit: boolean
+  offsets: readonly number[]
+  bars: readonly MonthRowBar[]
+  /** Single-day timed events per visible column. */
+  timedCounts: readonly number[]
+}): MonthRowCapacity {
+  const { cap, autoFit, offsets, bars, timedCounts } = input
+  const covers = (b: MonthRowBar, offset: number) =>
+    b.colStart <= offset && offset < b.colStart + b.colSpan
+  const hiddenKeys = new Set<string>(
+    bars.filter((b) => b.lane >= cap).map((b) => b.key)
+  )
+  if (autoFit && cap >= 1) {
+    const lastLane = bars.filter((b) => b.lane === cap - 1)
+    for (const b of lastLane) {
+      const overflows = offsets.some((offset, col) => {
+        if (!covers(b, offset)) return false
+        let reserved = 0
+        let hidden = 0
+        for (const o of bars) {
+          if (!covers(o, offset)) continue
+          if (hiddenKeys.has(o.key)) hidden++
+          else reserved = Math.max(reserved, o.lane + 1)
+        }
+        return reserved + hidden + (timedCounts[col] ?? 0) > cap
+      })
+      if (overflows) hiddenKeys.add(b.key)
+    }
+  }
+  const visible = bars.filter((b) => !hiddenKeys.has(b.key))
+  const reservedLanes = offsets.map((offset) =>
+    visible.reduce(
+      (max, b) => (covers(b, offset) ? Math.max(max, b.lane + 1) : max),
+      0
+    )
+  )
+  const hiddenBarKeysByCol = offsets.map(
+    (offset) =>
+      new Set(
+        bars.filter((b) => hiddenKeys.has(b.key) && covers(b, offset)).map((b) => b.key)
+      )
+  )
+  const timedSlots = reservedLanes.map((r) => Math.max(0, cap - r))
+  const showIndicator = offsets.map((_, col) => {
+    const m = timedCounts[col] ?? 0
+    return hiddenBarKeysByCol[col]!.size > 0 || m > timedSlots[col]!
+  })
+  const shownTimed = offsets.map((_, col) => {
+    const m = timedCounts[col] ?? 0
+    const slots = timedSlots[col]!
+    const shown = autoFit && showIndicator[col] ? Math.max(0, slots - 1) : slots
+    return Math.min(m, shown)
+  })
+  return {
+    visibleBarKeys: visible.map((b) => b.key),
+    reservedLanes,
+    hiddenBarKeysByCol,
+    timedSlots,
+    shownTimed,
+    showIndicator,
+  }
+}
+
 export {
   buildEventIndex,
   defaultEventOrder,
@@ -850,6 +962,7 @@ export {
   segmentOccurrence,
   snapMinutes,
   spansMultipleDays,
+  splitMonthRowCapacity,
   stepDate,
   toZoned,
   wallClockMinutesAtElapsed,
@@ -861,6 +974,8 @@ export type {
   EventCalendarDayBucket,
   EventCalendarIndex,
   EventCalendarWeekRow,
+  MonthRowBar,
+  MonthRowCapacity,
   ViewDateRanges,
   ViewRangeOptions,
   WeekStartsOn,
