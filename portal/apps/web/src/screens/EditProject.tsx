@@ -14,6 +14,8 @@ import { EmptyState } from "@/components/quincy/EmptyState";
 import { Notice } from "@/components/quincy/Notice";
 import { QuincyField } from "@/components/quincy/QuincyField";
 import { Button } from "@/components/reui/button";
+import { ConfirmDeleteDialog } from "../components/ConfirmDeleteDialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/reui/alert-dialog";
 import { buttonClasses } from "@/components/quincy/Button";
 
 type ProjectResponse = {
@@ -67,6 +69,8 @@ export function EditProject({ projectId, onReturnToWorkspace, onDeleted }: { pro
   const [dangerError, setDangerError] = useState<string>();
   const [dangerNotice, setDangerNotice] = useState<string>();
   const [isDangerAction, setIsDangerAction] = useState(false);
+  const [restoreOpen, setRestoreOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   // #455: a Save refused as archived latches the read-only view even before the refetch lands. Cleared when the Project is restored or another is opened.
   const [latched, setLatched] = useState(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -134,8 +138,9 @@ export function EditProject({ projectId, onReturnToWorkspace, onDeleted }: { pro
     finally { setIsDangerAction(false); }
   }
 
+  // #604: Restore asks through the shared AlertDialog (as ConfirmDeleteDialog does), not `lib/confirm`. Cancel changes nothing.
   async function restoreProject() {
-    if (!await confirm({ title: "Restore project?", message: "Restore this project to the dashboard?", confirmLabel: "Restore" })) return;
+    setRestoreOpen(false);
     setDangerError(undefined); setIsDangerAction(true);
     try { await apiPost<{ ok: true }, Record<string, never>>(`/api/projects/${projectId}/restore`, {}); if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true }); onReturnToWorkspace("Project restored."); }
     catch (reason) { setDangerError(reason instanceof Error ? reason.message : "The project could not be restored."); }
@@ -143,7 +148,7 @@ export function EditProject({ projectId, onReturnToWorkspace, onDeleted }: { pro
   }
 
   async function deleteProject() {
-    if (!await confirm({ title: "Delete project permanently?", message: "Permanently delete this archived project and all of its cloud media? This cannot be undone.", confirmLabel: "Delete permanently", danger: true })) return;
+    setDeleteOpen(false);
     setDangerError(undefined); setIsDangerAction(true);
     try {
       const response = await fetch(`/api/projects/${projectId}`, { method: "DELETE", credentials: "include", headers: { Accept: "application/json" } });
@@ -207,7 +212,19 @@ export function EditProject({ projectId, onReturnToWorkspace, onDeleted }: { pro
             <strong className={DANGER_LABEL}>Restore project</strong>
             <p className={DANGER_COPY}>Return this project to the dashboard and active production work.</p>
           </div>
-          <Button variant="outline" className="max-[721px]:w-full" type="button" disabled={isDangerAction} onClick={() => void restoreProject()}>{isDangerAction ? "Restoring…" : "Restore project"}</Button>
+          <Button variant="outline" className="max-[721px]:w-full" type="button" disabled={isDangerAction} onClick={() => setRestoreOpen(true)}>{isDangerAction ? "Restoring…" : "Restore project"}</Button>
+          <AlertDialog open={restoreOpen} onOpenChange={setRestoreOpen}>
+            <AlertDialogContent size="default" data-testid="restore-project-confirm">
+              <AlertDialogHeader>
+                <AlertDialogTitle>Restore project?</AlertDialogTitle>
+                <AlertDialogDescription className="text-foreground-secondary">Restore this project to the dashboard?</AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel data-testid="restore-project-cancel">Cancel</AlertDialogCancel>
+                <AlertDialogAction data-testid="restore-project-confirm-action" onClick={() => void restoreProject()}>Restore</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
         <div className={`${DANGER_ROW} min-[721px]:grid-cols-[minmax(0,1fr)_minmax(220px,0.7fr)_auto]`}>
           <div>
@@ -215,8 +232,10 @@ export function EditProject({ projectId, onReturnToWorkspace, onDeleted }: { pro
             <p className={DANGER_COPY}>All media in cloud storage will be erased. This cannot be undone.</p>
           </div>
           <QuincyField id="project-delete-confirmation" label={<>Type “{project.street}” to confirm</>} value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} autoComplete="off" />
-          <Button variant="destructive" className="max-[721px]:w-full" type="button" disabled={isDangerAction || !deleteMatchesStreet} onClick={() => void deleteProject()}>{isDangerAction ? "Deleting…" : "Delete project permanently"}</Button>
+          <Button variant="destructive" className="max-[721px]:w-full" type="button" disabled={isDangerAction || !deleteMatchesStreet} onClick={() => setDeleteOpen(true)}>{isDangerAction ? "Deleting…" : "Delete project permanently"}</Button>
         </div>
+        <ConfirmDeleteDialog open={deleteOpen} excerpt="" deleting={false} error={null} onConfirm={() => void deleteProject()} onCancel={() => setDeleteOpen(false)} finalFocus={() => true}
+          copy={{ title: "Delete project permanently?", action: "Delete permanently", pending: "Deleting…", fallbackSubject: "", description: () => <>Permanently delete this archived project and all of its cloud media? This cannot be undone.</> }} testIdPrefix="project-delete" size="default" />
       </>}
     </section>}
   </main>;

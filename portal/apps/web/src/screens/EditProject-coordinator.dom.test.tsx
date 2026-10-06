@@ -72,6 +72,9 @@ describe("EditProject surface coordinator wiring", () => {
     await render(); await flush();
     const publish = vi.spyOn(runtime, "publish");
     await act(async () => { [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === actionLabel)!.click(); await Promise.resolve(); }); await flush();
+    // #604: Restore asks through the AlertDialog; Archive still goes through lib/confirm.
+    const restoreConfirm = document.querySelector<HTMLElement>('[data-testid="restore-project-confirm-action"]');
+    if (restoreConfirm) { await act(async () => { restoreConfirm.click(); await Promise.resolve(); }); await flush(); }
     expect(apiPostMock).toHaveBeenCalledWith(path, {});
     expect(publish.mock.calls.some(([message]) => message.type === "project-data-invalidated" && JSON.stringify(message.resources) === JSON.stringify([{ kind: "detail" }, { kind: "activity" }]))).toBe(true);
     expect(publish.mock.calls.some(([message]) => message.type === "dashboard-board-invalidated")).toBe(true);

@@ -20,7 +20,7 @@ import { Notice } from "./quincy/Notice";
 // No raw primitives here, so no ui-primitive-allowlist entry.
 // Also the Project discussion's comment Delete (#568): the copy and test-id prefix are props, so there is one confirmation, not a fork.
 
-type NoticeDeleteDialogProps = {
+type ConfirmDeleteDialogProps = {
   open: boolean;
   /** Plain-text excerpt of the notice, or "" when it has no text (images only). */
   excerpt: string;
@@ -32,15 +32,17 @@ type NoticeDeleteDialogProps = {
   /** Copy and test ids; the defaults are the Notice board's (#523). */
   copy?: { title: string; action: string; pending: string; description: (subject: ReactNode) => ReactNode; fallbackSubject: string };
   testIdPrefix?: string;
+  /** "sm" (default) suits a short label; "default" gives a long uppercase action room (#604). */
+  size?: "default" | "sm";
 };
 
-const NOTICE_COPY: NonNullable<NoticeDeleteDialogProps["copy"]> = {
+const NOTICE_COPY: NonNullable<ConfirmDeleteDialogProps["copy"]> = {
   title: "Delete notice?", action: "Delete", pending: "Deleting…", fallbackSubject: "This notice",
   description: (subject) => <>{subject} will be removed from the Notice board for everyone, with any images in it. This can't be undone.</>,
 };
 
 /** Confirms before a Notice board post is deleted for everyone. The dialog stays open on failure. */
-export function NoticeDeleteDialog({ open, excerpt, deleting, error, onConfirm, onCancel, finalFocus, copy = NOTICE_COPY, testIdPrefix = "notice-delete" }: NoticeDeleteDialogProps) {
+export function ConfirmDeleteDialog({ open, excerpt, deleting, error, onConfirm, onCancel, finalFocus, copy = NOTICE_COPY, testIdPrefix = "notice-delete", size = "sm" }: ConfirmDeleteDialogProps) {
   const cancelRef = useRef<HTMLButtonElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   // Both buttons are disabled while deleting, so focus drops to <body>. On a failure the dialog stays open:
@@ -53,7 +55,7 @@ export function NoticeDeleteDialog({ open, excerpt, deleting, error, onConfirm, 
     : copy.fallbackSubject;
   return (
     <AlertDialog open={open} onOpenChange={(next) => { if (!next && !deleting) onCancel(); }}>
-      <AlertDialogContent size="sm" data-testid={`${testIdPrefix}-confirm`} initialFocus={cancelRef} finalFocus={finalFocus}>
+      <AlertDialogContent size={size} data-testid={`${testIdPrefix}-confirm`} initialFocus={cancelRef} finalFocus={finalFocus}>
         <AlertDialogHeader>
           <AlertDialogTitle>{copy.title}</AlertDialogTitle>
           <AlertDialogDescription className="text-foreground-secondary">

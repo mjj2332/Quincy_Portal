@@ -13,7 +13,7 @@ import { EmptyState } from "./quincy/EmptyState";
 import { Notice } from "./quincy/Notice";
 import { ICON_BUTTON } from "./quincy/icon-button";
 import { MENU_ITEM, Menu, MenuPrimitive } from "./quincy/menu";
-import { NoticeDeleteDialog } from "./NoticeDeleteDialog";
+import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
 import type { MentionableUser } from "./MentionAutocomplete";
 import type { NoticeBoardPost } from "../lib/notice-board-data";
 
@@ -219,7 +219,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
       </div>
       <form data-slot="notice-board-composer" className={CREATE_COMPOSER} onSubmit={(event) => void submit(event)}><label className="sr-only" htmlFor={`${panelId}-body`}>Write a notice</label><QuincyRichTextEditor preset="document" id={`${panelId}-body`} value={content} onChange={setContent} limit={NOTICE_BODY_MAX_LENGTH} maxBytes={NOTICE_RICH_TEXT_JSON_MAX_BYTES} disabled={isBusy} loadMentionables={loadMentionables} placeholder="Write a notice for the team…" onSubmit={() => void submit()} media={{ noticeBoard: true }} linkPreviews={{ noticeBoard: true }} onUploadingChange={setComposerUploading} /><div className={COMPOSER_FOOT}><span className={MENTION_HINT}>Use @ to mention active staff</span><button className={buttonClasses("primary")} type="submit" disabled={isBusy || postingOverBytes || composerUploading}>{isPosting ? "Posting…" : "Post notice"}</button></div></form>
     </div>
-    <NoticeDeleteDialog open={deleteTarget !== null} excerpt={deleteTarget?.excerpt ?? ""} deleting={isDeleting} error={deleteError} onConfirm={() => void confirmDelete()} onCancel={() => setDeleteTarget(null)} finalFocus={deleteFinalFocus} />
+    <ConfirmDeleteDialog open={deleteTarget !== null} excerpt={deleteTarget?.excerpt ?? ""} deleting={isDeleting} error={deleteError} onConfirm={() => void confirmDelete()} onCancel={() => setDeleteTarget(null)} finalFocus={deleteFinalFocus} />
   </section>;
 }
 
