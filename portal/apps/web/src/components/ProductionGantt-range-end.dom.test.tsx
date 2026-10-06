@@ -636,9 +636,46 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     await openDue(RANGE_TITLE);
     expect(patches()).toHaveLength(1);
     expect(picker(RANGE_TITLE)!.textContent).toContain("Latest checklist item · schedule v3");
-    expect(picker(RANGE_TITLE)!.textContent).toContain("Complete");
     expect(endText(RANGE_TITLE)).toBe(rangeMoment(sydneyDay(5), "17:00"));
     expect(pickerButton(RANGE_TITLE, "4 hours")!.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("R13j an item conflict dismissed, then a refetch with a renamed item at the same schedule version: the reopened notice shows the current row, not the stale details", async () => {
+    await render();
+    await conflictOnDue(itemConflict);
+    await dismissDue("escape");
+    rows[0]!.title = "Retouch hero set";
+    await act(async () => { await client.invalidateQueries(); });
+    await flush(8);
+    await openDue("Retouch hero set");
+    const text = picker("Retouch hero set")!.textContent ?? "";
+    expect(text).toContain("Latest checklist item · schedule v3");
+    expect(text).toContain("TitleRetouch hero setDoneOpen");
+    expect(text).not.toContain("TitleEdit hero set");
+  });
+
+  it("R13k a dismissal fired after a generation change (the new query still pending) leaves no stale notice: the reopened picker has neither the notice nor the draft", async () => {
+    await render();
+    await conflictOnDue();
+    const gate = deferred<void>();
+    getGate = gate.promise;
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <ProductionGantt identity={identity} q="zzz" filters={DEFAULT_GANTT_FACET_FILTERS} onFiltersChange={() => {}} onAcceptGateChange={onAcceptGateChange} onAccessLoss={onAccessLoss} />
+          <ToastViewport />
+        </QueryClientProvider>,
+      );
+      await Promise.resolve();
+    });
+    await flush(6);
+    await act(async () => { gate.resolve(); await Promise.resolve(); });
+    getGate = null;
+    await flush(8);
+    await waitFor(() => expect(picker(RANGE_TITLE)).toBeNull());
+    await openDue(RANGE_TITLE);
+    expect(picker(RANGE_TITLE)!.textContent).not.toContain("Latest schedule");
+    expect(pickerButton(RANGE_TITLE, "4 hours")!.getAttribute("aria-pressed")).not.toBe("true");
   });
 
   it("R13i editing another Subtask between the dismiss and the reopen keeps the first Subtask's stash", async () => {

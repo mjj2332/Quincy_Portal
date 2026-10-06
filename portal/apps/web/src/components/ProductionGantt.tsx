@@ -1336,15 +1336,20 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   }, []);
   // A passive close of an inline picker (Escape, an outside press, narrowing): a conflict is stashed under its Subtask, then the
   // session ends exactly as a Cancel does. Both updates run in one handler, so there is no frame with neither set.
+  // The generation the open editor session began under: a dismissal from an outgoing session (the chart was replaced, a filter changed
+  // while it was open) must not repopulate a stash the generation reset just cleared. Set when a session starts, not on every render.
+  const editorGenerationRef = useRef(generationKey);
+  const editorOpen = commands.scheduleEditor !== null;
+  useEffect(() => { if (editorOpen) editorGenerationRef.current = generationKey; }, [editorOpen]); // eslint-disable-line react-hooks/exhaustive-deps
   const { scheduleEditor, cancelScheduleEditor } = commands;
   const dismissScheduleEditor = useCallback(() => {
     const editor = scheduleEditor;
-    if (editor?.validationError) {
+    if (editor?.validationError && editorGenerationRef.current === generationKey) {
       const id = subtaskIdFromCalendarEntityId(editor.source.id);
       if (id) setConflictStash((current) => new Map(current).set(id, { validationError: editor.validationError, latestItem: editor.latestItem }));
     }
     cancelScheduleEditor();
-  }, [scheduleEditor, cancelScheduleEditor]);
+  }, [scheduleEditor, cancelScheduleEditor, generationKey]);
   // The notice for a Subtask's picker: the editor's own error first (a fresh 409), else the stash (a reopened session has no validationError).
   const stashErrorFor = useCallback((row: GanttChecklistRowDto) => {
     const stash = conflictStash.get(row.id);

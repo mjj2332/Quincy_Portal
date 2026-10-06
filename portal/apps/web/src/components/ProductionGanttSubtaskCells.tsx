@@ -57,11 +57,15 @@ export type ScheduleConflictStash = Pick<ScheduleEditorState, "validationError" 
 
 /**
  * The notice a reopened picker shows for a dismissed conflict. The row is the live one (a refetch or a conflict body may have
- * moved it past the 409), so the schedule named is the row's own; a stashed latest item older than the row is dropped, never
- * shown as the latest.
+ * moved it past the 409), so the schedule named is the row's own. A stashed latest item is rebuilt from that row (title, Done,
+ * assignees, schedule, reminders): none of those but the schedule carries a version, so the stash's copy could be stale in a
+ * way no marker reveals. Only when the row's schedule is OLDER than the stashed item (a row not yet adopted) is the item kept.
  */
 export function scheduleErrorFromStash(stash: ScheduleConflictStash, row: GanttChecklistRowDto): ScheduleError<LatestSubtaskSummary> | undefined {
-  const latestItem = stash.latestItem && row.schedule.version > stash.latestItem.schedule.version ? undefined : stash.latestItem;
+  const stashed = stash.latestItem;
+  const latestItem = stashed && row.schedule.version >= stashed.schedule.version
+    ? { ...stashed, title: row.title, done: row.done, assignees: row.assignees, otherAssigneeCount: row.otherAssigneeCount, schedule: row.schedule, reminders: row.reminders }
+    : stashed;
   return scheduleErrorFromEditor({ source: row, validationError: stash.validationError, latestItem });
 }
 
