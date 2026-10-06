@@ -1,6 +1,7 @@
 import * as React from "react"
 import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog"
 import { cn } from "@/lib/utils"
+import { InsideAlertDialogContext } from "@/lib/alert-dialog-press"
 
 import { Button } from "@/components/reui/button"
 
@@ -35,6 +36,10 @@ import { Button } from "@/components/reui/button"
  * - Footer: Modal's FOOT (hairline top rule, no tinted band, no rounded bottom). Because the
  *   content carries the padding, the footer pulls itself out by `--space-6` so the rule runs
  *   edge to edge like Modal's.
+ *
+ * #625: `AlertDialogContent` provides `InsideAlertDialogContext` around its children, so a
+ * `reui/popover` opened from inside the dialog (above it) is told apart from a popover beneath it,
+ * which `popover.tsx`'s alert-dialog adaptation exempts from dismissal by presses on the dialog.
  *
  * #221 (2026-09-28, browser pass D): the overlay passes `forceRender` and carries
  * `data-testid="alert-dialog-scrim"`. `RailedShell` wraps every page in one `Sheet` (a Base UI
@@ -81,6 +86,7 @@ function AlertDialogOverlay({
 function AlertDialogContent({
   className,
   size = "default",
+  children,
   ...props
 }: AlertDialogPrimitive.Popup.Props & {
   size?: "default" | "sm"
@@ -102,7 +108,11 @@ function AlertDialogContent({
           className
         )}
         {...props}
-      />
+      >
+        <InsideAlertDialogContext.Provider value={true}>
+          {children}
+        </InsideAlertDialogContext.Provider>
+      </AlertDialogPrimitive.Popup>
     </AlertDialogPortal>
   )
 }

@@ -5790,3 +5790,27 @@ Tags: gantt-calendar, scheduling, focus-overlays · #583
   Pin it with a real button pressed outside and a wait past the controller's and the menu's restore timers.
 - **An untouched Apply is not a save.** The sheet's Save always PATCHed; the picker's Apply on an unchanged range sends nothing. A
   test that clicked Save to "write the same value" must change the range first.
+
+## One confirm look: the AlertDialog renderer for `lib/confirm`, and what its portal does to popovers (#625)
+Tags: focus-overlays, reui-vendor, testing-guards · #625
+
+`lib/confirm`'s promise API, queue, abort signal and every caller stayed; only `ConfirmDialog`'s renderer moved from `Modal` onto
+`reui/alert-dialog` (the look `ConfirmDeleteDialog` and EditProject's Restore already used).
+
+- **An alert dialog sets no `aria-modal` and ignores scrim presses.** Base UI's `AlertDialog` popup is `role="alertdialog"` with no
+  `aria-modal`, and a press on the scrim does nothing. Both are the standard behaviour, adopted deliberately: Escape and Cancel
+  answer `false`, the scrim leaves the confirm pending. Anything that detected the old `[role="dialog"][aria-modal="true"]` shape
+  needs its own arm — `project-sheet-layers.ts` now matches `[role="alertdialog"][data-open]`, else Escape on a confirm inside the
+  Project sheet closes the sheet too.
+- **The AlertDialog portal is inert-marked, so a Base UI popover dismisses on any press inside it.** A popover's outside-press check
+  skips an element "injected after it opened" only when that element's body-level ancestor holds no `data-base-ui-inert` marker. The
+  old `Modal` portal held none; the AlertDialog portal holds its overlay and focus guards, which Base marks inert. So Cancel, Confirm
+  or the scrim of a confirm raised from the Deadline popover (Clear) or the Team popover (final-role removal) closed the popover and
+  discarded its draft (`ProjectHeaderDeadline` and `ProductionGantt-inline-edit` T2 failed red). Escape and the focus move into the
+  dialog dismissed it the same way. `reui/popover.tsx` now cancels those `outside-press` / `escape-key` / `focus-out` dismissals
+  while an alert dialog is the target or is open (`lib/alert-dialog-press.ts`), declared as a Quincy adaptation and pinned by
+  `popover-adaptation.guard.test.ts` so a plain `shadcn add popover` cannot revert it. `AnchoredPopover` uses the same helper
+  instead of a confirm-specific `data-confirm-modal-root` marker, so any alert dialog raised from a popover behaves the same. The exemption must NOT apply to a popover opened from inside an alert
+  dialog (the Calendar Move Deadline dialog's date/time popup: Escape closes the popup, not the dialog), so `AlertDialogContent`
+  provides `InsideAlertDialogContext` and `Popover` skips the adaptation when it is inside one.
+- **Test seam.** `.dom.test.tsx` may not assert class names, so danger styling is no longer asserted at the ConfirmDialog level.

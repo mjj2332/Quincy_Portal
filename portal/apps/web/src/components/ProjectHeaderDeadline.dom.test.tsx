@@ -438,12 +438,24 @@ describe("ProjectHeaderDeadline", () => {
     expect(apiPutMock).not.toHaveBeenCalled();
     expect(document.querySelector('[role="dialog"][aria-label="Deadline"]')).not.toBeNull();
 
-    // Dismiss the confirm by pressing its scrim. Modal's panel stops click propagation, but its
-    // scrim does not, so this click reaches Base UI as an outside press of the Deadline popover.
+    // Pressing the alert dialog's scrim is neither an answer nor an outside press: the confirm stays
+    // pending AND the popover stays open (#625: the AlertDialog portal is inert-marked, so
+    // `reui/popover` must exempt presses on it).
     await clickClear();
-    const scrim = document.querySelector<HTMLElement>('[data-testid="modal-scrim"]')!;
+    const scrim = document.querySelector<HTMLElement>('[data-testid="alert-dialog-scrim"]')!;
     await act(async () => { scrim.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 })); await Promise.resolve(); });
     await pressOutside(scrim);
+    await waitForConfirmClose();
+    expect(document.querySelector('[data-testid="confirm-modal"]')).not.toBeNull();
+    expect(apiPutMock).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="dialog"][aria-label="Deadline"]')).not.toBeNull();
+    await pressOutside(document.querySelector<HTMLButtonElement>('[data-testid="confirm-modal-cancel"]')!);
+    await waitForConfirmClose();
+    expect(document.querySelector('[data-testid="confirm-modal"]')).toBeNull();
+
+    // Escape on the confirm answers it alone: the popover stays open too.
+    await clickClear();
+    await act(async () => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
     await waitForConfirmClose();
     expect(document.querySelector('[data-testid="confirm-modal"]')).toBeNull();
     expect(apiPutMock).not.toHaveBeenCalled();

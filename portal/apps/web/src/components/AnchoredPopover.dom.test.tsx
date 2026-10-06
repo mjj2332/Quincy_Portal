@@ -5,7 +5,7 @@ import { AnchoredPopover, useAnchoredPopover } from "./AnchoredPopover";
 import { ConfirmModalHost } from "./ConfirmDialog";
 import { confirm, confirmStore } from "../lib/confirm";
 
-// The `[data-confirm-modal-root]` interlock (`AnchoredPopover.tsx`'s outside-close exemption,
+// The alert-dialog press exemption (`lib/alert-dialog-press.ts`, used by `AnchoredPopover.tsx`;
 // shipped by `f2d3700`) — a `confirm()` raised from *inside* an open popover must not dismiss
 // that popover when the confirm dialog itself is interacted with. TB8-02 §7.1 preserves this
 // verbatim; acceptance criterion 6 requires it asserted end-to-end, not just that the attribute
@@ -71,7 +71,7 @@ describe("AnchoredPopover — confirm-from-inside interlock (criterion 6)", () =
     await flush();
 
     // Interacting with the confirm dialog (a click inside it) must not count as "outside" the
-    // popover via `AnchoredPopover`'s `[data-confirm-modal-root]` exemption — the popover is
+    // popover via `AnchoredPopover`'s alert-dialog exemption — the popover is
     // still present after the confirm dialog resolves.
     expect([...document.querySelectorAll("button")].some((button) => button.textContent === popoverButtonText)).toBe(true);
   });

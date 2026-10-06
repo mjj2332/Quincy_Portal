@@ -11,7 +11,7 @@ async function flush() {
   await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 }
 
-// `Modal` delays its own unmount by 120ms (`--dur-fast`) after `open` goes false, so it can
+// The alert dialog delays its own unmount until its exit animation ends, so it can
 // animate closed (§6.0) — a closed dialog is still in the DOM until that transition completes.
 async function waitForClose() {
   await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 150)); });
@@ -47,8 +47,8 @@ describe("ConfirmModalHost", () => {
     expect(dialog).not.toBeNull();
     expect(document.querySelector('[data-testid="confirm-modal-cancel"]')).not.toBeNull();
     expect(document.querySelector('[data-testid="confirm-modal-confirm"]')).not.toBeNull();
-    expect(dialog?.getAttribute("role")).toBe("dialog");
-    expect(dialog?.getAttribute("aria-modal")).toBe("true");
+    // #625: the confirm is a standard alert dialog (it demands an answer), not a generic modal.
+    expect(dialog?.getAttribute("role")).toBe("alertdialog");
     // Resolve the IDREF rather than hopping through `h3`: the tag is not the contract, and a ReUI
     // DialogTitle swap could legitimately emit `h2`. Both halves are load-bearing — the text proves
     // the accessible name resolves to the rendered title, `contains` proves it resolves *inside*
@@ -60,10 +60,8 @@ describe("ConfirmModalHost", () => {
     expect(dialog?.textContent).toContain("This cannot be undone.");
     expect(document.querySelector('[data-testid="confirm-modal-cancel"]')?.textContent).toBe("Keep file");
     expect(document.querySelector('[data-testid="confirm-modal-confirm"]')?.textContent).toBe("Delete file");
-    // TB8-10B: `.button--danger` retired onto buttonClasses("danger") — assert the design-system
-    // contract (the destructive text-colour utility) rather than the legacy class name.
-    expect(document.querySelector('[data-testid="confirm-modal-confirm"]')?.className).toContain("text-destructive");
-    expect(document.querySelector("[data-confirm-modal-root]")).not.toBeNull();
+    // Danger styling is the shared Button's `destructive` variant; `.dom.test.tsx` may not assert
+    // class names (test-seam guard), so the treatment is covered by the Button's own tests.
     // §6.1 item 4 — aria-describedby now resolves to the message <p>'s id (a useId() value, not
     // a stable literal, so this asserts the property rather than an exact innerHTML string).
     const message = dialog?.querySelector('[data-testid="confirm-modal-message"]');
@@ -77,9 +75,14 @@ describe("ConfirmModalHost", () => {
     await mount();
     const pending = confirm({ title: "Move Deadline", message: "Review this move.", content: <div data-testid="rich-confirmation">Old → New</div> });
     await flush();
-    const body = document.querySelector<HTMLElement>('[data-testid="modal-body"]')!;
-    expect(body.querySelector('[data-testid="confirm-modal-message"]')?.textContent).toBe("Review this move.");
-    expect(body.querySelector('[data-testid="rich-confirmation"]')?.textContent).toBe("Old → New");
+    const dialog = document.querySelector<HTMLElement>('[data-testid="confirm-modal"]')!;
+    const message = dialog.querySelector('[data-testid="confirm-modal-message"]')!;
+    const rich = dialog.querySelector('[data-testid="rich-confirmation"]')!;
+    expect(message.textContent).toBe("Review this move.");
+    expect(rich.textContent).toBe("Old → New");
+    // `content` sits below the message and above the footer buttons.
+    expect(message.compareDocumentPosition(rich) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(rich.compareDocumentPosition(dialog.querySelector('[data-testid="confirm-modal-cancel"]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     confirmStore.resolve(false);
     expect(await pending).toBe(false);
   });
@@ -97,7 +100,7 @@ describe("ConfirmModalHost", () => {
     const confirmButton = document.querySelector<HTMLButtonElement>('[data-testid="confirm-modal-confirm"]')!;
     expect(cancel.textContent).toBe("Cancel");
     expect(confirmButton.textContent).toBe("Confirm");
-    expect(confirmButton.className).not.toContain("text-destructive");
+    // Alert-dialog behaviour: the safe action (Cancel) takes initial focus.
     expect(document.activeElement).toBe(cancel);
 
     // Real Tab/Shift-Tab wraparound is a browser-native focus-traversal behavior that jsdom does
@@ -113,7 +116,7 @@ describe("ConfirmModalHost", () => {
     expect(document.activeElement).toBe(trigger);
   });
 
-  it("resolves Cancel, Escape, and scrim close exactly once without closing on panel clicks", async () => {
+  it("resolves Cancel and Escape exactly once; a scrim press leaves the confirm pending", async () => {
     await mount();
     const panelPromise = confirm({ title: "Panel", message: "Clicking inside stays open." });
     await flush();
@@ -131,24 +134,44 @@ describe("ConfirmModalHost", () => {
 
     const escapePromise = confirm({ title: "Escape", message: "Escape cancels." });
     await flush();
-    const underlying = vi.fn();
-    document.addEventListener("keydown", underlying);
     const escapeTarget = document.querySelector<HTMLButtonElement>('[data-testid="confirm-modal-cancel"]')!;
-    escapeTarget.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
-    document.removeEventListener("keydown", underlying);
+    await act(async () => { escapeTarget.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
     expect(await escapePromise).toBe(false);
-    expect(underlying).not.toHaveBeenCalled();
+    await waitForClose();
 
-    const scrimPromise = confirm({ title: "Backdrop", message: "Backdrop cancels." });
+    // Standard alert-dialog behaviour, deliberately adopted (#625): pressing the scrim does NOT
+    // dismiss — the confirm demands an explicit answer.
+    let scrimSettled = false;
+    const scrimPromise = confirm({ title: "Backdrop", message: "Backdrop does not cancel." });
+    void scrimPromise.then(() => { scrimSettled = true; });
     await flush();
-    // Press-contained dismissal (defect F, §6.1 item 2): a pointerdown that started on the scrim
-    // itself, then a click also on the scrim — a bare click with no preceding pointerdown does
-    // not close it (that is exactly the fix: a press that began inside the panel and is released
-    // past its edge must not dismiss).
-    const scrim = document.querySelector<HTMLElement>('[data-testid="modal-scrim"]')!;
-    scrim.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
-    scrim.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    const scrim = document.querySelector<HTMLElement>('[data-testid="alert-dialog-scrim"]')!;
+    expect(scrim).not.toBeNull();
+    await act(async () => {
+      scrim.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
+      scrim.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+      await Promise.resolve();
+    });
+    await flush();
+    expect(scrimSettled).toBe(false);
+    expect(document.querySelector('[data-testid="confirm-modal"]')).not.toBeNull();
+    confirmStore.resolve(false);
     expect(await scrimPromise).toBe(false);
+  });
+
+  it("withdraws a pending confirm when its AbortSignal fires, and hands over to the next request", async () => {
+    await mount();
+    const controller = new AbortController();
+    const first = confirm({ title: "First", message: "First request", signal: controller.signal });
+    const second = confirm({ title: "Second", message: "Second request" });
+    await flush();
+    expect(document.querySelector('[data-testid="confirm-modal"]')?.textContent).toContain("First");
+    await act(async () => { controller.abort(); await Promise.resolve(); });
+    expect(await first).toBe(false);
+    await flush();
+    expect(document.querySelector('[data-testid="confirm-modal"]')?.textContent).toContain("Second");
+    confirmStore.resolve(true);
+    expect(await second).toBe(true);
   });
 
   it("shows concurrent requests FIFO without orphaning either promise", async () => {

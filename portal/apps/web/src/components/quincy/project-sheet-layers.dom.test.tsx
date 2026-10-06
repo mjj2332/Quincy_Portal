@@ -27,6 +27,16 @@ describe("hasOpenInnerLayer (#366)", () => {
     expect(hasOpenInnerLayer(popup, slot, document)).toBe(true);
   });
 
+  it("is true for an open alert dialog (the global confirm, #625), which sets no aria-modal", () => {
+    const { popup, slot } = fixture(`<div data-fixture="popup" role="dialog" aria-modal="true" data-open><div data-fixture="slot"></div></div><div role="alertdialog" data-open data-testid="confirm-modal"></div>`);
+    expect(hasOpenInnerLayer(popup, slot, document)).toBe(true);
+  });
+
+  it("is false for a closing alert dialog, which no longer carries data-open", () => {
+    const { popup, slot } = fixture(`<div data-fixture="popup" role="dialog" aria-modal="true" data-open><div data-fixture="slot"></div></div><div role="alertdialog" data-testid="confirm-modal"></div>`);
+    expect(hasOpenInnerLayer(popup, slot, document)).toBe(false);
+  });
+
   it("is false for a closing modal, which no longer carries data-open", () => {
     const { popup, slot } = fixture(`<div data-fixture="popup" role="dialog" aria-modal="true" data-open><div data-fixture="slot"></div></div><div role="dialog" aria-modal="true" data-testid="confirm-modal"></div>`);
     expect(hasOpenInnerLayer(popup, slot, document)).toBe(false);
