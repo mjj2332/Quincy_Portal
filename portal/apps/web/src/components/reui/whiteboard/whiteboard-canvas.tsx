@@ -73,6 +73,7 @@ import type {
 } from "@excalidraw/excalidraw/types"
 import { cn } from "@/lib/utils"
 import { createChangeTracker } from "@/lib/whiteboard-changes"
+import { withSelectionAnchor } from "@/lib/whiteboard-collaborators"
 import { adoptArrivedRevisions, interactingIds, mergeRemote } from "@/lib/whiteboard-merge"
 import { isMediaCandidate, pasteIsUnsupported, planSceneDrop, withoutForeignMedia, withoutUnsupported, type ServerHold } from "@/lib/whiteboard-saver"
 import { whiteboardMediaRef } from "@quincy/shared"
@@ -1109,7 +1110,8 @@ export function createController(
         collaborators: new Map(
           collaborators.map((person) => [
             toSocketId(person.id),
-            toCollaborator(person),
+            // QUINCY ADDITION #551: a selection with no cursor still carries its owner's name.
+            toCollaborator(withSelectionAnchor(person, api.getSceneElements())),
           ])
         ),
         captureUpdate: CaptureUpdateAction.NEVER,

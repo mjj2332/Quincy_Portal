@@ -317,6 +317,7 @@ describe("mode changes (#499)", () => {
     await act(async () => { handlers().onMode("view"); });
     expect(board.props!.readOnly).toBe(true);
     expect(document.querySelector('[data-testid="project-whiteboard-view-only"]')?.textContent).toBe("View only");
+    expect(document.querySelector('[data-testid="project-whiteboard-view-only-reason"]')?.textContent).toBe("This project is archived");
     board.scene = [el("late", 2)]; board.props!.onElements!(board.scene);
     await act(async () => { await board.props!.onSave!(); });
     expect(board.log).not.toContain("send");
@@ -345,6 +346,7 @@ describe("mode changes (#499)", () => {
     board.initMode = "view";
     await mount();
     expect(board.props!.readOnly).toBe(true);
+    expect(document.querySelector('[data-testid="project-whiteboard-view-only-reason"]')?.textContent).toBe("This project is archived");
   });
 });
 

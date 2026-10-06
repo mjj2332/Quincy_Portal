@@ -247,6 +247,9 @@ const CONTROL_SQUARE = "size-[var(--wb-control-size,2rem)]"
 const CONTROL_TOGGLE =
   "h-[var(--wb-control-size,2rem)] min-w-[var(--wb-control-size,2rem)]"
 
+const DISABLED_NO_FILL =
+  "disabled:bg-transparent disabled:aria-pressed:bg-transparent disabled:data-[state=on]:bg-transparent disabled:data-[pressed]:bg-transparent"
+
 function ToggleItem({
   value,
   label,
@@ -274,7 +277,8 @@ function ToggleItem({
             aria-label={label}
             aria-keyshortcuts={ariaShortcut(keys)}
             disabled={disabled}
-            className={cn("px-0", CONTROL_TOGGLE)}
+            // #551: a disabled toggle (View Only on a locked board) is colour only, never the pressed fill.
+            className={cn("px-0", CONTROL_TOGGLE, DISABLED_NO_FILL)}
           />
         }
       >
