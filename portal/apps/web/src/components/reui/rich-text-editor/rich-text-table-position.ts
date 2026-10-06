@@ -1,20 +1,15 @@
-// Quincy-owned positioning for the table bar (#535). Pure (no React, no Tiptap) so the boundary maths is
-// tested without a browser. The bar's flip and shift share ONE boundary rectangle, chosen per positioning pass
-// by `tableBubbleZone`: between the neighbouring blocks (and above the helper line), so the bar NEVER covers a
-// neighbouring block or the active row. There is no wide tier: when the bar fits neither above nor below the
-// row it takes the tighter side with a gap under 8px ("tight"), then the blocks' room ignoring the viewport
-// ("offscreen": partly scrolled out, never clamped onto the row), and with no room at all the tier is "none"
-// and the host shows the table controls in the formatting toolbar instead.
+// Quincy-owned positioning for the table bar (#535, #555). Pure (no React, no Tiptap) so the boundary maths is
+// tested without a browser. The bar DOCKS to the table's outer edge: just above the whole table, else just below
+// it, never over a cell. Its flip and shift share ONE boundary rectangle, chosen per positioning pass by
+// `tableBubbleZone`: the editor surface clipped to the visible viewport (below the sticky shell header). The
+// neighbouring blocks do not bound it: the bar may float over the paragraph above or below the table while a cell
+// is edited (owner decision 2026-10-06), but never leaves the surface, so the helper line stays visible. When
+// neither side fits the tier is "none" and the host shows the table controls in the formatting toolbar instead.
 // The bar's own height comes from floating-ui's state, never a constant.
 
-export const TABLE_BUBBLE_GAP = 8
+import { shellChromeBottom } from "@/lib/shell-chrome"
 
-/**
- * Tiptap 3.30.2 orders the middleware flip -> shift -> offset, so flip and shift judge the bar BEFORE the
- * 8px offset is applied. The floor therefore sits one gap above the helper, so that the bar's final
- * bottom edge (after the offset) is at most `helperTop - 8`.
- */
-export const TABLE_BUBBLE_FLOOR_INSET = TABLE_BUBBLE_GAP
+export const TABLE_BUBBLE_GAP = 8
 
 export interface BoundaryRect {
   x: number
@@ -35,17 +30,16 @@ interface RectLike {
 }
 
 /**
- * The ONE rect the bar anchors to and the zone is judged against: vertically the union of the row and the active
- * cell (a rowspan cell reaches past its row's rect), horizontally the cell. Anchoring to the cell while judging
- * the row let floating-ui and the zone disagree about which side fits.
+ * The ONE rect the bar anchors to and the zone is judged against (#555): vertically the whole TABLE, so the bar
+ * docks to the table's outer top or bottom edge and never covers any cell; horizontally the active cell's
+ * column, clamped to the table's visible width. Anchoring and judging one rect keeps floating-ui and the zone
+ * agreeing about which side fits.
  */
-export function tableBubbleAnchor(row: RectLike, cell: RectLike): RectLike {
-  return {
-    top: Math.min(row.top, cell.top),
-    bottom: Math.max(row.bottom, cell.bottom),
-    left: cell.left,
-    right: cell.right,
-  }
+export function tableBubbleAnchor(table: RectLike, cell: RectLike): RectLike {
+  const left = Math.min(Math.max(cell.left, table.left), table.right)
+  const right = Math.max(Math.min(cell.right, table.right), left)
+
+  return { top: table.top, bottom: table.bottom, left, right }
 }
 
 export interface VisualOffset {
@@ -54,23 +48,13 @@ export interface VisualOffset {
 }
 
 /**
- * The boundary rect: the editable surface, extended down to `floorBottom` when that is below the surface's
- * bottom. Never shrinks the surface. Fields are copied explicitly because DOMRect exposes getters on its
- * prototype, so a spread would lose them. `visualOffset` compensates floating-ui, which subtracts the
- * visualViewport offset from Rect boundaries (WebKit only) but not from an absolutely positioned anchor.
+ * The boundary rect floating-ui judges the bar against: the zone's edges plus the horizontal limits. Fields are
+ * copied explicitly because DOMRect exposes getters on its prototype, so a spread would lose them. `visualOffset`
+ * compensates floating-ui, which subtracts the visualViewport offset from Rect boundaries (WebKit only) but not
+ * from an absolutely positioned anchor.
  */
-export function tableBubbleBoundary(
-  surface: RectLike,
-  floorBottom: number | null,
-  visualOffset: VisualOffset = { x: 0, y: 0 }
-): BoundaryRect {
-  const top = surface.top
-  const left = surface.left
-  const right = surface.right
-  const bottom =
-    floorBottom !== null && Number.isFinite(floorBottom)
-      ? Math.max(surface.bottom, floorBottom)
-      : surface.bottom
+export function tableBubbleBoundary(surface: RectLike, visualOffset: VisualOffset = { x: 0, y: 0 }): BoundaryRect {
+  const { top, left, right, bottom } = surface
 
   return {
     x: left + visualOffset.x,
@@ -82,33 +66,6 @@ export function tableBubbleBoundary(
     right: right + visualOffset.x,
     bottom: bottom + visualOffset.y,
   }
-}
-
-interface FloorElement {
-  isConnected: boolean
-  getBoundingClientRect: () => RectLike & { width: number; height: number }
-}
-
-/**
- * The top edge of the first rendered element below the editor frame: pass the candidates in any order (the
- * character counter, the host's helper line) and the highest usable one wins. Absent, detached, hidden,
- * zero-size or non-finite candidates are skipped; null when none is usable, so the surface stays the boundary.
- */
-export function readFloorTop(...elements: Array<FloorElement | null | undefined>): number | null {
-  let floor: number | null = null
-
-  for (const element of elements) {
-    if (!element || !element.isConnected) continue
-
-    const rect = element.getBoundingClientRect()
-
-    if (![rect.top, rect.bottom, rect.width, rect.height].every(Number.isFinite)) continue
-    if (rect.width <= 0 || rect.height <= 0) continue
-
-    floor = floor === null ? rect.top : Math.min(floor, rect.top)
-  }
-
-  return floor
 }
 
 /** floating-ui subtracts the visualViewport offset from Rect boundaries on WebKit only. */
@@ -123,98 +80,59 @@ export function readVisualOffset(win: Window = window): VisualOffset {
 }
 
 export interface ZoneInput {
-  /** The WHOLE active row (every cell), not the cell: the bar must never cover the row it edits. */
+  /** The WHOLE table (`tableBubbleAnchor`): the no-go area. The bar docks above or below it, never over a cell. */
   row: RectLike
   /** The bar's real height, from floating-ui's `state.rects.floating.height`. */
   barHeight: number
-  /** The editable surface (`editor.view.dom`). */
+  /** The editable surface (`editor.view.dom`): the bar never leaves it. */
   surface: RectLike
-  /** Bottom of the block before the table, top of the block after it (null at the document's edges). */
-  prevBottom: number | null
-  nextTop: number | null
-  /** The raw top of the first element below the frame (counter, helper); one gap is taken off here. */
-  floorTop: number | null
-  /** Client-coordinate viewport edges. */
+  /** Client-coordinate visible edges: the viewport, with `top` already below the sticky shell header. */
   viewport: { top: number; bottom: number }
 }
 
 /**
- * - clean: the bar fits above or below the row with the full 8px gap, inside the viewport.
- * - tight: it fits on the roomier side with a gap under 8px (never under EPS of clearance).
- * - offscreen: the viewport cuts the room, but the blocks around the row allow it (bar partly scrolled out).
- * - none: no side fits anywhere; the host shows the controls in the toolbar.
+ * - clean: the bar fits above the table, else below it, with the full 8px gap, inside the surface and the visible
+ *   viewport. It may float over the paragraph above or below the table (owner decision, #555).
+ * - none: neither docked spot fits (or the tall table leaves both outside the viewport); the host shows the
+ *   controls in the toolbar group instead.
  */
-export type TableBubbleTier = "clean" | "tight" | "offscreen" | "none"
-
-/** Clearance kept between a tight bar and the block or row it nearly touches. */
-export const TABLE_BUBBLE_EPS = 0.5
+export type TableBubbleTier = "clean" | "none"
 
 export interface TableBubbleZone {
-  /** Boundary edges: the previous block's bottom (or the surface top) and the next block's top / the helper. */
+  /** Boundary edges: the visible top of the surface and its visible bottom. They ARE the final bar's limits. */
   top: number
   bottom: number
   tier: TableBubbleTier
-  /** The gap between the bar and the row: 8, or less in the tight tier. Both the offset and the padding. */
+  /** The gap between the bar and the table: always 8. Both the offset and the padding. */
   gap: number
-  /** The root boundary floating-ui intersects the rect with: the viewport, or the document for "offscreen". */
-  root: "viewport" | "document"
-}
-
-const finite = (value: number | null | undefined): value is number =>
-  value !== null && value !== undefined && Number.isFinite(value)
-
-/** One side's choice for rooms above and below the row: the full gap, else the roomier side tight, else null. */
-function pick(roomTop: number, roomBottom: number, barHeight: number): { side: "top" | "bottom"; gap: number } | null {
-  const full = barHeight + TABLE_BUBBLE_GAP
-
-  if (roomTop >= full) return { side: "top", gap: TABLE_BUBBLE_GAP }
-  if (roomBottom >= full) return { side: "bottom", gap: TABLE_BUBBLE_GAP }
-
-  const room = Math.max(roomTop, roomBottom)
-
-  if (room - barHeight < TABLE_BUBBLE_EPS) return null
-
-  return { side: roomTop >= roomBottom ? "top" : "bottom", gap: room - barHeight - TABLE_BUBBLE_EPS }
+  /** The side the bar docks to; null when the tier is none. */
+  side: "top" | "bottom" | null
 }
 
 /**
  * The vertical limits of the bar's FINAL position (flip/shift padding and the offset are the same gap, so the
  * boundary's edges are the bar's own). Decided from fresh geometry on every pass, so the answer never depends
- * on which placement floating-ui is currently trying. The fit tests use the un-offset rects; the
- * visualViewport offset is added to the rect afterwards.
+ * on which placement floating-ui is currently trying. Room above = table top minus the higher of the surface top
+ * and the visible viewport top; room below = the lower of the surface bottom and the viewport bottom minus the
+ * table bottom. Neighbouring blocks do not bound it. The fit tests use the un-offset rects; the visualViewport
+ * offset is added to the rect afterwards.
  */
-export function tableBubbleZone({
-  row,
-  barHeight,
-  surface,
-  prevBottom,
-  nextTop,
-  floorTop,
-  viewport,
-}: ZoneInput): TableBubbleZone {
-  const floorWide = finite(floorTop) ? Math.max(surface.bottom, floorTop - TABLE_BUBBLE_FLOOR_INSET) : surface.bottom
-  const ceil = finite(prevBottom) ? Math.max(surface.top, prevBottom) : surface.top
-  const floor = finite(nextTop) ? Math.min(floorWide, nextTop) : floorWide
-  const zone = { top: ceil, bottom: floor }
+export function tableBubbleZone({ row, barHeight, surface, viewport }: ZoneInput): TableBubbleZone {
+  const top = Math.max(surface.top, viewport.top)
+  const bottom = Math.min(surface.bottom, viewport.bottom)
+  const zone = { top, bottom, gap: TABLE_BUBBLE_GAP }
 
   // An unmeasured bar (hidden, not laid out yet) cannot be judged: keep the bar rather than flicker the toolbar.
-  if (!(barHeight > 0)) return { ...zone, tier: "clean", gap: TABLE_BUBBLE_GAP, root: "viewport" }
+  if (!(barHeight > 0)) return { ...zone, tier: "clean", side: "top" }
 
-  const visible = pick(
-    row.top - Math.max(ceil, viewport.top),
-    Math.min(floor, viewport.bottom) - row.bottom,
-    barHeight
-  )
+  const full = barHeight + TABLE_BUBBLE_GAP
 
-  if (visible) {
-    return { ...zone, tier: visible.gap === TABLE_BUBBLE_GAP ? "clean" : "tight", gap: visible.gap, root: "viewport" }
-  }
+  // A docked bar must also land inside [top, bottom]: a table wholly scrolled below the visible area has "room
+  // above" that is really off the bottom edge, and one wholly above it has "room below" off the top edge.
+  if (row.top - top >= full && row.top - TABLE_BUBBLE_GAP <= bottom) return { ...zone, tier: "clean", side: "top" }
+  if (bottom - row.bottom >= full && row.bottom + TABLE_BUBBLE_GAP >= top) return { ...zone, tier: "clean", side: "bottom" }
 
-  const blocks = pick(row.top - ceil, floor - row.bottom, barHeight)
-
-  return blocks
-    ? { ...zone, tier: "offscreen", gap: blocks.gap, root: "document" }
-    : { ...zone, tier: "none", gap: TABLE_BUBBLE_GAP, root: "viewport" }
+  return { ...zone, tier: "none", side: null }
 }
 
 /** The state floating-ui hands a derivable middleware option; only the bar's height is read. */
@@ -225,36 +143,24 @@ interface FloatingState {
 export interface TableBubbleOptionsInput {
   /** The editable surface (`editor.view.dom`). */
   surface: () => RectLike
-  /** The helper line's top edge, or null to keep the surface as the boundary. */
-  floorTop: () => number | null
-  /** The blocks beside the table, re-read on every positioning pass. */
-  neighbours: () => { prevBottom: number | null; nextTop: number | null }
-  /** The whole active row. */
+  /** The whole table's rect (the anchor). */
   row: () => RectLike
-  /** Client-coordinate viewport edges; defaults to the document's client height. */
+  /** Client-coordinate visible edges (top below the sticky shell header); defaults to the document's client height. */
   viewport?: () => { top: number; bottom: number }
   visualOffset?: () => VisualOffset
   /** Fired when the tier CHANGES (not on every pass): "none" asks the host to show the toolbar group instead. */
   onTier?: (tier: TableBubbleTier) => void
 }
 
-const documentViewport = () => ({ top: 0, bottom: document.documentElement.clientHeight })
+const documentViewport = () => ({ top: shellChromeBottom(), bottom: document.documentElement.clientHeight })
 
 /**
  * BubbleMenu `options` for the table bar. offset, flip and shift take derivable options, so the zone is rebuilt
  * on every positioning pass from fresh rects and the bar's real height (no scroll offsets: all rects are
  * client coordinates). The same `gap` feeds the offset and the flip/shift padding, so the side flip judges is the
- * side the bar lands on, and a side that does not fit is never clamped onto the row.
+ * side the bar lands on, and a side that does not fit is never clamped onto the table.
  */
-export function tableBubbleOptions({
-  surface,
-  floorTop,
-  neighbours,
-  row,
-  viewport = documentViewport,
-  visualOffset,
-  onTier,
-}: TableBubbleOptionsInput) {
+export function tableBubbleOptions({ surface, row, viewport = documentViewport, visualOffset, onTier }: TableBubbleOptionsInput) {
   let lastTier: TableBubbleTier | null = null
 
   const zone = (state: FloatingState) => {
@@ -263,8 +169,6 @@ export function tableBubbleOptions({
       row: row(),
       barHeight: state.rects.floating.height,
       surface: surfaceRect,
-      ...neighbours(),
-      floorTop: floorTop(),
       viewport: viewport(),
     })
 
@@ -276,14 +180,13 @@ export function tableBubbleOptions({
     // Zone edges are already the limits; `tableBubbleBoundary` only adds the visual offset and the rect fields.
     const boundary = tableBubbleBoundary(
       { top: result.top, bottom: result.bottom, left: surfaceRect.left, right: surfaceRect.right },
-      null,
       visualOffset?.()
     )
 
     return {
       boundary,
       gap: result.gap,
-      rootBoundary: result.root,
+      rootBoundary: "viewport" as const,
       padding: { top: result.gap, bottom: result.gap, left: TABLE_BUBBLE_GAP, right: TABLE_BUBBLE_GAP },
     }
   }
@@ -306,7 +209,7 @@ export function tableBubbleOptions({
       const { boundary, rootBoundary, padding } = zone(state)
 
       // Horizontal only: flip already chose a side that fits, and a vertical shift would move the bar off its gap
-      // (its far-side padding would nudge a bar that is already clear) or, on a side that does not fit, onto the row.
+      // (its far-side padding would nudge a bar that is already clear) or, on a side that does not fit, onto the table.
       return { boundary, rootBoundary, padding, crossAxis: false }
     },
   }

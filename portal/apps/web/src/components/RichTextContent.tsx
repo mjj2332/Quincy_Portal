@@ -45,7 +45,7 @@ function block(node: RichTextBlock | RichTextListItem | RichTextTaskItem | RichT
     return <Heading key={key} className={alignClass(node.attrs.textAlign)}>{(node.content ?? []).map(inline)}</Heading>;
   }
   if (node.type === "image") return <EmbeddedImage key={key} mediaId={node.attrs.mediaId} alt={node.attrs.alt} />;
-  if (node.type === "video") return <EmbeddedVideo key={`video-${node.attrs.mediaId}`} mediaId={node.attrs.mediaId} />;
+  if (node.type === "video") return <EmbeddedVideo key={`video-${node.attrs.mediaId}`} mediaId={node.attrs.mediaId} hasPoster={node.attrs.hasPoster} />;
   if (node.type === "linkPreview") return <LinkPreviewCard key={`link-preview-${node.attrs.previewId}`} attrs={node.attrs} />;
   if (node.type === "table") {
     const columns = Math.max(...node.content.map((row) => row.content.reduce((sum, cell) => sum + (cell.attrs?.colspan ?? 1), 0)));
