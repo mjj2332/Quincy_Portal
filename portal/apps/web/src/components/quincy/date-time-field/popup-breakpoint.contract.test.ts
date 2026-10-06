@@ -55,8 +55,8 @@ describe("date popup stacking breakpoint (#602)", () => {
  * Source-text contract; happy-dom resolves no layout. The chrome allowance must cover the gutters, frame/scrollbar and panel padding (66px).
  */
 describe("calendar cells fit the stacked popup (#636)", () => {
-  const rule = /max-\[721px\]:\[--cell-size:min\(--spacing\(11\),calc\(\(100vw-([\d.]+)rem\)\/7\)\)\]/.exec(read("CalendarPane.tsx"));
-  const chromePx = rule ? Number(rule[1]) * 16 : NaN;
+  const rule = /max-\[721px\]:\[--cell-size:min\(--spacing\(11\),calc\(\(100vw-2\*var\(--space-4\)-([\d.]+)rem\)\/7\)\)\]/.exec(read("CalendarPane.tsx"));
+  const chromePx = rule ? 32 + Number(rule[1]) * 16 : NaN; // 2*var(--space-4) = 32px, the popup width's gutters
   const cell = (viewport: number) => Math.min(44, (viewport - chromePx) / 7);
   // 32px gutters + 10px popup-to-body (frame, scrollbar) + 24px panel padding (measured at 360 in the #636 browser pass).
   const POPUP_CHROME_PX = 32 + 10 + 24;
