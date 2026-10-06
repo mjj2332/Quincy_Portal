@@ -44,7 +44,7 @@ function EmbeddedImageEditorView({ node, editor, selected, updateAttributes }: N
   const mediaId = String(node.attrs.mediaId ?? "");
   const alt = typeof node.attrs.alt === "string" ? node.attrs.alt : "";
   return <NodeViewWrapper className="rich-text__embedded-image-node" contentEditable={false}>
-    <img src={embeddedMediaUrl(mediaId)} alt={alt || "Embedded image"} data-media-id={mediaId} className="rich-text__embedded-image" />
+    <img src={embeddedMediaUrl(mediaId)} alt={alt || "Embedded image"} data-media-id={mediaId} data-drag-handle="" className="rich-text__embedded-image" />
     {(selected || open) && editable && <div className="absolute bottom-[var(--space-2)] left-[var(--space-2)]">
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger render={<Button type="button" variant="secondary" size="xs" data-testid="embedded-image-alt-button" className="pointer-coarse:h-11 max-[721px]:h-11" />}>Alt text</PopoverTrigger>

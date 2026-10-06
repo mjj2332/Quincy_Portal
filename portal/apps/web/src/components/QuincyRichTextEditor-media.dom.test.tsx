@@ -115,6 +115,19 @@ describe("inserting an image", () => {
     expect(host.querySelector(`img[data-media-id="${A}"]`)?.getAttribute("alt")).toBe("Embedded image");
   });
 
+  it("lets an image be dragged by itself: the image is the drag handle, the Alt text control is not, and the node stays draggable (#553)", async () => {
+    const host = mount(<Harness initial={withImages(A)} />); await settle();
+    const editor = (host.querySelector('[contenteditable="true"]') as unknown as { editor: Editor }).editor;
+    expect(editor.schema.nodes.image!.spec.draggable).toBe(true);
+    const image = host.querySelector<HTMLElement>(`img[data-media-id="${A}"]`)!;
+    expect(image.hasAttribute("data-drag-handle")).toBe(true);
+    let imagePos = -1; editor.state.doc.descendants((node, pos) => { if (node.type.name === "image") imagePos = pos; });
+    await act(async () => { editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, imagePos))); }); await settle();
+    const button = host.querySelector<HTMLElement>('[data-testid="embedded-image-alt-button"]')!;
+    expect(button.hasAttribute("data-drag-handle")).toBe(false);
+    expect(button.closest("[data-drag-handle]")).toBeNull();
+  });
+
   it("edits the alt text from a control on the selected image, and the node carries the new text (#553)", async () => {
     const host = mount(<Harness initial={{ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Hi" }] }, { type: "image", attrs: { mediaId: A, alt: "IMG 1234" } }] }} />);
     const editor = (host.querySelector('[contenteditable="true"]') as unknown as { editor: Editor }).editor;
@@ -271,7 +284,7 @@ describe("design review fixes (#493)", () => {
   });
 
   it("outlines the selected image with a hairline accent, not the heavy focus ring", () => {
-    const selected = rule(".rich-text__editor-content .rich-text__embedded-image-node.ProseMirror-selectednode > img.rich-text__embedded-image");
+    const selected = rule(".rich-text__editor-content .ProseMirror-selectednode .rich-text__embedded-image-node > img.rich-text__embedded-image");
     expect(selected).toContain("var(--border-width-hair)"); expect(selected).not.toContain("--ring"); expect(selected).not.toContain("--border-width-bold");
   });
 
@@ -333,6 +346,18 @@ describe("design review fixes (#493)", () => {
     expect(classes(dialog)).toContain("w-fit"); expect(classes(dialog)).not.toContain("w-full");
     const image = dialog.querySelector("img")!;
     expect(classes(image)).toEqual(expect.arrayContaining(["w-auto", "max-w-full", "h-auto", "max-h-[90dvh]"])); expect(classes(image)).not.toContain("w-full");
+  });
+
+  it("keeps a 48px close target even for a tiny image: the dialog has a token minimum in both dimensions and centres the image (#553)", async () => {
+    const host = mount(<RichTextContent content={withImages(A)} />);
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="embedded-image"]')!.click(); });
+    await settle();
+    const dialog = document.querySelector<HTMLElement>('[data-testid="embedded-image-dialog"]')!;
+    const classes = dialog.getAttribute("class")!.split(/\s+/);
+    expect(classes).toEqual(expect.arrayContaining(["min-w-[var(--space-7)]", "min-h-[var(--space-7)]", "place-items-center"]));
+    const close = dialog.querySelector<HTMLElement>('[data-testid="embedded-image-close"]')!;
+    expect(close.className).toContain("size-[var(--space-7)]");
+    expect(dialog.querySelector("img")!.className).not.toMatch(/min-w|min-h|(^|\s)w-full/);
   });
 
   it("makes the close button the drawn 48px chip, with the dialog's radius and a hairline ring on the scrim (#553)", async () => {

@@ -23,7 +23,7 @@ export function EmbeddedImage({ mediaId, alt }: { mediaId: string; alt?: string 
         <img src={src} alt={label} loading="lazy" decoding="async" onError={() => setFailed(true)} className="rich-text__embedded-image" />
       </DialogTrigger>
       {/* The review Lightbox's language: an inverse (dark) stage, the image edge to edge, and the close button on a scrim chip only as large as the button, so a light image never hides it and the photo is not darkened. */}
-      <DialogContent data-surface="inverse" data-testid="embedded-image-dialog" showCloseButton={false} className="max-h-[90dvh] w-fit max-w-[calc(100%-2rem)] gap-0 overflow-hidden bg-background p-0 text-foreground ring-0 sm:max-w-[min(90vw,64rem)]">
+      <DialogContent data-surface="inverse" data-testid="embedded-image-dialog" showCloseButton={false} className="place-items-center max-h-[90dvh] min-h-[var(--space-7)] w-fit min-w-[var(--space-7)] max-w-[calc(100%-2rem)] gap-0 overflow-hidden bg-background p-0 text-foreground ring-0 sm:max-w-[min(90vw,64rem)]">
         <DialogTitle className="sr-only">{label}</DialogTitle>
         <DialogDescription className="sr-only">The image as posted.</DialogDescription>
         {/* Never upscaled: the dialog fits the image (w-fit) and the image is capped at its natural size, so a small photo is not stretched soft. */}
