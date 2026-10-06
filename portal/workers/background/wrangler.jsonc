@@ -75,6 +75,8 @@
     "APP_ORIGIN": "https://quincy.flamingfire.my",
     // CLOUDFLARE_ZONE_ID and CLOUDFLARE_CACHE_PURGE_TOKEN are background-only secrets;
     // provision them with `wrangler secret put`, never as committed vars.
+    // #549: observe first (counts and logs `wouldReclaim`, writes nothing). Flip to "reclaim" after one 16-day shard rotation of clean logs.
+    "EMBEDDED_MEDIA_ORPHAN_SWEEP": "observe",
     "RENDITIONS_ENABLED": true,
     "DROPBOX_RAW_AUTOMATION_ENABLED": "1",
     "DROPBOX_AUTOHDR_AUTOMATION_ENABLED": "1",
