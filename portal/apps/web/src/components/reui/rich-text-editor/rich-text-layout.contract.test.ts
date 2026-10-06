@@ -101,7 +101,7 @@ describe("rich-text editor layout contracts", () => {
   it("keeps the outline focus ring inside the scroller (no clipping)", () => {
     const source = read("rich-text-outline.tsx");
     expect(source).not.toContain("overflow-y-auto p-0.5");
-    expect(source).toContain("focus-visible:outline-offset-[-2px]");
+    expect(source).toContain("outline-offset-[-2px] focus-visible:!outline-offset-[-2px]");
   });
 
   it("gives the heading trigger a fixed width so its label never shifts the toolbar", () => {

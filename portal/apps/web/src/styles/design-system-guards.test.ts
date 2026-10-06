@@ -1002,6 +1002,74 @@ describe("guard: outline width and offset rest values match the focus ring (#552
   });
 });
 
+/**
+ * #552, the other half. `tokens/base.css` rests every element at `outline-offset: 2px`. A control
+ * whose focus ring is INSET (`-outline-offset-2`, `outline-offset-[-2px]`, `-outline-offset-4`, `0`)
+ * and only sets that offset in its focus state would animate 2px -> -2px under `transition-all`,
+ * the very slide the rest default removed. So every state-only offset that is not +2px must have its
+ * counterpart at rest, in the same file and with the same spelling and the same non-state variants
+ * (`max-[721px]:`, `after:`): `X focus-visible:!X`.
+ *
+ * Narrower than it could be: it checks "some token in this file", not "the same element", and it
+ * knows the three state variants this repo uses (`focus-visible:`, `has-[…:focus-visible]:`,
+ * `data-keyboard-focus:` / `data-drop-into:`).
+ *
+ * It also requires `!` on a bare `focus-visible:<offset>` that is NOT on a pseudo-element: the global
+ * `:focus-visible` shorthand is unlayered and resets the offset, so without `!` the override never
+ * applies (data-grid-column-header and rich-text-outline carried such dead overrides until #552).
+ */
+const STATE_VARIANT = /has-\[(?:[^\[\]]|\[[^\]]*\])*focus-visible\]:|(?<![\w-])(?:focus-visible|data-keyboard-focus|data-drop-into):/g;
+
+export function insetOffsetProblems(source: string): string[] {
+  const tokens = stripComments(source).split(/[\s"'`]+/).filter((token) => token.includes("outline-offset-"));
+  const has = new Set(tokens);
+  const problems: string[] = [];
+  for (const token of tokens) {
+    if (!/focus-visible|data-keyboard-focus|data-drop-into/.test(token)) continue;
+    const value = /(-?)outline-offset-(\[[^\]]+\]|\d+)$/.exec(token.replace("!", ""));
+    if (!value) continue;
+    if (value[1] === "" && (value[2] === "2" || value[2] === "[2px]")) continue; // equals the rest value
+    const rest = token.replace(STATE_VARIANT, "").replace("!", "");
+    if (!has.has(rest)) problems.push(`${token} has no at-rest \`${rest}\``);
+    const onElementItself = /(?:^|:)focus-visible:(?!after:|before:)[^:]*$/.test(token) && !token.includes("has-[");
+    if (onElementItself && !token.includes("!")) problems.push(`${token} is not \`!\`-prefixed: the unlayered :focus-visible shorthand beats it`);
+  }
+  return problems;
+}
+
+describe("guard: an inset focus-ring offset is also set at rest (#552)", () => {
+  it("every state-only outline-offset that is not +2px has its at-rest twin", () => {
+    const offenders = sourceFiles().flatMap((file) =>
+      insetOffsetProblems(readFileSync(file, "utf8")).map((problem) => `  ${rel(file)}: ${problem}`));
+    expect(offenders, [
+      "A focus/state-only `outline-offset` that differs from the +2px rest value animates under",
+      "`transition-all`. Add the same utility, un-prefixed, beside it, e.g.",
+      "`outline-offset-[-2px] focus-visible:!outline-offset-[-2px]`.",
+      ...offenders,
+    ].join("\n")).toEqual([]);
+  });
+
+  it("proves the matcher on planted fixtures", () => {
+    expect(insetOffsetProblems("focus-visible:!outline-offset-[-2px]")).toHaveLength(1);
+    expect(insetOffsetProblems("outline-offset-[-2px] focus-visible:!outline-offset-[-2px]")).toEqual([]);
+    expect(insetOffsetProblems("focus-visible:!-outline-offset-4")).toHaveLength(1);
+    expect(insetOffsetProblems("-outline-offset-4 focus-visible:!-outline-offset-4")).toEqual([]);
+    // +2 equals the rest value
+    expect(insetOffsetProblems("focus-visible:!outline-offset-2 focus-visible:outline-offset-2")).toEqual([]);
+    // other variants must match
+    expect(insetOffsetProblems("max-[721px]:focus-visible:!-outline-offset-2")).toHaveLength(1);
+    expect(insetOffsetProblems("max-[721px]:-outline-offset-2 max-[721px]:focus-visible:!-outline-offset-2")).toEqual([]);
+    expect(insetOffsetProblems("focus-visible:after:-outline-offset-2")).toHaveLength(1);
+    expect(insetOffsetProblems("after:-outline-offset-2 focus-visible:after:-outline-offset-2")).toEqual([]);
+    expect(insetOffsetProblems("has-[[data-x]:focus-visible]:outline-offset-[-2px]")).toHaveLength(1);
+    expect(insetOffsetProblems("outline-offset-[-2px] has-[[data-x]:focus-visible]:outline-offset-[-2px]")).toEqual([]);
+    expect(insetOffsetProblems("data-keyboard-focus:-outline-offset-2")).toHaveLength(1);
+    // a bare, non-! focus-visible override is dead
+    expect(insetOffsetProblems("outline-offset-[-2px] focus-visible:outline-offset-[-2px]")).toHaveLength(1);
+    expect(insetOffsetProblems("outline-offset-[-2px] focus-visible:!outline-offset-[-2px]")).toEqual([]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Guard — no unlayered element-type selector in styles/ (#569)
 // ---------------------------------------------------------------------------

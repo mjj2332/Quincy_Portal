@@ -75,7 +75,7 @@ export type NotificationScale = keyof typeof SCALE;
 
 const ROW_FOCUS_RING =
   'has-[[data-notification-title]:focus-visible]:outline ' +
-  'has-[[data-notification-title]:focus-visible]:outline-[length:var(--border-width-bold)] ' +
+  'outline-offset-[-2px] has-[[data-notification-title]:focus-visible]:outline-[length:var(--border-width-bold)] ' +
   'has-[[data-notification-title]:focus-visible]:outline-solid ' +
   'has-[[data-notification-title]:focus-visible]:outline-ring ' +
   'has-[[data-notification-title]:focus-visible]:outline-offset-[-2px]';
@@ -111,7 +111,7 @@ const DISMISS = cn(
   "[font:var(--weight-regular)_var(--text-md)/1_var(--font-mono)] leading-none hover:!text-foreground hover:bg-secondary",
   /* 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token */
   "outline-none focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)]",
-  "focus-visible:!outline-solid focus-visible:!outline-ring focus-visible:!outline-offset-[-2px]",
+  "outline-offset-[-2px] focus-visible:!outline-solid focus-visible:!outline-ring focus-visible:!outline-offset-[-2px]",
 );
 
 // Sydney absolute date-time for the row's `<time title>` — a fuller rendering than the relative

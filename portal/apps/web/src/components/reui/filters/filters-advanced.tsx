@@ -309,7 +309,7 @@ const GROUP_CARD_CLASS = cn(
   // slot by STYLE and not size: dashed is not there yet, solid exists.
   "data-drop-into:bg-muted/60",
   "data-drop-into:outline-1 data-drop-into:outline-solid",
-  "data-drop-into:outline-border data-drop-into:-outline-offset-2"
+  "data-drop-into:outline-border -outline-offset-2 data-drop-into:-outline-offset-2"
 )
 
 /** THE CONTAINER a row measures its own room against, on the panel body and on

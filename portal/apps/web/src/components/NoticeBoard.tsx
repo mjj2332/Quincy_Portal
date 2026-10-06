@@ -35,7 +35,7 @@ const MENTION_HINT = cn(META_TEXT, "!normal-case", "flex-[1_1_12rem] min-w-0");
 // 2px stroke) would reach past it onto the divider; draw that ring inside the box there instead.
 const TRIGGER_OVERHANG =
   "-my-[calc((28px_-_1.2*var(--text-xs))/2)] max-[721px]:-my-[calc((44px_-_1.2*var(--text-xs))/2)] " +
-  "max-[721px]:focus-visible:!-outline-offset-2";
+  "max-[721px]:-outline-offset-2 max-[721px]:focus-visible:!-outline-offset-2";
 
 const EMPTY_DOC: RichTextDoc = { type: "doc", content: [{ type: "paragraph" }] };
 type NoticeBoardMutation = "create" | "edit" | "delete";

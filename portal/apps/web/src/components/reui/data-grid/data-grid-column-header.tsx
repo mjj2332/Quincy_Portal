@@ -19,7 +19,7 @@
  * removed from the header and unpin buttons so they take the Quincy Button's own radius.
  *
  * Quincy addition (#431 review D8): the sort button gets an inset focus outline
- * (`focus-visible:outline-offset-[-2px]`), because the scroll area and header cell clip an outset ring.
+ * (`outline-offset-[-2px] focus-visible:!outline-offset-[-2px]`: at rest too, and `!` to beat the unlayered ring), because the scroll area and header cell clip an outset ring.
  */
 import { memo, useMemo } from "react"
 import type { HTMLAttributes, ReactNode } from "react"
@@ -153,7 +153,7 @@ function DataGridColumnHeaderInner<TData extends object, TValue>({
   )
 
   const headerButtonClassName = cn(
-    "text-foreground-secondary hover:bg-secondary data-[state=open]:bg-secondary hover:text-foreground data-[state=open]:text-foreground px-2 font-normal h-6 focus-visible:outline-offset-[-2px]",
+    "text-foreground-secondary hover:bg-secondary data-[state=open]:bg-secondary hover:text-foreground data-[state=open]:text-foreground px-2 font-normal h-6 outline-offset-[-2px] focus-visible:!outline-offset-[-2px]",
     className
   )
 

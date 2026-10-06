@@ -55,7 +55,7 @@ const CHECK_TILE =
   "transition-[background-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] " +
   "hover:bg-secondary has-[:checked]:bg-surface-sunken " +
   "has-[:focus-visible]:outline-[length:var(--border-width-bold)] has-[:focus-visible]:outline-solid " +
-  "has-[:focus-visible]:outline-ring has-[:focus-visible]:-outline-offset-2 " +
+  "has-[:focus-visible]:outline-ring -outline-offset-2 has-[:focus-visible]:-outline-offset-2 " +
   "has-[:disabled]:cursor-default has-[:disabled]:text-foreground-secondary " +
   "has-[:disabled]:bg-surface-sunken has-[:disabled]:hover:bg-surface-sunken";
 
