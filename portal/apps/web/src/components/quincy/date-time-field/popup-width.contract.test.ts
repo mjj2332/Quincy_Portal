@@ -12,9 +12,9 @@ import { POPUP_STACKED_QUERY } from "@/lib/date-time-field";
 const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../DateTimeField.tsx"), "utf8");
 
 describe("stacked date popup width (#630)", () => {
-  it("fills the viewport between the --space-4 gutters at the stacked breakpoint", () => {
+  it("fills the viewport between the --space-4 gutters at the stacked breakpoint, capped at 24rem so a 720px window does not stretch the day cells", () => {
     expect(POPUP_STACKED_QUERY).toBe("(width < 721px)");
-    expect(source).toContain("max-[721px]:w-[calc(100vw-2*var(--space-4))]");
+    expect(source).toContain("max-[721px]:w-[min(calc(100vw-2*var(--space-4)),24rem)]");
   });
   it("keeps the desktop width content-sized", () => {
     expect(source).toMatch(/cn\("w-auto max-w-\[calc\(100vw-2\*var\(--space-4\)\)\]/);

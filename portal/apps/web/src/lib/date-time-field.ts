@@ -173,8 +173,9 @@ export type FadeItem = EdgeRect & { required?: boolean; /** Wins over the other 
  * cleared together the optional ones give way: the solve retries with the required items alone, and if those conflict too, with the `priority` item (the focused control) alone.
  *
  * #630 — `snaps` are scroll positions (body offsets) the caller would rather land on: the top of each preset row, so
- * the popup never opens with the Today/Tomorrow row cut in half. When one lies inside the valid window, the nearest to
- * `scrollTop` wins (0 when it is valid, so a day that fits under the presets opens at the top); when none does, the fade
+ * the popup never opens with the Today/Tomorrow row cut in half. When one lies inside the valid window, the SMALLEST
+ * wins, never the nearest to `scrollTop` (0 when it is valid, so a day that fits under the presets opens at the top, and a
+ * body a resize left further down comes back); when none does, the fade
  * guarantee still wins and the plain nearest-valid position is returned.
  */
 export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, items, snaps }: { viewport: EdgeRect; scrollTop: number; maxScrollTop: number; fade: number; items: readonly FadeItem[]; snaps?: readonly number[] }): number {
@@ -206,7 +207,7 @@ export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, 
   const whole = { low: Math.ceil(range.low - 1e-9), high: Math.floor(range.high + 1e-9) };
   const safe = whole.low <= whole.high ? whole : range;
   const landing = (snaps ?? []).filter((snap) => snap >= safe.low && snap <= safe.high);
-  if (landing.length > 0) return landing.reduce((best, snap) => (Math.abs(snap - scrollTop) < Math.abs(best - scrollTop) ? snap : best));
+  if (landing.length > 0) return Math.min(...landing);
   return Math.min(Math.max(scrollTop, safe.low), safe.high);
 }
 

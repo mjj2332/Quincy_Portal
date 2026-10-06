@@ -31,7 +31,7 @@ const FADE = 24;
 const TILE = 36;
 const BODY = { top: 100, height: 400, scrollHeight: 900 };
 
-function layout(dayTop: number) {
+function layout(dayTop: number, slotTop?: number) {
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
     let box = { top: 0, height: 0 };
     const viewport = this.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
@@ -42,6 +42,7 @@ function layout(dayTop: number) {
     else if (group && this.tagName === "BUTTON") box = { top: BODY.top + 8 + Math.floor([...group.querySelectorAll("button")].indexOf(this as HTMLButtonElement) / 2) * 56 - scroll, height: 52 };
     else if (this.getAttribute("aria-label") === "Date shortcuts") box = { top: BODY.top + 8 - scroll, height: 112 };
     else if (this.previousElementSibling?.getAttribute("aria-label") === "Date shortcuts") box = { top: BODY.top + 8 + 112 + 16 - scroll, height: 300 };
+    else if (viewport && slotTop !== undefined && this.closest('[role="group"][aria-label="Time slots"]') && this.tagName === "BUTTON" && this.getAttribute("aria-pressed") === "true") box = { top: BODY.top + slotTop - (viewport!.parentElement!.closest<HTMLElement>('[data-slot="scroll-area-viewport"]')?.scrollTop ?? 0), height: 36 };
     else if (viewport && this.closest('[role="gridcell"]')) box = { top: BODY.top + dayTop - scroll, height: TILE };
     return { ...box, bottom: box.top + box.height, left: 0, right: 0, width: 0, x: 0, y: box.top, toJSON() {} } as DOMRect;
   });
@@ -49,9 +50,9 @@ function layout(dayTop: number) {
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(() => BODY.height);
 }
 
-async function open(value: string | null) {
+async function open(value: string | null, variant: "date" | "date-time" = "date") {
   await act(async () => {
-    root.render(<DateTimeField variant="date" id="field" label="Picker" value={value} onApply={vi.fn()} />);
+    root.render(variant === "date" ? <DateTimeField variant="date" id="field" label="Picker" value={value} onApply={vi.fn()} /> : <DateTimeField variant="date-time" id="field" label="Picker" value={value ? { localCivil: `${value}T09:00`, fold: 0 } : null} onApply={vi.fn()} />);
     await Promise.resolve();
   });
   await act(async () => { host.querySelector<HTMLButtonElement>("button#field")!.click(); await Promise.resolve(); await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
@@ -76,5 +77,12 @@ describe("PopupFrame opens on a whole preset row (#630)", () => {
     // Selected day is still clear of the bottom fade.
     const bottom = BODY.top + 372 + TILE - body.scrollTop;
     expect(bottom).toBeLessThanOrEqual(BODY.top + BODY.height - Math.min(FADE, BODY.scrollHeight - BODY.height - body.scrollTop));
+  });
+
+  it("does not scroll past the presets to reveal the pressed time slot: a day that fits at 0 opens at 0", async () => {
+    // The 09:00 slot sits inside the bottom fade band at 0 (rect 465..501 against 476..500); the presets win at open.
+    layout(300, 365);
+    const body = await open("2026-10-14", "date-time");
+    expect(body.scrollTop).toBe(0);
   });
 });
