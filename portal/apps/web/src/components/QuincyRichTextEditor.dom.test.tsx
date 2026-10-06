@@ -1803,6 +1803,29 @@ describe("table bar with no room falls back to the toolbar group (#535)", () => 
       expect(firstRowCells()).toBe(2);
     });
 
+    it("focus on the Table trigger is not stranded when the viewport shrinks to a phone: the editor takes it (Sol r1)", async () => {
+      let phone = false;
+      const listeners = new Set<() => void>();
+      vi.stubGlobal("matchMedia", (query: string) => ({
+        media: query,
+        get matches() { return query === RICH_TEXT_PHONE_QUERY ? phone : false; },
+        addEventListener: (_t: string, l: () => void) => { if (query === RICH_TEXT_PHONE_QUERY) listeners.add(l); },
+        removeEventListener: (_t: string, l: () => void) => { listeners.delete(l); },
+        addListener: () => {}, removeListener: () => {},
+      }) as unknown as MediaQueryList);
+      const host = mount(); const editor = await renderDoc(host, oneRow());
+      await caretIn(editor, "Mon");
+      await waitForCondition(() => menuTrigger(host) !== null, "Table menu");
+      await keydown(editor, "F10", { altKey: true });
+      expect(document.activeElement).toBe(menuTrigger(host));
+      phone = true;
+      await act(async () => { listeners.forEach((l) => l()); await Promise.resolve(); await Promise.resolve(); });
+      await waitForCondition(() => menuTrigger(host) === null, "Table menu unmounted");
+      await act(async () => { await new Promise((resolve) => requestAnimationFrame(() => resolve(null))); });
+      expect(document.activeElement).not.toBe(document.body);
+      expect(document.activeElement === editor || editor.contains(document.activeElement)).toBe(true);
+    });
+
     it("Delete Table opens the confirmation dialog", async () => {
       const host = mount(); const editor = await renderDoc(host, oneRow());
       await caretIn(editor, "Mon");

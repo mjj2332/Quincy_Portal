@@ -66,7 +66,7 @@ describe("rich-text editor layout contracts", () => {
     const source = readFileSync(new URL("../../QuincyRichTextEditor.tsx", import.meta.url), "utf8");
     expect(source).toContain("useMediaQuery(RICH_TEXT_PHONE_QUERY)");
     expect(source).toMatch(/!phone && <RichTextTableBubble/);
-    expect(source).toMatch(/const tableInToolbar = phone \|\| tableTier === "none"/);
+    expect(source).toMatch(/const presentation = phone \? "tools" : tableTier === "none" \? "menu" : "bubble"/);
     // #595: only the phone leads the toolbar with the group; on a desktop the Insert-table slot becomes the Table menu.
     expect(source).toMatch(/phone && state\.inTable && <RichTextTableTools/);
     expect(source).not.toMatch(/tableInToolbar && state\.inTable && <RichTextTableTools/);

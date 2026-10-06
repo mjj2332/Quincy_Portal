@@ -289,12 +289,13 @@ export function QuincyRichTextEditor({
   const phone = useMediaQuery(RICH_TEXT_PHONE_QUERY);
   const [reportedTier, setTableTier] = useState<TableBubbleTier | null>(null);
   const tableTier = state.inTable ? reportedTier : null;
-  const tableInToolbar = phone || tableTier === "none";
-  const toolbarRef = useRef(tableInToolbar);
+  // Which presentation holds the table controls: the floating bar, the desktop Table menu, or the phone's leading group.
+  const presentation = phone ? "tools" : tableTier === "none" ? "menu" : "bubble";
+  const toolbarRef = useRef(presentation);
   const refocusRef = useRef(false);
   // The presentation holding focus is about to stop being usable: note it while the DOM still shows it (render runs before commit).
-  if (toolbarRef.current !== tableInToolbar) {
-    toolbarRef.current = tableInToolbar;
+  if (toolbarRef.current !== presentation) {
+    toolbarRef.current = presentation;
     // Only focus inside THIS editor's own toolbar group or bar counts: another mounted editor must not claim it.
     const active = document.activeElement;
     const own = active?.closest('[data-testid="rich-text-table-tools"], [data-testid="rich-text-table-menu"]') != null && wrapperRef.current?.contains(active) === true
@@ -305,7 +306,7 @@ export function QuincyRichTextEditor({
     if (!refocusRef.current) return;
     refocusRef.current = false;
     if (editorRef.current && !editorRef.current.isDestroyed) editorRef.current.commands.focus();
-  }, [tableInToolbar]);
+  }, [presentation]);
   // Leaving the table forgets the tier; the bar's options are rebuilt on entering, so it is reported afresh.
   useEffect(() => { if (!state.inTable) setTableTier(null); }, [state.inTable]);
   // The derived outline rail (document preset only; `null` keeps the composer's selector idle).
