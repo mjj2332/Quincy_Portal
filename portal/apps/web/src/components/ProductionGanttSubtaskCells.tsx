@@ -59,6 +59,28 @@ export type ScheduleConflictStash = Pick<ScheduleEditorState, "validationError" 
 };
 
 /**
+ * Is this Subtask really gone? The ONE answer (#585) shared by the prune effect and both automatic-close effects, built from the
+ * CURRENT settled query data only (never the accepted baseline the chart draws, which trails it by a commit). Gone means the query
+ * is settled and successful, and either the Project is present with a child list that is fully walked for the current revision and
+ * lacks the id, or the Project is absent from the loaded pages with no later page. Anything else (a pending, held or failed query, a
+ * walk still running or superseded, a Project that may sit on an unloaded page) is "not confirmed": dismiss, never discard.
+ */
+export function isRowConfirmedRemoved(input: {
+  settled: boolean;
+  hasNextPage: boolean;
+  /** The Project in the current data (query rows overlaid with the live child walk), or undefined if it is not in the loaded pages. */
+  project: { children: { truncated: boolean; rows: readonly { id: string }[] } } | undefined;
+  /** False while the child walk in state belongs to an older page one (its seed signature differs from the current embedded one). */
+  walkIsCurrent: boolean;
+  subtaskId: string;
+}): boolean {
+  if (!input.settled) return false;
+  if (!input.project) return !input.hasNextPage;
+  if (input.project.children.truncated || !input.walkIsCurrent) return false;
+  return !input.project.children.rows.some((row) => row.id === input.subtaskId);
+}
+
+/**
  * The notice a reopened picker shows for a dismissed conflict. The row is the live one (a refetch or a conflict body may have
  * moved it past the 409), so the schedule named is the row's own. A stashed latest item is rebuilt from that row (title, Done,
  * assignees, schedule, reminders): none of those but the schedule carries a version, so the stash's copy could be stale in a

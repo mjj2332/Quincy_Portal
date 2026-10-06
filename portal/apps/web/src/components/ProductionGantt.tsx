@@ -232,7 +232,7 @@ import { useMediaQuery } from "../lib/use-media-query";
 import { ProductionEventCalendarDialogs } from "./ProductionEventCalendarDialogs";
 import { ProductionGanttScheduleEditorPopover } from "./ProductionGanttScheduleEditorPopover";
 import { GanttDeadlineCell, GanttTeamCell } from "./ProductionGanttProjectCells";
-import { GanttSubtaskDueCell, scheduleErrorFromEditor, scheduleErrorFromStash, stopRowGesture, type ScheduleConflictStash } from "./ProductionGanttSubtaskCells";
+import { GanttSubtaskDueCell, isRowConfirmedRemoved, scheduleErrorFromEditor, scheduleErrorFromStash, stopRowGesture, type ScheduleConflictStash } from "./ProductionGanttSubtaskCells";
 import { ProjectCalendarAnchor } from "./ProjectCalendarAnchor";
 import { focusLanding } from "../lib/landing-focus";
 import { type ProductionGanttDeadlineConfirmState } from "./ProductionGanttDeadlineDialog";
@@ -1108,6 +1108,13 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     [projects, liveChildState],
   );
 
+  const embeddedChildSignatureByProjectId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const project of projects) map.set(project.id, computeEmbeddedChildSignature(project.children));
+    return map;
+  }, [projects]);
+  const effectiveProjectById = useMemo(() => new Map(effectiveProjects.map((project) => [project.id, project])), [effectiveProjects]);
+
   // ---------------------------------------------------------------------------------------------
   // #221 — writes. See this file's header ("#221 — writes").
   // ---------------------------------------------------------------------------------------------
@@ -1350,21 +1357,20 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     }
     cancelScheduleEditor();
   }, [scheduleEditor, cancelScheduleEditor, generationKey]);
-  // A row that left the data takes its stash and draft with it, even with no editor open (an archived then restored Project must not
-  // revive an old draft). Only settled, successful data speaks: a pending, held or failed query keeps everything. Rows are loaded by
-  // Project (page one embedded, the rest walked per Project) and Projects by page, so absence counts only when the Subtask's Project
-  // is loaded in full and lacks it, or the Project itself is gone from the loaded pages and no later Project page exists.
+  // "Is this row really gone?", answered from the CURRENT settled query data only (see `isRowConfirmedRemoved`).
   const settledData = query.isSuccess && !query.isFetching;
   const hasMoreProjectPages = query.hasNextPage === true;
+  const rowConfirmedRemoved = useCallback((subtaskId: string, projectId: string) => {
+    const project = effectiveProjectById.get(projectId);
+    const state = project ? liveChildState[projectId] : undefined;
+    return isRowConfirmedRemoved({ settled: settledData, hasNextPage: hasMoreProjectPages, project, walkIsCurrent: !state || state.seedSignature === embeddedChildSignatureByProjectId.get(projectId), subtaskId });
+  }, [settledData, hasMoreProjectPages, effectiveProjectById, liveChildState, embeddedChildSignatureByProjectId]);
+  // A row that left the data takes its stash and draft with it, even with no editor open (an archived then restored Project must not
+  // revive an old draft). Rows load by Project (page one embedded, the rest walked per Project) and Projects by page, so only a
+  // confirmed removal prunes; a pending, held or failed query, a restarted walk or an unloaded page keeps everything.
   useEffect(() => {
-    if (!settledData || conflictStash.size === 0) return;
-    const projectsById = new Map(displayProjects.map((project) => [project.id, project]));
-    const gone: string[] = [];
-    for (const [id, stash] of conflictStash) {
-      const project = projectsById.get(stash.projectId);
-      const removed = project ? project.children.nextCursor === null && !project.children.rows.some((row) => row.id === id) : !hasMoreProjectPages;
-      if (removed) gone.push(id);
-    }
+    if (conflictStash.size === 0) return;
+    const gone = [...conflictStash].filter(([id, stash]) => rowConfirmedRemoved(id, stash.projectId)).map(([id]) => id);
     if (!gone.length) return;
     for (const id of gone) retainedSchedules.current.delete(id);
     setConflictStash((current) => {
@@ -1372,7 +1378,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
       for (const id of gone) next.delete(id);
       return next;
     });
-  }, [settledData, hasMoreProjectPages, conflictStash, displayProjects]);
+  }, [conflictStash, rowConfirmedRemoved]);
   // The notice for a Subtask's picker: the editor's own error first (a fresh 409), else the stash (a reopened session has no validationError).
   const stashErrorFor = useCallback((row: GanttChecklistRowDto) => {
     const stash = conflictStash.get(row.id);
@@ -1386,9 +1392,12 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   useEffect(() => {
     if (!dueEditorSubtaskId) return;
     if (narrowTree || chartReplaced) dismissScheduleEditor();
-    // The row left the data: a true discard, nothing to reopen on.
-    else if (!dueEditorRowVisible) { clearScheduleStash(dueEditorSubtaskId); commands.cancelScheduleEditor(); }
-  }, [dueEditorSubtaskId, narrowTree, chartReplaced, dueEditorRowVisible, dismissScheduleEditor, clearScheduleStash, commands]);
+    // The row left the drawn rows: a true discard only once the current data CONFIRMS the removal; a walk still restarting is a dismissal.
+    else if (!dueEditorRowVisible) {
+      if (dueEditor && rowConfirmedRemoved(dueEditorSubtaskId, dueEditor.source.project.id)) { clearScheduleStash(dueEditorSubtaskId); commands.cancelScheduleEditor(); }
+      else dismissScheduleEditor();
+    }
+  }, [dueEditorSubtaskId, dueEditor, narrowTree, chartReplaced, dueEditorRowVisible, dismissScheduleEditor, clearScheduleStash, rowConfirmedRemoved, commands]);
   const openDueEditor = useCallback((cell: GanttAssigneeCell) => {
     const project = projectById.get(cell.projectId);
     const source = project ? ganttChecklistSource(project, cell.row) : null;
@@ -1448,11 +1457,6 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // — recomputed only when the query's own data actually changes (a real fetch/refetch landing), not
   // on every intermediate childState write a chain's own page-by-page merge makes. Cheap either way
   // (bounded by one page's worth of rows per project), but this keeps it off the render path entirely.
-  const embeddedChildSignatureByProjectId = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const project of projects) map.set(project.id, computeEmbeddedChildSignature(project.children));
-    return map;
-  }, [projects]);
 
   // fix-220-sol1 #3 / fix-220-sol1b: eagerly walk each INCLUDED truncated project's remaining child
   // pages (S7 — the tree defaults every group expanded, so "wait for an expand event" would miss a
@@ -1949,9 +1953,12 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     if (!itemEditorSubtaskId) return;
     // An automatic close is a dismissal (a failed refetch replaces the chart for a while): a conflicted draft and notice are stashed (#585).
     if (chartReplaced) dismissScheduleEditor();
-    // The row left the data: a true discard, nothing to reopen on.
-    else if (!itemEditorRowPresent) { clearScheduleStash(itemEditorSubtaskId); commands.cancelScheduleEditor(); }
-  }, [itemEditorSubtaskId, chartReplaced, itemEditorRowPresent, commands, dismissScheduleEditor, clearScheduleStash]);
+    // The row left the drawn rows: a true discard only once the current data CONFIRMS the removal; a walk still restarting is a dismissal.
+    else if (!itemEditorRowPresent) {
+      if (itemEditor && rowConfirmedRemoved(itemEditorSubtaskId, itemEditor.source.project.id)) { clearScheduleStash(itemEditorSubtaskId); commands.cancelScheduleEditor(); }
+      else dismissScheduleEditor();
+    }
+  }, [itemEditorSubtaskId, itemEditor, chartReplaced, itemEditorRowPresent, commands, dismissScheduleEditor, clearScheduleStash, rowConfirmedRemoved]);
   const itemEditorLookup = (subtaskId: string) => {
     const target = findTaskTarget(subtaskId);
     return target ? { row: target.row, street: target.project.street, projectDefault: projectDefaultById.get(target.project.id) ?? null } : null;
@@ -2081,7 +2088,6 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // render late, and until then `effectiveProjects` still shows the old walk's "complete" rows.
   // Judged on the DRAWN project (`displayProjects`), which must also have caught up with the current
   // one: the accepted baseline is cloned a render after the data changes.
-  const effectiveProjectById = useMemo(() => new Map(effectiveProjects.map((project) => [project.id, project])), [effectiveProjects]);
   const isChildListAuthoritative = useCallback((drawn: GanttProjectRowDto) => {
     const project = effectiveProjectById.get(drawn.id);
     if (!project || project.children.truncated || drawn.children.truncated) return false;

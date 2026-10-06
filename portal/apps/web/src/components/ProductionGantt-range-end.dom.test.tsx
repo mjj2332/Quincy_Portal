@@ -116,6 +116,8 @@ let getGate: Promise<void> | null;
 let getFails: boolean;
 /** #585: the Project is archived by someone else: the gantt response carries no Project. */
 let projectGone = false;
+/** #585: holds a continuation page's request (the Project's child walk). */
+let childGate: Promise<void> | null = null;
 
 function scheduleFromInput(input: ScheduleInput, version: number): ChecklistScheduleDto {
   const endpoint = (value: ScheduleInput["end"]) => (value ? timedEndpoint(value.localCivil, value.disambiguation) : null);
@@ -275,6 +277,7 @@ beforeEach(() => {
   getGate = null;
   getFails = false;
   projectGone = false;
+  childGate = null;
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -288,6 +291,7 @@ beforeEach(() => {
     requests.push({ method, url, body });
     const json = (reply: Reply) => new Response(JSON.stringify(reply.body), { status: reply.status, headers: { "content-type": "application/json" } });
     if (method === "GET" && url.startsWith("/api/production-gantt") && url.includes("childrenOf=")) {
+      if (childGate) await childGate;
       const total = rows.length + pageTwo.length;
       return json({ status: 200, body: { projectId: PROJECT_ID, children: { rows: pageTwo.map(childRow), total, returned: pageTwo.length, truncated: false, nextCursor: null } } });
     }
@@ -734,6 +738,32 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     await waitFor(() => expect(dueTrigger(RANGE_TITLE)).not.toBeNull());
     await openDue(RANGE_TITLE);
     await expectDraftAndReapply(3);
+  });
+
+  it("R13o a continuation-page task's 409 whose refetch restarts the child walk: the task vanishing while the walk is pending is a dismissal, so the notice and draft return with it", async () => {
+    pageTwo = [{ id: PAGE_TWO_ID, title: PAGE_TWO_TITLE, position: 2, canOpenScheduleEditor: true, schedule: range(1, startMoment(sydneyDay(2)), endMoment(sydneyDay(4))) }];
+    await render();
+    await waitFor(() => expect(dueTrigger(PAGE_TWO_TITLE)).not.toBeNull());
+    await openDue(PAGE_TWO_TITLE);
+    await pickPopupDay(picker(PAGE_TWO_TITLE)!, sydneyDay(6));
+    const winner = range(3, startMoment(sydneyDay(2)), endMoment(sydneyDay(9)));
+    // The 409's settle refetch brings a changed page one (a new child revision), so the walk restarts, and the walk's request is held.
+    patchReply = () => { pageTwo[0]!.schedule = winner; rows[0]!.schedule = range(5, startMoment(sydneyDay(1)), endMoment(sydneyDay(8))); return { status: 409, body: { error: "conflict", code: "subtask_schedule_version_conflict", current: winner } }; };
+    const gate = deferred<void>();
+    childGate = gate.promise;
+    await applyPopup(picker(PAGE_TWO_TITLE)!);
+    await flush(10);
+    patchReply = null;
+    // The task is out of the drawn rows while the walk is pending; the picker closes without a Cancel.
+    await waitFor(() => expect(picker(PAGE_TWO_TITLE)).toBeNull());
+    expect(dueTrigger(PAGE_TWO_TITLE)).toBeNull();
+    childGate = null;
+    await act(async () => { gate.resolve(); await Promise.resolve(); });
+    await flush(10);
+    await waitFor(() => expect(dueTrigger(PAGE_TWO_TITLE)).not.toBeNull());
+    await openDue(PAGE_TWO_TITLE);
+    expect(picker(PAGE_TWO_TITLE)!.textContent).toContain("Latest schedule · v3");
+    expect(endText(PAGE_TWO_TITLE)).toBe(rangeMoment(sydneyDay(6), "17:00"));
   });
 
   it("R13i editing another Subtask between the dismiss and the reopen keeps the first Subtask's stash", async () => {
