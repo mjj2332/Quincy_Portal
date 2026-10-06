@@ -33,13 +33,15 @@ export type ProductionGanttScheduleEditorPopoverProps = {
   /** The bar's element now (`findBar("task:<id>")`), or null while it is not drawn. */
   findBar: (key: string) => HTMLElement | null;
   retainedFor: (subtaskId: string) => RetainedSchedule;
+  /** True while the chart is not live (a write settling, the gate held) and this picker holds no session: as the Due cell's `!(live || owner)`, it keeps the retained draft through a pending Apply so a 409 or fold error reopens on it. */
+  busy: boolean;
   onSubmit: (schedule: RangeChecklistScheduleInput, reminderOffsetsMinutes?: number[]) => void;
   onCancel: () => void;
 };
 
 const EMPTY_RECT = { x: 0, y: 0, top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0, toJSON: () => ({}) } as DOMRect;
 
-export function ProductionGanttScheduleEditorPopover({ editor, subtaskId, lookup, findBar, retainedFor, onSubmit, onCancel }: ProductionGanttScheduleEditorPopoverProps) {
+export function ProductionGanttScheduleEditorPopover({ editor, subtaskId, lookup, findBar, retainedFor, busy, onSubmit, onCancel }: ProductionGanttScheduleEditorPopoverProps) {
   const close = useSchedulePickerClose({ onSubmit, onCancel });
   // What the popover last showed, kept so its exit animation has content after the session (and its row) is gone.
   const shownRef = useRef<Shown | null>(null);
@@ -79,7 +81,7 @@ export function ProductionGanttScheduleEditorPopover({ editor, subtaskId, lookup
       value={row.schedule}
       open={editor !== null}
       setOpen={(next) => { if (!next) close.closed(); }}
-      busy={false}
+      busy={busy}
       error={editor ? scheduleErrorFromEditor(editor) : undefined}
       retained={retainedFor(row.id)}
       onSave={close.onSave}

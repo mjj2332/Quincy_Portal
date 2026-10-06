@@ -2175,7 +2175,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
       <div className="sr-only" data-testid="production-gantt-live-region" aria-live="polite" aria-atomic="true">{commands.announcement}</div>
       <ProductionEventCalendarDialogs commands={commands} deadlineConfirm={deadlineConfirm} scheduleEditorPresentation="inline" projectDefaultFor={(projectId) => projectDefaultById.get(projectId) ?? null} />
       {itemMenu.menu}
-      <ProductionGanttScheduleEditorPopover editor={itemEditor} subtaskId={itemEditorSubtaskId} lookup={itemEditorLookup} findBar={findBar} retainedFor={retainedScheduleFor} onSubmit={commands.submitScheduleEditor} onCancel={commands.cancelScheduleEditor} />
+      <ProductionGanttScheduleEditorPopover editor={itemEditor} subtaskId={itemEditorSubtaskId} lookup={itemEditorLookup} findBar={findBar} retainedFor={retainedScheduleFor} busy={!itemEditor && !live} onSubmit={commands.submitScheduleEditor} onCancel={commands.cancelScheduleEditor} />
     </div>
   );
 }
