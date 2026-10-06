@@ -26,8 +26,8 @@ export type RichTextTableRow = { type: "tableRow"; content: RichTextTableCell[] 
 export type RichTextTable = { type: "table"; content: RichTextTableRow[] };
 /** An image placed in a post (#493). It names stored media by id and never carries a URL or bytes. */
 export type RichTextImage = { type: "image"; attrs: { mediaId: string; alt?: string } };
-/** A video placed in a post (#494). Like an image it names stored media by id and never carries a URL or bytes. */
-export type RichTextVideo = { type: "video"; attrs: { mediaId: string } };
+/** A video placed in a post (#494). Like an image it names stored media by id and never carries a URL or bytes. `hasPoster` (#556) is served-only: the server fills it from the media record so a posterless video never requests `/poster`; it is never stored, and absent means "unknown" (the older behaviour: ask for the poster). */
+export type RichTextVideo = { type: "video"; attrs: { mediaId: string; hasPoster?: boolean } };
 export type RichTextMediaNode = RichTextImage | RichTextVideo;
 /**
  * The card a post shows for a link (#497). A stored post names a preview by id alone, and the server fills the rest in when it
@@ -263,8 +263,10 @@ function parseBlock(value: unknown, depth: number, profile: RichTextProfile, ite
     if (!profile.allowMedia || !profile.allowVideo || depth > 0 || itemKind || insideListItem) throw new RichTextValidationError("Unsupported rich-text node");
     onlyKeys(node, ["type", "attrs"], "Video");
     const attrs = record(node.attrs, "Video attributes");
-    onlyKeys(attrs, ["mediaId"], "Video attributes");
+    onlyKeys(attrs, ["mediaId", "hasPoster"], "Video attributes");
     if (typeof attrs.mediaId !== "string" || !UUID.test(attrs.mediaId)) throw new RichTextValidationError("Video media id must be a UUID");
+    if (attrs.hasPoster !== undefined && typeof attrs.hasPoster !== "boolean") throw new RichTextValidationError("Video poster flag must be a boolean");
+    // A served document carries `hasPoster`. It is never stored: the server fills it in from the media record.
     return { type: "video", attrs: { mediaId: attrs.mediaId } };
   }
   if (node.type === "linkPreview") {
