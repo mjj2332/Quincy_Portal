@@ -980,7 +980,8 @@ describe("permanent delete from the edit form (#374, E4)", () => {
       await act(async () => { setInputValue(sheet()!.querySelector<HTMLInputElement>("#project-delete-confirmation")!, "1 Active Street"); await Promise.resolve(); });
       const del = [...sheet()!.querySelectorAll("button")].find((b) => b.textContent === "Delete project permanently")!;
       await click(del);
-      await act(async () => { confirmStore.resolve(true); await Promise.resolve(); await Promise.resolve(); });
+      // #604: Delete permanently confirms in the AlertDialog (ConfirmDeleteDialog), not lib/confirm.
+      await click(document.querySelector<HTMLElement>('[data-testid="project-delete-confirm-action"]')!);
       await settle();
       expect(fetchMock).toHaveBeenCalledWith(`/api/projects/${PROJECT_ID}`, expect.objectContaining({ method: "DELETE" }));
       expect(go).toHaveBeenCalledWith(-2);

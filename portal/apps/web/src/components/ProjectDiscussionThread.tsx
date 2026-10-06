@@ -21,7 +21,7 @@ import { useProjectCommentDraft } from "../lib/project-comment-drafts";
 import { RichTextContent } from "./RichTextContent";
 import { QuincyRichTextEditor } from "./QuincyRichTextEditor";
 import type { MentionableUser } from "./MentionAutocomplete";
-import { NoticeDeleteDialog } from "./NoticeDeleteDialog";
+import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
 import { cn } from "../lib/utils";
 import { useNow } from "../lib/use-now";
 import { META_TEXT } from "./quincy/Eyebrow";
@@ -413,7 +413,7 @@ export function ProjectDiscussionThread({
       />) : <EmptyState size="compact" title="No comments yet." />}</div>
       {commentsQuery.hasNextPage && <Button variant="secondary" className="justify-self-start" type="button" disabled={commentsQuery.isFetchingNextPage} onClick={() => void commentsQuery.fetchNextPage()}>{commentsQuery.isFetchingNextPage ? "Loading…" : "Load older comments"}</Button>}
     </>}
-    <NoticeDeleteDialog open={deleteTarget !== null} excerpt={deleteTarget?.excerpt ?? ""} deleting={deleting} error={deleteError} onConfirm={() => void confirmDelete()} onCancel={() => setDeleteTarget(null)} finalFocus={deleteFinalFocus} testIdPrefix="comment-delete" copy={COMMENT_DELETE_COPY} />
+    <ConfirmDeleteDialog open={deleteTarget !== null} excerpt={deleteTarget?.excerpt ?? ""} deleting={deleting} error={deleteError} onConfirm={() => void confirmDelete()} onCancel={() => setDeleteTarget(null)} finalFocus={deleteFinalFocus} testIdPrefix="comment-delete" copy={COMMENT_DELETE_COPY} />
   </>;
 
   if (children) return <>{children({ content: contentMarkup, project, scrollRootRef: presentation.scrollRootRef })}</>;
