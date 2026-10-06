@@ -169,23 +169,24 @@ describe("table bar placement (floating-ui computePosition)", () => {
     expect(result.barTop).toBeGreaterThanOrEqual(500);
   });
 
-  it("with the helper line as the floor drops below the cell, 8px clear of it and of the helper", async () => {
-    const helperTop = 693;
-    const result = await place(helperTop);
+  it("with no block below the table the helper is not the floor: the bar drops below the cell but ends inside the frame (#555)", async () => {
+    const helperTop = 740;
+    const roomySurface = rect(500, 700); // 700 - 620.75 = 79.25 >= 62 below the cell
+    const result = await place(helperTop, cell, roomySurface);
     expect(result.placement).toBe("bottom-start");
     expect(result.barTop).toBe(620.75 + TABLE_BUBBLE_GAP);
-    expect(result.barBottom).toBeLessThanOrEqual(helperTop - TABLE_BUBBLE_GAP);
+    expect(result.barBottom).toBeLessThanOrEqual(roomySurface.bottom);
   });
 
-  it("when the full 8px gap would end within 8px of the helper, drops below TIGHT (gap < 8) and still clears the helper", async () => {
-    // cell bottom 624; the floor is helperTop - 8 = 685. Above: 553.75 - 500 = 53.75 (< 54). Below: 685 - 624 = 61 (< 62).
+  it("when the full 8px gap would end past the frame's bottom, drops below TIGHT (gap < 8) and still ends inside the frame", async () => {
+    // cell bottom 624; the frame ends at 685. Above: 553.75 - 500 = 53.75 (< 54). Below: 685 - 624 = 61 (< 62).
     // The roomier side is below, with 61 - 54 - 0.5 = 6.5px of gap: the bar ends at 684.5.
     const lowCell = { x: 20, y: 553.75, width: 300, height: 70.25 };
-    const result = await place(693, lowCell);
+    const result = await place(693, lowCell, rect(500, 685));
     expect(result.placement).toBe("bottom-start");
     expect(result.barTop - 624).toBeCloseTo(6.5, 5);
     expect(result.barTop - 624).toBeLessThan(TABLE_BUBBLE_GAP);
-    expect(result.barBottom).toBeLessThanOrEqual(693 - TABLE_BUBBLE_GAP);
+    expect(result.barBottom).toBeLessThanOrEqual(685);
   });
 
   it("reports tier none when neither side fits (no clamping onto the row; the host shows the toolbar group)", async () => {
@@ -209,12 +210,11 @@ describe("table bar placement (floating-ui computePosition)", () => {
       expect(result.placement).not.toBe("bottom-start");
     });
 
-    it("desktop: the helper is 28px under the frame, so the bar drops below the caret row and clears the helper", async () => {
+    it("desktop (#555): the helper is 28px under the frame, but with no block below the bar stays inside the frame (tight above), not down toward the helper", async () => {
       const helperTop = FRAME_BOTTOM + 28; // 643.8
       const result = await place(helperTop, liveCell, liveSurface, LIVE_BAR);
-      expect(result.placement).toBe("bottom-start");
-      expect(result.barTop).toBeCloseTo(572.3 + TABLE_BUBBLE_GAP, 5);
-      expect(result.barBottom).toBeLessThanOrEqual(helperTop - TABLE_BUBBLE_GAP);
+      expect(result.placement).toBe("top-start");
+      expect(result.barBottom).toBeLessThanOrEqual(liveSurface.bottom);
     });
 
     it("desktop with the counter showing: the floor is the counter's top, so the same bar does not drop onto it", async () => {
@@ -227,9 +227,10 @@ describe("table bar placement (floating-ui computePosition)", () => {
       expect(floorTop).toBe(counterTop);
       const result = await place(floorTop, liveCell, liveSurface, LIVE_BAR);
       expect(result.placement).toBe("top-start");
-      // The helper alone (the old floor) would have dropped it over the counter.
-      const old = await place(helperTop, liveCell, liveSurface, LIVE_BAR);
-      expect(old.barBottom).toBeGreaterThan(counterTop - TABLE_BUBBLE_GAP);
+      expect(result.barBottom).toBeLessThanOrEqual(liveSurface.bottom);
+      // The helper alone gives the same placement: with no block below, the frame is the floor either way.
+      const alone = await place(helperTop, liveCell, liveSurface, LIVE_BAR);
+      expect(alone.barBottom).toBeLessThanOrEqual(liveSurface.bottom);
     });
   });
 });
@@ -282,9 +283,14 @@ describe("tableBubbleZone", () => {
     expect(tableBubbleZone({ ...base, row: rect(560, 600), barHeight: 38, nextTop: 900 }).bottom).toBe(700);
   });
 
-  it("extends the wide floor to one gap above the helper, as the previous rule did", () => {
-    const zone = tableBubbleZone({ ...base, row: rect(420, 460), barHeight: 60, floorTop: 760 });
+  it("with a block below that starts past the frame, the floor reaches one gap above the helper", () => {
+    const zone = tableBubbleZone({ ...base, row: rect(420, 460), barHeight: 60, nextTop: 900, floorTop: 760 });
     expect(zone.bottom).toBe(760 - G);
+  });
+
+  it("with NO block below, the floor is the surface's bottom even when the helper is far below (#555)", () => {
+    const zone = tableBubbleZone({ ...base, row: rect(420, 460), barHeight: 60, floorTop: 760 });
+    expect(zone.bottom).toBe(700);
   });
 
   it("counts a viewport that cuts above the row as 'does not fit above'", () => {
@@ -531,8 +537,9 @@ describe("table bar zone placement (floating-ui computePosition)", () => {
                 expect(overlap(result, row), `row ${label}`).toBe(0);
                 expect(result.top, `surface top ${label}`).toBeGreaterThanOrEqual(SURFACE.top);
                 expect(result.bottom, `helper ${label}`).toBeLessThanOrEqual(FLOOR_TOP - G);
+                if (!next) expect(result.bottom, `frame ${label}`).toBeLessThanOrEqual(SURFACE.bottom); // #555
                 const ceil = prev ? Math.max(SURFACE.top, prev.bottom) : SURFACE.top;
-                const floor = Math.min(Math.max(SURFACE.bottom, FLOOR_TOP - G), next ? next.top : Infinity);
+                const floor = next ? Math.min(Math.max(SURFACE.bottom, FLOOR_TOP - G), next.top) : SURFACE.bottom;
                 const fits8 = (top: number, bottom: number) => row.top - top >= barHeight + G || bottom - row.bottom >= barHeight + G;
                 const visibleRoom = Math.max(row.top - Math.max(ceil, 0), Math.min(floor, viewportBottom) - row.bottom);
                 if (fits8(Math.max(ceil, 0), Math.min(floor, viewportBottom))) { expect(tier, `clean ${label}`).toBe("clean"); expect(result.gap, `clean ${label}`).toBeCloseTo(G, 9); }

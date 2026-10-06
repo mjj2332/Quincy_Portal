@@ -433,7 +433,12 @@
 .rich-text__editor-content .rich-text__link-preview [data-slot=item-description]::selection { background: transparent; color: var(--foreground-secondary); }
 .rich-text__editor-content .rich-text__link-preview [data-slot=link-preview-meta]::selection { background: transparent; color: var(--foreground-secondary); }
 .rich-text__editor-content .ProseMirror-selectednode [data-slot=item] { outline: var(--border-width-hair) solid var(--accent); outline-offset: 0; }
-.rich-text__table-scroll, .rich-text__editor-content .tableWrapper { margin: 8px 0 0; overflow-x: auto; }
+/* #555 — the wrapper is the scroll container AND carries the table's right edge: a wide table scrolls inside the
+   frame (max-width keeps the wrapper inside it), and at 390 the unscrolled view still ends in a visible border
+   instead of the table appearing to run off the frame. The last column's own right border is dropped so a table
+   that fits does not draw a double edge. */
+.rich-text__table-scroll, .rich-text__editor-content .tableWrapper { max-width: 100%; margin: 8px 0 0; overflow-x: auto; border-inline-end: var(--border-width-hair) solid var(--border-hairline); }
+.rich-text tr > :last-child, .rich-text__editor-content tr > :last-child { border-inline-end: 0; }
 .rich-text table, .rich-text__editor-content table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: var(--text-sm); }
 .rich-text th, .rich-text td, .rich-text__editor-content th, .rich-text__editor-content td { position: relative; min-width: 0; padding: 6px 10px; border: var(--border-width-hair) solid var(--border-hairline); text-align: start; vertical-align: top; }
 .rich-text th, .rich-text__editor-content th { background: var(--bg-raised); font-weight: var(--weight-bold); }

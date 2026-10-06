@@ -194,7 +194,9 @@ export function tableBubbleZone({
 }: ZoneInput): TableBubbleZone {
   const floorWide = finite(floorTop) ? Math.max(surface.bottom, floorTop - TABLE_BUBBLE_FLOOR_INSET) : surface.bottom
   const ceil = finite(prevBottom) ? Math.max(surface.top, prevBottom) : surface.top
-  const floor = finite(nextTop) ? Math.min(floorWide, nextTop) : floorWide
+  // No block below the table (#555): the bar stays inside the editor frame. Reaching down to the helper line put
+  // it past the composer's double frame, which reads unfinished; with a block below, that block is the limit.
+  const floor = finite(nextTop) ? Math.min(floorWide, nextTop) : surface.bottom
   const zone = { top: ceil, bottom: floor }
 
   // An unmeasured bar (hidden, not laid out yet) cannot be judged: keep the bar rather than flicker the toolbar.
