@@ -368,6 +368,9 @@ export const embeddedMedia = sqliteTable(
     displayBytes: integer("display_bytes"),
     displayWidth: integer("display_width"),
     displayHeight: integer("display_height"),
+    // The image's pixel size as the uploading browser measured it (#611, migration 0065). Null for older rows, videos and HEIC (whose size is `displayWidth`/`displayHeight`).
+    width: integer("width"),
+    height: integer("height"),
     renditionAttempts: integer("rendition_attempts").notNull().default(0),
     renditionLeaseUntil: integer("rendition_lease_until"),
     renditionRequestedAt: integer("rendition_requested_at"),

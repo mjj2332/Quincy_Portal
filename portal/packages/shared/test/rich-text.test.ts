@@ -391,6 +391,14 @@ describe("image node (#493)", () => {
     expect(richTextMediaIds(parseRichTextDoc(valid))).toEqual([]);
   });
 
+  it("accepts the served width and height (#611) and never stores them", () => {
+    const sent = withImages(image(mediaA, { alt: "Front", width: 511, height: 384 }));
+    expect(parseRichTextDoc(sent, COMMENT_MEDIA_RICH_TEXT_PROFILE)).toEqual(withImages(image(mediaA, { alt: "Front" })));
+    expect(parseRichTextDoc(withImages(image(mediaA, { width: 511, height: 384 })), NOTICE_RICH_TEXT_PROFILE)).toEqual(withImages(image(mediaA)));
+    for (const extra of [{ width: 0, height: 5 }, { width: 5, height: -1 }, { width: 1.5, height: 5 }, { width: "5", height: 5 }, { width: 5 }, { height: 5 }])
+      expect(() => parseRichTextDoc(withImages(image(mediaA, extra)), COMMENT_MEDIA_RICH_TEXT_PROFILE), JSON.stringify(extra)).toThrow(RichTextValidationError);
+  });
+
   it("is strict: only a UUID mediaId, no extra attributes or keys, and only at the top level", () => {
     const profile = COMMENT_MEDIA_RICH_TEXT_PROFILE;
     const bad = [

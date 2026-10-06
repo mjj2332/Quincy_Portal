@@ -250,3 +250,12 @@ export async function verifyUploadedEmbeddedObject(env: Env, row: EmbeddedMediaR
   if (row.kind === "video" ? !sniffed : sniffed !== row.contentType) return reject(row.kind === "video" ? "The uploaded file is not an MP4 or MOV video" : "The uploaded file is not a JPEG, PNG or WebP image");
   return { ok: true };
 }
+
+/**
+ * The size to record for an upload being completed (#611): what the browser measured, for an image only. A video has no image size, and a HEIC's size is its display copy's (`display_width`, `display_height`), so neither takes the browser's.
+ * Null columns are left as they are by the `COALESCE` that writes them.
+ */
+export function recordedImageSize(row: Pick<EmbeddedMediaRow, "kind" | "renditionStatus">, input: { width?: number | undefined; height?: number | undefined }): { width: number | null; height: number | null } {
+  if (row.kind !== "image" || row.renditionStatus !== "not_required" || input.width === undefined || input.height === undefined) return { width: null, height: null };
+  return { width: input.width, height: input.height };
+}

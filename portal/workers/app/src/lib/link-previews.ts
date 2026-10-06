@@ -77,6 +77,14 @@ export function linkPreviewStatements(db: D1Database, input: PreviewOwner & { re
   return statements;
 }
 
+type ImageSizeRow = { id: string; rendition_status: string; width: number | null; height: number | null; display_width: number | null; display_height: number | null };
+const wholePixels = (value: number | null): value is number => value !== null && Number.isInteger(value) && value > 0;
+/** The size a served image carries (#611): the browser's measurement, or a HEIC's JPEG display copy's. Null unless both sides are known. */
+function servedImageSize(row: ImageSizeRow): { width: number; height: number } | null {
+  const [width, height] = row.rendition_status === "not_required" ? [row.width, row.height] : row.rendition_status === "ready" ? [row.display_width, row.display_height] : [null, null];
+  return wholePixels(width) && wholePixels(height) ? { width, height } : null;
+}
+
 type PreviewRow = { id: string; url: string; title: string | null; description: string | null; site_name: string | null; image_media_id: string | null; image_state: string | null };
 
 /**
@@ -88,11 +96,13 @@ type PreviewRow = { id: string; url: string; title: string | null; description: 
 export async function fillLinkPreviews<T extends { content: RichTextDoc }>(db: D1Database, items: T[]): Promise<T[]> {
   const wanted = new Set<string>();
   const wantedVideos = new Set<string>();
+  const wantedImages = new Set<string>();
   for (const item of items) for (const block of item.content.content) {
     if (block.type === "linkPreview") wanted.add(block.attrs.previewId);
     else if (block.type === "video") wantedVideos.add(block.attrs.mediaId);
+    else if (block.type === "image") wantedImages.add(block.attrs.mediaId);
   }
-  if (!wanted.size && !wantedVideos.size) return items;
+  if (!wanted.size && !wantedVideos.size && !wantedImages.size) return items;
   const rows = new Map<string, PreviewRow>();
   const all = [...wanted];
   for (let index = 0; index < all.length; index += 90) {
@@ -112,10 +122,26 @@ export async function fillLinkPreviews<T extends { content: RichTextDoc }>(db: D
     const found = await db.prepare(`SELECT id, poster_key IS NOT NULL AS has_poster FROM embedded_media WHERE kind = 'video' AND id IN (${chunk.map(() => "?").join(", ")})`).bind(...chunk).all<{ id: string; has_poster: number }>();
     for (const row of found.results) posters.set(row.id, Boolean(row.has_poster));
   }
+  // #611: each image's pixel size, so its box is reserved before the file loads. A HEIC takes its display copy's size (the browser never decodes the original). A row with no size, or half of one, keeps the node as stored.
+  const sizes = new Map<string, { width: number; height: number }>();
+  const imageIds = [...wantedImages];
+  for (let index = 0; index < imageIds.length; index += 90) {
+    const chunk = imageIds.slice(index, index + 90);
+    const found = await db.prepare(`SELECT id, rendition_status, width, height, display_width, display_height FROM embedded_media WHERE kind = 'image' AND id IN (${chunk.map(() => "?").join(", ")})`).bind(...chunk).all<ImageSizeRow>();
+    for (const row of found.results) {
+      const size = servedImageSize(row);
+      if (size) sizes.set(row.id, size);
+    }
+  }
   return items.map((item) => {
-    if (!item.content.content.some((block) => block.type === "linkPreview" || block.type === "video")) return item;
+    if (!item.content.content.some((block) => block.type === "linkPreview" || block.type === "video" || block.type === "image")) return item;
     const content: RichTextBlock[] = [];
     for (const block of item.content.content) {
+      if (block.type === "image") {
+        const size = sizes.get(block.attrs.mediaId);
+        content.push(size ? { type: "image", attrs: { mediaId: block.attrs.mediaId, ...(block.attrs.alt ? { alt: block.attrs.alt } : {}), width: size.width, height: size.height } } : block);
+        continue;
+      }
       if (block.type === "video") {
         const hasPoster = posters.get(block.attrs.mediaId);
         content.push(hasPoster === undefined ? block : { type: "video", attrs: { mediaId: block.attrs.mediaId, hasPoster } });

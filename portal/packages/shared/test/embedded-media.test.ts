@@ -22,6 +22,8 @@ import {
   isEmbeddedHeicContentType,
   sniffHeifImage,
   inspectJpeg,
+  EMBEDDED_IMAGE_MAX_DIMENSION,
+  embeddedImageDimensionsInput,
 } from "../src/embedded-media";
 
 const bytes = (...values: number[]) => new Uint8Array(values);
@@ -290,5 +292,15 @@ describe("JPEG inspection (#495)", () => {
     expect(inspectJpeg(jpeg(segment(0xe0, [1, 2, 3])))).toBeNull();
     expect(inspectJpeg(jpeg(sof(0, 10)))).toBeNull();
     expect(inspectJpeg(new Uint8Array([0xff, 0xd8, 0xff, 0xe1, 0xff, 0xff, 1, 2]))).toBeNull();
+  });
+});
+
+describe("embedded image dimensions input (#611)", () => {
+  it("takes both sizes as positive whole pixels up to the cap, or neither", () => {
+    expect(embeddedImageDimensionsInput.safeParse({}).success).toBe(true);
+    expect(embeddedImageDimensionsInput.safeParse({ width: 511, height: 384 }).success).toBe(true);
+    expect(embeddedImageDimensionsInput.safeParse({ width: EMBEDDED_IMAGE_MAX_DIMENSION, height: 1 }).success).toBe(true);
+    for (const bad of [{ width: 511 }, { height: 384 }, { width: 0, height: 5 }, { width: -3, height: 5 }, { width: 1.5, height: 5 }, { width: "5", height: 5 }, { width: EMBEDDED_IMAGE_MAX_DIMENSION + 1, height: 5 }, { width: null, height: 5 }])
+      expect(embeddedImageDimensionsInput.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
   });
 });

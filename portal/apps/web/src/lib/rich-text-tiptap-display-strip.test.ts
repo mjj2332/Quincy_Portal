@@ -26,4 +26,12 @@ describe("stripEmbeddedDisplay (#556)", () => {
     const plain: RichTextDoc = { type: "doc", content: [{ type: "video", attrs: { mediaId: A } }] };
     expect(stripEmbeddedDisplay(plain)).toBe(plain);
   });
+
+  it("drops the served-only width and height from images (#611) and keeps the alt text", () => {
+    const served: RichTextDoc = { type: "doc", content: [{ type: "image", attrs: { mediaId: A, alt: "Front", width: 511, height: 384 } }, { type: "image", attrs: { mediaId: P } }] };
+    const submitted = stripEmbeddedDisplay(served);
+    expect(submitted.content).toEqual([{ type: "image", attrs: { mediaId: A, alt: "Front" } }, { type: "image", attrs: { mediaId: P } }]);
+    const plain: RichTextDoc = { type: "doc", content: [{ type: "image", attrs: { mediaId: A } }] };
+    expect(stripEmbeddedDisplay(plain)).toBe(plain);
+  });
 });
