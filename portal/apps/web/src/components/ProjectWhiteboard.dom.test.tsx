@@ -307,6 +307,20 @@ describe("presence (#499)", () => {
     hidden.mockRestore();
     expect(board.sentPresence).toEqual([{ pointer: null, button: "up", selectedIds: ["q"] }]);
   });
+
+  it("a selection change while hidden sends no pointer, and the pointer returns only when it moves while visible (#607)", async () => {
+    await mount();
+    board.props!.onPresence!({ pointer: { x: 1, y: 2 }, button: "up", selectedIds: ["q"] });
+    const hidden = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+    board.sentPresence.length = 0;
+    board.props!.onPresence!({ pointer: { x: 1, y: 2 }, button: "up", selectedIds: [] });
+    expect(board.sentPresence).toEqual([{ pointer: null, button: "up", selectedIds: [] }]);
+    hidden.mockRestore();
+    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+    board.props!.onPresence!({ pointer: { x: 5, y: 6 }, button: "up", selectedIds: [] });
+    expect(board.sentPresence.at(-1)).toEqual({ pointer: { x: 5, y: 6 }, button: "up", selectedIds: [] });
+  });
 });
 
 describe("focus on load and the archived reason (#551)", () => {

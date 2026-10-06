@@ -266,7 +266,10 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
   }, []);
   const discardSave = useCallback(() => resettingRef.current, []);
   useEffect(() => { resettingRef.current = false; setSelectedVideo(null); }, [epoch]);
-  const sharePresence = useCallback((presence: WhiteboardPresence) => {
+  const sharePresence = useCallback((incoming: WhiteboardPresence) => {
+    // #607: a hidden tab shares no pointer on ANY send (a selection-only update must not resurrect the last one);
+    // the saved copy drops it too, so the real pointer returns only when it next moves in a visible tab.
+    const presence: WhiteboardPresence = document.visibilityState === "hidden" ? { ...incoming, pointer: null, button: "up" } : incoming;
     lastPresenceRef.current = presence;
     socketRef.current?.sendPresence(presence);
     // #501: the header's Play video button follows a selection of exactly one video.
