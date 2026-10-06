@@ -539,7 +539,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
           <Button type="button" variant="outline" disabled={isReleasingFreeze} onClick={() => void releaseProvisioningFreeze()}>Release freeze</Button>
         </Notice>}
         {!isLoadingUsers && !usersError && users.length === 0 && <EmptyState title="No users provisioned.">Provision a team member to give them closed-access Google sign-in.</EmptyState>}
-        {!isLoadingUsers && !usersError && users.length > 0 && <TableWrap className="min-[721px]:scroll-px-[var(--space-1)]"><Table>
+        {!isLoadingUsers && !usersError && users.length > 0 && <TableWrap className="min-[721px]:scroll-px-[var(--space-1)] min-[721px]:[&_th]:px-[var(--space-3)] min-[721px]:[&_td]:px-[var(--space-3)]"><Table>
           <TableHead><TableRow><TableHeader>Name</TableHeader><TableHeader>Email</TableHeader><TableHeader>Role</TableHeader><TableHeader>Access</TableHeader><TableHeader>Default editor</TableHeader><TableHeader>Created</TableHeader><TableHeader><span className="sr-only">Actions</span></TableHeader></TableRow></TableHead>
           <TableBody>{users.map((user) => {
           const isSelf = user.id === currentUserId;

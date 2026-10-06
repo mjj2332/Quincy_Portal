@@ -36,8 +36,8 @@ export type ModalProps = {
 
 // Overlay elevation/scrim/motion. §10.1 (elevation ladder), §6.2.
 // `scrim` is kept as a literal class name alongside the Tailwind utilities — it has no CSS rule
-// of its own any more, but ConfirmDialog.dom.test.tsx queries it directly (§12.2's grep rule: a
-// querySelector in a test file is a consumer).
+// of its own any more, but tests may query it (§12.2's grep rule: a querySelector in a test file is
+// a consumer).
 // `--overlay-enter`/`--overlay-exit` (§4.3, tokens/spacing.css) pack duration+easing into one
 // named value; consumed here via Tailwind's arbitrary-property form (a raw `transition:`
 // declaration) rather than split across separate `duration-*`/`ease-*` utilities, so the token
@@ -82,7 +82,7 @@ const HEAD = "p-[var(--space-6)] pb-[var(--space-4)]";
 const TITLE = "[font:var(--type-h3)] tracking-[var(--tracking-tight)] text-pretty";
 
 // `.modal__body` is kept as a literal class name — no CSS rule of its own, but
-// ConfirmDialog.dom.test.tsx queries it directly (same reasoning as `.scrim` above).
+// tests may query it directly (same reasoning as `.scrim` above).
 const BODY = "flex flex-col gap-[var(--space-4)] px-[var(--space-6)] pb-[var(--space-5)]";
 
 const FOOT = cn(
@@ -134,47 +134,45 @@ export function Modal({
   if (!isMounted) return null;
 
   return <FloatingPortal>
-    <div data-confirm-modal-root={testId === "confirm-modal" ? "" : undefined}>
-      <FloatingOverlay
-        lockScroll
-        className={SCRIM}
-        data-testid="modal-scrim"
-        data-open={dataOpen}
-        onPointerDown={(event) => { pressStartedOutside.current = event.target === event.currentTarget; }}
-        onClick={(event) => { if (event.target === event.currentTarget && pressStartedOutside.current) onClose(); }}
-      >
-        <FloatingFocusManager context={context} modal returnFocus={returnFocus} initialFocus={initialFocus}>
-          <div
-            ref={refs.setFloating}
-            className={panelClasses(size, wide)}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby={titleId}
-            aria-describedby={describedBy}
-            tabIndex={-1}
-            data-testid={testId}
-            data-open={dataOpen}
-            onClick={(event) => event.stopPropagation()}
-            onKeyDown={handleKeyDown}
-          >
-            <OverlayContainerContext.Provider value={nestedSlot}>
-              <div className={PANEL_SCROLL}>
-                {(eyebrow || title) && <div className={HEAD}>
-                  {eyebrow && <Eyebrow className="mb-[var(--space-3)]">{eyebrow}</Eyebrow>}
-                  {title && <h3 className={TITLE} id={titleId}>{title}</h3>}
-                </div>}
-                <div className={BODY} data-testid="modal-body">{children}</div>
-                {footer && <div className={FOOT}>{footer}</div>}
-              </div>
-            </OverlayContainerContext.Provider>
-            {/* §4.2a: nested-overlay slot. Outside the scroller, inside the panel and the focus
-                trap. A popup portaled here (Select/Menu/AnchoredPopover opened from inside this
-                dialog) paints inside the FloatingOverlay's z-95 stacking context and stays
-                reachable by Tab. */}
-            <div ref={setNestedSlot} />
-          </div>
-        </FloatingFocusManager>
-      </FloatingOverlay>
-    </div>
+    <FloatingOverlay
+      lockScroll
+      className={SCRIM}
+      data-testid="modal-scrim"
+      data-open={dataOpen}
+      onPointerDown={(event) => { pressStartedOutside.current = event.target === event.currentTarget; }}
+      onClick={(event) => { if (event.target === event.currentTarget && pressStartedOutside.current) onClose(); }}
+    >
+      <FloatingFocusManager context={context} modal returnFocus={returnFocus} initialFocus={initialFocus}>
+        <div
+          ref={refs.setFloating}
+          className={panelClasses(size, wide)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          aria-describedby={describedBy}
+          tabIndex={-1}
+          data-testid={testId}
+          data-open={dataOpen}
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={handleKeyDown}
+        >
+          <OverlayContainerContext.Provider value={nestedSlot}>
+            <div className={PANEL_SCROLL}>
+              {(eyebrow || title) && <div className={HEAD}>
+                {eyebrow && <Eyebrow className="mb-[var(--space-3)]">{eyebrow}</Eyebrow>}
+                {title && <h3 className={TITLE} id={titleId}>{title}</h3>}
+              </div>}
+              <div className={BODY} data-testid="modal-body">{children}</div>
+              {footer && <div className={FOOT}>{footer}</div>}
+            </div>
+          </OverlayContainerContext.Provider>
+          {/* §4.2a: nested-overlay slot. Outside the scroller, inside the panel and the focus
+              trap. A popup portaled here (Select/Menu/AnchoredPopover opened from inside this
+              dialog) paints inside the FloatingOverlay's z-95 stacking context and stays
+              reachable by Tab. */}
+          <div ref={setNestedSlot} />
+        </div>
+      </FloatingFocusManager>
+    </FloatingOverlay>
   </FloatingPortal>;
 }

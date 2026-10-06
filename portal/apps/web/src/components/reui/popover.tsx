@@ -3,6 +3,7 @@ import { Popover as PopoverPrimitive } from "@base-ui/react/popover"
 
 import { cn } from "@/lib/utils"
 import { OverlayContainerContext } from "@/components/OverlayContainerContext"
+import { InsideAlertDialogContext, keepOpenBehindAlertDialog } from "@/lib/alert-dialog-press"
 
 /**
  * Popover primitive — base-nova's `popover` (`docs/adr/0005-…` addendum), the first consumer
@@ -49,6 +50,18 @@ import { OverlayContainerContext } from "@/components/OverlayContainerContext"
  *    option: `AlertDialogContent` is transformed and scrolls, so a container inside it would clip
  *    and mis-anchor a 600px popup.)
  *
+ * 9. **QUINCY ADAPTATION (#625): a press on an alert dialog is never an outside press, and Escape
+ *    belongs to it.** `Popover` wraps `onOpenChange` and cancels an `outside-press` dismissal whose
+ *    target is inside an alert dialog, an `escape-key` dismissal while one is open, and a
+ *    `focus-out` dismissal while one is mounted (focus moving into the dialog and back out as it
+ *    closes is not the popover losing focus elsewhere) (`keepOpenBehindAlertDialog` in `lib/alert-dialog-press.ts`, shared with `reui/combobox.tsx`). A popover
+ *    rendered inside an alert dialog (`InsideAlertDialogContext`) is above it and is left alone. Reason: `reui/alert-dialog`'s portal carries Base UI
+ *    inert markers (its overlay and focus guards), so the popover's outside-press check no longer
+ *    ignores it as an element injected after the popover opened — pressing Cancel, Confirm or the
+ *    scrim of a confirm raised from a popover (Deadline Clear, Team removal) closed the popover and
+ *    discarded its draft. A plain `shadcn add popover` would silently revert this;
+ *    `popover-adaptation.guard.test.ts` pins it.
+ *
  * `bg-popover`, `text-popover-foreground` and `ring-foreground/10` are kept: the panel portals to
  * `document.body`, outside any `[data-surface]` subtree, and all three roles are bridged
  * (`tokens/tailwind.css:24,27-28`) — `styles/sidebar-token-bridge.guard.test.ts`'s rail-surface
@@ -59,8 +72,19 @@ import { OverlayContainerContext } from "@/components/OverlayContainerContext"
  * no-ops today, same as P1's sidebar/tooltip vendoring.
  */
 
-function Popover({ ...props }: PopoverPrimitive.Root.Props) {
-  return <PopoverPrimitive.Root data-slot="popover" {...props} />
+function Popover({ onOpenChange, ...props }: PopoverPrimitive.Root.Props) {
+  // A popover opened from inside an alert dialog sits above it and keeps ordinary dismissal.
+  const insideAlertDialog = React.useContext(InsideAlertDialogContext)
+  return (
+    <PopoverPrimitive.Root
+      data-slot="popover"
+      onOpenChange={(open, details) => {
+        if (keepOpenBehindAlertDialog(open, details, insideAlertDialog)) return
+        onOpenChange?.(open, details)
+      }}
+      {...props}
+    />
+  )
 }
 
 function PopoverTrigger({ ...props }: PopoverPrimitive.Trigger.Props) {

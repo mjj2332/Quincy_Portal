@@ -210,17 +210,31 @@ describe("the real Workspace inside the Project sheet (#366)", () => {
     expect(document.querySelector('[data-testid="project-sheet"]')).not.toBeNull();
   });
 
+  it("Escape on a confirm raised from inside the sheet answers it alone: the sheet stays open", async () => {
+    await renderSheet();
+    let answer: boolean | undefined;
+    await act(async () => { void confirm({ title: "Delete comment?", message: "Sure?", danger: true }).then((value) => { answer = value; }); await Promise.resolve(); });
+    await flushUntil(() => document.querySelector('[data-testid="confirm-modal"]') !== null, "the confirm modal");
+    await escape(document.activeElement ?? document.body);
+    await flushUntil(() => answer !== undefined, "the confirm to resolve");
+    expect(answer).toBe(false);
+    expect(onRequestClose).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-testid="project-sheet"]')).not.toBeNull();
+  });
+
   it("an outside press on the confirm's scrim is the confirm's, not the sheet's", async () => {
     await renderSheet();
     await act(async () => { void confirm({ title: "Delete comment?", message: "Sure?" }); await Promise.resolve(); });
     await flushUntil(() => document.querySelector('[data-testid="confirm-modal"]') !== null, "the confirm modal");
-    const scrim = document.querySelector('[data-testid="modal-scrim"]')!;
+    const scrim = document.querySelector('[data-testid="alert-dialog-scrim"]')!;
     await act(async () => {
       for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) scrim.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0 }));
       await Promise.resolve();
     });
     await flush();
     expect(onRequestClose).not.toHaveBeenCalled();
+    // Alert-dialog behaviour (#625): the scrim press neither closes the sheet nor answers the confirm.
+    expect(document.querySelector('[data-testid="confirm-modal"]')).not.toBeNull();
   });
 
   // #376 — the Discussion's read anchor must be judged against the sheet body's own scroll box:
