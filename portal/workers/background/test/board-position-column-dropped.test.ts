@@ -5,10 +5,10 @@ import { commitAutomaticStage } from "../src/lib/automatic-stage";
 
 /**
  * #475 (Board order Stage B): the background Worker reads and writes no `projects.board_position`. The proof is
- * this suite: it drops the index and the column after the migration chain, then drives a Tonomo create (a drizzle
+ * this suite: the migration chain (0064) drops the index and the column, then it drives a Tonomo create (a drizzle
  * insert that used to name the column) and `commitAutomaticStage` under a `raw_reconciliation` premise and an
  * AutoHDR handoff premise. Any `no such column: board_position` throws and fails a test here, which makes Stage B
- * the safe floor for #476's DROP COLUMN. Same pattern as #373's subtask-assignee-column-dropped.test.ts.
+ * the proof for #476's DROP COLUMN (migration 0064). Same pattern as #373's subtask-assignee-column-dropped.test.ts.
  */
 const database = env as unknown as { DB: D1Database };
 declare const __PORTAL_MIGRATION_SQL__: string;
@@ -26,7 +26,6 @@ async function executeSql(source: string): Promise<void> {
 beforeAll(async () => {
   await executeSql(__PORTAL_MIGRATION_SQL__);
   await executeSql("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'");
-  await executeSql("DROP INDEX projects_stage_archive_board_order_idx; ALTER TABLE projects DROP COLUMN board_position;");
 }, 60_000);
 
 async function project(stage: string) {

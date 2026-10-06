@@ -27,7 +27,7 @@ async function executeSql(sql: string) {
 
 async function seedProject(projectId: string, memberId = crypto.randomUUID()) {
   const now = Date.now();
-  await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, ?, 'editing_autohdr', 0, ?, ?)").bind(projectId, `Command ${projectId}`, now, now).run();
+  await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, ?, 'editing_autohdr', ?, ?)").bind(projectId, `Command ${projectId}`, now, now).run();
   await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(memberId, projectId, commandUserId, now).run();
 }
 

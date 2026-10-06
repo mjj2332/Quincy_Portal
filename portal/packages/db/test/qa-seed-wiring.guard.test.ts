@@ -15,7 +15,7 @@ import { PROJECT_ASSIGNMENT_ELIGIBLE_ROLES } from "@quincy/shared";
 import { parseArguments, wranglerArguments, DEFAULT_EDITOR_ELIGIBLE_ROLES, SAFE_IDENTIFIER_RE as CLI_SAFE_IDENTIFIER_RE, UUID_RE as CLI_UUID_RE } from "../qa-seed/cli.mjs";
 import { QA_FIXTURE_CAPABILITY_SQL } from "../setup-local.mjs";
 import { anchorReferenceInstantMs, buildQaFixtureDataset } from "../qa-seed/dataset";
-import { buildApplyPlan, CAPABILITY_PREDICATE, FIXTURE_BOARD_POSITIONS_TABLE, FIXTURE_RUN_RECORDS_TABLE, UUID_RE } from "../qa-seed/sql";
+import { buildApplyPlan, CAPABILITY_PREDICATE, FIXTURE_RUN_RECORDS_TABLE, UUID_RE } from "../qa-seed/sql";
 import { FIXTURE_CLOSURE_TABLE, SAFE_IDENTIFIER_RE } from "../qa-seed/teardown-graph";
 import { freshFixtureDatabase, liveTeardownPlan } from "./qa-seed-sqlite-executor";
 
@@ -237,7 +237,7 @@ describe("guard: no committed SQL artifact, no CI wiring", () => {
     expect(QA_FIXTURE_CAPABILITY_SQL).toContain("__quincy_local_fixture_runs");
     expect(QA_FIXTURE_CAPABILITY_SQL).toContain("__quincy_local_fixture_entities");
     expect(QA_FIXTURE_CAPABILITY_SQL).toContain(`CREATE TABLE IF NOT EXISTS ${FIXTURE_RUN_RECORDS_TABLE} (`);
-    expect(QA_FIXTURE_CAPABILITY_SQL).toContain(`CREATE TABLE IF NOT EXISTS ${FIXTURE_BOARD_POSITIONS_TABLE} (`);
+    expect(QA_FIXTURE_CAPABILITY_SQL).not.toContain("board_position");
     expect(QA_FIXTURE_CAPABILITY_SQL).toContain(`CREATE TABLE IF NOT EXISTS ${FIXTURE_CLOSURE_TABLE} (`);
   });
 

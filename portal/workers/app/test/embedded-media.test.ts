@@ -215,7 +215,7 @@ describe("POST /projects/:id/embedded-media/:mediaId/complete", () => {
 
   it("claims the row before deleting: if another writer attaches it between the lost promotion's re-read and the cleanup, R2 is never touched", async () => {
     const projectId = crypto.randomUUID(); const now = Date.now();
-    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Claim', 'editing_autohdr', 0, ?, ?)").bind(projectId, now, now).run();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Claim', 'editing_autohdr', ?, ?)").bind(projectId, now, now).run();
     await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, ids.member, now).run();
     const { id, key } = await seedMedia({ state: "uploading", projectId });
     const owner = crypto.randomUUID(); let reads = 0;
@@ -260,7 +260,7 @@ describe("POST /projects/:id/embedded-media/:mediaId/complete", () => {
   it("does not promote, and deletes the object and the row, when the Project is archived or deleted while R2 is being read", async () => {
     for (const lifecycle of ["archive", "delete"] as const) {
       const projectId = crypto.randomUUID(); const now = Date.now();
-      await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Racy', 'editing_autohdr', 0, ?, ?)").bind(projectId, now, now).run();
+      await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Racy', 'editing_autohdr', ?, ?)").bind(projectId, now, now).run();
       await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, ids.member, now).run();
       const { id, key } = await seedMedia({ state: "uploading", projectId });
       // The lifecycle change lands after the route's earlier checks, during its R2 reads.

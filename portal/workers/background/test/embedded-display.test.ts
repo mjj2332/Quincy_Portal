@@ -59,7 +59,7 @@ const stubFetch = (handler: (url: string) => Response | Promise<Response>) => { 
 beforeAll(async () => {
   await executeSql(__PORTAL_MIGRATION_SQL__);
   await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'U', 'u@example.test', 1, 'admin', 1, ?, ?)").bind(userId, now, now).run();
-  await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'S', 'editing_autohdr', 0, ?, ?)").bind(projectId, now, now).run();
+  await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'S', 'editing_autohdr', ?, ?)").bind(projectId, now, now).run();
 });
 beforeEach(async () => { await database.DB.exec("DELETE FROM rendition_dlq_events; DELETE FROM embedded_media; DELETE FROM embedded_media_cleanup;"); });
 afterEach(() => { vi.unstubAllGlobals(); });

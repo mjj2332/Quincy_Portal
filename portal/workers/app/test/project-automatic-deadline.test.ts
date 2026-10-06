@@ -55,7 +55,7 @@ async function createProject(body: Record<string, unknown>): Promise<string> {
 async function seedProject(fields: { shootDate?: string | null; stageKey?: string; archived?: boolean } = {}): Promise<string> {
   const id = crypto.randomUUID();
   const now = Date.now();
-  await database.DB.prepare("INSERT INTO projects (id, street, stage_key, shoot_date, board_position, board_revision, archived_at, created_at, updated_at) VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?)")
+  await database.DB.prepare("INSERT INTO projects (id, street, stage_key, shoot_date, board_revision, archived_at, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?, ?)")
     .bind(id, `Seed ${id}`, fields.stageKey ?? "editing", fields.shootDate ?? null, fields.archived ? now : null, now, now).run();
   return id;
 }

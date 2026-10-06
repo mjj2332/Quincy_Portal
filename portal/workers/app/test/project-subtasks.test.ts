@@ -24,7 +24,7 @@ beforeAll(async () => {
   await executeSql(__PORTAL_MIGRATION_SQL__); await executeSql(__PORTAL_SEED_SQL__); const now = Date.now();
   for (const [id, role] of [[adminId, "admin"], [editorId, "editor"], [photographerId, "photographer"], [outsiderId, "editor"]]) await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, ?, ?, 1, ?, 1, ?, ?)").bind(id, `${role} ${id.slice(0, 4)}`, `${id}@example.test`, role, now, now).run();
   for (const [id, token, userId] of [["subtasks-admin", "subtasks-admin-token", adminId], ["subtasks-editor", "subtasks-editor-token", editorId], ["subtasks-photographer", "subtasks-photographer-token", photographerId], ["subtasks-outsider", "subtasks-outsider-token", outsiderId]]) await database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").bind(id, now + 3_600_000, token, userId, now, now).run();
-  await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Subtask Street', 'editing_autohdr', 0, ?, ?)").bind(projectId, now, now).run();
+  await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Subtask Street', 'editing_autohdr', ?, ?)").bind(projectId, now, now).run();
   await addMember(editorId, "editor"); await addMember(photographerId, "photographer");
 });
 
@@ -157,7 +157,7 @@ describe("project subtasks API", () => {
 
   it("rejects invalid or stale reorder neighbors and rebases tied snapshots, including a 24-item checklist", async () => {
     const now = Date.now(); const guardedProject = crypto.randomUUID(); const targetId = crypto.randomUUID(); const beforeId = crypto.randomUUID(); const afterId = crypto.randomUUID(); const betweenId = crypto.randomUUID(); const otherProject = crypto.randomUUID(); const foreignId = crypto.randomUUID();
-    for (const id of [guardedProject, otherProject]) await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, ?, 'editing_autohdr', 0, ?, ?)").bind(id, `Reorder ${id}`, now, now).run();
+    for (const id of [guardedProject, otherProject]) await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, ?, 'editing_autohdr', ?, ?)").bind(id, `Reorder ${id}`, now, now).run();
     for (const [id, position] of [[beforeId, 1024], [afterId, 2048], [targetId, 3072], [betweenId, 4096]] as const) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, '2099-12-31T17:00', 'timed', '2099-12-31T09:00', 4102351200000, 660, 0, 'timed', 4102380000000, 660, 0, 'Australia/Sydney', 1, ?, ?, ?)").bind(id, guardedProject, id, position, editorId, now, now).run();
     await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'foreign', 0, 1024, 0, '2099-12-31T17:00', 'timed', '2099-12-31T09:00', 4102351200000, 660, 0, 'timed', 4102380000000, 660, 0, 'Australia/Sydney', 1, ?, ?, ?)").bind(foreignId, otherProject, editorId, now, now).run();
     for (const body of [{ beforeId: "not-a-uuid", afterId: null }, { beforeId: 42, afterId: null }, { beforeId: null }, { beforeId: null, afterId: null, position: 1 }]) expect((await request(`/api/projects/${guardedProject}/subtasks/${targetId}/reorder`, "subtasks-admin-token", "POST", body)).status).toBe(400);
@@ -170,12 +170,12 @@ describe("project subtasks API", () => {
     expect((await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'project_subtask.reorder'").bind(targetId).first<{ count: number }>())!.count).toBe(beforeAudit);
 
     const tiedProject = crypto.randomUUID(); const tiedBefore = "81000000-0000-4000-8000-000000000001"; const tiedAfter = "81000000-0000-4000-8000-000000000002"; const tiedTarget = "81000000-0000-4000-8000-000000000003";
-    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Tied rebase', 'editing_autohdr', 0, ?, ?)").bind(tiedProject, now, now).run();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Tied rebase', 'editing_autohdr', ?, ?)").bind(tiedProject, now, now).run();
     for (const [id, position] of [[tiedBefore, 1024], [tiedAfter, 1024], [tiedTarget, 4096]] as const) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, '2099-12-31T17:00', 'timed', '2099-12-31T09:00', 4102351200000, 660, 0, 'timed', 4102380000000, 660, 0, 'Australia/Sydney', 1, ?, ?, ?)").bind(id, tiedProject, id, position, editorId, now, now).run();
     expect(await (await request(`/api/projects/${tiedProject}/subtasks/${tiedTarget}/reorder`, "subtasks-admin-token", "POST", { beforeId: tiedBefore, afterId: tiedAfter })).json()).toEqual({ position: 2048 });
     expect((await database.DB.prepare("SELECT id, position FROM project_subtasks WHERE project_id = ? ORDER BY position, id").bind(tiedProject).all()).results).toEqual([{ id: tiedBefore, position: 1024 }, { id: tiedTarget, position: 2048 }, { id: tiedAfter, position: 3072 }]);
 
-    const longProject = crypto.randomUUID(); await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Long tied rebase', 'editing_autohdr', 0, ?, ?)").bind(longProject, now, now).run();
+    const longProject = crypto.randomUUID(); await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Long tied rebase', 'editing_autohdr', ?, ?)").bind(longProject, now, now).run();
     const ids = Array.from({ length: 24 }, (_, index) => `82000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`);
     for (const [index, id] of ids.entries()) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, '2099-12-31T17:00', 'timed', '2099-12-31T09:00', 4102351200000, 660, 0, 'timed', 4102380000000, 660, 0, 'Australia/Sydney', 1, ?, ?, ?)").bind(id, longProject, id, index === 10 ? 10 * 1024 : (index + 1) * 1024, editorId, now, now).run();
     const longTarget = ids[23]!; const longBefore = ids[9]!; const longAfter = ids[10]!;
@@ -186,7 +186,7 @@ describe("project subtasks API", () => {
 
   it("reorders at beginning, middle, and end without restamping neighbors, auditing twice, or notifying", async () => {
     const now = 1; const ordinaryProject = crypto.randomUUID(); const a = crypto.randomUUID(); const b = crypto.randomUUID(); const c = crypto.randomUUID();
-    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Ordinary reorders', 'editing_autohdr', 0, ?, ?)").bind(ordinaryProject, now, now).run();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Ordinary reorders', 'editing_autohdr', ?, ?)").bind(ordinaryProject, now, now).run();
     for (const [id, position] of [[a, 1024], [b, 2048], [c, 3072]] as const) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, '2099-12-31T17:00', 'timed', '2099-12-31T09:00', 4102351200000, 660, 0, 'timed', 4102380000000, 660, 0, 'Australia/Sydney', 1, ?, ?, ?)").bind(id, ordinaryProject, id, position, editorId, now, now).run();
     const assignments = async () => (await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ? AND event_type = 'project.subtask.assigned'").bind(ordinaryProject).first<{ count: number }>())!.count;
     const reorder = async (target: string, beforeId: string | null, afterId: string | null, expectedPosition: number, expectedOrder: string[]) => {
@@ -202,7 +202,7 @@ describe("project subtasks API", () => {
 
   it("keeps a non-integral ordinary midpoint without rebasing its neighbors", async () => {
     const now = 1; const midpointProject = crypto.randomUUID(); const before = crypto.randomUUID(); const after = crypto.randomUUID(); const target = crypto.randomUUID();
-    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Fractional midpoint', 'editing_autohdr', 0, ?, ?)").bind(midpointProject, now, now).run();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Fractional midpoint', 'editing_autohdr', ?, ?)").bind(midpointProject, now, now).run();
     for (const [id, position] of [[before, 1024], [after, 1025], [target, 4096]] as const) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, '2099-12-31T17:00', 'timed', '2099-12-31T09:00', 4102351200000, 660, 0, 'timed', 4102380000000, 660, 0, 'Australia/Sydney', 1, ?, ?, ?)").bind(id, midpointProject, id, position, editorId, now, now).run();
     const response = await request(`/api/projects/${midpointProject}/subtasks/${target}/reorder`, "subtasks-admin-token", "POST", { beforeId: before, afterId: after }); expect(response.status).toBe(200); expect(await response.json()).toEqual({ position: 1024.5 });
     expect(await database.DB.prepare("SELECT position FROM project_subtasks WHERE id = ?").bind(target).first()).toEqual({ position: 1024.5 });
@@ -260,7 +260,7 @@ describe("project subtasks API", () => {
 
   it("clears only final-role non-admin assignees as part of the project membership batch", async () => {
     const isolatedProject = crypto.randomUUID(); const now = Date.now(); const initialPhotographerId = crypto.randomUUID();
-    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Final role isolation', 'editing_autohdr', 0, ?, ?)").bind(isolatedProject, now, now).run();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Final role isolation', 'editing_autohdr', ?, ?)").bind(isolatedProject, now, now).run();
     await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'photographer', ?)").bind(initialPhotographerId, isolatedProject, photographerId, now).run();
     const initialPhotographer = await database.DB.prepare("SELECT id FROM project_members WHERE project_id = ? AND user_id = ? AND role_on_project = 'photographer'").bind(isolatedProject, photographerId).first<{ id: string }>();
     expect(initialPhotographer).toBeDefined();
@@ -378,7 +378,7 @@ describe("default Subtask range (#339)", () => {
   type Seed = { shootDate?: string | null; deadlineLocalCivil?: string | null; createdAt?: number };
   async function seedProject(seed: Seed = {}) {
     const id = crypto.randomUUID(); const createdAt = seed.createdAt ?? CREATED_SPLIT;
-    await database.DB.prepare("INSERT INTO projects (id, street, shoot_date, stage_key, board_position, created_at, updated_at) VALUES (?, 'Default Range Street', ?, 'editing_autohdr', 0, ?, ?)").bind(id, seed.shootDate ?? null, createdAt, createdAt).run();
+    await database.DB.prepare("INSERT INTO projects (id, street, shoot_date, stage_key, created_at, updated_at) VALUES (?, 'Default Range Street', ?, 'editing_autohdr', ?, ?)").bind(id, seed.shootDate ?? null, createdAt, createdAt).run();
     await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'photographer', ?)").bind(crypto.randomUUID(), id, photographerId, createdAt).run();
     if (seed.deadlineLocalCivil) await setDeadline(id, seed.deadlineLocalCivil);
     return id;
@@ -532,7 +532,7 @@ describe("assignee relation writes (#364, #373)", () => {
 
   beforeAll(async () => {
     const now = Date.now();
-    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Relation Street', 'editing_autohdr', 0, ?, ?)").bind(relationProject, now, now).run();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Relation Street', 'editing_autohdr', ?, ?)").bind(relationProject, now, now).run();
     for (const [userId, role] of [[editorId, "editor"], [photographerId, "photographer"]] as const) await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), relationProject, userId, role, now).run();
   });
 
@@ -603,7 +603,7 @@ describe("multi-assignee writes (#368)", () => {
 
   beforeAll(async () => {
     const now = Date.now();
-    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Multi Assignee Street', 'editing_autohdr', 0, ?, ?)").bind(multiProject, now, now).run();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Multi Assignee Street', 'editing_autohdr', ?, ?)").bind(multiProject, now, now).run();
     for (const [id, role] of [[externalId, "external_editor"], [retiredId, "photographer"]] as const) await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, authorization_epoch, created_at, updated_at) VALUES (?, ?, ?, 1, ?, 1, 0, ?, ?)").bind(id, `${role} ${id.slice(0, 4)}`, `${id}@example.test`, role, now, now).run();
     await database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").bind("subtasks-external", now + 3_600_000, "subtasks-external-token", externalId, now, now).run();
     for (const [userId, role] of [[editorId, "editor"], [photographerId, "photographer"], [externalId, "editor"], [retiredId, "photographer"]] as const) await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), multiProject, userId, role, now).run();
@@ -880,7 +880,7 @@ describe("team removal and counts with several assignees (#371)", () => {
 
   async function seed(members: Array<[string, "editor" | "photographer"]>) {
     const project = crypto.randomUUID(); const now = Date.now(); const cycles = new Map<string, string>();
-    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'T371 Street', 'editing_autohdr', 0, ?, ?)").bind(project, now, now).run();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'T371 Street', 'editing_autohdr', ?, ?)").bind(project, now, now).run();
     for (const [userId, role] of members) { const id = crypto.randomUUID(); cycles.set(`${userId}:${role}`, id); await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, ?, ?)").bind(id, project, userId, role, now).run(); }
     return { project, cycles };
   }

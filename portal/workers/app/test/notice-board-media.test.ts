@@ -406,7 +406,7 @@ describe("GET /media/embedded/:mediaId for notice media", () => {
 describe("Project hard delete", () => {
   it("leaves notice media alone: its rows and objects survive, and nothing is queued for it", async () => {
     const projectId = crypto.randomUUID(); const now = Date.now();
-    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, archived_at, created_at, updated_at) VALUES (?, 'Doomed', 'editing_autohdr', 0, ?, ?, ?)").bind(projectId, now, now, now).run();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, archived_at, created_at, updated_at) VALUES (?, 'Doomed', 'editing_autohdr', ?, ?, ?)").bind(projectId, now, now, now).run();
     const attached = await seedMedia({ ownerKind: "notice_post", state: "attached" }); const pending = await seedMedia({ ownerKind: "notice_post", state: "pending" });
     const queued = await count("embedded_media_cleanup");
     const response = await appRequest(S3_ENV, `/api/projects/${projectId}`, tokens.admin, "DELETE");
