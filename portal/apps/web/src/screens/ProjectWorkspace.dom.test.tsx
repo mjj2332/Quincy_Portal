@@ -2325,6 +2325,19 @@ describe("Collaboration is the default Workspace tab (#336)", () => {
     expect(host.querySelector('[data-testid="collection-loading"]')).toBeNull();
   });
 
+  it("never shows the loading state on a revisit of a tab whose assets are cached (#623)", async () => {
+    const floorplan = deferredPromise<{ assets: WorkspaceAsset[] }>();
+    mockProject({ floorplan: floorplan.promise });
+    await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+    await openTab(host, "Floorplan");
+    expect(host.querySelector('[data-testid="collection-loading"]')).not.toBeNull();
+    await act(async () => { floorplan.resolve({ assets: [] }); await Promise.resolve(); }); await flush(10);
+    await openTab(host, "Collaboration");
+    await openTab(host, "Floorplan");
+    expect(host.querySelector('[data-testid="collection-loading"]')).toBeNull();
+    expect(host.textContent).toContain("No floorplan yet.");
+  });
+
   it("badges the Collaboration tab with the unread count, capped at 99+, and keeps it off-tab", async () => {
     mockProject({ unread: 123 });
     await render(<ProjectWorkspace projectId="p1" />); await flush(20);

@@ -546,3 +546,12 @@ describe("Project sheet body scroll anchoring (#613)", () => {
     expect(ruleBody(appCss, ".project-sheet__body") ?? "").toMatch(/overflow-anchor:\s*none\s*;/);
   });
 });
+
+describe("Project sheet collection loading placeholder (#623)", () => {
+  // The first visit to a Copy/Video/Floorplan panel swapped a long panel for a short loading block, so the sheet body clamped its scrollTop.
+  // jsdom has no layout, so the rule is the pin. Scoped to the sheet scroller: the full-page workspace is unchanged.
+  it("makes the loading placeholder a dynamic viewport tall inside the sheet body only", () => {
+    expect(ruleBody(appCss, ".project-sheet__body .collection-loading") ?? "").toMatch(/min-height:\s*100dvh\s*;/);
+    expect(ruleBody(appCss, ".collection-loading")).toBeNull();
+  });
+});

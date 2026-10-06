@@ -331,6 +331,11 @@
   .project-sheet__body .project-header__tabrow { padding-inline-end: calc(var(--space-4) + 44px + var(--space-2) - var(--space-4)); }
 }
 
+/* #623: the first visit to a Collection tab swaps a long panel for the short loading block; the sheet body then shrinks below its
+   scrollTop and the browser clamps it (300 -> 199.5). A dynamic viewport covers the body (never taller), so scrollTop survives.
+   Sheet scroller only: the full-page workspace keeps the compact block. */
+.project-sheet__body .collection-loading { min-height: 100dvh; }
+
 /* selection action bar */
 
 /* ---------------------------------------------------------------------
