@@ -44,7 +44,7 @@ function block(node: RichTextBlock | RichTextListItem | RichTextTaskItem | RichT
     const Heading = node.attrs.level === 2 ? "h2" : "h3";
     return <Heading key={key} className={alignClass(node.attrs.textAlign)}>{(node.content ?? []).map(inline)}</Heading>;
   }
-  if (node.type === "image") return <EmbeddedImage key={key} mediaId={node.attrs.mediaId} />;
+  if (node.type === "image") return <EmbeddedImage key={key} mediaId={node.attrs.mediaId} alt={node.attrs.alt} />;
   if (node.type === "video") return <EmbeddedVideo key={`video-${node.attrs.mediaId}`} mediaId={node.attrs.mediaId} />;
   if (node.type === "linkPreview") return <LinkPreviewCard key={`link-preview-${node.attrs.previewId}`} attrs={node.attrs} />;
   if (node.type === "table") {
