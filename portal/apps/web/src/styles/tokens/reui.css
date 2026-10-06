@@ -226,6 +226,35 @@
    mechanism (tokens/inverse.css's [data-surface="inverse"]). */
 @custom-variant dark (&:is(.dark *));
 
+/* #640: Quincy `Table` switches between a grid and stacked cards. The switch point is per table:
+   `TableWrap stackBelow="md"` (default) switches at 721px, `stackBelow="lg"` below 1024px. The wrap
+   carries `data-stack`; these variants match the wrap itself and every descendant of it, so a table's
+   rows and cells follow their own wrap. `md` keeps the historic overlap at exactly 721px. `:where` keeps specificity equal to the old max-/min- utilities. */
+@custom-variant table-stacked {
+  @media (max-width: 721px) {
+    &:where([data-stack="md"], [data-stack="md"] *) {
+      @slot;
+    }
+  }
+  @media (max-width: 1023px) {
+    &:where([data-stack="lg"], [data-stack="lg"] *) {
+      @slot;
+    }
+  }
+}
+@custom-variant table-grid {
+  @media (min-width: 721px) {
+    &:where([data-stack="md"], [data-stack="md"] *) {
+      @slot;
+    }
+  }
+  @media (min-width: 1024px) {
+    &:where([data-stack="lg"], [data-stack="lg"] *) {
+      @slot;
+    }
+  }
+}
+
 @theme inline {
   --color-success: var(--success);
   --color-success-foreground: var(--success-foreground);
