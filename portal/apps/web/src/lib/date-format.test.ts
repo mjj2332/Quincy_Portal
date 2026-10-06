@@ -11,6 +11,7 @@ import {
   formatDistinctTimes,
   formatCivilSchedule,
   formatDayGroupedTime,
+  formatDayRangePortal,
   formatDueCivil,
   formatRelativeTime,
   groupByDay,
@@ -165,5 +166,31 @@ describe("formatAbsoluteTimeWithSeconds / formatDistinctTimes (#559)", () => {
       .toEqual(["28 Sep, 3:00:50 PM", "28 Sep, 3:00:05 PM"]);
     expect(formatDistinctTimes([at("2025-09-28T05:00:50.000Z"), at("2025-09-28T05:00:05.000Z")], NOW))
       .toEqual(["28 Sep 2025, 3:00:50 PM", "28 Sep 2025, 3:00:05 PM"]);
+  });
+});
+
+describe("formatDayRangePortal (#643)", () => {
+  // Machine zone is America/Los_Angeles (pinned above); every range is read as Sydney days.
+  const syd = (iso: string) => new Date(iso);
+
+  it("names one day", () => {
+    expect(formatDayRangePortal(syd("2026-10-06T14:00:00.000Z"), syd("2026-10-06T14:00:00.000Z"))).toBe("7 Oct 2026");
+  });
+
+  it("collapses a same-month range with an en dash", () => {
+    expect(formatDayRangePortal(syd("2026-10-06T14:00:00.000Z"), syd("2026-10-19T14:00:00.000Z"))).toBe("7\u201320 Oct 2026");
+  });
+
+  it("spells both months across a month boundary", () => {
+    expect(formatDayRangePortal(syd("2026-09-27T14:00:00.000Z"), syd("2026-10-04T05:00:00.000Z"))).toBe("28 Sep \u2013 4 Oct 2026");
+  });
+
+  it("spells both years across a year boundary", () => {
+    expect(formatDayRangePortal(syd("2026-12-27T13:00:00.000Z"), syd("2027-01-03T05:00:00.000Z"))).toBe("28 Dec 2026 \u2013 3 Jan 2027");
+  });
+
+  it("reads Sydney days across the 4 Oct 2026 DST start, not the machine zone's", () => {
+    // 3 Oct 00:00 AEST (+10) to 5 Oct 23:59 AEDT (+11).
+    expect(formatDayRangePortal(syd("2026-10-02T14:00:00.000Z"), syd("2026-10-05T12:59:00.000Z"))).toBe("3\u20135 Oct 2026");
   });
 });

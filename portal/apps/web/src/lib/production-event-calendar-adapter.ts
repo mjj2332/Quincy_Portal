@@ -27,6 +27,7 @@ import {
   type CalendarPerson,
   type ProductionCalendarSubview,
 } from "@quincy/shared";
+import { formatDayRangePortal } from "./date-format";
 
 /**
  * The fixed view settings `ProductionEventCalendar` hands `<EventCalendar>`. One constant so the
@@ -273,8 +274,32 @@ function chipColourClassName(data: ProductionEventCalendarData | undefined): str
  * aria-label uses the same text); it still ignores `formats.agendaDayHeader`, which is not overridden here.
  */
 export const PRODUCTION_EVENT_CALENDAR_I18N = {
-  formats: { moreDayHeader: "EEE d MMM", agendaDayWeekday: "EEE", agendaDayDate: "d MMM yyyy" },
-} as const;
+  formats: { moreDayHeader: "EEE d MMM", agendaDayWeekday: "EEE", agendaDayDate: "d MMM yyyy", dayTitle: "EEE d MMM yyyy" },
+  functions: {
+    /**
+     * #643: week / days / agenda read as the Portal's day-first range ("28 Sep – 4 Oct 2026"). Every other view
+     * goes to `base`, the vendor's merged default, so the `formats` above (month, day) keep applying. The range
+     * end is exclusive, so the last day is one millisecond earlier, as the vendor does it.
+     */
+    formatTitle: <C extends { activeRange: DayRange }>(
+      view: CalendarViewName,
+      ctx: C,
+      base?: (view: CalendarViewName, ctx: C) => string,
+    ): string => {
+      if (view === "week" || view === "days" || view === "agenda") return formatPortalRange(ctx.activeRange);
+      return base ? base(view, ctx) : "";
+    },
+    /** #643: the agenda group's aria-label and the drag-draft labels. */
+    formatDayRange: (range: DayRange): string => formatPortalRange(range),
+  },
+};
+
+type DayRange = { start: Date; end: Date };
+
+function formatPortalRange(range: DayRange): string {
+  // Exclusive end: the last day shown is a millisecond before it (a DST day is 23 hours, not 24).
+  return formatDayRangePortal(range.start, new Date(range.end.getTime() - 1));
+}
 
 export function subviewToCalendarView(subview: ProductionCalendarSubview): CalendarViewName {
   return subview;

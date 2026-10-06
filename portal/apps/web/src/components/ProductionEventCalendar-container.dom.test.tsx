@@ -191,6 +191,29 @@ describe("ProductionEventCalendar container", () => {
       expect(q("event-calendar-period").contains(q("event-calendar-empty"))).toBe(true);
     });
 
+    it("groups Prev and Next in one parent so the pair never splits across a wrapped row (#643)", async () => {
+      stubMedia(PHONE);
+      await renderCalendar(calendar("month", "2026-09-15"), adminProductionCalendarRangeResponseSchema.parse(rawResponse("editing_autohdr")));
+      expect(q("event-calendar-fake-prev").parentElement).toBe(q("event-calendar-fake-next").parentElement);
+      expect(q("event-calendar-fake-prev").parentElement).not.toBe(q("event-calendar-controls"));
+    });
+
+    it("keeps the toggle named Calendar with its text label above 400px (#643)", async () => {
+      stubMedia(PHONE);
+      await renderCalendar(calendar("month", "2026-09-15"), adminProductionCalendarRangeResponseSchema.parse(rawResponse("editing_autohdr")));
+      expect(q("event-calendar-rail-toggle").textContent).toBe("Calendar");
+      expect(q("event-calendar-rail-toggle").getAttribute("aria-expanded")).toBe("false");
+    });
+
+    it("below 400px the toggle is icon-only but still named Calendar and aria-expanded (#643)", async () => {
+      stubMedia([...PHONE, "(max-width: 399px)"]);
+      await renderCalendar(calendar("month", "2026-09-15"), adminProductionCalendarRangeResponseSchema.parse(rawResponse("editing_autohdr")));
+      const toggle = q("event-calendar-rail-toggle");
+      expect(toggle.getAttribute("aria-label")).toBe("Calendar");
+      expect(toggle.textContent).toBe("");
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    });
+
     it("leaves the wider layout on the default nav", async () => {
       stubMedia(["(max-width: 1100px)"]);
       await renderCalendar(calendar("month", "2026-09-15"), adminProductionCalendarRangeResponseSchema.parse(rawResponse("editing_autohdr")));

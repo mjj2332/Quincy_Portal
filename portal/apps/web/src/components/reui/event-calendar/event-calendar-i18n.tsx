@@ -48,6 +48,12 @@
  *    ("MMMM d, yyyy"). The agenda view hard-coded those two literals for its day header and group
  *    aria-label and ignored `formats.agendaDayHeader`. Defaults equal the old literals, so a
  *    consumer that overrides nothing renders identically.
+ *
+ * 3. 2026-10-07, #643 — `functions.formatTitle` takes an optional third argument, the merged
+ *    default title, and `mergeEventCalendarI18n` passes it to a consumer override. Lets Quincy
+ *    own the week / days / agenda range text and hand month, day and resource back to the default,
+ *    which is bound to the merged `formats` (so `monthTitle` / `dayTitle` overrides keep applying).
+ *    Additive: a caller or consumer that ignores the argument behaves as before.
  */
 import type {
   CalendarView,
@@ -177,7 +183,17 @@ interface EventCalendarI18nConfig {
         activeRange: EventCalendarDateRange
         visibleRange: EventCalendarDateRange
         locale?: Locale
-      }
+      },
+      /** QUINCY (#643): the merged default title, passed by `mergeEventCalendarI18n` to a consumer override. */
+      base?: (
+        view: CalendarView,
+        ctx: {
+          date: Date
+          activeRange: EventCalendarDateRange
+          visibleRange: EventCalendarDateRange
+          locale?: Locale
+        }
+      ) => string
     ) => string
     formatEventTime: (
       start: Date,
@@ -381,13 +397,20 @@ function mergeEventCalendarI18n(
   const labels = { ...DEFAULT_LABELS, ...overrides.labels }
   const viewNames = { ...DEFAULT_VIEW_NAMES, ...overrides.viewNames }
   const formats = { ...DEFAULT_FORMATS, ...overrides.formats }
+  const defaults = makeDefaultFunctions({ labels, formats })
+  const overrideTitle = overrides.functions?.formatTitle
   return {
     labels,
     viewNames,
     formats,
     functions: {
-      ...makeDefaultFunctions({ labels, formats }),
+      ...defaults,
       ...overrides.functions,
+      // QUINCY (#643): an override of formatTitle can hand the views it does not own back to the default,
+      // which is bound to the MERGED formats, so a `formats` override keeps applying to them.
+      ...(overrideTitle && {
+        formatTitle: (view, ctx) => overrideTitle(view, ctx, defaults.formatTitle),
+      }),
     },
   }
 }
