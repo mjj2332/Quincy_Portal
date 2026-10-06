@@ -179,19 +179,20 @@ export function RowText({
 /** A meta line's parts with the dot between them, one line that slides like the title. */
 export function MetaLine({ parts }: { parts: readonly React.ReactNode[] }) {
   return (
-    <RowText className="inline-flex items-center gap-1.5 align-top pointer-coarse:flex-wrap">
+    // #559: bounded, not RowText's sliding line: the time group keeps its width and the first part (the author) gives way, so a long name ellipsizes and the time stays whole.
+    <span className="flex min-w-0 items-center gap-1.5 align-top pointer-coarse:flex-wrap">
       {parts.map((part, index) =>
         index === 0 ? (
           <Fragment key={index}>{part}</Fragment>
         ) : (
           // #559: each dot travels with the part after it, so a wrapped line never starts or ends on a hanging dot.
-          <span key={index} className="inline-flex items-center gap-1.5 whitespace-nowrap">
+          <span key={index} className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap">
             <Dot />
             {part}
           </span>
         )
       )}
-    </RowText>
+    </span>
   )
 }
 

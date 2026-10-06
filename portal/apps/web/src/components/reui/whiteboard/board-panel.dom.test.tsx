@@ -44,6 +44,10 @@ describe("MetaLine (#559)", () => {
     expect(dots.map((dot) => dot.parentElement!.textContent)).toEqual([", 10 Mar 2020", ", 7 elements"]);
     expect(new Set(dots.map((dot) => dot.parentElement)).size).toBe(2);
     expect(dots.every((dot) => dot.parentElement!.className.includes("whitespace-nowrap"))).toBe(true);
+    // The time group never shrinks, and the line is bounded (not the sliding row text) so the first part is what gives way.
+    expect(dots.every((dot) => dot.parentElement!.className.includes("shrink-0"))).toBe(true);
+    expect(dots[0]!.parentElement!.parentElement!.className).toContain("min-w-0");
+    expect(dots[0]!.parentElement!.parentElement!.className).toContain("pointer-coarse:flex-wrap");
   });
 });
 

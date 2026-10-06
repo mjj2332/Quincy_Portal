@@ -58,11 +58,11 @@ const RESTORE_ICON = <RotateCcwIcon aria-hidden="true" />
 function byline(version: WhiteboardVersionSummary, when: string) {
   const who = version.createdBy?.name.trim() ? version.createdBy.name : null
   return [
-    <span key="who" className="flex items-center gap-1.5">
+    <span key="who" className="flex min-w-0 items-center gap-1.5">
       <Avatar className="size-4 shrink-0" aria-hidden="true">
         <AvatarFallback className="text-[8px]">{who ? initials(who) : "A"}</AvatarFallback>
       </Avatar>
-      {who ?? "Automatic"}
+      <span className="min-w-0 truncate pointer-coarse:overflow-visible pointer-coarse:whitespace-normal">{who ?? "Automatic"}</span>
     </span>,
     when,
   ]

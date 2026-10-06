@@ -251,6 +251,18 @@ describe("WhiteboardHistoryPanel (#500)", () => {
     expect(sheet.querySelector('[data-testid="whiteboard-version-row"]')).not.toBeNull();
   });
 
+  it("a long author name ellipsizes while the time stays whole (#559)", async () => {
+    h.get.mockResolvedValue({ generation: 1, currentVersionId: null, versions: [version("v1", Date.parse("2020-03-10T05:04:00.000Z"), "interval", 1, "TB8-04 Gate User Renamed")] });
+    await render(props());
+    const row = document.body.querySelector<HTMLElement>('[data-testid="whiteboard-version-row"]')!;
+    const name = [...row.querySelectorAll<HTMLElement>("span")].find((node) => node.children.length === 0 && node.textContent === "TB8-04 Gate User Renamed")!;
+    expect(name.className).toContain("min-w-0");
+    expect(name.className).toContain("truncate");
+    expect(name.parentElement!.className).toContain("min-w-0");
+    const time = [...row.querySelectorAll<HTMLElement>("span")].find((node) => node.textContent?.includes("10 Mar 2020") && node.className.includes("shrink-0"))!;
+    expect(time.className).toContain("whitespace-nowrap");
+  });
+
   it("two versions saved in the same minute read apart, in Sydney time (#559)", async () => {
     const minute = Date.parse("2020-03-10T05:04:00.000Z");
     h.get.mockResolvedValue({ generation: 1, currentVersionId: null, versions: [version("late", minute + 50_000, "last_leave", 4), version("early", minute + 5_000, "interval", 3), version("older", minute - 7_200_000, "interval", 2)] });
