@@ -260,6 +260,28 @@ describe("Notifications", () => {
     expect(empty?.textContent).toContain("You’re all caught up.");
   });
 
+  it("offers 'Show read notifications' on the Unread empty state only when something exists to show, and hides the end pill on an empty list (#619)", async () => {
+    apiGetMock.mockResolvedValue(response([], 0, null));
+    await render();
+    const unreadTab = () => [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((tab) => tab.textContent?.startsWith("Unread"))!;
+    await click(unreadTab());
+    expect(host.querySelector('[data-testid="rail-notifications-show-all"]')).toBeNull();
+    expect(host.querySelector('[data-testid="notifications-load-more"]')).toBeNull();
+  });
+
+  it("shows 'Show read notifications' when only read rows exist, and it switches to All (#619)", async () => {
+    apiGetMock.mockResolvedValue(response([notification({ readAt: "2026-07-28T00:00:00.000Z" })], 0, null));
+    await render();
+    const tabs = () => [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+    await click(tabs().find((tab) => tab.textContent?.startsWith("Unread"))!);
+    const showRead = host.querySelector<HTMLButtonElement>('[data-testid="rail-notifications-show-all"]')!;
+    expect(showRead.textContent).toBe("Show read notifications");
+    expect(host.querySelector('[data-testid="notifications-load-more"]')).toBeNull();
+    await click(showRead);
+    expect(tabs().find((tab) => tab.textContent === "All")!.getAttribute("aria-selected")).toBe("true");
+    expect(host.querySelector('[data-testid="notifications-load-more"]')).not.toBeNull();
+  });
+
   it("renders a payload lacking actor/subject/assetId, the external wire shape", async () => {
     const external = {
       id: "ext-1",

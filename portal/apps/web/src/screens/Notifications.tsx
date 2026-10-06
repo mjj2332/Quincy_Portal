@@ -180,7 +180,7 @@ export function Notifications() {
         tabIndex={0}
       >
         {filtered.length === 0 ? (
-          <NotificationEmptyState filter={tab} unreadCount={unreadCount} onShowAll={focusAllTabAndShowAll} />
+          <NotificationEmptyState filter={tab} unreadCount={unreadCount} onShowAll={focusAllTabAndShowAll} hasNotifications={notifications.length > 0} />
         ) : (
           <NotificationList
             buckets={buckets}
@@ -193,7 +193,8 @@ export function Notifications() {
         )}
       </div>
 
-      <div className={FOOT}>
+      {/* An empty list that has ended has nothing more to say: the empty state above already does. */}
+      {!(filtered.length === 0 && isEnd) && <div className={FOOT}>
         <Button
           type="button"
           variant="outline"
@@ -204,7 +205,7 @@ export function Notifications() {
         >
           {loadMoreLabel}
         </Button>
-      </div>
+      </div>}
       <div aria-live="polite" className="sr-only">{announcement}</div>
     </main>
   );

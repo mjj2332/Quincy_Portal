@@ -838,6 +838,15 @@ describe("NotificationBell panel (Popover)", () => {
       expect(document.activeElement).toBe(tabButton("All"));
     });
 
+    it("offers no 'Show read notifications' when the account has no notifications at all (#619)", async () => {
+      apiGetMock.mockResolvedValue({ notifications: [], unreadCount: 0 });
+      const trigger = await renderPanel();
+      await click(trigger);
+      await click(tabButton("Unread"));
+      expect(document.querySelector('[data-testid="rail-notifications-empty"]')!.textContent).toContain("You’re all caught up.");
+      expect(document.querySelector('[data-testid="rail-notifications-show-all"]')).toBeNull();
+    });
+
     it("explains unread notifications outside the recent list when the page shows none", async () => {
       apiGetMock.mockResolvedValue({ notifications: [
         notification({ id: "n-read", title: "Read row", readAt: "2026-07-28T01:00:00.000Z", createdAt: "2026-07-28T01:00:00.000Z" }),
