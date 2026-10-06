@@ -19,4 +19,8 @@ describe("stacked date popup width (#630)", () => {
   it("keeps the desktop width content-sized", () => {
     expect(source).toMatch(/cn\("w-auto max-w-\[calc\(100vw-2\*var\(--space-4\)\)\]/);
   });
+  it("no body layout switches to a row below 721px (it would overflow the capped popup at 640-720px)", () => {
+    expect(source.match(/(?:^|[\s"'`])(?:max-)?(?:sm|md|lg):[\w[\]*-]/gm) ?? []).toEqual([]);
+    expect(source).toContain("min-[721px]:flex-row");
+  });
 });

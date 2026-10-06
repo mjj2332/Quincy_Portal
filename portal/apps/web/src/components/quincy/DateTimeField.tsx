@@ -144,7 +144,7 @@ function DatePopup({ label, value, clearable, onApply, onClose }: {
 
   return (
     <PopupFrame label={label} zoneId={anchor.zoneId} bodyRef={anchor.bodyRef} applying={applying} onCancel={onClose} onApply={() => { void apply(); }}>
-      <div className="flex flex-col gap-[var(--space-4)] sm:flex-row">
+      <div className="flex flex-col gap-[var(--space-4)] min-[721px]:flex-row">
         <ShortcutList shortcuts={shortcuts} activeId={activeId} onPick={(shortcut) => pick(shortcut.resolve())} />
         <CalendarPane
           selection={{ mode: "single", day: selectedDay }}
