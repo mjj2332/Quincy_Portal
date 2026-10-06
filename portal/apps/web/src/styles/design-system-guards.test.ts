@@ -1364,6 +1364,13 @@ const FIELD_PRIMITIVES = [
   "components/quincy/NativeSelect.tsx",
   "components/QuincyRichTextEditor.tsx",
   "lib/rail-field.ts",
+  // #633 item 1: controls that kept `focus-visible:border-ring` beside the global outline.
+  "components/reui/checkbox.tsx",
+  "components/reui/switch.tsx",
+  "components/reui/item.tsx",
+  "components/reui/field.tsx",
+  "components/reui/whiteboard/board-panel.tsx",
+  "components/reui/cascader/cascader.tsx",
 ];
 
 function stripSourceComments(source: string): string {
@@ -1471,5 +1478,32 @@ describe("guard: one focus line — no field primitive recolours its border on f
     expect(hasFocusBorderColour('"hover:border-border-hover focus-visible:outline-ring aria-invalid:border-destructive"')).toBe(false);
     expect(hasFocusBorderColour('"focus-visible:border-0 border-border"')).toBe(false);
     expect(hasFocusBorderColour("// focus-visible:border-ring in a comment")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Guard 5b — Admin inline editors (#633 items 3 and 4)
+// ---------------------------------------------------------------------------
+/**
+ * Item 3: `TableWrap` is `overflow-x:auto`, which also clips on y and, at the left edge, the 2px
+ * flush focus outline of an inline editor. Every Admin table that hosts an inline editor gives its
+ * scroller inline padding from the spacing token so the outline has room.
+ * Item 4: Chrome paints its contact-autofill icon inside the Agent email editor and it sat over the
+ * value. The editor is a real `type="email"` field with `autoComplete="off"` and reserves end
+ * padding (`pe-[var(--space-8)]`) so, should the browser still draw the icon, it never covers text.
+ */
+describe("guard: Admin inline editors keep their focus outline and value clear (#633)", () => {
+  const admin = readFileSync(join(srcDir, "screens/Admin.tsx"), "utf8");
+  it("every TableWrap hosting an inline editor pads its scroller inline", () => {
+    const wraps = admin.split("<TableWrap").slice(1).map((chunk) => chunk.slice(0, chunk.indexOf("</TableWrap>") === -1 ? undefined : chunk.indexOf("</TableWrap>")));
+    const hosting = wraps.filter((chunk) => /<Input\b/.test(chunk));
+    expect(hosting.length).toBeGreaterThanOrEqual(3);
+    for (const chunk of hosting) expect(chunk.slice(0, 200)).toMatch(/className="[^"]*min-\[721px\]:px-\[var\(--space-1\)\]/);
+  });
+  it("the Agent email editor is a non-autofilled email field with end padding", () => {
+    const line = admin.split("\n").find((l) => l.includes("aria-label={`Email for ${agent.name}`}")) ?? "";
+    expect(line).toMatch(/type="email"/);
+    expect(line).toMatch(/autoComplete="off"/);
+    expect(line).toMatch(/pe-\[var\(--space-8\)\]/);
   });
 });

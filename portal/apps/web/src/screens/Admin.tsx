@@ -538,7 +538,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
           <Button type="button" variant="outline" disabled={isReleasingFreeze} onClick={() => void releaseProvisioningFreeze()}>Release freeze</Button>
         </Notice>}
         {!isLoadingUsers && !usersError && users.length === 0 && <EmptyState title="No users provisioned.">Provision a team member to give them closed-access Google sign-in.</EmptyState>}
-        {!isLoadingUsers && !usersError && users.length > 0 && <TableWrap><Table>
+        {!isLoadingUsers && !usersError && users.length > 0 && <TableWrap className="min-[721px]:px-[var(--space-1)]"><Table>
           <TableHead><TableRow><TableHeader>Name</TableHeader><TableHeader>Email</TableHeader><TableHeader>Role</TableHeader><TableHeader>Access</TableHeader><TableHeader>Default editor</TableHeader><TableHeader>Created</TableHeader><TableHeader><span className="sr-only">Actions</span></TableHeader></TableRow></TableHead>
           <TableBody>{users.map((user) => {
           const isSelf = user.id === currentUserId;
@@ -574,7 +574,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
           <QuincyField id="admin-agency-notes" label="Notes" value={agencyForm.notes} onChange={(event) => setAgencyForm((value) => ({ ...value, notes: event.target.value }))} />
           <Button type="submit" className="max-[721px]:w-full">Add agency</Button>
         </form>
-        <TableWrap><Table>
+        <TableWrap className="min-[721px]:px-[var(--space-1)]"><Table>
           <TableHead><TableRow><TableHeader>Agency</TableHeader><TableHeader>Notes</TableHeader><TableHeader>Agents</TableHeader><TableHeader>Created</TableHeader><TableHeader><span className="sr-only">Actions</span></TableHeader></TableRow></TableHead>
           <TableBody>{agencies.length === 0 ? <TableRow><TableCell colSpan={5} className="text-center text-foreground-secondary">No agencies yet.</TableCell></TableRow> : agencies.map((agency) => {
             const isSelected = selectedAgencyId === agency.id;
@@ -605,11 +605,11 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
           <QuincyField id="admin-agent-phone" label="Phone" value={agentForm.phone} onChange={(event) => setAgentForm((value) => ({ ...value, phone: event.target.value }))} />
           <Button type="submit" className="max-[721px]:w-full">Add agent</Button>
         </form>
-        <TableWrap><Table>
+        <TableWrap className="min-[721px]:px-[var(--space-1)]"><Table>
           <TableHead><TableRow><TableHeader>Name</TableHeader><TableHeader>Email</TableHeader><TableHeader>Phone</TableHeader><TableHeader>Agency</TableHeader><TableHeader><span className="sr-only">Actions</span></TableHeader></TableRow></TableHead>
           <TableBody>{agents.length === 0 ? <TableRow><TableCell colSpan={5} className="text-center text-foreground-secondary">No agents found.</TableCell></TableRow> : agents.map((agent) => <TableRow key={agent.id}>
             <TableCell data-label="Name">{editingAgent === agent.id ? <Input className="min-w-[130px] border-[var(--field-border)] outline-offset-0 focus-visible:!outline-offset-0" aria-label={`Name for ${agent.name}`} value={agent.name} onChange={(event) => setAgents((current) => current.map((item) => item.id === agent.id ? { ...item, name: event.target.value } : item))} /> : <strong>{agent.name}</strong>}</TableCell>
-            <TableCell data-label="Email">{editingAgent === agent.id ? <Input className="min-w-[130px] border-[var(--field-border)] outline-offset-0 focus-visible:!outline-offset-0" aria-label={`Email for ${agent.name}`} value={agent.email ?? ""} onChange={(event) => setAgents((current) => current.map((item) => item.id === agent.id ? { ...item, email: event.target.value || null } : item))} /> : agent.email || "—"}</TableCell>
+            <TableCell data-label="Email">{editingAgent === agent.id ? <Input type="email" autoComplete="off" className="min-w-[130px] pe-[var(--space-8)] border-[var(--field-border)] outline-offset-0 focus-visible:!outline-offset-0" aria-label={`Email for ${agent.name}`} value={agent.email ?? ""} onChange={(event) => setAgents((current) => current.map((item) => item.id === agent.id ? { ...item, email: event.target.value || null } : item))} /> : agent.email || "—"}</TableCell>
             <TableCell data-label="Phone">{editingAgent === agent.id ? <Input className="min-w-[130px] border-[var(--field-border)] outline-offset-0 focus-visible:!outline-offset-0" aria-label={`Phone for ${agent.name}`} value={agent.phone ?? ""} onChange={(event) => setAgents((current) => current.map((item) => item.id === agent.id ? { ...item, phone: event.target.value || null } : item))} /> : agent.phone || "—"}</TableCell>
             <TableCell data-label="Agency">{agent.agencyName || "—"}</TableCell>
             <TableCell className="min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]">{editingAgent === agent.id ? <><Button type="button" variant="outline" onClick={() => void saveAgentEdit(agent)}>Save</Button><Button type="button" variant="ghost" className={TEXT_BUTTON} onClick={() => setEditingAgent(undefined)}>Cancel</Button></> : <Button type="button" variant="ghost" className={TEXT_BUTTON} onClick={() => setEditingAgent(agent.id)}>Edit</Button>}</TableCell>
