@@ -73,3 +73,32 @@ describe("Calendar day states (#581)", () => {
     expect(td.className).not.toContain("data-[selected=true]:rounded-none");
   });
 });
+
+describe("Calendar range endpoints under the Subtask picker's inactive-end modifier (#581)", () => {
+  it("active end: primary-foreground on ink; inactive end: foreground on card, both pinned for hover", async () => {
+    const { INACTIVE_END_CLASS } = await import("@/components/quincy/date-time-field/CalendarPane");
+    const to = new Date(2026, 9, 14);
+    await render(
+      <Calendar
+        mode="range"
+        month={month}
+        selected={{ from: new Date(2026, 9, 10), to }}
+        modifiers={{ inactive_end: new Date(2026, 9, 10) }}
+        modifiersClassNames={{ inactive_end: INACTIVE_END_CLASS }}
+      />,
+    );
+    const active = host.querySelector<HTMLButtonElement>('button[data-range-end="true"]')!;
+    expect(active.className).toContain("data-[range-end=true]:hover:!text-primary-foreground");
+    expect(active.className).toContain("data-[range-end=true]:hover:bg-primary/80");
+    expect(active.closest("td")!.className).not.toContain("hover:!text-foreground");
+
+    const inactive = host.querySelector<HTMLButtonElement>('button[data-range-start="true"]')!;
+    const td = inactive.closest("td")!;
+    // The calendar's own start rule is on the button; the td's inactive-end override must out-rank it:
+    // `!important` on both, so the td selector carries `button[data-day]` for the extra specificity.
+    expect(inactive.className).toContain("data-[range-start=true]:hover:!text-primary-foreground");
+    expect(td.className).toContain("[&_button[data-day]]:hover:!text-foreground");
+    expect(td.className).toContain("[&_button[data-day]]:hover:!bg-card");
+    expect(inactive.hasAttribute("data-day")).toBe(true);
+  });
+});
