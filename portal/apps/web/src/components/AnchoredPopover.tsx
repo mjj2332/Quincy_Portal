@@ -12,6 +12,7 @@ import { useContext, useEffect } from "react";
 
 import { cn } from "../lib/utils";
 import { OverlayContainerContext } from "./OverlayContainerContext";
+import { hasMountedAlertDialog, isAlertDialogPress } from "../lib/alert-dialog-press";
 
 // Duplicated from `--dur-base`/`--dur-fast` (tokens/spacing.css) — `useTransitionStatus` cannot
 // read a CSS custom property. Exported so a plain unit test can assert the two stay in sync
@@ -94,7 +95,11 @@ export function useAnchoredPopover({ open, onClose, placement = "bottom-end" }: 
   const container = useContext(OverlayContainerContext) ?? undefined;
   const floating = useFloating({
     open,
-    onOpenChange(nextOpen) { if (!nextOpen) onClose(); },
+    onOpenChange(nextOpen, _event, reason) {
+      // Focus wrapping onto the alert dialog's focus guards (Shift+Tab from Cancel, Tab past Confirm) is not this popover losing focus.
+      if (!nextOpen && reason === "focus-out" && hasMountedAlertDialog()) return;
+      if (!nextOpen) onClose();
+    },
     placement,
     strategy: container ? "fixed" : "absolute",
     whileElementsMounted: autoUpdate,
@@ -115,7 +120,7 @@ export function useAnchoredPopover({ open, onClose, placement = "bottom-end" }: 
       const reference = floating.refs.reference.current as HTMLElement | null;
       const floatingNode = floating.refs.floating.current;
       if (!node || reference?.contains(node) || floatingNode?.contains(node)) return false;
-      if (node instanceof Element && node.closest("[data-confirm-modal-root]")) return false;
+      if (isAlertDialogPress(node)) return false;
       if (!includeFocusBoundary || !(node instanceof Element)) return true;
       if (node.matches("[data-floating-ui-focus-guard]") || node.closest("[data-floating-ui-focus-guard]")) return false;
       return !floatingNode?.closest("[data-floating-ui-portal]")?.contains(node);

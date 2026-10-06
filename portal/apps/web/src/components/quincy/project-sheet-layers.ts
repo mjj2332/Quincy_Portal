@@ -15,6 +15,8 @@
  * counts only while open, so the gate never blocks a close on something already closing.
  */
 const MODAL_DIALOG = '[role="dialog"][aria-modal="true"]';
+/** #625: the global confirm is an alert dialog (Base UI sets no `aria-modal` on it) — its own arm. */
+const ALERT_DIALOG = '[role="alertdialog"][data-open]';
 /**
  * Floating popups: a POSITIVE role list, not "anything with `data-open`" — tooltips carry
  * `data-open` too and must never block a close. Base UI's Popover popup is a non-modal
@@ -40,6 +42,8 @@ export function hasOpenInnerLayer(popup: HTMLElement | null, slot: HTMLElement |
     if (modal === popup || modal.contains(popup) || popup.contains(modal)) continue;
     return true;
   }
+  // The global confirm (`ConfirmModalHost`): an alert dialog, so Escape on it must not also close the sheet.
+  if (doc.querySelector(ALERT_DIALOG)) return true;
   // Floating popups portal into the overlay slot (or stay inside the popup); the slot is a sibling
   // of the popup's body, so both roots are searched.
   if (slot?.querySelector(OPEN_POPUP) || popup.querySelector(OPEN_POPUP)) return true;

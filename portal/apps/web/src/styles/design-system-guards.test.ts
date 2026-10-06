@@ -1510,6 +1510,14 @@ describe("guard: Admin inline editors keep their focus outline and value clear (
       expect(open).not.toMatch(/(?<![-\w])min-\[721px\]:px-/);
     }
   });
+  // #638: seven columns at 16px gutters need 864px (885 with the editor open) and the Users frame is 846px
+  // at 1024. 12px gutters (--space-3) on the Users table only, from 721px up, take 56px out of both.
+  it("the seven-column Users table tightens its cell gutters so it fits its frame at 1024 (#638)", () => {
+    const open = admin.split("<TableWrap").slice(1).find((chunk) => chunk.includes("<TableHeader>Default editor</TableHeader>"))?.slice(0, 260) ?? "";
+    expect(open).toMatch(/min-\[721px\]:\[&_th\]:px-\[var\(--space-3\)\]/);
+    expect(open).toMatch(/min-\[721px\]:\[&_td\]:px-\[var\(--space-3\)\]/);
+    expect(open).not.toMatch(/(?<![-\w])min-\[721px\]:px-/);
+  });
   it("Email cells break at @ and dots via EmailText so the actions column fits", () => {
     const cells = admin.split("\n").flatMap((l) => l.match(/<TableCell data-label="Email"[^>]*>/g) ?? []);
     expect(cells.length).toBeGreaterThanOrEqual(2);
