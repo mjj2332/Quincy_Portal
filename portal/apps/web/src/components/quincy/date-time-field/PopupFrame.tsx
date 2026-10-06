@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, type ReactNode, type Ref, type RefObject } from "react";
 import { scrollTopClearOfFade, type FadeItem } from "@/lib/date-time-field";
+import { SHORTCUTS_LABEL } from "./ShortcutList";
 import { Button } from "@/components/reui/button";
 import { ScrollArea } from "@/components/reui/scroll-area";
 import { Frame, FrameDescription, FrameFooter, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
@@ -67,16 +68,32 @@ function useSelectedClearOfFade(contentRef: RefObject<HTMLDivElement | null>, re
     let selected = signature();
     const focused = () => { const active = document.activeElement; return active instanceof HTMLElement && active !== viewport && viewport.contains(active) ? active : null; };
     const write = (top: number) => { viewport.scrollTop = top; applied = viewport.scrollTop; /* the browser may round it */ };
-    const solve = (items: FadeItem[], fade: number) => scrollTopClearOfFade({ viewport: viewport.getBoundingClientRect(), scrollTop: viewport.scrollTop, maxScrollTop: viewport.scrollHeight - viewport.clientHeight, fade, items });
+    // #630: where the body may rest so no preset row is cut in half: the top, each preset row's top, and where the presets end.
+    const presetSnaps = () => {
+      const box = viewport.getBoundingClientRect();
+      const at = (el: Element) => Math.round(el.getBoundingClientRect().top - box.top + viewport.scrollTop);
+      const group = viewport.querySelector(`[role="list"][aria-label="${SHORTCUTS_LABEL}"]`);
+      if (!group) return [];
+      const tops = [...group.querySelectorAll("button")].map(at);
+      const after = group.nextElementSibling;
+      return [0, ...tops, ...(after ? [at(after)] : [])];
+    };
+    const solve = (items: FadeItem[], fade: number, snaps?: number[]) => scrollTopClearOfFade({ viewport: viewport.getBoundingClientRect(), scrollTop: viewport.scrollTop, maxScrollTop: viewport.scrollHeight - viewport.clientHeight, fade, items, ...(snaps ? { snaps } : {}) });
     const nudge = (fromTop: boolean, withReveal: boolean) => {
       const fade = measure();
-      // Solved from where the body is when a control has focus, so a resize never jumps it away from the focused control.
-      if (fromTop && !focused()) viewport.scrollTop = 0;
+      // #630: an automatic solve (open, resize) always starts from the top, focus or not (the opening focus is on the picked day, so a
+      // "keep where it is" rule left a body that an early, smaller layout had scrolled down, and the later solve only picked among
+      // positions near it). A focused control is still required below, so this never moves it out of view.
+      if (fromTop) viewport.scrollTop = 0;
       const required = new Set<Element>(withReveal ? viewport.querySelectorAll(revealRef.current) : []);
       const focus = focused();
       if (focus) required.add(focus);
-      const elements = new Set<Element>([...viewport.querySelectorAll(SELECTED), ...required]);
-      write(solve([...elements].map((item) => { const { top, bottom } = item.getBoundingClientRect(); return { top, bottom, required: required.has(item), priority: item === focus }; }), fade));
+      // #630: at open only the picked day (the `reveal` match, plus a focused control) is solved for. The pressed time slot and the range's other
+      // highlighted days only read grey in the fade, so they never push the list past the presets; later selection and focus solves still count them.
+      const selected = fromTop ? [] : [...viewport.querySelectorAll(SELECTED)];
+      const elements = new Set<Element>([...selected, ...required]);
+      // Only the open/resize solve snaps: a selection change or focus keeps its least-scroll move.
+      write(solve([...elements].map((item) => { const { top, bottom } = item.getBoundingClientRect(); return { top, bottom, required: required.has(item), priority: item === focus }; }), fade, fromTop ? presetSnaps() : undefined));
     };
     revealNow.current = () => { noticeScroll(); nudge(false, true); };
     const automatic = () => { noticeScroll(); if (!userScrolled) nudge(true, true); };
@@ -96,8 +113,13 @@ function useSelectedClearOfFade(contentRef: RefObject<HTMLDivElement | null>, re
     // A selection change: the day's `aria-selected`, a slot's `aria-pressed`, or a re-rendered grid (another month).
     const selection = typeof MutationObserver === "undefined" ? undefined : new MutationObserver(() => { const now = signature(); if (now === selected) return; selected = now; noticeScroll(); nudge(false, false); });
     selection?.observe(content, { subtree: true, childList: true, attributes: true, attributeFilter: ["aria-selected", "aria-pressed"] });
+    // The preset rows can mount after the popup is sized (Project default arrives late): re-solve, so the snap points are the final ones. Only a change to the shortcut buttons counts, never a month change.
+    const presetCount = () => viewport.querySelectorAll(`[role="list"][aria-label="${SHORTCUTS_LABEL}"] button`).length;
+    let presets = presetCount();
+    const presetWatch = typeof MutationObserver === "undefined" ? undefined : new MutationObserver(() => { const now = presetCount(); if (now !== presets) { presets = now; automatic(); } });
+    presetWatch?.observe(content, { subtree: true, childList: true });
     automatic();
-    return () => { revealNow.current = () => {}; resize?.disconnect(); selection?.disconnect(); viewport.removeEventListener("scroll", noticeScroll); viewport.removeEventListener("focusin", onFocusIn); };
+    return () => { presetWatch?.disconnect(); revealNow.current = () => {}; resize?.disconnect(); selection?.disconnect(); viewport.removeEventListener("scroll", noticeScroll); viewport.removeEventListener("focusin", onFocusIn); };
   }, [contentRef]);
 }
 

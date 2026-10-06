@@ -199,6 +199,29 @@ describe("popupPaddingWithTopAtLeast (#537)", () => {
   });
 });
 
+describe("scrollTopClearOfFade snaps (#630)", () => {
+  const base = { viewport: { top: 100, bottom: 500 }, scrollTop: 0, maxScrollTop: 300, fade: 32 };
+  const snaps = [0, 56, 112];
+  it("stays at 0 when the item is already clear there, even though 0 is the only snap needed", () => {
+    expect(scrollTopClearOfFade({ ...base, snaps, items: [{ top: 200, bottom: 236 }] })).toBe(0);
+  });
+  it("lands on a whole preset row instead of the least scroll when one is valid", () => {
+    // Needs >= 22 (item ends at 490, band 468): least scroll is 22, which would cut a row; 56 is valid and is a row top.
+    expect(scrollTopClearOfFade({ ...base, snaps, items: [{ top: 454, bottom: 490 }] })).toBe(56);
+  });
+  it("takes the smallest valid snap, not the one nearest where the body already is", () => {
+    // Window 22..max: 56 and 112 are both valid; a body left at 112 by an earlier solve must come back to 56.
+    expect(scrollTopClearOfFade({ ...base, scrollTop: 112, snaps, items: [{ top: 342, bottom: 378 }] })).toBe(56);
+  });
+  it("opens at 0 when the item fits there, wherever the body was left", () => {
+    expect(scrollTopClearOfFade({ ...base, scrollTop: 112, snaps, items: [{ top: 88, bottom: 124 }] })).toBe(0);
+  });
+  it("falls back to the least scroll when no snap keeps the items clear of the fade", () => {
+    // Together the two items allow 22..38 only; neither 0 nor 56 is inside it.
+    expect(scrollTopClearOfFade({ ...base, snaps: [0, 56], items: [{ top: 454, bottom: 490 }, { top: 170, bottom: 206 }] })).toBe(22);
+  });
+});
+
 describe("scrollTopClearOfFade (#537)", () => {
   const viewport = { top: 100, bottom: 500 };
   const base = { viewport, scrollTop: 0, maxScrollTop: 300, fade: 32 };

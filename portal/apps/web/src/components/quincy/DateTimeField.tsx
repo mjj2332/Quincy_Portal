@@ -144,7 +144,7 @@ function DatePopup({ label, value, clearable, onApply, onClose }: {
 
   return (
     <PopupFrame label={label} zoneId={anchor.zoneId} bodyRef={anchor.bodyRef} applying={applying} onCancel={onClose} onApply={() => { void apply(); }}>
-      <div className="flex flex-col gap-[var(--space-4)] sm:flex-row">
+      <div className="flex flex-col gap-[var(--space-4)] min-[721px]:flex-row">
         <ShortcutList shortcuts={shortcuts} activeId={activeId} onPick={(shortcut) => pick(shortcut.resolve())} />
         <CalendarPane
           selection={{ mode: "single", day: selectedDay }}
@@ -194,7 +194,7 @@ export function DateTimePopoverContent({ label, className, children, popupCollis
         target.focus({ preventScroll: true });
         return false;
       }}
-      className={cn("w-auto max-w-[calc(100vw-2*var(--space-4))] gap-0 overflow-hidden rounded-[var(--radius-card)] p-0", className)}
+      className={cn("w-auto max-w-[calc(100vw-2*var(--space-4))] max-[721px]:w-[min(calc(100vw-2*var(--space-4)),24rem)] gap-0 overflow-hidden rounded-[var(--radius-card)] p-0", className)}
     >
       <PopupAnchorContext.Provider value={{ zoneId, bodyRef }}>{children}</PopupAnchorContext.Provider>
     </PopoverContent>
