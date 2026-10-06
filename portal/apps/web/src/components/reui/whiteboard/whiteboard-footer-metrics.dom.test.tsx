@@ -1,7 +1,7 @@
 /**
  * #564: the footer's measured height was written into `--wb-control-size`, which the footer's own controls
  * read, so a phone-width 44px stuck after the window widened. The hook may measure the footer's width only;
- * the control size follows the layout breakpoint in CSS (`max-[721px]`).
+ * the control size follows the board's phone layout in CSS (`data-phone-layout`, set from `isPhoneLayout`).
  */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
