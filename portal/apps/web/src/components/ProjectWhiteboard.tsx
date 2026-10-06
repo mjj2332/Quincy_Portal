@@ -68,6 +68,18 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
   /** True from the moment a restore is seen until the new editor has committed: the old editor's teardown must not flush. */
   const resettingRef = useRef(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  /** #559: the open History list's "the board changed" hook (set by the panel while it is open). */
+  const historyChanged = useRef<(() => void) | null>(null);
+  /** #559: the scene fingerprint History was last told about. `onElements` also fires for cursor, presence and selection changes, which must not keep resetting the History refresh's quiet period. */
+  const historyScene = useRef<string | null>(null);
+  const notifyHistoryIfChanged = (elements: readonly unknown[]) => {
+    let versions = 0, nonces = 0;
+    for (const element of elements as ReadonlyArray<{ version?: number; versionNonce?: number }>) { versions += element.version ?? 0; nonces = (nonces + (element.versionNonce ?? 0)) % 2_147_483_647; }
+    const fingerprint = `${elements.length}:${versions}:${nonces}`;
+    if (fingerprint === historyScene.current) return;
+    historyScene.current = fingerprint;
+    historyChanged.current?.();
+  };
   const [historyLoaded, setHistoryLoaded] = useState(false);
   /** This person started a restore and its `reset` has not been seen yet: their own reset reads "Board restored", not "your changes were replaced". */
   const restoreStartedRef = useRef(false);
@@ -166,6 +178,7 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
     const resetBoard = (next: { generation: number; elements: Array<Record<string, unknown>> }) => {
       if (next.generation <= generationRef.current) return;      // a straggler of a generation this board has already left
       generationRef.current = next.generation;
+      historyChanged.current?.();
       resettingRef.current = true;                               // the old editor's teardown must not flush what the restore replaced
       session.vanish.stop();
       elementsRef.current = next.elements as unknown as SavedElement[];
@@ -402,7 +415,7 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
                       resolverRef.current?.ensure(elementsRef.current);
                     }}
                     onPresence={sharePresence}
-                    onElements={(elements) => { if (epochRef.current !== epoch) return; elementsRef.current = elements as ReadonlyArray<SavedElement>; vanishRef.current?.observe(elementsRef.current); replayRemote.current(); resolverRef.current?.ensure(elements); }}
+                    onElements={(elements) => { if (epochRef.current !== epoch) return; notifyHistoryIfChanged(elements); elementsRef.current = elements as ReadonlyArray<SavedElement>; vanishRef.current?.observe(elementsRef.current); replayRemote.current(); resolverRef.current?.ensure(elements); }}
                     onSave={saveFor(epoch)}
                     discardSave={discardSave}
                     onSaveStatusChange={(status) => { if (epochRef.current === epoch) setSaveStatus(status); }}
@@ -422,6 +435,7 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
             open={historyOpen}
             onOpenChange={setHistoryOpen}
             readOnly={mode === "view"}
+            changes={historyChanged}
             onRestoreStarted={() => { restoreStartedRef.current = true; }}
             onRestoreFailed={() => { restoreStartedRef.current = false; }}
           />

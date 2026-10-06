@@ -7,6 +7,8 @@ import type { ChecklistScheduleDto } from "@quincy/shared";
 import {
   dayBucketLabel,
   formatAbsoluteTime,
+  formatAbsoluteTimeWithSeconds,
+  formatDistinctTimes,
   formatCivilSchedule,
   formatDayGroupedTime,
   formatDueCivil,
@@ -138,5 +140,30 @@ describe("formatDueCivil (#372)", () => {
     // The weekday is the civil date's own, not a device-zone reinterpretation of midnight.
     expect(formatDueCivil("2026-10-04")).toBe("Sun 4 Oct");
     expect(formatDueCivil("2026-12-31T00:05")).toBe("Thu 31 Dec · 00:05");
+  });
+});
+
+describe("formatAbsoluteTimeWithSeconds / formatDistinctTimes (#559)", () => {
+  it("adds Sydney seconds to the absolute form", () => {
+    expect(formatAbsoluteTimeWithSeconds("2026-09-30T05:04:09.000Z")).toBe("30 Sep 2026, 3:04:09 PM");
+    expect(formatAbsoluteTimeWithSeconds("2026-09-29T14:05:30.000Z")).toBe("30 Sep 2026, 12:05:30 AM");
+  });
+
+  it("reads relative for today and absolute for another day, with no seconds while every label differs", () => {
+    expect(formatDistinctTimes([at("2026-09-30T04:48:00.000Z"), at("2026-09-30T02:00:00.000Z"), at("2026-09-28T05:00:00.000Z")], NOW))
+      .toEqual(["12m ago", "3h ago", "28 Sep, 3:00 PM"]);
+  });
+
+  it("drops the year for the current Sydney year and keeps it for an older one", () => {
+    expect(formatDistinctTimes([at("2026-01-02T05:00:00.000Z"), at("2025-12-31T05:00:00.000Z")], NOW)).toEqual(["2 Jan, 4:00 PM", "31 Dec 2025, 4:00 PM"]);
+  });
+
+  it("tells apart rows that would read the same, and only those", () => {
+    expect(formatDistinctTimes([at("2026-09-30T04:48:40.000Z"), at("2026-09-30T04:48:10.000Z"), at("2026-09-30T02:00:00.000Z")], NOW))
+      .toEqual(["30 Sep, 2:48:40 PM", "30 Sep, 2:48:10 PM", "3h ago"]);
+    expect(formatDistinctTimes([at("2026-09-28T05:00:50.000Z"), at("2026-09-28T05:00:05.000Z")], NOW))
+      .toEqual(["28 Sep, 3:00:50 PM", "28 Sep, 3:00:05 PM"]);
+    expect(formatDistinctTimes([at("2025-09-28T05:00:50.000Z"), at("2025-09-28T05:00:05.000Z")], NOW))
+      .toEqual(["28 Sep 2025, 3:00:50 PM", "28 Sep 2025, 3:00:05 PM"]);
   });
 });
