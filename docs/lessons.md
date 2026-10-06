@@ -5709,3 +5709,25 @@ Tags: rich-text, focus-overlays, testing-guards · #562
 Tags: rich-text, testing-guards · #576
 
 `QuincyRichTextEditor`'s paste handler reads the HEIC setting synchronously from the rendered editor (`heicRef.current`). React Query hands a resolved query to React in its own `setTimeout(0)` (`notifyManager`'s default scheduler), so a test that waits one `setTimeout(0)` after mount races that timer: when the two timers are set within the same millisecond, Node may fire the test's first and the paste is refused as "not a JPEG, PNG or WebP image". It failed about half the time run alone and twice in a row on CI, blocking main deploys. Users can't hit it — the gap is one timer tick. Fix: in tests that act on a query result synchronously, set `notifyManager.setScheduler((cb) => cb())` in `beforeEach` and restore `defaultScheduler` in `afterEach`, so "the query resolved" and "the component rendered it" are one event (same pattern as `PrincipalFreshnessBoundary.dom.test.tsx`). Never add another tick or sleep.
+
+## A conflicted Gantt draft must outlive the controller session that raised it (#585)
+Tags: gantt-calendar, scheduling, focus-overlays · #585
+
+- **Escape and an outside press end the session; they must not end the draft.** The Gantt's Due cell and the item menu's bar
+  picker (#582) are presentations of the scheduling controller's own schedule editor, so a passive close (`Popover`
+  `onOpenChange(false)`, which Escape and an outside press both reach) used to be a controller Cancel. A 409's `validationError`
+  and `latestItem` live on that session, so the reopened picker lost its "Latest schedule · vN" notice even though the draft
+  (`retainedSchedules`, a ref above the vendor tree) survived. #423's rule is that only Cancel and Use latest discard; the Checklist
+  already kept it, the Gantt did not.
+- **Keep the session short and the notice long.** The session cannot simply stay alive while closed: the controller is shared with
+  the Calendar, and a closed-but-live session holds `commandLockRef` and the accept gate, which freezes the chart. So
+  `ProductionGantt` owns a `conflictStash` (Subtask id to `{ validationError, latestItem }`), `dismissScheduleEditor()` stashes
+  then calls `cancelScheduleEditor()` in the same handler, and `use-scheduling-commands` is unchanged.
+- **Only the popup's Cancel button is a discard.** `SubtaskScheduleControl` gains `onDiscard`, fired from its `onCancel` after
+  `discard()`. `useSchedulePickerClose` arms its one-shot swallow for Save, Use latest and `onDiscard` (each clears the stash first)
+  and sends an unarmed close to `onDismiss`, not `onCancel`. Escape never reaches `onDiscard`.
+- **The notice is named against the live row.** The editor's own error wins (a fresh 409), else the stash; a stashed error is
+  rebuilt by `scheduleErrorFromStash(stash, row)` so a refetch that brought v4 while the picker was closed shows v4 and the reapply
+  carries `expectedVersion` 4. A stashed `latestItem` older than the row is dropped. The stash is dropped on a new `generationKey`.
+- **Test it with a reapply, not just a look.** The reopened picker showing the draft is not enough: assert one more PATCH at the
+  latest `expectedVersion`, that the accept gate is released while dismissed, and that a Due to bar reopen shares the same stash.
