@@ -5,6 +5,7 @@ import { createDb, schema } from "@quincy/db";
 import {
   EMBEDDED_HEIC_CONTENT_TYPES, EMBEDDED_IMAGE_CONTENT_TYPES, EMBEDDED_MEDIA_MAX_BYTES, NOTICE_BODY_MAX_LENGTH, NOTICE_RICH_TEXT_JSON_MAX_BYTES, NOTICE_RICH_TEXT_PROFILE, externalEmbeddedMediaCompleteSchema, externalEmbeddedMediaPresignSchema,
   enqueueEmbeddedDisplaySafely, isEmbeddedHeicContentType, noticeEmbeddedMediaObjectKey, richTextDocByteLength, legacyBodyToRichTextDoc, linkPreviewRequestSchema, linkPreviewResponseSchema, normalizeRichTextMentionLabels, parseRichTextDoc, richTextLinkPreviewIds, richTextMediaIds, richTextMentionIds, richTextPlainText, type RichTextDoc,
+  embeddedImageDimensionsShape, requireBothImageDimensions,
 } from "@quincy/shared";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
@@ -14,7 +15,7 @@ import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { notifyNoticeBoardMentions } from "../lib/notifications";
 import { NoticeBoardMediaConflictError, createNoticeBoardPost, deleteNoticeBoardPost, editNoticeBoardPost } from "../lib/notice-board-service";
-import { enqueueEmbeddedMediaCleanup, getEmbeddedMedia, preflightOwnedMedia, purgeDetachedOwnerMedia, verifyUploadedEmbeddedObject } from "../lib/embedded-media";
+import { enqueueEmbeddedMediaCleanup, getEmbeddedMedia, preflightOwnedMedia, purgeDetachedOwnerMedia, recordedImageSize, verifyUploadedEmbeddedObject } from "../lib/embedded-media";
 import { abortMultipart, createMultipartPresign } from "../lib/r2s3";
 import { heicGate, isHeicRow, renditionStatusResponse, retryRendition } from "../lib/embedded-heic";
 import { advanceNoticeBoardReadMarker, getNoticeBoardReadState, type NoticeBoardReadState } from "../lib/notice-board-read-state";
@@ -27,7 +28,7 @@ const postsQuery = z.object({ limit: optionalQuery(z.coerce.number().int().min(1
 const postInput = z.object({ content: z.unknown() });
 const postId = z.string().uuid();
 const mediaPresignInput = z.object({ contentType: z.enum([...EMBEDDED_IMAGE_CONTENT_TYPES, ...EMBEDDED_HEIC_CONTENT_TYPES]), bytes: z.number().int().min(1).max(EMBEDDED_MEDIA_MAX_BYTES) }).strict();
-const mediaCompleteInput = z.object({ parts: z.array(z.object({ partNumber: z.number().int().positive(), etag: z.string().min(1) }).strict()).optional() }).strict();
+const mediaCompleteInput = z.object({ parts: z.array(z.object({ partNumber: z.number().int().positive(), etag: z.string().min(1) }).strict()).optional(), ...embeddedImageDimensionsShape }).strict().superRefine(requireBothImageDimensions);
 
 export type NoticePost = { id: string; authorId: string; authorName: string; body: string; content: RichTextDoc; createdAt: string; editedAt: string | null };
 type NoticeBoardMutationResponse = { post: NoticePost; readState: NoticeBoardReadState };
@@ -240,8 +241,8 @@ noticeBoardRoutes.post("/notice-board/embedded-media/:mediaId/complete", termina
   if (row.state !== "uploading") return c.json({ error: "This media is already in use", code: "media_not_uploading" }, 409);
   const verdict = await verifyUploadedEmbeddedObject(c.env, row, data.parts);
   if (!verdict.ok) return c.json(verdict.body, verdict.status);
-  const promotedAt = Date.now();
-  const promoted = await c.env.DB.prepare("UPDATE embedded_media SET state = 'pending', updated_at = ?, rendition_requested_at = CASE WHEN rendition_status = 'pending' THEN ? ELSE NULL END WHERE id = ? AND state = 'uploading'").bind(promotedAt, promotedAt, mediaId).run();
+  const promotedAt = Date.now(); const size = recordedImageSize(row, data);
+  const promoted = await c.env.DB.prepare("UPDATE embedded_media SET state = 'pending', updated_at = ?, width = COALESCE(?, width), height = COALESCE(?, height), rendition_requested_at = CASE WHEN rendition_status = 'pending' THEN ? ELSE NULL END WHERE id = ? AND state = 'uploading'").bind(promotedAt, size.width, size.height, promotedAt, mediaId).run();
   if ((promoted.meta.changes ?? 0) !== 1) {
     const current = await getEmbeddedMedia(c.env.DB, mediaId);
     if (!current) return mediaStray(c);

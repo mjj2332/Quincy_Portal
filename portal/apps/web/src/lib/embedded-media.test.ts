@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const apiPost = vi.hoisted(() => vi.fn());
 const apiGet = vi.hoisted(() => vi.fn());
@@ -221,5 +221,50 @@ describe("cancelling an image upload before it is preparing (#495)", () => {
     controller.abort();
     expect(await outcome).toMatchObject({ name: "AbortError" });
     expect(fetchMock).not.toHaveBeenCalled(); expect(completes()).toHaveLength(0);
+  });
+});
+
+describe("uploadEmbeddedImage sends the size the browser measured (#611)", () => {
+  const completeBody = () => apiPost.mock.calls.find((call) => String(call[0]).endsWith("/complete"))![1];
+  /** A stand-in for the browser's image decoder: an Image that "loads" with the given natural size, or fails. */
+  const stubDecoder = (size: { w: number; h: number } | "fails") => {
+    class FakeImage {
+      naturalWidth = 0; naturalHeight = 0; onload: (() => void) | null = null; onerror: (() => void) | null = null;
+      set src(_value: string) { queueMicrotask(() => { if (size === "fails") this.onerror?.(); else { this.naturalWidth = size.w; this.naturalHeight = size.h; this.onload?.(); } }); }
+    }
+    vi.stubGlobal("Image", FakeImage);
+    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: () => "blob:fake", revokeObjectURL: () => undefined }));
+  };
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it("puts the image's natural width and height in the completion body", async () => {
+    stubDecoder({ w: 511, h: 384 });
+    await uploadEmbeddedImage({ noticeBoard: true }, file);
+    expect(completeBody()).toEqual({ width: 511, height: 384 });
+  });
+
+  it("sends them beside the multipart parts", async () => {
+    stubDecoder({ w: 640, h: 480 });
+    uploadMultipartFile.mockResolvedValue({ parts: [{ partNumber: 1, etag: "e" }] });
+    await uploadEmbeddedImage({ projectId: "p" }, file);
+    expect(completeBody()).toEqual({ parts: [{ partNumber: 1, etag: "e" }], width: 640, height: 480 });
+  });
+
+  it("sends none when the browser cannot decode the file, and the upload still completes", async () => {
+    stubDecoder("fails");
+    await expect(uploadEmbeddedImage({ noticeBoard: true }, file)).resolves.toBe(ID);
+    expect(completeBody()).toEqual({});
+  });
+
+  it("sends none for a size the server would refuse", async () => {
+    stubDecoder({ w: 40000, h: 10 });
+    await uploadEmbeddedImage({ noticeBoard: true }, file);
+    expect(completeBody()).toEqual({});
+  });
+
+  it("sends none for a HEIC, which the browser cannot decode (the server uses its JPEG copy's size)", async () => {
+    stubDecoder({ w: 4032, h: 3024 });
+    await uploadEmbeddedImage({ noticeBoard: true }, new File([new Uint8Array(8)], "IMG.heic", { type: "image/heic" }));
+    expect(completeBody()).toEqual({});
   });
 });

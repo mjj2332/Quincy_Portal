@@ -1,3 +1,5 @@
+import { EMBEDDED_IMAGE_MAX_DIMENSION } from "./embedded-media";
+
 /**
  * The small, portable rich-text document accepted by collaboration surfaces.
  * This intentionally describes JSON, not HTML: browser editors are convenience
@@ -25,7 +27,7 @@ export type RichTextTableCell = { type: "tableCell" | "tableHeader"; attrs?: { c
 export type RichTextTableRow = { type: "tableRow"; content: RichTextTableCell[] };
 export type RichTextTable = { type: "table"; content: RichTextTableRow[] };
 /** An image placed in a post (#493). It names stored media by id and never carries a URL or bytes. */
-export type RichTextImage = { type: "image"; attrs: { mediaId: string; alt?: string } };
+export type RichTextImage = { type: "image"; attrs: { mediaId: string; alt?: string; width?: number; height?: number } };
 /** A video placed in a post (#494). Like an image it names stored media by id and never carries a URL or bytes. `hasPoster` (#556) is served-only: the server fills it from the media record so a posterless video never requests `/poster`; it is never stored, and absent means "unknown" (the older behaviour: ask for the poster). */
 export type RichTextVideo = { type: "video"; attrs: { mediaId: string; hasPoster?: boolean } };
 export type RichTextMediaNode = RichTextImage | RichTextVideo;
@@ -251,12 +253,15 @@ function parseBlock(value: unknown, depth: number, profile: RichTextProfile, ite
     if (!profile.allowMedia || depth > 0 || itemKind || insideListItem) throw new RichTextValidationError("Unsupported rich-text node");
     onlyKeys(node, ["type", "attrs"], "Image");
     const attrs = record(node.attrs, "Image attributes");
-    onlyKeys(attrs, ["mediaId", "alt"], "Image attributes");
+    onlyKeys(attrs, ["mediaId", "alt", "width", "height"], "Image attributes");
     if (typeof attrs.mediaId !== "string" || !UUID.test(attrs.mediaId)) throw new RichTextValidationError("Image media id must be a UUID");
     // Alt text (#553) is optional: absent, null and blank all mean "none" and are not stored.
     if (attrs.alt !== undefined && attrs.alt !== null && typeof attrs.alt !== "string") throw new RichTextValidationError("Image alt text must be a string");
     const alt = typeof attrs.alt === "string" ? attrs.alt.trim() : "";
     if (alt.length > RICH_TEXT_IMAGE_ALT_MAX_LENGTH) throw new RichTextValidationError(`Image alt text may be at most ${RICH_TEXT_IMAGE_ALT_MAX_LENGTH} characters`);
+    // A served document carries the image's pixel size (#611) so its box is reserved before it loads. Like `hasPoster` it is never stored: the server fills it in from the media record.
+    if ((attrs.width === undefined) !== (attrs.height === undefined)) throw new RichTextValidationError("Image width and height go together");
+    for (const size of [attrs.width, attrs.height]) if (size !== undefined && (typeof size !== "number" || !Number.isInteger(size) || size < 1 || size > EMBEDDED_IMAGE_MAX_DIMENSION)) throw new RichTextValidationError("Image size must be a whole number of pixels");
     return { type: "image", attrs: { mediaId: attrs.mediaId, ...(alt ? { alt } : {}) } };
   }
   if (node.type === "video") {
