@@ -60,16 +60,18 @@ describe("an embedded image's reserved box (#611)", () => {
     expect(trigger().hasAttribute("data-sized")).toBe(false);
   });
 
-  it("sizes a sized trigger to the image's width, capped at the container and at the height limit times the aspect ratio, with the image filling it", () => {
+  it("sizes a sized trigger to the image's pixels plus its border, so the ratio describes the pixels and nothing is stretched or letterboxed", () => {
     const appCss = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../styles/app.css"), "utf8");
     const line = (selector: string) => appCss.split("\n").find((value) => value.startsWith(selector)) ?? "";
     const button = line(".rich-text__embedded-image-trigger[data-sized] {");
-    expect(button).toContain("width: calc(var(--embedded-image-width) * 1px)");
-    expect(button).toContain("max-width: min(100%, calc(24rem * var(--embedded-image-aspect)))");
+    expect(button).toContain("width: calc(var(--embedded-image-width) * 1px + 2 * var(--border-width-hair))");
+    expect(button).toContain("max-width: min(100%, calc(24rem * var(--embedded-image-aspect) + 2 * var(--border-width-hair)))");
     const image = line(".rich-text__embedded-image-trigger[data-sized] > .rich-text__embedded-image");
-    expect(image).toContain("width: 100%");
-    // The box already has the image's ratio, so `contain` would only add a strip where the 1px border skews it.
-    expect(image).toContain("object-fit: fill");
+    // content-box: the aspect ratio is the pixels' box, the border sits outside it.
+    expect(image).toContain("box-sizing: content-box");
+    expect(image).toContain("width: calc(100% - 2 * var(--border-width-hair))");
+    expect(image).toContain("aspect-ratio: var(--embedded-image-aspect)");
+    expect(image).not.toContain("object-fit: fill");
     expect(line(".rich-text__embedded-image {")).toContain("max-height: 24rem");
     expect(line(".rich-text__embedded-image[data-sized]")).toBe("");
   });
