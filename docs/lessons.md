@@ -5848,6 +5848,8 @@ any pointer input on the page, Chrome treats that as `:focus-visible`, and the u
 the Project sheet on a fresh load, and the Gantt Due/bar picker. Fix: `focus-visible:!outline-none` on the container
 only (the `!` is needed against the unlayered rule), as `NotificationBell`'s panel already did. Rings on controls inside
 are untouched, and focus still lands on the named dialog, so screen readers are unaffected.
-`components/quincy/container-focus.guard.test.ts` pins the container list. Not covered yet: the Calendar rail sheet,
-`RailSheet`, `Modal.tsx`. Rejected: `focus({ focusVisible: false })` (cannot apply when `initialFocus` returns `true`) and
+`components/quincy/container-focus.guard.test.ts` pins the container list, now including `RailSheet` and `Modal.tsx`'s
+`panelClasses` (#659; `Modal` had a dead `focus:outline-none` that loses to the unlayered rule). Not covered yet: the
+Calendar rail sheet, deliberately (`initialFocus` resolves to the first tabbable, so the container is unreachable; its
+focus-motion guard bans `!outline-none`). Rejected: `focus({ focusVisible: false })` (cannot apply when `initialFocus` returns `true`) and
 a `data-focus-pending` marker (state for a ring that is never useful).
