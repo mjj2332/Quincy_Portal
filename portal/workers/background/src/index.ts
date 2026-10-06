@@ -52,6 +52,7 @@ import { reconcileSubtaskReminderOccurrences, scanSubtaskReminderOccurrences } f
 import { runEmailDigests } from "./email-digest";
 import { sweepExternalEditedUploads } from "./external-upload-sweep";
 import { sweepEmbeddedMedia } from "./embedded-media-sweep";
+import { sweepEmbeddedMediaOrphans } from "./embedded-media-orphan-sweep";
 import { fetchLinkPreview as readLinkPreview, type LinkPreviewFetchResult } from "./link-preview-fetch";
 import { processExternalRoleCachePurges } from "./external-role-cache-purge";
 import { sweepStuckManualPublishes } from "./manual-publish-recovery";
@@ -239,6 +240,13 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
         console.log("Embedded media sweep complete", swept);
       } catch (error) {
         console.error("Embedded media sweep failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+      }
+      // After the row sweep, so its cleanup drain has already run. Own try/catch: a failure here never hides the sweep above (#549).
+      try {
+        const orphans = await sweepEmbeddedMediaOrphans(this.env, controller.scheduledTime);
+        console.log("Embedded media orphan sweep complete", orphans);
+      } catch (error) {
+        console.error("Embedded media orphan sweep failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
       }
     }
   }
