@@ -246,6 +246,25 @@ describe("PopupFrame focus and month change (#587)", () => {
     expect(model.days.size).toBe(2);
   });
 
+  it("moves a focused cell that sits inside the top fade band clear of it (an arrow key's cell)", async () => {
+    const model = bodyModel({ "2027-01-15": 200, "2027-01-16": 110 });
+    await mount("date", "2027-01-15");
+    await open();
+    viewport().scrollTop = 100; // the person scrolled; 2027-01-16 is now 10px under the body's top, inside the 32px band
+    await act(async () => { dayButton("2027-01-16").focus({ preventScroll: true }); await Promise.resolve(); });
+    expect(viewport().scrollTop).toBe(78);
+    expectClear(model, "2027-01-16");
+  });
+
+  it("moves a focused cell inside the bottom fade band clear of it", async () => {
+    const model = bodyModel({ "2027-01-15": 200, "2027-01-16": 354 });
+    await mount("date", "2027-01-15");
+    await open();
+    await act(async () => { dayButton("2027-01-16").focus({ preventScroll: true }); await Promise.resolve(); });
+    expect(viewport().scrollTop).toBe(22);
+    expectClear(model, "2027-01-16");
+  });
+
   it("does not scroll the month select away when the month changes while it has focus", async () => {
     const model = bodyModel({ "2027-02-26": 300 });
     await mount("date", "2027-02-26");

@@ -22,8 +22,7 @@ export const REVEAL_SELECTED_DAY = '[aria-selected="true"] button';
  * and resize the reveal day and the focused element are required; on a selection change only the focused
  * element is, so changing the month with the month select focused never scrolls the select away. A new
  * `focusin` listener covers focus that arrives with `preventScroll` (opening focus, the Start/End handoff):
- * it scrolls only when the element is not already fully visible, so an arrow key's own native scroll is
- * never doubled. Writes are to `scrollTop` only (never `scrollIntoView`, which also moves the page and the
+ * it solves with the element required and fade-aware from the current scroll, so a clear element does not move and an arrow key's native scroll is followed by at most the fade height. Writes are to `scrollTop` only (never `scrollIntoView`, which also moves the page and the
  * popup's ancestors) and every one is marked `applied`, so a programmatic move is never read as the person's.
  *
  * Opt-out rule: once the person scrolls the body themselves (`userScrolled`, latched), the AUTOMATIC
@@ -83,14 +82,13 @@ function useSelectedClearOfFade(contentRef: RefObject<HTMLDivElement | null>, re
     const resize = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(automatic);
     resize?.observe(viewport);
     viewport.addEventListener("scroll", noticeScroll, { passive: true });
-    // Focus that arrived without scrolling (`preventScroll`): bring it into view, by the least amount, unless it already is.
+    // Focus: bring it into view and clear of the fade, by the least amount (none when it already is).
     const onFocusIn = (event: FocusEvent) => {
       const target = event.target;
       if (!(target instanceof HTMLElement) || target === viewport || !viewport.contains(target)) return;
       noticeScroll();
-      const box = viewport.getBoundingClientRect();
       const rect = target.getBoundingClientRect();
-      if (rect.top >= box.top && rect.bottom <= box.bottom) return;
+      // Always solved, fade-aware: a cell inside the fade band is "visible" to the box but reads muddy, and an arrow key's native scroll can leave it there. The solve starts from the current scrollTop, so a clear cell does not move.
       write(solve([{ top: rect.top, bottom: rect.bottom, required: true }], measure()));
     };
     viewport.addEventListener("focusin", onFocusIn);

@@ -576,7 +576,7 @@ describe("DateTimeField date-time: seeding a draft", () => {
       let box = { top: 0, bottom: 0, height: 0 };
       if (this.getAttribute("data-slot") === "scroll-area-viewport") box = { top: 100, bottom: 500, height: 400 };
       else if ((this as HTMLElement).style?.height === "var(--fade-size)") box = { top: 0, bottom: 32, height: 32 };
-      else if (this.closest('[aria-selected="true"]') && this.tagName === "BUTTON") box = { top: 454, bottom: 490, height: 36 };
+      else if (this.closest('[aria-selected="true"]') && this.tagName === "BUTTON") { const top = 454 - (this.closest('[data-slot="scroll-area-viewport"]') as HTMLElement).scrollTop; box = { top, bottom: top + 36, height: 36 }; } // follows scrollTop: the opening focus re-solves from where the body is
       return { ...box, left: 0, right: 0, width: 0, x: 0, y: box.top, toJSON() {} } as DOMRect;
     });
     const scrollHeight = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(800);
