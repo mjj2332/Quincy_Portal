@@ -562,6 +562,27 @@ describe("ProjectTeamCombobox", () => {
     expect(tokens).not.toContain("aria-expanded:bg-muted");
   });
 
+  it("Show less wears the same colour as +N, with no important override from aria-expanded (#550)", async () => {
+    const many: ProjectMember[] = Array.from({ length: 4 }, (_, index) => ({
+      id: `c-${index}`, userId: `cu-${index}`, roleOnProject: "photographer", name: `Colour ${index}`, email: `c${index}@example.test`, globalRole: "editor", active: true, assignedSubtaskCount: 0,
+    }));
+    const host = await mount(many, false);
+    const colour = (button: HTMLButtonElement) => button.className.split(/\s+/).filter((token) => /(^|:)!?text-foreground/.test(token)).sort();
+    const collapsed = host.querySelector<HTMLButtonElement>('[aria-label="Show 1 more team members"]')!;
+    const collapsedColour = colour(collapsed);
+    await act(async () => { collapsed.click(); await Promise.resolve(); });
+    const expanded = host.querySelector<HTMLButtonElement>('[aria-label="Show fewer team members"]')!;
+    expect(expanded.getAttribute("aria-expanded")).toBe("true");
+    const tokens = expanded.className.split(/\s+/);
+    expect(tokens).toContain("text-foreground-secondary");
+    // The ghost variant's `aria-expanded:!text-foreground` would paint #0a0a0a over the secondary text.
+    expect(tokens).not.toContain("aria-expanded:!text-foreground");
+    // Whatever expanded does to the colour, it must be the secondary one, same as +N.
+    expect(tokens.filter((token) => /^aria-expanded:!?text-/.test(token)).every((token) => token === "aria-expanded:!text-foreground-secondary")).toBe(true);
+    expect(collapsedColour).toContain("text-foreground-secondary");
+    expect(colour(expanded).every((token) => /foreground-secondary/.test(token) || /^hover:/.test(token))).toBe(true);
+  });
+
   it("renders read-only static chips with no × / input, and the +N disclosure still works (read-only photographer, no candidates GET)", async () => {
     roleState.role = "photographer";
     const many: ProjectMember[] = Array.from({ length: 4 }, (_, index) => ({

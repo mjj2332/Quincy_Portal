@@ -335,8 +335,9 @@ function TeamMoreToggle({ hiddenCount, expanded, onToggle }: { hiddenCount: numb
     // sized for that ×'s 24px box — so this is 24px too (`size-6`-tall), not the chips' 21px, or
     // the sum would be 41. The narrow breakpoint keeps the real 44px height like the chips do.
     // #550: one quiet text-link for "+N" and "Show less". The ghost variant fills `aria-expanded`
-    // buttons (`aria-expanded:bg-muted`), which is what made "Show less" read as one more chip.
-    className={cn(buttonClasses("text", { className: "min-h-0 h-6 py-0 px-1.5 shrink-0 !normal-case max-[721px]:min-h-[44px] bg-transparent text-foreground-secondary hover:bg-transparent aria-expanded:bg-transparent hover:underline underline-offset-2" }), TEAM_CHIP_REMOVE_HIT_AREA)}
+    // buttons (`aria-expanded:bg-muted`), which is what made "Show less" read as one more chip; it also forces
+    // `aria-expanded:!text-foreground`, so the expanded state re-asserts the secondary colour to match "+N".
+    className={cn(buttonClasses("text", { className: "min-h-0 h-6 py-0 px-1.5 shrink-0 !normal-case max-[721px]:min-h-[44px] bg-transparent text-foreground-secondary hover:bg-transparent aria-expanded:bg-transparent aria-expanded:!text-foreground-secondary hover:underline underline-offset-2" }), TEAM_CHIP_REMOVE_HIT_AREA)}
     aria-expanded={expanded}
     aria-label={label}
     // Base UI's Chips container opens the popup on most interaction inside it — this toggle

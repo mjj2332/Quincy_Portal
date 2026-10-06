@@ -118,4 +118,13 @@ describe("TabStrip", () => {
     expect(tokens).toContain("focus-visible:!-outline-offset-2");
     expect(tokens).not.toContain("focus-visible:outline-offset-2");
   });
+
+  it("pads each tab by --space-1 so the inset ring clears the label, and trims the gap so tab spacing is unchanged (#550)", async () => {
+    const tablist = await renderStrip("a", () => undefined);
+    const tokens = tablist.querySelector<HTMLButtonElement>('[role="tab"]')!.className.split(/\s+/);
+    expect(tokens).toContain("px-[var(--space-1)]");
+    expect(tokens).not.toContain("px-0");
+    expect(tablist.className).toContain("gap-[calc(var(--space-5)-2*var(--space-1))]");
+    expect(tablist.className).not.toContain("gap-[var(--space-5)]");
+  });
 });

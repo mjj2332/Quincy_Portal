@@ -3,7 +3,7 @@
  * long name, one throwaway project). The honest limit: nothing here can stop someone typing
  * `wrangler d1 execute --remote --file ...` by hand. What is falsifiable is that no script, workflow or
  * other package runs them, that the two npm scripts are pinned to `--local`, and that the SQL can only
- * touch `qa550-` ids.
+ * touch the fixed `550a0000-` UUIDs.
  */
 import { describe, expect, it } from "vitest";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -53,18 +53,45 @@ describe("guard: the picker-people QA fixture is local-only and cannot touch rea
     expect(referencing).toEqual(["fixtures:picker-people:apply", "fixtures:picker-people:remove"]);
   });
 
-  it("every id the SQL inserts or deletes is qa550-prefixed, and no other statement kinds appear", () => {
-    const ids = [...apply.matchAll(/^SELECT '(qa550-[^']*)'/gm)].map((match) => match[1]!);
+  // 550a0000-0000-4000-8000-00000000000N: a fixed, valid v4-shaped UUID (the app's `z.string().uuid()` and route
+  // checks reject the old `qa550-*` slugs), with the `550a0000-` prefix as the deterministic removal key.
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const FIXTURE_ID = /^550a0000-0000-4000-8000-0000000000[0-9a-f]{2}$/;
+
+  it("every id the SQL inserts or deletes is a fixed 550a0000- UUID, and no other statement kinds appear", () => {
+    const ids = [...apply.matchAll(/^SELECT '([^']*)'/gm)].map((match) => match[1]!);
     expect(ids).toHaveLength(11); // 5 users, 1 project, 5 members
+    expect(new Set(ids).size).toBe(11);
+    for (const id of ids) {
+      expect(id, id).toMatch(UUID);
+      expect(id, id).toMatch(FIXTURE_ID);
+    }
+    // Membership rows reference the project and user ids by their real UUIDs too.
+    const references = [...apply.matchAll(/^SELECT '[^']*', '([^']*)', '([^']*)'/gm)]
+      .filter((match) => /^550a0000-/.test(match[1]!)).flatMap((match) => [match[1]!, match[2]!]);
+    for (const id of references) expect(id, id).toMatch(UUID);
     const statements = (sql: string) => sql.replace(/--.*$/gm, "").split(";").map((s) => s.trim()).filter(Boolean);
     for (const statement of statements(apply)) {
       expect(statement).toMatch(/^INSERT OR IGNORE INTO (user|projects|project_members) /);
-      expect(statement).toMatch(/^SELECT 'qa550-/m);
+      expect(statement).toMatch(/^SELECT '550a0000-/m);
     }
     for (const statement of statements(remove)) {
       expect(statement).toMatch(/^DELETE FROM (user|projects|project_members) WHERE /);
-      expect(statement).toMatch(/'qa550-/);
+      expect(statement).toMatch(/'550a0000-/);
     }
+    expect(apply).not.toMatch(/qa550-(?:user|project|member)/);
+    expect(remove).not.toMatch(/qa550-(?:user|project|member)/);
+  });
+
+  it("seeds the same-name pairs onto the one project's team, so the email-suffix chips can render", () => {
+    const rows = [...apply.matchAll(/INSERT OR IGNORE INTO project_members[^;]*?SELECT '[^']*', '([^']*)', '([^']*)'/g)].map((m) => ({ project: m[1]!, user: m[2]! }));
+    expect(rows).toHaveLength(5);
+    expect(new Set(rows.map((row) => row.project)).size).toBe(1);
+    const users = [...apply.matchAll(/INSERT OR IGNORE INTO user[^;]*?SELECT '([^']*)', '([^']*)'/g)].map((m) => ({ id: m[1]!, name: m[2]! }));
+    const onTeam = new Set(rows.map((row) => row.user));
+    const byName = new Map<string, number>();
+    for (const user of users) { expect(onTeam.has(user.id), user.id).toBe(true); byName.set(user.name, (byName.get(user.name) ?? 0) + 1); }
+    expect([...byName.values()].filter((count) => count > 1)).toHaveLength(2); // Jordan Lee x2, the long name x2
   });
 
   it("every statement carries the local capability fence", () => {
@@ -78,7 +105,7 @@ describe("guard: the picker-people QA fixture is local-only and cannot touch rea
 
   describe("behaviour against a migrated + seeded database", () => {
     const counts = (db: SqliteDatabase) => db.prepare(
-      "SELECT (SELECT count(*) FROM user WHERE id LIKE 'qa550-%') AS users, (SELECT count(*) FROM projects WHERE id LIKE 'qa550-%') AS projects, (SELECT count(*) FROM project_members WHERE id LIKE 'qa550-%') AS members, (SELECT count(*) FROM user) AS all_users",
+      "SELECT (SELECT count(*) FROM user WHERE id LIKE '550a0000-%') AS users, (SELECT count(*) FROM projects WHERE id LIKE '550a0000-%') AS projects, (SELECT count(*) FROM project_members WHERE id LIKE '550a0000-%') AS members, (SELECT count(*) FROM user) AS all_users",
     ).get() as Record<string, number>;
 
     it("with the capability: applies, is idempotent, and removes cleanly", () => {

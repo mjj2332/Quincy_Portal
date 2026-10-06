@@ -304,18 +304,18 @@ scope, not an oversight.
 `qa-seed` still has no users, and `seed/0001_seed.sql` runs in every environment, so neither carries these.
 `packages/db/local-fixtures/picker-people.sql` is a **local-only** file nothing runs automatically: not CI,
 not `migrate:local`, not `qa:apply`. It inserts five active users, one throwaway project and its five
-members, all with fixed `qa550-` ids:
+members, all with fixed v4-shaped UUIDs (`550a0000-0000-4000-8000-0000000000NN`):
 
 - two photographer/editor users both named **Jordan Lee** (different emails), so header chips show the email-suffix collision label;
 - two named **Alexandria Montgomery-Featherstonehaugh** with long emails, so the collision label wraps;
 - **Sam Rivera**, so the project has five members (the Team box collapses to "+N" and can wrap).
 
-The project is **550 Picker Polish Street**, id `qa550-project`. Run from `portal/packages/db`; the scripts
+The project is **550 Picker Polish Street**, id `550a0000-0000-4000-8000-000000000010`. Run from `portal/packages/db`; the scripts
 are pinned to `--local` (add `--persist-to <dir>` after `--` to use a scratch D1):
 
 ```sh
 npm run fixtures:picker-people:apply     # idempotent (INSERT OR IGNORE)
-npm run fixtures:picker-people:remove    # deletes by the qa550- ids only
+npm run fixtures:picker-people:remove    # deletes by the 550a0000- UUIDs only
 ```
 
 Every statement in both files is fenced on the local capability table (the same fence qa-seed uses), so against a database without it, production included, they fail with `no such table` and change nothing.
@@ -323,4 +323,4 @@ Every statement in both files is fenced on the local capability table (the same 
 Remove the fixture before `qa:verify`/`qa:apply` if you want an untouched `user` table. If the app attached
 rows to the project (activity, comments), the project delete is refused by its foreign keys; reset the local D1
 instead. `local-fixtures-picker-people.guard.test.ts` pins the `--local` flag, that no workflow or script runs
-the file, and that the SQL can only touch `qa550-` ids. The guard also runs both files against a migrated and seeded in-memory DB with, without, and with-the-table-but-no-row capability.
+the file, and that the SQL can only touch the `550a0000-` UUIDs. The guard also runs both files against a migrated and seeded in-memory DB with, without, and with-the-table-but-no-row capability.

@@ -23,13 +23,14 @@ type TabItem = { value: string; label: React.ReactNode; count?: number };
 
 const TAB_BASE =
   "relative -mb-[var(--border-width-hair)] inline-flex items-center gap-[var(--space-2)] " +
-  "min-h-[38px] max-[721px]:min-h-[44px] px-0 pt-[var(--space-2)] pb-[11px] " + // 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token
+  "min-h-[38px] max-[721px]:min-h-[44px] px-[var(--space-1)] pt-[var(--space-2)] pb-[11px] " + // 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token
   "bg-transparent border-0 [border-bottom-style:solid] border-b-[length:var(--border-width-mid)] " +
   "cursor-pointer [font:var(--type-label)] uppercase tracking-[var(--tracking-wide)] " +
   "transition-[color,border-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] " +
   "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
   // #550: the ring is drawn INSIDE the tab. Outset (offset 2px) its bottom edge landed on the 2px active
-  // underline, which poked out past the ring's corners, and a 390 horizontal-scroll strip clips it. The
+  // underline, which poked out past the ring's corners, and a 390 horizontal-scroll strip clips it. The tab's
+  // `px-[var(--space-1)]` keeps that inset ring off the first and last letters when the tab is sized to its text. The
   // at-rest twin keeps width/offset from animating on focus; `!` beats the unlayered `:focus-visible`.
   "focus-visible:outline-ring -outline-offset-2 focus-visible:!-outline-offset-2";
 
@@ -81,7 +82,8 @@ function TabStrip({ items, value, onValueChange, idPrefix, label, className }: {
       data-slot="tab-strip"
       onKeyDown={onKeyDown}
       className={cn(
-        "flex flex-wrap gap-[var(--space-5)]",
+        // gap = --space-5 minus both sides of the tab's --space-1 padding (#550): label-to-label spacing is unchanged.
+        "flex flex-wrap gap-[calc(var(--space-5)-2*var(--space-1))]",
         "[border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border",
         className,
       )}
