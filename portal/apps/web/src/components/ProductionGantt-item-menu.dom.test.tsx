@@ -276,6 +276,57 @@ describe("ProductionGantt item menu (#463)", () => {
       vi.unstubAllGlobals();
     });
 
+    describe("opening focus lands inside the picker, on the Start day", () => {
+      const describeActive = () => {
+        const el = document.activeElement as HTMLElement | null;
+        return { tag: el?.tagName, ariaLabel: el?.getAttribute("aria-label"), text: el?.textContent?.slice(0, 40), isDialog: el?.getAttribute("role") === "dialog", inPicker: !!(el && picker()?.contains(el)) };
+      };
+      const sleep = (ms: number) => act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, ms)); });
+      function expectOnPickerButton(when: string) {
+        const active = document.activeElement as HTMLElement | null;
+        const report = `${when}: ${JSON.stringify(describeActive())}`;
+        expect(picker(), report).not.toBeNull();
+        expect(active, report).not.toBeNull();
+        expect(picker()!.contains(active), `inside the picker. ${report}`).toBe(true);
+        expect(active, `not the dialog itself. ${report}`).not.toBe(picker());
+        expect(active!.tagName, `a button. ${report}`).toBe("BUTTON");
+      }
+
+      it("keyboard: Enter on the bar -> ArrowDown -> Enter on Edit schedule… puts focus inside the picker on the Start day", async () => {
+        await mount();
+        const bar = taskBar();
+        await act(async () => { bar.focus(); await Promise.resolve(); });
+        // Enter on a button: keydown, then the browser's native keyboard click (detail 0).
+        await keydown(bar, "Enter");
+        await act(async () => { bar.click(); await Promise.resolve(); await Promise.resolve(); });
+        await flush(6);
+        expect(menu()).not.toBeNull();
+        await keydown(document.activeElement!, "ArrowDown");
+        await flush(3);
+        const row = document.activeElement as HTMLElement;
+        expect(row.textContent).toBe("Edit schedule…");
+        await keydown(row, "Enter");
+        await act(async () => { row.click(); await Promise.resolve(); await Promise.resolve(); });
+        await flush(6);
+        expectOnPickerButton("keyboard, after settle");
+        await sleep(250);
+        await flush(3);
+        expectOnPickerButton("keyboard, after 250ms (past the restore timer)");
+        await sleep(400);
+        expectOnPickerButton("keyboard, after 650ms");
+      });
+
+      it("pointer: clicking the bar then Edit schedule… puts focus inside the picker on the Start day", async () => {
+        await openPicker();
+        expectOnPickerButton("pointer, after settle");
+        await sleep(250);
+        await flush(3);
+        expectOnPickerButton("pointer, after 250ms (past the restore timer)");
+        await sleep(400);
+        expectOnPickerButton("pointer, after 650ms");
+      });
+    });
+
     it("stays open at a 720px-wide viewport (a bar session is not cancelled by narrowing)", async () => {
       const original = window.matchMedia;
       window.matchMedia = ((query: string) => ({
