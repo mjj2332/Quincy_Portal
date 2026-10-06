@@ -347,6 +347,14 @@ describe("a posted video (#494)", () => {
     expect(host.querySelector('[data-testid="embedded-video-unavailable"] a')!.getAttribute("data-slot")).toBe("button");
   });
 
+  it("gives the Download video anchor a visible outline border: the base border-transparent is merged away, not left to fight border-border (#556)", async () => {
+    const host = mount(<RichTextContent content={withVideos(A)} />);
+    await act(async () => { host.querySelector("video")!.dispatchEvent(new Event("error")); });
+    const classes = host.querySelector('[data-testid="embedded-video-unavailable"] a')!.className.split(/\s+/);
+    expect(classes).toContain("border-border");
+    expect(classes).not.toContain("border-transparent");
+  });
+
   it("does not carry one video's failure to the next: A fails, the post is refreshed to B in the same place, and B gets a player", async () => {
     const host = mount(<RichTextContent content={withVideos(A)} />);
     await act(async () => { host.querySelector("video")!.dispatchEvent(new Event("error")); });

@@ -16,7 +16,7 @@ export function EmbeddedVideo({ mediaId, hasPoster, className, videoClassName }:
   const src = embeddedMediaUrl(mediaId);
   if (failed) return <div data-testid="embedded-video-unavailable" className="my-[var(--space-2)] grid justify-items-start gap-[var(--space-2)] rounded-[var(--radius-xs)] border-[length:var(--border-width-hair)] border-solid border-border bg-surface-sunken p-[var(--space-3)]">
     <p className="m-0 text-foreground-secondary [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">This video can't play in this browser.</p>
-    <a data-slot="button" href={`${src}?download=1`} download className={buttonVariants({ variant: "outline", size: "default" })}>Download video</a>
+    <a data-slot="button" href={`${src}?download=1`} download className={cn(buttonVariants({ variant: "outline", size: "default" }))}>Download video</a>
   </div>;
   return <div data-testid="embedded-video" className={cn("my-[var(--space-2)]", className)}>
     <video controls preload="metadata" playsInline poster={hasPoster === false ? undefined : embeddedMediaPosterUrl(mediaId)} src={src} aria-label="Embedded video" onError={() => setFailed(true)} className={cn("rich-text__embedded-video", videoClassName)} />
