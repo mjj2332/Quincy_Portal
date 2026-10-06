@@ -1506,17 +1506,67 @@ describe("guard: Admin inline editors keep their focus outline and value clear (
     expect(hosting.length).toBeGreaterThanOrEqual(3);
     for (const chunk of hosting) {
       const open = chunk.slice(0, 200);
-      expect(open).toMatch(/className="[^"]*min-\[721px\]:scroll-px-\[var\(--space-1\)\]/);
+      expect(open).toMatch(/className="[^"]*(?:min-\[721px\]|table-grid):scroll-px-\[var\(--space-1\)\]/);
       expect(open).not.toMatch(/(?<![-\w])min-\[721px\]:px-/);
     }
   });
-  // #638: seven columns at 16px gutters need 864px (885 with the editor open) and the Users frame is 846px
-  // at 1024. 12px gutters (--space-3) on the Users table only, from 721px up, take 56px out of both.
-  it("the seven-column Users table tightens its cell gutters so it fits its frame at 1024 (#638)", () => {
-    const open = admin.split("<TableWrap").slice(1).find((chunk) => chunk.includes("<TableHeader>Default editor</TableHeader>"))?.slice(0, 260) ?? "";
-    expect(open).toMatch(/min-\[721px\]:\[&_th\]:px-\[var\(--space-3\)\]/);
-    expect(open).toMatch(/min-\[721px\]:\[&_td\]:px-\[var\(--space-3\)\]/);
+  // #638/#640: seven columns at 16px gutters need 864px (885 with the editor open) and the Users frame is 846px
+  // at 1024. Users opts into `Table density="compact"` (12px gutters at the grid breakpoint) instead of
+  // overriding descendant padding from the wrapper.
+  it("the seven-column Users table uses density=\"compact\", not descendant padding overrides (#638, #640)", () => {
+    const chunk = admin.split("<TableWrap").slice(1).find((c) => c.includes("<TableHeader>Default editor</TableHeader>")) ?? "";
+    const open = chunk.slice(0, chunk.indexOf("<TableHead>"));
+    expect(open).toMatch(/<Table density="compact">/);
+    expect(open).not.toMatch(/\[&_t[hd]\]:px-/);
     expect(open).not.toMatch(/(?<![-\w])min-\[721px\]:px-/);
+    const table = readFileSync(join(srcDir, "components/quincy/Table.tsx"), "utf8");
+    expect(table).toMatch(/data-density=/);
+    expect(table).toMatch(/table-grid:px-\[var\(--space-3\)\]/);
+  });
+  it("only the Users table stacks below 1024px; every other Admin table keeps the 721px switch (#640)", () => {
+    const wraps = admin.split("<TableWrap").slice(1);
+    const lg = wraps.filter((c) => /^[^>]*stackBelow="lg"/.test(c));
+    expect(lg).toHaveLength(1);
+    expect(lg[0]).toContain("<TableHeader>Default editor</TableHeader>");
+    expect(admin).not.toMatch(/stackBelow="md"/);
+    const css = readFileSync(join(srcDir, "styles/tokens/reui.css"), "utf8");
+    expect(css).toMatch(/@custom-variant table-stacked/);
+    expect(css).toMatch(/@custom-variant table-grid/);
+    for (const v of ["table-stacked", "table-grid"]) {
+      const block = css.slice(css.indexOf(`@custom-variant ${v}`), css.indexOf(`@custom-variant ${v}`) + 700);
+      expect(block).toMatch(/data-stack="md"/);
+      expect(block).toMatch(/data-stack="lg"/);
+    }
+    // Stacked and grid must be complementary at every width, fractional ones included: stacked is
+    // `width < N`, grid `min-width: N` (the old `max-[721px]:`/`min-[721px]:` pair compiled the same way).
+    const stacked = css.slice(css.indexOf("@custom-variant table-stacked"), css.indexOf("@custom-variant table-grid"));
+    expect(stacked).toMatch(/@media \(width < 721px\)/);
+    expect(stacked).toMatch(/@media \(width < 1024px\)/);
+    expect(stacked).not.toMatch(/max-width/);
+  });
+  it("action cells use TableActions with row and column gaps, never sibling-margin spacing (#640)", () => {
+    expect(admin).not.toMatch(/button\+button/);
+    expect(admin.match(/<TableActions/g) ?? []).toHaveLength(6);
+    const table = readFileSync(join(srcDir, "components/quincy/Table.tsx"), "utf8");
+    expect(table).toMatch(/data-slot="table-actions"/);
+    // Stacked cards keep the pre-#640 12px above the actions: the cell's 8px top padding plus 4px on
+    // the group, with the cell's empty data-label line hidden (it added a 4px margin of its own).
+    expect(table).toMatch(/table-stacked:pt-\[var\(--space-1\)\]/);
+    expect(table).toMatch(/table-stacked:has-\[>\[data-slot=table-actions\]\]:before:hidden/);
+    expect(table).toMatch(/flex-wrap/);
+    expect(table).toMatch(/justify-end/);
+    expect(table).toMatch(/gap-x-\[var\(--space-3\)\]/);
+    expect(table).toMatch(/gap-y-\[var\(--space-2\)\]/);
+  });
+  it("the Users Created date stays on one line once the table has room (#640)", () => {
+    const cell = admin.split("\n").flatMap((l) => l.match(/<TableCell data-label="Created"[^>]*>\{formatDate\(user\.createdAt\)/g) ?? []);
+    expect(cell).toHaveLength(1);
+    expect(cell[0]).toMatch(/min-\[1100px\]:whitespace-nowrap/);
+  });
+  it("Users card controls keep a field width instead of stretching across a wide card (#640)", () => {
+    const role = admin.match(/<NativeSelect id=\{`role-\$\{user\.id\}`\} className="([^"]*)"/)?.[1] ?? "";
+    const name = admin.match(/<Input className="([^"]*)" value=\{userNameDraft\}/)?.[1] ?? "";
+    for (const cls of [role, name]) expect(cls).toMatch(/table-stacked:max-w-\[320px\]/);
   });
   it("Email cells break at @ and dots via EmailText so the actions column fits", () => {
     const cells = admin.split("\n").flatMap((l) => l.match(/<TableCell data-label="Email"[^>]*>/g) ?? []);
@@ -1531,7 +1581,7 @@ describe("guard: Admin inline editors keep their focus outline and value clear (
   // The sr-only "Actions" header label is absolutely positioned and escapes an unpositioned overflow clip (#633).
   it("the TableWrap scroller is positioned so a sr-only header label cannot escape its overflow clip", () => {
     const table = readFileSync(join(srcDir, "components/quincy/Table.tsx"), "utf8");
-    const line = table.split("\n").find((l) => l.includes("min-[721px]:overflow-x-auto")) ?? "";
+    const line = table.split("\n").find((l) => l.includes("table-grid:overflow-x-auto")) ?? "";
     expect(line).toMatch(/(?<![-\w:])relative(?![-\w])/);
   });
 });

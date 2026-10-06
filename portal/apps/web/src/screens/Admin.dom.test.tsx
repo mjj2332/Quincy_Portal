@@ -191,6 +191,18 @@ describe("Admin Pipeline configuration boundary", () => {
     expect(invalidateActiveProjectDetailsMock).toHaveBeenCalledTimes(1);
   });
 
+  it("renders Save and Cancel in one wrapping table-actions group (#640)", async () => {
+    apiGetMock.mockImplementation((path) => Promise.resolve(path === "/api/users" ? { users: [{ id: "user-1", name: "Old Name", email: "old@example.com", role: "editor", active: true, createdAt: null }] } : {}));
+    await act(async () => { root!.render(<Admin />); await Promise.resolve(); });
+    await flush();
+    await click([...host.querySelectorAll<HTMLButtonElement>('[data-testid="admin-user-actions"] button')].find((button) => button.textContent === "Edit")!);
+    const buttons = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="admin-user-actions"] button')];
+    const save = buttons.find((b) => b.textContent === "Save")!;
+    const cancel = buttons.find((b) => b.textContent === "Cancel")!;
+    expect(save.parentElement?.getAttribute("data-slot")).toBe("table-actions");
+    expect(cancel.parentElement).toBe(save.parentElement);
+  });
+
   it("gates Act as behind the testing switch and filters targets by active non-admin identity", async () => {
     const users = [
       { id: "self", name: "The Admin", email: "admin@example.test", role: "admin", active: true, createdAt: null },

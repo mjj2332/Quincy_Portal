@@ -12,16 +12,21 @@ import { Table as ReuiTable } from "@/components/reui/table";
    display:block, which strips the native table semantics the roles then restore. ReUI's table
    ships no roles at all. */
 
-function TableWrap({ className, ...props }: React.ComponentProps<"div">) {
+type TableDensity = "default" | "compact";
+const TableDensityContext = React.createContext<TableDensity>("default");
+
+/** `stackBelow` picks where the grid collapses into stacked cards: "md" = 721px (default), "lg" = 1024px. */
+function TableWrap({ className, stackBelow = "md", ...props }: React.ComponentProps<"div"> & { stackBelow?: "md" | "lg" }) {
   return (
     <div
       data-slot="table-wrap"
+      data-stack={stackBelow}
       className={cn(
         // `relative` is load-bearing: the sr-only "Actions" header label is absolutely positioned, and
         // an overflow clip only contains absolute descendants when the clipping box is itself
         // positioned. Without it the label escaped and the whole page scrolled sideways at 721-1000px.
-        "relative w-full min-[721px]:overflow-x-auto",
-        "min-[721px]:border-solid min-[721px]:border-[length:var(--border-width-hair)] min-[721px]:border-border min-[721px]:bg-card",
+        "relative w-full table-grid:overflow-x-auto",
+        "table-grid:border-solid table-grid:border-[length:var(--border-width-hair)] table-grid:border-border table-grid:bg-card",
         className,
       )}
       {...props}
@@ -29,28 +34,32 @@ function TableWrap({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
-function Table({ className, ...props }: React.ComponentProps<"table">) {
+/** `density="compact"` narrows the cell gutters from 16px to 12px at the grid breakpoint (#640). */
+function Table({ className, density = "default", ...props }: React.ComponentProps<"table"> & { density?: TableDensity }) {
   return (
+    <TableDensityContext.Provider value={density}>
     <ReuiTable
       role="table"
       data-slot="table"
+      data-density={density}
       // ReUI's `Table` hardcodes its own `<div className="relative w-full overflow-x-auto">`
       // wrapper; `containerClassName` (a Stage A addition) is used here to render nothing extra
       // — Quincy's own `TableWrap` above is the wrapping element Admin composes with.
       containerClassName="contents"
       className={cn(
         "w-full border-collapse",
-        "min-[721px]:min-w-[820px]",
-        "max-[721px]:block",
+        "table-grid:min-w-[820px]",
+        "table-stacked:block",
         className,
       )}
       {...props}
     />
+    </TableDensityContext.Provider>
   );
 }
 
 function TableHead({ className, ...props }: React.ComponentProps<"thead">) {
-  return <thead role="rowgroup" data-slot="table-head" className={cn("max-[721px]:sr-only", className)} {...props} />;
+  return <thead role="rowgroup" data-slot="table-head" className={cn("table-stacked:sr-only", className)} {...props} />;
 }
 
 function TableBody({ className, ...props }: React.ComponentProps<"tbody">) {
@@ -58,7 +67,7 @@ function TableBody({ className, ...props }: React.ComponentProps<"tbody">) {
     <tbody
       role="rowgroup"
       data-slot="table-body"
-      className={cn("max-[721px]:block min-[721px]:[&>tr:last-child>td]:border-b-0", className)}
+      className={cn("table-stacked:block table-grid:[&>tr:last-child>td]:border-b-0", className)}
       {...props}
     />
   );
@@ -70,8 +79,8 @@ function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
       role="row"
       data-slot="table-row"
       className={cn(
-        "max-[721px]:block max-[721px]:mb-[var(--space-4)] max-[721px]:p-[var(--space-4)]",
-        "max-[721px]:border-solid max-[721px]:border-[length:var(--border-width-hair)] max-[721px]:border-border max-[721px]:bg-card",
+        "table-stacked:block table-stacked:mb-[var(--space-4)] table-stacked:p-[var(--space-4)]",
+        "table-stacked:border-solid table-stacked:border-[length:var(--border-width-hair)] table-stacked:border-border table-stacked:bg-card",
         className,
       )}
       {...props}
@@ -80,13 +89,15 @@ function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
 }
 
 function TableHeader({ className, ...props }: React.ComponentProps<"th">) {
+  const compact = React.useContext(TableDensityContext) === "compact";
   return (
     <th
       role="columnheader"
       scope="col"
       data-slot="table-header"
       className={cn(
-        "px-[var(--space-4)] py-[12px] text-left align-bottom",
+        compact ? "px-[var(--space-3)]" : "px-[var(--space-4)]",
+        "py-[12px] text-left align-bottom",
         "[font:var(--weight-regular)_var(--text-2xs)/1.2_var(--font-sans)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary",
         "[border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border",
         className,
@@ -97,6 +108,7 @@ function TableHeader({ className, ...props }: React.ComponentProps<"th">) {
 }
 
 function TableCell({ className, ...props }: React.ComponentProps<"td">) {
+  const compact = React.useContext(TableDensityContext) === "compact";
   return (
     <td
       role="cell"
@@ -104,14 +116,17 @@ function TableCell({ className, ...props }: React.ComponentProps<"td">) {
       className={cn(
         "align-middle text-foreground-secondary",
         "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]",
-        "min-[721px]:px-[var(--space-4)] min-[721px]:py-[13px]",
-        "min-[721px]:[border-bottom-style:solid] min-[721px]:border-b-[length:var(--border-width-hair)] min-[721px]:border-b-border",
+        compact ? "table-grid:px-[var(--space-3)]" : "table-grid:px-[var(--space-4)]",
+        "table-grid:py-[13px]",
+        "table-grid:[border-bottom-style:solid] table-grid:border-b-[length:var(--border-width-hair)] table-grid:border-b-border",
         "[&>strong]:text-foreground [&>strong]:font-[var(--weight-regular)]",
         // Stacked-card mode: the column name is restated from the cell's own data-label.
-        "max-[721px]:block max-[721px]:px-0 max-[721px]:py-[var(--space-2)]",
-        "max-[721px]:before:content-[attr(data-label)] max-[721px]:before:block max-[721px]:before:mb-[var(--space-1)]",
-        "max-[721px]:before:[font:var(--type-eyebrow)] max-[721px]:before:uppercase",
-        "max-[721px]:before:tracking-[var(--tracking-wide)] max-[721px]:before:text-foreground-secondary",
+        "table-stacked:block table-stacked:px-0 table-stacked:py-[var(--space-2)]",
+        "table-stacked:before:content-[attr(data-label)] table-stacked:before:block table-stacked:before:mb-[var(--space-1)]",
+        "table-stacked:before:[font:var(--type-eyebrow)] table-stacked:before:uppercase",
+        "table-stacked:before:tracking-[var(--tracking-wide)] table-stacked:before:text-foreground-secondary",
+        // An actions cell has no label: drop the empty line so the group sits 12px under the field above.
+        "table-stacked:has-[>[data-slot=table-actions]]:before:hidden",
         className,
       )}
       {...props}
@@ -119,4 +134,19 @@ function TableCell({ className, ...props }: React.ComponentProps<"td">) {
   );
 }
 
-export { TableWrap, Table, TableHead, TableBody, TableRow, TableHeader, TableCell };
+/** Row of action buttons in a cell: right-aligned in the grid, start-aligned in stacked cards, wraps with gaps. */
+function TableActions({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="table-actions"
+      className={cn(
+        "flex flex-wrap justify-end gap-x-[var(--space-3)] gap-y-[var(--space-2)]",
+        "table-stacked:justify-start table-stacked:pt-[var(--space-1)]",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+export { TableWrap, TableActions, Table, TableHead, TableBody, TableRow, TableHeader, TableCell };
