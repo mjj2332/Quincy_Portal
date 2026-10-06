@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, type ReactNode, type Ref, type RefObject } from "react";
 import { scrollTopClearOfFade, type FadeItem } from "@/lib/date-time-field";
+import { SHORTCUTS_LABEL } from "./ShortcutList";
 import { Button } from "@/components/reui/button";
 import { ScrollArea } from "@/components/reui/scroll-area";
 import { Frame, FrameDescription, FrameFooter, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
@@ -71,7 +72,7 @@ function useSelectedClearOfFade(contentRef: RefObject<HTMLDivElement | null>, re
     const presetSnaps = () => {
       const box = viewport.getBoundingClientRect();
       const at = (el: Element) => Math.round(el.getBoundingClientRect().top - box.top + viewport.scrollTop);
-      const group = viewport.querySelector('[data-slot="item-group"]');
+      const group = viewport.querySelector(`[role="list"][aria-label="${SHORTCUTS_LABEL}"]`);
       if (!group) return [];
       const tops = [...group.querySelectorAll("button")].map(at);
       const after = group.nextElementSibling;

@@ -36,12 +36,12 @@ function layout(dayTop: number) {
     let box = { top: 0, height: 0 };
     const viewport = this.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
     const scroll = viewport?.scrollTop ?? 0;
-    const group = this.closest('[data-slot="item-group"]');
+    const group = this.closest('[role="list"][aria-label="Date shortcuts"]');
     if (this.getAttribute("data-slot") === "scroll-area-viewport") box = { top: BODY.top, height: BODY.height };
     else if (this.style?.height === "var(--fade-size)") box = { top: 0, height: FADE };
     else if (group && this.tagName === "BUTTON") box = { top: BODY.top + 8 + Math.floor([...group.querySelectorAll("button")].indexOf(this as HTMLButtonElement) / 2) * 56 - scroll, height: 52 };
-    else if (this.getAttribute("data-slot") === "item-group") box = { top: BODY.top + 8 - scroll, height: 112 };
-    else if (this.previousElementSibling?.getAttribute("data-slot") === "item-group") box = { top: BODY.top + 8 + 112 + 16 - scroll, height: 300 };
+    else if (this.getAttribute("aria-label") === "Date shortcuts") box = { top: BODY.top + 8 - scroll, height: 112 };
+    else if (this.previousElementSibling?.getAttribute("aria-label") === "Date shortcuts") box = { top: BODY.top + 8 + 112 + 16 - scroll, height: 300 };
     else if (viewport && this.closest('[role="gridcell"]')) box = { top: BODY.top + dayTop - scroll, height: TILE };
     return { ...box, bottom: box.top + box.height, left: 0, right: 0, width: 0, x: 0, y: box.top, toJSON() {} } as DOMRect;
   });
