@@ -8,7 +8,7 @@ import { useSession } from "../lib/auth";
 import { invalidateProjectSurfaces, projectDataKeys, recordProjectArchivedRefusal, useOptionalProjectQueryClient, useProjectAccessTermination, useProjectSubtaskDefaultRange, useProjectSubtasksQuery, type ProjectSubtask } from "../lib/project-data";
 import { createProjectDataInvalidationMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
 import { formatCivilRange, formatCivilSchedule } from "../lib/date-format";
-import { sameReminderOffsets, shellAwarePopupPadding } from "../lib/date-time-field";
+import { sameReminderOffsets, SHELL_AWARE_SHIFT_AVOIDANCE, shellAwarePopupPadding } from "../lib/date-time-field";
 import { checklistScheduleToDto, normalizeChecklistSchedule, SUBTASK_REMINDER_DEFAULT_OFFSETS, type ChecklistScheduleDto, type RangeChecklistScheduleInput, type Role, type SubtaskRemindersDto } from "@quincy/shared";
 import { reorderNeighbors } from "../lib/reorder-neighbors";
 import { confirm } from "../lib/confirm";
@@ -146,7 +146,7 @@ function SortableSubtaskRow({ item, projectId, role, busy, editing, draftTitle, 
           ? "col-span-full flex flex-wrap items-center gap-[var(--space-1)] pt-[var(--space-1)] [&>:last-child]:ms-auto"
           : cn("max-[721px]:col-span-full max-[721px]:flex max-[721px]:flex-wrap max-[721px]:items-center", "max-[721px]:gap-[var(--space-1)] max-[721px]:pt-[var(--space-1)] max-[721px]:[&>:last-child]:ms-auto", "min-[721px]:contents"),
       )}>
-        <SubtaskScheduleControl owner={item.id} label={`Schedule for ${item.title}`} popupCollisionPadding={shellAwarePopupPadding} value={item.schedule} error={scheduleError} retained={retainedSchedule} open={activeKind === "schedule"} setOpen={(open) => setKind("schedule", open)} onSave={(schedule) => onUpdate({ schedule }, "schedule")} onUseLatest={onUseLatest} onUseLatestItem={onUseLatestItem} busy={busy} projectDefault={projectDefault} reminders={{ offsets: item.reminders.offsetsMinutes, next: item.reminders.nextOccurrence }} readOnly={readOnly} />
+        <SubtaskScheduleControl owner={item.id} label={`Schedule for ${item.title}`} popupCollisionAvoidance={SHELL_AWARE_SHIFT_AVOIDANCE} popupCollisionPadding={shellAwarePopupPadding} value={item.schedule} error={scheduleError} retained={retainedSchedule} open={activeKind === "schedule"} setOpen={(open) => setKind("schedule", open)} onSave={(schedule) => onUpdate({ schedule }, "schedule")} onUseLatest={onUseLatest} onUseLatestItem={onUseLatestItem} busy={busy} projectDefault={projectDefault} reminders={{ offsets: item.reminders.offsetsMinutes, next: item.reminders.nextOccurrence }} readOnly={readOnly} />
         <SubtaskAssigneePicker projectId={projectId} role={role} label={`Assignees for ${item.title}`} selected={item.assignees} version={item.assignmentVersion} hiddenCount={item.otherAssigneeCount ?? 0} busy={busy} readOnly={readOnly} onCommit={(ids, _people, baseline) => onCommitAssignees(ids, baseline)} />
         {!readOnly && <ActionsControl owner={item.id} title={item.title} open={activeKind === "actions"} setOpen={(open) => setKind("actions", open)} busy={busy} onDelete={onRemove} />}
       </div>
