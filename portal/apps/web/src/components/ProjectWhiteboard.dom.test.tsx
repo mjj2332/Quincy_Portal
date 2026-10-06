@@ -321,6 +321,24 @@ describe("presence (#499)", () => {
     board.props!.onPresence!({ pointer: { x: 5, y: 6 }, button: "up", selectedIds: [] });
     expect(board.sentPresence.at(-1)).toEqual({ pointer: { x: 5, y: 6 }, button: "up", selectedIds: [] });
   });
+
+  it("after the tab is visible again, the stale pointer is not re-sent until a different pointer arrives (#607)", async () => {
+    await mount();
+    board.props!.onPresence!({ pointer: { x: 1, y: 2 }, button: "up", selectedIds: ["q"] });
+    const hidden = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+    hidden.mockRestore();
+    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+    board.sentPresence.length = 0;
+    // A selection-only update (keyboard Delete) before any mouse move: the canvas still carries the old pointer.
+    board.props!.onPresence!({ pointer: { x: 1, y: 2 }, button: "up", selectedIds: [] });
+    expect(board.sentPresence.at(-1)).toEqual({ pointer: null, button: "up", selectedIds: [] });
+    board.props!.onPresence!({ pointer: { x: 3, y: 4 }, button: "up", selectedIds: [] });
+    expect(board.sentPresence.at(-1)).toEqual({ pointer: { x: 3, y: 4 }, button: "up", selectedIds: [] });
+    // The memory is cleared: a pointer that happens to equal the old one is real now.
+    board.props!.onPresence!({ pointer: { x: 1, y: 2 }, button: "up", selectedIds: [] });
+    expect(board.sentPresence.at(-1)).toEqual({ pointer: { x: 1, y: 2 }, button: "up", selectedIds: [] });
+  });
 });
 
 describe("focus on load and the archived reason (#551)", () => {
