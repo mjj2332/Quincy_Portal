@@ -14,6 +14,9 @@ const webSrc = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 const read = (rel: string) => readFileSync(join(webSrc, rel), "utf8");
 const RING_OFF = "focus-visible:!outline-none";
 
+/** Drops block comments and whole-line `//` comments, so a comment that names the class can't satisfy the guard (Sol). */
+const stripComments = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
 /** The `<tag ...>` opening element that carries `marker`, from `<tag` to the first `>` outside braces. */
 export function openingTag(source: string, tag: string, marker: string): string | null {
   const at = source.indexOf(marker);
@@ -25,14 +28,15 @@ export function openingTag(source: string, tag: string, marker: string): string 
     const c = source[i];
     if (c === "{") depth++;
     else if (c === "}") depth--;
-    else if (c === ">" && depth === 0 && source[i - 1] !== "=") return source.slice(start, i + 1);
+    else if (c === ">" && depth === 0 && source[i - 1] !== "=") return stripComments(source.slice(start, i + 1));
   }
   return null;
 }
 
 /** The `POPOVER_CONTENT` initialiser, `const` through the terminating semicolon. */
 export function constInitialiser(source: string, name: string): string | null {
-  return new RegExp(`const ${name}\\s*=[\\s\\S]*?;`).exec(source)?.[0] ?? null;
+  const init = new RegExp(`const ${name}\\s*=[\\s\\S]*?;`).exec(source)?.[0];
+  return init === undefined ? null : stripComments(init);
 }
 
 describe("programmatically focused containers carry focus-visible:!outline-none", () => {
@@ -67,6 +71,11 @@ describe("programmatically focused containers carry focus-visible:!outline-none"
       expect(openingTag(FIXED, "SheetContent", 'data-testid="project-sheet"')).toContain(RING_OFF);
       const inChild = '<SheetContent data-testid="project-sheet" className="p-0"><b className="focus-visible:!outline-none"/></SheetContent>';
       expect(openingTag(inChild, "SheetContent", 'data-testid="project-sheet"')).not.toContain(RING_OFF);
+    });
+    it("ignores the class when it is only in a comment inside the tag (Sol)", () => {
+      const inComment =
+        '<SheetContent data-testid="project-sheet"\n  // `focus-visible:!outline-none`: see NotificationBell.\n  /* focus-visible:!outline-none */\n  className="p-0">x</SheetContent>';
+      expect(openingTag(inComment, "SheetContent", 'data-testid="project-sheet"')).not.toContain(RING_OFF);
     });
     it("returns null when the marker is gone", () => {
       expect(openingTag("<div/>", "SheetContent", "x")).toBeNull();
