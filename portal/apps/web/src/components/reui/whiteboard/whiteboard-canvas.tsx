@@ -2540,6 +2540,14 @@ export function WhiteboardCanvas({
     if (root) root.dataset.wbTool = chrome.tool
   }, [chrome.tool, ready, rootRef])
 
+  // One predicate decides the phone bar and its 44px controls (#564): `isPhoneLayout` on the board's own size.
+  useLayoutEffect(() => {
+    const root = rootRef.current
+    if (!root) return
+    if (chrome.phone) root.setAttribute("data-phone-layout", "")
+    else root.removeAttribute("data-phone-layout")
+  }, [chrome.phone, ready, rootRef])
+
   useFooterMetrics(rootRef, footer)
 
   useFontRewrap(api, ready, armedRef)

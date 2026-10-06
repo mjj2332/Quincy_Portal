@@ -6,8 +6,8 @@ import { useLayoutEffect, type RefObject } from "react"
  *
  * Only the WIDTH is measured. `--wb-control-size` is never written from here (#564): the footer's own
  * controls size from that variable, so writing the footer's height into it pinned the phone's 44px
- * after the window widened. The size follows the layout instead, in CSS: 2rem by default and 44px at
- * `max-[721px]` (`whiteboard-theme.ts` on the board root, `whiteboard-controls.tsx` on the chrome layer).
+ * after the window widened. The size follows the layout instead, in CSS: 2rem by default and 44px under
+ * `data-phone-layout`, which the canvas sets from `isPhoneLayout`, the predicate that picks the phone bar.
  */
 export function useFooterMetrics(rootRef: RefObject<HTMLElement | null>, footer: HTMLElement | null) {
   useLayoutEffect(() => {

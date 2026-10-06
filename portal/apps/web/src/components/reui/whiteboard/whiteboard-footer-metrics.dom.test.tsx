@@ -63,8 +63,9 @@ describe("footer metrics (#564)", () => {
     expect(board.style.getPropertyValue("--wb-control-size")).toBe("");
   });
 
-  it("the size comes from CSS: 44px at max-[721px] on the board, the desktop default elsewhere", () => {
-    expect(WHITEBOARD_THEME).toContain("max-[721px]:[--wb-control-size:44px]");
+  it("the size comes from the phone-layout attribute, not a viewport query", () => {
+    expect(WHITEBOARD_THEME).toContain("data-[phone-layout]:[--wb-control-size:44px]");
+    expect(WHITEBOARD_THEME).not.toContain("721px]:[--wb-control-size");
     expect(WHITEBOARD_THEME).not.toMatch(/(^|\s)\[--wb-control-size:/);
   });
 });
