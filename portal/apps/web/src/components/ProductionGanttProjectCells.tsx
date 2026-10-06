@@ -27,6 +27,7 @@ import { CELL_TRIGGER, ProjectDeadlineCell, ProjectDetailGate } from "./ProjectD
 export { CELL_TRIGGER };
 import { ProjectTeamCombobox } from "./ProjectTeamCombobox";
 import { POPOVER_CONTENT } from "./project-header-popover";
+import { SHELL_AWARE_SHIFT_AVOIDANCE, shellAwarePopupPadding } from "../lib/date-time-field";
 import { cn } from "../lib/utils";
 
 /** One person once, first occurrence wins: a dual-role member is one avatar and one name. */
@@ -156,5 +157,5 @@ export function GanttDeadlineCell({ projectId, street, deadline, canEdit, disabl
     );
   }
   // The popover editor (and its inert / read-only forms) is the shared surface-neutral cell.
-  return <ProjectDeadlineCell projectId={projectId} street={street} deadline={deadline} canEdit={canEdit} disabled={disabled} role={role} testIdPrefix="gantt" />;
+  return <ProjectDeadlineCell projectId={projectId} street={street} deadline={deadline} canEdit={canEdit} disabled={disabled} role={role} testIdPrefix="gantt" popupCollisionAvoidance={SHELL_AWARE_SHIFT_AVOIDANCE} popupCollisionPadding={shellAwarePopupPadding} />;
 }

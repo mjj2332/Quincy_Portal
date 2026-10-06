@@ -159,7 +159,11 @@ embeddedMediaRoutes.put("/projects/:projectId/embedded-media/:mediaId/poster", t
   const queuedAt = Date.now();
   await c.env.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) VALUES (?, NULL, ?, ?)").bind(posterKey, projectId, queuedAt).run();
   try { await c.env.MEDIA.put(posterKey, body, { httpMetadata: { contentType: "image/jpeg" } }); }
-  catch (error) { await c.env.DB.prepare("DELETE FROM embedded_media_cleanup WHERE storage_key = ?").bind(posterKey).run(); throw error; }
+  catch (error) {
+    // A thrown PUT may still have committed the object, so it is discarded (deleted, re-queued if R2 refuses) rather than just dropping its entry (#574).
+    await discardUnreferencedObject(c.env, posterKey, projectId);
+    throw error;
+  }
   let results: D1Result[];
   try {
     results = await c.env.DB.batch([

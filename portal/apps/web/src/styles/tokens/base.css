@@ -3,22 +3,33 @@
    Sensible document defaults wired to the tokens, plus a few brand utilities.
    ========================================================================== */
 
-*, *::before, *::after { box-sizing: border-box; }
+/* ---- Element resets live in `@layer base` (#569) ---------------------------
+   Unlayered CSS beats every rule in Tailwind's `@layer utilities` regardless of specificity, so
+   an unlayered `p { margin: 0 }` made `mt-*` / `mb-*` / `ms-*` on a <p> or heading a silent
+   no-op (the code carried `!mt-[…]` to compensate). Layer order is declared in `index.css`
+   (`theme, base, components, utilities`), so `base` loses to utilities, as a reset should.
+   Do NOT add an element-type selector outside `@layer base` anywhere in `styles/`; the
+   "no unlayered element resets" guard in `design-system-guards.test.ts` fails on it.
+   `::selection` stays outside (a pseudo-element no utility targets), and so does the
+   `:focus-visible` ring below, which is unlayered ON PURPOSE. */
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; }
 
-html { -webkit-text-size-adjust: 100%; }
+  html { -webkit-text-size-adjust: 100%; }
 
-body {
-  margin: 0;
-  background: var(--bg-canvas);
-  color: var(--text-primary);
-  font: var(--type-body);
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
+  body {
+    margin: 0;
+    background: var(--bg-canvas);
+    color: var(--text-primary);
+    font: var(--type-body);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1, h2, h3, h4 { margin: 0; font-weight: var(--weight-regular); }
+  p { margin: 0; }
+  a { color: inherit; }
 }
-
-h1, h2, h3, h4 { margin: 0; font-weight: var(--weight-regular); }
-p { margin: 0; }
-a { color: inherit; }
 
 ::selection { background: var(--ink-900); color: var(--paper-050); }
 
@@ -65,6 +76,21 @@ a { color: inherit; }
    which would fade from this rest colour again). */
 @layer base {
   *, *::before, *::after { outline-color: var(--focus-ring); }
+}
+
+/* ---- The outline width / offset rest state (#552) -------------------------
+   The same trap for the other two outline longhands. At rest `outline-offset` is 0 and the
+   width is the `medium` initial; the unlayered `:focus-visible` shorthand below sets 2px / 2px.
+   Under `transition: all 0.15s` the offset therefore slid 0 -> 2px over ~150ms after every
+   focus (the ring "grew outward"). Setting the same values at rest means that on focus only
+   `outline-style` changes, and `outline-style` is not animatable. Keep these equal to the
+   `:focus-visible` shorthand (guarded). Layered, so `outline-offset-*` / `outline-*` utilities
+   still win. */
+@layer base {
+  *, *::before, *::after {
+    outline-width: var(--border-width-bold);
+    outline-offset: 2px;
+  }
 }
 
 /* ---- Brand display helpers ------------------------------------------ */

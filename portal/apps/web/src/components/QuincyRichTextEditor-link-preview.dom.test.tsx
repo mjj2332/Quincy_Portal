@@ -6,7 +6,7 @@ import { NodeSelection } from "@tiptap/pm/state";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { COMMENT_MEDIA_RICH_TEXT_PROFILE, NOTICE_RICH_TEXT_PROFILE, parseRichTextDoc, richTextPlainText, type LinkPreviewCard, type RichTextDoc } from "@quincy/shared";
 import { ProjectCommentDraftsProvider, useProjectCommentDraft } from "../lib/project-comment-drafts";
-import { createRichTextEditorExtensions, stripLinkPreviewDisplay, tiptapToRichTextDoc, toTiptap } from "../lib/rich-text-tiptap";
+import { createRichTextEditorExtensions, stripEmbeddedDisplay, tiptapToRichTextDoc, toTiptap } from "../lib/rich-text-tiptap";
 import { QuincyRichTextEditor } from "./QuincyRichTextEditor";
 import { ProjectSheet } from "./quincy/ProjectSheet";
 import { RichTextContent } from "./RichTextContent";
@@ -55,7 +55,7 @@ async function apply(host: HTMLElement, href: string) {
   await settle();
 }
 const cards = (host: HTMLElement) => [...host.querySelectorAll('[data-testid="link-preview-card-editor"]')];
-const storedPreviews = () => stripLinkPreviewDisplay(latest).content.filter((block) => block.type === "linkPreview");
+const storedPreviews = () => stripEmbeddedDisplay(latest).content.filter((block) => block.type === "linkPreview");
 
 beforeEach(() => { request.mockReset(); latest = plain(); reset = null; });
 afterEach(async () => { await act(async () => root?.unmount()); root = null; document.body.replaceChildren(); });
@@ -260,7 +260,7 @@ describe("a card in a Project composer draft (#497)", () => {
     expect(cards(host)).toHaveLength(1);
     expect(host.querySelector('[data-testid="link-preview-card-editor"]')!.textContent).toContain("Title 1");
     expect(host.querySelector('[data-testid="link-preview-remove"]')).not.toBeNull();
-    expect(stripLinkPreviewDisplay(latest).content.filter((block) => block.type === "linkPreview")).toEqual([{ type: "linkPreview", attrs: { previewId: P1 } }]);
+    expect(stripEmbeddedDisplay(latest).content.filter((block) => block.type === "linkPreview")).toEqual([{ type: "linkPreview", attrs: { previewId: P1 } }]);
     await click(host.querySelector('[data-testid="link-preview-remove"]')!);
     expect(cards(host)).toHaveLength(0);
   });
@@ -272,7 +272,7 @@ describe("a card in a Project composer draft (#497)", () => {
     await act(async () => open!(false)); await act(async () => open!(true));
     await apply(host, "https://example.test/a");
     expect(latest.content.filter((block) => block.type === "linkPreview")).toHaveLength(1);
-    expect(() => parseRichTextDoc(stripLinkPreviewDisplay(latest), COMMENT_MEDIA_RICH_TEXT_PROFILE)).not.toThrow();
+    expect(() => parseRichTextDoc(stripEmbeddedDisplay(latest), COMMENT_MEDIA_RICH_TEXT_PROFILE)).not.toThrow();
   });
 });
 
@@ -291,7 +291,7 @@ describe("any editor whose state lives outside it (#497)", () => {
   it("measures the size of a draft without the display data a card carries", async () => {
     const big = "x".repeat(2_500);
     const cardsOf = (count: number) => Array.from({ length: count }, (_, index) => ({ type: "linkPreview" as const, attrs: { previewId: `${index}2222222-2222-4222-8222-222222222222`, url: `https://example.test/${index}`, title: big, description: big, siteName: "S", imageMediaId: null } }));
-    const stripped = stripLinkPreviewDisplay({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hi" }] }, ...cardsOf(3)] });
+    const stripped = stripEmbeddedDisplay({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hi" }] }, ...cardsOf(3)] });
     const rich: RichTextDoc = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hi" }] }, ...cardsOf(3)] };
     const limitBytes = new TextEncoder().encode(JSON.stringify(stripped)).length + 50;
     expect(new TextEncoder().encode(JSON.stringify(rich)).length).toBeGreaterThan(limitBytes);
@@ -380,6 +380,8 @@ describe("a card that lands while the author is composing (#548)", () => {
     await act(async () => { editor.commands.focus(); editor.commands.setTextSelection({ from: 12, to: 17 }); });
     await applyToSelection(host, "https://github.com/");
     const before = { from: editor.state.selection.from, to: editor.state.selection.to };
+    // Absolute, taken right after Apply: a collapse during Apply fails here, not as "unchanged from a later snapshot" (#562).
+    expect(before).toEqual({ from: 12, to: 17 });
     await act(async () => { finish(cardFor(P1, "https://github.com/")); await new Promise((resolve) => setTimeout(resolve, 0)); });
     expect(cards(host)).toHaveLength(1);
     // insertContentAt selects inserted content by default: a NodeSelection on the card means the next keystroke deletes it.
@@ -389,6 +391,28 @@ describe("a card that lands while the author is composing (#548)", () => {
     expect(cards(host)).toHaveLength(1);
     expect(storedPreviews()).toHaveLength(1);
     expect(richTextPlainText(latest)).toContain("QA 548 mid xafter text");
+  });
+});
+
+describe("Apply syncs the editor selection before any DOM-observer flush (#562)", () => {
+  it("keeps the author's range when ProseMirror flushes its DOM observer right after Apply", async () => {
+    request.mockImplementation(() => new Promise<LinkPreviewCard>(() => {}));
+    const host = await mount(plain("QA 548 mid home after text"));
+    const editor = tiptapOf(host);
+    await act(async () => { editor.commands.focus(); editor.commands.setTextSelection({ from: 12, to: 17 }); });
+    await click(host.querySelector('[aria-label="Link"]')!);
+    const input = document.querySelector<HTMLInputElement>('[data-testid="rich-text-link-popover"] input')!;
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "https://github.com/"); input.dispatchEvent(new Event("input", { bubbles: true })); });
+    // Test-only. Tiptap's focus() defers a frame, so Apply must sync the DOM selection itself, in the same tick
+    // as the command, with ProseMirror's view.focus(). happy-dom repairs the selection on the focus event, which
+    // hides the real-browser race, so the sync is pinned directly: a spy, then the forced flush.
+    const sync = vi.spyOn(editor.view, "focus");
+    document.querySelector<HTMLElement>('[data-testid="rich-text-link-popover"] [aria-label="Apply link"]')!.click();
+    expect(sync).toHaveBeenCalled(); // same tick as the click, before Tiptap's deferred focus() can run
+    await settle();
+    // Test-only: ProseMirror's own 20 ms mount timer is what races Tiptap's deferred focus(); force it deterministically.
+    act(() => { document.dispatchEvent(new Event("selectionchange")); (editor.view as unknown as { domObserver: { flush: () => void } }).domObserver.flush(); });
+    expect({ from: editor.state.selection.from, to: editor.state.selection.to }).toEqual({ from: 12, to: 17 });
   });
 });
 

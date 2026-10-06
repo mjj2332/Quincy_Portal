@@ -85,7 +85,7 @@ describe("TB4C activity marker and exact-cycle fan-out", () => {
     applyMigrations(db);
     const now = 1_787_000_000_000;
     db.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES ('tb4c-editor', 'TB4D Editor', 'tb4d-editor@example.test', 1, 'editor', 1, ?, ?)").run(now, now);
-    db.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES ('tb4c-project', 'TB4C Street', 'edited_review', 0, ?, ?)").run(now, now);
+    db.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES ('tb4c-project', 'TB4C Street', 'edited_review', ?, ?)").run(now, now);
     db.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES ('tb4d-cycle', 'tb4c-project', 'tb4c-editor', 'editor', ?)").run(now - 1000);
     addAudit(db, "tb4d-audit", now);
     const bundle = buildProjectActivityStatements({ db: localD1(db), intent: intent("project.priority.changed", "a0000000-0000-4000-8000-000000000001", now, "tb4d-audit"), winnerAuditId: "tb4d-audit", createdAt: now, broadMode: "activity_only" });
@@ -104,7 +104,7 @@ describe("TB4C activity marker and exact-cycle fan-out", () => {
     for (const [id, role, active] of [["tb4c-editor", "editor", 1], ["tb4c-admin", "admin", 1], ["tb4c-unassigned", "admin", 1], ["tb4c-inactive", "editor", 0], ["tb4c-photographer", "photographer", 1]] as const) {
       db.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?, ?)").run(id, id, `${id}@example.test`, role, active, now, now);
     }
-    db.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES ('tb4c-project', 'TB4C Street', 'edited_review', 0, ?, ?)").run(now, now);
+    db.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES ('tb4c-project', 'TB4C Street', 'edited_review', ?, ?)").run(now, now);
     for (const [id, userId, createdAt] of [["cycle-editor", "tb4c-editor", now - 1000], ["cycle-admin", "tb4c-admin", now - 1000], ["cycle-inactive", "tb4c-inactive", now - 1000], ["cycle-photographer", "tb4c-photographer", now - 1000]] as const) {
       db.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, 'tb4c-project', ?, 'editor', ?)").run(id, userId, createdAt);
     }
@@ -137,7 +137,7 @@ describe("TB4C activity marker and exact-cycle fan-out", () => {
     applyMigrations(db);
     const start = 1_787_000_000_000;
     for (const id of ["tb4c-editor", "tb4c-admin"]) db.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, ?, ?, 1, 'editor', 1, ?, ?)").run(id, id, `${id}@example.test`, start, start);
-    db.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES ('tb4c-project', 'TB4C Street', 'edited_review', 0, ?, ?)").run(start, start);
+    db.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES ('tb4c-project', 'TB4C Street', 'edited_review', ?, ?)").run(start, start);
     db.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES ('old-cycle', 'tb4c-project', 'tb4c-editor', 'editor', ?)").run(start - 1000);
     db.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES ('admin-cycle', 'tb4c-project', 'tb4c-admin', 'editor', ?)").run(start - 1000);
     const d1 = localD1(db);
@@ -170,7 +170,7 @@ describe("TB4C activity marker and exact-cycle fan-out", () => {
     applyMigrations(db);
     const start = 1_787_000_000_000;
     db.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES ('tb4c-editor', 'TB4C Editor', 'tb4c-editor@example.test', 1, 'editor', 1, ?, ?)").run(start, start);
-    db.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES ('tb4c-project', 'TB4C Street', 'edited_review', 0, ?, ?)").run(start, start);
+    db.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES ('tb4c-project', 'TB4C Street', 'edited_review', ?, ?)").run(start, start);
     db.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES ('cycle-editor', 'tb4c-project', 'tb4c-editor', 'editor', ?)").run(start - 1000);
     const d1 = localD1(db);
 

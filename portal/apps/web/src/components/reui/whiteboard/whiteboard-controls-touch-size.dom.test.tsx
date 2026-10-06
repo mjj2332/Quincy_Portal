@@ -76,4 +76,38 @@ describe("whiteboard controls follow --wb-control-size (#498)", () => {
       expect(zoom.className).not.toMatch(/(^|\s)h-8(\s|$)/);
     });
   }
+
+  // #564: one predicate (`isPhoneLayout` on the board's size) decides the phone bar and the 44px size.
+  describe("the 44px size follows the phone layout (#564)", () => {
+    const layer = () => host.firstElementChild as HTMLElement;
+
+    it("phone layout on: the layer carries data-phone-layout and the rule sets 44px; off again: back to the 2rem default", async () => {
+      await render({ phone: true });
+      expect(layer().hasAttribute("data-phone-layout")).toBe(true);
+      expect(layer().className).toContain("data-[phone-layout]:[--wb-control-size:44px]");
+      await render({ phone: false });
+      expect(layer().hasAttribute("data-phone-layout")).toBe(false);
+      // Unset, the controls fall back to their 2rem default.
+      expect(SQUARE).toContain(",2rem)");
+    });
+
+    it("a narrow board in a wide viewport gets the phone size; a wide board in a narrow viewport does not", async () => {
+      const original = window.innerWidth;
+      try {
+        window.innerWidth = 1280;
+        await render({ phone: true });
+        expect(layer().hasAttribute("data-phone-layout")).toBe(true);
+        window.innerWidth = 390;
+        await render({ phone: false });
+        expect(layer().hasAttribute("data-phone-layout")).toBe(false);
+      } finally {
+        window.innerWidth = original;
+      }
+    });
+
+    it("no viewport query is left deciding the size", async () => {
+      await render({ phone: true });
+      expect(layer().className).not.toContain("721px");
+    });
+  });
 });

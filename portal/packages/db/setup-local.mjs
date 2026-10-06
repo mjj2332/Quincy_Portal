@@ -61,9 +61,8 @@ const FORBIDDEN_ARGUMENTS = ["--remote", "--env", "--config", "--database", "--p
  * table: __quincy_local_capability` instead of silently succeeding. A one-time preflight is not
  * enough: this makes the check part of every statement, not just the first one.
  *
- * `__quincy_local_fixture_run_records` and `__quincy_local_fixture_board_positions` record what an
- * `apply` actually USED and WROTE (the default-editor set it read, the live `board_position` each
- * project landed on), so `db:qa:verify` compares against the run itself rather than recomputing from
+ * `__quincy_local_fixture_run_records` records what an
+ * `apply` actually USED (the default-editor set it read), so `db:qa:verify` compares against the run itself rather than recomputing from
  * today's state. `__quincy_local_fixture_closure` is the graph teardown's capture of every row it is
  * about to delete (`qa-seed/teardown-graph.ts`) — recorded BEFORE anything is deleted, so the
  * post-teardown sweep can prove every captured id is gone. `CREATE TABLE IF NOT EXISTS` means
@@ -96,11 +95,6 @@ CREATE TABLE IF NOT EXISTS __quincy_local_fixture_entities (
 CREATE TABLE IF NOT EXISTS __quincy_local_fixture_run_records (
   run_id text PRIMARY KEY NOT NULL,
   default_editor_ids text NOT NULL
-);
-CREATE TABLE IF NOT EXISTS __quincy_local_fixture_board_positions (
-  project_id text PRIMARY KEY NOT NULL,
-  run_id text NOT NULL,
-  board_position real NOT NULL
 );
 CREATE TABLE IF NOT EXISTS __quincy_local_fixture_closure (
   table_name text NOT NULL,

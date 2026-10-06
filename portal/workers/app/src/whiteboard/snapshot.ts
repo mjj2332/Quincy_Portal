@@ -138,6 +138,13 @@ export class Snapshots {
 
   generation(): number { return this.row().generation; }
 
+  /** #559: the hash a snapshot of the board AS IT IS NOW would carry (same rows, same function), so a listing can name the version it equals. */
+  async liveSha256(): Promise<string> {
+    this.ensureSchema();
+    const rows = this.sql.exec<{ json: string }>("SELECT json FROM elements ORDER BY id").toArray().map((entry) => JSON.parse(entry.json) as SceneRow);
+    return sceneSha256(rows);
+  }
+
   rememberProject(projectId: string): void {
     this.ensureSchema();
     this.sql.exec("UPDATE wb_state SET project_id = ? WHERE id = 1 AND project_id IS NOT ?", projectId, projectId);

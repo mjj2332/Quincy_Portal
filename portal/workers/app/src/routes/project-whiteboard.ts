@@ -70,14 +70,16 @@ projectWhiteboardRoutes.get("/projects/:projectId/whiteboard/versions", terminal
   const project = await createDb(c.env.DB).select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
   if (!project) return c.json({ error: "Project not found" }, 404);
   const rows = (await c.env.DB.prepare(
-    `SELECT v.id AS id, v.created_at AS createdAt, v.created_by AS createdById, u.name AS createdByName, v.reason AS reason, v.element_count AS elementCount, v.byte_count AS byteCount
+    `SELECT v.id AS id, v.created_at AS createdAt, v.created_by AS createdById, u.name AS createdByName, v.reason AS reason, v.element_count AS elementCount, v.byte_count AS byteCount, v.scene_sha256 AS sceneSha256
      FROM project_whiteboard_versions v LEFT JOIN user u ON u.id = v.created_by
      WHERE v.project_id = ? AND v.state = 'ready' ORDER BY v.ordinal DESC LIMIT ?`,
-  ).bind(projectId, WHITEBOARD_VERSIONS_RETAINED).all<{ id: string; createdAt: number; createdById: string | null; createdByName: string | null; reason: "interval" | "last_leave" | "pre_restore"; elementCount: number; byteCount: number }>()).results;
+  ).bind(projectId, WHITEBOARD_VERSIONS_RETAINED).all<{ id: string; createdAt: number; createdById: string | null; createdByName: string | null; reason: "interval" | "last_leave" | "pre_restore"; elementCount: number; byteCount: number; sceneSha256: string }>()).results;
   const stub = c.env.PROJECT_WHITEBOARD.get(c.env.PROJECT_WHITEBOARD.idFromName(projectId));
-  const generation = await stub.currentGeneration();
+  const [generation, liveSha] = await Promise.all([stub.currentGeneration(), stub.currentSceneSha256()]);
   const body: WhiteboardVersionsResponse = {
     generation,
+    // #559: the newest version whose content hash equals the live board's (rows are newest first), or none when the board has moved on since its last snapshot.
+    currentVersionId: rows.find((row) => row.sceneSha256 === liveSha)?.id ?? null,
     versions: rows.map((row) => ({ id: row.id, createdAt: row.createdAt, createdBy: row.createdById === null ? null : { id: row.createdById, name: row.createdByName ?? "" }, reason: row.reason, elementCount: row.elementCount, byteCount: row.byteCount })),
   };
   return c.json(body);

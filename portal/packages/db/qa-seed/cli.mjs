@@ -202,7 +202,7 @@ function applyStatements(options, statements, label) {
  * them (`CREATE TABLE IF NOT EXISTS`, so re-running it upgrades an older local database). */
 const RESERVED_TABLES = [
   "__quincy_local_capability", "__quincy_local_fixture_runs", "__quincy_local_fixture_entities",
-  "__quincy_local_fixture_run_records", "__quincy_local_fixture_board_positions", "__quincy_local_fixture_closure",
+  "__quincy_local_fixture_run_records", "__quincy_local_fixture_closure",
 ];
 
 export function assertCapabilityPresent(executor) {
@@ -421,10 +421,6 @@ export function apply(executor, options) {
   }
   const record = queryScalar(executor, `SELECT COUNT(*) AS n FROM __quincy_local_fixture_run_records WHERE run_id = '${plan.runId}';`);
   if (Number(record?.n) !== 1) throw new Error(`Expected exactly one recorded default-editor set for run ${plan.runId}, found ${record?.n}.`);
-  const positions = queryScalar(executor, `SELECT COUNT(*) AS n FROM __quincy_local_fixture_board_positions WHERE run_id = '${plan.runId}';`);
-  if (Number(positions?.n) !== plan.summary.projects) {
-    throw new Error(`Expected ${plan.summary.projects} recorded board positions for run ${plan.runId}, found ${positions?.n}.`);
-  }
   const sentinelProjects = queryScalar(executor, `SELECT COUNT(*) AS n FROM projects WHERE notes LIKE 'QA-FIXTURE-v1 · anchor=${plan.anchor} · tier=%';`);
   if (Number(sentinelProjects?.n) !== plan.summary.projects) {
     throw new Error(`Expected ${plan.summary.projects} sentinel-tagged projects, found ${sentinelProjects?.n}.`);
@@ -562,14 +558,7 @@ function readRunRecord(executor, runId) {
   for (const id of defaultEditorIds) {
     if (!UUID_RE.test(id)) throw new Error(`Recorded default-editor id is not a canonical UUID: ${JSON.stringify(id)}`);
   }
-  const positionRows = executor.query(
-    `SELECT e.id AS project_id, b.board_position AS board_position FROM __quincy_local_fixture_entities e LEFT JOIN __quincy_local_fixture_board_positions b ON b.project_id = e.id AND b.run_id = '${runId}' WHERE e.kind = 'project' AND e.run_id = '${runId}';`,
-  );
-  const unrecorded = positionRows.filter((row) => typeof row.board_position !== "number").map((row) => row.project_id);
-  if (unrecorded.length > 0) {
-    throw new Error(`Run ${runId} has no recorded board_position for ${unrecorded.length} project(s), e.g. ${unrecorded.slice(0, VERIFY_MAX_REPORTED_IDS).join(", ")}. Re-apply the fixture: \`npm run db:qa:apply\`.`);
-  }
-  return { defaultEditorIds, boardPositions: Object.fromEntries(positionRows.map((row) => [row.project_id, row.board_position])) };
+  return { defaultEditorIds };
 }
 
 export function verify(executor, options) {
@@ -603,10 +592,10 @@ export function verify(executor, options) {
   // Recomputed against the RECORDED run's own anchor/tier/applied-at — never the caller's values,
   // never `Date.now()` — so occurrence status (the one apply-time-dependent field, item 4) is
   // reproduced exactly as this run actually inserted it, not as a fresh apply would today. The
-  // default-editor set and every project's board_position are likewise the values THIS run recorded
-  // (findings 5 and 6) — never today's editors, never a column left out of the comparison.
-  const { defaultEditorIds, boardPositions } = readRunRecord(executor, run.id);
-  const manifestArgs = [`--anchor=${run.anchor}`, `--tier=${run.tier}`, `--applied-at-ms=${run.applied_at}`, `--board-positions=${JSON.stringify(boardPositions)}`];
+  // default-editor set is likewise the value THIS run recorded
+  // (finding 6) — never today's editors.
+  const { defaultEditorIds } = readRunRecord(executor, run.id);
+  const manifestArgs = [`--anchor=${run.anchor}`, `--tier=${run.tier}`, `--applied-at-ms=${run.applied_at}`];
   if (defaultEditorIds.length > 0) manifestArgs.push(`--default-editor-ids=${defaultEditorIds.join(",")}`);
   const manifest = executor.emit("manifest", manifestArgs);
 

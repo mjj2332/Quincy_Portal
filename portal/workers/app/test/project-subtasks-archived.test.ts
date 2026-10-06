@@ -90,7 +90,7 @@ type Fixture = { projectId: string; a: string; b: string; c: string; x: string; 
 async function seedProject(archived: boolean): Promise<Fixture> {
   const projectId = crypto.randomUUID(); const now = Date.now();
   await database.DB.batch([
-    database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Archived Street', 'editing_autohdr', 0, ?, ?)").bind(projectId, now, now),
+    database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Archived Street', 'editing_autohdr', ?, ?)").bind(projectId, now, now),
     ...([[editorId, "editor"], [photographerId, "photographer"], [externalId, "editor"]] as const).map(([userId, role]) => database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), projectId, userId, role, now)),
   ]);
   const create = async (title: string, extra: object = {}) => {

@@ -36,7 +36,7 @@
  * interpolated (the closure is joined by subquery), and the only literal ids — run ids — are
  * canonical-UUID-validated.
  */
-import { CAPABILITY_PREDICATE, FIXTURE_BOARD_POSITIONS_TABLE, FIXTURE_ENTITIES_TABLE, FIXTURE_RUN_RECORDS_TABLE, FIXTURE_RUNS_TABLE, sqlId, type FixtureEntityKind } from "./sql";
+import { CAPABILITY_PREDICATE, FIXTURE_ENTITIES_TABLE, FIXTURE_RUN_RECORDS_TABLE, FIXTURE_RUNS_TABLE, sqlId, type FixtureEntityKind } from "./sql";
 
 export const FIXTURE_CLOSURE_TABLE = "__quincy_local_fixture_closure";
 
@@ -378,7 +378,6 @@ export function buildTeardownPlan(graph: TeardownGraph, runIds: readonly string[
     ...(runIds.length > 0
       ? [
         `DELETE FROM ${FIXTURE_ENTITIES_TABLE} WHERE run_id IN (${runIdList}) AND ${CAPABILITY_PREDICATE};`,
-        `DELETE FROM ${FIXTURE_BOARD_POSITIONS_TABLE} WHERE run_id IN (${runIdList}) AND ${CAPABILITY_PREDICATE};`,
         `DELETE FROM ${FIXTURE_RUN_RECORDS_TABLE} WHERE run_id IN (${runIdList}) AND ${CAPABILITY_PREDICATE};`,
         `DELETE FROM ${FIXTURE_RUNS_TABLE} WHERE id IN (${runIdList}) AND ${CAPABILITY_PREDICATE};`,
       ]

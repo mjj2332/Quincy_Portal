@@ -157,4 +157,161 @@ describe("SubtaskScheduleControl (#372, #423)", () => {
     await mount({ readOnly: true, value: null });
     expect(host.textContent).toBe("");
   });
+
+  describe("external anchor, no trigger (#582)", () => {
+    function AnchoredHarness({ onClose, finalFocus }: { onClose: (open: boolean) => void; finalFocus?: () => boolean | HTMLElement | null | void }) {
+      const [open, setOpenState] = useState(true);
+      const setOpen = (next: boolean) => { onClose(next); setOpenState(next); };
+      return <>
+        <div data-testid="bar" tabIndex={-1} style={{ position: "fixed", left: 40, top: 40, width: 300, height: 20 }}>bar</div>
+        <button type="button" data-testid="outside">elsewhere</button>
+        <SubtaskScheduleControl owner="t" label="Schedule for Row" value={value} open={open} setOpen={setOpen} busy={false} onSave={(request) => saved.push(request)}
+          anchor={() => document.querySelector('[data-testid="bar"]')!} finalFocus={finalFocus ?? (() => document.querySelector<HTMLElement>('[data-testid="bar"]') ?? true)} />
+      </>;
+    }
+    it("A1 renders no trigger and no button of its own, and the popup is open on Start", async () => {
+      await act(async () => { root.render(<AnchoredHarness onClose={() => undefined} />); await Promise.resolve(); });
+      await settle();
+      expect(host.querySelector('[aria-label="Schedule for Row"]')).toBeNull();
+      expect(document.querySelectorAll('[role="dialog"][aria-label="Schedule for Row"]')).toHaveLength(1);
+      expect(rangeToggles(popover()!).active).toBe("Start");
+    });
+    it("A2 Cancel closes it and hands focus to finalFocus's element, not a trigger", async () => {
+      const closes: boolean[] = [];
+      await act(async () => { root.render(<AnchoredHarness onClose={(next) => closes.push(next)} />); await Promise.resolve(); });
+      await settle();
+      await pressInPopup(popover()!, "Cancel");
+      await settle(12);
+      expect(closes).toEqual([false]);
+      expect(popover()).toBeNull();
+      expect(document.activeElement).toBe(document.querySelector('[data-testid="bar"]'));
+    });
+    it("A3 Escape closes it", async () => {
+      const closes: boolean[] = [];
+      await act(async () => { root.render(<AnchoredHarness onClose={(next) => closes.push(next)} />); await Promise.resolve(); });
+      await settle();
+      await act(async () => { popover()!.querySelector<HTMLElement>("button")!.focus(); document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
+      await settle(12);
+      expect(closes).toEqual([false]);
+      expect(popover()).toBeNull();
+    });
+    it("A4 an outside press closes it and finalFocus can leave focus where the press landed", async () => {
+      const closes: boolean[] = [];
+      const outsideKept = () => (document.activeElement?.getAttribute("data-testid") === "outside" ? false : true);
+      await act(async () => { root.render(<AnchoredHarness onClose={(next) => closes.push(next)} finalFocus={outsideKept} />); await Promise.resolve(); });
+      await settle();
+      const outside = host.querySelector<HTMLButtonElement>('[data-testid="outside"]')!;
+      await act(async () => {
+        outside.focus();
+        outside.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, pointerType: "mouse" }));
+        outside.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+        outside.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, pointerType: "mouse" }));
+        outside.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+        await Promise.resolve();
+      });
+      await settle(12);
+      expect(closes).toContain(false);
+      expect(popover()).toBeNull();
+      expect(document.activeElement).toBe(outside);
+    });
+    it("A5 anchor and trigger together is refused", async () => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      await expect(act(async () => { root.render(<Harness extra={{ trigger: customTrigger, anchor: () => document.body }} />); await Promise.resolve(); })).rejects.toThrow(/mutually exclusive/);
+      spy.mockRestore();
+    });
+  });
+});
+
+describe("SubtaskScheduleControl collision padding (#587)", () => {
+  it("calls a padding function once per open, never while closed, and again on a reopen", async () => {
+    const padding = vi.fn(() => ({ top: 66, right: 16, bottom: 16, left: 16 }));
+    await mount({ trigger: customTrigger, popupCollisionPadding: padding });
+    expect(padding).not.toHaveBeenCalled();
+    await click(host.querySelector<HTMLButtonElement>('[data-testid="custom-trigger"]')!);
+    await settle();
+    expect(padding).toHaveBeenCalledTimes(1);
+    await click(button("Cancel")!);
+    await settle(12);
+    expect(popover()).toBeNull();
+    expect(padding).toHaveBeenCalledTimes(1);
+    await click(host.querySelector<HTMLButtonElement>('[data-testid="custom-trigger"]')!);
+    await settle();
+    expect(padding).toHaveBeenCalledTimes(2);
+  });
+
+  it("calls it once for a picker an external host mounts already open (the bar picker has no onOpenChange edge)", async () => {
+    const padding = vi.fn(() => 16);
+    await act(async () => {
+      root.render(<SubtaskScheduleControl owner="t" label="Schedule for Row" value={value} open setOpen={() => {}} busy={false} onSave={() => {}} anchor={host} popupCollisionPadding={padding} />);
+      await Promise.resolve();
+    });
+    await settle();
+    expect(padding).toHaveBeenCalledTimes(1);
+    expect(popover()).not.toBeNull();
+    // Re-renders while open do not ask again.
+    await act(async () => {
+      root.render(<SubtaskScheduleControl owner="t" label="Schedule for Row" value={value} open setOpen={() => {}} busy={false} onSave={() => {}} anchor={host} popupCollisionPadding={padding} />);
+      await Promise.resolve();
+    });
+    expect(padding).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the focus rules: Start opens on the Start toggle's day, End on the End toggle", async () => {
+    await mount({ trigger: customTrigger, popupCollisionPadding: () => 16 });
+    await click(host.querySelector<HTMLButtonElement>('[data-testid="custom-trigger"]')!);
+    await settle();
+    expect(rangeToggles(popover()!).active).toBe("Start");
+    expect(document.activeElement?.closest('[aria-selected="true"]')).not.toBeNull();
+  });
+});
+
+describe("SubtaskScheduleControl onDiscard (#585)", () => {
+  const open = async () => { await click(host.querySelector<HTMLButtonElement>('[aria-label="Schedule for Row"]')!); await settle(); };
+
+  it("D1 onDiscard fires on Cancel, once, after the draft is discarded", async () => {
+    const onDiscard = vi.fn();
+    await mount({ onDiscard });
+    await open();
+    await pressInPopup(popover()!, "Cancel");
+    await settle(12);
+    expect(onDiscard).toHaveBeenCalledTimes(1);
+    expect(popover()).toBeNull();
+  });
+
+  it("D2 onDiscard does not fire on Apply, Escape or an outside press", async () => {
+    const onDiscard = vi.fn();
+    await mount({ onDiscard });
+    await open();
+    await pickPopupDay(popover()!, "2026-10-12");
+    await applyPopup(popover()!);
+    await settle(12);
+    expect(saved).toHaveLength(1);
+    expect(onDiscard).not.toHaveBeenCalled();
+
+    await mount({ onDiscard });
+    await open();
+    await act(async () => { document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Escape" })); await Promise.resolve(); });
+    await settle(12);
+    expect(onDiscard).not.toHaveBeenCalled();
+
+    await open();
+    await act(async () => {
+      for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
+        const Ctor = type.startsWith("pointer") ? PointerEvent : MouseEvent;
+        document.body.dispatchEvent(new Ctor(type, { bubbles: true, cancelable: true, button: 0, clientX: 2, clientY: 2 }));
+      }
+      await Promise.resolve();
+    });
+    await settle(12);
+    expect(onDiscard).not.toHaveBeenCalled();
+  });
+
+  it("D3 without onDiscard Cancel behaves as before (the Checklist caller passes none)", async () => {
+    await mount();
+    await open();
+    await pressInPopup(popover()!, "Cancel");
+    await settle(12);
+    expect(popover()).toBeNull();
+    expect(saved).toHaveLength(0);
+  });
 });

@@ -653,7 +653,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
             {/* `!mt` on each blurb below: `tokens/base.css` is imported outside any `@layer`, so its
                 `p { margin: 0 }` beats a plain margin utility from `@layer utilities`. (§7 case O) */}
             {provider === "dropbox" ? <>
-              <p className="!mt-[var(--space-5)] mb-0 [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">{integration ? "Connect the studio Dropbox to sync RAW capture folders." : "No Dropbox connection has been configured for this studio."}</p>
+              <p className="mt-[var(--space-5)] mb-0 [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">{integration ? "Connect the studio Dropbox to sync RAW capture folders." : "No Dropbox connection has been configured for this studio."}</p>
               {integration?.lastError && <Notice role="alert" className="mb-[var(--space-3)]">{integration.lastError}</Notice>}
               <dl className="flex flex-wrap gap-x-[var(--space-5)] gap-y-[var(--space-3)] my-[var(--space-5)] [&>div]:flex [&>div]:flex-col [&>div]:gap-[var(--space-1)] [&_dt]:[font:var(--type-eyebrow)] [&_dt]:uppercase [&_dt]:tracking-[var(--tracking-wide)] [&_dt]:text-foreground-secondary [&_dd]:m-0 [&_dd]:[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] [&_dd]:text-foreground-secondary">
                 <div><dt>Last event</dt><dd>{relativeTime(integration?.lastEventAt ?? null)}</dd></div>
@@ -662,7 +662,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
               {dropboxNotice && <Notice role="alert" className="mb-[var(--space-3)]">{dropboxNotice}</Notice>}
               <Button type="button" className="self-start mt-auto" onClick={() => void connectDropbox()} disabled={isConnectingDropbox}>{isConnectingDropbox ? "Opening Dropbox…" : integration?.status === "connected" ? "Reconnect Dropbox" : "Connect Dropbox"}</Button>
             </> : provider === "tonomo" ? <>
-              <p className="!mt-[var(--space-5)] mb-0 [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">Order deliveries are recorded and reconciled automatically.</p>
+              <p className="mt-[var(--space-5)] mb-0 [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">Order deliveries are recorded and reconciled automatically.</p>
               <dl className="flex flex-wrap gap-x-[var(--space-5)] gap-y-[var(--space-3)] my-[var(--space-5)] [&>div]:flex [&>div]:flex-col [&>div]:gap-[var(--space-1)] [&_dt]:[font:var(--type-eyebrow)] [&_dt]:uppercase [&_dt]:tracking-[var(--tracking-wide)] [&_dt]:text-foreground-secondary [&_dd]:m-0 [&_dd]:[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] [&_dd]:text-foreground-secondary">
                 <div><dt>Last event</dt><dd>{relativeTime(tonomoHealth?.lastEventAt ?? null)}</dd></div>
                 <div><dt>Processed</dt><dd>{tonomoHealth?.counts.processed ?? 0}</dd></div>
@@ -670,7 +670,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
                 <div><dt>Poison</dt><dd>{tonomoHealth?.counts.poison ?? 0}</dd></div>
               </dl>
             </> : <>
-              <p className="!mt-[var(--space-5)] mb-0 [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">Configured in a later phase.</p>
+              <p className="mt-[var(--space-5)] mb-0 [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">Configured in a later phase.</p>
               <dl className="flex flex-wrap gap-x-[var(--space-5)] gap-y-[var(--space-3)] my-[var(--space-5)] [&>div]:flex [&>div]:flex-col [&>div]:gap-[var(--space-1)] [&_dt]:[font:var(--type-eyebrow)] [&_dt]:uppercase [&_dt]:tracking-[var(--tracking-wide)] [&_dt]:text-foreground-secondary [&_dd]:m-0 [&_dd]:[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] [&_dd]:text-foreground-secondary">
                 <div><dt>Last event</dt><dd>{relativeTime(integration?.lastEventAt ?? null)}</dd></div>
               </dl>

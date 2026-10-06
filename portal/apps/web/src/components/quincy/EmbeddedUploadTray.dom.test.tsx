@@ -28,3 +28,20 @@ describe("EmbeddedUploadTray row layout (#495)", () => {
     expect(host.querySelector('button[aria-label="Remove IMG_1.HEIC"]')!.className).toContain("px-0");
   });
 });
+
+describe("EmbeddedUploadTray Cancel vs Remove (#556)", () => {
+  it("routes Remove on preparing and failed rows to onRemove, and Cancel on a running video to onCancel", async () => {
+    const onCancel = vi.fn(); const onRemove = vi.fn();
+    const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
+    await act(async () => { root!.render(<EmbeddedUploadTray uploads={[
+      { key: 1, name: "a.HEIC", percent: 0, kind: "image", phase: "preparing" },
+      { key: 2, name: "b.HEIC", percent: 0, kind: "image", phase: "failed" },
+      { key: 3, name: "c.mp4", percent: 10, kind: "video" },
+    ]} errors={[]} onCancel={onCancel} onRemove={onRemove} onRetry={vi.fn()} />); });
+    await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="Remove a.HEIC"]')!.click(); });
+    await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="Remove b.HEIC"]')!.click(); });
+    expect(onRemove.mock.calls).toEqual([[1], [2]]); expect(onCancel).not.toHaveBeenCalled();
+    await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="Cancel upload of c.mp4"]')!.click(); });
+    expect(onCancel.mock.calls).toEqual([[3]]);
+  });
+});

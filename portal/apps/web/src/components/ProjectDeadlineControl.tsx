@@ -11,6 +11,7 @@ import { NextReminder } from "./quincy/date-time-field/NextReminder";
 import { Notice } from "./quincy/Notice";
 import { StatusPill } from "./quincy/StatusPill";
 import { Button } from "./reui/button";
+import { POPOVER_READONLY_PANEL } from "./project-header-popover";
 import { AUTOMATIC_DEADLINE_APPLY_NOTE, AUTOMATIC_DEADLINE_NOTE } from "./AutomaticDeadlineMark";
 
 /**
@@ -253,7 +254,7 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onClose, 
 
   if (!canWrite) {
     // Read-only: the two facts as they were in the rail, plus the summary. No controls at all.
-    return <div className="grid gap-[var(--space-3)]">
+    return <div className={POPOVER_READONLY_PANEL}>
       <div className="grid gap-[var(--space-1)]" data-testid="project-deadline-row">
         <span className={DEADLINE_KV_KEY}>Deadline</span>
         <span className={DEADLINE_KV_VALUE}>{deadline ? <>

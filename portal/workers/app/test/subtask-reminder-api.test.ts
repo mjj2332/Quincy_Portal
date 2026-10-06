@@ -25,7 +25,7 @@ beforeAll(async () => {
   await executeSql(__PORTAL_MIGRATION_SQL__); await executeSql(__PORTAL_SEED_SQL__); const now = Date.now();
   for (const [id, role] of [[adminId, "admin"], [editorId, "editor"], [externalId, "external_editor"]] as const) await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, authorization_epoch, created_at, updated_at) VALUES (?, ?, ?, 1, ?, 1, 0, ?, ?)").bind(id, `${role} ${id.slice(0, 4)}`, `${id}@example.test`, role, now, now).run();
   for (const [token, userId] of [["rapi-admin", adminId], ["rapi-editor", editorId], ["rapi-external", externalId]] as const) await database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").bind(`${token}-session`, now + 3_600_000, `${token}-token`, userId, now, now).run();
-  await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Reminder API Street', 'editing_autohdr', 0, ?, ?)").bind(projectId, now, now).run();
+  await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Reminder API Street', 'editing_autohdr', ?, ?)").bind(projectId, now, now).run();
   for (const userId of [editorId, externalId]) await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, userId, now).run();
 });
 

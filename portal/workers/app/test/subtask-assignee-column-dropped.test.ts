@@ -38,7 +38,7 @@ beforeAll(async () => {
   for (const [key, userId] of [["admin", adminId], ["editor", editorId], ["photographer", photographerId], ["external", externalId]] as const) {
     await database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").bind(`t373-${key}`, now + 3_600_000, tokens[key], userId, now, now).run();
   }
-  await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Dropped Column Street', 'editing_autohdr', 0, ?, ?)").bind(projectId, now, now).run();
+  await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Dropped Column Street', 'editing_autohdr', ?, ?)").bind(projectId, now, now).run();
   for (const [userId, role] of [[editorId, "editor"], [photographerId, "photographer"], [externalId, "editor"]] as const) {
     await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), projectId, userId, role, now).run();
   }

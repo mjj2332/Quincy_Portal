@@ -8,7 +8,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { Editor } from "@tiptap/core";
 import { NodeSelection } from "@tiptap/pm/state";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, defaultScheduler, notifyManager } from "@tanstack/react-query";
 import { COMMENT_MEDIA_RICH_TEXT_PROFILE, parseRichTextDoc, type RichTextDoc } from "@quincy/shared";
 import { RenditionFailedError } from "../lib/embedded-media";
 import { createRichTextEditorExtensions, tiptapToRichTextDoc, toTiptap } from "../lib/rich-text-tiptap";
@@ -97,6 +97,95 @@ describe("inserting an image", () => {
     expect(uploadingNow).toBe(false);
     expect(host.querySelector('[data-testid="rich-text-upload-tray"]')).toBeNull();
     expect(host.querySelector(`img[data-media-id="${A}"]`)?.getAttribute("src")).toBe(`/media/embedded/${A}`);
+  });
+
+  it("inserts the node with the file name, cleaned, as its alt text (#553)", async () => {
+    upload.mockResolvedValue(A);
+    const host = mount(<Harness />);
+    await choose(host, [png("IMG_1234.HEIC")]); await settle();
+    expect(latest.content.find((node) => node.type === "image")).toEqual({ type: "image", attrs: { mediaId: A, alt: "IMG 1234" } });
+    expect(host.querySelector(`img[data-media-id="${A}"]`)?.getAttribute("alt")).toBe("IMG 1234");
+  });
+
+  it("stores no alt when the file name leaves nothing readable, and the image falls back to a generic one (#553)", async () => {
+    upload.mockResolvedValue(A);
+    const host = mount(<Harness />);
+    await choose(host, [png(".png")]); await settle();
+    expect(latest.content.find((node) => node.type === "image")).toEqual({ type: "image", attrs: { mediaId: A } });
+    expect(host.querySelector(`img[data-media-id="${A}"]`)?.getAttribute("alt")).toBe("Embedded image");
+  });
+
+  it("lets an image be dragged by itself: the image is the drag handle, the Alt text control is not, and the node stays draggable (#553)", async () => {
+    const host = mount(<Harness initial={withImages(A)} />); await settle();
+    const editor = (host.querySelector('[contenteditable="true"]') as unknown as { editor: Editor }).editor;
+    expect(editor.schema.nodes.image!.spec.draggable).toBe(true);
+    const image = host.querySelector<HTMLElement>(`img[data-media-id="${A}"]`)!;
+    expect(image.hasAttribute("data-drag-handle")).toBe(true);
+    expect(image.className).toContain("cursor-grab");
+    let imagePos = -1; editor.state.doc.descendants((node, pos) => { if (node.type.name === "image") imagePos = pos; });
+    await act(async () => { editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, imagePos))); }); await settle();
+    const button = host.querySelector<HTMLElement>('[data-testid="embedded-image-alt-button"]')!;
+    expect(button.hasAttribute("data-drag-handle")).toBe(false);
+    expect(button.closest("[data-drag-handle]")).toBeNull();
+  });
+
+  it.each([false, true])("moves a dragged image: dragstart makes a move of the node selection, and dropping it leaves exactly one image, node already selected: %s (#553)", async (preselected) => {
+    const para = (text: string) => ({ type: "paragraph" as const, content: [{ type: "text" as const, text }] });
+    const host = mount(<Harness initial={{ type: "doc", content: [para("One"), { type: "image", attrs: { mediaId: A } }, para("Two")] }} />); await settle();
+    const surface = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    const editor = (surface as unknown as { editor: Editor }).editor;
+    const images = () => { let n = 0; editor.state.doc.descendants((node) => { if (node.type.name === "image") n += 1; }); return n; };
+    expect(images()).toBe(1);
+    if (preselected) { let at = -1; editor.state.doc.descendants((node, pos) => { if (node.type.name === "image") at = pos; }); await act(async () => { editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, at))); }); await settle(); }
+    const store = new Map<string, string>();
+    const dataTransfer = { setData: (type: string, value: string) => { store.set(type, value); }, getData: (type: string) => store.get(type) ?? "", setDragImage: () => undefined, clearData: () => { store.clear(); }, effectAllowed: "", dropEffect: "move", files: [], types: [] as string[] };
+    const image = host.querySelector<HTMLElement>(`img[data-media-id="${A}"]`)!;
+    // A browser mouses down on the handle first (Tiptap records "dragging started" there; ProseMirror selects the node).
+    await act(async () => { image.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 })); }); await settle();
+    const start = new Event("dragstart", { bubbles: true, cancelable: true }) as Event & { dataTransfer?: unknown };
+    start.dataTransfer = dataTransfer;
+    await act(async () => { image.dispatchEvent(start); }); await settle();
+    const dragging = (editor.view as unknown as { dragging: { move: boolean; slice: { content: { childCount: number } } } | null }).dragging;
+    expect(dragging?.move).toBe(true);
+    expect(editor.state.selection).toBeInstanceOf(NodeSelection);
+    // Release below the second paragraph, as a browser would report it.
+    let end = 0; editor.state.doc.forEach((node, offset) => { end = offset + node.nodeSize; });
+    const view = editor.view; const original = view.posAtCoords.bind(view);
+    view.posAtCoords = () => ({ pos: end, inside: -1 }) as ReturnType<typeof original>;
+    const drop = new Event("drop", { bubbles: true, cancelable: true }) as Event & { dataTransfer?: unknown; clientX?: number; clientY?: number };
+    drop.dataTransfer = { ...dataTransfer, dropEffect: "move" }; drop.clientX = 1; drop.clientY = 1;
+    await act(async () => { surface.dispatchEvent(drop); }); await settle();
+    view.posAtCoords = original;
+    // A browser ends every drag with dragend; Tiptap tracks the source editor until then.
+    await act(async () => { window.dispatchEvent(new Event("dragend")); });
+    expect(images()).toBe(1);
+    expect(editor.state.doc.lastChild?.type.name).toBe("image");
+    expect(latest.content.filter((node) => node.type === "image")).toHaveLength(1);
+    expect(host.querySelectorAll(`img[data-media-id="${A}"]`)).toHaveLength(1);
+  });
+
+  it("edits the alt text from a control on the selected image, and the node carries the new text (#553)", async () => {
+    const host = mount(<Harness initial={{ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Hi" }] }, { type: "image", attrs: { mediaId: A, alt: "IMG 1234" } }] }} />);
+    const editor = (host.querySelector('[contenteditable="true"]') as unknown as { editor: Editor }).editor;
+    expect(host.querySelector('[data-testid="embedded-image-alt-button"]')).toBeNull();
+    let imagePos = -1; editor.state.doc.descendants((node, pos) => { if (node.type.name === "image") imagePos = pos; });
+    await act(async () => { editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, imagePos))); }); await settle();
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="embedded-image-alt-button"]')!.click(); }); await settle();
+    const input = document.querySelector<HTMLInputElement>('[data-testid="embedded-image-alt-popover"] input')!;
+    expect(document.querySelector('[data-testid="embedded-image-alt-popover"] label')?.textContent).toBe("Alt text");
+    expect(document.querySelector('[data-testid="embedded-image-alt-popover"] label')?.getAttribute("for")).toBe(input.id);
+    expect(input.value).toBe("IMG 1234"); expect(input.maxLength).toBe(200);
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "  Front door  "); input.dispatchEvent(new Event("input", { bubbles: true })); });
+    await act(async () => { document.querySelector<HTMLButtonElement>('[aria-label="Apply alt text"]')!.click(); }); await settle();
+    expect(latest.content.find((node) => node.type === "image")).toEqual({ type: "image", attrs: { mediaId: A, alt: "Front door" } });
+    expect(host.querySelector(`img[data-media-id="${A}"]`)?.getAttribute("alt")).toBe("Front door");
+    expect(() => parseRichTextDoc(latest, COMMENT_MEDIA_RICH_TEXT_PROFILE)).not.toThrow();
+    // Clearing it drops the attribute and the image falls back to the generic name.
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="embedded-image-alt-button"]')!.click(); }); await settle();
+    const again = document.querySelector<HTMLInputElement>('[data-testid="embedded-image-alt-popover"] input')!;
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(again, ""); again.dispatchEvent(new Event("input", { bubbles: true })); });
+    await act(async () => { document.querySelector<HTMLButtonElement>('[aria-label="Apply alt text"]')!.click(); }); await settle();
+    expect(latest.content.find((node) => node.type === "image")).toEqual({ type: "image", attrs: { mediaId: A } });
   });
 
   it("shows an error, inserts nothing and releases the busy state when the upload fails", async () => {
@@ -229,12 +318,12 @@ describe("design review fixes (#493)", () => {
     expect(imageSource).toMatch(/data-testid="embedded-image"[\s\S]{0,240}my-\[var\(--space-2\)\]/);
     expect(host.querySelector('[data-testid="embedded-image"]')).not.toBeNull();
     expect(rule(".rich-text__embedded-image {")).toMatch(/margin: 0[;\s]/);
-    expect(rule(".rich-text__editor-content img.rich-text__embedded-image {")).toContain("margin: var(--space-2) 0");
+    expect(rule(".rich-text__embedded-image-node {")).toContain("margin: var(--space-2) 0");
   });
 
-  it("outlines the selected image with a hairline accent, not the heavy focus ring", () => {
-    const selected = rule(".rich-text__editor-content img.rich-text__embedded-image.ProseMirror-selectednode");
-    expect(selected).toContain("var(--border-width-hair)"); expect(selected).not.toContain("--ring"); expect(selected).not.toContain("--border-width-bold");
+  it("turns the selected image's border accent, not an outside outline or the heavy focus ring", () => {
+    const selected = rule(".rich-text__editor-content .ProseMirror-selectednode .rich-text__embedded-image-node > img.rich-text__embedded-image");
+    expect(selected).toContain("border-color: var(--accent)"); expect(selected).not.toContain("outline"); expect(selected).not.toContain("--ring"); expect(selected).not.toContain("--border-width-bold");
   });
 
   it("moves the Media group to the front of the toolbar on a phone, so Insert image is never scrolled off-screen", () => {
@@ -284,6 +373,86 @@ describe("design review fixes (#493)", () => {
     expect(imageSource).toMatch(/data-testid="embedded-image-dialog"/);
     expect(imageSource).toMatch(/p-0/); expect(imageSource).toMatch(/bg-background/); expect(imageSource).toMatch(/embedded-image-scrim[^>]*scrim-overlay/);
     expect(imageSource).toMatch(/max-w-\[calc\(100%-2rem\)\]/);
+  });
+
+  it("never upscales: the dialog fits the image and the image is capped at its natural size (#553)", async () => {
+    const host = mount(<RichTextContent content={withImages(A)} />);
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="embedded-image"]')!.click(); });
+    await settle();
+    const dialog = document.querySelector<HTMLElement>('[data-testid="embedded-image-dialog"]')!;
+    const classes = (element: Element) => element.getAttribute("class")!.split(/\s+/);
+    expect(classes(dialog)).toContain("w-fit"); expect(classes(dialog)).not.toContain("w-full");
+    const image = dialog.querySelector("img")!;
+    expect(classes(image)).toEqual(expect.arrayContaining(["w-auto", "max-w-full", "h-auto", "max-h-[90dvh]"])); expect(classes(image)).not.toContain("w-full");
+  });
+
+  it("keeps a 48px close target even for a tiny image: the dialog has a token minimum in both dimensions and centres the image (#553)", async () => {
+    const host = mount(<RichTextContent content={withImages(A)} />);
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="embedded-image"]')!.click(); });
+    await settle();
+    const dialog = document.querySelector<HTMLElement>('[data-testid="embedded-image-dialog"]')!;
+    const classes = dialog.getAttribute("class")!.split(/\s+/);
+    expect(classes).toEqual(expect.arrayContaining(["min-w-[var(--space-7)]", "min-h-[var(--space-7)]", "place-items-center"]));
+    const close = dialog.querySelector<HTMLElement>('[data-testid="embedded-image-close"]')!;
+    expect(close.className).toContain("size-[var(--space-7)]");
+    expect(dialog.querySelector("img")!.className).not.toMatch(/min-w|min-h|(^|\s)w-full/);
+  });
+
+  it("pads the stage by the chip when the image is under twice the chip, so a tiny image stays visible beside Close (#553)", async () => {
+    const host = mount(<RichTextContent content={withImages(A)} />);
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="embedded-image"]')!.click(); });
+    await settle();
+    const dialog = () => document.querySelector<HTMLElement>('[data-testid="embedded-image-dialog"]')!;
+    const image = dialog().querySelector("img")!;
+    const load = async (width: number, height: number) => {
+      Object.defineProperty(image, "naturalWidth", { configurable: true, value: width }); Object.defineProperty(image, "naturalHeight", { configurable: true, value: height });
+      await act(async () => { image.dispatchEvent(new Event("load")); });
+    };
+    expect(dialog().className).not.toContain("p-[var(--space-7)]");
+    await load(24, 24);
+    expect(dialog().className).toContain("p-[var(--space-7)]");
+    // Padding on all four sides keeps a tiny image off the rounded corner; the top and bottom padding come out of the height cap, so a tall narrow image is not clipped; width is a percentage of the content box, which already excludes the side padding.
+    expect(image.className).toContain("max-h-[calc(90dvh-2*var(--space-7))]"); expect(image.className).not.toContain("max-h-[90dvh]");
+    await load(600, 400);
+    expect(dialog().className).not.toContain("p-[var(--space-7)]");
+    expect(image.className).toContain("max-h-[90dvh]"); expect(image.className).not.toContain("calc(90dvh");
+    await load(600, 90); // short in one dimension: the chip would still cover its corner
+    expect(dialog().className).toContain("p-[var(--space-7)]");
+  });
+
+  it("draws the close focus ring inside the chip and keeps the chip's ring legible on ink (#553)", () => {
+    expect(imageSource).toMatch(/embedded-image-close[^>]*outline-offset-\[-4px\][^>]*focus-visible:!outline-offset-\[-4px\]/);
+    expect(imageSource).toMatch(/embedded-image-scrim[^>]*ring-\[color:var\(--border-hover\)\]/);
+  });
+
+  it("makes the close button the drawn 48px chip, with the dialog's radius and a hairline ring on the scrim (#553)", async () => {
+    const host = mount(<RichTextContent content={withImages(A)} />);
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="embedded-image"]')!.click(); });
+    await settle();
+    const dialog = document.querySelector<HTMLElement>('[data-testid="embedded-image-dialog"]')!;
+    const close = dialog.querySelector<HTMLElement>('[data-testid="embedded-image-close"]')!;
+    const scrim = dialog.querySelector<HTMLElement>('[data-testid="embedded-image-scrim"]')!;
+    expect(close.textContent).toBe("Close");
+    for (const element of [close, scrim]) { expect(element.className).toContain("size-[var(--space-7)]"); expect(element.className).toContain("top-0"); expect(element.className).toContain("right-0"); expect(element.className).toContain("rounded-xl"); }
+    expect(scrim.className).toContain("ring-[length:var(--border-width-hair)]");
+    expect(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../styles/tokens/spacing.css"), "utf8")).toMatch(/--space-7:\s*48px/);
+    // Only one close control: the dialog's built-in 28px one is off.
+    expect(dialog.querySelectorAll("button")).toHaveLength(1);
+  });
+
+  it("names the thumbnail and the larger view from the author's alt text, and falls back for an image with none (#553)", async () => {
+    const withAlt: RichTextDoc = { type: "doc", content: [{ type: "image", attrs: { mediaId: A, alt: "Front door at dusk" } }] };
+    const host = mount(<RichTextContent content={withAlt} />);
+    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="embedded-image"]')!;
+    expect(trigger.getAttribute("aria-label")).toBe("View image: Front door at dusk");
+    expect(trigger.querySelector("img")?.getAttribute("alt")).toBe("Front door at dusk");
+    await act(async () => { trigger.click(); }); await settle();
+    const dialog = document.querySelector<HTMLElement>('[data-testid="embedded-image-dialog"]')!;
+    expect(dialog.querySelector("img")?.getAttribute("alt")).toBe("Front door at dusk");
+    expect(dialog.textContent).toContain("Front door at dusk");
+    act(() => root!.unmount()); document.body.innerHTML = "";
+    const plain = mount(<RichTextContent content={withImages(A)} />);
+    expect(plain.querySelector('[data-testid="embedded-image"]')?.getAttribute("aria-label")).toBe("View image: Embedded image");
   });
 
   async function openViewer(host: HTMLElement) {
@@ -393,6 +562,13 @@ function driveUpload(): Drive {
 }
 
 describe("HEIC images (#495)", () => {
+  // The paste handler reads the HEIC setting synchronously from the rendered editor. With react-query's default
+  // scheduler the observer->React notification is its own setTimeout(0), registered after `settle()`'s, so one
+  // settle() tick could end before the editor rendered the fetched setting and the paste was refused (#576).
+  // A synchronous scheduler makes "the query resolved inside the act" and "the editor rendered it" one event.
+  beforeEach(() => { notifyManager.setScheduler((callback) => callback()); });
+  afterEach(() => { notifyManager.setScheduler(defaultScheduler); });
+
   it("offers HEIC in the picker only once the setting is on, and sends a HEIC with no reported type", async () => {
     heicSetting.mockResolvedValue(true); upload.mockResolvedValue(A);
     const host = mountWithSetting(<Harness />); await settle();
@@ -508,6 +684,24 @@ describe("HEIC images (#495)", () => {
     const failedRemove = trayButton(host, "Remove")!; failedRemove.focus(); expect(document.activeElement).toBe(failedRemove);
     await act(async () => { failedRemove.click(); }); await settle();
     expect(tray(host)).toBeNull(); expect(document.activeElement).toBe(surface);
+  });
+
+  it("Remove on a failed or preparing row does not announce \"Upload cancelled\" (#556)", async () => {
+    heicSetting.mockResolvedValue(true); const drive = driveUpload();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 204 })));
+    const host = mountWithSetting(<Harness />); await settle();
+    const region = host.querySelector<HTMLElement>('[aria-live="polite"]')!;
+    await choose(host, [heic()], { accept: HEIC_ACCEPT });
+    await act(async () => { drive.phase("preparing", A); });
+    await act(async () => { trayButton(host, "Remove")!.click(); }); await settle();
+    expect(tray(host)).toBeNull(); expect(region.textContent).toBe("");
+    const second = driveUpload();
+    await choose(host, [heic("IMG_2.HEIC")], { accept: HEIC_ACCEPT });
+    await act(async () => { second.phase("preparing", B); });
+    await act(async () => { second.fail(new RenditionFailedError(B)); }); await settle();
+    await act(async () => { trayButton(host, "Remove")!.click(); }); await settle();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+    expect(tray(host)).toBeNull(); expect(region.textContent).toBe("");
   });
 
   it("Remove on a failed row aborts the upload too", async () => {

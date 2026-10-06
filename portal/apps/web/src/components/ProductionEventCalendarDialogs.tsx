@@ -288,10 +288,11 @@ export type ProductionEventCalendarDialogsProps = {
   deadlineConfirm: ProductionEventCalendarDeadlineConfirm | null;
   /**
    * How the controller's INLINE schedule sessions are presented. `"sheet"` (the default, the Calendar's) renders every
-   * session as the right-hand sheet; `"inline"` (#372, the Gantt) renders an inline session (`inline: true`, the Due
-   * cell's) as nothing here because the surface draws the Checklist's own picker from `commands.scheduleEditor` itself.
-   * #463: a session that is NOT inline (the Timeline menu's "Edit schedule…") is the sheet under either presentation, at
-   * every width. Move, fold and Deadline dialogs are unaffected.
+   * session as the right-hand sheet; `"inline"` (#372, the Gantt) renders an inline session (`inline: true`: the Due
+   * cell's, or since #582 the bar picker's `inlineTarget: "item"`) as nothing here because the surface draws the
+   * Checklist's own picker from `commands.scheduleEditor` itself.
+   * #582: the Timeline menu no longer opens a non-inline session, so nothing in the Gantt reaches this; a session that is
+   * NOT inline is still the sheet under either presentation (the `sheet || !inline` branch stays as the safety net). Move, fold and Deadline dialogs are unaffected.
    */
   scheduleEditorPresentation?: "sheet" | "inline";
   /** #423: a Project's default Subtask range, for the sheet's "Project default" shortcut. */

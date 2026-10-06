@@ -69,7 +69,7 @@ async function seedProject(archived: boolean, cover: "none" | "set" = "set"): Pr
   const assetId = crypto.randomUUID(); const otherAssetId = crypto.randomUUID();
   const collectionId = crypto.randomUUID(); const otherCollectionId = crypto.randomUUID();
   await database.DB.batch([
-    ...[projectId, otherProjectId].map((id) => database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Cover Street', 'editing_autohdr', 0, ?, ?)").bind(id, now, now)),
+    ...[projectId, otherProjectId].map((id) => database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Cover Street', 'editing_autohdr', ?, ?)").bind(id, now, now)),
     database.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'raw', 'empty', 0, ?, ?), (?, ?, 'raw', 'empty', 0, ?, ?)").bind(collectionId, projectId, now, now, otherCollectionId, otherProjectId, now, now),
     database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, 'a.jpg', 1, 'upload', ?, ?), (?, ?, ?, 'b.jpg', 1, 'upload', ?, ?)").bind(assetId, collectionId, `k/${assetId}`, now, now, otherAssetId, otherCollectionId, `k/${otherAssetId}`, now, now),
   ]);
