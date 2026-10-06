@@ -177,8 +177,12 @@ export type FadeItem = EdgeRect & { required?: boolean; /** Wins over the other 
  * wins, never the nearest to `scrollTop` (0 when it is valid, so a day that fits under the presets opens at the top, and a
  * body a resize left further down comes back); when none does, the fade
  * guarantee still wins and the plain nearest-valid position is returned.
+ *
+ * #636 — `noSliver` items (the pressed time slot) are not required to be clear, but the chosen scroll must not leave one partly
+ * inside the bottom fade: the smallest valid snap where each is fully clear of the band or fully below the body wins; failing
+ * that, the smallest valid whole scroll that does; failing that, the #630 choice stands.
  */
-export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, items, snaps }: { viewport: EdgeRect; scrollTop: number; maxScrollTop: number; fade: number; items: readonly FadeItem[]; snaps?: readonly number[] }): number {
+export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, items, snaps, noSliver }: { viewport: EdgeRect; scrollTop: number; maxScrollTop: number; fade: number; items: readonly FadeItem[]; snaps?: readonly number[]; noSliver?: readonly EdgeRect[] }): number {
   const height = viewport.bottom - viewport.top;
   const max = Math.max(0, maxScrollTop);
   const clamp = (value: number) => Math.min(Math.max(0, value), max);
@@ -206,7 +210,19 @@ export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, 
   // to its device-pixel grid (0.5px at DPR 2), and a target sitting exactly on a fade edge lands inside it. Whole pixels are on every such grid.
   const whole = { low: Math.ceil(range.low - 1e-9), high: Math.floor(range.high + 1e-9) };
   const safe = whole.low <= whole.high ? whole : range;
+  // #636: an item in `noSliver` (the pressed time slot) is never asked to be clear, but it must not end up PARTLY inside the bottom
+  // fade, where a solid chip reads as a grey sliver. At `s` it is fine when fully above the bottom band, or fully below the body.
+  const slivered = (s: number) => (noSliver ?? []).some((item) => {
+    const top = item.top - viewport.top + scrollTop - s;
+    const bottom = item.bottom - viewport.top + scrollTop - s;
+    return bottom > height - Math.min(fade, max - s) && top < height;
+  });
   const landing = (snaps ?? []).filter((snap) => snap >= safe.low && snap <= safe.high);
+  const clearLanding = landing.filter((snap) => !slivered(snap));
+  if (clearLanding.length > 0) return Math.min(...clearLanding);
+  if (noSliver?.length) {
+    for (let s = Math.ceil(safe.low - 1e-9); s <= safe.high; s += 1) if (!slivered(s)) return s;
+  }
   if (landing.length > 0) return Math.min(...landing);
   return Math.min(Math.max(scrollTop, safe.low), safe.high);
 }
