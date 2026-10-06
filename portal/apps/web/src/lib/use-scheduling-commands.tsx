@@ -1182,7 +1182,9 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
         return;
       }
 
-      if (action.refetch) setAcceptGate(false);
+      // A retained-draft conflict keeps the gate through its refetch: the editor reopens below, and an inline picker reads a
+      // released gate with no session as idle and drops its retained draft (#582). `refetchAuthoritative` accepts directly.
+      if (action.refetch && !action.retainDraft) setAcceptGate(false);
       const refreshed = action.refetch ? await refetchAuthoritative() : { ok: false };
       if (accessLostRef.current || token !== operationTokenRef.current) return;
       if (action.retainDraft) {

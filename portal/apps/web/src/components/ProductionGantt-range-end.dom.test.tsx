@@ -472,6 +472,30 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     await waitFor(() => expect(dueText(PAGE_TWO_TITLE)).toBe("Wed 16 Sep · 17:00"));
   });
 
+  it("R13b a 409 whose authoritative refetch is still in flight keeps the Due-cell draft: the reopened picker shows the user's End and reminder, not the latest ones", async () => {
+    await render();
+    await openDue(RANGE_TITLE);
+    await pickPopupDay(picker(RANGE_TITLE)!, sydneyDay(5));
+    await click(pickerButton(RANGE_TITLE, "4 hours")!);
+    const winner = range(3, startMoment(sydneyDay(1)), endMoment(sydneyDay(8)));
+    patchReply = () => { rows[0]!.schedule = winner; return { status: 409, body: { error: "conflict", code: "subtask_schedule_version_conflict", current: winner } }; };
+    const gate = deferred<void>();
+    getGate = gate.promise;
+    await applyPopup(picker(RANGE_TITLE)!);
+    // The PATCH has answered 409; the refetch GET is held. Let several renders and microtasks pass.
+    await flush(6);
+    await flush(6);
+    expect(patches()).toHaveLength(1);
+    await act(async () => { gate.resolve(); await Promise.resolve(); });
+    await flush(8);
+
+    expect(patches()).toHaveLength(1);
+    expect(picker(RANGE_TITLE)).not.toBeNull();
+    expect(picker(RANGE_TITLE)!.textContent).toContain("Latest schedule · v3");
+    expect(endText(RANGE_TITLE)).toBe(rangeMoment(sydneyDay(5), "17:00"));
+    expect(pickerButton(RANGE_TITLE, "4 hours")!.getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("R14 a full-item conflict retains the draft and presents the latest item (names and count only)", async () => {
     await render();
     await openDue(RANGE_TITLE);
@@ -854,6 +878,32 @@ describe("ProductionGantt — Edit schedule… on the bar (#582)", () => {
     await flush(6);
     expect(patches()).toHaveLength(1);
     await act(async () => { release(); await Promise.resolve(); });
+    await flush(8);
+
+    expect(patches()).toHaveLength(1);
+    const reopened = barPicker(RANGE_TITLE);
+    expect(reopened).not.toBeNull();
+    expect(reopened!.textContent).toContain("Latest schedule · v3");
+    expect(reopened!.textContent).toContain("StartSat 12 Sep · 09:00");
+    expect(reopened!.textContent).not.toContain("StartFri 11 Sep");
+    expect(barPickerButton(RANGE_TITLE, "4 hours")!.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("B7 a 409 whose authoritative refetch is still in flight keeps the bar picker's draft: the reopened picker shows the user's Start and reminder", async () => {
+    await render();
+    await openFromBar(RANGE_TITLE);
+    await pickPopupDay(barPicker(RANGE_TITLE)!, sydneyDay(2));
+    await click(barPickerButton(RANGE_TITLE, "4 hours")!);
+    const winner = range(3, startMoment(sydneyDay(1)), endMoment(sydneyDay(8)));
+    patchReply = () => { rows[0]!.schedule = winner; return { status: 409, body: { error: "conflict", code: "subtask_schedule_version_conflict", current: winner } }; };
+    const gate = deferred<void>();
+    getGate = gate.promise;
+    await applyPopup(barPicker(RANGE_TITLE)!);
+    // The PATCH has answered 409; the refetch GET is held. Let several renders and microtasks pass.
+    await flush(6);
+    await flush(6);
+    expect(patches()).toHaveLength(1);
+    await act(async () => { gate.resolve(); await Promise.resolve(); });
     await flush(8);
 
     expect(patches()).toHaveLength(1);
