@@ -232,11 +232,17 @@ describe("scrollTopClearOfFade noSliver (#636)", () => {
   it("stays at 0 when the slot is clear there", () => {
     expect(scrollTopClearOfFade({ ...base, items: [day], noSliver: [{ top: 380, bottom: 416 }] })).toBe(0);
   });
+  it("treats a 0.19px overlap with the body edge as fully below (#636 browser pass: 720x900 must open at 0)", () => {
+    expect(scrollTopClearOfFade({ ...base, items: [day], noSliver: [{ top: 499.81, bottom: 535.81 }] })).toBe(0);
+  });
+  it("still skips a snap when the slot shows a real sliver (3px inside the body)", () => {
+    expect(scrollTopClearOfFade({ ...base, items: [day], noSliver: [{ top: 497, bottom: 533 }] })).toBeGreaterThan(0);
+  });
   it("stays at 0 when the slot is fully below the body", () => {
     expect(scrollTopClearOfFade({ ...base, items: [day], noSliver: [{ top: 520, bottom: 556 }] })).toBe(0);
   });
   it("takes the smallest whole scroll when no snap clears the slot", () => {
-    expect(scrollTopClearOfFade({ ...base, snaps: [0], items: [day], noSliver: [{ top: 454, bottom: 490 }] })).toBe(22);
+    expect(scrollTopClearOfFade({ ...base, snaps: [0], items: [day], noSliver: [{ top: 454, bottom: 490 }] })).toBe(20);
   });
   it("keeps the picked day clear when the slot cannot be (the day wins)", () => {
     // The day (needs <= 10) pins the window to 0..10, where the slot is a sliver at every scroll: the #630 choice stands.

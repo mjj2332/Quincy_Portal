@@ -151,6 +151,9 @@ type EdgeRect = { top: number; bottom: number };
 /** An item to keep clear of the fade; `required` ones are never skipped for lying outside the body (#587). */
 export type FadeItem = EdgeRect & { required?: boolean; /** Wins over the other required items when they cannot all be cleared (the focused control, WCAG 2.4.11). Implies `required`. */ priority?: boolean };
 
+/** #636: an overlap under 2px with the band edge or the body edge is not visible (a chip's last 2px at the mask's end is ~transparent), and sub-pixel layout (0.19px at 720x900) must not push the list past the presets. */
+const SLIVER_TOLERANCE = 2;
+
 /**
  * #537 — the popup body fades each edge by `min(fade, overflow past that edge)`: the top band is
  * `min(fade, s)` and the bottom band `min(fade, max - s)` at scroll `s`, so a move changes the bands it
@@ -215,7 +218,7 @@ export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, 
   const slivered = (s: number) => (noSliver ?? []).some((item) => {
     const top = item.top - viewport.top + scrollTop - s;
     const bottom = item.bottom - viewport.top + scrollTop - s;
-    return bottom > height - Math.min(fade, max - s) && top < height;
+    return bottom - SLIVER_TOLERANCE > height - Math.min(fade, max - s) && top + SLIVER_TOLERANCE < height;
   });
   const landing = (snaps ?? []).filter((snap) => snap >= safe.low && snap <= safe.high);
   const clearLanding = landing.filter((snap) => !slivered(snap));
