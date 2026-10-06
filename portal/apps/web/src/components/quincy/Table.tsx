@@ -125,6 +125,8 @@ function TableCell({ className, ...props }: React.ComponentProps<"td">) {
         "table-stacked:before:content-[attr(data-label)] table-stacked:before:block table-stacked:before:mb-[var(--space-1)]",
         "table-stacked:before:[font:var(--type-eyebrow)] table-stacked:before:uppercase",
         "table-stacked:before:tracking-[var(--tracking-wide)] table-stacked:before:text-foreground-secondary",
+        // An actions cell has no label: drop the empty line so the group sits 12px under the field above.
+        "table-stacked:has-[>[data-slot=table-actions]]:before:hidden",
         className,
       )}
       {...props}
@@ -139,7 +141,7 @@ function TableActions({ className, ...props }: React.ComponentProps<"div">) {
       data-slot="table-actions"
       className={cn(
         "flex flex-wrap justify-end gap-x-[var(--space-3)] gap-y-[var(--space-2)]",
-        "table-stacked:justify-start table-stacked:pt-[var(--space-3)]",
+        "table-stacked:justify-start table-stacked:pt-[var(--space-1)]",
         className,
       )}
       {...props}

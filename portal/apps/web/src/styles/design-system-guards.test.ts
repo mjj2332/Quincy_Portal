@@ -1549,6 +1549,10 @@ describe("guard: Admin inline editors keep their focus outline and value clear (
     expect(admin.match(/<TableActions/g) ?? []).toHaveLength(6);
     const table = readFileSync(join(srcDir, "components/quincy/Table.tsx"), "utf8");
     expect(table).toMatch(/data-slot="table-actions"/);
+    // Stacked cards keep the pre-#640 12px above the actions: the cell's 8px top padding plus 4px on
+    // the group, with the cell's empty data-label line hidden (it added a 4px margin of its own).
+    expect(table).toMatch(/table-stacked:pt-\[var\(--space-1\)\]/);
+    expect(table).toMatch(/table-stacked:has-\[>\[data-slot=table-actions\]\]:before:hidden/);
     expect(table).toMatch(/flex-wrap/);
     expect(table).toMatch(/justify-end/);
     expect(table).toMatch(/gap-x-\[var\(--space-3\)\]/);
