@@ -105,7 +105,9 @@
  * 6. 2026-10-07, #643 — the week / day header's today marker is the month view's chip (`bg-primary
  *    text-primary-foreground`, `rounded-sm`, `px-1.5`) on a span around the header text, replacing
  *    the cell's own `text-primary` today tint. `--primary` is near-black in Quincy, so the tint did not
- *    show. A consumer `renderDayHeader` still replaces the span (and so the chip).
+ *    show. A consumer `renderDayHeader` still replaces the span (and so the chip). The chip is an
+ *    `inline-block max-w-full truncate` box, so in a narrow phone week column it ellipsises with its
+ *    neighbours instead of overflowing the column.
  */
 import {
   useEffect,
@@ -499,7 +501,8 @@ function EventCalendarDayHeader({
       {viewConfig.renderDayHeader?.({ day, view, isToday }) ?? (
         <span
           className={cn(
-            isToday && "bg-primary text-primary-foreground rounded-sm px-1.5"
+            isToday &&
+              "bg-primary text-primary-foreground rounded-sm px-1.5 inline-block max-w-full truncate align-bottom"
           )}
         >
           {format(

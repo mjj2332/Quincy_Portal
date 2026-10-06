@@ -35,6 +35,9 @@ describe("today highlight is a chip, not near-black text (#643)", () => {
     const chip = /isToday(?:\([^)]*\))?\s*&&\s*"[^"]*bg-primary text-primary-foreground[^"]*"/;
     expect(src).toMatch(chip);
     expect(timeGrid).toMatch(chip);
+    // A week column on a phone is narrower than the chip: it must shrink and ellipsise with its
+    // neighbours instead of overflowing the column (#643 browser pass, 30.9px columns at 320).
+    expect(timeGrid).toMatch(/isToday\s*&&\s*"[^"]*\binline-block max-w-full truncate align-bottom\b[^"]*"/);
     expect(src).toMatch(/rounded-sm/);
   });
 });
