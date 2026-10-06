@@ -439,7 +439,7 @@ function CollaborationOnlyView({ projectId, onAccessFailure, whiteboardOpen, onO
   </main>;
 }
 
-function CollectionLoading() { return <div className="empty" role="status" data-testid="collection-loading"><span className="serif">Loading collection.</span>Reading this collection's assets.</div>; }
+function CollectionLoading() { return <div className="empty collection-loading" role="status" data-testid="collection-loading"><span className="serif">Loading collection.</span>Reading this collection's assets.</div>; }
 
 function CollaborationUnavailableSection() {
   return <section className="grid content-start p-[var(--space-5)] bg-card [border-style:solid] border-[length:var(--border-width-hair)] border-border" aria-label="Project collaboration"><EmptyState tone="error" title="Collaboration unavailable.">This project discussion is no longer available.</EmptyState></section>;
