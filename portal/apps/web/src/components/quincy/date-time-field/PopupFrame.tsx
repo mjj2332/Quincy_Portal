@@ -70,12 +70,13 @@ function useSelectedClearOfFade(contentRef: RefObject<HTMLDivElement | null>, re
     const solve = (items: FadeItem[], fade: number) => scrollTopClearOfFade({ viewport: viewport.getBoundingClientRect(), scrollTop: viewport.scrollTop, maxScrollTop: viewport.scrollHeight - viewport.clientHeight, fade, items });
     const nudge = (fromTop: boolean, withReveal: boolean) => {
       const fade = measure();
-      if (fromTop) viewport.scrollTop = 0;
+      // Solved from where the body is when a control has focus, so a resize never jumps it away from the focused control.
+      if (fromTop && !focused()) viewport.scrollTop = 0;
       const required = new Set<Element>(withReveal ? viewport.querySelectorAll(revealRef.current) : []);
       const focus = focused();
       if (focus) required.add(focus);
       const elements = new Set<Element>([...viewport.querySelectorAll(SELECTED), ...required]);
-      write(solve([...elements].map((item) => { const { top, bottom } = item.getBoundingClientRect(); return { top, bottom, required: required.has(item) }; }), fade));
+      write(solve([...elements].map((item) => { const { top, bottom } = item.getBoundingClientRect(); return { top, bottom, required: required.has(item), priority: item === focus }; }), fade));
     };
     revealNow.current = () => { noticeScroll(); nudge(false, true); };
     const automatic = () => { noticeScroll(); if (!userScrolled) nudge(true, true); };
@@ -89,7 +90,7 @@ function useSelectedClearOfFade(contentRef: RefObject<HTMLDivElement | null>, re
       noticeScroll();
       const rect = target.getBoundingClientRect();
       // Always solved, fade-aware: a cell inside the fade band is "visible" to the box but reads muddy, and an arrow key's native scroll can leave it there. The solve starts from the current scrollTop, so a clear cell does not move.
-      write(solve([{ top: rect.top, bottom: rect.bottom, required: true }], measure()));
+      write(solve([{ top: rect.top, bottom: rect.bottom, required: true, priority: true }], measure()));
     };
     viewport.addEventListener("focusin", onFocusIn);
     // A selection change: the day's `aria-selected`, a slot's `aria-pressed`, or a re-rendered grid (another month).

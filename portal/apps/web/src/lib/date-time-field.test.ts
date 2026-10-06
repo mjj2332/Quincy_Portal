@@ -272,6 +272,11 @@ describe("scrollTopClearOfFade, required items (#587)", () => {
   it("does not move when two required items conflict", () => {
     expect(scrollTopClearOfFade({ ...base, scrollTop: 100, items: [{ top: 110, bottom: 146, required: true }, { top: 454, bottom: 490, required: true }] })).toBe(100);
   });
+  it("lets the priority item (the focused control) win when two required items conflict", () => {
+    // The first wants s <= 78, the second s >= 122; the priority one is cleared alone.
+    expect(scrollTopClearOfFade({ ...base, scrollTop: 100, items: [{ top: 110, bottom: 146, required: true }, { top: 454, bottom: 490, priority: true }] })).toBe(122);
+    expect(scrollTopClearOfFade({ ...base, scrollTop: 100, items: [{ top: 110, bottom: 146, priority: true }, { top: 454, bottom: 490, required: true }] })).toBe(78);
+  });
 });
 
 describe("scrollTopClearOfFade, over a grid of inputs (#537)", () => {

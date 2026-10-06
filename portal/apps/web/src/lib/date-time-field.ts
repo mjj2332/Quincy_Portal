@@ -149,7 +149,7 @@ export function popupPaddingWithTopAtLeast(padding: PopupCollisionPadding, top: 
 
 type EdgeRect = { top: number; bottom: number };
 /** An item to keep clear of the fade; `required` ones are never skipped for lying outside the body (#587). */
-export type FadeItem = EdgeRect & { required?: boolean };
+export type FadeItem = EdgeRect & { required?: boolean; /** Wins over the other required items when they cannot all be cleared (the focused control, WCAG 2.4.11). Implies `required`. */ priority?: boolean };
 
 /**
  * #537 — the popup body fades each edge by `min(fade, overflow past that edge)`: the top band is
@@ -170,7 +170,7 @@ export type FadeItem = EdgeRect & { required?: boolean };
  * #587 — an item wholly outside the body's visible area is ignored (scrolling to it would hide the month
  * navigation for nothing) UNLESS it is `required`: the day the person is about to edit, or the focused
  * element, must come into view. A required item is never skipped, and when the items cannot all be
- * cleared together the optional ones give way: the solve retries with the required items alone.
+ * cleared together the optional ones give way: the solve retries with the required items alone, and if those conflict too, with the `priority` item (the focused control) alone.
  */
 export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, items }: { viewport: EdgeRect; scrollTop: number; maxScrollTop: number; fade: number; items: readonly FadeItem[] }): number {
   const height = viewport.bottom - viewport.top;
@@ -191,8 +191,10 @@ export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, 
     }
     return { low, high };
   };
-  let range = solve(items);
-  if (range.low > range.high) range = solve(items.filter((item) => item.required));
+  const required = items.map((item) => (item.priority ? { ...item, required: true } : item));
+  let range = solve(required);
+  if (range.low > range.high) range = solve(required.filter((item) => item.required));
+  if (range.low > range.high) range = solve(required.filter((item) => item.priority));
   return range.low <= range.high ? Math.min(Math.max(scrollTop, range.low), range.high) : scrollTop;
 }
 

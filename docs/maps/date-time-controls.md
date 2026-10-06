@@ -39,7 +39,7 @@ Commands are exposed as `submitMoveDialog` portal/apps/web/src/lib/use-schedulin
 
 ## Popup placement and the selected day (#587)
 - **Placement.** `DateTimeField` and `SubtaskScheduleControl` take `popupCollisionAvoidance` / `popupCollisionPadding` (a value, or a function called once per open). `SHELL_AWARE_SHIFT_AVOIDANCE` and `shellAwarePopupPadding()` (`lib/date-time-field.ts`) are the shift-below-the-shell-header policy. Opted in: New shoot's Deadline, the Timeline Due cell (`GanttSubtaskDueCell`), the bar picker (`ProductionGanttScheduleEditorPopover`) and the Timeline Project Deadline cell (`ProjectDeadlineCell` via `GanttDeadlineCell`). The Checklist and Dashboard Table keep the default policy.
-- **Selected day.** `PopupFrame` (`quincy/date-time-field/PopupFrame.tsx`) writes the body's `scrollTop` so the `reveal` day (the picked day, or a range's active end) and the focused element are fully visible and clear of the fade. Pure solve: `scrollTopClearOfFade` with `required` items. Tests: `PopupFrame-reveal.dom.test.tsx`.
+- **Selected day.** `PopupFrame` (`quincy/date-time-field/PopupFrame.tsx`) writes the body's `scrollTop` so the `reveal` day (the picked day, or a range's active end) and the focused element are fully visible and clear of the fade. Pure solve: `scrollTopClearOfFade` with `required` items; when required items conflict, the `priority` item (the focused control) wins over the reveal day. Tests: `PopupFrame-reveal.dom.test.tsx`.
 - **Measured check (browser console, popup open).** Every PopupFrame picker at 1280x900, 1280x720 and 375x812, with a stored day of the 29th or 30th:
 ```js
 const pop = document.querySelector('[role="dialog"][data-slot="popover-content"], [role="dialog"]');

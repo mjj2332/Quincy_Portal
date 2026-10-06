@@ -265,6 +265,27 @@ describe("PopupFrame focus and month change (#587)", () => {
     expectClear(model, "2027-01-16");
   });
 
+  it("keeps a focused control in view over the reveal day when a resize makes the two conflict (focus wins)", async () => {
+    // The 2nd (the active End's day) and the focused time input are both visible at open; shrinking the body leaves no scroll that clears both.
+    const model = bodyModel({ "2027-01-02": 40 });
+    const resize = captureResize();
+    try {
+      await mount("range", range("2027-01-02T09:00", "2027-01-02T17:00"), { openOn: "end" });
+      await open();
+      const input = popupTimeInput(popup());
+      model.extras.set(input, [300, 340]);
+      await act(async () => { input.focus({ preventScroll: true }); await Promise.resolve(); });
+      expect(viewport().scrollTop).toBe(0);
+      model.height = 200; // the window shrinks; no manual scroll
+      await resize.fire();
+      // 300..340 in a 200px body over 800px of content: earliest = min(340 - 200 + 32 = 172, (600 + 140) / 2 = 370) = 172.
+      expect(viewport().scrollTop).toBe(172);
+      const box = input.getBoundingClientRect();
+      expect(box.top).toBeGreaterThanOrEqual(model.top);
+      expect(box.bottom).toBeLessThanOrEqual(model.top + model.height);
+    } finally { resize.restore(); }
+  });
+
   it("does not scroll the month select away when the month changes while it has focus", async () => {
     const model = bodyModel({ "2027-02-26": 300 });
     await mount("date", "2027-02-26");
