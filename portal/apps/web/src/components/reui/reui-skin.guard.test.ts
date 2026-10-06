@@ -91,11 +91,8 @@ function focusRingWidths(files: Map<string, string>): string[] {
 const FOCUS_RING_EXCEPTIONS: ReadonlyMap<string, number> = new Map<string, number>([
   // Known latent double indicators (a vendored ring beside the base.css outline), not fixed here.
   ["cascader/cascader-nav.tsx", 2],
-  ["cascader/cascader.tsx", 2],
-  ["field.tsx", 1],
-  ["item.tsx", 1], // known latent double indicator, not fixed here
+  ["cascader/cascader.tsx", 1],
   ["scroll-area.tsx", 1], // known latent double indicator, not fixed here
-  ["switch.tsx", 1],
 ]);
 
 /** Every match of `pattern`, as `file: class`, sorted. */

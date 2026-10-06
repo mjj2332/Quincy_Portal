@@ -1364,6 +1364,13 @@ const FIELD_PRIMITIVES = [
   "components/quincy/NativeSelect.tsx",
   "components/QuincyRichTextEditor.tsx",
   "lib/rail-field.ts",
+  // #633 item 1: controls that kept `focus-visible:border-ring` beside the global outline.
+  "components/reui/checkbox.tsx",
+  "components/reui/switch.tsx",
+  "components/reui/item.tsx",
+  "components/reui/field.tsx",
+  "components/reui/whiteboard/board-panel.tsx",
+  "components/reui/cascader/cascader.tsx",
 ];
 
 function stripSourceComments(source: string): string {
@@ -1471,5 +1478,52 @@ describe("guard: one focus line — no field primitive recolours its border on f
     expect(hasFocusBorderColour('"hover:border-border-hover focus-visible:outline-ring aria-invalid:border-destructive"')).toBe(false);
     expect(hasFocusBorderColour('"focus-visible:border-0 border-border"')).toBe(false);
     expect(hasFocusBorderColour("// focus-visible:border-ring in a comment")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Guard 5b — Admin inline editors (#633 items 3 and 4)
+// ---------------------------------------------------------------------------
+/**
+ * Item 3: `TableWrap` is `overflow-x:auto`, which also clips on y and, at the left edge, the 2px
+ * flush focus outline of an inline editor. Every Admin table that hosts an inline editor gives its
+ * scroller `scroll-px` from the spacing token so a focus-scroll leaves the outline room. It is NOT
+ * `px-`: padding on the scroller stopped the row dividers 4px short of the table frame.
+ * Item 4 (the icon over the Agent email value) is a browser extension's `<shark-icon-container>`,
+ * not an app defect; nothing in the app is changed for it.
+ * Follow-up: an unbreakable long address sized the Email column (461px at 1280, pushing the
+ * actions column out of the wrapper) and overflowed the stacked card at 390 (page scrolled
+ * sideways). `[overflow-wrap:anywhere]` fixed both but broke ordinary addresses mid-word, because
+ * it collapses min-content to one character. The cells use `[overflow-wrap:break-word]` plus
+ * `EmailText` (lib/format-email.tsx), whose `<wbr>` after `@` and before each `.` keeps
+ * min-content at the longest segment, so the column still shrinks and breaks land at `@` and `.`.
+ */
+describe("guard: Admin inline editors keep their focus outline and value clear (#633)", () => {
+  const admin = readFileSync(join(srcDir, "screens/Admin.tsx"), "utf8");
+  it("every TableWrap hosting an inline editor has scroll padding, not padding, on its scroller", () => {
+    const wraps = admin.split("<TableWrap").slice(1).map((chunk) => chunk.slice(0, chunk.indexOf("</TableWrap>") === -1 ? undefined : chunk.indexOf("</TableWrap>")));
+    const hosting = wraps.filter((chunk) => /<Input\b/.test(chunk));
+    expect(hosting.length).toBeGreaterThanOrEqual(3);
+    for (const chunk of hosting) {
+      const open = chunk.slice(0, 200);
+      expect(open).toMatch(/className="[^"]*min-\[721px\]:scroll-px-\[var\(--space-1\)\]/);
+      expect(open).not.toMatch(/(?<![-\w])min-\[721px\]:px-/);
+    }
+  });
+  it("Email cells break at @ and dots via EmailText so the actions column fits", () => {
+    const cells = admin.split("\n").flatMap((l) => l.match(/<TableCell data-label="Email"[^>]*>/g) ?? []);
+    expect(cells.length).toBeGreaterThanOrEqual(2);
+    for (const c of cells) {
+      expect(c).toMatch(/\[overflow-wrap:break-word\]/);
+      expect(c).not.toMatch(/overflow-wrap:anywhere/);
+    }
+    expect(admin).toMatch(/<EmailText email=\{user\.email\} \/>/);
+    expect(admin).toMatch(/<EmailText email=\{agent\.email\} \/>/);
+  });
+  // The sr-only "Actions" header label is absolutely positioned and escapes an unpositioned overflow clip (#633).
+  it("the TableWrap scroller is positioned so a sr-only header label cannot escape its overflow clip", () => {
+    const table = readFileSync(join(srcDir, "components/quincy/Table.tsx"), "utf8");
+    const line = table.split("\n").find((l) => l.includes("min-[721px]:overflow-x-auto")) ?? "";
+    expect(line).toMatch(/(?<![-\w:])relative(?![-\w])/);
   });
 });
