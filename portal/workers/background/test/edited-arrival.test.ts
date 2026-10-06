@@ -76,7 +76,7 @@ async function fixture(stage = "editing_autohdr", options: { shootDate?: string 
   const outputRoot = `${root}/Output`;
   await bindings.DB.batch([
     bindings.DB.prepare("INSERT INTO integration_connections (id, provider, status, created_at, updated_at) VALUES (?, 'dropbox', 'connected', ?, ?)").bind(connectionId, now, now),
-    bindings.DB.prepare("INSERT INTO projects (id, street, stage_key, shoot_date, board_position, created_at, updated_at) VALUES (?, 'Arrival', ?, ?, ?, ?, ?)").bind(projectId, stage, options.shootDate === undefined ? "2026-10-01" : options.shootDate, Math.random() * 1000, now, now),
+    bindings.DB.prepare("INSERT INTO projects (id, street, stage_key, shoot_date, created_at, updated_at) VALUES (?, 'Arrival', ?, ?, ?, ?)").bind(projectId, stage, options.shootDate === undefined ? "2026-10-01" : options.shootDate, now, now),
     bindings.DB.prepare("INSERT INTO editor_folder_mappings (id, project_id, connection_id, root_path, root_path_key, root_folder_id, shoot_date, project_folder_name, tonomo_raw_folder_path, photographer_evidence_json, input_roots_json, output_roots_json, editing_notes_path, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'id:root', '2026-10-02', ?, NULL, '{}', ?, ?, ?, 'ready', ?, ?)")
       .bind(crypto.randomUUID(), projectId, connectionId, root, root.toLowerCase(), projectId, JSON.stringify([{ path: `${root}/Input`, section: null, folderId: "id:input" }]), JSON.stringify([{ path: outputRoot, section: null, folderId: "id:output" }]), `${root}/Editing Notes`, now, now),
   ]);

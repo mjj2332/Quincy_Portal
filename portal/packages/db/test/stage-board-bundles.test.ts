@@ -111,10 +111,10 @@ function seedFeatureFlag(db: SqliteDatabase): void {
   db.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'").run();
 }
 
-function seedProject(db: SqliteDatabase, input: { id: string; stageKey: string; boardPosition?: number; boardRevision?: number; shootDate?: string }): void {
+function seedProject(db: SqliteDatabase, input: { id: string; stageKey: string; boardRevision?: number; shootDate?: string }): void {
   const now = 1_787_000_000_000;
-  db.prepare("INSERT INTO projects (id, street, shoot_date, stage_key, board_position, board_revision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-    .run(input.id, `${input.id} Street`, input.shootDate ?? null, input.stageKey, input.boardPosition ?? 0, input.boardRevision ?? 0, now, now);
+  db.prepare("INSERT INTO projects (id, street, shoot_date, stage_key, board_revision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .run(input.id, `${input.id} Street`, input.shootDate ?? null, input.stageKey, input.boardRevision ?? 0, now, now);
 }
 
 function audit(db: SqliteDatabase, id: string, targetId = "target"): void {
@@ -255,19 +255,19 @@ describe("TB5A Slice 3 stage-board bundles", () => {
     }
   });
 
-  it("moves only the mover: bumps board_revision, leaves board_position untouched, audits once", async () => {
+  it("moves only the mover: bumps board_revision, audits once", async () => {
     const db = localSqlite();
     try {
       db.exec("PRAGMA foreign_keys = ON");
       applyAllMigrations(db);
       seedFeatureFlag(db);
-      seedProject(db, { id: "target", stageKey: "raw_review", boardPosition: 3, boardRevision: 5 });
+      seedProject(db, { id: "target", stageKey: "raw_review", boardRevision: 5 });
       const d1 = localD1(db);
       const bundle = buildStageWinner(baseStageInput(d1));
       const results = await executeBundle(d1, bundle);
       expect((results[bundle.indexes.winner]!.results as SqliteRow[])).toEqual([{ id: "target", stage_key: "edited_review", board_revision: 6 }]);
       expect((results[bundle.indexes.auditMarker]!.results as SqliteRow[])).toEqual([{ id: "audit-stage" }]);
-      expect(db.prepare("SELECT stage_key, board_position, board_revision FROM projects WHERE id = 'target'").get()).toEqual({ stage_key: "edited_review", board_position: 3, board_revision: 6 });
+      expect(db.prepare("SELECT stage_key, board_revision FROM projects WHERE id = 'target'").get()).toEqual({ stage_key: "edited_review", board_revision: 6 });
       expect(db.prepare("SELECT count(*) AS count FROM audit_log WHERE id = 'audit-stage'").get()).toEqual({ count: 1 });
     } finally {
       db.close();
@@ -281,18 +281,18 @@ describe("TB5A Slice 3 stage-board bundles", () => {
       applyAllMigrations(db);
       seedFeatureFlag(db);
       seedProject(db, { id: "target", stageKey: "raw_review", boardRevision: 5 });
-      seedProject(db, { id: "neighbour", stageKey: "edited_review", boardPosition: 1024, boardRevision: 2 });
+      seedProject(db, { id: "neighbour", stageKey: "edited_review", boardRevision: 2 });
       const d1 = localD1(db);
       const bundle = buildStageWinner(baseStageInput(d1));
       db.prepare("UPDATE projects SET board_revision = 3 WHERE id = 'neighbour'").run();
-      seedProject(db, { id: "newcomer", stageKey: "edited_review", boardPosition: 2048, boardRevision: 0 });
+      seedProject(db, { id: "newcomer", stageKey: "edited_review", boardRevision: 0 });
       db.prepare("UPDATE projects SET archived_at = 1 WHERE id = 'neighbour'").run();
       const results = await executeBundle(d1, bundle);
       expect((results[bundle.indexes.winner]!.results as SqliteRow[])).toEqual([{ id: "target", stage_key: "edited_review", board_revision: 6 }]);
       expect((results[bundle.indexes.auditMarker]!.results as SqliteRow[])).toEqual([{ id: "audit-stage" }]);
-      expect(db.prepare("SELECT id, board_position, board_revision FROM projects WHERE id IN ('neighbour','newcomer') ORDER BY id").all()).toEqual([
-        { id: "neighbour", board_position: 1024, board_revision: 3 },
-        { id: "newcomer", board_position: 2048, board_revision: 0 },
+      expect(db.prepare("SELECT id, board_revision FROM projects WHERE id IN ('neighbour','newcomer') ORDER BY id").all()).toEqual([
+        { id: "neighbour", board_revision: 3 },
+        { id: "newcomer", board_revision: 0 },
       ]);
     } finally {
       db.close();
@@ -337,7 +337,7 @@ describe("TB5A Slice 3 stage-board bundles", () => {
       db.exec("PRAGMA foreign_keys = ON");
       applyAllMigrations(db);
       seedFeatureFlag(db);
-      seedProject(db, { id: "target", stageKey: "raw_review", boardPosition: 7, boardRevision: 5, shootDate: "2026-08-29" });
+      seedProject(db, { id: "target", stageKey: "raw_review", boardRevision: 5, shootDate: "2026-08-29" });
       if (caseName === "wrong from Stage") db.prepare("UPDATE projects SET stage_key = 'editing_autohdr' WHERE id = 'target'").run();
       if (caseName === "wrong revision") db.prepare("UPDATE projects SET board_revision = 6 WHERE id = 'target'").run();
       if (caseName === "archived mover") db.prepare("UPDATE projects SET archived_at = 1 WHERE id = 'target'").run();
@@ -346,12 +346,12 @@ describe("TB5A Slice 3 stage-board bundles", () => {
       const workflowPremise: GuardedTransitionPrerequisite = caseName === "failed workflow premise"
         ? { kind: "raw_reconciliation", projectId: "target", claimId: null, claimStates: ["running"], shootDate: "2020-01-01" }
         : { kind: "none" };
-      const before = db.prepare("SELECT id, stage_key, board_position, board_revision, archived_at FROM projects").all();
+      const before = db.prepare("SELECT id, stage_key, board_revision, archived_at FROM projects").all();
       const bundle = buildStageWinner({ ...baseStageInput(d1), workflowPremise });
       const results = await executeBundle(d1, bundle);
       expect(results[bundle.indexes.winner]!.results).toEqual([]);
       expect(results[bundle.indexes.auditMarker]!.results).toEqual([]);
-      expect(db.prepare("SELECT id, stage_key, board_position, board_revision, archived_at FROM projects").all()).toEqual(before);
+      expect(db.prepare("SELECT id, stage_key, board_revision, archived_at FROM projects").all()).toEqual(before);
       expect(db.prepare("SELECT id FROM audit_log WHERE id = 'audit-stage'").all()).toEqual([]);
     } finally {
       db.close();
@@ -525,7 +525,7 @@ describe("TB5A Slice 3 stage-board bundles", () => {
         db.exec("PRAGMA foreign_keys = ON");
         applyAllMigrations(db);
         seedFeatureFlag(db);
-        seedProject(db, { id: "target", stageKey: "raw_review", boardPosition: 0, boardRevision: 5 });
+        seedProject(db, { id: "target", stageKey: "raw_review", boardRevision: 5 });
         db.prepare("INSERT INTO integration_connections (id, provider, status, created_at, updated_at) VALUES ('connection', 'dropbox', 'connected', 1, 1)").run();
         db.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES ('actor', 'Actor', 'actor@test.invalid', 1, 'admin', 1, 1, 1)").run();
         const d1 = localD1(db);

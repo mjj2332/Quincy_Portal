@@ -4,15 +4,13 @@
  * (`qa-seed-sqlite-executor.ts`), so every case below is the production comparison code, not a copy.
  *
  *  - Finding 4: values are compared exactly. NULL is not `''`, and a number is not its string form.
- *  - Finding 5: `board_position` is compared against the value apply actually wrote (recorded at
- *    apply time), not excluded because apply computes it live.
  *  - Finding 6: memberships are checked against the default-editor set apply RECORDED, never today's.
  *    A default editor disabled after apply must not make `verify` skip the membership check, nor
  *    make a still-present membership look unexpected.
  */
 import { describe, expect, it } from "vitest";
 import { apply, fingerprintValuesEqual, verify } from "../qa-seed/cli.mjs";
-import { FIXTURE_BOARD_POSITIONS_TABLE, FIXTURE_RUN_RECORDS_TABLE, FIXTURE_RUNS_TABLE } from "../qa-seed/sql";
+import { FIXTURE_RUN_RECORDS_TABLE, FIXTURE_RUNS_TABLE } from "../qa-seed/sql";
 import { freshFixtureDatabase, sqliteExecutor, type SqliteDatabase } from "./qa-seed-sqlite-executor";
 
 const ANCHOR = "2026-09-21";
@@ -68,15 +66,6 @@ describe("finding 4: verify compares values exactly", () => {
   });
 });
 
-describe("finding 5: verify compares board_position against the value apply recorded", () => {
-  it("a moved fixture project fails verify, naming projects and board_position", () => {
-    const { db, executor } = appliedDatabase([]);
-    db.prepare("UPDATE projects SET board_position = board_position + 1 WHERE id = ?;").run(firstFixtureProjectId(db));
-    expect(verifyError(executor)).toMatch(/projects: 1 row\(s\) differ[^\n]*\(board_position\)/);
-    db.close();
-  });
-});
-
 describe("finding 6: memberships are verified against the default-editor set apply recorded", () => {
   it("disabling one of two default editors after apply leaves verify clean — their memberships are still exactly present", () => {
     const { db, executor } = appliedDatabase([EDITOR_A, EDITOR_B]);
@@ -106,9 +95,7 @@ describe("finding 6: memberships are verified against the default-editor set app
     const { db, executor } = appliedDatabase([EDITOR_A]);
     const runId = String(db.prepare(`SELECT id FROM ${FIXTURE_RUNS_TABLE};`).get()?.id);
     // Simulates a run applied before apply started recording what it used.
-    for (const table of [FIXTURE_RUN_RECORDS_TABLE, FIXTURE_BOARD_POSITIONS_TABLE]) {
-      db.prepare(`DELETE FROM ${table} WHERE run_id = ?;`).run(runId);
-    }
+    db.prepare(`DELETE FROM ${FIXTURE_RUN_RECORDS_TABLE} WHERE run_id = ?;`).run(runId);
     expect(verifyError(executor)).toMatch(/re-apply/i);
     db.close();
   });

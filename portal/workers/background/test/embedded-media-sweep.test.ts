@@ -41,7 +41,7 @@ const count = async () => (await database.DB.prepare("SELECT count(*) AS n FROM 
 beforeAll(async () => {
   await executeSql(__PORTAL_MIGRATION_SQL__);
   await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'U', 'u@example.test', 1, 'editor', 1, ?, ?)").bind(userId, now, now).run();
-  await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'S', 'editing_autohdr', 0, ?, ?)").bind(projectId, now, now).run();
+  await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'S', 'editing_autohdr', ?, ?)").bind(projectId, now, now).run();
 });
 beforeEach(async () => { await database.DB.exec("DELETE FROM link_preview_attempts; DELETE FROM link_previews; DELETE FROM embedded_media; DELETE FROM embedded_media_cleanup;"); });
 const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);

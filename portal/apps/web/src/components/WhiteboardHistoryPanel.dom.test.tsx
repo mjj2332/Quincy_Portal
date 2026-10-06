@@ -158,17 +158,6 @@ describe("WhiteboardHistoryPanel (#500)", () => {
     expect(document.activeElement).toBe(restoreFor());
   });
 
-  it("touch: the Restore action and the History tab are 44px at <=721px (#500 browser pass)", async () => {
-    h.get.mockResolvedValue(listing());
-    await render(props());
-    const restore = document.body.querySelector<HTMLElement>('[aria-label^="Restore "]')!;
-    expect(restore.className).toContain("max-[721px]:min-h-[44px]");
-    expect(restore.className).toContain("max-[721px]:min-w-[44px]");
-    const tab = [...document.body.querySelectorAll<HTMLElement>('[role="tab"]')].find((node) => node.textContent === "History")!;
-    expect(tab.className).toContain("max-[721px]:h-11");
-    expect(tab.parentElement!.className).toContain("max-[721px]:group-data-[orientation=horizontal]/tabs:h-[3.125rem]");
-  });
-
   it("the sheet's own width wins over the registry's w-3/4 (320px, capped to the viewport) (#500 browser pass)", async () => {
     h.get.mockResolvedValue(listing());
     await render(props());

@@ -296,7 +296,7 @@ describe("POST /projects/:projectId/link-previews", () => {
     await database.DB.prepare("DELETE FROM embedded_media_cleanup").run();
     await database.DB.prepare("DELETE FROM link_preview_attempts").run();
     const projectId = crypto.randomUUID(); const now = Date.now();
-    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Late Put Street', 'editing_autohdr', 0, ?, ?)").bind(projectId, now, now).run();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Late Put Street', 'editing_autohdr', ?, ?)").bind(projectId, now, now).run();
     let release: () => void = () => undefined; const gate = new Promise<void>((resolve) => { release = resolve; });
     let started = false;
     const { environment } = background(fetched());
@@ -566,7 +566,7 @@ describe("saving a Notice board post with link previews", () => {
 describe("a Project hard delete", () => {
   it("leaves no preview rows behind", async () => {
     const projectId = crypto.randomUUID(); const now = Date.now();
-    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Doomed Street', 'editing_autohdr', 0, ?, ?)").bind(projectId, now, now).run();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Doomed Street', 'editing_autohdr', ?, ?)").bind(projectId, now, now).run();
     const preview = await seedPreview({ projectId, image: false });
     await database.DB.prepare("DELETE FROM projects WHERE id = ?").bind(projectId).run();
     expect(await previewRow(preview.id)).toBeNull();

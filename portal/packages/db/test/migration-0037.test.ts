@@ -2,7 +2,6 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { rollbackBoardOrder0037PreEnable } from "../src/board-order-rollback-0037";
 import { BOARD_CONTRACT_FLAG } from "../src/board-schema-variant";
 
 type SqliteRow = Record<string, unknown>;
@@ -154,44 +153,6 @@ function seedProjects(db: SqliteDatabase, fixtures = ORDERING_FIXTURES): void {
 
 function snapshotProjects(db: SqliteDatabase): SqliteRow[] {
   return db.prepare("SELECT id, stage_key, priority, board_position, archived_at FROM projects ORDER BY id").all() as SqliteRow[];
-}
-
-function localD1(db: SqliteDatabase): D1Database {
-  class LocalD1Statement {
-    constructor(private readonly source: string, private readonly values: unknown[] = []) {}
-
-    bind(...values: unknown[]): D1PreparedStatement {
-      return new LocalD1Statement(this.source, values) as unknown as D1PreparedStatement;
-    }
-
-    execute(): D1Result<unknown> {
-      const result = db.prepare(this.source).run(...this.values) as { changes?: number | bigint };
-      return { success: true, results: [], meta: { changes: Number(result.changes ?? 0) } } as unknown as D1Result<unknown>;
-    }
-
-    async first<T>(): Promise<T | null> {
-      return (db.prepare(this.source).get(...this.values) as T | undefined) ?? null;
-    }
-  }
-
-  return {
-    prepare: (source: string) => new LocalD1Statement(source) as unknown as D1PreparedStatement,
-    batch: async (statements: D1PreparedStatement[]) => {
-      db.exec("BEGIN TRANSACTION");
-      try {
-        const results = statements.map((statement) => (statement as unknown as LocalD1Statement).execute());
-        db.exec("COMMIT");
-        return results;
-      } catch (error) {
-        try {
-          db.exec("ROLLBACK");
-        } catch {
-          // SQLite may already have rolled back a failed transaction.
-        }
-        throw error;
-      }
-    },
-  } as unknown as D1Database;
 }
 
 function withTemporaryDatabase(callback: (filename: string) => void): void {
@@ -383,44 +344,6 @@ describe("migration 0037 project board order contract", () => {
     expect(parsed.tables.autohdr_handoffs.columns).toHaveProperty("editing_entry_board_revision");
     expect(parsed.tables.jobs.columns).toHaveProperty("stage_entry_board_revision");
     expect(parsed.tables.projects.indexes).not.toHaveProperty("projects_stage_archive_board_order_idx");
-  });
-
-  it("restores all captured positions on the pre-enable rollback happy path", async () => {
-    const db = localSqlite();
-    db.exec("PRAGMA foreign_keys = ON");
-    applyThrough(db, 36);
-    seedPipelineStages(db);
-    seedProjects(db);
-    applyMigration(db, MIGRATION_NAME);
-    const normalized = db.prepare("SELECT id, board_position FROM projects WHERE archived_at IS NULL ORDER BY id").all() as SqliteRow[];
-    const oldPositions = new Map((db.prepare("SELECT project_id, old_board_position FROM project_board_order_0037_rollback").all() as SqliteRow[]).map((row) => [String(row.project_id), row.old_board_position]));
-
-    await expect(rollbackBoardOrder0037PreEnable(localD1(db))).resolves.toEqual({ rolledBack: normalized.length });
-    const restored = db.prepare("SELECT id, board_position FROM projects WHERE archived_at IS NULL ORDER BY id").all() as SqliteRow[];
-    for (const row of restored) expect(row.board_position).toBe(oldPositions.get(String(row.id)));
-    expect(normalized.every((row) => Number(row.board_position) !== Number(oldPositions.get(String(row.id))))).toBe(true);
-    db.close();
-  });
-
-  it.each(["wrong Stage", "already re-revised"])('rolls back every pre-enable restoration when one row has drifted (%s)', async (drift) => {
-    const db = localSqlite();
-    db.exec("PRAGMA foreign_keys = ON");
-    applyThrough(db, 36);
-    seedPipelineStages(db);
-    seedProjects(db, ORDERING_FIXTURES.slice(0, 4));
-    applyMigration(db, MIGRATION_NAME);
-    const normalized = db.prepare("SELECT id, board_position FROM projects WHERE archived_at IS NULL ORDER BY id").all() as SqliteRow[];
-    const driftedId = String(normalized[0]?.id);
-    if (drift === "wrong Stage") {
-      db.prepare("UPDATE projects SET stage_key = 'wrong_stage' WHERE id = ?").run(driftedId);
-    } else {
-      db.prepare("UPDATE projects SET board_revision = 2 WHERE id = ?").run(driftedId);
-    }
-
-    await expect(rollbackBoardOrder0037PreEnable(localD1(db))).rejects.toThrow();
-    expect(db.prepare("SELECT id, board_position FROM projects WHERE archived_at IS NULL ORDER BY id").all()).toEqual(normalized);
-    expect(objectExists(db, "table", "_tb5a_0037_position_rollback_guard")).toBe(false);
-    db.close();
   });
 
   it("leaves an operator's flag flip and its audit trail intact when the flag statement is replayed", () => {

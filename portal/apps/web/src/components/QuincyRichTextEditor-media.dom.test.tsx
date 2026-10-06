@@ -8,7 +8,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { Editor } from "@tiptap/core";
 import { NodeSelection } from "@tiptap/pm/state";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, defaultScheduler, notifyManager } from "@tanstack/react-query";
 import { COMMENT_MEDIA_RICH_TEXT_PROFILE, parseRichTextDoc, type RichTextDoc } from "@quincy/shared";
 import { RenditionFailedError } from "../lib/embedded-media";
 import { createRichTextEditorExtensions, tiptapToRichTextDoc, toTiptap } from "../lib/rich-text-tiptap";
@@ -393,6 +393,13 @@ function driveUpload(): Drive {
 }
 
 describe("HEIC images (#495)", () => {
+  // The paste handler reads the HEIC setting synchronously from the rendered editor. With react-query's default
+  // scheduler the observer->React notification is its own setTimeout(0), registered after `settle()`'s, so one
+  // settle() tick could end before the editor rendered the fetched setting and the paste was refused (#576).
+  // A synchronous scheduler makes "the query resolved inside the act" and "the editor rendered it" one event.
+  beforeEach(() => { notifyManager.setScheduler((callback) => callback()); });
+  afterEach(() => { notifyManager.setScheduler(defaultScheduler); });
+
   it("offers HEIC in the picker only once the setting is on, and sends a HEIC with no reported type", async () => {
     heicSetting.mockResolvedValue(true); upload.mockResolvedValue(A);
     const host = mountWithSetting(<Harness />); await settle();

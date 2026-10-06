@@ -2789,8 +2789,8 @@ describe("staff app API", () => {
     const now = Date.now();
     // A non-empty raw_review column with positions the move must not touch.
     await database.DB.batch([
-      database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, board_revision, created_at, updated_at) VALUES (?, ?, 'raw_review', 4096, 3, ?, ?)").bind(crypto.randomUUID(), "RAW review neighbour", now, now),
-      database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, board_revision, created_at, updated_at) VALUES (?, ?, 'awaiting_raw', 55, 2, ?, ?)").bind(projectId, `RAW ingest outcome ${projectId}`, now, now),
+      database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_revision, created_at, updated_at) VALUES (?, ?, 'raw_review', 3, ?, ?)").bind(crypto.randomUUID(), "RAW review neighbour", now, now),
+      database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_revision, created_at, updated_at) VALUES (?, ?, 'awaiting_raw', 2, ?, ?)").bind(projectId, `RAW ingest outcome ${projectId}`, now, now),
       database.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'raw', 'empty', 0, ?, ?)").bind(collectionId, projectId, now, now),
     ]);
     const key = `projects/${projectId}/raw/${assetId}/outcome.jpg`;
@@ -2802,8 +2802,8 @@ describe("staff app API", () => {
         body: JSON.stringify({ projectId, key, originalFilename: "outcome.jpg", collection: "raw" }),
       });
       expect(response.status).toBe(201);
-      await expect(database.DB.prepare("SELECT stage_key, board_position, board_revision FROM projects WHERE id = ?").bind(projectId).first())
-        .resolves.toEqual({ stage_key: "raw_review", board_position: 55, board_revision: 3 });
+      await expect(database.DB.prepare("SELECT stage_key, board_revision FROM projects WHERE id = ?").bind(projectId).first())
+        .resolves.toEqual({ stage_key: "raw_review", board_revision: 3 });
       // Reported outcome and follow-ups, not just the row: the raw_ready notification went out and the
       // finalizer's invariant check did not trip.
       const notified = await database.DB.prepare("SELECT count(*) AS count FROM notifications WHERE project_id = ? AND type = 'raw_ready'").bind(projectId).first<{ count: number }>();

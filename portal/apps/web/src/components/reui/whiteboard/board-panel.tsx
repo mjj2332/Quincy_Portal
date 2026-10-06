@@ -6,7 +6,7 @@
  * Tailwind `shadow-*`, focus ring widths -- see `reui-skin.guard.test.ts`), and `noUncheckedIndexedAccess`
  * narrowing. `"dark": boolean` is quoted only so the guard's `dark:` matcher does not read a type as a variant.
  *
- * This file: The Frames / Library / History panel. Edits (additive): #500 `rowAttrs` on `PanelRow` (data attributes for a host's test seam and hooks) and `forceRender` on the sheet's scrim (nested under the shell's Dialog Root); a `title` prop replaces the demo title; `panes` is now `Partial<...>` and a tab with no pane is not rendered, because History arrives with #500. `dark:` row fills and a focus ring width dropped (Skin guard). #500 browser pass: `RowAction` and the tab triggers reach 44px at <=721px; the sheet's width is set under the same `data-[side=right]:` variant as the registry's `w-3/4`, so it replaces it. #500 stacking: the sheet passes `z-[var(--z-dialog)]` (and the impersonation top offset) itself; the base `reui/sheet` stays z-50.
+ * This file: The Frames / Library / History panel. Edits (additive): #500 `rowAttrs` on `PanelRow` (data attributes for a host's test seam and hooks) and `forceRender` on the sheet's scrim (nested under the shell's Dialog Root); a `title` prop replaces the demo title; `panes` is now `Partial<...>` and a tab with no pane is not rendered, because History arrives with #500. `dark:` row fills and a focus ring width dropped (Skin guard). #500 browser pass: `RowAction` and the tab triggers reach 44px while a board in the phone layout is on the page (`data-phone-layout`, #564; the sheet is portaled, so it is matched with :has()); the sheet's width is set under the same `data-[side=right]:` variant as the registry's `w-3/4`, so it replaces it. #500 stacking: the sheet passes `z-[var(--z-dialog)]` (and the impersonation top offset) itself; the base `reui/sheet` stays z-50.
  */
 import { Fragment, useEffect, useRef, useState } from "react"
 import { IconTile } from "@/components/reui/icon-tile"
@@ -287,7 +287,7 @@ export function RowAction({
             disabled={disabled}
             aria-label={label}
             aria-pressed={pressed}
-            className="hover:bg-foreground/10 relative z-10 max-[721px]:min-h-[44px] max-[721px]:min-w-[44px]"
+            className="hover:bg-foreground/10 relative z-10 [body:has([data-phone-layout])_&]:min-h-[44px] [body:has([data-phone-layout])_&]:min-w-[44px]"
             onClick={onClick}
           />
         }
@@ -410,13 +410,13 @@ function PanelTabs({
       className="min-h-0 flex-1 gap-0"
     >
       <div className="shrink-0 p-3">
-        <TabsList className="w-full max-[721px]:group-data-[orientation=horizontal]/tabs:h-[3.125rem]">
+        <TabsList className="w-full [body:has([data-phone-layout])_&]:group-data-[orientation=horizontal]/tabs:h-[3.125rem]">
           {tabs.map((item) => (
             <TabsTrigger
               key={item.value}
               value={item.value}
               ref={item.value === tab ? activeTabRef : undefined}
-              className="max-[721px]:h-11"
+              className="[body:has([data-phone-layout])_&]:h-11"
             >
               {item.label}
             </TabsTrigger>

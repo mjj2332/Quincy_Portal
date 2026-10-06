@@ -131,7 +131,7 @@ export function globalRows(connectionId: string, userId: string): PlantRow[] {
  * alone. Carries the same collection/subtask/occurrence the fixture side gets from the generator. */
 export function controlProjectRows(ctx: PlantContext): PlantRow[] {
   return [
-    { table: "projects", values: { id: ctx.projectId, street: `Control ${ctx.tag}`, stage_key: "raw_review", board_position: 99_000, created_at: T0, updated_at: T0 } },
+    { table: "projects", values: { id: ctx.projectId, street: `Control ${ctx.tag}`, stage_key: "raw_review", created_at: T0, updated_at: T0 } },
     { table: "collections", values: { id: ctx.collectionId, project_id: ctx.projectId, kind: "raw", status: "empty", received_count: 0, created_at: T0, updated_at: T0 } },
     { table: "project_subtasks", values: { id: ctx.subtaskId, project_id: ctx.projectId, title: "Control subtask", done: 0, position: 1024, due_date: CONTROL_SCHEDULE.dueDate, schedule_start_kind: "timed", schedule_start_civil: CONTROL_SCHEDULE.scheduleStartCivil, schedule_start_at: CONTROL_SCHEDULE.scheduleStartAt, schedule_start_utc_offset_minutes: CONTROL_SCHEDULE.scheduleStartUtcOffsetMinutes, schedule_start_fold: CONTROL_SCHEDULE.scheduleStartFold, schedule_end_kind: "timed", schedule_end_at: CONTROL_SCHEDULE.scheduleEndAt, schedule_end_utc_offset_minutes: CONTROL_SCHEDULE.scheduleEndUtcOffsetMinutes, schedule_end_fold: CONTROL_SCHEDULE.scheduleEndFold, schedule_zone: "Australia/Sydney", schedule_version: 1, created_by: ctx.userId, created_at: T0, updated_at: T0 } },
     {

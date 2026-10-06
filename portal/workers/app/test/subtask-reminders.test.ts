@@ -35,7 +35,7 @@ beforeAll(async () => {
   await executeSql(__PORTAL_MIGRATION_SQL__); await executeSql(__PORTAL_SEED_SQL__); await database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'").run(); const now = Date.now();
   for (const [id, role] of [[adminId, "admin"], [editorId, "editor"], [otherId, "editor"]]) await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, ?, ?, 1, ?, 1, ?, ?)").bind(id, `${role} ${id.slice(0, 4)}`, `${id}@example.test`, role, now, now).run();
   await database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES ('reminders-admin', ?, 'reminders-admin-token', ?, ?, ?)").bind(now + 3_600_000, adminId, now, now).run();
-  await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Reminder Street', 'editing_autohdr', 0, ?, ?)").bind(projectId, now, now).run();
+  await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Reminder Street', 'editing_autohdr', ?, ?)").bind(projectId, now, now).run();
   for (const userId of [editorId, otherId]) await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, userId, now).run();
 });
 
@@ -188,7 +188,7 @@ describe("Subtask reminder occurrences follow the Subtask (#424)", () => {
 
   it("archiving the Project supersedes pending occurrences and suppresses unsent deliveries, and restoring recomputes only the future ones", async () => {
     const project = crypto.randomUUID(); const now = Date.now();
-    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Archive Street', 'editing_autohdr', 1, ?, ?)").bind(project, now, now).run();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Archive Street', 'editing_autohdr', ?, ?)").bind(project, now, now).run();
     await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), project, editorId, now).run();
     // Far-future due (2099) so the real clock the restore route reads still sees both fire times ahead.
     const created = await saveProjectSubtask({ env: baseEnv, projectId: project, principal, now: NOW, operation: { kind: "create", item: { title: "Archive me", assigneeIds: [] }, schedule: { state: "range", start: { localCivil: START }, end: { localCivil: END } } } });
