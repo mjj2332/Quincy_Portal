@@ -433,7 +433,7 @@
 .rich-text__embedded-video-node { position: relative; width: 100%; max-width: min(100%, calc(24rem * 16 / 9)); margin: var(--space-2) 0; }
 .rich-text__editor-content .rich-text__embedded-video-node > .rich-text__embedded-video { margin: 0; }
 .rich-text__editor-content .ProseMirror-selectednode .rich-text__embedded-video-node > .rich-text__embedded-video { border-color: var(--accent); }
-/* #592 — same #497 trap: a selected failed-preview panel would paint its message in the global ::selection paper-050 on a light panel. Explicit token, transparent background. */
+/* #592 — defensive against the #497 trap, not a reproduced bug (the panel text is effectively user-select: none today): if it ever becomes selectable, the global ::selection paper-050 would paint on the light panel. Explicit token, transparent background. */
 .rich-text__editor-content .rich-text__embedded-video--unavailable ::selection { background: transparent; color: var(--foreground-secondary); }
 /* #497 — the global ::selection paints paper-050 text; ProseMirror hides its own selection on a node view, so a selected card would read near-invisible. The wrapper takes ProseMirror-selectednode.
    Trap: `color: inherit` (or currentColor) inside a ::selection takes the PARENT's ::selection colour — the global paper-050 — not the element's own colour, so the text stayed paper-on-white. Each slot gets the explicit token its normal colour uses. */

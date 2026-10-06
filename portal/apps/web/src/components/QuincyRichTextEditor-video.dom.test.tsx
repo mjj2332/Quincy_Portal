@@ -394,7 +394,7 @@ describe("a posted video (#494)", () => {
     const node = element.parentElement!;
     await act(async () => { element.dispatchEvent(new Event("error")); });
     const unavailable = node.querySelector('[data-testid="embedded-video-preview-unavailable"]')!;
-    expect(unavailable.textContent).toContain("Preview unavailable in this browser");
+    expect(unavailable.textContent).toContain("This video can't preview in this browser.");
     expect(node.querySelector("video")).toBeNull();
     expect(node.querySelector("[data-drag-handle]")).not.toBeNull();
     expect(node.querySelector('[data-testid="embedded-video-badge"]')).not.toBeNull();
