@@ -51,6 +51,8 @@ export function isRowConfirmedRemoved(input: {
 
 export type GanttSubtaskDueCellProps = {
   row: GanttChecklistRowDto;
+  /** The Project's street: the picker is named "Schedule for <title>, <street>", as the bar's is. */
+  street: string;
   /** True while the controller's editor session belongs to THIS row. */
   editorOpen: boolean;
   /**
@@ -76,7 +78,7 @@ export type GanttSubtaskDueCellProps = {
 // Tone: a Subtask date is always neutral. The Gantt never marks Subtask rows overdue (production-gantt-scheduling.ts sets
 // `overdue: false`; only the Project deadline carries a server-computed `overdue`), so this cell does not either.
 // Frozen state: `focusableWhenDisabled` renders `aria-disabled`, not `disabled`, so the dimming keys on aria-disabled.
-export function GanttSubtaskDueCell({ row, editorOpen, disabled, error, retained, onOpen, onSubmit, onCancel, onDismiss, onClear, projectDefault = null }: GanttSubtaskDueCellProps) {
+export function GanttSubtaskDueCell({ row, street, editorOpen, disabled, error, retained, onOpen, onSubmit, onCancel, onDismiss, onClear, projectDefault = null }: GanttSubtaskDueCellProps) {
   const end = row.schedule.end;
   const text = formatDueCivil(end.localCivil);
   const close = useSchedulePickerClose({ onSubmit, onCancel, onDismiss, onClear });
@@ -87,7 +89,7 @@ export function GanttSubtaskDueCell({ row, editorOpen, disabled, error, retained
     <span data-testid="gantt-subtask-due" className="flex min-w-0 flex-1 items-center" onClick={stopRowGesture} onPointerDown={stopRowGesture} onMouseDown={stopRowGesture} onKeyDown={stopRowGesture}>
       <SubtaskScheduleControl<LatestSubtaskSummary>
         owner={`gantt-${row.id}`}
-        label={`Schedule for ${row.title}`}
+        label={`Schedule for ${row.title}, ${street}`}
         value={row.schedule}
         open={editorOpen}
         setOpen={(next) => {

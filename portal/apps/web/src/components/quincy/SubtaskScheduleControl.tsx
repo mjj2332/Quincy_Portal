@@ -111,6 +111,11 @@ export function SubtaskScheduleControl<TItem extends LatestSubtaskSummary = Subt
   const id = subtaskPopoverId(owner, "schedule");
   const stored = storedRange(value) ?? projectDefault;
   const seed = error && retained.draft ? retained.draft : undefined;
+  // #599: after a conflict reopen on the one end that differs from the latest, so it and its day are in view.
+  const latestRange = storedRange(error?.current ?? null);
+  const startDiffers = !!seed && !!latestRange && seed.start.localCivil !== latestRange.start.localCivil;
+  const endDiffers = !!seed && !!latestRange && seed.end.localCivil !== latestRange.end.localCivil;
+  const conflictEnd: "start" | "end" | undefined = endDiffers && !startDiffers ? "end" : startDiffers && !endDiffers ? "start" : undefined;
   // After a conflict the saved set is the latest one the server reported, not the stale row's.
   const latestReminders = error?.currentReminders ?? error?.currentSubtask?.reminders;
   const popupReminders: DateTimeReminders | undefined = reminders && (latestReminders ? { offsets: latestReminders.offsetsMinutes, next: latestReminders.nextOccurrence } : reminders);
@@ -146,7 +151,8 @@ export function SubtaskScheduleControl<TItem extends LatestSubtaskSummary = Subt
         label={label}
         value={stored}
         projectDefault={projectDefault}
-        openOn={initialFocus === "end" ? "end" : "start"}
+        openOn={initialFocus === "end" ? "end" : conflictEnd ?? "start"}
+        banner={error?.current || error?.currentSubtask ? <Notice tone="caution" className="truncate text-[length:var(--text-xs)]">Changed elsewhere · latest v{(error.currentSubtask?.schedule ?? error.current)!.version}. Review below.</Notice> : undefined}
         seed={seed}
         seedKey={seed ? JSON.stringify(seed) : "stored"}
         reminders={popupReminders}

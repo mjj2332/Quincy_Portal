@@ -314,4 +314,50 @@ describe("SubtaskScheduleControl onDiscard (#585)", () => {
     expect(popover()).toBeNull();
     expect(saved).toHaveLength(0);
   });
+
+  describe("#599 conflicted end and pinned banner", () => {
+    const winner = (start: string, end: string): ChecklistScheduleDto => ({ ...value, version: 5, start: startMoment(start), end: endMoment(end) });
+    const draft = (start: string, end: string) => ({ start: { localCivil: `${start}T09:00` }, end: { localCivil: `${end}T17:00` } }) as unknown as NonNullable<Extra["retained"]>["draft"];
+    async function openWith(current: ChecklistScheduleDto | undefined, seedDraft: ReturnType<typeof draft> | null) {
+      const error: ScheduleError | undefined = current ? { current } : undefined;
+      await mount({ trigger: customTrigger, error, retained: { draft: seedDraft, baseVersion: 3 } });
+      await click(host.querySelector<HTMLButtonElement>('[data-testid="custom-trigger"]')!);
+      await settle();
+    }
+    const banner = () => [...popover()!.querySelectorAll<HTMLElement>('[data-slot="notice"]')].find((el) => el.textContent?.includes("Changed elsewhere"));
+
+    it("S9 End-only differing from the latest opens on End", async () => {
+      await openWith(winner("2026-10-08", "2026-10-14"), draft("2026-10-08", "2026-10-12"));
+      expect(rangeToggles(popover()!).active).toBe("End");
+      expect(banner()?.textContent).toContain("latest v5");
+      expect(banner()?.hasAttribute("role")).toBe(false);
+    });
+    it("S10 Start-only differing opens on Start", async () => {
+      await openWith(winner("2026-10-08", "2026-10-10"), draft("2026-10-07", "2026-10-10"));
+      expect(rangeToggles(popover()!).active).toBe("Start");
+    });
+    it("S11 both differing opens on Start", async () => {
+      await openWith(winner("2026-10-08", "2026-10-14"), draft("2026-10-07", "2026-10-12"));
+      expect(rangeToggles(popover()!).active).toBe("Start");
+    });
+    it("S12 neither differing (reminders-only draft) opens on Start", async () => {
+      await openWith(winner("2026-10-08", "2026-10-10"), draft("2026-10-08", "2026-10-10"));
+      expect(rangeToggles(popover()!).active).toBe("Start");
+    });
+    it("S13 a conflict with no retained draft opens on Start", async () => {
+      await openWith(winner("2026-10-08", "2026-10-14"), null);
+      expect(rangeToggles(popover()!).active).toBe("Start");
+      expect(banner()).toBeDefined();
+    });
+    it("S14 initialFocus='end' still wins over a Start-only conflict", async () => {
+      await mount({ trigger: customTrigger, initialFocus: "end", error: { current: winner("2026-10-08", "2026-10-10") }, retained: { draft: draft("2026-10-07", "2026-10-10"), baseVersion: 3 } });
+      await click(host.querySelector<HTMLButtonElement>('[data-testid="custom-trigger"]')!);
+      await settle();
+      expect(rangeToggles(popover()!).active).toBe("End");
+    });
+    it("S15 no conflict, no banner", async () => {
+      await openWith(undefined, null);
+      expect(banner()).toBeUndefined();
+    });
+  });
 });

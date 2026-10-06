@@ -180,7 +180,13 @@ const barLabel = (title: string) => findBar(title)?.getAttribute("aria-label") ?
 const dueTrigger = (title: string) => host.querySelector<HTMLButtonElement>(`[data-testid="gantt-subtask-due-trigger"][aria-label^="Due for ${title}"]`);
 const dueCells = () => [...host.querySelectorAll<HTMLElement>('[data-testid="gantt-subtask-due"]')];
 const dueText = (title: string) => dueTrigger(title)?.textContent ?? "";
-const picker = (title: string) => dateTimePopup(`Schedule for ${title}`);
+const picker = (title: string) => dateTimePopup(`Schedule for ${title}, 1 Range Street`);
+/** #599: the pinned one-line caution a conflict puts above the scroll body (not the full notice inside it). */
+const conflictBanner = (popup: HTMLElement) => {
+  const viewport = popup.querySelector('[data-slot="scroll-area-viewport"]');
+  const banner = [...popup.querySelectorAll<HTMLElement>('[data-slot="notice"]')].find((el) => el.textContent?.includes("Changed elsewhere")) ?? null;
+  return { banner, pinned: !!banner && !!viewport && !viewport.contains(banner) && !!(viewport.compareDocumentPosition(banner) & Node.DOCUMENT_POSITION_PRECEDING) };
+};
 const pickerButton = (title: string, name: string) => (picker(title) ? popupButton(picker(title)!, name) : undefined);
 /** The End toggle's text in the open popup ("Tue 15 Sep · 17:00"). */
 const endText = (title: string) => rangeToggles(picker(title)!).end;
@@ -495,6 +501,7 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     expect(patches()).toHaveLength(1);
     expect(picker(RANGE_TITLE)).not.toBeNull();
     expect(picker(RANGE_TITLE)!.textContent).toContain("Latest schedule · v3");
+    expect(conflictBanner(picker(RANGE_TITLE)!).pinned).toBe(true);
     expect(endText(RANGE_TITLE)).toBe(rangeMoment(sydneyDay(5), "17:00"));
 
     patchReply = null;
@@ -1098,6 +1105,46 @@ describe("ProductionGantt — Edit schedule… on the bar (#582)", () => {
     expect(patches()).toHaveLength(1);
     await waitFor(() => expect(barPicker(RANGE_TITLE)).toBeNull());
     expect(onAcceptGateChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("B2e an End-only 409 reopens (after Escape) on End, with the pinned caution line above the scroll body", async () => {
+    await render();
+    await openFromBar(RANGE_TITLE);
+    expect(conflictBanner(barPicker(RANGE_TITLE)!).banner).toBeNull();
+    await click(popupButton(barPicker(RANGE_TITLE)!, "End")!);
+    await pickPopupDay(barPicker(RANGE_TITLE)!, sydneyDay(5));
+    patchReply = () => scheduleConflict(winnerV3());
+    await applyPopup(barPicker(RANGE_TITLE)!);
+    await flush(8);
+    patchReply = null;
+    await keydown(document.activeElement ?? document.body, "Escape");
+    await flush(3);
+    await waitFor(() => expect(barPicker(RANGE_TITLE)).toBeNull());
+    await openFromBar(RANGE_TITLE);
+    const popup = barPicker(RANGE_TITLE)!;
+    expect(rangeToggles(popup).active).toBe("End");
+    const { banner, pinned } = conflictBanner(popup);
+    expect(banner?.textContent).toContain("latest v3");
+    expect(banner?.hasAttribute("role")).toBe(false);
+    expect(pinned).toBe(true);
+    expect(popup.textContent).toContain("Latest schedule · v3");
+  });
+
+  it("B2s a Start-only 409 reopens (after Escape) on Start, with the pinned caution line", async () => {
+    await render();
+    await openFromBar(RANGE_TITLE);
+    await pickPopupDay(barPicker(RANGE_TITLE)!, sydneyDay(2));
+    patchReply = () => scheduleConflict(range(3, startMoment(sydneyDay(1)), endMoment(sydneyDay(3))));
+    await applyPopup(barPicker(RANGE_TITLE)!);
+    await flush(8);
+    patchReply = null;
+    await keydown(document.activeElement ?? document.body, "Escape");
+    await flush(3);
+    await waitFor(() => expect(barPicker(RANGE_TITLE)).toBeNull());
+    await openFromBar(RANGE_TITLE);
+    const popup = barPicker(RANGE_TITLE)!;
+    expect(rangeToggles(popup).active).toBe("Start");
+    expect(conflictBanner(popup).pinned).toBe(true);
   });
 
   it("B3 a reminders-only edit is one PATCH at the open version, range unchanged", async () => {

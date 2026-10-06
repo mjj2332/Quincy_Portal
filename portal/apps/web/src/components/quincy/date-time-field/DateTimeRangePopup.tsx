@@ -70,6 +70,8 @@ export type DateTimeRangePopupProps = {
   facts?: ReactNode;
   /** Failure and conflict feedback drawn at the foot of the body. */
   feedback?: ReactNode;
+  /** A one-line notice pinned under the Start/End toggle, so it stays in view while the body scrolls. Give it no live role. */
+  banner?: ReactNode;
   /** Move focus into the popup when it mounts. */
   focusOnMount?: boolean;
   onApply: (next: DateTimeRangeApply) => void | Promise<void>;
@@ -144,7 +146,7 @@ function resolveEnd(draft: EndDraft): Resolved {
   return { civil, gap, choices, chosen, epochMs };
 }
 
-export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "start", seed, reminders, facts, feedback, focusOnMount, onApply, onClose, onCancel }: Omit<DateTimeRangePopupProps, "seedKey">) {
+export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "start", seed, reminders, facts, feedback, banner, focusOnMount, onApply, onClose, onCancel }: Omit<DateTimeRangePopupProps, "seedKey">) {
   const anchor = useContext(PopupAnchorContext);
   const ownId = useId();
   const ownBodyRef = useRef<HTMLDivElement>(null);
@@ -333,6 +335,7 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
               </Button>
             ))}
           </ButtonGroup>
+          {banner}
           <div role="status" aria-live="polite" className="sr-only">{announcement}</div>
           {order && <FieldError>{order}</FieldError>}
         </div>

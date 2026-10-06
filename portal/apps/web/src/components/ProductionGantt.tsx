@@ -1604,6 +1604,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
                 {(disabled) => (
                   <GanttSubtaskDueCell
                     row={subtaskCell.row}
+                    street={projectById.get(subtaskCell.projectId)?.street ?? ""}
                     editorOpen={owner}
                     disabled={disabled}
                     error={(owner && dueEditor ? scheduleErrorFromEditor(dueEditor) : undefined) ?? stashErrorFor(subtaskCell.row)}
