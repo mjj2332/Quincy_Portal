@@ -6,7 +6,7 @@
  *
  * The cell owns presentation only. The write, the version it is made at, the lock, the optimistic bar, Undo and the
  * settle refetch belong to the scheduling controller (`use-scheduling-commands`), which `ProductionGantt` drives through
- * `openChecklistScheduleEditor(source, undefined, { inline: true })` / `submitScheduleEditor` / `cancelScheduleEditor`;
+ * `openChecklistScheduleEditor(source, undefined, { inline: true })` (the default `inlineTarget: "due-cell"`; the item menu's bar picker, #582, is `"item"` and drawn by `ProductionGanttScheduleEditorPopover`) / `submitScheduleEditor` / `cancelScheduleEditor`;
  * `open` is derived from the controller's editor session, never held here.
  *
  * Reminders (#425): the picker's strip is `RemindersStrip` inside `DateTimeRangePopup`, fed from `row.reminders`; no new element here.
@@ -48,6 +48,24 @@ export function scheduleErrorFromEditor(editor: Pick<ScheduleEditorState, "sourc
   return { message: failure.message };
 }
 
+/**
+ * "Save's own close is not a Cancel", shared by the Due cell and the bar's picker (#582) so the two cannot drift. Save and Use
+ * latest already tell the controller what they mean; the popover then calls `setOpen(false)` as well, which must not be read as a
+ * Cancel (that would release the lock under a request in flight). `onSave`/`onUseLatest` arm one pass-through; `closed` is what a
+ * `false` from the popover calls: it swallows that one close, else cancels (every close but Save and Use latest is a controller Cancel, so a conflicted draft does not survive Escape or an outside press on the Gantt yet: #585; the Checklist caller keeps #423's Cancel-only discard).
+ */
+export function useSchedulePickerClose({ onSubmit, onCancel }: { onSubmit: (schedule: RangeChecklistScheduleInput, reminderOffsetsMinutes?: number[]) => void; onCancel: () => void }) {
+  const closeHandledRef = useRef(false);
+  return {
+    closed: () => {
+      if (closeHandledRef.current) { closeHandledRef.current = false; return; }
+      onCancel();
+    },
+    onSave: (request: { schedule: RangeChecklistScheduleInput; reminderOffsetsMinutes?: number[] }) => { closeHandledRef.current = true; onSubmit(request.schedule, request.reminderOffsetsMinutes); },
+    onUseLatest: () => { closeHandledRef.current = true; onCancel(); },
+  };
+}
+
 export type GanttSubtaskDueCellProps = {
   row: GanttChecklistRowDto;
   /** True while the controller's editor session belongs to THIS row. */
@@ -74,9 +92,7 @@ export type GanttSubtaskDueCellProps = {
 export function GanttSubtaskDueCell({ row, editorOpen, disabled, error, retained, onOpen, onSubmit, onCancel, projectDefault = null }: GanttSubtaskDueCellProps) {
   const end = row.schedule.end;
   const text = formatDueCivil(end.localCivil);
-  // Save and Use latest already tell the controller what they mean; the popover then calls `setOpen(false)` as well, which must
-  // not be read as a Cancel (that would release the lock under a request in flight). This flag lets that one close pass.
-  const closeHandledRef = useRef(false);
+  const close = useSchedulePickerClose({ onSubmit, onCancel });
   if (!row.permissions.canOpenScheduleEditor) {
     return <time data-testid="gantt-subtask-due" dateTime={end.instant ?? end.localCivil} className="truncate text-foreground">{text}</time>;
   }
@@ -92,19 +108,15 @@ export function GanttSubtaskDueCell({ row, editorOpen, disabled, error, retained
             if (!disabled) onOpen();
             return;
           }
-          if (closeHandledRef.current) {
-            closeHandledRef.current = false;
-            return;
-          }
-          onCancel();
+          close.closed();
         }}
         // The owner's own session is not "busy"; a frozen chart is.
         busy={disabled}
         error={error}
         retained={retained}
-        onSave={(request) => { closeHandledRef.current = true; onSubmit(request.schedule, request.reminderOffsetsMinutes); }}
-        onUseLatest={() => { closeHandledRef.current = true; onCancel(); }}
-        onUseLatestItem={() => { closeHandledRef.current = true; onCancel(); }}
+        onSave={close.onSave}
+        onUseLatest={close.onUseLatest}
+        onUseLatestItem={close.onUseLatest}
         initialFocus="end"
         projectDefault={projectDefault}
         reminders={{ offsets: row.reminders.offsetsMinutes, next: row.reminders.nextOccurrence }}

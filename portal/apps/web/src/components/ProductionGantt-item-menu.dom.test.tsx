@@ -2,7 +2,7 @@
  * #463 — the item menu on the Production Gantt, through the REAL vendored Gantt: a bar click, Enter
  * or right-click opens the shared menu (Open project and Reschedule… on a Project bar, Open project
  * and Edit schedule… on a checklist bar); a drag never does; Space still starts keyboard Adjust
- * (ADR 0009). Edit schedule… opens the sheet at every width (not the inline popover).
+ * (ADR 0009). Edit schedule… opens the bar-anchored picker (#582), no sheet, at every width.
  *
  * Guard F: bars are found by their accessible name, the menu by role, dialogs by Quincy test ids.
  */
@@ -17,7 +17,7 @@ import { adminProductionGanttResponseSchema, PRODUCTION_GANTT_ZONE } from "@quin
 import type { DashboardIdentity } from "../lib/dashboard-projects";
 import { DEFAULT_GANTT_FACET_FILTERS } from "../lib/production-gantt-filters";
 import { ProductionGantt } from "./ProductionGantt";
-import { dateTimePopup, popupButton } from "@/testing/date-time-popup";
+import { dateTimePopup, popupButton, pressInPopup, rangeToggles } from "@/testing/date-time-popup";
 import { endMoment, startMoment, subtaskReminders } from "@/testing/subtask-schedule";
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
@@ -78,6 +78,7 @@ let host: HTMLDivElement;
 let root: Root;
 let fixture: Fixture;
 let onOpenProject: ReturnType<typeof vi.fn<(id: string) => void>>;
+let onAcceptGateChange: ReturnType<typeof vi.fn<(blocked: boolean) => void>>;
 
 async function flush(rounds = 4) {
   for (let index = 0; index < rounds; index += 1) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
@@ -88,7 +89,7 @@ async function mount(props: { withOpenProject?: boolean } = {}) {
   await act(async () => {
     root.render(
       <QueryClientProvider client={client}>
-        <ProductionGantt identity={identity} q="" filters={DEFAULT_GANTT_FACET_FILTERS} onFiltersChange={() => {}} onOpenProject={props.withOpenProject === false ? undefined : onOpenProject} />
+        <ProductionGantt identity={identity} q="" filters={DEFAULT_GANTT_FACET_FILTERS} onFiltersChange={() => {}} onAcceptGateChange={onAcceptGateChange} onOpenProject={props.withOpenProject === false ? undefined : onOpenProject} />
       </QueryClientProvider>,
     );
     await Promise.resolve();
@@ -130,6 +131,7 @@ beforeEach(() => {
   vi.setSystemTime(TODAY);
   fixture = { canEditDeadline: true, taskCanDrag: true };
   onOpenProject = vi.fn<(id: string) => void>();
+  onAcceptGateChange = vi.fn<(blocked: boolean) => void>();
   apiGetMock.mockReset();
   apiGetMock.mockImplementation((path: string) => (path.startsWith("/api/production-gantt") ? Promise.resolve(ganttResponse(fixture)) : Promise.reject(new Error(`unexpected fetch: ${path}`))));
   host = document.createElement("div");
@@ -200,26 +202,145 @@ describe("ProductionGantt item menu (#463)", () => {
     expect(document.activeElement).toBe(projectBar());
   });
 
-  it("Edit schedule… opens the schedule sheet, and Cancel returns focus to the bar", async () => {
-    await mount();
-    await activate(taskBar());
-    await pick("Edit schedule…");
-    expect(byTestId("event-calendar-schedule-editor")).not.toBeNull();
-    await act(async () => { byTestId("event-calendar-schedule-cancel")!.click(); await Promise.resolve(); });
-    await flush(30);
-    expect(document.activeElement).toBe(taskBar());
-  });
+  describe("Edit schedule… opens the bar's own picker (#582)", () => {
+    const pickerName = `Schedule for ${TASK_TITLE}, ${PROJECT_STREET}`;
+    const picker = () => dateTimePopup(pickerName);
+    const gateStates = () => onAcceptGateChange.mock.calls.map(([blocked]) => blocked);
 
-  it("Edit schedule… gives the sheet the Project default shortcut", async () => {
-    await mount();
-    await activate(taskBar());
-    await pick("Edit schedule…");
-    const sheet = byTestId("event-calendar-schedule-editor")!;
-    const trigger = [...sheet.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.getAttribute("aria-haspopup") === "dialog");
-    expect(trigger, "the sheet's Schedule field").toBeDefined();
-    await act(async () => { trigger!.click(); await Promise.resolve(); await Promise.resolve(); });
-    await flush(30);
-    expect(popupButton(dateTimePopup("Schedule")!, "Project default"), "the Project default shortcut").toBeDefined();
+    async function openPicker() {
+      await mount();
+      await activate(taskBar());
+      await pick("Edit schedule…");
+      await flush(3);
+    }
+
+    it("opens exactly one dialog, the picker, and no sheet; it opens on Start with the Project default and reminders", async () => {
+      await openPicker();
+      expect(picker()).not.toBeNull();
+      expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+      expect(byTestId("event-calendar-schedule-editor")).toBeNull();
+      expect(rangeToggles(picker()!).active).toBe("Start");
+      expect(popupButton(picker()!, "Project default"), "the Project default shortcut").toBeDefined();
+      expect(popupButton(picker()!, "1 day"), "a reminder chip").toBeDefined();
+      expect(gateStates().at(-1)).toBe(true);
+    });
+
+    it("Cancel sends no PATCH, releases the gate and puts focus on the bar before the menu's restore timer", async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+      await openPicker();
+      await pressInPopup(picker()!, "Cancel");
+      // Asserted before the item menu's 200ms restore-if-lost could run: the popover's own finalFocus did it.
+      await flush(3);
+      expect(document.activeElement).toBe(taskBar());
+      expect(picker()).toBeNull();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(gateStates().at(-1)).toBe(false);
+      vi.unstubAllGlobals();
+    });
+
+    it("Escape sends no PATCH and releases the gate", async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+      await openPicker();
+      await keydown(document.activeElement ?? document.body, "Escape");
+      await flush(3);
+      expect(picker()).toBeNull();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(gateStates().at(-1)).toBe(false);
+      expect(document.activeElement).toBe(taskBar());
+      vi.unstubAllGlobals();
+    });
+
+    it("an outside press sends no PATCH and releases the gate", async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+      await openPicker();
+      const outside = document.createElement("button");
+      outside.type = "button";
+      document.body.append(outside);
+      await act(async () => {
+        outside.focus();
+        outside.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerType: "mouse" }));
+        outside.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
+        outside.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, button: 0, pointerType: "mouse" }));
+        outside.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
+        outside.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
+        await Promise.resolve();
+      });
+      await flush(3);
+      outside.remove();
+      expect(picker()).toBeNull();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(gateStates().at(-1)).toBe(false);
+      vi.unstubAllGlobals();
+    });
+
+    describe("opening focus lands inside the picker, on the Start day", () => {
+      const describeActive = () => {
+        const el = document.activeElement as HTMLElement | null;
+        return { tag: el?.tagName, ariaLabel: el?.getAttribute("aria-label"), text: el?.textContent?.slice(0, 40), isDialog: el?.getAttribute("role") === "dialog", inPicker: !!(el && picker()?.contains(el)) };
+      };
+      const sleep = (ms: number) => act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, ms)); });
+      function expectOnPickerButton(when: string) {
+        const active = document.activeElement as HTMLElement | null;
+        const report = `${when}: ${JSON.stringify(describeActive())}`;
+        expect(picker(), report).not.toBeNull();
+        expect(active, report).not.toBeNull();
+        expect(picker()!.contains(active), `inside the picker. ${report}`).toBe(true);
+        expect(active, `not the dialog itself. ${report}`).not.toBe(picker());
+        expect(active!.tagName, `a button. ${report}`).toBe("BUTTON");
+      }
+
+      it("keyboard: Enter on the bar -> ArrowDown -> Enter on Edit schedule… puts focus inside the picker on the Start day", async () => {
+        await mount();
+        const bar = taskBar();
+        await act(async () => { bar.focus(); await Promise.resolve(); });
+        // Enter on a button: keydown, then the browser's native keyboard click (detail 0).
+        await keydown(bar, "Enter");
+        await act(async () => { bar.click(); await Promise.resolve(); await Promise.resolve(); });
+        await flush(6);
+        expect(menu()).not.toBeNull();
+        await keydown(document.activeElement!, "ArrowDown");
+        await flush(3);
+        const row = document.activeElement as HTMLElement;
+        expect(row.textContent).toBe("Edit schedule…");
+        await keydown(row, "Enter");
+        await act(async () => { row.click(); await Promise.resolve(); await Promise.resolve(); });
+        await flush(6);
+        expectOnPickerButton("keyboard, after settle");
+        await sleep(250);
+        await flush(3);
+        expectOnPickerButton("keyboard, after 250ms (past the restore timer)");
+        await sleep(400);
+        expectOnPickerButton("keyboard, after 650ms");
+      });
+
+      it("pointer: clicking the bar then Edit schedule… puts focus inside the picker on the Start day", async () => {
+        await openPicker();
+        expectOnPickerButton("pointer, after settle");
+        await sleep(250);
+        await flush(3);
+        expectOnPickerButton("pointer, after 250ms (past the restore timer)");
+        await sleep(400);
+        expectOnPickerButton("pointer, after 650ms");
+      });
+    });
+
+    it("stays open at a 720px-wide viewport (a bar session is not cancelled by narrowing)", async () => {
+      const original = window.matchMedia;
+      window.matchMedia = ((query: string) => ({
+        matches: query === "(max-width: 720px)",
+        media: query,
+        addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false,
+      })) as unknown as typeof window.matchMedia;
+      try {
+        await openPicker();
+        await flush(4);
+        expect(picker()).not.toBeNull();
+        expect(gateStates().at(-1)).toBe(true);
+      } finally { window.matchMedia = original; }
+    });
   });
 
   it("Escape closes the menu and returns focus to the bar", async () => {

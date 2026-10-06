@@ -127,12 +127,19 @@ export type DeadlineProposalResult =
   | { ok: false; reason: "invalid" };
 
 export type ChecklistSnapshot = CalendarAcceptedSnapshot<ChecklistSource>;
+/** #582: the surface that renders an inline schedule editor. */
+export type InlineEditorTarget = "due-cell" | "item";
+/** The `inline` + `inlineTarget` fields an editor state or operation carries forward (nothing for a non-inline one). */
+const inlineFieldsOf = (from: { inline?: boolean; inlineTarget?: InlineEditorTarget }): { inline?: true; inlineTarget?: InlineEditorTarget } =>
+  from.inline ? { inline: true, inlineTarget: from.inlineTarget ?? "due-cell" } : {};
 export type ChecklistOperationInfo = {
   drop?: CalendarRevertable;
   resize?: CalendarResizeInfo;
   editor?: boolean;
   /** #372: the editor is a surface's own inline picker (the Gantt's Due cell), not the Calendar's sheet: a conflict's authoritative body is kept and adopted, and an item conflict retains the draft too. */
   inline?: boolean;
+  /** #582: which surface draws an inline editor: the Gantt's Due cell (default) or its item menu's anchored bar picker. Carried through every reopen. */
+  inlineTarget?: InlineEditorTarget;
 };
 export type ChecklistProposal = {
   snapshot: ChecklistSnapshot;
@@ -170,6 +177,8 @@ export type ScheduleEditorState = {
   validationError?: ProductionCalendarScheduleEditorError;
   /** #372: set for a surface's own inline picker (`openChecklistScheduleEditor`'s `inline` option). */
   inline?: boolean;
+  /** #582: which surface draws the inline editor; absent on an inline state means `"due-cell"`. */
+  inlineTarget?: InlineEditorTarget;
   /** #372: the decoded `currentSubtask` of a retained inline item conflict, for the picker's latest-item notice. */
   latestItem?: ChecklistMutationResult;
 };
@@ -341,7 +350,7 @@ export type SchedulingController<TBaseline> = {
   openMoveDialog: (event: ProjectDeadlineCalendarEventDto) => void;
   openUnscheduledProjectDialog: (entry: ProjectCalendarUnscheduledEntryDto) => void;
   /** `inline` (#372): the caller renders the editor itself, so a conflict's own body is adopted (see `ChecklistOperationInfo.inline`). */
-  openChecklistScheduleEditor: (source: ChecklistSource, initialSchedule?: RangeChecklistScheduleInput, options?: { inline?: boolean }) => void;
+  openChecklistScheduleEditor: (source: ChecklistSource, initialSchedule?: RangeChecklistScheduleInput, options?: { inline?: boolean; inlineTarget?: InlineEditorTarget }) => void;
   /** `reminderOffsetsMinutes` is the dialog's edited Deadline reminders; absent, the event's own are kept (#422). */
   submitMoveDialog: (localCivil: string, disambiguation?: ProjectDeadlineDisambiguation, reminderOffsetsMinutes?: number[]) => void;
   cancelMoveDialog: () => void;
@@ -1151,7 +1160,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
           if (proposal.operation.editor) {
             setAcceptGate(true);
             commandLockRef.current.active = true;
-            setScheduleEditor({ source: proposal.source, snapshot: proposal.snapshot, initialSchedule: proposal.schedule, ...(proposal.request.reminderOffsetsMinutes ? { initialReminderOffsets: proposal.request.reminderOffsetsMinutes } : {}), ...(proposal.operation.inline ? { inline: true } : {}), validationError: { code: action.code, message: action.announce, endpoint, choices } });
+            setScheduleEditor({ source: proposal.source, snapshot: proposal.snapshot, initialSchedule: proposal.schedule, ...(proposal.request.reminderOffsetsMinutes ? { initialReminderOffsets: proposal.request.reminderOffsetsMinutes } : {}), ...inlineFieldsOf(proposal.operation), validationError: { code: action.code, message: action.announce, endpoint, choices } });
           } else {
             setAcceptGate(true);
             commandLockRef.current.active = true;
@@ -1173,7 +1182,9 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
         return;
       }
 
-      if (action.refetch) setAcceptGate(false);
+      // A retained-draft conflict keeps the gate through its refetch: the editor reopens below, and an inline picker reads a
+      // released gate with no session as idle and drops its retained draft (#582). `refetchAuthoritative` accepts directly.
+      if (action.refetch && !action.retainDraft) setAcceptGate(false);
       const refreshed = action.refetch ? await refetchAuthoritative() : { ok: false };
       if (accessLostRef.current || token !== operationTokenRef.current) return;
       if (action.retainDraft) {
@@ -1191,7 +1202,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
         const nextSnapshot: ChecklistSnapshot = { ...proposal.snapshot, event: cloneSource(latest) };
         commandLockRef.current.active = true;
         setAcceptGate(true);
-        setScheduleEditor({ source: latest, snapshot: nextSnapshot, initialSchedule: proposal.schedule, ...(proposal.request.reminderOffsetsMinutes ? { initialReminderOffsets: proposal.request.reminderOffsetsMinutes } : {}), ...(proposal.operation.inline ? { inline: true } : {}), ...(editorConflict?.item ? { latestItem: editorConflict.item } : {}), validationError: { code: action.code, message: action.announce, ...(endpointOfError(error) ? { endpoint: endpointOfError(error) } : {}) } });
+        setScheduleEditor({ source: latest, snapshot: nextSnapshot, initialSchedule: proposal.schedule, ...(proposal.request.reminderOffsetsMinutes ? { initialReminderOffsets: proposal.request.reminderOffsetsMinutes } : {}), ...inlineFieldsOf(proposal.operation), ...(editorConflict?.item ? { latestItem: editorConflict.item } : {}), validationError: { code: action.code, message: action.announce, ...(endpointOfError(error) ? { endpoint: endpointOfError(error) } : {}) } });
       } else {
         setScheduleEditor(null);
         setChecklistFold(null);
@@ -1292,7 +1303,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     finishChecklistInteraction(state.proposal.operation, state.proposal.source, { kind: "cancelled" });
   }, [checklistFold, finishChecklistInteraction]);
 
-  const openChecklistScheduleEditor = useCallback((source: ChecklistSource, initialSchedule?: RangeChecklistScheduleInput, options?: { inline?: boolean }) => {
+  const openChecklistScheduleEditor = useCallback((source: ChecklistSource, initialSchedule?: RangeChecklistScheduleInput, options?: { inline?: boolean; inlineTarget?: InlineEditorTarget }) => {
     if (!source.permissions.canOpenScheduleEditor || calendarInteractionBlocked || settleRef.current.pending || !canStartCalendarCommand(commandLockRef.current)) return;
     const snapshot = acceptForInteraction(source, { eventId: source.id, control: "move-reschedule" });
     if (!snapshot) return;
@@ -1302,7 +1313,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
       ...("timing" in source && formatAssigneeNames(source.assignees, source.otherAssigneeCount) ? { assigneeNames: formatAssigneeNames(source.assignees, source.otherAssigneeCount) } : {}),
       ...("timing" in source && source.status.sameAssigneeOverlap === true ? { overlap: true } : {}),
     });
-    setScheduleEditor({ source, snapshot, ...(initialSchedule ? { initialSchedule } : {}), ...(options?.inline ? { inline: true } : {}) });
+    setScheduleEditor({ source, snapshot, ...(initialSchedule ? { initialSchedule } : {}), ...inlineFieldsOf(options ?? {}) });
   }, [acceptForInteraction, announceChecklistLifecycle, calendarInteractionBlocked]);
 
   const handleScheduleEditorSubmit = useCallback((schedule: RangeChecklistScheduleInput, reminderOffsetsMinutes?: number[]) => {
@@ -1319,7 +1330,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
       request: { expectedVersion: state.source.schedule.version, schedule, ...(reminderOffsetsMinutes ? { reminderOffsetsMinutes } : {}) },
       schedule,
       timing: timingFromChecklistSchedule(checklistScheduleToDto(normalized.value)),
-      operation: { editor: true, ...(state.inline ? { inline: true } : {}) },
+      operation: { editor: true, ...inlineFieldsOf(state) },
     };
     setScheduleEditor(null);
     void runChecklistMutation(proposal);
@@ -1328,7 +1339,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
   const handleScheduleEditorCancel = useCallback(() => {
     const state = scheduleEditor;
     if (!state) return;
-    finishChecklistInteraction({ editor: true, ...(state.inline ? { inline: true } : {}) }, state.source, { kind: "cancelled" });
+    finishChecklistInteraction({ editor: true, ...inlineFieldsOf(state) }, state.source, { kind: "cancelled" });
   }, [finishChecklistInteraction, scheduleEditor]);
 
   const refreshRecovery = useCallback(async () => {
