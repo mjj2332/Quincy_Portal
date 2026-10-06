@@ -12,7 +12,7 @@ describe("event-calendar agenda time span on phones (#648)", () => {
   it("the agenda time span carries the phone-stacking classes", () => {
     const span = file.match(/<span className="([^"]*w-40 shrink-0[^"]*)">\s*\{agendaTimeText\}/);
     expect(span, "agenda time span not found").not.toBeNull();
-    const tokens = span![1].split(/\s+/);
+    const tokens = span?.[1]?.split(/\s+/) ?? [];
     for (const token of ["max-[721px]:w-auto", "max-[721px]:basis-full", "max-[721px]:text-xs"]) {
       expect(tokens).toContain(token);
     }

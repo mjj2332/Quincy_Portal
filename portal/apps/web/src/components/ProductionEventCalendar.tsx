@@ -720,7 +720,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
               <SheetContent
                 side="left"
                 showCloseButton={false}
-                className="z-[var(--z-dialog)] w-[320px] max-w-[90vw] gap-0 p-0"
+                className="z-[var(--z-dialog)] data-[side=left]:w-[320px] data-[side=left]:max-w-[90vw] gap-0 p-0"
                 data-testid="event-calendar-rail-sheet"
                 overlayProps={{
                   "data-testid": "event-calendar-rail-sheet-scrim",

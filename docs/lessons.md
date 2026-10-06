@@ -5825,3 +5825,15 @@ Tags: focus-overlays, reui-vendor, testing-guards · #625
   The alert dialog's focus guards (`data-base-ui-focus-guard`) sit in the same portal as the overlay, so the popover exemption
   matches the portal, not just the panel and scrim; `AnchoredPopover`'s Floating UI `focus-out` close is skipped while an alert
   dialog is mounted for the same reason.
+
+## A plain width on a SheetContent loses to the sheet's data-side width
+Tags: css-tokens, reui-vendor, focus-overlays · #648
+
+The Calendar's rail sheet set `w-[320px] max-w-[90vw]` on `SheetContent`, but `reui/sheet.tsx` carries
+`data-[side=left]:w-3/4`. tailwind-merge only merges classes that share the same variant chain, so a plain
+`w-[320px]` and a `data-[side=left]:w-3/4` are both kept, and the data-variant rule wins on specificity. The sheet was
+240px at a 320px viewport (clipping the mini month's "Su" column, which needs 256px) and 384px on tablets; the 320px
+never applied. Fix: set the consumer width through the same variant (`data-[side=left]:w-[320px]
+data-[side=left]:max-w-[90vw]`, as `quincy/RailSheet.tsx` does). `styles/sheet-width.guard.test.ts` fails on a plain `w-` / `max-w-` utility in any
+`<SheetContent className>` outside `components/reui/`. The general rule: a consumer override of a utility the vendor
+sets under a data or state variant must use that same variant, or it silently loses.
