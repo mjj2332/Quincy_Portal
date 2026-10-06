@@ -1835,6 +1835,31 @@ describe("table bar with no room falls back to the toolbar group (#535)", () => 
       await waitForCondition(() => document.querySelector('[role="alertdialog"]') !== null, "delete table dialog");
     });
 
+    it("choosing Delete Table leaves focus in the confirmation dialog after the menu's exit, and Cancel returns it to the text (Sol r2)", async () => {
+      // A real browser plays the menu's exit animation: Base UI waits on `getAnimations()` before the close hand-off (finalFocus).
+      const proto = Element.prototype as unknown as { getAnimations?: () => unknown[] };
+      const original = proto.getAnimations;
+      proto.getAnimations = () => [{ finished: new Promise((resolve) => setTimeout(resolve, 150)) }];
+      try {
+      const host = mount(); const editor = await renderDoc(host, oneRow());
+      await caretIn(editor, "Mon");
+      await waitForCondition(() => menuTrigger(host) !== null, "Table menu");
+      await click(menuTrigger(host)!);
+      await click(menuItem("Delete Table"));
+      await waitForCondition(() => document.querySelector('[role="alertdialog"]') !== null, "delete table dialog");
+      // Past the menu's exit (its close hand-off runs then).
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); await new Promise((resolve) => requestAnimationFrame(() => resolve(null))); });
+      expect(document.querySelector('[role="menu"]')).toBeNull();
+      expect(document.activeElement?.closest('[role="alertdialog"]')).not.toBeNull();
+      expect(document.activeElement).not.toBe(editor);
+      const cancel = [...document.querySelectorAll<HTMLElement>('[role="alertdialog"] button')].find((button) => button.textContent === "Cancel")!;
+      await click(cancel);
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); await new Promise((resolve) => requestAnimationFrame(() => resolve(null))); });
+      expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+      expect(document.activeElement === editor || editor.contains(document.activeElement)).toBe(true);
+      } finally { if (original) proto.getAnimations = original; else delete proto.getAnimations; }
+    });
+
     it("leaving the table brings Insert table back", async () => {
       const host = mount(); const editor = await renderDoc(host, oneRow());
       await caretIn(editor, "Mon");

@@ -220,6 +220,8 @@ export function RichTextTableControls({
   disabled = false,
 }: RichTextTableControlsProps) {
   const table = useRichTextSelector(editor, readTable)
+  // As in the Table menu: choosing Delete Table opens a dialog the menu's close hand-off must not steal focus from (#523).
+  const confirmingRef = useRef(false)
 
   return (
     <>
@@ -249,7 +251,7 @@ export function RichTextTableControls({
         <PanelTopIcon aria-hidden="true" />
       </RichTextToggle>
       <RichTextToolbarSeparator />
-      <DropdownMenu>
+      <DropdownMenu onOpenChange={(open) => { if (open) confirmingRef.current = false }}>
         <Tooltip>
           {/* The span carries the tooltip, so the trigger keeps its own props. */}
           <TooltipTrigger render={<span className="flex shrink-0" />}>
@@ -273,7 +275,7 @@ export function RichTextTableControls({
         <DropdownMenuContent
           align="start"
           className="w-auto"
-          finalFocus={() => editor.view.dom}
+          finalFocus={() => (confirmingRef.current ? false : editor.view.dom)}
         >
           <DropdownMenuGroup>
             <DropdownMenuLabel>Delete</DropdownMenuLabel>
@@ -293,7 +295,7 @@ export function RichTextTableControls({
             </DropdownMenuItem>
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
-          <DropdownMenuItem variant="destructive" disabled={disabled} onClick={onDeleteTable}>
+          <DropdownMenuItem variant="destructive" disabled={disabled} onClick={() => { confirmingRef.current = true; onDeleteTable() }}>
             <Trash2Icon aria-hidden="true" />
             Delete Table
           </DropdownMenuItem>
@@ -472,6 +474,9 @@ interface RichTextTableMenuProps {
 export function RichTextTableMenu({ editor, onDeleteTable, disabled = false }: RichTextTableMenuProps) {
   const table = useRichTextSelector(editor, readTable)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
+  // Delete Table opens a dialog: the menu's close hand-off (finalFocus, after its exit animation) must not pull focus back
+  // to the text behind it. Set on choosing it, cleared the next time the menu opens, not in a completion callback (#523).
+  const confirmingRef = useRef(false)
 
   // Appearing must not leave the slot scrolled out of a narrow toolbar: write scrollLeft (a call that scrolls the page itself would jump it).
   useLayoutEffect(() => {
@@ -510,7 +515,7 @@ export function RichTextTableMenu({ editor, onDeleteTable, disabled = false }: R
 
   return (
     <span className="flex shrink-0" aria-keyshortcuts="Alt+F10" onKeyDownCapture={handleKeyDown}>
-      <DropdownMenu>
+      <DropdownMenu onOpenChange={(open) => { if (open) confirmingRef.current = false }}>
         <DropdownMenuTrigger
           render={
             <Button
@@ -528,7 +533,7 @@ export function RichTextTableMenu({ editor, onDeleteTable, disabled = false }: R
           Table
           <ChevronDownIcon aria-hidden="true" />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-auto" finalFocus={() => editor.view.dom}>
+        <DropdownMenuContent align="start" className="w-auto" finalFocus={() => (confirmingRef.current ? false : editor.view.dom)}>
           <DropdownMenuGroup>
             <DropdownMenuItem disabled={disabled || !table.canAddRow} onClick={() => tableCommands.addRow(editor)}>
               <BetweenHorizontalEndIcon aria-hidden="true" />
@@ -555,7 +560,7 @@ export function RichTextTableMenu({ editor, onDeleteTable, disabled = false }: R
             </DropdownMenuItem>
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
-          <DropdownMenuItem variant="destructive" disabled={disabled} onClick={onDeleteTable}>
+          <DropdownMenuItem variant="destructive" disabled={disabled} onClick={() => { confirmingRef.current = true; onDeleteTable() }}>
             <Trash2Icon aria-hidden="true" />
             Delete Table
           </DropdownMenuItem>
