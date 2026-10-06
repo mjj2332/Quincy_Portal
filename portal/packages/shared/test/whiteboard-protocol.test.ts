@@ -141,8 +141,9 @@ describe("whiteboard protocol", () => {
 
     it("validates the versions listing", () => {
       const version = { id: "3f2504e0-4f89-41d3-9a0c-0305e82c3301", createdAt: 1, createdBy: { id: "u", name: "Ana" }, reason: "interval", elementCount: 2, byteCount: 10 };
-      expect(whiteboardVersionsResponseSchema.safeParse({ generation: 1, versions: [version, { ...version, createdBy: null, reason: "pre_restore" }] }).success).toBe(true);
-      expect(whiteboardVersionsResponseSchema.safeParse({ generation: 1, versions: [{ ...version, reason: "manual" }] }).success).toBe(false);
+      expect(whiteboardVersionsResponseSchema.safeParse({ generation: 1, currentVersionId: null, versions: [version, { ...version, createdBy: null, reason: "pre_restore" }] }).success).toBe(true);
+      expect(whiteboardVersionsResponseSchema.safeParse({ generation: 1, currentVersionId: "v1", versions: [version] }).success).toBe(true);
+      expect(whiteboardVersionsResponseSchema.safeParse({ generation: 1, currentVersionId: null, versions: [{ ...version, reason: "manual" }] }).success).toBe(false);
       expect(whiteboardVersionsResponseSchema.safeParse({ versions: [] }).success).toBe(false);
     });
   });

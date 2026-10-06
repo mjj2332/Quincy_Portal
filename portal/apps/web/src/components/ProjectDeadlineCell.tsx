@@ -19,6 +19,7 @@ import { Skeleton } from "./reui/skeleton";
 import { ProjectDeadlineControl } from "./ProjectDeadlineControl";
 import { deadlineTriggerText } from "./ProjectHeaderDeadline";
 import { DateTimePopoverContent } from "./quincy/DateTimeField";
+import type { PopupCollisionAvoidance, PopupCollisionPadding } from "../lib/date-time-field";
 import { useProjectDetailQuery, type ProjectDetail } from "../lib/project-data";
 import { cn } from "../lib/utils";
 
@@ -52,7 +53,7 @@ export function ProjectDetailGate({ projectId, role, fallbackClassName, testIdPr
   );
 }
 
-export function ProjectDeadlineCell({ projectId, street, deadline, canEdit, disabled, role, emptyLabel = "No deadline", testIdPrefix, triggerClassName, textClassName, overdueInName = false }: {
+export function ProjectDeadlineCell({ projectId, street, deadline, canEdit, disabled, role, emptyLabel = "No deadline", testIdPrefix, triggerClassName, textClassName, overdueInName = false, popupCollisionAvoidance, popupCollisionPadding }: {
   projectId: string;
   street: string;
   deadline: ProjectDeadlineView | null;
@@ -68,8 +69,17 @@ export function ProjectDeadlineCell({ projectId, street, deadline, canEdit, disa
   textClassName?: string;
   /** Adds "overdue" to the trigger's accessible name and a visually hidden word to the read-only text. */
   overdueInName?: boolean;
+  /** Replaces the popup's collision policy (#587); omitted keeps the default. */
+  popupCollisionAvoidance?: PopupCollisionAvoidance;
+  /** Replaces the popup's 16px viewport padding. A function is called each time the popup opens, never while it is closed (#587). */
+  popupCollisionPadding?: PopupCollisionPadding | (() => PopupCollisionPadding);
 }) {
   const [open, setOpen] = useState(false);
+  const [openPadding, setOpenPadding] = useState<PopupCollisionPadding | undefined>(undefined);
+  const onOpenChange = (next: boolean) => {
+    if (next) setOpenPadding(typeof popupCollisionPadding === "function" ? popupCollisionPadding() : popupCollisionPadding);
+    setOpen(next);
+  };
   if (deadline === null) {
     // No Deadline: an inert dash.
     return <span data-testid={`${testIdPrefix}-deadline`} className="text-foreground-secondary">—<span className="sr-only">{emptyLabel}</span></span>;
@@ -81,7 +91,7 @@ export function ProjectDeadlineCell({ projectId, street, deadline, canEdit, disa
     return <time data-testid={`${testIdPrefix}-deadline`} dateTime={deadline.at} className={cn("truncate", tone, textClassName)}>{text}{overdueWord && <span className="sr-only"> (overdue)</span>}</time>;
   }
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger
         render={<Button type="button" size="xs" variant="ghost" className={cn(CELL_TRIGGER, tone, textClassName, triggerClassName)} />}
         data-testid={`${testIdPrefix}-deadline-trigger`}
@@ -94,7 +104,7 @@ export function ProjectDeadlineCell({ projectId, street, deadline, canEdit, disa
       {/* #422: the date-time popup mounts once the detail has loaded, after the popover opened, so
           Base UI's `initialFocus` (evaluated at open) found nothing: `focusOnMount` moves focus in
           the moment the popup mounts. The cached-detail case is covered by `initialFocus`. */}
-      <DateTimePopoverContent label="Deadline">
+      <DateTimePopoverContent label="Deadline" popupCollisionAvoidance={popupCollisionAvoidance} popupCollisionPadding={openPadding}>
         <ProjectDetailGate projectId={projectId} role={role} testIdPrefix={testIdPrefix} fallbackClassName="m-[var(--space-3)] w-[min(20rem,calc(100vw-4*var(--space-4)))]">
           {(detail) => <ProjectDeadlineControl projectId={projectId} schedule={detail.deadlineSchedule} canEdit onClose={() => setOpen(false)} focusOnMount />}
         </ProjectDetailGate>

@@ -5,7 +5,7 @@ import { FIELD_BOX } from "@/components/reui/input";
 import { PopoverContent, Popover, PopoverTrigger } from "@/components/reui/popover";
 import { isSydneyCalendarDate } from "@quincy/shared";
 import { formatCivilDay, formatCivilRange } from "@/lib/date-format";
-import { buildShortcuts, civilToCell, resolveDateTimePopupPlacement, sydneyToday, yearBounds, type PopupCollisionAvoidance, type PopupCollisionPadding } from "@/lib/date-time-field";
+import { buildShortcuts, DATE_TIME_POPUP_EDGE_GAP, popupPaddingWithTopAtLeast, civilToCell, resolveDateTimePopupPlacement, sydneyToday, yearBounds, type PopupCollisionAvoidance, type PopupCollisionPadding } from "@/lib/date-time-field";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { cn } from "@/lib/utils";
 import { CalendarPane } from "./date-time-field/CalendarPane";
@@ -56,6 +56,12 @@ type CommonProps = {
   popupCollisionAvoidance?: PopupCollisionAvoidance;
   /** Replaces the popup's 16px viewport padding. A function is called each time the popup opens (after the DOM has committed), never while it is closed. */
   popupCollisionPadding?: PopupCollisionPadding | (() => PopupCollisionPadding);
+  /**
+   * Scrolls the field's row to the top of the viewport (below the padding's top edge) as the popup opens, and keeps
+   * the popup from rising above the trigger, so the popup never cuts through the field's own label (#537).
+   * For a popup too tall to sit below its field, which shifts over it (New shoot's Deadline).
+   */
+  popupPinTopToField?: boolean;
 };
 
 export type DateTimeFieldProps =
@@ -194,14 +200,33 @@ export function DateTimePopoverContent({ label, className, children, popupCollis
   );
 }
 
+/**
+ * #537 — the field's row (label, trigger, description) is scrolled to the top of the viewport, below
+ * `padding.top`, and the returned padding keeps the popup from rising above the trigger, so the label
+ * above it stays whole. The scroll is instant: the popup measures the trigger on this same open.
+ */
+function pinnedToField(trigger: HTMLElement | null, padding: PopupCollisionPadding): PopupCollisionPadding {
+  const row = trigger?.parentElement;
+  if (!trigger || !row) return padding;
+  const edges = popupPaddingWithTopAtLeast(padding, 0);
+  row.style.scrollMarginTop = `${edges.top}px`;
+  row.scrollIntoView({ block: "start", inline: "nearest", behavior: "instant" });
+  row.style.scrollMarginTop = "";
+  return popupPaddingWithTopAtLeast(edges, trigger.getBoundingClientRect().top);
+}
+
 export function DateTimeField(props: DateTimeFieldProps) {
   const { id, label, placeholder = "Select a date", disabled } = props;
   const clearable = props.variant === "range" ? false : (props.clearable ?? false);
   const [open, setOpen] = useState(false);
   // Resolved per open, not at field mount: the content element exists while closed, and a cold load has no shell header yet (#528).
   const [openPadding, setOpenPadding] = useState<PopupCollisionPadding | undefined>(undefined);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const onOpenChange = (next: boolean) => {
-    if (next) setOpenPadding(typeof props.popupCollisionPadding === "function" ? props.popupCollisionPadding() : props.popupCollisionPadding);
+    if (next) {
+      const resolved = typeof props.popupCollisionPadding === "function" ? props.popupCollisionPadding() : props.popupCollisionPadding;
+      setOpenPadding(props.popupPinTopToField ? pinnedToField(triggerRef.current, resolved ?? DATE_TIME_POPUP_EDGE_GAP) : resolved);
+    }
     setOpen(next);
   };
   const labelId = `${id}-label`;
@@ -221,6 +246,7 @@ export function DateTimeField(props: DateTimeFieldProps) {
       <FieldLabel id={labelId} htmlFor={id}>{label}</FieldLabel>
       <Popover open={open} onOpenChange={onOpenChange}>
         <PopoverTrigger
+          ref={triggerRef}
           id={id}
           type="button"
           disabled={disabled}

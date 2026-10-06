@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode, type Ref } from "react";
 import { NOTICE_BODY_MAX_LENGTH, NOTICE_RICH_TEXT_JSON_MAX_BYTES, richTextDocByteLength, richTextPlainText, type RichTextDoc } from "@quincy/shared";
-import { stripLinkPreviewDisplay } from "../lib/rich-text-tiptap";
+import { stripEmbeddedDisplay } from "../lib/rich-text-tiptap";
 import { createNoticeBoardPost, deleteNoticeBoardPost, editNoticeBoardPost, useNoticeBoardPostsQuery, useNoticeBoardPresentation, useNoticeBoardReadStateQuery } from "../lib/notice-board-data";
 import { ApiError, apiGet } from "../lib/api";
 import { cn } from "@/lib/utils";
@@ -35,7 +35,7 @@ const MENTION_HINT = cn(META_TEXT, "!normal-case", "flex-[1_1_12rem] min-w-0");
 // 2px stroke) would reach past it onto the divider; draw that ring inside the box there instead.
 const TRIGGER_OVERHANG =
   "-my-[calc((28px_-_1.2*var(--text-xs))/2)] max-[721px]:-my-[calc((44px_-_1.2*var(--text-xs))/2)] " +
-  "max-[721px]:focus-visible:!-outline-offset-2";
+  "max-[721px]:-outline-offset-2 max-[721px]:focus-visible:!-outline-offset-2";
 
 const EMPTY_DOC: RichTextDoc = { type: "doc", content: [{ type: "paragraph" }] };
 type NoticeBoardMutation = "create" | "edit" | "delete";
@@ -54,7 +54,6 @@ function relativeTime(value: string): string {
 export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
   const queryClient = useQueryClient();
   const panelId = useId();
-  const mentionHintRef = useRef<HTMLSpanElement>(null); // the helper line the table bar may extend down to (#535)
   const [content, setContent] = useState<RichTextDoc>(EMPTY_DOC);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState<RichTextDoc>(EMPTY_DOC);
@@ -94,7 +93,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
 
   // Over either cap the editor says so and the action is disabled: the server (the notice profile)
   // would answer 400, and the character counter reads the same untrimmed plain text.
-  const overCap = (doc: RichTextDoc) => richTextDocByteLength(stripLinkPreviewDisplay(doc)) > NOTICE_RICH_TEXT_JSON_MAX_BYTES || richTextPlainText(doc).length > NOTICE_BODY_MAX_LENGTH;
+  const overCap = (doc: RichTextDoc) => richTextDocByteLength(stripEmbeddedDisplay(doc)) > NOTICE_RICH_TEXT_JSON_MAX_BYTES || richTextPlainText(doc).length > NOTICE_BODY_MAX_LENGTH;
   const postingOverBytes = overCap(content);
   const editingOverBytes = overCap(editingContent);
   const queryError = postsQuery.error ?? readStateQuery.error;
@@ -130,7 +129,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
   async function submit(event?: FormEvent) {
     event?.preventDefault(); if (postingOverBytes || composerUploading || !beginNoticeBoardMutation("create")) return;
     try {
-      await createNoticeBoardPost(queryClient, stripLinkPreviewDisplay(content));
+      await createNoticeBoardPost(queryClient, stripEmbeddedDisplay(content));
       setContent(EMPTY_DOC); clearMutationError("create");
     } catch (reason) {
       setMutationError("create", reason, "The post could not be published.");
@@ -140,7 +139,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
   async function saveEdit(id: string) {
     if (editingOverBytes || editUploading || !beginNoticeBoardMutation("edit")) return;
     try {
-      await editNoticeBoardPost(queryClient, id, stripLinkPreviewDisplay(editingContent));
+      await editNoticeBoardPost(queryClient, id, stripEmbeddedDisplay(editingContent));
       restoreTriggerFor.current = id; setEditingId(null); setEditingContent(EMPTY_DOC); clearMutationError("edit");
     } catch (reason) {
       setMutationError("edit", reason, "The post could not be updated.");
@@ -218,7 +217,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
           {renderEditComposer(editingId)}
         </article>}
       </div>
-      <form data-slot="notice-board-composer" className={CREATE_COMPOSER} onSubmit={(event) => void submit(event)}><label className="sr-only" htmlFor={`${panelId}-body`}>Write a notice</label><QuincyRichTextEditor preset="document" id={`${panelId}-body`} value={content} onChange={setContent} limit={NOTICE_BODY_MAX_LENGTH} maxBytes={NOTICE_RICH_TEXT_JSON_MAX_BYTES} disabled={isBusy} loadMentionables={loadMentionables} placeholder="Write a notice for the team…" onSubmit={() => void submit()} media={{ noticeBoard: true }} linkPreviews={{ noticeBoard: true }} onUploadingChange={setComposerUploading} tableBubbleFloor={mentionHintRef} /><div className={COMPOSER_FOOT}><span ref={mentionHintRef} className={MENTION_HINT}>Use @ to mention active staff</span><button className={buttonClasses("primary")} type="submit" disabled={isBusy || postingOverBytes || composerUploading}>{isPosting ? "Posting…" : "Post notice"}</button></div></form>
+      <form data-slot="notice-board-composer" className={CREATE_COMPOSER} onSubmit={(event) => void submit(event)}><label className="sr-only" htmlFor={`${panelId}-body`}>Write a notice</label><QuincyRichTextEditor preset="document" id={`${panelId}-body`} value={content} onChange={setContent} limit={NOTICE_BODY_MAX_LENGTH} maxBytes={NOTICE_RICH_TEXT_JSON_MAX_BYTES} disabled={isBusy} loadMentionables={loadMentionables} placeholder="Write a notice for the team…" onSubmit={() => void submit()} media={{ noticeBoard: true }} linkPreviews={{ noticeBoard: true }} onUploadingChange={setComposerUploading} /><div className={COMPOSER_FOOT}><span className={MENTION_HINT}>Use @ to mention active staff</span><button className={buttonClasses("primary")} type="submit" disabled={isBusy || postingOverBytes || composerUploading}>{isPosting ? "Posting…" : "Post notice"}</button></div></form>
     </div>
     <NoticeDeleteDialog open={deleteTarget !== null} excerpt={deleteTarget?.excerpt ?? ""} deleting={isDeleting} error={deleteError} onConfirm={() => void confirmDelete()} onCancel={() => setDeleteTarget(null)} finalFocus={deleteFinalFocus} />
   </section>;

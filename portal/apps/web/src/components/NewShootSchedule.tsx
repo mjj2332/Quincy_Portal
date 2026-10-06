@@ -3,7 +3,7 @@ import { DateTimeField, type DateTimeApply, type DateTimeStored } from "@/compon
 import { PriorityStars } from "@/components/quincy/PriorityStars";
 import { AutomaticDeadlineMark, AUTOMATIC_DEADLINE_NEW_SHOOT_NOTE } from "@/components/AutomaticDeadlineMark";
 import { Field, FieldLabel } from "@/components/reui/field";
-import { shellChromeBottom } from "@/lib/shell-chrome";
+import { SHELL_AWARE_SHIFT_AVOIDANCE, shellAwarePopupPadding } from "@/lib/date-time-field";
 
 /**
  * #488 — the Deadline and Priority controls on New shoot. Presentational: `CreateProject` owns the
@@ -28,11 +28,6 @@ export function deadlineRequestBody(draft: NewShootDeadline) {
     ? { localCivil: draft.localCivil, ...(draft.disambiguation ? { disambiguation: draft.disambiguation } : {}), reminderOffsetsMinutes: draft.reminderOffsetsMinutes }
     : null;
 }
-
-// #528 — the Deadline form is taller than the room above or below a field this low on the page, so it
-// shifts into view (it may cover its own trigger) instead of flipping up under the sticky top bar.
-const DEADLINE_POPUP_AVOIDANCE = { side: "shift", align: "shift", fallbackAxisSide: "none" } as const;
-const deadlinePopupPadding = () => ({ top: shellChromeBottom() + 16, right: 16, bottom: 16, left: 16 });
 
 export function NewShootSchedule({ shootDate, street, deadline, onDeadlineChange, priority, onPriorityChange }: {
   shootDate: string;
@@ -80,8 +75,9 @@ export function NewShootSchedule({ shootDate, street, deadline, onDeadlineChange
       facts={automaticPreview ? <p className="[font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">{AUTOMATIC_DEADLINE_NEW_SHOOT_NOTE}</p> : undefined}
       description={note}
       descriptionRole={deadline.kind === "automatic" && deadline.cleared ? "status" : undefined}
-      popupCollisionAvoidance={DEADLINE_POPUP_AVOIDANCE}
-      popupCollisionPadding={deadlinePopupPadding}
+      popupCollisionAvoidance={SHELL_AWARE_SHIFT_AVOIDANCE}
+      popupCollisionPadding={shellAwarePopupPadding}
+      popupPinTopToField
       onApply={apply}
     />
     <Field>

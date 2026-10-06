@@ -62,7 +62,7 @@ export type UseSchedulingItemMenuOptions = {
   fallbackFor?: (element: HTMLElement) => HTMLElement | null;
   /** Runs a picked row, after the menu has closed and focus is on the item. */
   onAction: (id: SchedulingItemActionId, key: string) => void;
-  /** True while a dialog or sheet the menu handed off to is open. Its closing triggers the focus restore. */
+  /** True while a dialog, sheet or the bar's anchored picker (#582) the menu handed off to is open. Its closing triggers the focus restore. */
   followOnOpen?: boolean;
   /** A change closes the menu without running anything (the controller's reset key, an access change). */
   closeKey?: string;

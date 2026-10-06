@@ -4,9 +4,11 @@ import {
   NOTICE_RICH_TEXT_JSON_MAX_BYTES,
   COMMENT_MEDIA_RICH_TEXT_PROFILE,
   NOTICE_RICH_TEXT_PROFILE,
+  RICH_TEXT_IMAGE_ALT_MAX_LENGTH,
   RICH_TEXT_JSON_MAX_BYTES,
   RICH_TEXT_MAX_NESTING,
   RichTextValidationError,
+  imageAltFromFileName,
   isHttpUrl,
   legacyBodyToRichTextDoc,
   normalizeRichTextMentionLabels,
@@ -403,6 +405,36 @@ describe("image node (#493)", () => {
       { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "x" }, image(mediaA)] }] },
     ];
     for (const value of bad) expect(() => parseRichTextDoc(value, profile), JSON.stringify(value)).toThrow(RichTextValidationError);
+  });
+
+  describe("alt text (#553)", () => {
+    const profile = COMMENT_MEDIA_RICH_TEXT_PROFILE;
+    const altOf = (value: unknown) => ((parseRichTextDoc(withImages(image(mediaA, { alt: value })), profile).content[1] as { attrs: { alt?: string } }).attrs);
+    it("keeps a trimmed alt and drops an absent, null or blank one", () => {
+      expect(altOf("  IMG 1234 ")).toEqual({ mediaId: mediaA, alt: "IMG 1234" });
+      expect(altOf(undefined)).toEqual({ mediaId: mediaA });
+      expect(altOf(null)).toEqual({ mediaId: mediaA });
+      expect(altOf("   ")).toEqual({ mediaId: mediaA });
+    });
+    it("limits alt to RICH_TEXT_IMAGE_ALT_MAX_LENGTH and rejects a non-string", () => {
+      expect(altOf("a".repeat(RICH_TEXT_IMAGE_ALT_MAX_LENGTH)).alt).toHaveLength(RICH_TEXT_IMAGE_ALT_MAX_LENGTH);
+      for (const bad of ["a".repeat(RICH_TEXT_IMAGE_ALT_MAX_LENGTH + 1), 5, {}, ["x"]]) expect(() => parseRichTextDoc(withImages(image(mediaA, { alt: bad })), profile)).toThrow(RichTextValidationError);
+    });
+    it("still refuses any other attribute", () => {
+      expect(() => parseRichTextDoc(withImages(image(mediaA, { alt: "ok", title: "x" })), profile)).toThrow(RichTextValidationError);
+    });
+    it("survives mention-label normalisation", () => {
+      const doc = parseRichTextDoc(withImages(image(mediaA, { alt: "Front door" })), profile);
+      expect(normalizeRichTextMentionLabels(doc, new Map()).content[1]).toEqual({ type: "image", attrs: { mediaId: mediaA, alt: "Front door" } });
+    });
+    it("cleans a file name into a default alt", () => {
+      expect(imageAltFromFileName("IMG_1234.HEIC")).toBe("IMG 1234");
+      expect(imageAltFromFileName("  front-door__view.final.jpeg ")).toBe("front door view.final");
+      expect(imageAltFromFileName("photo")).toBe("photo");
+      expect(imageAltFromFileName(".png")).toBe("");
+      expect(imageAltFromFileName("")).toBe("");
+      expect(imageAltFromFileName(`${"x".repeat(500)}.jpg`)).toHaveLength(RICH_TEXT_IMAGE_ALT_MAX_LENGTH);
+    });
   });
 
   it("rejects a duplicated media id", () => {

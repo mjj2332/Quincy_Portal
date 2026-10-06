@@ -56,8 +56,8 @@
  *
  * ## #463 — the item menu
  * A bar click, Enter or right-click opens the shared menu host (`scheduling-item-menu.tsx`): Open project and Reschedule…
- * on a Project bar (`canEditDeadline`), Open project and Edit schedule… on a checklist bar. Edit schedule… opens the
- * controller's SHEET at every width (not the inline Due popover). `renderEventMenu` is never passed (the import-boundary
+ * on a Project bar (`canEditDeadline`), Open project and Edit schedule… on a checklist bar. Edit schedule… (#582) opens the
+ * Due cell's own picker anchored to the BAR, as an inline `inlineTarget: "item"` session (`ProductionGanttScheduleEditorPopover`), at every width. `renderEventMenu` is never passed (the import-boundary
  * guard pins it). Reuse ledger: menu — `reui/dropdown-menu` through `scheduling-item-menu.tsx`; `reui/context-menu` and the
  * `gantt-1`/`gantt-2` `renderEventMenu` blocks were searched and fail on the touch long-press and the per-bar root.
  *
@@ -102,6 +102,11 @@
  * `current` (and a full item's `currentSubtask`) is adopted, so a continuation-page row (never returned by the refetch) retries
  * at the version that won, never the stale one (`onEditorConflict` -> `adoptGanttChildSchedule`); the draft is kept and never
  * re-sent on its own. At <= 720px the Due column is not rendered, so the range is edited from the bar or the Checklist.
+ * #585: Escape or an outside press on a CONFLICTED picker ends the controller's session (a closed one must not hold the lock and
+ * the accept gate) but keeps the draft and the notice: `conflictStash` (Gantt state, per Subtask, shared by the Due cell and the bar
+ * picker) holds `{ validationError, latestItem }` while `retainedSchedules` holds the draft. A reopened picker shows the editor's own
+ * error first, else the stash (named against the live row, so a refetch's newer version wins). Only Cancel, Use latest and Save clear
+ * it (#423's rule); a new chart generation or a row that left the data drops it. `use-scheduling-commands` is unchanged.
  * Reuse ledger: `ProductionGanttSubtaskCells.tsx`.
  *
  * ## #372 — Subtask assignees
@@ -225,8 +230,9 @@ import { deadlineFoldOf, projectDefaultFromFacts } from "../lib/date-time-range"
 import { useStages } from "../lib/stages";
 import { useMediaQuery } from "../lib/use-media-query";
 import { ProductionEventCalendarDialogs } from "./ProductionEventCalendarDialogs";
+import { ProductionGanttScheduleEditorPopover } from "./ProductionGanttScheduleEditorPopover";
 import { GanttDeadlineCell, GanttTeamCell } from "./ProductionGanttProjectCells";
-import { GanttSubtaskDueCell, scheduleErrorFromEditor, stopRowGesture } from "./ProductionGanttSubtaskCells";
+import { GanttSubtaskDueCell, isRowConfirmedRemoved, scheduleErrorFromEditor, scheduleErrorFromStash, stopRowGesture, type ScheduleConflictStash } from "./ProductionGanttSubtaskCells";
 import { ProjectCalendarAnchor } from "./ProjectCalendarAnchor";
 import { focusLanding } from "../lib/landing-focus";
 import { type ProductionGanttDeadlineConfirmState } from "./ProductionGanttDeadlineDialog";
@@ -327,7 +333,7 @@ const NEAR_BOTTOM_THRESHOLD_PX = 240;
 const COARSE_TAP_TARGET = "pointer-coarse:min-w-[44px] pointer-coarse:min-h-[44px] max-[720px]:min-w-[44px]";
 
 /** #464: the street cell's \`truncate\` (overflow:hidden) clips an outset ring, so the row link's focus ring is drawn inset. */
-const GANTT_ROW_LINK = "truncate focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring focus-visible:!-outline-offset-2";
+const GANTT_ROW_LINK = "truncate focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring -outline-offset-2 focus-visible:!-outline-offset-2";
 
 const NO_LOADED_PROJECTS: readonly GanttProjectRowDto[] = [];
 const NO_SELECTED_ROWS: string[] = [];
@@ -1102,6 +1108,13 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     [projects, liveChildState],
   );
 
+  const embeddedChildSignatureByProjectId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const project of projects) map.set(project.id, computeEmbeddedChildSignature(project.children));
+    return map;
+  }, [projects]);
+  const effectiveProjectById = useMemo(() => new Map(effectiveProjects.map((project) => [project.id, project])), [effectiveProjects]);
+
   // ---------------------------------------------------------------------------------------------
   // #221 — writes. See this file's header ("#221 — writes").
   // ---------------------------------------------------------------------------------------------
@@ -1305,7 +1318,10 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // -------------------------------------------------------------------------------------------
   // The Subtask whose inline editor session the controller holds, if any.
   const narrowTree = useMediaQuery("(max-width: 720px)");
-  const dueEditor = commands.scheduleEditor?.inline ? commands.scheduleEditor : null;
+  // #582: an inline session is drawn by the Due cell ("due-cell", the default) or by the item menu's bar picker ("item").
+  const dueEditor = commands.scheduleEditor?.inline && (commands.scheduleEditor.inlineTarget ?? "due-cell") === "due-cell" ? commands.scheduleEditor : null;
+  const itemEditor = commands.scheduleEditor?.inline && commands.scheduleEditor.inlineTarget === "item" ? commands.scheduleEditor : null;
+  const itemEditorSubtaskId = itemEditor ? subtaskIdFromCalendarEntityId(itemEditor.source.id) : null;
   const dueEditorSubtaskId = dueEditor ? subtaskIdFromCalendarEntityId(dueEditor.source.id) : null;
   // A failed save keeps its draft here, above the vendor tree's rows (which remount), one entry per Subtask.
   const retainedSchedules = useRef(new Map<string, RetainedSchedule>());
@@ -1314,15 +1330,74 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     if (!retained) { retained = { draft: null, baseVersion: null }; retainedSchedules.current.set(id, retained); }
     return retained;
   }, []);
-  useEffect(() => { retainedSchedules.current.clear(); }, [generationKey]);
+  // #585: what a dismissed conflict leaves (Escape, outside press, narrowing), per Subtask, shared by the Due cell and the bar picker.
+  const [conflictStash, setConflictStash] = useState<ReadonlyMap<string, ScheduleConflictStash>>(() => new Map());
+  useEffect(() => { retainedSchedules.current.clear(); setConflictStash((current) => (current.size ? new Map() : current)); }, [generationKey]);
+  const clearScheduleStash = useCallback((id: string) => {
+    setConflictStash((current) => {
+      if (!current.has(id)) return current;
+      const next = new Map(current);
+      next.delete(id);
+      return next;
+    });
+  }, []);
+  // A passive close of an inline picker (Escape, an outside press, narrowing): a conflict is stashed under its Subtask, then the
+  // session ends exactly as a Cancel does. Both updates run in one handler, so there is no frame with neither set.
+  // The generation the open editor session began under: a dismissal from an outgoing session (the chart was replaced, a filter changed
+  // while it was open) must not repopulate a stash the generation reset just cleared. Set when a session starts, not on every render.
+  const editorGenerationRef = useRef(generationKey);
+  const editorOpen = commands.scheduleEditor !== null;
+  useEffect(() => { if (editorOpen) editorGenerationRef.current = generationKey; }, [editorOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+  const { scheduleEditor, cancelScheduleEditor } = commands;
+  const dismissScheduleEditor = useCallback(() => {
+    const editor = scheduleEditor;
+    if (editor?.validationError && editorGenerationRef.current === generationKey) {
+      const id = subtaskIdFromCalendarEntityId(editor.source.id);
+      if (id) setConflictStash((current) => new Map(current).set(id, { validationError: editor.validationError, latestItem: editor.latestItem, projectId: editor.source.project.id }));
+    }
+    cancelScheduleEditor();
+  }, [scheduleEditor, cancelScheduleEditor, generationKey]);
+  // "Is this row really gone?", answered from the CURRENT settled query data only (see `isRowConfirmedRemoved`).
+  const settledData = query.isSuccess && !query.isFetching;
+  const hasMoreProjectPages = query.hasNextPage === true;
+  const rowConfirmedRemoved = useCallback((subtaskId: string, projectId: string) => {
+    const project = effectiveProjectById.get(projectId);
+    const state = project ? liveChildState[projectId] : undefined;
+    return isRowConfirmedRemoved({ settled: settledData, hasNextPage: hasMoreProjectPages, project, walkIsCurrent: !state || state.seedSignature === embeddedChildSignatureByProjectId.get(projectId), subtaskId });
+  }, [settledData, hasMoreProjectPages, effectiveProjectById, liveChildState, embeddedChildSignatureByProjectId]);
+  // A row that left the data takes its stash and draft with it, even with no editor open (an archived then restored Project must not
+  // revive an old draft). Rows load by Project (page one embedded, the rest walked per Project) and Projects by page, so only a
+  // confirmed removal prunes; a pending, held or failed query, a restarted walk or an unloaded page keeps everything.
+  useEffect(() => {
+    if (conflictStash.size === 0) return;
+    const gone = [...conflictStash].filter(([id, stash]) => rowConfirmedRemoved(id, stash.projectId)).map(([id]) => id);
+    if (!gone.length) return;
+    for (const id of gone) retainedSchedules.current.delete(id);
+    setConflictStash((current) => {
+      const next = new Map(current);
+      for (const id of gone) next.delete(id);
+      return next;
+    });
+  }, [conflictStash, rowConfirmedRemoved]);
+  // The notice for a Subtask's picker: the editor's own error first (a fresh 409), else the stash (a reopened session has no validationError).
+  const stashErrorFor = useCallback((row: GanttChecklistRowDto) => {
+    const stash = conflictStash.get(row.id);
+    return stash ? scheduleErrorFromStash(stash, row) : undefined;
+  }, [conflictStash]);
   // The cell that draws the editor is gone (the Due column hides at <= 720px, the row left the chart, or a failed refetch
   // replaced the whole chart with its error state while the cached rows remain): a session no one can see would hold the
   // lock and the accept gate, so it is cancelled. Not a save; nothing was sent.
   const chartReplaced = query.isPending || query.isError;
   const dueEditorRowVisible = dueEditorSubtaskId ? [...assigneeCellByChecklistResourceId.values()].some((cell) => cell.row.id === dueEditorSubtaskId) : true;
   useEffect(() => {
-    if (dueEditorSubtaskId && (narrowTree || chartReplaced || !dueEditorRowVisible)) commands.cancelScheduleEditor();
-  }, [dueEditorSubtaskId, narrowTree, chartReplaced, dueEditorRowVisible, commands]);
+    if (!dueEditorSubtaskId) return;
+    if (narrowTree || chartReplaced) dismissScheduleEditor();
+    // The row left the drawn rows: a true discard only once the current data CONFIRMS the removal; a walk still restarting is a dismissal.
+    else if (!dueEditorRowVisible) {
+      if (dueEditor && rowConfirmedRemoved(dueEditorSubtaskId, dueEditor.source.project.id)) { clearScheduleStash(dueEditorSubtaskId); commands.cancelScheduleEditor(); }
+      else dismissScheduleEditor();
+    }
+  }, [dueEditorSubtaskId, dueEditor, narrowTree, chartReplaced, dueEditorRowVisible, dismissScheduleEditor, clearScheduleStash, rowConfirmedRemoved, commands]);
   const openDueEditor = useCallback((cell: GanttAssigneeCell) => {
     const project = projectById.get(cell.projectId);
     const source = project ? ganttChecklistSource(project, cell.row) : null;
@@ -1382,11 +1457,6 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // — recomputed only when the query's own data actually changes (a real fetch/refetch landing), not
   // on every intermediate childState write a chain's own page-by-page merge makes. Cheap either way
   // (bounded by one page's worth of rows per project), but this keeps it off the render path entirely.
-  const embeddedChildSignatureByProjectId = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const project of projects) map.set(project.id, computeEmbeddedChildSignature(project.children));
-    return map;
-  }, [projects]);
 
   // fix-220-sol1 #3 / fix-220-sol1b: eagerly walk each INCLUDED truncated project's remaining child
   // pages (S7 — the tree defaults every group expanded, so "wait for an expand event" would miss a
@@ -1577,11 +1647,13 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
                     row={subtaskCell.row}
                     editorOpen={owner}
                     disabled={disabled}
-                    error={owner && dueEditor ? scheduleErrorFromEditor(dueEditor) : undefined}
+                    error={(owner && dueEditor ? scheduleErrorFromEditor(dueEditor) : undefined) ?? stashErrorFor(subtaskCell.row)}
                     retained={retainedScheduleFor(subtaskCell.row.id)}
                     onOpen={() => openDueEditor(subtaskCell)}
                     onSubmit={commands.submitScheduleEditor}
                     onCancel={commands.cancelScheduleEditor}
+                    onDismiss={dismissScheduleEditor}
+                    onClear={() => clearScheduleStash(subtaskCell.row.id)}
                     projectDefault={projectDefaultById.get(subtaskCell.projectId) ?? null}
                   />
                 )}
@@ -1597,7 +1669,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
         },
       },
     ];
-  }, [projectById, live, identity.role, narrowTree, deadlineActionByProjectResourceId, attentionByResourceId, assigneeCellByChecklistResourceId, assigneeBusyIds, commitAssignees, dueEditor, dueEditorSubtaskId, retainedScheduleFor, openDueEditor, commands.submitScheduleEditor, commands.cancelScheduleEditor]);
+  }, [projectById, live, identity.role, narrowTree, deadlineActionByProjectResourceId, attentionByResourceId, assigneeCellByChecklistResourceId, assigneeBusyIds, commitAssignees, dueEditor, dueEditorSubtaskId, retainedScheduleFor, openDueEditor, commands.submitScheduleEditor, commands.cancelScheduleEditor, dismissScheduleEditor, clearScheduleStash, stashErrorFor]);
 
   // Called directly, not mounted as `<renderGanttEventContent {...props} />` — see that function's
   // own header for why the distinction is load-bearing here.
@@ -1803,7 +1875,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // The item menu (#463): a bar click, Enter or right-click opens Open project and Reschedule… (a
   // Project bar) or Edit schedule… (a checklist bar). The bar is a vendor `<button>`, so the menu is a
   // controlled host anchored to it (`scheduling-item-menu.tsx`), never the vendor's `renderEventMenu`.
-  // Edit schedule… opens the controller's SHEET at every width (not the inline Due popover).
+  // Edit schedule… (#582) opens the bar-anchored picker (an inline item-target session), not the sheet, at every width.
   // ---------------------------------------------------------------------------------------------
   // A drawn checklist row, or a #344 pinned created row the refetch has not returned yet (read-only, so
   // only Open project is offered on it; `ganttChecklistSource` / its permissions veto the rest).
@@ -1863,16 +1935,34 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     const target = findTaskTarget(key.slice("task:".length));
     if (!target) return;
     if (id === "open-project") onOpenProject?.(target.project.id);
-    else if (id === "edit-schedule") { const source = ganttChecklistSource(target.project, target.row); if (source) commands.openChecklistScheduleEditor(source); }
+    else if (id === "edit-schedule") { const source = ganttChecklistSource(target.project, target.row); if (source) commands.openChecklistScheduleEditor(source, undefined, { inline: true, inlineTarget: "item" }); }
   };
   const itemMenu = useSchedulingItemMenu({
     describe: describeItem,
     resolveElement: findBar,
     onAction: runItemAction,
-    followOnOpen: commands.moveDialog !== null || (commands.scheduleEditor !== null && !commands.scheduleEditor.inline),
+    // A follow-on dialog, the sheet (a non-inline session) or the bar's picker (an item-target inline session): its closing arms restore-if-lost.
+    followOnOpen: commands.moveDialog !== null || (commands.scheduleEditor !== null && (!commands.scheduleEditor.inline || commands.scheduleEditor.inlineTarget === "item")),
     closeKey: `${generationKey}|${identity.principalId}|${identity.role}|${identity.authorizationEpoch}|${commands.accessLost}`,
   });
   const { isOpenFor: isItemMenuOpenFor } = itemMenu;
+  // #582: an item session has no Due cell to lose, so the narrow width does not cancel it. It is cancelled only when the chart is replaced
+  // or its row left the data (a re-keyed bar is the same row, so a Start edit never cancels).
+  const itemEditorRowPresent = itemEditorSubtaskId ? findTaskTarget(itemEditorSubtaskId) !== null : true;
+  useEffect(() => {
+    if (!itemEditorSubtaskId) return;
+    // An automatic close is a dismissal (a failed refetch replaces the chart for a while): a conflicted draft and notice are stashed (#585).
+    if (chartReplaced) dismissScheduleEditor();
+    // The row left the drawn rows: a true discard only once the current data CONFIRMS the removal; a walk still restarting is a dismissal.
+    else if (!itemEditorRowPresent) {
+      if (itemEditor && rowConfirmedRemoved(itemEditorSubtaskId, itemEditor.source.project.id)) { clearScheduleStash(itemEditorSubtaskId); commands.cancelScheduleEditor(); }
+      else dismissScheduleEditor();
+    }
+  }, [itemEditorSubtaskId, itemEditor, chartReplaced, itemEditorRowPresent, commands, dismissScheduleEditor, clearScheduleStash, rowConfirmedRemoved]);
+  const itemEditorLookup = (subtaskId: string) => {
+    const target = findTaskTarget(subtaskId);
+    return target ? { row: target.row, street: target.project.street, projectDefault: projectDefaultById.get(target.project.id) ?? null } : null;
+  };
   const eventPopup = useMemo(() => ({ isOpen: (occurrence: { event: { id: string | number } }) => isItemMenuOpenFor(String(occurrence.event.id)) }), [isItemMenuOpenFor]);
 
   // #221: the vendor's proposal → the grab-time checklist source and a `GanttEdit`. `null` for
@@ -1998,7 +2088,6 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // render late, and until then `effectiveProjects` still shows the old walk's "complete" rows.
   // Judged on the DRAWN project (`displayProjects`), which must also have caught up with the current
   // one: the accepted baseline is cloned a render after the data changes.
-  const effectiveProjectById = useMemo(() => new Map(effectiveProjects.map((project) => [project.id, project])), [effectiveProjects]);
   const isChildListAuthoritative = useCallback((drawn: GanttProjectRowDto) => {
     const project = effectiveProjectById.get(drawn.id);
     if (!project || project.children.truncated || drawn.children.truncated) return false;
@@ -2160,6 +2249,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
       <div className="sr-only" data-testid="production-gantt-live-region" aria-live="polite" aria-atomic="true">{commands.announcement}</div>
       <ProductionEventCalendarDialogs commands={commands} deadlineConfirm={deadlineConfirm} scheduleEditorPresentation="inline" projectDefaultFor={(projectId) => projectDefaultById.get(projectId) ?? null} />
       {itemMenu.menu}
+      <ProductionGanttScheduleEditorPopover editor={itemEditor} subtaskId={itemEditorSubtaskId} lookup={itemEditorLookup} findBar={findBar} retainedFor={retainedScheduleFor} busy={!itemEditor && !live} onSubmit={commands.submitScheduleEditor} onCancel={commands.cancelScheduleEditor} onDismiss={dismissScheduleEditor} stashErrorFor={stashErrorFor} onClear={clearScheduleStash} />
     </div>
   );
 }
