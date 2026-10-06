@@ -1661,11 +1661,12 @@ describe("table bar with no room falls back to the toolbar group (#535)", () => 
     });
     return host.querySelector<HTMLElement>('[contenteditable="true"]')!;
   }
-  const tools = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-testid="rich-text-table-tools"]');
+  // Desktop (#595): the cramped fallback is the Table menu standing in the Insert-table slot, not a leading group.
+  const tools = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-testid="rich-text-table-menu"]');
   const bubble = () => document.querySelector<HTMLElement>('[data-testid="rich-text-table-bubble"]');
   const usable = (label: string) => [...document.querySelectorAll<HTMLElement>(`[aria-label="${label}"]`)].filter((element) => !element.closest("[inert]") && element.closest("[aria-hidden='true']") === null);
 
-  it("a one-row table between two paragraphs: the bar is inert, invisible and tier none, the toolbar group carries the controls, and exactly one control set is usable", async () => {
+  it("a one-row table between two paragraphs: the bar is inert, invisible and tier none, the Table menu stands in the Insert-table slot, and the bar's own controls are not usable", async () => {
     const host = mount(); const editor = await renderDoc(host, oneRow());
     await caretIn(editor, "Mon");
     await waitForCondition(() => tools(host) !== null, "toolbar table group");
@@ -1674,9 +1675,9 @@ describe("table bar with no room falls back to the toolbar group (#535)", () => 
     expect(bubble()!.hasAttribute("inert")).toBe(true);
     expect(bubble()!.getAttribute("aria-hidden")).toBe("true");
     expect(bubble()!.className).toContain("invisible");
-    const addRow = usable("Add row below");
-    expect(addRow.length).toBe(1);
-    expect(tools(host)!.contains(addRow[0]!)).toBe(true);
+    // The bar's buttons are inert (usable() skips them); the menu's items mount only while it is open.
+    expect(usable("Add row below").length).toBe(0);
+    expect(host.querySelector('[data-testid="rich-text-table-tools"]')).toBeNull();
   });
 
   it("at tier none Tiptap's OUTER bubble element leaves the tab order too: inert, aria-hidden, tabindex -1 (reverse Tab cannot land on it)", async () => {
@@ -1721,16 +1722,162 @@ describe("table bar with no room falls back to the toolbar group (#535)", () => 
     expect(active === editor || editor.contains(active) || tools(host)!.contains(active)).toBe(true);
   });
 
-  it("Alt+F10 from the text lands in the toolbar group, not in the inert bar", async () => {
+  it("Alt+F10 from the text lands in the Table menu, not in the inert bar", async () => {
     const host = mount(); const editor = await renderDoc(host, oneRow());
     await caretIn(editor, "Mon");
-    await waitForCondition(() => tools(host) !== null, "toolbar table group");
+    await waitForCondition(() => tools(host) !== null, "Table menu");
     const event = await keydown(editor, "F10", { altKey: true });
     expect(event.defaultPrevented).toBe(true);
-    const addRow = tools(host)!.querySelector<HTMLElement>('[aria-label="Add row below"]')!;
-    expect(document.activeElement).toBe(addRow);
-    // The bar lets go of its bubble once focus has left the text (it is not near the bar), so it may be gone.
+    expect(document.activeElement).toBe(tools(host));
     expect(bubble()?.contains(document.activeElement) ?? false).toBe(false);
+  });
+
+  describe("desktop: the Insert-table slot becomes a Table menu (#595)", () => {
+    const menuTrigger = (host: HTMLElement) => host.querySelector<HTMLButtonElement>('[data-testid="rich-text-table-menu"]');
+    const itemLabels = (host: HTMLElement) => [...toolbarOf(host).querySelectorAll<HTMLElement>("[data-toolbar-item]")].map((item) => item.getAttribute("aria-label") ?? item.textContent ?? "");
+    const toolbarOf = (host: HTMLElement) => host.querySelector<HTMLElement>('[aria-label="Formatting"]')!;
+    const menuItem = (text: string) => [...document.querySelectorAll<HTMLElement>('[role="menuitem"], [role="menuitemcheckbox"]')].find((entry) => entry.textContent?.includes(text))!;
+
+    it("swaps Insert table for the Table menu in place: the toolbar's order is unchanged and no phone group is mounted", async () => {
+      const host = mount(); const editor = await renderDoc(host, oneRow());
+      await caretIn(editor, "before");
+      const outside = itemLabels(host);
+      expect(outside).toContain("Insert table");
+      const insertTable = host.querySelector<HTMLElement>('[aria-label="Insert table"]')!;
+      const insertClass = insertTable.className;
+      expect(menuTrigger(host)).toBeNull();
+      await caretIn(editor, "Mon");
+      await waitForCondition(() => menuTrigger(host) !== null, "Table menu");
+      expect(host.querySelector('[data-testid="rich-text-table-tools"]')).toBeNull();
+      expect(itemLabels(host).map((label) => label === "Table options" ? "Insert table" : label)).toEqual(outside);
+      // Same size and variant as the button it replaces, icon only: nothing to the right of the slot moves (#595).
+      expect(menuTrigger(host)!.className).toBe(insertClass);
+      expect(menuTrigger(host)!.textContent).toBe("");
+      expect(menuTrigger(host)!.getAttribute("aria-haspopup")).toBe("menu");
+      // A different glyph from Insert table's, so it reads as table settings, not "insert" (design review).
+      const glyph = (element: HTMLElement) => element.querySelector("svg")?.getAttribute("class") ?? "";
+      expect(glyph(menuTrigger(host)!)).toContain("lucide-table-properties");
+      expect(glyph(insertTable)).not.toContain("lucide-table-properties");
+      expect(host.querySelector('[aria-label="Insert table"]')).toBeNull();
+      // It sits in the Layout group, where Insert table was.
+      expect(menuTrigger(host)!.closest('[role="group"][aria-label="Layout"]')).not.toBeNull();
+    });
+
+    it("does not reset the toolbar's scroll position on entering the table", async () => {
+      const host = mount(); const editor = await renderDoc(host, oneRow());
+      toolbarOf(host).scrollLeft = 40;
+      await caretIn(editor, "Mon");
+      await waitForCondition(() => menuTrigger(host) !== null, "Table menu");
+      expect(toolbarOf(host).scrollLeft).toBe(40);
+    });
+
+    it("Alt+F10 from the text focuses the menu trigger", async () => {
+      const host = mount(); const editor = await renderDoc(host, oneRow());
+      await caretIn(editor, "Mon");
+      await waitForCondition(() => menuTrigger(host) !== null, "Table menu");
+      const event = await keydown(editor, "F10", { altKey: true });
+      expect(event.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(menuTrigger(host));
+    });
+
+    it("Escape on the trigger returns focus to the text", async () => {
+      const host = mount(); const editor = await renderDoc(host, oneRow());
+      await caretIn(editor, "Mon");
+      await waitForCondition(() => menuTrigger(host) !== null, "Table menu");
+      await keydown(editor, "F10", { altKey: true });
+      await keydown(menuTrigger(host)!, "Escape");
+      expect(document.activeElement === editor || editor.contains(document.activeElement)).toBe(true);
+    });
+
+    it("its items run the bar's commands: Add row below, Add column right, Header row, Delete row/column", async () => {
+      const host = mount(); const editor = await renderDoc(host, oneRow());
+      await caretIn(editor, "Mon");
+      await waitForCondition(() => menuTrigger(host) !== null, "Table menu");
+      const rows = () => host.querySelectorAll("tr").length;
+      const firstRowCells = () => host.querySelectorAll("tr:first-child td, tr:first-child th").length;
+      await click(menuTrigger(host)!);
+      await click(menuItem("Add row below"));
+      expect(rows()).toBe(2);
+      await click(menuTrigger(host)!);
+      await click(menuItem("Add column right"));
+      expect(firstRowCells()).toBe(3);
+      await click(menuTrigger(host)!);
+      expect(menuItem("Header row").getAttribute("aria-checked")).toBe("false");
+      await click(menuItem("Header row"));
+      expect(host.querySelectorAll("th").length).toBeGreaterThan(0);
+      await click(menuTrigger(host)!);
+      await click(menuItem("Delete row"));
+      expect(rows()).toBe(1);
+      await click(menuTrigger(host)!);
+      await click(menuItem("Delete column"));
+      expect(firstRowCells()).toBe(2);
+    });
+
+    it("focus on the Table trigger is not stranded when the viewport shrinks to a phone: the editor takes it (Sol r1)", async () => {
+      let phone = false;
+      const listeners = new Set<() => void>();
+      vi.stubGlobal("matchMedia", (query: string) => ({
+        media: query,
+        get matches() { return query === RICH_TEXT_PHONE_QUERY ? phone : false; },
+        addEventListener: (_t: string, l: () => void) => { if (query === RICH_TEXT_PHONE_QUERY) listeners.add(l); },
+        removeEventListener: (_t: string, l: () => void) => { listeners.delete(l); },
+        addListener: () => {}, removeListener: () => {},
+      }) as unknown as MediaQueryList);
+      const host = mount(); const editor = await renderDoc(host, oneRow());
+      await caretIn(editor, "Mon");
+      await waitForCondition(() => menuTrigger(host) !== null, "Table menu");
+      await keydown(editor, "F10", { altKey: true });
+      expect(document.activeElement).toBe(menuTrigger(host));
+      phone = true;
+      await act(async () => { listeners.forEach((l) => l()); await Promise.resolve(); await Promise.resolve(); });
+      await waitForCondition(() => menuTrigger(host) === null, "Table menu unmounted");
+      await act(async () => { await new Promise((resolve) => requestAnimationFrame(() => resolve(null))); });
+      expect(document.activeElement).not.toBe(document.body);
+      expect(document.activeElement === editor || editor.contains(document.activeElement)).toBe(true);
+    });
+
+    it("Delete Table opens the confirmation dialog", async () => {
+      const host = mount(); const editor = await renderDoc(host, oneRow());
+      await caretIn(editor, "Mon");
+      await waitForCondition(() => menuTrigger(host) !== null, "Table menu");
+      await click(menuTrigger(host)!);
+      await click(menuItem("Delete table"));
+      await waitForCondition(() => document.querySelector('[role="alertdialog"]') !== null, "delete table dialog");
+    });
+
+    it("choosing Delete Table leaves focus in the confirmation dialog after the menu's exit, and Cancel returns it to the text (Sol r2)", async () => {
+      // A real browser plays the menu's exit animation: Base UI waits on `getAnimations()` before the close hand-off (finalFocus).
+      const proto = Element.prototype as unknown as { getAnimations?: () => unknown[] };
+      const original = proto.getAnimations;
+      proto.getAnimations = () => [{ finished: new Promise((resolve) => setTimeout(resolve, 150)) }];
+      try {
+      const host = mount(); const editor = await renderDoc(host, oneRow());
+      await caretIn(editor, "Mon");
+      await waitForCondition(() => menuTrigger(host) !== null, "Table menu");
+      await click(menuTrigger(host)!);
+      await click(menuItem("Delete table"));
+      await waitForCondition(() => document.querySelector('[role="alertdialog"]') !== null, "delete table dialog");
+      // Past the menu's exit (its close hand-off runs then).
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); await new Promise((resolve) => requestAnimationFrame(() => resolve(null))); });
+      expect(document.querySelector('[role="menu"]')).toBeNull();
+      expect(document.activeElement?.closest('[role="alertdialog"]')).not.toBeNull();
+      expect(document.activeElement).not.toBe(editor);
+      const cancel = [...document.querySelectorAll<HTMLElement>('[role="alertdialog"] button')].find((button) => button.textContent === "Cancel")!;
+      await click(cancel);
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); await new Promise((resolve) => requestAnimationFrame(() => resolve(null))); });
+      expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+      expect(document.activeElement === editor || editor.contains(document.activeElement)).toBe(true);
+      } finally { if (original) proto.getAnimations = original; else delete proto.getAnimations; }
+    });
+
+    it("leaving the table brings Insert table back", async () => {
+      const host = mount(); const editor = await renderDoc(host, oneRow());
+      await caretIn(editor, "Mon");
+      await waitForCondition(() => menuTrigger(host) !== null, "Table menu");
+      await caretIn(editor, "after");
+      await waitForCondition(() => menuTrigger(host) === null, "Table menu gone");
+      expect(host.querySelector('[aria-label="Insert table"]')).not.toBeNull();
+    });
   });
 
   it("with room around the row the bar is the only control set (tier clean, no toolbar group), and the group returns after the caret leaves and re-enters a cramped table", async () => {
@@ -1751,5 +1898,85 @@ describe("table bar with no room falls back to the toolbar group (#535)", () => 
     await waitForCondition(() => tools(host) === null, "toolbar table group gone outside the table");
     await caretIn(editor, "Mon");
     await waitForCondition(() => tools(host) !== null, "toolbar table group back on re-entering the table");
+  });
+});
+
+describe("selection scrolling clears the stuck composer toolbar (#594, Sol r3)", () => {
+  // The toolbar's wrapper (the sticky addon): the element whose first child is the toolbar.
+  const isToolbarAddon = (element: Element | null | undefined) => element?.firstElementChild?.getAttribute("role") === "toolbar";
+  let originalComputed: typeof window.getComputedStyle;
+  let originalOffsetHeight: PropertyDescriptor | undefined;
+  beforeEach(() => {
+    originalComputed = window.getComputedStyle;
+    // happy-dom loads no app.css: stand in for the sticky rule's `top: var(--shell-header-height)` (50px) and a 48px toolbar.
+    window.getComputedStyle = ((element: Element, pseudo?: string | null) => {
+      const style = originalComputed.call(window, element, pseudo);
+      if (isToolbarAddon(element)) return new Proxy(style, { get: (target, key) => {
+        if (key === "top") return "50px";
+        if (key === "getPropertyValue") return (name: string) => name === "--space-2" ? "8px" : target.getPropertyValue(name);
+        const value = Reflect.get(target, key);
+        return typeof value === "function" ? value.bind(target) : value;
+      } });
+      return style;
+    }) as typeof window.getComputedStyle;
+    originalOffsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", { configurable: true, get(this: HTMLElement) { return isToolbarAddon(this) ? 48 : 0; } });
+  });
+  afterEach(() => {
+    window.getComputedStyle = originalComputed;
+    if (originalOffsetHeight) Object.defineProperty(HTMLElement.prototype, "offsetHeight", originalOffsetHeight);
+    else delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetHeight;
+  });
+  const prop = (editor: HTMLElement, name: "scrollMargin" | "scrollThreshold") => (editor as unknown as { editor: Editor }).editor.view.someProp(name, (value) => value) as { top: number } | number | undefined;
+  const margin = (editor: HTMLElement) => prop(editor, "scrollMargin");
+  const doc = (): RichTextDoc => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "x" }] }] });
+
+  it("document preset: the view's scrollMargin.top is the stuck toolbar's bottom (its sticky top plus its height)", async () => {
+    variant = "document";
+    const host = mount();
+    await act(async () => { root!.render(<EditorUnderTest value={doc()} onChange={vi.fn()} limit={2_000} loadMentionables={mentionables} />); await Promise.resolve(); await Promise.resolve(); });
+    const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    const value = margin(editor);
+    expect(typeof value === "object" ? value.top : value).toBe(106); // toolbar bottom 98 plus --space-2 (8px) of breathing room
+    // ProseMirror only scrolls once the caret is within the THRESHOLD of the edge: the same bottom, or a caret at y80 never triggers it.
+    const threshold = prop(editor, "scrollThreshold");
+    expect(typeof threshold === "object" ? threshold.top : threshold).toBe(98);
+  });
+
+  it("document preset: a caret under the stuck toolbar scrolls the page (the selection's scrollIntoView honours the margin)", async () => {
+    variant = "document";
+    const host = mount();
+    await act(async () => { root!.render(<EditorUnderTest value={doc()} onChange={vi.fn()} limit={2_000} loadMentionables={mentionables} />); await Promise.resolve(); await Promise.resolve(); });
+    const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    const tiptap = (editor as unknown as { editor: Editor }).editor;
+    const caret = { left: 100, right: 100, top: 80, bottom: 98 };
+    const coords = vi.spyOn(tiptap.view, "coordsAtPos").mockReturnValue(caret);
+    const scrollBy = vi.spyOn(document.defaultView!, "scrollBy").mockImplementation(() => {});
+    Object.defineProperty(document.documentElement, "clientHeight", { configurable: true, value: 900 });
+    Object.defineProperty(document.documentElement, "clientWidth", { configurable: true, value: 1000 });
+    // Every scroll ancestor is a full-viewport box, so only the page itself can scroll (happy-dom has no layout).
+    const originalRect = Element.prototype.getBoundingClientRect;
+    Element.prototype.getBoundingClientRect = function (this: Element) { return { top: 0, bottom: 900, left: 0, right: 1000, width: 1000, height: 900, x: 0, y: 0, toJSON() { return {}; } } as DOMRect; };
+    const originalScrollTop = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop");
+    Object.defineProperty(Element.prototype, "scrollTop", { configurable: true, get: () => 0, set: () => {} });
+    try {
+      await act(async () => { editor.focus(); document.getSelection()?.collapse(editor.querySelector("p")!.firstChild!, 0); await Promise.resolve(); });
+      scrollBy.mockClear();
+      await act(async () => { tiptap.view.dispatch(tiptap.state.tr.scrollIntoView()); await Promise.resolve(); });
+      expect(scrollBy).toHaveBeenCalled();
+      expect(scrollBy.mock.calls.some((call) => (call[1] as number) < 0)).toBe(true);
+    } finally {
+      coords.mockRestore(); scrollBy.mockRestore(); Element.prototype.getBoundingClientRect = originalRect;
+      if (originalScrollTop) Object.defineProperty(Element.prototype, "scrollTop", originalScrollTop); else delete (Element.prototype as unknown as Record<string, unknown>).scrollTop;
+      delete (document.documentElement as unknown as Record<string, unknown>).clientHeight;
+      delete (document.documentElement as unknown as Record<string, unknown>).clientWidth;
+    }
+  });
+
+  it("composer preset: scrollMargin is left alone", async () => {
+    variant = "composer";
+    const host = mount();
+    await act(async () => { root!.render(<EditorUnderTest value={doc()} onChange={vi.fn()} limit={2_000} loadMentionables={mentionables} />); await Promise.resolve(); await Promise.resolve(); });
+    expect(margin(host.querySelector<HTMLElement>('[contenteditable="true"]')!)).toBeUndefined();
   });
 });
