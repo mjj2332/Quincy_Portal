@@ -5853,3 +5853,8 @@ are untouched, and focus still lands on the named dialog, so screen readers are 
 Calendar rail sheet, deliberately (`initialFocus` resolves to the first tabbable, so the container is unreachable; its
 focus-motion guard bans `!outline-none`). Rejected: `focus({ focusVisible: false })` (cannot apply when `initialFocus` returns `true`) and
 a `data-focus-pending` marker (state for a ring that is never useful).
+
+## A masked scroll viewport's outline never paints
+Tags: focus-overlays, css-tokens · #660
+
+The time list's 96 slot buttons were each a Tab stop, and the ring on a focused slot was drawn outward. Their scroll viewport carries a `mask`, and a mask clips everything painted outside the element's box, so an outline never showed (a box-shadow would clip the same way). Fix: an inward ring, `RING_IN` from `AnchoredPopover` plus `focus-visible:!outline-solid`. twMerge drops `RING_IN`'s bare `focus-visible:!outline` inside `cn()`, and a width plus colour with no style draws nothing, so the explicit `!outline-solid` is what makes it paint (`ShortcutList` found the same). The list is also one roving Tab stop (as `PriorityStars`), and the column's own viewport is `tabIndex -1` through `reui/scroll-area`'s `viewportProps`, so Base UI's overflow stop does not double it. `TimeColumn.focus.guard.test.ts` pins the classes; ring painting itself is only visible in a browser.
