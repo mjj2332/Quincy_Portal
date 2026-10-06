@@ -155,7 +155,7 @@ export function SubtaskScheduleControl<TItem extends LatestSubtaskSummary = Subt
         value={stored}
         projectDefault={projectDefault}
         openOn={conflictEnd ?? (initialFocus === "end" ? "end" : "start")}
-        banner={error?.current || error?.currentSubtask ? <Notice tone="caution" className="truncate text-[length:var(--text-xs)]">Changed elsewhere · latest v{(error.currentSubtask?.schedule ?? error.current)!.version}. Review below.</Notice> : undefined}
+        banner={error?.current || error?.currentSubtask ? <Notice tone="caution" className="truncate py-[var(--space-2)] text-[length:var(--text-xs)]">Changed elsewhere · latest v{(error.currentSubtask?.schedule ?? error.current)!.version}. Review below.</Notice> : undefined}
         seed={seed}
         seedKey={seed ? JSON.stringify(seed) : "stored"}
         reminders={popupReminders}
