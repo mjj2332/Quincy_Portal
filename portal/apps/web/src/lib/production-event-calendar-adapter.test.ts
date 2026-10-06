@@ -326,4 +326,9 @@ describe("production event-calendar adapter: range titles (#643)", () => {
   it("names a day range for the agenda aria-label and drag drafts", () => {
     expect(f.formatDayRange(range("2026-10-06T13:00:00.000Z", "2026-10-20T13:00:00.000Z"))).toBe("7\u201320 Oct 2026");
   });
+
+  it("stacks the agenda row on phones through the vendor's classNames.agendaItem hook (#648)", () => {
+    expect(PRODUCTION_EVENT_CALENDAR_VIEW_SETTINGS.classNames.agendaItem).toBe("max-[721px]:flex-wrap max-[721px]:gap-y-0.5");
+  });
+
 });
