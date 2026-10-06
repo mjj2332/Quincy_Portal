@@ -43,6 +43,8 @@ export interface Env {
   EMAIL?: SendEmail;
   NOTIFICATIONS_FROM_ADDRESS?: string;
   /** Zone purge credentials remain on the background Worker; never expose them to the app. */
+  /** Orphan sweep for embedded media (#549): `off` (default when absent), `observe` (count and log, write nothing) or `reclaim` (queue for the cleanup drain). */
+  EMBEDDED_MEDIA_ORPHAN_SWEEP?: string;
   CLOUDFLARE_ZONE_ID?: string;
   CLOUDFLARE_CACHE_PURGE_TOKEN?: string;
 }
