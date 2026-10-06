@@ -140,6 +140,8 @@ afterEach(async () => {
   runtime?.dispose(); queryClient?.clear(); runtime = null; queryClient = null; root = null; document.body.replaceChildren();
 });
 
+import { POPOVER_READONLY_PANEL } from "./project-header-popover";
+
 describe("ProjectDeadlineControl", () => {
   it("renders the two rail rows read-only and hides write controls for Delivered", async () => {
     const host = await mount({ ...activeSchedule, state: "inactive_delivered" }, true);
@@ -147,6 +149,13 @@ describe("ProjectDeadlineControl", () => {
     expect(host.textContent).toContain("Sydney (Australia/Sydney)");
     expect(host.textContent).toContain("Reminders inactive while Delivered. Move the project out of Delivered before changing or resuming them.");
     expect(host.querySelectorAll("button")).toHaveLength(0);
+  });
+
+  it("pads the read-only panel, which sits in a p-0 popover with no frame of its own (#536)", async () => {
+    const host = await mount({ ...activeSchedule, state: "inactive_delivered" }, true);
+    const panel = host.querySelector('[data-testid="project-deadline-row"]')!.parentElement!;
+    expect(panel.className.split(/\s+/)).toEqual(expect.arrayContaining(POPOVER_READONLY_PANEL.split(" ")));
+    expect(POPOVER_READONLY_PANEL).toContain("p-[var(--space-4)]");
   });
 
   it("never suppresses the global focus ring on the open editor's inputs and action buttons", async () => {

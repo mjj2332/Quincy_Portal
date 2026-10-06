@@ -5672,6 +5672,13 @@ Tags: focus-overlays, css-tokens · #523
 - **A 404 on delete means already gone**: close the dialog, no error. `deleteNoticeBoardPost` refetches in `finally`, so a failure never leaves a stale list. Any other failure keeps the dialog open with the message beside the action.
 - **In a test, Base UI Menu positioning makes `IntersectionObserver`s of its own** (floating-ui `autoUpdate`), so "the last observer" in a fake is no longer the presentation hook's. `NoticeBoard.freshness` picks the last one that is still observing. And `Node.contains(document.activeElement)` was unreliable here; assert with `closest(...)`.
 
+## A shifted date popup cut through its own label, and its selected day sat under the body fade (#537, #536)
+Tags: focus-overlays, css-tokens · #537, #536
+
+- **`shift` with a low field pulls the popup's top to wherever the viewport padding allows, which can be mid-label.** New shoot's Deadline now passes `popupPinTopToField`: `DateTimeField` reads the padding callback, scrolls the field row to the top of the viewport (below the padding's top edge, via a temporary `scrollMarginTop`, `behavior: "instant"` so the trigger is measured on the same open), then raises the padding's top to the trigger's top. The popup covers the trigger, never the label. If the page cannot scroll far enough, the pin leaves less room and the body scrolls (not measured).
+- **The body's fade is `min(--fade-size, overflow)` per edge, and the body opens at scroll 0 (#528).** A selected day or pressed slot in the bottom band reads grey, not ink. `PopupFrame` nudges the body by the least amount that clears the band (`scrollTopClearOfFade`, a pure function over rects), reads `--fade-size` by measuring a probe, re-runs on body resize because Base UI sets `--available-height` after mount, and stops the moment the person scrolls. An item wholly below the fold is left alone, so the month navigation stays.
+- **`16` is `--space-4`, named once.** `DATE_TIME_POPUP_EDGE_GAP` (`lib/date-time-field.ts`) is the default `collisionPadding` and New shoot's four edges.
+- **A read-only Deadline panel has no frame.** `DateTimePopoverContent` is `p-0` because the editable form brings `reui/frame` padding; the read-only branch renders bare content, so it carries `POPOVER_READONLY_PANEL` (`project-header-popover.ts`, `p-[var(--space-4)]`).
 ## Unlayered element resets beat Tailwind utilities (#569, #552)
 Tags: css-tokens, testing-guards · #569, #552
 

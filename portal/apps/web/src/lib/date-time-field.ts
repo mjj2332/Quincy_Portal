@@ -137,6 +137,53 @@ export function sameReminderOffsets(a: readonly number[], b: readonly number[]):
 export type PopupCollisionAvoidance = { side?: "shift" | "none"; align?: "shift" | "none"; fallbackAxisSide?: "start" | "end" | "none" };
 export type PopupCollisionPadding = number | { top?: number; right?: number; bottom?: number; left?: number };
 
+/** `--space-4` in px: the gap a date popup keeps from the viewport edge, and the default `collisionPadding` below. */
+export const DATE_TIME_POPUP_EDGE_GAP = 16;
+
+/** `padding` as four edges with the top raised to at least `top`. Used to pin a popup's top to its field row (#537). */
+export function popupPaddingWithTopAtLeast(padding: PopupCollisionPadding, top: number): { top: number; right: number; bottom: number; left: number } {
+  const edges = typeof padding === "number" ? { top: padding, right: padding, bottom: padding, left: padding } : { top: padding.top ?? 0, right: padding.right ?? 0, bottom: padding.bottom ?? 0, left: padding.left ?? 0 };
+  return { ...edges, top: Math.max(edges.top, top) };
+}
+
+type EdgeRect = { top: number; bottom: number };
+
+/**
+ * #537 — the popup body fades each edge by `min(fade, overflow past that edge)`: the top band is
+ * `min(fade, s)` and the bottom band `min(fade, max - s)` at scroll `s`, so a move changes the bands it
+ * is judged against. Selected items (the picked day, the pressed time slot) inside a band read as muddy
+ * grey, not solid ink.
+ *
+ * Solved exactly, not by proposing a move and checking it. With the item at document offsets
+ * `top`..`bottom` and a body of height `H`, it is clear at `s` when `top - s >= min(fade, s)` and
+ * `bottom - s <= H - min(fade, max - s)`; each is a one-sided bound on `s`:
+ *   s <= max(top - fade, top / 2)        and        s >= min(bottom - H + fade, (max + bottom - H) / 2)
+ * so each item owns a closed interval of valid scroll positions. The result is the position nearest to
+ * the current `scrollTop` inside the intersection of those intervals (so the least scroll, in either
+ * direction), or the current `scrollTop` when the intersection is empty. An item taller than the clear
+ * window has no valid position; it asks for its top edge aligned to the top band. An item wholly outside
+ * the body's visible area is ignored, since scrolling to it would hide the month navigation for nothing.
+ * Rects share one coordinate space.
+ */
+export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, items }: { viewport: EdgeRect; scrollTop: number; maxScrollTop: number; fade: number; items: readonly EdgeRect[] }): number {
+  const height = viewport.bottom - viewport.top;
+  const max = Math.max(0, maxScrollTop);
+  const clamp = (value: number) => Math.min(Math.max(0, value), max);
+  let low = 0;
+  let high = max;
+  for (const item of items) {
+    if (item.bottom <= viewport.top || item.top >= viewport.bottom) continue;
+    const top = item.top - viewport.top + scrollTop;
+    const bottom = item.bottom - viewport.top + scrollTop;
+    const latest = Math.max(top - fade, top / 2);
+    const earliest = Math.min(bottom - height + fade, (max + bottom - height) / 2);
+    const [from, to] = earliest <= latest ? [earliest, latest] : [clamp(latest), clamp(latest)];
+    low = Math.max(low, from);
+    high = Math.min(high, to);
+  }
+  return low <= high ? Math.min(Math.max(scrollTop, low), high) : scrollTop;
+}
+
 /**
  * How a date popup resolves its collision policy (#447, #528): below `sm` it shifts over its
  * trigger; above, it stays on one axis. A caller's override replaces the default outright, and an
@@ -145,6 +192,6 @@ export type PopupCollisionPadding = number | { top?: number; right?: number; bot
 export function resolveDateTimePopupPlacement({ narrow, avoidance, padding }: { narrow: boolean; avoidance?: PopupCollisionAvoidance | undefined; padding?: PopupCollisionPadding | undefined }): { collisionAvoidance: PopupCollisionAvoidance; collisionPadding: PopupCollisionPadding } {
   return {
     collisionAvoidance: avoidance ?? (narrow ? { side: "shift", fallbackAxisSide: "none" } : { fallbackAxisSide: "none" }),
-    collisionPadding: padding ?? 16,
+    collisionPadding: padding ?? DATE_TIME_POPUP_EDGE_GAP,
   };
 }
