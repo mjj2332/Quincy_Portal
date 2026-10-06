@@ -1,6 +1,7 @@
 import * as React from "react"
 import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog"
 import { cn } from "@/lib/utils"
+import { InsideAlertDialogContext } from "@/lib/alert-dialog-press"
 
 import { Button } from "@/components/reui/button"
 
@@ -17,7 +18,7 @@ import { Button } from "@/components/reui/button"
  * accident. No other change.
  *
  * #221 (2026-09-28): restyled on Quincy's Modal tokens — scrim, square panel, display-serif title,
- * Modal padding/footer, bottom sheet ≤721px. The Gantt deadline confirm is its first production
+ * Modal padding/footer, bottom sheet below 721px (≤720). The Gantt deadline confirm is its first production
  * consumer; the design review found the stock styling unlike every Portal dialog. Token choices
  * copied from `components/Modal.tsx` (SCRIM, panelClasses, TITLE, FOOT), not its implementation:
  * - Overlay: Modal's `--scrim-overlay` + 3px blur at `--z-dialog`; the base-ui open/close
@@ -27,7 +28,7 @@ import { Button } from "@/components/reui/button"
  *   `max-w-xs` (320px — Quincy does not redefine `--container-xs`). The vendor's
  *   `sm:max-w-sm` is gone: Quincy redefines `--container-sm/md` (tokens/spacing.css) to
  *   640/860px, so `max-w-sm` would resolve to 640px, not the stock 384px.
- * - ≤721px: a bottom sheet like Modal — anchored to the bottom edge, full width, footer buttons
+ * - Below 721px (≤720; `max-[721px]:` compiles to `width < 721px`): a bottom sheet like Modal — anchored to the bottom edge, full width, footer buttons
  *   stacked full width at 44px. The Popup is a SIBLING of the overlay here (not its child, as in
  *   Modal), so the sheet is positioned on the Popup itself.
  * - Header: left-aligned at every width for `size="default"` (the vendor centred it below its
@@ -35,6 +36,14 @@ import { Button } from "@/components/reui/button"
  * - Footer: Modal's FOOT (hairline top rule, no tinted band, no rounded bottom). Because the
  *   content carries the padding, the footer pulls itself out by `--space-6` so the rule runs
  *   edge to edge like Modal's.
+ *
+ * #625: `AlertDialogContent` provides `InsideAlertDialogContext` around its children, so a
+ * `reui/popover` opened from inside the dialog (above it) is told apart from a popover beneath it,
+ * which `popover.tsx`'s alert-dialog adaptation exempts from dismissal by presses on the dialog.
+ * The overlay also cancels `mousedown`'s default: an alert dialog ignores scrim presses, and Base
+ * UI never restores focus after one, so the press would leave focus on `<body>` with the dialog
+ * still open — Shift+Tab then walks out into the app and closes popovers beneath. (`mousedown`,
+ * not `pointerdown`: only the former's default moves focus. Touch taps emit one too.)
  *
  * #221 (2026-09-28, browser pass D): the overlay passes `forceRender` and carries
  * `data-testid="alert-dialog-scrim"`. `RailedShell` wraps every page in one `Sheet` (a Base UI
@@ -60,6 +69,7 @@ function AlertDialogPortal({ ...props }: AlertDialogPrimitive.Portal.Props) {
 
 function AlertDialogOverlay({
   className,
+  onMouseDown,
   ...props
 }: AlertDialogPrimitive.Backdrop.Props) {
   return (
@@ -69,6 +79,11 @@ function AlertDialogOverlay({
       // Every Portal page sits inside RailedShell's `Sheet` Root, so Base UI treats this dialog as
       // nested and would skip its Backdrop (`enabled: forceRender || !nested`). See header, #221.
       forceRender
+      // Keep focus inside the dialog on a scrim press. See header, #625.
+      onMouseDown={(event) => {
+        event.preventDefault()
+        onMouseDown?.(event)
+      }}
       className={cn(
         "fixed inset-0 isolate z-[var(--z-dialog)] bg-[var(--scrim-overlay)] backdrop-blur-[3px] duration-100 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
         className
@@ -81,6 +96,7 @@ function AlertDialogOverlay({
 function AlertDialogContent({
   className,
   size = "default",
+  children,
   ...props
 }: AlertDialogPrimitive.Popup.Props & {
   size?: "default" | "sm"
@@ -97,12 +113,16 @@ function AlertDialogContent({
           // variant out-specifies both a consumer's `max-w-[560px]` and the sheet's
           // `max-[721px]:max-w-none` below, and tailwind-merge only collapses same-variant pairs.
           size === "sm" ? "max-w-xs" : "max-w-[460px]",
-          // ≤721px: Modal's bottom sheet — pinned to the bottom edge, full width.
+          // Below 721px (≤720): Modal's bottom sheet — pinned to the bottom edge, full width.
           "max-[721px]:top-auto max-[721px]:bottom-0 max-[721px]:left-0 max-[721px]:translate-x-0 max-[721px]:translate-y-0 max-[721px]:max-w-none max-[721px]:max-h-[85dvh]",
           className
         )}
         {...props}
-      />
+      >
+        <InsideAlertDialogContext.Provider value={true}>
+          {children}
+        </InsideAlertDialogContext.Provider>
+      </AlertDialogPrimitive.Popup>
     </AlertDialogPortal>
   )
 }

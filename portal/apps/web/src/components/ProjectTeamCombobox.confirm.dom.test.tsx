@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CollectionKind } from "@quincy/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError } from "../lib/api";
-import { confirmStore } from "../lib/confirm";
+import { confirm, confirmStore } from "../lib/confirm";
 import { ConfirmModalHost } from "./ConfirmDialog";
 import { ProjectHeader } from "./ProjectHeader";
 import type { ProjectDetail, ProjectMember } from "../lib/project-data";
@@ -88,5 +88,39 @@ describe("ProjectTeamCombobox real confirmation boundary", () => {
     await waitForClose();
     expect(apiDeleteMock).toHaveBeenCalledOnce();
     expect(document.querySelector('[data-testid="confirm-modal"]')).toBeNull();
+  });
+
+  // #625 (browser pass 3c): the Team list is a Base UI Combobox. A confirm raised while it is open (toggling a member off inside the
+  // list) is pressed in an inert-marked AlertDialog portal; the combobox used to dismiss its list on that press and stayed closed
+  // after Cancel. (The confirm is raised directly: happy-dom closes the list on an option click for a reason unrelated to the confirm.)
+  it("keeps the open Team list open while the confirm is pressed, and after Cancel", async () => {
+    apiGetMock.mockResolvedValue({ photographers: [], editors: [{ id: member.userId, name: member.name, email: member.email, globalRole: "editor", active: true }] });
+    const host = document.createElement("div"); document.body.append(host); root = createRoot(host);
+    await act(async () => {
+      root!.render(<QueryClientProvider client={queryClient!}><><ProjectHeader {...baseProps(project())} /><ConfirmModalHost /></></QueryClientProvider>);
+      await Promise.resolve();
+    });
+    await flush();
+    const input = host.querySelector<HTMLInputElement>('[aria-label="Add team member"]')!;
+    await act(async () => { input.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); input.focus(); await Promise.resolve(); });
+    for (let i = 0; i < 20 && !document.querySelector('[role="listbox"]'); i += 1) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+    expect(document.querySelector('[role="listbox"]')).not.toBeNull();
+    const pending = confirm({ title: "Remove final project role?", message: "Sure?" });
+    await flush();
+    const press = async (el: Element) => act(async () => {
+      el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
+      el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    await press(document.querySelector('[data-testid="alert-dialog-scrim"]')!);
+    await press(document.querySelector('[data-testid="confirm-modal-message"]')!);
+    await waitForClose();
+    expect(document.querySelector('[data-testid="confirm-modal"]')).not.toBeNull();
+    expect(document.querySelector('[role="listbox"]')).not.toBeNull();
+    await press(document.querySelector('[data-testid="confirm-modal-cancel"]')!);
+    expect(await pending).toBe(false);
+    await waitForClose();
+    expect(document.querySelector('[data-testid="confirm-modal"]')).toBeNull();
+    expect(document.querySelector('[role="listbox"]')).not.toBeNull();
   });
 });

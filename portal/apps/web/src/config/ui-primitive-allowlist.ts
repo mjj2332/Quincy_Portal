@@ -17,7 +17,6 @@ export type UiPrimitiveAllowance = { count: number; ledger: string };
 
 export const UI_PRIMITIVE_ALLOWLIST: Record<string, UiPrimitiveAllowance> = {
   "components/CollectionPanel.tsx": { count: 16, ledger: "baseline (#262)" },
-  "components/ConfirmDialog.tsx": { count: 2, ledger: "baseline (#262)" },
   "components/ExternalEditedUpload.tsx": { count: 2, ledger: "baseline (#262)" },
   "components/ImpersonationBanner.tsx": { count: 1, ledger: "baseline (#262)" },
   "components/Lightbox.tsx": { count: 28, ledger: "baseline (#262)" },
