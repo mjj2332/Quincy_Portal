@@ -1270,35 +1270,64 @@ function extractLiterals(source: string): string[] {
   const out: string[] = [];
   let i = 0;
   while (i < source.length) {
-    const q = source[i];
-    if (q !== '"' && q !== "'" && q !== "`") {
-      i++;
-      continue;
-    }
-    let j = i + 1;
-    let body = "";
-    let closed = false;
-    while (j < source.length) {
-      const c = source[j];
-      if (c === "\\") {
-        body += c + (source[j + 1] ?? "");
-        j += 2;
-        continue;
-      }
-      if (c === q) {
-        closed = true;
-        break;
-      }
-      if (c === "\n" && q !== "`") break;
-      body += c;
-      j++;
-    }
-    if (closed) {
-      out.push(body);
-      i = j + 1;
-    } else i = i + 1;
+    const c = source[i];
+    if (c === '"' || c === "'" || c === "`") {
+      const end = scanLiteral(source, i, out);
+      i = end === -1 ? i + 1 : end;
+    } else i++;
   }
   return out;
+}
+
+/**
+ * Scans the literal opening at `start`, pushing its text into `out` (a template's head, middle and
+ * tail chunks are separate entries; each `${…}` expression is scanned recursively, so a nested
+ * `cn("…")` or a nested backtick template is found). Returns the index just past the closing
+ * quote, or -1 when the literal never closes (then nothing is emitted).
+ */
+function scanLiteral(source: string, start: number, out: string[]): number {
+  const q = source[start];
+  const found: string[] = [];
+  let chunk = "";
+  let j = start + 1;
+  while (j < source.length) {
+    const c = source[j];
+    if (c === "\\") {
+      chunk += c + (source[j + 1] ?? "");
+      j += 2;
+      continue;
+    }
+    if (c === q) {
+      found.push(chunk);
+      out.push(...found);
+      return j + 1;
+    }
+    if (c === "\n" && q !== "`") return -1;
+    if (q === "`" && c === "$" && source[j + 1] === "{") {
+      found.push(chunk);
+      chunk = "";
+      let k = j + 2;
+      let depth = 1;
+      while (k < source.length && depth > 0) {
+        const d = source[k];
+        if (d === '"' || d === "'" || d === "`") {
+          const end = scanLiteral(source, k, []);
+          k = end === -1 ? k + 1 : end;
+          continue;
+        }
+        if (d === "{") depth++;
+        else if (d === "}") depth--;
+        k++;
+      }
+      if (depth > 0) return -1;
+      found.push(...extractLiterals(source.slice(j + 2, k - 1)));
+      j = k;
+      continue;
+    }
+    chunk += c;
+    j++;
+  }
+  return -1;
 }
 
 /** Splits one literal's body into class tokens on whitespace at bracket depth 0 (quotes stay inside a variant). */
@@ -1386,6 +1415,11 @@ describe("guard: one focus line — no field primitive recolours its border on f
     expect(FOCUS_OUTLINE.test('"focus-visible:!outline-ring"')).toBe(true);
     expect(FOCUS_OUTLINE.test('"focus-visible:outline-solid!"')).toBe(true);
     expect(hasFocusBorderColour('"focus-visible:!border-0 focus-visible:border-transparent!"')).toBe(false);
+    // template interpolation: a nested cn() inside ${…}, and nested backticks
+    expect(hasFocusBorderColour('const E = cn(`flex ${cn("focus-visible:border-ring", x)} focus-visible:outline-ring`);')).toBe(true);
+    expect(hasFocusBorderColour("const F = cn(`flex ${cond ? `has-[input:focus-visible]:border-primary` : ''} rounded`);")).toBe(true);
+    expect(FOCUS_OUTLINE.test('const G = cn(`flex ${cn("x", `focus-visible:outline-ring`)}`);')).toBe(true);
+    expect(hasFocusBorderColour("const H = cn(`flex ${a ? '}' : `x`} hover:border-border-hover`, y);")).toBe(false);
     // full-source fixtures: class strings inside cn()/cva()/arrays and template literals
     expect(hasFocusBorderColour('const A = cn("flex rounded", "has-[input:focus-visible]:border-primary outline-solid", className);')).toBe(true);
     expect(hasFocusBorderColour("const B = cva(['border', 'focus-visible:border-ring'], { variants: {} });")).toBe(true);
