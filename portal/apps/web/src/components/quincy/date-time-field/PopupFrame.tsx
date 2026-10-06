@@ -8,7 +8,6 @@ import { SYDNEY_TIME_ZONE } from "@quincy/shared";
 import { Eyebrow } from "../Eyebrow";
 
 /** The picked day and the pressed time slot: what must read as solid ink, never under the body's fade. */
-const TIME_SLOTS = '[role="group"][aria-label="Time slots"]';
 const SELECTED = '[aria-selected="true"] button, [role="group"][aria-label="Time slots"] button[aria-pressed="true"]';
 
 /** The day the person is about to edit when nothing narrower is given: the picked day. The time slot is never revealed, only cleared of the fade. */
@@ -89,8 +88,9 @@ function useSelectedClearOfFade(contentRef: RefObject<HTMLDivElement | null>, re
       const required = new Set<Element>(withReveal ? viewport.querySelectorAll(revealRef.current) : []);
       const focus = focused();
       if (focus) required.add(focus);
-      // #630: at open the presets win over revealing the pressed time slot (it only reads grey in the fade, and its column scrolls itself).
-      const selected = [...viewport.querySelectorAll(SELECTED)].filter((item) => !(fromTop && item.closest(TIME_SLOTS) && item !== focus));
+      // #630: at open only the picked day (the `reveal` match, plus a focused control) is solved for. The pressed time slot and the range's other
+      // highlighted days only read grey in the fade, so they never push the list past the presets; later selection and focus solves still count them.
+      const selected = fromTop ? [] : [...viewport.querySelectorAll(SELECTED)];
       const elements = new Set<Element>([...selected, ...required]);
       // Only the open/resize solve snaps: a selection change or focus keeps its least-scroll move.
       write(solve([...elements].map((item) => { const { top, bottom } = item.getBoundingClientRect(); return { top, bottom, required: required.has(item), priority: item === focus }; }), fade, fromTop ? presetSnaps() : undefined));

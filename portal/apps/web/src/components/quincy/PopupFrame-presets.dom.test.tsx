@@ -31,7 +31,7 @@ const FADE = 24;
 const TILE = 36;
 const BODY = { top: 100, height: 400, scrollHeight: 900 };
 
-function layout(dayTop: number, slotTop?: number) {
+function layout(dayTop: number, slotTop?: number, dayTops: Record<string, number> = {}) {
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
     let box = { top: 0, height: 0 };
     const viewport = this.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
@@ -43,16 +43,16 @@ function layout(dayTop: number, slotTop?: number) {
     else if (this.getAttribute("aria-label") === "Date shortcuts") box = { top: BODY.top + 8 - scroll, height: 112 };
     else if (this.previousElementSibling?.getAttribute("aria-label") === "Date shortcuts") box = { top: BODY.top + 8 + 112 + 16 - scroll, height: 300 };
     else if (viewport && slotTop !== undefined && this.closest('[role="group"][aria-label="Time slots"]') && this.tagName === "BUTTON" && this.getAttribute("aria-pressed") === "true") box = { top: BODY.top + slotTop - (viewport!.parentElement!.closest<HTMLElement>('[data-slot="scroll-area-viewport"]')?.scrollTop ?? 0), height: 36 };
-    else if (viewport && this.closest('[role="gridcell"]')) box = { top: BODY.top + dayTop - scroll, height: TILE };
+    else if (viewport && this.closest('[role="gridcell"]')) box = { top: BODY.top + (dayTops[this.closest('[role="gridcell"]')!.getAttribute("data-day")!] ?? dayTop) - scroll, height: TILE };
     return { ...box, bottom: box.top + box.height, left: 0, right: 0, width: 0, x: 0, y: box.top, toJSON() {} } as DOMRect;
   });
   vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(() => BODY.scrollHeight);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(() => BODY.height);
 }
 
-async function open(value: string | null, variant: "date" | "date-time" = "date") {
+async function open(value: string | null, variant: "date" | "date-time" | "range" = "date") {
   await act(async () => {
-    root.render(variant === "date" ? <DateTimeField variant="date" id="field" label="Picker" value={value} onApply={vi.fn()} /> : <DateTimeField variant="date-time" id="field" label="Picker" value={value ? { localCivil: `${value}T09:00`, fold: 0 } : null} onApply={vi.fn()} />);
+    root.render(variant === "range" ? <DateTimeField variant="range" id="field" label="Picker" value={{ start: { localCivil: "2026-10-14T09:00", fold: 0 }, end: { localCivil: "2026-10-20T17:00", fold: 0 } }} projectDefault={null} openOn="start" onApply={vi.fn()} /> : variant === "date" ? <DateTimeField variant="date" id="field" label="Picker" value={value} onApply={vi.fn()} /> : <DateTimeField variant="date-time" id="field" label="Picker" value={value ? { localCivil: `${value}T09:00`, fold: 0 } : null} onApply={vi.fn()} />);
     await Promise.resolve();
   });
   await act(async () => { host.querySelector<HTMLButtonElement>("button#field")!.click(); await Promise.resolve(); await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
@@ -83,6 +83,13 @@ describe("PopupFrame opens on a whole preset row (#630)", () => {
     // The 09:00 slot sits inside the bottom fade band at 0 (rect 465..501 against 476..500); the presets win at open.
     layout(300, 365);
     const body = await open("2026-10-14", "date-time");
+    expect(body.scrollTop).toBe(0);
+  });
+
+  it("counts only the picked day at open: a highlighted range day in the bottom fade does not push the list down", async () => {
+    // The start day (14th) fits at 0. The 20th, highlighted as the range's end, sits in the bottom band (rect 465..501 against 476..500).
+    layout(300, undefined, { "2026-10-20": 365 });
+    const body = await open(null, "range");
     expect(body.scrollTop).toBe(0);
   });
 });
