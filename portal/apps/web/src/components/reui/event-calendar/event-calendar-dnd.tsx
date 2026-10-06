@@ -1348,7 +1348,23 @@ function beginKeyboardAdjust<TData>(
         chips.find((el) => el === origin) ??
         chips[0]
       if (!chip) {
-        if (framesLeft > 1) refocus(framesLeft - 1)
+        if (framesLeft > 1) {
+          refocus(framesLeft - 1)
+          return
+        }
+        // QUINCY (#614 PR B): the wait is spent and the event has no chip. A month cell under
+        // autoFit folds a moved bar into its "+N more", so the destination day's trigger is
+        // where the event now lives - focus it rather than leave focus on <body>.
+        const active = document.activeElement
+        if (active && active !== document.body && active !== origin && !scope.contains(active)) {
+          return
+        }
+        const dayStart = [...scope.querySelectorAll<HTMLElement>("[data-ec-day]")]
+          .map((cell) => ({ cell, t: Number(cell.dataset.ecDay) }))
+          .filter(({ t }) => t <= current.start.getTime())
+          .sort((a, b) => b.t - a.t)[0]?.cell
+        const more = dayStart?.querySelector<HTMLElement>("[data-slot=event-calendar-more]")
+        more?.focus({ preventScroll: true })
         return
       }
       // the user moved focus somewhere real while we waited: leave it there

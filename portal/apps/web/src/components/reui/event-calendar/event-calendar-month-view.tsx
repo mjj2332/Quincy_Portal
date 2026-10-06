@@ -67,7 +67,10 @@
  *    to a sliver above the day number. The hidden bar lists in that day's "+N more" popover via
  *    `hiddenBarKeysByCol`, as lane >= cap bars always did. A numeric `maxEventsPerCell` is
  *    unchanged. The week row reads per-column timed counts through one selector over
- *    `getIndex().byDay` (the source `useEventCalendarDay` uses). Markup is untouched.
+ *    `getIndex().byDay` (the source `useEventCalendarDay` uses). Markup is untouched. A keyboard
+ *    move that hides the moved bar unmounts its chip, so the gesture's `refocus`
+ *    (event-calendar-dnd.tsx, entry 6) falls back, once its wait is spent, to the destination
+ *    day's "+N more" trigger instead of leaving focus on <body>.
  */
 import {
   useCallback,
