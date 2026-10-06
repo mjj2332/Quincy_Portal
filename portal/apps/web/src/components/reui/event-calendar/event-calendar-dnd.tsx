@@ -137,6 +137,7 @@ import type {
   EventCalendarProposedUpdate,
   EventCalendarSegment,
 } from "@/components/reui/event-calendar/event-calendar-types"
+import { focusEventOrOverflow } from "@/components/reui/event-calendar/event-calendar-focus"
 import {
   addDays,
   addMinutes,
@@ -1348,7 +1349,23 @@ function beginKeyboardAdjust<TData>(
         chips.find((el) => el === origin) ??
         chips[0]
       if (!chip) {
-        if (framesLeft > 1) refocus(framesLeft - 1)
+        if (framesLeft > 1) {
+          refocus(framesLeft - 1)
+          return
+        }
+        // QUINCY (#614 PR B): the wait is spent and the event has no chip. A month cell under
+        // autoFit folds a bar into its "+N more", so a covered rendered day's trigger is where the
+        // event now lives - focus it rather than leave focus on <body>. The lookup is Quincy's
+        // (`event-calendar-focus.ts`), which also covers an occurrence starting before the grid.
+        const active = document.activeElement
+        if (active && active !== document.body && active !== origin && !scope.contains(active)) {
+          return
+        }
+        focusEventOrOverflow(scope, id, {
+          start: current.start,
+          end: current.end,
+          edge: target === "end" ? "end" : "start",
+        })
         return
       }
       // the user moved focus somewhere real while we waited: leave it there

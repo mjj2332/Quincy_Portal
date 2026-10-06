@@ -74,6 +74,7 @@ import {
   type CalendarSettleEvent,
   type CalendarSettleState,
 } from "./production-calendar-interaction";
+import { findMoreForEvent } from "./calendar-more-anchor";
 import { ProductionCalendarMoveConfirmation } from "../components/ProductionCalendarMoveConfirmation";
 import type { ProductionCalendarScheduleEditorError } from "../components/ProductionCalendarScheduleEditorFields";
 import type {
@@ -621,7 +622,10 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
       // `<button>` around it (whose own `data-ec-*` attributes are vendor-internal —
       // `event-calendar-skin.guard.test.ts`, detector 9).
       const eventTarget = eventElement && !eventElement.matches("button, [tabindex]") ? eventElement.closest<HTMLElement>("button") ?? eventElement : eventElement;
-      (byKey ?? eventTarget)?.focus();
+      // #614 PR B: under autoFit the event's chip may be folded into a month cell's "+N more" (a rollback that
+      // restores a hidden bar, or a keyboard move that hid it). The descriptor carries no occurrence range, so
+      // `findMoreForEvent` finds the trigger whose Portal marker lists the event.
+      (byKey ?? eventTarget ?? (descriptor.control === "event" ? findMoreForEvent(descriptor.eventId) : null))?.focus();
     }, 0);
   }, []);
 

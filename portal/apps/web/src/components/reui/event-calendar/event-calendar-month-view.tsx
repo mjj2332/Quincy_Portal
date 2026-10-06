@@ -59,6 +59,21 @@
  *    keyboard one (`!state.drag.keyboard`). A pointer drag carries the chip away, so closing was
  *    right; a keyboard session's chip is the focused thing being adjusted, and closing unmounted
  *    it mid-session. A re-vendor WILL restore the one-line selector — re-apply this.
+ * 4. 2026-10-07, #614 PR B — BEHAVIOUR CHANGE (autoFit only). The week row's lane/overflow split
+ *    moved into the pure `splitMonthRowCapacity` (event-calendar-lib.tsx). Under `autoFit`
+ *    ("auto" cap) a bar in the last visible lane (cap - 1) is now HIDDEN when any column it covers
+ *    would overflow, instead of staying drawn: at a measured cap of 1 a lane-0 bar reserved the
+ *    cell's only row, so "+N more" rendered below the lane spacer and `overflow-hidden` clipped it
+ *    to a sliver above the day number. The hidden bar lists in that day's "+N more" popover via
+ *    `hiddenBarKeysByCol`, as lane >= cap bars always did. A numeric `maxEventsPerCell` is
+ *    unchanged. The week row reads per-column timed counts through one selector over
+ *    `getIndex().byDay` (the source `useEventCalendarDay` uses). Markup is untouched. A keyboard
+ *    move or resize that hides the bar unmounts its chip, so the gesture's `refocus`
+ *    (event-calendar-dnd.tsx, entry 6) falls back, once its wait is spent, to a "+N more" trigger.
+ *    That fallback lives in the Quincy-authored resolver `event-calendar-focus.ts` (the scheduling
+ *    controller's rollback finds the same trigger through the Portal's own `data-more-event-ids`
+ *    marker, `findMoreForEvent`), which intersects the occurrence with the rendered days
+ *    rather than assuming its start is in the grid.
  */
 import {
   useCallback,
@@ -95,6 +110,7 @@ import {
   getDayKey,
   getRangeKey,
   resolveOffDay,
+  splitMonthRowCapacity,
   toZoned,
   zonedStartOfDay,
 } from "@/components/reui/event-calendar/event-calendar-lib"
@@ -434,24 +450,45 @@ function EventCalendarMonthWeek({
     }
     return start === -1 ? null : { col: start, span: end - start + 1 }
   }
-  // bars fit within the cap; deeper lanes fall into each day's "+N more"
-  const visibleBars = bars.filter((b) => (b.lane ?? 0) < cap)
   const covers = (b: EventCalendarSegment, dayOffset: number) =>
     (b.colStart ?? 0) <= dayOffset &&
     dayOffset < (b.colStart ?? 0) + (b.colSpan ?? 1)
-  // Occurrence keys of the bars hidden in each column (lane >= cap). Threaded to
-  // the cell so its "+N more" popover can list the hidden bars WITHOUT re-listing
-  // the visible ones (day buckets carry no lane, so the week row - which owns bar
-  // laning - is the only place that knows which bars are hidden).
-  const hiddenBarKeysByCol = week.map(
-    (_, col) =>
-      new Set(
-        bars
-          // offsets has one entry per column of `week`, so `col` is always in range.
-          .filter((b) => (b.lane ?? 0) >= cap && covers(b, offsets[col]!))
-          .map((b) => b.occurrence.key)
+  // Single-day timed events per column - the same per-day buckets
+  // `useEventCalendarDay` reads, so the row's split agrees with each cell's.
+  const instance = useEventCalendar()
+  const timedCounts = useEventCalendarSelector<unknown, number[]>(
+    () => {
+      const byDay = instance.internals.getIndex().byDay
+      return week.map(
+        (d) => byDay.get(getDayKey(d, settings.timeZone))?.timed.length ?? 0
       )
+    },
+    {
+      isEqual: (a, b) =>
+        a === b || (a.length === b.length && a.every((n, i) => n === b[i])),
+    }
   )
+  // Bars fit within the cap; deeper lanes - and, under autoFit, the last
+  // visible lane when a covered column would overflow - fall into each day's
+  // "+N more". hiddenBarKeysByCol threads the hidden bars' occurrence keys to
+  // the cell so its popover lists them WITHOUT re-listing the visible ones (day
+  // buckets carry no lane, so the week row - which owns bar laning - is the only
+  // place that knows which bars are hidden).
+  const capacity = splitMonthRowCapacity({
+    cap,
+    autoFit,
+    offsets,
+    timedCounts,
+    bars: bars.map((b) => ({
+      key: b.occurrence.key,
+      lane: b.lane ?? 0,
+      colStart: b.colStart ?? 0,
+      colSpan: b.colSpan ?? 1,
+    })),
+  })
+  const visibleKeys = new Set(capacity.visibleBarKeys)
+  const visibleBars = bars.filter((b) => visibleKeys.has(b.occurrence.key))
+  const { hiddenBarKeysByCol, reservedLanes } = capacity
 
   // Live move/resize ghost at the PROPOSED day span. Standardized treatment
   // (EVENT_CALENDAR_GHOST): move = the event carried as a full clone, resize =
@@ -586,14 +623,7 @@ function EventCalendarMonthWeek({
           // short multi-day event does not push down timed events in unrelated
           // cells of the same row. Reserve down to the deepest covering bar
           // lane so timed events always sit below every bar in their own cell.
-          reservedLanes={visibleBars.reduce(
-            // offsets has one entry per column of `week`, so `col` is always in range.
-            (max, b) =>
-              covers(b, offsets[col]!)
-                ? Math.max(max, (b.lane ?? 0) + 1)
-                : max,
-            0
-          )}
+          reservedLanes={reservedLanes[col]!}
           // hiddenBarKeysByCol has one entry per column of `week`, so `col` is always in range.
           hiddenBarKeys={hiddenBarKeysByCol[col]!}
           isLast={col === week.length - 1}
