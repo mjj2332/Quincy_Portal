@@ -13,7 +13,7 @@
 import { describe, expect, it } from "vitest";
 import { apply, teardown } from "../qa-seed/cli.mjs";
 import { BOOTSTRAP_ADMIN_ID } from "../qa-seed/dataset";
-import { CAPABILITY_TABLE, FIXTURE_BOARD_POSITIONS_TABLE, FIXTURE_ENTITIES_TABLE, FIXTURE_RUN_RECORDS_TABLE, FIXTURE_RUNS_TABLE } from "../qa-seed/sql";
+import { CAPABILITY_TABLE, FIXTURE_ENTITIES_TABLE, FIXTURE_RUN_RECORDS_TABLE, FIXTURE_RUNS_TABLE } from "../qa-seed/sql";
 import { FIXTURE_CLOSURE_TABLE } from "../qa-seed/teardown-graph";
 import {
   appRows, controlProjectRows, GLOBAL_AUDIT_TYPES, globalRows, insertSql, plantId, PROJECT_DESCENDANT_AUDIT_TYPES, scannedAuditTargetTypes,
@@ -23,7 +23,7 @@ import { freshFixtureDatabase, sqliteExecutor, type Row, type SqliteDatabase } f
 
 const ANCHOR = "2026-09-21";
 const DEFAULT_EDITOR = "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f";
-const REGISTRY_TABLES = [FIXTURE_RUNS_TABLE, FIXTURE_ENTITIES_TABLE, FIXTURE_RUN_RECORDS_TABLE, FIXTURE_BOARD_POSITIONS_TABLE, FIXTURE_CLOSURE_TABLE];
+const REGISTRY_TABLES = [FIXTURE_RUNS_TABLE, FIXTURE_ENTITIES_TABLE, FIXTURE_RUN_RECORDS_TABLE, FIXTURE_CLOSURE_TABLE];
 
 type Snapshot = Record<string, Row[]>;
 

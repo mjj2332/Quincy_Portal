@@ -172,7 +172,7 @@ describe("notifications", () => {
 describe("Project hard delete", () => {
   it("leaves no media rows or objects, and aborts a started upload first", async () => {
     const projectId = crypto.randomUUID(); const now = Date.now();
-    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, archived_at, created_at, updated_at) VALUES (?, 'Doomed', 'editing_autohdr', 0, ?, ?, ?)").bind(projectId, now, now, now).run();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, archived_at, created_at, updated_at) VALUES (?, 'Doomed', 'editing_autohdr', ?, ?, ?)").bind(projectId, now, now, now).run();
     const pending = await seedMedia({ projectId, state: "pending" }); const attached = await seedMedia({ projectId, state: "attached" });
     const uploading = await seedMedia({ projectId, state: "uploading", uploadId: "s3-upload-9" }); const kept = await seedMedia({ state: "attached" });
     const calls: string[] = [];
@@ -192,7 +192,7 @@ describe("Project hard delete", () => {
 describe("Project hard delete keeps cleanup ownership of what it could not abort (#493)", () => {
   it("queues the multipart upload whose abort failed, with its upload id, after the Project and its rows are gone", async () => {
     const projectId = crypto.randomUUID(); const now = Date.now();
-    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, archived_at, created_at, updated_at) VALUES (?, 'Doomed2', 'editing_autohdr', 0, ?, ?, ?)").bind(projectId, now, now, now).run();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, archived_at, created_at, updated_at) VALUES (?, 'Doomed2', 'editing_autohdr', ?, ?, ?)").bind(projectId, now, now, now).run();
     const uploading = await seedMedia({ projectId, state: "uploading", uploadId: "s3-upload-stuck" }); const attached = await seedMedia({ projectId, state: "attached" });
     vi.stubGlobal("fetch", async () => new Response("R2 unavailable", { status: 403 }));
     const environment: Env = { ...baseEnv, R2_ACCOUNT_ID: "acct", R2_S3_ACCESS_KEY_ID: "key", R2_S3_SECRET_ACCESS_KEY: "secret" };
@@ -211,7 +211,7 @@ describe("Project hard delete keeps cleanup ownership of what it could not abort
 describe("Project hard delete dequeues only what it resolved (#493)", () => {
   it("keeps a queue entry that was already there, and one queued concurrently during the purge, while dequeuing the keys it deleted", async () => {
     const projectId = crypto.randomUUID(); const now = Date.now();
-    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, archived_at, created_at, updated_at) VALUES (?, 'Doomed3', 'editing_autohdr', 0, ?, ?, ?)").bind(projectId, now, now, now).run();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, archived_at, created_at, updated_at) VALUES (?, 'Doomed3', 'editing_autohdr', ?, ?, ?)").bind(projectId, now, now, now).run();
     const attached = await seedMedia({ projectId, state: "attached" });
     const earlyKey = mediaKey(projectId, crypto.randomUUID()); const lateKey = mediaKey(projectId, crypto.randomUUID());
     await database.MEDIA.put(earlyKey, pngBytes(8)); await database.MEDIA.put(lateKey, pngBytes(8));

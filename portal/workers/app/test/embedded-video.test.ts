@@ -319,6 +319,37 @@ describe("PUT …/poster (#494)", () => {
     expect(logged).toBeDefined(); expect(JSON.stringify(logged)).toContain(written);
   });
 
+  it("a poster PUT that throws after writing the object deletes it and its queue entry, and the PUT's own error still surfaces (#574)", async () => {
+    const { id } = await pending(); let written = "";
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const env = wrapMedia((target, property) => property === "put" ? async (key: string, ...rest: unknown[]) => {
+      written = key; await (target.put as (...a: unknown[]) => Promise<unknown>).call(target, key, ...rest); throw new Error("R2 put threw after commit");
+    } : undefined);
+    const response = await putPoster("member", id, jpegBytes(64), env);
+    errors.mockRestore();
+    expect(response.status).toBe(500);
+    expect(written).toContain("/poster-");
+    expect(await database.MEDIA.head(written)).toBeNull(); expect(await queued(written)).toBeNull();
+    expect((await mediaRow(id))!.poster_key).toBeNull();
+  });
+
+  it("a poster PUT that throws after writing, with R2 refusing the delete, leaves the key re-queued and the PUT's error surfacing (#574)", async () => {
+    const { id } = await pending(); let written = "";
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const env = wrapMedia((target, property) => {
+      if (property === "delete") return async () => { throw new Error("R2 down"); };
+      if (property === "put") return async (key: string, ...rest: unknown[]) => {
+        written = key; await (target.put as (...a: unknown[]) => Promise<unknown>).call(target, key, ...rest); throw new Error("R2 put threw after commit");
+      };
+      return undefined;
+    });
+    const response = await putPoster("member", id, jpegBytes(64), env);
+    errors.mockRestore();
+    expect(response.status).toBe(500);
+    expect(await database.MEDIA.head(written)).not.toBeNull();
+    expect(await queued(written)).toMatchObject({ storageKey: written, projectId: ids.project });
+  });
+
   it("keeps the poster when the adoption batch commits and then throws and the verification read throws too: object present, row references it, no queue entry, key logged", async () => {
     const { id } = await pending(); let written = ""; let committed = false;
     const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -359,7 +390,7 @@ describe("PUT …/poster (#494)", () => {
 
   it("leaves no orphan when the Project cascades away mid-write: with R2 refusing the delete, the key waits in the cleanup queue", async () => {
     const projectId = crypto.randomUUID(); const now = Date.now();
-    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Cascade', 'editing_autohdr', 0, ?, ?)").bind(projectId, now, now).run();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Cascade', 'editing_autohdr', ?, ?)").bind(projectId, now, now).run();
     await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, ids.member, now).run();
     const { id } = await pending({ projectId });
     let written = "";
