@@ -5510,6 +5510,14 @@ Tags: rich-text · #496
 - **A raw `D1Database.batch` is needed once media statements are involved**: the Drizzle batch cannot carry the raw SQL, so PATCH and DELETE moved into `editNoticeBoardPost` / `deleteNoticeBoardPost`. The delete batch detaches the images with `detached_at = 0` only if the post is gone (`NOT EXISTS`).
 - **The new-post and edit composers keep separate upload locks**; Ctrl/Cmd+Enter goes through `submit()` / `saveEdit()`, which refuse while their own composer uploads.
 
+## Embedded image viewer: never upscale, 48px close, editable alt (#553)
+Tags: rich-text, css-tokens · #553
+
+- **Fit the dialog to the image, do not stretch the image to the dialog.** `DialogContent` is `w-fit` and the viewer `<img>` is `w-auto max-w-full h-auto max-h-[90dvh]`; `w-full` upscaled a 600px photo to 1024px.
+- **A scrim chip needs the dialog's corner and a hairline ring, or it reads as a bite out of the corner.** `--scrim-overlay` is also the backdrop, so the chip is `rounded-xl` with `ring-border`, and the Close button fills it (`size-[var(--space-7)]`, 48px) instead of the built-in 28px one (`showCloseButton={false}`). `EmbeddedVideoDialog` still has the old chip.
+- **Alt is a node attribute, not a label.** `{type:"image",attrs:{mediaId,alt?}}`; the validator trims it, drops blank/null, rejects non-strings and over `RICH_TEXT_IMAGE_ALT_MAX_LENGTH` (200). The Tiptap attribute is `rendered:false` and both mappings (`toTiptap`, `tiptapToRichTextDoc`) must carry it or it silently disappears (#493). The default is `imageAltFromFileName(file.name)` at insert time (no schema or D1 change); the editor's selected image shows an "Alt text" popover (`EmbeddedImageEditorNode`, the LinkPreview node-view pattern).
+- **A trigger `aria-label` replaces the image's alt for screen readers.** The thumbnail button is named `View image: <alt>`, never a generic label. An image with no alt falls back to `Embedded image`.
+
 ## A date popup opened under the sticky top bar with its month navigation scrolled away (#528)
 Tags: focus-overlays, css-tokens · #528
 

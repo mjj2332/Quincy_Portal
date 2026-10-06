@@ -99,6 +99,44 @@ describe("inserting an image", () => {
     expect(host.querySelector(`img[data-media-id="${A}"]`)?.getAttribute("src")).toBe(`/media/embedded/${A}`);
   });
 
+  it("inserts the node with the file name, cleaned, as its alt text (#553)", async () => {
+    upload.mockResolvedValue(A);
+    const host = mount(<Harness />);
+    await choose(host, [png("IMG_1234.HEIC")]); await settle();
+    expect(latest.content.find((node) => node.type === "image")).toEqual({ type: "image", attrs: { mediaId: A, alt: "IMG 1234" } });
+    expect(host.querySelector(`img[data-media-id="${A}"]`)?.getAttribute("alt")).toBe("IMG 1234");
+  });
+
+  it("stores no alt when the file name leaves nothing readable, and the image falls back to a generic one (#553)", async () => {
+    upload.mockResolvedValue(A);
+    const host = mount(<Harness />);
+    await choose(host, [png(".png")]); await settle();
+    expect(latest.content.find((node) => node.type === "image")).toEqual({ type: "image", attrs: { mediaId: A } });
+    expect(host.querySelector(`img[data-media-id="${A}"]`)?.getAttribute("alt")).toBe("Embedded image");
+  });
+
+  it("edits the alt text from a control on the selected image, and the node carries the new text (#553)", async () => {
+    const host = mount(<Harness initial={{ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Hi" }] }, { type: "image", attrs: { mediaId: A, alt: "IMG 1234" } }] }} />);
+    const editor = (host.querySelector('[contenteditable="true"]') as unknown as { editor: Editor }).editor;
+    expect(host.querySelector('[data-testid="embedded-image-alt-button"]')).toBeNull();
+    let imagePos = -1; editor.state.doc.descendants((node, pos) => { if (node.type.name === "image") imagePos = pos; });
+    await act(async () => { editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, imagePos))); }); await settle();
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="embedded-image-alt-button"]')!.click(); }); await settle();
+    const input = document.querySelector<HTMLInputElement>('[data-testid="embedded-image-alt-popover"] input')!;
+    expect(input.value).toBe("IMG 1234"); expect(input.maxLength).toBe(200);
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "  Front door  "); input.dispatchEvent(new Event("input", { bubbles: true })); });
+    await act(async () => { document.querySelector<HTMLButtonElement>('[aria-label="Apply alt text"]')!.click(); }); await settle();
+    expect(latest.content.find((node) => node.type === "image")).toEqual({ type: "image", attrs: { mediaId: A, alt: "Front door" } });
+    expect(host.querySelector(`img[data-media-id="${A}"]`)?.getAttribute("alt")).toBe("Front door");
+    expect(() => parseRichTextDoc(latest, COMMENT_MEDIA_RICH_TEXT_PROFILE)).not.toThrow();
+    // Clearing it drops the attribute and the image falls back to the generic name.
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="embedded-image-alt-button"]')!.click(); }); await settle();
+    const again = document.querySelector<HTMLInputElement>('[data-testid="embedded-image-alt-popover"] input')!;
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(again, ""); again.dispatchEvent(new Event("input", { bubbles: true })); });
+    await act(async () => { document.querySelector<HTMLButtonElement>('[aria-label="Apply alt text"]')!.click(); }); await settle();
+    expect(latest.content.find((node) => node.type === "image")).toEqual({ type: "image", attrs: { mediaId: A } });
+  });
+
   it("shows an error, inserts nothing and releases the busy state when the upload fails", async () => {
     upload.mockRejectedValue(new Error("Upload service is down"));
     const host = mount(<Harness />);
@@ -229,11 +267,11 @@ describe("design review fixes (#493)", () => {
     expect(imageSource).toMatch(/data-testid="embedded-image"[\s\S]{0,240}my-\[var\(--space-2\)\]/);
     expect(host.querySelector('[data-testid="embedded-image"]')).not.toBeNull();
     expect(rule(".rich-text__embedded-image {")).toMatch(/margin: 0[;\s]/);
-    expect(rule(".rich-text__editor-content img.rich-text__embedded-image {")).toContain("margin: var(--space-2) 0");
+    expect(rule(".rich-text__embedded-image-node {")).toContain("margin: var(--space-2) 0");
   });
 
   it("outlines the selected image with a hairline accent, not the heavy focus ring", () => {
-    const selected = rule(".rich-text__editor-content img.rich-text__embedded-image.ProseMirror-selectednode");
+    const selected = rule(".rich-text__editor-content .rich-text__embedded-image-node.ProseMirror-selectednode > img.rich-text__embedded-image");
     expect(selected).toContain("var(--border-width-hair)"); expect(selected).not.toContain("--ring"); expect(selected).not.toContain("--border-width-bold");
   });
 
@@ -284,6 +322,47 @@ describe("design review fixes (#493)", () => {
     expect(imageSource).toMatch(/data-testid="embedded-image-dialog"/);
     expect(imageSource).toMatch(/p-0/); expect(imageSource).toMatch(/bg-background/); expect(imageSource).toMatch(/embedded-image-scrim[^>]*scrim-overlay/);
     expect(imageSource).toMatch(/max-w-\[calc\(100%-2rem\)\]/);
+  });
+
+  it("never upscales: the dialog fits the image and the image is capped at its natural size (#553)", async () => {
+    const host = mount(<RichTextContent content={withImages(A)} />);
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="embedded-image"]')!.click(); });
+    await settle();
+    const dialog = document.querySelector<HTMLElement>('[data-testid="embedded-image-dialog"]')!;
+    const classes = (element: Element) => element.getAttribute("class")!.split(/\s+/);
+    expect(classes(dialog)).toContain("w-fit"); expect(classes(dialog)).not.toContain("w-full");
+    const image = dialog.querySelector("img")!;
+    expect(classes(image)).toEqual(expect.arrayContaining(["w-auto", "max-w-full", "h-auto", "max-h-[90dvh]"])); expect(classes(image)).not.toContain("w-full");
+  });
+
+  it("makes the close button the drawn 48px chip, with the dialog's radius and a hairline ring on the scrim (#553)", async () => {
+    const host = mount(<RichTextContent content={withImages(A)} />);
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="embedded-image"]')!.click(); });
+    await settle();
+    const dialog = document.querySelector<HTMLElement>('[data-testid="embedded-image-dialog"]')!;
+    const close = dialog.querySelector<HTMLElement>('[data-testid="embedded-image-close"]')!;
+    const scrim = dialog.querySelector<HTMLElement>('[data-testid="embedded-image-scrim"]')!;
+    expect(close.textContent).toBe("Close");
+    for (const element of [close, scrim]) { expect(element.className).toContain("size-[var(--space-7)]"); expect(element.className).toContain("top-0"); expect(element.className).toContain("right-0"); expect(element.className).toContain("rounded-xl"); }
+    expect(scrim.className).toContain("ring-[length:var(--border-width-hair)]");
+    expect(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../styles/tokens/spacing.css"), "utf8")).toMatch(/--space-7:\s*48px/);
+    // Only one close control: the dialog's built-in 28px one is off.
+    expect(dialog.querySelectorAll("button")).toHaveLength(1);
+  });
+
+  it("names the thumbnail and the larger view from the author's alt text, and falls back for an image with none (#553)", async () => {
+    const withAlt: RichTextDoc = { type: "doc", content: [{ type: "image", attrs: { mediaId: A, alt: "Front door at dusk" } }] };
+    const host = mount(<RichTextContent content={withAlt} />);
+    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="embedded-image"]')!;
+    expect(trigger.getAttribute("aria-label")).toBe("View image: Front door at dusk");
+    expect(trigger.querySelector("img")?.getAttribute("alt")).toBe("Front door at dusk");
+    await act(async () => { trigger.click(); }); await settle();
+    const dialog = document.querySelector<HTMLElement>('[data-testid="embedded-image-dialog"]')!;
+    expect(dialog.querySelector("img")?.getAttribute("alt")).toBe("Front door at dusk");
+    expect(dialog.textContent).toContain("Front door at dusk");
+    act(() => root!.unmount()); document.body.innerHTML = "";
+    const plain = mount(<RichTextContent content={withImages(A)} />);
+    expect(plain.querySelector('[data-testid="embedded-image"]')?.getAttribute("aria-label")).toBe("View image: Embedded image");
   });
 
   async function openViewer(host: HTMLElement) {
