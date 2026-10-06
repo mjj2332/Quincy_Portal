@@ -117,7 +117,7 @@ const RAIL_TRIGGER = "relative inline-grid place-items-center size-8 shrink-0 ro
 // rather than leaving the width at 34.
 const TOUCH_TARGET = "size-[44px]";
 
-const TABS_ROW = "px-[var(--space-2)] pt-[var(--space-2)] shrink-0";
+const TABS_ROW = "px-[var(--space-4)] pt-[var(--space-2)] shrink-0";
 
 // Rail placement is a fixed 420px, wide enough to hold a full notification row without wrapping
 // its body text; header placement instead tracks the header's own width (`w-[var(--anchor-width)]`
