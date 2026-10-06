@@ -63,7 +63,7 @@ import {
   RichTextToolbarGroup,
   RichTextToolbarSeparator,
 } from "./rich-text-toolbar"
-import { ChevronDownIcon, TableIcon, BetweenHorizontalEndIcon, BetweenVerticalEndIcon, PanelTopIcon, Trash2Icon, Rows3Icon, Columns3Icon } from "lucide-react"
+import { TableIcon, BetweenHorizontalEndIcon, BetweenVerticalEndIcon, PanelTopIcon, Trash2Icon, Rows3Icon, Columns3Icon } from "lucide-react"
 
 export const RICH_TEXT_TABLE_SLASH_ITEM: RichTextSlashItem = {
   id: "table",
@@ -467,7 +467,7 @@ interface RichTextTableMenuProps {
 }
 
 /**
- * The desktop's table controls at tier "none" (#595): one "Table" menu standing in the Insert-table slot of the Layout
+ * The desktop's table controls at tier "none" (#595): one icon-only "Table options" menu, the same 28px size and variant as the Insert-table button it replaces, standing in the Insert-table slot of the Layout
  * group (Insert table cannot act inside a table anyway), so nothing in the toolbar shifts sideways. Same commands as the
  * bar (`tableCommands`). Alt+F10 from the text focuses the trigger; Escape on it returns to the text (capture phase).
  */
@@ -516,23 +516,28 @@ export function RichTextTableMenu({ editor, onDeleteTable, disabled = false }: R
   return (
     <span className="flex shrink-0" aria-keyshortcuts="Alt+F10" onKeyDownCapture={handleKeyDown}>
       <DropdownMenu onOpenChange={(open) => { if (open) confirmingRef.current = false }}>
-        <DropdownMenuTrigger
-          render={
-            <Button
-              ref={triggerRef}
-              variant="ghost"
-              size="sm"
-              aria-label="Table"
-              disabled={disabled}
-              data-toolbar-item=""
-              data-testid="rich-text-table-menu"
-              className="max-[721px]:h-11"
-            />
-          }
-        >
-          Table
-          <ChevronDownIcon aria-hidden="true" />
-        </DropdownMenuTrigger>
+        <Tooltip>
+          {/* The span carries the tooltip, so the trigger keeps its own props. */}
+          <TooltipTrigger render={<span className="flex shrink-0" />}>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  ref={triggerRef}
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Table options"
+                  disabled={disabled}
+                  data-toolbar-item=""
+                  data-testid="rich-text-table-menu"
+                  className="max-[721px]:size-11 disabled:bg-transparent disabled:text-muted-foreground disabled:opacity-100"
+                />
+              }
+            >
+              <TableIcon aria-hidden="true" />
+            </DropdownMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent>Table options</TooltipContent>
+        </Tooltip>
         <DropdownMenuContent align="start" className="w-auto" finalFocus={() => (confirmingRef.current ? false : editor.view.dom)}>
           <DropdownMenuGroup>
             <DropdownMenuItem disabled={disabled || !table.canAddRow} onClick={() => tableCommands.addRow(editor)}>

@@ -1743,11 +1743,18 @@ describe("table bar with no room falls back to the toolbar group (#535)", () => 
       await caretIn(editor, "before");
       const outside = itemLabels(host);
       expect(outside).toContain("Insert table");
+      const insertTable = host.querySelector<HTMLElement>('[aria-label="Insert table"]')!;
+      const insertClass = insertTable.className;
       expect(menuTrigger(host)).toBeNull();
       await caretIn(editor, "Mon");
       await waitForCondition(() => menuTrigger(host) !== null, "Table menu");
       expect(host.querySelector('[data-testid="rich-text-table-tools"]')).toBeNull();
-      expect(itemLabels(host).map((label) => label === "Table" ? "Insert table" : label)).toEqual(outside);
+      expect(itemLabels(host).map((label) => label === "Table options" ? "Insert table" : label)).toEqual(outside);
+      // Same size and variant as the button it replaces, icon only: nothing to the right of the slot moves (#595).
+      expect(menuTrigger(host)!.className).toBe(insertClass);
+      expect(menuTrigger(host)!.textContent).toBe("");
+      expect(menuTrigger(host)!.getAttribute("aria-haspopup")).toBe("menu");
+      expect(menuTrigger(host)!.querySelector("svg")).not.toBeNull();
       expect(host.querySelector('[aria-label="Insert table"]')).toBeNull();
       // It sits in the Layout group, where Insert table was.
       expect(menuTrigger(host)!.closest('[role="group"][aria-label="Layout"]')).not.toBeNull();
@@ -1922,7 +1929,7 @@ describe("selection scrolling clears the stuck composer toolbar (#594, Sol r3)",
     await act(async () => { root!.render(<EditorUnderTest value={doc()} onChange={vi.fn()} limit={2_000} loadMentionables={mentionables} />); await Promise.resolve(); await Promise.resolve(); });
     const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
     const value = margin(editor);
-    expect(typeof value === "object" ? value.top : value).toBe(98);
+    expect(typeof value === "object" ? value.top : value).toBe(106); // toolbar bottom 98 plus --space-2 (8px) of breathing room
     // ProseMirror only scrolls once the caret is within the THRESHOLD of the edge: the same bottom, or a caret at y80 never triggers it.
     const threshold = prop(editor, "scrollThreshold");
     expect(typeof threshold === "object" ? threshold.top : threshold).toBe(98);

@@ -477,7 +477,7 @@ export function QuincyRichTextEditor({
     if (!editor || !isDocument || !addon) return;
     const apply = () => {
       const top = (parseFloat(getComputedStyle(addon).top) || 0) + addon.offsetHeight;
-      editor.view.setProps({ scrollMargin: { top, right: 5, bottom: 5, left: 5 }, scrollThreshold: { top, right: 0, bottom: 0, left: 0 } });
+      editor.view.setProps({ scrollMargin: { top: top + 8 /* --space-2: breathing room under the toolbar */, right: 5, bottom: 5, left: 5 }, scrollThreshold: { top, right: 0, bottom: 0, left: 0 } });
     };
     apply();
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(apply);
