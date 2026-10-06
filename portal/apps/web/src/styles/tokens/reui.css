@@ -229,14 +229,14 @@
 /* #640: Quincy `Table` switches between a grid and stacked cards. The switch point is per table:
    `TableWrap stackBelow="md"` (default) switches at 721px, `stackBelow="lg"` below 1024px. The wrap
    carries `data-stack`; these variants match the wrap itself and every descendant of it, so a table's
-   rows and cells follow their own wrap. `md` keeps the historic overlap at exactly 721px. `:where` keeps specificity equal to the old max-/min- utilities. */
+   rows and cells follow their own wrap. Stacked is `width < N` and grid `min-width: N`, so exactly one applies at every width (fractional too). `:where` keeps specificity equal to the old max-/min- utilities. */
 @custom-variant table-stacked {
-  @media (max-width: 721px) {
+  @media (width < 721px) {
     &:where([data-stack="md"], [data-stack="md"] *) {
       @slot;
     }
   }
-  @media (max-width: 1023px) {
+  @media (width < 1024px) {
     &:where([data-stack="lg"], [data-stack="lg"] *) {
       @slot;
     }

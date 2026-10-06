@@ -1537,6 +1537,12 @@ describe("guard: Admin inline editors keep their focus outline and value clear (
       expect(block).toMatch(/data-stack="md"/);
       expect(block).toMatch(/data-stack="lg"/);
     }
+    // Stacked and grid must be complementary at every width, fractional ones included: stacked is
+    // `width < N`, grid `min-width: N` (the old `max-[721px]:`/`min-[721px]:` pair compiled the same way).
+    const stacked = css.slice(css.indexOf("@custom-variant table-stacked"), css.indexOf("@custom-variant table-grid"));
+    expect(stacked).toMatch(/@media \(width < 721px\)/);
+    expect(stacked).toMatch(/@media \(width < 1024px\)/);
+    expect(stacked).not.toMatch(/max-width/);
   });
   it("action cells use TableActions with row and column gaps, never sibling-margin spacing (#640)", () => {
     expect(admin).not.toMatch(/button\+button/);
