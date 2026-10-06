@@ -37,7 +37,7 @@ function board(initial: Array<Record<string, unknown>>, rows = new Map<string, E
   tracker.seed(elements);
   const appState: Record<string, unknown> = { editingTextElement: null, resizingElement: null, newElement: null, multiElement: null, editingLinearElement: null };
   const api = {
-    onChange: () => () => undefined, getSceneElementsIncludingDeleted: () => elements,
+    getSceneElementsIncludingDeleted: () => elements,
     getSceneElements: () => elements.filter((element) => element.isDeleted !== true),
     getAppState: () => appState,
     updateScene: (update: { elements?: El[] }) => { if (update.elements) elements = update.elements; },

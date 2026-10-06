@@ -240,6 +240,8 @@ export type WhiteboardController = {
   /** Call it straight from the click: browsers only allow it inside a gesture; SVG logs the same line as exportImage. */
   copyImage: (options: WhiteboardExportOptions) => Promise<void>
   setCollaborators: (collaborators: readonly WhiteboardCollaborator[]) => void
+  /** QUINCY ADDITION #551: re-places names anchored to a selection (a peer selecting with no cursor) after a scene change; the canvas calls it from its change path. */
+  refreshAnchors: () => void
   /** QUINCY ADDITION #499: merges elements another person changed into the board, by Excalidraw's own element-version
    * reconciliation (`reconcileElements`), as a change that never enters this person's Undo. Unlike `replace`, it keeps
    * everything the sender did not mention and never bumps versions or tombstones. `hold` says what the server holds of each board element (the saver's `hold`): what it holds keeps its index, and an unsent or edited element in the way of an incoming index is moved (never changing a revision). Works in view-only mode too. Returns

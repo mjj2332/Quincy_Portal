@@ -1,7 +1,16 @@
 // @vitest-environment happy-dom
-import { act, createElement } from "react";
+import { act, createElement, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+
+// Capture each editor API the board is handed (StrictMode constructs the editor twice), passing everything through.
+const handedApis: unknown[] = [];
+vi.mock("@excalidraw/excalidraw", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@excalidraw/excalidraw")>();
+  const { createElement: h } = await import("react");
+  const Excalidraw = (props: { excalidrawAPI?: (api: unknown) => void }) => h(real.Excalidraw as never, { ...props, excalidrawAPI: (api: unknown) => { handedApis.push(api); props.excalidrawAPI?.(api); } } as never);
+  return { ...real, Excalidraw };
+});
 
 /**
  * #551 items 1 and 2, against the REAL editor (history, store and reconcile of the installed Excalidraw) and the production
@@ -14,7 +23,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 const proxy: unknown = new Proxy(function () {}, { get: (_t, key) => (key === "canvas" ? document.createElement("canvas") : key === "measureText" ? () => ({ width: 1 }) : proxy), apply: () => proxy });
 (globalThis as { FontFace?: unknown }).FontFace = class { load() { return Promise.resolve(this); } };
 (globalThis as { Path2D?: unknown }).Path2D = class {};
-Object.defineProperty(document, "fonts", { configurable: true, value: { add() {}, has: () => true, load: async () => [], ready: Promise.resolve(), check: () => true, forEach() {} } });
+Object.defineProperty(document, "fonts", { configurable: true, value: { add() {}, addEventListener() {}, removeEventListener() {}, has: () => true, load: async () => [], ready: Promise.resolve(), check: () => true, forEach() {} } });
 
 type El = Record<string, unknown> & { id: string; version: number; versionNonce: number; isDeleted: boolean };
 type Api = {
@@ -25,10 +34,12 @@ type Api = {
 };
 let x: { Excalidraw: never; CaptureUpdateAction: { IMMEDIATELY: unknown; NEVER: unknown }; convertToExcalidrawElements: (e: unknown[]) => El[] };
 let canvas: typeof import("./whiteboard-canvas");
+let shell: typeof import("./whiteboard");
 beforeAll(async () => {
   HTMLCanvasElement.prototype.getContext = (() => proxy) as never;
   x = (await import("@excalidraw/excalidraw")) as never;
   canvas = await import("./whiteboard-canvas");
+  shell = await import("./whiteboard");
 });
 
 let root: Root | null = null;
@@ -123,10 +134,37 @@ describe("a selection-anchored name follows the shape with no new presence frame
     const { e, a } = await setup();
     expect(pointerOf(e)).toMatchObject({ x: 10, y: 20 });
     await act(async () => { e.api.updateScene({ elements: [{ ...a, x: 70, y: 90, version: a.version + 1, versionNonce: 3 }], captureUpdate: x.CaptureUpdateAction.NEVER }); });
-    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    await act(async () => { e.controller.refreshAnchors(); });   // what the canvas's change path does
     expect(pointerOf(e)).toMatchObject({ x: 70, y: 90 });
     await act(async () => { e.api.updateScene({ elements: [{ ...a, x: 70, y: 90, isDeleted: true, version: a.version + 2, versionNonce: 4 }], captureUpdate: x.CaptureUpdateAction.NEVER }); });
-    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    await act(async () => { e.controller.refreshAnchors(); });
     expect(pointerOf(e)).toBeUndefined();
+  });
+});
+
+describe("the anchor follows a move through the board's change path, across a StrictMode remount (#551, Sol round 2)", () => {
+  it("re-places an idle name after the editor is constructed twice, with no presence frame", async () => {
+    handedApis.length = 0;
+    let controller: { setCollaborators: (c: never) => void } | undefined;
+    const host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    const a = { ...rect("a"), x: 10, y: 20 };
+    await act(async () => {
+      root!.render(createElement(StrictMode, null, createElement(shell.Whiteboard as never, { initialData: { elements: [a] }, onReady: (c: never) => { controller = c; } })));
+    });
+    await act(async () => { await new Promise((r) => setTimeout(r, 800)); });
+    expect(controller).toBeDefined();
+    expect(handedApis.length).toBeGreaterThan(1);
+    const api = handedApis[handedApis.length - 1] as Api;
+    const pointer = () => (api.getAppState().collaborators as Map<string, { pointer?: { x: number; y: number } }>).get("s1")?.pointer;
+    await act(async () => { controller!.setCollaborators([{ id: "s1", name: "Ana", selectedIds: ["a"] }] as never); });
+    expect(pointer()).toMatchObject({ x: 10, y: 20 });
+    const live = api.getSceneElements()[0]!;
+    await act(async () => { api.updateScene({ elements: [{ ...live, x: 90, y: 95, version: live.version + 1, versionNonce: 31 }], captureUpdate: x.CaptureUpdateAction.NEVER }); await new Promise((r) => setTimeout(r, 50)); });
+    expect(pointer()).toMatchObject({ x: 90, y: 95 });
+    const moved = api.getSceneElements()[0]!;
+    await act(async () => { api.updateScene({ elements: [{ ...moved, isDeleted: true, version: moved.version + 1, versionNonce: 32 }], captureUpdate: x.CaptureUpdateAction.NEVER }); await new Promise((r) => setTimeout(r, 50)); });
+    expect(pointer()).toBeUndefined();
   });
 });

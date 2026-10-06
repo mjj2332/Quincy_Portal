@@ -892,14 +892,15 @@ export function createController(
       captureUpdate: CaptureUpdateAction.NEVER,
     })
   }
-  api.onChange(() => {
-    // Cheap: only a peer with a selection and no pointer can be anchored, and only a changed anchor republishes.
+  // Called from the board's own change path (not an editor subscription, which Excalidraw clears on a StrictMode remount).
+  // Cheap: only a peer with a selection and no pointer can be anchored, and only a changed anchor republishes.
+  const refreshAnchors = () => {
     if (!rawPeople.some((person) => !person.pointer && person.selectedIds?.length)) return
     const scene = api.getSceneElements()
     for (const person of rawPeople) {
       if (!person.pointer && person.selectedIds?.length && anchorKey(person, scene) !== publishedAnchors.get(person.id)) return publishPeople()
     }
-  })
+  }
 
   // QUINCY ADDITION #499: merges a batch into the board and returns every element now on it. Restore, reconcile and the index
   // repair they do never change a revision (see whiteboard-merge.ts).
@@ -1131,6 +1132,7 @@ export function createController(
         ...exportOptions(api, options),
         type: options.format,
       }),
+    refreshAnchors,
     setCollaborators: (collaborators) => {
       rawPeople = collaborators
       publishPeople()
@@ -1816,6 +1818,7 @@ export function WhiteboardCanvas({
   const [controller, setController] = useState<WhiteboardController | null>(
     null
   )
+  const controllerRef = useRef<WhiteboardController | null>(null)
   const [ready, setReady] = useState(false)
   const [chrome, setChrome] = useState<ChromeState>(() =>
     initialChrome(openingZoom, readOnly)
@@ -1987,6 +1990,8 @@ export function WhiteboardCanvas({
         return
       }
       latest.current.onElements?.(elements)
+      // QUINCY ADDITION #551: a selection-anchored name follows its shape (a move or delete is a scene change, not a presence frame).
+      controllerRef.current?.refreshAnchors()
       // QUINCY ADDITION #499: a changed selection is presence too.
       const selected = Object.keys(appState.selectedElementIds)
       const selection = selected.join(",")
@@ -2345,8 +2350,7 @@ export function WhiteboardCanvas({
   const handleApi = useCallback(
     (next: ExcalidrawImperativeAPI) => {
       setApi(next)
-      setController(
-        createController(next, {
+      const made = createController(next, {
           root: rootOf,
           arm,
           panel: hostPanel,
@@ -2361,7 +2365,8 @@ export function WhiteboardCanvas({
           refusedMedia: () =>
             latest.current.onToast?.("Images and videos from another board cannot be opened here."),
         })
-      )
+      controllerRef.current = made
+      setController(made)
     },
     [arm, hostPanel, knownMedia, libraryOf, rootOf]
   )
