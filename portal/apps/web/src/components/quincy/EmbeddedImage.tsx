@@ -32,7 +32,7 @@ export function EmbeddedImage({ mediaId, alt }: { mediaId: string; alt?: string 
         <DialogTitle className="sr-only">{label}</DialogTitle>
         <DialogDescription className="sr-only">The image as posted.</DialogDescription>
         {/* Never upscaled: the dialog fits the image (w-fit) and the image is capped at its natural size, so a small photo is not stretched soft. */}
-        <img src={src} alt={label} onLoad={(event) => setSmall(event.currentTarget.naturalWidth < SMALL_NATURAL || event.currentTarget.naturalHeight < SMALL_NATURAL)} className="mx-auto block h-auto max-h-[90dvh] w-auto max-w-full object-contain" />
+        <img src={src} alt={label} onLoad={(event) => setSmall(event.currentTarget.naturalWidth < SMALL_NATURAL || event.currentTarget.naturalHeight < SMALL_NATURAL)} className={`mx-auto block h-auto ${small ? "max-h-[calc(90dvh-var(--space-7))]" : "max-h-[90dvh]"} w-auto max-w-full object-contain`} />
         {/* The close chip is the drawn 48px (--space-7) square and the button fills it, so the click area is what is seen. It takes the dialog's corner radius and a hairline ring, so the scrim reads as part of the dialog rather than a bite taken out of its corner. */}
         <div data-testid="embedded-image-scrim" aria-hidden="true" className="pointer-events-none absolute top-0 right-0 size-[var(--space-7)] rounded-xl bg-[var(--scrim-overlay)] ring-[length:var(--border-width-hair)] ring-[color:var(--border-hover)]" />
         <DialogClose render={<Button type="button" variant="ghost" size="icon" data-testid="embedded-image-close" className="absolute top-0 right-0 size-[var(--space-7)] rounded-xl outline-offset-[-4px] focus-visible:!outline-offset-[-4px]" />}>

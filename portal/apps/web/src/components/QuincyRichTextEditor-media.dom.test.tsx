@@ -411,8 +411,11 @@ describe("design review fixes (#493)", () => {
     expect(dialog().className).not.toContain("pt-[var(--space-7)]");
     await load(24, 24);
     expect(dialog().className).toContain("pt-[var(--space-7)]"); expect(dialog().className).toContain("pr-[var(--space-7)]");
+    // The top padding comes out of the image's height cap, so a tall narrow image is not clipped by the dialog's overflow; width is a percentage of the content box, which already excludes the right padding.
+    expect(image.className).toContain("max-h-[calc(90dvh-var(--space-7))]"); expect(image.className).not.toContain("max-h-[90dvh]");
     await load(600, 400);
     expect(dialog().className).not.toContain("pt-[var(--space-7)]");
+    expect(image.className).toContain("max-h-[90dvh]"); expect(image.className).not.toContain("calc(90dvh");
     await load(600, 90); // short in one dimension: the chip would still cover its corner
     expect(dialog().className).toContain("pr-[var(--space-7)]");
   });
