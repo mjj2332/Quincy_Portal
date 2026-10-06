@@ -86,6 +86,8 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
   const [liveMode, setLiveMode] = useState<WhiteboardMode | null>(null);
   const modeRef = useRef<WhiteboardMode>(archivedHint ? "view" : "edit");
   const lastPresenceRef = useRef<WhiteboardPresence>({ pointer: null, button: "up", selectedIds: [] });
+  // #607: the pointer the canvas still holds from before the tab was hidden; it is never re-sent until a different one arrives.
+  const stalePointerRef = useRef<WhiteboardPresence["pointer"]>(null);
   const socketRef = useRef<WhiteboardSocket | null>(null);
   const controllerRef = useRef<WhiteboardController | null>(null);
   const saverRef = useRef<WhiteboardSaver | null>(null);
@@ -239,7 +241,11 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
 
   // The pointer is shared only while the tab is visible: a hidden tab's last cursor would hang on everyone's board.
   useEffect(() => {
-    const onVisibility = () => { if (document.visibilityState === "hidden") socketRef.current?.sendPresence({ ...lastPresenceRef.current, pointer: null, button: "up" }); };
+    const onVisibility = () => {
+      if (document.visibilityState !== "hidden") return;
+      if (lastPresenceRef.current.pointer) stalePointerRef.current = lastPresenceRef.current.pointer;
+      socketRef.current?.sendPresence({ ...lastPresenceRef.current, pointer: null, button: "up" });
+    };
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, []);
@@ -269,7 +275,14 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
   const sharePresence = useCallback((incoming: WhiteboardPresence) => {
     // #607: a hidden tab shares no pointer on ANY send (a selection-only update must not resurrect the last one);
     // the saved copy drops it too, so the real pointer returns only when it next moves in a visible tab.
-    const presence: WhiteboardPresence = document.visibilityState === "hidden" ? { ...incoming, pointer: null, button: "up" } : incoming;
+    // The vendored canvas keeps its last pointer, so after the tab is visible again a selection-only update re-sends it: while the
+    // outgoing pointer equals the one remembered from the hide, it goes out as null, until a different pointer arrives.
+    const hidden = document.visibilityState === "hidden";
+    const stale = stalePointerRef.current;
+    const matchesStale = incoming.pointer !== null && stale !== null && incoming.pointer.x === stale.x && incoming.pointer.y === stale.y;
+    if (hidden) { if (incoming.pointer) stalePointerRef.current = incoming.pointer; }
+    else if (incoming.pointer !== null && !matchesStale) stalePointerRef.current = null;
+    const presence: WhiteboardPresence = hidden ? { ...incoming, pointer: null, button: "up" } : matchesStale ? { ...incoming, pointer: null } : incoming;
     lastPresenceRef.current = presence;
     socketRef.current?.sendPresence(presence);
     // #501: the header's Play video button follows a selection of exactly one video.
