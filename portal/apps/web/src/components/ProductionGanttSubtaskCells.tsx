@@ -32,7 +32,7 @@ export const stopRowGesture = (event: { stopPropagation: () => void }) => event.
  * validation sentence. Only fields the controller already validated and decoded (an External Editor's item is the
  * team-filtered DTO, so names and a hidden count are all it can carry).
  */
-export function scheduleErrorFromEditor(editor: Pick<ScheduleEditorState, "source" | "validationError" | "latestItem">): ScheduleError<LatestSubtaskSummary> | undefined {
+export function scheduleErrorFromEditor(editor: { source: Pick<GanttChecklistRowDto, "schedule" | "assignees" | "otherAssigneeCount">; validationError?: ScheduleEditorState["validationError"]; latestItem?: ScheduleEditorState["latestItem"] }): ScheduleError<LatestSubtaskSummary> | undefined {
   const failure = editor.validationError;
   if (!failure) return undefined;
   if (failure.endpoint && failure.choices) return { endpoint: failure.endpoint, choices: failure.choices };
@@ -49,20 +49,41 @@ export function scheduleErrorFromEditor(editor: Pick<ScheduleEditorState, "sourc
 }
 
 /**
- * "Save's own close is not a Cancel", shared by the Due cell and the bar's picker (#582) so the two cannot drift. Save and Use
- * latest already tell the controller what they mean; the popover then calls `setOpen(false)` as well, which must not be read as a
- * Cancel (that would release the lock under a request in flight). `onSave`/`onUseLatest` arm one pass-through; `closed` is what a
- * `false` from the popover calls: it swallows that one close, else cancels (every close but Save and Use latest is a controller Cancel, so a conflicted draft does not survive Escape or an outside press on the Gantt yet: #585; the Checklist caller keeps #423's Cancel-only discard).
+ * What a dismissed conflict leaves behind (#585): the two fields of the controller's editor state the notice is built from.
+ * The Gantt holds one per Subtask above the vendor tree, because Escape and an outside press end the controller's session
+ * (it would otherwise hold the lock and the accept gate over a closed picker) while the draft itself stays in `retained`.
  */
-export function useSchedulePickerClose({ onSubmit, onCancel }: { onSubmit: (schedule: RangeChecklistScheduleInput, reminderOffsetsMinutes?: number[]) => void; onCancel: () => void }) {
+export type ScheduleConflictStash = Pick<ScheduleEditorState, "validationError" | "latestItem">;
+
+/**
+ * The notice a reopened picker shows for a dismissed conflict. The row is the live one (a refetch or a conflict body may have
+ * moved it past the 409), so the schedule named is the row's own; a stashed latest item older than the row is dropped, never
+ * shown as the latest.
+ */
+export function scheduleErrorFromStash(stash: ScheduleConflictStash, row: GanttChecklistRowDto): ScheduleError<LatestSubtaskSummary> | undefined {
+  const latestItem = stash.latestItem && row.schedule.version > stash.latestItem.schedule.version ? undefined : stash.latestItem;
+  return scheduleErrorFromEditor({ source: row, validationError: stash.validationError, latestItem });
+}
+
+/**
+ * "Save's own close is not a Cancel", shared by the Due cell and the bar's picker (#582) so the two cannot drift. Save, Use latest
+ * and Cancel each already tell the controller (and the Gantt's conflict stash) what they mean; the popover then calls
+ * `setOpen(false)` as well, which must not be read as a dismissal. Each arms one pass-through; `closed` is what a `false` from
+ * the popover calls: it swallows that one close, else it is a passive dismissal (Escape, an outside press, narrowing), which
+ * ends the controller's session through `onDismiss` but keeps a conflicted draft and its notice (#585). Only Save, Use latest
+ * and Cancel clear the stash (`onClear`), so the rule stays #423's: only Cancel and Use latest discard. The Checklist caller
+ * passes no `onDiscard`, and its Escape never reaches a controller.
+ */
+export function useSchedulePickerClose({ onSubmit, onCancel, onDismiss, onClear }: { onSubmit: (schedule: RangeChecklistScheduleInput, reminderOffsetsMinutes?: number[]) => void; onCancel: () => void; onDismiss: () => void; onClear: () => void }) {
   const closeHandledRef = useRef(false);
   return {
     closed: () => {
       if (closeHandledRef.current) { closeHandledRef.current = false; return; }
-      onCancel();
+      onDismiss();
     },
-    onSave: (request: { schedule: RangeChecklistScheduleInput; reminderOffsetsMinutes?: number[] }) => { closeHandledRef.current = true; onSubmit(request.schedule, request.reminderOffsetsMinutes); },
-    onUseLatest: () => { closeHandledRef.current = true; onCancel(); },
+    onSave: (request: { schedule: RangeChecklistScheduleInput; reminderOffsetsMinutes?: number[] }) => { closeHandledRef.current = true; onClear(); onSubmit(request.schedule, request.reminderOffsetsMinutes); },
+    onUseLatest: () => { closeHandledRef.current = true; onClear(); onCancel(); },
+    onDiscard: () => { closeHandledRef.current = true; onClear(); onCancel(); },
   };
 }
 
@@ -82,6 +103,10 @@ export type GanttSubtaskDueCellProps = {
   /** The offsets ride along only when the draft set differs from the saved one (#425); absent keeps the stored set. */
   onSubmit: (schedule: RangeChecklistScheduleInput, reminderOffsetsMinutes?: number[]) => void;
   onCancel: () => void;
+  /** #585: a passive close (Escape, an outside press): ends the controller's session and stashes a conflict. */
+  onDismiss: () => void;
+  /** #585: drops the row's stashed conflict (Save, Use latest, Cancel). */
+  onClear: () => void;
   /** The Project's default range, for the picker's "Project default" shortcut (#423). */
   projectDefault?: ProjectDefaultRangeDto | null;
 };
@@ -89,10 +114,10 @@ export type GanttSubtaskDueCellProps = {
 // Tone: a Subtask date is always neutral. The Gantt never marks Subtask rows overdue (production-gantt-scheduling.ts sets
 // `overdue: false`; only the Project deadline carries a server-computed `overdue`), so this cell does not either.
 // Frozen state: `focusableWhenDisabled` renders `aria-disabled`, not `disabled`, so the dimming keys on aria-disabled.
-export function GanttSubtaskDueCell({ row, editorOpen, disabled, error, retained, onOpen, onSubmit, onCancel, projectDefault = null }: GanttSubtaskDueCellProps) {
+export function GanttSubtaskDueCell({ row, editorOpen, disabled, error, retained, onOpen, onSubmit, onCancel, onDismiss, onClear, projectDefault = null }: GanttSubtaskDueCellProps) {
   const end = row.schedule.end;
   const text = formatDueCivil(end.localCivil);
-  const close = useSchedulePickerClose({ onSubmit, onCancel });
+  const close = useSchedulePickerClose({ onSubmit, onCancel, onDismiss, onClear });
   if (!row.permissions.canOpenScheduleEditor) {
     return <time data-testid="gantt-subtask-due" dateTime={end.instant ?? end.localCivil} className="truncate text-foreground">{text}</time>;
   }
@@ -117,6 +142,7 @@ export function GanttSubtaskDueCell({ row, editorOpen, disabled, error, retained
         onSave={close.onSave}
         onUseLatest={close.onUseLatest}
         onUseLatestItem={close.onUseLatest}
+        onDiscard={close.onDiscard}
         initialFocus="end"
         projectDefault={projectDefault}
         reminders={{ offsets: row.reminders.offsetsMinutes, next: row.reminders.nextOccurrence }}

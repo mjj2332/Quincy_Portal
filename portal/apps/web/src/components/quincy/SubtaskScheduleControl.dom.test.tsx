@@ -221,3 +221,54 @@ describe("SubtaskScheduleControl (#372, #423)", () => {
     });
   });
 });
+
+describe("SubtaskScheduleControl onDiscard (#585)", () => {
+  const open = async () => { await click(host.querySelector<HTMLButtonElement>('[aria-label="Schedule for Row"]')!); await settle(); };
+
+  it("D1 onDiscard fires on Cancel, once, after the draft is discarded", async () => {
+    const onDiscard = vi.fn();
+    await mount({ onDiscard });
+    await open();
+    await pressInPopup(popover()!, "Cancel");
+    await settle(12);
+    expect(onDiscard).toHaveBeenCalledTimes(1);
+    expect(popover()).toBeNull();
+  });
+
+  it("D2 onDiscard does not fire on Apply, Escape or an outside press", async () => {
+    const onDiscard = vi.fn();
+    await mount({ onDiscard });
+    await open();
+    await pickPopupDay(popover()!, "2026-10-12");
+    await applyPopup(popover()!);
+    await settle(12);
+    expect(saved).toHaveLength(1);
+    expect(onDiscard).not.toHaveBeenCalled();
+
+    await mount({ onDiscard });
+    await open();
+    await act(async () => { document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Escape" })); await Promise.resolve(); });
+    await settle(12);
+    expect(onDiscard).not.toHaveBeenCalled();
+
+    await open();
+    await act(async () => {
+      for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
+        const Ctor = type.startsWith("pointer") ? PointerEvent : MouseEvent;
+        document.body.dispatchEvent(new Ctor(type, { bubbles: true, cancelable: true, button: 0, clientX: 2, clientY: 2 }));
+      }
+      await Promise.resolve();
+    });
+    await settle(12);
+    expect(onDiscard).not.toHaveBeenCalled();
+  });
+
+  it("D3 without onDiscard Cancel behaves as before (the Checklist caller passes none)", async () => {
+    await mount();
+    await open();
+    await pressInPopup(popover()!, "Cancel");
+    await settle(12);
+    expect(popover()).toBeNull();
+    expect(saved).toHaveLength(0);
+  });
+});

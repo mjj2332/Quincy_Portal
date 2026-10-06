@@ -208,6 +208,62 @@ async function saveEnd(title: string, date: string) {
   await flush(6);
 }
 
+/** #585: the 409 body the conflict tests answer with: v3, End on day 8. */
+const winnerV3 = () => range(3, startMoment(sydneyDay(1)), endMoment(sydneyDay(8)));
+const scheduleConflict = (winner: ChecklistScheduleDto): Reply => { rows[0]!.schedule = winner; return { status: 409, body: { error: "conflict", code: "subtask_schedule_version_conflict", current: winner } }; };
+const itemConflict = (winner: ChecklistScheduleDto): Reply => { rows[0]!.schedule = winner; return { status: 409, body: { error: "conflict", code: "subtask_item_conflict", current: winner, currentSubtask: { id: RANGE_ID, title: RANGE_TITLE, done: true, position: 0, schedule: winner } } }; };
+/** A real outside press that lands on another focusable control (not only on the body). */
+async function outsideControlPress() {
+  const control = document.createElement("button");
+  control.type = "button";
+  control.setAttribute("data-testid", "outside-focus-target");
+  document.body.append(control);
+  await act(async () => {
+    control.focus();
+    for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
+      const Ctor = type.startsWith("pointer") ? PointerEvent : MouseEvent;
+      control.dispatchEvent(new Ctor(type, { bubbles: true, cancelable: true, button: 0, clientX: 2, clientY: 2 }));
+    }
+    await Promise.resolve();
+  });
+  await flush(3);
+  control.remove();
+}
+/** The Due cell's conflicted state: End on day 5 and "4 hours" drafted, answered 409 with v3. */
+async function conflictOnDue(conflict: (winner: ChecklistScheduleDto) => Reply = scheduleConflict) {
+  await openDue(RANGE_TITLE);
+  await pickPopupDay(picker(RANGE_TITLE)!, sydneyDay(5));
+  await click(pickerButton(RANGE_TITLE, "4 hours")!);
+  const winner = winnerV3();
+  patchReply = () => conflict(winner);
+  await applyPopup(picker(RANGE_TITLE)!);
+  await flush(8);
+  patchReply = null;
+  expect(patches()).toHaveLength(1);
+  expect(picker(RANGE_TITLE)!.textContent).toContain(conflict === itemConflict ? "Latest checklist item · schedule v3" : "Latest schedule · v3");
+  expect(endText(RANGE_TITLE)).toBe(rangeMoment(sydneyDay(5), "17:00"));
+}
+/** Dismisses the open Due picker the given way and waits until it is gone and the chart is live again. */
+async function dismissDue(how: "escape" | "outside" | "control") {
+  if (how === "escape") await keydown(document.activeElement ?? document.body, "Escape");
+  else if (how === "outside") await outsidePress();
+  else await outsideControlPress();
+  await flush(3);
+  await waitFor(() => expect(picker(RANGE_TITLE)).toBeNull());
+  expect(onAcceptGateChange).toHaveBeenLastCalledWith(false);
+}
+/** After a reopen: the stash's notice and the draft are back, and a reapply is exactly one more PATCH at `version`. */
+async function expectDraftAndReapply(version: number) {
+  expect(patches()).toHaveLength(1);
+  expect(picker(RANGE_TITLE)!.textContent).toContain(`Latest schedule · v${version}`);
+  expect(endText(RANGE_TITLE)).toBe(rangeMoment(sydneyDay(5), "17:00"));
+  expect(pickerButton(RANGE_TITLE, "4 hours")!.getAttribute("aria-pressed")).toBe("true");
+  await applyPopup(picker(RANGE_TITLE)!);
+  await flush(8);
+  expect(patches()).toHaveLength(2);
+  expect(patchBody(1).schedule.expectedVersion).toBe(version);
+}
+
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-09-15T02:00:00.000Z"));
@@ -506,49 +562,95 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     expect(pickerButton(RANGE_TITLE, "4 hours")!.getAttribute("aria-pressed")).toBe("true");
   });
 
-  // #585: the Gantt inline path ends the session on any non-Save close, so a conflicted draft does not survive dismissal yet (on main too).
-  it.skip("R13c a 409 reopens the Due-cell picker with the draft; after Escape and a reopen the draft survives", async () => {
+  // #585: Escape and an outside press keep the conflicted draft and its notice (Gantt-owned stash); only Cancel and Use latest discard.
+  it("R13c a 409 reopens the Due-cell picker with the draft; after Escape and a reopen the draft and the latest-schedule notice survive, and a reapply is one PATCH at the latest version", async () => {
     await render();
+    await conflictOnDue();
+    await dismissDue("escape");
     await openDue(RANGE_TITLE);
-    await pickPopupDay(picker(RANGE_TITLE)!, sydneyDay(5));
-    await click(pickerButton(RANGE_TITLE, "4 hours")!);
-    const winner = range(3, startMoment(sydneyDay(1)), endMoment(sydneyDay(8)));
-    patchReply = () => { rows[0]!.schedule = winner; return { status: 409, body: { error: "conflict", code: "subtask_schedule_version_conflict", current: winner } }; };
-    await applyPopup(picker(RANGE_TITLE)!);
-    await flush(8);
-    expect(picker(RANGE_TITLE)).not.toBeNull();
-    expect(picker(RANGE_TITLE)!.textContent).toContain("Latest schedule · v3");
-    expect(endText(RANGE_TITLE)).toBe(rangeMoment(sydneyDay(5), "17:00"));
+    await expectDraftAndReapply(3);
+  });
 
-    await keydown(document.activeElement ?? document.body, "Escape");
-    await flush(3);
+  it("R13d a 409 reopens the Due-cell picker with the draft; after an outside press and a reopen the draft and notice survive, and a reapply is one PATCH at the latest version", async () => {
+    await render();
+    await conflictOnDue();
+    await dismissDue("outside");
+    await openDue(RANGE_TITLE);
+    await expectDraftAndReapply(3);
+  });
+
+  it("R13d2 a real outside press on another focusable control counts as a dismiss, not a discard", async () => {
+    await render();
+    await conflictOnDue();
+    await dismissDue("control");
+    await openDue(RANGE_TITLE);
+    await expectDraftAndReapply(3);
+  });
+
+  it("R13e Escape, reopen, then Cancel discards the draft: the next open shows the stored v3 with no notice", async () => {
+    await render();
+    await conflictOnDue();
+    await dismissDue("escape");
+    await openDue(RANGE_TITLE);
+    expect(picker(RANGE_TITLE)!.textContent).toContain("Latest schedule · v3");
+    await pressInPopup(picker(RANGE_TITLE)!, "Cancel");
+    await flush(6);
     await waitFor(() => expect(picker(RANGE_TITLE)).toBeNull());
     await openDue(RANGE_TITLE);
-
+    expect(picker(RANGE_TITLE)!.textContent).not.toContain("Latest schedule");
+    expect(endText(RANGE_TITLE)).toBe(rangeMoment(sydneyDay(8), "17:00"));
+    expect(pickerButton(RANGE_TITLE, "4 hours")!.getAttribute("aria-pressed")).not.toBe("true");
     expect(patches()).toHaveLength(1);
+  });
+
+  it("R13f Escape, reopen, then Use latest sends nothing more and clears the stash: the next open has no notice", async () => {
+    await render();
+    await conflictOnDue();
+    await dismissDue("escape");
+    await openDue(RANGE_TITLE);
+    await pressInPopup(picker(RANGE_TITLE)!, "Use latest schedule (discard draft)");
+    await flush(6);
+    await waitFor(() => expect(picker(RANGE_TITLE)).toBeNull());
+    expect(patches()).toHaveLength(1);
+    expect(onAcceptGateChange).toHaveBeenLastCalledWith(false);
+    await openDue(RANGE_TITLE);
+    expect(picker(RANGE_TITLE)!.textContent).not.toContain("Latest schedule");
+    expect(endText(RANGE_TITLE)).toBe(rangeMoment(sydneyDay(8), "17:00"));
+  });
+
+  it("R13g a refetch that brings v4 while the picker is dismissed makes the reopened notice name v4, and the reapply is a PATCH at v4", async () => {
+    await render();
+    await conflictOnDue();
+    await dismissDue("escape");
+    rows[0]!.schedule = range(4, startMoment(sydneyDay(1)), endMoment(sydneyDay(9)));
+    await act(async () => { await client.invalidateQueries(); });
+    await flush(8);
+    await openDue(RANGE_TITLE);
+    await expectDraftAndReapply(4);
+  });
+
+  it("R13h an item conflict keeps its latest-item notice and the draft through Escape and a reopen", async () => {
+    await render();
+    await conflictOnDue(itemConflict);
+    await dismissDue("escape");
+    await openDue(RANGE_TITLE);
+    expect(patches()).toHaveLength(1);
+    expect(picker(RANGE_TITLE)!.textContent).toContain("Latest checklist item · schedule v3");
+    expect(picker(RANGE_TITLE)!.textContent).toContain("Complete");
     expect(endText(RANGE_TITLE)).toBe(rangeMoment(sydneyDay(5), "17:00"));
     expect(pickerButton(RANGE_TITLE, "4 hours")!.getAttribute("aria-pressed")).toBe("true");
   });
 
-  // #585: the Gantt inline path ends the session on any non-Save close, so a conflicted draft does not survive dismissal yet (on main too).
-  it.skip("R13d a 409 reopens the Due-cell picker with the draft; after an outside press and a reopen the draft survives", async () => {
+  it("R13i editing another Subtask between the dismiss and the reopen keeps the first Subtask's stash", async () => {
     await render();
+    await conflictOnDue();
+    await dismissDue("escape");
+    await openDue(TIMED_TITLE);
+    await saveEnd(TIMED_TITLE, sydneyDay(4));
+    await waitFor(() => expect(picker(TIMED_TITLE)).toBeNull());
+    expect(patches()).toHaveLength(2);
     await openDue(RANGE_TITLE);
-    await pickPopupDay(picker(RANGE_TITLE)!, sydneyDay(5));
-    await click(pickerButton(RANGE_TITLE, "4 hours")!);
-    const winner = range(3, startMoment(sydneyDay(1)), endMoment(sydneyDay(8)));
-    patchReply = () => { rows[0]!.schedule = winner; return { status: 409, body: { error: "conflict", code: "subtask_schedule_version_conflict", current: winner } }; };
-    await applyPopup(picker(RANGE_TITLE)!);
-    await flush(8);
-    expect(picker(RANGE_TITLE)).not.toBeNull();
     expect(picker(RANGE_TITLE)!.textContent).toContain("Latest schedule · v3");
-    expect(endText(RANGE_TITLE)).toBe(rangeMoment(sydneyDay(5), "17:00"));
-
-    await outsidePress();
-    await waitFor(() => expect(picker(RANGE_TITLE)).toBeNull());
-    await openDue(RANGE_TITLE);
-
-    expect(patches()).toHaveLength(1);
     expect(endText(RANGE_TITLE)).toBe(rangeMoment(sydneyDay(5), "17:00"));
     expect(pickerButton(RANGE_TITLE, "4 hours")!.getAttribute("aria-pressed")).toBe("true");
   });
@@ -972,50 +1074,108 @@ describe("ProductionGantt — Edit schedule… on the bar (#582)", () => {
     expect(barPickerButton(RANGE_TITLE, "4 hours")!.getAttribute("aria-pressed")).toBe("true");
   });
 
-  // #585: the Gantt inline path ends the session on any non-Save close, so a conflicted draft does not survive dismissal yet (on main too).
-  it.skip("B8 a 409 reopens the bar picker with the draft; after Escape and a reopen via Edit schedule… the draft survives", async () => {
-    await render();
+  /** The bar picker's conflicted state: Start on day 2 and "4 hours" drafted, answered 409 with v3. */
+  async function conflictOnBar() {
     await openFromBar(RANGE_TITLE);
     await pickPopupDay(barPicker(RANGE_TITLE)!, sydneyDay(2));
     await click(barPickerButton(RANGE_TITLE, "4 hours")!);
-    const winner = range(3, startMoment(sydneyDay(1)), endMoment(sydneyDay(8)));
-    patchReply = () => { rows[0]!.schedule = winner; return { status: 409, body: { error: "conflict", code: "subtask_schedule_version_conflict", current: winner } }; };
+    const winner = winnerV3();
+    patchReply = () => scheduleConflict(winner);
     await applyPopup(barPicker(RANGE_TITLE)!);
     await flush(8);
-    expect(barPicker(RANGE_TITLE)).not.toBeNull();
+    patchReply = null;
+    expect(patches()).toHaveLength(1);
     expect(barPicker(RANGE_TITLE)!.textContent).toContain("Latest schedule · v3");
     expect(barPicker(RANGE_TITLE)!.textContent).toContain("StartSat 12 Sep · 09:00");
-
-    await keydown(document.activeElement ?? document.body, "Escape");
+  }
+  async function dismissBar(how: "escape" | "outside") {
+    if (how === "escape") await keydown(document.activeElement ?? document.body, "Escape");
+    else await outsidePress();
     await flush(3);
     await waitFor(() => expect(barPicker(RANGE_TITLE)).toBeNull());
-    await openFromBar(RANGE_TITLE);
-
+    expect(onAcceptGateChange).toHaveBeenLastCalledWith(false);
+  }
+  async function expectBarDraftAndReapply() {
     expect(patches()).toHaveLength(1);
+    expect(barPicker(RANGE_TITLE)!.textContent).toContain("Latest schedule · v3");
     expect(barPicker(RANGE_TITLE)!.textContent).toContain("StartSat 12 Sep · 09:00");
+    expect(barPickerButton(RANGE_TITLE, "4 hours")!.getAttribute("aria-pressed")).toBe("true");
+    await applyPopup(barPicker(RANGE_TITLE)!);
+    await flush(8);
+    expect(patches()).toHaveLength(2);
+    expect(patchBody(1).schedule.expectedVersion).toBe(3);
+  }
+
+  // #585: Escape and an outside press keep the conflicted draft and its notice; only Cancel and Use latest discard.
+  it("B8 a 409 reopens the bar picker with the draft; after Escape and a reopen via Edit schedule… the draft and notice survive, and a reapply is one PATCH at v3", async () => {
+    await render();
+    await conflictOnBar();
+    await dismissBar("escape");
+    await openFromBar(RANGE_TITLE);
+    await expectBarDraftAndReapply();
+  });
+
+  it("B9 a 409 reopens the bar picker with the draft; after an outside press and a reopen via Edit schedule… the draft and notice survive, and a reapply is one PATCH at v3", async () => {
+    await render();
+    await conflictOnBar();
+    await dismissBar("outside");
+    await openFromBar(RANGE_TITLE);
+    await expectBarDraftAndReapply();
+  });
+
+  it("B10 the two pickers share one holder: a bar picker dismissed on a conflict reopens from the Due cell with the same draft and notice, and the reverse", async () => {
+    await render();
+    await conflictOnBar();
+    await dismissBar("escape");
+    await openDue(RANGE_TITLE);
+    expect(picker(RANGE_TITLE)!.textContent).toContain("Latest schedule · v3");
+    expect(startText(RANGE_TITLE)).toBe(rangeMoment(sydneyDay(2), "09:00"));
+    expect(pickerButton(RANGE_TITLE, "4 hours")!.getAttribute("aria-pressed")).toBe("true");
+    await pressInPopup(picker(RANGE_TITLE)!, "Cancel");
+    await flush(6);
+    await waitFor(() => expect(picker(RANGE_TITLE)).toBeNull());
+
+    // Reverse: conflict on the Due cell, Escape, reopen from the bar.
+    resetFixture();
+    requests = [];
+    await act(async () => { await client.invalidateQueries(); });
+    await flush(8);
+    await conflictOnDue();
+    await dismissDue("escape");
+    await openFromBar(RANGE_TITLE);
+    expect(barPicker(RANGE_TITLE)!.textContent).toContain("Latest schedule · v3");
+    expect(rangeToggles(barPicker(RANGE_TITLE)!).end).toBe(rangeMoment(sydneyDay(5), "17:00"));
     expect(barPickerButton(RANGE_TITLE, "4 hours")!.getAttribute("aria-pressed")).toBe("true");
   });
 
-  // #585: the Gantt inline path ends the session on any non-Save close, so a conflicted draft does not survive dismissal yet (on main too).
-  it.skip("B9 a 409 reopens the bar picker with the draft; after an outside press and a reopen via Edit schedule… the draft survives", async () => {
-    await render();
-    await openFromBar(RANGE_TITLE);
-    await pickPopupDay(barPicker(RANGE_TITLE)!, sydneyDay(2));
-    await click(barPickerButton(RANGE_TITLE, "4 hours")!);
-    const winner = range(3, startMoment(sydneyDay(1)), endMoment(sydneyDay(8)));
-    patchReply = () => { rows[0]!.schedule = winner; return { status: 409, body: { error: "conflict", code: "subtask_schedule_version_conflict", current: winner } }; };
-    await applyPopup(barPicker(RANGE_TITLE)!);
-    await flush(8);
-    expect(barPicker(RANGE_TITLE)).not.toBeNull();
-    expect(barPicker(RANGE_TITLE)!.textContent).toContain("Latest schedule · v3");
-    expect(barPicker(RANGE_TITLE)!.textContent).toContain("StartSat 12 Sep · 09:00");
-
-    await outsidePress();
-    await waitFor(() => expect(barPicker(RANGE_TITLE)).toBeNull());
-    await openFromBar(RANGE_TITLE);
-
-    expect(patches()).toHaveLength(1);
-    expect(barPicker(RANGE_TITLE)!.textContent).toContain("StartSat 12 Sep · 09:00");
-    expect(barPickerButton(RANGE_TITLE, "4 hours")!.getAttribute("aria-pressed")).toBe("true");
+  it("B11 a dismissed conflict keeps its stash when the chart narrows to 720px: the bar picker reopens with the draft, and a narrowed Due picker is dismissed, not discarded", async () => {
+    const original = window.matchMedia;
+    let narrow = false;
+    const listeners = new Set<() => void>();
+    window.matchMedia = ((query: string) => ({
+      get matches() { return query === "(max-width: 720px)" ? narrow : false; },
+      media: query,
+      addEventListener: (_: string, listener: () => void) => { listeners.add(listener); },
+      removeEventListener: (_: string, listener: () => void) => { listeners.delete(listener); },
+      addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false,
+    })) as unknown as typeof window.matchMedia;
+    const setNarrow = async (next: boolean) => { narrow = next; await act(async () => { listeners.forEach((listener) => listener()); await Promise.resolve(); }); await flush(4); };
+    try {
+      await render();
+      // A Due picker with a conflict is cancelled by narrowing, but the conflict context is kept.
+      await conflictOnDue();
+      await setNarrow(true);
+      await waitFor(() => expect(picker(RANGE_TITLE)).toBeNull());
+      expect(onAcceptGateChange).toHaveBeenLastCalledWith(false);
+      // A bar picker reopened at the narrow width still shows it.
+      await openFromBar(RANGE_TITLE);
+      expect(barPicker(RANGE_TITLE)!.textContent).toContain("Latest schedule · v3");
+      expect(barPickerButton(RANGE_TITLE, "4 hours")!.getAttribute("aria-pressed")).toBe("true");
+      await dismissBar("escape");
+      await setNarrow(false);
+      await openDue(RANGE_TITLE);
+      expect(picker(RANGE_TITLE)!.textContent).toContain("Latest schedule · v3");
+      expect(endText(RANGE_TITLE)).toBe(rangeMoment(sydneyDay(5), "17:00"));
+    } finally { window.matchMedia = original; }
   });
 });

@@ -63,7 +63,7 @@ const storedRange = (value: ChecklistScheduleDto | null): ProjectDefaultRangeDto
   ? { start: { localCivil: value.start.localCivil, fold: value.start.fold }, end: { localCivil: value.end.localCivil, fold: value.end.fold } }
   : null;
 
-export function SubtaskScheduleControl<TItem extends LatestSubtaskSummary = Subtask>({ owner, label, value, open, setOpen, onSave, onUseLatest, onUseLatestItem, busy, compact = false, error, defaultLabel, retained: retainedProp, trigger, anchor, finalFocus, initialFocus = "first", projectDefault = null, reminders, readOnly = false }: { owner: string; label: string; value: ChecklistScheduleDto | null; defaultLabel?: string; open: boolean; setOpen: (open: boolean) => void; onSave: (value: RangeScheduleRequest) => void; onUseLatest?: (value: ChecklistScheduleDto, reminders?: SubtaskRemindersDto) => void; onUseLatestItem?: (value: TItem) => void; busy: boolean; compact?: boolean; error?: ScheduleError<TItem>; retained?: RetainedSchedule;
+export function SubtaskScheduleControl<TItem extends LatestSubtaskSummary = Subtask>({ owner, label, value, open, setOpen, onSave, onUseLatest, onUseLatestItem, busy, compact = false, error, defaultLabel, retained: retainedProp, trigger, anchor, finalFocus, initialFocus = "first", projectDefault = null, reminders, readOnly = false, onDiscard }: { owner: string; label: string; value: ChecklistScheduleDto | null; defaultLabel?: string; open: boolean; setOpen: (open: boolean) => void; onSave: (value: RangeScheduleRequest) => void; onUseLatest?: (value: ChecklistScheduleDto, reminders?: SubtaskRemindersDto) => void; onUseLatestItem?: (value: TItem) => void; busy: boolean; compact?: boolean; error?: ScheduleError<TItem>; retained?: RetainedSchedule;
   /** Replaces the built-in trigger (the Gantt's Due cell). The popover keeps `aria-label={label}` either way. */
   trigger?: (props: SubtaskScheduleTriggerProps) => ReactNode;
   /** External-anchor mode (#582): no trigger renders at all and the popup sits on this element or virtual element, read live by the positioner. Mutually exclusive with `trigger`. */
@@ -77,7 +77,9 @@ export function SubtaskScheduleControl<TItem extends LatestSubtaskSummary = Subt
   /** The Subtask's reminder set for the popup's strip (#425). `next` undefined hides the saved next-reminder line (a new Subtask). Omit for a range-only popup. */
   reminders?: DateTimeReminders;
   /** The schedule as a plain pill with no trigger and no popup: an archived Project's Checklist (#450). */
-  readOnly?: boolean }) {
+  readOnly?: boolean;
+  /** #585: the popup's Cancel button only (after the draft is discarded). Escape and an outside press reach `setOpen(false)` alone, so a caller that keeps a conflicted draft across a dismissal (the Gantt) clears it here. */
+  onDiscard?: () => void }) {
   const ownRetained = useRef<RetainedSchedule>({ draft: null, baseVersion: null });
   const retained = retainedProp ?? ownRetained.current;
   // A failed save keeps the draft Apply handed over, because the conflict is shown after the popup closes and the user must be able
@@ -136,7 +138,7 @@ export function SubtaskScheduleControl<TItem extends LatestSubtaskSummary = Subt
         feedback={feedback}
         onApply={apply}
         onClose={() => setOpen(false)}
-        onCancel={() => { discard(); setOpen(false); }}
+        onCancel={() => { discard(); onDiscard?.(); setOpen(false); }}
       />
     </DateTimePopoverContent>
   </Popover>;
