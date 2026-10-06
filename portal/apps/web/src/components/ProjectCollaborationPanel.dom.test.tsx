@@ -6,7 +6,7 @@ import { focusManager, useQueryClient, type QueryClient } from "@tanstack/react-
 import { CHECKLIST_RAIL_QUERY, ProjectCollaborationPanel } from "./ProjectCollaborationPanel";
 // The Subtask composer mounts the range popup (ScrollArea time column, #423); see testing/dom-polyfills.ts.
 import "../testing/dom-polyfills";
-import { chooseCommentAction } from "../testing/comment-menu";
+import { cancelCommentDelete, chooseCommentAction, confirmCommentDelete } from "../testing/comment-menu";
 import { formatAbsoluteTime, formatRelativeTime } from "../lib/date-format";
 import { EditProject } from "../screens/EditProject";
 import { QuincyQueryProvider } from "../lib/query-client";
@@ -17,8 +17,6 @@ import { RAIL_QUERY, stubRailMedia } from "../testing/rail-media";
 import { purgeProjectCollaborationData, useProjectCommentPresentation, useProjectCommentReadStateQuery, useProjectCommentsCacheQuery, useProjectCommentsQuery } from "../lib/project-comments";
 import { subtaskReminders } from "@/testing/subtask-schedule";
 
-const confirmMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)));
-vi.mock("../lib/confirm", () => ({ confirm: confirmMock }));
 
 // #376 — records every call the presentation's `scrollRootRef` receives, delegating to the real one,
 // so the "stable ref callback" test can see attach/detach churn. Pass-through everywhere else.
@@ -512,7 +510,7 @@ describe("ProjectCollaborationPanel", () => {
 
     publish.mockClear();
     expect(host.querySelector('[aria-label="Actions for comment by Myself"]')).not.toBeNull();
-    await chooseCommentAction(host, "Myself", "Delete"); await flush();
+    await chooseCommentAction(host, "Myself", "Delete"); await confirmCommentDelete(); await flush();
     expect(publish.mock.calls.some(([message]) => message.type === "project-data-invalidated" && JSON.stringify(message.resources) === JSON.stringify([{ kind: "comments" }, { kind: "comment-read-marker" }, { kind: "activity" }]))).toBe(true);
   });
 
@@ -1156,16 +1154,16 @@ describe("Discussion restyle (#376)", () => {
     expect(document.activeElement).toBe(host.querySelector('[aria-label="Actions for comment by Myself"]'));
 
     (host.ownerDocument.activeElement as HTMLElement).blur();
-    confirmMock.mockResolvedValueOnce(false);
-    await chooseCommentAction(host, "Myself", "Delete"); await flush();
+    await chooseCommentAction(host, "Myself", "Delete"); await cancelCommentDelete(); await flush();
     expect(apiDeleteMock).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(host.querySelector('[aria-label="Actions for comment by Myself"]'));
   });
 
   it("deletes through the menu after a confirm", async () => {
     const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
-    await chooseCommentAction(host, "Myself", "Delete"); await flush();
-    expect(confirmMock).toHaveBeenCalled();
+    await chooseCommentAction(host, "Myself", "Delete");
+    expect(apiDeleteMock).not.toHaveBeenCalled();
+    await confirmCommentDelete(); await flush();
     expect(apiDeleteMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments/comment-own`);
   });
 

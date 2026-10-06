@@ -23,7 +23,6 @@ const invalidateMock = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 const prependMock = vi.hoisted(() => vi.fn());
 const replaceMock = vi.hoisted(() => vi.fn());
 const removeMock = vi.hoisted(() => vi.fn());
-const confirmMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)));
 const terminateMock = vi.hoisted(() => vi.fn());
 const invalidateSurfacesMock = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 
@@ -32,7 +31,6 @@ vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
   return { ...actual, apiGet: apiGetMock, apiPost: apiPostMock, apiPatch: apiPatchMock, apiDelete: apiDeleteMock };
 });
-vi.mock("../lib/confirm", () => ({ confirm: confirmMock }));
 vi.mock("../lib/project-data", () => ({
   projectDataKeys: {
     detail: (id: string) => ["project-data", id, "detail"],
@@ -90,7 +88,7 @@ beforeEach(() => {
   apiPostMock.mockReset().mockResolvedValue({ ...ownComment, id: "comment-posted", content: doc("Posted") });
   apiPatchMock.mockReset().mockResolvedValue({ ...ownComment, content: doc("Edited"), editedAt: "2026-08-17T00:02:00.000Z" });
   apiDeleteMock.mockReset().mockResolvedValue({ ok: true });
-  invalidateMock.mockClear(); prependMock.mockClear(); replaceMock.mockClear(); removeMock.mockClear(); confirmMock.mockClear(); terminateMock.mockClear(); invalidateSurfacesMock.mockClear();
+  invalidateMock.mockClear(); prependMock.mockClear(); replaceMock.mockClear(); removeMock.mockClear(); terminateMock.mockClear(); invalidateSurfacesMock.mockClear();
   state.commentsQuery = queryState();
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
@@ -105,6 +103,11 @@ async function typeComposer(text: string) {
   const composer = state.editors.find((editor) => editor.id === `project-comment-${projectId}`)!;
   await act(async () => { composer.onChange(doc(text)); await Promise.resolve(); });
 }
+const wait = (ms: number) => act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, ms)); });
+const deleteDialog = () => document.querySelector<HTMLElement>('[data-testid="comment-delete-confirm"]');
+const deleteAction = () => document.querySelector<HTMLButtonElement>('[data-testid="comment-delete-confirm-action"]')!;
+/** Delete from the "⋯" now only asks; this confirms in the alert dialog and waits out its exit transition. */
+async function confirmDeleteInDialog() { await act(async () => { deleteAction().click(); await Promise.resolve(); await Promise.resolve(); }); await wait(300); }
 async function click(element: HTMLElement) { await act(async () => { element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await Promise.resolve(); }); }
 
 describe("ProjectDiscussionThread", () => {
@@ -142,7 +145,7 @@ describe("ProjectDiscussionThread", () => {
     await typeComposer("Posted");
     await click(host.querySelector<HTMLElement>(`[data-testid="submit-project-comment-${projectId}"]`)!);
     expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, expect.objectContaining({ content: expect.anything() }));
-    await chooseCommentAction(host, "Me", "Delete"); await flush();
+    await chooseCommentAction(host, "Me", "Delete"); await confirmDeleteInDialog(); await flush();
     expect(apiDeleteMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments/${ownComment.id}`);
     expect(invalidateMock).toHaveBeenCalledWith(client, projectId, ["comments", "activity"]);
     expect(invalidateMock).toHaveBeenCalledWith(client, projectId, ["comments", "comment-read-marker", "activity"]);
@@ -267,7 +270,7 @@ describe("ProjectDiscussionThread", () => {
     const onAccessFailure = vi.fn();
     apiDeleteMock.mockRejectedValueOnce(new ApiError("Forbidden: only the author can delete this comment.", 403));
     render({ onAccessFailure }); await flush();
-    await chooseCommentAction(host, "Me", "Delete"); await flush();
+    await chooseCommentAction(host, "Me", "Delete"); await confirmDeleteInDialog(); await flush();
     expect(host.textContent).not.toContain("No discussion access");
     expect(host.querySelector("[data-testid=discussion-comments]")).not.toBeNull();
     expect(onAccessFailure).toHaveBeenCalledWith(expect.any(ApiError), "nested-comment");
@@ -349,7 +352,7 @@ describe("ProjectDiscussionThread", () => {
       const refuseOnce = async () => {
         apiDeleteMock.mockRejectedValueOnce(refusal());
         render(); await flush();
-        await chooseCommentAction(host, "Me", "Delete"); await flush();
+        await chooseCommentAction(host, "Me", "Delete"); await confirmDeleteInDialog(); await flush();
         expect(notice()?.textContent).toBe(COPY);
       };
       it("clears when the next detail fetch lands un-archived, though the prop never showed true", async () => {
@@ -380,7 +383,7 @@ describe("ProjectDiscussionThread", () => {
     it("turns read-only when a Delete is refused", async () => {
       apiDeleteMock.mockRejectedValueOnce(refusal());
       render(); await flush();
-      await chooseCommentAction(host, "Me", "Delete"); await flush();
+      await chooseCommentAction(host, "Me", "Delete"); await confirmDeleteInDialog(); await flush();
       expect(notice()?.textContent).toBe(COPY);
       expect(host.querySelector('[role="alert"]')).toBeNull();
       expect(removeMock).not.toHaveBeenCalled();
@@ -408,5 +411,84 @@ describe("ProjectDiscussionThread", () => {
       expect(host.querySelector("[data-testid=discussion-composer]")).not.toBeNull();
       expect(invalidateSurfacesMock).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("ProjectDiscussionThread comment Delete confirmation (#568)", () => {
+  const mine = (id: string, text: string) => ({ ...ownComment, id, body: text, content: doc(text) });
+  const trigger = (id: string) => host.querySelector<HTMLElement>(`[data-comment-id="${id}"] [data-testid="comment-actions"]`);
+  const three = () => { state.comments = { pages: [{ project, comments: [mine("c1", "First"), mine("c2", "Second"), mine("c3", "Third")] }], pageParams: [null] }; state.commentsQuery = queryState(); };
+
+  it("choosing Delete only asks: the dialog names the comment, focus is on Cancel, and nothing is sent", async () => {
+    render(); await flush();
+    await chooseCommentAction(host, "Me", "Delete");
+    expect(apiDeleteMock).not.toHaveBeenCalled();
+    expect(deleteDialog()?.textContent).toContain("Delete comment?");
+    expect(deleteDialog()?.textContent).toContain("“Own comment”");
+    expect(document.activeElement).toBe(document.querySelector('[data-testid="comment-delete-cancel"]'));
+  });
+
+  it("holds the dialog while deleting: Deleting…, both buttons disabled, then closes on success", async () => {
+    let finish!: (value: unknown) => void;
+    apiDeleteMock.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    render(); await flush();
+    await chooseCommentAction(host, "Me", "Delete");
+    await act(async () => { deleteAction().click(); await Promise.resolve(); });
+    expect(deleteAction().textContent).toBe("Deleting…");
+    expect(deleteAction().disabled).toBe(true);
+    expect(document.querySelector<HTMLButtonElement>('[data-testid="comment-delete-cancel"]')!.disabled).toBe(true);
+    await act(async () => { finish({ ok: true }); await Promise.resolve(); await Promise.resolve(); }); await wait(300);
+    expect(deleteDialog()).toBeNull();
+    expect(removeMock).toHaveBeenCalledWith(client, projectId, ownComment.id);
+  });
+
+  it("a failed delete keeps the dialog open with the message inside it and the comment kept", async () => {
+    apiDeleteMock.mockRejectedValueOnce(new Error("Delete exploded"));
+    render(); await flush();
+    await chooseCommentAction(host, "Me", "Delete"); await confirmDeleteInDialog();
+    expect(deleteDialog()).not.toBeNull();
+    expect(deleteDialog()!.querySelector('[data-testid="comment-delete-error"]')?.textContent).toBe("Delete exploded");
+    expect(deleteAction().disabled).toBe(false);
+    expect(removeMock).not.toHaveBeenCalled();
+    expect(host.querySelector("[data-testid=discussion-comments]")?.textContent).toContain("Own comment");
+    expect(host.querySelector('[data-testid="discussion-composer"] [role="alert"]')).toBeNull();
+  });
+
+  it("Cancel sends no DELETE and returns focus to that comment's ⋯", async () => {
+    render(); await flush();
+    await chooseCommentAction(host, "Me", "Delete");
+    await act(async () => { document.querySelector<HTMLElement>('[data-testid="comment-delete-cancel"]')!.click(); await Promise.resolve(); }); await wait(300);
+    expect(deleteDialog()).toBeNull();
+    expect(apiDeleteMock).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(trigger(ownComment.id));
+  });
+
+  it("after a delete, focus goes to the next comment's ⋯, never body", async () => {
+    three(); render(); await flush();
+    await chooseCommentAction(host, "Me", "Delete"); // the first "Actions for comment by Me" is c1
+    expect(deleteDialog()).not.toBeNull();
+    await confirmDeleteInDialog();
+    expect(apiDeleteMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments/c1`);
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement).toBe(trigger("c2"));
+  });
+
+  it("deleting the last comment with a menu focuses the previous comment's ⋯", async () => {
+    three();
+    render(); await flush();
+    const last = host.querySelector<HTMLElement>('[data-comment-id="c3"] [data-testid="comment-actions"]')!;
+    await act(async () => { last.click(); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent === "Delete")!.click(); await Promise.resolve(); await Promise.resolve(); });
+    await wait(150); await confirmDeleteInDialog();
+    expect(apiDeleteMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments/c3`);
+    expect(document.activeElement).toBe(trigger("c2"));
+  });
+
+  it("with no other comment of yours left, focus falls back to the composer, never body", async () => {
+    render(); await flush();
+    await chooseCommentAction(host, "Me", "Delete"); await confirmDeleteInDialog();
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement!.closest('[data-testid="discussion-composer"]')).not.toBeNull();
+    expect(document.activeElement!.getAttribute("contenteditable")).toBe("true");
   });
 });
