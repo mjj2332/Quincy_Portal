@@ -60,7 +60,7 @@ const COMMENT_LIMIT = 10_000;
 /** The server refused a write because the Project is archived (#527): a 409 with this code. Upload refusals are not this: they stay in-editor errors. */
 function isCommentArchivedRefusal(error: unknown) { return error instanceof ApiError && error.status === 409 && typeof error.details === "object" && error.details !== null && (error.details as { code?: unknown }).code === "comment_project_archived"; }
 const COMMENT_DELETE_COPY = {
-  title: "Delete comment?", action: "Delete comment", pending: "Deleting…", fallbackSubject: "This comment",
+  title: "Delete comment?", action: "Delete", pending: "Deleting…", fallbackSubject: "This comment",
   description: (subject: ReactNode) => <>{subject} will be removed from the discussion for everyone, with any images in it. This can't be undone.</>,
 };
 const DISCUSSION_ARCHIVED_COPY = "Read-only while archived. Restore the project before commenting.";

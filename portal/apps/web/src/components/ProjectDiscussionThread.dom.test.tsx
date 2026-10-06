@@ -391,6 +391,11 @@ describe("ProjectDiscussionThread comment Delete confirmation (#568)", () => {
     await chooseCommentAction(host, "Me", "Delete");
     expect(apiDeleteMock).not.toHaveBeenCalled();
     expect(deleteDialog()?.textContent).toContain("Delete comment?");
+    // #568 review: a short label fits the two-column footer at desktop width; the dialog's title names the action.
+    expect(deleteAction().textContent).toBe("Delete");
+    const labelledBy = deleteDialog()!.getAttribute("aria-labelledby");
+    expect(labelledBy && document.getElementById(labelledBy)?.textContent).toBe("Delete comment?");
+    expect(deleteAction().hasAttribute("aria-label")).toBe(false);
     expect(deleteDialog()?.textContent).toContain("“Own comment”");
     expect(document.activeElement).toBe(document.querySelector('[data-testid="comment-delete-cancel"]'));
   });
@@ -416,6 +421,10 @@ describe("ProjectDiscussionThread comment Delete confirmation (#568)", () => {
     expect(deleteDialog()).not.toBeNull();
     expect(deleteDialog()!.querySelector('[data-testid="comment-delete-error"]')?.textContent).toBe("Delete exploded");
     expect(deleteAction().disabled).toBe(false);
+    const errorNotice = deleteDialog()!.querySelector<HTMLElement>('[data-testid="comment-delete-error"]')!;
+    expect(document.activeElement).toBe(errorNotice);
+    expect(document.activeElement).not.toBe(document.body);
+    expect(deleteDialog()!.contains(document.activeElement)).toBe(true);
     expect(removeMock).not.toHaveBeenCalled();
     expect(host.querySelector("[data-testid=discussion-comments]")?.textContent).toContain("Own comment");
     expect(host.querySelector('[data-testid="discussion-composer"] [role="alert"]')).toBeNull();

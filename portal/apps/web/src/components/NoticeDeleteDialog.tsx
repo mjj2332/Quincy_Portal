@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -35,13 +35,19 @@ type NoticeDeleteDialogProps = {
 };
 
 const NOTICE_COPY: NonNullable<NoticeDeleteDialogProps["copy"]> = {
-  title: "Delete notice?", action: "Delete notice", pending: "Deleting…", fallbackSubject: "This notice",
+  title: "Delete notice?", action: "Delete", pending: "Deleting…", fallbackSubject: "This notice",
   description: (subject) => <>{subject} will be removed from the Notice board for everyone, with any images in it. This can't be undone.</>,
 };
 
 /** Confirms before a Notice board post is deleted for everyone. The dialog stays open on failure. */
 export function NoticeDeleteDialog({ open, excerpt, deleting, error, onConfirm, onCancel, finalFocus, copy = NOTICE_COPY, testIdPrefix = "notice-delete" }: NoticeDeleteDialogProps) {
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+  // Both buttons are disabled while deleting, so focus drops to <body>. On a failure the dialog stays open:
+  // move focus to the error so it is announced and focus is back inside the dialog (#568 review).
+  useEffect(() => {
+    if (error) errorRef.current?.focus();
+  }, [error]);
   const subject: ReactNode = excerpt
     ? <span className="text-foreground font-medium">“{excerpt}”</span>
     : copy.fallbackSubject;
@@ -54,7 +60,7 @@ export function NoticeDeleteDialog({ open, excerpt, deleting, error, onConfirm, 
             {copy.description(subject)}
           </AlertDialogDescription>
         </AlertDialogHeader>
-        {error && <Notice tone="critical" role="alert" data-testid={`${testIdPrefix}-error`}>{error}</Notice>}
+        {error && <Notice ref={errorRef} tabIndex={-1} tone="critical" role="alert" data-testid={`${testIdPrefix}-error`}>{error}</Notice>}
         <AlertDialogFooter>
           <AlertDialogCancel ref={cancelRef} disabled={deleting} data-testid={`${testIdPrefix}-cancel`}>Cancel</AlertDialogCancel>
           <AlertDialogAction variant="destructive" disabled={deleting} onClick={onConfirm} data-testid={`${testIdPrefix}-confirm-action`}>
