@@ -178,6 +178,21 @@ describe("Notifications", () => {
     expect(loadMoreButton().textContent).toBe("No more notifications");
   });
 
+  it("hands focus to the tabpanel, not <body>, when the final page empties the Unread list and the footer unmounts (#619)", async () => {
+    const read = "2026-07-28T00:00:00.000Z";
+    apiGetMock.mockResolvedValueOnce(response([notification({ id: "a", readAt: read })], 0, "cursor-1"));
+    await render();
+    await click([...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((tab) => tab.textContent?.startsWith("Unread"))!);
+    expect(loadMoreButton().textContent).toBe("Load more");
+    loadMoreButton().focus();
+
+    apiGetMock.mockResolvedValueOnce(response([notification({ id: "b", readAt: read })], 0, null));
+    await click(loadMoreButton());
+
+    expect(host.querySelector('[data-testid="notifications-load-more"]')).toBeNull();
+    expect(document.activeElement).toBe(host.querySelector('[role="tabpanel"]'));
+  });
+
   it("shows Try again on a failed loadMore and retries with the same cursor", async () => {
     apiGetMock.mockResolvedValueOnce(response([notification({ id: "a" })], 1, "cursor-1"));
     await render();
