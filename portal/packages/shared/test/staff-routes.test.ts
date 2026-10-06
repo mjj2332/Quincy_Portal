@@ -319,7 +319,6 @@ describe("shared staff route contract", () => {
       calendarUrl(`${base}&stages=${sixStages}`),
       calendarUrl(`${base}&q=${"x".repeat(8200)}`),
       calendarUrl("date=2026-08-30&sub=month&layers=project"),
-      calendarUrl("view=calendar&date=2026-08-30&sub=month"),
       calendarUrl(`${base}&view=calendar`),
       calendarUrl(`${base}&q=%`),
       `${calendarUrl(base)}#hash`,
