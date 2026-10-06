@@ -53,7 +53,10 @@ export function scheduleErrorFromEditor(editor: { source: Pick<GanttChecklistRow
  * The Gantt holds one per Subtask above the vendor tree, because Escape and an outside press end the controller's session
  * (it would otherwise hold the lock and the accept gate over a closed picker) while the draft itself stays in `retained`.
  */
-export type ScheduleConflictStash = Pick<ScheduleEditorState, "validationError" | "latestItem">;
+export type ScheduleConflictStash = Pick<ScheduleEditorState, "validationError" | "latestItem"> & {
+  /** The Subtask's Project, so the Gantt can tell "the row was removed" (its Project is loaded in full and lacks it) from "not loaded yet". */
+  projectId: string;
+};
 
 /**
  * The notice a reopened picker shows for a dismissed conflict. The row is the live one (a refetch or a conflict body may have

@@ -95,7 +95,7 @@ function ganttResponse() {
   return adminProductionGanttResponseSchema.parse({
     scope: "active", zone: PRODUCTION_GANTT_ZONE,
     appliedFilters: { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide", includeDelivered: false, includeCompletedChecklist: false },
-    projects: [{
+    projects: projectGone ? [] : [{
       id: PROJECT_ID, street: "1 Range Street", suburb: null, agencyName: null, agentName: null, stageKey: "editing_autohdr", delivered: false, archived: false,
       shootDate: shoot, shootDateCivil: shoot, createdAt: `${shoot}T00:00:00.000Z`, barStartDate: shoot,
       deadline: { at: resolveSydneyCivilMinute(`${sydneyDay(6)}T15:00`).ok ? (resolveSydneyCivilMinute(`${sydneyDay(6)}T15:00`) as { ok: true; value: { instant: string } }).value.instant : "", localCivil: `${sydneyDay(6)}T15:00`, version: 1, reminderOffsetsMinutes: [], overdue: false },
@@ -114,6 +114,8 @@ let requests: Request[];
 let patchReply: ((body: PatchBody, subtaskId: string) => Promise<Reply> | Reply) | null;
 let getGate: Promise<void> | null;
 let getFails: boolean;
+/** #585: the Project is archived by someone else: the gantt response carries no Project. */
+let projectGone = false;
 
 function scheduleFromInput(input: ScheduleInput, version: number): ChecklistScheduleDto {
   const endpoint = (value: ScheduleInput["end"]) => (value ? timedEndpoint(value.localCivil, value.disambiguation) : null);
@@ -272,6 +274,7 @@ beforeEach(() => {
   patchReply = null;
   getGate = null;
   getFails = false;
+  projectGone = false;
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -676,6 +679,61 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     await openDue(RANGE_TITLE);
     expect(picker(RANGE_TITLE)!.textContent).not.toContain("Latest schedule");
     expect(pickerButton(RANGE_TITLE, "4 hours")!.getAttribute("aria-pressed")).not.toBe("true");
+  });
+
+  it("R13l a conflict dismissed, then the Project is archived (a refetch drops the row) and restored: the reopened picker shows the stored schedule, no notice, no draft", async () => {
+    await render();
+    await conflictOnDue();
+    await dismissDue("escape");
+    projectGone = true;
+    await act(async () => { await client.invalidateQueries(); });
+    await flush(8);
+    expect(dueTrigger(RANGE_TITLE)).toBeNull();
+    projectGone = false;
+    await act(async () => { await client.invalidateQueries(); });
+    await flush(8);
+    await waitFor(() => expect(dueTrigger(RANGE_TITLE)).not.toBeNull());
+    await openDue(RANGE_TITLE);
+    expect(picker(RANGE_TITLE)!.textContent).not.toContain("Latest schedule");
+    expect(endText(RANGE_TITLE)).toBe(rangeMoment(sydneyDay(8), "17:00"));
+    expect(pickerButton(RANGE_TITLE, "4 hours")!.getAttribute("aria-pressed")).not.toBe("true");
+  });
+
+  it("R13m the same when only the Subtask is removed from a Project that stays loaded", async () => {
+    await render();
+    await conflictOnDue();
+    await dismissDue("escape");
+    const removed = rows.shift()!;
+    await act(async () => { await client.invalidateQueries(); });
+    await flush(8);
+    expect(dueTrigger(RANGE_TITLE)).toBeNull();
+    rows.unshift(removed);
+    await act(async () => { await client.invalidateQueries(); });
+    await flush(8);
+    await waitFor(() => expect(dueTrigger(RANGE_TITLE)).not.toBeNull());
+    await openDue(RANGE_TITLE);
+    expect(picker(RANGE_TITLE)!.textContent).not.toContain("Latest schedule");
+    expect(pickerButton(RANGE_TITLE, "4 hours")!.getAttribute("aria-pressed")).not.toBe("true");
+  });
+
+  it("R13n a transient refetch error (and the held refetch before it) does not prune the stash: after recovery the notice and draft are back", async () => {
+    await render();
+    await conflictOnDue();
+    await dismissDue("escape");
+    const gate = deferred<void>();
+    getGate = gate.promise;
+    await act(async () => { void client.invalidateQueries(); });
+    await flush(4);
+    getFails = true;
+    await act(async () => { gate.resolve(); await Promise.resolve(); });
+    getGate = null;
+    await flush(8);
+    getFails = false;
+    await act(async () => { await client.invalidateQueries(); });
+    await flush(8);
+    await waitFor(() => expect(dueTrigger(RANGE_TITLE)).not.toBeNull());
+    await openDue(RANGE_TITLE);
+    await expectDraftAndReapply(3);
   });
 
   it("R13i editing another Subtask between the dismiss and the reopen keeps the first Subtask's stash", async () => {

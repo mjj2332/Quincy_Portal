@@ -1346,10 +1346,33 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     const editor = scheduleEditor;
     if (editor?.validationError && editorGenerationRef.current === generationKey) {
       const id = subtaskIdFromCalendarEntityId(editor.source.id);
-      if (id) setConflictStash((current) => new Map(current).set(id, { validationError: editor.validationError, latestItem: editor.latestItem }));
+      if (id) setConflictStash((current) => new Map(current).set(id, { validationError: editor.validationError, latestItem: editor.latestItem, projectId: editor.source.project.id }));
     }
     cancelScheduleEditor();
   }, [scheduleEditor, cancelScheduleEditor, generationKey]);
+  // A row that left the data takes its stash and draft with it, even with no editor open (an archived then restored Project must not
+  // revive an old draft). Only settled, successful data speaks: a pending, held or failed query keeps everything. Rows are loaded by
+  // Project (page one embedded, the rest walked per Project) and Projects by page, so absence counts only when the Subtask's Project
+  // is loaded in full and lacks it, or the Project itself is gone from the loaded pages and no later Project page exists.
+  const settledData = query.isSuccess && !query.isFetching;
+  const hasMoreProjectPages = query.hasNextPage === true;
+  useEffect(() => {
+    if (!settledData || conflictStash.size === 0) return;
+    const projectsById = new Map(displayProjects.map((project) => [project.id, project]));
+    const gone: string[] = [];
+    for (const [id, stash] of conflictStash) {
+      const project = projectsById.get(stash.projectId);
+      const removed = project ? project.children.nextCursor === null && !project.children.rows.some((row) => row.id === id) : !hasMoreProjectPages;
+      if (removed) gone.push(id);
+    }
+    if (!gone.length) return;
+    for (const id of gone) retainedSchedules.current.delete(id);
+    setConflictStash((current) => {
+      const next = new Map(current);
+      for (const id of gone) next.delete(id);
+      return next;
+    });
+  }, [settledData, hasMoreProjectPages, conflictStash, displayProjects]);
   // The notice for a Subtask's picker: the editor's own error first (a fresh 409), else the stash (a reopened session has no validationError).
   const stashErrorFor = useCallback((row: GanttChecklistRowDto) => {
     const stash = conflictStash.get(row.id);
