@@ -226,21 +226,27 @@ export function resolveDateTimePopupPlacement({ narrow, avoidance, padding }: { 
 export const SHELL_AWARE_SHIFT_AVOIDANCE = { side: "shift", align: "shift", fallbackAxisSide: "none" } as const satisfies PopupCollisionAvoidance;
 
 /**
- * #597: the top of the open Project sheet, if one is up. The sheet is modal, so nothing behind it can open a
+ * #597: the open Project sheet's distance from each viewport edge, if one is up. The sheet is modal, so nothing behind it can open a
  * picker; any picker opened while one is up lives inside it, and the sheet (not the shell header) is what
  * covers the viewport's top. Base UI marks an open popup `data-open` and a closing one `data-closed`.
+ * #629: on desktop the sheet is inset from the viewport on every side, so all four edges are read, not only the top.
  */
-function openSheetTop(): number | null {
+function openSheetInsets(): { top: number; right: number; bottom: number; left: number } | null {
   if (typeof document === "undefined") return null;
   const sheets = document.querySelectorAll<HTMLElement>('[data-slot="sheet-content"][data-open]');
   const last = sheets.item(sheets.length - 1);
-  return last ? Math.max(0, last.getBoundingClientRect().top) : null;
+  if (!last) return null;
+  const rect = last.getBoundingClientRect();
+  return { top: Math.max(0, rect.top), right: Math.max(0, window.innerWidth - rect.right), bottom: Math.max(0, window.innerHeight - rect.bottom), left: Math.max(0, rect.left) };
 }
 
 /**
- * `collisionPadding` with the top below whatever covers the viewport's top: the open Project sheet when there
- * is one (#597), else the shell header. Read at open time: a cold load has no header yet, and an impersonation banner lowers it.
+ * `collisionPadding` kept inside whatever bounds the viewport: the open Project sheet's rect on all four edges when there
+ * is one (#597, #629), else the shell header on top and the viewport gap elsewhere. Read at open time: a cold load has no header yet, and an impersonation banner lowers it.
  */
 export function shellAwarePopupPadding(): { top: number; right: number; bottom: number; left: number } {
-  return { top: (openSheetTop() ?? shellChromeBottom()) + DATE_TIME_POPUP_EDGE_GAP, right: DATE_TIME_POPUP_EDGE_GAP, bottom: DATE_TIME_POPUP_EDGE_GAP, left: DATE_TIME_POPUP_EDGE_GAP };
+  const sheet = openSheetInsets();
+  const gap = DATE_TIME_POPUP_EDGE_GAP;
+  if (sheet) return { top: sheet.top + gap, right: sheet.right + gap, bottom: sheet.bottom + gap, left: sheet.left + gap };
+  return { top: shellChromeBottom() + gap, right: gap, bottom: gap, left: gap };
 }
