@@ -360,11 +360,11 @@ export function tiptapToRichTextDoc(value: unknown, options: { keepPreviewDispla
   return copy(value) as RichTextDoc;
 }
 
-/** The form a post is sent in: every link card is its preview id alone and every video its media id alone, whatever a local draft or the server's served form kept for drawing them (a link card's text and image, a video's `hasPoster`). */
+/** The form a post is sent in: every link card is its preview id alone and every video its media id alone, whatever a local draft or the server's served form kept for drawing them (a link card's text and image, a video's `hasPoster`), and an image its id and alt without the served `width` and `height` (#611). */
 export function stripEmbeddedDisplay(doc: RichTextDoc): RichTextDoc {
-  const needsStrip = (block: RichTextDoc["content"][number]) => (block.type === "linkPreview" && Object.keys(block.attrs).length > 1) || (block.type === "video" && "hasPoster" in block.attrs);
+  const needsStrip = (block: RichTextDoc["content"][number]) => (block.type === "linkPreview" && Object.keys(block.attrs).length > 1) || (block.type === "video" && "hasPoster" in block.attrs) || (block.type === "image" && ("width" in block.attrs || "height" in block.attrs));
   if (!doc.content.some(needsStrip)) return doc;
-  return { ...doc, content: doc.content.map((block) => !needsStrip(block) ? block : block.type === "linkPreview" ? { type: "linkPreview" as const, attrs: { previewId: block.attrs.previewId } } : { type: "video" as const, attrs: { mediaId: (block as Extract<typeof block, { type: "video" }>).attrs.mediaId } }) };
+  return { ...doc, content: doc.content.map((block) => !needsStrip(block) ? block : block.type === "linkPreview" ? { type: "linkPreview" as const, attrs: { previewId: block.attrs.previewId } } : block.type === "image" ? { type: "image" as const, attrs: { mediaId: block.attrs.mediaId, ...(block.attrs.alt ? { alt: block.attrs.alt } : {}) } } : { type: "video" as const, attrs: { mediaId: (block as Extract<typeof block, { type: "video" }>).attrs.mediaId } }) };
 }
 
 export function mentionQuery(editor: NonNullable<ReturnType<typeof useEditor>>): string | null {

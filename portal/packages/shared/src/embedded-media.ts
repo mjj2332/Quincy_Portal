@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 /**
  * Embedded media (#493): an image placed inside a post. The limits and the key layout live here so
  * the API, the sweep and the browser agree on them; the browser's checks are a convenience and the
@@ -19,6 +21,16 @@ export const EMBEDDED_RENDITION_STATUSES = ["not_required", "pending", "ready", 
 export type EmbeddedRenditionStatus = (typeof EMBEDDED_RENDITION_STATUSES)[number];
 /** The feature flag that opens HEIC to everyone; until it is on, only an Admin can upload HEIC. */
 export const EMBEDDED_HEIC_UPLOADS_FLAG = "embedded_heic_uploads";
+/** The largest side, in pixels, an image's recorded size may claim (#611). It only reserves a box before the file loads, so it is a sanity bound, not a decode limit. */
+export const EMBEDDED_IMAGE_MAX_DIMENSION = 32768;
+const embeddedImageDimension = z.number().int().min(1).max(EMBEDDED_IMAGE_MAX_DIMENSION);
+/** The two fields an image upload's completion may carry (#611): what the browser measured. Both or neither. */
+export const embeddedImageDimensionsShape = { width: embeddedImageDimension.optional(), height: embeddedImageDimension.optional() };
+/** For a completion body: refuses a width without a height and the reverse. */
+export const requireBothImageDimensions = (value: { width?: number | undefined; height?: number | undefined }, context: z.RefinementCtx): void => {
+  if ((value.width === undefined) !== (value.height === undefined)) context.addIssue({ code: "custom", path: [value.width === undefined ? "width" : "height"], message: "Width and height go together" });
+};
+export const embeddedImageDimensionsInput = z.object(embeddedImageDimensionsShape).strict().superRefine(requireBothImageDimensions);
 export const EMBEDDED_MEDIA_MAX_BYTES = 25 * 1024 * 1024;
 /** Video in Project discussion (#494): MP4 or MOV, no transcoding. "1 GB" is 1 GiB. */
 export const EMBEDDED_VIDEO_CONTENT_TYPES = ["video/mp4", "video/quicktime"] as const;

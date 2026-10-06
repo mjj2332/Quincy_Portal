@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import {
   EMBEDDED_HEIC_CONTENT_TYPES, EMBEDDED_IMAGE_CONTENT_TYPES, EMBEDDED_POSTER_MAX_BYTES, EMBEDDED_VIDEO_CONTENT_TYPES, EMBEDDED_VIDEO_PART_URL_TTL_SECONDS, embeddedMediaKindFor, embeddedMediaMaxBytes, embeddedMediaObjectKey,
   embeddedMediaPosterKey, enqueueEmbeddedDisplaySafely, externalEmbeddedMediaCompleteSchema, externalEmbeddedMediaPresignSchema, externalEmbeddedMediaSettingsSchema, isEmbeddedHeicContentType, isJpeg, renditionsEnabled,
+  embeddedImageDimensionsShape, requireBothImageDimensions,
 } from "@quincy/shared";
 import { terminalRoute } from "../lib/terminal-route";
 import type { AppEnv, Env } from "../env";
@@ -12,7 +13,7 @@ import { hasProjectCollaborationAccess } from "../middleware/capability";
 import { audit } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { abortMultipart, createMultipartPresign, PART_BYTES, PRESIGN_EXPIRES_SECONDS } from "../lib/r2s3";
-import { abortEmbeddedMedia, claimAndDiscardUploadingMedia, discardUnreferencedObject, enqueueEmbeddedMediaCleanup, getEmbeddedMedia, settleThrownAdoption, verifyUploadedEmbeddedObject } from "../lib/embedded-media";
+import { abortEmbeddedMedia, claimAndDiscardUploadingMedia, discardUnreferencedObject, enqueueEmbeddedMediaCleanup, getEmbeddedMedia, recordedImageSize, settleThrownAdoption, verifyUploadedEmbeddedObject } from "../lib/embedded-media";
 import { heicGate, heicUploadsAllowed, isHeicRow, renditionStatusResponse, retryRendition } from "../lib/embedded-heic";
 import { jsonInput } from "./helpers";
 
@@ -24,7 +25,8 @@ const uuid = z.string().uuid();
  */
 const presignInput = z.object({ contentType: z.enum([...EMBEDDED_IMAGE_CONTENT_TYPES, ...EMBEDDED_HEIC_CONTENT_TYPES, ...EMBEDDED_VIDEO_CONTENT_TYPES]), bytes: z.number().int().min(1), owner: z.enum(["discussion", "whiteboard"]).optional() }).strict()
   .superRefine((value, context) => { if (value.bytes > embeddedMediaMaxBytes(embeddedMediaKindFor(value.contentType)!)) context.addIssue({ code: "custom", path: ["bytes"], message: "File is too large" }); });
-const completeInput = z.object({ parts: z.array(z.object({ partNumber: z.number().int().positive(), etag: z.string().min(1) }).strict()).optional() }).strict();
+/** `width` and `height` (#611) are the image's pixel size as the uploading browser measured it. Optional, both or neither, and only recorded for an image that is not HEIC. */
+const completeInput = z.object({ parts: z.array(z.object({ partNumber: z.number().int().positive(), etag: z.string().min(1) }).strict()).optional(), ...embeddedImageDimensionsShape }).strict().superRefine(requireBothImageDimensions);
 
 export const embeddedMediaRoutes = new Hono<AppEnv>();
 
@@ -115,8 +117,8 @@ embeddedMediaRoutes.post("/projects/:projectId/embedded-media/:mediaId/complete"
   if (!verdict.ok) return c.json(verdict.body, verdict.status);
 
   // Fenced on the Project still being live and unarchived: R2 was awaited above, so the Project may have been deleted or archived meanwhile.
-  const promotedAt = Date.now();
-  const promoted = await c.env.DB.prepare("UPDATE embedded_media SET state = 'pending', updated_at = ?, rendition_requested_at = CASE WHEN rendition_status = 'pending' THEN ? ELSE NULL END WHERE id = ? AND state = 'uploading' AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)").bind(promotedAt, promotedAt, mediaId, projectId).run();
+  const promotedAt = Date.now(); const size = recordedImageSize(row, data);
+  const promoted = await c.env.DB.prepare("UPDATE embedded_media SET state = 'pending', updated_at = ?, width = COALESCE(?, width), height = COALESCE(?, height), rendition_requested_at = CASE WHEN rendition_status = 'pending' THEN ? ELSE NULL END WHERE id = ? AND state = 'uploading' AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)").bind(promotedAt, size.width, size.height, promotedAt, mediaId, projectId).run();
   if ((promoted.meta.changes ?? 0) !== 1) {
     const current = await getEmbeddedMedia(c.env.DB, mediaId);
     if (!current) return stray();
