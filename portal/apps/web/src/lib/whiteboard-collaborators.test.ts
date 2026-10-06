@@ -26,8 +26,10 @@ describe("a selection with no cursor still names who is selecting (#551)", () =>
   const scene = [{ id: "a", x: 10, y: 30 }, { id: "b", x: 4, y: 50 }, { id: "gone", x: -9, y: -9, isDeleted: true }];
   const person = (over: Partial<ReturnType<typeof toCollaborator>> = {}) => ({ ...toCollaborator(peer({ pointer: null })), ...over });
 
-  it("anchors an idle cursor at the top-left of the selected shapes", () => {
-    expect(withSelectionAnchor(person(), scene)).toMatchObject({ pointer: { x: 4, y: 30 }, state: "idle", name: "Ana" });
+  it("anchors a cursor at the top-left of the selected shapes, not faded (the idle tag reads ~2.1:1)", () => {
+    const anchored = withSelectionAnchor(person(), scene);
+    expect(anchored).toMatchObject({ pointer: { x: 4, y: 30 }, name: "Ana" });
+    expect(anchored.state).not.toBe("idle");
   });
   it("leaves a peer with a pointer, with no selection, or whose selection is not on the board alone", () => {
     const withPointer = toCollaborator(peer());

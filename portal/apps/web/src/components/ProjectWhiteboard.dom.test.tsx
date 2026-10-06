@@ -309,6 +309,28 @@ describe("presence (#499)", () => {
   });
 });
 
+describe("focus on load and the archived reason (#551)", () => {
+  it("focuses the board without asking for a focus-visible ring", async () => {
+    const focus = vi.spyOn(HTMLElement.prototype, "focus");
+    try {
+      await mount();
+      const board = document.querySelector('[data-testid="project-whiteboard-board"]');
+      const call = focus.mock.calls.find((_, i) => focus.mock.contexts[i] === board);
+      expect(call?.[0]).toMatchObject({ preventScroll: true, focusVisible: false });
+    } finally { focus.mockRestore(); }
+  });
+
+  it("on the phone layout the archived reason is visually hidden but stays the View only badge's description", async () => {
+    board.initMode = "view";
+    await mount();
+    const reason = document.querySelector<HTMLElement>('[data-testid="project-whiteboard-view-only-reason"]')!;
+    const badge = document.querySelector<HTMLElement>('[data-testid="project-whiteboard-view-only"]')!;
+    expect(reason.className).toContain("[body:has([data-phone-layout])_&]:sr-only");
+    expect(reason.id).not.toBe("");
+    expect(badge.getAttribute("aria-describedby")).toBe(reason.id);
+  });
+});
+
 describe("mode changes (#499)", () => {
   it("flips to view-only when the Project is archived, and stops autosaving", async () => {
     await mount();
