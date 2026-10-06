@@ -51,3 +51,6 @@ const chrome = document.querySelector('.shell-header')?.getBoundingClientRect().
   `dayInBody` must be true; for the Timeline and Dashboard pickers `popupTopClearOfShell` must be true. For the header and Checklist pickers, and any picker inside an open Project sheet, replace `chrome` with `document.querySelector('[data-slot="sheet-content"][data-open]')?.getBoundingClientRect().top ?? chrome`.
 
 Last verified against 495766e9
+
+## Time list keyboard (#660)
+`TimeColumn` portal/apps/web/src/components/quincy/date-time-field/TimeColumn.tsx is one roving Tab stop (pressed slot, else next enabled slot, else first), not 96. Arrows move focus only; Up/Down step by the column count from `POPUP_STACKED_QUERY` (4 stacked, else 1), Left/Right by 1, Home/End jump, ends clamp, disabled slots are skipped; Enter/Space picks. Slots ring inward (`RING_IN` + `focus-visible:!outline-solid`) and the column viewport is `tabIndex -1` via `viewportProps`. `PopupFrame`'s `PRESSED_SLOT` still reads `aria-pressed`. Guards: `TimeColumn.focus.guard.test.ts`, `TimeColumn.dom.test.tsx`.

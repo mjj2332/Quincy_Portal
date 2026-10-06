@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent } from "react";
+import { RING_IN } from "@/components/AnchoredPopover";
 import { Button } from "@/components/reui/button";
 import { ScrollArea } from "@/components/reui/scroll-area";
-import { timeSlots } from "@/lib/date-time-field";
+import { cn } from "@/lib/utils";
+import { POPUP_STACKED_QUERY, scrollTopClearOfFade, timeSlots } from "@/lib/date-time-field";
+import { useMediaQuery } from "@/lib/use-media-query";
 
 const SLOTS = timeSlots();
 
@@ -15,6 +18,13 @@ const SLOTS = timeSlots();
  * a taller one (`min-[721px]:h-72`). #422 had dropped the column's own scroll below 721px so the popup body
  * scrolled once; #447 restores it, because the body's window was ~165px on a phone and the reminders
  * below it were unreachable.
+ *
+ * The list is ONE roving Tab stop (#660, after `quincy/PriorityStars.tsx`), not 96: the pressed slot, else the next
+ * enabled slot at or after the time (17:07 gives 17:15), else the first enabled slot; it resets to that when focus leaves.
+ * Arrows move focus only (Enter/Space on the native button picks): Up/Down by the column count (4 when stacked, from
+ * `POPUP_STACKED_QUERY`, else 1), Left/Right by 1, Home/End to the ends, clamped, skipping disabled slots. The column's own
+ * viewport is `tabIndex -1`, so Base UI's overflow stop never doubles it. Slots ring inward (`RING_IN`): the viewport is
+ * masked, and a mask clips an outline drawn outside it.
  */
 export function TimeColumn({ selected, skipped, onPick }: {
   /** The picked time (`HH:mm`), highlighted only when it is on the 15-minute grid. */
@@ -24,6 +34,64 @@ export function TimeColumn({ selected, skipped, onPick }: {
   onPick: (time: string) => void;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
+  const stacked = useMediaQuery(POPUP_STACKED_QUERY);
+  // The roving position while focus is inside the list; null means "the default stop".
+  const [roving, setRoving] = useState<number | null>(null);
+
+  const defaultStop = useMemo(() => {
+    const enabled = (index: number) => !skipped.has(SLOTS[index]!);
+    const pressed = selected === null ? -1 : SLOTS.indexOf(selected);
+    if (pressed >= 0 && enabled(pressed)) return pressed;
+    const from = selected === null ? 0 : SLOTS.findIndex((slot) => slot >= selected);
+    for (let index = Math.max(from, 0); index < SLOTS.length; index++) if (enabled(index)) return index;
+    return Math.max(SLOTS.findIndex((_, index) => enabled(index)), 0);
+  }, [selected, skipped]);
+  const stop = roving ?? defaultStop;
+
+  // Keep the focused slot inside the column viewport and clear of the stacked fade. The popup body's own `focusin`
+  // handler (PopupFrame) brings the column into view in the body.
+  const reveal = useCallback((slotEl: HTMLElement) => {
+    const viewport = listRef.current?.parentElement;
+    if (!viewport) return;
+    let fade = 0;
+    if (stacked) {
+      const probe = document.createElement("div");
+      probe.style.cssText = "position:absolute;visibility:hidden;width:0;height:var(--fade-size)";
+      viewport.append(probe);
+      fade = probe.getBoundingClientRect().height;
+      probe.remove();
+    }
+    const { top, bottom } = slotEl.getBoundingClientRect();
+    viewport.scrollTop = scrollTopClearOfFade({ viewport: viewport.getBoundingClientRect(), scrollTop: viewport.scrollTop, maxScrollTop: viewport.scrollHeight - viewport.clientHeight, fade, items: [{ top, bottom, required: true, priority: true }] });
+  }, [stacked]);
+
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const current = SLOTS.indexOf((event.target as HTMLElement).textContent?.trim().slice(0, 5) ?? "");
+    if (current < 0 || event.altKey || event.ctrlKey || event.metaKey) return;
+    const columns = stacked ? 4 : 1;
+    const step = ({ ArrowDown: columns, ArrowUp: -columns, ArrowRight: 1, ArrowLeft: -1 } as Record<string, number | undefined>)[event.key];
+    const enabled = (index: number) => !skipped.has(SLOTS[index]!);
+    let target = -1;
+    if (event.key === "Home") target = SLOTS.findIndex((_, index) => enabled(index));
+    else if (event.key === "End") { for (let index = SLOTS.length - 1; index >= 0 && target < 0; index--) if (enabled(index)) target = index; }
+    else if (step !== undefined) {
+      // Clamp at the ends (no wrap), and step over a disabled slot in the same direction.
+      for (let index = current + step; index >= 0 && index < SLOTS.length; index += step) if (enabled(index)) { target = index; break; }
+      if (target < 0) target = current;
+    } else return;
+    event.preventDefault();
+    if (target < 0) return;
+    const el = listRef.current?.querySelectorAll<HTMLElement>("button")[target];
+    if (!el) return;
+    setRoving(target);
+    // preventScroll: the popup body scrolls itself on focusin; the column is scrolled by writing scrollTop (never scrollIntoView).
+    el.focus({ preventScroll: true });
+    reveal(el);
+  };
+
+  const onBlur = (event: FocusEvent<HTMLDivElement>) => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setRoving(null);
+  };
 
   const centre = useCallback(() => {
     const list = listRef.current;
@@ -47,9 +115,9 @@ export function TimeColumn({ selected, skipped, onPick }: {
   }, [centre]);
 
   return (
-    <ScrollArea className="h-36 w-full [--fade-size:var(--space-8)] min-[721px]:h-72 min-[721px]:w-28 min-[721px]:shrink-0 max-[721px]:*:data-[slot=scroll-area-scrollbar]:hidden max-[721px]:*:data-[slot=scroll-area-viewport]:mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] max-[721px]:*:data-[slot=scroll-area-viewport]:mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))]">
-      <div ref={listRef} role="group" aria-label="Time slots" className="grid grid-cols-4 gap-[var(--space-1)] min-[721px]:flex min-[721px]:flex-col pr-[var(--space-3)]">
-        {SLOTS.map((slot) => {
+    <ScrollArea className="h-36 w-full [--fade-size:var(--space-8)] min-[721px]:h-72 min-[721px]:w-28 min-[721px]:shrink-0 max-[721px]:*:data-[slot=scroll-area-scrollbar]:hidden max-[721px]:*:data-[slot=scroll-area-viewport]:mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] max-[721px]:*:data-[slot=scroll-area-viewport]:mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))]" viewportProps={{ tabIndex: -1 }}>
+      <div ref={listRef} role="group" aria-label="Time slots" onKeyDown={onKeyDown} onBlur={onBlur} className="grid grid-cols-4 gap-[var(--space-1)] min-[721px]:flex min-[721px]:flex-col pr-[var(--space-3)]">
+        {SLOTS.map((slot, index) => {
           const isSkipped = skipped.has(slot);
           const isSelected = selected === slot;
           return (
@@ -58,7 +126,8 @@ export function TimeColumn({ selected, skipped, onPick }: {
               type="button"
               size="sm"
               variant={isSelected ? "default" : "ghost"}
-              className="w-full justify-center pointer-coarse:min-h-[44px] max-[721px]:min-h-[44px]"
+              tabIndex={index === stop ? 0 : -1}
+              className={cn("w-full justify-center pointer-coarse:min-h-[44px] max-[721px]:min-h-[44px]", RING_IN, "focus-visible:!outline-solid")}
               aria-pressed={isSelected}
               disabled={isSkipped}
               onClick={() => onPick(slot)}
