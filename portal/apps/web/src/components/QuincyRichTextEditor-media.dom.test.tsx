@@ -121,11 +121,47 @@ describe("inserting an image", () => {
     expect(editor.schema.nodes.image!.spec.draggable).toBe(true);
     const image = host.querySelector<HTMLElement>(`img[data-media-id="${A}"]`)!;
     expect(image.hasAttribute("data-drag-handle")).toBe(true);
+    expect(image.className).toContain("cursor-grab");
     let imagePos = -1; editor.state.doc.descendants((node, pos) => { if (node.type.name === "image") imagePos = pos; });
     await act(async () => { editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, imagePos))); }); await settle();
     const button = host.querySelector<HTMLElement>('[data-testid="embedded-image-alt-button"]')!;
     expect(button.hasAttribute("data-drag-handle")).toBe(false);
     expect(button.closest("[data-drag-handle]")).toBeNull();
+  });
+
+  it.each([false, true])("moves a dragged image: dragstart makes a move of the node selection, and dropping it leaves exactly one image, node already selected: %s (#553)", async (preselected) => {
+    const para = (text: string) => ({ type: "paragraph" as const, content: [{ type: "text" as const, text }] });
+    const host = mount(<Harness initial={{ type: "doc", content: [para("One"), { type: "image", attrs: { mediaId: A } }, para("Two")] }} />); await settle();
+    const surface = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    const editor = (surface as unknown as { editor: Editor }).editor;
+    const images = () => { let n = 0; editor.state.doc.descendants((node) => { if (node.type.name === "image") n += 1; }); return n; };
+    expect(images()).toBe(1);
+    if (preselected) { let at = -1; editor.state.doc.descendants((node, pos) => { if (node.type.name === "image") at = pos; }); await act(async () => { editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, at))); }); await settle(); }
+    const store = new Map<string, string>();
+    const dataTransfer = { setData: (type: string, value: string) => { store.set(type, value); }, getData: (type: string) => store.get(type) ?? "", setDragImage: () => undefined, clearData: () => { store.clear(); }, effectAllowed: "", dropEffect: "move", files: [], types: [] as string[] };
+    const image = host.querySelector<HTMLElement>(`img[data-media-id="${A}"]`)!;
+    // A browser mouses down on the handle first (Tiptap records "dragging started" there; ProseMirror selects the node).
+    await act(async () => { image.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 })); }); await settle();
+    const start = new Event("dragstart", { bubbles: true, cancelable: true }) as Event & { dataTransfer?: unknown };
+    start.dataTransfer = dataTransfer;
+    await act(async () => { image.dispatchEvent(start); }); await settle();
+    const dragging = (editor.view as unknown as { dragging: { move: boolean; slice: { content: { childCount: number } } } | null }).dragging;
+    expect(dragging?.move).toBe(true);
+    expect(editor.state.selection).toBeInstanceOf(NodeSelection);
+    // Release below the second paragraph, as a browser would report it.
+    let end = 0; editor.state.doc.forEach((node, offset) => { end = offset + node.nodeSize; });
+    const view = editor.view; const original = view.posAtCoords.bind(view);
+    view.posAtCoords = () => ({ pos: end, inside: -1 }) as ReturnType<typeof original>;
+    const drop = new Event("drop", { bubbles: true, cancelable: true }) as Event & { dataTransfer?: unknown; clientX?: number; clientY?: number };
+    drop.dataTransfer = { ...dataTransfer, dropEffect: "move" }; drop.clientX = 1; drop.clientY = 1;
+    await act(async () => { surface.dispatchEvent(drop); }); await settle();
+    view.posAtCoords = original;
+    // A browser ends every drag with dragend; Tiptap tracks the source editor until then.
+    await act(async () => { window.dispatchEvent(new Event("dragend")); });
+    expect(images()).toBe(1);
+    expect(editor.state.doc.lastChild?.type.name).toBe("image");
+    expect(latest.content.filter((node) => node.type === "image")).toHaveLength(1);
+    expect(host.querySelectorAll(`img[data-media-id="${A}"]`)).toHaveLength(1);
   });
 
   it("edits the alt text from a control on the selected image, and the node carries the new text (#553)", async () => {
@@ -136,6 +172,8 @@ describe("inserting an image", () => {
     await act(async () => { editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, imagePos))); }); await settle();
     await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="embedded-image-alt-button"]')!.click(); }); await settle();
     const input = document.querySelector<HTMLInputElement>('[data-testid="embedded-image-alt-popover"] input')!;
+    expect(document.querySelector('[data-testid="embedded-image-alt-popover"] label')?.textContent).toBe("Alt text");
+    expect(document.querySelector('[data-testid="embedded-image-alt-popover"] label')?.getAttribute("for")).toBe(input.id);
     expect(input.value).toBe("IMG 1234"); expect(input.maxLength).toBe(200);
     await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "  Front door  "); input.dispatchEvent(new Event("input", { bubbles: true })); });
     await act(async () => { document.querySelector<HTMLButtonElement>('[aria-label="Apply alt text"]')!.click(); }); await settle();
@@ -358,6 +396,30 @@ describe("design review fixes (#493)", () => {
     const close = dialog.querySelector<HTMLElement>('[data-testid="embedded-image-close"]')!;
     expect(close.className).toContain("size-[var(--space-7)]");
     expect(dialog.querySelector("img")!.className).not.toMatch(/min-w|min-h|(^|\s)w-full/);
+  });
+
+  it("pads the stage by the chip when the image is under twice the chip, so a tiny image stays visible beside Close (#553)", async () => {
+    const host = mount(<RichTextContent content={withImages(A)} />);
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="embedded-image"]')!.click(); });
+    await settle();
+    const dialog = () => document.querySelector<HTMLElement>('[data-testid="embedded-image-dialog"]')!;
+    const image = dialog().querySelector("img")!;
+    const load = async (width: number, height: number) => {
+      Object.defineProperty(image, "naturalWidth", { configurable: true, value: width }); Object.defineProperty(image, "naturalHeight", { configurable: true, value: height });
+      await act(async () => { image.dispatchEvent(new Event("load")); });
+    };
+    expect(dialog().className).not.toContain("pt-[var(--space-7)]");
+    await load(24, 24);
+    expect(dialog().className).toContain("pt-[var(--space-7)]"); expect(dialog().className).toContain("pr-[var(--space-7)]");
+    await load(600, 400);
+    expect(dialog().className).not.toContain("pt-[var(--space-7)]");
+    await load(600, 90); // short in one dimension: the chip would still cover its corner
+    expect(dialog().className).toContain("pr-[var(--space-7)]");
+  });
+
+  it("draws the close focus ring inside the chip and keeps the chip's ring legible on ink (#553)", () => {
+    expect(imageSource).toMatch(/embedded-image-close[^>]*outline-offset-\[-4px\][^>]*focus-visible:!outline-offset-\[-4px\]/);
+    expect(imageSource).toMatch(/embedded-image-scrim[^>]*ring-\[color:var\(--border-hover\)\]/);
   });
 
   it("makes the close button the drawn 48px chip, with the dialog's radius and a hairline ring on the scrim (#553)", async () => {

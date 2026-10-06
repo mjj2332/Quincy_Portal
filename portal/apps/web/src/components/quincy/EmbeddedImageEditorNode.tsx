@@ -5,7 +5,7 @@ import { RICH_TEXT_IMAGE_ALT_MAX_LENGTH } from "@quincy/shared";
 import { EmbeddedImage } from "../../lib/rich-text-tiptap";
 import { embeddedMediaUrl } from "../../lib/embedded-media";
 import { Button } from "../reui/button";
-import { Field } from "../reui/field";
+import { Field, FieldLabel } from "../reui/field";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "../reui/input-group";
 import { Popover, PopoverContent, PopoverTrigger } from "../reui/popover";
 
@@ -18,10 +18,12 @@ function AltForm({ alt, inputRef, onApply }: { alt: string; inputRef: RefObject<
     event.stopPropagation();
     onApply(draft.trim());
   };
+  const inputId = useId();
   return <form onSubmit={submit}>
     <Field>
+      <FieldLabel htmlFor={inputId}>Alt text</FieldLabel>
       <InputGroup>
-        <InputGroupInput ref={inputRef} value={draft} maxLength={RICH_TEXT_IMAGE_ALT_MAX_LENGTH} placeholder="Describe the image" aria-label="Alt text" data-testid="embedded-image-alt-input" onChange={(event) => setDraft(event.target.value)} />
+        <InputGroupInput id={inputId} ref={inputRef} value={draft} maxLength={RICH_TEXT_IMAGE_ALT_MAX_LENGTH} placeholder="Describe the image" data-testid="embedded-image-alt-input" onChange={(event) => setDraft(event.target.value)} />
         <InputGroupAddon align="inline-end">
           <InputGroupButton type="submit" size="icon-xs" aria-label="Apply alt text"><CheckIcon aria-hidden="true" /></InputGroupButton>
         </InputGroupAddon>
@@ -44,7 +46,7 @@ function EmbeddedImageEditorView({ node, editor, selected, updateAttributes }: N
   const mediaId = String(node.attrs.mediaId ?? "");
   const alt = typeof node.attrs.alt === "string" ? node.attrs.alt : "";
   return <NodeViewWrapper className="rich-text__embedded-image-node" contentEditable={false}>
-    <img src={embeddedMediaUrl(mediaId)} alt={alt || "Embedded image"} data-media-id={mediaId} data-drag-handle="" className="rich-text__embedded-image" />
+    <img src={embeddedMediaUrl(mediaId)} alt={alt || "Embedded image"} data-media-id={mediaId} data-drag-handle="" className="rich-text__embedded-image cursor-grab active:cursor-grabbing" />
     {(selected || open) && editable && <div className="absolute bottom-[var(--space-2)] left-[var(--space-2)]">
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger render={<Button type="button" variant="secondary" size="xs" data-testid="embedded-image-alt-button" className="pointer-coarse:h-11 max-[721px]:h-11" />}>Alt text</PopoverTrigger>
