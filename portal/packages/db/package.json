@@ -14,7 +14,9 @@
     "verify:migration-0022:local-d1": "bash ./verify-0022-local-d1.sh",
     "qa:apply": "node ./qa-seed/cli.mjs apply",
     "qa:teardown": "node ./qa-seed/cli.mjs teardown",
-    "qa:verify": "node ./qa-seed/cli.mjs verify"
+    "qa:verify": "node ./qa-seed/cli.mjs verify",
+    "fixtures:picker-people:apply": "wrangler d1 execute quincy-portal --local --config ../../workers/app/wrangler.jsonc --file local-fixtures/picker-people.sql",
+    "fixtures:picker-people:remove": "wrangler d1 execute quincy-portal --local --config ../../workers/app/wrangler.jsonc --file local-fixtures/picker-people-remove.sql"
   },
   "devDependencies": {
     "tsx": "^4.23.1"

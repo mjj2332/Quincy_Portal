@@ -14,11 +14,14 @@ import { buttonVariants } from "../reui/button";
 export function EmbeddedVideo({ mediaId, hasPoster, className, videoClassName }: { mediaId: string; hasPoster?: boolean; className?: string; videoClassName?: string }) {
   const [failed, setFailed] = useState(false);
   const src = embeddedMediaUrl(mediaId);
-  if (failed) return <div data-testid="embedded-video-unavailable" className="my-[var(--space-2)] grid justify-items-start gap-[var(--space-2)] rounded-[var(--radius-xs)] border-[length:var(--border-width-hair)] border-solid border-border bg-surface-sunken p-[var(--space-3)]">
-    <p className="m-0 text-foreground-secondary [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">This video can't play in this browser.</p>
-    <a data-slot="button" href={`${src}?download=1`} download className={cn(buttonVariants({ variant: "outline", size: "default" }))}>Download video</a>
-  </div>;
+  // A posterless video shows no frame until it plays; `#t=0.1` asks the browser for one. Only the player gets it: the download href stays on the bare `src`.
+  const playSrc = hasPoster === false ? `${src}#t=0.1` : src;
   return <div data-testid="embedded-video" className={cn("my-[var(--space-2)]", className)}>
-    <video controls preload="metadata" playsInline poster={hasPoster === false ? undefined : embeddedMediaPosterUrl(mediaId)} src={src} aria-label="Embedded video" onError={() => setFailed(true)} className={cn("rich-text__embedded-video", videoClassName)} />
+    {failed
+      ? <div data-testid="embedded-video-unavailable" className={cn("rich-text__embedded-video rich-text__embedded-video--unavailable", videoClassName)}>
+        <p className="m-0 text-foreground-secondary [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">This video can't play in this browser.</p>
+        <a data-slot="button" href={`${src}?download=1`} download className={cn(buttonVariants({ variant: "outline", size: "default" }))}>Download video</a>
+      </div>
+      : <video controls preload="metadata" playsInline poster={hasPoster === false ? undefined : embeddedMediaPosterUrl(mediaId)} src={playSrc} aria-label="Embedded video" onError={() => setFailed(true)} className={cn("rich-text__embedded-video", videoClassName)} />}
   </div>;
 }

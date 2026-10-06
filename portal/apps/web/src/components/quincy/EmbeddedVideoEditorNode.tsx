@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tiptap/react";
 import { VideoIcon } from "lucide-react";
 import { EmbeddedVideo } from "../../lib/rich-text-tiptap";
@@ -6,9 +7,13 @@ import { Badge } from "../reui/badge";
 
 function EmbeddedVideoEditorView({ node }: NodeViewProps) {
   const mediaId = String(node.attrs.mediaId ?? "");
+  const [failed, setFailed] = useState(false);
+  const hasPoster = node.attrs.hasPoster !== false;
   // `hasPoster === false` (the server kept no frame) leaves `poster` off so the browser never requests a 404; null or absent means unknown and asks, as before.
   return <NodeViewWrapper className="rich-text__embedded-video-node" contentEditable={false}>
-    <video src={embeddedMediaUrl(mediaId)} poster={node.attrs.hasPoster === false ? undefined : embeddedMediaPosterUrl(mediaId)} preload="metadata" muted playsInline data-media-id={mediaId} data-drag-handle="" className="rich-text__embedded-video cursor-grab active:cursor-grabbing" />
+    {failed
+      ? <div data-testid="embedded-video-preview-unavailable" data-drag-handle="" className="rich-text__embedded-video rich-text__embedded-video--unavailable cursor-grab active:cursor-grabbing"><p className="m-0 text-foreground-secondary [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">This video can't preview in this browser.</p></div>
+      : <video src={hasPoster ? embeddedMediaUrl(mediaId) : `${embeddedMediaUrl(mediaId)}#t=0.1`} poster={hasPoster ? embeddedMediaPosterUrl(mediaId) : undefined} preload="metadata" muted playsInline data-media-id={mediaId} data-drag-handle="" onError={() => setFailed(true)} className="rich-text__embedded-video cursor-grab active:cursor-grabbing" />}
     <Badge variant="invert" data-testid="embedded-video-badge" className="pointer-events-none absolute top-[var(--space-2)] left-[var(--space-2)]"><VideoIcon aria-hidden="true" />Video</Badge>
   </NodeViewWrapper>;
 }
