@@ -49,3 +49,28 @@ describe("date popup stacking breakpoint (#602)", () => {
     expect(source).toContain("useMediaQuery(POPUP_STACKED_QUERY)");
   });
 });
+
+/**
+ * #636: at 360 the stacked popup body is ~306px wide (popup = 100vw - 2 gutters, less the frame and scrollbar, then the 24px panel padding), and seven 44px cells are 308 against ~298 of grid. The cell size is capped by the room: min(44px, (100vw - chrome) / 7).
+ * Source-text contract; happy-dom resolves no layout. The chrome allowance must cover the gutters, frame/scrollbar and panel padding (66px).
+ */
+describe("calendar cells fit the stacked popup (#636)", () => {
+  const rule = /max-\[721px\]:\[--cell-size:min\(--spacing\(11\),calc\(\(100vw-2\*var\(--space-4\)-([\d.]+)rem\)\/7\)\)\]/.exec(read("CalendarPane.tsx"));
+  const chromePx = rule ? 32 + Number(rule[1]) * 16 : NaN; // 2*var(--space-4) = 32px, the popup width's gutters
+  const cell = (viewport: number) => Math.min(44, (viewport - chromePx) / 7);
+  // 32px gutters + 10px popup-to-body (frame, scrollbar) + 24px panel padding (measured at 360 in the #636 browser pass).
+  const POPUP_CHROME_PX = 32 + 10 + 24;
+
+  it("caps the 44px cell by the room left across seven columns", () => {
+    expect(rule).not.toBeNull();
+    expect(chromePx).toBeGreaterThanOrEqual(POPUP_CHROME_PX);
+  });
+  it("seven cells fit the body at 320-390 and the cell stays at least 40px from 335 up", () => {
+    for (const width of [320, 360, 375, 390]) {
+      const body = Math.min(width - 32, 384) - 10 - 24;
+      expect(7 * cell(width)).toBeLessThanOrEqual(body);
+    }
+    for (const width of [360, 375, 390]) expect(cell(width)).toBeGreaterThanOrEqual(40);
+    expect(cell(390)).toBe(44);
+  });
+});

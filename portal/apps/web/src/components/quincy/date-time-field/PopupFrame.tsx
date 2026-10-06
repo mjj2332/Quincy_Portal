@@ -8,7 +8,8 @@ import { SYDNEY_TIME_ZONE } from "@quincy/shared";
 import { Eyebrow } from "../Eyebrow";
 
 /** The picked day and the pressed time slot: what must read as solid ink, never under the body's fade. */
-const SELECTED = '[aria-selected="true"] button, [role="group"][aria-label="Time slots"] button[aria-pressed="true"]';
+const PRESSED_SLOT = '[role="group"][aria-label="Time slots"] button[aria-pressed="true"]';
+const SELECTED = `[aria-selected="true"] button, ${PRESSED_SLOT}`;
 
 /** The day the person is about to edit when nothing narrower is given: the picked day. The time slot is never revealed, only cleared of the fade. */
 export const REVEAL_SELECTED_DAY = '[aria-selected="true"] button';
@@ -78,7 +79,7 @@ function useSelectedClearOfFade(contentRef: RefObject<HTMLDivElement | null>, re
       const after = group.nextElementSibling;
       return [0, ...tops, ...(after ? [at(after)] : [])];
     };
-    const solve = (items: FadeItem[], fade: number, snaps?: number[]) => scrollTopClearOfFade({ viewport: viewport.getBoundingClientRect(), scrollTop: viewport.scrollTop, maxScrollTop: viewport.scrollHeight - viewport.clientHeight, fade, items, ...(snaps ? { snaps } : {}) });
+    const solve = (items: FadeItem[], fade: number, snaps?: number[], noSliver?: FadeItem[]) => scrollTopClearOfFade({ viewport: viewport.getBoundingClientRect(), scrollTop: viewport.scrollTop, maxScrollTop: viewport.scrollHeight - viewport.clientHeight, fade, items, ...(snaps ? { snaps } : {}), ...(noSliver ? { noSliver } : {}) });
     const nudge = (fromTop: boolean, withReveal: boolean) => {
       const fade = measure();
       // #630: an automatic solve (open, resize) always starts from the top, focus or not (the opening focus is on the picked day, so a
@@ -93,7 +94,9 @@ function useSelectedClearOfFade(contentRef: RefObject<HTMLDivElement | null>, re
       const selected = fromTop ? [] : [...viewport.querySelectorAll(SELECTED)];
       const elements = new Set<Element>([...selected, ...required]);
       // Only the open/resize solve snaps: a selection change or focus keeps its least-scroll move.
-      write(solve([...elements].map((item) => { const { top, bottom } = item.getBoundingClientRect(); return { top, bottom, required: required.has(item), priority: item === focus }; }), fade, fromTop ? presetSnaps() : undefined));
+      // #636: the pressed slot is not solved for at open, but must not be left partly under the bottom fade.
+      const slots = fromTop ? [...viewport.querySelectorAll(PRESSED_SLOT)].filter((slot) => !elements.has(slot)).map((slot) => { const { top, bottom } = slot.getBoundingClientRect(); return { top, bottom }; }) : [];
+      write(solve([...elements].map((item) => { const { top, bottom } = item.getBoundingClientRect(); return { top, bottom, required: required.has(item), priority: item === focus }; }), fade, fromTop ? presetSnaps() : undefined, slots.length ? slots : undefined));
     };
     revealNow.current = () => { noticeScroll(); nudge(false, true); };
     const automatic = () => { noticeScroll(); if (!userScrolled) nudge(true, true); };
