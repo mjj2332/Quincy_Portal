@@ -188,16 +188,83 @@ describe("embedded media orphan sweep (#549)", () => {
     }
   });
 
-  it("walks one shard a day, rotating through all sixteen", async () => {
+  it("finishes one shard, then moves to the next on the following run, wrapping after f", async () => {
     const byShard: Record<string, string> = {};
     for (const shard of "0123456789abcdef") { byShard[shard] = embeddedMediaObjectKey(shardId(shard), shardId(shard)); await put(byShard[shard]!, -10 * day); }
     const { env: media } = bucket();
     const result = await sweepEmbeddedMediaOrphans(mode("reclaim", { env: media }), 0);
-    expect(result).toMatchObject({ shard: "0", reclaimed: 1 });
+    expect(result).toMatchObject({ shard: "0", reclaimed: 1, complete: true, resumed: false });
     expect(await queueRow(byShard["0"]!)).not.toBeNull(); expect(await queueSize()).toBe(1);
-    expect((await sweepEmbeddedMediaOrphans(mode("observe", { env: media }), 10 * day + 5)).shard).toBe("a");
-    expect((await sweepEmbeddedMediaOrphans(mode("observe", { env: media }), 15 * day)).shard).toBe("f");
-    expect((await sweepEmbeddedMediaOrphans(mode("observe", { env: media }), 16 * day)).shard).toBe("0");
+    expect(await sweepEmbeddedMediaOrphans(mode("observe", { env: media }), 1)).toMatchObject({ shard: "1", wouldReclaim: 1, resumed: true });
+    for (let index = 2; index < 16; index += 1) await sweepEmbeddedMediaOrphans(mode("observe", { env: media }), index);
+    expect(await sweepEmbeddedMediaOrphans(mode("observe", { env: media }), 16)).toMatchObject({ shard: "0", resumed: true });
+  });
+
+  it("starts at the day's shard when there is no saved progress, and ignores a corrupt progress object", async () => {
+    await database.MEDIA.put("_state/embedded-media-orphan-sweep.json", "not json");
+    const { env: media } = bucket();
+    expect(await sweepEmbeddedMediaOrphans(mode("observe", { env: media }), now)).toMatchObject({ shard: "3", resumed: false, complete: true });
+  });
+
+  it("does not let live old keys use up the enqueue budget before an orphan behind them (reclaim)", async () => {
+    const live = [] as string[];
+    for (let index = 1; index <= 3; index += 1) { const id = `3000000${index}-0000-4000-8000-000000000000`; live.push(await row({ id })); await put(live.at(-1)!); }
+    const orphan = embeddedMediaObjectKey(projectId, "3fffffff-0000-4000-8000-000000000000"); await put(orphan);
+    const { env: media } = bucket();
+    // Three live old keys come first; the enqueue budget is 2. It must count only successful enqueues.
+    const first = await sweepEmbeddedMediaOrphans(mode("reclaim", { env: media }), now, { maxEnqueues: 2 });
+    expect(first).toMatchObject({ referenced: 3, reclaimed: 1, complete: true });
+    expect(await queueRow(orphan)).not.toBeNull();
+    for (const key of live) expect(await queueRow(key)).toBeNull();
+  });
+
+  it("counts would-reclaim candidates against the budget in observe mode, and a later run picks up the rest", async () => {
+    const live = await row({ id: "30000001-0000-4000-8000-000000000000" }); await put(live);
+    const orphans = ["31", "32", "33"].map((prefix) => embeddedMediaObjectKey(projectId, `${prefix}000000-0000-4000-8000-000000000000`));
+    for (const key of orphans) await put(key);
+    const { env: media } = bucket();
+    const first = await sweepEmbeddedMediaOrphans(mode("observe", { env: media }), now, { maxEnqueues: 2 });
+    expect(first).toMatchObject({ referenced: 1, wouldReclaim: 2, truncated: true, complete: false });
+    const second = await sweepEmbeddedMediaOrphans(mode("observe", { env: media }), now + day, { maxEnqueues: 2 });
+    expect(second).toMatchObject({ shard: "3", resumed: true, referenced: 0, wouldReclaim: 1, complete: true });
+  });
+
+  it("bounds classification work separately and resumes it on the next runs until the shard is covered", async () => {
+    const live: string[] = [];
+    for (let index = 1; index <= 5; index += 1) { const id = `3000000${index}-0000-4000-8000-000000000000`; live.push(await row({ id })); await put(live.at(-1)!); }
+    const orphan = embeddedMediaObjectKey(projectId, "3fffffff-0000-4000-8000-000000000000"); await put(orphan);
+    const { env: media } = bucket();
+    const runs = [];
+    for (let run = 0; run < 3; run += 1) runs.push(await sweepEmbeddedMediaOrphans(mode("reclaim", { env: media }), now + run * day, { maxClassify: 2 }));
+    expect(runs.map((r) => [r.classified, r.referenced, r.reclaimed, r.complete])).toEqual([[2, 2, 0, false], [2, 2, 0, false], [2, 1, 1, true]]);
+    expect(await queueRow(orphan)).not.toBeNull();
+    expect(runs[0]!.truncated).toBe(true);
+  });
+
+  it("does not starve a Project after many RAW-only folders, nor the Notice board prefix (consecutive runs)", async () => {
+    for (let index = 0; index < 299; index += 1) await database.MEDIA.put(`projects/3${String(index).padStart(7, "0")}-0000-4000-8000-000000000000/raw/IMG_${index}.CR3`, "x");
+    const lateProject = "3ffffff0-0000-4000-8000-000000000000";
+    const orphan = embeddedMediaObjectKey(lateProject, "3fffffff-0000-4000-8000-000000000000"); const notice = noticeEmbeddedMediaObjectKey(shardId("3"));
+    await put(orphan); await put(notice);
+    const { env: media } = bucket();
+    const first = await sweepEmbeddedMediaOrphans(mode("reclaim", { env: media }), now);
+    expect(first).toMatchObject({ listCalls: 300, truncated: true, complete: false });
+    let runs = 1;
+    while (runs < 4 && !(await queueRow(orphan) && await queueRow(notice))) { await sweepEmbeddedMediaOrphans(mode("reclaim", { env: media }), now + runs * day); runs += 1; }
+    expect(await queueRow(orphan)).not.toBeNull(); expect(await queueRow(notice)).not.toBeNull();
+    expect(runs).toBeLessThanOrEqual(2);
+  });
+
+  it("resumes inside a Project folder that was cut mid-listing", async () => {
+    const keys = Array.from({ length: 5 }, (_, index) => embeddedMediaObjectKey(projectId, `3000000${index}-0000-4000-8000-000000000000`));
+    for (const key of keys) await put(key);
+    const { env: media } = bucket({ limit: 2 });
+    const first = await sweepEmbeddedMediaOrphans(mode("reclaim", { env: media }), now, { maxListCalls: 3 });
+    expect(first).toMatchObject({ truncated: true, complete: false });
+    const second = await sweepEmbeddedMediaOrphans(mode("reclaim", { env: media }), now + day);
+    expect(second).toMatchObject({ complete: true, resumed: true });
+    for (const key of keys) expect(await queueRow(key)).not.toBeNull();
+    expect(first.reclaimed + second.reclaimed).toBe(5);
   });
 
   it("does not queue an object whose row appears between the listing and the enqueue", async () => {
