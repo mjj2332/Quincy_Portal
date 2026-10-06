@@ -64,6 +64,19 @@ describe("link preview card design (#497)", () => {
     expect(v).toMatch(/max-width:\s*min\(100%,\s*calc\(24rem \* 16 \/ 9\)\)/);
     expect(ruleBody(".rich-text__embedded-video-node")).toMatch(/width:\s*100%;[^}]*max-width:\s*min\(100%,\s*calc\(24rem \* 16 \/ 9\)\)/);
   });
+  it("6c: the --unavailable fallback is a centred grid on the shared box and declares no own aspect-ratio or max-height, so it cannot drift (#592)", () => {
+    const u = ruleBody(".rich-text__embedded-video.rich-text__embedded-video--unavailable");
+    expect(u).toMatch(/display:\s*grid/); expect(u).toMatch(/place-content:\s*center/);
+    expect(u).not.toMatch(/aspect-ratio/); expect(u).not.toMatch(/max-height/);
+  });
+  it("6d: the fallback panel carries the shared box class, the --unavailable modifier and videoClassName, inside the player's own wrapper (#592)", () => {
+    const src = readFileSync(join(here, "../components/quincy/EmbeddedVideo.tsx"), "utf8");
+    expect(src).toContain('cn("rich-text__embedded-video rich-text__embedded-video--unavailable", videoClassName)');
+    expect(src).toContain('cn("my-[var(--space-2)]", className)');
+    expect(src.indexOf("embedded-video--unavailable")).toBeGreaterThan(src.indexOf('cn("my-[var(--space-2)]", className)'));
+    const node = readFileSync(join(here, "../components/quincy/EmbeddedVideoEditorNode.tsx"), "utf8");
+    expect(node).toContain("rich-text__embedded-video rich-text__embedded-video--unavailable");
+  });
   it("6b: the whiteboard dialog player keeps its full width: no 682px cap, no fixed 16/9 box (#556)", () => {
     const dialog = readFileSync(join(here, "../components/quincy/EmbeddedVideoDialog.tsx"), "utf8");
     expect(dialog).toContain("!max-w-none"); expect(dialog).toContain("!aspect-auto");
