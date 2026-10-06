@@ -10,24 +10,19 @@
 // 4. `testId="rich-text-table-bubble"` on the bar: a Quincy-owned test hook.
 // 5. Add row / Add column disable at the server's 50 x 12 limits (`tableDimensions`); the hard stop for
 //    Tab and paste is `TableSizeBoundary` in `lib/rich-text-tiptap.ts`.
-// 6. The bar anchors to the DOM element of the CELL holding the caret (`$anchor`), not the whole table
-//    (nothing in the vendored copy anchored to cells or rows; the original used the table), so it can be
-//    placed `top-start` -> `bottom-start` around the active cell and never over it. It is re-resolved on
-//    every selection update; the plugin's own scroll/resize handlers re-run it. flip and shift share one
-//    boundary rect (`rich-text-table-position.ts`): bounded by the editable surface's top down to the
-//    helper line, with 8px clearance. The bar may therefore cross the frame's bottom border (owner
-//    decision #535); it never covers the toolbar, the character counter or the helper: the floor is the top of
-//    the first rendered element below the frame (`tableBubbleFloors`). Hosts with none of them (e.g. the edit
-//    composer below 90% of the limit) keep the surface as the boundary.
-// 7. The zone the bar may occupy is chosen per positioning pass (`tableBubbleZone`) from the neighbouring blocks
-//    (`readActiveRowRect`, `readTableNeighbours`), and there is NO wide tier: the bar never covers a neighbouring
-//    block or the active row. Tiers: clean (8px gap, inside the viewport), tight (the roomier side, a gap under 8px),
-//    offscreen (the viewport cuts the room, the blocks allow it: root boundary "document"), none (no room). The
-//    offset is derivable and carries the same gap as the flip/shift padding. Under "none" the bar stays MOUNTED but
+// 6. The bar DOCKS to the table's outer edge (#555): it anchors to the whole table vertically (`readActiveTableRect`) and
+//    to the DOM element of the CELL holding the caret (`$anchor`) horizontally, clamped to the table, so it is placed
+//    `top-start` -> `bottom-start` around the table and never over a cell. It is re-resolved on every selection
+//    update; the plugin's own scroll/resize handlers re-run it. flip and shift share one boundary rect
+//    (`rich-text-table-position.ts`): the editable surface clipped to the visible viewport, whose top is the sticky
+//    shell header's bottom (`shellChromeBottom`). The bar may float over the paragraph above or below the table
+//    (owner decision 2026-10-06) but never leaves the surface, so the helper line stays visible.
+// 7. The zone is chosen per positioning pass (`tableBubbleZone`): just above the table with an 8px gap when that fits,
+//    else just below, else tier "none". The neighbouring blocks no longer bound it. The offset is derivable and
+//    carries the same gap as the flip/shift padding. Under "none" the bar stays MOUNTED but
 //    inert, hidden from assistive tech and invisible (`RichTextBubbleBar` `inactive`; we do not touch Tiptap's own
 //    inline visibility), `onTierChange` tells the host, which shows the same controls as the toolbar's table group
-//    (edit 8), so exactly one control set is usable. The bar's outer padding is gone (`rich-text-bubble-bar.tsx`),
-//    so it fits above row 2 of a first-block table (#535).
+//    (edit 8), so exactly one control set is usable. The bar's outer padding is gone (`rich-text-bubble-bar.tsx`).
 // 8. The bar's controls are `RichTextTableControls`, shared with `RichTextTableTools`: below 721px, or whenever the
 //    bar's tier is "none", the same controls render as the FIRST group of the formatting toolbar instead
 //    (`QuincyRichTextEditor`), because a floating bar has no room around the table (#535). Below 721px the bar is
@@ -53,7 +48,7 @@ import {
 } from "@/components/reui/tooltip"
 import { RICH_TEXT_TABLE_MAX_COLUMNS, RICH_TEXT_TABLE_MAX_ROWS } from "@quincy/shared"
 import { tableDimensions } from "@/lib/rich-text-tiptap"
-import { readFloorTop, readVisualOffset, tableBubbleAnchor, tableBubbleOptions, type TableBubbleTier } from "./rich-text-table-position"
+import { readVisualOffset, tableBubbleAnchor, tableBubbleOptions, type TableBubbleTier } from "./rich-text-table-position"
 import { RichTextBubbleBar, focusFirstToolbarStop, fromOwnDom } from "./rich-text-bubble-bar"
 import type { RichTextSlashItem } from "./rich-text-slash-menu"
 import { useRichTextSelector } from "./rich-text-state"
@@ -169,37 +164,6 @@ export function readActiveTableRect(editor: Editor) {
   const horizontal = dom.getBoundingClientRect()
 
   return { top: vertical.top, bottom: vertical.bottom, left: horizontal.left, right: horizontal.right }
-}
-
-function blockRect(editor: Editor, pos: number) {
-  const dom = editor.view.nodeDOM(pos)
-  if (!(dom instanceof HTMLElement)) return null
-  const rect = dom.getBoundingClientRect()
-
-  return Number.isFinite(rect.top) && Number.isFinite(rect.bottom) ? rect : null
-}
-
-/**
- * Bottom of the block before the table and top of the block after it (null at the document's edges or when a
- * neighbour has no element). Read fresh on every positioning pass: the blocks reflow as the content does.
- */
-export function readTableNeighbours(editor: Editor): {
-  prevBottom: number | null
-  nextTop: number | null
-} {
-  const table = findTable(editor)
-
-  if (!table) return { prevBottom: null, nextTop: null }
-
-  const $table = editor.state.doc.resolve(table.pos)
-  const before = $table.nodeBefore
-  const nextPos = table.pos + table.node.nodeSize
-  const after = nextPos <= editor.state.doc.content.size ? editor.state.doc.resolve(nextPos).nodeAfter : null
-
-  return {
-    prevBottom: before ? (blockRect(editor, table.pos - before.nodeSize)?.bottom ?? null) : null,
-    nextTop: after ? (blockRect(editor, nextPos)?.top ?? null) : null,
-  }
 }
 
 function showInTable({
@@ -376,8 +340,6 @@ export function RichTextTableBubble({
 
       return tableBubbleOptions({
         surface: () => editor.view.dom.getBoundingClientRect(),
-        floorTop: () => readFloorTop(...(tableBubbleFloors ?? []).map((ref) => ref?.current)),
-        neighbours: () => readTableNeighbours(editor),
         row: () => readAnchor() ?? readActiveRowRect(editor),
         visualOffset: () => readVisualOffset(),
         // A late pass after the caret left the table must not resurrect the group.

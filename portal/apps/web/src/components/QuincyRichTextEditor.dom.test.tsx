@@ -1589,10 +1589,10 @@ describe("table controls on a phone (#535)", () => {
   });
 });
 
-// #535 (tight fit): off the phone the floating bar never covers a neighbouring block or the row. When no side has
-// room (a one-row table between two paragraphs) the bar stays mounted but inert/invisible and the SAME controls
+// #535/#555: off the phone the floating bar docks above or below the table and never covers a cell. When no side has
+// room inside the surface (a one-row table with 8px of surface around it) the bar stays mounted but inert/invisible and the SAME controls
 // appear as the toolbar's table group, so exactly one usable control set exists. happy-dom has no layout, so the
-// geometry is stubbed per element: a 400-760 surface, a 520-560 row, a paragraph above (bottom 515) and below
+// geometry is stubbed per element: a 400-760 surface (512-568 when cramped), a 520-560 table, a paragraph above (bottom 515) and below
 // (top 565) and a 38px bar.
 describe("table bar with no room falls back to the toolbar group (#535)", () => {
   beforeEach(() => { variant = "document"; });
@@ -1609,7 +1609,7 @@ describe("table bar with no room falls back to the toolbar group (#535)", () => 
     originalRect = Element.prototype.getBoundingClientRect;
     const box = (top: number, bottom: number) => ({ top, bottom, left: 20, right: 340, width: 320, height: bottom - top, x: 20, y: top, toJSON() { return {}; } }) as DOMRect;
     Element.prototype.getBoundingClientRect = function (this: Element) {
-      if (this.matches('[contenteditable="true"]')) return box(400, 760);
+      if (this.matches('[contenteditable="true"]')) return roomy ? box(400, 760) : box(512, 568); // cramped: 8px of surface above and below the table (#555)
       if (["TR", "TD", "TH", "TABLE"].includes(this.tagName)) return box(520, 560);
       if ((this.tagName === "DIV" && this.querySelector(":scope > table") !== null)) return box(520, 560); // the one-row table (#555: the bar docks to the table)
       if (this.tagName === "P") {
