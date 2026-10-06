@@ -307,10 +307,12 @@
 .worktools .prog { font: var(--type-label); font-size: 13px; color: var(--text-secondary); }
 .worktools .prog b { color: var(--text-primary); font-weight: 400; }
 .workgrid { padding: var(--space-6); }
+/* #613: `overflow-anchor: none` on the sheet body. Swapping a tab panel (long Collaboration -> short Copy -> back) otherwise lets
+   scroll anchoring carry the clamped scrollTop to the bottom of the long panel; nothing here relies on anchoring. */
 /* #366: the Project sheet portals to <body>, outside .app and [data-rail-mode]; re-declare what they
    supply. `--shell-header-height` is 0 here (the sheet's own scroller has no shell header above it)
    so `.worktools` sticks to the top of the sheet body. */
-.project-sheet__body { --shell-header-height: 0px; --toast-inset-inline-start: max(var(--space-5), env(safe-area-inset-left));
+.project-sheet__body { overflow-anchor: none; --shell-header-height: 0px; --toast-inset-inline-start: max(var(--space-5), env(safe-area-inset-left));
   /* The Collaboration checklist rail sticks below the sheet's close button (space-4 + 44px + space-2), as `.worktools` does (#377). */
   --collab-rail-top: calc(var(--space-4) + 44px + var(--space-2)); }
 [data-testid="project-sheet"][data-impersonating] .viewer { inset: var(--impersonation-banner-height) 0 0; }
@@ -322,6 +324,11 @@
 .project-sheet__body .project-header__identity > h2 { padding-inline-end: calc(var(--space-4) + 44px + var(--space-2) - var(--space-6)); overflow-wrap: anywhere; }
 @media (max-width: 720px) {
   .project-sheet__body .project-header__identity > h2 { padding-inline-end: calc(var(--space-4) + 44px + var(--space-2) - var(--space-4)); }
+}
+/* #613: the tab row (tabs + whiteboard button) scrolled into the close button's column; same clearance as the title. */
+.project-sheet__body .project-header__tabrow { padding-inline-end: calc(var(--space-4) + 44px + var(--space-2) - var(--space-6)); }
+@media (max-width: 720px) {
+  .project-sheet__body .project-header__tabrow { padding-inline-end: calc(var(--space-4) + 44px + var(--space-2) - var(--space-4)); }
 }
 
 /* selection action bar */
