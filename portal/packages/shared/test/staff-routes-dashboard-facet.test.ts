@@ -94,9 +94,28 @@ describe("Dashboard routing grammar", () => {
       calendarUrl(`${calendarBase}&${retiredViewParameter}=activity`),
       calendarUrl("view=calendar&sub=month&layers=project"),
       calendarUrl("view=calendar&date=2026-08-30&layers=project"),
-      calendarUrl("view=calendar&date=2026-08-30&sub=month"),
       calendarUrl(`${retiredProjectParameter}=${projectId}`),
       calendarUrl(`view=table&${retiredViewParameter}=activity`),
+    ]) {
+      expect(parseStaffLocation(location), location).toEqual({ kind: "not-found" });
+      expect(safeStaffDestination(location), location).toBeNull();
+    }
+  });
+
+  it("defaults an ABSENT `layers` on the calendar facet to project+checklist (#651)", () => {
+    const short = calendarUrl("view=calendar&date=2026-08-30&sub=month");
+    const route = parseStaffLocation(short);
+    expect(route).toEqual({ kind: "dashboard", calendar: calendar({ layers: ["project", "checklist"] }) });
+    if (route.kind === "not-found" || route.kind === "reserved") throw new Error("expected a route");
+    const canonical = staffPathFor(route);
+    expect(canonical).toContain("layers=project%2Cchecklist");
+    expect(parseStaffLocation(canonical)).toEqual(route);
+    expect(safeStaffDestination(short)).toBe(canonical);
+    for (const location of [
+      calendarUrl("view=calendar&date=2026-08-30&sub=month&layers="),
+      calendarUrl("view=calendar&date=2026-08-30&sub=month&layers=bogus"),
+      calendarUrl("view=calendar&sub=month"),
+      calendarUrl("view=calendar&date=2026-08-30"),
     ]) {
       expect(parseStaffLocation(location), location).toEqual({ kind: "not-found" });
       expect(safeStaffDestination(location), location).toBeNull();
