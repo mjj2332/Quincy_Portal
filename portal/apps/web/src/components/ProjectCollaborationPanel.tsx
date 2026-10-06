@@ -120,7 +120,7 @@ export function ProjectCollaborationPanel({ projectId, presented = true, view, o
     return <section className={cn("group/collab grid content-start gap-[var(--space-4)] p-[var(--space-5)] bg-[var(--paper-050)]",
       "grid-cols-[minmax(0,var(--container-md))]",
       "data-[checklist-layout=rail]:grid-cols-[minmax(0,var(--container-md))_var(--collab-rail-width)] data-[checklist-layout=rail]:gap-x-[var(--space-6)]",
-      embedded ? "data-[checklist-layout=rail]:[grid-template-areas:'tabs_rail'_'panels_rail']" : "data-[checklist-layout=rail]:[grid-template-areas:'head_head'_'tabs_rail'_'panels_rail']",
+      embedded ? "data-[checklist-layout=rail]:[grid-template-areas:'tabs_rail'_'panels_rail'] data-[checklist-layout=rail]:[grid-template-rows:auto_1fr]" : "data-[checklist-layout=rail]:[grid-template-areas:'head_head'_'tabs_rail'_'panels_rail'] data-[checklist-layout=rail]:[grid-template-rows:auto_auto_1fr]",
       embedded ? "max-[721px]:p-[var(--space-3)]" : "[border-style:solid] border-[length:var(--border-width-hair)] border-border shadow-[var(--shadow-sm)]")}
       data-testid="project-collaboration-panel" data-checklist-layout={layout} aria-label="Project collaboration" ref={attachScrollRoot}>{!embedded && headerMarkup}{checklist}{tabs}{panels}</section>;
   };
