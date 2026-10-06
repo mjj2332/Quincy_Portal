@@ -125,7 +125,7 @@ export function PopupFrame({ label, zoneId, bodyRef, applying, applyDisabled = f
   return (
     <Frame ref={bodyRef} spacing="sm" className="max-h-[var(--available-height)] min-h-0">
       <FrameHeader>
-        <FrameTitle className="min-w-0 [contain:inline-size]"><Eyebrow className="block truncate" title={label}>{label}</Eyebrow></FrameTitle>
+        <FrameTitle className="min-w-0 [contain:inline-size]"><Eyebrow className="line-clamp-2" title={label}>{label}</Eyebrow></FrameTitle>
         <FrameDescription id={zoneId} className="text-[length:var(--text-xs)]">{SYDNEY_TIME_ZONE}</FrameDescription>
       </FrameHeader>
       {pinned && <div className="shrink-0 px-(--frame-panel-header-px) pb-[var(--space-2)]">{pinned}</div>}

@@ -503,13 +503,12 @@ describe("DateTimeField date-time: seeding a draft", () => {
     } finally { globalThis.ResizeObserver = original; rect.mockRestore(); client.mockRestore(); offset.mockRestore(); }
   });
 
-  it("keeps the eyebrow to one truncated line while the popup name stays the full label (#447)", async () => {
+  it("keeps the popup name the full label and the eyebrow title (#447, #621; the two-line clamp is pinned in popup-title.contract.test.ts)", async () => {
     await mount({ value: stored("2027-01-15T09:00") });
     await open();
     const dialog = popup()!;
     expect(dialog.getAttribute("aria-label")).toBe("Deadline");
     const eyebrow = [...dialog.querySelectorAll<HTMLElement>("span")].find((el) => el.textContent === "Deadline")!;
-    expect(eyebrow.classList.contains("truncate")).toBe(true);
     expect(eyebrow.getAttribute("title")).toBe("Deadline");
   });
 
