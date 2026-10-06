@@ -195,7 +195,12 @@ export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, 
   let range = solve(required);
   if (range.low > range.high) range = solve(required.filter((item) => item.required));
   if (range.low > range.high) range = solve(required.filter((item) => item.priority));
-  return range.low <= range.high ? Math.min(Math.max(scrollTop, range.low), range.high) : scrollTop;
+  if (range.low > range.high) return scrollTop;
+  // Whole pixels, toward the safe side: the top fade needs s <= high (floor), the bottom needs s >= low (ceil). A browser snaps scrollTop
+  // to its device-pixel grid (0.5px at DPR 2), and a target sitting exactly on a fade edge lands inside it. Whole pixels are on every such grid.
+  const whole = { low: Math.ceil(range.low - 1e-9), high: Math.floor(range.high + 1e-9) };
+  const safe = whole.low <= whole.high ? whole : range;
+  return Math.min(Math.max(scrollTop, safe.low), safe.high);
 }
 
 /**

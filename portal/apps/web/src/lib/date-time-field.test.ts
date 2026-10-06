@@ -279,6 +279,29 @@ describe("scrollTopClearOfFade, required items (#587)", () => {
   });
 });
 
+describe("scrollTopClearOfFade, rounding toward the safe side (#587)", () => {
+  const viewport = { top: 100, bottom: 500 };
+  // Document offsets 412.3..448.3: clearing the top fade needs s <= 380.3; clearing the bottom needs s >= 80.3.
+  const doc = { top: 412.3, bottom: 448.3 };
+  const at = (scrollTop: number) => ({ top: 100 + doc.top - scrollTop, bottom: 100 + doc.bottom - scrollTop, required: true });
+  it("floors the target when clearing the top fade, so the browser's rounding cannot push the item into the band", () => {
+    const result = scrollTopClearOfFade({ viewport, scrollTop: 500, maxScrollTop: 600, fade: 32, items: [at(500)] });
+    expect(result).toBe(380);
+  });
+  it("ceils the target when clearing the bottom fade", () => {
+    const result = scrollTopClearOfFade({ viewport, scrollTop: 0, maxScrollTop: 600, fade: 32, items: [at(0)] });
+    expect(result).toBe(81);
+  });
+  it("leaves a scrollTop that is already inside the interval alone, fractional or not", () => {
+    expect(scrollTopClearOfFade({ viewport, scrollTop: 300.5, maxScrollTop: 600, fade: 32, items: [at(300.5)] })).toBe(300.5);
+  });
+  it("falls back to the exact target when no whole pixel fits the interval", () => {
+    // Interval [100.2, 100.8] holds no integer: the exact (unrounded) bound is returned.
+    const result = scrollTopClearOfFade({ viewport, scrollTop: 0, maxScrollTop: 600, fade: 32, items: [{ top: 100 + 132.8, bottom: 100 + 468.2, required: true }] });
+    expect(result).toBeCloseTo(100.2, 6);
+  });
+});
+
 describe("scrollTopClearOfFade, over a grid of inputs (#537)", () => {
   const H = 400;
   const fade = 32;
