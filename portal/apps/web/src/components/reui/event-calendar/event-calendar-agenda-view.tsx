@@ -52,7 +52,9 @@
  * 2. 2026-10-07, #614 — the day header's weekday and date, and the group `aria-label`, are
  *    formatted with `settings.i18n.formats.agendaDayWeekday` / `agendaDayDate` instead of the
  *    vendor's inline weekday and long-date literals. The i18n defaults equal those literals, so an
- *    unconfigured calendar is unchanged; Quincy's i18n sets the short Portal form.
+ *    unconfigured calendar is unchanged; Quincy's i18n sets the short Portal form. The sticky
+ *    header's surface is solid `bg-muted` (was `bg-muted/60`): at 60% the rows scrolling under
+ *    it showed through and collided with the header text.
  */
 import { useMemo } from "react"
 import {
@@ -189,7 +191,7 @@ function EventCalendarAgendaView({
                   role="heading"
                   aria-level={3}
                   className={cn(
-                    "bg-muted/60 sticky top-0 z-10 flex items-baseline justify-between gap-4 border-b px-4 py-2",
+                    "bg-muted sticky top-0 z-10 flex items-baseline justify-between gap-4 border-b px-4 py-2",
                     // The custom ScrollArea's overlay scrollbar (w-2.5 = 10px)
                     // is painted UNDER this sticky, z-10, opaque header, so the
                     // thumb vanishes behind the day bar at the top of the view.

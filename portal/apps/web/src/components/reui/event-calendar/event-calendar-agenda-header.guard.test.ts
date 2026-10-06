@@ -16,4 +16,9 @@ describe("agenda view day header formats (#614)", () => {
     expect(src).toContain("settings.i18n.formats.agendaDayWeekday");
     expect(src).toContain("settings.i18n.formats.agendaDayDate");
   });
+
+  it("paints the sticky day header solid, so rows never show through it", () => {
+    const header = src.match(/"[^"]*\bsticky top-0[^"]*"/)?.[0] ?? "";
+    expect(header).toMatch(/\bbg-muted\b(?!\/)/);
+  });
 });
