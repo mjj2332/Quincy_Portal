@@ -89,7 +89,7 @@ export function GanttSubtaskDueCell({ row, street, editorOpen, disabled, error, 
     <span data-testid="gantt-subtask-due" className="flex min-w-0 flex-1 items-center" onClick={stopRowGesture} onPointerDown={stopRowGesture} onMouseDown={stopRowGesture} onKeyDown={stopRowGesture}>
       <SubtaskScheduleControl<LatestSubtaskSummary>
         owner={`gantt-${row.id}`}
-        label={`Schedule for ${row.title}, ${street}`}
+        label={street ? `Schedule for ${row.title}, ${street}` : `Schedule for ${row.title}`}
         value={row.schedule}
         open={editorOpen}
         setOpen={(next) => {
