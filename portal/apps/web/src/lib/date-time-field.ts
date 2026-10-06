@@ -1,4 +1,5 @@
 import { isSydneyCalendarDate, sydneyBusinessDate } from "@quincy/shared";
+import { shellChromeBottom } from "./shell-chrome";
 
 /**
  * #421 — the pure rules behind `quincy/DateTimeField`. A value here is always a civil
@@ -147,6 +148,8 @@ export function popupPaddingWithTopAtLeast(padding: PopupCollisionPadding, top: 
 }
 
 type EdgeRect = { top: number; bottom: number };
+/** An item to keep clear of the fade; `required` ones are never skipped for lying outside the body (#587). */
+export type FadeItem = EdgeRect & { required?: boolean };
 
 /**
  * #537 — the popup body fades each edge by `min(fade, overflow past that edge)`: the top band is
@@ -161,27 +164,36 @@ type EdgeRect = { top: number; bottom: number };
  * so each item owns a closed interval of valid scroll positions. The result is the position nearest to
  * the current `scrollTop` inside the intersection of those intervals (so the least scroll, in either
  * direction), or the current `scrollTop` when the intersection is empty. An item taller than the clear
- * window has no valid position; it asks for its top edge aligned to the top band. An item wholly outside
- * the body's visible area is ignored, since scrolling to it would hide the month navigation for nothing.
- * Rects share one coordinate space.
+ * window has no valid position; it asks for its top edge aligned to the top band. Rects share one
+ * coordinate space.
+ *
+ * #587 — an item wholly outside the body's visible area is ignored (scrolling to it would hide the month
+ * navigation for nothing) UNLESS it is `required`: the day the person is about to edit, or the focused
+ * element, must come into view. A required item is never skipped, and when the items cannot all be
+ * cleared together the optional ones give way: the solve retries with the required items alone.
  */
-export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, items }: { viewport: EdgeRect; scrollTop: number; maxScrollTop: number; fade: number; items: readonly EdgeRect[] }): number {
+export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, items }: { viewport: EdgeRect; scrollTop: number; maxScrollTop: number; fade: number; items: readonly FadeItem[] }): number {
   const height = viewport.bottom - viewport.top;
   const max = Math.max(0, maxScrollTop);
   const clamp = (value: number) => Math.min(Math.max(0, value), max);
-  let low = 0;
-  let high = max;
-  for (const item of items) {
-    if (item.bottom <= viewport.top || item.top >= viewport.bottom) continue;
-    const top = item.top - viewport.top + scrollTop;
-    const bottom = item.bottom - viewport.top + scrollTop;
-    const latest = Math.max(top - fade, top / 2);
-    const earliest = Math.min(bottom - height + fade, (max + bottom - height) / 2);
-    const [from, to] = earliest <= latest ? [earliest, latest] : [clamp(latest), clamp(latest)];
-    low = Math.max(low, from);
-    high = Math.min(high, to);
-  }
-  return low <= high ? Math.min(Math.max(scrollTop, low), high) : scrollTop;
+  const solve = (list: readonly FadeItem[]) => {
+    let low = 0;
+    let high = max;
+    for (const item of list) {
+      if (!item.required && (item.bottom <= viewport.top || item.top >= viewport.bottom)) continue;
+      const top = item.top - viewport.top + scrollTop;
+      const bottom = item.bottom - viewport.top + scrollTop;
+      const latest = Math.max(top - fade, top / 2);
+      const earliest = Math.min(bottom - height + fade, (max + bottom - height) / 2);
+      const [from, to] = earliest <= latest ? [earliest, latest] : [clamp(latest), clamp(latest)];
+      low = Math.max(low, from);
+      high = Math.min(high, to);
+    }
+    return { low, high };
+  };
+  let range = solve(items);
+  if (range.low > range.high) range = solve(items.filter((item) => item.required));
+  return range.low <= range.high ? Math.min(Math.max(scrollTop, range.low), range.high) : scrollTop;
 }
 
 /**
@@ -194,4 +206,16 @@ export function resolveDateTimePopupPlacement({ narrow, avoidance, padding }: { 
     collisionAvoidance: avoidance ?? (narrow ? { side: "shift", fallbackAxisSide: "none" } : { fallbackAxisSide: "none" }),
     collisionPadding: padding ?? DATE_TIME_POPUP_EDGE_GAP,
   };
+}
+
+/**
+ * #528, #587 — for a popup too tall to sit above or below its field: it SHIFTS into view (it may cover
+ * its own trigger) instead of flipping toward the sticky top bar. Shared by New shoot's Deadline and the
+ * Timeline pickers.
+ */
+export const SHELL_AWARE_SHIFT_AVOIDANCE = { side: "shift", align: "shift", fallbackAxisSide: "none" } as const satisfies PopupCollisionAvoidance;
+
+/** `collisionPadding` with the top below the shell header. Read at open time: a cold load has no header yet, and an impersonation banner lowers it. */
+export function shellAwarePopupPadding(): { top: number; right: number; bottom: number; left: number } {
+  return { top: shellChromeBottom() + DATE_TIME_POPUP_EDGE_GAP, right: DATE_TIME_POPUP_EDGE_GAP, bottom: DATE_TIME_POPUP_EDGE_GAP, left: DATE_TIME_POPUP_EDGE_GAP };
 }

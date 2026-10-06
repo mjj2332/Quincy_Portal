@@ -17,6 +17,7 @@
  */
 import { useCallback, useMemo, useRef } from "react";
 import type { GanttChecklistRowDto, ProjectDefaultRangeDto, RangeChecklistScheduleInput } from "@quincy/shared";
+import { SHELL_AWARE_SHIFT_AVOIDANCE, shellAwarePopupPadding } from "../lib/date-time-field";
 import type { ScheduleEditorState } from "../lib/use-scheduling-commands";
 import { scheduleErrorFromEditor, useSchedulePickerClose } from "./ProductionGanttSubtaskCells";
 import { SubtaskScheduleControl, type LatestSubtaskSummary, type RetainedSchedule } from "./quincy/SubtaskScheduleControl";
@@ -91,6 +92,8 @@ export function ProductionGanttScheduleEditorPopover({ editor, subtaskId, lookup
       reminders={{ offsets: row.reminders.offsetsMinutes, next: row.reminders.nextOccurrence }}
       anchor={anchor}
       finalFocus={finalFocus}
+      popupCollisionAvoidance={SHELL_AWARE_SHIFT_AVOIDANCE}
+      popupCollisionPadding={shellAwarePopupPadding}
     />
   );
 }

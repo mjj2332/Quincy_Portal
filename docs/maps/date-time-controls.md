@@ -37,4 +37,17 @@ Commands are exposed as `submitMoveDialog` portal/apps/web/src/lib/use-schedulin
 ## Shared time helpers
 `SYDNEY_TIME_ZONE` portal/packages/shared/src/sydney-civil-time.ts:1 · `sydneyBusinessDate` portal/packages/shared/src/sydney-civil-time.ts:80 · `resolveSydneyCivilMinute` portal/packages/shared/src/sydney-civil-time.ts:143 (DST fold/gap) · `formatSydneyCivilMinute` portal/packages/shared/src/sydney-civil-time.ts:168 · `effectiveDeadlineLocalCivil` portal/packages/shared/src/project-deadline.ts:21 · `automaticDeadlineFor` portal/packages/shared/src/project-deadline.ts:143 · `planDeadlineOccurrences` portal/packages/shared/src/project-deadline.ts:170.
 
+## Popup placement and the selected day (#587)
+- **Placement.** `DateTimeField` and `SubtaskScheduleControl` take `popupCollisionAvoidance` / `popupCollisionPadding` (a value, or a function called once per open). `SHELL_AWARE_SHIFT_AVOIDANCE` and `shellAwarePopupPadding()` (`lib/date-time-field.ts`) are the shift-below-the-shell-header policy. Opted in: New shoot's Deadline, the Timeline Due cell (`GanttSubtaskDueCell`), the bar picker (`ProductionGanttScheduleEditorPopover`) and the Timeline Project Deadline cell (`ProjectDeadlineCell` via `GanttDeadlineCell`). The Checklist and Dashboard Table keep the default policy.
+- **Selected day.** `PopupFrame` (`quincy/date-time-field/PopupFrame.tsx`) writes the body's `scrollTop` so the `reveal` day (the picked day, or a range's active end) and the focused element are fully visible and clear of the fade. Pure solve: `scrollTopClearOfFade` with `required` items. Tests: `PopupFrame-reveal.dom.test.tsx`.
+- **Measured check (browser console, popup open).** Every PopupFrame picker at 1280x900, 1280x720 and 375x812, with a stored day of the 29th or 30th:
+```js
+const pop = document.querySelector('[role="dialog"][data-slot="popover-content"], [role="dialog"]');
+const body = pop.querySelector('[data-slot="scroll-area-viewport"]').getBoundingClientRect();
+const day = pop.querySelector('button[data-range-end="true"], button[data-selected-single="true"], [aria-selected="true"] button').getBoundingClientRect();
+const chrome = document.querySelector('.shell-header')?.getBoundingClientRect().bottom ?? 0;
+({ dayInBody: day.top >= body.top && day.bottom <= body.bottom, popupTop: pop.getBoundingClientRect().top, popupTopClearOfShell: pop.getBoundingClientRect().top >= chrome + 16 })
+```
+  `dayInBody` must be true; for the Timeline pickers `popupTopClearOfShell` must be true.
+
 Last verified against 495766e9

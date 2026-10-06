@@ -17,6 +17,7 @@
  */
 import { useRef } from "react";
 import type { GanttChecklistRowDto, ProjectDefaultRangeDto, RangeChecklistScheduleInput } from "@quincy/shared";
+import { SHELL_AWARE_SHIFT_AVOIDANCE, shellAwarePopupPadding } from "../lib/date-time-field";
 import { formatDueCivil } from "../lib/date-format";
 import type { ScheduleEditorState } from "../lib/use-scheduling-commands";
 import { cn } from "../lib/utils";
@@ -118,6 +119,8 @@ export function GanttSubtaskDueCell({ row, editorOpen, disabled, error, retained
         onUseLatest={close.onUseLatest}
         onUseLatestItem={close.onUseLatest}
         initialFocus="end"
+        popupCollisionAvoidance={SHELL_AWARE_SHIFT_AVOIDANCE}
+        popupCollisionPadding={shellAwarePopupPadding}
         projectDefault={projectDefault}
         reminders={{ offsets: row.reminders.offsetsMinutes, next: row.reminders.nextOccurrence }}
         trigger={({ disabled: triggerDisabled, onClick, ...props }) => (

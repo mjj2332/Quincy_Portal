@@ -44,6 +44,8 @@ vi.mock("../lib/api", async (importOriginal) => ({
   apiPutWithStatus: (path: string) => apiPutWithStatusMock(path),
   apiDeleteWithBody: (path: string, body: unknown) => apiDeleteMock(path, body),
 }));
+const shellBottom = vi.hoisted(() => vi.fn(() => 50));
+vi.mock("../lib/shell-chrome", () => ({ shellChromeBottom: () => shellBottom() }));
 vi.mock("../lib/stages", () => ({
   presentationStages: (stages: unknown[]) => stages,
   useStages: () => ({ stages: [], presentationStageKey: (key: string) => key }),
@@ -420,6 +422,15 @@ describe("ProductionGantt — People and Due columns (#365)", () => {
     await act(async () => { chipFor().querySelector<HTMLButtonElement>('[data-testid="project-member-remove"]')!.click(); await Promise.resolve(); });
     await flush(3);
     expect(apiDeleteMock.mock.calls[1]![1]).toMatchObject({ membershipCycle: "cycle-new" });
+  });
+
+  it("T587 the Deadline picker reads the shell-aware padding once per open (#587)", async () => {
+    await render();
+    shellBottom.mockClear();
+    expect(shellBottom).not.toHaveBeenCalled();
+    await click(deadlineTrigger()!);
+    await waitFor(() => expect(dialog("Deadline") && popupButton(dialog("Deadline")!, "Apply")).toBeTruthy());
+    expect(shellBottom).toHaveBeenCalledTimes(1);
   });
 
   it("T4 Admin changes the Deadline: the popover is seeded from the detail, saves at the detail's version, closes, and the cell shows the new text", async () => {
