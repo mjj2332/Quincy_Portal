@@ -632,6 +632,27 @@ describe("Project header tab strip", () => {
     expect(tab.left).toBeGreaterThanOrEqual(FADE);
   });
 
+  it("does not snap a middle tab to the start when that would leave it under the end fade", () => {
+    render(<ProjectHeader {...props("raw", THREE)} />);
+    const strip = stripOf();
+    // At scrollLeft 0 the tab (200-280 in content) needs 25px to clear the 45px end fade, which is within the inset of 0.
+    stubGeometry(strip, [{ left: 12, right: 112 }, { left: 200, right: 280 }, { left: 428, right: 529 }]);
+    act(() => { root.render(<ProjectHeader {...props("edited", THREE)} />); });
+    const box = [...strip.querySelectorAll('[data-testid="project-overview-tab"]')][1]!.getBoundingClientRect();
+    expect(strip.scrollLeft).toBeGreaterThan(0);
+    expect(box.left).toBeGreaterThanOrEqual(FADE);
+    expect(box.right).toBeLessThanOrEqual(300 - FADE);
+  });
+
+  it("snaps the last tab to the end when the strip overflows by only ~30px", () => {
+    render(<ProjectHeader {...props("raw", THREE)} />);
+    const strip = stripOf();
+    stubGeometry(strip, [{ left: 12, right: 112 }, { left: 120, right: 200 }, { left: 208, right: 330 }]);
+    Object.defineProperty(strip, "scrollWidth", { configurable: true, value: 330 });
+    act(() => { root.render(<ProjectHeader {...props("collaboration", THREE)} />); });
+    expect(strip.scrollLeft).toBe(30);
+  });
+
   it("leaves the strip alone when the selected tab is already clear of the fades", () => {
     render(<ProjectHeader {...props("raw", THREE)} />);
     const strip = stripOf();

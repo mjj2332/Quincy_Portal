@@ -300,10 +300,17 @@ export function ProjectHeader({
     if (before >= 0 && after <= 0) return;
     const tabs = strip.querySelectorAll('[data-testid="project-overview-tab"]');
     const edge = selected === tabs[0] ? "start" : selected === tabs[tabs.length - 1] ? "end" : null;
-    let target = strip.scrollLeft + (before < 0 ? before : Math.min(after, before));
-    target = Math.min(max, Math.max(0, target));
-    if (edge === "start" || target <= inset) target = 0;
-    else if (edge === "end" || max - target <= inset) target = max;
+    let target = Math.min(max, Math.max(0, strip.scrollLeft + (before < 0 ? before : Math.min(after, before))));
+    if (edge) target = edge === "start" ? 0 : max;
+    else {
+      // A proximity snap is taken only if the tab still clears the fade left on the other side once the strip rests
+      // there (an end has no fade); otherwise the snap would undo the reveal.
+      const left = tab.left - stripBox.left + strip.scrollLeft;
+      const right = tab.right - stripBox.left + strip.scrollLeft;
+      const clears = (at: number) => left >= at + (at > 0 ? inset : 0) && right <= at + strip.clientWidth - (at < max ? inset : 0);
+      const snap = target <= inset ? 0 : max - target <= inset ? max : null;
+      if (snap !== null && clears(snap)) target = snap;
+    }
     strip.scrollLeft = target;
   }, [activeTab, whiteboardOpen]);
 
