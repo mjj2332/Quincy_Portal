@@ -5279,8 +5279,10 @@ Tags: gantt-calendar · #463
 - **The selection strip is gone.** Its context line and overlap caution are the menu's label; its gates became
   `lib/scheduling-item-actions.ts` (not live: Deadline and checklist rows hide because the effective permissions narrow, Open
   project disables). `checklistScheduleEditorButtonLabel` and the `calendar-move:` focus key are deleted. Cmd/Ctrl-click Open
-  project on the Calendar is accepted lost. The Timeline's Edit schedule… opens the sheet at every width (D7:
-  `scheduleEditorPresentation` now says how INLINE sessions draw).
+  project on the Calendar is accepted lost. The Timeline's Edit schedule… opened the sheet at every width (D7:
+  `scheduleEditorPresentation` says how INLINE sessions draw); **superseded by #582**: it now opens the Due cell's own picker
+  anchored to the bar, as an inline session with `inlineTarget: "item"`, so the Timeline no longer opens a non-inline session
+  (the sheet stays only as the dialog host's safety net).
 - **Test trap:** the vendor calendar ignores a click within 250ms of a drag end (a module flag an earlier test in the same file may
   set); wait it out before a grid click.
 ## Filter tree: OR, groups, negation across Projects, Calendar and Timeline (#461, PR A)

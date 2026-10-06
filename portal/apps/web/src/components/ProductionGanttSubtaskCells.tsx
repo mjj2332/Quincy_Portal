@@ -6,7 +6,7 @@
  *
  * The cell owns presentation only. The write, the version it is made at, the lock, the optimistic bar, Undo and the
  * settle refetch belong to the scheduling controller (`use-scheduling-commands`), which `ProductionGantt` drives through
- * `openChecklistScheduleEditor(source, undefined, { inline: true })` / `submitScheduleEditor` / `cancelScheduleEditor`;
+ * `openChecklistScheduleEditor(source, undefined, { inline: true })` (the default `inlineTarget: "due-cell"`; the item menu's bar picker, #582, is `"item"` and drawn by `ProductionGanttScheduleEditorPopover`) / `submitScheduleEditor` / `cancelScheduleEditor`;
  * `open` is derived from the controller's editor session, never held here.
  *
  * Reminders (#425): the picker's strip is `RemindersStrip` inside `DateTimeRangePopup`, fed from `row.reminders`; no new element here.

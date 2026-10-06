@@ -716,3 +716,102 @@ describe("ProductionGantt — Subtask Due cell reminders (#425)", () => {
     expect(patchBody(2).schedule.reminderOffsetsMinutes).toEqual([60]);
   });
 });
+
+describe("ProductionGantt — Edit schedule… on the bar (#582)", () => {
+  /** The bar's picker is named with the street too: "Schedule for <title>, <street>". */
+  const barPicker = (title: string) => dateTimePopup(`Schedule for ${title}, 1 Range Street`);
+  const barPickerButton = (title: string, name: string) => (barPicker(title) ? popupButton(barPicker(title)!, name) : undefined);
+  const itemMenuItem = (label: string) => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((node) => node.textContent === label) ?? null;
+  /** The item menu's route to the bar picker: activate the bar, pick Edit schedule…. */
+  async function openFromBar(title: string) {
+    const bar = findBar(title);
+    await act(async () => { bar.focus(); await Promise.resolve(); });
+    await click(bar);
+    await waitFor(() => expect(itemMenuItem("Edit schedule…")).not.toBeNull());
+    await act(async () => { itemMenuItem("Edit schedule…")!.click(); await Promise.resolve(); await Promise.resolve(); });
+    await waitFor(() => expect(barPicker(title)).not.toBeNull());
+    await flush(3);
+  }
+
+  it("B1 a Start edit is ONE PATCH at the open version, and focus lands on the (re-keyed) bar", async () => {
+    await render();
+    await openFromBar(RANGE_TITLE);
+    expect(rangeToggles(barPicker(RANGE_TITLE)!).active).toBe("Start");
+    expect(document.body.querySelector('[data-testid="event-calendar-schedule-editor"]')).toBeNull();
+    await pickPopupDay(barPicker(RANGE_TITLE)!, sydneyDay(2));
+    await applyPopup(barPicker(RANGE_TITLE)!);
+    await flush(8);
+    expect(patches()).toHaveLength(1);
+    expect(patches()[0]!.url).toBe(`/api/projects/${PROJECT_ID}/subtasks/${RANGE_ID}`);
+    expect(patchBody().schedule.expectedVersion).toBe(1);
+    expect(patchBody().schedule.schedule).toEqual({ state: "range", start: { localCivil: `${sydneyDay(2)}T09:00` }, end: { localCivil: `${sydneyDay(3)}T17:00` } });
+    await waitFor(() => expect(barPicker(RANGE_TITLE)).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(findBar(RANGE_TITLE)));
+    expect(onAcceptGateChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("B2 a version conflict reopens the picker on the bar with the Use latest notice, and Use latest releases the gate with no second write", async () => {
+    await render();
+    await openFromBar(RANGE_TITLE);
+    await pickPopupDay(barPicker(RANGE_TITLE)!, sydneyDay(2));
+    const winner = range(3, startMoment(sydneyDay(1)), endMoment(sydneyDay(8)));
+    patchReply = () => { rows[0]!.schedule = winner; return { status: 409, body: { error: "conflict", code: "subtask_schedule_version_conflict", current: winner } }; };
+    await applyPopup(barPicker(RANGE_TITLE)!);
+    await flush(6);
+    expect(patches()).toHaveLength(1);
+    expect(barPicker(RANGE_TITLE)).not.toBeNull();
+    expect(barPicker(RANGE_TITLE)!.textContent).toContain("Latest schedule · v3");
+    // Still the bar's picker (the Due cell has no popup of its own).
+    expect(document.body.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+    await pressInPopup(barPicker(RANGE_TITLE)!, "Use latest schedule (discard draft)");
+    await flush(6);
+    expect(patches()).toHaveLength(1);
+    await waitFor(() => expect(barPicker(RANGE_TITLE)).toBeNull());
+    expect(onAcceptGateChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("B3 a reminders-only edit is one PATCH at the open version, range unchanged", async () => {
+    await render();
+    await openFromBar(RANGE_TITLE);
+    await click(barPickerButton(RANGE_TITLE, "4 hours")!);
+    await applyPopup(barPicker(RANGE_TITLE)!);
+    await flush(6);
+    expect(patches()).toHaveLength(1);
+    expect(patchBody().schedule.expectedVersion).toBe(1);
+    expect(patchBody().schedule.schedule).toEqual({ state: "range", start: { localCivil: `${sydneyDay(1)}T09:00` }, end: { localCivil: `${sydneyDay(3)}T17:00` } });
+    expect(patchBody().schedule.reminderOffsetsMinutes).toEqual([1440, 240]);
+  });
+
+  it("B4 narrowing to 720px cancels a Due-cell picker but a bar picker survives it", async () => {
+    const original = window.matchMedia;
+    let narrow = false;
+    const listeners = new Set<() => void>();
+    window.matchMedia = ((query: string) => ({
+      get matches() { return query === "(max-width: 720px)" ? narrow : false; },
+      media: query,
+      addEventListener: (_: string, listener: () => void) => { listeners.add(listener); },
+      removeEventListener: (_: string, listener: () => void) => { listeners.delete(listener); },
+      addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false,
+    })) as unknown as typeof window.matchMedia;
+    const narrowNow = async () => { narrow = true; await act(async () => { listeners.forEach((listener) => listener()); await Promise.resolve(); }); await flush(4); };
+    try {
+      await render();
+      await openDue(RANGE_TITLE);
+      await narrowNow();
+      await waitFor(() => expect(picker(RANGE_TITLE)).toBeNull());
+      expect(onAcceptGateChange).toHaveBeenLastCalledWith(false);
+
+      narrow = false;
+      await act(async () => { listeners.forEach((listener) => listener()); await Promise.resolve(); });
+      await flush(4);
+      await openFromBar(RANGE_TITLE);
+      await narrowNow();
+      expect(barPicker(RANGE_TITLE)).not.toBeNull();
+      expect(onAcceptGateChange).toHaveBeenLastCalledWith(true);
+      await pickPopupDay(barPicker(RANGE_TITLE)!, sydneyDay(2));
+      await applyPopup(barPicker(RANGE_TITLE)!);
+      await flush(8);
+      expect(patches()).toHaveLength(1);
+    } finally { window.matchMedia = original; }
+  });
+});

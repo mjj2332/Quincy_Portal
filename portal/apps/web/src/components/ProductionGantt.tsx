@@ -56,8 +56,8 @@
  *
  * ## #463 — the item menu
  * A bar click, Enter or right-click opens the shared menu host (`scheduling-item-menu.tsx`): Open project and Reschedule…
- * on a Project bar (`canEditDeadline`), Open project and Edit schedule… on a checklist bar. Edit schedule… opens the
- * controller's SHEET at every width (not the inline Due popover). `renderEventMenu` is never passed (the import-boundary
+ * on a Project bar (`canEditDeadline`), Open project and Edit schedule… on a checklist bar. Edit schedule… (#582) opens the
+ * Due cell's own picker anchored to the BAR, as an inline `inlineTarget: "item"` session (`ProductionGanttScheduleEditorPopover`), at every width. `renderEventMenu` is never passed (the import-boundary
  * guard pins it). Reuse ledger: menu — `reui/dropdown-menu` through `scheduling-item-menu.tsx`; `reui/context-menu` and the
  * `gantt-1`/`gantt-2` `renderEventMenu` blocks were searched and fail on the touch long-press and the per-bar root.
  *
@@ -1807,7 +1807,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // The item menu (#463): a bar click, Enter or right-click opens Open project and Reschedule… (a
   // Project bar) or Edit schedule… (a checklist bar). The bar is a vendor `<button>`, so the menu is a
   // controlled host anchored to it (`scheduling-item-menu.tsx`), never the vendor's `renderEventMenu`.
-  // Edit schedule… opens the controller's SHEET at every width (not the inline Due popover).
+  // Edit schedule… (#582) opens the bar-anchored picker (an inline item-target session), not the sheet, at every width.
   // ---------------------------------------------------------------------------------------------
   // A drawn checklist row, or a #344 pinned created row the refetch has not returned yet (read-only, so
   // only Open project is offered on it; `ganttChecklistSource` / its permissions veto the rest).
