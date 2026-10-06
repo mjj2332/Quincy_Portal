@@ -255,11 +255,11 @@ describe("DateTimeField range trigger and popup", () => {
     expect(onApply).not.toHaveBeenCalled();
     expect(dateTimePopup("Schedule")).toBeNull();
   });
-  it("keeps the eyebrow to one truncated line while the popup name stays the full label (#447)", async () => {
+  it("keeps the popup name the full label and the eyebrow title (#447, #621; the two-line clamp is pinned in popup-title.contract.test.ts)", async () => {
     await mount({});
     await open();
     expect(popup().getAttribute("aria-label")).toBe("Schedule");
     const eyebrow = [...popup().querySelectorAll<HTMLElement>("span")].find((el) => el.textContent === "Schedule")!;
-    expect(eyebrow.classList.contains("truncate")).toBe(true);
+    expect(eyebrow.getAttribute("title")).toBe("Schedule");
   });
 });
