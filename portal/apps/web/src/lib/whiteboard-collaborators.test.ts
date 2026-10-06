@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { WhiteboardPeer } from "@quincy/shared";
-import { toCollaborator } from "./whiteboard-collaborators";
+import { toCollaborator, withSelectionAnchor } from "./whiteboard-collaborators";
 
 const peer = (overrides: Partial<WhiteboardPeer> = {}): WhiteboardPeer => ({ sessionId: "s2", userId: "u2", name: "Ana", pointer: { x: 4, y: 5 }, button: "up", selectedIds: ["a", "b"], ...overrides });
 
@@ -19,5 +19,24 @@ describe("whiteboard collaborators (#499)", () => {
   it("hides the cursor when there is no pointer, and shows a pressed button", () => {
     expect(toCollaborator(peer({ pointer: null })).pointer).toBeUndefined();
     expect(toCollaborator(peer({ button: "down" })).pressed).toBe(true);
+  });
+});
+
+describe("a selection with no cursor still names who is selecting (#551)", () => {
+  const scene = [{ id: "a", x: 10, y: 30 }, { id: "b", x: 4, y: 50 }, { id: "gone", x: -9, y: -9, isDeleted: true }];
+  const person = (over: Partial<ReturnType<typeof toCollaborator>> = {}) => ({ ...toCollaborator(peer({ pointer: null })), ...over });
+
+  it("anchors a cursor at the top-left of the selected shapes, not faded (the idle tag reads ~2.1:1)", () => {
+    const anchored = withSelectionAnchor(person(), scene);
+    expect(anchored).toMatchObject({ pointer: { x: 4, y: 30 }, name: "Ana" });
+    expect(anchored.state).not.toBe("idle");
+  });
+  it("leaves a peer with a pointer, with no selection, or whose selection is not on the board alone", () => {
+    const withPointer = toCollaborator(peer());
+    expect(withSelectionAnchor(withPointer, scene)).toBe(withPointer);
+    const nothing = person({ selectedIds: [] });
+    expect(withSelectionAnchor(nothing, scene)).toBe(nothing);
+    const missing = person({ selectedIds: ["nope", "gone"] });
+    expect(withSelectionAnchor(missing, scene)).toBe(missing);
   });
 });

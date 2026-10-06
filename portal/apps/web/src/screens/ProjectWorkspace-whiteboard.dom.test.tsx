@@ -182,10 +182,11 @@ describe("the whiteboard entry button (#498)", () => {
 });
 
 describe("whiteboard focus and layout (#498 design review)", () => {
-  it("a deep link lands focus on Close whiteboard, not the sheet popup", async () => {
+  it("a deep link lands focus on the board container, not the sheet popup and not Close (#551: no ring on the header)", async () => {
     await renderSheet({ whiteboardOpen: true });
     await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
-    expect(document.activeElement).toBe(document.querySelector('[data-testid="project-whiteboard-close"]'));
+    expect(document.activeElement).toBe(document.querySelector('[data-testid="project-whiteboard-board"]'));
+    expect(document.activeElement).not.toBe(document.querySelector('[data-testid="project-whiteboard-close"]'));
   });
 
   it("closing the board returns focus to the entry button", async () => {

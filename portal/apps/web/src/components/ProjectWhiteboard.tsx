@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ArrowLeftIcon, HistoryIcon, PlayIcon } from "lucide-react";
 import type { WhiteboardMode, WhiteboardPeer } from "@quincy/shared";
 import { Button } from "@/components/reui/button";
@@ -97,7 +97,6 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
   /** Set by the socket effect: replays remote winners that were skipped for an edit in progress. */
   const replayRemote = useRef<() => void>(() => undefined);
   const closeFailed = useRef(false);
-  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const leftByClose = useRef(false);
   const accessFailureRef = useRef(onAccessFailure);
   accessFailureRef.current = onAccessFailure;
@@ -117,6 +116,7 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
   const [selectedVideo, setSelectedVideo] = useState<string | null>(null);
   const uploadSeq = useRef(0);
   const boardRef = useRef<HTMLDivElement>(null);
+  const reasonId = useId();
   const runningUploads = useRef(new Map<number, { cancel: () => void; retry: () => void }>());
   const mountedRef = useRef(true);
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; for (const entry of [...runningUploads.current.values()]) entry.cancel(); }; }, []);
@@ -245,9 +245,11 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
   }, []);
 
   // The sheet focuses its popup when it opens, and a deep link mounts the board after that (and the entry
-  // button that opened it is hidden now): focus lands on the way out of the board instead.
+  // button that opened it is hidden now): focus lands on the board, not on Close, so an open or reload by pointer
+  // shows no ring on the header (#551). The board is the focus target the rest of this file already hands back to.
   useEffect(() => {
-    closeButtonRef.current?.focus({ preventScroll: true });
+    // focusVisible: false — a reload or deep link is no user action, so Chrome must not draw the focus ring around the whole canvas.
+    boardRef.current?.focus({ preventScroll: true, focusVisible: false } as FocusOptions);
     return () => {
       // Close hands the Workspace back; its entry button is what the user came from. Only the Close button
       // asks for this: Esc or navigation leave focus to whatever took over.
@@ -371,10 +373,11 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
   return (
     <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-[var(--space-3)] px-[var(--space-6)] py-[var(--space-5)] max-[721px]:p-[var(--space-4)] h-[calc(100dvh-var(--space-5)*2-var(--border-width-hair)*2)] [[data-impersonating]_&]:h-[calc(100dvh-var(--impersonation-banner-height)-var(--space-5)*2-var(--border-width-hair)*2)] max-[721px]:h-dvh max-[721px]:[[data-impersonating]_&]:h-[calc(100dvh-var(--impersonation-banner-height))] min-h-[28rem]" data-testid="project-whiteboard" data-quincy-whiteboard aria-label={`Whiteboard for ${street}`}>
       <div className="flex flex-wrap items-center gap-[var(--space-3)]">
-        <Button ref={closeButtonRef} type="button" variant="ghost" onClick={() => void requestClose()} data-testid="project-whiteboard-close"><ArrowLeftIcon className="size-3.5" aria-hidden="true" data-icon="inline-start" />Close whiteboard</Button>
+        <Button type="button" variant="ghost" onClick={() => void requestClose()} data-testid="project-whiteboard-close"><ArrowLeftIcon className="size-3.5" aria-hidden="true" data-icon="inline-start" />Close whiteboard</Button>
         <h2 className="serif [font:var(--type-h3)] min-w-0 truncate">{street}</h2>
         <div className="ms-auto flex flex-wrap items-center gap-[var(--space-2)]">
-        {mode === "view" && <Badge variant="primary-light" data-testid="project-whiteboard-view-only">View only</Badge>}
+        {mode === "view" && <Badge variant="primary-light" aria-describedby={reasonId} data-testid="project-whiteboard-view-only">View only</Badge>}
+        {mode === "view" && <span id={reasonId} className="[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary [body:has([data-phone-layout])_&]:sr-only" data-testid="project-whiteboard-view-only-reason">This project is archived</span>}
         {(deleted || mode !== "view") && <span className="[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" role="status" data-testid="project-whiteboard-status">{deleted ? "Deleted" : statusLabel}</span>}
         <Button type="button" variant="ghost" data-testid="project-whiteboard-history" aria-haspopup="dialog" onClick={() => { setHistoryLoaded(true); setHistoryOpen(true); }}><HistoryIcon className="size-3.5" aria-hidden="true" data-icon="inline-start" />History</Button>
         <CopyProjectLinkButton projectId={projectId} tab="collaboration" whiteboard />
