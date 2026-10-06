@@ -108,11 +108,12 @@ describe("ProductionEventCalendar item menu (#463)", () => {
     expect(document.activeElement).toBe(chip(PROJECT_STREET));
   });
 
-  it("Edit schedule… opens the schedule sheet", async () => {
+  it("Edit schedule… opens the date/time picker directly: exactly one picker, no sheet (#583)", async () => {
     await mount("week", [task()]);
     await activate(chip(TASK_TITLE));
     await pick("Edit schedule…");
-    expect(byTestId("event-calendar-schedule-editor")).not.toBeNull();
+    expect(byTestId("event-calendar-schedule-editor")).toBeNull();
+    expect(document.querySelectorAll('[data-slot="popover-content"]')).toHaveLength(1);
   });
 
   it("gives an External Editor Open project and Edit schedule… on a task", async () => {
@@ -189,27 +190,7 @@ describe("ProductionEventCalendar item menu (#463)", () => {
   });
 });
 
-describe("ProductionEventCalendar item menu focus after an Agenda row is replaced (#463)", () => {
-  it("returns focus to the replacement row when the edited item's start moved and the sheet closes", async () => {
-    let events = [task()];
-    stubCalendarFetch({ range: () => json(rangeResponse({ events, subview: "agenda" })) });
-    await h.render(calendarState("agenda"), { onOpenProject: () => undefined, projectHrefFor: (id) => `/projects/${id}` });
-    const before = chip(TASK_TITLE);
-    await activate(before);
-    await pick("Edit schedule…");
-    expect(byTestId("event-calendar-schedule-editor")).not.toBeNull();
-    // The save moved the item to another day in range: a new occurrence key, so a new row element.
-    events = [oneDayEvent(dated("2026-08-14"))];
-    await act(async () => { await h.client.invalidateQueries({ queryKey: ["production-calendar"] }); });
-    await flush(60);
-    await act(async () => { byTestId("event-calendar-schedule-editor-close")!.click(); await Promise.resolve(); });
-    await flush(700);
-    const after = chip(TASK_TITLE);
-    expect(after.isConnected).toBe(true);
-    expect(after, "the item's row was replaced").not.toBe(before);
-    expect(document.activeElement).toBe(after);
-  });
-});
+// The Agenda row replaced while the Edit schedule… picker is open (#463, now the picker since #583) is pinned in `ProductionEventCalendar-item-picker.dom.test.tsx`.
 
 describe("ProductionEventCalendar item menu in the month '+N more' popover (#463, owner decision 4)", () => {
   const many = (): CalendarEventDto[] => Array.from({ length: 8 }, (_, index) => task({ id: `checklist:00000000-0000-4000-8000-00000000000${index}` }) as CalendarEventDto)

@@ -188,6 +188,13 @@ export type ScheduleEditorState = {
  * `currentSubtask` decoded with the CAPTURED role's decoder (an External Editor's is team-filtered); a malformed
  * part is dropped, never trusted. `schedule` is the newest schedule the body carries.
  */
+/** Focus is lost when nothing holds it: `<body>`, an element that left the DOM, or one that is now disabled (the same test the item menu's restore uses, #450/#452). */
+function focusIsLost(): boolean {
+  const active = document.activeElement;
+  if (!active || active === document.body || !active.isConnected) return true;
+  return active instanceof HTMLElement && active.matches(":disabled");
+}
+
 function readEditorConflict(error: unknown, role: Role): { schedule?: ChecklistScheduleDto; item?: ChecklistMutationResult } | null {
   if (!(error instanceof ApiError) || error.status !== 409 || !error.details || typeof error.details !== "object") return null;
   const body = error.details as { code?: unknown; current?: unknown; currentSubtask?: unknown };
@@ -596,12 +603,14 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     if (descriptor.control === "safe-fallback") {
       window.setTimeout(() => {
         if (accessLostRef.current) return;
+        if (descriptor.ifLost && !focusIsLost()) return;
         document.querySelector<HTMLElement>('[data-focus-key="calendar-safe-fallback"]')?.focus();
       }, 0);
       return;
     }
     window.setTimeout(() => {
       if (accessLostRef.current) return;
+      if (descriptor.ifLost && !focusIsLost()) return;
       const focusKey = descriptor.control === "move-reschedule" ? `calendar-move:${descriptor.eventId}` : descriptor.control === "recovery" ? "calendar-recovery" : null;
       const byKey = focusKey === "calendar-recovery"
         ? document.querySelector<HTMLElement>('.button[data-focus-key="calendar-recovery"]') ?? document.querySelector<HTMLElement>('[data-focus-key="calendar-recovery"]')
@@ -1068,7 +1077,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     snapshotRef.current = null;
     setAcceptGate(false);
     if (announcement) announceChecklistLifecycle(announcement.kind, announcement.context ?? {});
-    focusDescriptor({ eventId: source.id, control: "event" });
+    focusDescriptor({ eventId: source.id, control: "event", ...(operation.inline ? { ifLost: true } : {}) });
     if (flush) flushQueuedRefetch();
   }, [announceChecklistLifecycle, flushQueuedRefetch, focusDescriptor, setAcceptGate, setOverlay]);
 
@@ -1178,7 +1187,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
         await refetchAuthoritative();
         if (accessLostRef.current || token !== operationTokenRef.current) return;
         announceChecklistLifecycle("rollback", {});
-        focusDescriptor({ eventId: proposal.source.id, control: "event" });
+        focusDescriptor({ eventId: proposal.source.id, control: "event", ...(proposal.operation.inline ? { ifLost: true } : {}) });
         return;
       }
 
@@ -1208,7 +1217,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
         setChecklistFold(null);
         commandLockRef.current.active = false;
         setAcceptGate(false);
-        focusDescriptor({ eventId: proposal.source.id, control: action.focus });
+        focusDescriptor({ eventId: proposal.source.id, control: action.focus, ...(proposal.operation.inline ? { ifLost: true } : {}) });
       }
       setAnnouncement(action.announce);
       if (!action.refetch) flushQueuedRefetch();
@@ -1305,7 +1314,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
 
   const openChecklistScheduleEditor = useCallback((source: ChecklistSource, initialSchedule?: RangeChecklistScheduleInput, options?: { inline?: boolean; inlineTarget?: InlineEditorTarget }) => {
     if (!source.permissions.canOpenScheduleEditor || calendarInteractionBlocked || settleRef.current.pending || !canStartCalendarCommand(commandLockRef.current)) return;
-    const snapshot = acceptForInteraction(source, { eventId: source.id, control: "move-reschedule" });
+    const snapshot = acceptForInteraction(source, { eventId: source.id, control: "move-reschedule", ...(options?.inline ? { ifLost: true } : {}) });
     if (!snapshot) return;
     announceChecklistLifecycle("picked-up", {
       street: source.project.street,
