@@ -155,6 +155,22 @@ export function readActiveRowRect(editor: Editor) {
     : { top: 0, bottom: 0, left: 0, right: 0 }
 }
 
+/**
+ * The whole table: vertical extent of the `<table>`, horizontal extent of its scroll wrapper (the visible width),
+ * so the bar docks to the table's outer edge (#555). Null when no table holds the caret.
+ */
+export function readActiveTableRect(editor: Editor) {
+  const found = findParentNodeClosestToPos(editor.state.selection.$anchor, (node) => node.type.name === "table")
+  const dom = found ? editor.view.nodeDOM(found.pos) : null
+
+  if (!(dom instanceof HTMLElement)) return null
+  const table = dom instanceof HTMLTableElement ? dom : dom.querySelector("table")
+  const vertical = (table ?? dom).getBoundingClientRect()
+  const horizontal = dom.getBoundingClientRect()
+
+  return { top: vertical.top, bottom: vertical.bottom, left: horizontal.left, right: horizontal.right }
+}
+
 function blockRect(editor: Editor, pos: number) {
   const dom = editor.view.nodeDOM(pos)
   if (!(dom instanceof HTMLElement)) return null
@@ -320,12 +336,14 @@ export function RichTextTableBubble({
   tier = null,
   onTierChange,
 }: RichTextTableBubbleProps) {
-  // The anchor and the zone share ONE rect (row/cell union, `tableBubbleAnchor`); re-resolved on each pass.
+  // The anchor and the zone share ONE rect (the whole table's vertical extent and the active cell's column, `tableBubbleAnchor`); re-resolved on each pass.
   const readAnchor = useCallback(() => {
     const dom = getActiveCellElement(editor)
 
     if (!dom) return null
-    return tableBubbleAnchor(readActiveRowRect(editor), dom.getBoundingClientRect())
+    const cell = dom.getBoundingClientRect()
+
+    return tableBubbleAnchor(readActiveTableRect(editor) ?? readActiveRowRect(editor), cell)
   }, [editor])
 
   const getCellRect = useCallback(() => {

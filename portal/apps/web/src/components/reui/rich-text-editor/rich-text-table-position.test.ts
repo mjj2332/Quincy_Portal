@@ -308,13 +308,13 @@ describe("tableBubbleZone", () => {
 });
 
 describe("tableBubbleAnchor", () => {
-  it("is the row when the cell sits inside it", () => {
-    expect(tableBubbleAnchor(rect(530, 560), rect(530, 560, 30, 120))).toEqual({ top: 530, bottom: 560, left: 30, right: 120 });
+  it("is the whole table vertically (never a row) and the active cell's column horizontally", () => {
+    expect(tableBubbleAnchor(rect(500, 640, 20, 340), rect(530, 560, 30, 120))).toEqual({ top: 500, bottom: 640, left: 30, right: 120 });
   });
 
-  it("spans row and cell vertically (a rowspan cell reaches past the row), horizontally the cell", () => {
-    expect(tableBubbleAnchor(rect(530, 560), rect(530, 630, 30, 120))).toEqual({ top: 530, bottom: 630, left: 30, right: 120 });
-    expect(tableBubbleAnchor(rect(530, 560), rect(500, 545, 30, 120))).toEqual({ top: 500, bottom: 560, left: 30, right: 120 });
+  it("clamps the column to the table's visible width", () => {
+    expect(tableBubbleAnchor(rect(500, 640, 20, 340), rect(530, 560, 300, 500))).toEqual({ top: 500, bottom: 640, left: 300, right: 340 });
+    expect(tableBubbleAnchor(rect(500, 640, 20, 340), rect(530, 560, -50, 40))).toEqual({ top: 500, bottom: 640, left: 20, right: 40 });
   });
 });
 
@@ -426,25 +426,46 @@ describe("table bar zone placement (floating-ui computePosition)", () => {
     expect(overlap(result, rect(600, 640))).toBe(0);
   });
 
-  it("a rowspan cell taller than its row: zone and anchor agree (one union rect), and with no room around it the tier is none", async () => {
-    // Zone 500-640, row 530-560, spanning cell 530-630, bar 38. Judged on the union (530-630): 30px above, 10px
-    // below. (Judged on the row alone the zone said "below fits" while floating-ui judged the longer cell.) The old
-    // rule widened the zone to the helper line and dropped the bar below the cell over the next block; there is no
-    // wide tier now, so the host shows the toolbar group.
-    const row = rect(530, 560);
-    const cell = rect(530, 630);
-    const result = await run({ surface: rect(500, 640), row, cell, barHeight: 38, prevBottom: 500, nextTop: 640, floorTop: 760 });
-    expect(result.tiers).toEqual(["none"]);
-  });
+  describe("docks to the table's outer edge and never covers a cell (#555)", () => {
+    // A 3-row table, 40px rows: header 560-600, middle 600-640, last 640-680; the table is 560-680.
+    const rows = [rect(560, 600, 30, 330), rect(600, 640, 30, 330), rect(640, 680, 30, 330)];
+    const table = rect(560, 680, 30, 330);
+    const cellIn = (rowIndex: number) => rect(rows[rowIndex]!.top, rows[rowIndex]!.bottom, 120, 220);
+    const scenes = {
+      "roomy above (a block above, room above)": { surface: rect(400, 900), prevBottom: 500, nextTop: null as number | null },
+      "no room above (first block): drops below the table": { surface: rect(552, 900), prevBottom: null, nextTop: null as number | null },
+      "a block after the table with room above": { surface: rect(400, 760), prevBottom: 500, nextTop: 720 as number | null },
+    };
 
-  it("a rowspan cell with room below: the bar clears both the row and the cell, below the union", async () => {
-    const row = rect(530, 560);
-    const cell = rect(530, 630);
-    const result = await run({ surface: rect(500, 760), row, cell, barHeight: 38, prevBottom: 500, nextTop: 760 });
-    expect(overlap(result, row)).toBe(0);
-    expect(overlap(result, cell)).toBe(0);
-    expect(result.placement).toBe("bottom-start");
-    expect(result.top - 630).toBe(G);
+    for (const [name, scene] of Object.entries(scenes)) {
+      for (const [rowName, rowIndex] of [["header", 0], ["middle", 1], ["last", 2]] as const) {
+        it(`${name}, caret in the ${rowName} row: the bar intersects no cell and sits on a table edge`, async () => {
+          const cell = cellIn(rowIndex);
+          const result = await run({ ...scene, row: table, cell, barHeight: 38 });
+          expect(result.tiers.at(-1)).not.toBe("none");
+          for (const r of rows) expect(overlap(result, r), `row ${r.top}`).toBe(0);
+          expect(overlap(result, table)).toBe(0);
+          if (result.placement.startsWith("top")) expect(result.bottom).toBeLessThanOrEqual(table.top);
+          else expect(result.top).toBeGreaterThanOrEqual(table.bottom);
+          // The frame rule (#555 item 1): with no block after the table the bar ends inside the surface.
+          if (scene.nextTop === null) expect(result.bottom).toBeLessThanOrEqual(scene.surface.bottom);
+        });
+      }
+    }
+
+    it("prefers just above the table (full 8px gap), and just below only when above has no room", async () => {
+      const above = await run({ surface: rect(400, 900), row: table, cell: cellIn(1), barHeight: 38, prevBottom: 500 });
+      expect(above.placement).toBe("top-start");
+      expect(table.top - above.bottom).toBe(G);
+      const below = await run({ surface: rect(552, 900), row: table, cell: cellIn(1), barHeight: 38 });
+      expect(below.placement).toBe("bottom-start");
+      expect(below.top - table.bottom).toBe(G);
+    });
+
+    it("neither side fits inside the frame: tier none (the toolbar fallback)", async () => {
+      const result = await run({ surface: rect(552, 700), row: table, cell: cellIn(1), barHeight: 38 });
+      expect(result.tiers).toEqual(["none"]);
+    });
   });
 
   it("a single-row table between two paragraphs has no room anywhere: tier none, reported once", async () => {

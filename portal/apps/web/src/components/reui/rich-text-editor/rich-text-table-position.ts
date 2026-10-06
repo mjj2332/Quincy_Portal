@@ -35,17 +35,16 @@ interface RectLike {
 }
 
 /**
- * The ONE rect the bar anchors to and the zone is judged against: vertically the union of the row and the active
- * cell (a rowspan cell reaches past its row's rect), horizontally the cell. Anchoring to the cell while judging
- * the row let floating-ui and the zone disagree about which side fits.
+ * The ONE rect the bar anchors to and the zone is judged against (#555): vertically the whole TABLE, so the bar
+ * docks to the table's outer top or bottom edge and never covers any cell; horizontally the active cell's
+ * column, clamped to the table's visible width. Anchoring and judging one rect keeps floating-ui and the zone
+ * agreeing about which side fits.
  */
-export function tableBubbleAnchor(row: RectLike, cell: RectLike): RectLike {
-  return {
-    top: Math.min(row.top, cell.top),
-    bottom: Math.max(row.bottom, cell.bottom),
-    left: cell.left,
-    right: cell.right,
-  }
+export function tableBubbleAnchor(table: RectLike, cell: RectLike): RectLike {
+  const left = Math.min(Math.max(cell.left, table.left), table.right)
+  const right = Math.max(Math.min(cell.right, table.right), left)
+
+  return { top: table.top, bottom: table.bottom, left, right }
 }
 
 export interface VisualOffset {
@@ -123,7 +122,7 @@ export function readVisualOffset(win: Window = window): VisualOffset {
 }
 
 export interface ZoneInput {
-  /** The WHOLE active row (every cell), not the cell: the bar must never cover the row it edits. */
+  /** The WHOLE table (`tableBubbleAnchor`): the bar docks above or below it and never covers a cell. */
   row: RectLike
   /** The bar's real height, from floating-ui's `state.rects.floating.height`. */
   barHeight: number
@@ -231,7 +230,7 @@ export interface TableBubbleOptionsInput {
   floorTop: () => number | null
   /** The blocks beside the table, re-read on every positioning pass. */
   neighbours: () => { prevBottom: number | null; nextTop: number | null }
-  /** The whole active row. */
+  /** The whole table's vertical extent (the anchor). */
   row: () => RectLike
   /** Client-coordinate viewport edges; defaults to the document's client height. */
   viewport?: () => { top: number; bottom: number }

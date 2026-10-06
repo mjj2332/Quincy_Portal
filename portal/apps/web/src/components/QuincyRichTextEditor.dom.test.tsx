@@ -1610,7 +1610,8 @@ describe("table bar with no room falls back to the toolbar group (#535)", () => 
     const box = (top: number, bottom: number) => ({ top, bottom, left: 20, right: 340, width: 320, height: bottom - top, x: 20, y: top, toJSON() { return {}; } }) as DOMRect;
     Element.prototype.getBoundingClientRect = function (this: Element) {
       if (this.matches('[contenteditable="true"]')) return box(400, 760);
-      if (["TR", "TD", "TH"].includes(this.tagName)) return box(520, 560);
+      if (["TR", "TD", "TH", "TABLE"].includes(this.tagName)) return box(520, 560);
+      if ((this.tagName === "DIV" && this.querySelector(":scope > table") !== null)) return box(520, 560); // the one-row table (#555: the bar docks to the table)
       if (this.tagName === "P") {
         if (this.closest("td, th")) return box(520, 560);
         if (this.textContent === "before") return box(roomy ? 200 : 480, roomy ? 300 : 515);
