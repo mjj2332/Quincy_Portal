@@ -63,7 +63,7 @@ import {
   RichTextToolbarGroup,
   RichTextToolbarSeparator,
 } from "./rich-text-toolbar"
-import { TableIcon, BetweenHorizontalEndIcon, BetweenVerticalEndIcon, PanelTopIcon, Trash2Icon, Rows3Icon, Columns3Icon } from "lucide-react"
+import { TableIcon, TablePropertiesIcon, BetweenHorizontalEndIcon, BetweenVerticalEndIcon, PanelTopIcon, Trash2Icon, Rows3Icon, Columns3Icon } from "lucide-react"
 
 export const RICH_TEXT_TABLE_SLASH_ITEM: RichTextSlashItem = {
   id: "table",
@@ -533,7 +533,7 @@ export function RichTextTableMenu({ editor, onDeleteTable, disabled = false }: R
                 />
               }
             >
-              <TableIcon aria-hidden="true" />
+              <TablePropertiesIcon aria-hidden="true" />
             </DropdownMenuTrigger>
           </TooltipTrigger>
           <TooltipContent>Table options</TooltipContent>
@@ -557,17 +557,17 @@ export function RichTextTableMenu({ editor, onDeleteTable, disabled = false }: R
           <DropdownMenuGroup>
             <DropdownMenuItem disabled={disabled || !table.canDeleteRow} onClick={() => tableCommands.deleteRow(editor)}>
               <Rows3Icon aria-hidden="true" />
-              Delete Row
+              Delete row
             </DropdownMenuItem>
             <DropdownMenuItem disabled={disabled || !table.canDeleteColumn} onClick={() => tableCommands.deleteColumn(editor)}>
               <Columns3Icon aria-hidden="true" />
-              Delete Column
+              Delete column
             </DropdownMenuItem>
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
           <DropdownMenuItem variant="destructive" disabled={disabled} onClick={() => { confirmingRef.current = true; onDeleteTable() }}>
             <Trash2Icon aria-hidden="true" />
-            Delete Table
+            Delete table
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

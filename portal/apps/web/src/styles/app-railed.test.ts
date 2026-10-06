@@ -412,6 +412,7 @@ describe("header-relative offsets derive from --shell-header-height (#113)", () 
     expect(body).toMatch(/top:\s*var\(--shell-header-height\)/);
     expect(body).toMatch(/z-index:\s*2\b/);
     expect(body).toMatch(/background:\s*var\(--card\)/);
+    expect(body).toMatch(/border-bottom:\s*var\(--border-width-hair\) solid var\(--border-hairline\)/);
   });
 
   it("does not make .project-header sticky (#201) — it carries no top: of its own", () => {

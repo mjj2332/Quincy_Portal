@@ -84,7 +84,7 @@ const EDITOR_CONTENT_UTILITIES =
 
 /** Room for the outline rail's dashes at the right edge (the rail is hidden on a phone). */
 // scroll-mt: an outline-rail jump (`scrollToRichTextHeading`) must land the heading clear of the shell header AND the stuck toolbar (#594).
-const DOCUMENT_CONTENT_UTILITIES = "min-[722px]:pe-12 [&_h2]:scroll-mt-[calc(var(--shell-header-height)+var(--impersonation-banner-height,0px)+3.5rem)] [&_h3]:scroll-mt-[calc(var(--shell-header-height)+var(--impersonation-banner-height,0px)+3.5rem)] ";
+const DOCUMENT_CONTENT_UTILITIES = "min-[722px]:pe-12 [&_h2]:scroll-mt-[calc(var(--shell-header-height)+var(--impersonation-banner-height,0px)+var(--rich-text-toolbar-block,3rem))] [&_h3]:scroll-mt-[calc(var(--shell-header-height)+var(--impersonation-banner-height,0px)+var(--rich-text-toolbar-block,3rem))] ";
 
 // The group wrapper's call-site divergences from `InputGroup` (#376): `has-disabled:bg-card` because
 // the base's deep `:has(:disabled)` would paint the whole field sunken as soon as Undo/Redo are
@@ -476,8 +476,14 @@ export function QuincyRichTextEditor({
     const addon = addonRef.current;
     if (!editor || !isDocument || !addon) return;
     const apply = () => {
-      const top = (parseFloat(getComputedStyle(addon).top) || 0) + addon.offsetHeight;
-      editor.view.setProps({ scrollMargin: { top: top + 8 /* --space-2: breathing room under the toolbar */, right: 5, bottom: 5, left: 5 }, scrollThreshold: { top, right: 0, bottom: 0, left: 0 } });
+      const style = getComputedStyle(addon);
+      const top = (parseFloat(style.top) || 0) + addon.offsetHeight;
+      // Breathing room under the toolbar: `--space-2`, read as a length (rem or px), 8px when unreadable.
+      const token = style.getPropertyValue("--space-2").trim();
+      const gap = token.endsWith("rem") ? parseFloat(token) * (parseFloat(getComputedStyle(document.documentElement).fontSize) || 16) : token.endsWith("px") ? parseFloat(token) : 8;
+      // The toolbar's block size, for headings' scroll-margin (an outline jump must land clear of it).
+      wrapperRef.current?.style.setProperty("--rich-text-toolbar-block", `${addon.offsetHeight}px`);
+      editor.view.setProps({ scrollMargin: { top: top + gap, right: 5, bottom: 5, left: 5 }, scrollThreshold: { top, right: 0, bottom: 0, left: 0 } });
     };
     apply();
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(apply);

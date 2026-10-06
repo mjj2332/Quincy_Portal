@@ -1754,7 +1754,10 @@ describe("table bar with no room falls back to the toolbar group (#535)", () => 
       expect(menuTrigger(host)!.className).toBe(insertClass);
       expect(menuTrigger(host)!.textContent).toBe("");
       expect(menuTrigger(host)!.getAttribute("aria-haspopup")).toBe("menu");
-      expect(menuTrigger(host)!.querySelector("svg")).not.toBeNull();
+      // A different glyph from Insert table's, so it reads as table settings, not "insert" (design review).
+      const glyph = (element: HTMLElement) => element.querySelector("svg")?.getAttribute("class") ?? "";
+      expect(glyph(menuTrigger(host)!)).toContain("lucide-table-properties");
+      expect(glyph(insertTable)).not.toContain("lucide-table-properties");
       expect(host.querySelector('[aria-label="Insert table"]')).toBeNull();
       // It sits in the Layout group, where Insert table was.
       expect(menuTrigger(host)!.closest('[role="group"][aria-label="Layout"]')).not.toBeNull();
@@ -1786,7 +1789,7 @@ describe("table bar with no room falls back to the toolbar group (#535)", () => 
       expect(document.activeElement === editor || editor.contains(document.activeElement)).toBe(true);
     });
 
-    it("its items run the bar's commands: Add row below, Add column right, Header row, Delete Row/Column", async () => {
+    it("its items run the bar's commands: Add row below, Add column right, Header row, Delete row/column", async () => {
       const host = mount(); const editor = await renderDoc(host, oneRow());
       await caretIn(editor, "Mon");
       await waitForCondition(() => menuTrigger(host) !== null, "Table menu");
@@ -1803,10 +1806,10 @@ describe("table bar with no room falls back to the toolbar group (#535)", () => 
       await click(menuItem("Header row"));
       expect(host.querySelectorAll("th").length).toBeGreaterThan(0);
       await click(menuTrigger(host)!);
-      await click(menuItem("Delete Row"));
+      await click(menuItem("Delete row"));
       expect(rows()).toBe(1);
       await click(menuTrigger(host)!);
-      await click(menuItem("Delete Column"));
+      await click(menuItem("Delete column"));
       expect(firstRowCells()).toBe(2);
     });
 
@@ -1838,7 +1841,7 @@ describe("table bar with no room falls back to the toolbar group (#535)", () => 
       await caretIn(editor, "Mon");
       await waitForCondition(() => menuTrigger(host) !== null, "Table menu");
       await click(menuTrigger(host)!);
-      await click(menuItem("Delete Table"));
+      await click(menuItem("Delete table"));
       await waitForCondition(() => document.querySelector('[role="alertdialog"]') !== null, "delete table dialog");
     });
 
@@ -1852,7 +1855,7 @@ describe("table bar with no room falls back to the toolbar group (#535)", () => 
       await caretIn(editor, "Mon");
       await waitForCondition(() => menuTrigger(host) !== null, "Table menu");
       await click(menuTrigger(host)!);
-      await click(menuItem("Delete Table"));
+      await click(menuItem("Delete table"));
       await waitForCondition(() => document.querySelector('[role="alertdialog"]') !== null, "delete table dialog");
       // Past the menu's exit (its close hand-off runs then).
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); await new Promise((resolve) => requestAnimationFrame(() => resolve(null))); });
@@ -1908,7 +1911,12 @@ describe("selection scrolling clears the stuck composer toolbar (#594, Sol r3)",
     // happy-dom loads no app.css: stand in for the sticky rule's `top: var(--shell-header-height)` (50px) and a 48px toolbar.
     window.getComputedStyle = ((element: Element, pseudo?: string | null) => {
       const style = originalComputed.call(window, element, pseudo);
-      if (isToolbarAddon(element)) return new Proxy(style, { get: (target, key) => key === "top" ? "50px" : Reflect.get(target, key) });
+      if (isToolbarAddon(element)) return new Proxy(style, { get: (target, key) => {
+        if (key === "top") return "50px";
+        if (key === "getPropertyValue") return (name: string) => name === "--space-2" ? "8px" : target.getPropertyValue(name);
+        const value = Reflect.get(target, key);
+        return typeof value === "function" ? value.bind(target) : value;
+      } });
       return style;
     }) as typeof window.getComputedStyle;
     originalOffsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
