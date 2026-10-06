@@ -364,6 +364,42 @@ describe("a posted video (#494)", () => {
     expect(host.querySelector("video")!.getAttribute("src")).toBe(`/media/embedded/${B}`);
   });
 
+  it("the fallback renders inside the same wrapper as the player, so the post's margin and layout slot do not change (#592)", async () => {
+    const host = mount(<RichTextContent content={withVideos(A)} />);
+    const wrapper = host.querySelector('[data-testid="embedded-video"]')!;
+    expect(wrapper.querySelector("video")).not.toBeNull();
+    await act(async () => { host.querySelector("video")!.dispatchEvent(new Event("error")); });
+    const unavailable = host.querySelector('[data-testid="embedded-video-unavailable"]')!;
+    expect(unavailable.parentElement).toBe(host.querySelector('[data-testid="embedded-video"]'));
+    expect(host.querySelectorAll('[data-testid="embedded-video"]').length).toBe(1);
+  });
+
+  it("a posterless video seeks to 0.1s for a first frame: the fragment is on the player src only, never the download href (#592)", async () => {
+    const posterless = (hasPoster?: boolean): RichTextDoc => ({ type: "doc", content: [{ type: "video", attrs: { mediaId: A, ...(hasPoster === undefined ? {} : { hasPoster }) } }] });
+    const host = mount(<RichTextContent content={posterless(false)} />);
+    expect(host.querySelector("video")!.getAttribute("src")).toBe(`/media/embedded/${A}#t=0.1`);
+    await act(async () => { host.querySelector("video")!.dispatchEvent(new Event("error")); });
+    expect(host.querySelector<HTMLAnchorElement>('[data-testid="embedded-video-unavailable"] a')!.getAttribute("href")).toBe(`/media/embedded/${A}?download=1`);
+    act(() => root?.unmount()); document.body.innerHTML = "";
+    expect(mount(<RichTextContent content={posterless(true)} />).querySelector("video")!.getAttribute("src")).toBe(`/media/embedded/${A}`);
+    act(() => root?.unmount()); document.body.innerHTML = "";
+    expect(mount(<RichTextContent content={posterless()} />).querySelector("video")!.getAttribute("src")).toBe(`/media/embedded/${A}`);
+  });
+
+  it("the composer preview of a posterless video carries the fragment, and a failing preview shows the message inside the box and keeps the badge (#592)", async () => {
+    const host = mount(<Harness initial={{ type: "doc", content: [{ type: "video", attrs: { mediaId: A, hasPoster: false } }, { type: "paragraph" }] }} />);
+    await settle();
+    const element = host.querySelector<HTMLVideoElement>(`video[data-media-id="${A}"]`)!;
+    expect(element.getAttribute("src")).toBe(`/media/embedded/${A}#t=0.1`);
+    const node = element.parentElement!;
+    await act(async () => { element.dispatchEvent(new Event("error")); });
+    const unavailable = node.querySelector('[data-testid="embedded-video-preview-unavailable"]')!;
+    expect(unavailable.textContent).toContain("This video can't preview in this browser.");
+    expect(node.querySelector("video")).toBeNull();
+    expect(node.querySelector("[data-drag-handle]")).not.toBeNull();
+    expect(node.querySelector('[data-testid="embedded-video-badge"]')).not.toBeNull();
+  });
+
   it("decides per viewer from the error event: a poster that fails to load does not mark the video unplayable", async () => {
     const host = mount(<RichTextContent content={withVideos(A)} />);
     await act(async () => { host.querySelector("video")!.dispatchEvent(new Event("abort")); });
@@ -380,7 +416,7 @@ describe("the video's styles (#494)", () => {
     expect(style).toContain("border: var(--border-width-hair) solid var(--border)"); expect(style).toContain("background: var(--surface-sunken)"); expect(style).toContain("border-radius: var(--radius-xs)");
   });
   it("turns a selected video's border accent in the editor, the same rule as an image and a link card", () => {
-    const selected = rule(".rich-text__editor-content .ProseMirror-selectednode .rich-text__embedded-video-node > video.rich-text__embedded-video");
+    const selected = rule(".rich-text__editor-content .ProseMirror-selectednode .rich-text__embedded-video-node > .rich-text__embedded-video");
     expect(selected).toContain("border-color: var(--accent)"); expect(selected).not.toContain("outline");
   });
   it("gives a video a stable box before its metadata arrives: full width, 16:9 until the file's own ratio is known (#556)", () => {

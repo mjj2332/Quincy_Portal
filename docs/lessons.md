@@ -1256,6 +1256,14 @@ rule silently resets longhands that layered utilities set, so an overriding util
 component of that shorthand needs `!`. Verify by reading the *computed* value at the live element
 in the state that matters (`:focus-visible` can be forced), never by reading the class list.
 
+**Tab focus ring (#550).** `TabStrip`'s tabs draw the ring as a `focus-visible:after:` box, not an `outline`. An
+outset outline put its bottom edge on the 2px active underline, and an inset one needed side padding that indented the
+label and widened the underline. The tab is `relative px-0` with `focus-visible:!outline-none` (the `!` beats the
+unlayered global rule), and the `::after` is absolute with `inset-y-[var(--space-1)]` (above the bottom border),
+`-inset-x-[var(--space-1)]` (4px past the label), a `--border-width-bold` `--focus-ring` border and `pointer-events-none`.
+Because the ring extends 4px outward, a strip inside an `overflow` clip needs `px-[var(--space-1)]` to avoid cutting
+it; no current consumer is clipped.
+
 ## A grep gate that cannot fail is not a gate — twice in two releases (TB8-05, 2026-09-03)
 Tags: testing-guards
 
@@ -5574,6 +5582,7 @@ Tags: rich-text, media-renditions · #494
 - **Playability is a per-viewer decision.** Nothing is transcoded, so `EmbeddedVideo` falls back to a download link from the `<video>` element's own `error` event, not from the stored content type.
 - **`/media/embedded/:id` answers byte ranges** (parser in `@quincy/shared`, unit table beside it), which is what makes a large file seekable. The sweep deletes poster and display keys with `UPDATE ... RETURNING` at claim time, so a claimed row owns the keys it removes.
 - **A video upload warns on `beforeunload`**, only while one is running; images finish too fast to warrant it. Unmounting the editor cancels any running upload.
+- **The playback-failure fallback is the same box as the player (#592).** It renders inside `EmbeddedVideo`'s own wrapper as `.rich-text__embedded-video.rich-text__embedded-video--unavailable`, so it inherits the 16/9 box and clamp and swapping it in for the `<video>` moves nothing below it; the modifier only centres the content (no own `aspect-ratio`/`max-height`). A posterless video's player `src` (composer preview and posted) carries `#t=0.1` so the browser paints a first frame; the download href and `renderHTML` stay on the bare URL. The composer node's own `onError` shows "This video can't preview in this browser." in the same box and keeps the Video badge.
 
 - **The embedded media cleanup queue is a lease, and a claim is permanent for adoption (#494).** The sweep claims an entry (`claimed_until` = now + 10 min, `attempts + 1`), cleans the object, and deletes the entry only after that succeeded. Fence every post-claim statement (dequeue and release) on `storage_key`, the `attempts` and `queued_at` the claim returned, never on `claimed_until`: two sweeps sharing a scheduled `now` get identical lease values, and a stalled sweep must never touch an entry a later claim or a re-queue owns. Release sets `claimed_until` to 0, not NULL: still reclaimable, but a poster adoption requires NULL, so no claim can ever be followed by an adoption (a NULL release let a late PUT adopt an object the stalled first sweep then deleted). Only a re-queue clears it to NULL, and only for an object the route has given up on. Every PUT uses a fresh nonce key.
 - **Accepted gap (poster PUT).** If the adoption batch throws or loses, the route deletes the object, then re-queues it if R2 refused. An orphan can remain only when the R2 delete AND the following D1 write both fail back to back. It is logged as `Embedded poster ORPHANED` with the key. A throw after the batch is verified from the row in three outcomes: adopted (keep, 204), confirmed not adopted (discard), unknown because the verification read threw too (keep the object, delete nothing, queue nothing, log `outcome UNKNOWN` with the key, 500): deleting or queueing there could destroy a live poster, so a possible leak in that case falls under the same accepted gap. The orphan sweep (#549, `docs/lessons.md` § "Embedded media orphan sweep (#549)") now queues such an object once it is a week old.

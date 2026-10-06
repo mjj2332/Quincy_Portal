@@ -431,10 +431,14 @@
 /* #556/#557 — one selected-node rule for image, video and link card: the node's own hairline border turns --accent (an outline sat outside the beige border and read double-edged). */
 .rich-text__editor-content .ProseMirror-selectednode .rich-text__embedded-image-node > img.rich-text__embedded-image { border-color: var(--accent); }
 .rich-text__embedded-video { display: block; width: 100%; aspect-ratio: 16 / 9; max-width: min(100%, calc(24rem * 16 / 9)); max-height: 24rem; height: auto; margin: 0; border-radius: var(--radius-xs); border: var(--border-width-hair) solid var(--border); object-fit: contain; background: var(--surface-sunken); }
+/* #592 — the playback-failure panel is the same box as the player (shared width/aspect-ratio/clamp above); it only centres its content. No own aspect-ratio or max-height, so the two cannot drift. */
+.rich-text__embedded-video.rich-text__embedded-video--unavailable { display: grid; place-content: center; justify-items: center; gap: var(--space-2); padding: var(--space-3); text-align: center; }
 .rich-text__editor-content video.rich-text__embedded-video { margin: var(--space-2) 0; }
 .rich-text__embedded-video-node { position: relative; width: 100%; max-width: min(100%, calc(24rem * 16 / 9)); margin: var(--space-2) 0; }
-.rich-text__editor-content .rich-text__embedded-video-node > video.rich-text__embedded-video { margin: 0; }
-.rich-text__editor-content .ProseMirror-selectednode .rich-text__embedded-video-node > video.rich-text__embedded-video { border-color: var(--accent); }
+.rich-text__editor-content .rich-text__embedded-video-node > .rich-text__embedded-video { margin: 0; }
+.rich-text__editor-content .ProseMirror-selectednode .rich-text__embedded-video-node > .rich-text__embedded-video { border-color: var(--accent); }
+/* #592 — defensive against the #497 trap, not a reproduced bug (the panel text is effectively user-select: none today): if it ever becomes selectable, the global ::selection paper-050 would paint on the light panel. Explicit token, transparent background. */
+.rich-text__editor-content .rich-text__embedded-video--unavailable ::selection { background: transparent; color: var(--foreground-secondary); }
 /* #497 — the global ::selection paints paper-050 text; ProseMirror hides its own selection on a node view, so a selected card would read near-invisible. The wrapper takes ProseMirror-selectednode.
    Trap: `color: inherit` (or currentColor) inside a ::selection takes the PARENT's ::selection colour — the global paper-050 — not the element's own colour, so the text stayed paper-on-white. Each slot gets the explicit token its normal colour uses. */
 .rich-text__editor-content .rich-text__link-preview ::selection { background: transparent; color: var(--text-primary); }
