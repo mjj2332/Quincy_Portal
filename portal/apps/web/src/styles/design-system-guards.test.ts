@@ -980,6 +980,161 @@ describe("guard: outline-color defaults to --focus-ring in @layer base (#532)", 
 });
 
 /**
+ * #552: setting only `outline-color` at rest left `outline-width` and `outline-offset` to animate
+ * under `transition: all` (offset slid 0 -> 2px over ~150ms on every focus). `tokens/base.css` now
+ * sets both at rest, inside `@layer base`, EQUAL to the unlayered `:focus-visible` shorthand, so on
+ * focus only `outline-style` changes. If the shorthand's width or offset changes, change both.
+ */
+describe("guard: outline width and offset rest values match the focus ring (#552)", () => {
+  const blocks = () => topLevelBlocks(stripCssComments(readFileSync(join(stylesDir, "tokens", "base.css"), "utf8")));
+  const longhand = (body: string, prop: string) => new RegExp(`(?:^|[;\\s])${prop}\\s*:\\s*([^;}]+)`).exec(body)?.[1]?.trim();
+
+  it("tokens/base.css sets both on all elements inside @layer base, equal to the :focus-visible ring", () => {
+    const ring = blocks().find(({ prelude }) => prelude === ":focus-visible")?.body ?? "";
+    const ringShorthand = longhand(ring, "outline") ?? "";
+    const rest = blocks()
+      .filter(({ prelude }) => /^@layer\s+base$/.test(prelude))
+      .flatMap(({ body }) => topLevelBlocks(body))
+      .find(({ prelude, body }) => /^\*\s*,/.test(prelude) && /\boutline-width\s*:/.test(body));
+    expect(rest, "base.css needs `*, *::before, *::after { outline-width; outline-offset }` in @layer base").toBeDefined();
+    expect(ringShorthand.startsWith(`${longhand(rest!.body, "outline-width")} `), "rest width must equal the ring width").toBe(true);
+    expect(longhand(rest!.body, "outline-offset"), "rest offset must equal the ring offset").toBe(longhand(ring, "outline-offset"));
+  });
+});
+
+/**
+ * #552, the other half. `tokens/base.css` rests every element at `outline-offset: 2px`. A control
+ * whose focus ring is INSET (`-outline-offset-2`, `outline-offset-[-2px]`, `-outline-offset-4`, `0`)
+ * and only sets that offset in its focus state would animate 2px -> -2px under `transition-all`,
+ * the very slide the rest default removed. So every state-only offset that is not +2px must have its
+ * counterpart at rest, in the same file and with the same spelling and the same non-state variants
+ * (`max-[721px]:`, `after:`): `X focus-visible:!X`.
+ *
+ * Narrower than it could be: it checks "some token in this file", not "the same element", and it
+ * knows the three state variants this repo uses (`focus-visible:`, `has-[…:focus-visible]:`,
+ * `data-keyboard-focus:` / `data-drop-into:`).
+ *
+ * It also requires `!` on a bare `focus-visible:<offset>` that is NOT on a pseudo-element: the global
+ * `:focus-visible` shorthand is unlayered and resets the offset, so without `!` the override never
+ * applies (data-grid-column-header and rich-text-outline carried such dead overrides until #552).
+ */
+const STATE_VARIANT = /has-\[(?:[^\[\]]|\[[^\]]*\])*focus-visible\]:|(?<![\w-])(?:focus-visible|data-keyboard-focus|data-drop-into):/g;
+
+export function insetOffsetProblems(source: string): string[] {
+  const tokens = stripComments(source).split(/[\s"'`]+/).filter((token) => token.includes("outline-offset-"));
+  const has = new Set(tokens);
+  const problems: string[] = [];
+  for (const token of tokens) {
+    if (!/focus-visible|data-keyboard-focus|data-drop-into/.test(token)) continue;
+    const value = /(-?)outline-offset-(\[[^\]]+\]|\d+)$/.exec(token.replace("!", ""));
+    if (!value) continue;
+    if (value[1] === "" && (value[2] === "2" || value[2] === "[2px]")) continue; // equals the rest value
+    const rest = token.replace(STATE_VARIANT, "").replace("!", "");
+    if (!has.has(rest)) problems.push(`${token} has no at-rest \`${rest}\``);
+    const onElementItself = /(?:^|:)focus-visible:(?!after:|before:)[^:]*$/.test(token) && !token.includes("has-[");
+    if (onElementItself && !token.includes("!")) problems.push(`${token} is not \`!\`-prefixed: the unlayered :focus-visible shorthand beats it`);
+  }
+  return problems;
+}
+
+describe("guard: an inset focus-ring offset is also set at rest (#552)", () => {
+  it("every state-only outline-offset that is not +2px has its at-rest twin", () => {
+    const offenders = sourceFiles().flatMap((file) =>
+      insetOffsetProblems(readFileSync(file, "utf8")).map((problem) => `  ${rel(file)}: ${problem}`));
+    expect(offenders, [
+      "A focus/state-only `outline-offset` that differs from the +2px rest value animates under",
+      "`transition-all`. Add the same utility, un-prefixed, beside it, e.g.",
+      "`outline-offset-[-2px] focus-visible:!outline-offset-[-2px]`.",
+      ...offenders,
+    ].join("\n")).toEqual([]);
+  });
+
+  it("proves the matcher on planted fixtures", () => {
+    expect(insetOffsetProblems("focus-visible:!outline-offset-[-2px]")).toHaveLength(1);
+    expect(insetOffsetProblems("outline-offset-[-2px] focus-visible:!outline-offset-[-2px]")).toEqual([]);
+    expect(insetOffsetProblems("focus-visible:!-outline-offset-4")).toHaveLength(1);
+    expect(insetOffsetProblems("-outline-offset-4 focus-visible:!-outline-offset-4")).toEqual([]);
+    // +2 equals the rest value
+    expect(insetOffsetProblems("focus-visible:!outline-offset-2 focus-visible:outline-offset-2")).toEqual([]);
+    // other variants must match
+    expect(insetOffsetProblems("max-[721px]:focus-visible:!-outline-offset-2")).toHaveLength(1);
+    expect(insetOffsetProblems("max-[721px]:-outline-offset-2 max-[721px]:focus-visible:!-outline-offset-2")).toEqual([]);
+    expect(insetOffsetProblems("focus-visible:after:-outline-offset-2")).toHaveLength(1);
+    expect(insetOffsetProblems("after:-outline-offset-2 focus-visible:after:-outline-offset-2")).toEqual([]);
+    expect(insetOffsetProblems("has-[[data-x]:focus-visible]:outline-offset-[-2px]")).toHaveLength(1);
+    expect(insetOffsetProblems("outline-offset-[-2px] has-[[data-x]:focus-visible]:outline-offset-[-2px]")).toEqual([]);
+    expect(insetOffsetProblems("data-keyboard-focus:-outline-offset-2")).toHaveLength(1);
+    // a bare, non-! focus-visible override is dead
+    expect(insetOffsetProblems("outline-offset-[-2px] focus-visible:outline-offset-[-2px]")).toHaveLength(1);
+    expect(insetOffsetProblems("outline-offset-[-2px] focus-visible:!outline-offset-[-2px]")).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Guard — no unlayered element-type selector in styles/ (#569)
+// ---------------------------------------------------------------------------
+/**
+ * Unlayered CSS beats everything in Tailwind's `@layer utilities` regardless of specificity, so an
+ * unlayered `p { margin: 0 }` made `mt-*` on a <p> a silent no-op (#527's note, `!mt-[…]` in
+ * CreateProject/Admin). Element resets belong inside `@layer base`.
+ *
+ * Deliberately narrow: it flags only a top-level (or top-level @media/@supports) rule with a
+ * selector that STARTS with an element type or `*` — `p`, `h1`, `a`, `button`, `*`, `html`, `body`,
+ * `img`. It ignores class/attribute/id selectors (app.css is full of intentional unlayered
+ * component rules), `:root`, pseudo-element-only selectors such as `::selection`, and the global
+ * `:focus-visible` ring, which is unlayered on purpose (Guard 3b/3c). `@keyframes`, `@font-face`
+ * and `@property` bodies are skipped. The reduced-motion `* { …!important }` rule is exempt: it
+ * must beat utilities.
+ */
+export function unlayeredElementSelectors(css: string): string[] {
+  const out: string[] = [];
+  const visit = (source: string) => {
+    for (const { prelude, body } of topLevelBlocks(source)) {
+      if (/^@(media|supports|container)\b/.test(prelude)) {
+        if (REDUCED_MOTION_MEDIA.test(prelude)) continue;
+        visit(body);
+        continue;
+      }
+      if (prelude.startsWith("@")) continue; // @layer, @keyframes, @font-face, @property, @theme
+      for (const selector of prelude.split(",").map((part) => part.trim())) {
+        if (/^(?:\*|[a-z][a-z0-9-]*)(?![\w-])/i.test(selector)) out.push(selector.replace(/\s+/g, " "));
+      }
+    }
+  };
+  visit(stripComments(css));
+  return out;
+}
+
+describe("guard: no unlayered element-type selectors in styles/ (#569)", () => {
+  it("every element reset in styles/**/*.css sits inside @layer base", () => {
+    const offenders = cssFiles().flatMap((file) =>
+      unlayeredElementSelectors(readFileSync(file, "utf8")).map((selector) => `  ${selector} — ${rel(file)}`));
+    expect(offenders, [
+      "An element-type selector (`p`, `h1`, `button`, `*`, …) is declared outside any @layer. It beats",
+      "every Tailwind utility regardless of specificity (a `mt-*` on a <p> silently does nothing).",
+      "Move it inside `@layer base { … }`.",
+      ...offenders,
+    ].join("\n")).toEqual([]);
+  });
+
+  it("proves the detector on planted fixtures", () => {
+    expect(unlayeredElementSelectors("p { margin: 0; }")).toEqual(["p"]);
+    expect(unlayeredElementSelectors("h1, h2 { margin: 0 }\na { color: inherit }")).toEqual(["h1", "h2", "a"]);
+    expect(unlayeredElementSelectors("*, *::before { box-sizing: border-box; }")).toEqual(["*", "*::before"]);
+    expect(unlayeredElementSelectors("button:hover { color: red }")).toEqual(["button:hover"]);
+    expect(unlayeredElementSelectors("@media (min-width: 40em) { p { margin: 1px } }")).toEqual(["p"]);
+    // layered, classed, scoped, pseudo-only, custom-property roots: fine
+    expect(unlayeredElementSelectors("@layer base { p { margin: 0 } h1 { margin: 0 } }")).toEqual([]);
+    expect(unlayeredElementSelectors(".card p { margin: 0 } [data-x] { } #a { } :root { } ::selection { } :focus-visible { }")).toEqual([]);
+    expect(unlayeredElementSelectors("@keyframes spin { from { transform: none } to { transform: none } }")).toEqual([]);
+    // the reduced-motion `*` rule must beat utilities, on purpose
+    expect(unlayeredElementSelectors("@media (prefers-reduced-motion: reduce) { * { animation-duration: 1ms !important } }")).toEqual([]);
+    // quoted in a comment only
+    expect(unlayeredElementSelectors("/* p { margin: 0 } */")).toEqual([]);
+  });
+});
+
+/**
  * #541: a focus ring coloured from a raw palette step ignores `data-surface="inverse"` scopes (and
  * the banner/toast `--focus-ring` override), so the ring is ink on ink. Any `focus*:` / `has-[…focus…]`
  * / `focus-visible:after:` outline colour has to read `var(--focus-ring)` (or a role utility), never

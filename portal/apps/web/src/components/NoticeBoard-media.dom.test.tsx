@@ -109,7 +109,7 @@ describe("the Notice board composers take images", () => {
     expect(apiPostMock).toHaveBeenCalledTimes(1);
     const sent = (apiPostMock.mock.calls[0]![1] as { content: RichTextDoc }).content;
     expect(apiPostMock.mock.calls[0]![0]).toBe("/api/notice-board/posts");
-    expect(sent.content.filter((node) => node.type === "image")).toEqual([{ type: "image", attrs: { mediaId: B } }]);
+    expect(sent.content.filter((node) => node.type === "image")).toEqual([{ type: "image", attrs: { mediaId: B, alt: "a" } }]);
   });
 
   it("keeps the draft and its image, and shows the error, when the server answers 409", async () => {

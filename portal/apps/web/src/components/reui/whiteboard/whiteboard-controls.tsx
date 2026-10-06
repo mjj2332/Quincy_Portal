@@ -241,7 +241,7 @@ const ICONS = {
 
 /** One square toggle with its name and key in a tooltip. */
 // Phone sets `--wb-control-size:44px` on the board root (`whiteboard-theme.ts`); every custom control reads it,
-// so the strip is 32px on desktop and 44px at <=721px, uniform (#498). `size="icon"` (`size-8`) and the toggle's
+// so the strip is 32px on desktop and 44px in the phone layout (`data-phone-layout`), uniform (#498). `size="icon"` (`size-8`) and the toggle's
 // `h-8 min-w-8` sit in the same tailwind-merge groups, so these win.
 const CONTROL_SQUARE = "size-[var(--wb-control-size,2rem)]"
 const CONTROL_TOGGLE =
@@ -1211,7 +1211,8 @@ export const WhiteboardChrome = memo(function WhiteboardChrome({
         ref={layerRef}
         data-slot="whiteboard-chrome"
         inert={loading}
-        className="@container pointer-events-none absolute inset-0 z-10 max-[721px]:[--wb-control-size:44px] max-[721px]:[&_[data-slot=button]]:min-h-11 max-[721px]:[&_[data-slot=button]]:min-w-11"
+        data-phone-layout={state.phone ? "" : undefined}
+        className="@container pointer-events-none absolute inset-0 z-10 data-[phone-layout]:[--wb-control-size:44px] data-[phone-layout]:[&_[data-slot=button]]:min-h-11 data-[phone-layout]:[&_[data-slot=button]]:min-w-11"
       >
         {state.phone ? (
           <>

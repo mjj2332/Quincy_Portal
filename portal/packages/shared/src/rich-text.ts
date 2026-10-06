@@ -25,9 +25,9 @@ export type RichTextTableCell = { type: "tableCell" | "tableHeader"; attrs?: { c
 export type RichTextTableRow = { type: "tableRow"; content: RichTextTableCell[] };
 export type RichTextTable = { type: "table"; content: RichTextTableRow[] };
 /** An image placed in a post (#493). It names stored media by id and never carries a URL or bytes. */
-export type RichTextImage = { type: "image"; attrs: { mediaId: string } };
-/** A video placed in a post (#494). Like an image it names stored media by id and never carries a URL or bytes. */
-export type RichTextVideo = { type: "video"; attrs: { mediaId: string } };
+export type RichTextImage = { type: "image"; attrs: { mediaId: string; alt?: string } };
+/** A video placed in a post (#494). Like an image it names stored media by id and never carries a URL or bytes. `hasPoster` (#556) is served-only: the server fills it from the media record so a posterless video never requests `/poster`; it is never stored, and absent means "unknown" (the older behaviour: ask for the poster). */
+export type RichTextVideo = { type: "video"; attrs: { mediaId: string; hasPoster?: boolean } };
 export type RichTextMediaNode = RichTextImage | RichTextVideo;
 /**
  * The card a post shows for a link (#497). A stored post names a preview by id alone, and the server fills the rest in when it
@@ -51,6 +51,17 @@ const LINK_PREVIEW_DISPLAY_KEYS = ["url", "title", "description", "siteName", "i
 export const RICH_TEXT_TABLE_MAX_ROWS = 50;
 export const RICH_TEXT_TABLE_MAX_COLUMNS = 12;
 export const STAFF_NAME_MAX_LENGTH = 200;
+/** The longest alt text an image may carry (#553). Longer is rejected on write; the editor's default from a file name is capped to it. */
+export const RICH_TEXT_IMAGE_ALT_MAX_LENGTH = 200;
+
+/**
+ * The default alt text for an uploaded file (#553): the name without its extension, `-` and `_` read as spaces, runs of space
+ * collapsed, trimmed and capped. `IMG_1234.HEIC` becomes `IMG 1234`. Empty when nothing readable is left.
+ */
+export function imageAltFromFileName(name: string): string {
+  const base = name.trim().replace(/\.[A-Za-z0-9]{1,8}$/, "").replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
+  return base.slice(0, RICH_TEXT_IMAGE_ALT_MAX_LENGTH).trim();
+}
 
 /**
  * What a surface may store. The default is the comment profile (Project discussion, #491); the
@@ -240,16 +251,22 @@ function parseBlock(value: unknown, depth: number, profile: RichTextProfile, ite
     if (!profile.allowMedia || depth > 0 || itemKind || insideListItem) throw new RichTextValidationError("Unsupported rich-text node");
     onlyKeys(node, ["type", "attrs"], "Image");
     const attrs = record(node.attrs, "Image attributes");
-    onlyKeys(attrs, ["mediaId"], "Image attributes");
+    onlyKeys(attrs, ["mediaId", "alt"], "Image attributes");
     if (typeof attrs.mediaId !== "string" || !UUID.test(attrs.mediaId)) throw new RichTextValidationError("Image media id must be a UUID");
-    return { type: "image", attrs: { mediaId: attrs.mediaId } };
+    // Alt text (#553) is optional: absent, null and blank all mean "none" and are not stored.
+    if (attrs.alt !== undefined && attrs.alt !== null && typeof attrs.alt !== "string") throw new RichTextValidationError("Image alt text must be a string");
+    const alt = typeof attrs.alt === "string" ? attrs.alt.trim() : "";
+    if (alt.length > RICH_TEXT_IMAGE_ALT_MAX_LENGTH) throw new RichTextValidationError(`Image alt text may be at most ${RICH_TEXT_IMAGE_ALT_MAX_LENGTH} characters`);
+    return { type: "image", attrs: { mediaId: attrs.mediaId, ...(alt ? { alt } : {}) } };
   }
   if (node.type === "video") {
     if (!profile.allowMedia || !profile.allowVideo || depth > 0 || itemKind || insideListItem) throw new RichTextValidationError("Unsupported rich-text node");
     onlyKeys(node, ["type", "attrs"], "Video");
     const attrs = record(node.attrs, "Video attributes");
-    onlyKeys(attrs, ["mediaId"], "Video attributes");
+    onlyKeys(attrs, ["mediaId", "hasPoster"], "Video attributes");
     if (typeof attrs.mediaId !== "string" || !UUID.test(attrs.mediaId)) throw new RichTextValidationError("Video media id must be a UUID");
+    if (attrs.hasPoster !== undefined && typeof attrs.hasPoster !== "boolean") throw new RichTextValidationError("Video poster flag must be a boolean");
+    // A served document carries `hasPoster`. It is never stored: the server fills it in from the media record.
     return { type: "video", attrs: { mediaId: attrs.mediaId } };
   }
   if (node.type === "linkPreview") {
@@ -394,7 +411,7 @@ export function normalizeRichTextMentionLabels(doc: RichTextDoc, namesById: Read
     }
     if (node.type === "text") return node.marks ? { ...node, marks: node.marks.map((mark) => ({ ...mark })) } : { ...node };
     if (node.type === "hardBreak") return { ...node };
-    if (node.type === "image") return { type: "image", attrs: { mediaId: node.attrs.mediaId } };
+    if (node.type === "image") return { type: "image", attrs: { mediaId: node.attrs.mediaId, ...(node.attrs.alt ? { alt: node.attrs.alt } : {}) } };
     if (node.type === "video") return { type: "video", attrs: { mediaId: node.attrs.mediaId } };
     if (node.type === "linkPreview") return { type: "linkPreview", attrs: { previewId: node.attrs.previewId } };
     if (node.type === "paragraph") return { type: "paragraph", ...(node.attrs ? { attrs: { ...node.attrs } } : {}), ...(node.content ? { content: node.content.map(normalize) as RichTextInline[] } : {}) };

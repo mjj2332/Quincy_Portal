@@ -77,7 +77,7 @@ export function CreateProject({ onNavigate }: { onNavigate: (path: string, notic
         </h2>
         {/* `!` on both margins: `tokens/base.css` is imported outside any `@layer`, so its
             `p { margin: 0 }` beats a plain margin utility from `@layer utilities`. (§7 case O) */}
-        <p className="!mt-[var(--space-4)] !mb-[var(--space-5)] [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">
+        <p className="mt-[var(--space-4)] mb-[var(--space-5)] [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">
           You can fill in everything else later from the shoot&apos;s workspace.
         </p>
 
@@ -106,7 +106,7 @@ export function CreateProject({ onNavigate }: { onNavigate: (path: string, notic
         </div>
 
         {errors.street ? (
-          <p id="project-street-error" role="alert" className="!mt-[var(--space-2)] mb-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive">
+          <p id="project-street-error" role="alert" className="mt-[var(--space-2)] mb-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive">
             {errors.street}
           </p>
         ) : null}

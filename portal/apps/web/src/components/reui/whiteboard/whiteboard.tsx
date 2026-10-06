@@ -567,7 +567,7 @@ export function Whiteboard({
       className={cn(
         "bg-background relative isolate size-full min-h-0 overflow-hidden",
         // Only a Tab onto the board rings it, inset and quiet; a click never does.
-        "data-keyboard-focus:outline-ring/50 data-keyboard-focus:-outline-offset-2 data-keyboard-focus:outline-2",
+        "data-keyboard-focus:outline-ring/50 -outline-offset-2 data-keyboard-focus:-outline-offset-2 data-keyboard-focus:outline-2",
         WHITEBOARD_THEME,
         className
       )}

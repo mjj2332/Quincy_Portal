@@ -34,28 +34,29 @@ function PreparingRow({ name, onRemove, focusRemove }: { name: string; onRemove:
  * A HEIC (#495) goes on to a `preparing` row (a `Spinner` with Remove) and, if its JPEG cannot be made, a `failed` row
  * (a critical `Notice` with Retry and Remove). Renders nothing when there is nothing to show. The owner keeps the uploads, their abort controllers and the errors.
  */
-export function EmbeddedUploadTray({ uploads, errors, onCancel, onRetry, trayRef, testId = "rich-text-upload-tray", className }: {
+export function EmbeddedUploadTray({ uploads, errors, onCancel, onRemove = onCancel, onRetry, testId = "rich-text-upload-tray", className }: {
   uploads: readonly EmbeddedUpload[];
   errors: readonly string[];
-  /** Cancel a running upload, or Remove a preparing or failed one. */
+  /** Cancel a running video upload. */
   onCancel: (key: number) => void;
+  /** Remove a preparing or failed row, which is not a cancellation. Defaults to `onCancel`. */
+  onRemove?: (key: number) => void;
   /** Retry a failed one. */
   onRetry?: (key: number) => void;
-  trayRef?: Ref<HTMLDivElement>;
   testId?: string;
   className?: string;
 }) {
   // The failed row's Retry unmounts when it is pressed; the preparing row that replaces it takes focus.
   const retried = useRef<number | null>(null);
   if (uploads.length === 0 && errors.length === 0) return null;
-  return <div ref={trayRef} data-testid={testId} className={className ?? "grid gap-[var(--space-2)]"}>
+  return <div data-testid={testId} className={className ?? "grid gap-[var(--space-2)]"}>
     {uploads.map((entry) => {
-      if (entry.phase === "preparing") return <PreparingRow key={entry.key} name={entry.name} onRemove={() => onCancel(entry.key)} focusRemove={retried.current === entry.key} />;
+      if (entry.phase === "preparing") return <PreparingRow key={entry.key} name={entry.name} onRemove={() => onRemove(entry.key)} focusRemove={retried.current === entry.key} />;
       if (entry.phase === "failed") return <Notice key={entry.key} tone="critical" role="alert" className="flex flex-wrap items-center justify-between gap-[var(--space-1)]">
         <span className="min-w-0 [overflow-wrap:anywhere]">{`Couldn't prepare ${entry.name}`}</span>
         <span className="flex flex-wrap items-center gap-[var(--space-1)]">
           {onRetry && <Button type="button" variant="text" aria-label={`Retry preparing ${entry.name}`} onClick={() => { retried.current = entry.key; onRetry(entry.key); }}>Retry</Button>}
-          <Button type="button" variant="text" aria-label={`Remove ${entry.name}`} onClick={() => onCancel(entry.key)}>Remove</Button>
+          <Button type="button" variant="text" aria-label={`Remove ${entry.name}`} onClick={() => onRemove(entry.key)}>Remove</Button>
         </span>
       </Notice>;
       return <div key={entry.key} className="flex flex-wrap items-center justify-between gap-[var(--space-1)]">
