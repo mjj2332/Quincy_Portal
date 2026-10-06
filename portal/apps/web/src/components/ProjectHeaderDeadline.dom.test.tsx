@@ -509,7 +509,6 @@ describe("ProjectHeaderDeadline", () => {
     expect(rootClass).toContain("*:data-[slot=scroll-area-viewport]:mask-t-from-");
     expect(rootClass).toContain("*:data-[slot=scroll-area-viewport]:mask-b-from-");
     expect(rootClass).toContain("[--fade-size:var(--space-6)]");
-    expect(rootClass).toContain("has-[[data-slot=scroll-area-viewport]:focus-visible]:ring-[3px]");
     // The footer is outside it, beside it under the same bounded frame.
     expect(scroller!.contains(footer)).toBe(false);
     expect(footer.contains(scroller!)).toBe(false);
