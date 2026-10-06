@@ -16,9 +16,16 @@ import { Input } from "@/components/reui/input"
 //    Enhanced / HIG, not a spacing token), `rounded-[var(--radius-sm)]`, a hairline
 //    `border-border`, and `bg-card`.
 //
-// 2. Focus and hover are re-pointed from nova's ring to Quincy's. `border-primary` plus a real
-//    `outline` (not a ring) is Quincy's focus treatment; `hover:border-border-hover` is the
-//    resting affordance nova has no equivalent for.
+// 2. Focus and hover are re-pointed from nova's ring to Quincy's. A real `outline` (not a ring) is
+//    Quincy's focus treatment; `hover:border-border-hover` is the resting affordance nova has no
+//    equivalent for.
+//
+//    ONE focus line — outline only (#613 item 3, owner decision). This wrapper used to ALSO turn
+//    its 1px border `border-primary` on focus, so a focused field drew two dark rules a few px
+//    apart (the composer at 1920 showed them at x≈122 and x≈126). The 2px outline is the Portal's
+//    single focus indicator, the same one buttons draw, so the border now keeps its rest/hover
+//    colour. Do not re-add a focus-time border colour here or on any field primitive that also
+//    draws the outline; `styles/design-system-guards.test.ts` ("one focus line") enforces it.
 //
 //    The SELECTOR is `has-[input:focus-visible]:`, not `focus-within:` (#217 design-fix round 2,
 //    item 2). `focus-within` originally matched the shipped search label this box replaces, but
@@ -68,7 +75,7 @@ function InputGroup({ className, ...props }: React.ComponentProps<"div">) {
       data-slot="input-group"
       role="group"
       className={cn(
-        "group/input-group relative flex min-h-[38px] max-[721px]:min-h-[44px] w-full min-w-0 items-center rounded-[var(--radius-sm)] border border-border bg-card transition-[border-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] hover:border-border-hover has-[input:focus-visible]:border-primary has-[input:focus-visible]:outline-[length:var(--border-width-bold)] has-[input:focus-visible]:outline-solid has-[input:focus-visible]:outline-ring has-[input:focus-visible]:outline-offset-2 has-disabled:bg-surface-sunken has-disabled:cursor-not-allowed has-[>[data-align=block-end]]:h-auto has-[>[data-align=block-end]]:flex-col has-[>[data-align=block-start]]:h-auto has-[>[data-align=block-start]]:flex-col has-[>textarea]:h-auto has-[>[data-align=block-end]]:[&>input]:pt-3 has-[>[data-align=block-start]]:[&>input]:pb-3",
+        "group/input-group relative flex min-h-[38px] max-[721px]:min-h-[44px] w-full min-w-0 items-center rounded-[var(--radius-sm)] border border-border bg-card transition-[border-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] hover:border-border-hover has-[input:focus-visible]:outline-[length:var(--border-width-bold)] has-[input:focus-visible]:outline-solid has-[input:focus-visible]:outline-ring has-[input:focus-visible]:outline-offset-2 has-disabled:bg-surface-sunken has-disabled:cursor-not-allowed has-[>[data-align=block-end]]:h-auto has-[>[data-align=block-end]]:flex-col has-[>[data-align=block-start]]:h-auto has-[>[data-align=block-start]]:flex-col has-[>textarea]:h-auto has-[>[data-align=block-end]]:[&>input]:pt-3 has-[>[data-align=block-start]]:[&>input]:pb-3",
         className
       )}
       {...props}

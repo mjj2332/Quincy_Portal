@@ -1229,3 +1229,247 @@ describe("guard: Team, Select and Mention popups share one square radius (#550)"
     expect(popupRadiusProblems("relative rounded-none bg-popover")).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Guard 5 — one focus line: no field primitive recolours its border on focus
+// ---------------------------------------------------------------------------
+/**
+ * #613 item 3 (owner decision). A focused field drew TWO dark rules: a 1px border turned
+ * `border-primary`/`border-ring` AND the 2px focus outline sat two pixels outside it (the
+ * composer at 1920 showed them at x≈122 and x≈126). The 2px outline is the Portal's single focus
+ * indicator, the same one buttons draw, so a field keeps its rest/hover border colour on focus.
+ *
+ * Two checks: the named field primitives carry no focus-time `border-<colour>` token at all, and
+ * no file combines one with a focus outline utility. Error colours (`aria-invalid:`) are not
+ * focus-time and are untouched.
+ */
+/**
+ * Splits a class token into its variant prefix and utility at the last TOP-LEVEL colon, so a nested
+ * arbitrary variant such as `has-[[contenteditable=true]:focus-visible]:border-primary` (colons and
+ * brackets inside brackets) is read correctly. A regex over `[^\]]*` cannot do this.
+ */
+function splitVariant(token: string): { variants: string; utility: string } {
+  let depth = 0;
+  let cut = -1;
+  for (let i = 0; i < token.length; i++) {
+    const c = token[i];
+    if (c === "[" || c === "(") depth++;
+    else if (c === "]" || c === ")") depth--;
+    else if (c === ":" && depth === 0) cut = i;
+  }
+  return { variants: token.slice(0, cut + 1), utility: token.slice(cut + 1) };
+}
+/**
+ * Every string and template-literal body in a source file, wherever it sits (a bare attribute,
+ * `cn(...)`, `cva(...)`, an array). Class strings are found HERE, before any tokenizing: the
+ * parentheses of a `cn("…", "…")` call are TypeScript, not Tailwind nesting, so running the
+ * bracket-aware splitter over raw source (the previous design) lost every class string inside a call.
+ * `'` and `"` literals end at a newline, so a stray apostrophe in JSX text cannot swallow code.
+ */
+function extractLiterals(source: string): string[] {
+  const out: string[] = [];
+  let i = 0;
+  while (i < source.length) {
+    const c = source[i];
+    if (c === '"' || c === "'" || c === "`") {
+      const end = scanLiteral(source, i, out);
+      i = end === -1 ? i + 1 : end;
+    } else i++;
+  }
+  return out;
+}
+
+/**
+ * Scans the literal opening at `start`, pushing its text into `out` (a template's head, middle and
+ * tail chunks are separate entries; each `${…}` expression is scanned recursively, so a nested
+ * `cn("…")` or a nested backtick template is found). Returns the index just past the closing
+ * quote, or -1 when the literal never closes (then nothing is emitted).
+ */
+function scanLiteral(source: string, start: number, out: string[]): number {
+  const q = source[start];
+  const found: string[] = [];
+  let chunk = "";
+  let j = start + 1;
+  while (j < source.length) {
+    const c = source[j];
+    if (c === "\\") {
+      chunk += c + (source[j + 1] ?? "");
+      j += 2;
+      continue;
+    }
+    if (c === q) {
+      found.push(chunk);
+      out.push(...found);
+      return j + 1;
+    }
+    if (c === "\n" && q !== "`") return -1;
+    if (q === "`" && c === "$" && source[j + 1] === "{") {
+      found.push(chunk);
+      chunk = "";
+      let k = j + 2;
+      let depth = 1;
+      while (k < source.length && depth > 0) {
+        const d = source[k];
+        if (d === '"' || d === "'" || d === "`") {
+          const end = scanLiteral(source, k, []);
+          k = end === -1 ? k + 1 : end;
+          continue;
+        }
+        if (d === "{") depth++;
+        else if (d === "}") depth--;
+        k++;
+      }
+      if (depth > 0) return -1;
+      found.push(...extractLiterals(source.slice(j + 2, k - 1)));
+      j = k;
+      continue;
+    }
+    chunk += c;
+    j++;
+  }
+  return -1;
+}
+
+/** Splits one literal's body into class tokens on whitespace at bracket depth 0 (quotes stay inside a variant). */
+function tokenizeLiteral(literal: string): { variants: string; utility: string }[] {
+  const tokens: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const c of literal) {
+    if (c === "[" || c === "(") depth++;
+    else if (c === "]" || c === ")") depth = Math.max(0, depth - 1);
+    if (depth === 0 && /\s/.test(c)) {
+      if (current) tokens.push(current);
+      current = "";
+    } else current += c;
+  }
+  if (current) tokens.push(current);
+  // Tailwind's important modifier is a `!` prefix (v3/v4) or suffix (v4); normalise before matching.
+  return tokens.map(splitVariant).map(({ variants, utility }) => ({ variants, utility: utility.replace(/^!/, "").replace(/!$/, "") }));
+}
+function classTokens(source: string): { variants: string; utility: string }[] {
+  return extractLiterals(source).flatMap(tokenizeLiteral);
+}
+const FOCUS_VARIANT = /focus/;
+const BORDER_COLOUR_UTILITY = /^border-(?!0$|transparent$|none$|solid$|\[length)/;
+const FOCUS_OUTLINE_UTILITY = /^outline-(?:ring|solid|\[length)/;
+const FOCUS_BORDER_COLOUR = { test: (code: string) => classTokens(code).some((t) => FOCUS_VARIANT.test(t.variants) && BORDER_COLOUR_UTILITY.test(t.utility)) };
+const FOCUS_OUTLINE = { test: (code: string) => classTokens(code).some((t) => FOCUS_VARIANT.test(t.variants) && FOCUS_OUTLINE_UTILITY.test(t.utility)) };
+const FIELD_PRIMITIVES = [
+  "components/reui/input-group.tsx",
+  "components/reui/input.tsx",
+  "components/reui/textarea.tsx",
+  "components/reui/select.tsx",
+  "components/reui/combobox.tsx",
+  "components/quincy/NativeSelect.tsx",
+  "components/QuincyRichTextEditor.tsx",
+  "lib/rail-field.ts",
+];
+
+function stripSourceComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+}
+
+function hasFocusBorderColour(source: string): boolean {
+  return FOCUS_BORDER_COLOUR.test(stripSourceComments(source));
+}
+
+/**
+ * A field whose REST border is the dark `--field-border` (ink-900) must not pair a positive
+ * `outline-offset` with the focus outline: the 2px outline sitting 2px outside an already-dark
+ * border is two dark lines (#613 item 3, browser pass: the New shoot street input and the Admin
+ * inline editors). The global `:focus-visible` rule is UNLAYERED and sets `outline-offset: 2px`,
+ * so only an important utility (`focus-visible:!outline-offset-0`) can pull the outline flush
+ * against the border, where it reads as one heavier rule. Checked per class literal.
+ */
+function darkBorderLiteralsWithoutFlushOutline(source: string): string[] {
+  return extractLiterals(source).filter((literal) => {
+    const tokens = tokenizeLiteral(literal);
+    if (!tokens.some((t) => t.variants === "" && t.utility === "border-[var(--field-border)]")) return false;
+    const flush = tokens.some((t) => /focus/.test(t.variants) && t.utility === "outline-offset-0");
+    const positive = tokens.some((t) => /focus/.test(t.variants) && /^outline-offset-(?!0$)/.test(t.utility));
+    return !flush || positive;
+  });
+}
+
+describe("guard: one focus line — no field primitive recolours its border on focus (#613 item 3)", () => {
+  it("named field primitives carry no focus-time border colour", () => {
+    const offenders = FIELD_PRIMITIVES.filter((file) => hasFocusBorderColour(readFileSync(join(srcDir, file), "utf8")));
+    expect(
+      offenders,
+      "These field primitives recolour their border on focus while the focus outline also paints: two dark lines. Drop the border-colour utility; keep only the outline (#613 item 3).",
+    ).toEqual([]);
+  });
+
+  it("no source file pairs a focus-time border colour with a focus outline", () => {
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (/\.(ts|tsx)$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
+          const code = stripSourceComments(readFileSync(full, "utf8"));
+          if (FOCUS_BORDER_COLOUR.test(code) && FOCUS_OUTLINE.test(code)) offenders.push(relative(srcDir, full));
+        }
+      }
+    };
+    walk(srcDir);
+    expect(offenders).toEqual([]);
+  });
+
+  it("a dark rest border (--field-border) pulls the focus outline flush (outline-offset-0)", () => {
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (/\.(ts|tsx)$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
+          for (const literal of darkBorderLiteralsWithoutFlushOutline(readFileSync(full, "utf8"))) offenders.push(`${relative(srcDir, full)}: ${literal.slice(0, 80)}`);
+        }
+      }
+    };
+    walk(srcDir);
+    expect(offenders).toEqual([]);
+  });
+
+  it("the dark-border detector flags a missing or positive offset and passes the flush form", () => {
+    expect(darkBorderLiteralsWithoutFlushOutline('cn("border-[var(--field-border)]", x)')).toHaveLength(1);
+    expect(darkBorderLiteralsWithoutFlushOutline('"border-[var(--field-border)] focus-visible:outline-offset-2"')).toHaveLength(1);
+    expect(darkBorderLiteralsWithoutFlushOutline('"border-[var(--field-border)] focus-visible:!outline-offset-0"')).toHaveLength(0);
+    expect(darkBorderLiteralsWithoutFlushOutline('"border-border focus-visible:outline-offset-2"')).toHaveLength(0);
+  });
+
+  it("the detector flags the doubled pairing and spares rest, hover and error colours", () => {
+    expect(hasFocusBorderColour('"focus-visible:border-ring"')).toBe(true);
+    expect(hasFocusBorderColour('"has-[input:focus-visible]:border-primary outline-solid"')).toBe(true);
+    expect(hasFocusBorderColour('"focus-within:border-ring"')).toBe(true);
+    // nested-bracket arbitrary variant (the rich-text editor's contenteditable focus selector)
+    expect(hasFocusBorderColour('"has-[[contenteditable=true]:focus-visible]:border-primary"')).toBe(true);
+    expect(FOCUS_OUTLINE.test('"has-[[contenteditable=true]:focus-visible]:outline-ring"')).toBe(true);
+    // quotes inside a nested variant stay part of the token
+    expect(hasFocusBorderColour(`"has-[[contenteditable='true']:focus-visible]:border-primary"`)).toBe(true);
+    expect(hasFocusBorderColour('"has-[[contenteditable=\\"true\\"]:focus-visible]:border-primary"')).toBe(true);
+    expect(FOCUS_OUTLINE.test(`"has-[[contenteditable='true']:focus-visible]:outline-ring"`)).toBe(true);
+    // important modifier, prefix and Tailwind v4 suffix
+    expect(hasFocusBorderColour('"focus-visible:!border-ring"')).toBe(true);
+    expect(hasFocusBorderColour('"focus-visible:border-ring!"')).toBe(true);
+    expect(FOCUS_OUTLINE.test('"focus-visible:!outline-ring"')).toBe(true);
+    expect(FOCUS_OUTLINE.test('"focus-visible:outline-solid!"')).toBe(true);
+    expect(hasFocusBorderColour('"focus-visible:!border-0 focus-visible:border-transparent!"')).toBe(false);
+    // template interpolation: a nested cn() inside ${…}, and nested backticks
+    expect(hasFocusBorderColour('const E = cn(`flex ${cn("focus-visible:border-ring", x)} focus-visible:outline-ring`);')).toBe(true);
+    expect(hasFocusBorderColour("const F = cn(`flex ${cond ? `has-[input:focus-visible]:border-primary` : ''} rounded`);")).toBe(true);
+    expect(FOCUS_OUTLINE.test('const G = cn(`flex ${cn("x", `focus-visible:outline-ring`)}`);')).toBe(true);
+    expect(hasFocusBorderColour("const H = cn(`flex ${a ? '}' : `x`} hover:border-border-hover`, y);")).toBe(false);
+    // full-source fixtures: class strings inside cn()/cva()/arrays and template literals
+    expect(hasFocusBorderColour('const A = cn("flex rounded", "has-[input:focus-visible]:border-primary outline-solid", className);')).toBe(true);
+    expect(hasFocusBorderColour("const B = cva(['border', 'focus-visible:border-ring'], { variants: {} });")).toBe(true);
+    expect(hasFocusBorderColour("const C = cn(`flex has-[input:focus-visible]:border-ring ${x}`);")).toBe(true);
+    expect(FOCUS_OUTLINE.test('<div className={cn("x", "has-[input:focus-visible]:outline-ring")} />')).toBe(true);
+    expect(hasFocusBorderColour('const D = cn("flex hover:border-border-hover aria-invalid:border-destructive", className); // don\'t')).toBe(false);
+    expect(hasFocusBorderColour('"focus-visible:border-[color:var(--border-strong)]"')).toBe(true);
+    expect(hasFocusBorderColour('"hover:border-border-hover focus-visible:outline-ring aria-invalid:border-destructive"')).toBe(false);
+    expect(hasFocusBorderColour('"focus-visible:border-0 border-border"')).toBe(false);
+    expect(hasFocusBorderColour("// focus-visible:border-ring in a comment")).toBe(false);
+  });
+});

@@ -30,14 +30,15 @@ import { cn } from "@/lib/utils"
 //    the two cannot collapse and both paint. See `reui/button.tsx` divergence 5, which is the same
 //    correction on the button base.
 //
-//    `focus-visible:border-ring` is KEPT, and the asymmetry with the button fix is deliberate. A
-//    field rests on a VISIBLE `border-border`, so recolouring it on focus changes existing paint
-//    rather than adding a ring. The button base rests on `border-transparent`, where the same
-//    utility materialises a border that was not there — a second ring in all but name.
+//    `focus-visible:border-ring` is REMOVED too (#613 item 3, owner decision; it was KEPT until
+//    then). The global outline is the one focus line; recolouring the 1px border as well drew a
+//    second dark rule beside it. The border keeps its rest/hover colour on focus.
+//    `styles/design-system-guards.test.ts` ("one focus line") fails if a field primitive pairs a
+//    focus-time border colour with the outline again.
 //
 //    `aria-invalid:ring-3` stays: an error affordance, painting focused or not.
 const FIELD_BOX =
-  "min-h-[38px] max-[721px]:min-h-[44px] w-full min-w-0 rounded-[var(--radius-sm)] border border-border bg-[var(--field-bg)] px-[10px] py-[8px] text-base transition-colors file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm [&:read-only:not(select)]:bg-surface-sunken [&:read-only:not(select)]:text-foreground-secondary"
+  "min-h-[38px] max-[721px]:min-h-[44px] w-full min-w-0 rounded-[var(--radius-sm)] border border-border bg-[var(--field-bg)] px-[10px] py-[8px] text-base transition-colors file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm [&:read-only:not(select)]:bg-surface-sunken [&:read-only:not(select)]:text-foreground-secondary"
 
 function Input({ className, type, ...props }: React.ComponentProps<"input">) {
   return (

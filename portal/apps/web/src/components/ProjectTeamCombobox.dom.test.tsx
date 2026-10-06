@@ -837,12 +837,13 @@ describe("ProjectTeamCombobox focus indicator (#458)", () => {
     expect(inputTokens).not.toContain("outline-none");
     const boxTokens = tokens(box);
     for (const token of [
-      "has-[input:focus-visible]:border-ring",
       "has-[input:focus-visible]:outline-[length:var(--border-width-bold)]",
       "has-[input:focus-visible]:outline-solid",
       "has-[input:focus-visible]:outline-ring",
       "has-[input:focus-visible]:outline-offset-2",
     ]) expect(boxTokens).toContain(token);
+    // #613 item 3: one focus line — the outline alone, no focus-time border colour.
+    expect(boxTokens.some((token) => /focus.*:border-/.test(token))).toBe(false);
     expect(boxTokens.some((token) => token.startsWith("focus-within:"))).toBe(false);
   });
 

@@ -48,7 +48,9 @@ describe("InputGroup — exactly one focus indicator (#217 design-fix round 2, i
     );
 
     const group = host.querySelector('[data-testid="group"]')!;
-    expect(group.className).toContain("has-[input:focus-visible]:border-primary");
+    // #613 item 3: one focus line — the outline only; the border keeps its rest/hover colour.
+    expect(group.className).not.toMatch(/focus[^ ]*:border-/);
+    expect(group.className).toContain("hover:border-border-hover");
     expect(group.className).toContain("has-[input:focus-visible]:outline-solid");
     expect(group.className).toContain("has-[input:focus-visible]:outline-ring");
     expect(group.className).toContain("has-[input:focus-visible]:outline-offset-2");

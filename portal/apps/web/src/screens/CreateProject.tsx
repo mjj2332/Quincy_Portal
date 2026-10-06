@@ -96,7 +96,7 @@ export function CreateProject({ onNavigate }: { onNavigate: (path: string, notic
               aria-errormessage={errors.street ? "project-street-error" : undefined}
               className={cn(
                 "min-h-[var(--space-7)] rounded-none px-[16px] py-[12px]",
-                "border-[var(--field-border)]",
+                "border-[var(--field-border)] outline-offset-0 focus-visible:!outline-offset-0",
                 "[font:var(--weight-regular)_var(--text-lg)/var(--leading-snug)_var(--font-display)]")}
             />
           </label>
