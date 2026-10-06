@@ -28,6 +28,8 @@ Installed: `"version": "1.7.0"` portal/node_modules/@base-ui/react/package.json:
 | Return happens in a microtask at unmount; a default return is skipped if focus already left the floating tree | `queueMicrotask` portal/node_modules/@base-ui/react/floating-ui-react/components/FloatingFocusManager.js:496 |
 | `finalFocus` receives only the close interaction type, never the reason | `finalFocus` portal/node_modules/@base-ui/react/dialog/popup/DialogPopup.d.ts:34 |
 
+- A popup/sheet container that `initialFocus` lands on needs `focus-visible:!outline-none` (base.css's unlayered ring would outline it): docs/lessons.md § "A programmatically focused container rings"; pinned by portal/apps/web/src/components/quincy/container-focus.guard.test.ts.
+
 ## Nested dialogs
 - "Nested" means a parent `Dialog.Root` in the React tree, not the DOM: `nested` portal/node_modules/@base-ui/react/dialog/root/useRenderDialogRoot.js:37.
 - A nested `Dialog.Backdrop` renders nothing unless `forceRender`: `forceRender || !nested` portal/node_modules/@base-ui/react/dialog/backdrop/DialogBackdrop.js:48. `AlertDialog.Backdrop` is the same component: `DialogBackdrop as Backdrop` portal/node_modules/@base-ui/react/alert-dialog/index.parts.d.ts:2.

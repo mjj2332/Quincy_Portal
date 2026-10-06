@@ -433,6 +433,19 @@ describe("ProductionGantt — People and Due columns (#365)", () => {
     expect(shellBottom).toHaveBeenCalledTimes(1);
   });
 
+  it("T598 the Deadline dialog holds focus while the detail is pending, then the selected day (#598)", async () => {
+    await render();
+    const gate = deferred();
+    server.detailGate = gate.promise;
+    await click(deadlineTrigger()!);
+    await waitFor(() => expect(dialog("Deadline")).not.toBeNull());
+    expect(document.querySelector('[data-testid="gantt-project-detail-loading"]')).not.toBeNull();
+    expect(document.activeElement).toBe(dialog("Deadline"));
+    server.detailGate = null;
+    gate.resolve();
+    await waitFor(() => expect(document.activeElement?.closest('[aria-selected="true"]')).not.toBeNull());
+  });
+
   it("T4 Admin changes the Deadline: the popover is seeded from the detail, saves at the detail's version, closes, and the cell shows the new text", async () => {
     await render();
     expect(deadlineTrigger()!.getAttribute("aria-label")).toBe(`Deadline for ${STREET}: Sun 20 Sep · 15:00`);

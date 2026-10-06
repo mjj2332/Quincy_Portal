@@ -40,3 +40,14 @@ describe("ProjectSheet scrim under impersonation (#531)", () => {
     expect(document.querySelector('[data-testid="project-sheet-scrim"]')!.hasAttribute("data-impersonating")).toBe(false);
   });
 });
+
+describe("ProjectSheet focus (#607)", () => {
+  it("opening focuses the named Project workspace dialog", async () => {
+    await render(false);
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"][aria-labelledby]');
+    expect(dialog).not.toBeNull();
+    expect(document.getElementById(dialog!.getAttribute("aria-labelledby")!)?.textContent).toBe("Project workspace");
+    for (let i = 0; i < 20 && document.activeElement !== dialog; i++) await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
+    expect(document.activeElement).toBe(dialog);
+  });
+});

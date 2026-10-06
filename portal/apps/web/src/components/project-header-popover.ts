@@ -49,8 +49,10 @@ export const DASHED_TRIGGER =
 // is set at the call site alongside this class.
 export const TRIGGER_CHEVRON = "size-[var(--space-4)] shrink-0 stroke-[1.5] text-foreground-secondary";
 
+// `focus-visible:!outline-none`: callers focus the container on open, and base.css's unlayered `:focus-visible` outline would ring it
+// (#598, see NotificationBell). Controls inside keep their own ring.
 export const POPOVER_CONTENT =
-  "w-[360px] max-w-[calc(100vw-2*var(--space-4))] max-h-[var(--available-height)] overflow-y-auto";
+  "w-[360px] max-w-[calc(100vw-2*var(--space-4))] max-h-[var(--available-height)] overflow-y-auto focus-visible:!outline-none";
 
 /**
  * #536: the inner padding of a Deadline popover's read-only panel. `DateTimePopoverContent` is `p-0`

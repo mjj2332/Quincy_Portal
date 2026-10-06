@@ -150,7 +150,8 @@ export function ProjectSheet({ open, kind, sheetKey, backdropHref, onRequestClos
         ref={popupRef}
         initialFocus={() => popupRef.current ?? true}
         finalFocus={finalFocus}
-        className="z-[var(--z-dialog)] gap-0 p-0 bg-background data-[side=right]:inset-[var(--space-5)] data-[side=right]:h-auto data-[side=right]:w-auto data-[side=right]:max-w-none data-[side=right]:sm:max-w-none data-[side=right]:border data-[impersonating]:data-[side=right]:top-[calc(var(--impersonation-banner-height)+var(--space-5))] max-[721px]:data-[side=right]:inset-0 max-[721px]:data-[side=right]:border-0 max-[721px]:data-[impersonating]:data-[side=right]:top-[var(--impersonation-banner-height)] data-ending-style:duration-0"
+        // `focus-visible:!outline-none`: initialFocus lands on the sheet itself; base.css's unlayered `:focus-visible` outline would ring it (#607, see NotificationBell).
+        className="z-[var(--z-dialog)] gap-0 p-0 bg-background focus-visible:!outline-none data-[side=right]:inset-[var(--space-5)] data-[side=right]:h-auto data-[side=right]:w-auto data-[side=right]:max-w-none data-[side=right]:sm:max-w-none data-[side=right]:border data-[impersonating]:data-[side=right]:top-[calc(var(--impersonation-banner-height)+var(--space-5))] max-[721px]:data-[side=right]:inset-0 max-[721px]:data-[side=right]:border-0 max-[721px]:data-[impersonating]:data-[side=right]:top-[var(--impersonation-banner-height)] data-ending-style:duration-0"
         overlayProps={{
           forceRender: true,
           "data-testid": "project-sheet-scrim",

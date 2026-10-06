@@ -194,7 +194,9 @@ export function DateTimePopoverContent({ label, className, children, popupCollis
         target.focus({ preventScroll: true });
         return false;
       }}
-      className={cn("w-auto max-w-[calc(100vw-2*var(--space-4))] max-[721px]:w-[min(calc(100vw-2*var(--space-4)),24rem)] gap-0 overflow-hidden rounded-[var(--radius-card)] p-0", className)}
+      // `focus-visible:!outline-none`: the container takes focus while the detail is pending (initialFocus returns `true`), and
+      // base.css's unlayered `:focus-visible` outline would ring the whole frame; the day and controls keep their ring (#598, see NotificationBell).
+      className={cn("w-auto max-w-[calc(100vw-2*var(--space-4))] max-[721px]:w-[min(calc(100vw-2*var(--space-4)),24rem)] gap-0 overflow-hidden rounded-[var(--radius-card)] p-0 focus-visible:!outline-none", className)}
     >
       <PopupAnchorContext.Provider value={{ zoneId, bodyRef }}>{children}</PopupAnchorContext.Provider>
     </PopoverContent>
