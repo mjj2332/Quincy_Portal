@@ -1331,23 +1331,24 @@ function scanLiteral(source: string, start: number, out: string[]): number {
 }
 
 /** Splits one literal's body into class tokens on whitespace at bracket depth 0 (quotes stay inside a variant). */
-function classTokens(source: string): { variants: string; utility: string }[] {
+function tokenizeLiteral(literal: string): { variants: string; utility: string }[] {
   const tokens: string[] = [];
-  for (const literal of extractLiterals(source)) {
-    let depth = 0;
-    let current = "";
-    for (const c of literal) {
-      if (c === "[" || c === "(") depth++;
-      else if (c === "]" || c === ")") depth = Math.max(0, depth - 1);
-      if (depth === 0 && /\s/.test(c)) {
-        if (current) tokens.push(current);
-        current = "";
-      } else current += c;
-    }
-    if (current) tokens.push(current);
+  let depth = 0;
+  let current = "";
+  for (const c of literal) {
+    if (c === "[" || c === "(") depth++;
+    else if (c === "]" || c === ")") depth = Math.max(0, depth - 1);
+    if (depth === 0 && /\s/.test(c)) {
+      if (current) tokens.push(current);
+      current = "";
+    } else current += c;
   }
+  if (current) tokens.push(current);
   // Tailwind's important modifier is a `!` prefix (v3/v4) or suffix (v4); normalise before matching.
   return tokens.map(splitVariant).map(({ variants, utility }) => ({ variants, utility: utility.replace(/^!/, "").replace(/!$/, "") }));
+}
+function classTokens(source: string): { variants: string; utility: string }[] {
+  return extractLiterals(source).flatMap(tokenizeLiteral);
 }
 const FOCUS_VARIANT = /focus/;
 const BORDER_COLOUR_UTILITY = /^border-(?!0$|transparent$|none$|solid$|\[length)/;
@@ -1373,6 +1374,24 @@ function hasFocusBorderColour(source: string): boolean {
   return FOCUS_BORDER_COLOUR.test(stripSourceComments(source));
 }
 
+/**
+ * A field whose REST border is the dark `--field-border` (ink-900) must not pair a positive
+ * `outline-offset` with the focus outline: the 2px outline sitting 2px outside an already-dark
+ * border is two dark lines (#613 item 3, browser pass: the New shoot street input and the Admin
+ * inline editors). The global `:focus-visible` rule is UNLAYERED and sets `outline-offset: 2px`,
+ * so only an important utility (`focus-visible:!outline-offset-0`) can pull the outline flush
+ * against the border, where it reads as one heavier rule. Checked per class literal.
+ */
+function darkBorderLiteralsWithoutFlushOutline(source: string): string[] {
+  return extractLiterals(source).filter((literal) => {
+    const tokens = tokenizeLiteral(literal);
+    if (!tokens.some((t) => t.variants === "" && t.utility === "border-[var(--field-border)]")) return false;
+    const flush = tokens.some((t) => /focus/.test(t.variants) && t.utility === "outline-offset-0");
+    const positive = tokens.some((t) => /focus/.test(t.variants) && /^outline-offset-(?!0$)/.test(t.utility));
+    return !flush || positive;
+  });
+}
+
 describe("guard: one focus line — no field primitive recolours its border on focus (#613 item 3)", () => {
   it("named field primitives carry no focus-time border colour", () => {
     const offenders = FIELD_PRIMITIVES.filter((file) => hasFocusBorderColour(readFileSync(join(srcDir, file), "utf8")));
@@ -1396,6 +1415,28 @@ describe("guard: one focus line — no field primitive recolours its border on f
     };
     walk(srcDir);
     expect(offenders).toEqual([]);
+  });
+
+  it("a dark rest border (--field-border) pulls the focus outline flush (outline-offset-0)", () => {
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (/\.(ts|tsx)$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
+          for (const literal of darkBorderLiteralsWithoutFlushOutline(readFileSync(full, "utf8"))) offenders.push(`${relative(srcDir, full)}: ${literal.slice(0, 80)}`);
+        }
+      }
+    };
+    walk(srcDir);
+    expect(offenders).toEqual([]);
+  });
+
+  it("the dark-border detector flags a missing or positive offset and passes the flush form", () => {
+    expect(darkBorderLiteralsWithoutFlushOutline('cn("border-[var(--field-border)]", x)')).toHaveLength(1);
+    expect(darkBorderLiteralsWithoutFlushOutline('"border-[var(--field-border)] focus-visible:outline-offset-2"')).toHaveLength(1);
+    expect(darkBorderLiteralsWithoutFlushOutline('"border-[var(--field-border)] focus-visible:!outline-offset-0"')).toHaveLength(0);
+    expect(darkBorderLiteralsWithoutFlushOutline('"border-border focus-visible:outline-offset-2"')).toHaveLength(0);
   });
 
   it("the detector flags the doubled pairing and spares rest, hover and error colours", () => {
