@@ -199,7 +199,7 @@ export function ProductionEventCalendarRail({ date, onDateChange, events, nowCiv
                   >
                     <ItemContent className="min-w-0">
                       <ItemTitle className="truncate">{upNextTitle(event)}</ItemTitle>
-                      <ItemDescription className="text-[length:var(--text-2xs)]">{upNextLabel(event, nowCivil)} · {upNextDetail(event)}</ItemDescription>
+                      <ItemDescription className="max-[721px]:line-clamp-1 text-[length:var(--text-2xs)]">{upNextLabel(event, nowCivil)} · {upNextDetail(event)}</ItemDescription>
                     </ItemContent>
                   </Item>
                 ))}

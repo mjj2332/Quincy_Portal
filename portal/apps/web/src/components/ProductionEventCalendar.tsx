@@ -275,6 +275,8 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
   const iconToggle = useMediaQuery(ICON_TOGGLE_QUERY);
   const phone = phoneViewport && coarsePointer;
   const [railOpen, setRailOpen] = useState(false);
+  // #652: the sheet opens on Close calendar, not Previous month (the first tabbable, since the rail precedes the close).
+  const railCloseRef = useRef<HTMLButtonElement>(null);
   useEffect(() => { if (!narrow) setRailOpen(false); }, [narrow]);
 
   // ---------------------------------------------------------------------------------------------
@@ -720,6 +722,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
               <SheetContent
                 side="left"
                 showCloseButton={false}
+                initialFocus={() => railCloseRef.current ?? true}
                 className="z-[var(--z-dialog)] data-[side=left]:w-[320px] data-[side=left]:max-w-[90vw] gap-0 p-0"
                 data-testid="event-calendar-rail-sheet"
                 overlayProps={{
@@ -736,7 +739,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
                   <SheetDescription className="sr-only">Mini month and up next.</SheetDescription>
                 </SheetHeader>
                 {rail}
-                <SheetCloseButton label="Close calendar" data-testid="event-calendar-rail-sheet-close" />
+                <SheetCloseButton label="Close calendar" data-testid="event-calendar-rail-sheet-close" buttonRef={railCloseRef} />
               </SheetContent>
             </Sheet>
           )}
