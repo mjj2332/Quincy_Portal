@@ -437,7 +437,7 @@
    same rules style the editor (`.rich-text__editor-content`) and the posted body (`.rich-text`), so
    what a writer sees is what a reader gets. The table's inline `min-width` (cells x 96px) comes from
    Tiptap's `cellMinWidth` and `RichTextContent`; the wrapper scrolls it sideways on a phone. */
-.rich-text__embedded-image { display: block; max-width: 100%; max-height: 24rem; height: auto; margin: 0; border-radius: var(--radius-xs); border: var(--border-width-hair) solid var(--border); object-fit: contain; background: var(--surface-sunken); }
+.rich-text__embedded-image { --embedded-image-aspect: 1; display: block; max-width: 100%; max-height: 24rem; height: auto; margin: 0; border-radius: var(--radius-xs); border: var(--border-width-hair) solid var(--border); object-fit: contain; background: var(--surface-sunken); }
 /* #611 — a sized thumbnail (the server gave its pixel size) keeps its aspect ratio under the 24rem height cap: the width is capped at 24rem times the ratio, so a tall portrait is not a wide box holding a narrow picture. */
 .rich-text__embedded-image[data-sized] { aspect-ratio: var(--embedded-image-aspect); max-width: min(100%, calc(24rem * var(--embedded-image-aspect))); }
 .rich-text__embedded-image-node { position: relative; width: fit-content; max-width: 100%; margin: var(--space-2) 0; }
