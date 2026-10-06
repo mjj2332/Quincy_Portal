@@ -83,6 +83,10 @@ describe("link preview card design (#497)", () => {
     expect(readFileSync(join(here, "app.css"), "utf8")).not.toContain("selectednode .rich-text__embedded-video-node > video.rich-text__embedded-video");
     expect(ruleBody(".rich-text__embedded-video-node")).not.toMatch(/border/);
   });
+  it("6f: the composer's failed-preview message gets an explicit ::selection colour, since the global paper-050 text is invisible on the light panel once ProseMirror hides its selection (#592, #497 trap)", () => {
+    const sel = ruleBody(".rich-text__editor-content .rich-text__embedded-video--unavailable ::selection");
+    expect(sel).toMatch(/background:\s*transparent/); expect(sel).toMatch(/color:\s*var\(--foreground-secondary\)/);
+  });
   it("6b: the whiteboard dialog player keeps its full width: no 682px cap, no fixed 16/9 box (#556)", () => {
     const dialog = readFileSync(join(here, "../components/quincy/EmbeddedVideoDialog.tsx"), "utf8");
     expect(dialog).toContain("!max-w-none"); expect(dialog).toContain("!aspect-auto");
