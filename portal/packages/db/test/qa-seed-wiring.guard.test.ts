@@ -249,6 +249,8 @@ describe("guard: no committed SQL artifact, no CI wiring", () => {
     "setup-local.mjs",
     join("test", "qa-seed-wiring.guard.test.ts"),
     join("test", "qa-seed-teardown.test.ts"),
+    // #550: its fixture SQL is fenced on the capability table and the test must quote it to prove the fence.
+    join("test", "local-fixtures-picker-people.guard.test.ts"),
   ]);
   const SCANNABLE_EXTENSIONS = [".ts", ".mjs", ".js"];
   const SKIPPED_DIRECTORY_NAMES = new Set(["node_modules", ".git", "migrations", "seed"]); // covered by their own dedicated checks above

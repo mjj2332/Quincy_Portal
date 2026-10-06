@@ -318,7 +318,9 @@ npm run fixtures:picker-people:apply     # idempotent (INSERT OR IGNORE)
 npm run fixtures:picker-people:remove    # deletes by the qa550- ids only
 ```
 
+Every statement in both files is fenced on the local capability table (the same fence qa-seed uses), so against a database without it, production included, they fail with `no such table` and change nothing.
+
 Remove the fixture before `qa:verify`/`qa:apply` if you want an untouched `user` table. If the app attached
 rows to the project (activity, comments), the project delete is refused by its foreign keys; reset the local D1
 instead. `local-fixtures-picker-people.guard.test.ts` pins the `--local` flag, that no workflow or script runs
-the file, and that the SQL can only touch `qa550-` ids. It cannot stop a hand-typed `--remote`.
+the file, and that the SQL can only touch `qa550-` ids. The guard also runs both files against a migrated and seeded in-memory DB with, without, and with-the-table-but-no-row capability.

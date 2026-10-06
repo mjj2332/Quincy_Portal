@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { freshFixtureDatabase, type SqliteDatabase } from "./qa-seed-sqlite-executor";
 
 const dbDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const repoRoot = resolve(dbDir, "../../..");
@@ -53,15 +54,69 @@ describe("guard: the picker-people QA fixture is local-only and cannot touch rea
   });
 
   it("every id the SQL inserts or deletes is qa550-prefixed, and no other statement kinds appear", () => {
-    const ids = [...apply.matchAll(/^\s*\('((?:[^']|'')*)'/gm)].map((match) => match[1]!);
-    expect(ids.length).toBeGreaterThan(5);
-    for (const id of ids) expect(id, id).toMatch(/^qa550-/);
+    const ids = [...apply.matchAll(/^SELECT '(qa550-[^']*)'/gm)].map((match) => match[1]!);
+    expect(ids).toHaveLength(11); // 5 users, 1 project, 5 members
     const statements = (sql: string) => sql.replace(/--.*$/gm, "").split(";").map((s) => s.trim()).filter(Boolean);
-    for (const statement of statements(apply)) expect(statement).toMatch(/^INSERT OR IGNORE INTO (user|projects|project_members) /);
+    for (const statement of statements(apply)) {
+      expect(statement).toMatch(/^INSERT OR IGNORE INTO (user|projects|project_members) /);
+      expect(statement).toMatch(/^SELECT 'qa550-/m);
+    }
     for (const statement of statements(remove)) {
       expect(statement).toMatch(/^DELETE FROM (user|projects|project_members) WHERE /);
       expect(statement).toMatch(/'qa550-/);
     }
+  });
+
+  it("every statement carries the local capability fence", () => {
+    const fence = "EXISTS (SELECT 1 FROM __quincy_local_capability WHERE capability = 'scheduling-fixtures')";
+    for (const sql of [apply, remove]) {
+      const statements = sql.replace(/--.*$/gm, "").split(";").map((s) => s.trim()).filter(Boolean);
+      expect(statements.length).toBeGreaterThan(2);
+      for (const statement of statements) expect(statement, statement).toContain(fence);
+    }
+  });
+
+  describe("behaviour against a migrated + seeded database", () => {
+    const counts = (db: SqliteDatabase) => db.prepare(
+      "SELECT (SELECT count(*) FROM user WHERE id LIKE 'qa550-%') AS users, (SELECT count(*) FROM projects WHERE id LIKE 'qa550-%') AS projects, (SELECT count(*) FROM project_members WHERE id LIKE 'qa550-%') AS members, (SELECT count(*) FROM user) AS all_users",
+    ).get() as Record<string, number>;
+
+    it("with the capability: applies, is idempotent, and removes cleanly", () => {
+      const db = freshFixtureDatabase();
+      try {
+        const before = counts(db).all_users!;
+        db.exec(apply);
+        db.exec(apply);
+        expect(counts(db)).toMatchObject({ users: 5, projects: 1, members: 5, all_users: before + 5 });
+        db.exec(remove);
+        expect(counts(db)).toMatchObject({ users: 0, projects: 0, members: 0, all_users: before });
+      } finally { db.close(); }
+    });
+
+    it("WITHOUT the capability table: both files fail and change nothing (as against production)", () => {
+      const db = freshFixtureDatabase();
+      try {
+        db.exec("DROP TABLE __quincy_local_capability");
+        const before = counts(db);
+        expect(() => db.exec(apply)).toThrow(/no such table: __quincy_local_capability/);
+        expect(() => db.exec(remove)).toThrow(/no such table: __quincy_local_capability/);
+        expect(counts(db)).toEqual(before);
+      } finally { db.close(); }
+    });
+
+    it("with the table but not the capability row: both files are no-ops", () => {
+      const db = freshFixtureDatabase();
+      try {
+        db.exec("DELETE FROM __quincy_local_capability");
+        db.exec(apply);
+        expect(counts(db)).toMatchObject({ users: 0, projects: 0, members: 0 });
+        db.exec("INSERT INTO __quincy_local_capability (capability, schema_version) VALUES ('scheduling-fixtures', 1)");
+        db.exec(apply);
+        db.exec("DELETE FROM __quincy_local_capability");
+        db.exec(remove);
+        expect(counts(db)).toMatchObject({ users: 5, projects: 1, members: 5 }); // remove did nothing
+      } finally { db.close(); }
+    });
   });
 
   it("is documented in Local-QA-Fixtures.md with both commands", () => {
