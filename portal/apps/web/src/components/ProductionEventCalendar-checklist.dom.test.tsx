@@ -16,7 +16,7 @@ if (!Element.prototype.getAnimations) {
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PRODUCTION_CALENDAR_ZONE, type ChecklistCalendarEventDto, type ChecklistScheduleDto, type ProductionCalendarProjectBounds } from "@quincy/shared";
-import { applyPopup, openFieldPopup, pickPopupDay, pickRangeEnd, popupButton, pressInPopup, pressRangeFold, rangeToggles, typePopupTime } from "../testing/date-time-popup";
+import { applyPopup, dateTimePopup, pickPopupDay, pickRangeEnd, popupButton, pressInPopup, pressRangeFold, rangeToggles, typePopupTime } from "../testing/date-time-popup";
 import { ProjectQueryRuntime } from "../lib/project-query-sync";
 import { eventCalendarFake } from "../testing/event-calendar-fake";
 import { subtaskReminders } from "@/testing/subtask-schedule";
@@ -46,6 +46,7 @@ import {
   json,
   liveRegion,
   mainRangeQuery,
+  openEditSchedule,
   openReschedule,
   proposeUpdate,
   setValue,
@@ -70,6 +71,11 @@ const day = (date: string) => at(`${date}T00:00`);
 let h: Harness;
 beforeEach(() => { h = createHarness(); });
 afterEach(() => { h.teardown(); });
+
+/** The Calendar item picker for an event, by its name (#583): null once it has closed. */
+function pickerFor(event: ChecklistCalendarEventDto): HTMLElement | null {
+  return dateTimePopup(`Schedule for ${event.title}, ${event.project.street}`);
+}
 
 function scheduleOf(call: { body: unknown }) {
   return (call.body as { schedule: { expectedVersion: number; schedule: unknown } }).schedule;
@@ -107,17 +113,18 @@ describe("ProductionEventCalendar checklist writes", () => {
     const event = oneDayEvent(dated("2026-08-12"), { id: "checklist:" });
     const fetch = await mount([event]);
     expect(fetch.rangeGets()).toHaveLength(1);
-    await openReschedule("checklist:");
+    const popup = await openEditSchedule("checklist:");
     expect(byLabel("Checklist schedule state")).toBeNull();
-    expect(document.querySelector('[data-testid="event-calendar-schedule-editor"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="event-calendar-schedule-editor"]'), "the picker, not the sheet (#583)").toBeNull();
 
     h.client.setQueryData(mainRangeQuery(h.client).queryKey, rangeResponse({ events: [{ ...event, title: "Queued update" }] }));
     await flush(0);
 
-    await clickTestId("event-calendar-schedule-submit");
+    await pickPopupDay(popup, "2026-08-14");
+    await applyPopup(popup);
     expect(fetch.patches()).toHaveLength(0);
     expect(liveRegion()).toContain("That schedule change isn't valid.");
-    expect(document.querySelector('[data-testid="event-calendar-schedule-editor"]')?.hasAttribute("data-open") ?? false).toBe(false);
+    expect(pickerFor(event)).toBeNull();
     expect(document.querySelector('[data-testid="event-calendar-fold-submit"]')).toBeNull();
     await flush(10);
     expect(fetch.rangeGets()).toHaveLength(2);
@@ -242,13 +249,12 @@ describe("ProductionEventCalendar checklist writes", () => {
     expect(liveRegion()).toContain("Warning: Ends after the project deadline.");
   });
 
-  it("#423: the schedule sheet's popup offers the Project default from the bounds and resets the range to it", async () => {
+  it("#423: the schedule picker offers the Project default from the bounds and resets the range to it", async () => {
     const event = oneDayEvent(dated("2026-08-12"));
     await mount([event], {
       projectBounds: [{ projectId: PROJECT_ID, shootDate: "2026-08-01", createdAt: "2026-07-01T00:00:00.000Z", deadlineLocalCivil: "2026-08-14T17:00", deadlineFold: 0 }],
     });
-    await openReschedule(ID);
-    const popup = await openFieldPopup("Schedule");
+    const popup = await openEditSchedule(ID);
     expect(popupButton(popup, "Project default")).toBeDefined();
     expect(rangeToggles(popup)).not.toMatchObject({ start: "Sat 1 Aug · 09:00", end: "Fri 14 Aug · 17:00" });
     await pressInPopup(popup, "Project default");
@@ -292,13 +298,15 @@ describe("ProductionEventCalendar checklist writes", () => {
     expect(fetch.patches()).toHaveLength(1);
   });
 
-  it("preserves richer external assignee metadata through a no-op PATCH (editor save)", async () => {
+  it("preserves richer external assignee metadata through an unchanged-assignee PATCH (picker save)", async () => {
     const base = oneDayEvent(dated("2026-08-12"));
     const assignee = { ...ASSIGNEE, isExternal: true, roleLabel: "External Editor" };
     const event = { ...base, assignees: [assignee] } as ChecklistCalendarEventDto;
     const fetch = await mount([event], { patch: () => json(checklistMutationBody(event, event.schedule)) });
-    await openReschedule(ID);
-    await clickTestId("event-calendar-schedule-submit");
+    const popup = await openEditSchedule(ID);
+    // An untouched Apply is a no-op (#583); a one-day move saves a PATCH whose response carries the same assignees.
+    await pickPopupDay(popup, "2026-08-13");
+    await applyPopup(popup);
     await flush(5);
     expect(fetch.patches()).toHaveLength(1);
     const rendered = eventCalendarFake.event(ID)?.data as { dto: ChecklistCalendarEventDto } | undefined;
@@ -409,14 +417,12 @@ describe("ProductionEventCalendar checklist writes", () => {
   it("re-PATCHes a dual-fold range editor save with both choices and the source version", async () => {
     const event = rangeEvent(timed("2026-08-12T10:00"), timed("2026-08-12T11:00"), { version: 7 });
     const fetch = await mount([event]);
-    await openReschedule(ID);
-    const popup = await openFieldPopup("Schedule");
+    const popup = await openEditSchedule(ID);
     await pickPopupDay(popup, "2026-04-05"); await pickPopupDay(popup, "2026-04-05");
     await pickRangeEnd(popup, "Start"); await typePopupTime(popup, "02:30");
     await pickRangeEnd(popup, "End"); await typePopupTime(popup, "02:30");
     await pressRangeFold(popup, "Start", "Earlier"); await pressRangeFold(popup, "End", "Later");
     await applyPopup(popup);
-    await clickTestId("event-calendar-schedule-submit");
     expect(fetch.patches()).toHaveLength(1);
     expect(fetch.patches()[0]!.body).toEqual({ schedule: { expectedVersion: 7, schedule: { state: "range", start: { localCivil: "2026-04-05T02:30", disambiguation: "earlier" }, end: { localCivil: "2026-04-05T02:30", disambiguation: "later" } } } });
     expect(JSON.stringify(fetch.patches()[0]!.body)).not.toContain("dueDate");
@@ -425,24 +431,21 @@ describe("ProductionEventCalendar checklist writes", () => {
   it("opens a one-day entry as a range of two moments and saves the extended range (#340, #423)", async () => {
     const event = oneDayEvent(dated("2026-08-12"), { version: 4 });
     const fetch = await mount([event], { patch: () => json(checklistMutationBody(event, rangeSchedule(dated("2026-08-12"), dated("2026-08-13"), 5))) });
-    await openReschedule(ID);
-    const popup = await openFieldPopup("Schedule");
+    const popup = await openEditSchedule(ID);
     expect(rangeToggles(popup)).toEqual({ active: "Start", start: "Wed 12 Aug · 09:00", end: "Wed 12 Aug · 17:00" });
     await pickRangeEnd(popup, "End"); await pickPopupDay(popup, "2026-08-13"); await applyPopup(popup);
-    await clickTestId("event-calendar-schedule-submit");
     expect(scheduleOf(fetch.patches()[0]!)).toEqual({ expectedVersion: 4, schedule: { state: "range", start: { localCivil: "2026-08-12T09:00" }, end: { localCivil: "2026-08-13T17:00" } } });
   });
 
   it("retains the editor draft after a schedule-version conflict and never retries", async () => {
     const event = oneDayEvent(dated("2026-08-12"));
     const fetch = await mount([event], { patch: () => json({ code: "subtask_schedule_version_conflict", message: "conflict" }, 409) });
-    await openReschedule(ID);
-    const popup = await openFieldPopup("Schedule");
+    const popup = await openEditSchedule(ID);
     await pickRangeEnd(popup, "End"); await pickPopupDay(popup, "2026-08-15"); await applyPopup(popup);
-    await clickTestId("event-calendar-schedule-submit");
     await flush(10);
     expect(fetch.patches()).toHaveLength(1);
-    expect(rangeToggles(await openFieldPopup("Schedule")).end).toBe("Sat 15 Aug · 17:00");
+    // The inline session reopens on the retained draft (#372, #583): the same picker, End still 15 Aug.
+    expect(rangeToggles(pickerFor(event)!).end).toBe("Sat 15 Aug · 17:00");
     expect(liveRegion()).toContain("changed elsewhere");
   });
 
@@ -468,10 +471,10 @@ describe("ProductionEventCalendar checklist writes", () => {
   it("refuses a checklist command while its schedule editor owns the shared lock", async () => {
     const event = oneDayEvent(dated("2026-08-12"));
     const fetch = await mount([event]);
-    await openReschedule(ID);
+    const popup = await openEditSchedule(ID);
     await proposeUpdate(ID, { start: day("2026-08-14"), allDay: true });
     expect(fetch.patches()).toHaveLength(0);
-    await clickTestId("event-calendar-schedule-cancel");
+    await pressInPopup(popup, "Cancel");
   });
 
   it("sets the settle gate only for a changed response, then clears it after one refetch", async () => {
@@ -540,8 +543,8 @@ describe("ProductionEventCalendar checklist writes", () => {
   it("returns focus to the chip button around the chip content after a cancelled command", async () => {
     const event = oneDayEvent(dated("2026-08-12"));
     await mount([event]);
-    await openReschedule(ID);
-    await clickTestId("event-calendar-schedule-cancel");
+    const popup = await openEditSchedule(ID);
+    await pressInPopup(popup, "Cancel");
     await flush(5);
     const active = document.activeElement as HTMLElement | null;
     expect(active?.tagName).toBe("BUTTON");
@@ -554,10 +557,12 @@ describe("ProductionEventCalendar checklist editor Range option", () => {
     const event = rangeEvent(dated("2026-08-12"), dated("2026-08-13"));
     stubCalendarFetch({ range: rangeResponse({ events: [event] }) });
     await h.render(calendarState("month"));
-    await openReschedule(ID);
+    const popup = await openEditSchedule(ID);
     expect(byLabel("Checklist schedule state")).toBeNull();
-    expect(document.querySelectorAll('input[type="date"], input[type="time"], input[type="radio"], select')).toHaveLength(0);
-    expect(rangeToggles(await openFieldPopup("Schedule")).start).toBe("Wed 12 Aug · 09:00");
+    expect(document.querySelectorAll('input[type="date"], input[type="time"], input[type="radio"]')).toHaveLength(0);
+    // The picker's own month and year are the only selects (#423: no native date fields).
+    expect([...document.querySelectorAll("select")].every((select) => popup.contains(select))).toBe(true);
+    expect(rangeToggles(popup).start).toBe("Wed 12 Aug · 09:00");
   });
 
 });

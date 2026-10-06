@@ -12,6 +12,12 @@ export type CalendarInteractionSource = CalendarEventDto | ProjectCalendarUnsche
 export type CalendarFocusDescriptor = {
   eventId: string;
   control: "event" | "move-reschedule" | "recovery" | "safe-fallback";
+  /**
+   * #583: move focus only if it was LOST (on `<body>`, disconnected or disabled). An inline schedule picker (the Gantt's Due cell and bar,
+   * the Calendar's chip picker) is a popover that closes on an outside press: the press may have landed on another control, and the
+   * controller must not pull focus off it. A non-inline session (a dialog or sheet) is modal, so it always restores focus.
+   */
+  ifLost?: boolean;
 };
 
 /** An interaction-start copy of the accepted response, never a query-cache reference. */

@@ -7,7 +7,7 @@ import { focusManager, QueryObserver, useQueryClient } from "@tanstack/react-que
 import { ProjectWorkspace } from "./ProjectWorkspace";
 import type { WorkspaceAsset } from "../components/PhotoGrid";
 import { ApiError } from "../lib/api";
-import { chooseCommentAction } from "../testing/comment-menu";
+import { chooseCommentAction, confirmCommentDelete } from "../testing/comment-menu";
 import { QuincyQueryProvider } from "../lib/query-client";
 import { createProjectDataInvalidationMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
 import { projectAssetsQueryOptions, projectDataKeys } from "../lib/project-data";
@@ -1952,8 +1952,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
     const initialCalls = commentListCalls;
     apiDeleteMock.mockRejectedValueOnce(new ApiError("Only the author can delete this comment.", 403));
-    confirmMock.mockResolvedValue(true);
-    await chooseCommentAction(host, "Owner", "Delete"); await flush(20);
+    await chooseCommentAction(host, "Owner", "Delete"); await confirmCommentDelete(); await flush(20);
     expect(commentListCalls).toBeGreaterThan(initialCalls);
     expect(host.querySelector('[data-testid="project-workspace"]')).not.toBeNull();
     expect(host.textContent).not.toContain("Project unavailable.");
@@ -1976,8 +1975,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     });
     await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
     apiDeleteMock.mockRejectedValueOnce(new ApiError("Comment missing", 404));
-    confirmMock.mockResolvedValue(true);
-    await chooseCommentAction(host, "Owner", "Delete"); await flush(20);
+    await chooseCommentAction(host, "Owner", "Delete"); await confirmCommentDelete(); await flush(20);
     expect(commentListCalls).toBeGreaterThan(1);
     expect(host.textContent).toContain("Project unavailable.");
     expect(queryClient!.getQueryData(projectDataKeys.detail("p1"))).toBeUndefined();
@@ -2014,9 +2012,8 @@ describe("ProjectWorkspace collaboration relocation", () => {
       await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
     } else {
       apiDeleteMock.mockRejectedValueOnce(new ApiError("Only the author can delete this comment.", 403));
-      confirmMock.mockResolvedValue(true);
       await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
-      await chooseCommentAction(host, "Owner", "Delete");
+      await chooseCommentAction(host, "Owner", "Delete"); await confirmCommentDelete();
     }
     await flush(20);
     expect(commentListCalls).toBeGreaterThan(1);
