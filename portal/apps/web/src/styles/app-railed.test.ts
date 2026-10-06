@@ -520,6 +520,14 @@ describe("header-relative offsets derive from --shell-header-height (#113)", () 
     expect(appCss.indexOf(`${sel} {`)).toBeGreaterThan(appCss.indexOf(".project-sheet__body .worktools {"));
     expect(appCss.indexOf(`@media (max-width: 720px) {\n  ${sel}`)).toBeGreaterThan(appCss.indexOf(`${sel} {`));
   });
+  // #613 (below): the tab row.
+  // Same clearance as the title (#460): the whiteboard button at the row's end scrolled into the 44px close button's column.
+  const sel = ".project-sheet__body .project-header__tabrow";
+  it("reserves the close button's width on the tab row's inline end, in step with the header's padding", () => {
+    expect(ruleBody(appCss, sel) ?? "").toMatch(/padding-inline-end:\s*calc\(var\(--space-4\) \+ 44px \+ var\(--space-2\) - var\(--space-6\)\)/);
+    expect(mediaRule("720px", sel) ?? "").toMatch(/padding-inline-end:\s*calc\(var\(--space-4\) \+ 44px \+ var\(--space-2\) - var\(--space-4\)\)/);
+    expect(appCss.indexOf(`@media (max-width: 720px) {\n  ${sel}`)).toBeGreaterThan(appCss.indexOf(`${sel} {`));
+  });
 });
 
 describe("Project header tab strip clearance (#514)", () => {
@@ -528,5 +536,13 @@ describe("Project header tab strip clearance (#514)", () => {
   });
   it("scroll-pads the strip so an auto-revealed tab lands with the same margin", () => {
     expect(ruleBody(appCss, ".project-header__tabs") ?? "").toMatch(/scroll-padding-inline:\s*var\(--space-2\)\s*;/);
+  });
+});
+
+describe("Project sheet body scroll anchoring (#613)", () => {
+  // jsdom has no scroll anchoring, so the rule is the pin: swapping a short tab panel in clamps the body's scrollTop, and
+  // anchoring then carried it to the bottom of the long panel when the user returned to it.
+  it("turns scroll anchoring off on the sheet body", () => {
+    expect(ruleBody(appCss, ".project-sheet__body") ?? "").toMatch(/overflow-anchor:\s*none\s*;/);
   });
 });

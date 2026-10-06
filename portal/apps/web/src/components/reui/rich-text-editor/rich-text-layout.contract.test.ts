@@ -48,9 +48,11 @@ describe("rich-text editor layout contracts", () => {
   });
 
   it("the toolbar's scroll-fade mask applies at every width (the desktop tier-none fallback overflows too); only touch targets are phone-only", () => {
-    const source = read("rich-text-toolbar.tsx");
+    // The mask classes live in the shared hook module (#613); the toolbar must apply them unscoped.
+    expect(read("rich-text-toolbar.tsx")).toContain("SCROLL_FADE_MASK_CLASSES,");
+    const source = readFileSync(new URL("../../../lib/use-scroll-fade.ts", import.meta.url), "utf8");
     for (const fade of ["end", "start", "both"]) {
-      expect(source).toContain(` data-[fade=${fade}]:[mask-image:`);
+      expect(source).toContain(`data-[fade=${fade}]:[mask-image:`);
       expect(source).not.toContain(`max-[721px]:data-[fade=${fade}]`);
     }
     expect(read("rich-text-table.tsx")).toContain("max-[721px]:size-11");
