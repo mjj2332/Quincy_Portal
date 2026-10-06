@@ -47,7 +47,7 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
 }
 
 function TableHead({ className, ...props }: React.ComponentProps<"thead">) {
-  return <thead role="rowgroup" data-slot="table-head" className={cn("max-[721px]:block max-[721px]:sr-only", className)} {...props} />;
+  return <thead role="rowgroup" data-slot="table-head" className={cn("max-[721px]:sr-only", className)} {...props} />;
 }
 
 function TableBody({ className, ...props }: React.ComponentProps<"tbody">) {

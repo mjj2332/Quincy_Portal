@@ -1490,10 +1490,10 @@ describe("guard: one focus line — no field primitive recolours its border on f
  * scroller inline padding from the spacing token so the outline has room.
  * Item 4 (the icon over the Agent email value) is a browser extension's `<shark-icon-container>`,
  * not an app defect; nothing in the app is changed for it.
- * Follow-ups: an unbreakable long address sized the Email column (461px at 1280) and pushed the
- * actions column out of the wrapper, so Email cells wrap anywhere. The phone-width `TableHead` is
- * visually hidden with `sr-only`, which does not apply to a `table-header-group` (overflow is
- * ignored), so its columns still laid out and scrolled the page 72px at 390: it is made a block.
+ * Follow-up: an unbreakable long address sized the Email column (461px at 1280, pushing the
+ * actions column out of the wrapper) and overflowed the stacked card at 390 (page scrolled
+ * sideways). `[overflow-wrap:anywhere]` on the Email cells fixes both; `break-word` would not,
+ * because it leaves the column's min-content width unchanged so the 1280 overflow would return.
  */
 describe("guard: Admin inline editors keep their focus outline and value clear (#633)", () => {
   const admin = readFileSync(join(srcDir, "screens/Admin.tsx"), "utf8");
@@ -1507,11 +1507,5 @@ describe("guard: Admin inline editors keep their focus outline and value clear (
     const cells = admin.split("\n").flatMap((l) => l.match(/<TableCell data-label="Email"[^>]*>/g) ?? []);
     expect(cells.length).toBeGreaterThanOrEqual(2);
     for (const c of cells) expect(c).toMatch(/\[overflow-wrap:anywhere\]/);
-  });
-  it("the phone-width TableHead is a block when hidden, so sr-only clips it", () => {
-    const table = readFileSync(join(srcDir, "components/quincy/Table.tsx"), "utf8");
-    const head = table.split("\n").find((l) => l.includes('data-slot="table-head"')) ?? "";
-    expect(head).toMatch(/max-\[721px\]:sr-only/);
-    expect(head).toMatch(/max-\[721px\]:block/);
   });
 });
