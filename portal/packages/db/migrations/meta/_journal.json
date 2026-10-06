@@ -449,6 +449,13 @@
       "when": 1789700000000,
       "tag": "0063_embedded_media_heic_rendition",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "6",
+      "when": 1789800000000,
+      "tag": "0064_drop_projects_board_position",
+      "breakpoints": true
     }
   ]
 }

@@ -450,15 +450,15 @@ describe("processTonomoEvent create — default editors (#135)", () => {
     await insertUser(flaggedInactiveEditorId, "TB135 Tonomo Inactive Editor", `tb135-tonomo-inactive-${flaggedInactiveEditorId}@example.test`, "editor", false, true);
     await insertUser(flaggedPhotographerId, "TB135 Tonomo Flagged Photographer", `tb135-tonomo-photographer-${flaggedPhotographerId}@example.test`, "photographer", true, true);
 
-    // A non-empty Awaiting RAW column with a high stored position: Tonomo no longer writes a position.
+    // A non-empty Awaiting RAW column a crowded column: Tonomo writes no Board position.
     const crowdedAt = Date.now();
-    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, board_revision, created_at, updated_at) VALUES (?, 'Crowded awaiting RAW', 'awaiting_raw', 4096, 0, ?, ?)").bind(crypto.randomUUID(), crowdedAt, crowdedAt).run();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_revision, created_at, updated_at) VALUES (?, 'Crowded awaiting RAW', 'awaiting_raw', 0, ?, ?)").bind(crypto.randomUUID(), crowdedAt, crowdedAt).run();
     const before = Date.now();
     const { orderId, projectId } = await processCreateEvent({});
 
-    // The project row itself still goes in with ms timestamps, awaiting_raw, revision 0 and the column default position.
-    const created = await database.DB.prepare("SELECT stage_key AS stageKey, board_position AS boardPosition, board_revision AS boardRevision, created_at AS createdAt, updated_at AS updatedAt FROM projects WHERE id = ?").bind(projectId).first<{ stageKey: string; boardPosition: number; boardRevision: number; createdAt: number; updatedAt: number }>();
-    expect(created).toMatchObject({ stageKey: "awaiting_raw", boardRevision: 0, boardPosition: 0 });
+    // The project row itself still goes in with ms timestamps, awaiting_raw, revision 0.
+    const created = await database.DB.prepare("SELECT stage_key AS stageKey, board_revision AS boardRevision, created_at AS createdAt, updated_at AS updatedAt FROM projects WHERE id = ?").bind(projectId).first<{ stageKey: string; boardRevision: number; createdAt: number; updatedAt: number }>();
+    expect(created).toMatchObject({ stageKey: "awaiting_raw", boardRevision: 0 });
     expect(created!.createdAt).toBeGreaterThanOrEqual(before);
     expect(created!.updatedAt).toBe(created!.createdAt);
 

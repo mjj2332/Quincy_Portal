@@ -8,7 +8,6 @@ import {
   NORMATIVE_STAGE_MOVE_SQL,
   NORMATIVE_TERMINAL_ASSERTION_SQL,
   buildStageWinner,
-  rollbackBoardOrder0037PreEnable,
 } from "../src";
 import {
   BREAKPOINT,
@@ -198,105 +197,6 @@ describe("TB5A Slice 8 consolidated migration and SQL proof", { timeout: 30_000 
         db.close();
       }
     });
-  });
-
-  it("rolls back every captured position or none when the pre-enable row fence drifts", async () => {
-    const db = localSqlite();
-    try {
-      db.exec("PRAGMA foreign_keys = ON");
-      applyThrough(db, 36);
-      for (const project of [
-        { id: "rollback-a", stageKey: "awaiting_raw", priority: 1, boardPosition: 20 },
-        { id: "rollback-b", stageKey: "awaiting_raw", priority: 2, boardPosition: 10 },
-      ]) seedLegacyProject(db, project);
-      const original = db.prepare("SELECT id, stage_key, priority, board_position FROM projects ORDER BY id").all();
-      applyMigration(db, MIGRATION_NAME);
-      const normalized = db.prepare("SELECT id, board_position, board_revision FROM projects ORDER BY id").all();
-      const oldPositions = new Map((db.prepare("SELECT project_id, old_board_position FROM project_board_order_0037_rollback").all() as SqliteRow[]).map((row) => [row.project_id, row.old_board_position]));
-      await expect(rollbackBoardOrder0037PreEnable(localD1(db))).resolves.toEqual({ rolledBack: 2 });
-      expect(db.prepare("SELECT id, stage_key, priority, board_position FROM projects ORDER BY id").all()).toEqual(original);
-      expect(db.prepare("SELECT id, board_revision FROM projects ORDER BY id").all()).toEqual(normalized.map((row) => ({ id: row.id, board_revision: 1 })));
-      expect(oldPositions.size).toBe(2);
-
-      db.close();
-      const drifted = localSqlite();
-      try {
-        drifted.exec("PRAGMA foreign_keys = ON");
-        applyThrough(drifted, 36);
-        seedLegacyProject(drifted, { id: "drift-a", stageKey: "awaiting_raw", priority: 1, boardPosition: 20 });
-        seedLegacyProject(drifted, { id: "drift-b", stageKey: "awaiting_raw", priority: 2, boardPosition: 10 });
-        applyMigration(drifted, MIGRATION_NAME);
-        const before = drifted.prepare("SELECT id, stage_key, board_position, board_revision FROM projects ORDER BY id").all();
-        drifted.prepare("UPDATE projects SET board_revision = 2 WHERE id = 'drift-a'").run();
-        await expect(rollbackBoardOrder0037PreEnable(localD1(drifted))).rejects.toThrow();
-        expect(drifted.prepare("SELECT id, stage_key, board_position, board_revision FROM projects ORDER BY id").all()).toEqual(before.map((row) => row.id === "drift-a" ? { ...row, board_revision: 2 } : row));
-        expect(objectExists(drifted, "table", "_tb5a_0037_position_rollback_guard")).toBe(false);
-      } finally {
-        drifted.close();
-      }
-      return;
-    } finally {
-      try {
-        db.close();
-      } catch {
-        // The happy-path connection is intentionally closed before the drift case.
-      }
-    }
-  });
-
-  it("refuses rollback when a flag-off project was created after capture", async () => {
-    const db = localSqlite();
-    try {
-      db.exec("PRAGMA foreign_keys = ON");
-      applyThrough(db, 36);
-      seedLegacyProject(db, { id: "captured", stageKey: "awaiting_raw", boardPosition: 20 });
-      applyMigration(db, MIGRATION_NAME);
-      seedContractProject(db, { id: "post-capture", stageKey: "awaiting_raw", boardPosition: 2048, boardRevision: 0 });
-      const before = db.prepare("SELECT id, board_position, board_revision FROM projects ORDER BY id").all();
-
-      await expect(rollbackBoardOrder0037PreEnable(localD1(db))).rejects.toThrow();
-      expect(db.prepare("SELECT id, board_position, board_revision FROM projects ORDER BY id").all()).toEqual(before);
-      expect(objectExists(db, "table", "_tb5a_0037_position_rollback_guard")).toBe(false);
-    } finally {
-      db.close();
-    }
-  });
-
-  it("refuses rollback after a Board mutation even when flag updater evidence is deleted", async () => {
-    const db = localSqlite();
-    try {
-      db.exec("PRAGMA foreign_keys = ON");
-      applyThrough(db, 36);
-      seedLegacyProject(db, { id: "history", stageKey: "awaiting_raw", boardPosition: 20 });
-      applyMigration(db, MIGRATION_NAME);
-      db.prepare("UPDATE projects SET board_revision = 2 WHERE id = 'history'").run();
-      db.prepare("UPDATE feature_flags SET enabled = 0, updated_by = NULL WHERE key = 'tb5a_board_contract_enabled'").run();
-      const before = db.prepare("SELECT id, board_position, board_revision FROM projects ORDER BY id").all();
-
-      await expect(rollbackBoardOrder0037PreEnable(localD1(db))).rejects.toThrow();
-      expect(db.prepare("SELECT id, board_position, board_revision FROM projects ORDER BY id").all()).toEqual(before);
-      expect(objectExists(db, "table", "_tb5a_0037_position_rollback_guard")).toBe(false);
-    } finally {
-      db.close();
-    }
-  });
-
-  it("refuses rollback when every captured row is at revision one but one capture row is missing", async () => {
-    const db = localSqlite();
-    try {
-      db.exec("PRAGMA foreign_keys = ON");
-      applyThrough(db, 36);
-      seedLegacyProject(db, { id: "captured", stageKey: "awaiting_raw", boardPosition: 20 });
-      applyMigration(db, MIGRATION_NAME);
-      seedContractProject(db, { id: "missing-capture", stageKey: "awaiting_raw", boardPosition: 2048, boardRevision: 1 });
-      const before = db.prepare("SELECT id, board_position, board_revision FROM projects ORDER BY id").all();
-
-      await expect(rollbackBoardOrder0037PreEnable(localD1(db))).rejects.toThrow();
-      expect(db.prepare("SELECT id, board_position, board_revision FROM projects ORDER BY id").all()).toEqual(before);
-      expect(objectExists(db, "table", "_tb5a_0037_position_rollback_guard")).toBe(false);
-    } finally {
-      db.close();
-    }
   });
 
   it("executes the mover-only winner on the migrated chain and pins fence materialization", async () => {

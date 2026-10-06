@@ -54,7 +54,7 @@ async function call(who: Who, method: "GET" | "POST" | "PATCH" | "DELETE", path:
 async function seedProject(archived: boolean): Promise<string> {
   const projectId = crypto.randomUUID(); const now = Date.now();
   await database.DB.batch([
-    database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Original Street', 'editing_autohdr', 0, ?, ?)").bind(projectId, now, now),
+    database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Original Street', 'editing_autohdr', ?, ?)").bind(projectId, now, now),
     database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, editorId, now),
   ]);
   if (archived) await database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), projectId).run();
