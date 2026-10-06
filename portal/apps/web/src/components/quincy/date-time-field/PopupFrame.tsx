@@ -11,32 +11,45 @@ const SELECTED = '[aria-selected="true"] button, [role="group"][aria-label="Time
 
 /**
  * #537 — the body opens at scroll 0 (#528) with its bottom edge faded, so a selected day or time slot
- * sitting there reads muddy. Nudges the body down by the least amount that clears the fade, and only
- * until the person scrolls it themselves. The body's height settles after Base UI positions the popup,
- * so it re-runs when the body is resized.
+ * sitting there reads muddy. This nudges the body down by the least amount that clears the fade.
+ *
+ * Opt-out rule: once the person scrolls the body themselves, the AUTOMATIC nudge (mount, and the
+ * resize that follows Base UI sizing the popup) stops. A change of selection is not an automatic
+ * nudge, and a click is not a manual scroll: whenever the selection changes (a day, a time slot) the
+ * newly selected item is always cleared of the fade, scrolling further down from where the body is
+ * and never back up.
  */
 function useSelectedClearOfFade(contentRef: RefObject<HTMLDivElement | null>) {
   useLayoutEffect(() => {
-    const viewport = contentRef.current?.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
-    if (!viewport) return;
+    const content = contentRef.current;
+    const viewport = content?.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
+    if (!content || !viewport) return;
     let applied = 0;
-    const clear = () => {
-      if (viewport.scrollTop !== applied) { observer?.disconnect(); return; } // the person scrolled
+    const measure = () => {
       const probe = document.createElement("div");
       probe.style.cssText = "position:absolute;visibility:hidden;width:0;height:var(--fade-size)";
       viewport.append(probe);
       const fade = probe.getBoundingClientRect().height;
       probe.remove();
-      viewport.scrollTop = 0;
-      const box = viewport.getBoundingClientRect();
+      return fade;
+    };
+    const signature = () => [...viewport.querySelectorAll<HTMLElement>(SELECTED)].map((item) => item.closest("[data-day]")?.getAttribute("data-day") ?? item.textContent).join("|");
+    let selected = signature();
+    const nudge = (fromTop: boolean) => {
+      const fade = measure();
+      if (fromTop) viewport.scrollTop = 0;
       const items = [...viewport.querySelectorAll<HTMLElement>(SELECTED)].map((item) => item.getBoundingClientRect());
-      viewport.scrollTop = scrollTopClearOfFade({ viewport: box, scrollTop: 0, maxScrollTop: viewport.scrollHeight - viewport.clientHeight, fade, items });
+      viewport.scrollTop = scrollTopClearOfFade({ viewport: viewport.getBoundingClientRect(), scrollTop: viewport.scrollTop, maxScrollTop: viewport.scrollHeight - viewport.clientHeight, fade, items });
       applied = viewport.scrollTop; // the browser may round it
     };
-    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(clear);
-    observer?.observe(viewport);
-    clear();
-    return () => observer?.disconnect();
+    const automatic = () => { if (viewport.scrollTop === applied) nudge(true); };
+    const resize = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(automatic);
+    resize?.observe(viewport);
+    // A selection change: the day's `aria-selected`, a slot's `aria-pressed`, or a re-rendered grid (another month).
+    const selection = typeof MutationObserver === "undefined" ? undefined : new MutationObserver(() => { const now = signature(); if (now === selected) return; selected = now; nudge(false); });
+    selection?.observe(content, { subtree: true, childList: true, attributes: true, attributeFilter: ["aria-selected", "aria-pressed"] });
+    automatic();
+    return () => { resize?.disconnect(); selection?.disconnect(); };
   }, [contentRef]);
 }
 

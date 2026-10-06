@@ -590,6 +590,29 @@ describe("DateTimeField date-time: seeding a draft", () => {
     } finally { rect.mockRestore(); scrollHeight.mockRestore(); clientHeight.mockRestore(); }
   });
 
+  it("clears a day picked inside the bottom fade, though nothing resized and the body was already scrolled (#537)", async () => {
+    // The day buttons' rects follow a mutable "top", so picking one moves the selection to a new place.
+    const tops = new Map<string, number>([["2027-01-15", 200], ["2027-01-20", 454]]);
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      let box = { top: 0, bottom: 0, height: 0 };
+      const day = this.tagName === "BUTTON" ? this.closest<HTMLElement>('[aria-selected="true"]')?.getAttribute("data-day") : null;
+      if (this.getAttribute("data-slot") === "scroll-area-viewport") box = { top: 100, bottom: 500, height: 400 };
+      else if (this.style?.height === "var(--fade-size)") box = { top: 0, bottom: 32, height: 32 };
+      else if (day && tops.has(day)) { const top = tops.get(day)! - (this.closest('[data-slot="scroll-area-viewport"]') as HTMLElement).scrollTop; box = { top, bottom: top + 36, height: 36 }; }
+      return { ...box, left: 0, right: 0, width: 0, x: 0, y: box.top, toJSON() {} } as DOMRect;
+    });
+    const scrollHeight = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(800);
+    const clientHeight = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+    try {
+      await mount({ value: stored("2027-01-15T09:00") });
+      await open();
+      const viewport = popup()!.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
+      expect(viewport.scrollTop).toBe(0); // the stored day is clear of the fade
+      await pickPopupDay(popup()!, "2027-01-20");
+      expect(viewport.scrollTop).toBe(22); // 454 + 36 = 490, over a band of 468..500
+    } finally { rect.mockRestore(); scrollHeight.mockRestore(); clientHeight.mockRestore(); }
+  });
+
   it("reads a collision-padding callback on each open, not at mount, so a late shell header counts (#528)", async () => {
     // Stands in for the shell header's bottom edge (`shellChromeBottom`, tested on its own): 0 until the header renders.
     let headerBottom = 0;
