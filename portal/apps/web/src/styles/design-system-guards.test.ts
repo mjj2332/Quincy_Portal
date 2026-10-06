@@ -1520,4 +1520,10 @@ describe("guard: Admin inline editors keep their focus outline and value clear (
     expect(admin).toMatch(/<EmailText email=\{user\.email\} \/>/);
     expect(admin).toMatch(/<EmailText email=\{agent\.email\} \/>/);
   });
+  // The sr-only "Actions" header label is absolutely positioned and escapes an unpositioned overflow clip (#633).
+  it("the TableWrap scroller is positioned so a sr-only header label cannot escape its overflow clip", () => {
+    const table = readFileSync(join(srcDir, "components/quincy/Table.tsx"), "utf8");
+    const line = table.split("\n").find((l) => l.includes("min-[721px]:overflow-x-auto")) ?? "";
+    expect(line).toMatch(/(?<![-\w:])relative(?![-\w])/);
+  });
 });
