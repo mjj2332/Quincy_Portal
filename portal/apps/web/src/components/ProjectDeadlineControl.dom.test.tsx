@@ -189,7 +189,7 @@ describe("ProjectDeadlineControl", () => {
         shortcutRows += 1;
         const tokens = new Set(control.className.split(/\s+/));
         const replacement = [...RING_IN.split(/\s+/).filter((token) => token !== "focus-visible:!outline"), "focus-visible:!outline-solid"];
-        expect(replacement).toHaveLength(4);
+        expect(replacement).toHaveLength(5); // four ring utilities + the at-rest `outline-offset-[-2px]` (#552)
         for (const token of replacement) expect(tokens, `shortcut row lacks ${token}: ${control.className}`).toContain(token);
         // Item's resting `outline-none` is what the replacement above overrides on focus-visible;
         // nothing may suppress the outline ON focus-visible.

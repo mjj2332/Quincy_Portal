@@ -3678,7 +3678,7 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
           // Inward focus ring (the same four utilities as Quincy's `AnchoredPopover` RING_IN): the
           // row spans the tree pane, whose overflow clips an outward ring at both edges. `!` because
           // the unlayered global `:focus-visible` outline shorthand resets `outline-offset`.
-          className="text-muted-foreground hover:text-foreground hover:bg-muted/40 flex h-full w-full items-center ps-3 pe-3 focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]"
+          className="text-muted-foreground hover:text-foreground hover:bg-muted/40 flex h-full w-full items-center ps-3 pe-3 focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] outline-offset-[-2px] focus-visible:!outline-offset-[-2px]"
           onClick={open}
           onKeyDown={(e) => {
             if (e.key === "Enter") {

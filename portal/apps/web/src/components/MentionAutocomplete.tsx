@@ -57,7 +57,7 @@ export const MentionAutocomplete = forwardRef<MentionAutocompleteHandle, {
           data-active={index === activeIndex ? "true" : undefined}
           onMouseEnter={() => setActiveIndex(index)}
           onMouseMove={() => setActiveIndex(index)}
-          className="group flex items-baseline justify-between gap-[var(--space-3)] w-full text-left min-w-0 min-h-[44px] px-[var(--space-3)] py-[var(--space-2)] bg-transparent border-0 rounded-md text-foreground [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] cursor-pointer data-[active=true]:bg-accent data-[active=true]:text-accent-foreground active:bg-surface-sunken focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]"
+          className="group flex items-baseline justify-between gap-[var(--space-3)] w-full text-left min-w-0 min-h-[44px] px-[var(--space-3)] py-[var(--space-2)] bg-transparent border-0 rounded-md text-foreground [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] cursor-pointer data-[active=true]:bg-accent data-[active=true]:text-accent-foreground active:bg-surface-sunken focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] outline-offset-[-2px] focus-visible:!outline-offset-[-2px]"
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => onSelect(user)}
         >
