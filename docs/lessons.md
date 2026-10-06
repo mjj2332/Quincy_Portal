@@ -5813,6 +5813,13 @@ Tags: focus-overlays, reui-vendor, testing-guards · #625
   instead of a confirm-specific `data-confirm-modal-root` marker, so any alert dialog raised from a popover behaves the same. The exemption must NOT apply to a popover opened from inside an alert
   dialog (the Calendar Move Deadline dialog's date/time popup: Escape closes the popup, not the dialog), so `AlertDialogContent`
   provides `InsideAlertDialogContext` and `Popover` skips the adaptation when it is inside one.
+- **The Team list is a Base UI Combobox, not a Popover (browser pass 3c).** It closed when the confirm opened and stayed closed after
+  Cancel. The dismissal-cancel logic is one helper, `keepOpenBehindAlertDialog(open, details, insideAlertDialog)` in
+  `lib/alert-dialog-press.ts`, used by `reui/popover.tsx` and the `reui/combobox.tsx` Root (both declared adaptations, both pinned by
+  `popover-adaptation.guard.test.ts`). In happy-dom `main` also closes the list the moment the confirm takes focus, so this is the
+  plan's "a confirm must not close the popup that raised it" applied to a third popup kind rather than a regression from the
+  AlertDialog. Menus and Selects are not adapted: every confirm caller reaches `confirm()` after the item select has closed them
+  (stage move from the header Select and the board card menu, scheduling commands from the item menu).
 - **Test seam.** `.dom.test.tsx` may not assert incidental class names, but may assert a Tailwind utility that encodes a design
   contract: `ConfirmDialog.dom.test.tsx` pins `danger` -> destructive (`text-destructive`) and the default variant (no `text-destructive`).
   The alert dialog's focus guards (`data-base-ui-focus-guard`) sit in the same portal as the overlay, so the popover exemption

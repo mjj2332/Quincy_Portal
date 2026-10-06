@@ -4,6 +4,7 @@ import { ChevronDownIcon, XIcon, CheckIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { OverlayContainerContext } from "@/components/OverlayContainerContext"
+import { InsideAlertDialogContext, keepOpenBehindAlertDialog } from "@/lib/alert-dialog-press"
 import { Button } from "@/components/reui/button"
 import {
   InputGroup,
@@ -52,7 +53,29 @@ import {
  *    picker's 14px popup was the odd one out; `design-system-guards.test.ts` pins all three.
  */
 
-const Combobox = ComboboxPrimitive.Root
+/**
+ * QUINCY ADAPTATION (#625): `Combobox` wraps Base UI's Root so an open list stays open behind an
+ * alert dialog raised from it (the Team picker's final-role removal confirm). The AlertDialog portal
+ * carries Base UI inert markers, so the list's outside-press / focus-out dismissal no longer ignores
+ * it. The shared `keepOpenBehindAlertDialog` (`lib/alert-dialog-press.ts`, the same helper as
+ * `reui/popover.tsx`) cancels those dismissals; `popover-adaptation.guard.test.ts` pins both. A plain
+ * `shadcn add combobox` would revert it.
+ */
+function Combobox<Value, Multiple extends boolean | undefined = false>({
+  onOpenChange,
+  ...props
+}: ComboboxPrimitive.Root.Props<Value, Multiple>) {
+  const insideAlertDialog = React.useContext(InsideAlertDialogContext)
+  return (
+    <ComboboxPrimitive.Root
+      onOpenChange={(open, details) => {
+        if (keepOpenBehindAlertDialog(open, details, insideAlertDialog)) return
+        onOpenChange?.(open, details)
+      }}
+      {...props}
+    />
+  )
+}
 
 function ComboboxValue({ ...props }: ComboboxPrimitive.Value.Props) {
   return <ComboboxPrimitive.Value data-slot="combobox-value" {...props} />

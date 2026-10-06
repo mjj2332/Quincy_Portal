@@ -42,3 +42,22 @@ export function hasMountedAlertDialog(doc: Document = document): boolean {
  * so it keeps Base UI's ordinary dismissal; only a popover BENEATH an alert dialog is exempted.
  */
 export const InsideAlertDialogContext = createContext(false);
+
+type DismissalDetails = { reason: string; event?: Event; cancel(): void };
+
+/**
+ * The one place a Base UI popup beneath an alert dialog decides to stay open (#625). Call it first
+ * in a Root's `onOpenChange`; when it returns true the dismissal has been cancelled and the caller
+ * must not forward it. Cancels `outside-press` on the dialog, `escape-key` while one is open, and
+ * `focus-out` while one is mounted — but never for a popup rendered inside an alert dialog
+ * (`insideAlertDialog`, from `InsideAlertDialogContext`), which sits above it.
+ */
+export function keepOpenBehindAlertDialog(open: boolean, details: DismissalDetails, insideAlertDialog: boolean): boolean {
+  if (insideAlertDialog || open) return false;
+  const keep =
+    (details.reason === "outside-press" && isAlertDialogPress(details.event?.target)) ||
+    (details.reason === "escape-key" && hasOpenAlertDialog()) ||
+    (details.reason === "focus-out" && hasMountedAlertDialog());
+  if (keep) details.cancel();
+  return keep;
+}

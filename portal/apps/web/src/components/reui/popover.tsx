@@ -3,7 +3,7 @@ import { Popover as PopoverPrimitive } from "@base-ui/react/popover"
 
 import { cn } from "@/lib/utils"
 import { OverlayContainerContext } from "@/components/OverlayContainerContext"
-import { hasMountedAlertDialog, hasOpenAlertDialog, InsideAlertDialogContext, isAlertDialogPress } from "@/lib/alert-dialog-press"
+import { InsideAlertDialogContext, keepOpenBehindAlertDialog } from "@/lib/alert-dialog-press"
 
 /**
  * Popover primitive — base-nova's `popover` (`docs/adr/0005-…` addendum), the first consumer
@@ -54,7 +54,7 @@ import { hasMountedAlertDialog, hasOpenAlertDialog, InsideAlertDialogContext, is
  *    belongs to it.** `Popover` wraps `onOpenChange` and cancels an `outside-press` dismissal whose
  *    target is inside an alert dialog, an `escape-key` dismissal while one is open, and a
  *    `focus-out` dismissal while one is mounted (focus moving into the dialog and back out as it
- *    closes is not the popover losing focus elsewhere) (`lib/alert-dialog-press.ts`). A popover
+ *    closes is not the popover losing focus elsewhere) (`keepOpenBehindAlertDialog` in `lib/alert-dialog-press.ts`, shared with `reui/combobox.tsx`). A popover
  *    rendered inside an alert dialog (`InsideAlertDialogContext`) is above it and is left alone. Reason: `reui/alert-dialog`'s portal carries Base UI
  *    inert markers (its overlay and focus guards), so the popover's outside-press check no longer
  *    ignores it as an element injected after the popover opened — pressing Cancel, Confirm or the
@@ -79,16 +79,7 @@ function Popover({ onOpenChange, ...props }: PopoverPrimitive.Root.Props) {
     <PopoverPrimitive.Root
       data-slot="popover"
       onOpenChange={(open, details) => {
-        if (
-          !insideAlertDialog &&
-          !open &&
-          ((details.reason === "outside-press" && isAlertDialogPress(details.event?.target)) ||
-            (details.reason === "escape-key" && hasOpenAlertDialog()) ||
-            (details.reason === "focus-out" && hasMountedAlertDialog()))
-        ) {
-          details.cancel()
-          return
-        }
+        if (keepOpenBehindAlertDialog(open, details, insideAlertDialog)) return
         onOpenChange?.(open, details)
       }}
       {...props}
