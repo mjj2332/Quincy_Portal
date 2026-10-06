@@ -303,7 +303,29 @@ describe("tableBubbleZone", () => {
   it("counts a viewport that cuts below the row as 'does not fit below': the blocks allow it, so the bar goes partly offscreen", () => {
     const zone = tableBubbleZone({ ...base, row: rect(420, 460), barHeight: 38, nextTop: 520, viewport: { top: 0, bottom: 480 } });
     // Visible: top 420 - 400 = 20, bottom min(520, 480) - 460 = 20: neither fits, even tight. Blocks: bottom 520 - 460 = 60 >= 46.
-    expect(zone).toEqual({ top: 400, bottom: 520, tier: "offscreen", gap: G, root: "document" });
+    expect(zone).toEqual({ top: 400, bottom: 520, tier: "offscreen", gap: G, root: "document", side: "bottom" });
+  });
+});
+
+describe("a docked bar that is entirely outside the viewport falls back to the toolbar (#555 Sol r2)", () => {
+  const G = TABLE_BUBBLE_GAP;
+  const tall = { surface: rect(-400, 1200), prevBottom: -380, nextTop: 1150, floorTop: null, viewport: { top: 0, bottom: 800 }, barHeight: 38 };
+
+  it("a tall table scrolled so its top is above the viewport and its bottom below it (caret in a middle row): tier none, not offscreen", () => {
+    const zone = tableBubbleZone({ ...tall, row: rect(-300, 1100) });
+    expect(zone.tier).toBe("none");
+  });
+
+  it("the same table with its top edge just visible still docks (partly clipped bar above is kept)", () => {
+    const zone = tableBubbleZone({ ...tall, row: rect(20, 1100) });
+    // 20 - 8 - 38 = -26: the bar above is partly outside the viewport but overlaps it, so it is kept.
+    expect(zone.tier).toBe("offscreen");
+    expect(zone.gap).toBe(G);
+  });
+
+  it("the table's bottom edge just visible docks below, partly clipped", () => {
+    const zone = tableBubbleZone({ ...tall, row: rect(-300, 790) });
+    expect(zone.tier).toBe("offscreen");
   });
 });
 
@@ -466,6 +488,14 @@ describe("table bar zone placement (floating-ui computePosition)", () => {
       const result = await run({ surface: rect(552, 700), row: table, cell: cellIn(1), barHeight: 38 });
       expect(result.tiers).toEqual(["none"]);
     });
+  });
+
+  it("offscreen: the bar lands on the side that overlaps the viewport (bottom edge just visible docks below, not above offscreen)", async () => {
+    const result = await run({ surface: rect(-400, 1200), row: rect(-300, 790), cell: rect(300, 340, 120, 220), barHeight: 38, prevBottom: -380, nextTop: 1150, viewport: { top: 0, bottom: 800 } });
+    expect(result.tiers).toEqual(["offscreen"]);
+    expect(result.placement).toBe("bottom-start");
+    expect(result.bottom).toBeGreaterThan(0);
+    expect(result.top).toBeLessThan(800);
   });
 
   it("a single-row table between two paragraphs has no room anywhere: tier none, reported once", async () => {

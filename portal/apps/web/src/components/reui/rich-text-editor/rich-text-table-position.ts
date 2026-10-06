@@ -157,23 +157,38 @@ export interface TableBubbleZone {
   gap: number
   /** The root boundary floating-ui intersects the rect with: the viewport, or the document for "offscreen". */
   root: "viewport" | "document"
+  /** "offscreen" only: the side that overlaps the viewport, which flip must land on (it cannot see the viewport). */
+  side?: "top" | "bottom"
 }
 
 const finite = (value: number | null | undefined): value is number =>
   value !== null && value !== undefined && Number.isFinite(value)
 
-/** One side's choice for rooms above and below the row: the full gap, else the roomier side tight, else null. */
-function pick(roomTop: number, roomBottom: number, barHeight: number): { side: "top" | "bottom"; gap: number } | null {
+type Candidate = { side: "top" | "bottom"; gap: number }
+
+/**
+ * Every side that can hold the bar, in preference order: the full gap (above first), then the roomier side tight
+ * (a gap under 8, never under EPS of clearance). Empty when neither side fits.
+ */
+function candidates(roomTop: number, roomBottom: number, barHeight: number): Candidate[] {
   const full = barHeight + TABLE_BUBBLE_GAP
+  const out: Candidate[] = []
 
-  if (roomTop >= full) return { side: "top", gap: TABLE_BUBBLE_GAP }
-  if (roomBottom >= full) return { side: "bottom", gap: TABLE_BUBBLE_GAP }
+  if (roomTop >= full) out.push({ side: "top", gap: TABLE_BUBBLE_GAP })
+  if (roomBottom >= full) out.push({ side: "bottom", gap: TABLE_BUBBLE_GAP })
+  if (out.length) return out
 
-  const room = Math.max(roomTop, roomBottom)
+  const tight = (side: "top" | "bottom", room: number): Candidate[] =>
+    room - barHeight < TABLE_BUBBLE_EPS ? [] : [{ side, gap: room - barHeight - TABLE_BUBBLE_EPS }]
 
-  if (room - barHeight < TABLE_BUBBLE_EPS) return null
+  return roomTop >= roomBottom
+    ? [...tight("top", roomTop), ...tight("bottom", roomBottom)]
+    : [...tight("bottom", roomBottom), ...tight("top", roomTop)]
+}
 
-  return { side: roomTop >= roomBottom ? "top" : "bottom", gap: room - barHeight - TABLE_BUBBLE_EPS }
+/** One side's choice for rooms above and below the row: the full gap, else the roomier side tight, else null. */
+function pick(roomTop: number, roomBottom: number, barHeight: number): Candidate | null {
+  return candidates(roomTop, roomBottom, barHeight)[0] ?? null
 }
 
 /**
@@ -211,10 +226,15 @@ export function tableBubbleZone({
     return { ...zone, tier: visible.gap === TABLE_BUBBLE_GAP ? "clean" : "tight", gap: visible.gap, root: "viewport" }
   }
 
-  const blocks = pick(row.top - ceil, floor - row.bottom, barHeight)
+  // The blocks allow it but the viewport cuts the room: the bar may be partly scrolled out, never wholly. A tall
+  // table scrolled past the viewport leaves both docked spots outside it: the host shows the toolbar group (#555).
+  const blocks = candidates(row.top - ceil, floor - row.bottom, barHeight).find((candidate) => {
+    const barTop = candidate.side === "top" ? row.top - candidate.gap - barHeight : row.bottom + candidate.gap
+    return barTop + barHeight > viewport.top && barTop < viewport.bottom
+  })
 
   return blocks
-    ? { ...zone, tier: "offscreen", gap: blocks.gap, root: "document" }
+    ? { ...zone, tier: "offscreen", gap: blocks.gap, root: "document", side: blocks.side }
     : { ...zone, tier: "none", gap: TABLE_BUBBLE_GAP, root: "viewport" }
 }
 
@@ -275,8 +295,16 @@ export function tableBubbleOptions({
     }
 
     // Zone edges are already the limits; `tableBubbleBoundary` only adds the visual offset and the rect fields.
+    // Offscreen, flip judges against the document, so it would keep a top bar that is wholly scrolled out. When the
+    // overlapping side is the bottom, the boundary starts at the row so the top placement overflows and flip drops.
+    const bottomOnly = result.tier === "offscreen" && result.side === "bottom"
     const boundary = tableBubbleBoundary(
-      { top: result.top, bottom: result.bottom, left: surfaceRect.left, right: surfaceRect.right },
+      {
+        top: bottomOnly ? Math.max(result.top, row().bottom) : result.top,
+        bottom: result.bottom,
+        left: surfaceRect.left,
+        right: surfaceRect.right,
+      },
       null,
       visualOffset?.()
     )
