@@ -194,7 +194,7 @@ export function DateTimePopoverContent({ label, className, children, popupCollis
         target.focus({ preventScroll: true });
         return false;
       }}
-      className={cn("w-auto max-w-[calc(100vw-2*var(--space-4))] gap-0 overflow-hidden rounded-[var(--radius-card)] p-0", className)}
+      className={cn("w-auto max-w-[calc(100vw-2*var(--space-4))] max-[721px]:w-[calc(100vw-2*var(--space-4))] gap-0 overflow-hidden rounded-[var(--radius-card)] p-0", className)}
     >
       <PopupAnchorContext.Provider value={{ zoneId, bodyRef }}>{children}</PopupAnchorContext.Provider>
     </PopoverContent>

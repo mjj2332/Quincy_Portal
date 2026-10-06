@@ -171,8 +171,13 @@ export type FadeItem = EdgeRect & { required?: boolean; /** Wins over the other 
  * navigation for nothing) UNLESS it is `required`: the day the person is about to edit, or the focused
  * element, must come into view. A required item is never skipped, and when the items cannot all be
  * cleared together the optional ones give way: the solve retries with the required items alone, and if those conflict too, with the `priority` item (the focused control) alone.
+ *
+ * #630 — `snaps` are scroll positions (body offsets) the caller would rather land on: the top of each preset row, so
+ * the popup never opens with the Today/Tomorrow row cut in half. When one lies inside the valid window, the nearest to
+ * `scrollTop` wins (0 when it is valid, so a day that fits under the presets opens at the top); when none does, the fade
+ * guarantee still wins and the plain nearest-valid position is returned.
  */
-export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, items }: { viewport: EdgeRect; scrollTop: number; maxScrollTop: number; fade: number; items: readonly FadeItem[] }): number {
+export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, items, snaps }: { viewport: EdgeRect; scrollTop: number; maxScrollTop: number; fade: number; items: readonly FadeItem[]; snaps?: readonly number[] }): number {
   const height = viewport.bottom - viewport.top;
   const max = Math.max(0, maxScrollTop);
   const clamp = (value: number) => Math.min(Math.max(0, value), max);
@@ -200,6 +205,8 @@ export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, 
   // to its device-pixel grid (0.5px at DPR 2), and a target sitting exactly on a fade edge lands inside it. Whole pixels are on every such grid.
   const whole = { low: Math.ceil(range.low - 1e-9), high: Math.floor(range.high + 1e-9) };
   const safe = whole.low <= whole.high ? whole : range;
+  const landing = (snaps ?? []).filter((snap) => snap >= safe.low && snap <= safe.high);
+  if (landing.length > 0) return landing.reduce((best, snap) => (Math.abs(snap - scrollTop) < Math.abs(best - scrollTop) ? snap : best));
   return Math.min(Math.max(scrollTop, safe.low), safe.high);
 }
 

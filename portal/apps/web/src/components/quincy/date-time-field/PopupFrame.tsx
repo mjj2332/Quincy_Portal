@@ -67,7 +67,17 @@ function useSelectedClearOfFade(contentRef: RefObject<HTMLDivElement | null>, re
     let selected = signature();
     const focused = () => { const active = document.activeElement; return active instanceof HTMLElement && active !== viewport && viewport.contains(active) ? active : null; };
     const write = (top: number) => { viewport.scrollTop = top; applied = viewport.scrollTop; /* the browser may round it */ };
-    const solve = (items: FadeItem[], fade: number) => scrollTopClearOfFade({ viewport: viewport.getBoundingClientRect(), scrollTop: viewport.scrollTop, maxScrollTop: viewport.scrollHeight - viewport.clientHeight, fade, items });
+    // #630: where the body may rest so no preset row is cut in half: the top, each preset row's top, and where the presets end.
+    const presetSnaps = () => {
+      const box = viewport.getBoundingClientRect();
+      const at = (el: Element) => Math.round(el.getBoundingClientRect().top - box.top + viewport.scrollTop);
+      const group = viewport.querySelector('[data-slot="item-group"]');
+      if (!group) return [];
+      const tops = [...group.querySelectorAll("button")].map(at);
+      const after = group.nextElementSibling;
+      return [0, ...tops, ...(after ? [at(after)] : [])];
+    };
+    const solve = (items: FadeItem[], fade: number, snaps?: number[]) => scrollTopClearOfFade({ viewport: viewport.getBoundingClientRect(), scrollTop: viewport.scrollTop, maxScrollTop: viewport.scrollHeight - viewport.clientHeight, fade, items, ...(snaps ? { snaps } : {}) });
     const nudge = (fromTop: boolean, withReveal: boolean) => {
       const fade = measure();
       // Solved from where the body is when a control has focus, so a resize never jumps it away from the focused control.
@@ -76,7 +86,8 @@ function useSelectedClearOfFade(contentRef: RefObject<HTMLDivElement | null>, re
       const focus = focused();
       if (focus) required.add(focus);
       const elements = new Set<Element>([...viewport.querySelectorAll(SELECTED), ...required]);
-      write(solve([...elements].map((item) => { const { top, bottom } = item.getBoundingClientRect(); return { top, bottom, required: required.has(item), priority: item === focus }; }), fade));
+      // Only the open/resize solve snaps: a selection change or focus keeps its least-scroll move.
+      write(solve([...elements].map((item) => { const { top, bottom } = item.getBoundingClientRect(); return { top, bottom, required: required.has(item), priority: item === focus }; }), fade, fromTop ? presetSnaps() : undefined));
     };
     revealNow.current = () => { noticeScroll(); nudge(false, true); };
     const automatic = () => { noticeScroll(); if (!userScrolled) nudge(true, true); };
