@@ -110,6 +110,7 @@ import {
   type WhiteboardTool,
   type ZoomTarget,
 } from "./whiteboard-controls"
+import { useFooterMetrics } from "./whiteboard-footer-metrics"
 import { shortcutPlatform, WhiteboardShortcuts } from "./whiteboard-shortcuts"
 import {
   CANVAS_BACKGROUND,
@@ -2539,20 +2540,7 @@ export function WhiteboardCanvas({
     if (root) root.dataset.wbTool = chrome.tool
   }, [chrome.tool, ready, rootRef])
 
-  // The editor's buttons that share the footer's line (the phone bar's, a touch
-  // screen's finalize) follow it at its control size, measured before the first paint.
-  useLayoutEffect(() => {
-    const root = rootRef.current
-    if (!root || !footer) return
-    const measure = () => {
-      root.style.setProperty("--wb-footer-width", `${footer.offsetWidth}px`)
-      root.style.setProperty("--wb-control-size", `${footer.offsetHeight}px`)
-    }
-    measure()
-    const observer = new ResizeObserver(measure)
-    observer.observe(footer)
-    return () => observer.disconnect()
-  }, [rootRef, footer])
+  useFooterMetrics(rootRef, footer)
 
   useFontRewrap(api, ready, armedRef)
   useContainerFollow(rootRef, api, ready, armedRef, latest)
