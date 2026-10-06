@@ -137,6 +137,37 @@ export function sameReminderOffsets(a: readonly number[], b: readonly number[]):
 export type PopupCollisionAvoidance = { side?: "shift" | "none"; align?: "shift" | "none"; fallbackAxisSide?: "start" | "end" | "none" };
 export type PopupCollisionPadding = number | { top?: number; right?: number; bottom?: number; left?: number };
 
+/** `--space-4` in px: the gap a date popup keeps from the viewport edge, and the default `collisionPadding` below. */
+export const DATE_TIME_POPUP_EDGE_GAP = 16;
+
+/** `padding` as four edges with the top raised to at least `top`. Used to pin a popup's top to its field row (#537). */
+export function popupPaddingWithTopAtLeast(padding: PopupCollisionPadding, top: number): { top: number; right: number; bottom: number; left: number } {
+  const edges = typeof padding === "number" ? { top: padding, right: padding, bottom: padding, left: padding } : { top: padding.top ?? 0, right: padding.right ?? 0, bottom: padding.bottom ?? 0, left: padding.left ?? 0 };
+  return { ...edges, top: Math.max(edges.top, top) };
+}
+
+type EdgeRect = { top: number; bottom: number };
+
+/**
+ * #537 — the popup body fades its top and bottom edges by `min(fade, overflow)`. Selected items
+ * (the picked day, the pressed time slot) in that band read as muddy grey, not solid ink. Returns
+ * the body's `scrollTop` that moves every selected item that is partly inside the bottom band just
+ * above it, by the least amount. Rects share one coordinate space. An item wholly below the body's
+ * visible area is ignored (scrolling to it would hide the month navigation for nothing), and no
+ * move is made when it would push an item into the top band.
+ */
+export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, items }: { viewport: EdgeRect; scrollTop: number; maxScrollTop: number; fade: number; items: readonly EdgeRect[] }): number {
+  const bandTop = viewport.bottom - fade;
+  const delta = Math.min(
+    Math.max(0, ...items.filter((item) => item.bottom > bandTop && item.top < viewport.bottom).map((item) => item.bottom - bandTop)),
+    Math.max(0, maxScrollTop - scrollTop),
+  );
+  if (delta <= 0) return scrollTop;
+  const topFade = Math.min(fade, scrollTop + delta);
+  const intoTopBand = items.some((item) => item.top < viewport.bottom && item.bottom - delta > viewport.top && item.top - delta < viewport.top + topFade);
+  return intoTopBand ? scrollTop : scrollTop + delta;
+}
+
 /**
  * How a date popup resolves its collision policy (#447, #528): below `sm` it shifts over its
  * trigger; above, it stays on one axis. A caller's override replaces the default outright, and an
@@ -145,6 +176,6 @@ export type PopupCollisionPadding = number | { top?: number; right?: number; bot
 export function resolveDateTimePopupPlacement({ narrow, avoidance, padding }: { narrow: boolean; avoidance?: PopupCollisionAvoidance | undefined; padding?: PopupCollisionPadding | undefined }): { collisionAvoidance: PopupCollisionAvoidance; collisionPadding: PopupCollisionPadding } {
   return {
     collisionAvoidance: avoidance ?? (narrow ? { side: "shift", fallbackAxisSide: "none" } : { fallbackAxisSide: "none" }),
-    collisionPadding: padding ?? 16,
+    collisionPadding: padding ?? DATE_TIME_POPUP_EDGE_GAP,
   };
 }

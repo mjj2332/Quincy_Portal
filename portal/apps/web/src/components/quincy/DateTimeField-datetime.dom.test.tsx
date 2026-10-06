@@ -540,6 +540,56 @@ describe("DateTimeField date-time: seeding a draft", () => {
     expect(focusing.every((call) => call.options?.preventScroll === true)).toBe(true);
   });
 
+  it("scrolls the field's row into view before the popup reads its padding, and pins the popup top to the trigger (#537)", async () => {
+    const order: string[] = [];
+    const scroll = vi.fn(function (this: Element) { order.push("scroll"); });
+    const originalScroll = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scroll as unknown as typeof Element.prototype.scrollIntoView;
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      const top = this.id === "deadline" ? 180 : 0;
+      return { top, bottom: top, left: 0, right: 0, width: 0, height: 0, x: 0, y: top, toJSON() {} } as DOMRect;
+    });
+    const padding = vi.fn(() => { order.push("padding"); return { top: 66, right: 16, bottom: 16, left: 16 }; });
+    try {
+      await act(async () => { root.render(<DateTimeField variant="date-time" id="deadline" label="Deadline" value={null} popupCollisionPadding={padding} popupPinTopToField onApply={vi.fn()} />); await Promise.resolve(); });
+      await open();
+      expect(order).toEqual(["padding", "scroll"]);
+      expect(scroll).toHaveBeenCalledTimes(1);
+      expect(scroll.mock.instances[0]).toBe(trigger().parentElement);
+      expect(scroll).toHaveBeenCalledWith({ block: "start", inline: "nearest", behavior: "instant" });
+    } finally { Element.prototype.scrollIntoView = originalScroll; rect.mockRestore(); }
+  });
+
+  it("does not scroll the page on open unless asked to pin to the field (#537)", async () => {
+    const scroll = vi.fn();
+    const originalScroll = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scroll as unknown as typeof Element.prototype.scrollIntoView;
+    try {
+      await mount({ value: stored("2027-01-15T09:00") });
+      await open();
+      expect(scroll).not.toHaveBeenCalled();
+    } finally { Element.prototype.scrollIntoView = originalScroll; }
+  });
+
+  it("opens with a selected day that sits in the body's bottom fade scrolled clear of it (#537)", async () => {
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      let box = { top: 0, bottom: 0, height: 0 };
+      if (this.getAttribute("data-slot") === "scroll-area-viewport") box = { top: 100, bottom: 500, height: 400 };
+      else if ((this as HTMLElement).style?.height === "var(--fade-size)") box = { top: 0, bottom: 32, height: 32 };
+      else if (this.closest('[aria-selected="true"]') && this.tagName === "BUTTON") box = { top: 454, bottom: 490, height: 36 };
+      return { ...box, left: 0, right: 0, width: 0, x: 0, y: box.top, toJSON() {} } as DOMRect;
+    });
+    const scrollHeight = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(800);
+    const clientHeight = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+    try {
+      await mount({ value: stored("2027-01-15T09:00") });
+      await open();
+      const viewport = popup()!.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
+      // Band is 468..500 and the day ends at 490: the least scroll that clears it is 22.
+      expect(viewport.scrollTop).toBe(22);
+    } finally { rect.mockRestore(); scrollHeight.mockRestore(); clientHeight.mockRestore(); }
+  });
+
   it("reads a collision-padding callback on each open, not at mount, so a late shell header counts (#528)", async () => {
     // Stands in for the shell header's bottom edge (`shellChromeBottom`, tested on its own): 0 until the header renders.
     let headerBottom = 0;

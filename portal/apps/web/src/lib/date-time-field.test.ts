@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addCivilDays, resolveDateTimePopupPlacement, buildShortcuts, cellToCivil, civilToCell, civilWeekday, joinCivilMinute, parseTypedTime, splitCivilMinute, sydneyToday, timeSlots, yearBounds } from "./date-time-field";
+import { addCivilDays, DATE_TIME_POPUP_EDGE_GAP, popupPaddingWithTopAtLeast, scrollTopClearOfFade, resolveDateTimePopupPlacement, buildShortcuts, cellToCivil, civilToCell, civilWeekday, joinCivilMinute, parseTypedTime, splitCivilMinute, sydneyToday, timeSlots, yearBounds } from "./date-time-field";
 import { formatCivilDay } from "./date-format";
 
 const resolved = (today: string, clearable = false) =>
@@ -180,5 +180,42 @@ describe("resolveDateTimePopupPlacement (#528)", () => {
   });
   it("an undefined override never erases the default", () => {
     expect(resolveDateTimePopupPlacement({ narrow: true, avoidance: undefined, padding: undefined })).toEqual({ collisionAvoidance: { side: "shift", fallbackAxisSide: "none" }, collisionPadding: 16 });
+  });
+});
+
+describe("DATE_TIME_POPUP_EDGE_GAP (#537)", () => {
+  it("is --space-4 (16px) and is the default collisionPadding", () => {
+    expect(DATE_TIME_POPUP_EDGE_GAP).toBe(16);
+    expect(resolveDateTimePopupPlacement({ narrow: false }).collisionPadding).toBe(DATE_TIME_POPUP_EDGE_GAP);
+  });
+});
+
+describe("popupPaddingWithTopAtLeast (#537)", () => {
+  it("expands a number to four edges and raises only the top", () => {
+    expect(popupPaddingWithTopAtLeast(16, 300)).toEqual({ top: 300, right: 16, bottom: 16, left: 16 });
+  });
+  it("never lowers a top that is already higher", () => {
+    expect(popupPaddingWithTopAtLeast({ top: 66, right: 16 }, 40)).toEqual({ top: 66, right: 16, bottom: 0, left: 0 });
+  });
+});
+
+describe("scrollTopClearOfFade (#537)", () => {
+  const viewport = { top: 100, bottom: 500 };
+  const base = { viewport, scrollTop: 0, maxScrollTop: 300, fade: 32 };
+  it("leaves the body at 0 when nothing selected is in the bottom fade", () => {
+    expect(scrollTopClearOfFade({ ...base, items: [{ top: 200, bottom: 236 }] })).toBe(0);
+  });
+  it("scrolls the least amount that lifts a selected item above the bottom fade", () => {
+    // fade band is 468..500; the item ends at 490, so it moves up 22px.
+    expect(scrollTopClearOfFade({ ...base, items: [{ top: 454, bottom: 490 }] })).toBe(22);
+  });
+  it("ignores an item wholly below the visible body (it would hide the month navigation for nothing)", () => {
+    expect(scrollTopClearOfFade({ ...base, items: [{ top: 520, bottom: 556 }] })).toBe(0);
+  });
+  it("cannot scroll past the end of the body", () => {
+    expect(scrollTopClearOfFade({ ...base, maxScrollTop: 10, items: [{ top: 454, bottom: 490 }] })).toBe(10);
+  });
+  it("does not move when it would push another selected item into the top fade", () => {
+    expect(scrollTopClearOfFade({ ...base, items: [{ top: 100, bottom: 136 }, { top: 454, bottom: 490 }] })).toBe(0);
   });
 });
