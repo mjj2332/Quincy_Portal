@@ -191,14 +191,13 @@ describe("ProjectDeadlineControl", () => {
     for (const control of controls) {
       // #422: the popup's shortcut rows (reui `Item`) drop their own focus ring (`focus-visible:ring-0`)
       // so it does not double the global outline. Dropping it is only legitimate when the precise
-      // replacement is there: RING_IN's inward outline (width, colour, offset) made drawable by
-      // `!outline-solid` (Item's `outline-none` would otherwise leave its style at none, and
-      // twMerge drops RING_IN's bare `!outline`). Neither is an exemption from the outline check.
+      // replacement is there: RING_IN's inward outline (style, width, colour, offset), whose
+      // `!outline-solid` overrides Item's resting `outline-none`. Neither is an exemption from the outline check.
       if (/(?:^|\s)focus-visible:ring-0(?:\s|$)/.test(control.className)) {
         shortcutRows += 1;
         const tokens = new Set(control.className.split(/\s+/));
-        const replacement = [...RING_IN.split(/\s+/).filter((token) => token !== "focus-visible:!outline"), "focus-visible:!outline-solid"];
-        expect(replacement).toHaveLength(5); // four ring utilities + the at-rest `outline-offset-[-2px]` (#552)
+        const replacement = RING_IN.split(/\s+/);
+        expect(replacement).toHaveLength(5); // style, width, colour, offset + the at-rest `outline-offset-[-2px]` (#552)
         for (const token of replacement) expect(tokens, `shortcut row lacks ${token}: ${control.className}`).toContain(token);
         // Item's resting `outline-none` is what the replacement above overrides on focus-visible;
         // nothing may suppress the outline ON focus-visible.

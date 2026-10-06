@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { openingTag } from "../container-focus.guard.test";
+import { openingTag } from "@/testing/source-extract";
 
 const source = readFileSync(join(fileURLToPath(new URL(".", import.meta.url)), "PopupFrame.tsx"), "utf8");
 const VIEWPORT = "[data-slot=scroll-area-viewport]:focus-visible";

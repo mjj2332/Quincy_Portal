@@ -9,55 +9,11 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
+import { constInitialiser, functionBody, openingTag } from "@/testing/source-extract";
 
 const webSrc = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 const read = (rel: string) => readFileSync(join(webSrc, rel), "utf8");
 const RING_OFF = "focus-visible:!outline-none";
-
-/** Drops block comments and whole-line `//` comments, so a comment that names the class can't satisfy the guard (Sol). */
-const stripComments = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-
-/** The `<tag ...>` opening element that carries `marker`, from `<tag` to the first `>` outside braces. */
-export function openingTag(source: string, tag: string, marker: string): string | null {
-  const at = source.indexOf(marker);
-  if (at < 0) return null;
-  const start = source.lastIndexOf(`<${tag}`, at);
-  if (start < 0) return null;
-  let depth = 0;
-  for (let i = start; i < source.length; i++) {
-    const c = source[i];
-    if (c === "{") depth++;
-    else if (c === "}") depth--;
-    else if (c === ">" && depth === 0 && source[i - 1] !== "=") return stripComments(source.slice(start, i + 1));
-  }
-  return null;
-}
-
-/** The `POPOVER_CONTENT` initialiser, `const` through the terminating semicolon. */
-export function constInitialiser(source: string, name: string): string | null {
-  const init = new RegExp(`const ${name}\\s*=[\\s\\S]*?;`).exec(source)?.[0];
-  return init === undefined ? null : stripComments(init);
-}
-
-/** The body of `function name(...) {...}`, brace-matched from the first `{` after the signature's closing `)`. Comments stripped. */
-export function functionBody(source: string, name: string): string | null {
-  const at = source.search(new RegExp(`function ${name}\\s*\\(`));
-  if (at < 0) return null;
-  let paren = 0;
-  let i = source.indexOf("(", at);
-  for (; i < source.length; i++) {
-    if (source[i] === "(") paren++;
-    else if (source[i] === ")" && --paren === 0) break;
-  }
-  const open = source.indexOf("{", i);
-  if (open < 0) return null;
-  let depth = 0;
-  for (let j = open; j < source.length; j++) {
-    if (source[j] === "{") depth++;
-    else if (source[j] === "}" && --depth === 0) return stripComments(source.slice(open, j + 1));
-  }
-  return null;
-}
 
 describe("programmatically focused containers carry focus-visible:!outline-none", () => {
   it("DateTimePopoverContent", () => {
@@ -104,6 +60,11 @@ describe("programmatically focused containers carry focus-visible:!outline-none"
     it("ignores the class when it is only in a comment", () => {
       const inComment = 'function panelClasses(a: X): string {\n  // focus-visible:!outline-none\n  /* focus-visible:!outline-none */\n  return cn("focus:outline-none");\n}';
       expect(functionBody(inComment, "panelClasses")).not.toContain(RING_OFF);
+    });
+    it("does not match a function whose name merely starts with the target", () => {
+      const prefixed = 'function panelClassesX(a: X): string {\n  return cn("focus:outline-none");\n}\nfunction panelClasses(a: X): string {\n  return cn("focus-visible:!outline-none");\n}';
+      expect(functionBody(prefixed, "panelClasses")).toContain(RING_OFF);
+      expect(functionBody('function panelClassesX() { return 1; }', "panelClasses")).toBeNull();
     });
     it("returns null when the function is gone", () => {
       expect(functionBody("const x = 1;", "panelClasses")).toBeNull();
