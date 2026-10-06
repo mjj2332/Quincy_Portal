@@ -5279,8 +5279,10 @@ Tags: gantt-calendar · #463
 - **The selection strip is gone.** Its context line and overlap caution are the menu's label; its gates became
   `lib/scheduling-item-actions.ts` (not live: Deadline and checklist rows hide because the effective permissions narrow, Open
   project disables). `checklistScheduleEditorButtonLabel` and the `calendar-move:` focus key are deleted. Cmd/Ctrl-click Open
-  project on the Calendar is accepted lost. The Timeline's Edit schedule… opens the sheet at every width (D7:
-  `scheduleEditorPresentation` now says how INLINE sessions draw).
+  project on the Calendar is accepted lost. The Timeline's Edit schedule… opened the sheet at every width (D7:
+  `scheduleEditorPresentation` says how INLINE sessions draw); **superseded by #582**: it now opens the Due cell's own picker
+  anchored to the bar, as an inline session with `inlineTarget: "item"`, so the Timeline no longer opens a non-inline session
+  (the sheet stays only as the dialog host's safety net).
 - **Test trap:** the vendor calendar ignores a click within 250ms of a drag end (a module flag an earlier test in the same file may
   set); wait it out before a grid click.
 ## Filter tree: OR, groups, negation across Projects, Calendar and Timeline (#461, PR A)
@@ -5510,6 +5512,14 @@ Tags: rich-text · #496
 - **A raw `D1Database.batch` is needed once media statements are involved**: the Drizzle batch cannot carry the raw SQL, so PATCH and DELETE moved into `editNoticeBoardPost` / `deleteNoticeBoardPost`. The delete batch detaches the images with `detached_at = 0` only if the post is gone (`NOT EXISTS`).
 - **The new-post and edit composers keep separate upload locks**; Ctrl/Cmd+Enter goes through `submit()` / `saveEdit()`, which refuse while their own composer uploads.
 
+## Embedded image viewer: never upscale, 48px close, editable alt (#553)
+Tags: rich-text, css-tokens · #553
+
+- **Fit the dialog to the image, do not stretch the image to the dialog.** `DialogContent` is `w-fit` and the viewer `<img>` is `w-auto max-w-full h-auto max-h-[90dvh]`; `w-full` upscaled a 600px photo to 1024px.
+- **A scrim chip needs the dialog's corner and a hairline ring, or it reads as a bite out of the corner.** `--scrim-overlay` is also the backdrop, so the chip is `rounded-xl` with `ring-border`, and the Close button fills it (`size-[var(--space-7)]`, 48px) instead of the built-in 28px one (`showCloseButton={false}`). `EmbeddedVideoDialog` still has the old chip.
+- **Alt is a node attribute, not a label.** `{type:"image",attrs:{mediaId,alt?}}`; the validator trims it, drops blank/null, rejects non-strings and over `RICH_TEXT_IMAGE_ALT_MAX_LENGTH` (200). The Tiptap attribute is `rendered:false` and both mappings (`toTiptap`, `tiptapToRichTextDoc`) must carry it or it silently disappears (#493). The default is `imageAltFromFileName(file.name)` at insert time (no schema or D1 change); the editor's selected image shows an "Alt text" popover (`EmbeddedImageEditorNode`, the LinkPreview node-view pattern).
+- **A trigger `aria-label` replaces the image's alt for screen readers.** The thumbnail button is named `View image: <alt>`, never a generic label. An image with no alt falls back to `Embedded image`.
+
 ## A date popup opened under the sticky top bar with its month navigation scrolled away (#528)
 Tags: focus-overlays, css-tokens · #528
 
@@ -5671,3 +5681,30 @@ Tags: focus-overlays, css-tokens · #523
 - **The dialog's `finalFocus` must never return `undefined`, and must not read state the confirm has just cleared.** It runs after `deleteTarget` is null, so the target and the post order live in a ref. After a delete focus goes to the next surviving "⋯", then the previous, then the composer; Cancel/Escape return to the notice's own "⋯".
 - **A 404 on delete means already gone**: close the dialog, no error. `deleteNoticeBoardPost` refetches in `finally`, so a failure never leaves a stale list. Any other failure keeps the dialog open with the message beside the action.
 - **In a test, Base UI Menu positioning makes `IntersectionObserver`s of its own** (floating-ui `autoUpdate`), so "the last observer" in a fake is no longer the presentation hook's. `NoticeBoard.freshness` picks the last one that is still observing. And `Node.contains(document.activeElement)` was unreliable here; assert with `closest(...)`.
+
+## A shifted date popup cut through its own label, and its selected day sat under the body fade (#537, #536)
+Tags: focus-overlays, css-tokens · #537, #536
+
+- **`shift` with a low field pulls the popup's top to wherever the viewport padding allows, which can be mid-label.** New shoot's Deadline now passes `popupPinTopToField`: `DateTimeField` reads the padding callback, scrolls the field row to the top of the viewport (below the padding's top edge, via a temporary `scrollMarginTop`, `behavior: "instant"` so the trigger is measured on the same open), then raises the padding's top to the trigger's top. The popup covers the trigger, never the label. If the page cannot scroll far enough, the pin leaves less room and the body scrolls (not measured).
+- **The body's fade is `min(--fade-size, overflow)` per edge, and the body opens at scroll 0 (#528).** A selected day or pressed slot in the bottom band reads grey, not ink. `PopupFrame` nudges the body by the least amount that clears the band (`scrollTopClearOfFade`, a pure function over rects), reads `--fade-size` by measuring a probe, re-runs on body resize because Base UI sets `--available-height` after mount, and stops the moment the person scrolls. An item wholly below the fold is left alone, so the month navigation stays.
+- **`16` is `--space-4`, named once.** `DATE_TIME_POPUP_EDGE_GAP` (`lib/date-time-field.ts`) is the default `collisionPadding` and New shoot's four edges.
+- **A read-only Deadline panel has no frame.** `DateTimePopoverContent` is `p-0` because the editable form brings `reui/frame` padding; the read-only branch renders bare content, so it carries `POPOVER_READONLY_PANEL` (`project-header-popover.ts`, `p-[var(--space-4)]`).
+## Unlayered element resets beat Tailwind utilities (#569, #552)
+Tags: css-tokens, testing-guards · #569, #552
+
+- **An element-type selector outside `@layer` silently beats every utility.** `p { margin: 0 }`, `h1..h4`, `a`, `button { font-family }`, `*`, `body`, `img` in `tokens/base.css` and `app.css` were unlayered, so `mt-*` / `mb-*` / `ms-*` on a `<p>` or heading did nothing (the code carried `!mt-[…]`, and #527's note had to move its `mb-*` to a wrapper). They now live in `@layer base` (order `theme, base, components, utilities` is declared at the top of `index.css`), so utilities win and the `!` workarounds are gone. A guard in `design-system-guards.test.ts` fails on an unlayered element-type selector in `styles/`.
+- **Sites that were dead and are now live** are the cost: every `mt-`/`mb-`/`my-`/`ms-` on a `<p>` or heading that never carried `!` now applies. Those were swept and listed for a browser pass in the #569 PR; when you remove a reset's win, grep for margin utilities on the tags it covered, not just for `!`.
+- **`:focus-visible` stays unlayered on purpose.** Layering it would let every `outline-none` / `outline-hidden` utility in the vendored ReUI components (menu, tabs, switch, checkbox, …) suppress the ring, which Guard 3b/3c pins. It is a separate, audited change, not part of the reset sweep.
+- **Setting only `outline-color` at rest (#532) left width and offset to animate.** Under `transition: all` the offset slid 0 → 2px on focus. `outline-width` / `outline-offset` are now also set at rest in `@layer base`, equal to the `:focus-visible` shorthand, so only `outline-style` changes on focus. A guard pins the equality.
+## Link preview selection flake: Apply must sync the editor selection (#562)
+Tags: rich-text, focus-overlays, testing-guards · #562
+
+- **Apply now ends with `editor.view.focus()`, as Remove does.** `chain().focus()` defers a frame in Tiptap. In happy-dom the document selection stays in the editor while an `<input>` holds focus, and is clamped to a mid-document caret when ProseMirror rewrites the text node. Base UI's no-animation `finalFocus` then focuses the editor with that stale DOM selection, so any ProseMirror DOM-observer flush (its 20 ms mount timer) before the deferred `view.focus()` reads the caret and collapses the author's range. Real browsers were covered only by the popover's 100 ms exit animation.
+- **The test hid it by snapshotting `before` AFTER Apply.** "Unchanged from a later snapshot" passes when Apply itself collapsed the range. Assert the absolute selection (`{ from: 12, to: 17 }`) right after Apply.
+- **happy-dom repairs the selection on the focus event, so the race itself is not reproducible deterministically.** The regression test pins the sync instead: it clicks Apply synchronously and asserts `view.focus` was called in the same tick (red without the fix), then forces `domObserver.flush()` and asserts the range survives. The flush call is test-only internals.
+- **The old issue command is stale:** the web tests run with `npx vitest run --config vitest.config.ts <file>` (happy-dom), not a `vitest.dom.config.ts` / jsdom.
+
+## Pasted HEIC flake: one setTimeout(0) does not cover react-query's notify (#576)
+Tags: rich-text, testing-guards · #576
+
+`QuincyRichTextEditor`'s paste handler reads the HEIC setting synchronously from the rendered editor (`heicRef.current`). React Query hands a resolved query to React in its own `setTimeout(0)` (`notifyManager`'s default scheduler), so a test that waits one `setTimeout(0)` after mount races that timer: when the two timers are set within the same millisecond, Node may fire the test's first and the paste is refused as "not a JPEG, PNG or WebP image". It failed about half the time run alone and twice in a row on CI, blocking main deploys. Users can't hit it — the gap is one timer tick. Fix: in tests that act on a query result synchronously, set `notifyManager.setScheduler((cb) => cb())` in `beforeEach` and restore `defaultScheduler` in `afterEach`, so "the query resolved" and "the component rendered it" are one event (same pattern as `PrincipalFreshnessBoundary.dom.test.tsx`). Never add another tick or sleep.

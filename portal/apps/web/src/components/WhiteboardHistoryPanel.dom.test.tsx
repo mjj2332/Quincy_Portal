@@ -158,19 +158,11 @@ describe("WhiteboardHistoryPanel (#500)", () => {
     expect(document.activeElement).toBe(restoreFor());
   });
 
-  it("touch: the Restore action and Try Again are 44px at <=721px (#500 browser pass, #559)", async () => {
-    h.get.mockResolvedValue(listing());
-    await render(props());
-    const restore = document.body.querySelector<HTMLElement>('[aria-label^="Restore "]')!;
-    expect(restore.className).toContain("max-[721px]:min-h-[44px]");
-    expect(restore.className).toContain("max-[721px]:min-w-[44px]");
-  });
-
-  it("Try Again is the default button size, whose floor is 44px on phones, not the 28px sm (#559)", async () => {
+  it("Try Again is the default button size (not the 28px sm) and reaches 44px on the board's phone-layout predicate, not a viewport query (#559, #564)", async () => {
     h.get.mockRejectedValue(new ApiError("nope", 500, undefined));
     await render(props());
     const retry = byId("whiteboard-history-retry")!;
-    expect(retry.className).toContain("max-[721px]:min-h-[44px]");
+    expect(retry.className).toContain("[body:has([data-phone-layout])_&]:min-h-[44px]");
     expect(retry.className).not.toContain("h-7");
   });
 

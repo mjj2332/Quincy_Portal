@@ -255,6 +255,67 @@ describe("useSchedulingController (generic port)", () => {
     expect(onCommitted).not.toHaveBeenCalled();
   });
 
+  describe("inline schedule editor target (#582)", () => {
+    const rangeInput = (start: string, end: string) => ({ state: "range" as const, start: { localCivil: start }, end: { localCivil: end } });
+    async function openInline(inlineTarget?: "due-cell" | "item", inline = true) {
+      const source = rangeEvent("2026-08-27T09:00", "2026-08-27T11:00");
+      const { port } = makePort({ checklists: [source], deadlines: [] });
+      await render(port);
+      await act(async () => { controllerRef!.openChecklistScheduleEditor(source, undefined, { inline, ...(inlineTarget ? { inlineTarget } : {}) }); await Promise.resolve(); });
+      return source;
+    }
+    async function submit(schedule: ReturnType<typeof rangeInput>) {
+      await act(async () => { controllerRef!.submitScheduleEditor(schedule); await Promise.resolve(); });
+      await settle();
+    }
+
+    it("an inline session opened without inlineTarget reports the Due cell as its target", async () => {
+      await openInline(undefined);
+      expect(controllerRef!.scheduleEditor?.inline).toBe(true);
+      expect(controllerRef!.scheduleEditor?.inlineTarget ?? "due-cell").toBe("due-cell");
+      // A reopen from that session carries the default forward explicitly.
+      await submit(rangeInput("2026-08-27T12:00", "2026-08-27T11:00"));
+      expect(controllerRef!.scheduleEditor?.inlineTarget).toBe("due-cell");
+    });
+
+    it("a non-inline session carries no inline target", async () => {
+      await openInline(undefined, false);
+      expect(controllerRef!.scheduleEditor?.inline).toBeUndefined();
+      expect(controllerRef!.scheduleEditor?.inlineTarget).toBeUndefined();
+    });
+
+    it("item target survives a local validation reopen", async () => {
+      await openInline("item");
+      expect(controllerRef!.scheduleEditor?.inlineTarget).toBe("item");
+      await submit(rangeInput("2026-08-27T12:00", "2026-08-27T11:00"));
+      expect(mutations()).toHaveLength(0);
+      expect(controllerRef!.scheduleEditor?.validationError).toBeDefined();
+      expect(controllerRef!.scheduleEditor?.inline).toBe(true);
+      expect(controllerRef!.scheduleEditor?.inlineTarget).toBe("item");
+    });
+
+    it("item target survives a repeated-hour (fold) error reopen", async () => {
+      await openInline("item");
+      reply = { status: 422, body: { error: "repeated", code: "subtask_schedule_repeated_local_time", endpoint: "end", choices: [{ disambiguation: "earlier", utcOffsetMinutes: 660 }, { disambiguation: "later", utcOffsetMinutes: 600 }] } };
+      await submit(rangeInput("2026-08-27T09:00", "2026-08-27T11:00"));
+      expect(mutations()).toHaveLength(1);
+      expect(controllerRef!.scheduleEditor?.validationError?.code).toBe("subtask_schedule_repeated_local_time");
+      expect(controllerRef!.scheduleEditor?.inline).toBe(true);
+      expect(controllerRef!.scheduleEditor?.inlineTarget).toBe("item");
+    });
+
+    it("item target survives a 409 reopen", async () => {
+      const source = await openInline("item");
+      const winner = { ...source.schedule, version: source.schedule.version + 2 };
+      reply = { status: 409, body: { error: "conflict", code: "subtask_schedule_version_conflict", current: winner } };
+      await submit(rangeInput("2026-08-27T10:00", "2026-08-27T11:00"));
+      expect(mutations()).toHaveLength(1);
+      expect(controllerRef!.scheduleEditor?.validationError?.code).toBe("subtask_schedule_version_conflict");
+      expect(controllerRef!.scheduleEditor?.inline).toBe(true);
+      expect(controllerRef!.scheduleEditor?.inlineTarget).toBe("item");
+    });
+  });
+
   const checklistTicket: UndoTicket = {
     kind: "checklist", projectId, subtaskId, expectedVersion: 5,
     request: { expectedVersion: 5, schedule: { state: "range", start: { localCivil: "2026-08-27T09:00" }, end: { localCivil: "2026-08-27T11:00" } } },

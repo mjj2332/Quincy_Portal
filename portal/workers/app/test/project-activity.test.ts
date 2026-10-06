@@ -83,7 +83,7 @@ async function insertActivity(input: {
 
 async function insertProject(id: string, street: string, archived = false, stageKey = "editing_autohdr"): Promise<void> {
   const now = Date.now();
-  await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, archived_at, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?)")
+  await database.DB.prepare("INSERT INTO projects (id, street, stage_key, archived_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
     .bind(id, street, stageKey, archived ? now : null, now, now).run();
 }
 

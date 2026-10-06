@@ -48,7 +48,7 @@ export const MENU_ITEM =
   // separates it from the panel hairline: `!` is needed because the unlayered rule beats layered
   // utilities, and never `outline-none` — that is suppression. The ink colour stays: `--accent-on`
   // (select's ring) is paper on paper here and would vanish.
-  "focus-visible:!-outline-offset-4 " +
+  "-outline-offset-4 focus-visible:!-outline-offset-4 " +
   "data-[highlighted]:bg-secondary";
 
 export type MenuProps = {

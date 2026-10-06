@@ -5,10 +5,13 @@
    corners, Mazius display + Apfel sans.
    ============================================================ */
 
-html, body { margin: 0; }
-body { background: var(--bg-canvas); color: var(--text-primary); font: var(--type-body); }
-* { box-sizing: border-box; }
-img { display: block; max-width: 100%; }
+/* Element-type resets are `@layer base` (#569): unlayered, they would beat Tailwind utilities. */
+@layer base {
+  html, body { margin: 0; }
+  body { background: var(--bg-canvas); color: var(--text-primary); font: var(--type-body); }
+  * { box-sizing: border-box; }
+  img { display: block; max-width: 100%; }
+}
 
 .boot {
   min-height: 100vh; display: grid; place-items: center;
@@ -26,7 +29,7 @@ img { display: block; max-width: 100%; }
 .gap2 { gap: var(--space-2); } .gap3 { gap: var(--space-3); } .gap4 { gap: var(--space-4); } .gap5 { gap: var(--space-5); }
 .hairline { border: 0; border-top: 1px solid var(--border-hairline); margin: 0; }
 .grow { flex: 1; }
-button { font-family: var(--font-sans); }
+@layer base { button { font-family: var(--font-sans); } }
 
 /* ---------------------------------------------------------------------
    App shell
@@ -418,8 +421,9 @@ button { font-family: var(--font-sans); }
    what a writer sees is what a reader gets. The table's inline `min-width` (cells x 96px) comes from
    Tiptap's `cellMinWidth` and `RichTextContent`; the wrapper scrolls it sideways on a phone. */
 .rich-text__embedded-image { display: block; max-width: 100%; max-height: 24rem; height: auto; margin: 0; border-radius: var(--radius-xs); border: var(--border-width-hair) solid var(--border); object-fit: contain; background: var(--surface-sunken); }
-.rich-text__editor-content img.rich-text__embedded-image { margin: var(--space-2) 0; }
-.rich-text__editor-content img.rich-text__embedded-image.ProseMirror-selectednode { outline: var(--border-width-hair) solid var(--accent); outline-offset: 0; }
+.rich-text__embedded-image-node { position: relative; width: fit-content; max-width: 100%; margin: var(--space-2) 0; }
+.rich-text__editor-content .rich-text__embedded-image-node > img.rich-text__embedded-image { margin: 0; }
+.rich-text__editor-content .ProseMirror-selectednode .rich-text__embedded-image-node > img.rich-text__embedded-image { outline: var(--border-width-hair) solid var(--accent); outline-offset: 0; }
 .rich-text__embedded-video { display: block; max-width: 100%; max-height: 24rem; height: auto; margin: 0; border-radius: var(--radius-xs); border: var(--border-width-hair) solid var(--border); object-fit: contain; background: var(--surface-sunken); }
 .rich-text__editor-content video.rich-text__embedded-video { margin: var(--space-2) 0; }
 .rich-text__editor-content video.rich-text__embedded-video.ProseMirror-selectednode { outline: var(--border-width-hair) solid var(--accent); outline-offset: 0; }

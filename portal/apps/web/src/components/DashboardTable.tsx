@@ -120,7 +120,7 @@ function AddressCell({ project, href }: { project: ProjectSummary; href: string 
           to={href}
           data-testid="project-table-row-link"
           // The overlay: ::after covers the row (`tr` is `relative`), so the whole row is the link.
-          className="block truncate font-[family-name:var(--font-display)] text-[length:var(--text-md)] tracking-[var(--tracking-tight)] text-inherit no-underline after:absolute after:inset-0 after:content-[''] focus-visible:outline-none focus-visible:after:outline-[length:var(--border-width-bold)] focus-visible:after:outline-solid focus-visible:after:outline-ring focus-visible:after:-outline-offset-2"
+          className="block truncate font-[family-name:var(--font-display)] text-[length:var(--text-md)] tracking-[var(--tracking-tight)] text-inherit no-underline after:absolute after:inset-0 after:content-[''] focus-visible:outline-none focus-visible:after:outline-[length:var(--border-width-bold)] focus-visible:after:outline-solid focus-visible:after:outline-ring after:-outline-offset-2 focus-visible:after:-outline-offset-2"
         >
           {project.street}
         </InternalLink>

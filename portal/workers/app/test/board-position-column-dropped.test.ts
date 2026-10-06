@@ -6,9 +6,9 @@ import type { Env } from "../src/env";
 
 /**
  * #475 (Board order Stage B): no app-Worker code reads or writes `projects.board_position`. The proof is this
- * suite: it drops the index and the column after the migration chain, then drives every path that ever touched
+ * suite: the migration chain (0064) drops the index and the column, then it drives every path that ever touched
  * them over HTTP. Any `no such column: board_position` (including a drizzle full-row select, which is a hidden
- * column read) is a 500 and fails a test here. This is what makes Stage B the safe floor for #476's DROP COLUMN.
+ * column read) is a 500 and fails a test here. This is what makes Stage B the proof for #476's DROP COLUMN (migration 0064).
  * Same pattern as #373's subtask-assignee-column-dropped.test.ts.
  */
 const database = env as unknown as { DB: D1Database };
@@ -36,8 +36,6 @@ beforeAll(async () => {
   for (const [key, userId] of [["admin", adminId], ["photographer", photographerId], ["external", externalId]] as const) {
     await database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").bind(`t475-${key}`, now + 3_600_000, tokens[key], userId, now, now).run();
   }
-  // The column and its index go: the Worker must run without them. SQLite refuses to drop an indexed column.
-  await executeSql("DROP INDEX projects_stage_archive_board_order_idx; ALTER TABLE projects DROP COLUMN board_position;");
 });
 
 describe("with projects.board_position dropped", () => {

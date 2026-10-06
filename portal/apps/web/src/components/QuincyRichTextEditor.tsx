@@ -2,13 +2,14 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject }
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import { exitSuggestion } from "@tiptap/suggestion";
 import { ChevronDownIcon, ImageIcon, ListChecksIcon, ListIcon, ListOrderedIcon, Redo2Icon, TableIcon, Undo2Icon, VideoIcon } from "lucide-react";
-import { RICH_TEXT_JSON_MAX_BYTES, RICH_TEXT_MAX_LINK_PREVIEWS, richTextDocByteLength, richTextMediaIds, richTextPlainText, type RichTextDoc } from "@quincy/shared";
+import { RICH_TEXT_JSON_MAX_BYTES, RICH_TEXT_MAX_LINK_PREVIEWS, imageAltFromFileName, richTextDocByteLength, richTextMediaIds, richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { cn } from "../lib/utils";
 import { useMediaQuery } from "../lib/use-media-query";
 import { EMBEDDED_MEDIA_MAX_PER_POST, EMBEDDED_VIDEO_ACCEPT, RenditionFailedError, abortEmbeddedImage, embeddedImageAccept, embeddedImageProblem, embeddedVideoProblem, retryEmbeddedRendition, uploadEmbeddedImage, uploadEmbeddedVideo, type EmbeddedMediaScope } from "../lib/embedded-media";
 import { useEmbeddedHeicEnabled } from "../lib/use-embedded-heic";
 import { requestLinkPreview } from "../lib/link-previews";
 import {
+  EmbeddedImage,
   LinkPreview,
   createRichTextEditorExtensions,
   type RichTextEditorPreset,
@@ -24,6 +25,7 @@ import { Button } from "./reui/button";
 import { Input } from "./reui/input";
 import { EmbeddedUploadTray, type EmbeddedUpload } from "./quincy/EmbeddedUploadTray";
 import { LinkPreviewWithView } from "./quincy/LinkPreviewEditorNode";
+import { EmbeddedImageWithView } from "./quincy/EmbeddedImageEditorNode";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -196,7 +198,7 @@ export function QuincyRichTextEditor({
   const [picking, setPicking] = useState<{ n: number; kind: "image" | "video" } | null>(null);
   const pickerRef = useRef<HTMLInputElement>(null);
   const extensions = useMemo(() => [
-    ...createRichTextEditorExtensions(preset).map((extension) => extension === LinkPreview ? LinkPreviewWithView : extension),
+    ...createRichTextEditorExtensions(preset).map((extension) => extension === LinkPreview ? LinkPreviewWithView : extension === EmbeddedImage ? EmbeddedImageWithView : extension),
     ...(preset === "document" ? [RichTextSlashCommand.configure({ items: [...RICH_TEXT_BASIC_SLASH_ITEMS, RICH_TEXT_TABLE_SLASH_ITEM] })] : []),
   ], [preset]);
   const editor = useEditor({
@@ -352,7 +354,7 @@ export function QuincyRichTextEditor({
         if (cancelled || !mountedRef.current || !live) return;
         const position = Math.min(insertAt.current.get(key) ?? live.state.doc.content.size, live.state.doc.content.size);
         // insertContentAt selects inserted content by default; an async insert must leave the caret where the author is typing.
-        live.chain().command(({ tr }) => { tr.setMeta(UPLOAD_INSERT_META, true); return true; }).insertContentAt(position, { type: kind, attrs: { mediaId } }, { updateSelection: false }).run();
+        live.chain().command(({ tr }) => { tr.setMeta(UPLOAD_INSERT_META, true); return true; }).insertContentAt(position, { type: kind, attrs: kind === "image" ? { mediaId, alt: imageAltFromFileName(file.name) || null } : { mediaId } }, { updateSelection: false }).run();
       };
       const follow = (work: Promise<string>) => {
         keepRow = false;

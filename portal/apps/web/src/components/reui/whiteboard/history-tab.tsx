@@ -127,7 +127,7 @@ export function HistoryTab({
             <EmptyDescription>{state.message}</EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
-            <Button type="button" variant="outline" data-testid="whiteboard-history-retry" onClick={onRetry}>Try Again</Button>
+            <Button type="button" variant="outline" className="[body:has([data-phone-layout])_&]:min-h-[44px]" data-testid="whiteboard-history-retry" onClick={onRetry}>Try Again</Button>
           </EmptyContent>
         </Empty>
       </PanelScroll>

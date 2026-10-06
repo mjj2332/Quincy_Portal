@@ -178,6 +178,16 @@ describe("creating a post with images", () => {
     expect(imageNodes(listed.posts.find((entry) => entry.id === result.id)!.content)).toEqual([a, b]);
   });
 
+  it("stores and returns the author's alt text on the image node, and refuses an alt over the limit with 400 (#553)", async () => {
+    const [a, b] = [await notice(), await notice()];
+    const doc = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Photos" }] }, { type: "image", attrs: { mediaId: a, alt: "  Front door " } }] };
+    const result = await created(await post("member", doc));
+    expect((result.content.content.find((node) => node.type === "image") as { attrs: { alt?: string } }).attrs).toEqual({ mediaId: a, alt: "Front door" });
+    const tooLong = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Photos" }] }, { type: "image", attrs: { mediaId: b, alt: "x".repeat(201) } }] };
+    expect((await post("member", tooLong)).status).toBe(400);
+    expect((await mediaRow(b))).toMatchObject({ state: "pending" });
+  });
+
   it("accepts an image-only post", async () => {
     const id = await notice("pending", { uploader: ids.photographer });
     expect((await created(await post("photographer", { type: "doc", content: [{ type: "image", attrs: { mediaId: id } }] }))).body).toBe("[image]");
@@ -396,7 +406,7 @@ describe("GET /media/embedded/:mediaId for notice media", () => {
 describe("Project hard delete", () => {
   it("leaves notice media alone: its rows and objects survive, and nothing is queued for it", async () => {
     const projectId = crypto.randomUUID(); const now = Date.now();
-    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, archived_at, created_at, updated_at) VALUES (?, 'Doomed', 'editing_autohdr', 0, ?, ?, ?)").bind(projectId, now, now, now).run();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, archived_at, created_at, updated_at) VALUES (?, 'Doomed', 'editing_autohdr', ?, ?, ?)").bind(projectId, now, now, now).run();
     const attached = await seedMedia({ ownerKind: "notice_post", state: "attached" }); const pending = await seedMedia({ ownerKind: "notice_post", state: "pending" });
     const queued = await count("embedded_media_cleanup");
     const response = await appRequest(S3_ENV, `/api/projects/${projectId}`, tokens.admin, "DELETE");

@@ -44,7 +44,10 @@ export function toTiptap(doc: RichTextDoc): Record<string, unknown> {
       }) } : {}),
     };
     if (valueNode.type === "mention") return { type: "mention", attrs: { ...(valueNode.attrs as Record<string, unknown>) } };
-    if (valueNode.type === "image") return { type: "image", attrs: { mediaId: (valueNode.attrs as Record<string, unknown> | undefined)?.mediaId } };
+    if (valueNode.type === "image") {
+      const attrs = valueNode.attrs as Record<string, unknown> | undefined;
+      return { type: "image", attrs: { mediaId: attrs?.mediaId, ...(typeof attrs?.alt === "string" && attrs.alt ? { alt: attrs.alt } : {}) } };
+    }
     if (valueNode.type === "video") return { type: "video", attrs: { mediaId: (valueNode.attrs as Record<string, unknown> | undefined)?.mediaId } };
     if (valueNode.type === "linkPreview") return { type: "linkPreview", attrs: { ...(valueNode.attrs as Record<string, unknown>) } };
     if (valueNode.type === "heading" || valueNode.type === "taskItem") return { type: valueNode.type, attrs: { ...(valueNode.attrs as Record<string, unknown>) }, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
@@ -173,11 +176,12 @@ export const EmbeddedImage = TiptapNode.create({
   atom: true,
   draggable: true,
   selectable: true,
-  addAttributes() { return { mediaId: { default: null } }; },
+  // `alt` (#553) is the author's description, defaulting to the cleaned file name; absent on older images, which fall back to "Embedded image".
+  addAttributes() { return { mediaId: { default: null }, alt: { default: null, rendered: false } }; },
   parseHTML() { return []; },
   renderHTML({ node, HTMLAttributes }) {
     const mediaId = String(node.attrs.mediaId ?? "");
-    return ["img", mergeAttributes(HTMLAttributes, { src: embeddedMediaUrl(mediaId), alt: "Embedded image", "data-media-id": mediaId, class: "rich-text__embedded-image" })];
+    return ["img", mergeAttributes(HTMLAttributes, { src: embeddedMediaUrl(mediaId), alt: typeof node.attrs.alt === "string" && node.attrs.alt ? node.attrs.alt : "Embedded image", "data-media-id": mediaId, class: "rich-text__embedded-image" })];
   },
 });
 
@@ -315,7 +319,7 @@ export function tiptapToRichTextDoc(value: unknown, options: { keepPreviewDispla
     }
     if (valueNode.type === "image") {
       const attrs = valueNode.attrs as Record<string, unknown> | undefined;
-      return { type: "image", attrs: { mediaId: attrs?.mediaId } };
+      return { type: "image", attrs: { mediaId: attrs?.mediaId, ...(typeof attrs?.alt === "string" && attrs.alt.trim() ? { alt: attrs.alt.trim() } : {}) } };
     }
     if (valueNode.type === "video") {
       const attrs = valueNode.attrs as Record<string, unknown> | undefined;

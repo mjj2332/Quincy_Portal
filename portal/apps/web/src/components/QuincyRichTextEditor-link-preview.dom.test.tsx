@@ -380,6 +380,8 @@ describe("a card that lands while the author is composing (#548)", () => {
     await act(async () => { editor.commands.focus(); editor.commands.setTextSelection({ from: 12, to: 17 }); });
     await applyToSelection(host, "https://github.com/");
     const before = { from: editor.state.selection.from, to: editor.state.selection.to };
+    // Absolute, taken right after Apply: a collapse during Apply fails here, not as "unchanged from a later snapshot" (#562).
+    expect(before).toEqual({ from: 12, to: 17 });
     await act(async () => { finish(cardFor(P1, "https://github.com/")); await new Promise((resolve) => setTimeout(resolve, 0)); });
     expect(cards(host)).toHaveLength(1);
     // insertContentAt selects inserted content by default: a NodeSelection on the card means the next keystroke deletes it.
@@ -389,6 +391,28 @@ describe("a card that lands while the author is composing (#548)", () => {
     expect(cards(host)).toHaveLength(1);
     expect(storedPreviews()).toHaveLength(1);
     expect(richTextPlainText(latest)).toContain("QA 548 mid xafter text");
+  });
+});
+
+describe("Apply syncs the editor selection before any DOM-observer flush (#562)", () => {
+  it("keeps the author's range when ProseMirror flushes its DOM observer right after Apply", async () => {
+    request.mockImplementation(() => new Promise<LinkPreviewCard>(() => {}));
+    const host = await mount(plain("QA 548 mid home after text"));
+    const editor = tiptapOf(host);
+    await act(async () => { editor.commands.focus(); editor.commands.setTextSelection({ from: 12, to: 17 }); });
+    await click(host.querySelector('[aria-label="Link"]')!);
+    const input = document.querySelector<HTMLInputElement>('[data-testid="rich-text-link-popover"] input')!;
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "https://github.com/"); input.dispatchEvent(new Event("input", { bubbles: true })); });
+    // Test-only. Tiptap's focus() defers a frame, so Apply must sync the DOM selection itself, in the same tick
+    // as the command, with ProseMirror's view.focus(). happy-dom repairs the selection on the focus event, which
+    // hides the real-browser race, so the sync is pinned directly: a spy, then the forced flush.
+    const sync = vi.spyOn(editor.view, "focus");
+    document.querySelector<HTMLElement>('[data-testid="rich-text-link-popover"] [aria-label="Apply link"]')!.click();
+    expect(sync).toHaveBeenCalled(); // same tick as the click, before Tiptap's deferred focus() can run
+    await settle();
+    // Test-only: ProseMirror's own 20 ms mount timer is what races Tiptap's deferred focus(); force it deterministically.
+    act(() => { document.dispatchEvent(new Event("selectionchange")); (editor.view as unknown as { domObserver: { flush: () => void } }).domObserver.flush(); });
+    expect({ from: editor.state.selection.from, to: editor.state.selection.to }).toEqual({ from: 12, to: 17 });
   });
 });
 
