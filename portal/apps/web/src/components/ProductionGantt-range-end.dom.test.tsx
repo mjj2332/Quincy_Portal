@@ -814,4 +814,54 @@ describe("ProductionGantt — Edit schedule… on the bar (#582)", () => {
       expect(patches()).toHaveLength(1);
     } finally { window.matchMedia = original; }
   });
+
+  it("B5 a later-page row's conflict adopts the body's current schedule on the bar picker: no stale retry, the later-page bar picker converges", async () => {
+    pageTwo = [{ id: PAGE_TWO_ID, title: PAGE_TWO_TITLE, position: 2, canOpenScheduleEditor: true, schedule: range(1, startMoment(sydneyDay(2)), endMoment(sydneyDay(4))) }];
+    await render();
+    await waitFor(() => expect(findBar(PAGE_TWO_TITLE)).toBeTruthy());
+    await openFromBar(PAGE_TWO_TITLE);
+    await pickPopupDay(barPicker(PAGE_TWO_TITLE)!, sydneyDay(6));
+    const winner = range(3, startMoment(sydneyDay(2)), endMoment(sydneyDay(9)));
+    patchReply = () => { pageTwo[0]!.schedule = winner; return { status: 409, body: { error: "conflict", code: "subtask_schedule_version_conflict", current: winner } }; };
+    await applyPopup(barPicker(PAGE_TWO_TITLE)!);
+    await flush(1);
+    await flush(5);
+
+    expect(patches()).toHaveLength(1);
+    expect(barPicker(PAGE_TWO_TITLE)!.textContent).toContain("Latest schedule · v3");
+    patchReply = null;
+    await applyPopup(barPicker(PAGE_TWO_TITLE)!);
+    await flush(8);
+    // The retry used the body's version, not the stale one the page-two source carried.
+    expect(patches()).toHaveLength(2);
+    expect(patchBody(1).schedule.expectedVersion).toBe(3);
+    await waitFor(() => expect(barPicker(PAGE_TWO_TITLE)).toBeNull());
+    await waitFor(() => expect(dueText(PAGE_TWO_TITLE)).toBe("Wed 16 Sep · 17:00"));
+  });
+
+  it("B6 a 409 that answers late reopens the bar picker on the user's edited Start and reminder, not the stored or latest ones", async () => {
+    await render();
+    await openFromBar(RANGE_TITLE);
+    await pickPopupDay(barPicker(RANGE_TITLE)!, sydneyDay(2));
+    await click(barPickerButton(RANGE_TITLE, "4 hours")!);
+    const winner = range(3, startMoment(sydneyDay(1)), endMoment(sydneyDay(8)));
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    patchReply = async () => { await held; rows[0]!.schedule = winner; return { status: 409, body: { error: "conflict", code: "subtask_schedule_version_conflict", current: winner } }; };
+    await applyPopup(barPicker(RANGE_TITLE)!);
+    // The request is pending: let several renders and microtasks pass before it answers.
+    await flush(6);
+    await flush(6);
+    expect(patches()).toHaveLength(1);
+    await act(async () => { release(); await Promise.resolve(); });
+    await flush(8);
+
+    expect(patches()).toHaveLength(1);
+    const reopened = barPicker(RANGE_TITLE);
+    expect(reopened).not.toBeNull();
+    expect(reopened!.textContent).toContain("Latest schedule · v3");
+    expect(reopened!.textContent).toContain("StartSat 12 Sep · 09:00");
+    expect(reopened!.textContent).not.toContain("StartFri 11 Sep");
+    expect(barPickerButton(RANGE_TITLE, "4 hours")!.getAttribute("aria-pressed")).toBe("true");
+  });
 });
