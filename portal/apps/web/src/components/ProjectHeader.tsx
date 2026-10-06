@@ -16,6 +16,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/reui/toolt
 import { PresentationIcon } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/reui/select";
 import { cn, formatUnreadCount } from "../lib/utils";
+import { SCROLL_FADE_MASK_CLASSES, useScrollFade } from "../lib/use-scroll-fade";
 import { HEADER_READONLY_VALUE, HEADER_TEXT_LINK, READONLY_GROUP_FOCUS } from "./project-header-popover";
 import { useStages } from "../lib/stages";
 import { useCapabilities } from "../lib/capabilities";
@@ -257,6 +258,7 @@ export function ProjectHeader({
   // fold (Collaboration is last and the default) would be out of view. `nearest` on both axes keeps
   // the page itself from scrolling vertically.
   const tabsRef = useRef<HTMLDivElement>(null);
+  const { fade: tabsFade, onScroll: onTabsScroll } = useScrollFade(tabsRef);
   // One stable callback per tab for the component's lifetime: a fresh ref callback every render makes
   // Base UI's trigger re-run its own ref registration (a state update), which loops. A `useRef` Map,
   // not `useMemo`, because React may discard a memo; the registry prop is read through a ref.
@@ -281,8 +283,19 @@ export function ProjectHeader({
   // loses its scrollLeft. The effect therefore re-runs when the board closes and the header is shown again (#498).
   useEffect(() => {
     if (whiteboardOpen) return;
-    const selected = tabsRef.current?.querySelector<HTMLElement>('[data-testid="project-overview-tab"][aria-selected="true"]');
-    if (typeof selected?.scrollIntoView === "function") selected.scrollIntoView({ block: "nearest", inline: "nearest" });
+    const strip = tabsRef.current;
+    const selected = strip?.querySelector<HTMLElement>('[data-testid="project-overview-tab"][aria-selected="true"]');
+    if (!strip || !selected) return;
+    // Scroll the strip alone. `scrollIntoView` also scrolls every scrollable ancestor, so it moved the sheet body
+    // until the tab sat flush with the body's top edge and clipped the tab's 4px-outset focus ring (#613).
+    const stripBox = strip.getBoundingClientRect();
+    const tab = selected.getBoundingClientRect();
+    const pad = parseFloat(getComputedStyle(strip).scrollPaddingLeft) || 0;
+    const padEnd = parseFloat(getComputedStyle(strip).scrollPaddingRight) || 0;
+    const before = tab.left - (stripBox.left + pad);
+    const after = tab.right - (stripBox.right - padEnd);
+    if (before < 0) strip.scrollLeft += before;
+    else if (after > 0) strip.scrollLeft += Math.min(after, before);
   }, [activeTab, whiteboardOpen]);
 
   return <section className="project-header" aria-label="Project Overview" data-testid="project-header">
@@ -339,9 +352,9 @@ export function ProjectHeader({
     </div>
 
     {/* The entry button sits beside the scroller, not inside it: at phone width the tabs scroll sideways and it must stay in view. */}
-    <div className="flex min-w-0 items-center gap-[var(--space-2)]">
+    <div className="project-header__tabrow flex min-w-0 items-center gap-[var(--space-2)]">
     {/* The scroller clips its overflow on both axes: the padding (cancelled by the negative margin) keeps the focus ring and the count chip inside it. */}
-    <div className="project-header__tabs -my-[var(--space-1)] flex min-w-0 flex-1 items-center gap-[var(--space-2)] p-[var(--space-1)]" ref={tabsRef}>
+    <div className={cn("project-header__tabs -my-[var(--space-1)] flex min-w-0 flex-1 items-center gap-[var(--space-2)] p-[var(--space-1)]", SCROLL_FADE_MASK_CLASSES)} ref={tabsRef} data-fade={tabsFade} onScroll={onTabsScroll}>
       <Tabs value={activeTab} onValueChange={(next) => { if (typeof next === "string" && next !== activeTab) onActiveTabChange(next as WorkspaceTab); }}>
         <TabsList variant="line" aria-label="Workspace">
           {availableTabs.map((tab) => { const collection = project.collections.find((item) => item.kind === tab); return (

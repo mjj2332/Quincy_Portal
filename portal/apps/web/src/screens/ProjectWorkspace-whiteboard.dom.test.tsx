@@ -200,22 +200,30 @@ describe("whiteboard focus and layout (#498 design review)", () => {
     expect(document.activeElement).toBe(openButton());
   });
 
-  it("closing a deep-linked board scrolls the selected tab into view (a hidden scroller cannot scroll)", async () => {
-    const scrolled: Array<{ selected: string | null; hidden: boolean }> = [];
+  it("closing a deep-linked board scrolls the tab strip to the selected tab (a hidden scroller cannot scroll), never an ancestor (#613)", async () => {
     const original = Element.prototype.scrollIntoView;
-    Element.prototype.scrollIntoView = function (this: Element) {
-      scrolled.push({ selected: this.getAttribute("aria-selected"), hidden: this.closest("[data-whiteboard-hidden]")?.getAttribute("data-whiteboard-hidden") === "true" });
-    };
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    const strip = () => document.querySelector<HTMLElement>('[data-fade]');
+    const hiddenCalls: string[] = [];
     try {
       await renderSheet({ whiteboardOpen: true });
       await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
+      // A real browser reports an empty box for the hidden header; here the selected tab sits 400px past the strip's end once laid out.
+      let laidOut = false;
+      vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+        const box = !laidOut ? { left: 0, right: 0 } : this === strip() ? { left: 0, right: 300 } : this.getAttribute("aria-selected") === "true" ? { left: 400, right: 520 } : { left: 0, right: 0 };
+        return { ...box, x: box.left, y: 0, top: 0, bottom: 44, width: box.right - box.left, height: 44, toJSON: () => ({}) } as DOMRect;
+      });
       // Mounted under the open board: nothing may be driven while the header has no layout.
-      expect(scrolled.filter((call) => call.hidden)).toEqual([]);
-      scrolled.length = 0;
+      if (strip()!.scrollLeft !== 0) hiddenCalls.push("scrolled while hidden");
+      expect(hiddenCalls).toEqual([]);
+      laidOut = true;
       await rerenderSheet({ whiteboardOpen: false });
       await flush(3);
-      expect(scrolled).toContainEqual({ selected: "true", hidden: false });
-    } finally { Element.prototype.scrollIntoView = original; }
+      expect(strip()!.scrollLeft).toBeGreaterThan(0);
+      expect(scrollIntoView).not.toHaveBeenCalled();
+    } finally { Element.prototype.scrollIntoView = original; vi.restoreAllMocks(); }
   });
 
   it("the section only subtracts the banner while impersonating (the token is always defined)", async () => {

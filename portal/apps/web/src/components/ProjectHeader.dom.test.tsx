@@ -578,17 +578,54 @@ describe("Project header tab strip", () => {
     canEdit: false, hasRawFolder: false, autohdrBlocked: false, isSyncing: false, onSyncDropbox: vi.fn(), onActiveTabChange: vi.fn(),
   });
 
-  it("scrolls the selected tab into view on mount and when the selection changes, without vertical page scroll", () => {
-    const calls: Array<{ text: string | null; arg: unknown }> = [];
-    Element.prototype.scrollIntoView = function (this: Element, arg?: unknown) { calls.push({ text: this.textContent, arg }); };
-    render(<ProjectHeader {...props("collaboration")} />);
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.text).toContain("Collaboration");
-    expect(calls[0]!.arg).toEqual({ block: "nearest", inline: "nearest" });
-    act(() => { root.render(<ProjectHeader {...props("raw")} />); });
-    expect(calls).toHaveLength(2);
-    expect(calls[1]!.text).toContain("RAW");
-    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  // #613: `scrollIntoView` scrolls every scrollable ancestor, so it moved the sheet body until the tab sat flush with the
+  // body's top edge and clipped the tab's outset focus ring. The strip is scrolled on its own axis instead.
+  function stubGeometry(strip: Element, tabs: Record<string, { left: number; right: number }>) {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      const box = this === strip ? { left: 0, right: 300 } : (tabs[this.textContent?.trim().replace(/\d+$|—$/, "") ?? ""] ?? { left: 0, right: 0 });
+      return { ...box, x: box.left, y: 0, top: 0, bottom: 44, width: box.right - box.left, height: 44, toJSON: () => ({}) } as DOMRect;
+    });
+  }
+
+  it("reveals the selected tab by scrolling the strip itself, never an ancestor (#613)", () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    try {
+      render(<ProjectHeader {...props("raw")} />);
+      const strip = host.querySelector<HTMLElement>('[data-fade]')!;
+      stubGeometry(strip, { Collaboration: { left: 400, right: 520 }, RAW: { left: -80, right: 40 } });
+      act(() => { root.render(<ProjectHeader {...props("collaboration")} />); });
+      expect(strip.scrollLeft).toBe(220);
+      strip.scrollLeft = 200;
+      act(() => { root.render(<ProjectHeader {...props("raw")} />); });
+      expect(strip.scrollLeft).toBe(120);
+      expect(scrollIntoView).not.toHaveBeenCalled();
+    } finally { delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView; }
+  });
+
+  it("leaves the strip alone when the selected tab is already in view", () => {
+    render(<ProjectHeader {...props("raw")} />);
+    const strip = host.querySelector<HTMLElement>('[data-fade]')!;
+    stubGeometry(strip, { Collaboration: { left: 100, right: 220 }, RAW: { left: 10, right: 90 } });
+    strip.scrollLeft = 7;
+    act(() => { root.render(<ProjectHeader {...props("collaboration")} />); });
+    expect(strip.scrollLeft).toBe(7);
+  });
+
+  it("marks which side of the strip has more tabs, for the edge fade (#613)", () => {
+    render(<ProjectHeader {...props("raw")} />);
+    const strip = host.querySelector<HTMLElement>('[data-fade]')!;
+    expect(strip.dataset.fade).toBe("none");
+    Object.defineProperty(strip, "clientWidth", { configurable: true, value: 300 });
+    Object.defineProperty(strip, "scrollWidth", { configurable: true, value: 541 });
+    act(() => { strip.dispatchEvent(new Event("scroll")); });
+    expect(strip.dataset.fade).toBe("end");
+    strip.scrollLeft = 100;
+    act(() => { strip.dispatchEvent(new Event("scroll")); });
+    expect(strip.dataset.fade).toBe("both");
+    strip.scrollLeft = 241;
+    act(() => { strip.dispatchEvent(new Event("scroll")); });
+    expect(strip.dataset.fade).toBe("start");
   });
 
   it("does not throw where scrollIntoView is unavailable", () => {

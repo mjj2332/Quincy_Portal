@@ -323,6 +323,11 @@
 @media (max-width: 720px) {
   .project-sheet__body .project-header__identity > h2 { padding-inline-end: calc(var(--space-4) + 44px + var(--space-2) - var(--space-4)); }
 }
+/* #613: the tab row (tabs + whiteboard button) scrolled into the close button's column; same clearance as the title. */
+.project-sheet__body .project-header__tabrow { padding-inline-end: calc(var(--space-4) + 44px + var(--space-2) - var(--space-6)); }
+@media (max-width: 720px) {
+  .project-sheet__body .project-header__tabrow { padding-inline-end: calc(var(--space-4) + 44px + var(--space-2) - var(--space-4)); }
+}
 
 /* selection action bar */
 
