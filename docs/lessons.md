@@ -5837,3 +5837,17 @@ never applied. Fix: set the consumer width through the same variant (`data-[side
 data-[side=left]:max-w-[90vw]`, as `quincy/RailSheet.tsx` does). `styles/sheet-width.guard.test.ts` fails on a plain `w-` / `max-w-` utility in any
 `<SheetContent className>` outside `components/reui/`. The general rule: a consumer override of a utility the vendor
 sets under a data or state variant must use that same variant, or it silently loses.
+
+## A programmatically focused container rings
+Tags: focus-overlays, css-tokens · #598
+
+Base UI focuses a popup or sheet container (`tabIndex -1`, never a Tab stop) on open. After a keyboard open, or before
+any pointer input on the page, Chrome treats that as `:focus-visible`, and the unlayered global ring in
+`styles/tokens/base.css` outlines the whole container. Three sightings, one mechanism: the Deadline popover frame while
+`ProjectDetailGate` showed its skeleton (`DateTimeField`'s `initialFocus` returns `true` when no day button exists yet),
+the Project sheet on a fresh load, and the Gantt Due/bar picker. Fix: `focus-visible:!outline-none` on the container
+only (the `!` is needed against the unlayered rule), as `NotificationBell`'s panel already did. Rings on controls inside
+are untouched, and focus still lands on the named dialog, so screen readers are unaffected.
+`components/quincy/container-focus.guard.test.ts` pins the container list. Not covered yet: the Calendar rail sheet,
+`RailSheet`, `Modal.tsx`. Rejected: `focus({ focusVisible: false })` (cannot apply when `initialFocus` returns `true`) and
+a `data-focus-pending` marker (state for a ring that is never useful).
