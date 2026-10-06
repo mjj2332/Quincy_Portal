@@ -14,3 +14,20 @@ export async function chooseCommentAction(scope: ParentNode, authorName: string,
   await act(async () => { item.click(); await Promise.resolve(); await Promise.resolve(); });
   await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 150)); });
 }
+
+/**
+ * Comment Delete asks in an alert dialog (#568): `chooseCommentAction(..., "Delete")` only opens it. These finish the choice
+ * and wait out the dialog's exit transition so focus has settled before the next assertion.
+ */
+export async function confirmCommentDelete() {
+  const action = document.querySelector<HTMLElement>('[data-testid="comment-delete-confirm-action"]');
+  if (!action) throw new Error("No comment Delete confirmation is open");
+  await act(async () => { action.click(); await Promise.resolve(); await Promise.resolve(); });
+  await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 300)); });
+}
+export async function cancelCommentDelete() {
+  const cancel = document.querySelector<HTMLElement>('[data-testid="comment-delete-cancel"]');
+  if (!cancel) throw new Error("No comment Delete confirmation is open");
+  await act(async () => { cancel.click(); await Promise.resolve(); await Promise.resolve(); });
+  await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 300)); });
+}

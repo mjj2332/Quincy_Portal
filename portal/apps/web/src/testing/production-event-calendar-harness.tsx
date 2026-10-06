@@ -23,6 +23,7 @@ import { ProjectQueryRuntimeProvider, type ProjectQueryRuntime } from "../lib/pr
 import { ProductionEventCalendar, type ProductionEventCalendarFocus, type ProductionEventCalendarFocusOutcome } from "../components/ProductionEventCalendar";
 import { PROJECT_ID } from "./production-calendar-fixtures";
 import { eventCalendarFake } from "./event-calendar-fake";
+import { dateTimePopup } from "./date-time-popup";
 
 export function calendarState(subview: DashboardCalendarState["subview"] = "month", date = "2026-08-12", layers: DashboardCalendarState["layers"] = ["project", "checklist"]): DashboardCalendarState {
   return { view: "calendar", date, subview, layers, editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide", shootRange: null, deadlineRange: null, showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false };
@@ -197,6 +198,19 @@ export async function openReschedule(eventId: string): Promise<void> {
   if (!item) throw new Error(`no Reschedule… / Edit schedule… row for ${eventId}`);
   await act(async () => { item.click(); await Promise.resolve(); await Promise.resolve(); });
   await flush(60);
+}
+
+/**
+ * #583 — opens a checklist item's item menu, picks "Edit schedule…" and returns the date/time picker it opens (the item's own
+ * popover, named "Schedule for <title>, <street>", from the DTO the fake vendor holds). Throws when no picker opened.
+ */
+export async function openEditSchedule(eventId: string): Promise<HTMLElement> {
+  await openReschedule(eventId);
+  const dto = (eventCalendarFake.event(eventId)?.data as { dto?: { title: string; project: { street: string } } } | undefined)?.dto;
+  if (!dto) throw new Error(`no event data for ${eventId}`);
+  const popup = dateTimePopup(`Schedule for ${dto.title}, ${dto.project.street}`);
+  if (!popup) throw new Error(`no schedule picker for ${eventId}`);
+  return popup;
 }
 
 /** Opens an event's item menu and returns its "Reschedule…" / "Edit schedule…" row (null when absent), then leaves the menu open. */
