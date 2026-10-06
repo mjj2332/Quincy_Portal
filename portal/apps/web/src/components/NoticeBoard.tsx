@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode, type Ref } from "react";
 import { NOTICE_BODY_MAX_LENGTH, NOTICE_RICH_TEXT_JSON_MAX_BYTES, richTextDocByteLength, richTextPlainText, type RichTextDoc } from "@quincy/shared";
-import { stripLinkPreviewDisplay } from "../lib/rich-text-tiptap";
+import { stripEmbeddedDisplay } from "../lib/rich-text-tiptap";
 import { createNoticeBoardPost, deleteNoticeBoardPost, editNoticeBoardPost, useNoticeBoardPostsQuery, useNoticeBoardPresentation, useNoticeBoardReadStateQuery } from "../lib/notice-board-data";
 import { ApiError, apiGet } from "../lib/api";
 import { cn } from "@/lib/utils";
@@ -94,7 +94,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
 
   // Over either cap the editor says so and the action is disabled: the server (the notice profile)
   // would answer 400, and the character counter reads the same untrimmed plain text.
-  const overCap = (doc: RichTextDoc) => richTextDocByteLength(stripLinkPreviewDisplay(doc)) > NOTICE_RICH_TEXT_JSON_MAX_BYTES || richTextPlainText(doc).length > NOTICE_BODY_MAX_LENGTH;
+  const overCap = (doc: RichTextDoc) => richTextDocByteLength(stripEmbeddedDisplay(doc)) > NOTICE_RICH_TEXT_JSON_MAX_BYTES || richTextPlainText(doc).length > NOTICE_BODY_MAX_LENGTH;
   const postingOverBytes = overCap(content);
   const editingOverBytes = overCap(editingContent);
   const queryError = postsQuery.error ?? readStateQuery.error;
@@ -130,7 +130,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
   async function submit(event?: FormEvent) {
     event?.preventDefault(); if (postingOverBytes || composerUploading || !beginNoticeBoardMutation("create")) return;
     try {
-      await createNoticeBoardPost(queryClient, stripLinkPreviewDisplay(content));
+      await createNoticeBoardPost(queryClient, stripEmbeddedDisplay(content));
       setContent(EMPTY_DOC); clearMutationError("create");
     } catch (reason) {
       setMutationError("create", reason, "The post could not be published.");
@@ -140,7 +140,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
   async function saveEdit(id: string) {
     if (editingOverBytes || editUploading || !beginNoticeBoardMutation("edit")) return;
     try {
-      await editNoticeBoardPost(queryClient, id, stripLinkPreviewDisplay(editingContent));
+      await editNoticeBoardPost(queryClient, id, stripEmbeddedDisplay(editingContent));
       restoreTriggerFor.current = id; setEditingId(null); setEditingContent(EMPTY_DOC); clearMutationError("edit");
     } catch (reason) {
       setMutationError("edit", reason, "The post could not be updated.");

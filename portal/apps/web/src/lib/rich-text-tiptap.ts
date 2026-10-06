@@ -360,10 +360,11 @@ export function tiptapToRichTextDoc(value: unknown, options: { keepPreviewDispla
   return copy(value) as RichTextDoc;
 }
 
-/** The form a post is sent in: every card is its preview id alone, whatever a local draft kept for drawing it. */
-export function stripLinkPreviewDisplay(doc: RichTextDoc): RichTextDoc {
-  if (!doc.content.some((block) => block.type === "linkPreview" && Object.keys(block.attrs).length > 1)) return doc;
-  return { ...doc, content: doc.content.map((block) => block.type === "linkPreview" ? { type: "linkPreview" as const, attrs: { previewId: block.attrs.previewId } } : block) };
+/** The form a post is sent in: every link card is its preview id alone and every video its media id alone, whatever a local draft or the server's served form kept for drawing them (a link card's text and image, a video's `hasPoster`). */
+export function stripEmbeddedDisplay(doc: RichTextDoc): RichTextDoc {
+  const needsStrip = (block: RichTextDoc["content"][number]) => (block.type === "linkPreview" && Object.keys(block.attrs).length > 1) || (block.type === "video" && "hasPoster" in block.attrs);
+  if (!doc.content.some(needsStrip)) return doc;
+  return { ...doc, content: doc.content.map((block) => !needsStrip(block) ? block : block.type === "linkPreview" ? { type: "linkPreview" as const, attrs: { previewId: block.attrs.previewId } } : { type: "video" as const, attrs: { mediaId: (block as Extract<typeof block, { type: "video" }>).attrs.mediaId } }) };
 }
 
 export function mentionQuery(editor: NonNullable<ReturnType<typeof useEditor>>): string | null {

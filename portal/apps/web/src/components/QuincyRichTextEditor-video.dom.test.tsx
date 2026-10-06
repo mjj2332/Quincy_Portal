@@ -233,6 +233,23 @@ describe("cancelling a video upload (#494)", () => {
     expect(region.textContent).toBe("Upload cancelled");
   });
 
+  it("announces a second consecutive cancel: the live region is cleared, then repopulated, with no edit between (#556)", async () => {
+    uploadVideo.mockImplementation((_p: string, _f: File, options: { signal: AbortSignal }) => new Promise<string>((_resolve, reject) => { options.signal.addEventListener("abort", () => reject(Object.assign(new Error("Upload cancelled"), { name: "AbortError" }))); }));
+    const host = mount(<Harness />);
+    await choose(host, [mp4("one.mp4"), mp4("two.mp4")]);
+    const region = host.querySelector<HTMLElement>('[aria-live="polite"]')!;
+    const seen: string[] = [];
+    const observer = new MutationObserver(() => { if (seen[seen.length - 1] !== (region.textContent ?? "")) seen.push(region.textContent ?? ""); });
+    observer.observe(region, { childList: true, characterData: true, subtree: true });
+    await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="Cancel upload of one.mp4"]')!.click(); });
+    await settle();
+    await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="Cancel upload of two.mp4"]')!.click(); });
+    await settle();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+    observer.disconnect();
+    expect(seen).toEqual(["Upload cancelled", "", "Upload cancelled"]);
+  });
+
   it("an image row has no Cancel button", async () => {
     uploadImage.mockImplementation(() => new Promise<string>(() => undefined));
     const host = mount(<Harness />);
