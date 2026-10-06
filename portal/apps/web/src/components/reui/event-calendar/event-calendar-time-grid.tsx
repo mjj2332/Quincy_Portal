@@ -101,6 +101,11 @@
  *    the in-grid MOVE ghost renders the event's content when it is set. A pointer move shows an
  *    empty placeholder because a cursor-following carry shows the content; a keyboard move has
  *    no carry. Pointer behaviour is unchanged. See `event-calendar-dnd.tsx` entry 6.
+ *
+ * 6. 2026-10-07, #643 — the week / day header's today marker is the month view's chip (`bg-primary
+ *    text-primary-foreground`, `rounded-sm`, `px-1.5`) on a span around the header text, replacing
+ *    the cell's own `text-primary` today tint. `--primary` is near-black in Quincy, so the tint did not
+ *    show. A consumer `renderDayHeader` still replaces the span (and so the chip).
  */
 import {
   useEffect,
@@ -487,16 +492,23 @@ function EventCalendarDayHeader({
       data-slot="event-calendar-day-header"
       data-today={isToday || undefined}
       className={cn(
-        "data-today:text-primary min-w-0 truncate border-e px-2 py-1.5 font-medium last:border-e-0",
+        "min-w-0 truncate border-e px-2 py-1.5 font-medium last:border-e-0",
         isToday && viewConfig.todayClassName
       )}
     >
-      {viewConfig.renderDayHeader?.({ day, view, isToday }) ??
-        format(
-          toZoned(day, settings.timeZone),
-          settings.i18n.formats.timeGridDayHeader,
-          { locale: settings.locale }
-        )}
+      {viewConfig.renderDayHeader?.({ day, view, isToday }) ?? (
+        <span
+          className={cn(
+            isToday && "bg-primary text-primary-foreground rounded-sm px-1.5"
+          )}
+        >
+          {format(
+            toZoned(day, settings.timeZone),
+            settings.i18n.formats.timeGridDayHeader,
+            { locale: settings.locale }
+          )}
+        </span>
+      )}
     </div>
   )
 }

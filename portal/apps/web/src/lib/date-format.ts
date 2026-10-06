@@ -234,3 +234,21 @@ export function formatCivilDay(civil: string): string {
   const weekday = WEEKDAY_SHORT[new Date(Date.UTC(year, month - 1, day)).getUTCDay()];
   return `${weekday} ${day} ${MONTH_NAMES[month - 1]} ${year}`;
 }
+
+/**
+ * #643: a day range as the Portal writes it, day-first, in Sydney days: "7 Oct 2026", "7–20 Oct 2026",
+ * "28 Sep – 4 Oct 2026", "28 Dec 2026 – 3 Jan 2027". `endInclusive` is the LAST day shown (a caller holding an
+ * exclusive end subtracts a millisecond first). The separator is an en dash, tight within a month and spaced
+ * across months. Read through `sydneyCivilParts`, so a zoned vendor date and a plain instant agree, whatever the
+ * machine zone.
+ */
+export function formatDayRangePortal(start: Date, endInclusive: Date): string {
+  const a = sydneyParts(start);
+  const b = sydneyParts(endInclusive);
+  const mon = (month: number) => MONTH_NAMES[month - 1];
+  if (a.year === b.year && a.month === b.month) {
+    return a.day === b.day ? `${a.day} ${mon(a.month)} ${a.year}` : `${a.day}–${b.day} ${mon(a.month)} ${a.year}`;
+  }
+  if (a.year === b.year) return `${a.day} ${mon(a.month)} – ${b.day} ${mon(b.month)} ${b.year}`;
+  return `${a.day} ${mon(a.month)} ${a.year} – ${b.day} ${mon(b.month)} ${b.year}`;
+}

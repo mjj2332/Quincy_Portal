@@ -297,3 +297,33 @@ describe("production event-calendar adapter: focus ring and day headers (#602)",
     expect(format(new Date(2026, 9, 7), f.agendaDayDate)).toBe("7 Oct 2026");
   });
 });
+
+describe("production event-calendar adapter: range titles (#643)", () => {
+  const f = PRODUCTION_EVENT_CALENDAR_I18N.functions;
+  const range = (startIso: string, endIso: string) => ({ start: new Date(startIso), end: new Date(endIso) });
+  const base = () => "BASE";
+  const ctx = (activeRange: { start: Date; end: Date }, date = activeRange.start) => ({ date, activeRange, visibleRange: activeRange });
+
+  it("titles a Monday week with the Portal's day-first range, the end read as exclusive", () => {
+    // 28 Sep 00:00 AEST to 5 Oct 00:00 AEDT (exclusive).
+    expect(f.formatTitle("week", ctx(range("2026-09-27T14:00:00.000Z", "2026-10-04T13:00:00.000Z")), base)).toBe("28 Sep \u2013 4 Oct 2026");
+  });
+
+  it("titles the 3-day and agenda ranges the same way", () => {
+    expect(f.formatTitle("days", ctx(range("2026-10-06T13:00:00.000Z", "2026-10-09T13:00:00.000Z")), base)).toBe("7\u20139 Oct 2026");
+    expect(f.formatTitle("agenda", ctx(range("2026-10-06T13:00:00.000Z", "2026-10-20T13:00:00.000Z")), base)).toBe("7\u201320 Oct 2026");
+  });
+
+  it("leaves the month title to the merged base", () => {
+    expect(f.formatTitle("month", ctx(range("2026-09-30T14:00:00.000Z", "2026-11-10T13:00:00.000Z")), (view) => (view === "month" ? "October 2026" : "x"))).toBe("October 2026");
+  });
+
+  it("titles the day view 'Wed 7 Oct 2026' through the dayTitle format", () => {
+    expect(PRODUCTION_EVENT_CALENDAR_I18N.formats.dayTitle).toBe("EEE d MMM yyyy");
+    expect(format(new Date(2026, 9, 7), PRODUCTION_EVENT_CALENDAR_I18N.formats.dayTitle)).toBe("Wed 7 Oct 2026");
+  });
+
+  it("names a day range for the agenda aria-label and drag drafts", () => {
+    expect(f.formatDayRange(range("2026-10-06T13:00:00.000Z", "2026-10-20T13:00:00.000Z"))).toBe("7\u201320 Oct 2026");
+  });
+});

@@ -97,6 +97,8 @@ import { TooltipProvider } from "./reui/tooltip";
 import { EventCalendarContent } from "./reui/event-calendar/event-calendar-content";
 import { Button } from "./reui/button";
 import { Button as QuincyButton } from "./quincy/Button";
+import { IconButton } from "./quincy/icon-button";
+import { CalendarIcon } from "lucide-react";
 import { ganttShowDeliveredRecovery } from "../lib/production-gantt-filters";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "./reui/sheet";
 import { Skeleton } from "./reui/skeleton";
@@ -162,6 +164,8 @@ export type ProductionEventCalendarProps = {
 const RAIL_SHEET_QUERY = "(max-width: 1100px)";
 const PHONE_QUERY = "(max-width: 720px)";
 const COARSE_QUERY = "(pointer: coarse)";
+/** #643: below this the Calendar side-panel toggle is icon-only, so Today / view / arrows fit one row at 375px. */
+const ICON_TOGGLE_QUERY = "(max-width: 399px)";
 const CALENDAR_VIEWS = ["month", "week", "day", "days", "agenda"] as const;
 const TIME_GRID_SUBVIEWS = new Set(["week", "day", "days"]);
 const OVERLAP = "Overlaps another task";
@@ -269,6 +273,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
   const narrow = useMediaQuery(RAIL_SHEET_QUERY);
   const phoneViewport = useMediaQuery(PHONE_QUERY);
   const coarsePointer = useMediaQuery(COARSE_QUERY);
+  const iconToggle = useMediaQuery(ICON_TOGGLE_QUERY);
   const phone = phoneViewport && coarsePointer;
   const [railOpen, setRailOpen] = useState(false);
   useEffect(() => { if (!narrow) setRailOpen(false); }, [narrow]);
@@ -666,13 +671,22 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
                       {showDeliveredButton}
                     </div>
                     <div className="flex min-w-0 basis-full flex-wrap items-center gap-[var(--space-1)]" data-testid="event-calendar-controls">
-                      <Button type="button" variant="outline" size="sm" className="min-h-[44px]" data-testid="event-calendar-rail-toggle" aria-expanded={railOpen} onClick={() => setRailOpen(true)}>
-                        Calendar
-                      </Button>
+                      {iconToggle ? (
+                        <IconButton className="min-h-[44px] min-w-[44px] border border-border" data-testid="event-calendar-rail-toggle" aria-label="Calendar" aria-expanded={railOpen} onClick={() => setRailOpen(true)}>
+                          <CalendarIcon className="size-4" aria-hidden="true" />
+                        </IconButton>
+                      ) : (
+                        <Button type="button" variant="outline" size="sm" className="min-h-[44px]" data-testid="event-calendar-rail-toggle" aria-expanded={railOpen} onClick={() => setRailOpen(true)}>
+                          Calendar
+                        </Button>
+                      )}
                       <EventCalendarNavToday className="min-h-[44px]" />
                       <EventCalendarViewSwitcher className="min-h-[44px]" />
-                      <EventCalendarNavPrev className="min-h-[44px] min-w-[44px]" />
-                      <EventCalendarNavNext className="min-h-[44px] min-w-[44px]" />
+                      {/* One shrink-0 pair: a wrapped row never strands Next on its own line. */}
+                      <div className="flex shrink-0 items-center">
+                        <EventCalendarNavPrev className="min-h-[44px] min-w-[44px]" />
+                        <EventCalendarNavNext className="min-h-[44px] min-w-[44px]" />
+                      </div>
                     </div>
                   </TooltipProvider>
                 </EventCalendarNav>
