@@ -149,12 +149,17 @@ describe("ConfirmModalHost", () => {
     await flush();
     const scrim = document.querySelector<HTMLElement>('[data-testid="alert-dialog-scrim"]')!;
     expect(scrim).not.toBeNull();
+    // The scrim also cancels mousedown's default focus move: a press must not drop focus to
+    // <body>, from which Shift+Tab walks out of the still-open confirm into the app behind it.
+    const scrimMouseDown = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 });
     await act(async () => {
       scrim.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
+      scrim.dispatchEvent(scrimMouseDown);
       scrim.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
       await Promise.resolve();
     });
     await flush();
+    expect(scrimMouseDown.defaultPrevented).toBe(true);
     expect(scrimSettled).toBe(false);
     expect(document.querySelector('[data-testid="confirm-modal"]')).not.toBeNull();
     confirmStore.resolve(false);

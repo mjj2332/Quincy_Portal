@@ -40,6 +40,10 @@ import { Button } from "@/components/reui/button"
  * #625: `AlertDialogContent` provides `InsideAlertDialogContext` around its children, so a
  * `reui/popover` opened from inside the dialog (above it) is told apart from a popover beneath it,
  * which `popover.tsx`'s alert-dialog adaptation exempts from dismissal by presses on the dialog.
+ * The overlay also cancels `mousedown`'s default: an alert dialog ignores scrim presses, and Base
+ * UI never restores focus after one, so the press would leave focus on `<body>` with the dialog
+ * still open — Shift+Tab then walks out into the app and closes popovers beneath. (`mousedown`,
+ * not `pointerdown`: only the former's default moves focus. Touch taps emit one too.)
  *
  * #221 (2026-09-28, browser pass D): the overlay passes `forceRender` and carries
  * `data-testid="alert-dialog-scrim"`. `RailedShell` wraps every page in one `Sheet` (a Base UI
@@ -65,6 +69,7 @@ function AlertDialogPortal({ ...props }: AlertDialogPrimitive.Portal.Props) {
 
 function AlertDialogOverlay({
   className,
+  onMouseDown,
   ...props
 }: AlertDialogPrimitive.Backdrop.Props) {
   return (
@@ -74,6 +79,11 @@ function AlertDialogOverlay({
       // Every Portal page sits inside RailedShell's `Sheet` Root, so Base UI treats this dialog as
       // nested and would skip its Backdrop (`enabled: forceRender || !nested`). See header, #221.
       forceRender
+      // Keep focus inside the dialog on a scrim press. See header, #625.
+      onMouseDown={(event) => {
+        event.preventDefault()
+        onMouseDown?.(event)
+      }}
       className={cn(
         "fixed inset-0 isolate z-[var(--z-dialog)] bg-[var(--scrim-overlay)] backdrop-blur-[3px] duration-100 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
         className
