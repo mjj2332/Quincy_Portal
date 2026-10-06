@@ -648,6 +648,20 @@ describe("a comment with a video (#494)", () => {
     for (const who of ["admin", "external"] as const) { const response = await get(`/media/embedded/${id}`, who, { range: "bytes=0-9" }); expect(response.status, who).toBe(206); await consume(response); }
   });
 
+  it("serves a video with its poster flag from the media record, stores only the id, and tells a posterless video apart (#556)", async () => {
+    const withPoster = await video("pending", { poster: true }); const without = await video();
+    // The browser sends its own flag (it keeps one on the node); the server trusts only the media record.
+    const sent = videoDoc(withPoster, without).content.map((node) => node.type === "video" ? { ...node, attrs: { ...node.attrs, hasPoster: node.attrs!.mediaId === without } } : node);
+    const comment = await created(await post("member", { type: "doc", content: sent }));
+    const flags = (content: Array<{ type: string; attrs?: Record<string, unknown> }>) => content.filter((node) => node.type === "video").map((node) => node.attrs);
+    expect(flags(comment.content.content)).toEqual([{ mediaId: withPoster, hasPoster: true }, { mediaId: without, hasPoster: false }]);
+    const stored = await database.DB.prepare("SELECT content_json FROM project_comments WHERE id = ?").bind(comment.id).first<{ content_json: string }>();
+    expect(flags(JSON.parse(stored!.content_json).content)).toEqual([{ mediaId: withPoster }, { mediaId: without }]);
+    const listed = (await (await request(`/api/projects/${ids.project}/comments`, "member")).json()) as { comments: Array<{ id: string; content: { content: Array<{ type: string; attrs?: Record<string, unknown> }> } }> };
+    expect(flags(listed.comments.find((item) => item.id === comment.id)!.content.content)).toEqual([{ mediaId: withPoster, hasPoster: true }, { mediaId: without, hasPoster: false }]);
+    expect((await get(`/media/embedded/${without}/poster`, "member")).status).toBe(404);
+  });
+
   it("accepts a video-only comment and an External editor's own video", async () => {
     const only = await created(await post("member", { type: "doc", content: [{ type: "video", attrs: { mediaId: await video() } }] }));
     expect(only.body).toBe("[video]");

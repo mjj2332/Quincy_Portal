@@ -6,7 +6,7 @@ import { NodeSelection } from "@tiptap/pm/state";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { COMMENT_MEDIA_RICH_TEXT_PROFILE, NOTICE_RICH_TEXT_PROFILE, parseRichTextDoc, richTextPlainText, type LinkPreviewCard, type RichTextDoc } from "@quincy/shared";
 import { ProjectCommentDraftsProvider, useProjectCommentDraft } from "../lib/project-comment-drafts";
-import { createRichTextEditorExtensions, stripLinkPreviewDisplay, tiptapToRichTextDoc, toTiptap } from "../lib/rich-text-tiptap";
+import { createRichTextEditorExtensions, stripEmbeddedDisplay, tiptapToRichTextDoc, toTiptap } from "../lib/rich-text-tiptap";
 import { QuincyRichTextEditor } from "./QuincyRichTextEditor";
 import { ProjectSheet } from "./quincy/ProjectSheet";
 import { RichTextContent } from "./RichTextContent";
@@ -55,7 +55,7 @@ async function apply(host: HTMLElement, href: string) {
   await settle();
 }
 const cards = (host: HTMLElement) => [...host.querySelectorAll('[data-testid="link-preview-card-editor"]')];
-const storedPreviews = () => stripLinkPreviewDisplay(latest).content.filter((block) => block.type === "linkPreview");
+const storedPreviews = () => stripEmbeddedDisplay(latest).content.filter((block) => block.type === "linkPreview");
 
 beforeEach(() => { request.mockReset(); latest = plain(); reset = null; });
 afterEach(async () => { await act(async () => root?.unmount()); root = null; document.body.replaceChildren(); });
@@ -260,7 +260,7 @@ describe("a card in a Project composer draft (#497)", () => {
     expect(cards(host)).toHaveLength(1);
     expect(host.querySelector('[data-testid="link-preview-card-editor"]')!.textContent).toContain("Title 1");
     expect(host.querySelector('[data-testid="link-preview-remove"]')).not.toBeNull();
-    expect(stripLinkPreviewDisplay(latest).content.filter((block) => block.type === "linkPreview")).toEqual([{ type: "linkPreview", attrs: { previewId: P1 } }]);
+    expect(stripEmbeddedDisplay(latest).content.filter((block) => block.type === "linkPreview")).toEqual([{ type: "linkPreview", attrs: { previewId: P1 } }]);
     await click(host.querySelector('[data-testid="link-preview-remove"]')!);
     expect(cards(host)).toHaveLength(0);
   });
@@ -272,7 +272,7 @@ describe("a card in a Project composer draft (#497)", () => {
     await act(async () => open!(false)); await act(async () => open!(true));
     await apply(host, "https://example.test/a");
     expect(latest.content.filter((block) => block.type === "linkPreview")).toHaveLength(1);
-    expect(() => parseRichTextDoc(stripLinkPreviewDisplay(latest), COMMENT_MEDIA_RICH_TEXT_PROFILE)).not.toThrow();
+    expect(() => parseRichTextDoc(stripEmbeddedDisplay(latest), COMMENT_MEDIA_RICH_TEXT_PROFILE)).not.toThrow();
   });
 });
 
@@ -291,7 +291,7 @@ describe("any editor whose state lives outside it (#497)", () => {
   it("measures the size of a draft without the display data a card carries", async () => {
     const big = "x".repeat(2_500);
     const cardsOf = (count: number) => Array.from({ length: count }, (_, index) => ({ type: "linkPreview" as const, attrs: { previewId: `${index}2222222-2222-4222-8222-222222222222`, url: `https://example.test/${index}`, title: big, description: big, siteName: "S", imageMediaId: null } }));
-    const stripped = stripLinkPreviewDisplay({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hi" }] }, ...cardsOf(3)] });
+    const stripped = stripEmbeddedDisplay({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hi" }] }, ...cardsOf(3)] });
     const rich: RichTextDoc = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hi" }] }, ...cardsOf(3)] };
     const limitBytes = new TextEncoder().encode(JSON.stringify(stripped)).length + 50;
     expect(new TextEncoder().encode(JSON.stringify(rich)).length).toBeGreaterThan(limitBytes);

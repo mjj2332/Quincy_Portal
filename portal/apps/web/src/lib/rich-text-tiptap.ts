@@ -48,7 +48,10 @@ export function toTiptap(doc: RichTextDoc): Record<string, unknown> {
       const attrs = valueNode.attrs as Record<string, unknown> | undefined;
       return { type: "image", attrs: { mediaId: attrs?.mediaId, ...(typeof attrs?.alt === "string" && attrs.alt ? { alt: attrs.alt } : {}) } };
     }
-    if (valueNode.type === "video") return { type: "video", attrs: { mediaId: (valueNode.attrs as Record<string, unknown> | undefined)?.mediaId } };
+    if (valueNode.type === "video") {
+      const attrs = valueNode.attrs as Record<string, unknown> | undefined;
+      return { type: "video", attrs: { mediaId: attrs?.mediaId, ...(typeof attrs?.hasPoster === "boolean" ? { hasPoster: attrs.hasPoster } : {}) } };
+    }
     if (valueNode.type === "linkPreview") return { type: "linkPreview", attrs: { ...(valueNode.attrs as Record<string, unknown>) } };
     if (valueNode.type === "heading" || valueNode.type === "taskItem") return { type: valueNode.type, attrs: { ...(valueNode.attrs as Record<string, unknown>) }, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
     if (valueNode.type === "paragraph" && valueNode.attrs) return { type: "paragraph", attrs: tiptapTextAlign(valueNode.attrs as Record<string, unknown>), ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
@@ -196,11 +199,12 @@ export const EmbeddedVideo = TiptapNode.create({
   atom: true,
   draggable: true,
   selectable: true,
-  addAttributes() { return { mediaId: { default: null } }; },
+  // `hasPoster` (#556) is whether the server kept a poster frame; `null` (an older node, a draft) means unknown, which asks for the poster as before. Never stored.
+  addAttributes() { return { mediaId: { default: null }, hasPoster: { default: null, rendered: false } }; },
   parseHTML() { return []; },
   renderHTML({ node, HTMLAttributes }) {
     const mediaId = String(node.attrs.mediaId ?? "");
-    return ["video", mergeAttributes(HTMLAttributes, { src: embeddedMediaUrl(mediaId), poster: embeddedMediaPosterUrl(mediaId), preload: "metadata", muted: "", playsinline: "", "data-media-id": mediaId, class: "rich-text__embedded-video" })];
+    return ["video", mergeAttributes(HTMLAttributes, { src: embeddedMediaUrl(mediaId), ...(node.attrs.hasPoster === false ? {} : { poster: embeddedMediaPosterUrl(mediaId) }), preload: "metadata", muted: "", playsinline: "", "data-media-id": mediaId, class: "rich-text__embedded-video" })];
   },
 });
 
@@ -323,7 +327,8 @@ export function tiptapToRichTextDoc(value: unknown, options: { keepPreviewDispla
     }
     if (valueNode.type === "video") {
       const attrs = valueNode.attrs as Record<string, unknown> | undefined;
-      return { type: "video", attrs: { mediaId: attrs?.mediaId } };
+      // The stored form is the id alone; a local draft (`keepPreviewDisplay`) also keeps the poster flag so a reopened composer does not ask for a poster that is not there.
+      return { type: "video", attrs: { mediaId: attrs?.mediaId, ...(options.keepPreviewDisplay && typeof attrs?.hasPoster === "boolean" ? { hasPoster: attrs.hasPoster } : {}) } };
     }
     if (valueNode.type === "linkPreview") {
       const attrs = valueNode.attrs as Record<string, unknown> | undefined;
@@ -355,10 +360,11 @@ export function tiptapToRichTextDoc(value: unknown, options: { keepPreviewDispla
   return copy(value) as RichTextDoc;
 }
 
-/** The form a post is sent in: every card is its preview id alone, whatever a local draft kept for drawing it. */
-export function stripLinkPreviewDisplay(doc: RichTextDoc): RichTextDoc {
-  if (!doc.content.some((block) => block.type === "linkPreview" && Object.keys(block.attrs).length > 1)) return doc;
-  return { ...doc, content: doc.content.map((block) => block.type === "linkPreview" ? { type: "linkPreview" as const, attrs: { previewId: block.attrs.previewId } } : block) };
+/** The form a post is sent in: every link card is its preview id alone and every video its media id alone, whatever a local draft or the server's served form kept for drawing them (a link card's text and image, a video's `hasPoster`). */
+export function stripEmbeddedDisplay(doc: RichTextDoc): RichTextDoc {
+  const needsStrip = (block: RichTextDoc["content"][number]) => (block.type === "linkPreview" && Object.keys(block.attrs).length > 1) || (block.type === "video" && "hasPoster" in block.attrs);
+  if (!doc.content.some(needsStrip)) return doc;
+  return { ...doc, content: doc.content.map((block) => !needsStrip(block) ? block : block.type === "linkPreview" ? { type: "linkPreview" as const, attrs: { previewId: block.attrs.previewId } } : { type: "video" as const, attrs: { mediaId: (block as Extract<typeof block, { type: "video" }>).attrs.mediaId } }) };
 }
 
 export function mentionQuery(editor: NonNullable<ReturnType<typeof useEditor>>): string | null {
