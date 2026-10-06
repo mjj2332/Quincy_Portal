@@ -1912,7 +1912,8 @@ describe("selection scrolling clears the stuck composer toolbar (#594, Sol r3)",
     if (originalOffsetHeight) Object.defineProperty(HTMLElement.prototype, "offsetHeight", originalOffsetHeight);
     else delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetHeight;
   });
-  const margin = (editor: HTMLElement) => (editor as unknown as { editor: Editor }).editor.view.someProp("scrollMargin", (value) => value) as { top: number } | number | undefined;
+  const prop = (editor: HTMLElement, name: "scrollMargin" | "scrollThreshold") => (editor as unknown as { editor: Editor }).editor.view.someProp(name, (value) => value) as { top: number } | number | undefined;
+  const margin = (editor: HTMLElement) => prop(editor, "scrollMargin");
   const doc = (): RichTextDoc => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "x" }] }] });
 
   it("document preset: the view's scrollMargin.top is the stuck toolbar's bottom (its sticky top plus its height)", async () => {
@@ -1922,6 +1923,39 @@ describe("selection scrolling clears the stuck composer toolbar (#594, Sol r3)",
     const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
     const value = margin(editor);
     expect(typeof value === "object" ? value.top : value).toBe(98);
+    // ProseMirror only scrolls once the caret is within the THRESHOLD of the edge: the same bottom, or a caret at y80 never triggers it.
+    const threshold = prop(editor, "scrollThreshold");
+    expect(typeof threshold === "object" ? threshold.top : threshold).toBe(98);
+  });
+
+  it("document preset: a caret under the stuck toolbar scrolls the page (the selection's scrollIntoView honours the margin)", async () => {
+    variant = "document";
+    const host = mount();
+    await act(async () => { root!.render(<EditorUnderTest value={doc()} onChange={vi.fn()} limit={2_000} loadMentionables={mentionables} />); await Promise.resolve(); await Promise.resolve(); });
+    const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    const tiptap = (editor as unknown as { editor: Editor }).editor;
+    const caret = { left: 100, right: 100, top: 80, bottom: 98 };
+    const coords = vi.spyOn(tiptap.view, "coordsAtPos").mockReturnValue(caret);
+    const scrollBy = vi.spyOn(document.defaultView!, "scrollBy").mockImplementation(() => {});
+    Object.defineProperty(document.documentElement, "clientHeight", { configurable: true, value: 900 });
+    Object.defineProperty(document.documentElement, "clientWidth", { configurable: true, value: 1000 });
+    // Every scroll ancestor is a full-viewport box, so only the page itself can scroll (happy-dom has no layout).
+    const originalRect = Element.prototype.getBoundingClientRect;
+    Element.prototype.getBoundingClientRect = function (this: Element) { return { top: 0, bottom: 900, left: 0, right: 1000, width: 1000, height: 900, x: 0, y: 0, toJSON() { return {}; } } as DOMRect; };
+    const originalScrollTop = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop");
+    Object.defineProperty(Element.prototype, "scrollTop", { configurable: true, get: () => 0, set: () => {} });
+    try {
+      await act(async () => { editor.focus(); document.getSelection()?.collapse(editor.querySelector("p")!.firstChild!, 0); await Promise.resolve(); });
+      scrollBy.mockClear();
+      await act(async () => { tiptap.view.dispatch(tiptap.state.tr.scrollIntoView()); await Promise.resolve(); });
+      expect(scrollBy).toHaveBeenCalled();
+      expect(scrollBy.mock.calls.some((call) => (call[1] as number) < 0)).toBe(true);
+    } finally {
+      coords.mockRestore(); scrollBy.mockRestore(); Element.prototype.getBoundingClientRect = originalRect;
+      if (originalScrollTop) Object.defineProperty(Element.prototype, "scrollTop", originalScrollTop); else delete (Element.prototype as unknown as Record<string, unknown>).scrollTop;
+      delete (document.documentElement as unknown as Record<string, unknown>).clientHeight;
+      delete (document.documentElement as unknown as Record<string, unknown>).clientWidth;
+    }
   });
 
   it("composer preset: scrollMargin is left alone", async () => {
