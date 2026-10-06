@@ -98,4 +98,35 @@ describe("keyboard move that hides the moved bar (#614 PR B)", () => {
     expect(more).toBeDefined();
     expect(document.activeElement).toBe(more);
   });
+
+  it("lands focus on a rendered covered day's +N more when the hidden bar starts before the grid (Sol r2)", async () => {
+    // Sept 2026 grid: the bar (20 - 31 Aug) shows only on the leading days; extending its end
+    // through 1 Sep adds a column that already holds a timed event, so the bar folds away.
+    const spanning: CalendarEvent[] = [
+      { id: "long", title: "Long bar", start: wall(2026, 8, 20), end: wall(2026, 9, 1), allDay: true, draggable: false, resizable: true },
+      { id: "timed", title: "Timed event", start: wall(2026, 9, 1, 9), end: wall(2026, 9, 1, 10) },
+    ];
+    await act(async () => {
+      root.render(
+        <EventCalendar defaultEvents={spanning} defaultView="month" defaultDate={wall(2026, 9, 15, 12)} timeZone={TZ} maxEventsPerCell="auto">
+          <EventCalendarContent />
+        </EventCalendar>
+      );
+      await Promise.resolve();
+    });
+    const bar = button("Long bar");
+    expect(bar, "the bar is drawn on the leading days of the grid").toBeDefined();
+    act(() => bar!.focus());
+    await press(" "); // not draggable, so the session opens on the end edge and the Sept grid stays
+    await press("ArrowRight"); // end 1 Sep -> 2 Sep: now covers 1 Sep
+    await press("Enter");
+    await act(async () => {
+      for (let i = 0; i < 15; i++) await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    });
+    expect(button("Long bar"), "the bar folded into +N more").toBeUndefined();
+    // the adjusted edge (1 Sep, "+2 more": the bar and the timed event) - not the leading days
+    const more = [...host.querySelectorAll<HTMLElement>("button")].find((el) => /2\s*more/i.test(el.textContent ?? ""));
+    expect(more).toBeDefined();
+    expect(document.activeElement).toBe(more);
+  });
 });

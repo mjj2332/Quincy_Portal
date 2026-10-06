@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { findMoreFor } from "./calendar-more-anchor";
+import { findMoreFor, findMoreForEvent } from "./calendar-more-anchor";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -27,5 +27,15 @@ describe("findMoreFor (#583)", () => {
     expect(findMoreFor("a", null)).toBeNull();
     expect(findMoreFor("multi", "2026-08-12")).toBeNull();
     expect(findMoreFor("a", "2026-08-20")).toBeNull();
+  });
+});
+
+describe("findMoreForEvent (#614 PR B)", () => {
+  it("finds the first button listing the item, or null when it is not folded", () => {
+    const first = day("2026-08-12", ["a", "multi"]);
+    day("2026-08-13", ["multi"]);
+    expect(findMoreForEvent("multi")).toBe(first);
+    expect(findMoreForEvent("a")).toBe(first);
+    expect(findMoreForEvent("absent")).toBeNull();
   });
 });

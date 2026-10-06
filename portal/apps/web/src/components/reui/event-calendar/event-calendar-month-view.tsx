@@ -68,9 +68,12 @@
  *    `hiddenBarKeysByCol`, as lane >= cap bars always did. A numeric `maxEventsPerCell` is
  *    unchanged. The week row reads per-column timed counts through one selector over
  *    `getIndex().byDay` (the source `useEventCalendarDay` uses). Markup is untouched. A keyboard
- *    move that hides the moved bar unmounts its chip, so the gesture's `refocus`
- *    (event-calendar-dnd.tsx, entry 6) falls back, once its wait is spent, to the destination
- *    day's "+N more" trigger instead of leaving focus on <body>.
+ *    move or resize that hides the bar unmounts its chip, so the gesture's `refocus`
+ *    (event-calendar-dnd.tsx, entry 6) falls back, once its wait is spent, to a "+N more" trigger.
+ *    That fallback lives in the Quincy-authored resolver `event-calendar-focus.ts` (the scheduling
+ *    controller's rollback finds the same trigger through the Portal's own `data-more-event-ids`
+ *    marker, `findMoreForEvent`), which intersects the occurrence with the rendered days
+ *    rather than assuming its start is in the grid.
  */
 import {
   useCallback,
