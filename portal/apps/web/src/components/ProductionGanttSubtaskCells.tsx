@@ -52,7 +52,7 @@ export function scheduleErrorFromEditor(editor: Pick<ScheduleEditorState, "sourc
  * "Save's own close is not a Cancel", shared by the Due cell and the bar's picker (#582) so the two cannot drift. Save and Use
  * latest already tell the controller what they mean; the popover then calls `setOpen(false)` as well, which must not be read as a
  * Cancel (that would release the lock under a request in flight). `onSave`/`onUseLatest` arm one pass-through; `closed` is what a
- * `false` from the popover calls: it swallows that one close, else cancels (#423: Cancel discards, any other close retains).
+ * `false` from the popover calls: it swallows that one close, else cancels (every close but Save and Use latest is a controller Cancel, so a conflicted draft does not survive Escape or an outside press on the Gantt yet: #585; the Checklist caller keeps #423's Cancel-only discard).
  */
 export function useSchedulePickerClose({ onSubmit, onCancel }: { onSubmit: (schedule: RangeChecklistScheduleInput, reminderOffsetsMinutes?: number[]) => void; onCancel: () => void }) {
   const closeHandledRef = useRef(false);
