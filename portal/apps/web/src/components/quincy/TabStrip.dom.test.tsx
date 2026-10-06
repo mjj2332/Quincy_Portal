@@ -111,25 +111,29 @@ describe("TabStrip", () => {
     expect(tabs.every((tab) => tab.getAttribute("type") === "button")).toBe(true);
   });
 
-  it("draws the focus ring inside the tab, at rest and on focus, so it never meets the 2px underline (#550)", async () => {
+  it("draws the focus ring as an ::after box above the underline, with the global outline suppressed (#550)", async () => {
     const tablist = await renderStrip("a", () => undefined);
     const tokens = tablist.querySelector<HTMLButtonElement>('[role="tab"]')!.className.split(/\s+/);
-    expect(tokens).toContain("-outline-offset-2");
-    expect(tokens).toContain("focus-visible:!-outline-offset-2");
-    expect(tokens).not.toContain("focus-visible:outline-offset-2");
+    expect(tokens).toContain("relative");
+    expect(tokens).toContain("focus-visible:!outline-none");
+    for (const token of [
+      "focus-visible:after:content-['']",
+      "focus-visible:after:absolute",
+      "focus-visible:after:pointer-events-none",
+      "focus-visible:after:inset-y-[var(--space-1)]",
+      "focus-visible:after:-inset-x-[var(--space-1)]",
+      "focus-visible:after:border-[length:var(--border-width-bold)]",
+      "focus-visible:after:border-[var(--focus-ring)]",
+    ]) expect(tokens, token).toContain(token);
+    expect(tokens.filter((t) => /^focus-visible:!?outline/.test(t))).toEqual(["focus-visible:!outline-none"]);
   });
 
-  it("pads each tab by --space-2 so the inset ring clears the label, and sets the gap so label-to-label stays 24px (#550)", async () => {
+  it("keeps the label flush with the content edge: tabs carry no side padding and the strip gap stays --space-5 (#550)", async () => {
     const tablist = await renderStrip("a", () => undefined);
     const tokens = tablist.querySelector<HTMLButtonElement>('[role="tab"]')!.className.split(/\s+/);
-    expect(tokens).toContain("px-[var(--space-2)]");
-    expect(tokens).not.toContain("px-[var(--space-1)]");
-    expect(tokens).not.toContain("px-0");
-    const listTokens = tablist.className.split(/\s+/);
-    expect(listTokens).toContain("gap-[var(--space-2)]");
-    expect(listTokens).not.toContain("gap-[var(--space-5)]");
-    // A class that resolves is a single token with no calc(): the earlier calc() gap rendered 32px, not 16px.
-    expect(listTokens.filter((t) => t.startsWith("gap-"))).toEqual(["gap-[var(--space-2)]"]);
+    expect(tokens).toContain("px-0");
+    expect(tokens.filter((t) => /^px-/.test(t))).toEqual(["px-0"]);
+    expect(tablist.className.split(/\s+/).filter((t) => t.startsWith("gap-"))).toEqual(["gap-[var(--space-5)]"]);
     expect(tablist.className).not.toContain("calc(");
   });
 });

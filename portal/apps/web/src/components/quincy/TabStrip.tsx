@@ -23,16 +23,17 @@ type TabItem = { value: string; label: React.ReactNode; count?: number };
 
 const TAB_BASE =
   "relative -mb-[var(--border-width-hair)] inline-flex items-center gap-[var(--space-2)] " +
-  "min-h-[38px] max-[721px]:min-h-[44px] px-[var(--space-2)] pt-[var(--space-2)] pb-[11px] " + // 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token
+  "min-h-[38px] max-[721px]:min-h-[44px] px-0 pt-[var(--space-2)] pb-[11px] " + // 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token
   "bg-transparent border-0 [border-bottom-style:solid] border-b-[length:var(--border-width-mid)] " +
   "cursor-pointer [font:var(--type-label)] uppercase tracking-[var(--tracking-wide)] " +
   "transition-[color,border-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] " +
-  "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
-  // #550: the ring is drawn INSIDE the tab. Outset (offset 2px) its bottom edge landed on the 2px active
-  // underline, which poked out past the ring's corners, and a 390 horizontal-scroll strip clips it. The tab's
-  // `px-[var(--space-2)]` leaves 4px between that inset ring and the first and last letters when the tab is sized to its text. The
-  // at-rest twin keeps width/offset from animating on focus; `!` beats the unlayered `:focus-visible`.
-  "focus-visible:outline-ring -outline-offset-2 focus-visible:!-outline-offset-2";
+  // #550: the focus ring is a pseudo-element, not an `outline`. An outset outline's bottom edge landed on the 2px active
+  // underline, and an inset one forced side padding that pushed the label off the content edge and widened the underline.
+  // The ::after box sits above the underline (`inset-y` clears the bottom border) and reaches `--space-1` past the label
+  // on each side. `!` beats the unlayered global `:focus-visible` outline.
+  "focus-visible:!outline-none focus-visible:after:content-[''] focus-visible:after:absolute focus-visible:after:pointer-events-none " +
+  "focus-visible:after:inset-y-[var(--space-1)] focus-visible:after:-inset-x-[var(--space-1)] " +
+  "focus-visible:after:border-[length:var(--border-width-bold)] focus-visible:after:border-solid focus-visible:after:border-[var(--focus-ring)]";
 
 const TAB_IDLE = "border-b-transparent text-foreground-secondary hover:text-foreground hover:border-b-border-hover";
 const TAB_SELECTED = "border-b-primary text-foreground";
@@ -82,9 +83,7 @@ function TabStrip({ items, value, onValueChange, idPrefix, label, className }: {
       data-slot="tab-strip"
       onKeyDown={onKeyDown}
       className={cn(
-        // gap = --space-5 (24px label-to-label) minus both sides of the tab's --space-2 padding = 8px = --space-2 (#550).
-        // A plain token, not a `calc()`: Tailwind's arbitrary calc did not resolve to 16px and measured 32px.
-        "flex flex-wrap gap-[var(--space-2)]",
+        "flex flex-wrap gap-[var(--space-5)]",
         "[border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border",
         className,
       )}

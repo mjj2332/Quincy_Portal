@@ -1272,14 +1272,15 @@ describe("ProjectCollaborationPanel checklist rail (#377)", () => {
     expect(collapseControl(host).getAttribute("aria-expanded")).toBe("true");
   });
 
-  it("tab strip gap keeps labels 24px apart once tabs carry --space-2 side padding (#550)", async () => {
+  it("tab strip keeps the 24px --space-5 gap and flush px-0 tabs (#550)", async () => {
     emptyChecklistApi();
     const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
     const tablist = host.querySelector('[role="tablist"]')!;
     const gaps = tablist.className.split(/\s+/).filter((c) => /^gap-/.test(c));
-    expect(gaps).toEqual(["gap-[var(--space-2)]"]);
+    expect(gaps).toEqual(["gap-[var(--space-5)]"]);
     const tab = tablist.querySelector('[role="tab"]')!;
-    expect(tab.className).toContain("px-[var(--space-2)]");
+    expect(tab.className.split(/\s+/)).toContain("px-0");
+    expect(tab.className).toContain("focus-visible:after:-inset-x-[var(--space-1)]");
   });
 
   it("narrow viewport: stacked, collapsed to its count, checklist before the tab strip; the media change flips the layout and the default", async () => {
