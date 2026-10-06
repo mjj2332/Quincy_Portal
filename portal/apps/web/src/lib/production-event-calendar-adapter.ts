@@ -49,6 +49,9 @@ export const PRODUCTION_EVENT_CALENDAR_VIEW_SETTINGS = {
   // Week, Day and 3-day open scrolled to 08:00 Sydney (the working day), not midnight. The vendor
   // prop is an hour number; month and agenda ignore it.
   scrollToHour: 8,
+  // Phone agenda row (#648): wraps so the vendored time span (Quincy edit 7 in
+  // `reui/event-calendar/event-calendar-event.tsx`) takes its own line above the dot + title.
+  classNames: { agendaItem: "max-[721px]:flex-wrap max-[721px]:gap-y-0.5" },
 } as const;
 
 /** The controlled `date`: Sydney noon of the civil date, clear of any midnight / DST edge. */
