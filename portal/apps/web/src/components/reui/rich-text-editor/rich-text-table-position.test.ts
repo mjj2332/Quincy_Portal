@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { computePosition, flip, offset, shift, type Platform } from "@floating-ui/core";
 import {
   TABLE_BUBBLE_GAP,
@@ -6,6 +6,7 @@ import {
   tableBubbleBoundary,
   tableBubbleOptions,
   tableBubbleZone,
+  viewportBelow,
   type TableBubbleTier,
 } from "./rich-text-table-position";
 
@@ -272,5 +273,33 @@ describe("table bar placement (floating-ui computePosition)", () => {
     expect(shifted.top).toBe(plain.top + 30);
     expect(shifted.bottom).toBe(plain.bottom + 30);
     expect(shifted.height).toBe(plain.height);
+  });
+});
+
+describe("viewportBelow (#594: the sticky composer toolbar is a second ceiling under the shell header)", () => {
+  // The unit project has no DOM: a 50px shell header and a 900px viewport.
+  beforeEach(() => {
+    vi.stubGlobal("document", {
+      documentElement: { clientHeight: 900 },
+      querySelector: () => ({ getBoundingClientRect: () => ({ bottom: 50 }) }),
+    });
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it("is the shell chrome bottom when there is no ceiling, and the lower of the two when there is", () => {
+    const base = viewportBelow()().top;
+    expect(viewportBelow(() => 0)().top).toBe(base);
+    expect(viewportBelow(() => base - 10)().top).toBe(base);
+    expect(viewportBelow(() => base + 48)().top).toBe(base + 48);
+  });
+
+  it("a table whose top sits under a toolbar stuck at 50-98 has no room above (tier none or below), where it used to be clean", () => {
+    const row = rect(120, 400);
+    const surface = rect(0, 900);
+    const old = tableBubbleZone({ row, barHeight: 38, surface, viewport: { top: 50, bottom: 900 } });
+    const stuck = tableBubbleZone({ row, barHeight: 38, surface, viewport: { top: viewportBelow(() => 98)().top, bottom: 900 } });
+    expect(old).toMatchObject({ tier: "clean", side: "top" });
+    expect(stuck.top).toBeGreaterThanOrEqual(98);
+    expect(stuck.side).not.toBe("top");
   });
 });

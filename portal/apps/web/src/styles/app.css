@@ -110,6 +110,7 @@
 [data-rail-mode="sheet"] { --app-rail-inline-size: 0px; }
 [data-rail-mode] { --toast-inset-inline-start: calc(var(--app-rail-inline-size) + max(var(--space-5), env(safe-area-inset-left))); }
 .app--impersonating .worktools { top: calc(var(--shell-header-height) + var(--impersonation-banner-height)); }
+.app--impersonating .rich-text-toolbar-sticky { top: calc(var(--shell-header-height) + var(--impersonation-banner-height)); }
 .app--impersonating .viewer { inset: var(--impersonation-banner-height) 0 0; }
 
 /* ---------------------------------------------------------------------
@@ -300,6 +301,9 @@
   .project-header__control { padding-inline: 0; border-inline-start: 0; }
 }
 .worktools { position: sticky; top: var(--shell-header-height); z-index: 20; display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-6); background: color-mix(in srgb, var(--paper-050) 90%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border-hairline); flex-wrap: wrap; }
+/* #594: the Notice board composer's toolbar (the InputGroupAddon, whose containing block is the whole field) sticks under the
+   shell header while a long document scrolls. z-index 2 sits above .tableWrapper and the outline rail (1), below the header and popovers. */
+.rich-text-toolbar-sticky { position: sticky; top: var(--shell-header-height); z-index: 2; background: var(--card); border-bottom: var(--border-width-hair) solid var(--border-hairline); }
 .worktools .prog { font: var(--type-label); font-size: 13px; color: var(--text-secondary); }
 .worktools .prog b { color: var(--text-primary); font-weight: 400; }
 .workgrid { padding: var(--space-6); }

@@ -66,8 +66,34 @@ describe("rich-text editor layout contracts", () => {
     const source = readFileSync(new URL("../../QuincyRichTextEditor.tsx", import.meta.url), "utf8");
     expect(source).toContain("useMediaQuery(RICH_TEXT_PHONE_QUERY)");
     expect(source).toMatch(/!phone && <RichTextTableBubble/);
-    expect(source).toMatch(/const tableInToolbar = phone \|\| tableTier === "none"/);
-    expect(source).toMatch(/tableInToolbar && state\.inTable && <RichTextTableTools/);
+    expect(source).toMatch(/const presentation = phone \? "tools" : tableTier === "none" \? "menu" : "bubble"/);
+    // #595: only the phone leads the toolbar with the group; on a desktop the Insert-table slot becomes the Table menu.
+    expect(source).toMatch(/phone && state\.inTable && <RichTextTableTools/);
+    expect(source).not.toMatch(/tableInToolbar && state\.inTable && <RichTextTableTools/);
+    const layout = /<RichTextToolbarGroup label="Layout">([\s\S]*?)<\/RichTextToolbarGroup>/.exec(source)?.[1] ?? "";
+    expect(layout).toMatch(/<RichTextTableMenu/);
+    expect(layout).toMatch(/label="Insert table"/);
+    expect(layout.indexOf("<RichTextHighlightPopover")).toBeLessThan(Math.min(layout.indexOf("<RichTextTableMenu"), layout.indexOf('label="Insert table"')));
+  });
+
+  it("the composer toolbar is sticky on the document preset only, and the table bar takes its bottom as a ceiling (#594)", () => {
+    const source = readFileSync(new URL("../../QuincyRichTextEditor.tsx", import.meta.url), "utf8");
+    expect(source).toMatch(/isDocument && "rich-text-toolbar-sticky"/);
+    expect(source).toMatch(/ceiling=\{/);
+    const table = read("rich-text-table.tsx");
+    expect(table).toMatch(/ceiling\?: \(\) => number/);
+    expect(table).toContain("viewport: viewportBelow(");
+  });
+
+  it("the table menu and the floating bar share one set of table commands (#595)", () => {
+    const table = read("rich-text-table.tsx");
+    expect(table).toMatch(/export const tableCommands/);
+    const menu = /export function RichTextTableMenu[\s\S]*$/.exec(table)?.[0] ?? "";
+    expect(menu).toContain("tableCommands.");
+    expect(menu).toContain('data-testid="rich-text-table-menu"');
+    expect(menu).toContain("onKeyDownCapture");
+    expect(menu).not.toMatch(/scrollIntoView/);
+    expect(menu).not.toMatch(/scrollLeft = 0/);
   });
 
   it("the bar stays mounted but inert, hidden from assistive tech and invisible when the toolbar group takes over (tier none), and exposes its tier", () => {
