@@ -33,7 +33,8 @@ describe("link preview card design (#497)", () => {
     expect(ruleBody(".rich-text__editor-content .rich-text__link-preview [data-slot=item-description]::selection")).toMatch(/color:\s*var\(--foreground-secondary\)/);
     expect(ruleBody(".rich-text__editor-content .rich-text__link-preview [data-slot=link-preview-meta]::selection")).toMatch(/color:\s*var\(--foreground-secondary\)/);
     expect(card).toContain('data-slot="link-preview-meta"');
-    expect(ruleBody(".rich-text__editor-content .ProseMirror-selectednode [data-slot=item]")).toMatch(/outline:\s*var\(--border-width-hair\) solid var\(--accent\)/);
+    expect(ruleBody(".rich-text__editor-content .ProseMirror-selectednode [data-slot=item]")).toMatch(/border-color:\s*var\(--accent\)/);
+    expect(ruleBody(".rich-text__editor-content .ProseMirror-selectednode [data-slot=item]")).not.toMatch(/outline/);
   });
   it("2: the card keeps text colour, no underline, and normal paragraph rhythm", () => {
     expect(ruleBody(":is(.rich-text, .rich-text__editor-content) a[data-slot=item]")).toMatch(/color:\s*var\(--text-primary\)[\s\S]*text-decoration:\s*none/);
@@ -47,6 +48,10 @@ describe("link preview card design (#497)", () => {
     expect(node).toContain("pointer-coarse:size-11");
     expect(node).not.toContain('size="icon-xs"');
     expect(card).toMatch(/actions\s*\?[^\n]*pr-\[var\(--space-5\)\][^\n]*max-\[721px\]:pr-11[^\n]*pointer-coarse:pr-11/);
+  });
+  it("3b: Remove is inset --space-2 from the card edge so its focus ring clears the border (#557)", () => {
+    expect(node).toContain("top-[var(--space-2)] right-[var(--space-2)]");
+    expect(node).not.toContain("top-[var(--space-1)]");
   });
   it("4: the image overrides the Item's size=sm 32px, on desktop and phone", () => {
     expect(card).toContain("size-16 group-data-[size=sm]/item:size-16");

@@ -61,6 +61,15 @@ describe("the video node's stored contract (#494)", () => {
     editor.destroy();
   });
 
+  it("a posted video omits `poster` when the server says it has none, and keeps it otherwise (#556)", () => {
+    const flagged = (hasPoster?: boolean): RichTextDoc => ({ type: "doc", content: [{ type: "video", attrs: { mediaId: A, ...(hasPoster === undefined ? {} : { hasPoster }) } }] });
+    expect(mount(<RichTextContent content={flagged(false)} />).querySelector("video")!.hasAttribute("poster")).toBe(false);
+    act(() => root?.unmount()); document.body.innerHTML = "";
+    expect(mount(<RichTextContent content={flagged(true)} />).querySelector("video")!.getAttribute("poster")).toBe(`/media/embedded/${A}/poster`);
+    act(() => root?.unmount()); document.body.innerHTML = "";
+    expect(mount(<RichTextContent content={flagged()} />).querySelector("video")!.getAttribute("poster")).toBe(`/media/embedded/${A}/poster`);
+  });
+
   it("renders in the editor as a muted inline-playing preview with the poster and no controls, addressed by id only", () => {
     const editor = new Editor({ extensions: createRichTextEditorExtensions("composer"), content: toTiptap(withVideos(A)) });
     const element = editor.view.dom.querySelector<HTMLVideoElement>("video")!;
@@ -112,7 +121,7 @@ describe("Insert video (#494)", () => {
     uploadVideo.mockImplementation((_project: string, _file: File, options: { onProgress: (percent: number) => void }) => { report = options.onProgress; return new Promise<string>((resolve) => { finish = resolve; }); });
     const host = mount(<Harness />);
     await choose(host, [mp4()]);
-    expect(uploadVideo).toHaveBeenCalledWith("p1", expect.any(File), { signal: expect.any(AbortSignal), onProgress: expect.any(Function) });
+    expect(uploadVideo).toHaveBeenCalledWith("p1", expect.any(File), { signal: expect.any(AbortSignal), onProgress: expect.any(Function), onPoster: expect.any(Function) });
     expect(uploadingNow).toBe(true); expect(tray(host)?.textContent).toContain("Uploading a.mp4");
     expect(JSON.stringify(latest)).not.toContain('"video"');
     await act(async () => { report(40); });
@@ -122,6 +131,31 @@ describe("Insert video (#494)", () => {
     expect(latest.content.some((node) => node.type === "video" && node.attrs.mediaId === A)).toBe(true);
     expect(uploadingNow).toBe(false); expect(tray(host)).toBeNull();
     expect(host.querySelector(`video[data-media-id="${A}"]`)).not.toBeNull();
+  });
+
+  it("shows a Video badge over the composer node, and leaves `poster` off a video the server kept no poster for (#556)", async () => {
+    uploadVideo.mockImplementation(async (_project: string, _file: File, options: { onPoster: (stored: boolean) => void }) => { options.onPoster(false); return A; });
+    const host = mount(<Harness />);
+    await choose(host, [mp4()]);
+    const video = host.querySelector<HTMLVideoElement>(`video[data-media-id="${A}"]`)!;
+    expect(video.hasAttribute("poster")).toBe(false);
+    expect(host.querySelector('[data-testid="embedded-video-badge"]')?.textContent).toBe("Video");
+    expect(latest.content.find((node) => node.type === "video")).toEqual({ type: "video", attrs: { mediaId: A, hasPoster: false } });
+  });
+
+  it("asks for the poster of a video the server did keep one for, and of an older node with no flag (#556)", async () => {
+    uploadVideo.mockImplementation(async (_project: string, _file: File, options: { onPoster: (stored: boolean) => void }) => { options.onPoster(true); return A; });
+    const host = mount(<Harness initial={withVideos(B)} />);
+    await choose(host, [mp4()]);
+    expect(host.querySelector(`video[data-media-id="${A}"]`)?.getAttribute("poster")).toBe(`/media/embedded/${A}/poster`);
+    expect(host.querySelector(`video[data-media-id="${B}"]`)?.getAttribute("poster")).toBe(`/media/embedded/${B}/poster`);
+  });
+
+  it("keeps the poster flag in a local draft, never in the stored document", () => {
+    const flagged = toTiptap({ type: "doc", content: [{ type: "video", attrs: { mediaId: A, hasPoster: false } }] });
+    expect(tiptapToRichTextDoc(flagged).content[0]).toEqual({ type: "video", attrs: { mediaId: A } });
+    expect(tiptapToRichTextDoc(flagged, { keepPreviewDisplay: true }).content[0]).toEqual({ type: "video", attrs: { mediaId: A, hasPoster: false } });
+    expect(() => parseRichTextDoc({ type: "doc", content: [{ type: "video", attrs: { mediaId: A, hasPoster: false } }] }, COMMENT_MEDIA_RICH_TEXT_PROFILE)).not.toThrow();
   });
 
   it("refuses a non-video, an oversize file and an 11th item without calling the server, saying what is wrong", async () => {
@@ -272,9 +306,13 @@ describe("the video's styles (#494)", () => {
     expect(style).toContain("max-width: 100%"); expect(style).toContain("max-height: 24rem"); expect(style).toContain("object-fit: contain");
     expect(style).toContain("border: var(--border-width-hair) solid var(--border)"); expect(style).toContain("background: var(--surface-sunken)"); expect(style).toContain("border-radius: var(--radius-xs)");
   });
-  it("outlines a selected video in the editor with the same hairline accent as an image", () => {
-    const selected = rule(".rich-text__editor-content video.rich-text__embedded-video.ProseMirror-selectednode");
-    expect(selected).toContain("var(--border-width-hair)"); expect(selected).toContain("var(--accent)");
+  it("turns a selected video's border accent in the editor, the same rule as an image and a link card", () => {
+    const selected = rule(".rich-text__editor-content .ProseMirror-selectednode .rich-text__embedded-video-node > video.rich-text__embedded-video");
+    expect(selected).toContain("border-color: var(--accent)"); expect(selected).not.toContain("outline");
+  });
+  it("gives a video a stable box before its metadata arrives: full width, 16:9 until the file's own ratio is known (#556)", () => {
+    const style = rule(".rich-text__embedded-video {");
+    expect(style).toContain("width: 100%"); expect(style).toContain("aspect-ratio: auto 16 / 9");
   });
 });
 

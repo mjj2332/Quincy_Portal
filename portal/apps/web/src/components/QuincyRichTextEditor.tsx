@@ -10,6 +10,7 @@ import { useEmbeddedHeicEnabled } from "../lib/use-embedded-heic";
 import { requestLinkPreview } from "../lib/link-previews";
 import {
   EmbeddedImage,
+  EmbeddedVideo,
   LinkPreview,
   createRichTextEditorExtensions,
   type RichTextEditorPreset,
@@ -26,6 +27,7 @@ import { Input } from "./reui/input";
 import { EmbeddedUploadTray, type EmbeddedUpload } from "./quincy/EmbeddedUploadTray";
 import { LinkPreviewWithView } from "./quincy/LinkPreviewEditorNode";
 import { EmbeddedImageWithView } from "./quincy/EmbeddedImageEditorNode";
+import { EmbeddedVideoWithView } from "./quincy/EmbeddedVideoEditorNode";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -198,7 +200,7 @@ export function QuincyRichTextEditor({
   const [picking, setPicking] = useState<{ n: number; kind: "image" | "video" } | null>(null);
   const pickerRef = useRef<HTMLInputElement>(null);
   const extensions = useMemo(() => [
-    ...createRichTextEditorExtensions(preset).map((extension) => extension === LinkPreview ? LinkPreviewWithView : extension === EmbeddedImage ? EmbeddedImageWithView : extension),
+    ...createRichTextEditorExtensions(preset).map((extension) => extension === LinkPreview ? LinkPreviewWithView : extension === EmbeddedImage ? EmbeddedImageWithView : extension === EmbeddedVideo ? EmbeddedVideoWithView : extension),
     ...(preset === "document" ? [RichTextSlashCommand.configure({ items: [...RICH_TEXT_BASIC_SLASH_ITEMS, RICH_TEXT_TABLE_SLASH_ITEM] })] : []),
   ], [preset]);
   const editor = useEditor({
@@ -349,12 +351,13 @@ export function QuincyRichTextEditor({
       const discard = () => { if (preparedId) void abortEmbeddedImage(scope, preparedId); };
       const setPhase = (phase: "uploading" | "preparing" | "failed") => { if (mountedRef.current && !released) setUploads((entries) => entries.map((entry) => entry.key === key ? { ...entry, phase } : entry)); };
       const onPhase = (phase: "preparing", mediaId: string) => { preparedId = mediaId; setPhase(phase); };
+      let posterStored: boolean | undefined;
       const insert = (mediaId: string) => {
         const live = editorRef.current;
         if (cancelled || !mountedRef.current || !live) return;
         const position = Math.min(insertAt.current.get(key) ?? live.state.doc.content.size, live.state.doc.content.size);
         // insertContentAt selects inserted content by default; an async insert must leave the caret where the author is typing.
-        live.chain().command(({ tr }) => { tr.setMeta(UPLOAD_INSERT_META, true); return true; }).insertContentAt(position, { type: kind, attrs: kind === "image" ? { mediaId, alt: imageAltFromFileName(file.name) || null } : { mediaId } }, { updateSelection: false }).run();
+        live.chain().command(({ tr }) => { tr.setMeta(UPLOAD_INSERT_META, true); return true; }).insertContentAt(position, { type: kind, attrs: kind === "image" ? { mediaId, alt: imageAltFromFileName(file.name) || null } : { mediaId, ...(posterStored === undefined ? {} : { hasPoster: posterStored }) } }, { updateSelection: false }).run();
       };
       const follow = (work: Promise<string>) => {
         keepRow = false;
@@ -377,7 +380,7 @@ export function QuincyRichTextEditor({
       });
       setUploads((entries) => [...entries, { key, name: file.name || (kind === "video" ? "Video" : "Image"), percent: 0, kind }]);
       const onProgress = (percent: number) => { if (mountedRef.current && !released) setUploads((entries) => entries.map((entry) => entry.key === key ? { ...entry, percent } : entry)); };
-      follow(kind === "video" && "projectId" in scope ? uploadEmbeddedVideo(scope.projectId, file, { signal: controller.signal, onProgress }) : uploadEmbeddedImage(scope, file, onProgress, { signal: controller.signal, onPhase }));
+      follow(kind === "video" && "projectId" in scope ? uploadEmbeddedVideo(scope.projectId, file, { signal: controller.signal, onProgress, onPoster: (stored) => { posterStored = stored; } }) : uploadEmbeddedImage(scope, file, onProgress, { signal: controller.signal, onPhase }));
     }
     setUploadErrors(problems);
   };

@@ -321,9 +321,9 @@ describe("design review fixes (#493)", () => {
     expect(rule(".rich-text__embedded-image-node {")).toContain("margin: var(--space-2) 0");
   });
 
-  it("outlines the selected image with a hairline accent, not the heavy focus ring", () => {
+  it("turns the selected image's border accent, not an outside outline or the heavy focus ring", () => {
     const selected = rule(".rich-text__editor-content .ProseMirror-selectednode .rich-text__embedded-image-node > img.rich-text__embedded-image");
-    expect(selected).toContain("var(--border-width-hair)"); expect(selected).not.toContain("--ring"); expect(selected).not.toContain("--border-width-bold");
+    expect(selected).toContain("border-color: var(--accent)"); expect(selected).not.toContain("outline"); expect(selected).not.toContain("--ring"); expect(selected).not.toContain("--border-width-bold");
   });
 
   it("moves the Media group to the front of the toolbar on a phone, so Insert image is never scrolled off-screen", () => {

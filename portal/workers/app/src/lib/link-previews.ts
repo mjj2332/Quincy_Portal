@@ -87,8 +87,12 @@ type PreviewRow = { id: string; url: string; title: string | null; description: 
  */
 export async function fillLinkPreviews<T extends { content: RichTextDoc }>(db: D1Database, items: T[]): Promise<T[]> {
   const wanted = new Set<string>();
-  for (const item of items) for (const block of item.content.content) if (block.type === "linkPreview") wanted.add(block.attrs.previewId);
-  if (!wanted.size) return items;
+  const wantedVideos = new Set<string>();
+  for (const item of items) for (const block of item.content.content) {
+    if (block.type === "linkPreview") wanted.add(block.attrs.previewId);
+    else if (block.type === "video") wantedVideos.add(block.attrs.mediaId);
+  }
+  if (!wanted.size && !wantedVideos.size) return items;
   const rows = new Map<string, PreviewRow>();
   const all = [...wanted];
   for (let index = 0; index < all.length; index += 90) {
@@ -100,10 +104,23 @@ export async function fillLinkPreviews<T extends { content: RichTextDoc }>(db: D
     `).bind(...chunk).all<PreviewRow>();
     for (const row of found.results) rows.set(row.id, row);
   }
+  // #556: whether each video has a poster frame, so a posterless one never asks for `/poster` and 404s. A video with no row keeps the node as stored.
+  const posters = new Map<string, boolean>();
+  const videos = [...wantedVideos];
+  for (let index = 0; index < videos.length; index += 90) {
+    const chunk = videos.slice(index, index + 90);
+    const found = await db.prepare(`SELECT id, poster_key IS NOT NULL AS has_poster FROM embedded_media WHERE kind = 'video' AND id IN (${chunk.map(() => "?").join(", ")})`).bind(...chunk).all<{ id: string; has_poster: number }>();
+    for (const row of found.results) posters.set(row.id, Boolean(row.has_poster));
+  }
   return items.map((item) => {
-    if (!item.content.content.some((block) => block.type === "linkPreview")) return item;
+    if (!item.content.content.some((block) => block.type === "linkPreview" || block.type === "video")) return item;
     const content: RichTextBlock[] = [];
     for (const block of item.content.content) {
+      if (block.type === "video") {
+        const hasPoster = posters.get(block.attrs.mediaId);
+        content.push(hasPoster === undefined ? block : { type: "video", attrs: { mediaId: block.attrs.mediaId, hasPoster } });
+        continue;
+      }
       if (block.type !== "linkPreview") { content.push(block); continue; }
       const row = rows.get(block.attrs.previewId);
       if (!row) continue;

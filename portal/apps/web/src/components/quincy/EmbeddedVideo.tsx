@@ -10,7 +10,8 @@ import { buttonVariants } from "../reui/button";
  * on the viewer's browser: the decision is made here, per viewer, from the element's own `error` event, and a file that cannot play
  * (ProRes, say) offers itself as a download instead of a dead player. Neither ReUI nor base-nova has a media-playback component.
  */
-export function EmbeddedVideo({ mediaId, className, videoClassName }: { mediaId: string; className?: string; videoClassName?: string }) {
+/** `hasPoster` is the server's answer (#556): `false` leaves `poster` off so a posterless video never requests `/poster`; absent (an older node, the whiteboard dialog) asks for it as before. */
+export function EmbeddedVideo({ mediaId, hasPoster, className, videoClassName }: { mediaId: string; hasPoster?: boolean; className?: string; videoClassName?: string }) {
   const [failed, setFailed] = useState(false);
   const src = embeddedMediaUrl(mediaId);
   if (failed) return <div data-testid="embedded-video-unavailable" className="my-[var(--space-2)] grid justify-items-start gap-[var(--space-2)] rounded-[var(--radius-xs)] border-[length:var(--border-width-hair)] border-solid border-border bg-surface-sunken p-[var(--space-3)]">
@@ -18,6 +19,6 @@ export function EmbeddedVideo({ mediaId, className, videoClassName }: { mediaId:
     <a href={`${src}?download=1`} download className={buttonVariants({ variant: "outline", size: "default" })}>Download video</a>
   </div>;
   return <div data-testid="embedded-video" className={cn("my-[var(--space-2)]", className)}>
-    <video controls preload="metadata" playsInline poster={embeddedMediaPosterUrl(mediaId)} src={src} aria-label="Embedded video" onError={() => setFailed(true)} className={cn("rich-text__embedded-video", videoClassName)} />
+    <video controls preload="metadata" playsInline poster={hasPoster === false ? undefined : embeddedMediaPosterUrl(mediaId)} src={src} aria-label="Embedded video" onError={() => setFailed(true)} className={cn("rich-text__embedded-video", videoClassName)} />
   </div>;
 }
