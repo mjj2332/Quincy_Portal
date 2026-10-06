@@ -10,6 +10,7 @@ import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChecklistCalendarEventDto } from "@quincy/shared";
 import { eventCalendarFake } from "../testing/event-calendar-fake";
+import { applyPopup, pickPopupDay } from "../testing/date-time-popup";
 import { checklistMutationBody, deadlineEvent, oneDaySchedule, instantOf, PROJECT_ID, rangeResponse, timed, oneDayEvent } from "../testing/production-calendar-fixtures";
 import {
   calendarState,
@@ -18,6 +19,7 @@ import {
   flush,
   json,
   liveRegion,
+  openEditSchedule,
   openReschedule,
   proposeUpdate,
   stubCalendarFetch,
@@ -72,10 +74,12 @@ describe("ProductionEventCalendar coarse-phone time-grid gate", () => {
     await clickTestId("event-calendar-move-cancel");
     await flush(5);
 
-    await openReschedule(checklistId);
+    const popup = await openEditSchedule(checklistId);
     expect(liveRegion()).toContain("This item overlaps another task for the same assignee.");
-    expect(document.querySelector('[data-testid="event-calendar-schedule-editor"]')).not.toBeNull();
-    await clickTestId("event-calendar-schedule-submit");
+    expect(document.querySelector('[data-testid="event-calendar-schedule-editor"]'), "the picker, not the sheet, even on a phone (#583)").toBeNull();
+    // An untouched Apply is a no-op; the range is changed so the save is a PATCH.
+    await pickPopupDay(popup, "2026-08-14");
+    await applyPopup(popup);
     await flush(5);
     expect(fetch.patches()).toHaveLength(1);
   });

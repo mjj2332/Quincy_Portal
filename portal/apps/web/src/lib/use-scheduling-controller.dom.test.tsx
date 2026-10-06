@@ -316,6 +316,56 @@ describe("useSchedulingController (generic port)", () => {
     });
   });
 
+  describe("focus after an editor session ends: an inline session moves focus only if it was lost (#583)", () => {
+    /** A chip the controller's `data-event-id` lookup finds, and an unrelated control the user can press instead. */
+    const added: HTMLElement[] = [];
+    afterEach(() => { for (const element of added.splice(0)) element.remove(); });
+    function addControls(source: ChecklistSource) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.setAttribute("data-event-id", source.id);
+      const other = document.createElement("button");
+      other.type = "button";
+      document.body.append(chip, other);
+      added.push(chip, other);
+      return { chip, other };
+    }
+    async function openSession(inline: boolean) {
+      const source = rangeEvent("2026-08-27T09:00", "2026-08-27T11:00");
+      const { port } = makePort({ checklists: [source], deadlines: [] });
+      await render(port);
+      const controls = addControls(source);
+      await act(async () => { controllerRef!.openChecklistScheduleEditor(source, undefined, inline ? { inline: true, inlineTarget: "item" } : undefined); await Promise.resolve(); });
+      return controls;
+    }
+    const cancel = async () => {
+      await act(async () => { controllerRef!.cancelScheduleEditor(); await Promise.resolve(); });
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); await Promise.resolve(); });
+    };
+
+    it("an inline cancel leaves focus on a control the user pressed instead", async () => {
+      const { chip, other } = await openSession(true);
+      other.focus();
+      await cancel();
+      expect(document.activeElement).toBe(other);
+      expect(document.activeElement).not.toBe(chip);
+    });
+
+    it("an inline cancel still focuses the chip when focus was lost (on the body)", async () => {
+      const { chip, other } = await openSession(true);
+      (document.activeElement as HTMLElement | null)?.blur();
+      await cancel();
+      expect(document.activeElement).toBe(chip);
+    });
+
+    it("a non-inline cancel still moves focus to the chip", async () => {
+      const { chip, other } = await openSession(false);
+      other.focus();
+      await cancel();
+      expect(document.activeElement).toBe(chip);
+    });
+  });
+
   const checklistTicket: UndoTicket = {
     kind: "checklist", projectId, subtaskId, expectedVersion: 5,
     request: { expectedVersion: 5, schedule: { state: "range", start: { localCivil: "2026-08-27T09:00" }, end: { localCivil: "2026-08-27T11:00" } } },
