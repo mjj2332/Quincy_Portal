@@ -703,6 +703,23 @@ describe("SubtaskChecklist on an archived Project (#450)", () => {
     expect(liveRegion(host)).toBeUndefined();
     expect(document.getElementById(`subtask-add-${projectId}`)).not.toBeNull(); expect(item(host, "Call client").querySelector('[aria-label="Actions for Call client"]')).not.toBeNull();
   });
+  it("the latch clears when the next detail fetch lands un-archived, though the prop never showed true (#566)", async () => {
+    const host = await renderCase();
+    apiPatchMock.mockRejectedValueOnce(refusal());
+    await click(checkbox(host)); await waitFor(() => expect(liveRegion(host)).toBeDefined());
+    await act(async () => { client.setQueryData(["project-data", projectId, "detail"], { archivedAt: null }); await Promise.resolve(); });
+    await rerenderCase({ archived: false });
+    expect(liveRegion(host)).toBeUndefined();
+    expect(document.getElementById(`subtask-add-${projectId}`)).not.toBeNull();
+  });
+  it("the latch stays read-only when the next fetch says archived (#566)", async () => {
+    const host = await renderCase();
+    apiPatchMock.mockRejectedValueOnce(refusal());
+    await click(checkbox(host)); await waitFor(() => expect(liveRegion(host)).toBeDefined());
+    await act(async () => { client.setQueryData(["project-data", projectId, "detail"], { archivedAt: "2026-01-01" }); await Promise.resolve(); });
+    await rerenderCase({ archived: true });
+    expect(liveRegion(host)).toBeDefined(); controlsGone(host);
+  });
   it("archived arriving with no 409 (a refetch) closes an open composer and drops its draft, and Restore does not reopen it or steal focus", async () => {
     const host = await renderCase();
     await click(document.getElementById(`subtask-add-${projectId}`)!);

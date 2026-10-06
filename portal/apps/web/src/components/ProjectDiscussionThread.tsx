@@ -34,6 +34,7 @@ import { CollaborationTimestamp } from "./quincy/CollaborationTimestamp";
 import { ICON_BUTTON } from "./quincy/icon-button";
 import { MENU_ITEM, Menu, MenuPrimitive } from "./quincy/menu";
 import { ARCHIVED_NOTICE_CLASS } from "./archived-notice";
+import { useArchivedRefusalLatch } from "./use-archived-refusal-latch";
 
 export type ProjectDiscussionAccessFailureResource = "comments" | "comment-read-marker" | "nested-comment";
 
@@ -169,9 +170,7 @@ export function ProjectDiscussionThread({
   const [mutationError, setMutationError] = useState<string>();
   const [discussionDeniedFor, setDiscussionDeniedFor] = useState<string>();
   // A write refused as archived latches the thread read-only until the `archived` prop catches up (the detail refetch it triggers), and clears on Restore (#527).
-  const [latched, setLatched] = useState(false);
-  const readOnly = archived || latched;
-  const priorArchived = useRef(archived);
+  const { latched, latch: setLatch, readOnly } = useArchivedRefusalLatch(queryClient, projectId, archived);
   const priorReadOnly = useRef(readOnly);
   const focusAfterFlip = useRef<{ inThread: boolean } | null>(null);
   const composerRef = useRef<HTMLFormElement>(null);
@@ -217,7 +216,6 @@ export function ProjectDiscussionThread({
   const listDenied = Boolean(consumeDiscussion403 && listError && isDiscussionOnlyForbidden(listError));
   const discussionDenied = listDenied || discussionDeniedFor === projectId;
 
-  useEffect(() => { if (priorArchived.current && !archived) setLatched(false); priorArchived.current = archived; }, [archived]);
   // Turning read-only (by the latch or by the prop arriving with a refetch) drops an open edit and its error: the controls that own them are gone.
   // The composer's draft is kept, in state and in storage, and returns after Restore.
   useLayoutEffect(() => { const was = priorReadOnly.current; priorReadOnly.current = readOnly; if (was || !readOnly) return; setEditing(undefined); setMutationError(undefined); }, [readOnly]);
@@ -266,7 +264,7 @@ export function ProjectDiscussionThread({
   const focusInThread = () => { const active = document.activeElement; return active !== null && (composerRef.current?.contains(active) === true || listRef.current?.contains(active) === true); };
   /** Handles an archived refusal of a Post, Save or Delete: the thread goes read-only, nothing is optimistic, and the header and Checklist catch up. */
   function enterArchived(inThread: boolean) {
-    focusAfterFlip.current = { inThread }; setLatched(true); setMutationError(undefined);
+    focusAfterFlip.current = { inThread }; setLatch(); setMutationError(undefined);
     void invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "collaboration-summary" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true });
   }
 

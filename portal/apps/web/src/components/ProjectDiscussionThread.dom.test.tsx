@@ -34,6 +34,10 @@ vi.mock("../lib/api", async (importOriginal) => {
 });
 vi.mock("../lib/confirm", () => ({ confirm: confirmMock }));
 vi.mock("../lib/project-data", () => ({
+  projectDataKeys: {
+    detail: (id: string) => ["project-data", id, "detail"],
+    collaborationSummary: (id: string) => ["project-data", id, "collaboration-summary"],
+  },
   classifyProjectAccessError: (error: unknown) => error instanceof ApiError && error.status === 403 ? { scope: "collaboration" } : null,
   projectCollaborationDataGeneration: () => "generation",
   invalidateProjectSurfaces: invalidateSurfacesMock,
@@ -338,6 +342,39 @@ describe("ProjectDiscussionThread", () => {
       expect(host.querySelector('[contenteditable="true"]')).toBeNull();
       expect(host.querySelector('[role="alert"]')).toBeNull();
       expect(host.querySelector('[aria-label^="Actions for comment by"]')).toBeNull();
+    });
+
+    describe("the refusal latch awaits fresh data (#566)", () => {
+      const detailKey = ["project-data", projectId, "detail"];
+      const refuseOnce = async () => {
+        apiDeleteMock.mockRejectedValueOnce(refusal());
+        render(); await flush();
+        await chooseCommentAction(host, "Me", "Delete"); await flush();
+        expect(notice()?.textContent).toBe(COPY);
+      };
+      it("clears when the next detail fetch lands un-archived, though the prop never showed true", async () => {
+        await refuseOnce();
+        await act(async () => { client.setQueryData(detailKey, { archivedAt: null }); await Promise.resolve(); });
+        render({ archived: false }); await flush();
+        expect(notice()).toBeNull();
+        expect(host.querySelector("[data-testid=discussion-composer]")).not.toBeNull();
+      });
+      it("clears on a collaboration-summary fetch too", async () => {
+        await refuseOnce();
+        await act(async () => { client.setQueryData(["project-data", projectId, "collaboration-summary"], { project: { archived: false } }); await Promise.resolve(); });
+        expect(notice()).toBeNull();
+      });
+      it("stays read-only through the prop when the fetch says archived", async () => {
+        await refuseOnce();
+        await act(async () => { client.setQueryData(detailKey, { archivedAt: "2026-01-01" }); await Promise.resolve(); });
+        render({ archived: true }); await flush();
+        expect(notice()?.textContent).toBe(COPY);
+      });
+      it("is not cleared by an unrelated query landing", async () => {
+        await refuseOnce();
+        await act(async () => { client.setQueryData(["project-data", projectId, "subtasks"], []); await Promise.resolve(); });
+        expect(notice()?.textContent).toBe(COPY);
+      });
     });
 
     it("turns read-only when a Delete is refused", async () => {

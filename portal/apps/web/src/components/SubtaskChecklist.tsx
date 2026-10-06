@@ -14,6 +14,7 @@ import { reorderNeighbors } from "../lib/reorder-neighbors";
 import { confirm } from "../lib/confirm";
 import { cn } from "../lib/utils";
 import { ARCHIVED_NOTICE_CLASS } from "./archived-notice";
+import { useArchivedRefusalLatch } from "./use-archived-refusal-latch";
 import { Eyebrow } from "./quincy/Eyebrow";
 import { EmptyState } from "./quincy/EmptyState";
 import { Input } from "./reui/input";
@@ -168,7 +169,7 @@ export function SubtaskChecklist({ projectId, onAccessFailure, layout = "rail", 
   const [newTitle, setNewTitle] = useState(""); const [newAssignees, setNewAssignees] = useState<Array<{ id: string; name: string }>>([]); const [newSchedule, setNewSchedule] = useState<RangeChecklistScheduleInput | null>(null); const [newSchedulePreview, setNewSchedulePreview] = useState<ChecklistScheduleDto | null>(null); const [newReminders, setNewReminders] = useState<number[]>([...SUBTASK_REMINDER_DEFAULT_OFFSETS]); const [composerOpen, setComposerOpen] = useState(false); const [activePopover, setActivePopover] = useState<ActivePopover>(null);
   const [draftTitles, setDraftTitles] = useState<Record<string, string>>({}); const [notice, setNotice] = useState(""); const [open, setOpen] = useState(layout === "rail"); const [completedOpen, setCompletedOpen] = useState(false); const [editingId, setEditingId] = useState<string | null>(null);
   // A write refused as archived latches the rail read-only until the `archived` prop catches up (the detail refetch it triggers) and then clears on Restore (#450).
-  const [latched, setLatched] = useState(false); const readOnly = archived || latched; const priorArchived = useRef(archived); const priorReadOnly = useRef(readOnly); const focusAfterFlip = useRef<{ inRail: boolean } | null>(null); const collapseTriggerRef = useRef<HTMLButtonElement>(null);
+  const { latched, latch: setLatch, readOnly } = useArchivedRefusalLatch(queryClient, projectId, archived); const priorReadOnly = useRef(readOnly); const focusAfterFlip = useRef<{ inRail: boolean } | null>(null); const collapseTriggerRef = useRef<HTMLButtonElement>(null);
   const [dragging, setDragging] = useState(false); const [scheduleErrors, setScheduleErrors] = useState<Record<string, ScheduleError>>({});
   // Held above the grouped rows so a Done toggle (row remount) cannot discard a retained schedule draft; entries are dropped when the item is deleted.
   const retainedSchedules = useRef(new Map<string, RetainedSchedule>());
@@ -181,7 +182,6 @@ export function SubtaskChecklist({ projectId, onAccessFailure, layout = "rail", 
   useEffect(() => { if (!subtasksQuery.error) return; terminateOnUnauthorized(subtasksQuery.error); onAccessFailureRef.current?.(subtasksQuery.error); if (!(subtasksQuery.error instanceof Error && subtasksQuery.error.name === "AbortError")) setNotice(message(subtasksQuery.error, "Checklist could not be loaded.")); }, [subtasksQuery.error, terminateOnUnauthorized]);
   useEffect(() => { if (!queryRuntime) return; const owns = dragging || activePopover?.kind === "schedule" || [...busy].some((key) => key.endsWith(":schedule") || key.endsWith(":assignees")); if (!owns) return; return queryRuntime.acquireOwner(projectDataKeys.subtasks(projectId)); }, [activePopover?.kind, busy, dragging, projectId, queryRuntime]);
   useLayoutEffect(() => { const changed = editingId !== priorEditingId.current; priorEditingId.current = editingId; if (!editingId || !changed || [...busy].some((key) => key.startsWith(`${editingId}:`))) return; const input = titleInputRefs.current.get(editingId); if (input && !input.disabled) input.focus(); }, [busy, editingId]);
-  useEffect(() => { if (priorArchived.current && !archived) setLatched(false); priorArchived.current = archived; }, [archived]);
   // A flip to read-only removes the focused control (or disables it, which Chrome only resolves to <body> a frame later), and a modal Project sheet
   // reclaims body focus on the next frame, so this runs in the layout phase: focus the always-mounted collapse button instead (#450).
   // Only when focus was genuinely lost (body, disabled, disconnected, or an ancestor of the rail): a connected, enabled control elsewhere keeps it.
@@ -228,7 +228,7 @@ export function SubtaskChecklist({ projectId, onAccessFailure, layout = "rail", 
   // Whether focus is in the rail when a write starts: the refusal can land after the focused control is gone and the sheet moved focus (#450).
   const focusInRail = () => sectionRef.current?.contains(document.activeElement) === true;
   function enterArchived(inRail: boolean) {
-    focusAfterFlip.current = { inRail }; setLatched(true); setNotice("");
+    focusAfterFlip.current = { inRail }; setLatch(); setNotice("");
     if (queryClient) void invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "subtasks" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true });
   }
   // No chosen range (null): omit it and the server copies the Project's default range (ADR 0011).
