@@ -85,6 +85,10 @@ function LinkForm({ editor, href, inputRef, onDone, onApplied }: LinkFormProps) 
     // collapsed caret keeps a stored mark so the next typed text is linked (parity with the legacy dialog).
     if (href !== null) chain.extendMarkRange("link")
     chain.setLink({ href: next }).run()
+    // Tiptap's focus() defers a frame; Base UI's no-animation finalFocus focuses the editor with a stale
+    // DOM selection first, and any ProseMirror DOM-observer flush before the deferred focus collapses the
+    // author's range (#562). Sync the DOM selection now, as Remove does.
+    editor.view.focus()
 
     onDone(true)
     onApplied?.(next)
