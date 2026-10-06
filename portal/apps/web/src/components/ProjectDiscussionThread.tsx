@@ -275,9 +275,9 @@ export function ProjectDiscussionThread({
 
   const focusInThread = () => { const active = document.activeElement; return active !== null && (composerRef.current?.contains(active) === true || listRef.current?.contains(active) === true); };
   /** Handles an archived refusal of a Post, Save or Delete: the thread goes read-only, nothing is optimistic, and the header and Checklist catch up. */
-  function enterArchived(inThread: boolean) {
+  async function enterArchived(inThread: boolean) {
     focusAfterFlip.current = { inThread }; setMutationError(undefined);
-    recordProjectArchivedRefusal(queryClient, projectId);
+    await recordProjectArchivedRefusal(queryClient, projectId);
     void invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "collaboration-summary" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true });
   }
 
@@ -298,7 +298,7 @@ export function ProjectDiscussionThread({
       void invalidateProjectCommentResources(queryClient, projectId, ["comments", "comment-read-marker", "activity"]);
     } catch (reason) {
       if (presentation.isCurrent(mutationProjectId)) {
-        if (isCommentArchivedRefusal(reason)) { enterArchived(inThread); return; }
+        if (isCommentArchivedRefusal(reason)) { void enterArchived(inThread); return; }
         consumeOrForward(reason, "comments");
         setMutationError(errorMessage(reason, "Comment could not be posted."));
       }
@@ -320,7 +320,7 @@ export function ProjectDiscussionThread({
       void invalidateProjectCommentResources(queryClient, projectId, ["comments", "activity"]);
     } catch (reason) {
       if (presentation.isCurrent(mutationProjectId)) {
-        if (isCommentArchivedRefusal(reason)) { enterArchived(inThread); return; }
+        if (isCommentArchivedRefusal(reason)) { void enterArchived(inThread); return; }
         consumeOrForward(reason, "nested-comment");
         setMutationError(errorMessage(reason, "Comment could not be updated."));
       }
@@ -353,7 +353,7 @@ export function ProjectDiscussionThread({
       void invalidateProjectCommentResources(queryClient, projectId, ["comments", "comment-read-marker", "activity"]);
     } catch (reason) {
       if (presentation.isCurrent(mutationProjectId)) {
-        if (isCommentArchivedRefusal(reason)) { setDeleteTarget(null); enterArchived(inThread); return; }
+        if (isCommentArchivedRefusal(reason)) { setDeleteTarget(null); void enterArchived(inThread); return; }
         consumeOrForward(reason, "nested-comment");
         setDeleteError(errorMessage(reason, "Comment could not be deleted."));
       }

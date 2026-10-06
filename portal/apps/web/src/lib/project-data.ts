@@ -609,19 +609,37 @@ export function applyProjectCollaborationSummaryMembershipOverlay(canonicalData:
 /**
  * A write was refused because the Project is archived (#566): record the fact in the cache, so the archived surfaces derive
  * read-only from the cached value alone instead of keeping a latch of their own. Only a key that already holds data is written.
- * Cancelling then keeps that write and discards any read that began before the refusal (a manual success sets the revert state),
- * which could otherwise land `archived: false` over it. Call this before invalidating: invalidation first would be undone by the write.
+ * Cancelling then discards a read that began before the refusal (a manual success sets the revert state). Cancelling does nothing once
+ * a read's retryer has resolved but the query has not published yet, so that read can still land `archived: false` over the write:
+ * the same idempotent write is applied again after the cancel settles. Await this before invalidating: invalidation first would be
+ * undone by the write.
  */
-export function recordProjectArchivedRefusal(queryClient: QueryClient, projectId: string) {
+export async function recordProjectArchivedRefusal(queryClient: QueryClient, projectId: string): Promise<void> {
   const detailKey = projectDataKeys.detail(projectId);
   const summaryKey = projectDataKeys.collaborationSummary(projectId);
   const detailHeld = queryClient.getQueryData<ProjectDetail>(detailKey) !== undefined;
   const summaryHeld = queryClient.getQueryData<ProjectCollaborationSummary>(summaryKey) !== undefined;
   // The timestamp is a placeholder: surfaces only check it for presence, and the refetch brings the server's value.
-  if (detailHeld) queryClient.setQueryData<ProjectDetail>(detailKey, (current) => current && !current.archivedAt ? { ...current, archivedAt: new Date().toISOString() } : current);
-  if (summaryHeld) queryClient.setQueryData<ProjectCollaborationSummary>(summaryKey, (current) => current && !current.project.archived ? { ...current, project: { ...current.project, archived: true } } : current);
-  if (detailHeld) void queryClient.cancelQueries({ queryKey: detailKey, exact: true });
-  if (summaryHeld) void queryClient.cancelQueries({ queryKey: summaryKey, exact: true });
+  const write = () => {
+    if (detailHeld) queryClient.setQueryData<ProjectDetail>(detailKey, (current) => current && !current.archivedAt ? { ...current, archivedAt: new Date().toISOString() } : current);
+    if (summaryHeld) queryClient.setQueryData<ProjectCollaborationSummary>(summaryKey, (current) => current && !current.project.archived ? { ...current, project: { ...current.project, archived: true } } : current);
+  };
+  write();
+  await Promise.all([
+    detailHeld ? queryClient.cancelQueries({ queryKey: detailKey, exact: true }) : undefined,
+    summaryHeld ? queryClient.cancelQueries({ queryKey: summaryKey, exact: true }) : undefined,
+  ]);
+  write();
+}
+
+/**
+ * A response that replaces the whole cached Project detail (the details Save) must not un-archive it: a Save never un-archives,
+ * only Restore does, and Restore reaches the cache through a refetch. Without this, a Save that was in flight when a refusal
+ * recorded the archive would land `archivedAt: null` over it and reopen every archived surface (#566).
+ */
+export function keepCachedArchiveState<T extends { archivedAt?: string | number | null }>(cached: unknown, incoming: T): T {
+  const archivedAt = (cached as { archivedAt?: string | number | null } | undefined)?.archivedAt;
+  return archivedAt && !incoming.archivedAt ? { ...incoming, archivedAt } : incoming;
 }
 
 export type ProjectMembershipMutation = {
