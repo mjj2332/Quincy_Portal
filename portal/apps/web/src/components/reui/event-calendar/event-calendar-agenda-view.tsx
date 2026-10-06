@@ -56,8 +56,9 @@
  *    header's surface is solid `bg-muted` (was `bg-muted/60`): at 60% the rows scrolling under
  *    it showed through and collided with the header text.
  *
- * 3. 2026-10-07, #643 — today's weekday is the month view's chip (`bg-primary
- *    text-primary-foreground`, `rounded-sm`, `px-1.5`) instead of `text-primary`. Quincy's
+ * 3. 2026-10-07, #643 — today's weekday takes the month view's colours (`bg-primary
+ *    text-primary-foreground`) on a `rounded-sm px-1.5` rectangular chip (the month view itself
+ *    circles the numeral) instead of `text-primary`. Quincy's
  *    `--primary` is near-black, so the registry's tint was indistinguishable from the other days.
  *    The range text itself comes from `i18n.functions.formatDayRange` (see the i18n file).
  */

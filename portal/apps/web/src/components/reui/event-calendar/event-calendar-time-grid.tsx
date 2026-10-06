@@ -102,12 +102,14 @@
  *    empty placeholder because a cursor-following carry shows the content; a keyboard move has
  *    no carry. Pointer behaviour is unchanged. See `event-calendar-dnd.tsx` entry 6.
  *
- * 6. 2026-10-07, #643 — the week / day header's today marker is the month view's chip (`bg-primary
- *    text-primary-foreground`, `rounded-sm`, `px-1.5`) on a span around the header text, replacing
- *    the cell's own `text-primary` today tint. `--primary` is near-black in Quincy, so the tint did not
- *    show. A consumer `renderDayHeader` still replaces the span (and so the chip). The chip is an
- *    `inline-block max-w-full truncate` box, so in a narrow phone week column it ellipsises with its
- *    neighbours instead of overflowing the column.
+ * 6. 2026-10-07, #643 — the week / day header marks today with the month view's COLOURS (`bg-primary
+ *    text-primary-foreground`) instead of the cell's own `text-primary` tint; `--primary` is near-black
+ *    in Quincy, so the tint did not show. At >=721px it is a `rounded-sm` rectangular chip around the
+ *    single-line header (same weight/line-height as the agenda chip), an `inline-block max-w-full
+ *    truncate` box so it never overflows its column. Below 721px the header is stacked (narrow weekday
+ *    over date number, both variants rendered and one hidden per breakpoint) and only the number takes
+ *    the month view's circled numeral (`size-5 rounded-full`). A consumer `renderDayHeader` still
+ *    replaces all of it.
  */
 import {
   useEffect,
@@ -489,28 +491,47 @@ function EventCalendarDayHeader({
   const settings = useEventCalendarSettings()
   const viewConfig = useEventCalendarViewConfig()
   const { isToday } = useEventCalendarDay(day)
+  const zoned = toZoned(day, settings.timeZone)
   return (
     <div
       data-slot="event-calendar-day-header"
       data-today={isToday || undefined}
       className={cn(
-        "min-w-0 truncate border-e px-2 py-1.5 font-medium last:border-e-0",
+        "min-w-0 truncate border-e px-2 py-1.5 font-medium last:border-e-0 max-[721px]:px-0.5 max-[721px]:text-center",
         isToday && viewConfig.todayClassName
       )}
     >
       {viewConfig.renderDayHeader?.({ day, view, isToday }) ?? (
-        <span
-          className={cn(
-            isToday &&
-              "bg-primary text-primary-foreground rounded-sm px-1.5 inline-block max-w-full truncate align-bottom"
-          )}
-        >
-          {format(
-            toZoned(day, settings.timeZone),
-            settings.i18n.formats.timeGridDayHeader,
-            { locale: settings.locale }
-          )}
-        </span>
+        <>
+          <span
+            className={cn(
+              "min-[721px]:hidden flex flex-col items-center leading-tight"
+            )}
+          >
+            <span className="text-muted-foreground">
+              {format(zoned, "EEEEE", { locale: settings.locale })}
+            </span>
+            <span
+              className={cn(
+                isToday &&
+                  "mx-auto flex size-5 items-center justify-center rounded-full bg-primary text-primary-foreground font-light"
+              )}
+            >
+              {format(zoned, "d", { locale: settings.locale })}
+            </span>
+          </span>
+          <span
+            className={cn(
+              "max-[721px]:hidden",
+              isToday &&
+                "bg-primary text-primary-foreground rounded-sm px-1.5 inline-block max-w-full truncate align-bottom font-semibold leading-[inherit]"
+            )}
+          >
+            {format(zoned, settings.i18n.formats.timeGridDayHeader, {
+              locale: settings.locale,
+            })}
+          </span>
+        </>
       )}
     </div>
   )

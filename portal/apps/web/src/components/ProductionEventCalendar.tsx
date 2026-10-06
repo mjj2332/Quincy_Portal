@@ -97,7 +97,6 @@ import { TooltipProvider } from "./reui/tooltip";
 import { EventCalendarContent } from "./reui/event-calendar/event-calendar-content";
 import { Button } from "./reui/button";
 import { Button as QuincyButton } from "./quincy/Button";
-import { IconButton } from "./quincy/icon-button";
 import { CalendarIcon } from "lucide-react";
 import { ganttShowDeliveredRecovery } from "../lib/production-gantt-filters";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "./reui/sheet";
@@ -672,9 +671,9 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
                     </div>
                     <div className="flex min-w-0 basis-full flex-wrap items-center gap-[var(--space-1)]" data-testid="event-calendar-controls">
                       {iconToggle ? (
-                        <IconButton className="min-h-[44px] min-w-[44px] border border-border" data-testid="event-calendar-rail-toggle" aria-label="Calendar" aria-expanded={railOpen} onClick={() => setRailOpen(true)}>
+                        <Button type="button" variant="outline" size="icon" className="min-h-[44px] min-w-[44px]" data-testid="event-calendar-rail-toggle" aria-label="Calendar" aria-expanded={railOpen} onClick={() => setRailOpen(true)}>
                           <CalendarIcon className="size-4" aria-hidden="true" />
-                        </IconButton>
+                        </Button>
                       ) : (
                         <Button type="button" variant="outline" size="sm" className="min-h-[44px]" data-testid="event-calendar-rail-toggle" aria-expanded={railOpen} onClick={() => setRailOpen(true)}>
                           Calendar
@@ -683,7 +682,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
                       <EventCalendarNavToday className="min-h-[44px]" />
                       <EventCalendarViewSwitcher className="min-h-[44px]" />
                       {/* One shrink-0 pair: a wrapped row never strands Next on its own line. */}
-                      <div className="flex shrink-0 items-center">
+                      <div className="ml-auto flex shrink-0 items-center">
                         <EventCalendarNavPrev className="min-h-[44px] min-w-[44px]" />
                         <EventCalendarNavNext className="min-h-[44px] min-w-[44px]" />
                       </div>

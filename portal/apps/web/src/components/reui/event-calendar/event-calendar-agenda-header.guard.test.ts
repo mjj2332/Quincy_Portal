@@ -41,3 +41,37 @@ describe("today highlight is a chip, not near-black text (#643)", () => {
     expect(src).toMatch(/rounded-sm/);
   });
 });
+
+describe("week/day header is stacked on phones (#643)", () => {
+  it("renders a stacked narrow-weekday + date-number variant below 721px, hidden at >=721px", () => {
+    expect(timeGrid).toContain('"EEEEE"');
+    expect(timeGrid).toContain('"d"');
+    expect(timeGrid).toContain("max-[721px]:hidden");
+    expect(timeGrid).toContain("min-[721px]:hidden");
+    expect(timeGrid).toContain("max-[721px]:px-0.5 max-[721px]:text-center");
+  });
+
+  it("circles only the today numeral, with the month view's marker classes", () => {
+    expect(timeGrid).toMatch(/isToday\s*&&\s*"[^"]*\brounded-full\b[^"]*"/);
+    expect(timeGrid).toMatch(/isToday\s*&&\s*"[^"]*\bbg-primary text-primary-foreground\b[^"]*"/);
+    expect(timeGrid).toMatch(/\bsize-5\b/);
+  });
+
+  it("the >=721 week chip matches the agenda chip's weight and line-height", () => {
+    expect(src).toMatch(/font-semibold/);
+    expect(timeGrid).toMatch(/isToday\s*&&\s*"[^"]*\bfont-semibold leading-\[inherit\][^"]*"/);
+  });
+});
+
+describe("Calendar toolbar toggle (#643)", () => {
+  const toolbar = readFileSync(join(here, "../../ProductionEventCalendar.tsx"), "utf8");
+
+  it("icon-only toggle is an outline icon Button, not an IconButton", () => {
+    expect(toolbar).toMatch(/<Button[^>]*variant="outline"[^>]*size="icon"[^>]*aria-label="Calendar"/s);
+    expect(toolbar).not.toContain("IconButton");
+  });
+
+  it("Prev/Next wrapper pins right with ml-auto", () => {
+    expect(toolbar).toMatch(/className="ml-auto flex shrink-0 items-center"/);
+  });
+});
