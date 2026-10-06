@@ -93,7 +93,8 @@ export function ProjectCollaborationPanel({ projectId, presented = true, view, o
       selectTab(views[nextIndex]!, true);
     };
     const tabsStripClass = cn(
-      "flex flex-none gap-[var(--space-5)] bg-[var(--paper-050)] [border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border",
+      // gap = --space-5 (24px label-to-label) minus both tabs' --space-2 side padding (TabStrip TAB_BASE, #550).
+      "flex flex-none gap-[var(--space-2)] bg-[var(--paper-050)] [border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border",
       "max-[721px]:*:flex-1 max-[721px]:*:justify-center",
       "-mx-[var(--space-5)] px-[var(--space-5)] max-[721px]:-mx-[var(--space-4)] max-[721px]:px-[var(--space-4)]",
       // In the rail the strip's hairline stops at the Discussion column instead of running under the rail.
