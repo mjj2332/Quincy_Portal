@@ -597,7 +597,7 @@ export function ProjectKanbanBoard2({
           In the Dashboard's fill mode (#363) the Root is a bounded column: the Viewport takes the height
           and the bar is an in-flow row beneath it, so `position: sticky` is inert, and the bar still sits
           at the bottom of the visible Board. */}
-      <ScrollAreaPrimitive.Root data-slot="scroll-area" className="relative flex min-h-0 w-full min-w-0 flex-1 flex-col has-[>[data-slot=scroll-area-viewport]:focus-visible]:outline has-[>[data-slot=scroll-area-viewport]:focus-visible]:outline-[length:var(--border-width-bold)] has-[>[data-slot=scroll-area-viewport]:focus-visible]:outline-[var(--focus-ring)] has-[>[data-slot=scroll-area-viewport]:focus-visible]:outline-offset-0">
+      <ScrollAreaPrimitive.Root data-slot="scroll-area" className="relative flex min-h-0 w-full min-w-0 flex-1 flex-col has-[>[data-slot=scroll-area-viewport]:focus-visible]:outline has-[>[data-slot=scroll-area-viewport]:focus-visible]:outline-[length:var(--border-width-bold)] has-[>[data-slot=scroll-area-viewport]:focus-visible]:outline-[var(--focus-ring)] outline-offset-0 has-[>[data-slot=scroll-area-viewport]:focus-visible]:outline-offset-0">
         <ScrollAreaPrimitive.Viewport
           data-slot="scroll-area-viewport"
           data-testid="board-scroll-viewport"
@@ -648,7 +648,7 @@ export function ProjectKanbanBoard2({
                     const receiving = shownProposal?.targetStageKey === stageKey;
                     return (
                       <KanbanColumn key={stage.key} id={columnId} value={stage.key} disabled className={`w-12 shrink-0 bg-[var(--paper-050)] min-h-0 border border-[length:var(--border-width-hair)] border-border opacity-100 ${receiving ? "border-[var(--ink-900)]" : ""}`} data-testid="board-column" data-collapsed="true">
-                        <div className="flex h-full flex-col items-center gap-[var(--space-3)] py-[var(--space-3)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${stageKey}`} tabIndex={-1}>
+                        <div className="flex h-full flex-col items-center gap-[var(--space-3)] py-[var(--space-3)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] outline-offset-[-2px] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${stageKey}`} tabIndex={-1}>
                           {toggle("Expand", false)}
                           <span className="tabular-nums text-sm text-foreground-secondary" data-testid="board-column-count">{stageProjects.length}</span>
                           {overdueCount > 0 && <span className="tabular-nums text-xs text-signal-critical" data-testid="board-column-overdue">{overdueCount}<span className="sr-only"> overdue</span></span>}
@@ -672,7 +672,7 @@ export function ProjectKanbanBoard2({
                     // sees `editing` for `editing_autohdr` — would never match, and tier 2 would fall
                     // through to the Board root. The Board this replaced keyed its headings the same way.
                     <KanbanColumn key={stage.key} id={columnId} value={stage.key} disabled className={`w-[17.5rem] shrink-0 bg-[var(--paper-050)] min-h-0 min-w-0 border border-[length:var(--border-width-hair)] border-border opacity-100 ${shownProposal?.targetStageKey === stageKey ? "border-[var(--ink-900)]" : ""}`} data-testid="board-column">
-                      <div className="flex shrink-0 flex-col gap-[var(--space-2)] p-[var(--space-4)] border-b border-b-border bg-[var(--bg-canvas)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${stageKey}`} tabIndex={-1}>
+                      <div className="flex shrink-0 flex-col gap-[var(--space-2)] p-[var(--space-4)] border-b border-b-border bg-[var(--bg-canvas)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] outline-offset-[-2px] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${stageKey}`} tabIndex={-1}>
                         <div className="flex min-w-0 items-center gap-[var(--space-3)]" data-testid="board-column-title-row">
                           <span className="flex-none [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] tabular-nums text-foreground-secondary" aria-hidden="true">{String(stageIndex + 1).padStart(2, "0")}</span>
                           {/* Full width for the name; `truncate` + `title` only catch an unusually long one. */}

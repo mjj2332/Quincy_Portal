@@ -372,7 +372,7 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
           {...{ onCancel: () => setPicking(null) }}
         />}
       </div>
-      <div ref={boardRef} tabIndex={-1} data-testid="project-whiteboard-board" className="min-h-0 relative border-solid border-[length:var(--border-width-hair)] border-border bg-card focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]">
+      <div ref={boardRef} tabIndex={-1} data-testid="project-whiteboard-board" className="min-h-0 relative border-solid border-[length:var(--border-width-hair)] border-border bg-card focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] outline-offset-[-2px] focus-visible:!outline-offset-[-2px]">
         <EmbeddedUploadTray uploads={uploads} errors={uploadErrors} onCancel={(key) => { runningUploads.current.get(key)?.cancel(); boardRef.current?.focus(); }} onRetry={(key) => runningUploads.current.get(key)?.retry()} testId="project-whiteboard-upload-tray" className="absolute inset-x-[var(--space-4)] bottom-[calc(var(--space-4)+var(--space-7)+var(--space-2))] z-20 mx-auto grid max-w-[28rem] gap-[var(--space-2)] rounded-lg border-solid border-[length:var(--border-width-hair)] border-border bg-card p-[var(--space-3)] shadow-sm" />
         {deleted
           ? <p className="p-[var(--space-5)]" role="alert">This project's whiteboard was deleted.</p>

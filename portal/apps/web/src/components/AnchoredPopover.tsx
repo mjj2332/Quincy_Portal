@@ -81,7 +81,7 @@ const POPOVER_ACTIONS = "flex items-center gap-[var(--space-2)] min-w-0 max-[601
  * "A shorthand always resets its longhands").
  */
 const RING_IN =
-  "focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] " +
+  "outline-offset-[-2px] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] " +
   "focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]";
 
 /** Small checklist-facing positioning and close-boundary helper, not an app-wide menu system. */

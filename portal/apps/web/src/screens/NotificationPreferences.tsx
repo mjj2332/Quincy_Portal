@@ -236,7 +236,7 @@ export function NotificationPreferences() {
           </label>
         </div>
         {/* `p { margin: 0 }` in tokens/base.css sits outside @layer and beats a plain margin utility (CreateProject.tsx:109). */}
-        <p className={cn(FOOT, "!mt-[var(--space-2)]")}>Project activity (stage changes and collaboration activity) is only ever emailed in a digest; if you choose Immediately, it arrives hourly.</p>
+        <p className={cn(FOOT, "mt-[var(--space-2)]")}>Project activity (stage changes and collaboration activity) is only ever emailed in a digest; if you choose Immediately, it arrives hourly.</p>
         {(error?.section === "digest" || error?.section === "activity") && <Notice role="alert" className="mt-[var(--space-4)]">{error.message}</Notice>}
       </section>
 
