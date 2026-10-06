@@ -13,6 +13,9 @@
  * the last rect when the bar is momentarily gone. Focus (#463 hand-off, lessons): when the popup closes, focus goes back to the
  * bar unless it already sits on a connected control outside the popup (an outside press landed on it).
  *
+ * #585: a conflict dismissed by Escape or an outside press is kept in the Gantt's stash (`stashErrorFor`), shown here on a reopen and
+ * while closed so the retained draft survives; Cancel, Use latest and Save clear it.
+ *
  * Reuse ledger: picker — `quincy/SubtaskScheduleControl` over `reui/popover` (its `anchor` passthrough); nothing else is drawn.
  */
 import { useCallback, useMemo, useRef } from "react";
@@ -20,7 +23,7 @@ import type { GanttChecklistRowDto, ProjectDefaultRangeDto, RangeChecklistSchedu
 import { SHELL_AWARE_SHIFT_AVOIDANCE, shellAwarePopupPadding } from "../lib/date-time-field";
 import type { ScheduleEditorState } from "../lib/use-scheduling-commands";
 import { scheduleErrorFromEditor, useSchedulePickerClose } from "./ProductionGanttSubtaskCells";
-import { SubtaskScheduleControl, type LatestSubtaskSummary, type RetainedSchedule } from "./quincy/SubtaskScheduleControl";
+import { SubtaskScheduleControl, type LatestSubtaskSummary, type RetainedSchedule, type ScheduleError } from "./quincy/SubtaskScheduleControl";
 
 type Shown = { subtaskId: string; row: GanttChecklistRowDto; street: string; projectDefault: ProjectDefaultRangeDto | null };
 
@@ -38,14 +41,20 @@ export type ProductionGanttScheduleEditorPopoverProps = {
   busy: boolean;
   onSubmit: (schedule: RangeChecklistScheduleInput, reminderOffsetsMinutes?: number[]) => void;
   onCancel: () => void;
+  /** #585: a passive close (Escape, an outside press): ends the session but stashes a conflict. */
+  onDismiss: () => void;
+  /** #585: the notice a dismissed conflict leaves for a Subtask's row (the Gantt's stash, against the live row). */
+  stashErrorFor: (row: GanttChecklistRowDto) => ScheduleError<LatestSubtaskSummary> | undefined;
+  /** #585: drops the Subtask's stashed conflict (Save, Use latest, Cancel). */
+  onClear: (subtaskId: string) => void;
 };
 
 const EMPTY_RECT = { x: 0, y: 0, top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0, toJSON: () => ({}) } as DOMRect;
 
-export function ProductionGanttScheduleEditorPopover({ editor, subtaskId, lookup, findBar, retainedFor, busy, onSubmit, onCancel }: ProductionGanttScheduleEditorPopoverProps) {
-  const close = useSchedulePickerClose({ onSubmit, onCancel });
+export function ProductionGanttScheduleEditorPopover({ editor, subtaskId, lookup, findBar, retainedFor, busy, onSubmit, onCancel, onDismiss, stashErrorFor, onClear }: ProductionGanttScheduleEditorPopoverProps) {
   // What the popover last showed, kept so its exit animation has content after the session (and its row) is gone.
   const shownRef = useRef<Shown | null>(null);
+  const close = useSchedulePickerClose({ onSubmit, onCancel, onDismiss, onClear: () => { if (shownRef.current) onClear(shownRef.current.subtaskId); } });
   const found = editor && subtaskId ? lookup(subtaskId) : null;
   if (editor && subtaskId && found) shownRef.current = { subtaskId, ...found };
   const shown = shownRef.current;
@@ -83,11 +92,13 @@ export function ProductionGanttScheduleEditorPopover({ editor, subtaskId, lookup
       open={editor !== null}
       setOpen={(next) => { if (!next) close.closed(); }}
       busy={busy}
-      error={editor ? scheduleErrorFromEditor(editor) : undefined}
+      // The editor's own error first (a fresh 409); else the Gantt's stash, which a reopened session lacks and which stays while closed (#585).
+      error={(editor ? scheduleErrorFromEditor(editor) : undefined) ?? stashErrorFor(row)}
       retained={retainedFor(row.id)}
       onSave={close.onSave}
       onUseLatest={close.onUseLatest}
       onUseLatestItem={close.onUseLatest}
+      onDiscard={close.onDiscard}
       projectDefault={projectDefault}
       reminders={{ offsets: row.reminders.offsetsMinutes, next: row.reminders.nextOccurrence }}
       anchor={anchor}
