@@ -288,4 +288,12 @@ describe("production event-calendar adapter: focus ring and day headers (#602)",
   it("names the +N more day the way the rest of the Portal does", () => {
     expect(format(new Date(2026, 10, 18), PRODUCTION_EVENT_CALENDAR_I18N.formats.moreDayHeader)).toBe("Wed 18 Nov");
   });
+
+  it("heads the agenda day the same short way (#614)", () => {
+    const f = PRODUCTION_EVENT_CALENDAR_I18N.formats;
+    expect(f.agendaDayWeekday).toBe("EEE");
+    expect(f.agendaDayDate).toBe("d MMM yyyy");
+    expect(format(new Date(2026, 9, 7), f.agendaDayWeekday)).toBe("Wed");
+    expect(format(new Date(2026, 9, 7), f.agendaDayDate)).toBe("7 Oct 2026");
+  });
 });
