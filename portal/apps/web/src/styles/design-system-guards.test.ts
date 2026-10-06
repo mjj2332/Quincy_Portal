@@ -1563,6 +1563,11 @@ describe("guard: Admin inline editors keep their focus outline and value clear (
     expect(cell).toHaveLength(1);
     expect(cell[0]).toMatch(/min-\[1100px\]:whitespace-nowrap/);
   });
+  it("Users card controls keep a field width instead of stretching across a wide card (#640)", () => {
+    const role = admin.match(/<NativeSelect id=\{`role-\$\{user\.id\}`\} className="([^"]*)"/)?.[1] ?? "";
+    const name = admin.match(/<Input className="([^"]*)" value=\{userNameDraft\}/)?.[1] ?? "";
+    for (const cls of [role, name]) expect(cls).toMatch(/table-stacked:max-w-\[320px\]/);
+  });
   it("Email cells break at @ and dots via EmailText so the actions column fits", () => {
     const cells = admin.split("\n").flatMap((l) => l.match(/<TableCell data-label="Email"[^>]*>/g) ?? []);
     expect(cells.length).toBeGreaterThanOrEqual(2);
