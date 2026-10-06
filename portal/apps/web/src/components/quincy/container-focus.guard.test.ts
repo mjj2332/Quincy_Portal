@@ -39,6 +39,26 @@ export function constInitialiser(source: string, name: string): string | null {
   return init === undefined ? null : stripComments(init);
 }
 
+/** The body of `function name(...) {...}`, brace-matched from the first `{` after the signature's closing `)`. Comments stripped. */
+export function functionBody(source: string, name: string): string | null {
+  const at = source.search(new RegExp(`function ${name}\\s*\\(`));
+  if (at < 0) return null;
+  let paren = 0;
+  let i = source.indexOf("(", at);
+  for (; i < source.length; i++) {
+    if (source[i] === "(") paren++;
+    else if (source[i] === ")" && --paren === 0) break;
+  }
+  const open = source.indexOf("{", i);
+  if (open < 0) return null;
+  let depth = 0;
+  for (let j = open; j < source.length; j++) {
+    if (source[j] === "{") depth++;
+    else if (source[j] === "}" && --depth === 0) return stripComments(source.slice(open, j + 1));
+  }
+  return null;
+}
+
 describe("programmatically focused containers carry focus-visible:!outline-none", () => {
   it("DateTimePopoverContent", () => {
     const tag = openingTag(read("components/quincy/DateTimeField.tsx"), "PopoverContent", "aria-describedby={zoneId}");
@@ -59,6 +79,35 @@ describe("programmatically focused containers carry focus-visible:!outline-none"
     const tag = openingTag(read("components/quincy/NotificationBell.tsx"), "PopoverContent", 'data-testid="rail-notifications-panel"');
     expect(tag, "NotificationBell's PopoverContent not found").not.toBeNull();
     expect(tag).toContain(RING_OFF);
+  });
+  it("RailSheet's SheetContent", () => {
+    const tag = openingTag(read("components/quincy/RailSheet.tsx"), "SheetContent", 'data-testid="rail-sheet"');
+    expect(tag, "RailSheet's SheetContent not found").not.toBeNull();
+    expect(tag).toContain(RING_OFF);
+  });
+  it("Modal's panelClasses", () => {
+    const body = functionBody(read("components/Modal.tsx"), "panelClasses");
+    expect(body, "panelClasses not found").not.toBeNull();
+    expect(body).toContain(RING_OFF);
+    expect(body, "dead `focus:outline-none` loses to the unlayered ring").not.toMatch(/(?<![-\w])focus:outline-none/);
+  });
+
+  describe("function-body extractor fixtures", () => {
+    const BROKEN = 'function panelClasses(a: X | undefined, b: boolean): string {\n  return cn("w-full", "focus:outline-none");\n}\nfunction other() { return "focus-visible:!outline-none"; }';
+    const FIXED = 'function panelClasses(a: X | undefined, b: boolean): string {\n  return cn("w-full", "focus-visible:!outline-none");\n}';
+    it("fails on a body without the class, and does not read the next function", () => {
+      expect(functionBody(BROKEN, "panelClasses")).not.toContain(RING_OFF);
+    });
+    it("passes with the class", () => {
+      expect(functionBody(FIXED, "panelClasses")).toContain(RING_OFF);
+    });
+    it("ignores the class when it is only in a comment", () => {
+      const inComment = 'function panelClasses(a: X): string {\n  // focus-visible:!outline-none\n  /* focus-visible:!outline-none */\n  return cn("focus:outline-none");\n}';
+      expect(functionBody(inComment, "panelClasses")).not.toContain(RING_OFF);
+    });
+    it("returns null when the function is gone", () => {
+      expect(functionBody("const x = 1;", "panelClasses")).toBeNull();
+    });
   });
 
   describe("extractor fixtures", () => {

@@ -52,7 +52,7 @@ export function RailSheet({ children, finalFocus, initialFocus, impersonating = 
       showCloseButton={false}
       data-testid="rail-sheet"
       data-impersonating={impersonating ? "" : undefined}
-      className="z-[var(--z-dialog)] data-[impersonating]:data-[side=left]:top-[var(--impersonation-banner-height)] data-[impersonating]:data-[side=left]:h-auto data-[impersonating]:data-[side=left]:bottom-0 gap-0 bg-sidebar p-0 text-sidebar-foreground border-sidebar-border data-[side=left]:w-[288px]"
+      className="z-[var(--z-dialog)] data-[impersonating]:data-[side=left]:top-[var(--impersonation-banner-height)] data-[impersonating]:data-[side=left]:h-auto data-[impersonating]:data-[side=left]:bottom-0 gap-0 bg-sidebar p-0 text-sidebar-foreground border-sidebar-border data-[side=left]:w-[288px] focus-visible:!outline-none"
       finalFocus={finalFocus}
       initialFocus={initialFocus}
       overlayProps={{

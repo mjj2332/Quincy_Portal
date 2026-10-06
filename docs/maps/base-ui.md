@@ -29,6 +29,8 @@ Installed: `"version": "1.7.0"` portal/node_modules/@base-ui/react/package.json:
 | `finalFocus` receives only the close interaction type, never the reason | `finalFocus` portal/node_modules/@base-ui/react/dialog/popup/DialogPopup.d.ts:34 |
 
 - A popup/sheet container that `initialFocus` lands on needs `focus-visible:!outline-none` (base.css's unlayered ring would outline it): docs/lessons.md § "A programmatically focused container rings"; pinned by portal/apps/web/src/components/quincy/container-focus.guard.test.ts.
+- `RailSheet` and `Modal.tsx` `panelClasses` carry it too (#659). The Calendar rail sheet does not: its `initialFocus` resolves to the first tabbable.
+- Tab out of a non-modal popover (the Dropbox popover, `ProjectHeaderDropbox.tsx`) continues document order after the trigger. That is correct disclosure behaviour, not a bug; Shift+Tab returns to the trigger. Do not redirect focus to the trigger.
 
 ## Nested dialogs
 - "Nested" means a parent `Dialog.Root` in the React tree, not the DOM: `nested` portal/node_modules/@base-ui/react/dialog/root/useRenderDialogRoot.js:37.
