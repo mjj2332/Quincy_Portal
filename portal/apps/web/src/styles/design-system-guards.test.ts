@@ -1243,9 +1243,30 @@ describe("guard: Team, Select and Mention popups share one square radius (#550)"
  * no file combines one with a focus outline utility. Error colours (`aria-invalid:`) are not
  * focus-time and are untouched.
  */
-const FOCUS_BORDER_COLOUR =
-  /(?:^|[\s"'`])(?:[a-z-]*:)*(?:has-\[[^\]\s]*focus[^\]\s]*\]|group-has-\[[^\]\s]*focus[^\]\s]*\][^:\s]*|focus-visible|focus-within|focus):border-(?!0(?:\s|"|'|`|$)|transparent|none|solid|\[length)/;
-const FOCUS_OUTLINE = /(?:focus-visible|focus-within|focus|has-\[[^\]\s]*focus[^\]\s]*\]):outline-(?:ring|solid|\[length)/;
+/**
+ * Splits a class token into its variant prefix and utility at the last TOP-LEVEL colon, so a nested
+ * arbitrary variant such as `has-[[contenteditable=true]:focus-visible]:border-primary` (colons and
+ * brackets inside brackets) is read correctly. A regex over `[^\]]*` cannot do this.
+ */
+function splitVariant(token: string): { variants: string; utility: string } {
+  let depth = 0;
+  let cut = -1;
+  for (let i = 0; i < token.length; i++) {
+    const c = token[i];
+    if (c === "[" || c === "(") depth++;
+    else if (c === "]" || c === ")") depth--;
+    else if (c === ":" && depth === 0) cut = i;
+  }
+  return { variants: token.slice(0, cut + 1), utility: token.slice(cut + 1) };
+}
+function classTokens(source: string): { variants: string; utility: string }[] {
+  return source.split(/[\s"'`]+/).filter(Boolean).map(splitVariant);
+}
+const FOCUS_VARIANT = /focus/;
+const BORDER_COLOUR_UTILITY = /^border-(?!0$|transparent$|none$|solid$|\[length)/;
+const FOCUS_OUTLINE_UTILITY = /^outline-(?:ring|solid|\[length)/;
+const FOCUS_BORDER_COLOUR = { test: (code: string) => classTokens(code).some((t) => FOCUS_VARIANT.test(t.variants) && BORDER_COLOUR_UTILITY.test(t.utility)) };
+const FOCUS_OUTLINE = { test: (code: string) => classTokens(code).some((t) => FOCUS_VARIANT.test(t.variants) && FOCUS_OUTLINE_UTILITY.test(t.utility)) };
 const FIELD_PRIMITIVES = [
   "components/reui/input-group.tsx",
   "components/reui/input.tsx",
@@ -1294,6 +1315,9 @@ describe("guard: one focus line — no field primitive recolours its border on f
     expect(hasFocusBorderColour('"focus-visible:border-ring"')).toBe(true);
     expect(hasFocusBorderColour('"has-[input:focus-visible]:border-primary outline-solid"')).toBe(true);
     expect(hasFocusBorderColour('"focus-within:border-ring"')).toBe(true);
+    // nested-bracket arbitrary variant (the rich-text editor's contenteditable focus selector)
+    expect(hasFocusBorderColour('"has-[[contenteditable=true]:focus-visible]:border-primary"')).toBe(true);
+    expect(FOCUS_OUTLINE.test('"has-[[contenteditable=true]:focus-visible]:outline-ring"')).toBe(true);
     expect(hasFocusBorderColour('"focus-visible:border-[color:var(--border-strong)]"')).toBe(true);
     expect(hasFocusBorderColour('"hover:border-border-hover focus-visible:outline-ring aria-invalid:border-destructive"')).toBe(false);
     expect(hasFocusBorderColour('"focus-visible:border-0 border-border"')).toBe(false);
