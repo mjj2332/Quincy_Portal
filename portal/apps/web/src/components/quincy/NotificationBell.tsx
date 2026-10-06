@@ -348,7 +348,7 @@ export function NotificationBell({ poll = NOTIFICATION_POLL_MS, touchTarget = fa
             className={LIST}
           >
             {filtered.length === 0 ? (
-              <NotificationEmptyState filter={tab} unreadCount={unreadCount} onShowAll={focusAllTabAndShowAll} />
+              <NotificationEmptyState filter={tab} unreadCount={unreadCount} onShowAll={focusAllTabAndShowAll} hasNotifications={notifications.length > 0} />
             ) : (
               <NotificationList
                 buckets={buckets}
