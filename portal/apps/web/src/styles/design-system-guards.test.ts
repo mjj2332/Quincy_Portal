@@ -1488,9 +1488,12 @@ describe("guard: one focus line — no field primitive recolours its border on f
  * Item 3: `TableWrap` is `overflow-x:auto`, which also clips on y and, at the left edge, the 2px
  * flush focus outline of an inline editor. Every Admin table that hosts an inline editor gives its
  * scroller inline padding from the spacing token so the outline has room.
- * Item 4: Chrome paints its contact-autofill icon inside the Agent email editor and it sat over the
- * value. The editor is a real `type="email"` field with `autoComplete="off"` and reserves end
- * padding (`pe-[var(--space-8)]`) so, should the browser still draw the icon, it never covers text.
+ * Item 4 (the icon over the Agent email value) is a browser extension's `<shark-icon-container>`,
+ * not an app defect; nothing in the app is changed for it.
+ * Follow-ups: an unbreakable long address sized the Email column (461px at 1280) and pushed the
+ * actions column out of the wrapper, so Email cells wrap anywhere. The phone-width `TableHead` is
+ * visually hidden with `sr-only`, which does not apply to a `table-header-group` (overflow is
+ * ignored), so its columns still laid out and scrolled the page 72px at 390: it is made a block.
  */
 describe("guard: Admin inline editors keep their focus outline and value clear (#633)", () => {
   const admin = readFileSync(join(srcDir, "screens/Admin.tsx"), "utf8");
@@ -1500,10 +1503,15 @@ describe("guard: Admin inline editors keep their focus outline and value clear (
     expect(hosting.length).toBeGreaterThanOrEqual(3);
     for (const chunk of hosting) expect(chunk.slice(0, 200)).toMatch(/className="[^"]*min-\[721px\]:px-\[var\(--space-1\)\]/);
   });
-  it("the Agent email editor is a non-autofilled email field with end padding", () => {
-    const line = admin.split("\n").find((l) => l.includes("aria-label={`Email for ${agent.name}`}")) ?? "";
-    expect(line).toMatch(/type="email"/);
-    expect(line).toMatch(/autoComplete="off"/);
-    expect(line).toMatch(/pe-\[var\(--space-8\)\]/);
+  it("Email cells wrap long addresses so the actions column fits", () => {
+    const cells = admin.split("\n").flatMap((l) => l.match(/<TableCell data-label="Email"[^>]*>/g) ?? []);
+    expect(cells.length).toBeGreaterThanOrEqual(2);
+    for (const c of cells) expect(c).toMatch(/\[overflow-wrap:anywhere\]/);
+  });
+  it("the phone-width TableHead is a block when hidden, so sr-only clips it", () => {
+    const table = readFileSync(join(srcDir, "components/quincy/Table.tsx"), "utf8");
+    const head = table.split("\n").find((l) => l.includes('data-slot="table-head"')) ?? "";
+    expect(head).toMatch(/max-\[721px\]:sr-only/);
+    expect(head).toMatch(/max-\[721px\]:block/);
   });
 });
