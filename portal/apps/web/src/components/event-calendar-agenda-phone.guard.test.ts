@@ -18,6 +18,15 @@ describe("event-calendar agenda time span on phones (#648)", () => {
     }
   });
 
+  it("the title shrinks on the dot's line instead of wrapping to its own (Sol, #648)", () => {
+    const title = file.match(/<span className="([^"]*)">\{event\.title\}<\/span>/);
+    expect(title, "agenda title span not found").not.toBeNull();
+    const tokens = title?.[1]?.split(/\s+/) ?? [];
+    for (const token of ["max-[721px]:min-w-0", "max-[721px]:max-w-[calc(100%-2.75rem)]"]) expect(tokens).toContain(token);
+    // flex-1 would push the recurring icon to the row's far edge (design review, #648).
+    expect(tokens).not.toContain("max-[721px]:flex-1");
+  });
+
   it("the Quincy edit log records the change", () => {
     const header = file.slice(0, file.indexOf("*/"));
     expect(header).toMatch(/#648[\s\S]*agenda time span/);

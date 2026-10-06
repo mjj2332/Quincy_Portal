@@ -79,7 +79,12 @@
  *    320px viewport's title ~64px; below 721px the time now takes its own line above the dot + title.
  *    Needs the row to wrap: the Production calendar passes `classNames.agendaItem` (the vendor hook)
  *    `max-[721px]:flex-wrap max-[721px]:gap-y-0.5` from `production-event-calendar-adapter.ts`.
- *    Desktop unchanged. Pinned by `components/event-calendar-agenda-phone.guard.test.ts`.
+ *    The title span gains `max-[721px]:min-w-0 max-[721px]:max-w-[calc(100%-2.75rem)]`: a wrapping
+ *    flex line is chosen from the item's clamped size, so the cap (dot 8px + two 12px gaps + repeat
+ *    icon 10px) keeps a long title truncating on the dot's line instead of wrapping to a third, and
+ *    the repeat icon stays beside it (`flex-1` would push it to the row's far edge). Desktop unchanged.
+ *    Pinned by
+ *    `components/event-calendar-agenda-phone.guard.test.ts`.
  */
 import {
   createContext,
@@ -406,7 +411,7 @@ function EventCalendarEvent<TData = unknown>({
         data-slot="event-calendar-agenda-dot"
         className="size-2 shrink-0 rounded-full bg-(--ec-event-color)"
       />
-      <span className="truncate text-sm">{event.title}</span>
+      <span className="truncate text-sm max-[721px]:min-w-0 max-[721px]:max-w-[calc(100%-2.75rem)]">{event.title}</span>
       {occurrence.isRecurring && (
         <RepeatIcon className="text-muted-foreground size-2.5 shrink-0" aria-hidden="true" />
       )}
