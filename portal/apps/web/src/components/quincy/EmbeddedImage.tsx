@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { embeddedMediaUrl } from "../../lib/embedded-media";
 import { XIcon } from "lucide-react";
 import { Button } from "../reui/button";
@@ -22,7 +22,7 @@ export function EmbeddedImage({ mediaId, alt, width, height }: { mediaId: string
   const src = embeddedMediaUrl(mediaId);
   // The author's alt text (#553); an image posted before alt existed has none and keeps the generic name.
   const label = alt?.trim() || "Embedded image";
-  const reserved = width !== undefined && height !== undefined && width > 0 && height > 0 ? { width, height } : {};
+  const reserved = width !== undefined && height !== undefined && width > 0 && height > 0 ? { width, height, "data-sized": "", style: { "--embedded-image-aspect": width / height } as CSSProperties } : {};
   if (failed) return <p data-testid="embedded-image-unavailable" className="my-[var(--space-2)] text-foreground-secondary [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">Image unavailable</p>;
   return <>
     {/* The trigger is registered with the dialog, so Escape or Close returns focus to this thumbnail even where a click does not focus a button. */}

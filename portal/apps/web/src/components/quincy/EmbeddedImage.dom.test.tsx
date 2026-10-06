@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
@@ -40,5 +43,20 @@ describe("an embedded image's reserved box (#611)", () => {
     const image = thumbnail({ width: 511 });
     expect(image.hasAttribute("width")).toBe(false);
     expect(image.hasAttribute("height")).toBe(false);
+  });
+
+  it("hands the stylesheet the recorded aspect ratio, so a portrait is capped in width as well as height", () => {
+    const image = thumbnail({ width: 400, height: 1200 });
+    expect(Number(image.style.getPropertyValue("--embedded-image-aspect"))).toBeCloseTo(400 / 1200, 5);
+    expect(thumbnail({}).style.getPropertyValue("--embedded-image-aspect")).toBe("");
+  });
+
+  it("caps a sized thumbnail's width at the height limit times its aspect ratio, and leaves an unsized one alone", () => {
+    const appCss = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../styles/app.css"), "utf8");
+    const line = (selector: string) => appCss.split("\n").find((value) => value.startsWith(selector)) ?? "";
+    const sized = line(".rich-text__embedded-image[data-sized]");
+    expect(sized).toContain("aspect-ratio: var(--embedded-image-aspect)");
+    expect(sized).toContain("max-width: min(100%, calc(24rem * var(--embedded-image-aspect)))");
+    expect(line(".rich-text__embedded-image {")).toContain("max-height: 24rem");
   });
 });
