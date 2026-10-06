@@ -404,7 +404,9 @@ function parseCalendarLocation(params: URLSearchParams): DashboardCalendarState 
 
   const date = params.get("date");
   const subview = params.get("sub");
-  const rawLayers = parseCalendarList(params.get("layers"));
+  // #651: an ABSENT `layers` takes the default; a present-but-empty, unknown or duplicate one is
+  // still rejected by `parseCalendarList` / the checks below.
+  const rawLayers = params.has("layers") ? parseCalendarList(params.get("layers")) : [...calendarFilterDefaults.layers];
   if (date === null || !isSydneyCalendarDate(date) || subview === null || !PRODUCTION_CALENDAR_SUBVIEWS.includes(subview as (typeof PRODUCTION_CALENDAR_SUBVIEWS)[number]) || rawLayers === null) return null;
   if (rawLayers.some((value) => !PRODUCTION_CALENDAR_LAYERS.includes(value as (typeof PRODUCTION_CALENDAR_LAYERS)[number]))) return null;
   const layers = canonicalKnownList(rawLayers as Array<(typeof PRODUCTION_CALENDAR_LAYERS)[number]>, PRODUCTION_CALENDAR_LAYERS);
@@ -655,8 +657,8 @@ export function parseStaffLocation(location: string): StaffRoute {
     // The bare `/?view=calendar` intent (#111), legal as the sole query field or paired with
     // exactly one `q` (#217 fix round 4, item 1 -- see `DashboardCalendarIntentRoute`'s own
     // docblock for why). Checked before `parseCalendarLocation` because that function requires a
-    // complete facet — a date, a subview and a non-empty layer list — and would reject this
-    // spelling. Every partial facet still falls through to it and is still rejected: accepting
+    // complete facet — a date and a subview (layers alone defaults, #651) — and would reject this
+    // spelling. Every partial facet still falls through to it; missing `date` or `sub` is still rejected (a missing `layers` alone defaults to project+checklist, #651): accepting
     // `view=calendar` plus *some* of its parameters (other than `q`) would silently discard the
     // rest. Duplicate keys, a trailing `&`, an oversized query and non-canonical percent-encoding
     // are already rejected by `parseDashboardQuery` above, so this arm inherits all of that and

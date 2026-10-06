@@ -412,11 +412,15 @@ describe("shared staff route contract", () => {
       for (const location of [
         "/?view=calendar&q=smith&sub=month",
         "/?view=calendar&q=smith&date=2026-08-30",
-        "/?view=calendar&q=smith&date=2026-08-30&sub=month",
       ]) {
         expect(parseStaffLocation(location), location).toEqual({ kind: "not-found" });
         expect(safeStaffDestination(location), location).toBeNull();
       }
+      // #651: only `layers` is optional on the facet, so this one is accepted with the defaults.
+      const withDefaults = "/?view=calendar&q=smith&date=2026-08-30&sub=month";
+      const route = parseStaffLocation(withDefaults);
+      expect(route.kind).toBe("dashboard");
+      expect(safeStaffDestination(withDefaults)).toContain("layers=project%2Cchecklist");
     });
 
     it("strips parse-unsafe characters from a bare-dashboard search so the route round-trips", () => {

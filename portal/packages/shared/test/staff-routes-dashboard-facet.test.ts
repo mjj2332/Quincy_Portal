@@ -110,7 +110,7 @@ describe("Dashboard routing grammar", () => {
     const canonical = staffPathFor(route);
     expect(canonical).toContain("layers=project%2Cchecklist");
     expect(parseStaffLocation(canonical)).toEqual(route);
-    expect(safeStaffDestination(short)).toBe(short);
+    expect(safeStaffDestination(short)).toBe(canonical);
     for (const location of [
       calendarUrl("view=calendar&date=2026-08-30&sub=month&layers="),
       calendarUrl("view=calendar&date=2026-08-30&sub=month&layers=bogus"),
