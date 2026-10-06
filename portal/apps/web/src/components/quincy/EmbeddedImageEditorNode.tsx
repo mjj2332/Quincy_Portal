@@ -50,7 +50,7 @@ function EmbeddedImageEditorView({ node, editor, selected, updateAttributes }: N
     {(selected || open) && editable && <div className="absolute bottom-[var(--space-2)] left-[var(--space-2)]">
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger render={<Button type="button" variant="secondary" size="xs" data-testid="embedded-image-alt-button" className="pointer-coarse:h-11 max-[721px]:h-11" />}>Alt text</PopoverTrigger>
-        <PopoverContent align="start" aria-labelledby={titleId} className="w-80" data-testid="embedded-image-alt-popover" initialFocus={inputRef}>
+        <PopoverContent align="start" sideOffset={8} aria-labelledby={titleId} className="w-80" data-testid="embedded-image-alt-popover" initialFocus={inputRef}>
           <span id={titleId} className="sr-only">Edit alt text</span>
           <AltForm alt={alt} inputRef={inputRef} onApply={(next) => { updateAttributes({ alt: next || null }); setOpen(false); }} />
         </PopoverContent>

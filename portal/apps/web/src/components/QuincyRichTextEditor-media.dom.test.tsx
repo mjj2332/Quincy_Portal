@@ -408,16 +408,16 @@ describe("design review fixes (#493)", () => {
       Object.defineProperty(image, "naturalWidth", { configurable: true, value: width }); Object.defineProperty(image, "naturalHeight", { configurable: true, value: height });
       await act(async () => { image.dispatchEvent(new Event("load")); });
     };
-    expect(dialog().className).not.toContain("pt-[var(--space-7)]");
+    expect(dialog().className).not.toContain("p-[var(--space-7)]");
     await load(24, 24);
-    expect(dialog().className).toContain("pt-[var(--space-7)]"); expect(dialog().className).toContain("pr-[var(--space-7)]");
-    // The top padding comes out of the image's height cap, so a tall narrow image is not clipped by the dialog's overflow; width is a percentage of the content box, which already excludes the right padding.
-    expect(image.className).toContain("max-h-[calc(90dvh-var(--space-7))]"); expect(image.className).not.toContain("max-h-[90dvh]");
+    expect(dialog().className).toContain("p-[var(--space-7)]");
+    // Padding on all four sides keeps a tiny image off the rounded corner; the top and bottom padding come out of the height cap, so a tall narrow image is not clipped; width is a percentage of the content box, which already excludes the side padding.
+    expect(image.className).toContain("max-h-[calc(90dvh-2*var(--space-7))]"); expect(image.className).not.toContain("max-h-[90dvh]");
     await load(600, 400);
-    expect(dialog().className).not.toContain("pt-[var(--space-7)]");
+    expect(dialog().className).not.toContain("p-[var(--space-7)]");
     expect(image.className).toContain("max-h-[90dvh]"); expect(image.className).not.toContain("calc(90dvh");
     await load(600, 90); // short in one dimension: the chip would still cover its corner
-    expect(dialog().className).toContain("pr-[var(--space-7)]");
+    expect(dialog().className).toContain("p-[var(--space-7)]");
   });
 
   it("draws the close focus ring inside the chip and keeps the chip's ring legible on ink (#553)", () => {
