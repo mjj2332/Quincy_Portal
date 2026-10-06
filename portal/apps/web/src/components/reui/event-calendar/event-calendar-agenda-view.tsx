@@ -48,6 +48,11 @@
  *    near-black wash over a whole agenda row on hover — correct on a theme whose accent is a
  *    light tint, very wrong here. `--muted` (`--bg-raised`) is the surface this repo uses for a
  *    raised/hovered row.
+ *
+ * 2. 2026-10-07, #614 — the day header's weekday and date, and the group `aria-label`, are
+ *    formatted with `settings.i18n.formats.agendaDayWeekday` / `agendaDayDate` instead of the
+ *    vendor's inline weekday and long-date literals. The i18n defaults equal those literals, so an
+ *    unconfigured calendar is unchanged; Quincy's i18n sets the short Portal form.
  */
 import { useMemo } from "react"
 import {
@@ -159,8 +164,10 @@ function EventCalendarAgendaView({
           {groups.map(({ day, bucket }) => {
             const items = [...(bucket?.allDay ?? []), ...(bucket?.timed ?? [])]
             const zoned = toZoned(day, settings.timeZone)
-            const weekday = format(zoned, "EEEE", { locale: settings.locale })
-            const dayDate = format(zoned, "MMMM d, yyyy", {
+            const weekday = format(zoned, settings.i18n.formats.agendaDayWeekday, {
+              locale: settings.locale,
+            })
+            const dayDate = format(zoned, settings.i18n.formats.agendaDayDate, {
               locale: settings.locale,
             })
             return (
