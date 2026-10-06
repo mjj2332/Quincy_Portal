@@ -639,6 +639,41 @@ describe("DateTimeField date-time: seeding a draft", () => {
     } finally { rect.mockRestore(); scrollHeight.mockRestore(); clientHeight.mockRestore(); }
   });
 
+  it("never auto-scrolls on resize once the person has scrolled, even after a selection (#537)", async () => {
+    const docTop = new Map<string, number>([["2027-01-15", 150], ["2027-01-20", 200]]);
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      let box = { top: 0, bottom: 0, height: 0 };
+      const viewport = this.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
+      const day = this.tagName === "BUTTON" ? this.closest<HTMLElement>('[aria-selected="true"]')?.getAttribute("data-day") : null;
+      if (this.getAttribute("data-slot") === "scroll-area-viewport") box = { top: 100, bottom: 500, height: 400 };
+      else if (this.style?.height === "var(--fade-size)") box = { top: 0, bottom: 32, height: 32 };
+      else if (day && viewport && docTop.has(day)) { const top = 100 + docTop.get(day)! - viewport.scrollTop; box = { top, bottom: top + 36, height: 36 }; }
+      return { ...box, left: 0, right: 0, width: 0, x: 0, y: box.top, toJSON() {} } as DOMRect;
+    });
+    const scrollHeight = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(800);
+    const clientHeight = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+    const callbacks: Array<() => void> = [];
+    const original = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class {
+      cb: () => void;
+      constructor(cb: () => void) { this.cb = cb; }
+      observe(el: Element) { if (el.getAttribute("data-slot") === "scroll-area-viewport" && !el.querySelector(':scope > [role="group"][aria-label="Time slots"]')) callbacks.push(this.cb); }
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+    try {
+      await mount({ value: stored("2027-01-15T09:00") });
+      await open();
+      const viewport = popup()!.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
+      viewport.scrollTop = 100; // the person scrolls
+      await pickPopupDay(popup()!, "2027-01-20"); // visible and clear: a selection nudge that changes nothing
+      expect(viewport.scrollTop).toBe(100);
+      await act(async () => { callbacks.forEach((cb) => cb()); });
+      expect(callbacks.length).toBeGreaterThan(0);
+      expect(viewport.scrollTop).toBe(100); // not reset to 0
+    } finally { globalThis.ResizeObserver = original; rect.mockRestore(); scrollHeight.mockRestore(); clientHeight.mockRestore(); }
+  });
+
   it("reads a collision-padding callback on each open, not at mount, so a late shell header counts (#528)", async () => {
     // Stands in for the shell header's bottom edge (`shellChromeBottom`, tested on its own): 0 until the header renders.
     let headerBottom = 0;

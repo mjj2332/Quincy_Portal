@@ -149,48 +149,39 @@ export function popupPaddingWithTopAtLeast(padding: PopupCollisionPadding, top: 
 type EdgeRect = { top: number; bottom: number };
 
 /**
- * #537 — the popup body fades each edge by `min(fade, overflow past that edge)`: the top band grows
- * with `scrollTop`, the bottom band shrinks toward the end, so the two are rarely equal. Selected
- * items (the picked day, the pressed time slot) inside a band read as muddy grey, not solid ink.
- * Returns the `scrollTop` that moves every selected item out of both bands by the least amount, in
- * EITHER direction, using each edge's actual band at the destination. Rects share one coordinate
- * space. An item wholly outside the body's visible area is ignored (scrolling to it would hide the
- * month navigation for nothing); an item taller than the clear window gets its top edge aligned to the
- * top band; and nothing moves when the items want opposite directions, or when moving would push an
- * item that was clear into a band.
+ * #537 — the popup body fades each edge by `min(fade, overflow past that edge)`: the top band is
+ * `min(fade, s)` and the bottom band `min(fade, max - s)` at scroll `s`, so a move changes the bands it
+ * is judged against. Selected items (the picked day, the pressed time slot) inside a band read as muddy
+ * grey, not solid ink.
+ *
+ * Solved exactly, not by proposing a move and checking it. With the item at document offsets
+ * `top`..`bottom` and a body of height `H`, it is clear at `s` when `top - s >= min(fade, s)` and
+ * `bottom - s <= H - min(fade, max - s)`; each is a one-sided bound on `s`:
+ *   s <= max(top - fade, top / 2)        and        s >= min(bottom - H + fade, (max + bottom - H) / 2)
+ * so each item owns a closed interval of valid scroll positions. The result is the position nearest to
+ * the current `scrollTop` inside the intersection of those intervals (so the least scroll, in either
+ * direction), or the current `scrollTop` when the intersection is empty. An item taller than the clear
+ * window has no valid position; it asks for its top edge aligned to the top band. An item wholly outside
+ * the body's visible area is ignored, since scrolling to it would hide the month navigation for nothing.
+ * Rects share one coordinate space.
  */
 export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, items }: { viewport: EdgeRect; scrollTop: number; maxScrollTop: number; fade: number; items: readonly EdgeRect[] }): number {
   const height = viewport.bottom - viewport.top;
-  const clamp = (value: number) => Math.min(Math.max(0, value), Math.max(0, maxScrollTop));
-  /** Where `item` sits (relative to the body's top) with the body at `scroll`, and the bands there. */
-  const at = (item: EdgeRect, scroll: number) => ({
-    top: item.top - viewport.top - (scroll - scrollTop),
-    bottom: item.bottom - viewport.top - (scroll - scrollTop),
-    topFade: Math.min(fade, scroll),
-    bottomFade: Math.min(fade, maxScrollTop - scroll),
-  });
-  const clear = (item: EdgeRect, scroll: number) => { const r = at(item, scroll); return r.top >= r.topFade && r.bottom <= height - r.bottomFade; };
-  const targetFor = (item: EdgeRect): number => {
-    let scroll = scrollTop;
-    for (let pass = 0; pass < 4; pass += 1) {
-      const r = at(item, scroll);
-      const next = r.bottom - r.top > height - r.topFade - r.bottomFade ? scroll + (r.top - r.topFade)
-        : r.bottom > height - r.bottomFade ? scroll + (r.bottom - (height - r.bottomFade))
-        : r.top < r.topFade ? scroll - (r.topFade - r.top)
-        : scroll;
-      const clamped = clamp(next);
-      if (clamped === scroll) break;
-      scroll = clamped;
-    }
-    return scroll;
-  };
-  const visible = items.filter((item) => item.bottom > viewport.top && item.top < viewport.bottom);
-  const wanted = visible.filter((item) => !clear(item, scrollTop)).map(targetFor).filter((scroll) => scroll !== scrollTop);
-  if (wanted.length === 0) return scrollTop;
-  const down = wanted.every((scroll) => scroll > scrollTop);
-  if (!down && !wanted.every((scroll) => scroll < scrollTop)) return scrollTop;
-  const next = down ? Math.max(...wanted) : Math.min(...wanted);
-  return visible.every((item) => !clear(item, scrollTop) || clear(item, next)) ? next : scrollTop;
+  const max = Math.max(0, maxScrollTop);
+  const clamp = (value: number) => Math.min(Math.max(0, value), max);
+  let low = 0;
+  let high = max;
+  for (const item of items) {
+    if (item.bottom <= viewport.top || item.top >= viewport.bottom) continue;
+    const top = item.top - viewport.top + scrollTop;
+    const bottom = item.bottom - viewport.top + scrollTop;
+    const latest = Math.max(top - fade, top / 2);
+    const earliest = Math.min(bottom - height + fade, (max + bottom - height) / 2);
+    const [from, to] = earliest <= latest ? [earliest, latest] : [clamp(latest), clamp(latest)];
+    low = Math.max(low, from);
+    high = Math.min(high, to);
+  }
+  return low <= high ? Math.min(Math.max(scrollTop, low), high) : scrollTop;
 }
 
 /**
