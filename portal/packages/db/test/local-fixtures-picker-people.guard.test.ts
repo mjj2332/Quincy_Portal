@@ -60,27 +60,34 @@ describe("guard: the picker-people QA fixture is local-only and cannot touch rea
 
   it("every id the SQL inserts or deletes is a fixed 550a0000- UUID, and no other statement kinds appear", () => {
     const ids = [...apply.matchAll(/^SELECT '([^']*)'/gm)].map((match) => match[1]!);
-    expect(ids).toHaveLength(11); // 5 users, 1 project, 5 members
-    expect(new Set(ids).size).toBe(11);
+    expect(ids).toHaveLength(12); // 5 users, 1 project, 1 RAW collection, 5 members
+    expect(new Set(ids).size).toBe(12);
     for (const id of ids) {
       expect(id, id).toMatch(UUID);
       expect(id, id).toMatch(FIXTURE_ID);
     }
     // Membership rows reference the project and user ids by their real UUIDs too.
     const references = [...apply.matchAll(/^SELECT '[^']*', '([^']*)', '([^']*)'/gm)]
-      .filter((match) => /^550a0000-/.test(match[1]!)).flatMap((match) => [match[1]!, match[2]!]);
+      .filter((match) => /^550a0000-/.test(match[1]!)).flatMap((match) => [match[1]!, match[2]!].filter((value) => /^550a0000-/.test(value)));
     for (const id of references) expect(id, id).toMatch(UUID);
     const statements = (sql: string) => sql.replace(/--.*$/gm, "").split(";").map((s) => s.trim()).filter(Boolean);
     for (const statement of statements(apply)) {
-      expect(statement).toMatch(/^INSERT OR IGNORE INTO (user|projects|project_members) /);
+      expect(statement).toMatch(/^INSERT OR IGNORE INTO (user|projects|collections|project_members) /);
       expect(statement).toMatch(/^SELECT '550a0000-/m);
     }
     for (const statement of statements(remove)) {
-      expect(statement).toMatch(/^DELETE FROM (user|projects|project_members) WHERE /);
+      expect(statement).toMatch(/^DELETE FROM (user|projects|collections|project_members) WHERE /);
       expect(statement).toMatch(/'550a0000-/);
     }
     expect(apply).not.toMatch(/qa550-(?:user|project|member)/);
     expect(remove).not.toMatch(/qa550-(?:user|project|member)/);
+  });
+
+  it("gives the project its RAW collection, the row ingest-status requires, and removes it before the project", () => {
+    expect(apply).toMatch(/INSERT OR IGNORE INTO collections[^;]*?SELECT '550a0000-0000-4000-8000-000000000030', '550a0000-0000-4000-8000-000000000010', 'raw'/);
+    const order = (needle: string) => remove.indexOf(needle);
+    expect(order("DELETE FROM collections")).toBeGreaterThan(-1);
+    expect(order("DELETE FROM collections")).toBeLessThan(order("DELETE FROM projects"));
   });
 
   it("seeds the same-name pairs onto the one project's team, so the email-suffix chips can render", () => {
@@ -105,7 +112,7 @@ describe("guard: the picker-people QA fixture is local-only and cannot touch rea
 
   describe("behaviour against a migrated + seeded database", () => {
     const counts = (db: SqliteDatabase) => db.prepare(
-      "SELECT (SELECT count(*) FROM user WHERE id LIKE '550a0000-%') AS users, (SELECT count(*) FROM projects WHERE id LIKE '550a0000-%') AS projects, (SELECT count(*) FROM project_members WHERE id LIKE '550a0000-%') AS members, (SELECT count(*) FROM user) AS all_users",
+      "SELECT (SELECT count(*) FROM user WHERE id LIKE '550a0000-%') AS users, (SELECT count(*) FROM projects WHERE id LIKE '550a0000-%') AS projects, (SELECT count(*) FROM project_members WHERE id LIKE '550a0000-%') AS members, (SELECT count(*) FROM collections WHERE id LIKE '550a0000-%' AND kind = 'raw' AND project_id = '550a0000-0000-4000-8000-000000000010') AS raw_collections, (SELECT count(*) FROM user) AS all_users",
     ).get() as Record<string, number>;
 
     it("with the capability: applies, is idempotent, and removes cleanly", () => {
@@ -114,9 +121,9 @@ describe("guard: the picker-people QA fixture is local-only and cannot touch rea
         const before = counts(db).all_users!;
         db.exec(apply);
         db.exec(apply);
-        expect(counts(db)).toMatchObject({ users: 5, projects: 1, members: 5, all_users: before + 5 });
+        expect(counts(db)).toMatchObject({ users: 5, projects: 1, members: 5, raw_collections: 1, all_users: before + 5 });
         db.exec(remove);
-        expect(counts(db)).toMatchObject({ users: 0, projects: 0, members: 0, all_users: before });
+        expect(counts(db)).toMatchObject({ users: 0, projects: 0, members: 0, raw_collections: 0, all_users: before });
       } finally { db.close(); }
     });
 
