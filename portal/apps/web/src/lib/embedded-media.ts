@@ -1,6 +1,7 @@
 import {
   EMBEDDED_HEIC_CONTENT_TYPES,
   EMBEDDED_IMAGE_CONTENT_TYPES,
+  EMBEDDED_IMAGE_MAX_DIMENSION,
   EMBEDDED_MEDIA_MAX_BYTES,
   EMBEDDED_MEDIA_MAX_PER_POST,
   EMBEDDED_VIDEO_CONTENT_TYPES,
@@ -151,6 +152,29 @@ export function abortEmbeddedImage(scope: EmbeddedMediaScope, mediaId: string): 
 }
 
 /**
+ * The pixel size the browser decodes a picked image to (#611), or null when it cannot (a HEIC, a file it cannot read, a size the server would refuse, or no decoder at all).
+ * It is the size the post's `<img>` will have, so it is measured with an `Image`, which applies the photo's rotation the same way. Best effort: an upload never waits long for it or fails because of it.
+ */
+export function readImageDimensions(file: Blob): Promise<{ width: number; height: number } | null> {
+  if (typeof Image === "undefined" || typeof URL === "undefined" || typeof URL.createObjectURL !== "function") return Promise.resolve(null);
+  return new Promise((resolve) => {
+    let url: string | null = null;
+    const settle = (value: { width: number; height: number } | null) => { clearTimeout(timer); if (url) URL.revokeObjectURL(url); resolve(value); };
+    const timer = setTimeout(() => settle(null), 10_000);
+    try {
+      const image = new Image();
+      image.onload = () => {
+        const width = image.naturalWidth; const height = image.naturalHeight;
+        settle(Number.isInteger(width) && Number.isInteger(height) && width >= 1 && height >= 1 && width <= EMBEDDED_IMAGE_MAX_DIMENSION && height <= EMBEDDED_IMAGE_MAX_DIMENSION ? { width, height } : null);
+      };
+      image.onerror = () => settle(null);
+      url = URL.createObjectURL(file);
+      image.src = url;
+    } catch { settle(null); }
+  });
+}
+
+/**
  * presign, then bytes straight to R2, then complete. Resolves with the media id once the server accepts the file. A HEIC (#495) is not
  * usable yet when `complete` answers: its JPEG is made in the background, so this reports `preparing`, polls the status route (1, 2, 4
  * seconds, capped at 10) and resolves at `ready`, or rejects with a `RenditionFailedError` at `failed`. The `signal` stops the polling.
@@ -161,6 +185,8 @@ export async function uploadEmbeddedImage(scope: EmbeddedMediaScope, file: File,
   const owner = "projectId" in scope && scope.owner ? { owner: scope.owner } : {};
   const contentType = embeddedImageContentType(file, true) ?? file.type;
   if (signal?.aborted) throw abortError();
+  // The size is read while the upload runs and sent with the completion (#611). A HEIC is not measured: the server uses its JPEG copy's size.
+  const measured = isEmbeddedHeicContentType(contentType) ? Promise.resolve(null) : readImageDimensions(file);
   const presign = externalEmbeddedMediaPresignSchema.parse(await apiPost<unknown, { contentType: string; bytes: number; owner?: "whiteboard" }>(base, { contentType, bytes: file.size, ...owner }));
   // From here the helper owns the reservation: a cancel before the copy is `preparing` (the owner learns the id only then) aborts it here,
   // even when presign answered after the owner went away. The Notice board has no abort route, so `abortEmbeddedImage` leaves that to the sweep.
@@ -179,7 +205,8 @@ export async function uploadEmbeddedImage(scope: EmbeddedMediaScope, file: File,
       signal ? { signal } : undefined,
     ));
     if (signal?.aborted) throw abortError();
-    const done = externalEmbeddedMediaCompleteSchema.parse(await unlessCancelled(apiPost<unknown, { parts?: { partNumber: number; etag: string }[] }>(`${base}/${encodeURIComponent(presign.mediaId)}/complete`, completed.parts ? { parts: completed.parts } : {})));
+    const size = await unlessCancelled(measured);
+    const done = externalEmbeddedMediaCompleteSchema.parse(await unlessCancelled(apiPost<unknown, { parts?: { partNumber: number; etag: string }[]; width?: number; height?: number }>(`${base}/${encodeURIComponent(presign.mediaId)}/complete`, { ...(completed.parts ? { parts: completed.parts } : {}), ...(size ?? {}) })));
     if (signal?.aborted) throw abortError();
     if (done.rendition === "failed") throw new RenditionFailedError(done.mediaId);
     if (done.rendition === "pending") {

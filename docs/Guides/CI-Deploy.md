@@ -144,6 +144,15 @@ Migration 0064 (#476, Board order Stage C) drops `projects_stage_archive_board_o
 
 Rollback: the floor is the Stage B Worker. Restoring the column is a Time Travel restore to the bookmark, which loses every write since it.
 
+### Embedded image dimensions (0065)
+
+Migration 0065 (#611) adds two nullable columns, `embedded_media.width` and `embedded_media.height`, and nothing else. It is additive: a Worker older than this change ignores them, so a rollback is safe and the migration can be applied at any time before the merge deploys. The new Worker's completion `UPDATE` writes the columns, so apply it **before** the deploy job runs (the merge leaves the job red at the migration guard until then, as for any migration). Existing rows keep NULL and render as before; only images uploaded after the deploy carry a size (HEIC images use `display_width` / `display_height`). Apply checklist (from `portal/workers/app`, `--remote`, owner's go-ahead):
+
+1. Take a Time Travel bookmark (`npx wrangler d1 time-travel info DB`) and record the id.
+2. `npx wrangler d1 migrations apply DB --remote`; the pending list must show only 0065.
+3. Re-run the deploy (`gh run rerun <run-id> --failed`).
+4. Post-check: `PRAGMA table_info(embedded_media)` lists `width` and `height`, both nullable.
+
 ### Subtask presets (0052)
 
 0052 converts every date-only Subtask range to a 09:00 start and a 17:00 end (the presets, ADR 0016)
