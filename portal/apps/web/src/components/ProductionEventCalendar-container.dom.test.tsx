@@ -367,6 +367,14 @@ describe("ProductionEventCalendar container", () => {
       expect(toggleEl().getAttribute("aria-expanded")).toBe("false");
     });
 
+    it("opening the sheet focuses Close calendar, and Escape returns focus to the opener (#652)", async () => {
+      await openRail();
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+      expect(document.activeElement).toBe(sheetEl()!.querySelector('[data-testid="event-calendar-rail-sheet-close"]'));
+      await act(async () => { sheetEl()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await new Promise((resolve) => setTimeout(resolve, 50)); });
+      expect(document.activeElement).toBe(toggleEl());
+    });
+
     it("renders no sheet at the wide layout", async () => {
       await renderCalendar(calendar(), adminProductionCalendarRangeResponseSchema.parse(rawResponse("editing_autohdr")));
       expect(sheetEl()).toBeNull();
