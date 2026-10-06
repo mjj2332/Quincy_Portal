@@ -154,6 +154,16 @@ export type FadeItem = EdgeRect & { required?: boolean; /** Wins over the other 
 /** #636: an overlap under 2px with the band edge or the body edge is not visible (a chip's last 2px at the mask's end is ~transparent), and sub-pixel layout (0.19px at 720x900) must not push the list past the presets. */
 const SLIVER_TOLERANCE = 2;
 
+/** The viewport's `--fade-size` in px, read through a hidden probe (a custom property cannot be read as a number directly). */
+export function measureFade(viewport: HTMLElement): number {
+  const probe = document.createElement("div");
+  probe.style.cssText = "position:absolute;visibility:hidden;width:0;height:var(--fade-size)";
+  viewport.append(probe);
+  const fade = probe.getBoundingClientRect().height;
+  probe.remove();
+  return fade;
+}
+
 /**
  * #537 — the popup body fades each edge by `min(fade, overflow past that edge)`: the top band is
  * `min(fade, s)` and the bottom band `min(fade, max - s)` at scroll `s`, so a move changes the bands it

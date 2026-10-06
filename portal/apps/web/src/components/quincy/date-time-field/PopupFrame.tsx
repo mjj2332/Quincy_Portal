@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, type ReactNode, type Ref, type RefObject } from "react";
-import { scrollTopClearOfFade, type FadeItem } from "@/lib/date-time-field";
+import { measureFade, scrollTopClearOfFade, type FadeItem } from "@/lib/date-time-field";
 import { SHORTCUTS_LABEL } from "./ShortcutList";
 import { Button } from "@/components/reui/button";
 import { ScrollArea } from "@/components/reui/scroll-area";
@@ -57,14 +57,7 @@ function useSelectedClearOfFade(contentRef: RefObject<HTMLDivElement | null>, re
     // Set the first time the body is found somewhere this hook did not put it, and never cleared: from then on resize leaves it alone.
     let userScrolled = false;
     const noticeScroll = () => { if (viewport.scrollTop !== applied) userScrolled = true; };
-    const measure = () => {
-      const probe = document.createElement("div");
-      probe.style.cssText = "position:absolute;visibility:hidden;width:0;height:var(--fade-size)";
-      viewport.append(probe);
-      const fade = probe.getBoundingClientRect().height;
-      probe.remove();
-      return fade;
-    };
+    const measure = () => measureFade(viewport);
     const signature = () => [...viewport.querySelectorAll<HTMLElement>(SELECTED)].map((item) => item.closest("[data-day]")?.getAttribute("data-day") ?? item.textContent).join("|");
     let selected = signature();
     const focused = () => { const active = document.activeElement; return active instanceof HTMLElement && active !== viewport && viewport.contains(active) ? active : null; };
