@@ -89,3 +89,48 @@ describe("EditProject Restore confirmation (#604)", () => {
     expect(apiPostMock).toHaveBeenCalledWith("/api/projects/project-1/restore", {});
   });
 });
+
+/** #604: "Delete project permanently" asks through ConfirmDeleteDialog too, so both Danger-zone confirms match. */
+describe("EditProject Delete permanently confirmation (#604)", () => {
+  const fetchMock = vi.fn();
+  const onDeleted = vi.fn();
+  async function renderArchivedAndArm() {
+    apiGetMock.mockResolvedValue(project(ARCHIVED_AT));
+    await act(async () => { root.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><EditProject projectId="project-1" onReturnToWorkspace={vi.fn()} onDeleted={onDeleted} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
+    await flush();
+    const input = host.querySelector<HTMLInputElement>("#project-delete-confirmation")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "12 Example Street");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await flush();
+  }
+  const deleteButton = () => [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Delete project permanently")!;
+  beforeEach(() => { fetchMock.mockReset().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) }); onDeleted.mockReset(); vi.stubGlobal("fetch", fetchMock); });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it("opens an alertdialog with the same copy and sends no DELETE yet", async () => {
+    await renderArchivedAndArm();
+    await click(deleteButton());
+    expect(dialog()).not.toBeNull();
+    expect(dialog()!.textContent).toContain("Delete project permanently?");
+    expect(dialog()!.textContent).toContain("Permanently delete this archived project and all of its cloud media? This cannot be undone.");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it("Cancel sends no DELETE", async () => {
+    await renderArchivedAndArm();
+    await click(deleteButton());
+    await click(document.querySelector<HTMLElement>('[data-testid="project-delete-cancel"]')!);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(onDeleted).not.toHaveBeenCalled();
+  });
+  it("confirming sends the DELETE and reports the deletion", async () => {
+    await renderArchivedAndArm();
+    await click(deleteButton());
+    await click(document.querySelector<HTMLElement>('[data-testid="project-delete-confirm-action"]')!);
+    await flush();
+    expect(fetchMock).toHaveBeenCalledWith("/api/projects/project-1", expect.objectContaining({ method: "DELETE" }));
+    expect(onDeleted).toHaveBeenCalledWith("Project permanently deleted.");
+  });
+});
