@@ -874,6 +874,33 @@ export function createController(
     }
   }
 
+  // QUINCY ADDITION #551: the raw presence is kept so a selection-anchored name (a peer selecting with no cursor) follows the shape
+  // when it moves and drops when it is deleted, with no new presence frame. Remote presence is never the local user's undo history.
+  let rawPeople: readonly WhiteboardCollaborator[] = []
+  let publishedAnchors = new Map<string, string>()
+  const anchorKey = (person: WhiteboardCollaborator, scene: ReturnType<typeof api.getSceneElements>) => {
+    const anchored = withSelectionAnchor(person, scene)
+    return anchored.pointer && !person.pointer ? `${anchored.pointer.x},${anchored.pointer.y}` : ""
+  }
+  const publishPeople = () => {
+    const scene = api.getSceneElements()
+    publishedAnchors = new Map(rawPeople.map((person) => [person.id, anchorKey(person, scene)]))
+    api.updateScene({
+      collaborators: new Map(
+        rawPeople.map((person) => [toSocketId(person.id), toCollaborator(withSelectionAnchor(person, scene))])
+      ),
+      captureUpdate: CaptureUpdateAction.NEVER,
+    })
+  }
+  api.onChange(() => {
+    // Cheap: only a peer with a selection and no pointer can be anchored, and only a changed anchor republishes.
+    if (!rawPeople.some((person) => !person.pointer && person.selectedIds?.length)) return
+    const scene = api.getSceneElements()
+    for (const person of rawPeople) {
+      if (!person.pointer && person.selectedIds?.length && anchorKey(person, scene) !== publishedAnchors.get(person.id)) return publishPeople()
+    }
+  })
+
   // QUINCY ADDITION #499: merges a batch into the board and returns every element now on it. Restore, reconcile and the index
   // repair they do never change a revision (see whiteboard-merge.ts).
   const mergeInto = (
@@ -1105,17 +1132,8 @@ export function createController(
         type: options.format,
       }),
     setCollaborators: (collaborators) => {
-      // Remote presence is never the local user's undo history.
-      api.updateScene({
-        collaborators: new Map(
-          collaborators.map((person) => [
-            toSocketId(person.id),
-            // QUINCY ADDITION #551: a selection with no cursor still carries its owner's name.
-            toCollaborator(withSelectionAnchor(person, api.getSceneElements())),
-          ])
-        ),
-        captureUpdate: CaptureUpdateAction.NEVER,
-      })
+      rawPeople = collaborators
+      publishPeople()
     },
     // QUINCY ADDITION #499: other people's elements, merged by Excalidraw's own rule and kept out of Undo.
     applyRemote: (remote, hold) => {

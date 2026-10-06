@@ -25,7 +25,7 @@ function setup({ editable = true, elements = [] as El[], appState = {} as El } =
   const files: Record<string, unknown> = {};
   const updates: El[] = [];
   const api = {
-    getSceneElementsIncludingDeleted: () => scene,
+    onChange: () => () => undefined, getSceneElementsIncludingDeleted: () => scene,
     getSceneElements: () => scene.filter((element) => element.isDeleted !== true),
     getAppState: () => state,
     getFiles: () => files,

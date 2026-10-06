@@ -108,3 +108,25 @@ describe("undo after the zero-size sweep (#551 item 2)", () => {
     expect(e.api.getSceneElements().map((el) => el.width)).toEqual([0]);
   });
 });
+
+describe("a selection-anchored name follows the shape with no new presence frame (#551, Sol round 1)", () => {
+  const pointerOf = (e: Awaited<ReturnType<typeof editor>>) => (e.api.getAppState().collaborators as Map<string, { pointer?: { x: number; y: number } }>).get("s1")?.pointer;
+  async function setup() {
+    const e = await editor();
+    const a = { ...rect("a"), x: 10, y: 20 };
+    await act(async () => { e.api.updateScene({ elements: [a], captureUpdate: x.CaptureUpdateAction.NEVER }); });
+    await act(async () => { e.controller.setCollaborators([{ id: "s1", name: "Ana", selectedIds: ["a"] }]); });
+    return { e, a };
+  }
+
+  it("anchors at the selection, follows a move, and drops when the shape is deleted", async () => {
+    const { e, a } = await setup();
+    expect(pointerOf(e)).toMatchObject({ x: 10, y: 20 });
+    await act(async () => { e.api.updateScene({ elements: [{ ...a, x: 70, y: 90, version: a.version + 1, versionNonce: 3 }], captureUpdate: x.CaptureUpdateAction.NEVER }); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    expect(pointerOf(e)).toMatchObject({ x: 70, y: 90 });
+    await act(async () => { e.api.updateScene({ elements: [{ ...a, x: 70, y: 90, isDeleted: true, version: a.version + 2, versionNonce: 4 }], captureUpdate: x.CaptureUpdateAction.NEVER }); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    expect(pointerOf(e)).toBeUndefined();
+  });
+});

@@ -54,7 +54,7 @@ function mountBoard(rows: Array<Record<string, unknown>>, mode: "edit" | "view")
     if (armed) dirty();
   };
   const api = {
-    getSceneElementsIncludingDeleted: () => elements, getSceneElements: () => elements, getAppState: () => ({}), getFiles: () => ({}),
+    onChange: () => () => undefined, getSceneElementsIncludingDeleted: () => elements, getSceneElements: () => elements, getAppState: () => ({}), getFiles: () => ({}),
     updateScene: (update: { elements?: El[] }) => { if (update.elements) { elements = update.elements; handleChange(); } },
   };
   const controller = canvas.createController(api as never, { root: () => null, arm: () => { armed = true; }, panel: () => undefined, library: () => [], editable: () => true, remoteApplied: (hash, taken) => tracker.remoteApplied(hash, [], taken), edited: (element) => tracker.editedSinceLoad(element) });
