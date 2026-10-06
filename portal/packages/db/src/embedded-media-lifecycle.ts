@@ -26,7 +26,7 @@ export async function enqueueEmbeddedMediaCleanup(db: D1Database, entries: Clean
  * Gives up an R2 object nothing references (a video poster, a link preview image, a HEIC display copy): on a lost adoption and on an adoption that threw. Deletes the object, then its queue
  * entry (a leftover entry is harmless, the sweep deletes an already-gone object). If R2 refuses, the key is queued again with the
  * lease cleared. Accepted residual gap: when the R2 delete AND that following D1 write both fail back to back, the object is an orphan
- * nothing tracks. That is logged loudly with the key (see docs/lessons.md) and left to a future R2 prefix reconciliation.
+ * nothing tracks. That is logged loudly with the key (see docs/lessons.md), and the daily orphan sweep (`workers/background/src/embedded-media-orphan-sweep.ts`, #549) queues it once it is a week old.
  */
 export async function discardUnreferencedObject(env: EmbeddedMediaStores, posterKey: string, projectId: string | null): Promise<void> {
   let deleted = false;
