@@ -222,6 +222,8 @@ const DEADLINE_SELECTED =
   "data-selected:bg-(--ink-900) data-selected:hover:bg-(--ink-700) data-selected:inset-ring-4 data-selected:inset-ring-(--paper-050) data-selected:inset-shadow-[0_0_0_2px_var(--ink-900)]";
 export const DEADLINE_AGENDA_HOVER = "data-[view=agenda]:hover:bg-(--ink-700)";
 /** Mirrors `tokens/inverse.css`'s `--muted-foreground` for a dark surface. */
+/** #602: `--focus-ring` is ink, the same as the Deadline fill, so the inset ring would be invisible; draw it paper. Light chips keep the default. */
+const DEADLINE_FOCUS_RING = "[--focus-ring:var(--paper-050)]";
 const DEADLINE_INVERSE_ROLES = "[--muted-foreground:var(--greige-300)]";
 /**
  * Hides the vendored agenda row's colour dot on a Deadline, keeping its box so titles stay aligned
@@ -259,7 +261,7 @@ function baseEventClassName(data: ProductionEventCalendarData | undefined): stri
 
 function chipColourClassName(data: ProductionEventCalendarData | undefined): string | undefined {
   if (!data) return undefined;
-  if (data.shape === "deadline") return `bg-(--ink-900) hover:bg-(--ink-700) text-(--paper-050) inset-ring-(--ink-900) ${DEADLINE_SELECTED} ${DEADLINE_AGENDA_HOVER} ${DEADLINE_INVERSE_ROLES} ${DEADLINE_AGENDA_DOT}`;
+  if (data.shape === "deadline") return `bg-(--ink-900) hover:bg-(--ink-700) text-(--paper-050) inset-ring-(--ink-900) ${DEADLINE_SELECTED} ${DEADLINE_AGENDA_HOVER} ${DEADLINE_INVERSE_ROLES} ${DEADLINE_AGENDA_DOT} ${DEADLINE_FOCUS_RING}`;
   if (data.done) return `bg-border/25 hover:bg-border/35 inset-ring-border/25 text-foreground-secondary ${CHECKLIST_SELECTED}`;
   return `bg-(--paper-000) hover:bg-(--paper-100) inset-ring-(--border-hairline) text-foreground ${CHECKLIST_SELECTED}`;
 }

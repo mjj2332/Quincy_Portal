@@ -139,7 +139,7 @@ describe("production event-calendar adapter: DTO → vendor event (#222)", () =>
       "bg-(--ink-900) hover:bg-(--ink-700) text-(--paper-050) inset-ring-(--ink-900) " +
         "data-selected:bg-(--ink-900) data-selected:hover:bg-(--ink-700) data-selected:inset-ring-4 data-selected:inset-ring-(--paper-050) " +
         "data-selected:inset-shadow-[0_0_0_2px_var(--ink-900)] data-[view=agenda]:hover:bg-(--ink-700) " +
-        "[--muted-foreground:var(--greige-300)] [&_[data-slot=event-calendar-agenda-dot]]:invisible " +
+        "[--muted-foreground:var(--greige-300)] [&_[data-slot=event-calendar-agenda-dot]]:invisible [--focus-ring:var(--paper-050)] " +
         "focus-visible:![outline-offset:calc(-1*var(--border-width-bold))]",
     );
   });
@@ -269,6 +269,17 @@ describe("production event-calendar adapter: focus ring and day headers (#602)",
       expect(productionEventCalendarEventClassName(event.data)).toContain(ring);
       expect(productionEventCalendarEventClassName(event.data, true)).toContain(ring);
     }
+  });
+
+  it("a Deadline chip's focus ring is paper, since --focus-ring and its ink fill are the same colour; light chips keep the default", () => {
+    const override = "[--focus-ring:var(--paper-050)]";
+    const deadline = productionEventCalendarEventClassName(toProductionEventCalendarEvent(deadlineEvent("2026-08-27T09:00"))!.data)!;
+    expect(deadline).toContain(override);
+    expect(productionEventCalendarEventClassName(toProductionEventCalendarEvent(deadlineEvent("2026-08-27T09:00"))!.data, true)).toContain(override);
+    const range = toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00")))!;
+    const done = toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00"), { completed: true }))!;
+    expect(productionEventCalendarEventClassName(range.data)).not.toContain("--focus-ring");
+    expect(productionEventCalendarEventClassName(done.data)).not.toContain("--focus-ring");
   });
 
   it("names the +N more day the way the rest of the Portal does", () => {
