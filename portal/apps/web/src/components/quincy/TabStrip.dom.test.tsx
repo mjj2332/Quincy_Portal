@@ -110,4 +110,30 @@ describe("TabStrip", () => {
     const tabs = [...tablist.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
     expect(tabs.every((tab) => tab.getAttribute("type") === "button")).toBe(true);
   });
+
+  it("draws the focus ring as an ::after box above the underline, with the global outline suppressed (#550)", async () => {
+    const tablist = await renderStrip("a", () => undefined);
+    const tokens = tablist.querySelector<HTMLButtonElement>('[role="tab"]')!.className.split(/\s+/);
+    expect(tokens).toContain("relative");
+    expect(tokens).toContain("focus-visible:!outline-none");
+    for (const token of [
+      "focus-visible:after:content-['']",
+      "focus-visible:after:absolute",
+      "focus-visible:after:pointer-events-none",
+      "focus-visible:after:inset-y-[var(--space-1)]",
+      "focus-visible:after:-inset-x-[var(--space-1)]",
+      "focus-visible:after:border-[length:var(--border-width-bold)]",
+      "focus-visible:after:border-[var(--focus-ring)]",
+    ]) expect(tokens, token).toContain(token);
+    expect(tokens.filter((t) => /^focus-visible:!?outline/.test(t))).toEqual(["focus-visible:!outline-none"]);
+  });
+
+  it("keeps the label flush with the content edge: tabs carry no side padding and the strip gap stays --space-5 (#550)", async () => {
+    const tablist = await renderStrip("a", () => undefined);
+    const tokens = tablist.querySelector<HTMLButtonElement>('[role="tab"]')!.className.split(/\s+/);
+    expect(tokens).toContain("px-0");
+    expect(tokens.filter((t) => /^px-/.test(t))).toEqual(["px-0"]);
+    expect(tablist.className.split(/\s+/).filter((t) => t.startsWith("gap-"))).toEqual(["gap-[var(--space-5)]"]);
+    expect(tablist.className).not.toContain("calc(");
+  });
 });

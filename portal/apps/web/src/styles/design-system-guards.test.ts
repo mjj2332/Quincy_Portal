@@ -1192,3 +1192,40 @@ describe("guard: the mention list's active row uses the shared fill, not a left 
     expect(mentionRowProblems("rounded-md data-[active=true]:bg-accent data-[active=true]:text-accent-foreground")).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Guard — one popup radius across the pickers (#550)
+// ---------------------------------------------------------------------------
+/**
+ * The Team popup was 14px (`rounded-lg`), Select was square and Mention square, so the Mention list's
+ * rounded active row sat in a square popup next to a round one. Every list overlay is square
+ * (`rounded-none`, with `rounded-md` rows inset by `p-1`); a `rounded-*` other than none on any of the
+ * three popups is a regression.
+ */
+describe("guard: Team, Select and Mention popups share one square radius (#550)", () => {
+  function popupRadiusProblems(classes: string): string[] {
+    const radii = classes.split(/\s+/).filter((token) => /^rounded(?:-|$)/.test(token));
+    return radii.length === 1 && radii[0] === "rounded-none" ? [] : [`expected exactly rounded-none, found [${radii.join(", ")}]`];
+  }
+  const read = (file: string) => stripComments(readFileSync(join(srcDir, file), "utf8"));
+  const classesAfter = (source: string, marker: string) => {
+    const at = source.indexOf(marker);
+    return at < 0 ? "" : (/className=\{?(?:cn\()?\s*"([^"]+)"/.exec(source.slice(at))?.[1] ?? "");
+  };
+
+  it.each([
+    ["components/reui/combobox.tsx", "<ComboboxPrimitive.Popup"],
+    ["components/reui/select.tsx", "<SelectPrimitive.Popup"],
+    ["components/MentionAutocomplete.tsx", 'data-slot="mention-content"'],
+  ])("%s popup is rounded-none", (file, marker) => {
+    const classes = classesAfter(read(file), marker);
+    expect(classes, `${file}: popup className not found`).not.toBe("");
+    expect(popupRadiusProblems(classes)).toEqual([]);
+  });
+
+  it("proves the matcher on planted fixtures", () => {
+    expect(popupRadiusProblems("relative rounded-lg bg-popover")).toEqual(["expected exactly rounded-none, found [rounded-lg]"]);
+    expect(popupRadiusProblems("relative bg-popover")).toEqual(["expected exactly rounded-none, found []"]);
+    expect(popupRadiusProblems("relative rounded-none bg-popover")).toEqual([]);
+  });
+});

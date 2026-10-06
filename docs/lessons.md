@@ -1256,6 +1256,14 @@ rule silently resets longhands that layered utilities set, so an overriding util
 component of that shorthand needs `!`. Verify by reading the *computed* value at the live element
 in the state that matters (`:focus-visible` can be forced), never by reading the class list.
 
+**Tab focus ring (#550).** `TabStrip`'s tabs draw the ring as a `focus-visible:after:` box, not an `outline`. An
+outset outline put its bottom edge on the 2px active underline, and an inset one needed side padding that indented the
+label and widened the underline. The tab is `relative px-0` with `focus-visible:!outline-none` (the `!` beats the
+unlayered global rule), and the `::after` is absolute with `inset-y-[var(--space-1)]` (above the bottom border),
+`-inset-x-[var(--space-1)]` (4px past the label), a `--border-width-bold` `--focus-ring` border and `pointer-events-none`.
+Because the ring extends 4px outward, a strip inside an `overflow` clip needs `px-[var(--space-1)]` to avoid cutting
+it; no current consumer is clipped.
+
 ## A grep gate that cannot fail is not a gate — twice in two releases (TB8-05, 2026-09-03)
 Tags: testing-guards
 

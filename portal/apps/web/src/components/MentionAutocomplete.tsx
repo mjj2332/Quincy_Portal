@@ -46,7 +46,7 @@ export const MentionAutocomplete = forwardRef<MentionAutocompleteHandle, {
   }, [activeId, listboxId, onAccessibilityChange, query]);
 
   if (query === null) return null;
-  return <div data-slot="mention-content" className="min-w-0 max-w-full overflow-hidden [border-style:solid] border-[length:var(--border-width-hair)] border-border bg-card shadow-[var(--shadow-md)]">
+  return <div data-slot="mention-content" className="min-w-0 max-w-full overflow-hidden rounded-none [border-style:solid] border-[length:var(--border-width-hair)] border-border bg-card shadow-[var(--shadow-md)]">
     {state === "loading" && <div className="p-[var(--space-2)] [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" role="status">Finding staff…</div>}
     {state === "error" && <div className="p-[var(--space-2)] [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" role="alert">Staff suggestions are unavailable.</div>}
     {state === "idle" && <ul id={listboxId} className="m-0 p-[var(--space-1)] list-none" role="listbox" aria-label="Mention suggestions">

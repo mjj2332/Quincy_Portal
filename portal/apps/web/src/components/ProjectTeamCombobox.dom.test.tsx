@@ -6,7 +6,7 @@ import type { CollectionKind } from "@quincy/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError } from "../lib/api";
 import { ProjectHeader } from "./ProjectHeader";
-import { ProjectTeamCombobox, ProjectTeamCollectCombobox, teamChipLabels } from "./ProjectTeamCombobox";
+import { ProjectTeamCombobox, ProjectTeamCollectCombobox, teamChipLabels, chipsBoxWraps } from "./ProjectTeamCombobox";
 import { useState } from "react";
 import { createRef } from "react";
 import { projectDataKeys, type ProjectDetail, type ProjectMember } from "../lib/project-data";
@@ -547,6 +547,42 @@ describe("ProjectTeamCombobox", () => {
     expect(apiDeleteMock).toHaveBeenCalled();
   });
 
+  it("styles +N and Show less as one quiet text link, never a filled chip (#550)", async () => {
+    const many: ProjectMember[] = Array.from({ length: 4 }, (_, index) => ({
+      id: `q-${index}`, userId: `qu-${index}`, roleOnProject: "photographer", name: `Quiet ${index}`, email: `q${index}@example.test`, globalRole: "editor", active: true, assignedSubtaskCount: 0,
+    }));
+    const host = await mount(many, false);
+    const collapsed = host.querySelector<HTMLButtonElement>('[aria-label="Show 1 more team members"]')!;
+    const collapsedClass = collapsed.className;
+    await act(async () => { collapsed.click(); await Promise.resolve(); });
+    const expanded = host.querySelector<HTMLButtonElement>('[aria-label="Show fewer team members"]')!;
+    expect(expanded.className).toBe(collapsedClass);
+    const tokens = expanded.className.split(/\s+/);
+    for (const token of ["bg-transparent", "hover:bg-transparent", "aria-expanded:bg-transparent"]) expect(tokens).toContain(token);
+    expect(tokens).not.toContain("aria-expanded:bg-muted");
+  });
+
+  it("Show less wears the same colour as +N, with no important override from aria-expanded (#550)", async () => {
+    const many: ProjectMember[] = Array.from({ length: 4 }, (_, index) => ({
+      id: `c-${index}`, userId: `cu-${index}`, roleOnProject: "photographer", name: `Colour ${index}`, email: `c${index}@example.test`, globalRole: "editor", active: true, assignedSubtaskCount: 0,
+    }));
+    const host = await mount(many, false);
+    const colour = (button: HTMLButtonElement) => button.className.split(/\s+/).filter((token) => /(^|:)!?text-foreground/.test(token)).sort();
+    const collapsed = host.querySelector<HTMLButtonElement>('[aria-label="Show 1 more team members"]')!;
+    const collapsedColour = colour(collapsed);
+    await act(async () => { collapsed.click(); await Promise.resolve(); });
+    const expanded = host.querySelector<HTMLButtonElement>('[aria-label="Show fewer team members"]')!;
+    expect(expanded.getAttribute("aria-expanded")).toBe("true");
+    const tokens = expanded.className.split(/\s+/);
+    expect(tokens).toContain("text-foreground-secondary");
+    // The ghost variant's `aria-expanded:!text-foreground` would paint #0a0a0a over the secondary text.
+    expect(tokens).not.toContain("aria-expanded:!text-foreground");
+    // Whatever expanded does to the colour, it must be the secondary one, same as +N.
+    expect(tokens.filter((token) => /^aria-expanded:!?text-/.test(token)).every((token) => token === "aria-expanded:!text-foreground-secondary")).toBe(true);
+    expect(collapsedColour).toContain("text-foreground-secondary");
+    expect(colour(expanded).every((token) => /foreground-secondary/.test(token) || /^hover:/.test(token))).toBe(true);
+  });
+
   it("renders read-only static chips with no × / input, and the +N disclosure still works (read-only photographer, no candidates GET)", async () => {
     roleState.role = "photographer";
     const many: ProjectMember[] = Array.from({ length: 4 }, (_, index) => ({
@@ -1071,12 +1107,34 @@ describe("Team chip labels (#514)", () => {
     expect(host.querySelector('[data-testid="project-member-editor:dual"]')!.textContent).toContain("Edit");
   });
 
-  it("rounds the editable chips container to --radius-sm on a phone and keeps the pill above it", async () => {
+  it("keeps the pill on one row and rounds to --radius-sm only when the box wraps (#550)", async () => {
     const host = await mount([member("u1", "Ana Reyes", "ana@x.test")]);
     const box = chipsInput(host).parentElement!; // the chips box owns the input directly
     const classes = box.className.split(/\s+/);
     expect(classes).toContain("rounded-[var(--radius-pill)]");
-    expect(classes).toContain("max-[721px]:rounded-[var(--radius-sm)]");
+    expect(classes).toContain("data-[wrapped=true]:rounded-[var(--radius-sm)]");
+    expect(classes).not.toContain("max-[721px]:rounded-[var(--radius-sm)]");
+    expect(box.dataset.wrapped).toBeUndefined(); // jsdom lays nothing out: every offsetTop is 0, so one row
+  });
+
+  it("marks the box wrapped when its last child sits on a lower row (#550)", async () => {
+    const top = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetTop");
+    const height = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
+    Object.defineProperty(HTMLElement.prototype, "offsetTop", { configurable: true, get(this: HTMLElement) { return this.tagName === "INPUT" ? 40 : 4; } });
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", { configurable: true, get() { return 24; } });
+    try {
+      const host = await mount([member("u1", "Ana Reyes", "ana@x.test")]);
+      expect(chipsInput(host).parentElement!.dataset.wrapped).toBe("true");
+    } finally {
+      if (top) Object.defineProperty(HTMLElement.prototype, "offsetTop", top); else delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetTop;
+      if (height) Object.defineProperty(HTMLElement.prototype, "offsetHeight", height); else delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetHeight;
+    }
+  });
+
+  it("chipsBoxWraps compares row positions, tolerating centred children on one row (#550)", () => {
+    expect(chipsBoxWraps({ top: 4, height: 24 }, { top: 4 })).toBe(false);
+    expect(chipsBoxWraps({ top: 4, height: 24 }, { top: 7 })).toBe(false);
+    expect(chipsBoxWraps({ top: 4, height: 24 }, { top: 32 })).toBe(true);
   });
 
   // Sol review: a collision label is long; the chip must wrap it, never overflow its column or truncate the email.
