@@ -5,8 +5,9 @@ import { FIELD_BOX } from "@/components/reui/input";
 import { PopoverContent, Popover, PopoverTrigger } from "@/components/reui/popover";
 import { isSydneyCalendarDate } from "@quincy/shared";
 import { formatCivilDay, formatCivilRange } from "@/lib/date-format";
-import { buildShortcuts, DATE_TIME_POPUP_EDGE_GAP, popupPaddingWithTopAtLeast, civilToCell, resolveDateTimePopupPlacement, sydneyToday, yearBounds, type PopupCollisionAvoidance, type PopupCollisionPadding } from "@/lib/date-time-field";
+import { buildShortcuts, DATE_TIME_POPUP_EDGE_GAP, POPUP_STACKED_QUERY, popupPaddingWithTopAtLeast, civilToCell, resolveDateTimePopupPlacement, sydneyToday, yearBounds, type PopupCollisionAvoidance, type PopupCollisionPadding } from "@/lib/date-time-field";
 import { useMediaQuery } from "@/lib/use-media-query";
+import { useReresolveOnResize } from "@/lib/use-reresolve-on-resize";
 import { cn } from "@/lib/utils";
 import { CalendarPane } from "./date-time-field/CalendarPane";
 import { DateTimePopup, PopupAnchorContext, type DateTimeApply, type DateTimePopupProps, type DateTimeStored } from "./date-time-field/DateTimePopup";
@@ -173,9 +174,9 @@ function usePopupAnchor(): { zoneId: string; bodyRef: Ref<HTMLDivElement> } {
 export function DateTimePopoverContent({ label, className, children, popupCollisionAvoidance, popupCollisionPadding, ...props }: Omit<ComponentProps<typeof PopoverContent>, "aria-label" | "aria-describedby" | "initialFocus" | "collisionAvoidance" | "collisionPadding"> & { label: string; popupCollisionAvoidance?: PopupCollisionAvoidance; popupCollisionPadding?: PopupCollisionPadding }) {
   const zoneId = useId();
   const bodyRef = useRef<HTMLDivElement>(null);
-  // Below sm the popup may cover its trigger: "shift" on y gives --available-height the whole
+  // Below 721px the popup may cover its trigger: "shift" on y gives --available-height the whole
   // viewport (minus padding) instead of the sliver above or below the field (#447).
-  const narrow = useMediaQuery("(width < 40rem)");
+  const narrow = useMediaQuery(POPUP_STACKED_QUERY);
   // ~530-680px tall: if it fits neither side, stay above/below and scroll the body rather than opening sideways.
   const { collisionAvoidance, collisionPadding } = resolveDateTimePopupPlacement({ narrow, avoidance: popupCollisionAvoidance, padding: popupCollisionPadding });
   return (
@@ -229,6 +230,9 @@ export function DateTimeField(props: DateTimeFieldProps) {
     }
     setOpen(next);
   };
+  // #602: a viewport resize while open re-reads a padding callback. Never with `popupPinTopToField`: re-pinning scrolls the page.
+  const padFn = typeof props.popupCollisionPadding === "function" ? props.popupCollisionPadding : undefined;
+  useReresolveOnResize(open && padFn !== undefined && !props.popupPinTopToField, () => padFn!(), setOpenPadding);
   const labelId = `${id}-label`;
   const valueId = `${id}-value`;
   const adornmentId = `${id}-adornment`;

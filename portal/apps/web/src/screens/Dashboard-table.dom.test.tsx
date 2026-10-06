@@ -51,6 +51,8 @@ vi.mock("../lib/stages", () => ({
     presentationStageKey: (key: string) => key,
   }),
 }));
+const shellBottom = vi.hoisted(() => vi.fn(() => 0));
+vi.mock("../lib/shell-chrome", () => ({ shellChromeBottom: () => shellBottom() }));
 vi.mock("../components/NoticeBoard", () => ({ NoticeBoard: () => null }));
 vi.mock("../components/board/board", () => ({ ProjectKanbanBoard2: () => <div data-testid="dashboard-board" /> }));
 
@@ -585,6 +587,14 @@ describe("the Deadline cell (#431)", () => {
     expect(apiPutMock.mock.calls[0]![0]).toBe("/api/projects/p2/deadline");
     expect(apiPutMock.mock.calls[0]![1]).toMatchObject({ expectedVersion: 1, deadline: { localCivil: "2099-01-05T09:00" } });
     expect(window.location.pathname).toBe("/");
+  });
+
+  it("reads the shell-aware padding once per open, never while closed or at mount (#597)", async () => {
+    shellBottom.mockClear();
+    await renderTable();
+    expect(shellBottom).not.toHaveBeenCalled();
+    await openDeadline("p2");
+    expect(shellBottom).toHaveBeenCalledTimes(1);
   });
 
   it("handles a 409 conflict once, leaving the popup open", async () => {

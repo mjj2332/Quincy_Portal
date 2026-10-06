@@ -68,6 +68,7 @@ import { productionCalendarFiltersFor, useProductionCalendarRange } from "../lib
 import {
   calendarViewToSubview,
   PRODUCTION_EVENT_CALENDAR_VIEW_SETTINGS,
+  PRODUCTION_EVENT_CALENDAR_I18N,
   productionEventCalendarAnchor,
   productionEventCalendarEventClassName,
   subviewToCalendarView,
@@ -621,6 +622,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
           date={date}
           views={[...CALENDAR_VIEWS]}
           {...PRODUCTION_EVENT_CALENDAR_VIEW_SETTINGS}
+          i18n={PRODUCTION_EVENT_CALENDAR_I18N}
           loading={!source}
           interactions={interactions}
           onEventUpdate={handleEventUpdate}

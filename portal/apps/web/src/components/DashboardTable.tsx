@@ -13,6 +13,7 @@ import { Frame, FramePanel } from "./reui/frame";
 import { StatusBadge } from "./atoms";
 import { InternalLink } from "./InternalLink";
 import { CoverMedia } from "./board/card";
+import { SHELL_AWARE_SHIFT_AVOIDANCE, shellAwarePopupPadding } from "../lib/date-time-field";
 import { ProjectDeadlineCell, type ProjectDeadlineView } from "./ProjectDeadlineCell";
 import { AvatarStack } from "./quincy/AvatarStack";
 import { Eyebrow } from "./quincy/Eyebrow";
@@ -198,6 +199,8 @@ function DeadlineCellRenderer({ row }: { row: Row<DataGridFeatures, ProjectSumma
         testIdPrefix="project-table"
         overdueInName
         emptyLabel="No deadline"
+        popupCollisionAvoidance={SHELL_AWARE_SHIFT_AVOIDANCE}
+        popupCollisionPadding={shellAwarePopupPadding}
       />
     </div>
   );

@@ -203,6 +203,9 @@ export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, 
   return Math.min(Math.max(scrollTop, safe.low), safe.high);
 }
 
+/** #602: below this width the popup stacks its columns, the calendar takes 44px cells and the popup may cover its trigger. Tailwind's `max-[721px]:` compiles to this same `(width < 721px)`. */
+export const POPUP_STACKED_QUERY = "(width < 721px)";
+
 /**
  * How a date popup resolves its collision policy (#447, #528): below `sm` it shifts over its
  * trigger; above, it stays on one axis. A caller's override replaces the default outright, and an
@@ -222,7 +225,22 @@ export function resolveDateTimePopupPlacement({ narrow, avoidance, padding }: { 
  */
 export const SHELL_AWARE_SHIFT_AVOIDANCE = { side: "shift", align: "shift", fallbackAxisSide: "none" } as const satisfies PopupCollisionAvoidance;
 
-/** `collisionPadding` with the top below the shell header. Read at open time: a cold load has no header yet, and an impersonation banner lowers it. */
+/**
+ * #597: the top of the open Project sheet, if one is up. The sheet is modal, so nothing behind it can open a
+ * picker; any picker opened while one is up lives inside it, and the sheet (not the shell header) is what
+ * covers the viewport's top. Base UI marks an open popup `data-open` and a closing one `data-closed`.
+ */
+function openSheetTop(): number | null {
+  if (typeof document === "undefined") return null;
+  const sheets = document.querySelectorAll<HTMLElement>('[data-slot="sheet-content"][data-open]');
+  const last = sheets.item(sheets.length - 1);
+  return last ? Math.max(0, last.getBoundingClientRect().top) : null;
+}
+
+/**
+ * `collisionPadding` with the top below whatever covers the viewport's top: the open Project sheet when there
+ * is one (#597), else the shell header. Read at open time: a cold load has no header yet, and an impersonation banner lowers it.
+ */
 export function shellAwarePopupPadding(): { top: number; right: number; bottom: number; left: number } {
-  return { top: shellChromeBottom() + DATE_TIME_POPUP_EDGE_GAP, right: DATE_TIME_POPUP_EDGE_GAP, bottom: DATE_TIME_POPUP_EDGE_GAP, left: DATE_TIME_POPUP_EDGE_GAP };
+  return { top: (openSheetTop() ?? shellChromeBottom()) + DATE_TIME_POPUP_EDGE_GAP, right: DATE_TIME_POPUP_EDGE_GAP, bottom: DATE_TIME_POPUP_EDGE_GAP, left: DATE_TIME_POPUP_EDGE_GAP };
 }

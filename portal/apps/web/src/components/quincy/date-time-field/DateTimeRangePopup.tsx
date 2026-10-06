@@ -233,7 +233,9 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
     setMonth(civilToCell(day));
   };
 
-  const pickShortcut = (shortcut: ReturnType<typeof buildRangeShortcuts>[number]) => {
+  const pickShortcut = (shortcut: ReturnType<typeof buildRangeShortcuts>[number], button: HTMLElement) => {
+    // #598: moving the grid to another month removes the focused day; keep focus on the preset instead of letting it fall to the popup.
+    button.focus({ preventScroll: true });
     const range = shortcut.resolve();
     const startParts = splitCivilMinute(range.start.localCivil);
     const endParts = splitCivilMinute(range.end.localCivil);
@@ -244,7 +246,9 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
       start: { day: startParts.day, time: startParts.time, timeText: startParts.time ?? "", fold: { minute: range.start.localCivil, choice: foldChoice(range.start.fold) } },
       end: { day: endParts.day, time: endParts.time, timeText: endParts.time ?? "", fold: { minute: range.end.localCivil, choice: foldChoice(range.end.fold) } },
     }));
-    if (startParts.day) setMonth(civilToCell(startParts.day));
+    // #598: the grid follows the end being edited (as setActive does), not always the start.
+    const shownDay = draft.active === "end" ? (endParts.day ?? startParts.day) : startParts.day;
+    if (shownDay) setMonth(civilToCell(shownDay));
   };
 
   const pickSlot = (slot: string) => change(active, { time: slot, timeText: slot });
@@ -335,7 +339,7 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
       )}
     >
       <div className="flex flex-col gap-[var(--space-4)]">
-        <div className="flex flex-col gap-[var(--space-4)] sm:flex-row">
+        <div className="flex flex-col gap-[var(--space-4)] min-[721px]:flex-row">
           <ShortcutList shortcuts={shortcuts} activeId={activeId} onPick={pickShortcut} />
           <CalendarPane
             selection={{ mode: "range", start: draft.start.day, end: draft.end.day, activeEnd: active }}
@@ -346,7 +350,7 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
             startYear={startYear}
             endYear={endYear}
           />
-          <div className="flex min-w-0 flex-col gap-[var(--space-2)] sm:w-28 sm:shrink-0">
+          <div className="flex min-w-0 flex-col gap-[var(--space-2)] min-[721px]:w-28 min-[721px]:shrink-0">
             <TimeColumn selected={current.time && SLOTS.includes(current.time) ? current.time : null} skipped={skipped} onPick={pickSlot} />
           </div>
         </div>

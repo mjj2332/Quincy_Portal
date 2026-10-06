@@ -26,10 +26,11 @@ export function ShortcutList<TRow extends ShortcutRow>({ shortcuts, activeId, on
   shortcuts: readonly TRow[];
   /** The shortcut whose resolved value equals the draft, if any. */
   activeId: TRow["id"] | null;
-  onPick: (shortcut: TRow) => void;
+  /** The pressed button is handed over so a caller that re-renders the grid can keep focus on it. */
+  onPick: (shortcut: TRow, button: HTMLElement) => void;
 }) {
   return (
-    <ItemGroup className="grid grid-cols-2 gap-[var(--space-1)] sm:flex sm:w-44 sm:shrink-0">
+    <ItemGroup className="grid grid-cols-2 gap-[var(--space-1)] min-[721px]:flex min-[721px]:w-44 min-[721px]:shrink-0">
       {shortcuts.map((shortcut) => {
         const { icon: Icon, tone } = ICONS[shortcut.id] ?? ICONS.today!;
         return (
@@ -48,7 +49,7 @@ export function ShortcutList<TRow extends ShortcutRow>({ shortcuts, activeId, on
               RING_IN,
               "focus-visible:!outline-solid",
             )}
-            onClick={() => onPick(shortcut)}
+            onClick={(event) => onPick(shortcut, event.currentTarget)}
           >
             <Icon aria-hidden className={cn("size-4 shrink-0", tone)} />
             <ItemContent className="min-w-0">

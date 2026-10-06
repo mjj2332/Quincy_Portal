@@ -24,6 +24,9 @@ vi.mock("../lib/api", async (importOriginal) => {
   return { ...actual, apiPut: (path: string, body: unknown) => apiPutMock(path, body) };
 });
 
+const shellBottom = vi.hoisted(() => vi.fn(() => 0));
+vi.mock("../lib/shell-chrome", () => ({ shellChromeBottom: () => shellBottom() }));
+
 const projectId = "11111111-1111-4111-8111-111111111111";
 const emptySchedule: ProjectDeadlineSchedule = { version: 0, source: null, deadline: null, reminderOffsetsMinutes: [], state: "unset", nextOccurrence: null, canResume: false };
 
@@ -126,6 +129,21 @@ afterEach(async () => {
 });
 
 describe("ProjectHeaderDeadline", () => {
+  it("reads the sheet-relative padding once per open, never at mount or while closed, and re-reads it on resize (#597, #602)", async () => {
+    const frames: FrameRequestCallback[] = [];
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => { frames.push(cb); return frames.length; });
+    try {
+      shellBottom.mockClear();
+      const host = await mount(emptySchedule);
+      expect(shellBottom).not.toHaveBeenCalled();
+      await openTrigger(host);
+      expect(shellBottom).toHaveBeenCalledTimes(1);
+      await act(async () => { window.dispatchEvent(new Event("resize")); });
+      await act(async () => { frames.splice(0).forEach((cb) => cb(0)); });
+      expect(shellBottom).toHaveBeenCalledTimes(2);
+    } finally { raf.mockRestore(); }
+  });
+
   it("names only role-bearing or natively-named elements in the popover, and nests no interactive element inside another (#206)", async () => {
     const host = await mount(scheduleAt("2027-01-15T09:00:00.000Z", { state: "overdue" }));
     const dialog = await openTrigger(host);
@@ -467,7 +485,7 @@ describe("ProjectHeaderDeadline", () => {
     const rootClass = scroller!.parentElement!.className;
     expect(rootClass).toContain("*:data-[slot=scroll-area-viewport]:mask-t-from-");
     expect(rootClass).toContain("*:data-[slot=scroll-area-viewport]:mask-b-from-");
-    expect(rootClass).toContain("[--fade-size:var(--space-8)]");
+    expect(rootClass).toContain("[--fade-size:var(--space-6)]");
     expect(rootClass).toContain("has-[[data-slot=scroll-area-viewport]:focus-visible]:ring-[3px]");
     // The footer is outside it, beside it under the same bounded frame.
     expect(scroller!.contains(footer)).toBe(false);

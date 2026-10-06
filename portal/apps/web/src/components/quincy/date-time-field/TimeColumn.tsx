@@ -10,9 +10,9 @@ const SLOTS = timeSlots();
  * selected one pressed. The column is scrolled to the selection by writing the viewport's
  * `scrollTop`, never `scrollIntoView`, which would also scroll the page behind the popup
  * (docs/lessons.md, "Gantt landing row"). A slot inside a daylight-saving gap is disabled and says
- * so, since that wall-clock time does not exist on the chosen day. Below `sm` the slots wrap as a
- * four-column grid in a short (`h-36`) window of their own; from `sm` up it is a single column in
- * a taller one (`sm:h-72`). #422 had dropped the column's own scroll below `sm` so the popup body
+ * so, since that wall-clock time does not exist on the chosen day. Below 721px the slots wrap as a
+ * four-column grid in a short (`h-36`) window of their own; from 721px up it is a single column in
+ * a taller one (`min-[721px]:h-72`). #422 had dropped the column's own scroll below 721px so the popup body
  * scrolled once; #447 restores it, because the body's window was ~165px on a phone and the reminders
  * below it were unreachable.
  */
@@ -36,7 +36,7 @@ export function TimeColumn({ selected, skipped, onPick }: {
 
   useLayoutEffect(centre, [centre, selected]);
 
-  // Crossing `sm` swaps the four-column h-36 grid for the single h-72 column; the selection has not
+  // Crossing 721px swaps the four-column h-36 grid for the single h-72 column; the selection has not
   // changed, so re-centre when the viewport's size does.
   useEffect(() => {
     const viewport = listRef.current?.parentElement;
@@ -47,8 +47,8 @@ export function TimeColumn({ selected, skipped, onPick }: {
   }, [centre]);
 
   return (
-    <ScrollArea className="h-36 w-full [--fade-size:var(--space-8)] sm:h-72 sm:w-28 sm:shrink-0 max-sm:*:data-[slot=scroll-area-scrollbar]:hidden max-sm:*:data-[slot=scroll-area-viewport]:mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] max-sm:*:data-[slot=scroll-area-viewport]:mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))]">
-      <div ref={listRef} role="group" aria-label="Time slots" className="grid grid-cols-4 gap-[var(--space-1)] sm:flex sm:flex-col pr-[var(--space-3)]">
+    <ScrollArea className="h-36 w-full [--fade-size:var(--space-8)] min-[721px]:h-72 min-[721px]:w-28 min-[721px]:shrink-0 max-[721px]:*:data-[slot=scroll-area-scrollbar]:hidden max-[721px]:*:data-[slot=scroll-area-viewport]:mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] max-[721px]:*:data-[slot=scroll-area-viewport]:mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))]">
+      <div ref={listRef} role="group" aria-label="Time slots" className="grid grid-cols-4 gap-[var(--space-1)] min-[721px]:flex min-[721px]:flex-col pr-[var(--space-3)]">
         {SLOTS.map((slot) => {
           const isSkipped = skipped.has(slot);
           const isSelected = selected === slot;
@@ -58,7 +58,7 @@ export function TimeColumn({ selected, skipped, onPick }: {
               type="button"
               size="sm"
               variant={isSelected ? "default" : "ghost"}
-              className="w-full justify-center"
+              className="w-full justify-center pointer-coarse:min-h-[44px] max-[721px]:min-h-[44px]"
               aria-pressed={isSelected}
               disabled={isSkipped}
               onClick={() => onPick(slot)}

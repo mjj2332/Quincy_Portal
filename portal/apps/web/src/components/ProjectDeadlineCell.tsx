@@ -20,6 +20,7 @@ import { ProjectDeadlineControl } from "./ProjectDeadlineControl";
 import { deadlineTriggerText } from "./ProjectHeaderDeadline";
 import { DateTimePopoverContent } from "./quincy/DateTimeField";
 import type { PopupCollisionAvoidance, PopupCollisionPadding } from "../lib/date-time-field";
+import { useReresolveOnResize } from "../lib/use-reresolve-on-resize";
 import { useProjectDetailQuery, type ProjectDetail } from "../lib/project-data";
 import { cn } from "../lib/utils";
 
@@ -80,6 +81,9 @@ export function ProjectDeadlineCell({ projectId, street, deadline, canEdit, disa
     if (next) setOpenPadding(typeof popupCollisionPadding === "function" ? popupCollisionPadding() : popupCollisionPadding);
     setOpen(next);
   };
+  // #602: a resize while open re-reads a padding callback.
+  const padFn = typeof popupCollisionPadding === "function" ? popupCollisionPadding : undefined;
+  useReresolveOnResize(open && padFn !== undefined, () => padFn!(), setOpenPadding);
   if (deadline === null) {
     // No Deadline: an inert dash.
     return <span data-testid={`${testIdPrefix}-deadline`} className="text-foreground-secondary">—<span className="sr-only">{emptyLabel}</span></span>;
