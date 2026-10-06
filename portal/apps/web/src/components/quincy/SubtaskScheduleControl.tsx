@@ -113,8 +113,11 @@ export function SubtaskScheduleControl<TItem extends LatestSubtaskSummary = Subt
   const seed = error && retained.draft ? retained.draft : undefined;
   // #599: after a conflict reopen on the one end that differs from the latest, so it and its day are in view.
   const latestRange = storedRange(error?.current ?? null);
-  const startDiffers = !!seed && !!latestRange && seed.start.localCivil !== latestRange.start.localCivil;
-  const endDiffers = !!seed && !!latestRange && seed.end.localCivil !== latestRange.end.localCivil;
+  // An endpoint differs by its minute, or by its DST fold when the draft chose one (the repeated hour).
+  const endpointDiffers = (mine: { localCivil: string; disambiguation?: "earlier" | "later" }, latest: { localCivil: string; fold: 0 | 1 }) =>
+    mine.localCivil !== latest.localCivil || (mine.disambiguation !== undefined && (mine.disambiguation === "later" ? 1 : 0) !== latest.fold);
+  const startDiffers = !!seed && !!latestRange && endpointDiffers(seed.start, latestRange.start);
+  const endDiffers = !!seed && !!latestRange && endpointDiffers(seed.end, latestRange.end);
   const conflictEnd: "start" | "end" | undefined = endDiffers && !startDiffers ? "end" : startDiffers && !endDiffers ? "start" : undefined;
   // After a conflict the saved set is the latest one the server reported, not the stale row's.
   const latestReminders = error?.currentReminders ?? error?.currentSubtask?.reminders;
@@ -151,7 +154,7 @@ export function SubtaskScheduleControl<TItem extends LatestSubtaskSummary = Subt
         label={label}
         value={stored}
         projectDefault={projectDefault}
-        openOn={initialFocus === "end" ? "end" : conflictEnd ?? "start"}
+        openOn={conflictEnd ?? (initialFocus === "end" ? "end" : "start")}
         banner={error?.current || error?.currentSubtask ? <Notice tone="caution" className="truncate text-[length:var(--text-xs)]">Changed elsewhere · latest v{(error.currentSubtask?.schedule ?? error.current)!.version}. Review below.</Notice> : undefined}
         seed={seed}
         seedKey={seed ? JSON.stringify(seed) : "stored"}

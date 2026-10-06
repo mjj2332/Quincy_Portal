@@ -349,8 +349,22 @@ describe("SubtaskScheduleControl onDiscard (#585)", () => {
       expect(rangeToggles(popover()!).active).toBe("Start");
       expect(banner()).toBeDefined();
     });
-    it("S14 initialFocus='end' still wins over a Start-only conflict", async () => {
+    it("S14 a Start-only conflict beats initialFocus='end': the Due cell reopens on the changed Start", async () => {
       await mount({ trigger: customTrigger, initialFocus: "end", error: { current: winner("2026-10-08", "2026-10-10") }, retained: { draft: draft("2026-10-07", "2026-10-10"), baseVersion: 3 } });
+      await click(host.querySelector<HTMLButtonElement>('[data-testid="custom-trigger"]')!);
+      await settle();
+      expect(rangeToggles(popover()!).active).toBe("Start");
+    });
+    it("S14b initialFocus='end' still wins when no single end differs", async () => {
+      await mount({ trigger: customTrigger, initialFocus: "end", error: { current: winner("2026-10-08", "2026-10-10") }, retained: { draft: draft("2026-10-08", "2026-10-10"), baseVersion: 3 } });
+      await click(host.querySelector<HTMLButtonElement>('[data-testid="custom-trigger"]')!);
+      await settle();
+      expect(rangeToggles(popover()!).active).toBe("End");
+    });
+    it("S16 an End that differs only by DST fold (same repeated minute, earlier vs later) counts as the changed end", async () => {
+      const latest: ChecklistScheduleDto = { ...value, version: 5, start: startMoment("2027-04-03"), end: { ...endMoment("2027-04-04T03:30"), localCivil: "2027-04-04T02:30", fold: 0 } };
+      const seeded = { start: { localCivil: "2027-04-03T09:00" }, end: { localCivil: "2027-04-04T02:30", disambiguation: "later" } } as unknown as NonNullable<Extra["retained"]>["draft"];
+      await mount({ trigger: customTrigger, error: { current: latest }, retained: { draft: seeded, baseVersion: 3 } });
       await click(host.querySelector<HTMLButtonElement>('[data-testid="custom-trigger"]')!);
       await settle();
       expect(rangeToggles(popover()!).active).toBe("End");
