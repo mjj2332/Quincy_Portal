@@ -214,7 +214,7 @@ export function EditProject({ projectId, onReturnToWorkspace, onDeleted }: { pro
           </div>
           <Button variant="outline" className="max-[721px]:w-full" type="button" disabled={isDangerAction} onClick={() => setRestoreOpen(true)}>{isDangerAction ? "Restoring…" : "Restore project"}</Button>
           <AlertDialog open={restoreOpen} onOpenChange={setRestoreOpen}>
-            <AlertDialogContent size="sm" data-testid="restore-project-confirm">
+            <AlertDialogContent size="default" data-testid="restore-project-confirm">
               <AlertDialogHeader>
                 <AlertDialogTitle>Restore project?</AlertDialogTitle>
                 <AlertDialogDescription className="text-foreground-secondary">Restore this project to the dashboard?</AlertDialogDescription>
@@ -235,7 +235,7 @@ export function EditProject({ projectId, onReturnToWorkspace, onDeleted }: { pro
           <Button variant="destructive" className="max-[721px]:w-full" type="button" disabled={isDangerAction || !deleteMatchesStreet} onClick={() => setDeleteOpen(true)}>{isDangerAction ? "Deleting…" : "Delete project permanently"}</Button>
         </div>
         <ConfirmDeleteDialog open={deleteOpen} excerpt="" deleting={false} error={null} onConfirm={() => void deleteProject()} onCancel={() => setDeleteOpen(false)} finalFocus={() => true}
-          copy={{ title: "Delete project permanently?", action: "Delete permanently", pending: "Deleting…", fallbackSubject: "", description: () => <>Permanently delete this archived project and all of its cloud media? This cannot be undone.</> }} testIdPrefix="project-delete" />
+          copy={{ title: "Delete project permanently?", action: "Delete permanently", pending: "Deleting…", fallbackSubject: "", description: () => <>Permanently delete this archived project and all of its cloud media? This cannot be undone.</> }} testIdPrefix="project-delete" size="default" />
       </>}
     </section>}
   </main>;

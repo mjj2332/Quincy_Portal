@@ -32,6 +32,8 @@ type ConfirmDeleteDialogProps = {
   /** Copy and test ids; the defaults are the Notice board's (#523). */
   copy?: { title: string; action: string; pending: string; description: (subject: ReactNode) => ReactNode; fallbackSubject: string };
   testIdPrefix?: string;
+  /** "sm" (default) suits a short label; "default" gives a long uppercase action room (#604). */
+  size?: "default" | "sm";
 };
 
 const NOTICE_COPY: NonNullable<ConfirmDeleteDialogProps["copy"]> = {
@@ -40,7 +42,7 @@ const NOTICE_COPY: NonNullable<ConfirmDeleteDialogProps["copy"]> = {
 };
 
 /** Confirms before a Notice board post is deleted for everyone. The dialog stays open on failure. */
-export function ConfirmDeleteDialog({ open, excerpt, deleting, error, onConfirm, onCancel, finalFocus, copy = NOTICE_COPY, testIdPrefix = "notice-delete" }: ConfirmDeleteDialogProps) {
+export function ConfirmDeleteDialog({ open, excerpt, deleting, error, onConfirm, onCancel, finalFocus, copy = NOTICE_COPY, testIdPrefix = "notice-delete", size = "sm" }: ConfirmDeleteDialogProps) {
   const cancelRef = useRef<HTMLButtonElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   // Both buttons are disabled while deleting, so focus drops to <body>. On a failure the dialog stays open:
@@ -53,7 +55,7 @@ export function ConfirmDeleteDialog({ open, excerpt, deleting, error, onConfirm,
     : copy.fallbackSubject;
   return (
     <AlertDialog open={open} onOpenChange={(next) => { if (!next && !deleting) onCancel(); }}>
-      <AlertDialogContent size="sm" data-testid={`${testIdPrefix}-confirm`} initialFocus={cancelRef} finalFocus={finalFocus}>
+      <AlertDialogContent size={size} data-testid={`${testIdPrefix}-confirm`} initialFocus={cancelRef} finalFocus={finalFocus}>
         <AlertDialogHeader>
           <AlertDialogTitle>{copy.title}</AlertDialogTitle>
           <AlertDialogDescription className="text-foreground-secondary">

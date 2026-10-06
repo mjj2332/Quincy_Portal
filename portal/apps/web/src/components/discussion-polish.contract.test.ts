@@ -21,3 +21,17 @@ describe("discussion polish (#604)", () => {
     expect(panel).toContain("data-[checklist-layout=rail]:[grid-template-rows:auto_1fr]");
   });
 });
+
+describe("EditProject Danger-zone dialogs (#604)", () => {
+  const edit = readFileSync(join(here, "../screens/EditProject.tsx"), "utf8");
+  const dialog = readFileSync(join(here, "ConfirmDeleteDialog.tsx"), "utf8");
+  it("Restore and Delete permanently both use size=\"default\" (the 'sm' two-column footer clips the uppercase label)", () => {
+    expect(edit).toContain('<AlertDialogContent size="default" data-testid="restore-project-confirm">');
+    expect(edit).toMatch(/<ConfirmDeleteDialog[\s\S]*?testIdPrefix="project-delete" size="default" \/>/);
+    expect(edit).not.toContain('size="sm"');
+  });
+  it("ConfirmDeleteDialog defaults to sm and forwards size", () => {
+    expect(dialog).toContain('size = "sm"');
+    expect(dialog).toContain("<AlertDialogContent size={size}");
+  });
+});
