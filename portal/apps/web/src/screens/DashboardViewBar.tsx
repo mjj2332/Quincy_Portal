@@ -1,9 +1,10 @@
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { Calendar, GanttChart, SlidersHorizontal, SquareKanban, Table2, type LucideIcon } from "lucide-react";
 import { DashboardSearch, type DashboardSearchFocusRequest } from "../components/quincy/DashboardSearch";
 import { buttonClasses } from "../components/quincy/Button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "../components/reui/dropdown-menu";
 import { Tabs, TabsList, TabsTrigger } from "../components/reui/tabs";
+import { SCROLL_FADE_MASK_CLASSES, useScrollFade } from "../lib/use-scroll-fade";
 import { cn } from "../lib/utils";
 import type { DashboardView } from "./dashboard-helpers";
 
@@ -85,6 +86,8 @@ export function DashboardViewBar({
   filterTrigger,
 }: DashboardViewBarProps) {
   const showDisplay = display !== undefined && display !== null;
+  const tabsRef = useRef<HTMLDivElement>(null);
+  const { fade: tabsFade, onScroll: onTabsScroll } = useScrollFade(tabsRef);
   return (
     <div
       data-testid="dashboard-view-bar"
@@ -94,7 +97,7 @@ export function DashboardViewBar({
         "[border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border",
       )}
     >
-      <div className="-mb-px flex min-w-0 max-w-full overflow-x-auto">
+      <div className={cn("-mb-px flex min-w-0 max-w-full overflow-x-auto", SCROLL_FADE_MASK_CLASSES)} ref={tabsRef} data-fade={tabsFade} onScroll={onTabsScroll}>
         <Tabs value={renderedView === "none" ? null : renderedView} className="min-w-0 gap-0 data-[orientation=horizontal]:flex-row">
           <TabsList
             variant="line"

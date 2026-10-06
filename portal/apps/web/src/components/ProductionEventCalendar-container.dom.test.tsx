@@ -368,8 +368,10 @@ describe("ProductionEventCalendar container", () => {
     });
 
     it("opening the sheet focuses Close calendar, and Escape returns focus to the opener (#652)", async () => {
-      await openRail();
-      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+      stubMedia(["(max-width: 1100px)"]);
+      await renderCalendar(calendar(), adminProductionCalendarRangeResponseSchema.parse(rawResponse("editing_autohdr")));
+      // A real tap or key press focuses the toggle first; happy-dom's `.click()` does not.
+      await act(async () => { toggleEl().focus(); toggleEl().click(); await new Promise((resolve) => setTimeout(resolve, 50)); });
       expect(document.activeElement).toBe(sheetEl()!.querySelector('[data-testid="event-calendar-rail-sheet-close"]'));
       await act(async () => { sheetEl()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await new Promise((resolve) => setTimeout(resolve, 50)); });
       expect(document.activeElement).toBe(toggleEl());

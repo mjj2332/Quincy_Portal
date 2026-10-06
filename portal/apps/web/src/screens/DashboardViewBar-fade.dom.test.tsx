@@ -16,14 +16,14 @@ describe("DashboardViewBar tab row scroll fade (#652)", () => {
   let root: Root;
   let sizes = { scrollWidth: 0, clientWidth: 0 };
   const originals = {
-    scrollWidth: Object.getOwnPropertyDescriptor(Element.prototype, "scrollWidth"),
-    clientWidth: Object.getOwnPropertyDescriptor(Element.prototype, "clientWidth"),
+    scrollWidth: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollWidth"),
+    clientWidth: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth"),
   };
 
   beforeEach(() => {
     __resetDashboardSearchStoreForTest();
-    Object.defineProperty(Element.prototype, "scrollWidth", { configurable: true, get: () => sizes.scrollWidth });
-    Object.defineProperty(Element.prototype, "clientWidth", { configurable: true, get: () => sizes.clientWidth });
+    Object.defineProperty(HTMLElement.prototype, "scrollWidth", { configurable: true, get: () => sizes.scrollWidth });
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => sizes.clientWidth });
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -34,8 +34,8 @@ describe("DashboardViewBar tab row scroll fade (#652)", () => {
     host.remove();
     document.body.replaceChildren();
     for (const key of ["scrollWidth", "clientWidth"] as const) {
-      if (originals[key]) Object.defineProperty(Element.prototype, key, originals[key]!);
-      else delete (Element.prototype as unknown as Record<string, unknown>)[key];
+      if (originals[key]) Object.defineProperty(HTMLElement.prototype, key, originals[key]!);
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[key];
     }
   });
 
