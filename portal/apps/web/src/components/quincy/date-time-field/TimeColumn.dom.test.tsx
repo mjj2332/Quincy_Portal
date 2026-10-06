@@ -3,6 +3,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ScrollArea } from "@/components/reui/scroll-area";
 import { TimeColumn } from "./TimeColumn";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -132,5 +133,64 @@ describe("TimeColumn keys move focus without picking", () => {
     render({ selected: "17:00", onPick });
     act(() => { slot("17:45").click(); });
     expect(onPick).toHaveBeenCalledWith("17:45");
+  });
+});
+
+describe("TimeColumn edge cases", () => {
+  it("has no Tab stop at all when every slot is disabled (item 5)", () => {
+    const all = Array.from({ length: 96 }, (_, i) => `${String(Math.floor(i / 4)).padStart(2, "0")}:${["00", "15", "30", "45"][i % 4]}`);
+    render({ selected: null, skipped: all });
+    expect(slots()).toHaveLength(96);
+    expect(stops()).toEqual([]);
+  });
+  it("falls back to the first enabled slot for a time after the last slot (item 7)", () => {
+    render({ selected: "23:50" });
+    expect(stops()).toEqual(["00:00"]);
+  });
+  it("follows a click: Shift+Tab lands on the clicked slot, not the last arrowed one (item 6)", () => {
+    render({ selected: "17:00" });
+    slot("17:00").focus();
+    press(document.activeElement!, "ArrowDown");
+    press(document.activeElement!, "ArrowDown");
+    press(document.activeElement!, "ArrowDown");
+    expect(stops()).toEqual(["17:45"]);
+    act(() => { slot("18:00").focus(); });
+    expect(stops()).toEqual(["18:00"]);
+  });
+  it("Enter on a focused slot is left to the native button, which picks (item 8)", () => {
+    const onPick = vi.fn();
+    render({ selected: "17:00", onPick });
+    const target = slot("17:15");
+    target.focus();
+    const event = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    act(() => { target.dispatchEvent(event); });
+    // The handler must not swallow Enter; happy-dom does not synthesise the browser's Enter -> click, so do it as a browser would.
+    expect(event.defaultPrevented).toBe(false);
+    if (!event.defaultPrevented) act(() => { target.click(); });
+    expect(onPick).toHaveBeenCalledWith("17:15");
+  });
+});
+
+describe("TimeColumn viewport Tab stop inside an overflowing popup body (item 8)", () => {
+  const originals: Array<[string, PropertyDescriptor | undefined]> = [];
+  beforeEach(() => {
+    (HTMLElement.prototype as { getAnimations?: () => unknown[] }).getAnimations ??= () => [];
+    for (const name of ["scrollHeight", "clientHeight", "scrollWidth", "clientWidth"]) {
+      originals.push([name, Object.getOwnPropertyDescriptor(HTMLElement.prototype, name)]);
+      Object.defineProperty(HTMLElement.prototype, name, { configurable: true, get() { return name === "scrollHeight" ? 1000 : 100; } });
+    }
+  });
+  afterEach(() => { for (const [name, d] of originals.splice(0)) { if (d) Object.defineProperty(HTMLElement.prototype, name, d); else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[name]; } });
+
+  it("the column viewport is tabIndex -1 while the body viewport stays 0", async () => {
+    await act(async () => {
+      root.render(<ScrollArea><TimeColumn selected="17:00" skipped={new Set()} onPick={() => {}} /></ScrollArea>);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    const viewports = [...host.querySelectorAll<HTMLElement>('[data-slot="scroll-area-viewport"]')];
+    expect(viewports).toHaveLength(2);
+    const [body, column] = viewports;
+    expect(column!.tabIndex).toBe(-1);
+    expect(body!.tabIndex).toBe(0);
   });
 });
