@@ -17,6 +17,7 @@ import { Input } from "@/components/reui/input";
 import { NativeSelect } from "@/components/quincy/NativeSelect";
 import { StatusPill, type StatusTone } from "@/components/quincy/StatusPill";
 import { TabStrip } from "@/components/quincy/TabStrip";
+import { EmailText } from "@/lib/format-email";
 import { TableWrap, Table, TableHead, TableBody, TableRow, TableHeader, TableCell } from "@/components/quincy/Table";
 import { SectionHead } from "@/components/quincy/SectionHead";
 import { Notice } from "@/components/quincy/Notice";
@@ -538,7 +539,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
           <Button type="button" variant="outline" disabled={isReleasingFreeze} onClick={() => void releaseProvisioningFreeze()}>Release freeze</Button>
         </Notice>}
         {!isLoadingUsers && !usersError && users.length === 0 && <EmptyState title="No users provisioned.">Provision a team member to give them closed-access Google sign-in.</EmptyState>}
-        {!isLoadingUsers && !usersError && users.length > 0 && <TableWrap className="min-[721px]:px-[var(--space-1)]"><Table>
+        {!isLoadingUsers && !usersError && users.length > 0 && <TableWrap className="min-[721px]:scroll-px-[var(--space-1)]"><Table>
           <TableHead><TableRow><TableHeader>Name</TableHeader><TableHeader>Email</TableHeader><TableHeader>Role</TableHeader><TableHeader>Access</TableHeader><TableHeader>Default editor</TableHeader><TableHeader>Created</TableHeader><TableHeader><span className="sr-only">Actions</span></TableHeader></TableRow></TableHead>
           <TableBody>{users.map((user) => {
           const isSelf = user.id === currentUserId;
@@ -548,7 +549,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
           const isDefaultEditorIneligible = !user.active || !isProjectAssignmentEligible("editor", user.role);
           return <TableRow key={user.id} data-testid="admin-user-row">
             <TableCell data-label="Name">{isEditingName ? <Input className="min-w-[130px] border-[var(--field-border)] outline-offset-0 focus-visible:!outline-offset-0" value={userNameDraft} onChange={(event) => setUserNameDraft(event.target.value)} aria-label={`Name for ${user.name}`} /> : <strong>{user.name}</strong>}</TableCell>
-            <TableCell data-label="Email" className="[overflow-wrap:anywhere]">{user.email}</TableCell>
+            <TableCell data-label="Email" className="[overflow-wrap:break-word]"><EmailText email={user.email} /></TableCell>
             <TableCell data-label="Role"><label className="sr-only" htmlFor={`role-${user.id}`}>Role for {user.name}</label><NativeSelect id={`role-${user.id}`} className="min-w-[128px]" value={user.role} disabled={isUpdating} onChange={(event) => void updateUser(user, { role: event.target.value as Role })}>{ROLES.map((role) => <option key={role} value={role}>{ROLE_LABELS[role]}</option>)}</NativeSelect></TableCell>
             <TableCell data-label="Access"><StatusPill tone={user.active ? "positive" : "neutral"}>{user.active ? "Active" : "Inactive"}</StatusPill></TableCell>
             <TableCell data-label="Default editor"><input type="checkbox" className={CHECKBOX_INPUT} checked={user.defaultEditor} disabled={isUpdating || isDefaultEditorIneligible} title={isDefaultEditorIneligible ? "Only active editors, external editors and admins can be default editors" : undefined} onChange={() => void updateUser(user, { defaultEditor: !user.defaultEditor })} aria-label={`Default editor: ${user.name}`} /></TableCell>
@@ -574,7 +575,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
           <QuincyField id="admin-agency-notes" label="Notes" value={agencyForm.notes} onChange={(event) => setAgencyForm((value) => ({ ...value, notes: event.target.value }))} />
           <Button type="submit" className="max-[721px]:w-full">Add agency</Button>
         </form>
-        <TableWrap className="min-[721px]:px-[var(--space-1)]"><Table>
+        <TableWrap className="min-[721px]:scroll-px-[var(--space-1)]"><Table>
           <TableHead><TableRow><TableHeader>Agency</TableHeader><TableHeader>Notes</TableHeader><TableHeader>Agents</TableHeader><TableHeader>Created</TableHeader><TableHeader><span className="sr-only">Actions</span></TableHeader></TableRow></TableHead>
           <TableBody>{agencies.length === 0 ? <TableRow><TableCell colSpan={5} className="text-center text-foreground-secondary">No agencies yet.</TableCell></TableRow> : agencies.map((agency) => {
             const isSelected = selectedAgencyId === agency.id;
@@ -605,11 +606,11 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
           <QuincyField id="admin-agent-phone" label="Phone" value={agentForm.phone} onChange={(event) => setAgentForm((value) => ({ ...value, phone: event.target.value }))} />
           <Button type="submit" className="max-[721px]:w-full">Add agent</Button>
         </form>
-        <TableWrap className="min-[721px]:px-[var(--space-1)]"><Table>
+        <TableWrap className="min-[721px]:scroll-px-[var(--space-1)]"><Table>
           <TableHead><TableRow><TableHeader>Name</TableHeader><TableHeader>Email</TableHeader><TableHeader>Phone</TableHeader><TableHeader>Agency</TableHeader><TableHeader><span className="sr-only">Actions</span></TableHeader></TableRow></TableHead>
           <TableBody>{agents.length === 0 ? <TableRow><TableCell colSpan={5} className="text-center text-foreground-secondary">No agents found.</TableCell></TableRow> : agents.map((agent) => <TableRow key={agent.id}>
             <TableCell data-label="Name">{editingAgent === agent.id ? <Input className="min-w-[130px] border-[var(--field-border)] outline-offset-0 focus-visible:!outline-offset-0" aria-label={`Name for ${agent.name}`} value={agent.name} onChange={(event) => setAgents((current) => current.map((item) => item.id === agent.id ? { ...item, name: event.target.value } : item))} /> : <strong>{agent.name}</strong>}</TableCell>
-            <TableCell data-label="Email" className="[overflow-wrap:anywhere]">{editingAgent === agent.id ? <Input className="min-w-[130px] border-[var(--field-border)] outline-offset-0 focus-visible:!outline-offset-0" aria-label={`Email for ${agent.name}`} value={agent.email ?? ""} onChange={(event) => setAgents((current) => current.map((item) => item.id === agent.id ? { ...item, email: event.target.value || null } : item))} /> : agent.email || "—"}</TableCell>
+            <TableCell data-label="Email" className="[overflow-wrap:break-word]">{editingAgent === agent.id ? <Input className="min-w-[130px] border-[var(--field-border)] outline-offset-0 focus-visible:!outline-offset-0" aria-label={`Email for ${agent.name}`} value={agent.email ?? ""} onChange={(event) => setAgents((current) => current.map((item) => item.id === agent.id ? { ...item, email: event.target.value || null } : item))} /> : agent.email ? <EmailText email={agent.email} /> : "—"}</TableCell>
             <TableCell data-label="Phone">{editingAgent === agent.id ? <Input className="min-w-[130px] border-[var(--field-border)] outline-offset-0 focus-visible:!outline-offset-0" aria-label={`Phone for ${agent.name}`} value={agent.phone ?? ""} onChange={(event) => setAgents((current) => current.map((item) => item.id === agent.id ? { ...item, phone: event.target.value || null } : item))} /> : agent.phone || "—"}</TableCell>
             <TableCell data-label="Agency">{agent.agencyName || "—"}</TableCell>
             <TableCell className="min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]">{editingAgent === agent.id ? <><Button type="button" variant="outline" onClick={() => void saveAgentEdit(agent)}>Save</Button><Button type="button" variant="ghost" className={TEXT_BUTTON} onClick={() => setEditingAgent(undefined)}>Cancel</Button></> : <Button type="button" variant="ghost" className={TEXT_BUTTON} onClick={() => setEditingAgent(agent.id)}>Edit</Button>}</TableCell>
