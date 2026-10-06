@@ -54,7 +54,11 @@ const IGNORE_RANGE_SELECT = () => {};
  * inactive one is outlined instead and the active end alone stays solid. A modifier on the day cell,
  * reaching the button inside it, keeps the vendored calendar untouched.
  */
-const INACTIVE_END_CLASS = "[&_button]:!bg-card [&_button]:!text-foreground [&_button]:ring-2 [&_button]:ring-inset [&_button]:ring-primary";
+const INACTIVE_END_CLASS = "[&_button]:!bg-card [&_button]:!text-foreground [&_button]:ring-2 [&_button]:ring-inset [&_button]:ring-primary " +
+  // #581: reui/calendar's range-start/end hover (`!text-primary-foreground`, `bg-primary/80`) must not reach this end: it stays
+  // foreground on card. `button[data-day]` adds the specificity that out-ranks the calendar's compound `data-[…]:hover:` rule.
+  "[&_button[data-day]]:hover:!bg-card [&_button[data-day]]:hover:!text-foreground";
+export { INACTIVE_END_CLASS };
 
 export const LABELS = {
   labelMonthDropdown: () => "Month",

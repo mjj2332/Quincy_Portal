@@ -16,7 +16,7 @@ import {
   type CommentResponse,
 } from "../lib/project-comments";
 import { classifyProjectAccessError, invalidateProjectSurfaces, projectCollaborationDataGeneration, recordProjectArchivedRefusal, useProjectAccessTermination } from "../lib/project-data";
-import { stripLinkPreviewDisplay } from "../lib/rich-text-tiptap";
+import { stripEmbeddedDisplay } from "../lib/rich-text-tiptap";
 import { useProjectCommentDraft } from "../lib/project-comment-drafts";
 import { RichTextContent } from "./RichTextContent";
 import { QuincyRichTextEditor } from "./QuincyRichTextEditor";
@@ -266,8 +266,8 @@ export function ProjectDiscussionThread({
     }
   }, [consumeOrForward, projectId, queryClient, session.data?.user.role]);
 
-  const postingOverBytes = richTextDocByteLength(stripLinkPreviewDisplay(content)) > RICH_TEXT_JSON_MAX_BYTES;
-  const editingOverBytes = editing ? richTextDocByteLength(stripLinkPreviewDisplay(editing.content)) > RICH_TEXT_JSON_MAX_BYTES : false;
+  const postingOverBytes = richTextDocByteLength(stripEmbeddedDisplay(content)) > RICH_TEXT_JSON_MAX_BYTES;
+  const editingOverBytes = editing ? richTextDocByteLength(stripEmbeddedDisplay(editing.content)) > RICH_TEXT_JSON_MAX_BYTES : false;
   // Post is disabled for an empty or over-limit comment (previously it posted and the server
   // rejected it with a 400); keyboard submit already refused the same cases.
   const postingPlainText = richTextPlainText(content);
@@ -288,7 +288,7 @@ export function ProjectDiscussionThread({
     const inThread = focusInThread();
     setSaving(true); setMutationError(undefined);
     try {
-      const comment = await apiPost<Comment, { content: RichTextDoc }>(`/api/projects/${encodeURIComponent(projectId)}/comments`, { content: stripLinkPreviewDisplay(submitted) });
+      const comment = await apiPost<Comment, { content: RichTextDoc }>(`/api/projects/${encodeURIComponent(projectId)}/comments`, { content: stripEmbeddedDisplay(submitted) });
       // D3: a posted comment is no longer a draft even if the sheet closed mid-post (the isCurrent
       // guard below would otherwise leave it stored and restore it, to be posted twice).
       clearDraftIfSubmitted(submitted);
@@ -313,7 +313,7 @@ export function ProjectDiscussionThread({
     const inThread = focusInThread();
     setSaving(true); setMutationError(undefined);
     try {
-      const comment = await apiPatch<Comment, { content: RichTextDoc }>(`/api/projects/${encodeURIComponent(projectId)}/comments/${encodeURIComponent(editing.id)}`, { content: stripLinkPreviewDisplay(editing.content) });
+      const comment = await apiPatch<Comment, { content: RichTextDoc }>(`/api/projects/${encodeURIComponent(projectId)}/comments/${encodeURIComponent(editing.id)}`, { content: stripEmbeddedDisplay(editing.content) });
       if (!presentation.isCurrent(mutationProjectId)) return;
       replaceProjectComment(queryClient, projectId, comment);
       setEditing(undefined);

@@ -15,8 +15,6 @@ describe("rich-text editor layout contracts", () => {
     expect(source).not.toMatch(/boundary: editor\.view\.dom/);
     const options = tableBubbleOptions({
       surface: () => ({ top: 500, left: 20, right: 340, bottom: 640 }),
-      floorTop: () => 693,
-      neighbours: () => ({ prevBottom: null, nextTop: null }),
       row: () => ({ top: 560, left: 20, right: 340, bottom: 600 }),
       viewport: () => ({ top: 0, bottom: 900 }),
     });
@@ -35,7 +33,7 @@ describe("rich-text editor layout contracts", () => {
     // One boundary for both, rebuilt per pass; its edges equal the final bar's limits (padding and offset are the same gap).
     expect(flipOptions.boundary).toEqual(options.shift(state).boundary);
     expect(flipOptions.boundary.top).toBe(500);
-    expect(flipOptions.boundary.bottom).toBe(685);
+    expect(flipOptions.boundary.bottom).toBe(640); // the frame, not the helper (#555)
     // Horizontal only: a vertical shift would move the bar off its gap, or onto the row.
     expect(options.shift(state).crossAxis).toBe(false);
     expect(options.shift(state).padding).toEqual({ top: 8, bottom: 8, left: 8, right: 8 });
@@ -101,7 +99,7 @@ describe("rich-text editor layout contracts", () => {
   it("keeps the outline focus ring inside the scroller (no clipping)", () => {
     const source = read("rich-text-outline.tsx");
     expect(source).not.toContain("overflow-y-auto p-0.5");
-    expect(source).toContain("focus-visible:outline-offset-[-2px]");
+    expect(source).toContain("outline-offset-[-2px] focus-visible:!outline-offset-[-2px]");
   });
 
   it("gives the heading trigger a fixed width so its label never shifts the toolbar", () => {

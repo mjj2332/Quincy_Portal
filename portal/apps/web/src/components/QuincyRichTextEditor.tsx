@@ -2,20 +2,22 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject }
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import { exitSuggestion } from "@tiptap/suggestion";
 import { ChevronDownIcon, ImageIcon, ListChecksIcon, ListIcon, ListOrderedIcon, Redo2Icon, TableIcon, Undo2Icon, VideoIcon } from "lucide-react";
-import { RICH_TEXT_JSON_MAX_BYTES, RICH_TEXT_MAX_LINK_PREVIEWS, richTextDocByteLength, richTextMediaIds, richTextPlainText, type RichTextDoc } from "@quincy/shared";
+import { RICH_TEXT_JSON_MAX_BYTES, RICH_TEXT_MAX_LINK_PREVIEWS, imageAltFromFileName, richTextDocByteLength, richTextMediaIds, richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { cn } from "../lib/utils";
 import { useMediaQuery } from "../lib/use-media-query";
 import { EMBEDDED_MEDIA_MAX_PER_POST, EMBEDDED_VIDEO_ACCEPT, RenditionFailedError, abortEmbeddedImage, embeddedImageAccept, embeddedImageProblem, embeddedVideoProblem, retryEmbeddedRendition, uploadEmbeddedImage, uploadEmbeddedVideo, type EmbeddedMediaScope } from "../lib/embedded-media";
 import { useEmbeddedHeicEnabled } from "../lib/use-embedded-heic";
 import { requestLinkPreview } from "../lib/link-previews";
 import {
+  EmbeddedImage,
+  EmbeddedVideo,
   LinkPreview,
   createRichTextEditorExtensions,
   type RichTextEditorPreset,
   itemContainerDepth,
   mentionQuery,
   shouldBlockListIndent,
-  stripLinkPreviewDisplay,
+  stripEmbeddedDisplay,
   tiptapToRichTextDoc,
   toTiptap,
 } from "../lib/rich-text-tiptap";
@@ -24,6 +26,8 @@ import { Button } from "./reui/button";
 import { Input } from "./reui/input";
 import { EmbeddedUploadTray, type EmbeddedUpload } from "./quincy/EmbeddedUploadTray";
 import { LinkPreviewWithView } from "./quincy/LinkPreviewEditorNode";
+import { EmbeddedImageWithView } from "./quincy/EmbeddedImageEditorNode";
+import { EmbeddedVideoWithView } from "./quincy/EmbeddedVideoEditorNode";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -107,7 +111,7 @@ export type QuincyRichTextEditorProps = {
   onChange: (value: RichTextDoc) => void;
   // `onChange` carries what each link preview card shows (title, description, site, address, image) beside its id, because whatever a
   // host keeps outside the editor (a draft, an edit in progress) has to redraw the card when the editor is mounted again. The id alone
-  // is what is stored, so a host strips with `stripLinkPreviewDisplay` at the point it submits and wherever it measures size.
+  // is what is stored, so a host strips with `stripEmbeddedDisplay` at the point it submits and wherever it measures size.
   limit: number;
   /** The stored-JSON cap the surface's server profile enforces (default: the comment cap). */
   maxBytes?: number;
@@ -122,8 +126,6 @@ export type QuincyRichTextEditorProps = {
   linkPreviews?: EmbeddedMediaScope;
   /** Reports whether an image is still uploading, so the host can hold Post / Save until it lands. */
   onUploadingChange?: (uploading: boolean) => void;
-  /** The host's helper line under the editor; the table bar may extend down to it (#535). Omit for none. */
-  tableBubbleFloor?: RefObject<HTMLElement | null>;
 };
 
 type UploadingMedia = EmbeddedUpload;
@@ -148,7 +150,6 @@ export function QuincyRichTextEditor({
   media,
   linkPreviews,
   onUploadingChange,
-  tableBubbleFloor,
 }: QuincyRichTextEditorProps) {
   const valueRef = useRef(JSON.stringify(value));
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
@@ -160,10 +161,7 @@ export function QuincyRichTextEditor({
   const editorRef = useRef<Editor | null>(null);
   const menu = useRef<MentionAutocompleteHandle>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
-  // Everything rendered under the frame that the table bar must not cover (#535): the upload tray, the counter, the host's helper.
   const counterRef = useRef<HTMLDivElement>(null);
-  const trayRef = useRef<HTMLDivElement>(null);
-  const tableBubbleFloors = useMemo(() => [trayRef, counterRef, tableBubbleFloor], [tableBubbleFloor]);
   const [rawQuery, setQuery] = useState<string | null>(null);
   // #375: Esc / an outside press closes the mention list and it stays closed until the content
   // actually changes; the sheet's layer gate reads the list as open through `aria-expanded`.
@@ -172,6 +170,14 @@ export function QuincyRichTextEditor({
   const [mentionA11y, setMentionA11y] = useState<{ listboxId: string; activeId?: string; expanded: boolean } | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
   const [nestingBlocked, setNestingBlocked] = useState(false);
+  // The author cancelled an upload from its tray row: said once in the live region, retired by the next edit. An unmount abort never sets it.
+  const [uploadCancelled, setUploadCancelled] = useState(false);
+  // A second cancel with no edit between leaves the region's text unchanged, which a screen reader does not announce again: clear it in one
+  // committed update and repopulate it in a later one.
+  const cancelTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearCancelTimer = () => { if (cancelTimer.current !== null) { clearTimeout(cancelTimer.current); cancelTimer.current = null; } };
+  useEffect(() => clearCancelTimer, []);
+  const announceCancelled = () => { clearCancelTimer(); setUploadCancelled(false); cancelTimer.current = setTimeout(() => { cancelTimer.current = null; setUploadCancelled(true); }, 0); };
   const [deleteTableOpen, setDeleteTableOpen] = useState(false);
   const pageRef = useRef<HTMLDivElement>(null);
   const [uploads, setUploads] = useState<UploadingMedia[]>([]);
@@ -196,7 +202,7 @@ export function QuincyRichTextEditor({
   const [picking, setPicking] = useState<{ n: number; kind: "image" | "video" } | null>(null);
   const pickerRef = useRef<HTMLInputElement>(null);
   const extensions = useMemo(() => [
-    ...createRichTextEditorExtensions(preset).map((extension) => extension === LinkPreview ? LinkPreviewWithView : extension),
+    ...createRichTextEditorExtensions(preset).map((extension) => extension === LinkPreview ? LinkPreviewWithView : extension === EmbeddedImage ? EmbeddedImageWithView : extension === EmbeddedVideo ? EmbeddedVideoWithView : extension),
     ...(preset === "document" ? [RichTextSlashCommand.configure({ items: [...RICH_TEXT_BASIC_SLASH_ITEMS, RICH_TEXT_TABLE_SLASH_ITEM] })] : []),
   ], [preset]);
   const editor = useEditor({
@@ -243,7 +249,7 @@ export function QuincyRichTextEditor({
           const plainText = richTextPlainText(doc);
           // Never submit while an image is still uploading: the post would go without it.
           if (inFlight.current > 0) { event.preventDefault(); return true; }
-          if (plainText.trim().length > 0 && plainText.length <= limitRef.current && richTextDocByteLength(stripLinkPreviewDisplay(doc)) <= maxBytesRef.current && !disabledRef.current) {
+          if (plainText.trim().length > 0 && plainText.length <= limitRef.current && richTextDocByteLength(stripEmbeddedDisplay(doc)) <= maxBytesRef.current && !disabledRef.current) {
             event.preventDefault();
             onSubmitRef.current?.();
             return true;
@@ -266,7 +272,10 @@ export function QuincyRichTextEditor({
       if (serialised === valueRef.current) return;
       valueRef.current = serialised; onChangeRef.current(doc);
       // Only the author's own edits retire an upload problem: a sibling upload landing is not one, and must not hide a problem shown for another file.
-      if (!transaction.getMeta(UPLOAD_INSERT_META)) setUploadErrors((entries) => (entries.length ? [] : entries));
+      const isUploadInsert = Boolean(transaction.getMeta(UPLOAD_INSERT_META));
+      if (!isUploadInsert) setUploadErrors((entries) => (entries.length ? [] : entries));
+      // Likewise a sibling upload landing must not retire the cancel announcement or its re-announce timer.
+      if (!isUploadInsert) { clearCancelTimer(); setUploadCancelled(false); }
       setNestingBlocked(false); setMentionDismissed(false); setQuery(mentionQuery(next));
     },
     onSelectionUpdate: ({ editor: next }) => setQuery(mentionQuery(next)),
@@ -347,12 +356,13 @@ export function QuincyRichTextEditor({
       const discard = () => { if (preparedId) void abortEmbeddedImage(scope, preparedId); };
       const setPhase = (phase: "uploading" | "preparing" | "failed") => { if (mountedRef.current && !released) setUploads((entries) => entries.map((entry) => entry.key === key ? { ...entry, phase } : entry)); };
       const onPhase = (phase: "preparing", mediaId: string) => { preparedId = mediaId; setPhase(phase); };
+      let posterStored: boolean | undefined;
       const insert = (mediaId: string) => {
         const live = editorRef.current;
         if (cancelled || !mountedRef.current || !live) return;
         const position = Math.min(insertAt.current.get(key) ?? live.state.doc.content.size, live.state.doc.content.size);
         // insertContentAt selects inserted content by default; an async insert must leave the caret where the author is typing.
-        live.chain().command(({ tr }) => { tr.setMeta(UPLOAD_INSERT_META, true); return true; }).insertContentAt(position, { type: kind, attrs: { mediaId } }, { updateSelection: false }).run();
+        live.chain().command(({ tr }) => { tr.setMeta(UPLOAD_INSERT_META, true); return true; }).insertContentAt(position, { type: kind, attrs: kind === "image" ? { mediaId, alt: imageAltFromFileName(file.name) || null } : { mediaId, ...(posterStored === undefined ? {} : { hasPoster: posterStored }) } }, { updateSelection: false }).run();
       };
       const follow = (work: Promise<string>) => {
         keepRow = false;
@@ -375,7 +385,7 @@ export function QuincyRichTextEditor({
       });
       setUploads((entries) => [...entries, { key, name: file.name || (kind === "video" ? "Video" : "Image"), percent: 0, kind }]);
       const onProgress = (percent: number) => { if (mountedRef.current && !released) setUploads((entries) => entries.map((entry) => entry.key === key ? { ...entry, percent } : entry)); };
-      follow(kind === "video" && "projectId" in scope ? uploadEmbeddedVideo(scope.projectId, file, { signal: controller.signal, onProgress }) : uploadEmbeddedImage(scope, file, onProgress, { signal: controller.signal, onPhase }));
+      follow(kind === "video" && "projectId" in scope ? uploadEmbeddedVideo(scope.projectId, file, { signal: controller.signal, onProgress, onPoster: (stored) => { posterStored = stored; } }) : uploadEmbeddedImage(scope, file, onProgress, { signal: controller.signal, onPhase }));
     }
     setUploadErrors(problems);
   };
@@ -486,7 +496,7 @@ export function QuincyRichTextEditor({
   if (!editor) return null;
 
   const plainText = richTextPlainText(value);
-  const overBytes = richTextDocByteLength(stripLinkPreviewDisplay(value)) > maxBytes;
+  const overBytes = richTextDocByteLength(stripEmbeddedDisplay(value)) > maxBytes;
   const selectMention = (user: MentionableUser) => {
     const activeQuery = query ?? "";
     const from = editor.state.selection.from - activeQuery.length - 1;
@@ -502,7 +512,8 @@ export function QuincyRichTextEditor({
   // every Project surface that renders the composer. It is the installed ReUI `Input`, clicked as soon as it mounts.
   const choose = (kind: "image" | "video") => setPicking((previous) => ({ n: (previous?.n ?? 0) + 1, kind }));
   // The live region stays mounted so screen readers announce a message when it appears, but it takes no space while empty.
-  const liveMessage = overBytes ? "This formatting is too large to save; remove list items or formatting." : nestingBlocked ? "Maximum list nesting is four levels" : "";
+  const CANCELLED_MESSAGE = "Upload cancelled";
+  const liveMessage = overBytes ? "This formatting is too large to save; remove list items or formatting." : nestingBlocked ? "Maximum list nesting is four levels" : uploadCancelled ? CANCELLED_MESSAGE : "";
   const off = (can: boolean) => disabled || !can;
 
   return <div ref={wrapperRef} className="group grid gap-[var(--space-2)]" data-disabled={disabled || undefined}>
@@ -568,7 +579,7 @@ export function QuincyRichTextEditor({
       </div>
     </InputGroup>
     {isDocument && <>
-      {!phone && <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} tableBubbleFloors={tableBubbleFloors} tier={tableTier} onTierChange={setTableTier} />}
+      {!phone && <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} tier={tableTier} onTierChange={setTableTier} />}
       <DeleteTableDialog editor={editor} open={deleteTableOpen} onOpenChange={setDeleteTableOpen} />
     </>}
     {picking !== null && <Input
@@ -576,9 +587,9 @@ export function QuincyRichTextEditor({
       onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); const kind = picking.kind; setPicking(null); if (files.length) addImagesRef.current(files, editor.state.selection.to, kind); }}
       {...{ onCancel: () => setPicking(null) }}
     />}
-    <EmbeddedUploadTray uploads={uploads} errors={uploadErrors} trayRef={trayRef} onCancel={(key) => { running.current.get(key)?.release(); editorRef.current?.commands.focus(); }} onRetry={(key) => running.current.get(key)?.retry()} />
+    <EmbeddedUploadTray uploads={uploads} errors={uploadErrors} onCancel={(key) => { running.current.get(key)?.release(); announceCancelled(); editorRef.current?.commands.focus(); }} onRemove={(key) => { running.current.get(key)?.release(); editorRef.current?.commands.focus(); }} onRetry={(key) => running.current.get(key)?.retry()} />
     <MentionAutocomplete ref={menu} query={query} loadMentionables={loadMentionables} onSelect={selectMention} onDismiss={() => setMentionDismissed(true)} onAccessibilityChange={setMentionA11y} />
     {plainText.length >= limit * COUNTER_THRESHOLD && <div ref={counterRef} data-testid="rich-text-counter" className={cn("text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", plainText.length > limit && "!text-destructive")}>{plainText.length}/{limit}</div>}
-    <div className={liveMessage ? "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive" : "sr-only"} aria-live="polite">{liveMessage}</div>
+    <div className={liveMessage && liveMessage !== CANCELLED_MESSAGE ? "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive" : "sr-only"} aria-live="polite">{liveMessage}</div>
   </div>;
 }

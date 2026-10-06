@@ -17,7 +17,7 @@ vi.mock("../lib/api", async (original) => ({ ...(await original<typeof import(".
 vi.mock("../lib/toast-store", () => ({ pushToast: (message: string, tone?: string) => { h.toasts.push([message, tone]); } }));
 
 import { ApiError } from "../lib/api";
-import { WhiteboardHistoryPanel } from "./WhiteboardHistoryPanel";
+import { HISTORY_REFRESH_QUIET_MS, WhiteboardHistoryPanel } from "./WhiteboardHistoryPanel";
 
 const version = (id: string, createdAt: number, reason: "interval" | "last_leave" | "pre_restore", elementCount: number, name: string | null = "Terry Lee") => ({ id, createdAt, createdBy: name ? { id: "u1", name } : null, reason, elementCount, byteCount: 100 });
 const listing = (generation = 3) => ({ generation, versions: [version("v-old", 1_000_000, "interval", 2), version("v-new", 9_000_000, "last_leave", 7), version("v-mid", 5_000_000, "pre_restore", 5, null)] });
@@ -158,15 +158,112 @@ describe("WhiteboardHistoryPanel (#500)", () => {
     expect(document.activeElement).toBe(restoreFor());
   });
 
-  it("touch: the Restore action and the History tab are 44px at <=721px (#500 browser pass)", async () => {
+  it("Try Again is the default button size (not the 28px sm) and reaches 44px on the board's phone-layout predicate, not a viewport query (#559, #564)", async () => {
+    h.get.mockRejectedValue(new ApiError("nope", 500, undefined));
+    await render(props());
+    const retry = byId("whiteboard-history-retry")!;
+    expect(retry.className).toContain("[body:has([data-phone-layout])_&]:min-h-[44px]");
+    expect(retry.className).not.toContain("h-7");
+  });
+
+  it("History is said once: the title is History, the subtitle is the address, and a lone pane has no tab strip (#559)", async () => {
     h.get.mockResolvedValue(listing());
     await render(props());
-    const restore = document.body.querySelector<HTMLElement>('[aria-label^="Restore "]')!;
-    expect(restore.className).toContain("max-[721px]:min-h-[44px]");
-    expect(restore.className).toContain("max-[721px]:min-w-[44px]");
-    const tab = [...document.body.querySelectorAll<HTMLElement>('[role="tab"]')].find((node) => node.textContent === "History")!;
-    expect(tab.className).toContain("max-[721px]:h-11");
-    expect(tab.parentElement!.className).toContain("max-[721px]:group-data-[orientation=horizontal]/tabs:h-[3.125rem]");
+    const sheet = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
+    const named = (attribute: string) => document.getElementById(sheet.getAttribute(attribute) ?? "")?.textContent;
+    expect(named("aria-labelledby")).toBe("History");
+    expect(named("aria-describedby")).toBe("1 Writes Street");
+    expect(sheet.querySelector('[role="tablist"]')).toBeNull();
+    expect(sheet.querySelector('[role="tab"]')).toBeNull();
+    expect(sheet.querySelectorAll('[data-testid="whiteboard-version-row"]')).toHaveLength(3);
+  });
+
+  it("marks the version the live board equals as Current, with no Restore on it (#559)", async () => {
+    h.get.mockResolvedValue({ ...listing(), currentVersionId: "v-new" });
+    await render(props());
+    const rowOf = (id: string) => document.body.querySelector<HTMLElement>(`[data-version-id="${id}"]`)!;
+    expect(rowOf("v-new").querySelector('[data-testid="whiteboard-version-current"]')?.textContent).toBe("Current");
+    expect(rowOf("v-new").hasAttribute("data-current")).toBe(true);
+    expect(rowOf("v-new").querySelector('[data-testid="whiteboard-version-current"]')!.className).toContain("rounded-full");
+    // The count never wraps ("0 elements" stays on one line) and a long title clips instead of squeezing it.
+    for (const id of ["v-new", "v-mid", "v-old"]) {
+      const count = rowOf(id).querySelector<HTMLElement>('[data-testid="whiteboard-version-count"]')!;
+      expect(count.className).toContain("whitespace-nowrap");
+      expect(count.className).toContain("shrink-0");
+    }
+    expect(rowOf("v-new").querySelector('[aria-label^="Restore "]')).toBeNull();
+    for (const id of ["v-mid", "v-old"]) {
+      expect(rowOf(id).querySelector('[data-testid="whiteboard-version-current"]')).toBeNull();
+      expect(rowOf(id).querySelector('[aria-label^="Restore "]')).not.toBeNull();
+    }
+  });
+
+  it("marks nothing when the board has changed since its last snapshot, or the server names none (#559)", async () => {
+    h.get.mockResolvedValue({ ...listing(), currentVersionId: null });
+    await render(props());
+    expect(document.body.querySelector('[data-testid="whiteboard-version-current"]')).toBeNull();
+  });
+
+  it("the Current marker follows the board: a change while open refreshes the list once it settles, without a loading flash (#559)", async () => {
+    vi.useFakeTimers();
+    try {
+      h.get.mockResolvedValue({ ...listing(), currentVersionId: "v-new" });
+      const changes: { current: (() => void) | null } = { current: null };
+      await render(props({ changes }));
+      const current = () => document.body.querySelector('[data-testid="whiteboard-version-current"]')?.closest("[data-version-id]")?.getAttribute("data-version-id") ?? null;
+      expect(current()).toBe("v-new");
+      expect(changes.current).not.toBeNull();
+      // A burst of strokes is ONE read, after the quiet period.
+      h.get.mockClear();
+      h.get.mockResolvedValue({ ...listing(), currentVersionId: null });
+      for (let n = 0; n < 5; n += 1) { changes.current!(); await act(async () => { await vi.advanceTimersByTimeAsync(HISTORY_REFRESH_QUIET_MS - 100); }); }
+      expect(h.get).not.toHaveBeenCalled();
+      await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+      await flush();
+      expect(h.get).toHaveBeenCalledTimes(1);
+      expect(byId("whiteboard-history-loading")).toBeNull();
+      expect(current()).toBeNull();
+      expect(document.body.querySelector('[data-version-id="v-new"] [aria-label^="Restore "]')).not.toBeNull();
+      // Closing drops the hook and any pending read.
+      changes.current!();
+      await render(props({ changes, open: false }));
+      expect(changes.current).toBeNull();
+      h.get.mockClear();
+      await act(async () => { await vi.advanceTimersByTimeAsync(HISTORY_REFRESH_QUIET_MS * 2); });
+      expect(h.get).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("a single pane is plain content: no focusable unnamed tabpanel (#559)", async () => {
+    h.get.mockResolvedValue(listing());
+    await render(props());
+    const sheet = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(sheet.querySelector('[role="tabpanel"]')).toBeNull();
+    expect(sheet.querySelector('[role="tablist"]')).toBeNull();
+    expect(sheet.querySelector('[data-testid="whiteboard-version-row"]')).not.toBeNull();
+  });
+
+  it("a long author name ellipsizes while the time stays whole (#559)", async () => {
+    h.get.mockResolvedValue({ generation: 1, currentVersionId: null, versions: [version("v1", Date.parse("2020-03-10T05:04:00.000Z"), "interval", 1, "TB8-04 Gate User Renamed")] });
+    await render(props());
+    const row = document.body.querySelector<HTMLElement>('[data-testid="whiteboard-version-row"]')!;
+    const name = [...row.querySelectorAll<HTMLElement>("span")].find((node) => node.children.length === 0 && node.textContent === "TB8-04 Gate User Renamed")!;
+    expect(name.className).toContain("min-w-0");
+    expect(name.className).toContain("truncate");
+    expect(name.parentElement!.className).toContain("min-w-0");
+    const time = [...row.querySelectorAll<HTMLElement>("span")].find((node) => node.textContent?.includes("10 Mar 2020") && node.className.includes("shrink-0"))!;
+    expect(time.className).toContain("whitespace-nowrap");
+  });
+
+  it("two versions saved in the same minute read apart, in Sydney time (#559)", async () => {
+    const minute = Date.parse("2020-03-10T05:04:00.000Z");
+    h.get.mockResolvedValue({ generation: 1, currentVersionId: null, versions: [version("late", minute + 50_000, "last_leave", 4), version("early", minute + 5_000, "interval", 3), version("older", minute - 7_200_000, "interval", 2)] });
+    await render(props());
+    const when = (id: string) => document.body.querySelector<HTMLElement>(`[data-version-id="${id}"]`)!.textContent!;
+    expect(when("late")).toContain("10 Mar 2020, 4:04:50 PM");
+    expect(when("early")).toContain("10 Mar 2020, 4:04:05 PM");
+    expect(when("older")).toContain("10 Mar 2020, 2:04 PM");
+    expect(when("older")).not.toContain("2:04:00");
   });
 
   it("the sheet's own width wins over the registry's w-3/4 (320px, capped to the viewport) (#500 browser pass)", async () => {

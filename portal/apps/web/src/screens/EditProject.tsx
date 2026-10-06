@@ -29,7 +29,7 @@ const DANGER_ROW = "pt-[var(--space-5)] [border-top-style:solid] border-t-[lengt
 const DANGER_LABEL = "block [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground";
 // `!mt`: `tokens/base.css` is imported outside any `@layer`, so its `p { margin: 0 }` beats a
 // plain margin utility from `@layer utilities`. Without the `!` this gap collapses to zero. (§7 case O)
-const DANGER_COPY = "!mt-[var(--space-1)] max-w-[52ch] [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary";
+const DANGER_COPY = "mt-[var(--space-1)] max-w-[52ch] [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary";
 
 function fieldValue(value: string | number | null): string { return value === null ? "" : String(value); }
 function optionalValue(value: string): string | null { return value.trim() || null; }

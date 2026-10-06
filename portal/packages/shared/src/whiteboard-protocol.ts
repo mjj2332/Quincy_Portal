@@ -159,6 +159,8 @@ export type WhiteboardVersionSummary = z.infer<typeof whiteboardVersionSummarySc
 /** `GET /api/projects/:projectId/whiteboard/versions`: the board's current generation (what a restore must expect) and its ready versions. */
 export const whiteboardVersionsResponseSchema = z.object({
   generation: whiteboardGenerationSchema,
+  /** The newest version whose scene hash equals the live board's right now; null when the board has changed since its last snapshot. */
+  currentVersionId: z.string().min(1).nullable(),
   versions: z.array(whiteboardVersionSummarySchema),
 });
 export type WhiteboardVersionsResponse = z.infer<typeof whiteboardVersionsResponseSchema>;

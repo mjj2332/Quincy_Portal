@@ -513,7 +513,7 @@ describe("the uploader's status and retry routes (#495)", () => {
 describe("deleting a HEIC image (#495)", () => {
   it("a Project hard delete leaves no row, no original and no display copy", async () => {
     const projectId = crypto.randomUUID(); const now = Date.now();
-    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, archived_at, created_at, updated_at) VALUES (?, 'Doomed', 'editing_autohdr', 0, ?, ?, ?)").bind(projectId, now, now, now).run();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, archived_at, created_at, updated_at) VALUES (?, 'Doomed', 'editing_autohdr', ?, ?, ?)").bind(projectId, now, now, now).run();
     const ready = await readyHeic({ projectId, state: "attached" }); const pending = await heicRow({ projectId, state: "pending" });
     const displayKey = (await mediaRow(ready.id))!.display_key as string;
     const response = await call(baseEnv, `/api/projects/${projectId}`, "admin", "DELETE");

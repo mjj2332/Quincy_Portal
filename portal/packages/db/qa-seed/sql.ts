@@ -25,9 +25,6 @@ export const FIXTURE_ENTITIES_TABLE = "__quincy_local_fixture_entities";
 /** What an apply USED (the default-editor set it read) — `verify` checks memberships against this,
  * never against today's editors (Sol round 2, finding 6). */
 export const FIXTURE_RUN_RECORDS_TABLE = "__quincy_local_fixture_run_records";
-/** What an apply WROTE for the one live-computed column, `projects.board_position` — `verify`
- * compares against this rather than excluding the column (Sol round 2, finding 5). */
-export const FIXTURE_BOARD_POSITIONS_TABLE = "__quincy_local_fixture_board_positions";
 
 export const CAPABILITY_PREDICATE = `EXISTS (SELECT 1 FROM ${CAPABILITY_TABLE} WHERE capability = '${CAPABILITY_KEY}')`;
 
@@ -97,13 +94,6 @@ export function fixtureRunRecordStatement(runId: string, defaultEditorIds: reado
   );
 }
 
-/** Copies the `board_position` the project insert just computed into the run's record. Emitted
- * directly after each project insert, in the same batch, so the recorded value is exactly what
- * apply wrote — not a later re-read. */
-function boardPositionRecordStatement(runId: string, projectId: string): string {
-  return `INSERT INTO ${FIXTURE_BOARD_POSITIONS_TABLE} (project_id, run_id, board_position)\nSELECT id, ${sqlId(runId, "run id")}, board_position FROM projects\nWHERE id = ${sqlId(projectId, "project id")} AND ${CAPABILITY_PREDICATE};`;
-}
-
 export function entityRegistrationStatements(entities: readonly FixtureEntity[], runId: string): string[] {
   return entities.map((entity) => guardedInsert(
     FIXTURE_ENTITIES_TABLE,
@@ -135,8 +125,8 @@ const PROJECT_COLUMNS = [
 ];
 
 /**
- * `board_position` is not written (#475): the Board order is derived from the data, so a fixture project
- * takes the column's DEFAULT 0, exactly like `createProjectAtomically`.
+ * No Board position is written: the Board order is derived from the data (#470), so a fixture project
+ * carries nothing for it, exactly like `createProjectAtomically`.
  */
 function projectInsertStatement(dataset: QaFixtureDataset, project: QaFixtureDataset["projects"][number]): string {
   const deadline = project.deadline;
@@ -254,7 +244,7 @@ export function buildApplyPlan(dataset: QaFixtureDataset, opts: { runId: string;
     fixtureRunInsertStatement(opts.runId, dataset.anchor, dataset.tiers, opts.appliedAtMs),
     fixtureRunRecordStatement(opts.runId, opts.defaultEditorIds),
     ...entityRegistrationStatements(entities, opts.runId),
-    ...dataset.projects.flatMap((project) => [projectInsertStatement(dataset, project), boardPositionRecordStatement(opts.runId, project.id)]),
+    ...dataset.projects.map((project) => projectInsertStatement(dataset, project)),
     ...dataset.collections.map((collection) => collectionInsertStatement(collection)),
     ...dataset.subtasks.map((subtask) => subtaskInsertStatement(subtask, opts.createdBy)),
     ...dataset.deadlineOccurrences.map((row) => occurrenceInsertStatement(row, opts.createdBy)),
@@ -273,22 +263,17 @@ export function buildApplyPlan(dataset: QaFixtureDataset, opts: { runId: string;
 // Verification snapshot (build spec item 2 — `db:qa:verify` must actually verify). The same values
 // `buildApplyPlan`'s row-builders above insert, but as raw JS values keyed by DB column name
 // instead of SQL literal strings, so `cli.mjs`'s `verify` can fetch an actual row by id and diff it
-// field-by-field. `board_position` is the one column the dataset alone cannot determine —
-// `projectInsertStatement` computes it as a live subquery against sibling rows AT INSERT TIME — so
-// its expectation is the value apply RECORDED right after each insert
-// (`FIXTURE_BOARD_POSITIONS_TABLE`), passed in by `cli.mjs`'s `verify`, never excluded.
+// field-by-field.
 // ---------------------------------------------------------------------------
 
 export type FingerprintRow = Record<string, string | number | null>;
 
-function projectFingerprintRow(project: QaFixtureDataset["projects"][number], boardPositions: Readonly<Record<string, number>>): FingerprintRow {
+function projectFingerprintRow(project: QaFixtureDataset["projects"][number]): FingerprintRow {
   const deadline = project.deadline;
-  const boardPosition = boardPositions[project.id];
-  if (typeof boardPosition !== "number") throw new Error(`No recorded board_position for fixture project ${project.id} — re-apply the fixture.`);
   return {
     id: project.id, street: project.street, suburb: project.suburb, postcode: null, agency_name: project.agencyName,
     agent_name: null, agent_email: null, agent_phone: null, agency_id: null, agent_id: null,
-    shoot_date: project.shootDate, time_window: null, stage_key: project.stageKey, board_position: boardPosition, board_revision: project.boardRevision,
+    shoot_date: project.shootDate, time_window: null, stage_key: project.stageKey, board_revision: project.boardRevision,
     order_no: null, order_id: null, invoice_amount: null, payment_status: null, notes: project.notes,
     production_notes: null, raw_folder_link: null, raw_folder_path: null, cover_asset_id: null, archived_at: null, archived_by: null, edited_arrived_at: null, edited_arrival_attempts: 0, edited_arrival_retry_at: null,
     deadline_local_civil: deadline ? deadline.localCivil : null, deadline_zone: deadline ? "Australia/Sydney" : null,
@@ -318,7 +303,7 @@ function subtaskFingerprintRow(subtask: QaFixtureDataset["subtasks"][number], cr
   };
 }
 
-/** `status`/`terminal_reason` ARE included (unlike `board_position`): once `appliedAtMs` is the
+/** `status`/`terminal_reason` ARE included: once `appliedAtMs` is the
  * RECORDED run's own `applied_at` (item 4's resolution — `cli.mjs`'s `verify` recomputes the
  * manifest with that exact value), occurrence status becomes fully deterministic again, so it is
  * verifiable rather than excluded. */
@@ -350,10 +335,10 @@ function toFingerprintTable<T extends { id: string }>(rows: readonly T[], build:
 /** The recomputed source of truth `db:qa:verify` diffs the live database against — exact id sets
  * AND per-row content, for every generator-owned table including `project_members` (the build spec
  * calls this table out by name; the old `verify` never checked it at all). */
-export function buildVerificationManifest(dataset: QaFixtureDataset, opts: { createdBy: string; boardPositions: Readonly<Record<string, number>> }): VerificationManifest {
+export function buildVerificationManifest(dataset: QaFixtureDataset, opts: { createdBy: string }): VerificationManifest {
   return {
     anchor: dataset.anchor, tiers: dataset.tiers,
-    projects: toFingerprintTable(dataset.projects, (project) => projectFingerprintRow(project, opts.boardPositions)),
+    projects: toFingerprintTable(dataset.projects, projectFingerprintRow),
     subtasks: toFingerprintTable(dataset.subtasks, (s) => subtaskFingerprintRow(s, opts.createdBy)),
     collections: toFingerprintTable(dataset.collections, collectionFingerprintRow),
     deadlineOccurrences: toFingerprintTable(dataset.deadlineOccurrences, (o) => occurrenceFingerprintRow(o, opts.createdBy)),

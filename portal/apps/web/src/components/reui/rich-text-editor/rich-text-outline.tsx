@@ -301,7 +301,7 @@ export function RichTextOutlineList({
           onFocus={() => setFocused(index)}
           onClick={() => onSelect(index)}
           className={cn(
-            "text-foreground-secondary aria-[current=location]:bg-muted aria-[current=location]:text-foreground w-full justify-start [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] tracking-normal normal-case focus-visible:outline-offset-[-2px] aria-[current=location]:font-medium",
+            "text-foreground-secondary aria-[current=location]:bg-muted aria-[current=location]:text-foreground w-full justify-start [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] tracking-normal normal-case outline-offset-[-2px] focus-visible:!outline-offset-[-2px] aria-[current=location]:font-medium",
             LIST_INDENT[entry.depth]
           )}
         >

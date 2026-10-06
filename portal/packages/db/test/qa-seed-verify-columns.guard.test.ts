@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import { VERIFY_DIFF_TABLES, VERIFY_EXCLUDED_COLUMNS } from "../qa-seed/cli.mjs";
 import { anchorReferenceInstantMs, BOOTSTRAP_ADMIN_ID, buildQaFixtureDataset } from "../qa-seed/dataset";
 import {
-  buildApplyPlan, buildVerificationManifest, CAPABILITY_TABLE, FIXTURE_BOARD_POSITIONS_TABLE, FIXTURE_ENTITIES_TABLE, FIXTURE_RUN_RECORDS_TABLE, FIXTURE_RUNS_TABLE,
+  buildApplyPlan, buildVerificationManifest, CAPABILITY_TABLE, FIXTURE_ENTITIES_TABLE, FIXTURE_RUN_RECORDS_TABLE, FIXTURE_RUNS_TABLE,
   type VerificationManifest,
 } from "../qa-seed/sql";
 import { freshFixtureDatabase, type SqliteDatabase } from "./qa-seed-sqlite-executor";
@@ -21,7 +21,7 @@ const EDITOR = "0f3c9a4e-7b1d-4c2e-9a5f-1d2e3f4a5b6c";
 const RUN_ID = "11111111-1111-4111-8111-111111111111";
 
 const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core", "density"], appliedAtMs: anchorReferenceInstantMs(ANCHOR), defaultEditorIds: [EDITOR] });
-const manifest = buildVerificationManifest(dataset, { createdBy: BOOTSTRAP_ADMIN_ID, boardPositions: Object.fromEntries(dataset.projects.map((p) => [p.id, 0])) });
+const manifest = buildVerificationManifest(dataset, { createdBy: BOOTSTRAP_ADMIN_ID });
 const plan = buildApplyPlan(dataset, { runId: RUN_ID, appliedAtMs: anchorReferenceInstantMs(ANCHOR), createdBy: BOOTSTRAP_ADMIN_ID, defaultEditorIds: [EDITOR] });
 
 type DiffTable = { table: string; manifestKey: keyof VerificationManifest };
@@ -48,7 +48,7 @@ function uncoveredColumns(db: SqliteDatabase): string[] {
 
 describe("guard: every column of every table apply writes is compared by verify, or excluded with a reason", () => {
   it("every table apply inserts into (outside the reserved local tables) is fingerprinted by verify", () => {
-    const reserved = new Set([CAPABILITY_TABLE, FIXTURE_RUNS_TABLE, FIXTURE_ENTITIES_TABLE, FIXTURE_RUN_RECORDS_TABLE, FIXTURE_BOARD_POSITIONS_TABLE]);
+    const reserved = new Set([CAPABILITY_TABLE, FIXTURE_RUNS_TABLE, FIXTURE_ENTITIES_TABLE, FIXTURE_RUN_RECORDS_TABLE]);
     const written = new Set([...plan.statements.join("\n").matchAll(/INSERT INTO ([a-z_0-9]+)/g)].map((m) => m[1]!).filter((t) => !reserved.has(t)));
     expect(written.size).toBeGreaterThanOrEqual(5);
     expect([...written].filter((table) => !diffTables.some((d) => d.table === table))).toEqual([]);

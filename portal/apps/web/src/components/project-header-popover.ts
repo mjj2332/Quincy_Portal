@@ -51,3 +51,9 @@ export const TRIGGER_CHEVRON = "size-[var(--space-4)] shrink-0 stroke-[1.5] text
 
 export const POPOVER_CONTENT =
   "w-[360px] max-w-[calc(100vw-2*var(--space-4))] max-h-[var(--available-height)] overflow-y-auto";
+
+/**
+ * #536: the inner padding of a Deadline popover's read-only panel. `DateTimePopoverContent` is `p-0`
+ * (the editable form brings its own `reui/frame` padding), so a panel with no frame needs this itself.
+ */
+export const POPOVER_READONLY_PANEL = "grid gap-[var(--space-3)] p-[var(--space-4)]";

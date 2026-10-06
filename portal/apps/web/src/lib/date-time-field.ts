@@ -1,4 +1,5 @@
 import { isSydneyCalendarDate, sydneyBusinessDate } from "@quincy/shared";
+import { shellChromeBottom } from "./shell-chrome";
 
 /**
  * #421 — the pure rules behind `quincy/DateTimeField`. A value here is always a civil
@@ -137,6 +138,71 @@ export function sameReminderOffsets(a: readonly number[], b: readonly number[]):
 export type PopupCollisionAvoidance = { side?: "shift" | "none"; align?: "shift" | "none"; fallbackAxisSide?: "start" | "end" | "none" };
 export type PopupCollisionPadding = number | { top?: number; right?: number; bottom?: number; left?: number };
 
+/** `--space-4` in px: the gap a date popup keeps from the viewport edge, and the default `collisionPadding` below. */
+export const DATE_TIME_POPUP_EDGE_GAP = 16;
+
+/** `padding` as four edges with the top raised to at least `top`. Used to pin a popup's top to its field row (#537). */
+export function popupPaddingWithTopAtLeast(padding: PopupCollisionPadding, top: number): { top: number; right: number; bottom: number; left: number } {
+  const edges = typeof padding === "number" ? { top: padding, right: padding, bottom: padding, left: padding } : { top: padding.top ?? 0, right: padding.right ?? 0, bottom: padding.bottom ?? 0, left: padding.left ?? 0 };
+  return { ...edges, top: Math.max(edges.top, top) };
+}
+
+type EdgeRect = { top: number; bottom: number };
+/** An item to keep clear of the fade; `required` ones are never skipped for lying outside the body (#587). */
+export type FadeItem = EdgeRect & { required?: boolean; /** Wins over the other required items when they cannot all be cleared (the focused control, WCAG 2.4.11). Implies `required`. */ priority?: boolean };
+
+/**
+ * #537 — the popup body fades each edge by `min(fade, overflow past that edge)`: the top band is
+ * `min(fade, s)` and the bottom band `min(fade, max - s)` at scroll `s`, so a move changes the bands it
+ * is judged against. Selected items (the picked day, the pressed time slot) inside a band read as muddy
+ * grey, not solid ink.
+ *
+ * Solved exactly, not by proposing a move and checking it. With the item at document offsets
+ * `top`..`bottom` and a body of height `H`, it is clear at `s` when `top - s >= min(fade, s)` and
+ * `bottom - s <= H - min(fade, max - s)`; each is a one-sided bound on `s`:
+ *   s <= max(top - fade, top / 2)        and        s >= min(bottom - H + fade, (max + bottom - H) / 2)
+ * so each item owns a closed interval of valid scroll positions. The result is the position nearest to
+ * the current `scrollTop` inside the intersection of those intervals (so the least scroll, in either
+ * direction), or the current `scrollTop` when the intersection is empty. An item taller than the clear
+ * window has no valid position; it asks for its top edge aligned to the top band. Rects share one
+ * coordinate space.
+ *
+ * #587 — an item wholly outside the body's visible area is ignored (scrolling to it would hide the month
+ * navigation for nothing) UNLESS it is `required`: the day the person is about to edit, or the focused
+ * element, must come into view. A required item is never skipped, and when the items cannot all be
+ * cleared together the optional ones give way: the solve retries with the required items alone, and if those conflict too, with the `priority` item (the focused control) alone.
+ */
+export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, items }: { viewport: EdgeRect; scrollTop: number; maxScrollTop: number; fade: number; items: readonly FadeItem[] }): number {
+  const height = viewport.bottom - viewport.top;
+  const max = Math.max(0, maxScrollTop);
+  const clamp = (value: number) => Math.min(Math.max(0, value), max);
+  const solve = (list: readonly FadeItem[]) => {
+    let low = 0;
+    let high = max;
+    for (const item of list) {
+      if (!item.required && (item.bottom <= viewport.top || item.top >= viewport.bottom)) continue;
+      const top = item.top - viewport.top + scrollTop;
+      const bottom = item.bottom - viewport.top + scrollTop;
+      const latest = Math.max(top - fade, top / 2);
+      const earliest = Math.min(bottom - height + fade, (max + bottom - height) / 2);
+      const [from, to] = earliest <= latest ? [earliest, latest] : [clamp(latest), clamp(latest)];
+      low = Math.max(low, from);
+      high = Math.min(high, to);
+    }
+    return { low, high };
+  };
+  const required = items.map((item) => (item.priority ? { ...item, required: true } : item));
+  let range = solve(required);
+  if (range.low > range.high) range = solve(required.filter((item) => item.required));
+  if (range.low > range.high) range = solve(required.filter((item) => item.priority));
+  if (range.low > range.high) return scrollTop;
+  // Whole pixels, toward the safe side: the top fade needs s <= high (floor), the bottom needs s >= low (ceil). A browser snaps scrollTop
+  // to its device-pixel grid (0.5px at DPR 2), and a target sitting exactly on a fade edge lands inside it. Whole pixels are on every such grid.
+  const whole = { low: Math.ceil(range.low - 1e-9), high: Math.floor(range.high + 1e-9) };
+  const safe = whole.low <= whole.high ? whole : range;
+  return Math.min(Math.max(scrollTop, safe.low), safe.high);
+}
+
 /**
  * How a date popup resolves its collision policy (#447, #528): below `sm` it shifts over its
  * trigger; above, it stays on one axis. A caller's override replaces the default outright, and an
@@ -145,6 +211,18 @@ export type PopupCollisionPadding = number | { top?: number; right?: number; bot
 export function resolveDateTimePopupPlacement({ narrow, avoidance, padding }: { narrow: boolean; avoidance?: PopupCollisionAvoidance | undefined; padding?: PopupCollisionPadding | undefined }): { collisionAvoidance: PopupCollisionAvoidance; collisionPadding: PopupCollisionPadding } {
   return {
     collisionAvoidance: avoidance ?? (narrow ? { side: "shift", fallbackAxisSide: "none" } : { fallbackAxisSide: "none" }),
-    collisionPadding: padding ?? 16,
+    collisionPadding: padding ?? DATE_TIME_POPUP_EDGE_GAP,
   };
+}
+
+/**
+ * #528, #587 — for a popup too tall to sit above or below its field: it SHIFTS into view (it may cover
+ * its own trigger) instead of flipping toward the sticky top bar. Shared by New shoot's Deadline and the
+ * Timeline pickers.
+ */
+export const SHELL_AWARE_SHIFT_AVOIDANCE = { side: "shift", align: "shift", fallbackAxisSide: "none" } as const satisfies PopupCollisionAvoidance;
+
+/** `collisionPadding` with the top below the shell header. Read at open time: a cold load has no header yet, and an impersonation banner lowers it. */
+export function shellAwarePopupPadding(): { top: number; right: number; bottom: number; left: number } {
+  return { top: shellChromeBottom() + DATE_TIME_POPUP_EDGE_GAP, right: DATE_TIME_POPUP_EDGE_GAP, bottom: DATE_TIME_POPUP_EDGE_GAP, left: DATE_TIME_POPUP_EDGE_GAP };
 }

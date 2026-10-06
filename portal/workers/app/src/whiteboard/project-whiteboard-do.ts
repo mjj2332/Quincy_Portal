@@ -257,6 +257,11 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
     return this.snapshots.generation();
   }
 
+  /** #559: the live scene's snapshot hash, for the versions listing to mark the version the board still equals. */
+  async currentSceneSha256(): Promise<string> {
+    return this.snapshots.liveSha256();
+  }
+
   /**
    * #500: replaces the scene with a snapshot of this Project. The whole operation holds the object (`blockConcurrencyWhile`),
    * and `restoring` refuses a write that was already in flight. Every failure is a RETURNED result, never a throw: a throw inside

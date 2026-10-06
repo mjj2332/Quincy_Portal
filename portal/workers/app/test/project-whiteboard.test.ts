@@ -1215,11 +1215,22 @@ describe("GET whiteboard versions (#500)", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       generation: 1,
+      currentVersionId: v2.id,
       versions: [
         { id: v2.id, createdAt: expect.any(Number), createdBy: { id: memberId, name: expect.any(String) }, reason: "interval", elementCount: 3, byteCount: v2.byteCount },
         { id: v1.id, createdAt: expect.any(Number), createdBy: { id: memberId, name: expect.any(String) }, reason: "interval", elementCount: 2, byteCount: v1.byteCount },
       ],
     });
+    client.ws.close(1000);
+  });
+
+  it("names the version the live board equals, and none once the board has changed since its last snapshot (#559)", async () => {
+    const { project, client, v1, v2 } = await boardWithHistory();
+    expect(((await (await getVersions("member", project)).json()) as { currentVersionId: string | null }).currentVersionId).toBe(v2.id);
+    await save(client, 3, element("e", 1, 31, { x: 5 }));
+    const dirty = (await (await getVersions("member", project)).json()) as { currentVersionId: string | null };
+    expect(dirty.currentVersionId).toBeNull();
+    expect(v1.id).not.toBe(v2.id);
     client.ws.close(1000);
   });
 
@@ -1265,7 +1276,7 @@ describe("POST whiteboard version restore (#500)", () => {
     expect(backup).toMatchObject({ reason: "pre_restore", createdBy: memberId, ordinal: 3, generation: 1 });
     expect(byIdSorted((await envelopeOf(backup.r2Key)).elements)).toEqual(before);        // the scene as it stood, tombstones and all
     expect((await versionsOf(project)).find((row) => row.id === v2.id)).toBeDefined();
-    expect(await (await getVersions("member", project)).json()).toMatchObject({ generation: 2 });
+    expect(await (await getVersions("member", project)).json()).toMatchObject({ generation: 2, currentVersionId: v1.id });
     expect((await initOf(project)).generation).toBe(2);
     client.ws.close(1000); other.client.ws.close(1000);
   });
@@ -1294,7 +1305,7 @@ describe("POST whiteboard version restore (#500)", () => {
     expect(second.status).toBe(200);
     expect(await second.json()).toEqual(await first.json());
     expect((await versionsOf(project)).filter((row) => row.reason === "pre_restore")).toHaveLength(1);
-    expect(await (await getVersions("member", project)).json()).toMatchObject({ generation: 2 });
+    expect(await (await getVersions("member", project)).json()).toMatchObject({ generation: 2, currentVersionId: v1.id });
     expect(await auditRows(project)).toHaveLength(1);
     const reused = await api("member", "POST", restorePath(project, v2.id), body);
     expect(reused.status).toBe(409); expect(await reused.json()).toMatchObject({ code: "request_id_reused" });

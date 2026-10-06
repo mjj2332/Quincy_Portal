@@ -6,7 +6,7 @@
  * Tailwind `shadow-*`, focus ring widths -- see `reui-skin.guard.test.ts`), and `noUncheckedIndexedAccess`
  * narrowing. `"dark": boolean` is quoted only so the guard's `dark:` matcher does not read a type as a variant.
  *
- * This file: The Frames / Library / History panel. Edits (additive): #500 `rowAttrs` on `PanelRow` (data attributes for a host's test seam and hooks) and `forceRender` on the sheet's scrim (nested under the shell's Dialog Root); a `title` prop replaces the demo title; `panes` is now `Partial<...>` and a tab with no pane is not rendered, because History arrives with #500. `dark:` row fills and a focus ring width dropped (Skin guard). #500 browser pass: `RowAction` and the tab triggers reach 44px at <=721px; the sheet's width is set under the same `data-[side=right]:` variant as the registry's `w-3/4`, so it replaces it. #500 stacking: the sheet passes `z-[var(--z-dialog)]` (and the impersonation top offset) itself; the base `reui/sheet` stays z-50.
+ * This file: The Frames / Library / History panel. Edits (additive): #500 `rowAttrs` on `PanelRow` (data attributes for a host's test seam and hooks) and `forceRender` on the sheet's scrim (nested under the shell's Dialog Root); a `title` prop replaces the demo title; `panes` is now `Partial<...>` and a tab with no pane is not rendered, because History arrives with #500. `dark:` row fills and a focus ring width dropped (Skin guard). #500 browser pass: `RowAction` and the tab triggers reach 44px while a board in the phone layout is on the page (`data-phone-layout`, #564; the sheet is portaled, so it is matched with :has()); the sheet's width is set under the same `data-[side=right]:` variant as the registry's `w-3/4`, so it replaces it. #500 stacking: the sheet passes `z-[var(--z-dialog)]` (and the impersonation top offset) itself; the base `reui/sheet` stays z-50.
  */
 import { Fragment, useEffect, useRef, useState } from "react"
 import { IconTile } from "@/components/reui/icon-tile"
@@ -179,14 +179,20 @@ export function RowText({
 /** A meta line's parts with the dot between them, one line that slides like the title. */
 export function MetaLine({ parts }: { parts: readonly React.ReactNode[] }) {
   return (
-    <RowText className="inline-flex items-center gap-1.5 align-top pointer-coarse:flex-wrap">
-      {parts.map((part, index) => (
-        <Fragment key={index}>
-          {index > 0 ? <Dot /> : null}
-          {part}
-        </Fragment>
-      ))}
-    </RowText>
+    // #559: bounded, not RowText's sliding line: the time group keeps its width and the first part (the author) gives way, so a long name ellipsizes and the time stays whole.
+    <span className="flex min-w-0 items-center gap-1.5 align-top pointer-coarse:flex-wrap">
+      {parts.map((part, index) =>
+        index === 0 ? (
+          <Fragment key={index}>{part}</Fragment>
+        ) : (
+          // #559: each dot travels with the part after it, so a wrapped line never starts or ends on a hanging dot.
+          <span key={index} className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+            <Dot />
+            {part}
+          </span>
+        )
+      )}
+    </span>
   )
 }
 
@@ -287,7 +293,7 @@ export function RowAction({
             disabled={disabled}
             aria-label={label}
             aria-pressed={pressed}
-            className="hover:bg-foreground/10 relative z-10 max-[721px]:min-h-[44px] max-[721px]:min-w-[44px]"
+            className="hover:bg-foreground/10 relative z-10 [body:has([data-phone-layout])_&]:min-h-[44px] [body:has([data-phone-layout])_&]:min-w-[44px]"
             onClick={onClick}
           />
         }
@@ -401,6 +407,10 @@ function PanelTabs({
   activeTabRef,
 }: PanelProps & { activeTabRef?: React.Ref<HTMLButtonElement> }) {
   const tabs = TABS.filter((item) => panes[item.value] !== undefined)
+  // #559: one pane is plain content. Base UI's lone TabsContent would be an unnamed focusable role="tabpanel" with no tab to name it.
+  if (tabs.length === 1) {
+    return <div className="flex min-h-0 flex-1 flex-col">{panes[tabs[0]!.value]}</div>
+  }
   return (
     <Tabs
       value={tab}
@@ -409,20 +419,23 @@ function PanelTabs({
       }}
       className="min-h-0 flex-1 gap-0"
     >
-      <div className="shrink-0 p-3">
-        <TabsList className="w-full max-[721px]:group-data-[orientation=horizontal]/tabs:h-[3.125rem]">
-          {tabs.map((item) => (
-            <TabsTrigger
-              key={item.value}
-              value={item.value}
-              ref={item.value === tab ? activeTabRef : undefined}
-              className="max-[721px]:h-11"
-            >
-              {item.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </div>
+      {/* #559: a lone tab is no choice, and its label repeated the sheet's title; the strip shows only when there is more than one. */}
+      {tabs.length > 1 ? (
+        <div className="shrink-0 p-3">
+          <TabsList className="w-full [body:has([data-phone-layout])_&]:group-data-[orientation=horizontal]/tabs:h-[3.125rem]">
+            {tabs.map((item) => (
+              <TabsTrigger
+                key={item.value}
+                value={item.value}
+                ref={item.value === tab ? activeTabRef : undefined}
+                className="[body:has([data-phone-layout])_&]:h-11"
+              >
+                {item.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </div>
+      ) : null}
       {tabs.map((item) => (
         <TabsContent
           key={item.value}
@@ -481,6 +494,7 @@ function DockedPanel({
  */
 export function BoardPanel({
   title,
+  description,
   panelId,
   tabRef,
   docked,
@@ -491,8 +505,10 @@ export function BoardPanel({
   sheetFocus,
   ...props
 }: PanelProps & {
-  /** #498: the host's board name (the registry hard-codes a demo's). */
+  /** #498: the sheet's title (the registry hard-codes a demo's board name; #559: Quincy's one pane titles it "History"). */
   title: string
+  /** #559: the sheet's subtitle (Quincy passes the project's address); a sentence naming the panes when absent. */
+  description?: string
   /** The docked aside's id, which the header's toggle controls. */
   panelId: string
   /** The active tab, docked or in the sheet: the sheet's first focus and a focus fallback. */
@@ -541,7 +557,7 @@ export function BoardPanel({
         >
           <SheetHeader className="border-b">
             <SheetTitle>{title}</SheetTitle>
-            <SheetDescription>{TABS.filter((item) => props.panes[item.value] !== undefined).map((item) => item.label.toLowerCase()).join(" and ")}</SheetDescription>
+            <SheetDescription>{description ?? `The board's ${TABS.filter((item) => props.panes[item.value] !== undefined).map((item) => item.label.toLowerCase()).join(", ")}.`}</SheetDescription>
           </SheetHeader>
           <PanelTabs {...props} activeTabRef={tabRef} />
         </SheetContent>

@@ -59,11 +59,11 @@ async function call(path: string, method: "POST" | "PUT" | "PATCH", body: unknow
   return { response, editorFolderCalls };
 }
 
-async function seedProject(stageKey: string, shootDate: string | null = null, boardPosition = 0) {
+async function seedProject(stageKey: string, shootDate: string | null = null) {
   const id = crypto.randomUUID();
   const now = Date.now();
-  await database.DB.prepare("INSERT INTO projects (id, street, stage_key, shoot_date, board_position, board_revision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)")
-    .bind(id, `Fill ${id}`, stageKey, shootDate, boardPosition, now, now).run();
+  await database.DB.prepare("INSERT INTO projects (id, street, stage_key, shoot_date, board_revision, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?)")
+    .bind(id, `Fill ${id}`, stageKey, shootDate, now, now).run();
   return id;
 }
 

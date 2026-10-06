@@ -319,6 +319,37 @@ describe("PUT …/poster (#494)", () => {
     expect(logged).toBeDefined(); expect(JSON.stringify(logged)).toContain(written);
   });
 
+  it("a poster PUT that throws after writing the object deletes it and its queue entry, and the PUT's own error still surfaces (#574)", async () => {
+    const { id } = await pending(); let written = "";
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const env = wrapMedia((target, property) => property === "put" ? async (key: string, ...rest: unknown[]) => {
+      written = key; await (target.put as (...a: unknown[]) => Promise<unknown>).call(target, key, ...rest); throw new Error("R2 put threw after commit");
+    } : undefined);
+    const response = await putPoster("member", id, jpegBytes(64), env);
+    errors.mockRestore();
+    expect(response.status).toBe(500);
+    expect(written).toContain("/poster-");
+    expect(await database.MEDIA.head(written)).toBeNull(); expect(await queued(written)).toBeNull();
+    expect((await mediaRow(id))!.poster_key).toBeNull();
+  });
+
+  it("a poster PUT that throws after writing, with R2 refusing the delete, leaves the key re-queued and the PUT's error surfacing (#574)", async () => {
+    const { id } = await pending(); let written = "";
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const env = wrapMedia((target, property) => {
+      if (property === "delete") return async () => { throw new Error("R2 down"); };
+      if (property === "put") return async (key: string, ...rest: unknown[]) => {
+        written = key; await (target.put as (...a: unknown[]) => Promise<unknown>).call(target, key, ...rest); throw new Error("R2 put threw after commit");
+      };
+      return undefined;
+    });
+    const response = await putPoster("member", id, jpegBytes(64), env);
+    errors.mockRestore();
+    expect(response.status).toBe(500);
+    expect(await database.MEDIA.head(written)).not.toBeNull();
+    expect(await queued(written)).toMatchObject({ storageKey: written, projectId: ids.project });
+  });
+
   it("keeps the poster when the adoption batch commits and then throws and the verification read throws too: object present, row references it, no queue entry, key logged", async () => {
     const { id } = await pending(); let written = ""; let committed = false;
     const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -359,7 +390,7 @@ describe("PUT …/poster (#494)", () => {
 
   it("leaves no orphan when the Project cascades away mid-write: with R2 refusing the delete, the key waits in the cleanup queue", async () => {
     const projectId = crypto.randomUUID(); const now = Date.now();
-    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Cascade', 'editing_autohdr', 0, ?, ?)").bind(projectId, now, now).run();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Cascade', 'editing_autohdr', ?, ?)").bind(projectId, now, now).run();
     await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, ids.member, now).run();
     const { id } = await pending({ projectId });
     let written = "";
@@ -615,6 +646,20 @@ describe("a comment with a video (#494)", () => {
     expect(comment.content.content.filter((node) => node.type === "video").map((node) => node.attrs?.mediaId)).toEqual([id]);
     expect(await mediaRow(id)).toMatchObject({ state: "attached", owner_kind: "project_comment", owner_id: comment.id });
     for (const who of ["admin", "external"] as const) { const response = await get(`/media/embedded/${id}`, who, { range: "bytes=0-9" }); expect(response.status, who).toBe(206); await consume(response); }
+  });
+
+  it("serves a video with its poster flag from the media record, stores only the id, and tells a posterless video apart (#556)", async () => {
+    const withPoster = await video("pending", { poster: true }); const without = await video();
+    // The browser sends its own flag (it keeps one on the node); the server trusts only the media record.
+    const sent = videoDoc(withPoster, without).content.map((node) => node.type === "video" ? { ...node, attrs: { ...node.attrs, hasPoster: node.attrs!.mediaId === without } } : node);
+    const comment = await created(await post("member", { type: "doc", content: sent }));
+    const flags = (content: Array<{ type: string; attrs?: Record<string, unknown> }>) => content.filter((node) => node.type === "video").map((node) => node.attrs);
+    expect(flags(comment.content.content)).toEqual([{ mediaId: withPoster, hasPoster: true }, { mediaId: without, hasPoster: false }]);
+    const stored = await database.DB.prepare("SELECT content_json FROM project_comments WHERE id = ?").bind(comment.id).first<{ content_json: string }>();
+    expect(flags(JSON.parse(stored!.content_json).content)).toEqual([{ mediaId: withPoster }, { mediaId: without }]);
+    const listed = (await (await request(`/api/projects/${ids.project}/comments`, "member")).json()) as { comments: Array<{ id: string; content: { content: Array<{ type: string; attrs?: Record<string, unknown> }> } }> };
+    expect(flags(listed.comments.find((item) => item.id === comment.id)!.content.content)).toEqual([{ mediaId: withPoster, hasPoster: true }, { mediaId: without, hasPoster: false }]);
+    expect((await get(`/media/embedded/${without}/poster`, "member")).status).toBe(404);
   });
 
   it("accepts a video-only comment and an External editor's own video", async () => {
