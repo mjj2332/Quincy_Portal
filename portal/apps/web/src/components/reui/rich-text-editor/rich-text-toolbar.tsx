@@ -24,7 +24,6 @@
 //    keys / Home / End walk it. Intended; flagged to design-review.
 import {
   useLayoutEffect,
-  useState,
   useRef,
   useSyncExternalStore,
   type ComponentProps,
@@ -33,6 +32,7 @@ import {
   type ReactNode,
 } from "react"
 import { cn } from "@/lib/utils"
+import { SCROLL_FADE_MASK_CLASSES, useScrollFade } from "@/lib/use-scroll-fade"
 
 import { Button } from "@/components/reui/button"
 import { Kbd, KbdGroup } from "@/components/reui/kbd"
@@ -120,7 +120,7 @@ export function RichTextToolbar({
   ...props
 }: ComponentProps<"div">) {
   const ref = useRef<HTMLDivElement>(null)
-  const [fade, setFade] = useState<"none" | "start" | "end" | "both">("none")
+  const { fade, onScroll } = useScrollFade(ref)
   const activeRef = useRef<HTMLElement | null>(null)
 
   function items() {
@@ -143,27 +143,7 @@ export function RichTextToolbar({
   // after every render instead of pointing at a disabled button.
   useLayoutEffect(() => {
     rove(activeRef.current)
-    // Children come and go (the phone table group), so the fade follows them; setFade bails out on an equal value.
-    measureFade()
   })
-
-  // Fade only the side that has more content: scrolled to the end, the last control (Redo) is not faded.
-  function measureFade() {
-    const el = ref.current
-    if (!el) return
-    const more = (start: boolean, end: boolean) =>
-      setFade(start && end ? "both" : start ? "start" : end ? "end" : "none")
-    more(el.scrollLeft > 1, el.scrollLeft + el.clientWidth < el.scrollWidth - 1)
-  }
-
-  useLayoutEffect(() => {
-    measureFade()
-    const el = ref.current
-    if (!el || typeof ResizeObserver === "undefined") return
-    const observer = new ResizeObserver(measureFade)
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [])
 
   function handleFocus(event: FocusEvent<HTMLDivElement>) {
     if (event.target.matches(TOOLBAR_ITEM)) {
@@ -193,11 +173,12 @@ export function RichTextToolbar({
       role="toolbar"
       aria-orientation="horizontal"
       data-fade={fade}
-      onScroll={measureFade}
+      onScroll={onScroll}
       onFocus={handleFocus}
       onKeyDown={handleKeyDown}
       className={cn(
-        "flex items-center gap-1 p-[var(--space-1)] overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden data-[fade=end]:[mask-image:linear-gradient(to_right,black_85%,transparent)] data-[fade=start]:[mask-image:linear-gradient(to_left,black_85%,transparent)] data-[fade=both]:[mask-image:linear-gradient(to_right,transparent,black_15%,black_85%,transparent)]",
+        "flex items-center gap-1 p-[var(--space-1)] overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+        SCROLL_FADE_MASK_CLASSES,
         className
       )}
       {...props}
