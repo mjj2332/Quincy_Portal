@@ -44,7 +44,7 @@ import { RichTextOutlineRail, scrollToRichTextHeading, useRichTextActiveHeading,
 import { RICH_TEXT_BASIC_SLASH_ITEMS, RICH_TEXT_SLASH_KEY, RichTextSlashCommand } from "./reui/rich-text-editor/rich-text-slash-menu";
 import { useRichTextState } from "./reui/rich-text-editor/rich-text-state";
 import { editorOwnsBubbleBar } from "./reui/rich-text-editor/rich-text-bubble-bar";
-import { RICH_TEXT_TABLE_SLASH_ITEM, RichTextTableBubble, RichTextTableTools } from "./reui/rich-text-editor/rich-text-table";
+import { RICH_TEXT_TABLE_SLASH_ITEM, RichTextTableBubble, RichTextTableMenu, RichTextTableTools } from "./reui/rich-text-editor/rich-text-table";
 import type { TableBubbleTier } from "./reui/rich-text-editor/rich-text-table-position";
 import {
   RICH_TEXT_PHONE_QUERY,
@@ -83,7 +83,8 @@ const EDITOR_CONTENT_UTILITIES =
   "bg-transparent focus-visible:!outline-none ";
 
 /** Room for the outline rail's dashes at the right edge (the rail is hidden on a phone). */
-const DOCUMENT_CONTENT_UTILITIES = "min-[722px]:pe-12 ";
+// scroll-mt: an outline-rail jump (`scrollToRichTextHeading`) must land the heading clear of the shell header AND the stuck toolbar (#594).
+const DOCUMENT_CONTENT_UTILITIES = "min-[722px]:pe-12 [&_h2]:scroll-mt-[calc(var(--shell-header-height)+var(--impersonation-banner-height,0px)+3.5rem)] [&_h3]:scroll-mt-[calc(var(--shell-header-height)+var(--impersonation-banner-height,0px)+3.5rem)] ";
 
 // The group wrapper's call-site divergences from `InputGroup` (#376): `has-disabled:bg-card` because
 // the base's deep `:has(:disabled)` would paint the whole field sunken as soon as Undo/Redo are
@@ -180,6 +181,7 @@ export function QuincyRichTextEditor({
   const announceCancelled = () => { clearCancelTimer(); setUploadCancelled(false); cancelTimer.current = setTimeout(() => { cancelTimer.current = null; setUploadCancelled(true); }, 0); };
   const [deleteTableOpen, setDeleteTableOpen] = useState(false);
   const pageRef = useRef<HTMLDivElement>(null);
+  const addonRef = useRef<HTMLDivElement>(null);
   const [uploads, setUploads] = useState<UploadingMedia[]>([]);
   const [uploadErrors, setUploadErrors] = useState<string[]>([]);
   const uploadSeq = useRef(0);
@@ -295,7 +297,7 @@ export function QuincyRichTextEditor({
     toolbarRef.current = tableInToolbar;
     // Only focus inside THIS editor's own toolbar group or bar counts: another mounted editor must not claim it.
     const active = document.activeElement;
-    const own = active?.closest('[data-testid="rich-text-table-tools"]') != null && wrapperRef.current?.contains(active) === true
+    const own = active?.closest('[data-testid="rich-text-table-tools"], [data-testid="rich-text-table-menu"]') != null && wrapperRef.current?.contains(active) === true
       || (editorRef.current != null && editorOwnsBubbleBar(editorRef.current, active));
     refocusRef.current = own;
   }
@@ -518,10 +520,10 @@ export function QuincyRichTextEditor({
 
   return <div ref={wrapperRef} className="group grid gap-[var(--space-2)]" data-disabled={disabled || undefined}>
     <InputGroup data-testid="rich-text-field" className={FIELD_GROUP} data-disabled={disabled || undefined}>
-      <InputGroupAddon align="block-start" className="p-[var(--space-1)] cursor-default">
+      <InputGroupAddon ref={addonRef} align="block-start" className={cn("p-[var(--space-1)] cursor-default", isDocument && "rich-text-toolbar-sticky")}>
         <RichTextToolbar aria-label="Formatting" className="w-full min-w-0 gap-[var(--space-2)]">
-          {/* On a phone the table controls lead the scrolling toolbar; they stay while the editor is busy, disabled. */}
-          {isDocument && tableInToolbar && state.inTable && <RichTextTableTools editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} disabled={disabled || !state.editable} />}
+          {/* On a phone the table controls lead the scrolling toolbar; they stay while the editor is busy, disabled. On a desktop they are the Table menu in the Insert-table slot (#595). */}
+          {isDocument && phone && state.inTable && <RichTextTableTools editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} disabled={disabled || !state.editable} />}
           <RichTextToolbarGroup label="Text style">
             <RichTextToggle label="Bold" shortcut={["mod", "B"]} pressed={state.bold} disabled={off(state.canBold)} onToggle={() => editor.chain().focus().toggleBold().run()}><span aria-hidden="true" className="font-bold">B</span></RichTextToggle>
             <RichTextToggle label="Italic" shortcut={["mod", "I"]} pressed={state.italic} disabled={off(state.canItalic)} onToggle={() => editor.chain().focus().toggleItalic().run()}><span aria-hidden="true" className="italic">I</span></RichTextToggle>
@@ -555,7 +557,9 @@ export function QuincyRichTextEditor({
             <RichTextToolbarGroup label="Layout">
               <RichTextAlignMenu editor={editor} state={state} disabled={disabled} />
               <RichTextHighlightPopover editor={editor} state={state} />
-              <RichTextButton label="Insert table" disabled={off(state.canInsertTable)} onClick={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}><TableIcon aria-hidden="true" /></RichTextButton>
+              {!phone && tableTier === "none"
+                ? <RichTextTableMenu editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} disabled={disabled || !state.editable} />
+                : <RichTextButton label="Insert table" disabled={off(state.canInsertTable)} onClick={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}><TableIcon aria-hidden="true" /></RichTextButton>}
             </RichTextToolbarGroup>
           </>}
           {/* On a phone the toolbar scrolls sideways, which would leave Insert image off-screen: there it comes first (reversed, so the separator follows it). */}
@@ -579,7 +583,7 @@ export function QuincyRichTextEditor({
       </div>
     </InputGroup>
     {isDocument && <>
-      {!phone && <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} tier={tableTier} onTierChange={setTableTier} />}
+      {!phone && <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} tier={tableTier} onTierChange={setTableTier} ceiling={() => addonRef.current?.getBoundingClientRect().bottom ?? 0} />}
       <DeleteTableDialog editor={editor} open={deleteTableOpen} onOpenChange={setDeleteTableOpen} />
     </>}
     {picking !== null && <Input

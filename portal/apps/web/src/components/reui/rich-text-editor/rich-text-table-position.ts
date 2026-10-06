@@ -155,6 +155,15 @@ export interface TableBubbleOptionsInput {
 const documentViewport = () => ({ top: shellChromeBottom(), bottom: document.documentElement.clientHeight })
 
 /**
+ * The visible viewport below the shell header AND below `ceiling()`: the sticky composer toolbar (#594), whose bottom
+ * is a second chrome edge once it is stuck. Unstuck, the toolbar's bottom sits above the surface, so the `max` changes nothing.
+ */
+export const viewportBelow = (ceiling?: () => number) => () => ({
+  top: Math.max(shellChromeBottom(), ceiling?.() ?? 0),
+  bottom: document.documentElement.clientHeight,
+})
+
+/**
  * BubbleMenu `options` for the table bar. offset, flip and shift take derivable options, so the zone is rebuilt
  * on every positioning pass from fresh rects and the bar's real height (no scroll offsets: all rects are
  * client coordinates). The same `gap` feeds the offset and the flip/shift padding, so the side flip judges is the

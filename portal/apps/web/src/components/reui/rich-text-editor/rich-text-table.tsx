@@ -27,6 +27,10 @@
 //    bar's tier is "none", the same controls render as the FIRST group of the formatting toolbar instead
 //    (`QuincyRichTextEditor`), because a floating bar has no room around the table (#535). Below 721px the bar is
 //    unmounted; at "none" it is inert, so the two are never both usable.
+//    (#595 supersedes that for a desktop at tier "none": there the group does NOT lead the toolbar, it would shove every
+//    control sideways; the Insert-table slot becomes the `RichTextTableMenu` below, so the toolbar keeps its order.
+//    Only the phone still leads with `RichTextTableTools`.)
+// 9. The bar takes an optional `ceiling` (#594): the sticky composer toolbar's bottom, a second chrome edge under the header.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react"
 import { findParentNodeClosestToPos, type Editor } from "@tiptap/react"
 import { BubbleMenu } from "@tiptap/react/menus"
@@ -34,6 +38,7 @@ import { BubbleMenu } from "@tiptap/react/menus"
 import { Button } from "@/components/reui/button"
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
@@ -48,7 +53,7 @@ import {
 } from "@/components/reui/tooltip"
 import { RICH_TEXT_TABLE_MAX_COLUMNS, RICH_TEXT_TABLE_MAX_ROWS } from "@quincy/shared"
 import { tableDimensions } from "@/lib/rich-text-tiptap"
-import { readVisualOffset, tableBubbleAnchor, tableBubbleOptions, type TableBubbleTier } from "./rich-text-table-position"
+import { readVisualOffset, tableBubbleAnchor, tableBubbleOptions, viewportBelow, type TableBubbleTier } from "./rich-text-table-position"
 import { RichTextBubbleBar, focusFirstToolbarStop, fromOwnDom } from "./rich-text-bubble-bar"
 import type { RichTextSlashItem } from "./rich-text-slash-menu"
 import { useRichTextSelector } from "./rich-text-state"
@@ -58,7 +63,7 @@ import {
   RichTextToolbarGroup,
   RichTextToolbarSeparator,
 } from "./rich-text-toolbar"
-import { TableIcon, BetweenHorizontalEndIcon, BetweenVerticalEndIcon, PanelTopIcon, Trash2Icon, Rows3Icon, Columns3Icon } from "lucide-react"
+import { ChevronDownIcon, TableIcon, BetweenHorizontalEndIcon, BetweenVerticalEndIcon, PanelTopIcon, Trash2Icon, Rows3Icon, Columns3Icon } from "lucide-react"
 
 export const RICH_TEXT_TABLE_SLASH_ITEM: RichTextSlashItem = {
   id: "table",
@@ -188,6 +193,8 @@ interface RichTextTableBubbleProps {
   tier?: TableBubbleTier | null
   /** Fired when the bar's tier changes while the caret is in a table. */
   onTierChange?: (tier: TableBubbleTier) => void
+  /** Client-Y of a second chrome edge below the shell header (the stuck composer toolbar's bottom): the bar never docks above it. */
+  ceiling?: () => number
 }
 
 interface RichTextTableControlsProps {
@@ -195,6 +202,15 @@ interface RichTextTableControlsProps {
   onDeleteTable: () => void
   /** The editor is read-only or busy: every control is disabled, the group stays. */
   disabled?: boolean
+}
+
+/** The table commands, shared by the floating bar, the phone group and the desktop Table menu: one definition each. */
+export const tableCommands = {
+  addRow: (editor: Editor) => editor.chain().focus().addRowAfter().run(),
+  addColumn: (editor: Editor) => editor.chain().focus().addColumnAfter().run(),
+  toggleHeaderRow: (editor: Editor) => editor.chain().focus().toggleHeaderRow().run(),
+  deleteRow: (editor: Editor) => editor.chain().focus().deleteRow().run(),
+  deleteColumn: (editor: Editor) => editor.chain().focus().deleteColumn().run(),
 }
 
 /** Add row / column, Header row and Delete: the table's controls, in the floating bar and on the phone alike. */
@@ -211,14 +227,14 @@ export function RichTextTableControls({
         <RichTextButton
           label="Add row below"
           disabled={disabled || !table.canAddRow}
-          onClick={() => editor.chain().focus().addRowAfter().run()}
+          onClick={() => tableCommands.addRow(editor)}
         >
           <BetweenHorizontalEndIcon aria-hidden="true" />
         </RichTextButton>
         <RichTextButton
           label="Add column right"
           disabled={disabled || !table.canAddColumn}
-          onClick={() => editor.chain().focus().addColumnAfter().run()}
+          onClick={() => tableCommands.addColumn(editor)}
         >
           <BetweenVerticalEndIcon aria-hidden="true" />
         </RichTextButton>
@@ -228,7 +244,7 @@ export function RichTextTableControls({
         label="Header row"
         pressed={table.headerRow}
         disabled={disabled}
-        onToggle={() => editor.chain().focus().toggleHeaderRow().run()}
+        onToggle={() => tableCommands.toggleHeaderRow(editor)}
       >
         <PanelTopIcon aria-hidden="true" />
       </RichTextToggle>
@@ -263,14 +279,14 @@ export function RichTextTableControls({
             <DropdownMenuLabel>Delete</DropdownMenuLabel>
             <DropdownMenuItem
               disabled={disabled || !table.canDeleteRow}
-              onClick={() => editor.chain().focus().deleteRow().run()}
+              onClick={() => tableCommands.deleteRow(editor)}
             >
               <Rows3Icon aria-hidden="true" />
               Delete Row
             </DropdownMenuItem>
             <DropdownMenuItem
               disabled={disabled || !table.canDeleteColumn}
-              onClick={() => editor.chain().focus().deleteColumn().run()}
+              onClick={() => tableCommands.deleteColumn(editor)}
             >
               <Columns3Icon aria-hidden="true" />
               Delete Column
@@ -293,6 +309,7 @@ export function RichTextTableBubble({
   onDeleteTable,
   tier = null,
   onTierChange,
+  ceiling,
 }: RichTextTableBubbleProps) {
   // The anchor and the zone share ONE rect (the whole table's vertical extent and the active cell's column, `tableBubbleAnchor`); re-resolved on each pass.
   const readAnchor = useCallback(() => {
@@ -323,10 +340,12 @@ export function RichTextTableBubble({
   // Options are rebuilt when the caret enters or leaves a table, so the tier's "only on change" memory starts over.
   const inTable = useRichTextSelector(editor, (current) => current?.isActive("table") ?? false)
   const onTierChangeRef = useRef(onTierChange)
+  const ceilingRef = useRef(ceiling)
 
   useLayoutEffect(() => {
     onTierChangeRef.current = onTierChange
-  }, [onTierChange])
+    ceilingRef.current = ceiling
+  }, [onTierChange, ceiling])
 
   const options = useMemo(
     () => {
@@ -335,6 +354,7 @@ export function RichTextTableBubble({
       return tableBubbleOptions({
         surface: () => editor.view.dom.getBoundingClientRect(),
         row: () => readAnchor() ?? readActiveRowRect(editor),
+        viewport: viewportBelow(() => ceilingRef.current?.() ?? 0),
         visualOffset: () => readVisualOffset(),
         // A late pass after the caret left the table must not resurrect the group.
         onTier: (next) => {
@@ -435,5 +455,112 @@ export function RichTextTableTools({
       </RichTextToolbarGroup>
       <RichTextToolbarSeparator />
     </div>
+  )
+}
+
+interface RichTextTableMenuProps {
+  editor: Editor
+  onDeleteTable: () => void
+  disabled?: boolean
+}
+
+/**
+ * The desktop's table controls at tier "none" (#595): one "Table" menu standing in the Insert-table slot of the Layout
+ * group (Insert table cannot act inside a table anyway), so nothing in the toolbar shifts sideways. Same commands as the
+ * bar (`tableCommands`). Alt+F10 from the text focuses the trigger; Escape on it returns to the text (capture phase).
+ */
+export function RichTextTableMenu({ editor, onDeleteTable, disabled = false }: RichTextTableMenuProps) {
+  const table = useRichTextSelector(editor, readTable)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+
+  // Appearing must not leave the slot scrolled out of a narrow toolbar: write scrollLeft (a call that scrolls the page itself would jump it).
+  useLayoutEffect(() => {
+    const trigger = triggerRef.current
+    const scroller = trigger?.closest<HTMLElement>("[role='toolbar']")
+
+    if (!trigger || !scroller) return
+    const box = trigger.getBoundingClientRect()
+    const view = scroller.getBoundingClientRect()
+
+    if (box.right > view.right) scroller.scrollLeft += box.right - view.right
+    else if (box.left < view.left) scroller.scrollLeft -= view.left - box.left
+  }, [])
+
+  useEffect(() => {
+    const { dom } = editor.view
+
+    function handleShortcut(event: KeyboardEvent) {
+      const trigger = triggerRef.current
+
+      if (!event.altKey || event.key !== "F10" || !trigger?.isConnected || trigger.closest("[inert]")) return
+      event.preventDefault()
+      trigger.focus()
+    }
+
+    dom.addEventListener("keydown", handleShortcut)
+    return () => dom.removeEventListener("keydown", handleShortcut)
+  }, [editor])
+
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLSpanElement>) {
+    if (event.key !== "Escape" || !fromOwnDom(event)) return
+
+    event.preventDefault()
+    editor.commands.focus()
+  }
+
+  return (
+    <span className="flex shrink-0" aria-keyshortcuts="Alt+F10" onKeyDownCapture={handleKeyDown}>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              ref={triggerRef}
+              variant="ghost"
+              size="sm"
+              aria-label="Table"
+              disabled={disabled}
+              data-toolbar-item=""
+              data-testid="rich-text-table-menu"
+              className="max-[721px]:h-11"
+            />
+          }
+        >
+          Table
+          <ChevronDownIcon aria-hidden="true" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-auto" finalFocus={() => editor.view.dom}>
+          <DropdownMenuGroup>
+            <DropdownMenuItem disabled={disabled || !table.canAddRow} onClick={() => tableCommands.addRow(editor)}>
+              <BetweenHorizontalEndIcon aria-hidden="true" />
+              Add row below
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={disabled || !table.canAddColumn} onClick={() => tableCommands.addColumn(editor)}>
+              <BetweenVerticalEndIcon aria-hidden="true" />
+              Add column right
+            </DropdownMenuItem>
+            <DropdownMenuCheckboxItem checked={table.headerRow} closeOnClick disabled={disabled} onCheckedChange={() => tableCommands.toggleHeaderRow(editor)}>
+              <PanelTopIcon aria-hidden="true" />
+              Header row
+            </DropdownMenuCheckboxItem>
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuGroup>
+            <DropdownMenuItem disabled={disabled || !table.canDeleteRow} onClick={() => tableCommands.deleteRow(editor)}>
+              <Rows3Icon aria-hidden="true" />
+              Delete Row
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={disabled || !table.canDeleteColumn} onClick={() => tableCommands.deleteColumn(editor)}>
+              <Columns3Icon aria-hidden="true" />
+              Delete Column
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem variant="destructive" disabled={disabled} onClick={onDeleteTable}>
+            <Trash2Icon aria-hidden="true" />
+            Delete Table
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </span>
   )
 }

@@ -1661,11 +1661,12 @@ describe("table bar with no room falls back to the toolbar group (#535)", () => 
     });
     return host.querySelector<HTMLElement>('[contenteditable="true"]')!;
   }
-  const tools = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-testid="rich-text-table-tools"]');
+  // Desktop (#595): the cramped fallback is the Table menu standing in the Insert-table slot, not a leading group.
+  const tools = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-testid="rich-text-table-menu"]');
   const bubble = () => document.querySelector<HTMLElement>('[data-testid="rich-text-table-bubble"]');
   const usable = (label: string) => [...document.querySelectorAll<HTMLElement>(`[aria-label="${label}"]`)].filter((element) => !element.closest("[inert]") && element.closest("[aria-hidden='true']") === null);
 
-  it("a one-row table between two paragraphs: the bar is inert, invisible and tier none, the toolbar group carries the controls, and exactly one control set is usable", async () => {
+  it("a one-row table between two paragraphs: the bar is inert, invisible and tier none, the Table menu stands in the Insert-table slot, and the bar's own controls are not usable", async () => {
     const host = mount(); const editor = await renderDoc(host, oneRow());
     await caretIn(editor, "Mon");
     await waitForCondition(() => tools(host) !== null, "toolbar table group");
@@ -1674,9 +1675,9 @@ describe("table bar with no room falls back to the toolbar group (#535)", () => 
     expect(bubble()!.hasAttribute("inert")).toBe(true);
     expect(bubble()!.getAttribute("aria-hidden")).toBe("true");
     expect(bubble()!.className).toContain("invisible");
-    const addRow = usable("Add row below");
-    expect(addRow.length).toBe(1);
-    expect(tools(host)!.contains(addRow[0]!)).toBe(true);
+    // The bar's buttons are inert (usable() skips them); the menu's items mount only while it is open.
+    expect(usable("Add row below").length).toBe(0);
+    expect(host.querySelector('[data-testid="rich-text-table-tools"]')).toBeNull();
   });
 
   it("at tier none Tiptap's OUTER bubble element leaves the tab order too: inert, aria-hidden, tabindex -1 (reverse Tab cannot land on it)", async () => {
@@ -1721,16 +1722,104 @@ describe("table bar with no room falls back to the toolbar group (#535)", () => 
     expect(active === editor || editor.contains(active) || tools(host)!.contains(active)).toBe(true);
   });
 
-  it("Alt+F10 from the text lands in the toolbar group, not in the inert bar", async () => {
+  it("Alt+F10 from the text lands in the Table menu, not in the inert bar", async () => {
     const host = mount(); const editor = await renderDoc(host, oneRow());
     await caretIn(editor, "Mon");
-    await waitForCondition(() => tools(host) !== null, "toolbar table group");
+    await waitForCondition(() => tools(host) !== null, "Table menu");
     const event = await keydown(editor, "F10", { altKey: true });
     expect(event.defaultPrevented).toBe(true);
-    const addRow = tools(host)!.querySelector<HTMLElement>('[aria-label="Add row below"]')!;
-    expect(document.activeElement).toBe(addRow);
-    // The bar lets go of its bubble once focus has left the text (it is not near the bar), so it may be gone.
+    expect(document.activeElement).toBe(tools(host));
     expect(bubble()?.contains(document.activeElement) ?? false).toBe(false);
+  });
+
+  describe("desktop: the Insert-table slot becomes a Table menu (#595)", () => {
+    const menuTrigger = (host: HTMLElement) => host.querySelector<HTMLButtonElement>('[data-testid="rich-text-table-menu"]');
+    const itemLabels = (host: HTMLElement) => [...toolbarOf(host).querySelectorAll<HTMLElement>("[data-toolbar-item]")].map((item) => item.getAttribute("aria-label") ?? item.textContent ?? "");
+    const toolbarOf = (host: HTMLElement) => host.querySelector<HTMLElement>('[aria-label="Formatting"]')!;
+    const menuItem = (text: string) => [...document.querySelectorAll<HTMLElement>('[role="menuitem"], [role="menuitemcheckbox"]')].find((entry) => entry.textContent?.includes(text))!;
+
+    it("swaps Insert table for the Table menu in place: the toolbar's order is unchanged and no phone group is mounted", async () => {
+      const host = mount(); const editor = await renderDoc(host, oneRow());
+      await caretIn(editor, "before");
+      const outside = itemLabels(host);
+      expect(outside).toContain("Insert table");
+      expect(menuTrigger(host)).toBeNull();
+      await caretIn(editor, "Mon");
+      await waitForCondition(() => menuTrigger(host) !== null, "Table menu");
+      expect(host.querySelector('[data-testid="rich-text-table-tools"]')).toBeNull();
+      expect(itemLabels(host).map((label) => label === "Table" ? "Insert table" : label)).toEqual(outside);
+      expect(host.querySelector('[aria-label="Insert table"]')).toBeNull();
+      // It sits in the Layout group, where Insert table was.
+      expect(menuTrigger(host)!.closest('[role="group"][aria-label="Layout"]')).not.toBeNull();
+    });
+
+    it("does not reset the toolbar's scroll position on entering the table", async () => {
+      const host = mount(); const editor = await renderDoc(host, oneRow());
+      toolbarOf(host).scrollLeft = 40;
+      await caretIn(editor, "Mon");
+      await waitForCondition(() => menuTrigger(host) !== null, "Table menu");
+      expect(toolbarOf(host).scrollLeft).toBe(40);
+    });
+
+    it("Alt+F10 from the text focuses the menu trigger", async () => {
+      const host = mount(); const editor = await renderDoc(host, oneRow());
+      await caretIn(editor, "Mon");
+      await waitForCondition(() => menuTrigger(host) !== null, "Table menu");
+      const event = await keydown(editor, "F10", { altKey: true });
+      expect(event.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(menuTrigger(host));
+    });
+
+    it("Escape on the trigger returns focus to the text", async () => {
+      const host = mount(); const editor = await renderDoc(host, oneRow());
+      await caretIn(editor, "Mon");
+      await waitForCondition(() => menuTrigger(host) !== null, "Table menu");
+      await keydown(editor, "F10", { altKey: true });
+      await keydown(menuTrigger(host)!, "Escape");
+      expect(document.activeElement === editor || editor.contains(document.activeElement)).toBe(true);
+    });
+
+    it("its items run the bar's commands: Add row below, Add column right, Header row, Delete Row/Column", async () => {
+      const host = mount(); const editor = await renderDoc(host, oneRow());
+      await caretIn(editor, "Mon");
+      await waitForCondition(() => menuTrigger(host) !== null, "Table menu");
+      const rows = () => host.querySelectorAll("tr").length;
+      const firstRowCells = () => host.querySelectorAll("tr:first-child td, tr:first-child th").length;
+      await click(menuTrigger(host)!);
+      await click(menuItem("Add row below"));
+      expect(rows()).toBe(2);
+      await click(menuTrigger(host)!);
+      await click(menuItem("Add column right"));
+      expect(firstRowCells()).toBe(3);
+      await click(menuTrigger(host)!);
+      expect(menuItem("Header row").getAttribute("aria-checked")).toBe("false");
+      await click(menuItem("Header row"));
+      expect(host.querySelectorAll("th").length).toBeGreaterThan(0);
+      await click(menuTrigger(host)!);
+      await click(menuItem("Delete Row"));
+      expect(rows()).toBe(1);
+      await click(menuTrigger(host)!);
+      await click(menuItem("Delete Column"));
+      expect(firstRowCells()).toBe(2);
+    });
+
+    it("Delete Table opens the confirmation dialog", async () => {
+      const host = mount(); const editor = await renderDoc(host, oneRow());
+      await caretIn(editor, "Mon");
+      await waitForCondition(() => menuTrigger(host) !== null, "Table menu");
+      await click(menuTrigger(host)!);
+      await click(menuItem("Delete Table"));
+      await waitForCondition(() => document.querySelector('[role="alertdialog"]') !== null, "delete table dialog");
+    });
+
+    it("leaving the table brings Insert table back", async () => {
+      const host = mount(); const editor = await renderDoc(host, oneRow());
+      await caretIn(editor, "Mon");
+      await waitForCondition(() => menuTrigger(host) !== null, "Table menu");
+      await caretIn(editor, "after");
+      await waitForCondition(() => menuTrigger(host) === null, "Table menu gone");
+      expect(host.querySelector('[aria-label="Insert table"]')).not.toBeNull();
+    });
   });
 
   it("with room around the row the bar is the only control set (tier clean, no toolbar group), and the group returns after the caret leaves and re-enters a cramped table", async () => {

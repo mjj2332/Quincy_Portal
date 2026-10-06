@@ -397,13 +397,21 @@ describe("header-relative offsets derive from --shell-header-height (#113)", () 
   });
 
   it("uses the variable, not a Topbar literal, wherever a rule sits under the header", () => {
-    for (const selector of [".worktools", ".app--impersonating .worktools"]) {
+    for (const selector of [".worktools", ".app--impersonating .worktools", ".rich-text-toolbar-sticky", ".app--impersonating .rich-text-toolbar-sticky"]) {
       const body = ruleBody(appCss, selector);
       expect(body, `${selector} must exist as a real rule`).not.toBeNull();
       expect(body, `${selector} top`).toMatch(/top:\s*(var\(--shell-header-height\)|calc\(var\(--shell-header-height\) \+ var\(--impersonation-banner-height\)\))/);
     }
     expect(appCss).not.toMatch(/top:\s*(64|58|106|100)px/);
     expect(appCss).not.toMatch(/calc\((64|58)px \+ env/);
+  });
+
+  it("the Notice board's sticky composer toolbar (#594) sticks under the header, above the table wrapper and the outline rail, below the header and popovers, on the card ground", () => {
+    const body = ruleBody(appCss, ".rich-text-toolbar-sticky") ?? "";
+    expect(body).toMatch(/position:\s*sticky/);
+    expect(body).toMatch(/top:\s*var\(--shell-header-height\)/);
+    expect(body).toMatch(/z-index:\s*2\b/);
+    expect(body).toMatch(/background:\s*var\(--card\)/);
   });
 
   it("does not make .project-header sticky (#201) — it carries no top: of its own", () => {
