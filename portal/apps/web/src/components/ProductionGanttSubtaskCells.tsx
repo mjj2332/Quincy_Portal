@@ -16,6 +16,7 @@
  * the wrapper that keeps a press or key off the row — a plain `<span>` carrying `stopPropagation` (the People cell's pattern).
  */
 import type { GanttChecklistRowDto, ProjectDefaultRangeDto, RangeChecklistScheduleInput } from "@quincy/shared";
+import { SHELL_AWARE_SHIFT_AVOIDANCE, shellAwarePopupPadding } from "../lib/date-time-field";
 import { formatDueCivil } from "../lib/date-format";
 import { cn } from "../lib/utils";
 import { CELL_TRIGGER } from "./ProductionGanttProjectCells";
@@ -105,6 +106,8 @@ export function GanttSubtaskDueCell({ row, editorOpen, disabled, error, retained
         onUseLatestItem={close.onUseLatest}
         onDiscard={close.onDiscard}
         initialFocus="end"
+        popupCollisionAvoidance={SHELL_AWARE_SHIFT_AVOIDANCE}
+        popupCollisionPadding={shellAwarePopupPadding}
         projectDefault={projectDefault}
         reminders={{ offsets: row.reminders.offsetsMinutes, next: row.reminders.nextOccurrence }}
         trigger={({ disabled: triggerDisabled, onClick, ...props }) => (

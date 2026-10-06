@@ -222,6 +222,49 @@ describe("SubtaskScheduleControl (#372, #423)", () => {
   });
 });
 
+describe("SubtaskScheduleControl collision padding (#587)", () => {
+  it("calls a padding function once per open, never while closed, and again on a reopen", async () => {
+    const padding = vi.fn(() => ({ top: 66, right: 16, bottom: 16, left: 16 }));
+    await mount({ trigger: customTrigger, popupCollisionPadding: padding });
+    expect(padding).not.toHaveBeenCalled();
+    await click(host.querySelector<HTMLButtonElement>('[data-testid="custom-trigger"]')!);
+    await settle();
+    expect(padding).toHaveBeenCalledTimes(1);
+    await click(button("Cancel")!);
+    await settle(12);
+    expect(popover()).toBeNull();
+    expect(padding).toHaveBeenCalledTimes(1);
+    await click(host.querySelector<HTMLButtonElement>('[data-testid="custom-trigger"]')!);
+    await settle();
+    expect(padding).toHaveBeenCalledTimes(2);
+  });
+
+  it("calls it once for a picker an external host mounts already open (the bar picker has no onOpenChange edge)", async () => {
+    const padding = vi.fn(() => 16);
+    await act(async () => {
+      root.render(<SubtaskScheduleControl owner="t" label="Schedule for Row" value={value} open setOpen={() => {}} busy={false} onSave={() => {}} anchor={host} popupCollisionPadding={padding} />);
+      await Promise.resolve();
+    });
+    await settle();
+    expect(padding).toHaveBeenCalledTimes(1);
+    expect(popover()).not.toBeNull();
+    // Re-renders while open do not ask again.
+    await act(async () => {
+      root.render(<SubtaskScheduleControl owner="t" label="Schedule for Row" value={value} open setOpen={() => {}} busy={false} onSave={() => {}} anchor={host} popupCollisionPadding={padding} />);
+      await Promise.resolve();
+    });
+    expect(padding).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the focus rules: Start opens on the Start toggle's day, End on the End toggle", async () => {
+    await mount({ trigger: customTrigger, popupCollisionPadding: () => 16 });
+    await click(host.querySelector<HTMLButtonElement>('[data-testid="custom-trigger"]')!);
+    await settle();
+    expect(rangeToggles(popover()!).active).toBe("Start");
+    expect(document.activeElement?.closest('[aria-selected="true"]')).not.toBeNull();
+  });
+});
+
 describe("SubtaskScheduleControl onDiscard (#585)", () => {
   const open = async () => { await click(host.querySelector<HTMLButtonElement>('[aria-label="Schedule for Row"]')!); await settle(); };
 

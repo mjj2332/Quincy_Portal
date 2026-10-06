@@ -22,6 +22,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { subtaskIdFromCalendarEntityId, type CalendarPerson, type ChecklistScheduleDto, type ProjectDefaultRangeDto, type RangeChecklistScheduleInput, type SubtaskRemindersDto } from "@quincy/shared";
+import { SHELL_AWARE_SHIFT_AVOIDANCE, shellAwarePopupPadding } from "../lib/date-time-field";
 import type { ScheduleEditorState } from "../lib/use-scheduling-commands";
 import { SubtaskScheduleControl, type LatestSubtaskSummary, type RetainedSchedule, type ScheduleError } from "./quincy/SubtaskScheduleControl";
 
@@ -245,6 +246,8 @@ export function SchedulingItemSchedulePicker({ editor, itemKey, lookup, findAnch
       reminders={{ offsets: item.reminders.offsetsMinutes, next: item.reminders.nextOccurrence }}
       anchor={anchor}
       finalFocus={finalFocus}
+      popupCollisionAvoidance={SHELL_AWARE_SHIFT_AVOIDANCE}
+      popupCollisionPadding={shellAwarePopupPadding}
     />
   );
 }

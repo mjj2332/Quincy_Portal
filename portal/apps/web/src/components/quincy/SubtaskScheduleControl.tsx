@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ComponentProps, type ComponentPropsWithRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ComponentProps, type ComponentPropsWithRef, type ReactNode } from "react";
 import { POPOVER_LABEL } from "../AnchoredPopover";
 import { formatCivilSchedule } from "../../lib/date-format";
 import { deadlineOffsetLabel, type ChecklistScheduleDto, type ProjectDefaultRangeDto, type RangeChecklistScheduleInput, type SubtaskRemindersDto } from "@quincy/shared";
@@ -10,7 +10,7 @@ import { buttonClasses } from "./Button";
 import { META_TRIGGER } from "./icon-button";
 import { Popover, PopoverTrigger } from "../reui/popover";
 import { DateTimePopoverContent } from "./DateTimeField";
-import { sameReminderOffsets } from "@/lib/date-time-field";
+import { sameReminderOffsets, type PopupCollisionAvoidance, type PopupCollisionPadding } from "@/lib/date-time-field";
 import { DateTimeRangePopup, type DateTimeRangeApply } from "./date-time-field/DateTimeRangePopup";
 import type { DateTimeReminders } from "./date-time-field/DateTimePopup";
 import type { ProjectSubtask } from "../../lib/project-data";
@@ -63,7 +63,7 @@ const storedRange = (value: ChecklistScheduleDto | null): ProjectDefaultRangeDto
   ? { start: { localCivil: value.start.localCivil, fold: value.start.fold }, end: { localCivil: value.end.localCivil, fold: value.end.fold } }
   : null;
 
-export function SubtaskScheduleControl<TItem extends LatestSubtaskSummary = Subtask>({ owner, label, value, open, setOpen, onSave, onUseLatest, onUseLatestItem, busy, compact = false, error, defaultLabel, retained: retainedProp, trigger, anchor, finalFocus, initialFocus = "first", projectDefault = null, reminders, readOnly = false, onDiscard }: { owner: string; label: string; value: ChecklistScheduleDto | null; defaultLabel?: string; open: boolean; setOpen: (open: boolean) => void; onSave: (value: RangeScheduleRequest) => void; onUseLatest?: (value: ChecklistScheduleDto, reminders?: SubtaskRemindersDto) => void; onUseLatestItem?: (value: TItem) => void; busy: boolean; compact?: boolean; error?: ScheduleError<TItem>; retained?: RetainedSchedule;
+export function SubtaskScheduleControl<TItem extends LatestSubtaskSummary = Subtask>({ owner, label, value, open, setOpen, onSave, onUseLatest, onUseLatestItem, busy, compact = false, error, defaultLabel, retained: retainedProp, trigger, anchor, finalFocus, initialFocus = "first", projectDefault = null, reminders, readOnly = false, popupCollisionAvoidance, popupCollisionPadding, onDiscard }: { owner: string; label: string; value: ChecklistScheduleDto | null; defaultLabel?: string; open: boolean; setOpen: (open: boolean) => void; onSave: (value: RangeScheduleRequest) => void; onUseLatest?: (value: ChecklistScheduleDto, reminders?: SubtaskRemindersDto) => void; onUseLatestItem?: (value: TItem) => void; busy: boolean; compact?: boolean; error?: ScheduleError<TItem>; retained?: RetainedSchedule;
   /** Replaces the built-in trigger (the Gantt's Due cell). The popover keeps `aria-label={label}` either way. */
   trigger?: (props: SubtaskScheduleTriggerProps) => ReactNode;
   /** External-anchor mode (#582): no trigger renders at all and the popup sits on this element or virtual element, read live by the positioner. Mutually exclusive with `trigger`. */
@@ -79,7 +79,18 @@ export function SubtaskScheduleControl<TItem extends LatestSubtaskSummary = Subt
   /** The schedule as a plain pill with no trigger and no popup: an archived Project's Checklist (#450). */
   readOnly?: boolean;
   /** #585: the popup's Cancel button only (after the draft is discarded). Escape and an outside press reach `setOpen(false)` alone, so a caller that keeps a conflicted draft across a dismissal (the Gantt) clears it here. */
-  onDiscard?: () => void }) {
+  onDiscard?: () => void;
+  /** Replaces the popup's collision policy (see `resolveDateTimePopupPlacement`); omitted keeps the default (#587). */
+  popupCollisionAvoidance?: PopupCollisionAvoidance;
+  /** Replaces the popup's 16px viewport padding. A function is called once each time the popup opens (the closed -> open edge of `open`, so an externally opened picker counts too), never while it is closed (#587). */
+  popupCollisionPadding?: PopupCollisionPadding | (() => PopupCollisionPadding) }) {
+  // Resolved once per open, in render: the bar host mounts this with `open` already true, so there is no onOpenChange to hang it on (#587).
+  const [wasOpen, setWasOpen] = useState(false);
+  const [openPadding, setOpenPadding] = useState<PopupCollisionPadding | undefined>(undefined);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) setOpenPadding(typeof popupCollisionPadding === "function" ? popupCollisionPadding() : popupCollisionPadding);
+  }
   const ownRetained = useRef<RetainedSchedule>({ draft: null, baseVersion: null });
   const retained = retainedProp ?? ownRetained.current;
   // A failed save keeps the draft Apply handed over, because the conflict is shown after the popup closes and the user must be able
@@ -126,7 +137,7 @@ export function SubtaskScheduleControl<TItem extends LatestSubtaskSummary = Subt
           {valueText ? <StatusPill tone="neutral" className="min-w-0"><span className="sr-only">Schedule </span><span className="block truncate min-w-0">{valueText}</span></StatusPill> : <span aria-hidden="true">◷</span>}
         </button>}
     />}
-    <DateTimePopoverContent label={label} id={id} anchor={anchor} finalFocus={finalFocus}>
+    <DateTimePopoverContent label={label} id={id} anchor={anchor} finalFocus={finalFocus} popupCollisionAvoidance={popupCollisionAvoidance} popupCollisionPadding={openPadding}>
       <DateTimeRangePopup
         label={label}
         value={stored}
