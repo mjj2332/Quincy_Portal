@@ -321,9 +321,9 @@ describe("design review fixes (#493)", () => {
     expect(rule(".rich-text__embedded-image-node {")).toContain("margin: var(--space-2) 0");
   });
 
-  it("outlines the selected image with a hairline accent, not the heavy focus ring", () => {
+  it("turns the selected image's border accent, not an outside outline or the heavy focus ring", () => {
     const selected = rule(".rich-text__editor-content .ProseMirror-selectednode .rich-text__embedded-image-node > img.rich-text__embedded-image");
-    expect(selected).toContain("var(--border-width-hair)"); expect(selected).not.toContain("--ring"); expect(selected).not.toContain("--border-width-bold");
+    expect(selected).toContain("border-color: var(--accent)"); expect(selected).not.toContain("outline"); expect(selected).not.toContain("--ring"); expect(selected).not.toContain("--border-width-bold");
   });
 
   it("moves the Media group to the front of the toolbar on a phone, so Insert image is never scrolled off-screen", () => {
@@ -684,6 +684,24 @@ describe("HEIC images (#495)", () => {
     const failedRemove = trayButton(host, "Remove")!; failedRemove.focus(); expect(document.activeElement).toBe(failedRemove);
     await act(async () => { failedRemove.click(); }); await settle();
     expect(tray(host)).toBeNull(); expect(document.activeElement).toBe(surface);
+  });
+
+  it("Remove on a failed or preparing row does not announce \"Upload cancelled\" (#556)", async () => {
+    heicSetting.mockResolvedValue(true); const drive = driveUpload();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 204 })));
+    const host = mountWithSetting(<Harness />); await settle();
+    const region = host.querySelector<HTMLElement>('[aria-live="polite"]')!;
+    await choose(host, [heic()], { accept: HEIC_ACCEPT });
+    await act(async () => { drive.phase("preparing", A); });
+    await act(async () => { trayButton(host, "Remove")!.click(); }); await settle();
+    expect(tray(host)).toBeNull(); expect(region.textContent).toBe("");
+    const second = driveUpload();
+    await choose(host, [heic("IMG_2.HEIC")], { accept: HEIC_ACCEPT });
+    await act(async () => { second.phase("preparing", B); });
+    await act(async () => { second.fail(new RenditionFailedError(B)); }); await settle();
+    await act(async () => { trayButton(host, "Remove")!.click(); }); await settle();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+    expect(tray(host)).toBeNull(); expect(region.textContent).toBe("");
   });
 
   it("Remove on a failed row aborts the upload too", async () => {

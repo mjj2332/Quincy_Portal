@@ -92,6 +92,19 @@ describe("uploadEmbeddedVideo (#494)", () => {
     await expect(uploadEmbeddedVideo("p 1", video(), {})).resolves.toBe(ID);
   });
 
+  it("reports whether the server kept a poster, so the composer can leave `poster` off a video without one (#556)", async () => {
+    const seen: boolean[] = []; const onPoster = (stored: boolean) => { seen.push(stored); };
+    await uploadEmbeddedVideo("p 1", video(), { onPoster });
+    captureVideoPoster.mockResolvedValue(null);
+    await uploadEmbeddedVideo("p 1", video(), { onPoster });
+    captureVideoPoster.mockResolvedValue(new Blob([new Uint8Array([0xff, 0xd8, 0xff])]));
+    fetchStub.mockResolvedValue(new Response("no", { status: 409 }));
+    await uploadEmbeddedVideo("p 1", video(), { onPoster });
+    fetchStub.mockRejectedValue(new Error("offline"));
+    await uploadEmbeddedVideo("p 1", video(), { onPoster });
+    expect(seen).toEqual([true, false, false, false]);
+  });
+
   it("completes without a poster when the capture itself throws", async () => {
     captureVideoPoster.mockRejectedValue(new Error("decoder crashed"));
     await expect(uploadEmbeddedVideo("p 1", video(), {})).resolves.toBe(ID);

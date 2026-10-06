@@ -224,8 +224,8 @@ export function embeddedVideoProblem(file: Pick<File, "type" | "size" | "name">)
  * id. A cancelled or failed upload tells the server to abort, so no reservation or object is left behind; the abort request is
  * `keepalive`, so it survives the page closing. A cancel rejects as an `AbortError`.
  */
-export async function uploadEmbeddedVideo(projectId: string, file: File, options: { signal?: AbortSignal; onProgress?: (percent: number) => void; owner?: "whiteboard" } = {}): Promise<string> {
-  const { signal, onProgress, owner } = options;
+export async function uploadEmbeddedVideo(projectId: string, file: File, options: { signal?: AbortSignal; onProgress?: (percent: number) => void; owner?: "whiteboard"; /** Told, just before the media id is returned, whether the server kept a poster frame (#556): a posterless video must not ask for `/poster`. */ onPoster?: (stored: boolean) => void } = {}): Promise<string> {
+  const { signal, onProgress, owner, onPoster } = options;
   const contentType = embeddedVideoContentType(file);
   if (!contentType) throw new Error(`${file.name || "This file"} is not an MP4 or MOV video.`);
   if (signal?.aborted) throw abortError();
@@ -253,8 +253,9 @@ export async function uploadEmbeddedVideo(projectId: string, file: File, options
     const done = externalEmbeddedMediaCompleteSchema.parse(await unlessCancelled(apiPost<unknown, { parts?: { partNumber: number; etag: string }[] }>(`${mediaUrl}/complete`, completed.parts ? { parts: completed.parts } : {})));
     const frame = await unlessCancelled(poster);
     if (signal?.aborted) throw abortError();
-    if (frame) await unlessCancelled(fetch(`${mediaUrl}/poster`, { method: "PUT", credentials: "include", headers: { "content-type": "image/jpeg" }, body: frame, ...(signal ? { signal } : {}) }).catch(() => undefined));
+    const stored = frame ? await unlessCancelled(fetch(`${mediaUrl}/poster`, { method: "PUT", credentials: "include", headers: { "content-type": "image/jpeg" }, body: frame, ...(signal ? { signal } : {}) }).then((response) => response.ok, () => false)) : false;
     if (signal?.aborted) throw abortError();
+    onPoster?.(stored);
     return done.mediaId;
   } catch (error) {
     await abortOnServer();
