@@ -657,9 +657,10 @@ export function parseStaffLocation(location: string): StaffRoute {
     // The bare `/?view=calendar` intent (#111), legal as the sole query field or paired with
     // exactly one `q` (#217 fix round 4, item 1 -- see `DashboardCalendarIntentRoute`'s own
     // docblock for why). Checked before `parseCalendarLocation` because that function requires a
-    // complete facet — a date and a subview (layers alone defaults, #651) — and would reject this
-    // spelling. Every partial facet still falls through to it; missing `date` or `sub` is still rejected (a missing `layers` alone defaults to project+checklist, #651): accepting
-    // `view=calendar` plus *some* of its parameters (other than `q`) would silently discard the
+    // complete facet — a date and a subview; an absent `layers` alone defaults to
+    // project+checklist (#651) — and would reject this spelling. Every other partial facet still
+    // falls through to it and is still rejected: accepting `view=calendar` plus *some* of its
+    // required parameters (other than `q`) would silently discard the
     // rest. Duplicate keys, a trailing `&`, an oversized query and non-canonical percent-encoding
     // are already rejected by `parseDashboardQuery` above, so this arm inherits all of that and
     // only has to count and name the keys.
