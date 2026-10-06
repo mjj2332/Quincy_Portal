@@ -10,9 +10,12 @@ const here = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(join(here, "SubtaskChecklist.tsx"), "utf8");
 
 describe("SubtaskChecklist schedule picker placement (#629)", () => {
-  it("passes the shell-aware shift avoidance and padding to SubtaskScheduleControl", () => {
-    const control = source.match(/<SubtaskScheduleControl\b[^\n]*/)?.[0] ?? "";
-    expect(control).toContain("popupCollisionPadding={shellAwarePopupPadding}");
-    expect(control).toContain("popupCollisionAvoidance={SHELL_AWARE_SHIFT_AVOIDANCE}");
+  it("passes the shell-aware shift avoidance and padding to every SubtaskScheduleControl", () => {
+    const controls = source.match(/<SubtaskScheduleControl\b[^\n]*/g) ?? [];
+    expect(controls).toHaveLength(2); // the row's picker and the new-subtask composer's
+    for (const control of controls) {
+      expect(control).toContain("popupCollisionPadding={shellAwarePopupPadding}");
+      expect(control).toContain("popupCollisionAvoidance={SHELL_AWARE_SHIFT_AVOIDANCE}");
+    }
   });
 });
