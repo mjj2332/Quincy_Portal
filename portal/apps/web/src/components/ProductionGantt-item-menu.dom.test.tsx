@@ -25,6 +25,8 @@ vi.mock("../lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/api")>()),
   apiGet: (path: string) => apiGetMock(path),
 }));
+const shellBottom = vi.hoisted(() => vi.fn(() => 50));
+vi.mock("../lib/shell-chrome", () => ({ shellChromeBottom: () => shellBottom() }));
 vi.mock("../lib/stages", () => ({
   presentationStages: (stages: unknown[]) => stages,
   useStages: () => ({ stages: [], presentationStageKey: (key: string) => key }),
@@ -213,6 +215,16 @@ describe("ProductionGantt item menu (#463)", () => {
       await pick("Edit schedule…");
       await flush(3);
     }
+
+    it("reads the shell-aware padding once when the picker opens on the bar (#587)", async () => {
+      await mount();
+      shellBottom.mockClear();
+      await activate(taskBar());
+      await pick("Edit schedule…");
+      await flush(3);
+      expect(picker()).not.toBeNull();
+      expect(shellBottom).toHaveBeenCalledTimes(1);
+    });
 
     it("opens exactly one dialog, the picker, and no sheet; it opens on Start with the Project default and reminders", async () => {
       await openPicker();

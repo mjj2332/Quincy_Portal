@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addCivilDays, DATE_TIME_POPUP_EDGE_GAP, popupPaddingWithTopAtLeast, scrollTopClearOfFade, resolveDateTimePopupPlacement, buildShortcuts, cellToCivil, civilToCell, civilWeekday, joinCivilMinute, parseTypedTime, splitCivilMinute, sydneyToday, timeSlots, yearBounds } from "./date-time-field";
+import { addCivilDays, DATE_TIME_POPUP_EDGE_GAP, popupPaddingWithTopAtLeast, scrollTopClearOfFade, resolveDateTimePopupPlacement, SHELL_AWARE_SHIFT_AVOIDANCE, shellAwarePopupPadding, buildShortcuts, cellToCivil, civilToCell, civilWeekday, joinCivilMinute, parseTypedTime, splitCivilMinute, sydneyToday, timeSlots, yearBounds } from "./date-time-field";
 import { formatCivilDay } from "./date-format";
 
 const resolved = (today: string, clearable = false) =>
@@ -245,6 +245,63 @@ describe("scrollTopClearOfFade (#537)", () => {
   });
 });
 
+describe("scrollTopClearOfFade, required items (#587)", () => {
+  const viewport = { top: 100, bottom: 500 };
+  const base = { viewport, scrollTop: 0, maxScrollTop: 300, fade: 32 };
+  it("scrolls to a required item wholly below the body, where an optional one is skipped", () => {
+    // The item is 120px under the body: 520..556 -> docs 420..456 at scroll 0. Clear window at s is [min(fade,s), 400 - min(fade, max-s)].
+    expect(scrollTopClearOfFade({ ...base, items: [{ top: 520, bottom: 556 }] })).toBe(0);
+    expect(scrollTopClearOfFade({ ...base, items: [{ top: 520, bottom: 556, required: true }] })).toBe(88);
+  });
+  it("scrolls up to a required item wholly above the body", () => {
+    expect(scrollTopClearOfFade({ ...base, scrollTop: 200, items: [{ top: 20, bottom: 56, required: true }] })).toBe(88);
+  });
+  it("lets a required item win over a conflicting secondary item", () => {
+    const secondary = { top: 110, bottom: 146 };
+    const required = { top: 454, bottom: 490, required: true };
+    // Optional alone: the two want opposite things and nothing moves. A required one is cleared regardless.
+    expect(scrollTopClearOfFade({ ...base, scrollTop: 100, items: [secondary, { top: 454, bottom: 490 }] })).toBe(100);
+    expect(scrollTopClearOfFade({ ...base, scrollTop: 100, items: [secondary, required] })).toBe(100 + 22);
+  });
+  it("aligns a required item taller than the window to the top band", () => {
+    expect(scrollTopClearOfFade({ ...base, scrollTop: 100, items: [{ top: 150, bottom: 550, required: true }] })).toBe(100 + 50 - 32);
+  });
+  it("keeps a non-required item's skip when a required item is present and compatible", () => {
+    expect(scrollTopClearOfFade({ ...base, items: [{ top: 700, bottom: 736 }, { top: 454, bottom: 490, required: true }] })).toBe(22);
+  });
+  it("does not move when two required items conflict", () => {
+    expect(scrollTopClearOfFade({ ...base, scrollTop: 100, items: [{ top: 110, bottom: 146, required: true }, { top: 454, bottom: 490, required: true }] })).toBe(100);
+  });
+  it("lets the priority item (the focused control) win when two required items conflict", () => {
+    // The first wants s <= 78, the second s >= 122; the priority one is cleared alone.
+    expect(scrollTopClearOfFade({ ...base, scrollTop: 100, items: [{ top: 110, bottom: 146, required: true }, { top: 454, bottom: 490, priority: true }] })).toBe(122);
+    expect(scrollTopClearOfFade({ ...base, scrollTop: 100, items: [{ top: 110, bottom: 146, priority: true }, { top: 454, bottom: 490, required: true }] })).toBe(78);
+  });
+});
+
+describe("scrollTopClearOfFade, rounding toward the safe side (#587)", () => {
+  const viewport = { top: 100, bottom: 500 };
+  // Document offsets 412.3..448.3: clearing the top fade needs s <= 380.3; clearing the bottom needs s >= 80.3.
+  const doc = { top: 412.3, bottom: 448.3 };
+  const at = (scrollTop: number) => ({ top: 100 + doc.top - scrollTop, bottom: 100 + doc.bottom - scrollTop, required: true });
+  it("floors the target when clearing the top fade, so the browser's rounding cannot push the item into the band", () => {
+    const result = scrollTopClearOfFade({ viewport, scrollTop: 500, maxScrollTop: 600, fade: 32, items: [at(500)] });
+    expect(result).toBe(380);
+  });
+  it("ceils the target when clearing the bottom fade", () => {
+    const result = scrollTopClearOfFade({ viewport, scrollTop: 0, maxScrollTop: 600, fade: 32, items: [at(0)] });
+    expect(result).toBe(81);
+  });
+  it("leaves a scrollTop that is already inside the interval alone, fractional or not", () => {
+    expect(scrollTopClearOfFade({ viewport, scrollTop: 300.5, maxScrollTop: 600, fade: 32, items: [at(300.5)] })).toBe(300.5);
+  });
+  it("falls back to the exact target when no whole pixel fits the interval", () => {
+    // Interval [100.2, 100.8] holds no integer: the exact (unrounded) bound is returned.
+    const result = scrollTopClearOfFade({ viewport, scrollTop: 0, maxScrollTop: 600, fade: 32, items: [{ top: 100 + 132.8, bottom: 100 + 468.2, required: true }] });
+    expect(result).toBeCloseTo(100.2, 6);
+  });
+});
+
 describe("scrollTopClearOfFade, over a grid of inputs (#537)", () => {
   const H = 400;
   const fade = 32;
@@ -274,5 +331,14 @@ describe("scrollTopClearOfFade, over a grid of inputs (#537)", () => {
       }
     }
     expect(checked).toBeGreaterThan(300);
+  });
+});
+
+describe("shell-aware placement (#528, #587)", () => {
+  it("shifts on both axes and never flips a side", () => {
+    expect(SHELL_AWARE_SHIFT_AVOIDANCE).toEqual({ side: "shift", align: "shift", fallbackAxisSide: "none" });
+  });
+  it("puts the top below the shell header (0 when there is none) and keeps the 16px edge gap elsewhere", () => {
+    expect(shellAwarePopupPadding()).toEqual({ top: 16, right: 16, bottom: 16, left: 16 });
   });
 });

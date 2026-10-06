@@ -32,6 +32,8 @@ import { ProductionGantt } from "./ProductionGantt";
 import { endMoment, startMoment, subtaskReminders } from "@/testing/subtask-schedule";
 import { applyPopup, dateTimePopup, pickPopupDay, popupButton, pressInPopup, rangeToggles, typePopupTime, rangeMoment } from "@/testing/date-time-popup";
 
+const shellBottom = vi.hoisted(() => vi.fn(() => 50));
+vi.mock("../lib/shell-chrome", () => ({ shellChromeBottom: () => shellBottom() }));
 vi.mock("../lib/stages", () => ({
   presentationStages: (stages: unknown[]) => stages,
   useStages: () => ({ stages: [], presentationStageKey: (key: string) => key }),
@@ -815,6 +817,19 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     expect(picker(TIMED_TITLE)).toBeNull();
   });
 
+  it("P587a the Due picker reads the shell-aware padding once per open and never while closed (#587)", async () => {
+    await render();
+    shellBottom.mockClear();
+    expect(shellBottom).not.toHaveBeenCalled();
+    await openDue(RANGE_TITLE);
+    expect(shellBottom).toHaveBeenCalledTimes(1);
+    await pressInPopup(picker(RANGE_TITLE)!, "Cancel");
+    await flush(6);
+    expect(picker(RANGE_TITLE)).toBeNull();
+    await openDue(RANGE_TITLE);
+    expect(shellBottom).toHaveBeenCalledTimes(2);
+  });
+
   it("R16 the Due trigger is unavailable for the whole of a pointer drag and returns when it ends", async () => {
     await render();
     expect(dueTrigger(RANGE_TITLE)!.getAttribute("aria-disabled")).not.toBe("true");
@@ -1040,6 +1055,13 @@ describe("ProductionGantt — Edit schedule… on the bar (#582)", () => {
     await waitFor(() => expect(barPicker(title)).not.toBeNull());
     await flush(3);
   }
+
+  it("B587 the bar picker reads the shell-aware padding once on its externally controlled open (#587)", async () => {
+    await render();
+    shellBottom.mockClear();
+    await openFromBar(RANGE_TITLE);
+    expect(shellBottom).toHaveBeenCalledTimes(1);
+  });
 
   it("B1 a Start edit is ONE PATCH at the open version, and focus lands on the (re-keyed) bar", async () => {
     await render();

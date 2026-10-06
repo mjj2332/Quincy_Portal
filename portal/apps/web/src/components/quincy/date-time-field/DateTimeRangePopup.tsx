@@ -308,6 +308,7 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
       bodyRef={bodyRef}
       applying={applying}
       applyDisabled={blocked}
+      reveal={`button[data-range-${active}="true"], button[data-selected-single="true"]`}
       onCancel={onCancel ?? onClose}
       onApply={() => { void apply(); }}
       pinned={(
