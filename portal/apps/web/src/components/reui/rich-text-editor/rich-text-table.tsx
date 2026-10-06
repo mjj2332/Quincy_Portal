@@ -184,11 +184,6 @@ interface RichTextTableBubbleProps {
   editor: Editor
   /** Deleting the whole table is the host's call: confirm it first. */
   onDeleteTable: () => void
-  /**
-   * Elements rendered below the editor frame (character counter, host helper line): the table bar may extend
-   * down to the highest of them (#535).
-   */
-  tableBubbleFloors?: ReadonlyArray<RefObject<HTMLElement | null> | undefined>
   /** The tier the host last heard (null outside a table): "none" makes the bar inert, the host shows the toolbar group. */
   tier?: TableBubbleTier | null
   /** Fired when the bar's tier changes while the caret is in a table. */
@@ -296,7 +291,6 @@ export function RichTextTableControls({
 export function RichTextTableBubble({
   editor,
   onDeleteTable,
-  tableBubbleFloors,
   tier = null,
   onTierChange,
 }: RichTextTableBubbleProps) {
@@ -348,7 +342,7 @@ export function RichTextTableBubble({
         },
       })
     },
-    [editor, tableBubbleFloors, readAnchor, inTable]
+    [editor, readAnchor, inTable]
   )
 
   return (

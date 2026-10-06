@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { computePosition, flip, offset, shift, type Platform } from "@floating-ui/core";
 import {
   TABLE_BUBBLE_GAP,
-  readFloorTop,
   tableBubbleAnchor,
   tableBubbleBoundary,
   tableBubbleOptions,
@@ -15,26 +14,8 @@ const rect = (top: number, bottom: number, left = 20, right = 340) => ({ top, bo
 describe("tableBubbleBoundary", () => {
   const surface = rect(500, 640);
 
-  it("is the editable surface when there is no floor", () => {
-    expect(tableBubbleBoundary(surface, null)).toEqual({ x: 20, y: 500, width: 320, height: 140, top: 500, left: 20, right: 340, bottom: 640 });
-  });
-
-  it("extends down to a floor below the surface", () => {
-    const boundary = tableBubbleBoundary(surface, 685);
-    expect(boundary.bottom).toBe(685);
-    expect(boundary.height).toBe(185);
-    expect(boundary.top).toBe(500);
-    expect(boundary.left).toBe(20);
-    expect(boundary.width).toBe(320);
-  });
-
-  it("never shrinks the surface when the floor is above its bottom", () => {
-    expect(tableBubbleBoundary(surface, 600).bottom).toBe(640);
-  });
-
-  it("falls back to the surface for a non-finite floor", () => {
-    expect(tableBubbleBoundary(surface, Number.NaN).bottom).toBe(640);
-    expect(tableBubbleBoundary(surface, Number.POSITIVE_INFINITY).bottom).toBe(640);
+  it("is the given rect with the Rect fields filled in", () => {
+    expect(tableBubbleBoundary(surface)).toEqual({ x: 20, y: 500, width: 320, height: 140, top: 500, left: 20, right: 340, bottom: 640 });
   });
 
   it("reads getter-backed DOMRect fields (a spread would lose them)", () => {
@@ -44,45 +25,14 @@ describe("tableBubbleBoundary", () => {
       get left() { return 20; },
       get right() { return 340; },
     });
-    expect(tableBubbleBoundary(domRectLike, 685)).toMatchObject({ top: 500, bottom: 685, left: 20, right: 340, y: 500, x: 20 });
+    expect(tableBubbleBoundary(domRectLike)).toMatchObject({ top: 500, bottom: 640, left: 20, right: 340, y: 500, x: 20 });
   });
 
   it("shifts by the visualViewport offset when given one", () => {
-    expect(tableBubbleBoundary(surface, null, { x: 0, y: 30 })).toMatchObject({ top: 530, bottom: 670, y: 530 });
+    expect(tableBubbleBoundary(surface, { x: 0, y: 30 })).toMatchObject({ top: 530, bottom: 670, y: 530 });
   });
 });
 
-describe("readFloorTop", () => {
-  const helper = (over: Partial<{ isConnected: boolean; top: number; width: number; height: number }> = {}) => {
-    const { isConnected = true, top = 693, width = 200, height = 16 } = over;
-    return { isConnected, getBoundingClientRect: () => ({ top, bottom: top + height, left: 0, right: width, width, height }) };
-  };
-
-  it("returns the helper's top edge", () => expect(readFloorTop(helper())).toBe(693));
-  it("is null without a helper", () => { expect(readFloorTop(null)).toBeNull(); expect(readFloorTop(undefined)).toBeNull(); });
-  it("is null for a disconnected helper", () => expect(readFloorTop(helper({ isConnected: false }))).toBeNull());
-  it("is null for a hidden (zero-size) helper", () => {
-    expect(readFloorTop(helper({ width: 0 }))).toBeNull();
-    expect(readFloorTop(helper({ height: 0 }))).toBeNull();
-  });
-  it("is null for a non-finite rect", () => expect(readFloorTop(helper({ top: Number.NaN }))).toBeNull());
-
-  it("with a counter above the helper, the floor is the counter's top (the first rendered element below the frame)", () => {
-    expect(readFloorTop(helper({ top: 628 }), helper({ top: 644 }))).toBe(628);
-    expect(readFloorTop(helper({ top: 644 }), helper({ top: 628 }))).toBe(628);
-  });
-  it("skips absent, hidden or detached elements and falls back to the next one", () => {
-    expect(readFloorTop(null, helper({ top: 644 }))).toBe(644);
-    expect(readFloorTop(helper({ top: 628, height: 0 }), helper({ top: 644 }))).toBe(644);
-    expect(readFloorTop(helper({ top: 628, isConnected: false }), helper({ top: 644 }))).toBe(644);
-  });
-  it("is null when no element is usable", () => expect(readFloorTop(null, undefined, helper({ width: 0 }))).toBeNull());
-});
-
-// Real @floating-ui/core middleware (flip, shift, offset) in the order the pinned Tiptap 3.30.2 BubbleMenu
-// uses, over a minimal platform whose clipping rect intersects the Rect boundary with the viewport as
-// @floating-ui/dom does. The numbers are the #492 round-6 design review's (a 54px bar); the 390px labels
-// below are history: the phone no longer uses this bar (a toolbar group does), so they are math cases.
 const G = TABLE_BUBBLE_GAP;
 const overlap = (a: { top: number; bottom: number }, b: { top: number; bottom: number }) =>
   Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));

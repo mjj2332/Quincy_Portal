@@ -48,23 +48,13 @@ export interface VisualOffset {
 }
 
 /**
- * The boundary rect: the editable surface, extended down to `floorBottom` when that is below the surface's
- * bottom. Never shrinks the surface. Fields are copied explicitly because DOMRect exposes getters on its
- * prototype, so a spread would lose them. `visualOffset` compensates floating-ui, which subtracts the
- * visualViewport offset from Rect boundaries (WebKit only) but not from an absolutely positioned anchor.
+ * The boundary rect floating-ui judges the bar against: the zone's edges plus the horizontal limits. Fields are
+ * copied explicitly because DOMRect exposes getters on its prototype, so a spread would lose them. `visualOffset`
+ * compensates floating-ui, which subtracts the visualViewport offset from Rect boundaries (WebKit only) but not
+ * from an absolutely positioned anchor.
  */
-export function tableBubbleBoundary(
-  surface: RectLike,
-  floorBottom: number | null,
-  visualOffset: VisualOffset = { x: 0, y: 0 }
-): BoundaryRect {
-  const top = surface.top
-  const left = surface.left
-  const right = surface.right
-  const bottom =
-    floorBottom !== null && Number.isFinite(floorBottom)
-      ? Math.max(surface.bottom, floorBottom)
-      : surface.bottom
+export function tableBubbleBoundary(surface: RectLike, visualOffset: VisualOffset = { x: 0, y: 0 }): BoundaryRect {
+  const { top, left, right, bottom } = surface
 
   return {
     x: left + visualOffset.x,
@@ -76,33 +66,6 @@ export function tableBubbleBoundary(
     right: right + visualOffset.x,
     bottom: bottom + visualOffset.y,
   }
-}
-
-interface FloorElement {
-  isConnected: boolean
-  getBoundingClientRect: () => RectLike & { width: number; height: number }
-}
-
-/**
- * The top edge of the first rendered element below the editor frame: pass the candidates in any order (the
- * character counter, the host's helper line) and the highest usable one wins. Absent, detached, hidden,
- * zero-size or non-finite candidates are skipped; null when none is usable, so the surface stays the boundary.
- */
-export function readFloorTop(...elements: Array<FloorElement | null | undefined>): number | null {
-  let floor: number | null = null
-
-  for (const element of elements) {
-    if (!element || !element.isConnected) continue
-
-    const rect = element.getBoundingClientRect()
-
-    if (![rect.top, rect.bottom, rect.width, rect.height].every(Number.isFinite)) continue
-    if (rect.width <= 0 || rect.height <= 0) continue
-
-    floor = floor === null ? rect.top : Math.min(floor, rect.top)
-  }
-
-  return floor
 }
 
 /** floating-ui subtracts the visualViewport offset from Rect boundaries on WebKit only. */
@@ -217,7 +180,6 @@ export function tableBubbleOptions({ surface, row, viewport = documentViewport, 
     // Zone edges are already the limits; `tableBubbleBoundary` only adds the visual offset and the rect fields.
     const boundary = tableBubbleBoundary(
       { top: result.top, bottom: result.bottom, left: surfaceRect.left, right: surfaceRect.right },
-      null,
       visualOffset?.()
     )
 

@@ -124,8 +124,6 @@ export type QuincyRichTextEditorProps = {
   linkPreviews?: EmbeddedMediaScope;
   /** Reports whether an image is still uploading, so the host can hold Post / Save until it lands. */
   onUploadingChange?: (uploading: boolean) => void;
-  /** The host's helper line under the editor; the table bar may extend down to it (#535). Omit for none. */
-  tableBubbleFloor?: RefObject<HTMLElement | null>;
 };
 
 type UploadingMedia = EmbeddedUpload;
@@ -150,7 +148,6 @@ export function QuincyRichTextEditor({
   media,
   linkPreviews,
   onUploadingChange,
-  tableBubbleFloor,
 }: QuincyRichTextEditorProps) {
   const valueRef = useRef(JSON.stringify(value));
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
@@ -162,10 +159,7 @@ export function QuincyRichTextEditor({
   const editorRef = useRef<Editor | null>(null);
   const menu = useRef<MentionAutocompleteHandle>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
-  // Everything rendered under the frame that the table bar must not cover (#535): the upload tray, the counter, the host's helper.
   const counterRef = useRef<HTMLDivElement>(null);
-  const trayRef = useRef<HTMLDivElement>(null);
-  const tableBubbleFloors = useMemo(() => [trayRef, counterRef, tableBubbleFloor], [tableBubbleFloor]);
   const [rawQuery, setQuery] = useState<string | null>(null);
   // #375: Esc / an outside press closes the mention list and it stays closed until the content
   // actually changes; the sheet's layer gate reads the list as open through `aria-expanded`.
@@ -570,7 +564,7 @@ export function QuincyRichTextEditor({
       </div>
     </InputGroup>
     {isDocument && <>
-      {!phone && <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} tableBubbleFloors={tableBubbleFloors} tier={tableTier} onTierChange={setTableTier} />}
+      {!phone && <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} tier={tableTier} onTierChange={setTableTier} />}
       <DeleteTableDialog editor={editor} open={deleteTableOpen} onOpenChange={setDeleteTableOpen} />
     </>}
     {picking !== null && <Input
@@ -578,7 +572,7 @@ export function QuincyRichTextEditor({
       onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); const kind = picking.kind; setPicking(null); if (files.length) addImagesRef.current(files, editor.state.selection.to, kind); }}
       {...{ onCancel: () => setPicking(null) }}
     />}
-    <EmbeddedUploadTray uploads={uploads} errors={uploadErrors} trayRef={trayRef} onCancel={(key) => { running.current.get(key)?.release(); editorRef.current?.commands.focus(); }} onRetry={(key) => running.current.get(key)?.retry()} />
+    <EmbeddedUploadTray uploads={uploads} errors={uploadErrors} onCancel={(key) => { running.current.get(key)?.release(); editorRef.current?.commands.focus(); }} onRetry={(key) => running.current.get(key)?.retry()} />
     <MentionAutocomplete ref={menu} query={query} loadMentionables={loadMentionables} onSelect={selectMention} onDismiss={() => setMentionDismissed(true)} onAccessibilityChange={setMentionA11y} />
     {plainText.length >= limit * COUNTER_THRESHOLD && <div ref={counterRef} data-testid="rich-text-counter" className={cn("text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", plainText.length > limit && "!text-destructive")}>{plainText.length}/{limit}</div>}
     <div className={liveMessage ? "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive" : "sr-only"} aria-live="polite">{liveMessage}</div>
