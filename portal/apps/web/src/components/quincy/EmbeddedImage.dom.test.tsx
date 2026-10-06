@@ -45,18 +45,32 @@ describe("an embedded image's reserved box (#611)", () => {
     expect(image.hasAttribute("height")).toBe(false);
   });
 
-  it("hands the stylesheet the recorded aspect ratio, so a portrait is capped in width as well as height", () => {
-    const image = thumbnail({ width: 400, height: 1200 });
-    expect(Number(image.style.getPropertyValue("--embedded-image-aspect"))).toBeCloseTo(400 / 1200, 5);
-    expect(thumbnail({}).style.getPropertyValue("--embedded-image-aspect")).toBe("");
+  const trigger = () => document.querySelector<HTMLElement>('[data-testid="embedded-image"]')!;
+
+  it("hands the stylesheet the recorded size on the trigger, so the button can hug the capped image", () => {
+    thumbnail({ width: 400, height: 1200 });
+    expect(Number(trigger().style.getPropertyValue("--embedded-image-aspect"))).toBeCloseTo(400 / 1200, 5);
+    expect(trigger().style.getPropertyValue("--embedded-image-width")).toBe("400");
+    expect(trigger().hasAttribute("data-sized")).toBe(true);
   });
 
-  it("caps a sized thumbnail's width at the height limit times its aspect ratio, and leaves an unsized one alone", () => {
+  it("sets none of that on the trigger of an unsized image", () => {
+    thumbnail({});
+    expect(trigger().style.getPropertyValue("--embedded-image-aspect")).toBe("");
+    expect(trigger().hasAttribute("data-sized")).toBe(false);
+  });
+
+  it("sizes a sized trigger to the image's width, capped at the container and at the height limit times the aspect ratio, with the image filling it", () => {
     const appCss = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../styles/app.css"), "utf8");
     const line = (selector: string) => appCss.split("\n").find((value) => value.startsWith(selector)) ?? "";
-    const sized = line(".rich-text__embedded-image[data-sized]");
-    expect(sized).toContain("aspect-ratio: var(--embedded-image-aspect)");
-    expect(sized).toContain("max-width: min(100%, calc(24rem * var(--embedded-image-aspect)))");
+    const button = line(".rich-text__embedded-image-trigger[data-sized] {");
+    expect(button).toContain("width: calc(var(--embedded-image-width) * 1px)");
+    expect(button).toContain("max-width: min(100%, calc(24rem * var(--embedded-image-aspect)))");
+    const image = line(".rich-text__embedded-image-trigger[data-sized] > .rich-text__embedded-image");
+    expect(image).toContain("width: 100%");
+    // The box already has the image's ratio, so `contain` would only add a strip where the 1px border skews it.
+    expect(image).toContain("object-fit: fill");
     expect(line(".rich-text__embedded-image {")).toContain("max-height: 24rem");
+    expect(line(".rich-text__embedded-image[data-sized]")).toBe("");
   });
 });

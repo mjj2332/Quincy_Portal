@@ -22,12 +22,14 @@ export function EmbeddedImage({ mediaId, alt, width, height }: { mediaId: string
   const src = embeddedMediaUrl(mediaId);
   // The author's alt text (#553); an image posted before alt existed has none and keeps the generic name.
   const label = alt?.trim() || "Embedded image";
-  const reserved = width !== undefined && height !== undefined && width > 0 && height > 0 ? { width, height, "data-sized": "", style: { "--embedded-image-aspect": width / height } as CSSProperties } : {};
+  const reserved = width !== undefined && height !== undefined && width > 0 && height > 0 ? { width, height } : {};
+  // The trigger hugs the image the stylesheet draws (#611): it takes the recorded size too, since a button sizes from the image's width attribute, not from the width the CSS caps it to.
+  const sizedTrigger = width !== undefined && height !== undefined && width > 0 && height > 0 ? { "data-sized": "", style: { "--embedded-image-aspect": width / height, "--embedded-image-width": width } as CSSProperties } : {};
   if (failed) return <p data-testid="embedded-image-unavailable" className="my-[var(--space-2)] text-foreground-secondary [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">Image unavailable</p>;
   return <>
     {/* The trigger is registered with the dialog, so Escape or Close returns focus to this thumbnail even where a click does not focus a button. */}
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<button type="button" data-testid="embedded-image" aria-label={`View image: ${label}`} className="my-[var(--space-2)] block max-w-full cursor-zoom-in rounded-[var(--radius-xs)] focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-2" />}>
+      <DialogTrigger render={<button type="button" data-testid="embedded-image" {...sizedTrigger} aria-label={`View image: ${label}`} className="rich-text__embedded-image-trigger my-[var(--space-2)] block max-w-full cursor-zoom-in rounded-[var(--radius-xs)] focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-2" />}>
         <img src={src} alt={label} {...reserved} loading="lazy" decoding="async" onError={() => setFailed(true)} className="rich-text__embedded-image" />
       </DialogTrigger>
       {/* The review Lightbox's language: an inverse (dark) stage, the image edge to edge, and the close button on a scrim chip only as large as the button, so a light image never hides it and the photo is not darkened. */}
