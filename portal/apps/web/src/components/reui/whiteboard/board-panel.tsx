@@ -180,12 +180,17 @@ export function RowText({
 export function MetaLine({ parts }: { parts: readonly React.ReactNode[] }) {
   return (
     <RowText className="inline-flex items-center gap-1.5 align-top pointer-coarse:flex-wrap">
-      {parts.map((part, index) => (
-        <Fragment key={index}>
-          {index > 0 ? <Dot /> : null}
-          {part}
-        </Fragment>
-      ))}
+      {parts.map((part, index) =>
+        index === 0 ? (
+          <Fragment key={index}>{part}</Fragment>
+        ) : (
+          // #559: each dot travels with the part after it, so a wrapped line never starts or ends on a hanging dot.
+          <span key={index} className="inline-flex items-center gap-1.5 whitespace-nowrap">
+            <Dot />
+            {part}
+          </span>
+        )
+      )}
     </RowText>
   )
 }
@@ -409,20 +414,23 @@ function PanelTabs({
       }}
       className="min-h-0 flex-1 gap-0"
     >
-      <div className="shrink-0 p-3">
-        <TabsList className="w-full max-[721px]:group-data-[orientation=horizontal]/tabs:h-[3.125rem]">
-          {tabs.map((item) => (
-            <TabsTrigger
-              key={item.value}
-              value={item.value}
-              ref={item.value === tab ? activeTabRef : undefined}
-              className="max-[721px]:h-11"
-            >
-              {item.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </div>
+      {/* #559: a lone tab is no choice, and its label repeated the sheet's title; the strip shows only when there is more than one. */}
+      {tabs.length > 1 ? (
+        <div className="shrink-0 p-3">
+          <TabsList className="w-full max-[721px]:group-data-[orientation=horizontal]/tabs:h-[3.125rem]">
+            {tabs.map((item) => (
+              <TabsTrigger
+                key={item.value}
+                value={item.value}
+                ref={item.value === tab ? activeTabRef : undefined}
+                className="max-[721px]:h-11"
+              >
+                {item.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </div>
+      ) : null}
       {tabs.map((item) => (
         <TabsContent
           key={item.value}
@@ -481,6 +489,7 @@ function DockedPanel({
  */
 export function BoardPanel({
   title,
+  description,
   panelId,
   tabRef,
   docked,
@@ -491,8 +500,10 @@ export function BoardPanel({
   sheetFocus,
   ...props
 }: PanelProps & {
-  /** #498: the host's board name (the registry hard-codes a demo's). */
+  /** #498: the sheet's title (the registry hard-codes a demo's board name; #559: Quincy's one pane titles it "History"). */
   title: string
+  /** #559: the sheet's subtitle (Quincy passes the project's address); a sentence naming the panes when absent. */
+  description?: string
   /** The docked aside's id, which the header's toggle controls. */
   panelId: string
   /** The active tab, docked or in the sheet: the sheet's first focus and a focus fallback. */
@@ -541,7 +552,7 @@ export function BoardPanel({
         >
           <SheetHeader className="border-b">
             <SheetTitle>{title}</SheetTitle>
-            <SheetDescription>{TABS.filter((item) => props.panes[item.value] !== undefined).map((item) => item.label.toLowerCase()).join(" and ")}</SheetDescription>
+            <SheetDescription>{description ?? `The board's ${TABS.filter((item) => props.panes[item.value] !== undefined).map((item) => item.label.toLowerCase()).join(", ")}.`}</SheetDescription>
           </SheetHeader>
           <PanelTabs {...props} activeTabRef={tabRef} />
         </SheetContent>

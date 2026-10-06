@@ -63,7 +63,7 @@ export function WhiteboardHistoryPanel({ projectId, title, open, onOpenChange, r
       const response = await apiGet<WhiteboardVersionsResponse>(whiteboardVersionsPath(projectId));
       if (token !== loadToken.current) return;
       generationRef.current = response.generation;
-      setState({ status: "ready", versions: response.versions });
+      setState({ status: "ready", versions: response.versions, currentVersionId: response.currentVersionId ?? null });
     } catch (error) {
       if (token !== loadToken.current) return;
       setState({ status: "error", message: failureMessage(error, "The history could not be loaded.") });
@@ -98,7 +98,8 @@ export function WhiteboardHistoryPanel({ projectId, title, open, onOpenChange, r
   return (
     <>
       <BoardPanel
-        title={title}
+        title="History"
+        description={title}
         panelId="whiteboard-history-panel"
         tabRef={tabRef}
         docked={false}

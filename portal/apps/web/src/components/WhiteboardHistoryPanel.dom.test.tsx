@@ -158,15 +158,62 @@ describe("WhiteboardHistoryPanel (#500)", () => {
     expect(document.activeElement).toBe(restoreFor());
   });
 
-  it("touch: the Restore action and the History tab are 44px at <=721px (#500 browser pass)", async () => {
+  it("touch: the Restore action and Try Again are 44px at <=721px (#500 browser pass, #559)", async () => {
     h.get.mockResolvedValue(listing());
     await render(props());
     const restore = document.body.querySelector<HTMLElement>('[aria-label^="Restore "]')!;
     expect(restore.className).toContain("max-[721px]:min-h-[44px]");
     expect(restore.className).toContain("max-[721px]:min-w-[44px]");
-    const tab = [...document.body.querySelectorAll<HTMLElement>('[role="tab"]')].find((node) => node.textContent === "History")!;
-    expect(tab.className).toContain("max-[721px]:h-11");
-    expect(tab.parentElement!.className).toContain("max-[721px]:group-data-[orientation=horizontal]/tabs:h-[3.125rem]");
+  });
+
+  it("Try Again is the default button size, whose floor is 44px on phones, not the 28px sm (#559)", async () => {
+    h.get.mockRejectedValue(new ApiError("nope", 500, undefined));
+    await render(props());
+    const retry = byId("whiteboard-history-retry")!;
+    expect(retry.className).toContain("max-[721px]:min-h-[44px]");
+    expect(retry.className).not.toContain("h-7");
+  });
+
+  it("History is said once: the title is History, the subtitle is the address, and a lone pane has no tab strip (#559)", async () => {
+    h.get.mockResolvedValue(listing());
+    await render(props());
+    const sheet = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
+    const named = (attribute: string) => document.getElementById(sheet.getAttribute(attribute) ?? "")?.textContent;
+    expect(named("aria-labelledby")).toBe("History");
+    expect(named("aria-describedby")).toBe("1 Writes Street");
+    expect(sheet.querySelector('[role="tablist"]')).toBeNull();
+    expect(sheet.querySelector('[role="tab"]')).toBeNull();
+    expect(sheet.querySelectorAll('[data-testid="whiteboard-version-row"]')).toHaveLength(3);
+  });
+
+  it("marks the version the live board equals as Current, with no Restore on it (#559)", async () => {
+    h.get.mockResolvedValue({ ...listing(), currentVersionId: "v-new" });
+    await render(props());
+    const rowOf = (id: string) => document.body.querySelector<HTMLElement>(`[data-version-id="${id}"]`)!;
+    expect(rowOf("v-new").querySelector('[data-testid="whiteboard-version-current"]')?.textContent).toBe("Current");
+    expect(rowOf("v-new").hasAttribute("data-current")).toBe(true);
+    expect(rowOf("v-new").querySelector('[aria-label^="Restore "]')).toBeNull();
+    for (const id of ["v-mid", "v-old"]) {
+      expect(rowOf(id).querySelector('[data-testid="whiteboard-version-current"]')).toBeNull();
+      expect(rowOf(id).querySelector('[aria-label^="Restore "]')).not.toBeNull();
+    }
+  });
+
+  it("marks nothing when the board has changed since its last snapshot, or the server names none (#559)", async () => {
+    h.get.mockResolvedValue({ ...listing(), currentVersionId: null });
+    await render(props());
+    expect(document.body.querySelector('[data-testid="whiteboard-version-current"]')).toBeNull();
+  });
+
+  it("two versions saved in the same minute read apart, in Sydney time (#559)", async () => {
+    const minute = Date.parse("2020-03-10T05:04:00.000Z");
+    h.get.mockResolvedValue({ generation: 1, currentVersionId: null, versions: [version("late", minute + 50_000, "last_leave", 4), version("early", minute + 5_000, "interval", 3), version("older", minute - 7_200_000, "interval", 2)] });
+    await render(props());
+    const when = (id: string) => document.body.querySelector<HTMLElement>(`[data-version-id="${id}"]`)!.textContent!;
+    expect(when("late")).toContain("10 Mar 2020, 4:04:50 PM");
+    expect(when("early")).toContain("10 Mar 2020, 4:04:05 PM");
+    expect(when("older")).toContain("10 Mar 2020, 2:04 PM");
+    expect(when("older")).not.toContain("2:04:00");
   });
 
   it("the sheet's own width wins over the registry's w-3/4 (320px, capped to the viewport) (#500 browser pass)", async () => {

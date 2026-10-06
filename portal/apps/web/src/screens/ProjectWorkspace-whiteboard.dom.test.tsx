@@ -362,4 +362,25 @@ describe("the open whiteboard (#498)", () => {
     expect(onRequestClose).not.toHaveBeenCalled();
     expect(boardRoot()).not.toBeNull();
   });
+  it("Esc on the open History sheet closes only that sheet: the Project sheet stays open (#559)", async () => {
+    const base = apiGetMock.getMockImplementation()!;
+    apiGetMock.mockImplementation((path: string) => path.endsWith("/whiteboard/versions") ? Promise.resolve({ generation: 1, versions: [] }) : base(path));
+    await renderSheet({ whiteboardOpen: true });
+    await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
+    await click(document.querySelector('[data-testid="project-whiteboard-history"]')!);
+    await flushUntil(() => document.querySelector('[data-testid="whiteboard-history-empty"]') !== null, "the History sheet");
+    const inside = document.querySelector<HTMLElement>('[data-testid="whiteboard-history-empty"]')!;
+    await escape(inside); await flush(5);
+    expect(onRequestClose).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-testid="whiteboard-history-empty"]')).toBeNull();
+    expect(boardRoot()).not.toBeNull();
+  });
+  it("Esc on the toolbar (outside the canvas) never closes the Project sheet either (#559)", async () => {
+    await renderSheet({ whiteboardOpen: true });
+    await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
+    const toolbar = document.querySelector<HTMLElement>('[data-testid="project-whiteboard-close"]')!;
+    toolbar.focus();
+    await escape(toolbar); await flush(5);
+    expect(onRequestClose).not.toHaveBeenCalled();
+  });
 });
