@@ -19,7 +19,9 @@ const h = vi.hoisted(() => ({ get: vi.fn() }));
 vi.mock("../lib/api", async (original) => ({ ...(await original<typeof import("../lib/api")>()), apiGet: h.get, apiPost: vi.fn() }));
 vi.mock("../lib/toast-store", () => ({ pushToast: () => undefined }));
 
+import { createRef } from "react";
 import { WhiteboardHistoryPanel } from "./WhiteboardHistoryPanel";
+import { BoardPanel } from "./reui/whiteboard/board-panel";
 
 const PHONE = "[body:has([data-phone-layout])_&]";
 let host: HTMLDivElement;
@@ -36,22 +38,36 @@ beforeEach(async () => {
 });
 afterEach(async () => { await act(async () => { root.unmount(); }); host.remove(); document.body.replaceChildren(); });
 
+const panel = (panes: Record<string, React.ReactNode>) => (
+  <BoardPanel
+    title="History" panelId="p" tabRef={createRef<HTMLButtonElement>()} docked={false} measured dockOpen={false} sheetOpen onSheetOpenChange={() => undefined}
+    tab="history" onTabChange={() => undefined} panes={panes}
+  />
+);
+
 describe("the History sheet follows the board's phone layout (#564)", () => {
-  it("tab triggers, the tab list and row actions switch to 44px on the phone-layout predicate, with no viewport query", () => {
-    const tab = document.body.querySelector<HTMLElement>('[role="tab"]')!;
-    const list = document.body.querySelector<HTMLElement>('[role="tablist"]')!;
+  it("History is one pane, so the sheet has no tab strip; its row actions switch to 44px on the phone-layout predicate, with no viewport query", () => {
+    expect(document.body.querySelector('[role="tab"]')).toBeNull();
+    expect(document.body.querySelector('[role="tablist"]')).toBeNull();
     const action = document.body.querySelector<HTMLElement>('[aria-label^="Restore "]')!;
-    expect(tab.className).toContain(`${PHONE}:h-11`);
-    expect(list.className).toContain(`${PHONE}:group-data-[orientation=horizontal]/tabs:h-[3.125rem]`);
     expect(action.className).toContain(`${PHONE}:min-h-[44px]`);
     expect(action.className).toContain(`${PHONE}:min-w-[44px]`);
-    for (const el of [tab, list, action]) expect(el.className).not.toContain("721px");
+    expect(action.className).not.toContain("721px");
   });
 
-  it("the targets are conditional: a board that is not in the phone layout leaves the 32px defaults", () => {
+  it("the tab strip, when a panel has more than one pane, switches to 44px on the same predicate, with no viewport query", async () => {
+    await act(async () => { root.render(panel({ frames: <p>f</p>, history: <p>h</p> })); });
     const tab = document.body.querySelector<HTMLElement>('[role="tab"]')!;
+    const list = document.body.querySelector<HTMLElement>('[role="tablist"]')!;
+    expect(tab.className).toContain(`${PHONE}:h-11`);
+    expect(list.className).toContain(`${PHONE}:group-data-[orientation=horizontal]/tabs:h-[3.125rem]`);
+    for (const el of [tab, list]) expect(el.className).not.toContain("721px");
+  });
+
+  it("the targets are conditional: a board that is not in the phone layout leaves the 32px defaults", async () => {
     const action = document.body.querySelector<HTMLElement>('[aria-label^="Restore "]')!;
-    expect(tab.className).not.toMatch(/(^|\s)h-11(\s|$)/);
     expect(action.className).not.toMatch(/(^|\s)min-h-\[44px\](\s|$)/);
+    await act(async () => { root.render(panel({ frames: <p>f</p>, history: <p>h</p> })); });
+    expect(document.body.querySelector<HTMLElement>('[role="tab"]')!.className).not.toMatch(/(^|\s)h-11(\s|$)/);
   });
 });
