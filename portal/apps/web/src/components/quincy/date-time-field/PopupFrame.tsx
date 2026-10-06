@@ -131,7 +131,7 @@ export function PopupFrame({ label, zoneId, bodyRef, applying, applyDisabled = f
       {pinned && <div className="shrink-0 px-(--frame-panel-header-px) pb-[var(--space-2)]">{pinned}</div>}
       {/* The body scrolls; the footer below stays pinned so Cancel / Apply are always visible. */}
       <FramePanel className="flex min-h-0 flex-col p-0">
-        <ScrollArea className="flex min-h-0 grow flex-col [--fade-size:var(--space-8)] sm:[--fade-size:var(--space-5)] *:data-[slot=scroll-area-viewport]:mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] *:data-[slot=scroll-area-viewport]:mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))] *:data-[slot=scroll-area-viewport]:focus-visible:ring-0 has-[[data-slot=scroll-area-viewport]:focus-visible]:ring-[3px] has-[[data-slot=scroll-area-viewport]:focus-visible]:ring-ring/50">
+        <ScrollArea className="flex min-h-0 grow flex-col [--fade-size:var(--space-6)] sm:[--fade-size:var(--space-5)] *:data-[slot=scroll-area-viewport]:mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] *:data-[slot=scroll-area-viewport]:mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))] *:data-[slot=scroll-area-viewport]:focus-visible:ring-0 has-[[data-slot=scroll-area-viewport]:focus-visible]:ring-[3px] has-[[data-slot=scroll-area-viewport]:focus-visible]:ring-ring/50">
           <div ref={contentRef} className="px-(--frame-panel-px) py-(--frame-panel-py)">{children}</div>
         </ScrollArea>
       </FramePanel>

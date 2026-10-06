@@ -457,12 +457,12 @@ describe("DateTimeField date-time: seeding a draft", () => {
       const group = popup()!.querySelector('[role="group"][aria-label="Time slots"]')!;
       const viewport = group.parentElement!;
       expect(viewport.parentElement!.classList.contains("h-36")).toBe(true);
-      expect(viewport.parentElement!.classList.contains("sm:h-72")).toBe(true);
-      // Below sm the grid's own scrollbar is hidden and its edges fade like the body's (#447).
+      expect(viewport.parentElement!.classList.contains("min-[721px]:h-72")).toBe(true);
+      // Below 721px the grid's own scrollbar is hidden and its edges fade like the body's (#447).
       const rootClass = viewport.parentElement!.className;
-      expect(rootClass).toContain("max-sm:*:data-[slot=scroll-area-scrollbar]:hidden");
-      expect(rootClass).toContain("max-sm:*:data-[slot=scroll-area-viewport]:mask-t-from-");
-      expect(rootClass).toContain("max-sm:*:data-[slot=scroll-area-viewport]:mask-b-from-");
+      expect(rootClass).toContain("max-[721px]:*:data-[slot=scroll-area-scrollbar]:hidden");
+      expect(rootClass).toContain("max-[721px]:*:data-[slot=scroll-area-viewport]:mask-t-from-");
+      expect(rootClass).toContain("max-[721px]:*:data-[slot=scroll-area-viewport]:mask-b-from-");
       // 17:00 is slot 68: top 2040, centred in 144px => 2040 - 72 + 15.
       expect(viewport.scrollTop).toBe(1983);
     } finally { rect.mockRestore(); client.mockRestore(); offset.mockRestore(); }
@@ -691,5 +691,26 @@ describe("DateTimeField date-time: seeding a draft", () => {
     await open();
     expect(padding).toHaveBeenCalledTimes(2);
     expect(padding).toHaveLastReturnedWith({ top: 108 });
+  });
+
+  it("re-reads the collision-padding callback when the viewport resizes while open, once per frame (#602)", async () => {
+    let headerBottom = 50;
+    const padding = vi.fn(() => ({ top: headerBottom + 16 }));
+    const frames: FrameRequestCallback[] = [];
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => { frames.push(cb); return frames.length; });
+    try {
+      await act(async () => { root.render(<DateTimeField variant="date-time" id="deadline" label="Deadline" value={null} popupCollisionPadding={padding} onApply={vi.fn()} />); await Promise.resolve(); });
+      await open();
+      expect(padding).toHaveBeenCalledTimes(1);
+      headerBottom = 92; // the banner appeared while the popup was open, or the phone rotated
+      await act(async () => { window.dispatchEvent(new Event("resize")); window.dispatchEvent(new Event("resize")); });
+      await act(async () => { frames.splice(0).forEach((cb) => cb(0)); });
+      expect(padding).toHaveBeenCalledTimes(2);
+      expect(padding).toHaveLastReturnedWith({ top: 108 });
+      await click(popupButton(popup()!, "Cancel")!);
+      await act(async () => { window.dispatchEvent(new Event("resize")); });
+      await act(async () => { frames.splice(0).forEach((cb) => cb(0)); });
+      expect(padding).toHaveBeenCalledTimes(2); // closed: no read
+    } finally { raf.mockRestore(); }
   });
 });

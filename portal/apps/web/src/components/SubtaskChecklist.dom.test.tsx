@@ -20,6 +20,8 @@ const floating = vi.hoisted(() => ({ modalValues: [] as Array<boolean | undefine
 // capability-derived branches keep the coverage they had. A test needing a role sets one here.
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: null, isPending: false }) }));
 vi.mock("../lib/confirm", () => ({ confirm: confirmMock }));
+const shellBottom = vi.hoisted(() => vi.fn(() => 0));
+vi.mock("../lib/shell-chrome", () => ({ shellChromeBottom: () => shellBottom() }));
 // Records what the rail asks the Project surfaces to refetch (#450), delegating to the real thing.
 const surfaces = vi.hoisted(() => ({ calls: [] as Array<{ projectId: string; resources: Array<{ kind: string }>; dashboard: boolean; calendar: boolean; gantt: boolean }> }));
 vi.mock("../lib/project-data", async (importOriginal) => {
@@ -182,6 +184,19 @@ describe("SubtaskChecklist", () => {
     await typePopupTime(editor, "09:30"); expect(popupButton(editor, "Apply")!.disabled).toBe(false); await applyPopup(editor); await flush();
     expect(apiPatchMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { schedule: { expectedVersion: 1, schedule: { state: "range", start: { localCivil: `${year}-05-30T09:00` }, end: { localCivil: `${year}-05-30T09:30` } } } });
     await openAssignees(assignee); await pickAssignee("Ada Smith"); await closeAssignees(); expect(apiPatchMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { assignees: { expectedVersion: 1, add: ["30000000-0000-4000-8000-000000000003"], remove: [] } });
+  });
+
+  it("reads the sheet-relative padding once per open of the schedule picker (#597)", async () => {
+    const rangeTask = { ...task, id: "range-1", title: "Existing range", position: 512, dueDate: `${year}-06-02T17:00`, schedule: presetScheduleDto(`${year}-06-01`, `${year}-06-02`, 1) };
+    apiGetMock.mockImplementation((path) => path.includes("subtask-assignee-options") ? Promise.resolve(optionsResponse) : Promise.resolve({ subtasks: [rangeTask, second] }));
+    const host = mount(); await render();
+    shellBottom.mockClear();
+    expect(shellBottom).not.toHaveBeenCalled();
+    const editor = await openSchedule(host, "Existing range");
+    expect(shellBottom).toHaveBeenCalledTimes(1);
+    await click(popupButton(editor, "Cancel")!);
+    await openSchedule(host, "Existing range");
+    expect(shellBottom).toHaveBeenCalledTimes(2);
   });
 
   it("lets an existing range be edited: the control is enabled, shows both moments, and saves a versioned range PATCH", async () => {

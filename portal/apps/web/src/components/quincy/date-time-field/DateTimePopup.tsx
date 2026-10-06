@@ -208,7 +208,7 @@ function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedba
   return (
     <PopupFrame label={label} zoneId={zoneId} bodyRef={bodyRef} applying={applying} applyDisabled={blocked || busy} onCancel={onClose} onApply={() => { void apply(); }}>
       <div className="flex flex-col gap-[var(--space-4)]">
-        <div className="flex flex-col gap-[var(--space-4)] sm:flex-row">
+        <div className="flex flex-col gap-[var(--space-4)] min-[721px]:flex-row">
           <ShortcutList shortcuts={shortcuts} activeId={activeId} onPick={pickShortcut} />
           <CalendarPane
             selection={{ mode: "single", day: draft.day }}
@@ -219,7 +219,7 @@ function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedba
             startYear={bounds.startYear}
             endYear={bounds.endYear}
           />
-          <div className="flex min-w-0 flex-col gap-[var(--space-2)] sm:w-28 sm:shrink-0">
+          <div className="flex min-w-0 flex-col gap-[var(--space-2)] min-[721px]:w-28 min-[721px]:shrink-0">
             <TimeColumn selected={draft.time && SLOTS.includes(draft.time) ? draft.time : null} skipped={skipped} onPick={pickSlot} />
           </div>
         </div>

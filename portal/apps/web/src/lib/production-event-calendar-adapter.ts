@@ -244,12 +244,32 @@ export function productionEventCalendarEventClassName(data: ProductionEventCalen
   return highlighted && base ? `${base} ${LANDED_HIGHLIGHT}` : base;
 }
 
+/**
+ * #602: the global `:focus-visible` outline draws outside the chip, and the month cell and the agenda scroller
+ * (`overflow-hidden`) clip it. Inset it by the ring's own width. `!` because `tokens/base.css` sets `outline` as an
+ * unlayered shorthand that beats a layered utility (docs/lessons.md #522, #219). Lands on the chip's focusable root:
+ * `event-calendar-event.tsx` applies `eventClassName` to the same element that takes the props.
+ */
+const CHIP_FOCUS_RING_INSET = "focus-visible:![outline-offset:calc(-1*var(--border-width-bold))]";
+
 function baseEventClassName(data: ProductionEventCalendarData | undefined): string | undefined {
+  const base = chipColourClassName(data);
+  return base ? `${base} ${CHIP_FOCUS_RING_INSET}` : undefined;
+}
+
+function chipColourClassName(data: ProductionEventCalendarData | undefined): string | undefined {
   if (!data) return undefined;
   if (data.shape === "deadline") return `bg-(--ink-900) hover:bg-(--ink-700) text-(--paper-050) inset-ring-(--ink-900) ${DEADLINE_SELECTED} ${DEADLINE_AGENDA_HOVER} ${DEADLINE_INVERSE_ROLES} ${DEADLINE_AGENDA_DOT}`;
   if (data.done) return `bg-border/25 hover:bg-border/35 inset-ring-border/25 text-foreground-secondary ${CHECKLIST_SELECTED}`;
   return `bg-(--paper-000) hover:bg-(--paper-100) inset-ring-(--border-hairline) text-foreground ${CHECKLIST_SELECTED}`;
 }
+
+/**
+ * #602: the "+N more" popover heads its day like every other Portal date ("Wed 18 Nov"), not the vendor's US
+ * "Wednesday, November 18". The vendored agenda view builds its own day header from literals and ignores
+ * `formats.agendaDayHeader`, so that one is not overridden here.
+ */
+export const PRODUCTION_EVENT_CALENDAR_I18N = { formats: { moreDayHeader: "EEE d MMM" } } as const;
 
 export function subviewToCalendarView(subview: ProductionCalendarSubview): CalendarViewName {
   return subview;

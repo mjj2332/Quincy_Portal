@@ -244,7 +244,9 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
       start: { day: startParts.day, time: startParts.time, timeText: startParts.time ?? "", fold: { minute: range.start.localCivil, choice: foldChoice(range.start.fold) } },
       end: { day: endParts.day, time: endParts.time, timeText: endParts.time ?? "", fold: { minute: range.end.localCivil, choice: foldChoice(range.end.fold) } },
     }));
-    if (startParts.day) setMonth(civilToCell(startParts.day));
+    // #598: the grid follows the end being edited (as setActive does), not always the start.
+    const shownDay = draft.active === "end" ? (endParts.day ?? startParts.day) : startParts.day;
+    if (shownDay) setMonth(civilToCell(shownDay));
   };
 
   const pickSlot = (slot: string) => change(active, { time: slot, timeText: slot });
@@ -335,7 +337,7 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
       )}
     >
       <div className="flex flex-col gap-[var(--space-4)]">
-        <div className="flex flex-col gap-[var(--space-4)] sm:flex-row">
+        <div className="flex flex-col gap-[var(--space-4)] min-[721px]:flex-row">
           <ShortcutList shortcuts={shortcuts} activeId={activeId} onPick={pickShortcut} />
           <CalendarPane
             selection={{ mode: "range", start: draft.start.day, end: draft.end.day, activeEnd: active }}
@@ -346,7 +348,7 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
             startYear={startYear}
             endYear={endYear}
           />
-          <div className="flex min-w-0 flex-col gap-[var(--space-2)] sm:w-28 sm:shrink-0">
+          <div className="flex min-w-0 flex-col gap-[var(--space-2)] min-[721px]:w-28 min-[721px]:shrink-0">
             <TimeColumn selected={current.time && SLOTS.includes(current.time) ? current.time : null} skipped={skipped} onPick={pickSlot} />
           </div>
         </div>

@@ -11,6 +11,7 @@ import { META_TRIGGER } from "./icon-button";
 import { Popover, PopoverTrigger } from "../reui/popover";
 import { DateTimePopoverContent } from "./DateTimeField";
 import { sameReminderOffsets, type PopupCollisionAvoidance, type PopupCollisionPadding } from "@/lib/date-time-field";
+import { useReresolveOnResize } from "@/lib/use-reresolve-on-resize";
 import { DateTimeRangePopup, type DateTimeRangeApply } from "./date-time-field/DateTimeRangePopup";
 import type { DateTimeReminders } from "./date-time-field/DateTimePopup";
 import type { ProjectSubtask } from "../../lib/project-data";
@@ -91,6 +92,9 @@ export function SubtaskScheduleControl<TItem extends LatestSubtaskSummary = Subt
     setWasOpen(open);
     if (open) setOpenPadding(typeof popupCollisionPadding === "function" ? popupCollisionPadding() : popupCollisionPadding);
   }
+  // #602: a resize while open re-reads a padding callback.
+  const padFn = typeof popupCollisionPadding === "function" ? popupCollisionPadding : undefined;
+  useReresolveOnResize(open && padFn !== undefined, () => padFn!(), setOpenPadding);
   const ownRetained = useRef<RetainedSchedule>({ draft: null, baseVersion: null });
   const retained = retainedProp ?? ownRetained.current;
   // A failed save keeps the draft Apply handed over, because the conflict is shown after the popup closes and the user must be able

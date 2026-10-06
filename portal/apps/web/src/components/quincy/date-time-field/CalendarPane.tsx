@@ -95,7 +95,7 @@ export function CalendarPane({ selection, today, month, onMonthChange, onPickDay
     endMonth: new Date(endYear, 11, 1),
     labels: LABELS,
     formatters: FORMATTERS,
-    className: "w-full bg-transparent p-0 [--cell-size:--spacing(9)] max-[721px]:[--cell-size:--spacing(11)]",
+    className: "w-full bg-transparent p-0 [--cell-size:--spacing(9)] max-[721px]:[--cell-size:--spacing(11)] **:[.rdp-dropdown\_root]:flex **:[.rdp-dropdown\_root]:items-center **:[.rdp-dropdown\_root]:min-h-(--cell-size) pointer-coarse:**:[.rdp-dropdown\_root]:min-h-[44px]",
     components: COMPONENTS,
   };
   return (

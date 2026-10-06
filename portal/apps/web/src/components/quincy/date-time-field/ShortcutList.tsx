@@ -29,7 +29,7 @@ export function ShortcutList<TRow extends ShortcutRow>({ shortcuts, activeId, on
   onPick: (shortcut: TRow) => void;
 }) {
   return (
-    <ItemGroup className="grid grid-cols-2 gap-[var(--space-1)] sm:flex sm:w-44 sm:shrink-0">
+    <ItemGroup className="grid grid-cols-2 gap-[var(--space-1)] min-[721px]:flex min-[721px]:w-44 min-[721px]:shrink-0">
       {shortcuts.map((shortcut) => {
         const { icon: Icon, tone } = ICONS[shortcut.id] ?? ICONS.today!;
         return (

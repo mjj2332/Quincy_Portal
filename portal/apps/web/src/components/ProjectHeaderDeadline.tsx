@@ -4,6 +4,8 @@ import type { ProjectDeadlineSchedule } from "@quincy/shared";
 import { Popover, PopoverTrigger } from "@/components/reui/popover";
 import { ProjectDeadlineControl } from "./ProjectDeadlineControl";
 import { DateTimePopoverContent } from "./quincy/DateTimeField";
+import { shellAwarePopupPadding, type PopupCollisionPadding } from "../lib/date-time-field";
+import { useReresolveOnResize } from "../lib/use-reresolve-on-resize";
 import { StatusPill } from "./quincy/StatusPill";
 import { AutomaticDeadlineMark } from "./AutomaticDeadlineMark";
 import { dueIn } from "../lib/deadline-due-in";
@@ -68,6 +70,13 @@ export function ProjectHeaderDeadline({ projectId, schedule, canEdit, archived =
   onArchivedRefusal?: (focusWasInside: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
+  // #597: sheet-relative top padding, read when the popover opens (never at mount) and again on a resize while it is open (#602).
+  const [openPadding, setOpenPadding] = useState<PopupCollisionPadding | undefined>(undefined);
+  const onOpenChange = (next: boolean) => {
+    if (next) setOpenPadding(shellAwarePopupPadding());
+    setOpen(next);
+  };
+  useReresolveOnResize(open, shellAwarePopupPadding, setOpenPadding);
   const noticeId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popupRef = useRef<HTMLDivElement>(null);
@@ -112,7 +121,7 @@ export function ProjectHeaderDeadline({ projectId, schedule, canEdit, archived =
     </div>;
   }
 
-  return <Popover open={open} onOpenChange={setOpen}>
+  return <Popover open={open} onOpenChange={onOpenChange}>
     <PopoverTrigger
       ref={triggerRef}
       type="button"
@@ -127,7 +136,7 @@ export function ProjectHeaderDeadline({ projectId, schedule, canEdit, archived =
     </PopoverTrigger>
     {/* #422: the popup is the date-time form of the shared date/time field (`quincy/DateTimeField`);
         its own footer is pinned (#325), so the content needs no scroll padding of its own. */}
-    <DateTimePopoverContent label="Deadline" ref={popupRef}>
+    <DateTimePopoverContent label="Deadline" ref={popupRef} popupCollisionPadding={openPadding}>
       <ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} onClose={() => setOpen(false)}
         onRequestStart={() => { focusAtRequest.current = focusInCell(); }}
         onArchivedRefusal={() => onArchivedRefusal?.(focusAtRequest.current)} />

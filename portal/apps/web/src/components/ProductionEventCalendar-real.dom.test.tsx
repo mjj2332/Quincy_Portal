@@ -78,6 +78,9 @@ describe("ProductionEventCalendar through the real vendored event calendar", () 
     for (const utility of ["data-selected:bg-(--ink-900)", "data-selected:hover:bg-(--ink-700)", "data-selected:inset-ring-4", "data-selected:inset-ring-(--paper-050)", "data-selected:inset-shadow-[0_0_0_2px_var(--ink-900)]"]) {
       expect(deadlineClass).toContain(utility);
     }
+    // #602: the chip's focusable root (the button) carries the inset focus ring, so the cell's overflow-hidden cannot clip it.
+    expect(checklistClass).toContain("focus-visible:![outline-offset:calc(-1*var(--border-width-bold))]");
+    expect(deadlineClass).toContain("focus-visible:![outline-offset:calc(-1*var(--border-width-bold))]");
     expect(deadlineClass).not.toContain("data-selected:bg-(--ec-event-color)/30");
     expect(deadlineClass).not.toContain("data-selected:inset-ring-(--ec-event-color)/40");
   });
