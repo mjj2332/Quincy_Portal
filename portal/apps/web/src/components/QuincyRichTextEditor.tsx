@@ -469,6 +469,23 @@ export function QuincyRichTextEditor({
     dom.addEventListener("blur", onBlur);
     return () => dom.removeEventListener("blur", onBlur);
   }, [editor]);
+  // The stuck composer toolbar (#594) covers the top of the viewport, which ProseMirror's scroll-into-view knows nothing of: a caret
+  // moved up (ArrowUp, typing at the top edge) could land under it. `scrollMargin.top` is its bottom: its sticky `top` (header and
+  // impersonation offset included, read from the computed style) plus its height. Constant, so it does not depend on being stuck now.
+  useEffect(() => {
+    const addon = addonRef.current;
+    if (!editor || !isDocument || !addon) return;
+    const apply = () => {
+      const top = (parseFloat(getComputedStyle(addon).top) || 0) + addon.offsetHeight;
+      editor.view.setProps({ scrollMargin: { top, right: 5, bottom: 5, left: 5 } });
+    };
+    apply();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(apply);
+    observer?.observe(addon);
+    window.addEventListener("resize", apply);
+    editor.view.dom.addEventListener("focus", apply);
+    return () => { observer?.disconnect(); window.removeEventListener("resize", apply); editor.view.dom.removeEventListener("focus", apply); };
+  }, [editor, isDocument]);
   useEffect(() => {
     if (!editor) return;
     const announce = () => setNestingBlocked(true);

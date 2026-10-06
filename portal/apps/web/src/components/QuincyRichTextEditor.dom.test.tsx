@@ -1890,3 +1890,44 @@ describe("table bar with no room falls back to the toolbar group (#535)", () => 
     await waitForCondition(() => tools(host) !== null, "toolbar table group back on re-entering the table");
   });
 });
+
+describe("selection scrolling clears the stuck composer toolbar (#594, Sol r3)", () => {
+  // The toolbar's wrapper (the sticky addon): the element whose first child is the toolbar.
+  const isToolbarAddon = (element: Element | null | undefined) => element?.firstElementChild?.getAttribute("role") === "toolbar";
+  let originalComputed: typeof window.getComputedStyle;
+  let originalOffsetHeight: PropertyDescriptor | undefined;
+  beforeEach(() => {
+    originalComputed = window.getComputedStyle;
+    // happy-dom loads no app.css: stand in for the sticky rule's `top: var(--shell-header-height)` (50px) and a 48px toolbar.
+    window.getComputedStyle = ((element: Element, pseudo?: string | null) => {
+      const style = originalComputed.call(window, element, pseudo);
+      if (isToolbarAddon(element)) return new Proxy(style, { get: (target, key) => key === "top" ? "50px" : Reflect.get(target, key) });
+      return style;
+    }) as typeof window.getComputedStyle;
+    originalOffsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", { configurable: true, get(this: HTMLElement) { return isToolbarAddon(this) ? 48 : 0; } });
+  });
+  afterEach(() => {
+    window.getComputedStyle = originalComputed;
+    if (originalOffsetHeight) Object.defineProperty(HTMLElement.prototype, "offsetHeight", originalOffsetHeight);
+    else delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetHeight;
+  });
+  const margin = (editor: HTMLElement) => (editor as unknown as { editor: Editor }).editor.view.someProp("scrollMargin", (value) => value) as { top: number } | number | undefined;
+  const doc = (): RichTextDoc => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "x" }] }] });
+
+  it("document preset: the view's scrollMargin.top is the stuck toolbar's bottom (its sticky top plus its height)", async () => {
+    variant = "document";
+    const host = mount();
+    await act(async () => { root!.render(<EditorUnderTest value={doc()} onChange={vi.fn()} limit={2_000} loadMentionables={mentionables} />); await Promise.resolve(); await Promise.resolve(); });
+    const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    const value = margin(editor);
+    expect(typeof value === "object" ? value.top : value).toBe(98);
+  });
+
+  it("composer preset: scrollMargin is left alone", async () => {
+    variant = "composer";
+    const host = mount();
+    await act(async () => { root!.render(<EditorUnderTest value={doc()} onChange={vi.fn()} limit={2_000} loadMentionables={mentionables} />); await Promise.resolve(); await Promise.resolve(); });
+    expect(margin(host.querySelector<HTMLElement>('[contenteditable="true"]')!)).toBeUndefined();
+  });
+});
