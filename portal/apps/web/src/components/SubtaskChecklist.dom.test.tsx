@@ -703,21 +703,31 @@ describe("SubtaskChecklist on an archived Project (#450)", () => {
     expect(liveRegion(host)).toBeUndefined();
     expect(document.getElementById(`subtask-add-${projectId}`)).not.toBeNull(); expect(item(host, "Call client").querySelector('[aria-label="Actions for Call client"]')).not.toBeNull();
   });
-  it("the latch clears when the next detail fetch lands un-archived, though the prop never showed true (#566)", async () => {
+  const detailKey = ["project-data", projectId, "detail"];
+  it("a fast refetch that returns un-archived clears the latch, though the prop never showed true (#566)", async () => {
     const host = await renderCase();
+    await act(async () => { await client.prefetchQuery({ queryKey: detailKey, queryFn: () => Promise.resolve({ archivedAt: null }), staleTime: 0 }); });
     apiPatchMock.mockRejectedValueOnce(refusal());
-    await click(checkbox(host)); await waitFor(() => expect(liveRegion(host)).toBeDefined());
-    await act(async () => { client.setQueryData(["project-data", projectId, "detail"], { archivedAt: null }); await Promise.resolve(); });
-    await rerenderCase({ archived: false });
-    expect(liveRegion(host)).toBeUndefined();
+    await click(checkbox(host));
+    await waitFor(() => expect(liveRegion(host)).toBeUndefined());
     expect(document.getElementById(`subtask-add-${projectId}`)).not.toBeNull();
   });
-  it("the latch stays read-only when the next fetch says archived (#566)", async () => {
+  it("setQueryData alone does not clear the latch (#566)", async () => {
     const host = await renderCase();
+    await act(async () => { await client.prefetchQuery({ queryKey: detailKey, queryFn: (() => { let calls = 0; return () => (calls++ === 0 ? Promise.resolve({}) : new Promise(() => undefined)); })(), staleTime: 0 }); });
     apiPatchMock.mockRejectedValueOnce(refusal());
     await click(checkbox(host)); await waitFor(() => expect(liveRegion(host)).toBeDefined());
-    await act(async () => { client.setQueryData(["project-data", projectId, "detail"], { archivedAt: "2026-01-01" }); await Promise.resolve(); });
+    await act(async () => { client.setQueryData(detailKey, { archivedAt: null }); await new Promise((resolve) => window.setTimeout(resolve, 50)); });
+    expect(liveRegion(host)).toBeDefined(); controlsGone(host);
+  });
+  it("a refetch that returns archived keeps the rail read-only through the prop (#566)", async () => {
+    const host = await renderCase();
+    let release!: () => void; let calls = 0;
+    await act(async () => { await client.prefetchQuery({ queryKey: detailKey, queryFn: () => (calls++ === 0 ? Promise.resolve({}) : new Promise((resolve) => { release = () => resolve({ archivedAt: "2026-01-01" }); })), staleTime: 0 }); });
+    apiPatchMock.mockRejectedValueOnce(refusal());
+    await click(checkbox(host)); await waitFor(() => expect(liveRegion(host)).toBeDefined());
     await rerenderCase({ archived: true });
+    await act(async () => { release(); await new Promise((resolve) => window.setTimeout(resolve, 50)); });
     expect(liveRegion(host)).toBeDefined(); controlsGone(host);
   });
   it("archived arriving with no 409 (a refetch) closes an open composer and drops its draft, and Restore does not reopen it or steal focus", async () => {

@@ -1,4 +1,5 @@
 import { DndContext, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import type { QueryKey } from "@tanstack/react-query";
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -155,7 +156,7 @@ function SortableSubtaskRow({ item, projectId, role, busy, editing, draftTitle, 
   </article>;
 }
 
-export function SubtaskChecklist({ projectId, onAccessFailure, layout = "rail", archived = false }: { projectId: string; /** The Project is archived (#450): the checklist is read-only. Restore (true to false) turns editing back on. */ archived?: boolean; onAccessFailure?: (error: unknown) => void; /** "rail" (default) opens the checklist; "stacked" collapses it to its count. The panel derives it from the one 1100px breakpoint (#377). */ layout?: "rail" | "stacked" }) {
+export function SubtaskChecklist({ projectId, onAccessFailure, layout = "rail", archived = false, archivedQueryKey }: { projectId: string; /** The query that supplies `archived` (Project detail by default; the collaboration summary in the collaboration-only view). A refusal refetches it before the latch lets go (#566). */ archivedQueryKey?: QueryKey; /** The Project is archived (#450): the checklist is read-only. Restore (true to false) turns editing back on. */ archived?: boolean; onAccessFailure?: (error: unknown) => void; /** "rail" (default) opens the checklist; "stacked" collapses it to its count. The panel derives it from the one 1100px breakpoint (#377). */ layout?: "rail" | "stacked" }) {
   const queryClient = useOptionalProjectQueryClient();
   const session = useSession();
   const role: Role = session.data?.user.role === "external_editor" ? "external_editor" : "admin";
@@ -169,7 +170,7 @@ export function SubtaskChecklist({ projectId, onAccessFailure, layout = "rail", 
   const [newTitle, setNewTitle] = useState(""); const [newAssignees, setNewAssignees] = useState<Array<{ id: string; name: string }>>([]); const [newSchedule, setNewSchedule] = useState<RangeChecklistScheduleInput | null>(null); const [newSchedulePreview, setNewSchedulePreview] = useState<ChecklistScheduleDto | null>(null); const [newReminders, setNewReminders] = useState<number[]>([...SUBTASK_REMINDER_DEFAULT_OFFSETS]); const [composerOpen, setComposerOpen] = useState(false); const [activePopover, setActivePopover] = useState<ActivePopover>(null);
   const [draftTitles, setDraftTitles] = useState<Record<string, string>>({}); const [notice, setNotice] = useState(""); const [open, setOpen] = useState(layout === "rail"); const [completedOpen, setCompletedOpen] = useState(false); const [editingId, setEditingId] = useState<string | null>(null);
   // A write refused as archived latches the rail read-only until the `archived` prop catches up (the detail refetch it triggers) and then clears on Restore (#450).
-  const { latched, latch: setLatch, readOnly } = useArchivedRefusalLatch(queryClient, projectId, archived); const priorReadOnly = useRef(readOnly); const focusAfterFlip = useRef<{ inRail: boolean } | null>(null); const collapseTriggerRef = useRef<HTMLButtonElement>(null);
+  const { latched, latch: setLatch, readOnly } = useArchivedRefusalLatch(queryClient, archivedQueryKey ?? projectDataKeys.detail(projectId), archived); const priorReadOnly = useRef(readOnly); const focusAfterFlip = useRef<{ inRail: boolean } | null>(null); const collapseTriggerRef = useRef<HTMLButtonElement>(null);
   const [dragging, setDragging] = useState(false); const [scheduleErrors, setScheduleErrors] = useState<Record<string, ScheduleError>>({});
   // Held above the grouped rows so a Done toggle (row remount) cannot discard a retained schedule draft; entries are dropped when the item is deleted.
   const retainedSchedules = useRef(new Map<string, RetainedSchedule>());

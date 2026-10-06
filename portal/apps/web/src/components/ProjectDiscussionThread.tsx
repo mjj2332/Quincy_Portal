@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefCallback } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { RICH_TEXT_JSON_MAX_BYTES, richTextDocByteLength, richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { ApiError, apiDelete, apiGet, apiPatch, apiPost } from "../lib/api";
 import { externalApiGet } from "../lib/external-api-response";
@@ -15,7 +15,7 @@ import {
   type Comment,
   type CommentResponse,
 } from "../lib/project-comments";
-import { classifyProjectAccessError, invalidateProjectSurfaces, projectCollaborationDataGeneration, useProjectAccessTermination } from "../lib/project-data";
+import { classifyProjectAccessError, invalidateProjectSurfaces, projectCollaborationDataGeneration, projectDataKeys, useProjectAccessTermination } from "../lib/project-data";
 import { stripLinkPreviewDisplay } from "../lib/rich-text-tiptap";
 import { useProjectCommentDraft } from "../lib/project-comment-drafts";
 import { RichTextContent } from "./RichTextContent";
@@ -45,6 +45,8 @@ export type ProjectDiscussionThreadProps = {
   consumeDiscussion403?: boolean;
   /** The Project is archived: the discussion is read-only (#527). The collaboration-only view reads it from the staff collaboration summary. */
   archived?: boolean;
+  /** The query that supplies `archived` (Project detail by default; the collaboration summary in the collaboration-only view). A refusal refetches it before the latch lets go (#566). */
+  archivedQueryKey?: QueryKey;
   onAccessFailure?: (error: unknown, resource: ProjectDiscussionAccessFailureResource) => void;
   onUnreadCountChange?: (count: number) => void;
   children?: (discussion: {
@@ -161,6 +163,7 @@ export function ProjectDiscussionThread({
   presented = true,
   consumeDiscussion403 = true,
   archived = false,
+  archivedQueryKey,
   onAccessFailure,
   onUnreadCountChange,
   children,
@@ -183,7 +186,7 @@ export function ProjectDiscussionThread({
   const [deleting, setDeleting] = useState(false);
   const lastDeleteTarget = useRef<{ id: string; order: string[]; deleted: boolean } | null>(null);
   // A write refused as archived latches the thread read-only until the `archived` prop catches up (the detail refetch it triggers), and clears on Restore (#527).
-  const { latched, latch: setLatch, readOnly } = useArchivedRefusalLatch(queryClient, projectId, archived);
+  const { latched, latch: setLatch, readOnly } = useArchivedRefusalLatch(queryClient, archivedQueryKey ?? projectDataKeys.detail(projectId), archived);
   const priorReadOnly = useRef(readOnly);
   const focusAfterFlip = useRef<{ inThread: boolean } | null>(null);
   const composerRef = useRef<HTMLFormElement>(null);

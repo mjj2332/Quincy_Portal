@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type RefCallback } from "react";
+import type { QueryKey } from "@tanstack/react-query";
 import { useSession } from "../lib/auth";
 import { cn, formatUnreadCount } from "../lib/utils";
 import { nearestScrollContainer } from "../lib/scroll-container";
@@ -44,9 +45,11 @@ type ProjectCollaborationPanelProps = {
   onRetryJob?: (jobId: string) => void;
   /** The Project is archived: the Checklist rail is read-only (#450).  The collaboration-only view reads it from the staff collaboration summary. */
   archived?: boolean;
+  /** The query that supplies `archived`; Project detail unless the collaboration-only view passes its summary (#566). */
+  archivedQueryKey?: QueryKey;
 };
 
-export function ProjectCollaborationPanel({ projectId, presented = true, view, onViewChange, showUnreadBadge = true, onUnreadCountChange, onAccessFailure, embedded = false, jobs, onRetryJob, archived = false }: ProjectCollaborationPanelProps) {
+export function ProjectCollaborationPanel({ projectId, presented = true, view, onViewChange, showUnreadBadge = true, onUnreadCountChange, onAccessFailure, embedded = false, jobs, onRetryJob, archived = false, archivedQueryKey }: ProjectCollaborationPanelProps) {
   const session = useSession();
   const currentUserId = session.data?.user.id;
   const [localView, setLocalView] = useState<CollaborationView>("discussion");
@@ -116,7 +119,7 @@ export function ProjectCollaborationPanel({ projectId, presented = true, view, o
       // overflow keeps a checklist taller than the sheet reachable.
       "group-data-[checklist-layout=rail]/collab:[grid-area:rail] group-data-[checklist-layout=rail]/collab:sticky group-data-[checklist-layout=rail]/collab:self-start group-data-[checklist-layout=rail]/collab:top-[var(--collab-rail-top,var(--space-5))]",
       "group-data-[checklist-layout=rail]/collab:max-h-[calc(100dvh_-_var(--space-5)*2_-_var(--collab-rail-top,var(--space-5))_-_var(--space-5))] group-data-[checklist-layout=rail]/collab:overflow-y-auto group-data-[checklist-layout=rail]/collab:overscroll-contain",
-    )}><SubtaskChecklist projectId={projectId} layout={layout} archived={archived} onAccessFailure={(error) => onAccessFailure?.(error, "comments")} /></div>;
+    )}><SubtaskChecklist projectId={projectId} layout={layout} archived={archived} archivedQueryKey={archivedQueryKey} onAccessFailure={(error) => onAccessFailure?.(error, "comments")} /></div>;
     return <section className={cn("group/collab grid content-start gap-[var(--space-4)] p-[var(--space-5)] bg-[var(--paper-050)]",
       "grid-cols-[minmax(0,var(--container-md))]",
       "data-[checklist-layout=rail]:grid-cols-[minmax(0,var(--container-md))_var(--collab-rail-width)] data-[checklist-layout=rail]:gap-x-[var(--space-6)]",
@@ -131,6 +134,7 @@ export function ProjectCollaborationPanel({ projectId, presented = true, view, o
     presented={presented && activeView === "discussion"}
     consumeDiscussion403={false}
     archived={archived}
+    archivedQueryKey={archivedQueryKey}
     onAccessFailure={onAccessFailure}
     onUnreadCountChange={handleUnreadCount}
   >{renderDiscussion}</ProjectDiscussionThread>;

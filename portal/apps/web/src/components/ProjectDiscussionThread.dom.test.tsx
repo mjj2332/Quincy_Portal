@@ -347,36 +347,62 @@ describe("ProjectDiscussionThread", () => {
       expect(host.querySelector('[aria-label^="Actions for comment by"]')).toBeNull();
     });
 
-    describe("the refusal latch awaits fresh data (#566)", () => {
+    describe("the refusal latch awaits a real refetch of the supplying query (#566)", () => {
       const detailKey = ["project-data", projectId, "detail"];
-      const refuseOnce = async () => {
+      const summaryKey = ["project-data", projectId, "collaboration-summary"];
+      /** A real query the latch can refetch: `prefetchQuery` stores the queryFn on the cache entry. */
+      const seed = (key: readonly unknown[], fn: () => Promise<unknown>) => client.prefetchQuery({ queryKey: key, queryFn: fn, staleTime: 0 });
+      /** The first fetch resolves (so the entry exists with its queryFn); every later refetch never settles. */
+      const seedThenHang = (key: readonly unknown[]) => { let calls = 0; return seed(key, () => (calls++ === 0 ? Promise.resolve({}) : new Promise(() => undefined))); };
+      const refuseOnce = async (props: Partial<React.ComponentProps<typeof ProjectDiscussionThread>> = {}) => {
         apiDeleteMock.mockRejectedValueOnce(refusal());
-        render(); await flush();
-        await chooseCommentAction(host, "Me", "Delete"); await confirmDeleteInDialog(); await flush();
-        expect(notice()?.textContent).toBe(COPY);
+        render(props); await flush();
+        await chooseCommentAction(host, "Me", "Delete"); await confirmDeleteInDialog();
+        await wait(50); await flush();
       };
-      it("clears when the next detail fetch lands un-archived, though the prop never showed true", async () => {
+      it("a fast refetch that returns un-archived clears the latch, though the prop never showed true", async () => {
+        await seed(detailKey, () => Promise.resolve({ archivedAt: null }));
         await refuseOnce();
-        await act(async () => { client.setQueryData(detailKey, { archivedAt: null }); await Promise.resolve(); });
         render({ archived: false }); await flush();
         expect(notice()).toBeNull();
         expect(host.querySelector("[data-testid=discussion-composer]")).not.toBeNull();
       });
-      it("clears on a collaboration-summary fetch too", async () => {
+      it("a refetch that returns archived keeps the thread read-only through the prop", async () => {
+        await seed(detailKey, () => Promise.resolve({ archivedAt: "2026-01-01" }));
         await refuseOnce();
-        await act(async () => { client.setQueryData(["project-data", projectId, "collaboration-summary"], { project: { archived: false } }); await Promise.resolve(); });
+        render({ archived: true }); await flush(); await wait(50);
+        expect(notice()?.textContent).toBe(COPY);
+      });
+      it("a failed refetch keeps the latch", async () => {
+        await seed(detailKey, () => Promise.resolve({ archivedAt: null }));
+        client.setQueryDefaults(detailKey, { retry: false });
+        const failing = vi.fn(() => Promise.reject(new Error("offline")));
+        await client.fetchQuery({ queryKey: detailKey, queryFn: failing, staleTime: 0 }).catch(() => undefined);
+        await refuseOnce();
+        expect(failing).toHaveBeenCalled();
+        expect(notice()?.textContent).toBe(COPY);
+      });
+      it("setQueryData alone does not clear it", async () => {
+        await seedThenHang(detailKey); // the refetch never settles
+        await refuseOnce();
+        await act(async () => { client.setQueryData(detailKey, { archivedAt: null }); await Promise.resolve(); });
+        await wait(50);
+        expect(notice()?.textContent).toBe(COPY);
+      });
+      it("the other query landing does not clear it", async () => {
+        await seedThenHang(detailKey);
+        await seed(summaryKey, () => Promise.resolve({ project: { archived: false } }));
+        await refuseOnce();
+        await act(async () => { await client.refetchQueries({ queryKey: summaryKey, exact: true }); });
+        await wait(50);
+        expect(notice()?.textContent).toBe(COPY);
+      });
+      it("with the summary as the supplying query, the summary fetch clears it and detail does not", async () => {
+        await seed(summaryKey, () => Promise.resolve({ project: { archived: false } }));
+        await seedThenHang(detailKey);
+        await refuseOnce({ archivedQueryKey: summaryKey });
+        render({ archived: false, archivedQueryKey: summaryKey }); await flush();
         expect(notice()).toBeNull();
-      });
-      it("stays read-only through the prop when the fetch says archived", async () => {
-        await refuseOnce();
-        await act(async () => { client.setQueryData(detailKey, { archivedAt: "2026-01-01" }); await Promise.resolve(); });
-        render({ archived: true }); await flush();
-        expect(notice()?.textContent).toBe(COPY);
-      });
-      it("is not cleared by an unrelated query landing", async () => {
-        await refuseOnce();
-        await act(async () => { client.setQueryData(["project-data", projectId, "subtasks"], []); await Promise.resolve(); });
-        expect(notice()?.textContent).toBe(COPY);
       });
     });
 
