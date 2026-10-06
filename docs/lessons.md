@@ -5282,7 +5282,7 @@ Tags: gantt-calendar · #463
   project on the Calendar is accepted lost. The Timeline's Edit schedule… opened the sheet at every width (D7:
   `scheduleEditorPresentation` says how INLINE sessions draw); **superseded by #582**: it now opens the Due cell's own picker
   anchored to the bar, as an inline session with `inlineTarget: "item"`, so the Timeline no longer opens a non-inline session
-  (the sheet stays only as the dialog host's safety net).
+  (the sheet stays only as the dialog host's safety net). **The Calendar followed in #583**: same host, anchored to the chip.
 - **Test trap:** the vendor calendar ignores a click within 250ms of a drag end (a module flag an earlier test in the same file may
   set); wait it out before a grid click.
 ## Filter tree: OR, groups, negation across Projects, Calendar and Timeline (#461, PR A)
@@ -5731,3 +5731,28 @@ Tags: gantt-calendar, scheduling, focus-overlays · #585
   carries `expectedVersion` 4. A stashed `latestItem` older than the row is dropped. The stash is dropped on a new `generationKey`.
 - **Test it with a reapply, not just a look.** The reopened picker showing the draft is not enough: assert one more PATCH at the
   latest `expectedVersion`, that the accept gate is released while dismissed, and that a Due to bar reopen shares the same stash.
+## The Calendar's Edit schedule… picker: anchor to what can be re-keyed, move focus only if lost (#583)
+Tags: gantt-calendar, scheduling, focus-overlays · #583
+
+- **One host, two surfaces.** `components/scheduling-item-schedule-picker.tsx` (`SchedulingItemSchedulePicker`, the #582 bar picker
+  renamed) draws the item menu's Edit schedule… for the Timeline AND the Calendar: an inline `inlineTarget: "item"` session over
+  `SubtaskScheduleControl`. The Calendar must also pass `scheduleEditorPresentation="inline"` to `ProductionEventCalendarDialogs`,
+  or the sheet draws as well as the picker. The sheet branch is now only the dialog host's safety net.
+- **#585's stash had to leave `ProductionGantt`.** The draft and a dismissed conflict's notice are `useScheduleConflictStash` in the
+  picker file, called once per surface with its own reset key (the Gantt's `generationKey`, the Calendar's `resetKey`). The Gantt
+  keeps only its prune-by-confirmed-removal effect, because that depends on its paged, walked data. The Calendar has no such prune:
+  an item that leaves the drawn data cancels the session and clears its stash entry, nothing more; the rest clears on `resetKey`.
+  A save conflict on the Calendar now keeps the draft and offers "Use latest" (the owner accepted this; it was a sheet that
+  re-seeded before).
+- **The anchor is a ladder, never the chip alone.** A Calendar chip is re-keyed on a Start move, and a chip folded under "+N more"
+  has no element at all. Anchor: the live chip, then the element the menu handed focus to (captured as `document.activeElement` in
+  `runItemAction`), then the originating day's "+N more", then the picker's last rect. A multi-day item sits in several overflow
+  lists, so the id alone picks the wrong button: `renderMoreIndicator` carries `data-more-day` and `findMoreFor(key, day)` reads it.
+  Chip loss and width changes never cancel the session; only the item leaving the data does.
+- **A controller restore must not steal focus from an outside press.** A popover picker closes on an outside press that may have
+  landed on another control, and `finishChecklistInteraction`'s `focusDescriptor(... "event")` then focused the chip a tick later.
+  `CalendarFocusDescriptor.ifLost` makes an inline session's restore move focus only when it is lost (`<body>`, disconnected or
+  `:disabled`); a non-inline (modal) session still always restores. On the Gantt it is a no-op (bars carry no `data-event-id`).
+  Pin it with a real button pressed outside and a wait past the controller's and the menu's restore timers.
+- **An untouched Apply is not a save.** The sheet's Save always PATCHed; the picker's Apply on an unchanged range sends nothing. A
+  test that clicked Save to "write the same value" must change the range first.
