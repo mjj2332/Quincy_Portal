@@ -60,8 +60,9 @@ describe("ConfirmModalHost", () => {
     expect(dialog?.textContent).toContain("This cannot be undone.");
     expect(document.querySelector('[data-testid="confirm-modal-cancel"]')?.textContent).toBe("Keep file");
     expect(document.querySelector('[data-testid="confirm-modal-confirm"]')?.textContent).toBe("Delete file");
-    // Danger styling is the shared Button's `destructive` variant; `.dom.test.tsx` may not assert
-    // class names (test-seam guard), so the treatment is covered by the Button's own tests.
+    // `danger` -> the shared Button's `destructive` variant. The test-seam guard permits asserting
+    // a Tailwind utility that encodes a design contract: the destructive text colour.
+    expect(document.querySelector('[data-testid="confirm-modal-confirm"]')?.className).toContain("text-destructive");
     // §6.1 item 4 — aria-describedby now resolves to the message <p>'s id (a useId() value, not
     // a stable literal, so this asserts the property rather than an exact innerHTML string).
     const message = dialog?.querySelector('[data-testid="confirm-modal-message"]');
@@ -100,6 +101,7 @@ describe("ConfirmModalHost", () => {
     const confirmButton = document.querySelector<HTMLButtonElement>('[data-testid="confirm-modal-confirm"]')!;
     expect(cancel.textContent).toBe("Cancel");
     expect(confirmButton.textContent).toBe("Confirm");
+    expect(confirmButton.className).not.toContain("text-destructive");
     // Alert-dialog behaviour: the safe action (Cancel) takes initial focus.
     expect(document.activeElement).toBe(cancel);
 

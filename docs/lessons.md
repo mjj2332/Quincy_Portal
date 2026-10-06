@@ -5813,4 +5813,8 @@ Tags: focus-overlays, reui-vendor, testing-guards · #625
   instead of a confirm-specific `data-confirm-modal-root` marker, so any alert dialog raised from a popover behaves the same. The exemption must NOT apply to a popover opened from inside an alert
   dialog (the Calendar Move Deadline dialog's date/time popup: Escape closes the popup, not the dialog), so `AlertDialogContent`
   provides `InsideAlertDialogContext` and `Popover` skips the adaptation when it is inside one.
-- **Test seam.** `.dom.test.tsx` may not assert class names, so danger styling is no longer asserted at the ConfirmDialog level.
+- **Test seam.** `.dom.test.tsx` may not assert incidental class names, but may assert a Tailwind utility that encodes a design
+  contract: `ConfirmDialog.dom.test.tsx` pins `danger` -> destructive (`text-destructive`) and the default variant (no `text-destructive`).
+  The alert dialog's focus guards (`data-base-ui-focus-guard`) sit in the same portal as the overlay, so the popover exemption
+  matches the portal, not just the panel and scrim; `AnchoredPopover`'s Floating UI `focus-out` close is skipped while an alert
+  dialog is mounted for the same reason.

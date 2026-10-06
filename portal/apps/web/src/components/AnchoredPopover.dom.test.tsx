@@ -75,4 +75,23 @@ describe("AnchoredPopover — confirm-from-inside interlock (criterion 6)", () =
     // still present after the confirm dialog resolves.
     expect([...document.querySelectorAll("button")].some((button) => button.textContent === popoverButtonText)).toBe(true);
   });
+
+  it("focus wrapping onto the alert dialog's focus guards (Shift+Tab from Cancel, Tab past Confirm) leaves the popover open", async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => { root!.render(<Harness />); await Promise.resolve(); });
+    const deleteButton = [...document.querySelectorAll("button")].find((button) => button.textContent === "Delete (raises confirm)")!;
+    await act(async () => { deleteButton.click(); await Promise.resolve(); });
+    await flush();
+    const guards = [...document.querySelector<HTMLElement>('[data-testid="alert-dialog-scrim"]')!.parentElement!.querySelectorAll<HTMLElement>("[data-base-ui-focus-guard]")];
+    expect(guards.length).toBeGreaterThan(0);
+    for (const guard of guards) {
+      await act(async () => { guard.dispatchEvent(new FocusEvent("focusin", { bubbles: true })); await Promise.resolve(); });
+      await flush();
+    }
+    // The popover stays mounted through its close transition, so wait it out before asserting.
+    await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 300)); });
+    expect([...document.querySelectorAll("button")].some((button) => button.textContent === "Delete (raises confirm)")).toBe(true);
+  });
 });

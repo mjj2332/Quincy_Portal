@@ -453,6 +453,17 @@ describe("ProjectHeaderDeadline", () => {
     await waitForConfirmClose();
     expect(document.querySelector('[data-testid="confirm-modal"]')).toBeNull();
 
+    // Focus wrapping onto the alert dialog's focus guards is not the popover losing focus.
+    await clickClear();
+    for (const guard of document.querySelector<HTMLElement>('[data-testid="alert-dialog-scrim"]')!.parentElement!.querySelectorAll<HTMLElement>("[data-base-ui-focus-guard]")) {
+      await act(async () => { guard.dispatchEvent(new FocusEvent("focusin", { bubbles: true })); guard.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: guard })); await Promise.resolve(); });
+    }
+    await waitForConfirmClose();
+    expect(document.querySelector('[data-testid="confirm-modal"]')).not.toBeNull();
+    expect(document.querySelector('[role="dialog"][aria-label="Deadline"]')).not.toBeNull();
+    await pressOutside(document.querySelector<HTMLButtonElement>('[data-testid="confirm-modal-cancel"]')!);
+    await waitForConfirmClose();
+
     // Escape on the confirm answers it alone: the popover stays open too.
     await clickClear();
     await act(async () => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });

@@ -10,7 +10,10 @@ import { createContext } from "react";
  * `ConfirmDeleteDialog`) used to dismiss that popover and discard its draft. Popovers consult this
  * to treat such a press as the dialog's, never as an outside press.
  */
-export const ALERT_DIALOG_PRESS_SELECTOR = "[role='alertdialog'], [data-slot='alert-dialog-overlay']";
+// The portal covers the overlay AND the sibling focus guards Base UI adds (`data-base-ui-focus-guard`):
+// Shift+Tab from Cancel or Tab past Confirm wraps focus onto a guard, which is not the popover
+// beneath losing focus to something else.
+export const ALERT_DIALOG_PRESS_SELECTOR = "[role='alertdialog'], [data-slot='alert-dialog-portal']";
 
 export function isAlertDialogPress(target: EventTarget | null | undefined): boolean {
   return target instanceof Element && target.closest(ALERT_DIALOG_PRESS_SELECTOR) !== null;
