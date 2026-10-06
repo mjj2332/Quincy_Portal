@@ -16,7 +16,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/reui/toolt
 import { PresentationIcon } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/reui/select";
 import { cn, formatUnreadCount } from "../lib/utils";
-import { SCROLL_FADE_MASK_CLASSES, useScrollFade } from "../lib/use-scroll-fade";
+import { SCROLL_FADE_EDGE_FRACTION, SCROLL_FADE_MASK_CLASSES, useScrollFade } from "../lib/use-scroll-fade";
 import { HEADER_READONLY_VALUE, HEADER_TEXT_LINK, READONLY_GROUP_FOCUS } from "./project-header-popover";
 import { useStages } from "../lib/stages";
 import { useCapabilities } from "../lib/capabilities";
@@ -290,12 +290,21 @@ export function ProjectHeader({
     // until the tab sat flush with the body's top edge and clipped the tab's 4px-outset focus ring (#613).
     const stripBox = strip.getBoundingClientRect();
     const tab = selected.getBoundingClientRect();
-    const pad = parseFloat(getComputedStyle(strip).scrollPaddingLeft) || 0;
-    const padEnd = parseFloat(getComputedStyle(strip).scrollPaddingRight) || 0;
-    const before = tab.left - (stripBox.left + pad);
-    const after = tab.right - (stripBox.right - padEnd);
-    if (before < 0) strip.scrollLeft += before;
-    else if (after > 0) strip.scrollLeft += Math.min(after, before);
+    // A revealed tab must clear the edge fade (a fraction of the strip's width), not just the scroll-padding: at 8px it
+    // sat under the ~38px mask. Where the tab would land within a fade-width of either end, go to the end itself, so
+    // the strip does not rest 4px short of it and keep a fade over the selected tab.
+    const inset = strip.clientWidth * SCROLL_FADE_EDGE_FRACTION;
+    const max = Math.max(0, strip.scrollWidth - strip.clientWidth);
+    const before = tab.left - (stripBox.left + inset);
+    const after = tab.right - (stripBox.right - inset);
+    if (before >= 0 && after <= 0) return;
+    const tabs = strip.querySelectorAll('[data-testid="project-overview-tab"]');
+    const edge = selected === tabs[0] ? "start" : selected === tabs[tabs.length - 1] ? "end" : null;
+    let target = strip.scrollLeft + (before < 0 ? before : Math.min(after, before));
+    target = Math.min(max, Math.max(0, target));
+    if (edge === "start" || target <= inset) target = 0;
+    else if (edge === "end" || max - target <= inset) target = max;
+    strip.scrollLeft = target;
   }, [activeTab, whiteboardOpen]);
 
   return <section className="project-header" aria-label="Project Overview" data-testid="project-header">

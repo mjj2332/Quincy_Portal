@@ -211,6 +211,8 @@ describe("whiteboard focus and layout (#498 design review)", () => {
       await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
       // A real browser reports an empty box for the hidden header; here the selected tab sits 400px past the strip's end once laid out.
       let laidOut = false;
+      Object.defineProperty(strip()!, "clientWidth", { configurable: true, value: 300 });
+      Object.defineProperty(strip()!, "scrollWidth", { configurable: true, value: 541 });
       vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
         const box = !laidOut ? { left: 0, right: 0 } : this === strip() ? { left: 0, right: 300 } : this.getAttribute("aria-selected") === "true" ? { left: 400, right: 520 } : { left: 0, right: 0 };
         return { ...box, x: box.left, y: 0, top: 0, bottom: 44, width: box.right - box.left, height: 44, toJSON: () => ({}) } as DOMRect;

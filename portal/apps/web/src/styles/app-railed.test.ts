@@ -538,3 +538,11 @@ describe("Project header tab strip clearance (#514)", () => {
     expect(ruleBody(appCss, ".project-header__tabs") ?? "").toMatch(/scroll-padding-inline:\s*var\(--space-2\)\s*;/);
   });
 });
+
+describe("Project sheet body scroll anchoring (#613)", () => {
+  // jsdom has no scroll anchoring, so the rule is the pin: swapping a short tab panel in clamps the body's scrollTop, and
+  // anchoring then carried it to the bottom of the long panel when the user returned to it.
+  it("turns scroll anchoring off on the sheet body", () => {
+    expect(ruleBody(appCss, ".project-sheet__body") ?? "").toMatch(/overflow-anchor:\s*none\s*;/);
+  });
+});

@@ -573,42 +573,71 @@ describe("Project header Stage control", () => {
 describe("Project header tab strip", () => {
   beforeEach(() => { host = document.createElement("div"); document.body.append(host); root = createRoot(host); roleState.role = "editor"; });
   afterEach(() => { act(() => root.unmount()); document.body.replaceChildren(); vi.restoreAllMocks(); });
-  const props = (activeTab: "raw" | "collaboration") => ({
-    project: project(), activeTab, availableTabs: ["raw"] as CollectionKind[], canUpload: false, canAdminBackend: false,
+  const props = (activeTab: string, availableTabs: CollectionKind[] = ["raw"]) => ({
+    project: project(), activeTab: activeTab as WorkspaceTab, availableTabs, canUpload: false, canAdminBackend: false,
     canEdit: false, hasRawFolder: false, autohdrBlocked: false, isSyncing: false, onSyncDropbox: vi.fn(), onActiveTabChange: vi.fn(),
   });
 
   // #613: `scrollIntoView` scrolls every scrollable ancestor, so it moved the sheet body until the tab sat flush with the
   // body's top edge and clipped the tab's outset focus ring. The strip is scrolled on its own axis instead.
-  function stubGeometry(strip: Element, tabs: Record<string, { left: number; right: number }>) {
+  // The strip is 300px wide with 541px of content (max scrollLeft 241); the edge fade is 15% of it (45px). `tabBoxes`
+  // are the tabs' boxes in document order at scrollLeft 0, shifted by the strip's live scrollLeft.
+  const FADE = 45;
+  function stubGeometry(strip: HTMLElement, tabBoxes: Array<{ left: number; right: number }>) {
+    Object.defineProperty(strip, "clientWidth", { configurable: true, value: 300 });
+    Object.defineProperty(strip, "scrollWidth", { configurable: true, value: 541 });
+    const tabs = [...strip.querySelectorAll('[data-testid="project-overview-tab"]')];
     vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
-      const box = this === strip ? { left: 0, right: 300 } : (tabs[this.textContent?.trim().replace(/\d+$|—$/, "") ?? ""] ?? { left: 0, right: 0 });
+      const i = tabs.indexOf(this);
+      const box = this === strip ? { left: 0, right: 300 } : i >= 0 ? { left: tabBoxes[i]!.left - strip.scrollLeft, right: tabBoxes[i]!.right - strip.scrollLeft } : { left: 0, right: 0 };
       return { ...box, x: box.left, y: 0, top: 0, bottom: 44, width: box.right - box.left, height: 44, toJSON: () => ({}) } as DOMRect;
     });
   }
+  const stripOf = () => host.querySelector<HTMLElement>("[data-fade]")!;
+  const THREE: CollectionKind[] = ["raw", "edited"];
+  const BOXES = [{ left: 12, right: 112 }, { left: 120, right: 420 }, { left: 428, right: 529 }];
 
-  it("reveals the selected tab by scrolling the strip itself, never an ancestor (#613)", () => {
+  it("snaps to the end when the last tab is selected, so no fade covers it (#613)", () => {
     const scrollIntoView = vi.fn();
     Element.prototype.scrollIntoView = scrollIntoView;
     try {
-      render(<ProjectHeader {...props("raw")} />);
-      const strip = host.querySelector<HTMLElement>('[data-fade]')!;
-      stubGeometry(strip, { Collaboration: { left: 400, right: 520 }, RAW: { left: -80, right: 40 } });
-      act(() => { root.render(<ProjectHeader {...props("collaboration")} />); });
-      expect(strip.scrollLeft).toBe(220);
-      strip.scrollLeft = 200;
-      act(() => { root.render(<ProjectHeader {...props("raw")} />); });
-      expect(strip.scrollLeft).toBe(120);
+      render(<ProjectHeader {...props("raw", THREE)} />);
+      const strip = stripOf();
+      stubGeometry(strip, BOXES);
+      act(() => { root.render(<ProjectHeader {...props("collaboration", THREE)} />); });
+      expect(strip.scrollLeft).toBe(241);
+      expect(strip.dataset.fade).toBe("start");
       expect(scrollIntoView).not.toHaveBeenCalled();
     } finally { delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView; }
   });
 
-  it("leaves the strip alone when the selected tab is already in view", () => {
-    render(<ProjectHeader {...props("raw")} />);
-    const strip = host.querySelector<HTMLElement>('[data-fade]')!;
-    stubGeometry(strip, { Collaboration: { left: 100, right: 220 }, RAW: { left: 10, right: 90 } });
+  it("snaps to the start when the first tab is selected, even a few px short of it", () => {
+    render(<ProjectHeader {...props("collaboration", THREE)} />);
+    const strip = stripOf();
+    stubGeometry(strip, BOXES);
+    strip.scrollLeft = 4;
+    act(() => { root.render(<ProjectHeader {...props("raw", THREE)} />); });
+    expect(strip.scrollLeft).toBe(0);
+    expect(strip.dataset.fade).toBe("end");
+  });
+
+  it("reveals a middle tab clear of the fade width, scrolling only the strip", () => {
+    render(<ProjectHeader {...props("raw", ["raw", "edited", "video", "floorplan"])} />);
+    const strip = stripOf();
+    // Five tabs; the 3rd sits past the strip's end.
+    stubGeometry(strip, [{ left: 12, right: 100 }, { left: 108, right: 200 }, { left: 208, right: 330 }, { left: 338, right: 430 }, { left: 438, right: 529 }]);
+    act(() => { root.render(<ProjectHeader {...props("video", ["raw", "edited", "video", "floorplan"])} />); });
+    const tab = stripOf().querySelectorAll<HTMLElement>('[data-testid="project-overview-tab"]')[2]!.getBoundingClientRect();
+    expect(tab.right).toBeLessThanOrEqual(300 - FADE);
+    expect(tab.left).toBeGreaterThanOrEqual(FADE);
+  });
+
+  it("leaves the strip alone when the selected tab is already clear of the fades", () => {
+    render(<ProjectHeader {...props("raw", THREE)} />);
+    const strip = stripOf();
+    stubGeometry(strip, [{ left: 12, right: 112 }, { left: 120, right: 250 }, { left: 428, right: 529 }]);
     strip.scrollLeft = 7;
-    act(() => { root.render(<ProjectHeader {...props("collaboration")} />); });
+    act(() => { root.render(<ProjectHeader {...props("edited", THREE)} />); });
     expect(strip.scrollLeft).toBe(7);
   });
 

@@ -2,6 +2,9 @@ import { useLayoutEffect, useState, type RefObject } from "react"
 
 export type ScrollFade = "none" | "start" | "end" | "both"
 
+/** The mask fades the outer 15% of the scroller (the `black_85%` / `black_15%` stops below). */
+export const SCROLL_FADE_EDGE_FRACTION = 0.15
+
 /**
  * Edge mask for a horizontal scroller, keyed on `data-fade`: only the side that has more content fades, so a scroller
  * resting at its end does not fade its last item. Browsers that hide scrollbars (macOS) give no other cue that a
