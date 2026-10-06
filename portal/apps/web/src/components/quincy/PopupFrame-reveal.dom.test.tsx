@@ -260,3 +260,36 @@ describe("PopupFrame focus and month change (#587)", () => {
     expect(viewport().scrollTop).toBe(0);
   });
 });
+
+describe("PopupFrame reveal follows the Start/End toggle (#587)", () => {
+  const toggle = (name: string) => [...popup().querySelectorAll<HTMLButtonElement>('[aria-label="Edit which end"] button')].find((b) => b.textContent?.startsWith(name))!;
+  const press = async (el: HTMLElement) => { await act(async () => { el.click(); await Promise.resolve(); }); await settle(); };
+
+  it("scrolls the newly active end's day into the body when the toggle switches", async () => {
+    // Jan 2 is above the body once End's day (the 30th) has been revealed.
+    const model = bodyModel({ "2027-01-02": 40, "2027-01-30": 560 });
+    await mount("range", range("2027-01-02T09:00", "2027-01-30T09:00"), { openOn: "end" });
+    await open();
+    expect(viewport().scrollTop).toBe(228);
+    await press(toggle("Start"));
+    expectClear(model, "2027-01-02");
+    await press(toggle("End"));
+    expectClear(model, "2027-01-30");
+  });
+
+  it("honours an explicit toggle even after a manual scroll, and still leaves a later resize alone", async () => {
+    const model = bodyModel({ "2027-01-02": 40, "2027-01-30": 560 });
+    const resize = captureResize();
+    try {
+      await mount("range", range("2027-01-02T09:00", "2027-01-30T09:00"), { openOn: "end" });
+      await open();
+      viewport().scrollTop = 300; // the person scrolls
+      await press(toggle("Start"));
+      expectClear(model, "2027-01-02");
+      const placed = viewport().scrollTop;
+      model.height = 300;
+      await resize.fire();
+      expect(viewport().scrollTop).toBe(placed); // the latch still holds
+    } finally { resize.restore(); }
+  });
+});

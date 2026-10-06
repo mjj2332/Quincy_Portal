@@ -31,12 +31,23 @@ export const REVEAL_SELECTED_DAY = '[aria-selected="true"] button';
  * selection nudge has since put the body somewhere this hook chose. A change of selection is not an automatic
  * nudge, and a click is not a manual scroll: whenever the selection changes (a day, a time slot) the
  * newly selected item is always cleared of the fade, by the least scroll from where the body is, in
- * either direction. Focus is never latched out: focus has to be visible.
+ * either direction. Focus is never latched out: focus has to be visible. Neither is an explicit change of the
+ * `reveal` selector (the range's Start/End toggle): it reveals the newly active end's day once, even after a
+ * manual scroll, and leaves the latch as it was.
  */
 function useSelectedClearOfFade(contentRef: RefObject<HTMLDivElement | null>, reveal: string) {
   // Read live by the observers below, so the Start/End toggle changing `reveal` does not re-run the effect (which would reset its latch).
   const revealRef = useRef(reveal);
-  useLayoutEffect(() => { revealRef.current = reveal; }, [reveal]);
+  // Set by the effect below: reveals the current `reveal` day on demand, outside the manual-scroll latch.
+  const revealNow = useRef<() => void>(() => {});
+  const shown = useRef(reveal);
+  useLayoutEffect(() => {
+    revealRef.current = reveal;
+    if (shown.current === reveal) return;
+    shown.current = reveal;
+    // An explicit Start/End toggle is a deliberate request to see that end, so it reveals even after a manual scroll; the latch itself is untouched, so later resizes still leave the body alone.
+    revealNow.current();
+  }, [reveal]);
   useLayoutEffect(() => {
     const content = contentRef.current;
     const viewport = content?.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
@@ -67,6 +78,7 @@ function useSelectedClearOfFade(contentRef: RefObject<HTMLDivElement | null>, re
       const elements = new Set<Element>([...viewport.querySelectorAll(SELECTED), ...required]);
       write(solve([...elements].map((item) => { const { top, bottom } = item.getBoundingClientRect(); return { top, bottom, required: required.has(item) }; }), fade));
     };
+    revealNow.current = () => { noticeScroll(); nudge(false, true); };
     const automatic = () => { noticeScroll(); if (!userScrolled) nudge(true, true); };
     const resize = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(automatic);
     resize?.observe(viewport);
@@ -86,7 +98,7 @@ function useSelectedClearOfFade(contentRef: RefObject<HTMLDivElement | null>, re
     const selection = typeof MutationObserver === "undefined" ? undefined : new MutationObserver(() => { const now = signature(); if (now === selected) return; selected = now; noticeScroll(); nudge(false, false); });
     selection?.observe(content, { subtree: true, childList: true, attributes: true, attributeFilter: ["aria-selected", "aria-pressed"] });
     automatic();
-    return () => { resize?.disconnect(); selection?.disconnect(); viewport.removeEventListener("scroll", noticeScroll); viewport.removeEventListener("focusin", onFocusIn); };
+    return () => { revealNow.current = () => {}; resize?.disconnect(); selection?.disconnect(); viewport.removeEventListener("scroll", noticeScroll); viewport.removeEventListener("focusin", onFocusIn); };
   }, [contentRef]);
 }
 
