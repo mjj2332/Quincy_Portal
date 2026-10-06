@@ -267,11 +267,14 @@ function chipColourClassName(data: ProductionEventCalendarData | undefined): str
 }
 
 /**
- * #602: the "+N more" popover heads its day like every other Portal date ("Wed 18 Nov"), not the vendor's US
- * "Wednesday, November 18". The vendored agenda view builds its own day header from literals and ignores
- * `formats.agendaDayHeader`, so that one is not overridden here.
+ * #602 / #614: the "+N more" popover and the agenda day header both name a day like every other Portal date
+ * ("Wed 18 Nov", "Wed" + "7 Oct 2026"), not the vendor's US "Wednesday, November 18". The agenda keeps the year
+ * because it can span years. The vendored agenda view reads `agendaDayWeekday` / `agendaDayDate` (its group
+ * aria-label uses the same text); it still ignores `formats.agendaDayHeader`, which is not overridden here.
  */
-export const PRODUCTION_EVENT_CALENDAR_I18N = { formats: { moreDayHeader: "EEE d MMM" } } as const;
+export const PRODUCTION_EVENT_CALENDAR_I18N = {
+  formats: { moreDayHeader: "EEE d MMM", agendaDayWeekday: "EEE", agendaDayDate: "d MMM yyyy" },
+} as const;
 
 export function subviewToCalendarView(subview: ProductionCalendarSubview): CalendarViewName {
   return subview;

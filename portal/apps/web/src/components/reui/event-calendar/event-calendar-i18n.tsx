@@ -43,6 +43,11 @@
  *    the keyboard Adjust session announces, including `showing` (the view followed the proposal)
  *    and `secondPass` / `endsSecondPass` (which pass of a DST repeated hour an end sits in).
  *    Additive; no existing key changed.
+ *
+ * 2. 2026-10-07, #614 — ADDED `formats.agendaDayWeekday` ("EEEE") and `formats.agendaDayDate`
+ *    ("MMMM d, yyyy"). The agenda view hard-coded those two literals for its day header and group
+ *    aria-label and ignored `formats.agendaDayHeader`. Defaults equal the old literals, so a
+ *    consumer that overrides nothing renders identically.
  */
 import type {
   CalendarView,
@@ -142,6 +147,10 @@ interface EventCalendarI18nConfig {
     monthDayHeaderNarrow: string
     timeGridDayHeader: string
     agendaDayHeader: string
+    /** QUINCY (#614): agenda day-group header weekday, and the same text in the group aria-label. */
+    agendaDayWeekday: string
+    /** QUINCY (#614): agenda day-group header date, and the same text in the group aria-label. */
+    agendaDayDate: string
     /** Agenda date-gutter day number. */
     agendaDayNumber: string
     /** Agenda date-gutter weekday label. */
@@ -261,6 +270,8 @@ const DEFAULT_FORMATS: EventCalendarI18nConfig["formats"] = {
   monthDayHeaderNarrow: "EEEEE",
   timeGridDayHeader: "EEE d",
   agendaDayHeader: "EEEE, MMMM d",
+  agendaDayWeekday: "EEEE",
+  agendaDayDate: "MMMM d, yyyy",
   agendaDayNumber: "d",
   agendaWeekday: "EEE",
   moreDayHeader: "EEEE, MMMM d",
