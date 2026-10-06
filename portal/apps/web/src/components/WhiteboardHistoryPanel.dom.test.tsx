@@ -17,7 +17,7 @@ vi.mock("../lib/api", async (original) => ({ ...(await original<typeof import(".
 vi.mock("../lib/toast-store", () => ({ pushToast: (message: string, tone?: string) => { h.toasts.push([message, tone]); } }));
 
 import { ApiError } from "../lib/api";
-import { WhiteboardHistoryPanel } from "./WhiteboardHistoryPanel";
+import { HISTORY_REFRESH_QUIET_MS, WhiteboardHistoryPanel } from "./WhiteboardHistoryPanel";
 
 const version = (id: string, createdAt: number, reason: "interval" | "last_leave" | "pre_restore", elementCount: number, name: string | null = "Terry Lee") => ({ id, createdAt, createdBy: name ? { id: "u1", name } : null, reason, elementCount, byteCount: 100 });
 const listing = (generation = 3) => ({ generation, versions: [version("v-old", 1_000_000, "interval", 2), version("v-new", 9_000_000, "last_leave", 7), version("v-mid", 5_000_000, "pre_restore", 5, null)] });
@@ -203,6 +203,45 @@ describe("WhiteboardHistoryPanel (#500)", () => {
     h.get.mockResolvedValue({ ...listing(), currentVersionId: null });
     await render(props());
     expect(document.body.querySelector('[data-testid="whiteboard-version-current"]')).toBeNull();
+  });
+
+  it("the Current marker follows the board: a change while open refreshes the list once it settles, without a loading flash (#559)", async () => {
+    vi.useFakeTimers();
+    try {
+      h.get.mockResolvedValue({ ...listing(), currentVersionId: "v-new" });
+      const changes: { current: (() => void) | null } = { current: null };
+      await render(props({ changes }));
+      const current = () => document.body.querySelector('[data-testid="whiteboard-version-current"]')?.closest("[data-version-id]")?.getAttribute("data-version-id") ?? null;
+      expect(current()).toBe("v-new");
+      expect(changes.current).not.toBeNull();
+      // A burst of strokes is ONE read, after the quiet period.
+      h.get.mockClear();
+      h.get.mockResolvedValue({ ...listing(), currentVersionId: null });
+      for (let n = 0; n < 5; n += 1) { changes.current!(); await act(async () => { await vi.advanceTimersByTimeAsync(HISTORY_REFRESH_QUIET_MS - 100); }); }
+      expect(h.get).not.toHaveBeenCalled();
+      await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+      await flush();
+      expect(h.get).toHaveBeenCalledTimes(1);
+      expect(byId("whiteboard-history-loading")).toBeNull();
+      expect(current()).toBeNull();
+      expect(document.body.querySelector('[data-version-id="v-new"] [aria-label^="Restore "]')).not.toBeNull();
+      // Closing drops the hook and any pending read.
+      changes.current!();
+      await render(props({ changes, open: false }));
+      expect(changes.current).toBeNull();
+      h.get.mockClear();
+      await act(async () => { await vi.advanceTimersByTimeAsync(HISTORY_REFRESH_QUIET_MS * 2); });
+      expect(h.get).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("a single pane is plain content: no focusable unnamed tabpanel (#559)", async () => {
+    h.get.mockResolvedValue(listing());
+    await render(props());
+    const sheet = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(sheet.querySelector('[role="tabpanel"]')).toBeNull();
+    expect(sheet.querySelector('[role="tablist"]')).toBeNull();
+    expect(sheet.querySelector('[data-testid="whiteboard-version-row"]')).not.toBeNull();
   });
 
   it("two versions saved in the same minute read apart, in Sydney time (#559)", async () => {

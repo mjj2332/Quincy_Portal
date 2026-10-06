@@ -51,6 +51,7 @@ describe("the sheet's tab strip (#559)", () => {
   it("shows no tab strip for a single pane", async () => {
     await act(async () => { root.render(panel({ history: <p>rows</p> }, "1 Writes Street")); });
     expect(document.body.querySelector('[role="tablist"]')).toBeNull();
+    expect(document.body.querySelector('[role="tabpanel"]')).toBeNull();
     expect(document.body.textContent).toContain("rows");
   });
 
@@ -58,6 +59,8 @@ describe("the sheet's tab strip (#559)", () => {
     await act(async () => { root.render(panel({ frames: <p>f</p>, history: <p>rows</p> })); });
     const labels = [...document.body.querySelectorAll('[role="tab"]')].map((node) => node.textContent);
     expect(labels).toEqual(["Frames", "History"]);
+    // Every tabpanel is named by its tab.
+    for (const panel of document.body.querySelectorAll('[role="tabpanel"]')) expect(document.getElementById(panel.getAttribute("aria-labelledby") ?? "")).not.toBeNull();
   });
 
   it("without a description the subtitle is a sentence naming the panes, not a bare lowercase word", async () => {

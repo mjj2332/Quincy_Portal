@@ -33,7 +33,10 @@ function failureMessage(error: unknown, fallback: string): string {
  * and the generation the list was read at (a restore of a board that has since changed is refused, and the list refetched). The board itself
  * is replaced by the server's `reset` frame, not by this response. A view-only or archived board lists the versions and cannot restore.
  */
-export function WhiteboardHistoryPanel({ projectId, title, open, onOpenChange, readOnly, onRestoreStarted, onRestoreFailed }: {
+/** How long the board must be quiet before the open list is read again (#559): live drawing is one read after it settles, not one per stroke. */
+export const HISTORY_REFRESH_QUIET_MS = 1500;
+
+export function WhiteboardHistoryPanel({ projectId, title, open, onOpenChange, readOnly, onRestoreStarted, onRestoreFailed, changes }: {
   projectId: string;
   title: string;
   open: boolean;
@@ -43,6 +46,8 @@ export function WhiteboardHistoryPanel({ projectId, title, open, onOpenChange, r
   onRestoreStarted: () => void;
   /** The restore request failed, so no reset is coming for it. */
   onRestoreFailed: () => void;
+  /** #559: while the sheet is open the panel puts a "the board changed" function here (a collaborator's edit, a reset); a quiet moment later the list is read again so the Current marker follows the board. */
+  changes?: { current: (() => void) | null };
 }) {
   const [state, setState] = useState<HistoryState>({ status: "loading" });
   const [tab, setTab] = useState<PanelTab>("history");
@@ -56,9 +61,9 @@ export function WhiteboardHistoryPanel({ projectId, title, open, onOpenChange, r
   /** The row whose Restore opened the confirmation: `confirming` is already null when the dialog's focus returns, so the id is kept here. */
   const confirmedFromRef = useRef<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (silent = false) => {
     const token = ++loadToken.current;
-    setState({ status: "loading" });
+    if (!silent) setState({ status: "loading" });
     try {
       const response = await apiGet<WhiteboardVersionsResponse>(whiteboardVersionsPath(projectId));
       if (token !== loadToken.current) return;
@@ -66,6 +71,7 @@ export function WhiteboardHistoryPanel({ projectId, title, open, onOpenChange, r
       setState({ status: "ready", versions: response.versions, currentVersionId: response.currentVersionId ?? null });
     } catch (error) {
       if (token !== loadToken.current) return;
+      if (silent) return; // a background refresh that fails leaves the list as it was
       setState({ status: "error", message: failureMessage(error, "The history could not be loaded.") });
     }
   }, [projectId]);
@@ -73,8 +79,20 @@ export function WhiteboardHistoryPanel({ projectId, title, open, onOpenChange, r
   // Every opening reads the list afresh: it is what a restore's expected generation comes from.
   useEffect(() => { if (open) void load(); else loadToken.current += 1; }, [open, load]);
 
+  const restoringRef = useRef(false);
+  useEffect(() => {
+    if (!open || !changes) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    changes.current = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => { if (!restoringRef.current) void load(true); }, HISTORY_REFRESH_QUIET_MS);
+    };
+    return () => { clearTimeout(timer); changes.current = null; };
+  }, [open, changes, load]);
+
   const restore = useCallback(async (version: WhiteboardVersionSummary) => {
     setRestoring(true);
+    restoringRef.current = true;
     onRestoreStarted();
     try {
       await apiPost(whiteboardRestorePath(projectId, version.id), { expectedGeneration: generationRef.current, requestId: crypto.randomUUID() });
@@ -92,6 +110,7 @@ export function WhiteboardHistoryPanel({ projectId, title, open, onOpenChange, r
       }
     } finally {
       setRestoring(false);
+      restoringRef.current = false;
     }
   }, [projectId, load, onOpenChange, onRestoreStarted, onRestoreFailed]);
 

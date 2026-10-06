@@ -406,6 +406,10 @@ function PanelTabs({
   activeTabRef,
 }: PanelProps & { activeTabRef?: React.Ref<HTMLButtonElement> }) {
   const tabs = TABS.filter((item) => panes[item.value] !== undefined)
+  // #559: one pane is plain content. Base UI's lone TabsContent would be an unnamed focusable role="tabpanel" with no tab to name it.
+  if (tabs.length === 1) {
+    return <div className="flex min-h-0 flex-1 flex-col">{panes[tabs[0]!.value]}</div>
+  }
   return (
     <Tabs
       value={tab}
