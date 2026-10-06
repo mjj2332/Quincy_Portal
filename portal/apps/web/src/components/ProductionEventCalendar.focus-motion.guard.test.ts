@@ -37,7 +37,7 @@ function scopedFiles(): string[] {
   const top = readdirSync(componentsDir).filter((name) =>
     isSource(name)
     && (/^ProductionEventCalendar/.test(name)
-      || ["ProjectCalendarAnchor.tsx", "ProductionGanttDeadlineDialog.tsx", "ProductionCalendarMoveConfirmation.tsx", "ProductionCalendarScheduleEditorFields.tsx"].includes(name)));
+      || ["ProjectCalendarAnchor.tsx", "ProductionGanttDeadlineDialog.tsx", "ProductionCalendarMoveConfirmation.tsx", "ProductionCalendarScheduleEditorFields.tsx", "scheduling-item-schedule-picker.tsx"].includes(name)));
   const vendored = readdirSync(join(componentsDir, "reui", "event-calendar")).filter(isSource).map((name) => join("reui", "event-calendar", name));
   const shells = [join("reui", "alert-dialog.tsx"), join("reui", "sheet.tsx")];
   return [...top, ...vendored, ...shells].map((file) => join(componentsDir, file)).sort();

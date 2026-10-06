@@ -383,6 +383,11 @@ describe("NoticeBoard disclosure and polling", () => {
       expect(apiDeleteMock).not.toHaveBeenCalled();
       expect(dialog()).not.toBeNull();
       expect(dialog()!.textContent).toContain("Delete notice?");
+      const confirmAction = document.querySelector<HTMLElement>('[data-testid="notice-delete-confirm-action"]')!;
+      expect(confirmAction.textContent).toBe("Delete");
+      const labelledBy = dialog()!.getAttribute("aria-labelledby");
+      expect(labelledBy && document.getElementById(labelledBy)?.textContent).toBe("Delete notice?");
+      expect(confirmAction.hasAttribute("aria-label")).toBe(false);
       expect(dialog()!.textContent).toContain("“Old notice”");
       expect(document.activeElement).toBe(document.querySelector('[data-testid="notice-delete-cancel"]'));
     });
@@ -477,6 +482,9 @@ describe("NoticeBoard disclosure and polling", () => {
       expect(dialog()).not.toBeNull();
       expect(error.getAttribute("role")).toBe("alert");
       expect(error.textContent).toBe("Forbidden: only the author can delete this post.");
+      expect(document.activeElement).toBe(error);
+      expect(document.activeElement).not.toBe(document.body);
+      expect(dialog()!.contains(document.activeElement)).toBe(true);
       expect(document.querySelector<HTMLButtonElement>('[data-testid="notice-delete-confirm-action"]')!.disabled).toBe(false);
       expect(host.querySelector('[data-slot="notice-board-panel"] > [role="alert"]')).toBeNull();
       await cancelNoticeDelete(advance);

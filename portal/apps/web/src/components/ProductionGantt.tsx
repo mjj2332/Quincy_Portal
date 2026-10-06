@@ -57,7 +57,7 @@
  * ## #463 — the item menu
  * A bar click, Enter or right-click opens the shared menu host (`scheduling-item-menu.tsx`): Open project and Reschedule…
  * on a Project bar (`canEditDeadline`), Open project and Edit schedule… on a checklist bar. Edit schedule… (#582) opens the
- * Due cell's own picker anchored to the BAR, as an inline `inlineTarget: "item"` session (`ProductionGanttScheduleEditorPopover`), at every width. `renderEventMenu` is never passed (the import-boundary
+ * Due cell's own picker anchored to the BAR, as an inline `inlineTarget: "item"` session (`SchedulingItemSchedulePicker`, shared with the Calendar since #583), at every width. `renderEventMenu` is never passed (the import-boundary
  * guard pins it). Reuse ledger: menu — `reui/dropdown-menu` through `scheduling-item-menu.tsx`; `reui/context-menu` and the
  * `gantt-1`/`gantt-2` `renderEventMenu` blocks were searched and fail on the touch long-press and the per-bar root.
  *
@@ -230,9 +230,9 @@ import { deadlineFoldOf, projectDefaultFromFacts } from "../lib/date-time-range"
 import { useStages } from "../lib/stages";
 import { useMediaQuery } from "../lib/use-media-query";
 import { ProductionEventCalendarDialogs } from "./ProductionEventCalendarDialogs";
-import { ProductionGanttScheduleEditorPopover } from "./ProductionGanttScheduleEditorPopover";
+import { SchedulingItemSchedulePicker, scheduleErrorFromEditor, useScheduleConflictStash, type ScheduleItemSummary } from "./scheduling-item-schedule-picker";
 import { GanttDeadlineCell, GanttTeamCell } from "./ProductionGanttProjectCells";
-import { GanttSubtaskDueCell, isRowConfirmedRemoved, scheduleErrorFromEditor, scheduleErrorFromStash, stopRowGesture, type ScheduleConflictStash } from "./ProductionGanttSubtaskCells";
+import { GanttSubtaskDueCell, isRowConfirmedRemoved, stopRowGesture } from "./ProductionGanttSubtaskCells";
 import { ProjectCalendarAnchor } from "./ProjectCalendarAnchor";
 import { focusLanding } from "../lib/landing-focus";
 import { type ProductionGanttDeadlineConfirmState } from "./ProductionGanttDeadlineDialog";
@@ -1323,40 +1323,9 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   const itemEditor = commands.scheduleEditor?.inline && commands.scheduleEditor.inlineTarget === "item" ? commands.scheduleEditor : null;
   const itemEditorSubtaskId = itemEditor ? subtaskIdFromCalendarEntityId(itemEditor.source.id) : null;
   const dueEditorSubtaskId = dueEditor ? subtaskIdFromCalendarEntityId(dueEditor.source.id) : null;
-  // A failed save keeps its draft here, above the vendor tree's rows (which remount), one entry per Subtask.
-  const retainedSchedules = useRef(new Map<string, RetainedSchedule>());
-  const retainedScheduleFor = useCallback((id: string) => {
-    let retained = retainedSchedules.current.get(id);
-    if (!retained) { retained = { draft: null, baseVersion: null }; retainedSchedules.current.set(id, retained); }
-    return retained;
-  }, []);
-  // #585: what a dismissed conflict leaves (Escape, outside press, narrowing), per Subtask, shared by the Due cell and the bar picker.
-  const [conflictStash, setConflictStash] = useState<ReadonlyMap<string, ScheduleConflictStash>>(() => new Map());
-  useEffect(() => { retainedSchedules.current.clear(); setConflictStash((current) => (current.size ? new Map() : current)); }, [generationKey]);
-  const clearScheduleStash = useCallback((id: string) => {
-    setConflictStash((current) => {
-      if (!current.has(id)) return current;
-      const next = new Map(current);
-      next.delete(id);
-      return next;
-    });
-  }, []);
-  // A passive close of an inline picker (Escape, an outside press, narrowing): a conflict is stashed under its Subtask, then the
-  // session ends exactly as a Cancel does. Both updates run in one handler, so there is no frame with neither set.
-  // The generation the open editor session began under: a dismissal from an outgoing session (the chart was replaced, a filter changed
-  // while it was open) must not repopulate a stash the generation reset just cleared. Set when a session starts, not on every render.
-  const editorGenerationRef = useRef(generationKey);
-  const editorOpen = commands.scheduleEditor !== null;
-  useEffect(() => { if (editorOpen) editorGenerationRef.current = generationKey; }, [editorOpen]); // eslint-disable-line react-hooks/exhaustive-deps
-  const { scheduleEditor, cancelScheduleEditor } = commands;
-  const dismissScheduleEditor = useCallback(() => {
-    const editor = scheduleEditor;
-    if (editor?.validationError && editorGenerationRef.current === generationKey) {
-      const id = subtaskIdFromCalendarEntityId(editor.source.id);
-      if (id) setConflictStash((current) => new Map(current).set(id, { validationError: editor.validationError, latestItem: editor.latestItem, projectId: editor.source.project.id }));
-    }
-    cancelScheduleEditor();
-  }, [scheduleEditor, cancelScheduleEditor, generationKey]);
+  // A failed save keeps its draft, and a dismissed conflict its notice (#585), above the vendor tree's rows (which remount), one entry per
+  // Subtask, shared by the Due cell and the bar picker. Lifted into `useScheduleConflictStash` by #583, which the Calendar uses too.
+  const { retainedFor: retainedScheduleFor, stash: conflictStash, clear: clearScheduleStash, drop: dropScheduleDrafts, dismiss: dismissScheduleEditor, stashErrorFor } = useScheduleConflictStash({ generationKey, scheduleEditor: commands.scheduleEditor, cancelScheduleEditor: commands.cancelScheduleEditor });
   // "Is this row really gone?", answered from the CURRENT settled query data only (see `isRowConfirmedRemoved`).
   const settledData = query.isSuccess && !query.isFetching;
   const hasMoreProjectPages = query.hasNextPage === true;
@@ -1372,18 +1341,8 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     if (conflictStash.size === 0) return;
     const gone = [...conflictStash].filter(([id, stash]) => rowConfirmedRemoved(id, stash.projectId)).map(([id]) => id);
     if (!gone.length) return;
-    for (const id of gone) retainedSchedules.current.delete(id);
-    setConflictStash((current) => {
-      const next = new Map(current);
-      for (const id of gone) next.delete(id);
-      return next;
-    });
-  }, [conflictStash, rowConfirmedRemoved]);
-  // The notice for a Subtask's picker: the editor's own error first (a fresh 409), else the stash (a reopened session has no validationError).
-  const stashErrorFor = useCallback((row: GanttChecklistRowDto) => {
-    const stash = conflictStash.get(row.id);
-    return stash ? scheduleErrorFromStash(stash, row) : undefined;
-  }, [conflictStash]);
+    dropScheduleDrafts(gone);
+  }, [conflictStash, rowConfirmedRemoved, dropScheduleDrafts]);
   // The cell that draws the editor is gone (the Due column hides at <= 720px, the row left the chart, or a failed refetch
   // replaced the whole chart with its error state while the cached rows remain): a session no one can see would hold the
   // lock and the accept gate, so it is cancelled. Not a save; nothing was sent.
@@ -1959,9 +1918,9 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
       else dismissScheduleEditor();
     }
   }, [itemEditorSubtaskId, itemEditor, chartReplaced, itemEditorRowPresent, commands, dismissScheduleEditor, clearScheduleStash, rowConfirmedRemoved]);
-  const itemEditorLookup = (subtaskId: string) => {
-    const target = findTaskTarget(subtaskId);
-    return target ? { row: target.row, street: target.project.street, projectDefault: projectDefaultById.get(target.project.id) ?? null } : null;
+  const itemEditorLookup = (key: string): ScheduleItemSummary | null => {
+    const target = findTaskTarget(key.slice("task:".length));
+    return target ? { id: target.row.id, title: target.row.title, done: target.row.done, street: target.project.street, schedule: target.row.schedule, assignees: target.row.assignees, otherAssigneeCount: target.row.otherAssigneeCount, reminders: target.row.reminders, projectDefault: projectDefaultById.get(target.project.id) ?? null } : null;
   };
   const eventPopup = useMemo(() => ({ isOpen: (occurrence: { event: { id: string | number } }) => isItemMenuOpenFor(String(occurrence.event.id)) }), [isItemMenuOpenFor]);
 
@@ -2249,7 +2208,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
       <div className="sr-only" data-testid="production-gantt-live-region" aria-live="polite" aria-atomic="true">{commands.announcement}</div>
       <ProductionEventCalendarDialogs commands={commands} deadlineConfirm={deadlineConfirm} scheduleEditorPresentation="inline" projectDefaultFor={(projectId) => projectDefaultById.get(projectId) ?? null} />
       {itemMenu.menu}
-      <ProductionGanttScheduleEditorPopover editor={itemEditor} subtaskId={itemEditorSubtaskId} lookup={itemEditorLookup} findBar={findBar} retainedFor={retainedScheduleFor} busy={!itemEditor && !live} onSubmit={commands.submitScheduleEditor} onCancel={commands.cancelScheduleEditor} onDismiss={dismissScheduleEditor} stashErrorFor={stashErrorFor} onClear={clearScheduleStash} />
+      <SchedulingItemSchedulePicker editor={itemEditor} itemKey={itemEditorSubtaskId ? `task:${itemEditorSubtaskId}` : null} lookup={itemEditorLookup} findAnchor={findBar} retainedFor={retainedScheduleFor} busy={!itemEditor && !live} onSubmit={commands.submitScheduleEditor} onCancel={commands.cancelScheduleEditor} onDismiss={dismissScheduleEditor} stashErrorFor={stashErrorFor} onClear={clearScheduleStash} />
     </div>
   );
 }

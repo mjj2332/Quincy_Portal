@@ -27,7 +27,8 @@
  * - The item menu (#463): the vendor chip is itself a `<button>`, so no action can live inside it. A
  *   chip click, Enter or right-click opens a menu anchored to the chip (`scheduling-item-menu.tsx`,
  *   shared with the Timeline): Open project (`onOpenProject`, the Dashboard's existing sheet path),
- *   and Reschedule… (a Deadline: the move dialog) or Edit schedule… (a checklist item: the sheet),
+ *   and Reschedule… (a Deadline: the move dialog) or Edit schedule… (a checklist item: the chip's own date/time picker, #583: an inline
+ *   `inlineTarget: "item"` session drawn by `SchedulingItemSchedulePicker`, the Gantt's host, with no sheet at any width),
  *   with the strip's exact gates. A drag never opens it; Space still starts keyboard Adjust (ADR 0009).
  *   This retired the selection strip that carried the same actions. `onEventClick` calls
  *   `e.preventDefault()` to opt out of the vendor's own selection; the `selectedId` state below is
@@ -58,6 +59,7 @@ import {
   type DashboardCalendarState,
   type ProductionCalendarFilters,
   type ProductionCalendarRangeResponse,
+  subtaskIdFromCalendarEntityId,
 } from "@quincy/shared";
 import type { DashboardIdentity } from "../lib/dashboard-projects";
 import { applyOptimisticOverlay, type CalendarSettleState } from "../lib/production-calendar-interaction";
@@ -103,9 +105,11 @@ import { SheetCloseButton, SHEET_CLOSE_CLEARANCE } from "./quincy/SheetCloseButt
 import { AvatarStack } from "./quincy/AvatarStack";
 import { Notice } from "./quincy/Notice";
 import { focusLanding } from "../lib/landing-focus";
+import { findMoreFor } from "../lib/calendar-more-anchor";
 import { schedulingItemActions, type SchedulingItemActionId } from "../lib/scheduling-item-actions";
 import { useSchedulingItemMenu, type SchedulingMenuContent } from "./scheduling-item-menu";
 import { ProductionEventCalendarDialogs, type ProductionEventCalendarDeadlineConfirm } from "./ProductionEventCalendarDialogs";
+import { SchedulingItemSchedulePicker, useScheduleConflictStash, type ScheduleItemSummary } from "./scheduling-item-schedule-picker";
 import { ProductionEventCalendarRail, type ProductionEventCalendarUpNext } from "./ProductionEventCalendarRail";
 
 /** #464: the Project Show in Calendar asks the Calendar to land on. `token` is the Dashboard's one-shot request id. */
@@ -219,6 +223,8 @@ function findOverflowTrigger(chip: HTMLElement): HTMLElement | null {
   if (!chip.closest('[data-slot="event-calendar-more-popover"]')) return null;
   return document.querySelector<HTMLElement>('[data-slot="event-calendar-more"][aria-expanded="true"]');
 }
+
+const MORE_SELECTOR = '[data-slot="event-calendar-more"]';
 
 function ChipContent({ id, data, title }: { id: string; data: ProductionEventCalendarData | undefined; title: string }): JSX.Element {
   const dto = data?.dto;
@@ -443,8 +449,47 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
     if (!dto) return;
     if (id === "open-project") onOpenProject?.(dto.project.id);
     else if (id === "reschedule" && dto.kind === "project_deadline") commands.openMoveDialog(dto);
-    else if (id === "edit-schedule" && dto.kind === "checklist") commands.openChecklistScheduleEditor(dto);
+    else if (id === "edit-schedule" && dto.kind === "checklist") {
+      // #583: the picker (not the sheet), anchored to the chip. The menu has handed focus to the chip or, for a chip folded under "+N more",
+      // to that day's button: keep that element and the day, because the chip can be re-keyed or absent while the picker is open.
+      const active = document.activeElement;
+      handoffRef.current = active instanceof HTMLElement && active !== document.body ? active : null;
+      const trigger = handoffRef.current?.matches(MORE_SELECTOR) ? handoffRef.current : handoffRef.current ? findOverflowTrigger(handoffRef.current) : null;
+      moreDayRef.current = trigger?.querySelector("[data-more-day]")?.getAttribute("data-more-day") ?? null;
+      commands.openChecklistScheduleEditor(dto, undefined, { inline: true, inlineTarget: "item" });
+    }
   };
+  // #583: the item menu's "Edit schedule…" is an inline `inlineTarget: "item"` session drawn by `SchedulingItemSchedulePicker`, the Gantt's host.
+  // The draft and a dismissed conflict's notice (#585) are held here, above the vendor tree, and reset with the controller (`resetKey`).
+  const handoffRef = useRef<HTMLElement | null>(null);
+  const moreDayRef = useRef<string | null>(null);
+  const itemEditor = commands.scheduleEditor?.inline && commands.scheduleEditor.inlineTarget === "item" ? commands.scheduleEditor : null;
+  const itemKey = itemEditor?.source.id ?? null;
+  const { retainedFor: retainedScheduleFor, clear: clearScheduleStash, dismiss: dismissScheduleEditor, stashErrorFor } = useScheduleConflictStash({ generationKey: resetKey, scheduleEditor: commands.scheduleEditor, cancelScheduleEditor: commands.cancelScheduleEditor });
+  // The item left the drawn data (never judged while no baseline exists): a true discard, not a dismissal.
+  const itemGone = itemKey !== null && source !== null && !dtoById.has(itemKey);
+  useEffect(() => {
+    if (!itemEditor || !itemGone) return;
+    const id = subtaskIdFromCalendarEntityId(itemEditor.source.id);
+    if (id) clearScheduleStash(id);
+    commands.cancelScheduleEditor();
+  }, [itemEditor, itemGone, clearScheduleStash, commands]);
+  const lookupItem = (key: string): ScheduleItemSummary | null => {
+    const dto = dtoById.get(key);
+    if (!dto || dto.kind !== "checklist") return null;
+    // A malformed entity id is a mapping defect the controller answers with "invalid" on Apply; the picker still shows so the session is never invisible.
+    const id = subtaskIdFromCalendarEntityId(dto.id) ?? dto.id;
+    return { id, title: dto.title, done: dto.status.completed, street: dto.project.street, schedule: dto.schedule, assignees: dto.assignees, otherAssigneeCount: dto.otherAssigneeCount, reminders: dto.reminders, projectDefault: projectDefaults.get(dto.project.id) ?? null };
+  };
+  /** The picker's anchor, best first: the live chip, the element the menu handed focus to, the originating day's "+N more", else the picker's last rect. */
+  const findScheduleAnchor = (key: string): HTMLElement | null => {
+    const live = findChip(key);
+    if (live) return live;
+    const handoff = handoffRef.current;
+    if (handoff?.isConnected) return handoff;
+    return findMoreFor(key, moreDayRef.current);
+  };
+  const findScheduleFocusTarget = (key: string): HTMLElement | null => findChip(key) ?? findMoreFor(key, moreDayRef.current) ?? document.querySelector<HTMLElement>('[data-focus-key="calendar-safe-fallback"]');
   const itemMenu = useSchedulingItemMenu({
     describe: describeItem,
     resolveElement: findChip,
@@ -590,7 +635,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
           onViewChange={(view) => { const subview = calendarViewToSubview(view); if (subview && subview !== calendar.subview) navigate({ subview }); }}
           onSlotClick={(slot) => { if (slot.view === "month") navigate({ subview: "day", date: sydneyCivilDate(slot.date) }); }}
           eventClassName={(occurrence) => productionEventCalendarEventClassName(occurrence.event.data, landedProjectId !== null && occurrence.event.data?.dto.project.id === landedProjectId)}
-          renderMoreIndicator={({ count, segments }) => <span data-more-event-ids={segments.map((segment) => String(segment.occurrence.event.id)).join(" ")}>{`+${count} more`}</span>}
+          renderMoreIndicator={({ day, count, segments }) => <span data-more-event-ids={segments.map((segment) => String(segment.occurrence.event.id)).join(" ")} data-more-day={sydneyCivilDate(day)}>{`+${count} more`}</span>}
           renderEvent={({ occurrence }) => <ChipContent id={String(occurrence.event.id)} data={occurrence.event.data} title={occurrence.event.title} />}
         >
           {/* The body is a flexed item of a definite-height column (#363), so its `minmax(0,1fr)` row is
@@ -684,7 +729,8 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
       )}
 
       <div className="sr-only" data-testid="dashboard-live-region" aria-live="polite" aria-atomic="true">{commands.announcement}</div>
-      <ProductionEventCalendarDialogs commands={commands} deadlineConfirm={deadlineConfirm} projectDefaultFor={(projectId) => projectDefaults.get(projectId) ?? null} />
+      <SchedulingItemSchedulePicker editor={itemEditor} itemKey={itemKey} lookup={lookupItem} findAnchor={findScheduleAnchor} findFocusTarget={findScheduleFocusTarget} retainedFor={retainedScheduleFor} busy={!itemEditor && !live} onSubmit={commands.submitScheduleEditor} onCancel={commands.cancelScheduleEditor} onDismiss={dismissScheduleEditor} stashErrorFor={stashErrorFor} onClear={clearScheduleStash} />
+      <ProductionEventCalendarDialogs commands={commands} deadlineConfirm={deadlineConfirm} scheduleEditorPresentation="inline" projectDefaultFor={(projectId) => projectDefaults.get(projectId) ?? null} />
       {itemMenu.menu}
     </section>
   );
