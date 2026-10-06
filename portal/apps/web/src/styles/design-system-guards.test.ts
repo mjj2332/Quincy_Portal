@@ -1229,3 +1229,74 @@ describe("guard: Team, Select and Mention popups share one square radius (#550)"
     expect(popupRadiusProblems("relative rounded-none bg-popover")).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Guard 5 — one focus line: no field primitive recolours its border on focus
+// ---------------------------------------------------------------------------
+/**
+ * #613 item 3 (owner decision). A focused field drew TWO dark rules: a 1px border turned
+ * `border-primary`/`border-ring` AND the 2px focus outline sat two pixels outside it (the
+ * composer at 1920 showed them at x≈122 and x≈126). The 2px outline is the Portal's single focus
+ * indicator, the same one buttons draw, so a field keeps its rest/hover border colour on focus.
+ *
+ * Two checks: the named field primitives carry no focus-time `border-<colour>` token at all, and
+ * no file combines one with a focus outline utility. Error colours (`aria-invalid:`) are not
+ * focus-time and are untouched.
+ */
+const FOCUS_BORDER_COLOUR =
+  /(?:^|[\s"'`])(?:[a-z-]*:)*(?:has-\[[^\]\s]*focus[^\]\s]*\]|group-has-\[[^\]\s]*focus[^\]\s]*\][^:\s]*|focus-visible|focus-within|focus):border-(?!0(?:\s|"|'|`|$)|transparent|none|solid|\[length)/;
+const FOCUS_OUTLINE = /(?:focus-visible|focus-within|focus|has-\[[^\]\s]*focus[^\]\s]*\]):outline-(?:ring|solid|\[length)/;
+const FIELD_PRIMITIVES = [
+  "components/reui/input-group.tsx",
+  "components/reui/input.tsx",
+  "components/reui/textarea.tsx",
+  "components/reui/select.tsx",
+  "components/reui/combobox.tsx",
+  "components/quincy/NativeSelect.tsx",
+  "components/QuincyRichTextEditor.tsx",
+  "lib/rail-field.ts",
+];
+
+function stripSourceComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+}
+
+function hasFocusBorderColour(source: string): boolean {
+  return FOCUS_BORDER_COLOUR.test(stripSourceComments(source));
+}
+
+describe("guard: one focus line — no field primitive recolours its border on focus (#613 item 3)", () => {
+  it("named field primitives carry no focus-time border colour", () => {
+    const offenders = FIELD_PRIMITIVES.filter((file) => hasFocusBorderColour(readFileSync(join(srcDir, file), "utf8")));
+    expect(
+      offenders,
+      "These field primitives recolour their border on focus while the focus outline also paints: two dark lines. Drop the border-colour utility; keep only the outline (#613 item 3).",
+    ).toEqual([]);
+  });
+
+  it("no source file pairs a focus-time border colour with a focus outline", () => {
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (/\.(ts|tsx)$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
+          const code = stripSourceComments(readFileSync(full, "utf8"));
+          if (FOCUS_BORDER_COLOUR.test(code) && FOCUS_OUTLINE.test(code)) offenders.push(relative(srcDir, full));
+        }
+      }
+    };
+    walk(srcDir);
+    expect(offenders).toEqual([]);
+  });
+
+  it("the detector flags the doubled pairing and spares rest, hover and error colours", () => {
+    expect(hasFocusBorderColour('"focus-visible:border-ring"')).toBe(true);
+    expect(hasFocusBorderColour('"has-[input:focus-visible]:border-primary outline-solid"')).toBe(true);
+    expect(hasFocusBorderColour('"focus-within:border-ring"')).toBe(true);
+    expect(hasFocusBorderColour('"focus-visible:border-[color:var(--border-strong)]"')).toBe(true);
+    expect(hasFocusBorderColour('"hover:border-border-hover focus-visible:outline-ring aria-invalid:border-destructive"')).toBe(false);
+    expect(hasFocusBorderColour('"focus-visible:border-0 border-border"')).toBe(false);
+    expect(hasFocusBorderColour("// focus-visible:border-ring in a comment")).toBe(false);
+  });
+});

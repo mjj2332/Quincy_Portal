@@ -263,9 +263,9 @@ function ComboboxChips({
   return (
     <ComboboxPrimitive.Chips
       data-slot="combobox-chips"
-      // QUINCY ADDITION (#458): the focus ring is the token outline, on the input's focus-visible only.
+      // QUINCY ADDITION (#458): the focus ring is the token outline, on the input's focus-visible only. #613 item 3: outline only, no focus-time border colour (one focus line).
       className={cn(
-        "flex min-h-8 flex-wrap items-center gap-1 rounded-lg border border-input bg-transparent bg-clip-padding px-2.5 py-1 text-sm transition-colors has-[input:focus-visible]:border-ring has-[input:focus-visible]:outline-[length:var(--border-width-bold)] has-[input:focus-visible]:outline-solid has-[input:focus-visible]:outline-ring has-[input:focus-visible]:outline-offset-2 has-aria-invalid:border-destructive has-aria-invalid:ring-3 has-aria-invalid:ring-destructive/20 has-data-[slot=combobox-chip]:px-1",
+        "flex min-h-8 flex-wrap items-center gap-1 rounded-lg border border-input bg-transparent bg-clip-padding px-2.5 py-1 text-sm transition-colors has-[input:focus-visible]:outline-[length:var(--border-width-bold)] has-[input:focus-visible]:outline-solid has-[input:focus-visible]:outline-ring has-[input:focus-visible]:outline-offset-2 has-aria-invalid:border-destructive has-aria-invalid:ring-3 has-aria-invalid:ring-destructive/20 has-data-[slot=combobox-chip]:px-1",
         className
       )}
       {...props}

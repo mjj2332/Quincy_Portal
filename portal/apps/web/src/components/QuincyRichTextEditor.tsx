@@ -90,10 +90,10 @@ const DOCUMENT_CONTENT_UTILITIES = "min-[722px]:pe-12 [&_h2]:scroll-mt-[calc(var
 // the base's deep `:has(:disabled)` would paint the whole field sunken as soon as Undo/Redo are
 // disabled (always, on an empty editor); the sunken ground is re-keyed to the wrapper's own
 // `data-disabled` (important, so the higher-specificity `has-disabled` rule cannot beat it); and the
-// focus ring is extended to the contenteditable, which the base's `input:focus-visible` misses.
+// focus outline is extended to the contenteditable, which the base's `input:focus-visible` misses
+// (outline only — #613 item 3: no focus-time border colour, one focus line).
 const FIELD_GROUP =
   "group h-auto flex-col items-stretch has-disabled:bg-card data-[disabled]:bg-surface-sunken! " +
-  "has-[[contenteditable=true]:focus-visible]:border-primary " +
   "has-[[contenteditable=true]:focus-visible]:outline-[length:var(--border-width-bold)] " +
   "has-[[contenteditable=true]:focus-visible]:outline-solid " +
   "has-[[contenteditable=true]:focus-visible]:outline-ring " +
