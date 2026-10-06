@@ -1361,8 +1361,11 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   const chartReplaced = query.isPending || query.isError;
   const dueEditorRowVisible = dueEditorSubtaskId ? [...assigneeCellByChecklistResourceId.values()].some((cell) => cell.row.id === dueEditorSubtaskId) : true;
   useEffect(() => {
-    if (dueEditorSubtaskId && (narrowTree || chartReplaced || !dueEditorRowVisible)) dismissScheduleEditor();
-  }, [dueEditorSubtaskId, narrowTree, chartReplaced, dueEditorRowVisible, dismissScheduleEditor]);
+    if (!dueEditorSubtaskId) return;
+    if (narrowTree || chartReplaced) dismissScheduleEditor();
+    // The row left the data: a true discard, nothing to reopen on.
+    else if (!dueEditorRowVisible) { clearScheduleStash(dueEditorSubtaskId); commands.cancelScheduleEditor(); }
+  }, [dueEditorSubtaskId, narrowTree, chartReplaced, dueEditorRowVisible, dismissScheduleEditor, clearScheduleStash, commands]);
   const openDueEditor = useCallback((cell: GanttAssigneeCell) => {
     const project = projectById.get(cell.projectId);
     const source = project ? ganttChecklistSource(project, cell.row) : null;
@@ -1920,8 +1923,12 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // or its row left the data (a re-keyed bar is the same row, so a Start edit never cancels).
   const itemEditorRowPresent = itemEditorSubtaskId ? findTaskTarget(itemEditorSubtaskId) !== null : true;
   useEffect(() => {
-    if (itemEditorSubtaskId && (chartReplaced || !itemEditorRowPresent)) commands.cancelScheduleEditor();
-  }, [itemEditorSubtaskId, chartReplaced, itemEditorRowPresent, commands]);
+    if (!itemEditorSubtaskId) return;
+    // An automatic close is a dismissal (a failed refetch replaces the chart for a while): a conflicted draft and notice are stashed (#585).
+    if (chartReplaced) dismissScheduleEditor();
+    // The row left the data: a true discard, nothing to reopen on.
+    else if (!itemEditorRowPresent) { clearScheduleStash(itemEditorSubtaskId); commands.cancelScheduleEditor(); }
+  }, [itemEditorSubtaskId, chartReplaced, itemEditorRowPresent, commands, dismissScheduleEditor, clearScheduleStash]);
   const itemEditorLookup = (subtaskId: string) => {
     const target = findTaskTarget(subtaskId);
     return target ? { row: target.row, street: target.project.street, projectDefault: projectDefaultById.get(target.project.id) ?? null } : null;

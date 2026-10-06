@@ -1185,6 +1185,22 @@ describe("ProductionGantt — Edit schedule… on the bar (#582)", () => {
     expect(barPickerButton(RANGE_TITLE, "4 hours")!.getAttribute("aria-pressed")).toBe("true");
   });
 
+  it("B12 a 409 on the bar picker, then a failing refetch that replaces the chart, then recovery and a reopen: the notice and the draft are still there", async () => {
+    await render();
+    await conflictOnBar();
+    getFails = true;
+    await act(async () => { await client.invalidateQueries(); });
+    await flush(8);
+    await waitFor(() => expect(barPicker(RANGE_TITLE)).toBeNull());
+    expect(onAcceptGateChange).toHaveBeenLastCalledWith(false);
+    getFails = false;
+    await act(async () => { await client.invalidateQueries(); });
+    await flush(8);
+    await waitFor(() => expect(findBar(RANGE_TITLE)).toBeTruthy());
+    await openFromBar(RANGE_TITLE);
+    await expectBarDraftAndReapply();
+  });
+
   it("B11 a dismissed conflict keeps its stash when the chart narrows to 720px: the bar picker reopens with the draft, and a narrowed Due picker is dismissed, not discarded", async () => {
     const original = window.matchMedia;
     let narrow = false;
