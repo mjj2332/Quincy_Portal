@@ -185,6 +185,8 @@ export function ProjectDiscussionThread({
   const readOnly = archived;
   const priorReadOnly = useRef(readOnly);
   const focusAfterFlip = useRef<{ inThread: boolean } | null>(null);
+  // Bumped per recorded refusal: a poll can archive the Project while a write is pending, so `readOnly` is already true when the 409 lands.
+  const [refusalGeneration, setRefusalGeneration] = useState(0);
   const composerRef = useRef<HTMLFormElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const noticeRef = useRef<HTMLParagraphElement>(null);
@@ -238,7 +240,7 @@ export function ProjectDiscussionThread({
     focusAfterFlip.current = null;
     const active = document.activeElement; const notice = noticeRef.current;
     if (!active || active === document.body || active.matches(":disabled") || (flip.inThread && (!active.isConnected || (notice !== null && active.contains(notice))))) notice?.focus();
-  }, [readOnly]);
+  }, [readOnly, refusalGeneration]);
   useEffect(() => { void presentation.drain(commentsData, readStateQuery.data); }, [commentsData, presentation, readStateQuery.data]);
   useEffect(() => {
     onUnreadCountChange?.(unreadCount);
@@ -276,7 +278,7 @@ export function ProjectDiscussionThread({
   const focusInThread = () => { const active = document.activeElement; return active !== null && (composerRef.current?.contains(active) === true || listRef.current?.contains(active) === true); };
   /** Handles an archived refusal of a Post, Save or Delete: the thread goes read-only, nothing is optimistic, and the header and Checklist catch up. */
   async function enterArchived(inThread: boolean) {
-    focusAfterFlip.current = { inThread }; setMutationError(undefined);
+    focusAfterFlip.current = { inThread }; setMutationError(undefined); setRefusalGeneration((generation) => generation + 1);
     await recordProjectArchivedRefusal(queryClient, projectId);
     void invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "collaboration-summary" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true });
   }

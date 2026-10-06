@@ -168,7 +168,7 @@ export function SubtaskChecklist({ projectId, onAccessFailure, layout = "rail", 
   const [newTitle, setNewTitle] = useState(""); const [newAssignees, setNewAssignees] = useState<Array<{ id: string; name: string }>>([]); const [newSchedule, setNewSchedule] = useState<RangeChecklistScheduleInput | null>(null); const [newSchedulePreview, setNewSchedulePreview] = useState<ChecklistScheduleDto | null>(null); const [newReminders, setNewReminders] = useState<number[]>([...SUBTASK_REMINDER_DEFAULT_OFFSETS]); const [composerOpen, setComposerOpen] = useState(false); const [activePopover, setActivePopover] = useState<ActivePopover>(null);
   const [draftTitles, setDraftTitles] = useState<Record<string, string>>({}); const [notice, setNotice] = useState(""); const [open, setOpen] = useState(layout === "rail"); const [completedOpen, setCompletedOpen] = useState(false); const [editingId, setEditingId] = useState<string | null>(null);
   // Read-only comes from the `archived` prop alone. A write refused as archived records the fact in the cache (#566), which feeds the prop at once.
-  const readOnly = archived; const priorReadOnly = useRef(readOnly); const focusAfterFlip = useRef<{ inRail: boolean } | null>(null); const collapseTriggerRef = useRef<HTMLButtonElement>(null);
+  const readOnly = archived; const priorReadOnly = useRef(readOnly); const focusAfterFlip = useRef<{ inRail: boolean } | null>(null); const [refusalGeneration, setRefusalGeneration] = useState(0); const collapseTriggerRef = useRef<HTMLButtonElement>(null);
   const [dragging, setDragging] = useState(false); const [scheduleErrors, setScheduleErrors] = useState<Record<string, ScheduleError>>({});
   // Held above the grouped rows so a Done toggle (row remount) cannot discard a retained schedule draft; entries are dropped when the item is deleted.
   const retainedSchedules = useRef(new Map<string, RetainedSchedule>());
@@ -184,7 +184,7 @@ export function SubtaskChecklist({ projectId, onAccessFailure, layout = "rail", 
   // A flip to read-only removes the focused control (or disables it, which Chrome only resolves to <body> a frame later), and a modal Project sheet
   // reclaims body focus on the next frame, so this runs in the layout phase: focus the always-mounted collapse button instead (#450).
   // Only when focus was genuinely lost (body, disabled, disconnected, or an ancestor of the rail): a connected, enabled control elsewhere keeps it.
-  useLayoutEffect(() => { const flip = focusAfterFlip.current; if (!readOnly || !flip) return; focusAfterFlip.current = null; const active = document.activeElement; const section = sectionRef.current; if (!active || active === document.body || active.matches(":disabled") || (flip.inRail && (!active.isConnected || !section || active.contains(section)))) collapseTriggerRef.current?.focus(); }, [readOnly]);
+  useLayoutEffect(() => { const flip = focusAfterFlip.current; if (!readOnly || !flip) return; focusAfterFlip.current = null; const active = document.activeElement; const section = sectionRef.current; if (!active || active === document.body || active.matches(":disabled") || (flip.inRail && (!active.isConnected || !section || active.contains(section)))) collapseTriggerRef.current?.focus(); }, [readOnly, refusalGeneration]);
   // Whenever the rail turns read-only, by the latch or by the `archived` prop arriving with a refetch, drop everything mid-edit: an open composer,
   // title edit, drafts and schedule popover would otherwise outlive the controls that own them (a held popover also keeps the subtasks poll off) (#450).
   useLayoutEffect(() => { const was = priorReadOnly.current; priorReadOnly.current = readOnly; if (was || !readOnly) return; resetComposer(false); setEditingId(null); setDraftTitles({}); setScheduleErrors({}); retainedSchedules.current.clear(); setActivePopover(null); }, [readOnly]);
@@ -227,7 +227,7 @@ export function SubtaskChecklist({ projectId, onAccessFailure, layout = "rail", 
   // Whether focus is in the rail when a write starts: the refusal can land after the focused control is gone and the sheet moved focus (#450).
   const focusInRail = () => sectionRef.current?.contains(document.activeElement) === true;
   async function enterArchived(inRail: boolean) {
-    focusAfterFlip.current = { inRail }; setNotice("");
+    focusAfterFlip.current = { inRail }; setNotice(""); setRefusalGeneration((generation) => generation + 1);
     if (queryClient) await recordProjectArchivedRefusal(queryClient, projectId);
     if (queryClient) void invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "collaboration-summary" }, { kind: "subtasks" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true });
   }

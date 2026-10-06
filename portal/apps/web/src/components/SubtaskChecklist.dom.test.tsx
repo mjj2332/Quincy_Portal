@@ -734,6 +734,20 @@ describe("SubtaskChecklist on an archived Project (#450)", () => {
     expect(host.querySelector('[aria-label="Subtask title"]')).toBeNull();
     expect(item(host, "Call client").querySelector('[data-testid="subtask-checklist-title"]')!.textContent).toBe("Call client");
   });
+  it("a poll that archives the Project while an Add is pending: the refusal that follows still puts lost focus on the collapse button (#568 review)", async () => {
+    const host = await renderCase();
+    await click(document.getElementById(`subtask-add-${projectId}`)!);
+    const input = host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!;
+    await typeInto(input, "Schedule staging"); input.focus();
+    let refuse!: (reason: unknown) => void;
+    apiPostMock.mockImplementationOnce(() => new Promise((_resolve, reject) => { refuse = reject; }));
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Add")!);
+    await rerenderCase({ archived: true });
+    expect(host.querySelector(`#subtask-composer-${projectId}`)).toBeNull();
+    await act(async () => { refuse(refusal()); await Promise.resolve(); await Promise.resolve(); });
+    await waitFor(() => expect(document.activeElement).toBe(collapseButton(host)));
+    expect(document.activeElement).not.toBe(document.body);
+  });
   it("a refusal that lands after focus moved to an ancestor of the rail puts focus on the collapse button", async () => {
     const host = await renderCase();
     let reject!: (error: unknown) => void;

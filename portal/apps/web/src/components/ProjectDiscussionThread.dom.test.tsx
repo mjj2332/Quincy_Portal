@@ -368,6 +368,21 @@ describe("ProjectDiscussionThread", () => {
       expect(apiPostMock).not.toHaveBeenCalled();
     });
 
+    it("a poll that archives the Project while a Post is pending: the refusal that follows still moves lost focus to the notice (#568 review)", async () => {
+      let refuse!: (reason: unknown) => void;
+      apiPostMock.mockImplementationOnce(() => new Promise((_resolve, reject) => { refuse = reject; }));
+      render(); await flush();
+      await typeComposer("Pending post");
+      host.querySelector<HTMLElement>('[contenteditable="true"]')!.focus();
+      await click(host.querySelector<HTMLElement>(`[data-testid="submit-project-comment-${projectId}"]`)!); await flush();
+      render({ archived: true }); await flush();
+      expect(notice()).not.toBeNull();
+      expect(host.querySelector("[data-testid=discussion-composer]")).toBeNull();
+      await act(async () => { refuse(refusal()); await Promise.resolve(); await Promise.resolve(); }); await flush();
+      expect(document.activeElement).toBe(notice());
+      expect(document.activeElement).not.toBe(document.body);
+    });
+
     it("keeps a plain 409 as an error and does not switch the thread", async () => {
       apiPostMock.mockRejectedValueOnce(new ApiError("An image in this comment is no longer available.", 409, { code: "media_conflict" }));
       render(); await flush();
