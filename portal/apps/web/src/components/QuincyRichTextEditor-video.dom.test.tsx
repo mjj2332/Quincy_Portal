@@ -221,6 +221,18 @@ describe("cancelling a video upload (#494)", () => {
     expect(uploadingNow).toBe(false);
   });
 
+  it("announces \"Upload cancelled\" in the editor's live region when the author cancels (#556)", async () => {
+    uploadVideo.mockImplementation((_p: string, _f: File, options: { signal: AbortSignal }) => new Promise<string>((_resolve, reject) => { options.signal.addEventListener("abort", () => reject(Object.assign(new Error("Upload cancelled"), { name: "AbortError" }))); }));
+    const host = mount(<Harness />);
+    await choose(host, [mp4("long.mp4")]);
+    const region = host.querySelector<HTMLElement>('[aria-live="polite"]')!;
+    expect(region.textContent).toBe("");
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="rich-text-upload-tray"] button[aria-label="Cancel upload of long.mp4"]')!.click(); });
+    await settle();
+    expect(host.querySelectorAll('[aria-live="polite"]')).toHaveLength(1);
+    expect(region.textContent).toBe("Upload cancelled");
+  });
+
   it("an image row has no Cancel button", async () => {
     uploadImage.mockImplementation(() => new Promise<string>(() => undefined));
     const host = mount(<Harness />);

@@ -176,6 +176,8 @@ export function QuincyRichTextEditor({
   const [mentionA11y, setMentionA11y] = useState<{ listboxId: string; activeId?: string; expanded: boolean } | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
   const [nestingBlocked, setNestingBlocked] = useState(false);
+  // The author cancelled an upload from its tray row: said once in the live region, retired by the next edit. An unmount abort never sets it.
+  const [uploadCancelled, setUploadCancelled] = useState(false);
   const [deleteTableOpen, setDeleteTableOpen] = useState(false);
   const pageRef = useRef<HTMLDivElement>(null);
   const [uploads, setUploads] = useState<UploadingMedia[]>([]);
@@ -271,7 +273,7 @@ export function QuincyRichTextEditor({
       valueRef.current = serialised; onChangeRef.current(doc);
       // Only the author's own edits retire an upload problem: a sibling upload landing is not one, and must not hide a problem shown for another file.
       if (!transaction.getMeta(UPLOAD_INSERT_META)) setUploadErrors((entries) => (entries.length ? [] : entries));
-      setNestingBlocked(false); setMentionDismissed(false); setQuery(mentionQuery(next));
+      setNestingBlocked(false); setUploadCancelled(false); setMentionDismissed(false); setQuery(mentionQuery(next));
     },
     onSelectionUpdate: ({ editor: next }) => setQuery(mentionQuery(next)),
   });
@@ -507,7 +509,8 @@ export function QuincyRichTextEditor({
   // every Project surface that renders the composer. It is the installed ReUI `Input`, clicked as soon as it mounts.
   const choose = (kind: "image" | "video") => setPicking((previous) => ({ n: (previous?.n ?? 0) + 1, kind }));
   // The live region stays mounted so screen readers announce a message when it appears, but it takes no space while empty.
-  const liveMessage = overBytes ? "This formatting is too large to save; remove list items or formatting." : nestingBlocked ? "Maximum list nesting is four levels" : "";
+  const CANCELLED_MESSAGE = "Upload cancelled";
+  const liveMessage = overBytes ? "This formatting is too large to save; remove list items or formatting." : nestingBlocked ? "Maximum list nesting is four levels" : uploadCancelled ? CANCELLED_MESSAGE : "";
   const off = (can: boolean) => disabled || !can;
 
   return <div ref={wrapperRef} className="group grid gap-[var(--space-2)]" data-disabled={disabled || undefined}>
@@ -581,9 +584,9 @@ export function QuincyRichTextEditor({
       onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); const kind = picking.kind; setPicking(null); if (files.length) addImagesRef.current(files, editor.state.selection.to, kind); }}
       {...{ onCancel: () => setPicking(null) }}
     />}
-    <EmbeddedUploadTray uploads={uploads} errors={uploadErrors} trayRef={trayRef} onCancel={(key) => { running.current.get(key)?.release(); editorRef.current?.commands.focus(); }} onRetry={(key) => running.current.get(key)?.retry()} />
+    <EmbeddedUploadTray uploads={uploads} errors={uploadErrors} trayRef={trayRef} onCancel={(key) => { running.current.get(key)?.release(); setUploadCancelled(true); editorRef.current?.commands.focus(); }} onRetry={(key) => running.current.get(key)?.retry()} />
     <MentionAutocomplete ref={menu} query={query} loadMentionables={loadMentionables} onSelect={selectMention} onDismiss={() => setMentionDismissed(true)} onAccessibilityChange={setMentionA11y} />
     {plainText.length >= limit * COUNTER_THRESHOLD && <div ref={counterRef} data-testid="rich-text-counter" className={cn("text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", plainText.length > limit && "!text-destructive")}>{plainText.length}/{limit}</div>}
-    <div className={liveMessage ? "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive" : "sr-only"} aria-live="polite">{liveMessage}</div>
+    <div className={liveMessage && liveMessage !== CANCELLED_MESSAGE ? "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive" : "sr-only"} aria-live="polite">{liveMessage}</div>
   </div>;
 }
