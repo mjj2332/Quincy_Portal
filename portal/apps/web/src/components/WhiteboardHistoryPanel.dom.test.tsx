@@ -192,6 +192,13 @@ describe("WhiteboardHistoryPanel (#500)", () => {
     const rowOf = (id: string) => document.body.querySelector<HTMLElement>(`[data-version-id="${id}"]`)!;
     expect(rowOf("v-new").querySelector('[data-testid="whiteboard-version-current"]')?.textContent).toBe("Current");
     expect(rowOf("v-new").hasAttribute("data-current")).toBe(true);
+    expect(rowOf("v-new").querySelector('[data-testid="whiteboard-version-current"]')!.className).toContain("rounded-full");
+    // The count never wraps ("0 elements" stays on one line) and a long title clips instead of squeezing it.
+    for (const id of ["v-new", "v-mid", "v-old"]) {
+      const count = rowOf(id).querySelector<HTMLElement>('[data-testid="whiteboard-version-count"]')!;
+      expect(count.className).toContain("whitespace-nowrap");
+      expect(count.className).toContain("shrink-0");
+    }
     expect(rowOf("v-new").querySelector('[aria-label^="Restore "]')).toBeNull();
     for (const id of ["v-mid", "v-old"]) {
       expect(rowOf(id).querySelector('[data-testid="whiteboard-version-current"]')).toBeNull();

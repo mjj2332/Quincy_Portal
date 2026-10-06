@@ -151,13 +151,19 @@ describe("formatAbsoluteTimeWithSeconds / formatDistinctTimes (#559)", () => {
 
   it("reads relative for today and absolute for another day, with no seconds while every label differs", () => {
     expect(formatDistinctTimes([at("2026-09-30T04:48:00.000Z"), at("2026-09-30T02:00:00.000Z"), at("2026-09-28T05:00:00.000Z")], NOW))
-      .toEqual(["12m ago", "3h ago", "28 Sep 2026, 3:00 PM"]);
+      .toEqual(["12m ago", "3h ago", "28 Sep, 3:00 PM"]);
+  });
+
+  it("drops the year for the current Sydney year and keeps it for an older one", () => {
+    expect(formatDistinctTimes([at("2026-01-02T05:00:00.000Z"), at("2025-12-31T05:00:00.000Z")], NOW)).toEqual(["2 Jan, 4:00 PM", "31 Dec 2025, 4:00 PM"]);
   });
 
   it("tells apart rows that would read the same, and only those", () => {
     expect(formatDistinctTimes([at("2026-09-30T04:48:40.000Z"), at("2026-09-30T04:48:10.000Z"), at("2026-09-30T02:00:00.000Z")], NOW))
-      .toEqual(["30 Sep 2026, 2:48:40 PM", "30 Sep 2026, 2:48:10 PM", "3h ago"]);
+      .toEqual(["30 Sep, 2:48:40 PM", "30 Sep, 2:48:10 PM", "3h ago"]);
     expect(formatDistinctTimes([at("2026-09-28T05:00:50.000Z"), at("2026-09-28T05:00:05.000Z")], NOW))
-      .toEqual(["28 Sep 2026, 3:00:50 PM", "28 Sep 2026, 3:00:05 PM"]);
+      .toEqual(["28 Sep, 3:00:50 PM", "28 Sep, 3:00:05 PM"]);
+    expect(formatDistinctTimes([at("2025-09-28T05:00:50.000Z"), at("2025-09-28T05:00:05.000Z")], NOW))
+      .toEqual(["28 Sep 2025, 3:00:50 PM", "28 Sep 2025, 3:00:05 PM"]);
   });
 });

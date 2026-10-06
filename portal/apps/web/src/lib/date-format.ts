@@ -110,24 +110,31 @@ export function formatAbsoluteTime(instant: Instant): string {
 
 /** "30 Sep 2026, 3:04:09 PM": `formatAbsoluteTime` with seconds, for telling apart two events inside one minute (#559). A Sydney offset is whole minutes, so UTC seconds are Sydney seconds. */
 export function formatAbsoluteTimeWithSeconds(instant: Instant): string {
+  return absoluteLabel(instant, { seconds: true, year: true });
+}
+
+function absoluteLabel(instant: Instant, options: { seconds: boolean; year: boolean }): string {
   const date = toDate(instant);
   const { year, month, day, hour, minute } = sydneyParts(date);
-  const clock = clock12(hour, minute).replace(" ", `:${pad2(date.getUTCSeconds())} `);
-  return `${day} ${MONTH_NAMES[month - 1]} ${year}, ${clock}`;
+  const clock = options.seconds ? clock12(hour, minute).replace(" ", `:${pad2(date.getUTCSeconds())} `) : clock12(hour, minute);
+  return `${day} ${MONTH_NAMES[month - 1]}${options.year ? ` ${year}` : ""}, ${clock}`;
 }
 
 /**
  * One time label per instant for a list, in the Portal's own forms (#559): the same Sydney day as `now` reads relative
- * ("Just now", "12m ago", "3h ago", from `formatDayGroupedTime`), any other day reads absolute (`formatAbsoluteTime`).
+ * ("Just now", "12m ago", "3h ago", from `formatDayGroupedTime`), any other day reads absolute like `formatAbsoluteTime` but
+ * without the year while it is `now`'s Sydney year ("28 Sep, 3:00 PM"; an older year keeps it), which keeps a narrow row's time whole.
  * Two rows that would read the SAME (a minute of changes, "5m ago" twice) are told apart with seconds, and only those:
  * the Portal's dates never show seconds, so they appear only where nothing else separates two rows.
  */
 export function formatDistinctTimes(instants: readonly Instant[], now: number): string[] {
   const today = sydneyDayKey(now);
-  const labels = instants.map((instant) => (sydneyDayKey(instant) === today ? formatDayGroupedTime(instant, now) : formatAbsoluteTime(instant)));
+  const thisYear = sydneyParts(new Date(now)).year;
+  const absolute = (instant: Instant, seconds: boolean) => absoluteLabel(instant, { seconds, year: sydneyParts(toDate(instant)).year !== thisYear });
+  const labels = instants.map((instant) => (sydneyDayKey(instant) === today ? formatDayGroupedTime(instant, now) : absolute(instant, false)));
   const counts = new Map<string, number>();
   for (const label of labels) counts.set(label, (counts.get(label) ?? 0) + 1);
-  return labels.map((label, index) => ((counts.get(label) ?? 0) > 1 ? formatAbsoluteTimeWithSeconds(instants[index]!) : label));
+  return labels.map((label, index) => ((counts.get(label) ?? 0) > 1 ? absolute(instants[index]!, true) : label));
 }
 
 /**

@@ -72,8 +72,8 @@ function byline(version: WhiteboardVersionSummary, when: string) {
 function countBadge(version: WhiteboardVersionSummary, current: boolean) {
   return (
     <>
-      {current ? <Badge variant="primary-light" data-testid="whiteboard-version-current">Current</Badge> : null}
-      <span data-testid="whiteboard-version-count" className="text-xs font-normal text-muted-foreground tabular-nums">
+      {current ? <Badge variant="primary-light" radius="full" data-testid="whiteboard-version-current">Current</Badge> : null}
+      <span data-testid="whiteboard-version-count" className="shrink-0 whitespace-nowrap text-xs font-normal text-muted-foreground tabular-nums">
         {`${version.elementCount} element${version.elementCount === 1 ? "" : "s"}`}
       </span>
     </>
