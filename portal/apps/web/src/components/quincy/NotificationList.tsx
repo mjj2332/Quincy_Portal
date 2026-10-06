@@ -311,8 +311,9 @@ export function NotificationEmptyState({ filter, unreadCount, onShowAll }: Notif
   return (
     <div className={EMPTY} data-testid="rail-notifications-empty" data-notification-empty="unread">
       <span>You’re all caught up.</span>
-      <Button type="button" variant="ghost" size="sm" data-testid="rail-notifications-show-all" onClick={onShowAll}>
-        Show all notifications
+      {/* `-ms-2.5` cancels the `sm` size variant's own `px-2.5`, so the label sits on the text column. */}
+      <Button type="button" variant="ghost" size="sm" className="-ms-2.5" data-testid="rail-notifications-show-all" onClick={onShowAll}>
+        Show read notifications
       </Button>
       {unreadCount > 0 && <span>Older unread notifications may be outside this recent list.</span>}
     </div>
