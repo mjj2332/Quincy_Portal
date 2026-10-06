@@ -58,7 +58,7 @@ type Fixture = { projectId: string; byMember: string; byAdmin: string; byExterna
 async function seedProject(archived: boolean): Promise<Fixture> {
   const projectId = crypto.randomUUID(); const now = Date.now();
   await database.DB.batch([
-    database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Discussion Street', 'editing_autohdr', 0, ?, ?)").bind(projectId, now, now),
+    database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Discussion Street', 'editing_autohdr', ?, ?)").bind(projectId, now, now),
     ...([ids.member, ids.external] as const).map((userId) => database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, userId, now)),
   ]);
   const attached = (await seedMedia({ projectId })).id;

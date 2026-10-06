@@ -323,7 +323,7 @@ describe("an Automatic Deadline move and the reminder scanner (#485)", () => {
   async function seedAutomatic(): Promise<string> {
     const projectId = crypto.randomUUID();
     const now = Date.now();
-    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, shoot_date, board_position, board_revision, created_at, updated_at) VALUES (?, 'Move Scan Street', 'editing', '2099-01-05', 0, 0, ?, ?)").bind(projectId, now, now).run();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, shoot_date, board_revision, created_at, updated_at) VALUES (?, 'Move Scan Street', 'editing', '2099-01-05', 0, ?, ?)").bind(projectId, now, now).run();
     const bundle = buildAutomaticDeadlineBundle({ db: database.DB, projectId, shootDate: "2099-01-05", gate: { kind: "none" }, auditId: crypto.randomUUID(), reason: "tonomo_create", now })!;
     await database.DB.batch(bundle.statements);
     return projectId;

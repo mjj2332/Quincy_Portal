@@ -74,7 +74,7 @@ describe("TB4B Deadline and personal preference APIs", () => {
     await database.DB.batch([
       database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'TB4B Operator', ?, 1, 'admin', 1, ?, ?)").bind(userId, `${userId}@example.test`, now, now),
       database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), now + 3_600_000, token, userId, now, now),
-      database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Deadline API Street', 'edited_review', 0, ?, ?)").bind(projectId, now, now),
+      database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Deadline API Street', 'edited_review', ?, ?)").bind(projectId, now, now),
     ]);
   });
 

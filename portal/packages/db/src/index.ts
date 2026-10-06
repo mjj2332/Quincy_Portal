@@ -57,7 +57,6 @@ export {
 } from "./subtask-reminder-bundles";
 export { computeInsertPosition } from "./list-position";
 export { dashboardProjectOrder, orderDashboardStreetTies } from "./dashboard-order";
-export { rollbackBoardOrder0037PreEnable } from "./board-order-rollback-0037";
 export {
   NORMATIVE_AUDIT_MARKER_SQL,
   NORMATIVE_HANDOFF_EDITING_ENTRY_TOKEN_SQL,

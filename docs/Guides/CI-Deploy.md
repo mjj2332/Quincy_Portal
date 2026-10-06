@@ -131,6 +131,19 @@ Migration 0050 drops the index and the column and deletes the `subtask_multi_ass
 5. Post-verify: column and index gone, both row counts unchanged, `PRAGMA foreign_key_check` empty, flag row gone.
 6. Re-run the deploy.
 
+### Drop `board_position` (0064)
+
+Migration 0064 (#476, Board order Stage C) drops `projects_stage_archive_board_order_idx` and then the `projects.board_position` column, nothing else. It never touches `project_board_order_0037_rollback` or its index: `board-schema-variant.ts` detects the schema by that table, and dropping it puts every gated route into `board_schema_maintenance`. Apply checklist (from `portal/workers/app`, `--remote`, owner's go-ahead):
+
+1. Read-only pre-check: `SELECT type,name,tbl_name FROM sqlite_master WHERE sql LIKE '%board_position%' OR type IN ('view','trigger')` must return only the `projects` table, `projects_stage_archive_board_order_idx`, and the 0037 rollback table (which stays). Record the `projects` row count.
+2. Confirm the Stage B Worker (deploy of 495766e9) is live: it is the rollback floor, and older Workers cannot run against this schema.
+3. Take a Time Travel bookmark (`npx wrangler d1 time-travel info DB`) and record the id.
+4. Apply migrations; the pending list must show only 0064.
+5. Re-run the deploy (`gh run rerun <run-id> --failed`).
+6. Post-check: `PRAGMA table_info(projects)` has no `board_position`, `projects_stage_archive_board_order_idx` is gone, the 0037 rollback table and `project_board_order_0037_stage_rank_idx` are still present, the `projects` row count is unchanged, and `PRAGMA foreign_key_check` is empty.
+
+Rollback: the floor is the Stage B Worker. Restoring the column is a Time Travel restore to the bookmark, which loses every write since it.
+
 ### Subtask presets (0052)
 
 0052 converts every date-only Subtask range to a 09:00 start and a 17:00 end (the presets, ADR 0016)
