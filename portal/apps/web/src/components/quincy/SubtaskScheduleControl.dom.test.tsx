@@ -157,4 +157,67 @@ describe("SubtaskScheduleControl (#372, #423)", () => {
     await mount({ readOnly: true, value: null });
     expect(host.textContent).toBe("");
   });
+
+  describe("external anchor, no trigger (#582)", () => {
+    function AnchoredHarness({ onClose, finalFocus }: { onClose: (open: boolean) => void; finalFocus?: () => boolean | HTMLElement | null | void }) {
+      const [open, setOpenState] = useState(true);
+      const setOpen = (next: boolean) => { onClose(next); setOpenState(next); };
+      return <>
+        <div data-testid="bar" tabIndex={-1} style={{ position: "fixed", left: 40, top: 40, width: 300, height: 20 }}>bar</div>
+        <button type="button" data-testid="outside">elsewhere</button>
+        <SubtaskScheduleControl owner="t" label="Schedule for Row" value={value} open={open} setOpen={setOpen} busy={false} onSave={(request) => saved.push(request)}
+          anchor={() => document.querySelector('[data-testid="bar"]')!} finalFocus={finalFocus ?? (() => document.querySelector<HTMLElement>('[data-testid="bar"]') ?? true)} />
+      </>;
+    }
+    it("A1 renders no trigger and no button of its own, and the popup is open on Start", async () => {
+      await act(async () => { root.render(<AnchoredHarness onClose={() => undefined} />); await Promise.resolve(); });
+      await settle();
+      expect(host.querySelector('[aria-label="Schedule for Row"]')).toBeNull();
+      expect(document.querySelectorAll('[role="dialog"][aria-label="Schedule for Row"]')).toHaveLength(1);
+      expect(rangeToggles(popover()!).active).toBe("Start");
+    });
+    it("A2 Cancel closes it and hands focus to finalFocus's element, not a trigger", async () => {
+      const closes: boolean[] = [];
+      await act(async () => { root.render(<AnchoredHarness onClose={(next) => closes.push(next)} />); await Promise.resolve(); });
+      await settle();
+      await pressInPopup(popover()!, "Cancel");
+      await settle(12);
+      expect(closes).toEqual([false]);
+      expect(popover()).toBeNull();
+      expect(document.activeElement).toBe(document.querySelector('[data-testid="bar"]'));
+    });
+    it("A3 Escape closes it", async () => {
+      const closes: boolean[] = [];
+      await act(async () => { root.render(<AnchoredHarness onClose={(next) => closes.push(next)} />); await Promise.resolve(); });
+      await settle();
+      await act(async () => { popover()!.querySelector<HTMLElement>("button")!.focus(); document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
+      await settle(12);
+      expect(closes).toEqual([false]);
+      expect(popover()).toBeNull();
+    });
+    it("A4 an outside press closes it and finalFocus can leave focus where the press landed", async () => {
+      const closes: boolean[] = [];
+      const outsideKept = () => (document.activeElement?.getAttribute("data-testid") === "outside" ? false : true);
+      await act(async () => { root.render(<AnchoredHarness onClose={(next) => closes.push(next)} finalFocus={outsideKept} />); await Promise.resolve(); });
+      await settle();
+      const outside = host.querySelector<HTMLButtonElement>('[data-testid="outside"]')!;
+      await act(async () => {
+        outside.focus();
+        outside.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, pointerType: "mouse" }));
+        outside.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+        outside.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, pointerType: "mouse" }));
+        outside.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+        await Promise.resolve();
+      });
+      await settle(12);
+      expect(closes).toContain(false);
+      expect(popover()).toBeNull();
+      expect(document.activeElement).toBe(outside);
+    });
+    it("A5 anchor and trigger together is refused", async () => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      await expect(act(async () => { root.render(<Harness extra={{ trigger: customTrigger, anchor: () => document.body }} />); await Promise.resolve(); })).rejects.toThrow(/mutually exclusive/);
+      spy.mockRestore();
+    });
+  });
 });

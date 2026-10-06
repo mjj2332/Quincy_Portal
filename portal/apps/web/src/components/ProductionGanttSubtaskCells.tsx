@@ -48,6 +48,24 @@ export function scheduleErrorFromEditor(editor: Pick<ScheduleEditorState, "sourc
   return { message: failure.message };
 }
 
+/**
+ * "Save's own close is not a Cancel", shared by the Due cell and the bar's picker (#582) so the two cannot drift. Save and Use
+ * latest already tell the controller what they mean; the popover then calls `setOpen(false)` as well, which must not be read as a
+ * Cancel (that would release the lock under a request in flight). `onSave`/`onUseLatest` arm one pass-through; `closed` is what a
+ * `false` from the popover calls: it swallows that one close, else cancels (#423: Cancel discards, any other close retains).
+ */
+export function useSchedulePickerClose({ onSubmit, onCancel }: { onSubmit: (schedule: RangeChecklistScheduleInput, reminderOffsetsMinutes?: number[]) => void; onCancel: () => void }) {
+  const closeHandledRef = useRef(false);
+  return {
+    closed: () => {
+      if (closeHandledRef.current) { closeHandledRef.current = false; return; }
+      onCancel();
+    },
+    onSave: (request: { schedule: RangeChecklistScheduleInput; reminderOffsetsMinutes?: number[] }) => { closeHandledRef.current = true; onSubmit(request.schedule, request.reminderOffsetsMinutes); },
+    onUseLatest: () => { closeHandledRef.current = true; onCancel(); },
+  };
+}
+
 export type GanttSubtaskDueCellProps = {
   row: GanttChecklistRowDto;
   /** True while the controller's editor session belongs to THIS row. */
@@ -74,9 +92,7 @@ export type GanttSubtaskDueCellProps = {
 export function GanttSubtaskDueCell({ row, editorOpen, disabled, error, retained, onOpen, onSubmit, onCancel, projectDefault = null }: GanttSubtaskDueCellProps) {
   const end = row.schedule.end;
   const text = formatDueCivil(end.localCivil);
-  // Save and Use latest already tell the controller what they mean; the popover then calls `setOpen(false)` as well, which must
-  // not be read as a Cancel (that would release the lock under a request in flight). This flag lets that one close pass.
-  const closeHandledRef = useRef(false);
+  const close = useSchedulePickerClose({ onSubmit, onCancel });
   if (!row.permissions.canOpenScheduleEditor) {
     return <time data-testid="gantt-subtask-due" dateTime={end.instant ?? end.localCivil} className="truncate text-foreground">{text}</time>;
   }
@@ -92,19 +108,15 @@ export function GanttSubtaskDueCell({ row, editorOpen, disabled, error, retained
             if (!disabled) onOpen();
             return;
           }
-          if (closeHandledRef.current) {
-            closeHandledRef.current = false;
-            return;
-          }
-          onCancel();
+          close.closed();
         }}
         // The owner's own session is not "busy"; a frozen chart is.
         busy={disabled}
         error={error}
         retained={retained}
-        onSave={(request) => { closeHandledRef.current = true; onSubmit(request.schedule, request.reminderOffsetsMinutes); }}
-        onUseLatest={() => { closeHandledRef.current = true; onCancel(); }}
-        onUseLatestItem={() => { closeHandledRef.current = true; onCancel(); }}
+        onSave={close.onSave}
+        onUseLatest={close.onUseLatest}
+        onUseLatestItem={close.onUseLatest}
         initialFocus="end"
         projectDefault={projectDefault}
         reminders={{ offsets: row.reminders.offsetsMinutes, next: row.reminders.nextOccurrence }}

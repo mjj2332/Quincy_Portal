@@ -225,6 +225,7 @@ import { deadlineFoldOf, projectDefaultFromFacts } from "../lib/date-time-range"
 import { useStages } from "../lib/stages";
 import { useMediaQuery } from "../lib/use-media-query";
 import { ProductionEventCalendarDialogs } from "./ProductionEventCalendarDialogs";
+import { ProductionGanttScheduleEditorPopover } from "./ProductionGanttScheduleEditorPopover";
 import { GanttDeadlineCell, GanttTeamCell } from "./ProductionGanttProjectCells";
 import { GanttSubtaskDueCell, scheduleErrorFromEditor, stopRowGesture } from "./ProductionGanttSubtaskCells";
 import { ProjectCalendarAnchor } from "./ProjectCalendarAnchor";
@@ -1305,7 +1306,10 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // -------------------------------------------------------------------------------------------
   // The Subtask whose inline editor session the controller holds, if any.
   const narrowTree = useMediaQuery("(max-width: 720px)");
-  const dueEditor = commands.scheduleEditor?.inline ? commands.scheduleEditor : null;
+  // #582: an inline session is drawn by the Due cell ("due-cell", the default) or by the item menu's bar picker ("item").
+  const dueEditor = commands.scheduleEditor?.inline && (commands.scheduleEditor.inlineTarget ?? "due-cell") === "due-cell" ? commands.scheduleEditor : null;
+  const itemEditor = commands.scheduleEditor?.inline && commands.scheduleEditor.inlineTarget === "item" ? commands.scheduleEditor : null;
+  const itemEditorSubtaskId = itemEditor ? subtaskIdFromCalendarEntityId(itemEditor.source.id) : null;
   const dueEditorSubtaskId = dueEditor ? subtaskIdFromCalendarEntityId(dueEditor.source.id) : null;
   // A failed save keeps its draft here, above the vendor tree's rows (which remount), one entry per Subtask.
   const retainedSchedules = useRef(new Map<string, RetainedSchedule>());
@@ -1863,16 +1867,27 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     const target = findTaskTarget(key.slice("task:".length));
     if (!target) return;
     if (id === "open-project") onOpenProject?.(target.project.id);
-    else if (id === "edit-schedule") { const source = ganttChecklistSource(target.project, target.row); if (source) commands.openChecklistScheduleEditor(source); }
+    else if (id === "edit-schedule") { const source = ganttChecklistSource(target.project, target.row); if (source) commands.openChecklistScheduleEditor(source, undefined, { inline: true, inlineTarget: "item" }); }
   };
   const itemMenu = useSchedulingItemMenu({
     describe: describeItem,
     resolveElement: findBar,
     onAction: runItemAction,
-    followOnOpen: commands.moveDialog !== null || (commands.scheduleEditor !== null && !commands.scheduleEditor.inline),
+    // A follow-on dialog, the sheet (a non-inline session) or the bar's picker (an item-target inline session): its closing arms restore-if-lost.
+    followOnOpen: commands.moveDialog !== null || (commands.scheduleEditor !== null && (!commands.scheduleEditor.inline || commands.scheduleEditor.inlineTarget === "item")),
     closeKey: `${generationKey}|${identity.principalId}|${identity.role}|${identity.authorizationEpoch}|${commands.accessLost}`,
   });
   const { isOpenFor: isItemMenuOpenFor } = itemMenu;
+  // #582: an item session has no Due cell to lose, so the narrow width does not cancel it. It is cancelled only when the chart is replaced
+  // or its row left the data (a re-keyed bar is the same row, so a Start edit never cancels).
+  const itemEditorRowPresent = itemEditorSubtaskId ? findTaskTarget(itemEditorSubtaskId) !== null : true;
+  useEffect(() => {
+    if (itemEditorSubtaskId && (chartReplaced || !itemEditorRowPresent)) commands.cancelScheduleEditor();
+  }, [itemEditorSubtaskId, chartReplaced, itemEditorRowPresent, commands]);
+  const itemEditorLookup = (subtaskId: string) => {
+    const target = findTaskTarget(subtaskId);
+    return target ? { row: target.row, street: target.project.street, projectDefault: projectDefaultById.get(target.project.id) ?? null } : null;
+  };
   const eventPopup = useMemo(() => ({ isOpen: (occurrence: { event: { id: string | number } }) => isItemMenuOpenFor(String(occurrence.event.id)) }), [isItemMenuOpenFor]);
 
   // #221: the vendor's proposal → the grab-time checklist source and a `GanttEdit`. `null` for
@@ -2160,6 +2175,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
       <div className="sr-only" data-testid="production-gantt-live-region" aria-live="polite" aria-atomic="true">{commands.announcement}</div>
       <ProductionEventCalendarDialogs commands={commands} deadlineConfirm={deadlineConfirm} scheduleEditorPresentation="inline" projectDefaultFor={(projectId) => projectDefaultById.get(projectId) ?? null} />
       {itemMenu.menu}
+      <ProductionGanttScheduleEditorPopover editor={itemEditor} subtaskId={itemEditorSubtaskId} lookup={itemEditorLookup} findBar={findBar} retainedFor={retainedScheduleFor} onSubmit={commands.submitScheduleEditor} onCancel={commands.cancelScheduleEditor} />
     </div>
   );
 }
