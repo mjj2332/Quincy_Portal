@@ -396,6 +396,7 @@ describe("a posted video (#494)", () => {
     const unavailable = node.querySelector('[data-testid="embedded-video-preview-unavailable"]')!;
     expect(unavailable.textContent).toContain("Preview unavailable in this browser");
     expect(node.querySelector("video")).toBeNull();
+    expect(node.querySelector("[data-drag-handle]")).not.toBeNull();
     expect(node.querySelector('[data-testid="embedded-video-badge"]')).not.toBeNull();
   });
 
@@ -415,7 +416,7 @@ describe("the video's styles (#494)", () => {
     expect(style).toContain("border: var(--border-width-hair) solid var(--border)"); expect(style).toContain("background: var(--surface-sunken)"); expect(style).toContain("border-radius: var(--radius-xs)");
   });
   it("turns a selected video's border accent in the editor, the same rule as an image and a link card", () => {
-    const selected = rule(".rich-text__editor-content .ProseMirror-selectednode .rich-text__embedded-video-node > video.rich-text__embedded-video");
+    const selected = rule(".rich-text__editor-content .ProseMirror-selectednode .rich-text__embedded-video-node > .rich-text__embedded-video");
     expect(selected).toContain("border-color: var(--accent)"); expect(selected).not.toContain("outline");
   });
   it("gives a video a stable box before its metadata arrives: full width, 16:9 until the file's own ratio is known (#556)", () => {

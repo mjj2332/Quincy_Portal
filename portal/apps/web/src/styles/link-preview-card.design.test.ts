@@ -77,6 +77,12 @@ describe("link preview card design (#497)", () => {
     const node = readFileSync(join(here, "../components/quincy/EmbeddedVideoEditorNode.tsx"), "utf8");
     expect(node).toContain("rich-text__embedded-video rich-text__embedded-video--unavailable");
   });
+  it("6e: a selected composer video node takes the accent border on the shared box class, so the failed preview shows it too, without doubling the wrapper's edge (#592)", () => {
+    const sel = ruleBody(".rich-text__editor-content .ProseMirror-selectednode .rich-text__embedded-video-node > .rich-text__embedded-video");
+    expect(sel).toMatch(/border-color:\s*var\(--accent\)/);
+    expect(readFileSync(join(here, "app.css"), "utf8")).not.toContain("selectednode .rich-text__embedded-video-node > video.rich-text__embedded-video");
+    expect(ruleBody(".rich-text__embedded-video-node")).not.toMatch(/border/);
+  });
   it("6b: the whiteboard dialog player keeps its full width: no 682px cap, no fixed 16/9 box (#556)", () => {
     const dialog = readFileSync(join(here, "../components/quincy/EmbeddedVideoDialog.tsx"), "utf8");
     expect(dialog).toContain("!max-w-none"); expect(dialog).toContain("!aspect-auto");
