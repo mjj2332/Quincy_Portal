@@ -70,7 +70,7 @@ export const FIELD_GRID_PROPERTY = "grid gap-[var(--space-4)] grid-cols-1 min-[7
 // Both margins are `!` for the same cascade reason `button.tsx`'s colours are: `tokens/base.css`
 // is imported outside any `@layer`, and its unlayered `p { margin: 0 }` beats any margin utility
 // Tailwind emits into `@layer utilities`. Without the `!` these two collapse to zero. (§7 case O)
-const SECTION_NOTE = "!mt-[var(--space-2)] !mb-[var(--space-4)] [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary";
+const SECTION_NOTE = "mt-[var(--space-2)] mb-[var(--space-4)] [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary";
 const TILE_LABEL = "text-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]";
 const TILE_HINT = "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary";
 const TILE_SPAN = "flex min-w-0 flex-col gap-[var(--space-1)]";

@@ -980,6 +980,93 @@ describe("guard: outline-color defaults to --focus-ring in @layer base (#532)", 
 });
 
 /**
+ * #552: setting only `outline-color` at rest left `outline-width` and `outline-offset` to animate
+ * under `transition: all` (offset slid 0 -> 2px over ~150ms on every focus). `tokens/base.css` now
+ * sets both at rest, inside `@layer base`, EQUAL to the unlayered `:focus-visible` shorthand, so on
+ * focus only `outline-style` changes. If the shorthand's width or offset changes, change both.
+ */
+describe("guard: outline width and offset rest values match the focus ring (#552)", () => {
+  const blocks = () => topLevelBlocks(stripCssComments(readFileSync(join(stylesDir, "tokens", "base.css"), "utf8")));
+  const longhand = (body: string, prop: string) => new RegExp(`(?:^|[;\\s])${prop}\\s*:\\s*([^;}]+)`).exec(body)?.[1]?.trim();
+
+  it("tokens/base.css sets both on all elements inside @layer base, equal to the :focus-visible ring", () => {
+    const ring = blocks().find(({ prelude }) => prelude === ":focus-visible")?.body ?? "";
+    const ringShorthand = longhand(ring, "outline") ?? "";
+    const rest = blocks()
+      .filter(({ prelude }) => /^@layer\s+base$/.test(prelude))
+      .flatMap(({ body }) => topLevelBlocks(body))
+      .find(({ prelude, body }) => /^\*\s*,/.test(prelude) && /\boutline-width\s*:/.test(body));
+    expect(rest, "base.css needs `*, *::before, *::after { outline-width; outline-offset }` in @layer base").toBeDefined();
+    expect(ringShorthand.startsWith(`${longhand(rest!.body, "outline-width")} `), "rest width must equal the ring width").toBe(true);
+    expect(longhand(rest!.body, "outline-offset"), "rest offset must equal the ring offset").toBe(longhand(ring, "outline-offset"));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Guard — no unlayered element-type selector in styles/ (#569)
+// ---------------------------------------------------------------------------
+/**
+ * Unlayered CSS beats everything in Tailwind's `@layer utilities` regardless of specificity, so an
+ * unlayered `p { margin: 0 }` made `mt-*` on a <p> a silent no-op (#527's note, `!mt-[…]` in
+ * CreateProject/Admin). Element resets belong inside `@layer base`.
+ *
+ * Deliberately narrow: it flags only a top-level (or top-level @media/@supports) rule with a
+ * selector that STARTS with an element type or `*` — `p`, `h1`, `a`, `button`, `*`, `html`, `body`,
+ * `img`. It ignores class/attribute/id selectors (app.css is full of intentional unlayered
+ * component rules), `:root`, pseudo-element-only selectors such as `::selection`, and the global
+ * `:focus-visible` ring, which is unlayered on purpose (Guard 3b/3c). `@keyframes`, `@font-face`
+ * and `@property` bodies are skipped. The reduced-motion `* { …!important }` rule is exempt: it
+ * must beat utilities.
+ */
+export function unlayeredElementSelectors(css: string): string[] {
+  const out: string[] = [];
+  const visit = (source: string) => {
+    for (const { prelude, body } of topLevelBlocks(source)) {
+      if (/^@(media|supports|container)\b/.test(prelude)) {
+        if (REDUCED_MOTION_MEDIA.test(prelude)) continue;
+        visit(body);
+        continue;
+      }
+      if (prelude.startsWith("@")) continue; // @layer, @keyframes, @font-face, @property, @theme
+      for (const selector of prelude.split(",").map((part) => part.trim())) {
+        if (/^(?:\*|[a-z][a-z0-9-]*)(?![\w-])/i.test(selector)) out.push(selector.replace(/\s+/g, " "));
+      }
+    }
+  };
+  visit(stripComments(css));
+  return out;
+}
+
+describe("guard: no unlayered element-type selectors in styles/ (#569)", () => {
+  it("every element reset in styles/**/*.css sits inside @layer base", () => {
+    const offenders = cssFiles().flatMap((file) =>
+      unlayeredElementSelectors(readFileSync(file, "utf8")).map((selector) => `  ${selector} — ${rel(file)}`));
+    expect(offenders, [
+      "An element-type selector (`p`, `h1`, `button`, `*`, …) is declared outside any @layer. It beats",
+      "every Tailwind utility regardless of specificity (a `mt-*` on a <p> silently does nothing).",
+      "Move it inside `@layer base { … }`.",
+      ...offenders,
+    ].join("\n")).toEqual([]);
+  });
+
+  it("proves the detector on planted fixtures", () => {
+    expect(unlayeredElementSelectors("p { margin: 0; }")).toEqual(["p"]);
+    expect(unlayeredElementSelectors("h1, h2 { margin: 0 }\na { color: inherit }")).toEqual(["h1", "h2", "a"]);
+    expect(unlayeredElementSelectors("*, *::before { box-sizing: border-box; }")).toEqual(["*", "*::before"]);
+    expect(unlayeredElementSelectors("button:hover { color: red }")).toEqual(["button:hover"]);
+    expect(unlayeredElementSelectors("@media (min-width: 40em) { p { margin: 1px } }")).toEqual(["p"]);
+    // layered, classed, scoped, pseudo-only, custom-property roots: fine
+    expect(unlayeredElementSelectors("@layer base { p { margin: 0 } h1 { margin: 0 } }")).toEqual([]);
+    expect(unlayeredElementSelectors(".card p { margin: 0 } [data-x] { } #a { } :root { } ::selection { } :focus-visible { }")).toEqual([]);
+    expect(unlayeredElementSelectors("@keyframes spin { from { transform: none } to { transform: none } }")).toEqual([]);
+    // the reduced-motion `*` rule must beat utilities, on purpose
+    expect(unlayeredElementSelectors("@media (prefers-reduced-motion: reduce) { * { animation-duration: 1ms !important } }")).toEqual([]);
+    // quoted in a comment only
+    expect(unlayeredElementSelectors("/* p { margin: 0 } */")).toEqual([]);
+  });
+});
+
+/**
  * #541: a focus ring coloured from a raw palette step ignores `data-surface="inverse"` scopes (and
  * the banner/toast `--focus-ring` override), so the ring is ink on ink. Any `focus*:` / `has-[…focus…]`
  * / `focus-visible:after:` outline colour has to read `var(--focus-ring)` (or a role utility), never
