@@ -2305,7 +2305,7 @@ const TRIGGER_ICON_FALLBACK_CLASS =
 
 /** The chips field: a form-control surface, so it carries the invalid states. */
 const CHIPS_CLASS =
-  "flex flex-wrap items-center border bg-clip-padding border-input focus-within:border-ring focus-within:ring-ring/50 has-aria-invalid:ring-destructive/20 has-aria-invalid:border-destructive bg-transparent px-2.5 text-sm focus-within:ring-3 has-aria-invalid:ring-3 min-h-8 gap-1 py-1 transition-colors has-data-[slot=combobox-chip]:px-1"
+  "flex flex-wrap items-center border bg-clip-padding border-input has-aria-invalid:ring-destructive/20 has-aria-invalid:border-destructive bg-transparent px-2.5 text-sm has-aria-invalid:ring-3 min-h-8 gap-1 py-1 transition-colors has-data-[slot=combobox-chip]:px-1"
 
 const CHIP_CLASS =
   "text-foreground flex w-fit items-center justify-center gap-1 font-medium whitespace-nowrap bg-muted rounded-sm px-1.5 text-xs has-data-[slot=combobox-chip-remove]:pr-0 h-[calc(--spacing(5.25))]"

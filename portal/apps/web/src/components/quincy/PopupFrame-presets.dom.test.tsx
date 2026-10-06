@@ -79,9 +79,28 @@ describe("PopupFrame opens on a whole preset row (#630)", () => {
     expect(bottom).toBeLessThanOrEqual(BODY.top + BODY.height - Math.min(FADE, BODY.scrollHeight - BODY.height - body.scrollTop));
   });
 
-  it("does not scroll past the presets to reveal the pressed time slot: a day that fits at 0 opens at 0", async () => {
-    // The 09:00 slot sits inside the bottom fade band at 0 (rect 465..501 against 476..500); the presets win at open.
+  it("does not scroll past the presets to reveal the pressed time slot: a slot fully clear at 0 opens at 0 (#630)", async () => {
+    // The 09:00 slot (rect 380..416) is above the bottom band (476..500) at 0.
+    layout(300, 280);
+    const body = await open("2026-10-14", "date-time");
+    expect(body.scrollTop).toBe(0);
+  });
+
+  it("never opens with the pressed time slot partly under the bottom fade (#636)", async () => {
+    // At 0 the slot (rect 465..501) straddles the band (476..500): a grey sliver. The next preset row boundary clears it.
     layout(300, 365);
+    const body = await open("2026-10-14", "date-time");
+    const top = BODY.top + 365 - body.scrollTop;
+    const bottom = top + 36;
+    const band = BODY.top + BODY.height - Math.min(FADE, BODY.scrollHeight - BODY.height - body.scrollTop);
+    expect(bottom <= band || top >= BODY.top + BODY.height).toBe(true);
+    expect(body.scrollTop).toBeGreaterThan(0);
+    // The picked day stays clear.
+    expect(BODY.top + 300 + TILE - body.scrollTop).toBeLessThanOrEqual(band);
+  });
+
+  it("leaves a slot fully below the body alone (#636)", async () => {
+    layout(300, 420);
     const body = await open("2026-10-14", "date-time");
     expect(body.scrollTop).toBe(0);
   });
