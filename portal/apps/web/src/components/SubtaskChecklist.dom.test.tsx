@@ -11,6 +11,7 @@ import { applyPopup, dateTimePopup, pickPopupDay, pickRangeEnd, popupButton, ran
 import { checklistScheduleToDto, normalizeChecklistSchedule } from "@quincy/shared";
 import { formatCivilRange } from "../lib/date-format";
 import { endMoment, momentScheduleDto, presetScheduleDto, startMoment, subtaskReminders } from "@/testing/subtask-schedule";
+import { ArchivedFromCache } from "../testing/archived-from-cache";
 
 const confirmMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)));
 const floating = vi.hoisted(() => ({ modalValues: [] as Array<boolean | undefined> }));
@@ -582,7 +583,7 @@ describe("SubtaskChecklist on an archived Project (#450)", () => {
   const refusal = () => new ApiError("Archived projects are read-only; the checklist can't be changed.", 409, { code: "subtask_project_archived" });
   let client: QueryClient; let runtime: ProjectQueryRuntime;
   type Props = Partial<Parameters<typeof SubtaskChecklist>[0]>;
-  const tree = (props: Props) => <ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={client}><SubtaskChecklist projectId={projectId} {...props} /></QueryClientProvider></ProjectQueryRuntimeProvider>;
+  const tree = (props: Props) => <ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={client}><ArchivedFromCache projectId={projectId} archived={props.archived}>{(archived) => <SubtaskChecklist projectId={projectId} {...props} archived={archived} />}</ArchivedFromCache></QueryClientProvider></ProjectQueryRuntimeProvider>;
   async function renderCase(props: Props = {}) {
     client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); runtime = new ProjectQueryRuntime(client, "archived-rail-test");
     const host = mount();
@@ -646,7 +647,7 @@ describe("SubtaskChecklist on an archived Project (#450)", () => {
     expect(liveRegion(host)!.textContent).toBe(COPY);
     const call = surfaces.calls.find((entry) => entry.resources.some((resource) => resource.kind === "detail"));
     expect(call).toBeDefined();
-    expect(call!.resources.map((resource) => resource.kind).sort()).toEqual(["activity", "detail", "subtasks"]);
+    expect(call!.resources.map((resource) => resource.kind).sort()).toEqual(["activity", "collaboration-summary", "detail", "subtasks"]);
     expect([call!.dashboard, call!.calendar, call!.gantt]).toEqual([true, true, true]);
     expect(document.activeElement).toBe(collapseButton(host));
   });
@@ -702,33 +703,6 @@ describe("SubtaskChecklist on an archived Project (#450)", () => {
     await rerenderCase({ archived: false });
     expect(liveRegion(host)).toBeUndefined();
     expect(document.getElementById(`subtask-add-${projectId}`)).not.toBeNull(); expect(item(host, "Call client").querySelector('[aria-label="Actions for Call client"]')).not.toBeNull();
-  });
-  const detailKey = ["project-data", projectId, "detail"];
-  it("a fast refetch that returns un-archived clears the latch, though the prop never showed true (#566)", async () => {
-    const host = await renderCase();
-    await act(async () => { await client.prefetchQuery({ queryKey: detailKey, queryFn: () => Promise.resolve({ archivedAt: null }), staleTime: 0 }); });
-    apiPatchMock.mockRejectedValueOnce(refusal());
-    await click(checkbox(host));
-    await waitFor(() => expect(liveRegion(host)).toBeUndefined());
-    expect(document.getElementById(`subtask-add-${projectId}`)).not.toBeNull();
-  });
-  it("setQueryData alone does not clear the latch (#566)", async () => {
-    const host = await renderCase();
-    await act(async () => { await client.prefetchQuery({ queryKey: detailKey, queryFn: (() => { let calls = 0; return () => (calls++ === 0 ? Promise.resolve({}) : new Promise(() => undefined)); })(), staleTime: 0 }); });
-    apiPatchMock.mockRejectedValueOnce(refusal());
-    await click(checkbox(host)); await waitFor(() => expect(liveRegion(host)).toBeDefined());
-    await act(async () => { client.setQueryData(detailKey, { archivedAt: null }); await new Promise((resolve) => window.setTimeout(resolve, 50)); });
-    expect(liveRegion(host)).toBeDefined(); controlsGone(host);
-  });
-  it("a refetch that returns archived keeps the rail read-only through the prop (#566)", async () => {
-    const host = await renderCase();
-    let release!: () => void; let calls = 0;
-    await act(async () => { await client.prefetchQuery({ queryKey: detailKey, queryFn: () => (calls++ === 0 ? Promise.resolve({}) : new Promise((resolve) => { release = () => resolve({ archivedAt: "2026-01-01" }); })), staleTime: 0 }); });
-    apiPatchMock.mockRejectedValueOnce(refusal());
-    await click(checkbox(host)); await waitFor(() => expect(liveRegion(host)).toBeDefined());
-    await rerenderCase({ archived: true });
-    await act(async () => { release(); await new Promise((resolve) => window.setTimeout(resolve, 50)); });
-    expect(liveRegion(host)).toBeDefined(); controlsGone(host);
   });
   it("archived arriving with no 409 (a refetch) closes an open composer and drops its draft, and Restore does not reopen it or steal focus", async () => {
     const host = await renderCase();

@@ -1,12 +1,11 @@
 import { DndContext, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
-import type { QueryKey } from "@tanstack/react-query";
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AnchoredPopover, useAnchoredPopover, POPOVER_ACTIONS, POPOVER_CONTENT, RING_IN } from "./AnchoredPopover";
 import { ApiError, apiDelete, apiPatch, apiPost } from "../lib/api";
 import { useSession } from "../lib/auth";
-import { invalidateProjectSurfaces, projectDataKeys, useOptionalProjectQueryClient, useProjectAccessTermination, useProjectSubtaskDefaultRange, useProjectSubtasksQuery, type ProjectSubtask } from "../lib/project-data";
+import { invalidateProjectSurfaces, projectDataKeys, recordProjectArchivedRefusal, useOptionalProjectQueryClient, useProjectAccessTermination, useProjectSubtaskDefaultRange, useProjectSubtasksQuery, type ProjectSubtask } from "../lib/project-data";
 import { createProjectDataInvalidationMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
 import { formatCivilRange, formatCivilSchedule } from "../lib/date-format";
 import { sameReminderOffsets } from "../lib/date-time-field";
@@ -15,7 +14,6 @@ import { reorderNeighbors } from "../lib/reorder-neighbors";
 import { confirm } from "../lib/confirm";
 import { cn } from "../lib/utils";
 import { ARCHIVED_NOTICE_CLASS } from "./archived-notice";
-import { useArchivedRefusalLatch } from "./use-archived-refusal-latch";
 import { Eyebrow } from "./quincy/Eyebrow";
 import { EmptyState } from "./quincy/EmptyState";
 import { Input } from "./reui/input";
@@ -156,7 +154,7 @@ function SortableSubtaskRow({ item, projectId, role, busy, editing, draftTitle, 
   </article>;
 }
 
-export function SubtaskChecklist({ projectId, onAccessFailure, layout = "rail", archived = false, archivedQueryKey }: { projectId: string; /** The query that supplies `archived` (Project detail by default; the collaboration summary in the collaboration-only view). A refusal refetches it before the latch lets go (#566). */ archivedQueryKey?: QueryKey; /** The Project is archived (#450): the checklist is read-only. Restore (true to false) turns editing back on. */ archived?: boolean; onAccessFailure?: (error: unknown) => void; /** "rail" (default) opens the checklist; "stacked" collapses it to its count. The panel derives it from the one 1100px breakpoint (#377). */ layout?: "rail" | "stacked" }) {
+export function SubtaskChecklist({ projectId, onAccessFailure, layout = "rail", archived = false }: { projectId: string; /** The Project is archived (#450): the checklist is read-only. Restore (true to false) turns editing back on. */ archived?: boolean; onAccessFailure?: (error: unknown) => void; /** "rail" (default) opens the checklist; "stacked" collapses it to its count. The panel derives it from the one 1100px breakpoint (#377). */ layout?: "rail" | "stacked" }) {
   const queryClient = useOptionalProjectQueryClient();
   const session = useSession();
   const role: Role = session.data?.user.role === "external_editor" ? "external_editor" : "admin";
@@ -169,8 +167,8 @@ export function SubtaskChecklist({ projectId, onAccessFailure, layout = "rail", 
   const [subtasks, setSubtasks] = useState<Subtask[]>([]); const [adding, setAdding] = useState(false); const [busy, setBusy] = useState<Set<string>>(new Set());
   const [newTitle, setNewTitle] = useState(""); const [newAssignees, setNewAssignees] = useState<Array<{ id: string; name: string }>>([]); const [newSchedule, setNewSchedule] = useState<RangeChecklistScheduleInput | null>(null); const [newSchedulePreview, setNewSchedulePreview] = useState<ChecklistScheduleDto | null>(null); const [newReminders, setNewReminders] = useState<number[]>([...SUBTASK_REMINDER_DEFAULT_OFFSETS]); const [composerOpen, setComposerOpen] = useState(false); const [activePopover, setActivePopover] = useState<ActivePopover>(null);
   const [draftTitles, setDraftTitles] = useState<Record<string, string>>({}); const [notice, setNotice] = useState(""); const [open, setOpen] = useState(layout === "rail"); const [completedOpen, setCompletedOpen] = useState(false); const [editingId, setEditingId] = useState<string | null>(null);
-  // A write refused as archived latches the rail read-only until the `archived` prop catches up (the detail refetch it triggers) and then clears on Restore (#450).
-  const { latched, latch: setLatch, readOnly } = useArchivedRefusalLatch(queryClient, archivedQueryKey ?? projectDataKeys.detail(projectId), archived); const priorReadOnly = useRef(readOnly); const focusAfterFlip = useRef<{ inRail: boolean } | null>(null); const collapseTriggerRef = useRef<HTMLButtonElement>(null);
+  // Read-only comes from the `archived` prop alone. A write refused as archived records the fact in the cache (#566), which feeds the prop at once.
+  const readOnly = archived; const priorReadOnly = useRef(readOnly); const focusAfterFlip = useRef<{ inRail: boolean } | null>(null); const collapseTriggerRef = useRef<HTMLButtonElement>(null);
   const [dragging, setDragging] = useState(false); const [scheduleErrors, setScheduleErrors] = useState<Record<string, ScheduleError>>({});
   // Held above the grouped rows so a Done toggle (row remount) cannot discard a retained schedule draft; entries are dropped when the item is deleted.
   const retainedSchedules = useRef(new Map<string, RetainedSchedule>());
@@ -186,7 +184,7 @@ export function SubtaskChecklist({ projectId, onAccessFailure, layout = "rail", 
   // A flip to read-only removes the focused control (or disables it, which Chrome only resolves to <body> a frame later), and a modal Project sheet
   // reclaims body focus on the next frame, so this runs in the layout phase: focus the always-mounted collapse button instead (#450).
   // Only when focus was genuinely lost (body, disabled, disconnected, or an ancestor of the rail): a connected, enabled control elsewhere keeps it.
-  useLayoutEffect(() => { const flip = focusAfterFlip.current; if (!latched || !flip) return; focusAfterFlip.current = null; const active = document.activeElement; const section = sectionRef.current; if (!active || active === document.body || active.matches(":disabled") || (flip.inRail && (!active.isConnected || !section || active.contains(section)))) collapseTriggerRef.current?.focus(); }, [latched]);
+  useLayoutEffect(() => { const flip = focusAfterFlip.current; if (!readOnly || !flip) return; focusAfterFlip.current = null; const active = document.activeElement; const section = sectionRef.current; if (!active || active === document.body || active.matches(":disabled") || (flip.inRail && (!active.isConnected || !section || active.contains(section)))) collapseTriggerRef.current?.focus(); }, [readOnly]);
   // Whenever the rail turns read-only, by the latch or by the `archived` prop arriving with a refetch, drop everything mid-edit: an open composer,
   // title edit, drafts and schedule popover would otherwise outlive the controls that own them (a held popover also keeps the subtasks poll off) (#450).
   useLayoutEffect(() => { const was = priorReadOnly.current; priorReadOnly.current = readOnly; if (was || !readOnly) return; resetComposer(false); setEditingId(null); setDraftTitles({}); setScheduleErrors({}); retainedSchedules.current.clear(); setActivePopover(null); }, [readOnly]);
@@ -229,8 +227,9 @@ export function SubtaskChecklist({ projectId, onAccessFailure, layout = "rail", 
   // Whether focus is in the rail when a write starts: the refusal can land after the focused control is gone and the sheet moved focus (#450).
   const focusInRail = () => sectionRef.current?.contains(document.activeElement) === true;
   function enterArchived(inRail: boolean) {
-    focusAfterFlip.current = { inRail }; setLatch(); setNotice("");
-    if (queryClient) void invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "subtasks" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true });
+    focusAfterFlip.current = { inRail }; setNotice("");
+    if (queryClient) recordProjectArchivedRefusal(queryClient, projectId);
+    if (queryClient) void invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "collaboration-summary" }, { kind: "subtasks" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true });
   }
   // No chosen range (null): omit it and the server copies the Project's default range (ADR 0011).
   async function add(event: React.FormEvent) { event.preventDefault(); const railFocus = focusInRail(); if (!newTitle.trim()) return; setAdding(true); setNotice(""); const body: { title: string; assigneeIds?: string[]; schedule?: RangeChecklistScheduleInput; reminderOffsetsMinutes?: number[] } = { title: newTitle }; if (newSchedule) body.schedule = newSchedule; if (!sameReminderOffsets(newReminders, SUBTASK_REMINDER_DEFAULT_OFFSETS)) body.reminderOffsetsMinutes = newReminders; if (newAssignees.length) body.assigneeIds = newAssignees.map((person) => person.id); try { const task = await apiPost<Subtask, typeof body>(`/api/projects/${encodeURIComponent(projectId)}/subtasks`, body); setSubtasks((current) => [...current, task].sort((a, b) => a.position - b.position || a.id.localeCompare(b.id))); queryClient?.setQueryData<Subtask[]>(projectDataKeys.subtasks(projectId), (current) => [...(current ?? []), task].sort((a, b) => a.position - b.position || a.id.localeCompare(b.id))); await invalidateAfterMutation(true); resetComposer(); } catch (error) { terminateOnUnauthorized(error); if (isArchivedRefusal(error)) { enterArchived(railFocus); return; } setNotice(message(error, "Subtask could not be added.")); } finally { setAdding(false); } }

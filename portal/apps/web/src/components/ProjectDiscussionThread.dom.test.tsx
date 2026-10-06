@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError } from "../lib/api";
 import { ProjectDiscussionThread } from "./ProjectDiscussionThread";
 import { chooseCommentAction } from "../testing/comment-menu";
+import { ArchivedFromCache } from "../testing/archived-from-cache";
 import { ARCHIVED_NOTICE_CLASS } from "./archived-notice";
 
 const state = vi.hoisted(() => ({
@@ -31,11 +32,10 @@ vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
   return { ...actual, apiGet: apiGetMock, apiPost: apiPostMock, apiPatch: apiPatchMock, apiDelete: apiDeleteMock };
 });
-vi.mock("../lib/project-data", () => ({
-  projectDataKeys: {
-    detail: (id: string) => ["project-data", id, "detail"],
-    collaborationSummary: (id: string) => ["project-data", id, "collaboration-summary"],
-  },
+vi.mock("../lib/project-data", async () => ({
+  // The real helper and keys: a refusal writes the cache and read-only follows it (#566); see testing/archived-from-cache.tsx.
+  recordProjectArchivedRefusal: (await vi.importActual<typeof import("../lib/project-data")>("../lib/project-data")).recordProjectArchivedRefusal,
+  projectDataKeys: (await vi.importActual<typeof import("../lib/project-data")>("../lib/project-data")).projectDataKeys,
   classifyProjectAccessError: (error: unknown) => error instanceof ApiError && error.status === 403 ? { scope: "collaboration" } : null,
   projectCollaborationDataGeneration: () => "generation",
   invalidateProjectSurfaces: invalidateSurfacesMock,
@@ -75,7 +75,7 @@ function queryState(overrides: Record<string, unknown> = {}) {
 }
 
 function render(props: Partial<React.ComponentProps<typeof ProjectDiscussionThread>> = {}) {
-  act(() => { root.render(<QueryClientProvider client={client}><ProjectDiscussionThread projectId={projectId} currentUserId={state.sessionUser.id} {...props} /></QueryClientProvider>); });
+  act(() => { root.render(<QueryClientProvider client={client}><ArchivedFromCache projectId={projectId} archived={props.archived}>{(archived) => <ProjectDiscussionThread projectId={projectId} currentUserId={state.sessionUser.id} {...props} archived={archived} />}</ArchivedFromCache></QueryClientProvider>); });
 }
 
 beforeEach(() => {
@@ -345,65 +345,6 @@ describe("ProjectDiscussionThread", () => {
       expect(host.querySelector('[contenteditable="true"]')).toBeNull();
       expect(host.querySelector('[role="alert"]')).toBeNull();
       expect(host.querySelector('[aria-label^="Actions for comment by"]')).toBeNull();
-    });
-
-    describe("the refusal latch awaits a real refetch of the supplying query (#566)", () => {
-      const detailKey = ["project-data", projectId, "detail"];
-      const summaryKey = ["project-data", projectId, "collaboration-summary"];
-      /** A real query the latch can refetch: `prefetchQuery` stores the queryFn on the cache entry. */
-      const seed = (key: readonly unknown[], fn: () => Promise<unknown>) => client.prefetchQuery({ queryKey: key, queryFn: fn, staleTime: 0 });
-      /** The first fetch resolves (so the entry exists with its queryFn); every later refetch never settles. */
-      const seedThenHang = (key: readonly unknown[]) => { let calls = 0; return seed(key, () => (calls++ === 0 ? Promise.resolve({}) : new Promise(() => undefined))); };
-      const refuseOnce = async (props: Partial<React.ComponentProps<typeof ProjectDiscussionThread>> = {}) => {
-        apiDeleteMock.mockRejectedValueOnce(refusal());
-        render(props); await flush();
-        await chooseCommentAction(host, "Me", "Delete"); await confirmDeleteInDialog();
-        await wait(50); await flush();
-      };
-      it("a fast refetch that returns un-archived clears the latch, though the prop never showed true", async () => {
-        await seed(detailKey, () => Promise.resolve({ archivedAt: null }));
-        await refuseOnce();
-        render({ archived: false }); await flush();
-        expect(notice()).toBeNull();
-        expect(host.querySelector("[data-testid=discussion-composer]")).not.toBeNull();
-      });
-      it("a refetch that returns archived keeps the thread read-only through the prop", async () => {
-        await seed(detailKey, () => Promise.resolve({ archivedAt: "2026-01-01" }));
-        await refuseOnce();
-        render({ archived: true }); await flush(); await wait(50);
-        expect(notice()?.textContent).toBe(COPY);
-      });
-      it("a failed refetch keeps the latch", async () => {
-        await seed(detailKey, () => Promise.resolve({ archivedAt: null }));
-        client.setQueryDefaults(detailKey, { retry: false });
-        const failing = vi.fn(() => Promise.reject(new Error("offline")));
-        await client.fetchQuery({ queryKey: detailKey, queryFn: failing, staleTime: 0 }).catch(() => undefined);
-        await refuseOnce();
-        expect(failing).toHaveBeenCalled();
-        expect(notice()?.textContent).toBe(COPY);
-      });
-      it("setQueryData alone does not clear it", async () => {
-        await seedThenHang(detailKey); // the refetch never settles
-        await refuseOnce();
-        await act(async () => { client.setQueryData(detailKey, { archivedAt: null }); await Promise.resolve(); });
-        await wait(50);
-        expect(notice()?.textContent).toBe(COPY);
-      });
-      it("the other query landing does not clear it", async () => {
-        await seedThenHang(detailKey);
-        await seed(summaryKey, () => Promise.resolve({ project: { archived: false } }));
-        await refuseOnce();
-        await act(async () => { await client.refetchQueries({ queryKey: summaryKey, exact: true }); });
-        await wait(50);
-        expect(notice()?.textContent).toBe(COPY);
-      });
-      it("with the summary as the supplying query, the summary fetch clears it and detail does not", async () => {
-        await seed(summaryKey, () => Promise.resolve({ project: { archived: false } }));
-        await seedThenHang(detailKey);
-        await refuseOnce({ archivedQueryKey: summaryKey });
-        render({ archived: false, archivedQueryKey: summaryKey }); await flush();
-        expect(notice()).toBeNull();
-      });
     });
 
     it("turns read-only when a Delete is refused", async () => {
