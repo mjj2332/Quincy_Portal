@@ -64,8 +64,10 @@ describe("an embedded image's reserved box (#611)", () => {
     const appCss = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../styles/app.css"), "utf8");
     const line = (selector: string) => appCss.split("\n").find((value) => value.startsWith(selector)) ?? "";
     const button = line(".rich-text__embedded-image-trigger[data-sized] {");
-    expect(button).toContain("width: calc(var(--embedded-image-width) * 1px + 2 * var(--border-width-hair))");
-    expect(button).toContain("max-width: min(100%, calc(24rem * var(--embedded-image-aspect) + 2 * var(--border-width-hair)))");
+    // One width with the container's 100% inside it: a percentage is no size to grow a grid column or a flex item to, so a wide image can never widen what holds it (#611). A plain px width plus a max-width does, because the max-width is ignored when the column is sized.
+    expect(button).toContain("width: min(calc(var(--embedded-image-width) * 1px + 2 * var(--border-width-hair)), 100%, calc(24rem * var(--embedded-image-aspect) + 2 * var(--border-width-hair)))");
+    expect(button).toContain("min-width: 0");
+    expect(button).not.toMatch(/max-width/);
     const image = line(".rich-text__embedded-image-trigger[data-sized] > .rich-text__embedded-image");
     // content-box: the aspect ratio is the pixels' box, the border sits outside it.
     expect(image).toContain("box-sizing: content-box");
