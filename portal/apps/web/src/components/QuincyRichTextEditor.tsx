@@ -278,8 +278,11 @@ export function QuincyRichTextEditor({
       if (serialised === valueRef.current) return;
       valueRef.current = serialised; onChangeRef.current(doc);
       // Only the author's own edits retire an upload problem: a sibling upload landing is not one, and must not hide a problem shown for another file.
-      if (!transaction.getMeta(UPLOAD_INSERT_META)) setUploadErrors((entries) => (entries.length ? [] : entries));
-      clearCancelTimer(); setNestingBlocked(false); setUploadCancelled(false); setMentionDismissed(false); setQuery(mentionQuery(next));
+      const isUploadInsert = Boolean(transaction.getMeta(UPLOAD_INSERT_META));
+      if (!isUploadInsert) setUploadErrors((entries) => (entries.length ? [] : entries));
+      // Likewise a sibling upload landing must not retire the cancel announcement or its re-announce timer.
+      if (!isUploadInsert) { clearCancelTimer(); setUploadCancelled(false); }
+      setNestingBlocked(false); setMentionDismissed(false); setQuery(mentionQuery(next));
     },
     onSelectionUpdate: ({ editor: next }) => setQuery(mentionQuery(next)),
   });
@@ -590,7 +593,7 @@ export function QuincyRichTextEditor({
       onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); const kind = picking.kind; setPicking(null); if (files.length) addImagesRef.current(files, editor.state.selection.to, kind); }}
       {...{ onCancel: () => setPicking(null) }}
     />}
-    <EmbeddedUploadTray uploads={uploads} errors={uploadErrors} trayRef={trayRef} onCancel={(key) => { running.current.get(key)?.release(); announceCancelled(); editorRef.current?.commands.focus(); }} onRetry={(key) => running.current.get(key)?.retry()} />
+    <EmbeddedUploadTray uploads={uploads} errors={uploadErrors} trayRef={trayRef} onCancel={(key) => { running.current.get(key)?.release(); announceCancelled(); editorRef.current?.commands.focus(); }} onRemove={(key) => { running.current.get(key)?.release(); editorRef.current?.commands.focus(); }} onRetry={(key) => running.current.get(key)?.retry()} />
     <MentionAutocomplete ref={menu} query={query} loadMentionables={loadMentionables} onSelect={selectMention} onDismiss={() => setMentionDismissed(true)} onAccessibilityChange={setMentionA11y} />
     {plainText.length >= limit * COUNTER_THRESHOLD && <div ref={counterRef} data-testid="rich-text-counter" className={cn("text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", plainText.length > limit && "!text-destructive")}>{plainText.length}/{limit}</div>}
     <div className={liveMessage && liveMessage !== CANCELLED_MESSAGE ? "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive" : "sr-only"} aria-live="polite">{liveMessage}</div>

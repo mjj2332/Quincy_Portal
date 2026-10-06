@@ -407,6 +407,7 @@
 .rich-text a { color: var(--signal-info); text-decoration: underline; text-underline-offset: 2px; }
 .rich-text__editor-content a { color: var(--signal-info); text-decoration: underline; text-underline-offset: 2px; }
 :is(.rich-text, .rich-text__editor-content) a[data-slot=item] { color: var(--text-primary); text-decoration: none; }
+:is(.rich-text, .rich-text__editor-content) a[data-slot=button] { color: inherit; text-decoration: none; }
 :is(.rich-text, .rich-text__editor-content) a[data-slot=item]:hover [data-slot=item-title] { text-decoration: underline; text-underline-offset: 2px; }
 .rich-text [data-slot=item] p { margin: 0; white-space: normal; }
 /* Empty-editor placeholder (#491). Tiptap's Placeholder extension is not installed, so `.is-editor-empty`
@@ -425,9 +426,9 @@
 .rich-text__editor-content .rich-text__embedded-image-node > img.rich-text__embedded-image { margin: 0; }
 /* #556/#557 — one selected-node rule for image, video and link card: the node's own hairline border turns --accent (an outline sat outside the beige border and read double-edged). */
 .rich-text__editor-content .ProseMirror-selectednode .rich-text__embedded-image-node > img.rich-text__embedded-image { border-color: var(--accent); }
-.rich-text__embedded-video { display: block; width: 100%; aspect-ratio: auto 16 / 9; max-width: 100%; max-height: 24rem; height: auto; margin: 0; border-radius: var(--radius-xs); border: var(--border-width-hair) solid var(--border); object-fit: contain; background: var(--surface-sunken); }
+.rich-text__embedded-video { display: block; width: 100%; aspect-ratio: 16 / 9; max-width: min(100%, calc(24rem * 16 / 9)); max-height: 24rem; height: auto; margin: 0; border-radius: var(--radius-xs); border: var(--border-width-hair) solid var(--border); object-fit: contain; background: var(--surface-sunken); }
 .rich-text__editor-content video.rich-text__embedded-video { margin: var(--space-2) 0; }
-.rich-text__embedded-video-node { position: relative; width: 100%; margin: var(--space-2) 0; }
+.rich-text__embedded-video-node { position: relative; width: 100%; max-width: min(100%, calc(24rem * 16 / 9)); margin: var(--space-2) 0; }
 .rich-text__editor-content .rich-text__embedded-video-node > video.rich-text__embedded-video { margin: 0; }
 .rich-text__editor-content .ProseMirror-selectednode .rich-text__embedded-video-node > video.rich-text__embedded-video { border-color: var(--accent); }
 /* #497 — the global ::selection paints paper-050 text; ProseMirror hides its own selection on a node view, so a selected card would read near-invisible. The wrapper takes ProseMirror-selectednode.

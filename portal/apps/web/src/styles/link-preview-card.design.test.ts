@@ -47,7 +47,26 @@ describe("link preview card design (#497)", () => {
     expect(node).toContain('size="icon-sm"');
     expect(node).toContain("pointer-coarse:size-11");
     expect(node).not.toContain('size="icon-xs"');
-    expect(card).toMatch(/actions\s*\?[^\n]*pr-\[var\(--space-5\)\][^\n]*max-\[721px\]:pr-11[^\n]*pointer-coarse:pr-11/);
+    expect(card).toMatch(/actions\s*\?[^\n]*pr-\[var\(--space-6\)\][^\n]*max-\[721px\]:pr-11[^\n]*pointer-coarse:pr-11/);
+  });
+  it("3c: the desktop padding clears Remove: item px-3 + --space-6 leaves a gap past the 28px button inset --space-2 (#557)", () => {
+    expect(card).not.toContain("pr-[var(--space-5)]");
+    expect(card).toContain("pr-[var(--space-6)]");
+  });
+  it("2b: the Download video fallback anchor is excluded from the .rich-text link colour and underline (#556)", () => {
+    expect(ruleBody(":is(.rich-text, .rich-text__editor-content) a[data-slot=button]")).toMatch(/color:\s*inherit[\s\S]*text-decoration:\s*none/);
+  });
+  it("6: the video is a fixed 16/9 box capped at 24rem tall, and its node wrapper shrinks to it so the badge sits on the video (#556)", () => {
+    const v = ruleBody(".rich-text__embedded-video");
+    expect(v).toMatch(/aspect-ratio:\s*16 \/ 9;/);
+    expect(v).not.toMatch(/aspect-ratio:\s*auto/);
+    expect(v).toMatch(/width:\s*100%/);
+    expect(v).toMatch(/max-width:\s*min\(100%,\s*calc\(24rem \* 16 \/ 9\)\)/);
+    expect(ruleBody(".rich-text__embedded-video-node")).toMatch(/width:\s*100%;[^}]*max-width:\s*min\(100%,\s*calc\(24rem \* 16 \/ 9\)\)/);
+  });
+  it("6b: the whiteboard dialog player keeps its full width: no 682px cap, no fixed 16/9 box (#556)", () => {
+    const dialog = readFileSync(join(here, "../components/quincy/EmbeddedVideoDialog.tsx"), "utf8");
+    expect(dialog).toContain("!max-w-none"); expect(dialog).toContain("!aspect-auto");
   });
   it("3b: Remove is inset --space-2 from the card edge so its focus ring clears the border (#557)", () => {
     expect(node).toContain("top-[var(--space-2)] right-[var(--space-2)]");

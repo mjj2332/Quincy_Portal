@@ -250,6 +250,36 @@ describe("cancelling a video upload (#494)", () => {
     expect(seen).toEqual(["Upload cancelled", "", "Upload cancelled"]);
   });
 
+  it("a sibling upload landing before the re-announce timer fires neither clears the timer nor the message (#556)", async () => {
+    uploadVideo.mockImplementation((_p: string, _f: File, options: { signal: AbortSignal }) => new Promise<string>((_resolve, reject) => { options.signal.addEventListener("abort", () => reject(Object.assign(new Error("Upload cancelled"), { name: "AbortError" }))); }));
+    let finishImage!: (id: string) => void;
+    uploadImage.mockImplementation(() => new Promise<string>((resolve) => { finishImage = resolve; }));
+    const host = mount(<Harness />);
+    await choose(host, [mp4("long.mp4")]);
+    await choose(host, [png("sibling.png")], "Insert image");
+    const region = host.querySelector<HTMLElement>('[aria-live="polite"]')!;
+    await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="Cancel upload of long.mp4"]')!.click(); finishImage(B); });
+    await settle(); await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+    expect(JSON.stringify(latest)).toContain(B);
+    expect(region.textContent).toBe("Upload cancelled");
+  });
+  it("a sibling upload landing does not retire the cancel announcement (#556)", async () => {
+    uploadVideo.mockImplementation((_p: string, _f: File, options: { signal: AbortSignal }) => new Promise<string>((_resolve, reject) => { options.signal.addEventListener("abort", () => reject(Object.assign(new Error("Upload cancelled"), { name: "AbortError" }))); }));
+    let finishImage!: (id: string) => void;
+    uploadImage.mockImplementation(() => new Promise<string>((resolve) => { finishImage = resolve; }));
+    const host = mount(<Harness />);
+    await choose(host, [mp4("long.mp4")]);
+    await choose(host, [png("sibling.png")], "Insert image");
+    const region = host.querySelector<HTMLElement>('[aria-live="polite"]')!;
+    await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="Cancel upload of long.mp4"]')!.click(); });
+    await settle();
+    expect(region.textContent).toBe("Upload cancelled");
+    await act(async () => { finishImage(B); }); await settle();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+    expect(JSON.stringify(latest)).toContain(B);
+    expect(region.textContent).toBe("Upload cancelled");
+  });
+
   it("an image row has no Cancel button", async () => {
     uploadImage.mockImplementation(() => new Promise<string>(() => undefined));
     const host = mount(<Harness />);
@@ -311,6 +341,12 @@ describe("a posted video (#494)", () => {
     expect(host.querySelector("video")).toBeNull();
   });
 
+  it("marks the Download video anchor with data-slot so the .rich-text link rule can exclude it (#556)", async () => {
+    const host = mount(<RichTextContent content={withVideos(A)} />);
+    await act(async () => { host.querySelector("video")!.dispatchEvent(new Event("error")); });
+    expect(host.querySelector('[data-testid="embedded-video-unavailable"] a')!.getAttribute("data-slot")).toBe("button");
+  });
+
   it("does not carry one video's failure to the next: A fails, the post is refreshed to B in the same place, and B gets a player", async () => {
     const host = mount(<RichTextContent content={withVideos(A)} />);
     await act(async () => { host.querySelector("video")!.dispatchEvent(new Event("error")); });
@@ -332,7 +368,7 @@ describe("the video's styles (#494)", () => {
   const rule = (selector: string) => appCss.split("\n").find((line) => line.startsWith(selector)) ?? "";
   it("sizes a video like an image: contained, at most 24rem tall, the same border and sunken ground, and never wider than its container", () => {
     const style = rule(".rich-text__embedded-video {");
-    expect(style).toContain("max-width: 100%"); expect(style).toContain("max-height: 24rem"); expect(style).toContain("object-fit: contain");
+    expect(style).toContain("max-width: min(100%, calc(24rem * 16 / 9))"); expect(style).toContain("max-height: 24rem"); expect(style).toContain("object-fit: contain");
     expect(style).toContain("border: var(--border-width-hair) solid var(--border)"); expect(style).toContain("background: var(--surface-sunken)"); expect(style).toContain("border-radius: var(--radius-xs)");
   });
   it("turns a selected video's border accent in the editor, the same rule as an image and a link card", () => {
@@ -341,7 +377,7 @@ describe("the video's styles (#494)", () => {
   });
   it("gives a video a stable box before its metadata arrives: full width, 16:9 until the file's own ratio is known (#556)", () => {
     const style = rule(".rich-text__embedded-video {");
-    expect(style).toContain("width: 100%"); expect(style).toContain("aspect-ratio: auto 16 / 9");
+    expect(style).toContain("width: 100%"); expect(style).toContain("aspect-ratio: 16 / 9;"); expect(style).not.toContain("aspect-ratio: auto");
   });
 });
 
