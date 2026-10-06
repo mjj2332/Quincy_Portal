@@ -1259,8 +1259,26 @@ function splitVariant(token: string): { variants: string; utility: string } {
   }
   return { variants: token.slice(0, cut + 1), utility: token.slice(cut + 1) };
 }
+/**
+ * Whitespace and quote characters separate class tokens ONLY at bracket depth 0: a quote inside an
+ * arbitrary variant (`has-[[contenteditable='true']:focus-visible]:border-primary`) is part of the
+ * token and must not split it.
+ */
 function classTokens(source: string): { variants: string; utility: string }[] {
-  return source.split(/[\s"'`]+/).filter(Boolean).map(splitVariant);
+  const tokens: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const c of source) {
+    if (c === "[" || c === "(") depth++;
+    else if (c === "]" || c === ")") depth = Math.max(0, depth - 1);
+    if (depth === 0 && /[\s"'`]/.test(c)) {
+      if (current) tokens.push(current);
+      current = "";
+    } else current += c;
+  }
+  if (current) tokens.push(current);
+  // Tailwind's important modifier is a `!` prefix (v3/v4) or suffix (v4); normalise before matching.
+  return tokens.map(splitVariant).map(({ variants, utility }) => ({ variants, utility: utility.replace(/^!/, "").replace(/!$/, "") }));
 }
 const FOCUS_VARIANT = /focus/;
 const BORDER_COLOUR_UTILITY = /^border-(?!0$|transparent$|none$|solid$|\[length)/;
@@ -1318,6 +1336,16 @@ describe("guard: one focus line — no field primitive recolours its border on f
     // nested-bracket arbitrary variant (the rich-text editor's contenteditable focus selector)
     expect(hasFocusBorderColour('"has-[[contenteditable=true]:focus-visible]:border-primary"')).toBe(true);
     expect(FOCUS_OUTLINE.test('"has-[[contenteditable=true]:focus-visible]:outline-ring"')).toBe(true);
+    // quotes inside a nested variant stay part of the token
+    expect(hasFocusBorderColour(`"has-[[contenteditable='true']:focus-visible]:border-primary"`)).toBe(true);
+    expect(hasFocusBorderColour('"has-[[contenteditable=\\"true\\"]:focus-visible]:border-primary"')).toBe(true);
+    expect(FOCUS_OUTLINE.test(`"has-[[contenteditable='true']:focus-visible]:outline-ring"`)).toBe(true);
+    // important modifier, prefix and Tailwind v4 suffix
+    expect(hasFocusBorderColour('"focus-visible:!border-ring"')).toBe(true);
+    expect(hasFocusBorderColour('"focus-visible:border-ring!"')).toBe(true);
+    expect(FOCUS_OUTLINE.test('"focus-visible:!outline-ring"')).toBe(true);
+    expect(FOCUS_OUTLINE.test('"focus-visible:outline-solid!"')).toBe(true);
+    expect(hasFocusBorderColour('"focus-visible:!border-0 focus-visible:border-transparent!"')).toBe(false);
     expect(hasFocusBorderColour('"focus-visible:border-[color:var(--border-strong)]"')).toBe(true);
     expect(hasFocusBorderColour('"hover:border-border-hover focus-visible:outline-ring aria-invalid:border-destructive"')).toBe(false);
     expect(hasFocusBorderColour('"focus-visible:border-0 border-border"')).toBe(false);
