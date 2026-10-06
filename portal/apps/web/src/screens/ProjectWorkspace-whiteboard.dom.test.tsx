@@ -362,4 +362,57 @@ describe("the open whiteboard (#498)", () => {
     expect(onRequestClose).not.toHaveBeenCalled();
     expect(boardRoot()).not.toBeNull();
   });
+  it("Esc on the open History sheet closes only that sheet: the Project sheet stays open (#559)", async () => {
+    const base = apiGetMock.getMockImplementation()!;
+    apiGetMock.mockImplementation((path: string) => path.endsWith("/whiteboard/versions") ? Promise.resolve({ generation: 1, versions: [] }) : base(path));
+    await renderSheet({ whiteboardOpen: true });
+    await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
+    await click(document.querySelector('[data-testid="project-whiteboard-history"]')!);
+    await flushUntil(() => document.querySelector('[data-testid="whiteboard-history-empty"]') !== null, "the History sheet");
+    const inside = document.querySelector<HTMLElement>('[data-testid="whiteboard-history-empty"]')!;
+    await escape(inside); await flush(5);
+    expect(onRequestClose).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-testid="whiteboard-history-empty"]')).toBeNull();
+    expect(boardRoot()).not.toBeNull();
+  });
+  it("Esc on the toolbar (outside the canvas) never closes the Project sheet either (#559)", async () => {
+    await renderSheet({ whiteboardOpen: true });
+    await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
+    const toolbar = document.querySelector<HTMLElement>('[data-testid="project-whiteboard-close"]')!;
+    toolbar.focus();
+    await escape(toolbar); await flush(5);
+    expect(onRequestClose).not.toHaveBeenCalled();
+  });
+  describe("the open History list follows real board changes only (#559)", () => {
+    const el = (id: string, version: number, versionNonce: number) => ({ id, version, versionNonce, type: "rectangle", isDeleted: false });
+    const quiet = () => new Promise<void>((resolve) => setTimeout(resolve, 1_800));
+    async function openHistory() {
+      const base = apiGetMock.getMockImplementation()!;
+      apiGetMock.mockImplementation((path: string) => path.endsWith("/whiteboard/versions") ? Promise.resolve({ generation: 1, currentVersionId: "v1", versions: [] }) : base(path));
+      board.scene = [el("a", 1, 11)];
+      await renderSheet({ whiteboardOpen: true });
+      await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
+      await click(document.querySelector('[data-testid="project-whiteboard-history"]')!);
+      await flushUntil(() => document.querySelector('[data-testid="whiteboard-history-empty"]') !== null, "the History sheet");
+      apiGetMock.mockClear();
+    }
+    const versionReads = () => apiGetMock.mock.calls.filter(([path]) => String(path).endsWith("/whiteboard/versions")).length;
+
+    it("presence-only updates (the same elements, again and again) never refresh the list", async () => {
+      await openHistory();
+      for (let n = 0; n < 6; n += 1) { await act(async () => { board.props!.onElements!([el("a", 1, 11)]); await Promise.resolve(); }); await new Promise<void>((resolve) => setTimeout(resolve, 300)); }
+      await quiet();
+      expect(versionReads()).toBe(0);
+    }, 10_000);
+
+    it("a real element change refreshes it once, after the quiet period", async () => {
+      await openHistory();
+      await act(async () => { board.props!.onElements!([el("a", 1, 11)]); await Promise.resolve(); });
+      board.scene = [el("a", 2, 22), el("b", 1, 33)];   // the stand-in reports `board.scene` on every render, so the change is the scene itself
+      await act(async () => { board.props!.onElements!(board.scene); await Promise.resolve(); });
+      expect(versionReads()).toBe(0);
+      await quiet(); await flush(3);
+      expect(versionReads()).toBe(1);
+    }, 10_000);
+  });
 });
