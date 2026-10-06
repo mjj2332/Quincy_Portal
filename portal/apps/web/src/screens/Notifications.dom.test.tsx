@@ -178,6 +178,21 @@ describe("Notifications", () => {
     expect(loadMoreButton().textContent).toBe("No more notifications");
   });
 
+  it("hands focus to the tabpanel, not <body>, when the final page empties the Unread list and the footer unmounts (#619)", async () => {
+    const read = "2026-07-28T00:00:00.000Z";
+    apiGetMock.mockResolvedValueOnce(response([notification({ id: "a", readAt: read })], 0, "cursor-1"));
+    await render();
+    await click([...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((tab) => tab.textContent?.startsWith("Unread"))!);
+    expect(loadMoreButton().textContent).toBe("Load more");
+    loadMoreButton().focus();
+
+    apiGetMock.mockResolvedValueOnce(response([notification({ id: "b", readAt: read })], 0, null));
+    await click(loadMoreButton());
+
+    expect(host.querySelector('[data-testid="notifications-load-more"]')).toBeNull();
+    expect(document.activeElement).toBe(host.querySelector('[role="tabpanel"]'));
+  });
+
   it("shows Try again on a failed loadMore and retries with the same cursor", async () => {
     apiGetMock.mockResolvedValueOnce(response([notification({ id: "a" })], 1, "cursor-1"));
     await render();
@@ -258,6 +273,28 @@ describe("Notifications", () => {
     const empty = host.querySelector('[data-testid="rail-notifications-empty"]');
     expect(empty?.getAttribute("data-notification-empty")).toBe("unread");
     expect(empty?.textContent).toContain("You’re all caught up.");
+  });
+
+  it("offers 'Show read notifications' on the Unread empty state only when something exists to show, and hides the end pill on an empty list (#619)", async () => {
+    apiGetMock.mockResolvedValue(response([], 0, null));
+    await render();
+    const unreadTab = () => [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((tab) => tab.textContent?.startsWith("Unread"))!;
+    await click(unreadTab());
+    expect(host.querySelector('[data-testid="rail-notifications-show-all"]')).toBeNull();
+    expect(host.querySelector('[data-testid="notifications-load-more"]')).toBeNull();
+  });
+
+  it("shows 'Show read notifications' when only read rows exist, and it switches to All (#619)", async () => {
+    apiGetMock.mockResolvedValue(response([notification({ readAt: "2026-07-28T00:00:00.000Z" })], 0, null));
+    await render();
+    const tabs = () => [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+    await click(tabs().find((tab) => tab.textContent?.startsWith("Unread"))!);
+    const showRead = host.querySelector<HTMLButtonElement>('[data-testid="rail-notifications-show-all"]')!;
+    expect(showRead.textContent).toBe("Show read notifications");
+    expect(host.querySelector('[data-testid="notifications-load-more"]')).toBeNull();
+    await click(showRead);
+    expect(tabs().find((tab) => tab.textContent === "All")!.getAttribute("aria-selected")).toBe("true");
+    expect(host.querySelector('[data-testid="notifications-load-more"]')).not.toBeNull();
   });
 
   it("renders a payload lacking actor/subject/assetId, the external wire shape", async () => {

@@ -829,9 +829,22 @@ describe("NotificationBell panel (Popover)", () => {
       expect(empty.getAttribute("data-notification-empty")).toBe("unread");
       expect(empty.textContent).toContain("You’re all caught up.");
       const showAll = document.querySelector<HTMLButtonElement>('[data-testid="rail-notifications-show-all"]')!;
+      // #619: says what it does and cannot be mistaken for the footer's "View all notifications".
+      expect(showAll.textContent).toBe("Show read notifications");
+      expect(document.body.textContent).toContain("View all notifications");
+      expect(showAll.textContent).not.toMatch(/all notifications/i);
       await click(showAll);
       expect(tabButton("All").getAttribute("aria-selected")).toBe("true");
       expect(document.activeElement).toBe(tabButton("All"));
+    });
+
+    it("offers no 'Show read notifications' when the account has no notifications at all (#619)", async () => {
+      apiGetMock.mockResolvedValue({ notifications: [], unreadCount: 0 });
+      const trigger = await renderPanel();
+      await click(trigger);
+      await click(tabButton("Unread"));
+      expect(document.querySelector('[data-testid="rail-notifications-empty"]')!.textContent).toContain("You’re all caught up.");
+      expect(document.querySelector('[data-testid="rail-notifications-show-all"]')).toBeNull();
     });
 
     it("explains unread notifications outside the recent list when the page shows none", async () => {

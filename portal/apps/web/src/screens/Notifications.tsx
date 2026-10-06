@@ -65,6 +65,9 @@ export function Notifications() {
   const loadMoreRequestedRef = useRef(false);
   const countBeforeLoadMoreRef = useRef(0);
   const [announcement, setAnnouncement] = useState("");
+  // Set by the "Load more" click: that button held focus, so if the footer unmounts because the
+  // final page left the filtered list empty, focus falls to <body> unless we hand it on (#619).
+  const loadMoreFocusedRef = useRef(false);
 
   useLayoutEffect(() => {
     const target = pendingDismissFocusRef.current;
@@ -126,9 +129,21 @@ export function Notifications() {
   function handleLoadMoreClick() {
     if (isEnd || busy) return;
     countBeforeLoadMoreRef.current = filtered.length;
+    loadMoreFocusedRef.current = true;
     loadMoreRequestedRef.current = true;
     void loadMore();
   }
+
+  const footerHidden = filtered.length === 0 && isEnd;
+
+  useLayoutEffect(() => {
+    if (!footerHidden || !loadMoreFocusedRef.current) return;
+    loadMoreFocusedRef.current = false;
+    // Only when focus was actually stranded; a user who moved on keeps where they are. The tabpanel
+    // is the same fallback `dismissNotification` uses when the list empties.
+    const active = document.activeElement;
+    if (!active || active === document.body) tabpanelRef.current?.focus();
+  }, [footerHidden]);
 
   const loadMoreLabel = busy ? "Loading…" : loadMoreError ? "Try again" : hasMore ? "Load more" : "No more notifications";
 
@@ -180,7 +195,7 @@ export function Notifications() {
         tabIndex={0}
       >
         {filtered.length === 0 ? (
-          <NotificationEmptyState filter={tab} unreadCount={unreadCount} onShowAll={focusAllTabAndShowAll} />
+          <NotificationEmptyState filter={tab} unreadCount={unreadCount} onShowAll={focusAllTabAndShowAll} hasNotifications={notifications.length > 0} />
         ) : (
           <NotificationList
             buckets={buckets}
@@ -193,7 +208,8 @@ export function Notifications() {
         )}
       </div>
 
-      <div className={FOOT}>
+      {/* An empty list that has ended has nothing more to say: the empty state above already does. */}
+      {!footerHidden && <div className={FOOT}>
         <Button
           type="button"
           variant="outline"
@@ -204,7 +220,7 @@ export function Notifications() {
         >
           {loadMoreLabel}
         </Button>
-      </div>
+      </div>}
       <div aria-live="polite" className="sr-only">{announcement}</div>
     </main>
   );
