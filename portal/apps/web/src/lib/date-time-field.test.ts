@@ -213,7 +213,26 @@ describe("scrollTopClearOfFade (#537)", () => {
     expect(scrollTopClearOfFade({ ...base, items: [{ top: 520, bottom: 556 }] })).toBe(0);
   });
   it("cannot scroll past the end of the body", () => {
-    expect(scrollTopClearOfFade({ ...base, maxScrollTop: 10, items: [{ top: 454, bottom: 490 }] })).toBe(10);
+    expect(scrollTopClearOfFade({ ...base, maxScrollTop: 4, items: [{ top: 470, bottom: 506 }] })).toBe(4);
+  });
+  it("scrolls UP to clear an item in the top fade, using the top band at the destination", () => {
+    // scrollTop 100: the top band is 32. The item's top is 10px below the body's top, so it needs 22 up.
+    expect(scrollTopClearOfFade({ ...base, scrollTop: 100, items: [{ top: 110, bottom: 146 }] })).toBe(78);
+  });
+  it("uses each edge's own band: the top band is the scrolled distance, not the full fade, near scroll 0", () => {
+    // scrollTop 10: top band is only 10, so an item 12px below the top is already clear.
+    expect(scrollTopClearOfFade({ ...base, scrollTop: 10, items: [{ top: 112, bottom: 148 }] })).toBe(10);
+  });
+  it("uses the bottom band left at the end of the body, not the full fade", () => {
+    // 10px of overflow left below: the bottom band is 10, so an item ending 12px above the bottom is clear.
+    expect(scrollTopClearOfFade({ ...base, scrollTop: 290, items: [{ top: 452, bottom: 488 }] })).toBe(290);
+  });
+  it("aligns the top of an item taller than the clear window to the top band, and does not oscillate", () => {
+    // Clear window at scrollTop 100 is 32..368 (336px); the item is 400px tall.
+    expect(scrollTopClearOfFade({ ...base, scrollTop: 100, items: [{ top: 150, bottom: 550 }] })).toBe(100 + 50 - 32);
+  });
+  it("does not move when the items want opposite directions", () => {
+    expect(scrollTopClearOfFade({ ...base, scrollTop: 100, items: [{ top: 110, bottom: 146 }, { top: 454, bottom: 490 }] })).toBe(100);
   });
   it("does not move when it would push another selected item into the top fade", () => {
     expect(scrollTopClearOfFade({ ...base, items: [{ top: 100, bottom: 136 }, { top: 454, bottom: 490 }] })).toBe(0);

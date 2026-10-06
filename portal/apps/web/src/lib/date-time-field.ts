@@ -149,23 +149,48 @@ export function popupPaddingWithTopAtLeast(padding: PopupCollisionPadding, top: 
 type EdgeRect = { top: number; bottom: number };
 
 /**
- * #537 — the popup body fades its top and bottom edges by `min(fade, overflow)`. Selected items
- * (the picked day, the pressed time slot) in that band read as muddy grey, not solid ink. Returns
- * the body's `scrollTop` that moves every selected item that is partly inside the bottom band just
- * above it, by the least amount. Rects share one coordinate space. An item wholly below the body's
- * visible area is ignored (scrolling to it would hide the month navigation for nothing), and no
- * move is made when it would push an item into the top band.
+ * #537 — the popup body fades each edge by `min(fade, overflow past that edge)`: the top band grows
+ * with `scrollTop`, the bottom band shrinks toward the end, so the two are rarely equal. Selected
+ * items (the picked day, the pressed time slot) inside a band read as muddy grey, not solid ink.
+ * Returns the `scrollTop` that moves every selected item out of both bands by the least amount, in
+ * EITHER direction, using each edge's actual band at the destination. Rects share one coordinate
+ * space. An item wholly outside the body's visible area is ignored (scrolling to it would hide the
+ * month navigation for nothing); an item taller than the clear window gets its top edge aligned to the
+ * top band; and nothing moves when the items want opposite directions, or when moving would push an
+ * item that was clear into a band.
  */
 export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, items }: { viewport: EdgeRect; scrollTop: number; maxScrollTop: number; fade: number; items: readonly EdgeRect[] }): number {
-  const bandTop = viewport.bottom - fade;
-  const delta = Math.min(
-    Math.max(0, ...items.filter((item) => item.bottom > bandTop && item.top < viewport.bottom).map((item) => item.bottom - bandTop)),
-    Math.max(0, maxScrollTop - scrollTop),
-  );
-  if (delta <= 0) return scrollTop;
-  const topFade = Math.min(fade, scrollTop + delta);
-  const intoTopBand = items.some((item) => item.top < viewport.bottom && item.bottom - delta > viewport.top && item.top - delta < viewport.top + topFade);
-  return intoTopBand ? scrollTop : scrollTop + delta;
+  const height = viewport.bottom - viewport.top;
+  const clamp = (value: number) => Math.min(Math.max(0, value), Math.max(0, maxScrollTop));
+  /** Where `item` sits (relative to the body's top) with the body at `scroll`, and the bands there. */
+  const at = (item: EdgeRect, scroll: number) => ({
+    top: item.top - viewport.top - (scroll - scrollTop),
+    bottom: item.bottom - viewport.top - (scroll - scrollTop),
+    topFade: Math.min(fade, scroll),
+    bottomFade: Math.min(fade, maxScrollTop - scroll),
+  });
+  const clear = (item: EdgeRect, scroll: number) => { const r = at(item, scroll); return r.top >= r.topFade && r.bottom <= height - r.bottomFade; };
+  const targetFor = (item: EdgeRect): number => {
+    let scroll = scrollTop;
+    for (let pass = 0; pass < 4; pass += 1) {
+      const r = at(item, scroll);
+      const next = r.bottom - r.top > height - r.topFade - r.bottomFade ? scroll + (r.top - r.topFade)
+        : r.bottom > height - r.bottomFade ? scroll + (r.bottom - (height - r.bottomFade))
+        : r.top < r.topFade ? scroll - (r.topFade - r.top)
+        : scroll;
+      const clamped = clamp(next);
+      if (clamped === scroll) break;
+      scroll = clamped;
+    }
+    return scroll;
+  };
+  const visible = items.filter((item) => item.bottom > viewport.top && item.top < viewport.bottom);
+  const wanted = visible.filter((item) => !clear(item, scrollTop)).map(targetFor).filter((scroll) => scroll !== scrollTop);
+  if (wanted.length === 0) return scrollTop;
+  const down = wanted.every((scroll) => scroll > scrollTop);
+  if (!down && !wanted.every((scroll) => scroll < scrollTop)) return scrollTop;
+  const next = down ? Math.max(...wanted) : Math.min(...wanted);
+  return visible.every((item) => !clear(item, scrollTop) || clear(item, next)) ? next : scrollTop;
 }
 
 /**

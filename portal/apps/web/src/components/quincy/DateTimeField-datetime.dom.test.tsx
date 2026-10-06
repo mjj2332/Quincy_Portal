@@ -613,6 +613,32 @@ describe("DateTimeField date-time: seeding a draft", () => {
     } finally { rect.mockRestore(); scrollHeight.mockRestore(); clientHeight.mockRestore(); }
   });
 
+  it("clears a day picked under the TOP fade after the person scrolled the body themselves (#537)", async () => {
+    // Doc positions: the stored day is mid-body, the picked one 10px under the top edge once scrolled to 100.
+    const docTop = new Map<string, number>([["2027-01-15", 300], ["2027-01-20", 110]]);
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      let box = { top: 0, bottom: 0, height: 0 };
+      const viewport = this.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
+      const day = this.tagName === "BUTTON" ? this.closest<HTMLElement>('[aria-selected="true"]')?.getAttribute("data-day") : null;
+      if (this.getAttribute("data-slot") === "scroll-area-viewport") box = { top: 100, bottom: 500, height: 400 };
+      else if (this.style?.height === "var(--fade-size)") box = { top: 0, bottom: 32, height: 32 };
+      else if (day && viewport && docTop.has(day)) { const top = 100 + docTop.get(day)! - viewport.scrollTop; box = { top, bottom: top + 36, height: 36 }; }
+      return { ...box, left: 0, right: 0, width: 0, x: 0, y: box.top, toJSON() {} } as DOMRect;
+    });
+    const scrollHeight = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(800);
+    const clientHeight = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+    try {
+      await mount({ value: stored("2027-01-15T09:00") });
+      await open();
+      const viewport = popup()!.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
+      expect(viewport.scrollTop).toBe(0);
+      viewport.scrollTop = 100; // the person scrolls
+      await pickPopupDay(popup()!, "2027-01-20");
+      // Top band is 32 at scrollTop 100; the day sits 10px below the top, so 22 up.
+      expect(viewport.scrollTop).toBe(78);
+    } finally { rect.mockRestore(); scrollHeight.mockRestore(); clientHeight.mockRestore(); }
+  });
+
   it("reads a collision-padding callback on each open, not at mount, so a late shell header counts (#528)", async () => {
     // Stands in for the shell header's bottom edge (`shellChromeBottom`, tested on its own): 0 until the header renders.
     let headerBottom = 0;
