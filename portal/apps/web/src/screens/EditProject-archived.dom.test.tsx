@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CollectionKind } from "@quincy/shared";
 import { EditProject } from "./EditProject";
 import { ApiError } from "../lib/api";
+import { projectDataKeys, recordProjectArchivedRefusal } from "../lib/project-data";
 import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project-query-sync";
 import "@/testing/dom-polyfills";
 
@@ -116,5 +117,32 @@ describe("EditProject on an archived Project (#455)", () => {
       expect(host.querySelector('button[type="submit"]')).toBeNull();
       expect(document.activeElement).toBe(cancel);
     });
+  });
+});
+
+describe("a details Save never un-archives the cached Project (#566)", () => {
+  const cachedArchivedAt = () => (queryClient.getQueryData(projectDataKeys.detail("project-1")) as { archivedAt?: string | null } | undefined)?.archivedAt ?? null;
+  async function saveInFlight() {
+    await render(); await flush();
+    queryClient.setQueryData(projectDataKeys.detail("project-1"), { id: "project-1", archivedAt: null, members: [] });
+    let finish!: (value: unknown) => void;
+    apiPatchMock.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const submit = host.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    await act(async () => { submit.click(); await Promise.resolve(); });
+    return finish;
+  }
+
+  it("a Save response that says un-archived, landing after a refusal recorded the archive, leaves the cache archived", async () => {
+    const finish = await saveInFlight();
+    await act(async () => { await recordProjectArchivedRefusal(queryClient, "project-1"); });
+    expect(cachedArchivedAt()).not.toBeNull();
+    await act(async () => { finish(project(null)); await Promise.resolve(); await Promise.resolve(); }); await flush();
+    expect(cachedArchivedAt()).not.toBeNull();
+  });
+
+  it("a Save response with no archive in play still replaces the cached Project", async () => {
+    const finish = await saveInFlight();
+    await act(async () => { finish({ ...project(null), street: "99 New Street" }); await Promise.resolve(); await Promise.resolve(); }); await flush();
+    expect((queryClient.getQueryData(projectDataKeys.detail("project-1")) as { street?: string }).street).toBe("99 New Street");
   });
 });

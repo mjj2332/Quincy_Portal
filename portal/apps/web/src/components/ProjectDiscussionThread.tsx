@@ -15,13 +15,13 @@ import {
   type Comment,
   type CommentResponse,
 } from "../lib/project-comments";
-import { classifyProjectAccessError, invalidateProjectSurfaces, projectCollaborationDataGeneration, useProjectAccessTermination } from "../lib/project-data";
+import { classifyProjectAccessError, invalidateProjectSurfaces, projectCollaborationDataGeneration, recordProjectArchivedRefusal, useProjectAccessTermination } from "../lib/project-data";
 import { stripEmbeddedDisplay } from "../lib/rich-text-tiptap";
 import { useProjectCommentDraft } from "../lib/project-comment-drafts";
 import { RichTextContent } from "./RichTextContent";
 import { QuincyRichTextEditor } from "./QuincyRichTextEditor";
 import type { MentionableUser } from "./MentionAutocomplete";
-import { confirm } from "../lib/confirm";
+import { NoticeDeleteDialog } from "./NoticeDeleteDialog";
 import { cn } from "../lib/utils";
 import { useNow } from "../lib/use-now";
 import { META_TEXT } from "./quincy/Eyebrow";
@@ -59,6 +59,10 @@ const COMMENT_LIMIT = 10_000;
 
 /** The server refused a write because the Project is archived (#527): a 409 with this code. Upload refusals are not this: they stay in-editor errors. */
 function isCommentArchivedRefusal(error: unknown) { return error instanceof ApiError && error.status === 409 && typeof error.details === "object" && error.details !== null && (error.details as { code?: unknown }).code === "comment_project_archived"; }
+const COMMENT_DELETE_COPY = {
+  title: "Delete comment?", action: "Delete", pending: "Deleting…", fallbackSubject: "This comment",
+  description: (subject: ReactNode) => <>{subject} will be removed from the discussion for everyone, with any images in it. This can't be undone.</>,
+};
 const DISCUSSION_ARCHIVED_COPY = "Read-only while archived. Restore the project before commenting.";
 
 type CommentItemProps = {
@@ -75,7 +79,8 @@ type CommentItemProps = {
   onEditChange: (value: RichTextDoc) => void;
   onEditCancel: () => void;
   onEditSave: () => void;
-  onDelete: (comment: Comment) => Promise<void>;
+  /** Opens the Delete confirmation (#568); the thread owns the dialog and the request. */
+  onDeleteRequest: (comment: Comment) => void;
 };
 
 /**
@@ -85,13 +90,16 @@ type CommentItemProps = {
  * Edit / Delete are author-only exactly as before — `isOwn` is derived from the effective session
  * user by the caller (the impersonated user while an Admin impersonates), and the server enforces it.
  */
-function CommentItem({ comment, isOwn, readOnly, now, saving, editing, editingOverBytes, projectId, loadMentionables, onEditStart, onEditChange, onEditCancel, onEditSave, onDelete }: CommentItemProps) {
+function CommentItem({ comment, isOwn, readOnly, now, saving, editing, editingOverBytes, projectId, loadMentionables, onEditStart, onEditChange, onEditCancel, onEditSave, onDeleteRequest }: CommentItemProps) {
   const articleRef = useRef<HTMLElement>(null);
   const focusActions = useCallback(() => { articleRef.current?.querySelector<HTMLElement>('[data-testid="comment-actions"]')?.focus(); }, []);
   // Set when Edit is chosen from the "⋯" menu: the menu's close would otherwise return focus to the
   // trigger, so `finalFocus` hands it to the edit editor (caret at the end) instead.
   const focusEditorOnClose = useRef(false);
-  const focusEditor = useCallback((): HTMLElement | undefined => {
+  // Set when Delete is chosen: the confirmation dialog owns focus, so the menu's close must not take it back (#568).
+  const deletePending = useRef(false);
+  const focusEditor = useCallback((): HTMLElement | false | undefined => {
+    if (deletePending.current) return false;
     if (!focusEditorOnClose.current) return undefined;
     const surface = articleRef.current?.querySelector<HTMLElement>('[contenteditable="true"]');
     if (!surface) return undefined;
@@ -111,7 +119,7 @@ function CommentItem({ comment, isOwn, readOnly, now, saving, editing, editingOv
     if (wasEditing.current && !isEditing) focusActions();
     wasEditing.current = isEditing;
   }, [focusActions, isEditing]);
-  return <article ref={articleRef} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-[var(--space-3)] gap-y-[var(--space-2)] min-w-0 py-[var(--space-4)] first:pt-0 [border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border last:border-b-0">
+  return <article ref={articleRef} data-comment-id={comment.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-[var(--space-3)] gap-y-[var(--space-2)] min-w-0 py-[var(--space-4)] first:pt-0 [border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border last:border-b-0">
     <InitialsAvatar name={comment.author.name} />
     <header className="flex flex-wrap items-baseline gap-x-[var(--space-2)] gap-y-[var(--space-1)] min-w-0 self-center">
       <strong className="[font:var(--weight-regular)_var(--text-sm)/1.2_var(--font-sans)] text-foreground min-w-0 [overflow-wrap:anywhere]">{comment.author.name}</strong>
@@ -120,9 +128,9 @@ function CommentItem({ comment, isOwn, readOnly, now, saving, editing, editingOv
       <CollaborationTimestamp instant={comment.createdAt} now={now} mode="relative" />
       {comment.editedAt && <span className={cn(META_TEXT, "!normal-case")}>· Edited</span>}
     </header>
-    {isOwn && !readOnly ? <Menu triggerLabel={`Actions for comment by ${comment.author.name}`} label="Comment actions" triggerClassName={ICON_BUTTON} triggerTestId="comment-actions" finalFocus={focusEditor} trigger={<span aria-hidden="true">⋯</span>}>
+    {isOwn && !readOnly ? <Menu triggerLabel={`Actions for comment by ${comment.author.name}`} label="Comment actions" triggerClassName={ICON_BUTTON} triggerTestId="comment-actions" finalFocus={focusEditor} onOpenChange={(open) => { if (open) deletePending.current = false; }} trigger={<span aria-hidden="true">⋯</span>}>
       <MenuPrimitive.Item className={MENU_ITEM} disabled={isEditing || saving} onClick={() => { focusEditorOnClose.current = true; onEditStart(comment); }}>Edit</MenuPrimitive.Item>
-      <MenuPrimitive.Item className={cn(MENU_ITEM, "text-destructive")} disabled={saving} onClick={() => { void onDelete(comment).finally(focusActions); }}>Delete</MenuPrimitive.Item>
+      <MenuPrimitive.Item className={cn(MENU_ITEM, "text-destructive")} disabled={saving} onClick={() => { deletePending.current = true; onDeleteRequest(comment); }}>Delete</MenuPrimitive.Item>
     </Menu> : <span aria-hidden="true" />}
     <div className="col-start-2 col-span-2 max-[721px]:col-start-1 max-[721px]:col-span-3 grid gap-[var(--space-2)] min-w-0">
       {editing ? <>
@@ -168,12 +176,17 @@ export function ProjectDiscussionThread({
   const [editing, setEditing] = useState<{ id: string; content: RichTextDoc }>();
   const [mutationError, setMutationError] = useState<string>();
   const [discussionDeniedFor, setDiscussionDeniedFor] = useState<string>();
-  // A write refused as archived latches the thread read-only until the `archived` prop catches up (the detail refetch it triggers), and clears on Restore (#527).
-  const [latched, setLatched] = useState(false);
-  const readOnly = archived || latched;
-  const priorArchived = useRef(archived);
+  // Delete confirmation (#568). The focus hand-off runs after `deleteTarget` is cleared, so the target and the comment order live in a ref.
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; excerpt: string } | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const lastDeleteTarget = useRef<{ id: string; order: string[]; deleted: boolean } | null>(null);
+  // Read-only comes from the `archived` prop alone. A write refused as archived records the fact in the cache (#566), which feeds the prop at once.
+  const readOnly = archived;
   const priorReadOnly = useRef(readOnly);
   const focusAfterFlip = useRef<{ inThread: boolean } | null>(null);
+  // Bumped per recorded refusal: a poll can archive the Project while a write is pending, so `readOnly` is already true when the 409 lands.
+  const [refusalGeneration, setRefusalGeneration] = useState(0);
   const composerRef = useRef<HTMLFormElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const noticeRef = useRef<HTMLParagraphElement>(null);
@@ -217,18 +230,17 @@ export function ProjectDiscussionThread({
   const listDenied = Boolean(consumeDiscussion403 && listError && isDiscussionOnlyForbidden(listError));
   const discussionDenied = listDenied || discussionDeniedFor === projectId;
 
-  useEffect(() => { if (priorArchived.current && !archived) setLatched(false); priorArchived.current = archived; }, [archived]);
   // Turning read-only (by the latch or by the prop arriving with a refetch) drops an open edit and its error: the controls that own them are gone.
   // The composer's draft is kept, in state and in storage, and returns after Restore.
   useLayoutEffect(() => { const was = priorReadOnly.current; priorReadOnly.current = readOnly; if (was || !readOnly) return; setEditing(undefined); setMutationError(undefined); }, [readOnly]);
   // A refusal removes the focused control (the saving editor is disabled, then unmounted): focus the notice, but only when focus was genuinely lost
   // (body, disabled, disconnected, or an ancestor of the thread). A connected, enabled control elsewhere keeps it, and nothing moves on load (#450/#452).
   useLayoutEffect(() => {
-    const flip = focusAfterFlip.current; if (!latched || !flip) return;
+    const flip = focusAfterFlip.current; if (!readOnly || !flip) return;
     focusAfterFlip.current = null;
     const active = document.activeElement; const notice = noticeRef.current;
     if (!active || active === document.body || active.matches(":disabled") || (flip.inThread && (!active.isConnected || (notice !== null && active.contains(notice))))) notice?.focus();
-  }, [latched]);
+  }, [readOnly, refusalGeneration]);
   useEffect(() => { void presentation.drain(commentsData, readStateQuery.data); }, [commentsData, presentation, readStateQuery.data]);
   useEffect(() => {
     onUnreadCountChange?.(unreadCount);
@@ -265,8 +277,9 @@ export function ProjectDiscussionThread({
 
   const focusInThread = () => { const active = document.activeElement; return active !== null && (composerRef.current?.contains(active) === true || listRef.current?.contains(active) === true); };
   /** Handles an archived refusal of a Post, Save or Delete: the thread goes read-only, nothing is optimistic, and the header and Checklist catch up. */
-  function enterArchived(inThread: boolean) {
-    focusAfterFlip.current = { inThread }; setLatched(true); setMutationError(undefined);
+  async function enterArchived(inThread: boolean) {
+    focusAfterFlip.current = { inThread }; setMutationError(undefined); setRefusalGeneration((generation) => generation + 1);
+    await recordProjectArchivedRefusal(queryClient, projectId);
     void invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "collaboration-summary" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true });
   }
 
@@ -287,7 +300,7 @@ export function ProjectDiscussionThread({
       void invalidateProjectCommentResources(queryClient, projectId, ["comments", "comment-read-marker", "activity"]);
     } catch (reason) {
       if (presentation.isCurrent(mutationProjectId)) {
-        if (isCommentArchivedRefusal(reason)) { enterArchived(inThread); return; }
+        if (isCommentArchivedRefusal(reason)) { void enterArchived(inThread); return; }
         consumeOrForward(reason, "comments");
         setMutationError(errorMessage(reason, "Comment could not be posted."));
       }
@@ -309,7 +322,7 @@ export function ProjectDiscussionThread({
       void invalidateProjectCommentResources(queryClient, projectId, ["comments", "activity"]);
     } catch (reason) {
       if (presentation.isCurrent(mutationProjectId)) {
-        if (isCommentArchivedRefusal(reason)) { enterArchived(inThread); return; }
+        if (isCommentArchivedRefusal(reason)) { void enterArchived(inThread); return; }
         consumeOrForward(reason, "nested-comment");
         setMutationError(errorMessage(reason, "Comment could not be updated."));
       }
@@ -318,27 +331,53 @@ export function ProjectDiscussionThread({
     }
   }
 
-  async function remove(comment: Comment) {
-    if (!await confirm({ title: "Delete comment?", message: "Delete this comment?", confirmLabel: "Delete", danger: true })) return;
+  function requestDelete(comment: Comment) {
+    const text = richTextPlainText(comment.content).trim();
+    lastDeleteTarget.current = { id: comment.id, order: comments.map((candidate) => candidate.id), deleted: false };
+    setDeleteError(null);
+    setDeleteTarget({ id: comment.id, excerpt: text.length > 60 ? `${text.slice(0, 60)}…` : text });
+  }
+
+  // Sends the captured id only. The dialog stays open, with the message inside it, when the delete fails.
+  async function confirmDelete() {
+    if (!deleteTarget || deleting) return;
+    const target = deleteTarget;
     const mutationProjectId = projectId;
     const inThread = focusInThread();
-    setSaving(true); setMutationError(undefined);
+    setSaving(true); setDeleting(true); setDeleteError(null);
     try {
-      await apiDelete(`/api/projects/${encodeURIComponent(projectId)}/comments/${encodeURIComponent(comment.id)}`);
+      await apiDelete(`/api/projects/${encodeURIComponent(projectId)}/comments/${encodeURIComponent(target.id)}`);
       if (!presentation.isCurrent(mutationProjectId)) return;
-      removeProjectComment(queryClient, projectId, comment.id);
-      if (editing?.id === comment.id) setEditing(undefined);
+      removeProjectComment(queryClient, projectId, target.id);
+      if (editing?.id === target.id) setEditing(undefined);
+      if (lastDeleteTarget.current) lastDeleteTarget.current.deleted = true;
+      setDeleteTarget(null);
       void invalidateProjectCommentResources(queryClient, projectId, ["comments", "comment-read-marker", "activity"]);
     } catch (reason) {
       if (presentation.isCurrent(mutationProjectId)) {
-        if (isCommentArchivedRefusal(reason)) { enterArchived(inThread); return; }
+        if (isCommentArchivedRefusal(reason)) { setDeleteTarget(null); void enterArchived(inThread); return; }
         consumeOrForward(reason, "nested-comment");
-        setMutationError(errorMessage(reason, "Comment could not be deleted."));
+        setDeleteError(errorMessage(reason, "Comment could not be deleted."));
       }
     } finally {
-      if (presentation.isCurrent(mutationProjectId)) setSaving(false);
+      if (presentation.isCurrent(mutationProjectId)) { setSaving(false); setDeleting(false); }
     }
   }
+
+  // Resolved when the dialog closes; never `undefined`, so focus never falls to body. Cancel/Escape: the comment's own "⋯".
+  // After a delete: the next surviving "⋯", then the previous, then the composer. A refusal that turned the thread read-only: the notice.
+  function deleteFinalFocus(): HTMLElement | true {
+    const target = lastDeleteTarget.current; const list = listRef.current;
+    if (!target) return true;
+    if (noticeRef.current) return noticeRef.current;
+    const triggerOf = (id: string) => [...list?.querySelectorAll<HTMLElement>("[data-comment-id]") ?? []].find((node) => node.dataset.commentId === id)?.querySelector<HTMLElement>('[data-testid="comment-actions"]') ?? null;
+    const at = target.order.indexOf(target.id);
+    const successors = [...target.order.slice(at + 1), ...target.order.slice(0, at).reverse()];
+    for (const id of target.deleted ? successors : [target.id, ...successors]) { const trigger = triggerOf(id); if (trigger) return trigger; }
+    return composerRef.current?.querySelector<HTMLElement>('[contenteditable="true"]') ?? true;
+  }
+
+  useEffect(() => { setDeleteTarget(null); setDeleteError(null); setDeleting(false); }, [projectId]);
 
   const composer = <form ref={composerRef} data-testid="discussion-composer" className="flex items-start gap-[var(--space-3)] mb-[var(--space-5)]" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
     {typeof viewerName === "string" && viewerName !== "" && <InitialsAvatar name={viewerName} className="mt-[var(--space-1)] max-[721px]:hidden" />}
@@ -370,10 +409,11 @@ export function ProjectDiscussionThread({
         onEditChange={(value) => setEditing({ id: comment.id, content: value })}
         onEditCancel={() => setEditing(undefined)}
         onEditSave={() => void saveEdit()}
-        onDelete={remove}
+        onDeleteRequest={requestDelete}
       />) : <EmptyState size="compact" title="No comments yet." />}</div>
       {commentsQuery.hasNextPage && <Button variant="secondary" className="justify-self-start" type="button" disabled={commentsQuery.isFetchingNextPage} onClick={() => void commentsQuery.fetchNextPage()}>{commentsQuery.isFetchingNextPage ? "Loading…" : "Load older comments"}</Button>}
     </>}
+    <NoticeDeleteDialog open={deleteTarget !== null} excerpt={deleteTarget?.excerpt ?? ""} deleting={deleting} error={deleteError} onConfirm={() => void confirmDelete()} onCancel={() => setDeleteTarget(null)} finalFocus={deleteFinalFocus} testIdPrefix="comment-delete" copy={COMMENT_DELETE_COPY} />
   </>;
 
   if (children) return <>{children({ content: contentMarkup, project, scrollRootRef: presentation.scrollRootRef })}</>;

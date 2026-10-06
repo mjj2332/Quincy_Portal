@@ -11,6 +11,7 @@ import { applyPopup, dateTimePopup, pickPopupDay, pickRangeEnd, popupButton, ran
 import { checklistScheduleToDto, normalizeChecklistSchedule } from "@quincy/shared";
 import { formatCivilRange } from "../lib/date-format";
 import { endMoment, momentScheduleDto, presetScheduleDto, startMoment, subtaskReminders } from "@/testing/subtask-schedule";
+import { ArchivedFromCache } from "../testing/archived-from-cache";
 
 const confirmMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)));
 const floating = vi.hoisted(() => ({ modalValues: [] as Array<boolean | undefined> }));
@@ -582,7 +583,7 @@ describe("SubtaskChecklist on an archived Project (#450)", () => {
   const refusal = () => new ApiError("Archived projects are read-only; the checklist can't be changed.", 409, { code: "subtask_project_archived" });
   let client: QueryClient; let runtime: ProjectQueryRuntime;
   type Props = Partial<Parameters<typeof SubtaskChecklist>[0]>;
-  const tree = (props: Props) => <ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={client}><SubtaskChecklist projectId={projectId} {...props} /></QueryClientProvider></ProjectQueryRuntimeProvider>;
+  const tree = (props: Props) => <ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={client}><ArchivedFromCache projectId={projectId} archived={props.archived}>{(archived) => <SubtaskChecklist projectId={projectId} {...props} archived={archived} />}</ArchivedFromCache></QueryClientProvider></ProjectQueryRuntimeProvider>;
   async function renderCase(props: Props = {}) {
     client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); runtime = new ProjectQueryRuntime(client, "archived-rail-test");
     const host = mount();
@@ -646,7 +647,7 @@ describe("SubtaskChecklist on an archived Project (#450)", () => {
     expect(liveRegion(host)!.textContent).toBe(COPY);
     const call = surfaces.calls.find((entry) => entry.resources.some((resource) => resource.kind === "detail"));
     expect(call).toBeDefined();
-    expect(call!.resources.map((resource) => resource.kind).sort()).toEqual(["activity", "detail", "subtasks"]);
+    expect(call!.resources.map((resource) => resource.kind).sort()).toEqual(["activity", "collaboration-summary", "detail", "subtasks"]);
     expect([call!.dashboard, call!.calendar, call!.gantt]).toEqual([true, true, true]);
     expect(document.activeElement).toBe(collapseButton(host));
   });
@@ -732,6 +733,20 @@ describe("SubtaskChecklist on an archived Project (#450)", () => {
     await rerenderCase({ archived: false });
     expect(host.querySelector('[aria-label="Subtask title"]')).toBeNull();
     expect(item(host, "Call client").querySelector('[data-testid="subtask-checklist-title"]')!.textContent).toBe("Call client");
+  });
+  it("a poll that archives the Project while an Add is pending: the refusal that follows still puts lost focus on the collapse button (#568 review)", async () => {
+    const host = await renderCase();
+    await click(document.getElementById(`subtask-add-${projectId}`)!);
+    const input = host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!;
+    await typeInto(input, "Schedule staging"); input.focus();
+    let refuse!: (reason: unknown) => void;
+    apiPostMock.mockImplementationOnce(() => new Promise((_resolve, reject) => { refuse = reject; }));
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Add")!);
+    await rerenderCase({ archived: true });
+    expect(host.querySelector(`#subtask-composer-${projectId}`)).toBeNull();
+    await act(async () => { refuse(refusal()); await Promise.resolve(); await Promise.resolve(); });
+    await waitFor(() => expect(document.activeElement).toBe(collapseButton(host)));
+    expect(document.activeElement).not.toBe(document.body);
   });
   it("a refusal that lands after focus moved to an ancestor of the rail puts focus on the collapse button", async () => {
     const host = await renderCase();

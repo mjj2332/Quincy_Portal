@@ -5,7 +5,7 @@ import { ApiError, apiGet, apiPatch, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
 import { InternalLink } from "../components/InternalLink";
 import { shouldInterceptInternalLink } from "../lib/router";
-import { invalidateProjectSurfaces, projectDataKeys, removeProjectData, useOptionalProjectQueryClient } from "../lib/project-data";
+import { invalidateProjectSurfaces, keepCachedArchiveState, projectDataKeys, removeProjectData, useOptionalProjectQueryClient } from "../lib/project-data";
 import { confirm } from "../lib/confirm";
 import { Eyebrow } from "@/components/quincy/Eyebrow";
 import { SectionHead } from "@/components/quincy/SectionHead";
@@ -110,7 +110,7 @@ export function EditProject({ projectId, onReturnToWorkspace, onDeleted }: { pro
     try {
       const response = await apiPatch<ProjectResponse, Record<string, unknown>>(`/api/projects/${projectId}`, editProjectPayload(form));
       if (queryClient) {
-        queryClient.setQueryData(projectDataKeys.detail(projectId), response);
+        queryClient.setQueryData(projectDataKeys.detail(projectId), (cached: unknown) => keepCachedArchiveState(cached, response));
         await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true });
       }
       onReturnToWorkspace("Shoot details saved.");
