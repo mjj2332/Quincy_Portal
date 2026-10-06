@@ -222,8 +222,8 @@ const DEADLINE_SELECTED =
   "data-selected:bg-(--ink-900) data-selected:hover:bg-(--ink-700) data-selected:inset-ring-4 data-selected:inset-ring-(--paper-050) data-selected:inset-shadow-[0_0_0_2px_var(--ink-900)]";
 export const DEADLINE_AGENDA_HOVER = "data-[view=agenda]:hover:bg-(--ink-700)";
 /** Mirrors `tokens/inverse.css`'s `--muted-foreground` for a dark surface. */
-/** #602: `--focus-ring` is ink, the same as the Deadline fill, so the inset ring would be invisible; draw it paper. Light chips keep the default. */
-const DEADLINE_FOCUS_RING = "[--focus-ring:var(--paper-050)]";
+/** #602: `--focus-ring` is ink, the same as the Deadline fill, so the inset ring would be invisible; draw it paper, and lift the fill to the hover ink so focus reads apart from the selected state. Light chips keep the default. */
+const DEADLINE_FOCUS_RING = "[--focus-ring:var(--paper-050)] focus-visible:bg-(--ink-700)";
 const DEADLINE_INVERSE_ROLES = "[--muted-foreground:var(--greige-300)]";
 /**
  * Hides the vendored agenda row's colour dot on a Deadline, keeping its box so titles stay aligned

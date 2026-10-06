@@ -521,7 +521,7 @@ describe("DateTimeField date-time: seeding a draft", () => {
     try {
       await mount({ value: stored("2027-01-15T09:00") });
       await open();
-      expect(queries).toContain("(width < 40rem)");
+      expect(queries).toContain("(width < 721px)");
     } finally { window.matchMedia = original; }
   });
 

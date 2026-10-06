@@ -139,7 +139,7 @@ describe("production event-calendar adapter: DTO → vendor event (#222)", () =>
       "bg-(--ink-900) hover:bg-(--ink-700) text-(--paper-050) inset-ring-(--ink-900) " +
         "data-selected:bg-(--ink-900) data-selected:hover:bg-(--ink-700) data-selected:inset-ring-4 data-selected:inset-ring-(--paper-050) " +
         "data-selected:inset-shadow-[0_0_0_2px_var(--ink-900)] data-[view=agenda]:hover:bg-(--ink-700) " +
-        "[--muted-foreground:var(--greige-300)] [&_[data-slot=event-calendar-agenda-dot]]:invisible [--focus-ring:var(--paper-050)] " +
+        "[--muted-foreground:var(--greige-300)] [&_[data-slot=event-calendar-agenda-dot]]:invisible [--focus-ring:var(--paper-050)] focus-visible:bg-(--ink-700) " +
         "focus-visible:![outline-offset:calc(-1*var(--border-width-bold))]",
     );
   });
@@ -275,10 +275,13 @@ describe("production event-calendar adapter: focus ring and day headers (#602)",
     const override = "[--focus-ring:var(--paper-050)]";
     const deadline = productionEventCalendarEventClassName(toProductionEventCalendarEvent(deadlineEvent("2026-08-27T09:00"))!.data)!;
     expect(deadline).toContain(override);
+    // Keyboard focus lifts the fill to the hover ink, so it reads apart from the selected state (#602).
+    expect(deadline).toContain("focus-visible:bg-(--ink-700)");
     expect(productionEventCalendarEventClassName(toProductionEventCalendarEvent(deadlineEvent("2026-08-27T09:00"))!.data, true)).toContain(override);
     const range = toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00")))!;
     const done = toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00"), { completed: true }))!;
     expect(productionEventCalendarEventClassName(range.data)).not.toContain("--focus-ring");
+    expect(productionEventCalendarEventClassName(range.data)).not.toContain("focus-visible:bg-");
     expect(productionEventCalendarEventClassName(done.data)).not.toContain("--focus-ring");
   });
 

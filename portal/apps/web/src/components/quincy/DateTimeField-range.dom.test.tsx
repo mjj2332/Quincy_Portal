@@ -135,6 +135,20 @@ describe("DateTimeField range trigger and popup", () => {
     expect(popup().querySelector('[data-day="2026-10-12"]')).toBeNull();
   });
 
+  it("keeps focus on the pressed preset when it moves the grid to another month, never dropping it to the popup (#598)", async () => {
+    await mount({ value: range("2026-09-28T09:00", "2026-10-03T17:00"), projectDefault: range("2026-09-25T09:00", "2026-12-12T17:00") });
+    await open();
+    await pickRangeEnd(popup(), "End");
+    const endDay = popup().querySelector<HTMLElement>('button[data-range-end="true"]')!;
+    await act(async () => { endDay.focus(); });
+    expect(document.activeElement).toBe(endDay);
+    const preset = popupButton(popup(), "Project default")!;
+    await pressInPopup(popup(), "Project default"); // the click does not move focus (Safari never does), the removed day was the focus
+    expect(popup().querySelector('[data-day="2026-12-12"]')).not.toBeNull();
+    expect(endDay.isConnected).toBe(false);
+    expect(document.activeElement).toBe(preset);
+  });
+
   it("picks the start, hands over to End, and keeps the preset times for a fresh range", async () => {
     const onApply = await mount();
     await open();

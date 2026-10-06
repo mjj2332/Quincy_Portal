@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { POPUP_STACKED_QUERY } from "@/lib/date-time-field";
 
 /**
  * #602: the date/time popups stack their three columns at the SAME width the calendar swaps to its
@@ -12,7 +13,7 @@ import { describe, expect, it } from "vitest";
 const here = dirname(fileURLToPath(import.meta.url));
 const read = (file: string) => readFileSync(join(here, file), "utf8");
 
-const STACKING_FILES = ["DateTimeRangePopup.tsx", "DateTimePopup.tsx", "ShortcutList.tsx", "TimeColumn.tsx"] as const;
+const STACKING_FILES = ["DateTimeRangePopup.tsx", "DateTimePopup.tsx", "ShortcutList.tsx", "TimeColumn.tsx", "PopupFrame.tsx"] as const;
 const CELL_BREAKPOINT = /max-\[(\d+)px\]:\[--cell-size:/.exec(read("CalendarPane.tsx"))?.[1];
 
 describe("date popup stacking breakpoint (#602)", () => {
@@ -39,5 +40,12 @@ describe("date popup stacking breakpoint (#602)", () => {
     const source = read("CalendarPane.tsx");
     expect(source).toContain("**:[.rdp-dropdown\\_root]:min-h-(--cell-size)");
     expect(source).toContain("pointer-coarse:**:[.rdp-dropdown\\_root]:min-h-[44px]");
+  });
+
+  it("DateTimeField's slide-over placement switches at the same width as the stack, from the shared query", () => {
+    const source = readFileSync(join(here, "../DateTimeField.tsx"), "utf8");
+    expect(POPUP_STACKED_QUERY).toBe(`(width < ${CELL_BREAKPOINT}px)`);
+    expect(source).not.toContain("40rem");
+    expect(source).toContain("useMediaQuery(POPUP_STACKED_QUERY)");
   });
 });

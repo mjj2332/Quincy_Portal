@@ -203,6 +203,9 @@ export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, 
   return Math.min(Math.max(scrollTop, safe.low), safe.high);
 }
 
+/** #602: below this width the popup stacks its columns, the calendar takes 44px cells and the popup may cover its trigger. Tailwind's `max-[721px]:` compiles to this same `(width < 721px)`. */
+export const POPUP_STACKED_QUERY = "(width < 721px)";
+
 /**
  * How a date popup resolves its collision policy (#447, #528): below `sm` it shifts over its
  * trigger; above, it stays on one axis. A caller's override replaces the default outright, and an

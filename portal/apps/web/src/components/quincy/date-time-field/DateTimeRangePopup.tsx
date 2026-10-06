@@ -233,7 +233,9 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
     setMonth(civilToCell(day));
   };
 
-  const pickShortcut = (shortcut: ReturnType<typeof buildRangeShortcuts>[number]) => {
+  const pickShortcut = (shortcut: ReturnType<typeof buildRangeShortcuts>[number], button: HTMLElement) => {
+    // #598: moving the grid to another month removes the focused day; keep focus on the preset instead of letting it fall to the popup.
+    button.focus({ preventScroll: true });
     const range = shortcut.resolve();
     const startParts = splitCivilMinute(range.start.localCivil);
     const endParts = splitCivilMinute(range.end.localCivil);
