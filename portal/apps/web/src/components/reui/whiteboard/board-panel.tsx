@@ -352,7 +352,7 @@ export function PanelRow({
       draggable={draggable || undefined}
       onDragStart={onDragStart}
       className={cn(
-        "data-current:bg-muted has-[[data-row-select]:focus-visible]:border-ring has-[[data-row-select]:focus-visible]:ring-ring/50 relative flex-nowrap has-[[data-row-select]:focus-visible]:ring-inset",
+        "data-current:bg-muted relative flex-nowrap",
         interactive && "hover:bg-muted/50",
         draggable && "cursor-grab active:cursor-grabbing"
       )}

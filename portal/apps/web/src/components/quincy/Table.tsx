@@ -17,7 +17,10 @@ function TableWrap({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="table-wrap"
       className={cn(
-        "w-full min-[721px]:overflow-x-auto",
+        // `relative` is load-bearing: the sr-only "Actions" header label is absolutely positioned, and
+        // an overflow clip only contains absolute descendants when the clipping box is itself
+        // positioned. Without it the label escaped and the whole page scrolled sideways at 721-1000px.
+        "relative w-full min-[721px]:overflow-x-auto",
         "min-[721px]:border-solid min-[721px]:border-[length:var(--border-width-hair)] min-[721px]:border-border min-[721px]:bg-card",
         className,
       )}

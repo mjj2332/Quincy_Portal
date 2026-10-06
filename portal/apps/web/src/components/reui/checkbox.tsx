@@ -28,11 +28,14 @@ function Checkbox({ className, ...props }: CheckboxPrimitive.Root.Props) {
         // Tailwind's `@layer utilities`, so `outline-none` suppressed nothing and only tripped the
         // WCAG 2.4.7 detector, while the ring painted a second indicator the merge cannot collapse
         // against the global outline (`box-shadow` vs `outline`). `focus-visible:border-ring` is
-        // KEPT — the box rests on a visible `border-input`, so that recolours existing paint
-        // rather than adding a ring. Same correction as `reui/button.tsx` divergence 5 and
+        // REMOVED too (#633 item 1): an unchecked box rests on `border-input`, so recolouring it on
+        // focus drew a second line a few px inside the outline. The CHECKED border
+        // (`data-checked:border-primary`) is the state indicator and stays, as do its
+        // `aria-invalid` colours; the two `group-has-[:focus-visible]/field-label:` border
+        // resets existed only to undo the field-label's focus border and went with it. Same correction as `reui/button.tsx` divergence 5 and
         // `reui/input.tsx` divergence 4; `group-has-[:focus-visible]/field-label:ring-0` is left
         // alone, it only suppresses a ring that no longer exists.
-        "peer relative flex size-4 shrink-0 items-center justify-center rounded-[var(--radius-sm)] border border-input transition-colors group-has-disabled/field:opacity-50 group-has-[:focus-visible]/field-label:ring-0 group-has-[:focus-visible]/field-label:not-data-checked:border-input after:absolute after:-inset-x-3 after:-inset-y-2 focus-visible:border-ring data-disabled:cursor-not-allowed data-disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 aria-invalid:aria-checked:border-primary data-checked:border-primary data-checked:bg-primary data-checked:text-primary-foreground group-has-[:focus-visible]/field-label:data-checked:border-primary",
+        "peer relative flex size-4 shrink-0 items-center justify-center rounded-[var(--radius-sm)] border border-input transition-colors group-has-disabled/field:opacity-50 group-has-[:focus-visible]/field-label:ring-0 after:absolute after:-inset-x-3 after:-inset-y-2 data-disabled:cursor-not-allowed data-disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 aria-invalid:aria-checked:border-primary data-checked:border-primary data-checked:bg-primary data-checked:text-primary-foreground",
         className
       )}
       {...props}
