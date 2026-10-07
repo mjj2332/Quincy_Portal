@@ -5987,7 +5987,6 @@ Tags: scheduling, focus-overlays · #683
 Guards: `lib/date-time-range.test.ts`, `DateTimeField-range.dom.test.tsx`, `DateTimeField-range-reminders.dom.test.tsx`.
 
 ## A nested scroller taller than its host's window traps the wheel (#686)
-
 Tags: focus-overlays, css-tokens · #686
 
 At a landscape phone's height the date popups' body was a ~68px window (header, Start/End toggle and footer took the rest), and the
