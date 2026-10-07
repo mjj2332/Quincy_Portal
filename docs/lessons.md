@@ -5915,6 +5915,17 @@ only a browser at 390px proves it (jsdom has no geometry): see the map's measure
   every width (the owner's decision, superseding #597's 32px), and the active shortcut chip (`aria-pressed`) joins `noSliver`
   next to the pressed slot. Row 1 may still straddle the top edge (scrolled off, not fade-slivered); only the active chip is
   protected.
+- **#677: the TIME field starts below the fold at 390, and the 110 landing sliced it.** The Table Today/Tomorrow landing (110)
+  left 4.31px of the TIME input in the bottom fade; the Checklist range picker left 6.3px of the START TIME label cut by the
+  body's edge. The fix is a constraint on that landing, not a new snap: `PopupFrame` (open only) passes the `data-time-boundary`
+  Field's input and label as `boundaries`, and the preset chips as `chips`. A landing that already clears them stays (no-shortcut
+  50, Next week 50). Otherwise the smallest whole scroll at which the input is wholly below the body wins (Table Today/Tomorrow
+  and Checklist 102), provided no `noSliver` item is slivered and no preset chip crosses the top fade's inner edge. **A label
+  wholly inside the bottom band is allowed** (the "more below" cue, the mirror of #674's accepted top tail); only a label or
+  input cut by the body's bottom edge is rejected. Trap: putting the Field in `noSliver` without the bottom candidates scrolls
+  the presets away (~170-198). Nothing valid keeps the previous landing. The whole Field (label + input) as the boundary has no
+  valid Table landing, since it needs scroll <= 83 while the row-2 chips need >= 102. Guards: `lib/date-time-field.test.ts`
+  ("#677"), `PopupFrame-presets.dom.test.tsx`.
 
 ## Focus scrolls a mid-form field flush and clips its ring; an inactive window hides the ring in screenshots (#673)
 Tags: focus-overlays, css-tokens · #673

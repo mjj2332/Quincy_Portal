@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, type ReactNode, type Ref, type RefObject } from "react";
-import { measureFade, scrollTopClearOfFade, type FadeItem } from "@/lib/date-time-field";
+import { measureFade, scrollTopClearOfFade, type BottomBoundary, type FadeItem } from "@/lib/date-time-field";
 import { SHORTCUTS_LABEL } from "./ShortcutList";
 import { Button } from "@/components/reui/button";
 import { ScrollArea } from "@/components/reui/scroll-area";
@@ -74,7 +74,17 @@ function useSelectedClearOfFade(contentRef: RefObject<HTMLDivElement | null>, re
       const after = group.nextElementSibling;
       return [0, ...tops, ...(after ? [at(after)] : [])];
     };
-    const solve = (items: FadeItem[], fade: number, snaps?: number[], noSliver?: FadeItem[]) => scrollTopClearOfFade({ viewport: viewport.getBoundingClientRect(), scrollTop: viewport.scrollTop, maxScrollTop: viewport.scrollHeight - viewport.clientHeight, fade, items, ...(snaps ? { snaps } : {}), ...(noSliver ? { noSliver } : {}) });
+    // #677: at open only, the TIME field(s) that start below the fold (marked `data-time-boundary`: the input and its label) and the preset chips, so the landing
+    // never leaves the input in the bottom fade or the label cut by the body's edge, and never cuts a chip across the top fade's inner edge.
+    const bottomBoundaries = (): BottomBoundary[] => [...viewport.querySelectorAll("[data-time-boundary]")].flatMap((field) => {
+      const control = field.querySelector("input");
+      const label = field.querySelector("label");
+      if (!control) return [];
+      const rect = (el: Element) => { const { top, bottom } = el.getBoundingClientRect(); return { top, bottom }; };
+      return [{ control: rect(control), ...(label ? { label: rect(label) } : {}) }];
+    });
+    const presetChips = () => [...viewport.querySelectorAll(`[role="list"][aria-label="${SHORTCUTS_LABEL}"] button`)].map((chip) => { const { top, bottom } = chip.getBoundingClientRect(); return { top, bottom }; });
+    const solve = (items: FadeItem[], fade: number, snaps?: number[], noSliver?: FadeItem[], below?: { boundaries: BottomBoundary[]; chips: FadeItem[] }) => scrollTopClearOfFade({ viewport: viewport.getBoundingClientRect(), scrollTop: viewport.scrollTop, maxScrollTop: viewport.scrollHeight - viewport.clientHeight, fade, items, ...(snaps ? { snaps } : {}), ...(noSliver ? { noSliver } : {}), ...(below?.boundaries.length ? below : {}) });
     const nudge = (fromTop: boolean, withReveal: boolean) => {
       const fade = measure();
       // #630: an automatic solve (open, resize) always starts from the top, focus or not (the opening focus is on the picked day, so a
@@ -91,7 +101,7 @@ function useSelectedClearOfFade(contentRef: RefObject<HTMLDivElement | null>, re
       // Only the open/resize solve snaps: a selection change or focus keeps its least-scroll move.
       // #636, #674: the pressed slot and the active shortcut chip are not solved for at open, but must not be left partly under a fade.
       const slots = fromTop ? [...viewport.querySelectorAll(`${PRESSED_SLOT}, ${ACTIVE_CHIP}`)].filter((slot) => !elements.has(slot)).map((slot) => { const { top, bottom } = slot.getBoundingClientRect(); return { top, bottom }; }) : [];
-      write(solve([...elements].map((item) => { const { top, bottom } = item.getBoundingClientRect(); return { top, bottom, required: required.has(item), priority: item === focus }; }), fade, fromTop ? presetSnaps() : undefined, slots.length ? slots : undefined));
+      write(solve([...elements].map((item) => { const { top, bottom } = item.getBoundingClientRect(); return { top, bottom, required: required.has(item), priority: item === focus }; }), fade, fromTop ? presetSnaps() : undefined, slots.length ? slots : undefined, fromTop ? { boundaries: bottomBoundaries(), chips: presetChips() } : undefined));
     };
     revealNow.current = () => { noticeScroll(); nudge(false, true); };
     const automatic = () => { noticeScroll(); if (!userScrolled) nudge(true, true); };
