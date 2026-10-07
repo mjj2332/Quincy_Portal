@@ -133,7 +133,10 @@ export function applyRangeShortcut(row: RangeShortcut, active: RangeEnd, current
     const oldEnd = civilMinutes(current.end.civil);
     const newStart = civilMinutes(moment.localCivil);
     if (oldStart === null || oldEnd === null || newStart === null || oldEnd <= oldStart) return fromPair;
-    return { start: moment, end: { localCivil: civilFromMinutes(newStart + (oldEnd - oldStart)), fold: 0 } };
+    const shifted: RangeMoment = { localCivil: civilFromMinutes(newStart + (oldEnd - oldStart)), fold: 0 };
+    // The civil shift can land in a daylight-saving gap (a minute Sydney skips): the pair's end is always a real minute.
+    if (epochOf(shifted) === null) return fromPair;
+    return { start: moment, end: shifted };
   }
   if (newEpoch > other.epochMs) return { start: "keep", end: moment };
   return fromPair;
