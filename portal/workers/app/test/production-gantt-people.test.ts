@@ -149,9 +149,25 @@ describe("/api/production-gantt People, Unassigned and My tasks (#429)", () => {
     expect(mine(mixed.body)).toEqual([g1, g3, g6].sort());
   });
 
-  it("My tasks is People = me: the session user as Editor or checklist assignee", async () => {
+  it("My tasks on the Timeline (#680): every Subtask of a Project I edit, only my own in a Project I do not", async () => {
     const { body } = await get<Body>(`${base}&mine=1&dm=1`, tokens.alex);
     expect(mine(body)).toEqual([g1, g3, g6].sort());
+    expect(titles(rowOf(body, g1))).toEqual(["A1", "B1"]);
+    expect(rowOf(body, g1)?.children.total).toBe(2);
+    expect(rowOf(body, g1)?.deadlineInScope).toBe(true);
+    expect(titles(rowOf(body, g3))).toEqual(["A3"]);
+    expect(rowOf(body, g3)?.deadlineInScope).toBe(false);
+    // Standalone child page agrees.
+    const page = await get<ChildBody>(`scope=active&childrenOf=${g1}&mine=1`, tokens.alex);
+    expect(page.body.children.rows.map((child) => child.title)).toEqual(["A1", "B1"]);
+    expect(page.body.children.total).toBe(2);
+    // The density count sees B1 too.
+    const unfiltered = await get<Body>(`${base}&mine=1`, tokens.alex);
+    expect(unfiltered.body.density.matchedRows).toBeGreaterThanOrEqual(4);
+  });
+
+  it("People = me stays per-assignee on the Timeline (#680 knowingly diverges from #429's equivalence)", async () => {
+    const { body } = await get<Body>(`${base}&editors=${alexId}&dm=1`, tokens.alex);
     expect(titles(rowOf(body, g1))).toEqual(["A1"]);
   });
 
