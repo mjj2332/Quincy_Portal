@@ -28,6 +28,15 @@ describe("TimeColumn slot ring is inward and survives twMerge", () => {
     const merged = cn("w-full justify-center", RING_IN).split(/\s+/);
     for (const token of RING_IN.split(/\s+/)) expect(merged).toContain(token);
   });
+  it("rings the pressed (ink-filled) slot in paper, inward, so it shows on its own fill (F1)", () => {
+    expect(tag).toContain("aria-pressed:focus-visible:!outline-[var(--primary-foreground)]");
+    expect(tag).toContain("aria-pressed:focus-visible:!outline-offset-[-4px]");
+  });
+  it("keeps both pressed-ring tokens after cn()", () => {
+    const merged = cn("w-full", RING_IN, "aria-pressed:focus-visible:!outline-[var(--primary-foreground)] aria-pressed:focus-visible:!outline-offset-[-4px]").split(/\s+/);
+    expect(merged).toContain("aria-pressed:focus-visible:!outline-[var(--primary-foreground)]");
+    expect(merged).toContain("aria-pressed:focus-visible:!outline-offset-[-4px]");
+  });
   it("gives the column viewport no Tab stop of its own", () => {
     expect(source).toContain("viewportProps={{ tabIndex: -1 }}");
   });
