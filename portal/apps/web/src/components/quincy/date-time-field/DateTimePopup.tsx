@@ -7,7 +7,7 @@ import { useMediaQuery } from "@/lib/use-media-query";
 import { CalendarPane } from "./CalendarPane";
 import { FoldChoice } from "./FoldChoice";
 import { NextReminder } from "./NextReminder";
-import { PopupFrame } from "./PopupFrame";
+import { PopupFrame, REVEAL_TODAY } from "./PopupFrame";
 import { RemindersStrip } from "./RemindersStrip";
 import { ShortcutList } from "./ShortcutList";
 import { TimeColumn } from "./TimeColumn";
@@ -135,7 +135,7 @@ function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedba
   useLayoutEffect(() => {
     if (!focusOnMount) return;
     const body = bodyRef.current;
-    (body?.querySelector<HTMLElement>('[aria-selected="true"] button') ?? body?.querySelector<HTMLElement>("button"))?.focus({ preventScroll: true });
+    (body?.querySelector<HTMLElement>('[aria-selected="true"] button') ?? (short ? body?.querySelector<HTMLElement>(REVEAL_TODAY) : null) ?? body?.querySelector<HTMLElement>("button"))?.focus({ preventScroll: true });
     // Mount only: Base UI owns focus for the cached-detail case, this covers a late mount.
   }, []);
 
@@ -216,7 +216,7 @@ function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedba
   const hint = draft.touched && !draft.clear && civil === null && !timeInvalid ? "Pick a date and a time." : null;
 
   return (
-    <PopupFrame label={label} zoneId={zoneId} bodyRef={bodyRef} applying={applying} applyDisabled={blocked || busy} scrollTitle={short} onCancel={onClose} onApply={() => { void apply(); }}>
+    <PopupFrame label={label} zoneId={zoneId} bodyRef={bodyRef} applying={applying} applyDisabled={blocked || busy} scrollTitle={short} revealFallback={short ? REVEAL_TODAY : undefined} onCancel={onClose} onApply={() => { void apply(); }}>
       <div className="flex flex-col gap-[var(--space-4)]">
         <div className="flex flex-col gap-[var(--space-4)] min-[721px]:flex-row">
           {ordered(calendarFirst, [

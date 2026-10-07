@@ -250,7 +250,9 @@
  * `GanttCreateTaskContext`. Covered by `gantt-create-task.dom.test.tsx`.
  *
  * 2026-10-07, #686 — CHANGED (class only): the `+` start margin is `ms-2` (was `ms-1`) so its outward
- * focus ring clears the group title it follows.
+ * focus ring clears the group title it follows. The title beside it (`GanttResourceLabel` in `ProductionGantt.tsx`, the
+ * consumer's `renderResourceLabel`) is `min-w-0 truncate` below 721px, the 96px floor only above, so it shrinks and
+ * ends in an ellipsis before the `+` instead of being clipped under it (this file's own default label is already `truncate`).
  */
 
 import {

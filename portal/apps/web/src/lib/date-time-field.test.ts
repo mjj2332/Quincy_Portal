@@ -517,4 +517,10 @@ describe("scrollTopClearOfFade TIME boundary below the fold (#677)", () => {
     const low = { ...table, items: [day(560, 606)], noSliver: undefined, chips: chips() };
     expect(scrollTopClearOfFade({ ...low, boundaries: [boundary()] })).toBe(scrollTopClearOfFade({ ...low }));
   });
+
+  it("a short body whose input starts inside it (844x390) scrolls the input clear of the bottom band instead of keeping a sliver (#686)", () => {
+    // 194px body, 24px fades, 40px of scroll: the input (top 173.9) cannot be put wholly below the body, but at 28 its bottom clears the shrinking band.
+    const short = { viewport: { top: 0, bottom: 194 }, scrollTop: 0, maxScrollTop: 40, fade: 24, snaps: [0], items: [{ top: 100, bottom: 140, required: true }], boundaries: [{ control: { top: 173.9, bottom: 211.9 }, label: { top: 160, bottom: 172 } }] };
+    expect(scrollTopClearOfFade(short)).toBe(28);
+  });
 });

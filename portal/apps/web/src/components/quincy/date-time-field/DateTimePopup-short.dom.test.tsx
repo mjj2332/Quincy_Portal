@@ -55,9 +55,9 @@ async function settle() {
   await act(async () => { await Promise.resolve(); await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
 }
 
-async function open(onApply: (next: DateTimeApply) => void = vi.fn()) {
+async function open(onApply: (next: DateTimeApply) => void = vi.fn(), value: { localCivil: string } | null = { localCivil: "2026-10-15T09:00" }) {
   await act(async () => {
-    root.render(<DateTimeField variant="date-time" id="deadline" label="Deadline" value={{ localCivil: "2026-10-15T09:00" }} clearable={false} onApply={onApply} />);
+    root.render(<DateTimeField variant="date-time" id="deadline" label="Deadline" value={value} clearable={false} onApply={onApply} />);
     await Promise.resolve();
   });
   await act(async () => { host.querySelector<HTMLButtonElement>("button#deadline")!.click(); await Promise.resolve(); await Promise.resolve(); });
@@ -117,5 +117,24 @@ describe("DateTimePopup at a short height (#686)", () => {
     expect(slots(after)).not.toBeNull();
     expect(popupTimeInput(after).value).toBe("17:07");
     expect(popupDraft(after)).toEqual({ day: "2026-10-15", time: "17:07" });
+  });
+});
+
+describe("an empty field late in the month (#686)", () => {
+  const LATE = new Date("2026-10-28T02:00:00Z"); // Wed 28 Oct, 13:00 in Sydney
+  const focusedDay = () => (document.activeElement as HTMLElement | null)?.closest("td[data-day]")?.getAttribute("data-day") ?? null;
+
+  it("short: opening focus lands on today, not the calendar's first control", async () => {
+    vi.setSystemTime(LATE);
+    setMatching(POPUP_SHORT_QUERY, POPUP_STACKED_QUERY);
+    await open(vi.fn(), null);
+    expect(focusedDay()).toBe("2026-10-28");
+  });
+
+  it("tall: opening focus is unchanged", async () => {
+    vi.setSystemTime(LATE);
+    setMatching(POPUP_STACKED_QUERY);
+    await open(vi.fn(), null);
+    expect(focusedDay()).toBeNull();
   });
 });

@@ -217,7 +217,7 @@ function nearestClearScroll(window: { low: number; high: number }, slivered: (sc
  *
  * #677 — `boundaries` (the TIME input and its label, which start below the fold) and `chips` (the preset chips) only ever tighten the landing above: when it already
  * leaves each input clear of the bottom band and each label uncut by the body's edge it stands; otherwise the smallest whole scroll with every input wholly below the
- * body, no `noSliver` item slivered and no chip crossing the top band's inner edge wins (a label wholly inside the bottom band is fine); none valid keeps the landing.
+ * body or (#686, a short body that holds it from the start) clear of the bottom band, no `noSliver` item slivered and no chip crossing the top band's inner edge wins (a label wholly inside the bottom band is fine); none valid keeps the landing.
  */
 export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, items, snaps, noSliver, boundaries, chips }: { viewport: EdgeRect; scrollTop: number; maxScrollTop: number; fade: number; items: readonly FadeItem[]; snaps?: readonly number[]; noSliver?: readonly EdgeRect[]; boundaries?: readonly BottomBoundary[]; chips?: readonly EdgeRect[] }): number {
   const height = viewport.bottom - viewport.top;
@@ -301,8 +301,9 @@ export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, 
     const edge = Math.min(fade, s);
     return top < edge && bottom > edge;
   });
-  const lastBelow = Math.floor(Math.min(...boundaries.map(({ control }) => control.top - viewport.top + scrollTop)) - height + 1e-9);
-  for (let s = Math.ceil(safe.low - 1e-9); s <= Math.min(safe.high, lastBelow); s += 1) if (!slivered(s) && bottomOk(s) && !crossesInnerEdge(s)) return s;
+  // #686: not capped at "wholly below the body": a short body (844x390) holds the input from the start, and the only valid rests are those that scroll it up clear of
+  // the bottom band (which shrinks to nothing at the end of the scroll). Ascending, so a scroll that leaves it wholly below still wins when there is one.
+  for (let s = Math.ceil(safe.low - 1e-9); s <= safe.high; s += 1) if (!slivered(s) && bottomOk(s) && !crossesInnerEdge(s)) return s;
   return legacy;
 }
 

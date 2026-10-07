@@ -5,14 +5,14 @@ import { FIELD_BOX } from "@/components/reui/input";
 import { PopoverContent, Popover, PopoverTrigger } from "@/components/reui/popover";
 import { isSydneyCalendarDate } from "@quincy/shared";
 import { formatCivilDay, formatCivilRange } from "@/lib/date-format";
-import { buildShortcuts, DATE_TIME_POPUP_EDGE_GAP, POPUP_STACKED_QUERY, popupPaddingWithTopAtLeast, civilToCell, resolveDateTimePopupPlacement, sydneyToday, yearBounds, type PopupCollisionAvoidance, type PopupCollisionPadding } from "@/lib/date-time-field";
+import { buildShortcuts, DATE_TIME_POPUP_EDGE_GAP, POPUP_SHORT_QUERY, POPUP_STACKED_QUERY, popupPaddingWithTopAtLeast, civilToCell, resolveDateTimePopupPlacement, sydneyToday, yearBounds, type PopupCollisionAvoidance, type PopupCollisionPadding } from "@/lib/date-time-field";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { useReresolveOnResize } from "@/lib/use-reresolve-on-resize";
 import { cn } from "@/lib/utils";
 import { CalendarPane } from "./date-time-field/CalendarPane";
 import { DateTimePopup, PopupAnchorContext, type DateTimeApply, type DateTimePopupProps, type DateTimeStored } from "./date-time-field/DateTimePopup";
 import { DateTimeRangePopup, type DateTimeRangeApply, type DateTimeRangePopupProps } from "./date-time-field/DateTimeRangePopup";
-import { PopupFrame } from "./date-time-field/PopupFrame";
+import { PopupFrame, REVEAL_TODAY } from "./date-time-field/PopupFrame";
 import { ShortcutList } from "./date-time-field/ShortcutList";
 
 export { DateTimePopup, PopupAnchorContext };
@@ -177,6 +177,7 @@ export function DateTimePopoverContent({ label, className, children, popupCollis
   // Below 721px the popup may cover its trigger: "shift" on y gives --available-height the whole
   // viewport (minus padding) instead of the sliver above or below the field (#447).
   const narrow = useMediaQuery(POPUP_STACKED_QUERY);
+  const short = useMediaQuery(POPUP_SHORT_QUERY);
   // ~530-680px tall: if it fits neither side, stay above/below and scroll the body rather than opening sideways.
   const { collisionAvoidance, collisionPadding } = resolveDateTimePopupPlacement({ narrow, avoidance: popupCollisionAvoidance, padding: popupCollisionPadding });
   return (
@@ -189,7 +190,7 @@ export function DateTimePopoverContent({ label, className, children, popupCollis
       aria-describedby={zoneId}
       // preventScroll: Base UI's own focus() would scroll a short body past the month navigation and presets (#528).
       initialFocus={() => {
-        const target = bodyRef.current?.querySelector<HTMLElement>('[data-initial-focus="true"]') ?? bodyRef.current?.querySelector<HTMLElement>('[aria-selected="true"] button') ?? bodyRef.current?.querySelector<HTMLElement>("button");
+        const target = bodyRef.current?.querySelector<HTMLElement>('[data-initial-focus="true"]') ?? bodyRef.current?.querySelector<HTMLElement>('[aria-selected="true"] button') ?? (short ? bodyRef.current?.querySelector<HTMLElement>(REVEAL_TODAY) : null) ?? bodyRef.current?.querySelector<HTMLElement>("button");
         if (!target) return true;
         target.focus({ preventScroll: true });
         return false;

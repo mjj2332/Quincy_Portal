@@ -558,7 +558,7 @@ function GanttResourceLabel({
     <span className="flex min-w-0 items-center gap-1.5">
       {/* The street keeps a `--space-9` (96px = the old 6rem) floor while taking every remaining
           pixel; the attention badge yields to it (see `hideAttentionBadgeFor`). */}
-      <span className="min-w-[var(--space-9)] flex-1 truncate">
+      <span className="min-w-0 min-[721px]:min-w-[var(--space-9)] flex-1 truncate">
         {projectHrefFor && resource.id.startsWith("project:") ? (
           <ProjectCalendarAnchor
             testId="gantt-project-link"

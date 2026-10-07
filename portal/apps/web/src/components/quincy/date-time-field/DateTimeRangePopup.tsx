@@ -12,7 +12,7 @@ import { CalendarPane } from "./CalendarPane";
 import { FoldChoice } from "./FoldChoice";
 import { NextReminder } from "./NextReminder";
 import { ordered, PopupAnchorContext, type DateTimeReminders, type Disambiguation } from "./DateTimePopup";
-import { PopupFrame } from "./PopupFrame";
+import { PopupFrame, REVEAL_TODAY } from "./PopupFrame";
 import { RemindersStrip } from "./RemindersStrip";
 import { ShortcutList } from "./ShortcutList";
 import { TimeColumn } from "./TimeColumn";
@@ -173,7 +173,7 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
   useLayoutEffect(() => {
     if (!focusOnMount) return;
     const body = bodyRef.current;
-    (body?.querySelector<HTMLElement>('[data-initial-focus="true"]') ?? body?.querySelector<HTMLElement>('[aria-selected="true"] button') ?? body?.querySelector<HTMLElement>("button"))?.focus({ preventScroll: true });
+    (body?.querySelector<HTMLElement>('[data-initial-focus="true"]') ?? body?.querySelector<HTMLElement>('[aria-selected="true"] button') ?? (short ? body?.querySelector<HTMLElement>(REVEAL_TODAY) : null) ?? body?.querySelector<HTMLElement>("button"))?.focus({ preventScroll: true });
     // Mount only: Base UI owns focus for the ordinary open, this covers a late mount.
   }, []);
 
@@ -324,6 +324,7 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
       applying={applying}
       applyDisabled={blocked}
       scrollTitle={short}
+      revealFallback={short ? REVEAL_TODAY : undefined}
       reveal={`button[data-range-${active}="true"], button[data-selected-single="true"]`}
       onCancel={onCancel ?? onClose}
       onApply={() => { void apply(); }}
