@@ -6010,7 +6010,7 @@ Tags: gantt-calendar, focus-overlays · #688
 Guards: `gantt-create-task.dom.test.tsx` ("Escape on the desktop row"), `ProductionGantt-create-draft.dom.test.tsx`.
 
 ## A touch phone matches `pointer-coarse:` too, and that variant wins the cascade (#692, #693)
-Tags: css-tokens, gantt-calendar · #692 #693
+Tags: css-tokens, gantt-calendar · #692, #693
 
 - **The breakpoint spelling.** The phone breakpoint is `max-[721px]:` / `min-[721px]:`.
   - `max-[720px]:` compiles to `width < 720`, so at exactly 720 neither the phone nor the desktop variant applied.
