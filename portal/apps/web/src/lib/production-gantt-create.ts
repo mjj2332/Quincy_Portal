@@ -24,7 +24,8 @@
  * reconciliation reports the pin as `newlyCapped` so the caller can say so.
  */
 import type { Query, QueryCacheNotifyEvent } from "@tanstack/react-query";
-import type { GanttChecklistRowDto, GanttProjectRowDto } from "@quincy/shared";
+import { checklistScheduleToDto, normalizeChecklistSchedule, SUBTASK_REMINDER_DEFAULT_OFFSETS, type ChecklistScheduleDto, type GanttChecklistRowDto, type GanttProjectRowDto, type RangeChecklistScheduleInput } from "@quincy/shared";
+import { sameReminderOffsets } from "./date-time-field";
 import { buildProductionGanttModel, type ProductionGanttModel } from "./production-gantt-adapter";
 import type { ProjectSubtask } from "./project-data";
 
@@ -39,14 +40,60 @@ export type PinnedCreatedRow = {
 
 const READ_ONLY = { canDrag: false, canResize: false, canOpenScheduleEditor: false, canEditAssignees: false } as const;
 
-/** The created Subtask as a Gantt child row: unassigned (a title-only create), read-only until the real row arrives. */
-export function pinFromCreated(projectId: string, created: Pick<ProjectSubtask, "id" | "title" | "done" | "position" | "schedule" | "reminders">, stamp: number, generationKey: string): PinnedCreatedRow {
+/**
+ * The created Subtask as a Gantt child row, read-only until the real row arrives. It keeps the
+ * assignees, hidden count and assignment version the server returned (#678: the add-task draft can
+ * pick assignees); a create that returned none is unassigned.
+ */
+export function pinFromCreated(
+  projectId: string,
+  created: Pick<ProjectSubtask, "id" | "title" | "done" | "position" | "schedule" | "reminders"> & Partial<Pick<ProjectSubtask, "assignees" | "otherAssigneeCount" | "assignmentVersion">>,
+  stamp: number,
+  generationKey: string,
+): PinnedCreatedRow {
   return {
-    row: { id: created.id, projectId, title: created.title, done: created.done, position: created.position, assignees: [], otherAssigneeCount: 0, assignmentVersion: 0, schedule: created.schedule, reminders: created.reminders, permissions: { ...READ_ONLY } },
+    row: { id: created.id, projectId, title: created.title, done: created.done, position: created.position, assignees: created.assignees ?? [], otherAssigneeCount: created.otherAssigneeCount ?? 0, assignmentVersion: created.assignmentVersion ?? 0, schedule: created.schedule, reminders: created.reminders, permissions: { ...READ_ONLY } },
     generationKey,
     stamp,
     hiddenAtStamp: null,
   };
+}
+
+/**
+ * #678: the consumer's half of the Gantt's add-task draft (the title lives in the vendor editor
+ * row): the Assignees and Due the row's own cells collect before the one create.
+ */
+export type CreateDraft = {
+  assignees: Array<{ id: string; name: string }>;
+  /** The range the user applied; null keeps the server's Project default (ADR 0011). */
+  schedule: RangeChecklistScheduleInput | null;
+  /** A real resolution of `schedule`, for the picker's trigger. */
+  preview: ChecklistScheduleDto | null;
+  reminders: number[];
+};
+
+export const EMPTY_CREATE_DRAFT: CreateDraft = { assignees: [], schedule: null, preview: null, reminders: [...SUBTASK_REMINDER_DEFAULT_OFFSETS] };
+
+export type CreateSubtaskBody = { title: string; assigneeIds?: string[]; schedule?: RangeChecklistScheduleInput; reminderOffsetsMinutes?: number[] };
+
+/** Anything chosen beyond the defaults: with a typed title it decides whether another Project's `+` may move the editor. */
+export function createDraftIsDirty(draft: CreateDraft): boolean {
+  return draft.assignees.length > 0 || draft.schedule !== null || !sameReminderOffsets(draft.reminders, SUBTASK_REMINDER_DEFAULT_OFFSETS);
+}
+
+/** The Checklist composer's body (`SubtaskChecklist.add`): optional fields only when set, so the server's defaults stay authoritative. */
+export function buildCreateSubtaskBody(title: string, draft: CreateDraft): CreateSubtaskBody {
+  const body: CreateSubtaskBody = { title };
+  if (draft.schedule) body.schedule = draft.schedule;
+  if (!sameReminderOffsets(draft.reminders, SUBTASK_REMINDER_DEFAULT_OFFSETS)) body.reminderOffsetsMinutes = draft.reminders;
+  if (draft.assignees.length) body.assigneeIds = draft.assignees.map((person) => person.id);
+  return body;
+}
+
+/** The range an applied request resolves to, for the picker's trigger; never a hand-built DTO. */
+export function createSchedulePreview(input: RangeChecklistScheduleInput): ChecklistScheduleDto | null {
+  const result = normalizeChecklistSchedule(input, 1);
+  return result.ok ? checklistScheduleToDto(result.value) : null;
 }
 
 /** Appends each applicable pin to its project's children when the id is absent. Identity-preserving when nothing applies. */

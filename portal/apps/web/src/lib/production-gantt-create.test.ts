@@ -2,7 +2,8 @@
 import { InfiniteQueryObserver, QueryClient, type InfiniteData } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import { PRODUCTION_GANTT_DRAW_CAP, type GanttProjectRowDto } from "@quincy/shared";
-import { buildPinnedGanttModel, GanttFullFetchLedger, pinFromCreated, reconcilePinnedCreatedRows, subscribeGanttFullFetchLedger, withPinnedCreatedRows } from "./production-gantt-create";
+import { buildCreateSubtaskBody, buildPinnedGanttModel, createDraftIsDirty, EMPTY_CREATE_DRAFT, GanttFullFetchLedger, pinFromCreated, reconcilePinnedCreatedRows, subscribeGanttFullFetchLedger, withPinnedCreatedRows } from "./production-gantt-create";
+import { SUBTASK_REMINDER_DEFAULT_OFFSETS } from "@quincy/shared";
 import { startMoment, endMoment, subtaskReminders } from "@/testing/subtask-schedule";
 // The server applies the Project default range on a title-only create (#339): every Subtask is a range (ADR 0011).
 const schedule = { state: "range", version: 1, zone: "Australia/Sydney", start: startMoment("2026-08-01"), end: endMoment("2026-08-02"), due: "2026-08-02" } as never;
@@ -234,3 +235,38 @@ function ganttProject(id: string, ids: string[]): GanttProjectRowDto {
     },
   } as unknown as GanttProjectRowDto;
 }
+
+describe("pinFromCreated keeps what the server returned (#678)", () => {
+  const ada = { id: "u1", name: "Ada", roleLabel: "Editor", isExternal: false, active: true };
+  it("carries the created Subtask's assignees, hidden count and assignment version", () => {
+    const pin = pinFromCreated("p1", { ...created, assignees: [ada], otherAssigneeCount: 2, assignmentVersion: 4 }, 100, "g");
+    expect(pin.row).toMatchObject({ assignees: [ada], otherAssigneeCount: 2, assignmentVersion: 4 });
+    // still read-only until the authoritative row arrives
+    expect(pin.row.permissions).toEqual({ canDrag: false, canResize: false, canOpenScheduleEditor: false, canEditAssignees: false });
+  });
+});
+
+describe("the add-task draft's request body (#678)", () => {
+  const ada = { id: "u1", name: "Ada" };
+  const range = { state: "range", start: { localCivil: "2026-10-08T09:00", disambiguation: "earlier" }, end: { localCivil: "2026-10-09T17:00", disambiguation: "earlier" } } as never;
+
+  it("an untouched draft sends the title alone, so the server's defaults stay authoritative", () => {
+    expect(buildCreateSubtaskBody("Cull", EMPTY_CREATE_DRAFT)).toEqual({ title: "Cull" });
+    expect(Object.keys(buildCreateSubtaskBody("Cull", EMPTY_CREATE_DRAFT))).toEqual(["title"]);
+  });
+
+  it("sends assigneeIds only when someone is chosen, schedule only when set, reminders only when non-default", () => {
+    expect(buildCreateSubtaskBody("Cull", { ...EMPTY_CREATE_DRAFT, assignees: [ada] })).toEqual({ title: "Cull", assigneeIds: ["u1"] });
+    expect(buildCreateSubtaskBody("Cull", { ...EMPTY_CREATE_DRAFT, schedule: range })).toEqual({ title: "Cull", schedule: range });
+    expect(buildCreateSubtaskBody("Cull", { ...EMPTY_CREATE_DRAFT, reminders: [60] })).toEqual({ title: "Cull", reminderOffsetsMinutes: [60] });
+    expect(buildCreateSubtaskBody("Cull", { ...EMPTY_CREATE_DRAFT, reminders: [...SUBTASK_REMINDER_DEFAULT_OFFSETS].reverse() })).toEqual({ title: "Cull" });
+    expect(buildCreateSubtaskBody("Cull", { assignees: [ada], schedule: range, preview: null, reminders: [60] })).toEqual({ title: "Cull", assigneeIds: ["u1"], schedule: range, reminderOffsetsMinutes: [60] });
+  });
+
+  it("is dirty only when the consumer's half has something in it", () => {
+    expect(createDraftIsDirty(EMPTY_CREATE_DRAFT)).toBe(false);
+    expect(createDraftIsDirty({ ...EMPTY_CREATE_DRAFT, assignees: [ada] })).toBe(true);
+    expect(createDraftIsDirty({ ...EMPTY_CREATE_DRAFT, schedule: range })).toBe(true);
+    expect(createDraftIsDirty({ ...EMPTY_CREATE_DRAFT, reminders: [60] })).toBe(true);
+  });
+});
