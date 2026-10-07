@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { resolveSydneyCivilMinute } from "@quincy/shared";
 import { applyRangeShortcut, buildRangeShortcuts, momentLabel, type DateTimeRangeValue, type RangeShortcut } from "./date-time-range";
 
 /** #683: a shortcut sets the ACTIVE end only; Project default is the one that sets both. Wed 7 Oct 2026 unless stated. */
@@ -6,7 +7,14 @@ const TODAY = "2026-10-07";
 const moment = (localCivil: string, fold: 0 | 1 = 0) => ({ localCivil, fold });
 const range = (start: string, end: string): DateTimeRangeValue => ({ start: moment(start), end: moment(end) });
 const rows = (active: "start" | "end", projectDefault: DateTimeRangeValue | null = null, today = TODAY) => Object.fromEntries(buildRangeShortcuts({ today, projectDefault, active }).map((row) => [row.id, row])) as Record<string, RangeShortcut>;
-const apply = (id: string, active: "start" | "end", current: { start: string | null; end: string | null }, today = TODAY, projectDefault: DateTimeRangeValue | null = null) => applyRangeShortcut(rows(active, projectDefault, today)[id]!, active, current);
+type Draft = { start: string | null; end: string | null; startFold?: 0 | 1; endFold?: 0 | 1 };
+/** An end as the popup hands it over: its civil minute and its instant, null when the minute is empty, invalid, in a gap or an unchosen repeat. */
+const endOf = (civil: string | null, fold: 0 | 1 = 0) => {
+  const result = civil && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(civil) ? resolveSydneyCivilMinute(civil, fold === 1 ? "later" : "earlier") : null;
+  return { civil, epochMs: result && result.ok ? result.value.epochMs : null };
+};
+const apply = (id: string, active: "start" | "end", current: Draft, today = TODAY, projectDefault: DateTimeRangeValue | null = null) =>
+  applyRangeShortcut(rows(active, projectDefault, today)[id]!, active, { start: endOf(current.start, current.startFold), end: endOf(current.end, current.endFold) });
 
 describe("buildRangeShortcuts", () => {
   it("carries the full pair each shortcut used to set, and a scope", () => {
@@ -110,10 +118,14 @@ describe("applyRangeShortcut: an unusable other end", () => {
     expect(apply("next-week", "end", { start: null, end: "2026-10-09T17:00" })).toEqual({ start: moment("2026-10-12T09:00"), end: moment("2026-10-18T17:00") });
   });
 
-  it("an already inverted draft fills the other end from the pair on either tab", () => {
+  it("an already inverted draft is judged by the new value against the other end, not refilled", () => {
     const inverted = { start: "2026-10-20T09:00", end: "2026-10-10T17:00" };
-    expect(apply("this-week", "start", inverted)).toEqual({ start: moment("2026-10-07T09:00"), end: moment("2026-10-11T17:00") });
+    expect(apply("this-week", "start", inverted)).toEqual({ start: moment("2026-10-07T09:00"), end: "keep" });
     expect(apply("this-week", "end", inverted)).toEqual({ start: moment("2026-10-07T09:00"), end: moment("2026-10-11T17:00") });
+  });
+
+  it("a non-positive old duration falls back to the pair on a START collision", () => {
+    expect(apply("tomorrow", "start", { start: "2026-10-06T17:00", end: "2026-10-06T09:00" })).toEqual({ start: moment("2026-10-08T09:00"), end: moment("2026-10-08T17:00") });
   });
 
   it("an empty draft on START fills both ends", () => {
@@ -126,5 +138,47 @@ describe("applyRangeShortcut: Project default", () => {
 
   it.each(["start", "end"] as const)("sets both ends, folds included, from the %s tab, with no collision handling", (active) => {
     expect(apply("project-default", active, { start: "2026-12-10T09:00", end: "2026-12-11T09:00" }, TODAY, projectDefault)).toEqual({ start: projectDefault.start, end: projectDefault.end });
+  });
+});
+
+describe("applyRangeShortcut: an invalid active end does not discard a valid other end (#683 review)", () => {
+  it("START with a cleared start time keeps a valid end the new start does not reach", () => {
+    expect(apply("today", "start", { start: null, end: "2026-11-07T17:00" })).toEqual({ start: moment("2026-10-07T09:00"), end: "keep" });
+  });
+
+  it("END with a cleared end time keeps a valid start the new end is after", () => {
+    expect(apply("today", "end", { start: "2026-10-05T09:00", end: null })).toEqual({ start: "keep", end: moment("2026-10-07T17:00") });
+  });
+
+  it("START with an invalid start and a colliding end falls back to the pair", () => {
+    expect(apply("tomorrow", "start", { start: "garbage", end: "2026-10-06T17:00" })).toEqual({ start: moment("2026-10-08T09:00"), end: moment("2026-10-08T17:00") });
+  });
+
+  it("END with an invalid end and a colliding start takes the shortcut's own start", () => {
+    expect(apply("today", "end", { start: "2026-10-08T18:00", end: "garbage" })).toEqual({ start: moment("2026-10-07T09:00"), end: moment("2026-10-07T17:00") });
+  });
+});
+
+describe("applyRangeShortcut: order is by instant (#683 review)", () => {
+  // Sydney's clocks fall back at 03:00 on Sun 5 Apr 2026: 02:45 earlier (+11) is before 02:15 later (+10), a valid 30 minutes.
+  const fold = { start: "2026-04-05T02:45", end: "2026-04-05T02:15", startFold: 0 as const, endFold: 1 as const };
+
+  it("a valid fold range is not inverted: START keeps the end and its fold", () => {
+    expect(apply("today", "start", fold, "2026-04-01")).toEqual({ start: moment("2026-04-01T09:00"), end: "keep" });
+  });
+
+  it("a valid fold range is not inverted: END keeps the start and its fold", () => {
+    expect(apply("tomorrow", "end", fold, "2026-04-05")).toEqual({ start: "keep", end: moment("2026-04-06T17:00") });
+  });
+});
+
+describe("applyRangeShortcut: a gapped other end is filled from the pair (#683 review)", () => {
+  // Sydney springs forward at 02:00 on Sun 4 Oct 2026: 02:30 does not exist.
+  it("START: a gapped end is refilled", () => {
+    expect(apply("today", "start", { start: "2026-10-03T09:00", end: "2026-10-04T02:30" })).toEqual({ start: moment("2026-10-07T09:00"), end: moment("2026-10-07T17:00") });
+  });
+
+  it("END: a gapped start is refilled", () => {
+    expect(apply("today", "end", { start: "2026-10-04T02:30", end: "2026-10-09T17:00" })).toEqual({ start: moment("2026-10-07T09:00"), end: moment("2026-10-07T17:00") });
   });
 });
