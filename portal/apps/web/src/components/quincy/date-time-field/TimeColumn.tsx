@@ -137,14 +137,18 @@ export function TimeColumn({ selected, skipped, onPick }: {
   useEffect(() => { pickedRef.current = null; });
 
   // Crossing 721px swaps the four-column h-36 grid for the single h-72 column; the selection has not
-  // changed, so re-centre when the viewport's size does.
+  // changed, so re-centre when the viewport's size does. One observer for the column's life, reading the latest `centre`
+  // through a ref: a browser ResizeObserver reports once on every observe(), so re-observing whenever `selected` changed
+  // re-centred the column a frame after a pick had deliberately skipped it (#662).
+  const centreRef = useRef(centre);
+  centreRef.current = centre;
   useEffect(() => {
     const viewport = listRef.current?.parentElement;
     if (!viewport || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(centre);
+    const observer = new ResizeObserver(() => centreRef.current());
     observer.observe(viewport);
     return () => observer.disconnect();
-  }, [centre]);
+  }, []);
 
   return (
     <ScrollArea className="h-36 w-full [--fade-size:var(--space-5)] min-[721px]:h-72 min-[721px]:w-28 min-[721px]:shrink-0 max-[721px]:*:data-[slot=scroll-area-scrollbar]:hidden max-[721px]:*:data-[slot=scroll-area-viewport]:mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] max-[721px]:*:data-[slot=scroll-area-viewport]:mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))]" viewportProps={{ tabIndex: -1 }}>
