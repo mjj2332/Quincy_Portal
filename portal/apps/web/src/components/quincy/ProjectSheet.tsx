@@ -173,7 +173,7 @@ export function ProjectSheet({ open, kind, sheetKey, backdropHref, onRequestClos
           <XIcon aria-hidden />
         </SheetClose>
         ) : null}
-        <div key={sheetKey} ref={bodyRef} data-testid="project-sheet-body" className="project-sheet__body [--toast-inset-inline-end:calc(var(--space-5)+var(--space-5))] [--toast-inset-block-end:calc(var(--space-5)+var(--space-5))] max-[721px]:[--toast-inset-inline-end:max(var(--space-5),env(safe-area-inset-right))] max-[721px]:[--toast-inset-block-end:max(var(--space-5),env(safe-area-inset-bottom))] min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        <div key={sheetKey} ref={bodyRef} data-testid="project-sheet-body" className="project-sheet__body [--toast-inset-inline-end:calc(var(--space-5)+var(--space-5))] [--toast-inset-block-end:calc(var(--space-5)+var(--space-5))] max-[721px]:[--toast-inset-inline-end:max(var(--space-5),env(safe-area-inset-right))] max-[721px]:[--toast-inset-block-end:max(var(--space-5),env(safe-area-inset-bottom))] min-h-0 flex-1 overflow-y-auto overscroll-contain scroll-py-[var(--space-2)]">
           <ProjectSheetContext.Provider value={context}>
             <OverlayContainerContext.Provider value={slot}>{children}</OverlayContainerContext.Provider>
           </ProjectSheetContext.Provider>
