@@ -31,7 +31,7 @@ const slots = () => [...dateTimePopup("Schedule")!.querySelectorAll<HTMLButtonEl
 
 describe("an off-grid stored time keeps the next slot as the one Tab stop", () => {
   it("single popup", async () => {
-    await act(async () => { root.render(<DateTimeField variant="datetime" id="f" label="Schedule" value={{ localCivil: "2026-10-05T17:07" }} clearable={false} onApply={() => {}} />); await Promise.resolve(); });
+    await act(async () => { root.render(<DateTimeField variant="date-time" id="f" label="Schedule" value={{ localCivil: "2026-10-05T17:07" }} clearable={false} onApply={() => {}} />); await Promise.resolve(); });
     await open();
     expect(slots().filter((b) => b.tabIndex === 0).map((b) => b.textContent?.trim())).toEqual(["17:15"]);
     expect(slots().filter((b) => b.getAttribute("aria-pressed") === "true")).toEqual([]);
