@@ -2113,6 +2113,15 @@ Escape-returns-focus assertion going red the moment `RailSheet` gained a `finalF
 `restoreFocus: "popup"` reclaims it a frame later, so move focus to the trigger synchronously in
 `onOpenChange` instead. Root Menu collision avoidance has no axis fallback; pick `side` explicitly.
 
+**P3 again, the Project header Deadline popover (#662):** inside the modal Project sheet, Escape (and Apply/Cancel, where
+Apply disables its own button and leaves focus on `<body>`) landed focus on the sheet, not the Deadline trigger: the sheet's
+`restoreFocus: "popup"` reclaims homeless focus a frame after close, ahead of the popover's own return. The 1280 reading that
+looked like a width difference was the Timeline cell, which is not in a sheet. Fix: `ProjectHeaderDeadline`'s one
+`closePopover` helper focuses the connected trigger synchronously with `preventScroll` (when focus is in the popup, homeless,
+or was in the cell when a save began, via `focusAtRequest`), then closes; every close path uses it. The same guard
+`quincy/menu.tsx` has. Test it nested in the real `ProjectSheet` and assert focus immediately and after a frame
+(`ProjectHeaderDeadline-sheet.dom.test.tsx`); a standalone test passes without the fix.
+
 ## Tonomo's created webhook carries a display date, and null-fill never upgrades it (2026-09-14)
 Tags: scheduling
 
@@ -5854,7 +5863,37 @@ Calendar rail sheet, deliberately (`initialFocus` resolves to the first tabbable
 focus-motion guard bans `!outline-none`). Rejected: `focus({ focusVisible: false })` (cannot apply when `initialFocus` returns `true`) and
 a `data-focus-pending` marker (state for a ring that is never useful).
 
+A fourth sighting (#662): the Subtask Actions popover (`AnchoredPopover`, `SubtaskChecklist` `initialFocus={0}`). Its
+`FloatingFocusManager` ordered focus `["reference", "floating", "content"]`, so index 0 was the trigger and the panel
+itself became a Tab stop with a square ring. Fix: set `order={["content"]}` explicitly; a keyboard open
+now focuses Delete, and Escape returns to the trigger. Check `initialFocus` against the order list, not just against the
+container class.
+
 ## A masked scroll viewport's outline never paints
 Tags: focus-overlays, css-tokens · #660
 
 The time list's 96 slot buttons were each a Tab stop, and the ring on a focused slot was drawn outward. Their scroll viewport carries a `mask`, and a mask clips everything painted outside the element's box, so an outline never showed (a box-shadow would clip the same way). Fix: an inward ring, `RING_IN` from `AnchoredPopover`. Its old bare `focus-visible:!outline` was dropped by twMerge inside `cn()`, and a width plus colour with no style draws nothing, so callers had to patch `!outline-solid` on themselves (`TimeColumn`, `ShortcutList`); `RING_IN` now carries `focus-visible:!outline-solid` itself, which survives `cn()`, and `AnchoredPopover.ring.test.ts` proves it for each caller pattern. The list is also one roving Tab stop (as `PriorityStars`; a click re-seats the stop on the clicked slot, via `onFocus`), and the column's own viewport is `tabIndex -1` through `reui/scroll-area`'s `viewportProps`, so Base UI's overflow stop does not double it. `TimeColumn.focus.guard.test.ts` pins the classes; ring painting itself is only visible in a browser.
+
+## A pressed time slot under either fade reads as a grey bar, and focus before reveal jumps the body (#662)
+Tags: focus-overlays, scheduling · #662
+
+Three defects in the 390px time list (`TimeColumn` in a stacked `PopupFrame`), one family with the #636 bottom-fade sliver
+(`docs/maps/date-time-controls.md` § "Popup placement and the selected day"):
+
+- **Sliver under the top fade.** `slivered` in `scrollTopClearOfFade` (`lib/date-time-field.ts`) tested only the bottom
+  band, and `TimeColumn.reveal` never passed the pressed slot as `noSliver`, so a solid pressed chip half under the top
+  mask read as a grey bar. The solver now checks both bands (top `min(fade, s)`, bottom `min(fade, max - s)`); with no
+  `snaps` it picks the clear whole scroll nearest the current one (smaller on a tie), and falls back to the #630 choice so
+  required and `priority` items stay authoritative. The phone fade is `--space-5` (24px), not `--space-6`: 24 + 44 + 4 + 44
+  + 24 = 140 <= the 144px column, so even the adjacent-row case clears.
+- **Body jumped ~66px over two arrow presses.** `TimeColumn` focused the slot, then scrolled the column, and
+  `PopupFrame`'s `focusin` handler solves against where the slot is when focus lands, so it measured the old position and
+  scrolled the body twice (48px, then 18px). Rule: **reveal (write the column's `scrollTop`) first, then
+  `focus({ preventScroll: true })`**, so a focus handler sees the final geometry. An already-clear slot leaves the body
+  still.
+- **A pick re-centred the column.** The `useLayoutEffect` on `selected` centred after every pick. A one-shot `pickedRef`
+  now skips the centre for that exact selection after a pointer or Enter pick (cleared if the slot was already pressed, since
+  no selection change follows). Opening, a complete typed time and a crossing of 721px still centre.
+
+Guards: `TimeColumn.scroll.dom.test.tsx` (nested-viewport geometry), `lib/date-time-field.test.ts`. Layout-dependent, so
+only a browser at 390px proves it (jsdom has no geometry): see the map's measured check.

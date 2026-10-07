@@ -164,6 +164,22 @@ export function measureFade(viewport: HTMLElement): number {
   return fade;
 }
 
+/** The smallest whole scroll within `window` at which `slivered` is false (#636), or undefined when there is none. */
+function smallestClearScroll(window: { low: number; high: number }, slivered: (scroll: number) => boolean): number | undefined {
+  for (let s = Math.ceil(window.low - 1e-9); s <= window.high; s += 1) if (!slivered(s)) return s;
+  return undefined;
+}
+
+/** The whole scroll within `window` nearest to `from` at which `slivered` is false (#662), the smaller on a tie; undefined when there is none. */
+function nearestClearScroll(window: { low: number; high: number }, slivered: (scroll: number) => boolean, from: number): number | undefined {
+  let best: number | undefined;
+  for (let s = Math.ceil(window.low - 1e-9); s <= window.high; s += 1) {
+    if (slivered(s)) continue;
+    if (best === undefined || Math.abs(s - from) < Math.abs(best - from)) best = s;
+  }
+  return best;
+}
+
 /**
  * #537 — the popup body fades each edge by `min(fade, overflow past that edge)`: the top band is
  * `min(fade, s)` and the bottom band `min(fade, max - s)` at scroll `s`, so a move changes the bands it
@@ -191,9 +207,10 @@ export function measureFade(viewport: HTMLElement): number {
  * body a resize left further down comes back); when none does, the fade
  * guarantee still wins and the plain nearest-valid position is returned.
  *
- * #636 — `noSliver` items (the pressed time slot) are not required to be clear, but the chosen scroll must not leave one partly
- * inside the bottom fade: the smallest valid snap where each is fully clear of the band or fully below the body wins; failing
- * that, the smallest valid whole scroll that does; failing that, the #630 choice stands.
+ * #636, #662 — `noSliver` items (the pressed time slot) are not required to be clear, but the chosen scroll must not leave one partly
+ * inside the top or the bottom fade: the smallest valid snap where each is fully clear of both bands (or outside the body) wins; failing
+ * that, the valid whole scroll that does with the least movement (the smallest when `snaps` were given); failing that, the #630 choice
+ * stands, so required and `priority` items stay authoritative.
  */
 export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, items, snaps, noSliver }: { viewport: EdgeRect; scrollTop: number; maxScrollTop: number; fade: number; items: readonly FadeItem[]; snaps?: readonly number[]; noSliver?: readonly EdgeRect[] }): number {
   const height = viewport.bottom - viewport.top;
@@ -223,18 +240,28 @@ export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, 
   // to its device-pixel grid (0.5px at DPR 2), and a target sitting exactly on a fade edge lands inside it. Whole pixels are on every such grid.
   const whole = { low: Math.ceil(range.low - 1e-9), high: Math.floor(range.high + 1e-9) };
   const safe = whole.low <= whole.high ? whole : range;
-  // #636: an item in `noSliver` (the pressed time slot) is never asked to be clear, but it must not end up PARTLY inside the bottom
-  // fade, where a solid chip reads as a grey sliver. At `s` it is fine when fully above the bottom band, or fully below the body.
-  const slivered = (s: number) => (noSliver ?? []).some((item) => {
+  // #636, #662: an item in `noSliver` (the pressed time slot) is never asked to be clear, but it must not end up PARTLY inside either fade,
+  // where a solid chip reads as a grey sliver. At `s` it is fine when fully past a band (above the top one, below the bottom one) or outside
+  // the body. The top band is `min(fade, s)`, the bottom `min(fade, max - s)`.
+  const sliveredWithin = (tolerance: number) => (s: number) => (noSliver ?? []).some((item) => {
     const top = item.top - viewport.top + scrollTop - s;
     const bottom = item.bottom - viewport.top + scrollTop - s;
-    return bottom - SLIVER_TOLERANCE > height - Math.min(fade, max - s) && top + SLIVER_TOLERANCE < height;
+    const inTopBand = top + tolerance < Math.min(fade, s) && bottom - tolerance > 0;
+    const inBottomBand = bottom - tolerance > height - Math.min(fade, max - s) && top + tolerance < height;
+    return inTopBand || inBottomBand;
   });
+  const slivered = sliveredWithin(SLIVER_TOLERANCE);
   const landing = (snaps ?? []).filter((snap) => snap >= safe.low && snap <= safe.high);
   const clearLanding = landing.filter((snap) => !slivered(snap));
   if (clearLanding.length > 0) return Math.min(...clearLanding);
   if (noSliver?.length) {
-    for (let s = Math.ceil(safe.low - 1e-9); s <= safe.high; s += 1) if (!slivered(s)) return s;
+    // With snaps the smallest clear whole scroll (#636); otherwise the clear whole scroll nearest to where the body is now (#662).
+    // #662: without snaps, look for a scroll with no overlap at all first; the 2px tolerance absorbs sub-pixel rounding in what is
+    // acceptable, it is not a reason to choose a 2px sliver when a clean scroll is just as reachable.
+    const clear = snaps?.length
+      ? smallestClearScroll(safe, slivered)
+      : nearestClearScroll(safe, sliveredWithin(0), scrollTop) ?? nearestClearScroll(safe, slivered, scrollTop);
+    if (clear !== undefined) return clear;
   }
   if (landing.length > 0) return Math.min(...landing);
   return Math.min(Math.max(scrollTop, safe.low), safe.high);
