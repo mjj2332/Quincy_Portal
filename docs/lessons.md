@@ -5999,3 +5999,12 @@ time-slot list inside it was its own scroller: it caught every wheel and swipe, 
 - Height only, not width: the wide layout has the same trap. Do not nest a scroller inside a body window that can shrink below it.
 
 Guards: `popup-breakpoint.contract.test.ts`, `DateTimePopup-short.dom.test.tsx`.
+
+## Escape on a closed picker trigger was swallowed by the draft's own key boundary (#688)
+Tags: gantt-calendar, focus-overlays · #688
+
+- Not a regression and not the title input: Escape in the title already closed the row. The failing runs pressed Escape on the **closed Due trigger**, which `gestureBoundary` (`ProductionGanttCreateDraft.tsx`) stopped on desktop (it only let a closed trigger through in the phone sheet), and the row had no Escape handler of its own.
+- Fix: `GanttGroupCreateRow` handles Escape in a bubble-phase `onKeyDown` on the row, and `gestureBoundary` lets a closed trigger's Escape through everywhere. React bubbles a portaled popup's events through the row, so the guard is `rowRef.current.contains(event.target)` plus not `aria-expanded="true"`, never the React tree alone.
+- When a bug report says "Escape does nothing", find which element had focus first.
+
+Guards: `gantt-create-task.dom.test.tsx` ("Escape on the desktop row"), `ProductionGantt-create-draft.dom.test.tsx`.

@@ -32,17 +32,17 @@ export type CreateDraftChange = (patch: Partial<CreateDraft>) => void;
 const SHEET_DUE_TRIGGER = "flex-1 justify-start border-input rounded-[var(--radius-sm)] bg-[var(--field-bg)] text-base! min-h-[38px] max-[721px]:min-h-[44px] px-[10px] -ml-0";
 
 /**
- * Keeps a press or key off the row and the tree's key handling. In the phone sheet, Escape on a picker's CLOSED trigger is let
- * through so the sheet can close; while a popup is open (the key comes from its content, or from a trigger reporting
+ * Keeps a press or key off the row and the tree's key handling. Escape on a picker's CLOSED trigger is let
+ * through so the row or the phone sheet can close (#688); while a popup is open (the key comes from its content, or from a trigger reporting
  * `aria-expanded="true"`) it stays suppressed so Escape closes only the popup (#585).
  */
-function gestureBoundary(sheet: boolean) {
+function gestureBoundary() {
   return {
     onClick: stopRowGesture,
     onPointerDown: stopRowGesture,
     onMouseDown: stopRowGesture,
     onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
-      if (sheet && event.key === "Escape" && event.target instanceof HTMLElement && event.target.getAttribute("aria-expanded") === "false") return;
+      if (event.key === "Escape" && event.target instanceof HTMLElement && event.currentTarget.contains(event.target) && event.target.getAttribute("aria-expanded") === "false") return;
       stopRowGesture(event);
     },
   } as const;
@@ -50,7 +50,7 @@ function gestureBoundary(sheet: boolean) {
 
 export function GanttCreateDraftAssignees({ projectId, role, draft, pending, onChange, triggerId, sheet = false }: { projectId: string; role: Role; draft: CreateDraft; pending: boolean; onChange: CreateDraftChange; triggerId?: string; sheet?: boolean }) {
   return (
-    <span data-testid="gantt-create-draft-assignees" className="inline-flex min-w-0 items-center" {...gestureBoundary(sheet)}>
+    <span data-testid="gantt-create-draft-assignees" className="inline-flex min-w-0 items-center" {...gestureBoundary()}>
       <SubtaskAssigneePicker
         projectId={projectId}
         role={role}
@@ -73,7 +73,7 @@ export function GanttCreateDraftDue({ draft, projectDefault, pending, onChange, 
   const triggerText = draft.preview ? formatDueCivil(draft.preview.end.localCivil) : defaultText;
   const triggerName = draft.preview ? formatCivilSchedule(draft.preview) : defaultText;
   return (
-    <span data-testid="gantt-create-draft-due" className="inline-flex min-w-0 flex-1 items-center" {...gestureBoundary(sheet)}>
+    <span data-testid="gantt-create-draft-due" className="inline-flex min-w-0 flex-1 items-center" {...gestureBoundary()}>
       <SubtaskScheduleControl
         owner="gantt-create"
         label="Schedule for new task"

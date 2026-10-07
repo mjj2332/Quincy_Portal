@@ -225,8 +225,8 @@ paired with a timeline spacer):
 - **Draft lifecycle contract.** The vendor owns the open state and the title; the consumer owns the
   rest of the draft and is told when the editor closes: `onCreateTaskClose({ parentId })` (cancel,
   success, collapse, the group leaving the data, the whole view unmounting, a changed
-  `createTaskResetKey`). The editor row handles Escape on the input only: the draft's popups portal
-  out of the row but their events bubble through it (#585, #670).
+  `createTaskResetKey`). The editor row handles Escape on the input and, from #688, on any control inside the row that is DOM-contained in it and not `aria-expanded="true"` (a closed draft picker, the x): it closes the row and drops the draft. The draft's popups portal
+  out of the row but their events bubble through it (#585, #670), so the containment check is the guard.
 
 Reuse ledger for the phone sheet: the sheet itself `reui/sheet` (base-nova); Title input `reui/input`; Cancel / Add `reui/button`; the Title, Assignees and Due labels `reui/field` `FieldLabel` (a real `<label htmlFor>` above each control).
 

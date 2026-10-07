@@ -253,6 +253,11 @@
  * focus ring clears the group title it follows. The title beside it (`GanttResourceLabel` in `ProductionGantt.tsx`, the
  * consumer's `renderResourceLabel`) is `min-w-0 truncate` below 721px, the 96px floor only above, so it shrinks and
  * ends in an ellipsis before the `+` instead of being clipped under it (this file's own default label is already `truncate`).
+ *
+ * 2026-10-07, #688 — CHANGED, behaviour (ADR 0009 addendum). `GanttGroupCreateRow`'s row div takes a bubble-phase `onKeyDown`:
+ * Escape on any control inside the row (a closed draft picker, the x) calls `close()`, so the desktop row closes from every
+ * control, not only the title. Guarded by a DOM-containment check (a portaled popup's key bubbles through the row in React) and
+ * by `aria-expanded="true"`; `close()` already refuses while a save is pending and returns focus to the `+`.
  */
 
 import {
@@ -3972,6 +3977,18 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
       ref={rowRef}
       data-testid="gantt-group-create-task-row"
       data-gantt-create-for={group.resource.id}
+      onKeyDown={(e) => {
+        // #688: Escape on any control left in the row (a CLOSED draft picker, the x) closes the editor.
+        // React bubbles a portaled popup's key through this div, so the DOM check is the guard, as is a
+        // control still reporting an open popup; `close()` itself refuses while a save is pending.
+        if (e.key !== "Escape" || e.defaultPrevented) return
+        const target = e.target
+        if (!(target instanceof Element) || !rowRef.current?.contains(target)) return
+        if (target.getAttribute("aria-expanded") === "true") return
+        e.preventDefault()
+        e.stopPropagation()
+        close()
+      }}
       className="border-border relative flex w-full shrink-0 flex-col border-b"
       style={{ height: `${heightRem}rem` }}
     >
