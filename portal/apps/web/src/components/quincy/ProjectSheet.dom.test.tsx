@@ -41,6 +41,15 @@ describe("ProjectSheet scrim under impersonation (#531)", () => {
   });
 });
 
+describe("ProjectSheet close button backing (#670)", () => {
+  it("carries the .worktools frosted backing so a scrolled section rule never runs through the ×", async () => {
+    await render(false);
+    const close = document.querySelector<HTMLElement>('[data-testid="project-sheet-close"]')!;
+    expect(close.className).toContain("bg-[color-mix(in_srgb,var(--paper-050)_90%,transparent)]");
+    expect(close.className).toContain("backdrop-blur-[8px]");
+  });
+});
+
 describe("ProjectSheet focus (#607)", () => {
   it("opening focuses the named Project workspace dialog", async () => {
     await render(false);
