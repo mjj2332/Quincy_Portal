@@ -304,6 +304,12 @@ export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, 
   // #686: not capped at "wholly below the body": a short body (844x390) holds the input from the start, and the only valid rests are those that scroll it up clear of
   // the bottom band (which shrinks to nothing at the end of the scroll). Ascending, so a scroll that leaves it wholly below still wins when there is one.
   for (let s = Math.ceil(safe.low - 1e-9); s <= safe.high; s += 1) if (!slivered(s) && bottomOk(s) && !crossesInnerEdge(s)) return s;
+  // #686: when no scroll meets every rule (a short, wide popup: the stacked chips cross the top fade's inner edge at nearly every scroll), the rules give way in a stated
+  // order: (1) the required day stays in view (`safe`, hard); (2) the TIME input is not slivered; (3) the `noSliver` items (the active chip) are not slivered;
+  // (4) a chip crossing the top fade's inner edge is dropped first. The smallest whole scroll meeting 1-3 wins; none keeps the landing.
+  const strict = sliveredWithin(0);
+  for (let s = Math.ceil(safe.low - 1e-9); s <= safe.high; s += 1) if (!strict(s) && bottomOk(s)) return s;
+  for (let s = Math.ceil(safe.low - 1e-9); s <= safe.high; s += 1) if (!slivered(s) && bottomOk(s)) return s;
   return legacy;
 }
 

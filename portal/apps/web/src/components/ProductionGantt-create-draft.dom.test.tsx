@@ -299,6 +299,13 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
       expect(popup.querySelector('[data-testid="gantt-group-create-task-cancel"]')).not.toBeNull();
     });
 
+    it("the name cell is capped at the pane (no 208px floor), so the + sits in flow at its end and the title truncates before it (#686)", async () => {
+      await mount();
+      const cell = host.querySelector<HTMLElement>('[data-testid="gantt-tree-name-cell"]')!;
+      expect(cell.style.width).toBe("0px");
+      expect(cell.style.flexGrow).toBe("1");
+    });
+
     it("every field has a real <label> above it: Title, Assignees and Due are each named by (and associated with) their control", async () => {
       await mount();
       await click(plus(STREET_A)!);

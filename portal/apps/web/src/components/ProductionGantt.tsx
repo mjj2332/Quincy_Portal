@@ -331,7 +331,8 @@ const ganttFormatEventTime = mergeGanttI18n(GANTT_I18N).functions.formatEventTim
  */
 const GANTT_NAME_COLUMN_WIDTH = 180;
 const GANTT_TREE_PANEL: GanttTreePanelConfig = { nameColumnFill: true, nameColumnWidth: GANTT_NAME_COLUMN_WIDTH, width: 396 };
-const GANTT_TREE_PANEL_NARROW: GanttTreePanelConfig = { nameColumnFill: true };
+// #686: no floor on a phone. The vendor default (208px) made the row wider than the tree pane, so the sticky `+` overlaid the title; with none, the name cell fills exactly the pane.
+const GANTT_TREE_PANEL_NARROW: GanttTreePanelConfig = { nameColumnFill: true, nameColumnWidth: 0 };
 /** Scroll distance (px) from the bottom of the panel at which the next project page is requested. */
 const NEAR_BOTTOM_THRESHOLD_PX = 240;
 
