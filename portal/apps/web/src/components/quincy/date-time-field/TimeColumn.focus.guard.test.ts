@@ -31,6 +31,7 @@ describe("TimeColumn slot ring is inward and survives twMerge", () => {
   it("rings the pressed (ink-filled) slot in paper, inward, so it shows on its own fill (F1)", () => {
     expect(tag).toContain("aria-pressed:focus-visible:!outline-[var(--primary-foreground)]");
     expect(tag).toContain("aria-pressed:focus-visible:!outline-offset-[-4px]");
+    expect(tag).toContain("aria-pressed:outline-offset-[-4px]"); // the at-rest twin the inset-offset guard (#552) requires
   });
   it("keeps both pressed-ring tokens after cn()", () => {
     const merged = cn("w-full", RING_IN, "aria-pressed:focus-visible:!outline-[var(--primary-foreground)] aria-pressed:focus-visible:!outline-offset-[-4px]").split(/\s+/);

@@ -100,7 +100,7 @@ export function TimeColumn({ selected, skipped, onPick }: {
 
   const centre = useCallback(() => {
     const list = listRef.current;
-    const pressed = list?.querySelector<HTMLElement>('button[aria-pressed="true"]');
+    const pressed = list?.querySelector<HTMLElement>('button[aria-pressed="true"]') ?? list?.querySelector<HTMLElement>('button[tabindex="0"]');
     const viewport = list?.parentElement;
     if (!pressed || !viewport) return;
     const offset = pressed.getBoundingClientRect().top - viewport.getBoundingClientRect().top + viewport.scrollTop;
@@ -120,7 +120,7 @@ export function TimeColumn({ selected, skipped, onPick }: {
   }, [centre]);
 
   return (
-    <ScrollArea className="h-36 w-full [--fade-size:var(--space-8)] min-[721px]:h-72 min-[721px]:w-28 min-[721px]:shrink-0 max-[721px]:*:data-[slot=scroll-area-scrollbar]:hidden max-[721px]:*:data-[slot=scroll-area-viewport]:mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] max-[721px]:*:data-[slot=scroll-area-viewport]:mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))]" viewportProps={{ tabIndex: -1 }}>
+    <ScrollArea className="h-36 w-full [--fade-size:var(--space-6)] min-[721px]:h-72 min-[721px]:w-28 min-[721px]:shrink-0 max-[721px]:*:data-[slot=scroll-area-scrollbar]:hidden max-[721px]:*:data-[slot=scroll-area-viewport]:mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] max-[721px]:*:data-[slot=scroll-area-viewport]:mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))]" viewportProps={{ tabIndex: -1 }}>
       <div ref={listRef} role="group" aria-label="Time slots" onKeyDown={onKeyDown} onFocus={onFocus} onBlur={onBlur} className="grid grid-cols-4 gap-[var(--space-1)] min-[721px]:flex min-[721px]:flex-col pr-[var(--space-3)]">
         {SLOTS.map((slot, index) => {
           const isSkipped = skipped.has(slot);
@@ -133,7 +133,7 @@ export function TimeColumn({ selected, skipped, onPick }: {
               variant={isSelected ? "default" : "ghost"}
               data-index={index}
               tabIndex={index === stop ? 0 : -1}
-              className={cn("w-full justify-center pointer-coarse:min-h-[44px] max-[721px]:min-h-[44px]", RING_IN)}
+              className={cn("w-full justify-center pointer-coarse:min-h-[44px] max-[721px]:min-h-[44px]", RING_IN, "aria-pressed:outline-offset-[-4px] aria-pressed:focus-visible:!outline-[var(--primary-foreground)] aria-pressed:focus-visible:!outline-offset-[-4px]")}
               aria-pressed={isSelected}
               disabled={isSkipped}
               onClick={() => onPick(slot)}
