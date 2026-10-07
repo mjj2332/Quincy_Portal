@@ -76,12 +76,69 @@ describe("DateTimeField range trigger and popup", () => {
     expect(rangeToggles(popup())).toMatchObject({ active: "Start", start: "Tue 3 Nov · 09:00", end: "Sat 7 Nov · 17:00" });
   });
 
-  it("applies Next week as Monday 09:00 to Sunday 17:00", async () => {
+  it("applies Next week on Start as Monday 09:00 and keeps the end (#683)", async () => {
     const onApply = await mount({ value: range("2026-11-03T09:00", "2026-11-07T17:00") });
     await open();
     await pressInPopup(popup(), "Next week");
     await applyPopup(popup());
-    expect(onApply).toHaveBeenCalledWith({ start: { localCivil: "2026-10-05T09:00" }, end: { localCivil: "2026-10-11T17:00" } });
+    expect(onApply).toHaveBeenCalledWith({ start: { localCivil: "2026-10-05T09:00" }, end: { localCivil: "2026-11-07T17:00" } });
+  });
+
+  it("applies Next week on End as Sunday 17:00 and keeps the start (#683)", async () => {
+    const onApply = await mount({ value: range("2026-10-02T10:30", "2026-10-03T17:00") });
+    await open();
+    await pickRangeEnd(popup(), "End");
+    await pressInPopup(popup(), "Next week");
+    expect(rangeToggles(popup())).toMatchObject({ active: "End", start: "Fri 2 Oct · 10:30", end: "Sun 11 Oct · 17:00" });
+    await applyPopup(popup());
+    expect(onApply).toHaveBeenCalledWith({ start: { localCivil: "2026-10-02T10:30" }, end: { localCivil: "2026-10-11T17:00" } });
+  });
+
+  it("START Today on a 18:00 start gives 09:00 and leaves the end alone (#683)", async () => {
+    const onApply = await mount({ value: range("2026-10-01T18:00", "2026-10-02T17:00") });
+    await open();
+    await pressInPopup(popup(), "Today");
+    expect(rangeToggles(popup())).toMatchObject({ active: "Start", start: "Thu 1 Oct · 09:00", end: "Fri 2 Oct · 17:00" });
+    await applyPopup(popup());
+    expect(onApply).toHaveBeenCalledWith({ start: { localCivil: "2026-10-01T09:00" }, end: { localCivil: "2026-10-02T17:00" } });
+  });
+
+  it("END Today before the start takes the start from the shortcut (#683)", async () => {
+    await mount({ value: range("2026-10-02T18:00", "2026-10-03T17:00") });
+    await open();
+    await pickRangeEnd(popup(), "End");
+    await pressInPopup(popup(), "Today");
+    expect(rangeToggles(popup())).toMatchObject({ active: "End", start: "Thu 1 Oct · 09:00", end: "Thu 1 Oct · 17:00" });
+  });
+
+  it("START Tomorrow past the end moves the end by the old duration (#683)", async () => {
+    await mount({ value: range("2026-09-28T09:00", "2026-09-29T17:00") });
+    await open();
+    await pressInPopup(popup(), "Tomorrow");
+    expect(rangeToggles(popup())).toMatchObject({ start: "Fri 2 Oct · 09:00", end: "Sat 3 Oct · 17:00" });
+  });
+
+  it("sublabels follow the active tab and the pressed chip follows the active end only (#683)", async () => {
+    await mount({ value: range("2026-10-01T09:00", "2026-10-01T17:00"), projectDefault: range("2026-12-01T09:00", "2026-12-04T17:00") });
+    await open();
+    const pressed = (name: string) => popupButton(popup(), name)!.getAttribute("aria-pressed");
+    expect(popupButton(popup(), "Today")!.textContent).toContain("Thu 1 Oct · 09:00");
+    expect(pressed("Today")).toBe("true");
+    // Today and This week resolve to the same START moment: both show pressed.
+    expect(pressed("This week")).toBe("true");
+    expect(pressed("Tomorrow")).toBe("false");
+    await pickRangeEnd(popup(), "End");
+    expect(popupButton(popup(), "Today")!.textContent).toContain("Thu 1 Oct · 17:00");
+    expect(pressed("Today")).toBe("true");
+    expect(pressed("This week")).toBe("false");
+  });
+
+  it("Project default is pressed only when both ends match it (#683)", async () => {
+    await mount({ value: range("2026-12-01T09:00", "2026-12-05T17:00"), projectDefault: range("2026-12-01T09:00", "2026-12-04T17:00") });
+    await open();
+    expect(popupButton(popup(), "Project default")!.getAttribute("aria-pressed")).toBe("false");
+    await pressInPopup(popup(), "Project default");
+    expect(popupButton(popup(), "Project default")!.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("shows the Project default shortcut only when there is one", async () => {
@@ -103,8 +160,9 @@ describe("DateTimeField range trigger and popup", () => {
     await open();
     expect(highlighted(popup())).toEqual(["2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06", "2026-11-07"]);
     await pressInPopup(popup(), "Today");
-    expect(rangeToggles(popup())).toMatchObject({ start: "Thu 1 Oct · 09:00", end: "Thu 1 Oct · 17:00" });
-    expect(highlighted(popup())).toEqual(["2026-10-01"]);
+    expect(rangeToggles(popup())).toMatchObject({ start: "Thu 1 Oct · 09:00", end: "Sat 7 Nov · 17:00" });
+    expect(highlighted(popup())).toContain("2026-10-01");
+    expect(highlighted(popup())).not.toContain("2026-11-07");
     await pickPopupDay(popup(), "2026-10-20");
     await pickPopupDay(popup(), "2026-10-23");
     expect(highlighted(popup())).toEqual(["2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23"]);

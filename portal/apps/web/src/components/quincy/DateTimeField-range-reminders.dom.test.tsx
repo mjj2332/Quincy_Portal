@@ -104,7 +104,7 @@ describe("DateTimeField range: reminders strip", () => {
     await pressInPopup(popup(), "Today");
     await click(chip("1 day")!);
     await applyPopup(popup());
-    expect(onApply).toHaveBeenCalledWith({ start: { localCivil: "2026-10-01T09:00" }, end: { localCivil: "2026-10-01T17:00" }, reminderOffsetsMinutes: [] });
+    expect(onApply).toHaveBeenCalledWith({ start: { localCivil: "2026-10-01T09:00" }, end: { localCivil: "2026-11-07T17:00" }, reminderOffsetsMinutes: [] });
   });
 
   it("adds a custom offset as a pressed chip, keeps offsets unique and descending, and removes it by pressing it", async () => {
