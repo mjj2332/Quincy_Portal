@@ -3870,7 +3870,7 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
             return false
           }}
           // `focus-visible:!outline-none`: the sheet itself can hold focus between controls (see ProjectSheet).
-          className="z-[var(--z-dialog)] gap-[var(--space-3)] p-[var(--space-4)] pb-[max(var(--space-4),env(safe-area-inset-bottom))] focus-visible:!outline-none"
+          className="z-[var(--z-dialog)] max-h-[calc(100dvh-var(--space-4))] gap-[var(--space-3)] p-[var(--space-4)] pb-[max(var(--space-4),env(safe-area-inset-bottom))] focus-visible:!outline-none"
           overlayProps={{
             // Mandatory: the Gantt can itself sit inside another Sheet's Root (the Project sheet, the rail), and Base UI
             // renders no backdrop for a NESTED dialog unless forced - without a scrim a phone tap outside would do nothing.
@@ -3882,10 +3882,15 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
         >
           <OverlayContainerContext.Provider value={overlaySlot}>
             <OverlayCollisionBoundaryContext.Provider value={sheetPopup}>
-            <SheetHeader className="p-0">
+            <SheetHeader className="shrink-0 p-0">
               <SheetTitle className="m-0 [font:var(--type-h3)] tracking-[var(--tracking-tight)] [overflow-wrap:anywhere]">{createTaskSheetTitle(groupTitle)}</SheetTitle>
             </SheetHeader>
-            <div className="flex min-w-0 flex-col gap-[var(--space-3)]">
+            {/* the fields scroll when the sheet is capped at the viewport (a landscape phone); heading and footer stay put.
+                The small padding / negative margin keeps a focus ring from clipping at the scroller's edge. */}
+            <div
+              data-testid="gantt-group-create-task-body"
+              className="-mx-1 flex min-h-0 min-w-0 flex-1 flex-col gap-[var(--space-3)] overflow-y-auto overscroll-contain px-1 py-1 -my-1"
+            >
               <div className="flex min-w-0 flex-col gap-1">
                 <FieldLabel htmlFor={titleId}>Title</FieldLabel>
                 {titleField}
@@ -3897,7 +3902,7 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
                 {viewConfig.renderCreateStack?.(ctx)}
               </div>
             </div>
-            <SheetFooter className="flex-row justify-end gap-2 p-0">
+            <SheetFooter className="mt-0 shrink-0 flex-row justify-end gap-2 p-0">
               <Button
                 variant="ghost"
                 type="button"

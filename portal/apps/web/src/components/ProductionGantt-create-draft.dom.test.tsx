@@ -323,6 +323,36 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
       expect(sheet()!.querySelector('[data-testid="gantt-group-create-task-overlay-slot"]')!.contains(popup)).toBe(true);
     });
 
+    it("the sheet is capped at the viewport with a scrolling body; heading and the Cancel/Add footer sit outside the scroller", async () => {
+      await mount();
+      await click(plus(STREET_A)!);
+      const popup = sheet()!;
+      expect(popup.className).toContain("max-h-[calc(100dvh-var(--space-4))]");
+      const body = popup.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-body"]')!;
+      expect(body.className).toContain("overflow-y-auto");
+      expect(body.contains(input())).toBe(true);
+      expect(body.contains(draftAssignees())).toBe(true);
+      expect(body.contains(draftDue())).toBe(true);
+      expect(body.contains(popup.querySelector('[data-testid="gantt-group-create-task-add"]'))).toBe(false);
+      expect(body.contains(popup.querySelector('[data-testid="gantt-group-create-task-cancel"]'))).toBe(false);
+    });
+
+    it("Escape on a picker's CLOSED trigger closes the sheet; while its popup is open Escape closes only the popup", async () => {
+      await mount();
+      await click(plus(STREET_A)!);
+      await openPicker();
+      await pick("Ada Smith");
+      await closePickerWithEscape();
+      expect(sheet()).not.toBeNull();
+      const trigger = draftAssignees()!;
+      await act(async () => { trigger.focus(); });
+      expect(trigger.getAttribute("aria-expanded")).toBe("false");
+      await act(async () => { trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
+      await settle();
+      expect(sheet()).toBeNull();
+      expect(apiPostMock).not.toHaveBeenCalled();
+    });
+
     it("one POST carries title and assignees; success closes the sheet, returns focus to the + and pins the row", async () => {
       await mount();
       await click(plus(STREET_A)!);

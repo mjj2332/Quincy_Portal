@@ -12,7 +12,7 @@
  * (`owner="gantt-create"`, composer mode) behind one `reui/button` trigger carrying the Due column cell's `CELL_TRIGGER`; the wrapper that keeps a press or key off
  * the row — a plain `<span>` carrying `stopPropagation` (the People and Due cells' pattern, `stopRowGesture`).
  */
-import { useId, useState } from "react";
+import { useId, useState, type KeyboardEvent } from "react";
 import type { ProjectDefaultRangeDto, Role } from "@quincy/shared";
 import { createSchedulePreview, type CreateDraft } from "../lib/production-gantt-create";
 import { formatCivilSchedule, formatDueCivil } from "../lib/date-format";
@@ -30,11 +30,26 @@ export type CreateDraftChange = (patch: Partial<CreateDraft>) => void;
 /** The phone sheet's Due trigger: an outlined field the Title input's height, filling its row, instead of the column cell's borderless text. */
 const SHEET_DUE_TRIGGER = "flex-1 justify-start border-input min-h-[38px] max-[721px]:min-h-[44px] px-[10px] -ml-0";
 
-const GESTURE_BOUNDARY = { onClick: stopRowGesture, onPointerDown: stopRowGesture, onMouseDown: stopRowGesture, onKeyDown: stopRowGesture } as const;
+/**
+ * Keeps a press or key off the row and the tree's key handling. In the phone sheet, Escape on a picker's CLOSED trigger is let
+ * through so the sheet can close; while a popup is open (the key comes from its content, or from a trigger reporting
+ * `aria-expanded="true"`) it stays suppressed so Escape closes only the popup (#585).
+ */
+function gestureBoundary(sheet: boolean) {
+  return {
+    onClick: stopRowGesture,
+    onPointerDown: stopRowGesture,
+    onMouseDown: stopRowGesture,
+    onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
+      if (sheet && event.key === "Escape" && event.target instanceof HTMLElement && event.target.getAttribute("aria-expanded") === "false") return;
+      stopRowGesture(event);
+    },
+  } as const;
+}
 
-export function GanttCreateDraftAssignees({ projectId, role, draft, pending, onChange, triggerId }: { projectId: string; role: Role; draft: CreateDraft; pending: boolean; onChange: CreateDraftChange; triggerId?: string }) {
+export function GanttCreateDraftAssignees({ projectId, role, draft, pending, onChange, triggerId, sheet = false }: { projectId: string; role: Role; draft: CreateDraft; pending: boolean; onChange: CreateDraftChange; triggerId?: string; sheet?: boolean }) {
   return (
-    <span data-testid="gantt-create-draft-assignees" className="inline-flex min-w-0 items-center" {...GESTURE_BOUNDARY}>
+    <span data-testid="gantt-create-draft-assignees" className="inline-flex min-w-0 items-center" {...gestureBoundary(sheet)}>
       <SubtaskAssigneePicker
         projectId={projectId}
         role={role}
@@ -57,7 +72,7 @@ export function GanttCreateDraftDue({ draft, projectDefault, pending, onChange, 
   const triggerText = draft.preview ? formatDueCivil(draft.preview.end.localCivil) : defaultText;
   const triggerName = draft.preview ? formatCivilSchedule(draft.preview) : defaultText;
   return (
-    <span data-testid="gantt-create-draft-due" className="inline-flex min-w-0 flex-1 items-center" {...GESTURE_BOUNDARY}>
+    <span data-testid="gantt-create-draft-due" className="inline-flex min-w-0 flex-1 items-center" {...gestureBoundary(sheet)}>
       <SubtaskScheduleControl
         owner="gantt-create"
         label="Schedule for new task"
@@ -111,7 +126,7 @@ export function GanttCreateDraftStack({ projectId, role, draft, projectDefault, 
     <div className="flex min-w-0 flex-col gap-[var(--space-3)] [&_button]:min-h-[44px] [&_button]:min-w-[44px]">
       <div className="flex min-w-0 flex-col gap-1">
         <FieldLabel htmlFor={assigneesId}>Assignees</FieldLabel>
-        <div className="flex min-w-0"><GanttCreateDraftAssignees projectId={projectId} role={role} draft={draft} pending={pending} onChange={onChange} triggerId={assigneesId} /></div>
+        <div className="flex min-w-0"><GanttCreateDraftAssignees projectId={projectId} role={role} draft={draft} pending={pending} onChange={onChange} triggerId={assigneesId} sheet /></div>
       </div>
       <div className="flex min-w-0 flex-col gap-1">
         <FieldLabel htmlFor={dueId}>Due</FieldLabel>
