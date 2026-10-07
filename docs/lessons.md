@@ -6010,7 +6010,7 @@ Tags: gantt-calendar, focus-overlays · #688
 Guards: `gantt-create-task.dom.test.tsx` ("Escape on the desktop row"), `ProductionGantt-create-draft.dom.test.tsx`.
 
 ## A touch phone matches `pointer-coarse:` too, and that variant wins the cascade (#692, #693)
-Tags: css-tokens, gantt-calendar · #692, #693
+Tags: css-tokens, gantt-calendar · #692, #693, #695
 
 - **The breakpoint spelling.** The phone breakpoint is `max-[721px]:` / `min-[721px]:`.
   - `max-[720px]:` compiles to `width < 720`, so at exactly 720 neither the phone nor the desktop variant applied.
@@ -6022,6 +6022,11 @@ Tags: css-tokens, gantt-calendar · #692, #693
   - A narrow desktop window does not match `pointer-coarse`, so it looked fixed there.
   - Fix: scope the coarse value to the widths it is for (`min-[721px]:pointer-coarse:-my-1`) rather than adding a competing `max-[721px]:` override or `!`.
   - Confirm the result in the built CSS: grep `dist/assets/index-*.css` for the rule order.
+- **Key the JS row metric on the same media feature as the CSS variant (#695).** The row height came from `narrowTree` (`max-width: 720px`) while the `+` target followed `pointer-coarse:`, so a touch tablet above 720px had 44px targets in 40px rows.
+  - Neighbouring `+` targets overlapped, so a `-my-1` workaround was needed. It was a patch for the mismatch, not a layout.
+  - Fix: `useMediaQuery("(pointer: coarse)")` (what `pointer-coarse:` compiles to) selects the 44px metric too, and the workaround tokens go.
+  - Use `pointer`, not `any-pointer`, so a touch laptop with a fine primary pointer stays 40px in both JS and CSS.
+  - Tailwind scans comments too: a source comment that spells a removed class keeps its rule in the built CSS. Describe it in words.
 - **Measuring truncation.** `scrollWidth`/`clientWidth` round to whole pixels, so a label 0.2px too wide (50.2 in 50) read as 50/50 "fits" while the screen showed an ellipsis.
   - Measure a fit with fractional `getBoundingClientRect()` widths, and look at the crop.
   - Measure candidate wording in the real font, with canvas or an offscreen span, before choosing it.

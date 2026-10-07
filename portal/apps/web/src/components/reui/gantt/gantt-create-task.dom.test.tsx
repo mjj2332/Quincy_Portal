@@ -196,12 +196,11 @@ describe("gantt per-group add-task editor (#679)", () => {
     expect(cls).toContain("pointer-coarse:min-w-[44px]");
     expect(cls).toContain("max-[721px]:min-h-[44px]");
     expect(cls).toContain("max-[721px]:min-w-[44px]");
-    // #692 round 2: phone rows are 44px, so the + fills its row (no -my-1, full-height backing) and pins to the column's right edge.
-    // A touch phone matches pointer-coarse too, and pointer-coarse rules come later in the built CSS, so the 40px-row geometry
-    // must be scoped to desktop widths or it beats the phone layout.
+    // #695: every touch row is 44px (the metric follows (pointer: coarse)), so the + fills its row on any touch device: no negative
+    // block margin and no shrunken backing at any width. max-[721px]:ms-auto pins it to the column's right edge.
     const tokens = cls.split(/\s+/);
-    expect(tokens.filter((t) => t.endsWith(":-my-1"))).toEqual(["min-[721px]:pointer-coarse:-my-1"]);
-    expect(tokens.filter((t) => t.includes("bg-size-"))).toEqual(["min-[721px]:pointer-coarse:bg-size-[100%_calc(100%-6px)]"]);
+    expect(tokens.filter((t) => t.endsWith(":-my-1") || t === "-my-1")).toEqual([]);
+    expect(tokens.filter((t) => t.includes("bg-size-"))).toEqual([]);
     expect(cls).toContain("max-[721px]:ms-auto");
   });
 
