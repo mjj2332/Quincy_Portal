@@ -109,6 +109,23 @@ describe("SubtaskChecklist", () => {
     for (let attempt = 0; attempt < 50 && document.body.textContent?.includes("Loading checklist…"); attempt += 1) await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 5)); });
     const first = item(host, "Call client"); expect(first.getAttribute("data-row-layout")).toBeNull();
   });
+  it("keeps the Actions trigger inside the meta row's last child while its popover is open (#670)", async () => {
+    const host = mount(); await render(); const first = item(host, "Call client");
+    const meta = first.querySelector<HTMLElement>('[data-testid="subtask-checklist-meta"]')!; const trigger = () => first.querySelector<HTMLButtonElement>('[aria-label="Actions for Call client"]')!;
+    expect(meta.lastElementChild!.contains(trigger())).toBe(true);
+    await click(trigger()); expect(trigger().getAttribute("aria-expanded")).toBe("true");
+    // A non-modal FloatingPortal renders focus guards and an aria-owns span in place, after the trigger: the guard proves the open case is exercised.
+    expect(first.querySelector("[data-floating-ui-focus-guard], [aria-owns]")).not.toBeNull();
+    expect(meta.lastElementChild!.contains(trigger())).toBe(true);
+  });
+  it("in the stacked layout also keeps the Actions trigger in the meta row's last child while open (#670)", async () => {
+    const host = mount(); await act(async () => { root!.render(<SubtaskChecklist projectId={projectId} layout="stacked" />); await Promise.resolve(); });
+    await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="Expand checklist"]')?.click(); await Promise.resolve(); });
+    for (let attempt = 0; attempt < 50 && document.body.textContent?.includes("Loading checklist…"); attempt += 1) await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 5)); });
+    const first = item(host, "Call client"); const meta = first.querySelector<HTMLElement>('[data-testid="subtask-checklist-meta"]')!; const trigger = () => first.querySelector<HTMLButtonElement>('[aria-label="Actions for Call client"]')!;
+    expect(meta.lastElementChild!.contains(trigger())).toBe(true);
+    await click(trigger()); expect(meta.lastElementChild!.contains(trigger())).toBe(true);
+  });
   it("preserves accordion/progress, literal schedule badges, and compact title edit/Escape behavior", async () => {
     const host = mount(); await render(); const toggle = host.querySelector<HTMLButtonElement>('button[aria-label="Collapse checklist"]')!;
     expect(toggle.getAttribute("aria-expanded")).toBe("true"); expect(host.querySelector('[data-testid="subtask-checklist-count"]')!.textContent).toContain("0 / 2"); expect(host.querySelector('[role="progressbar"]')?.getAttribute("aria-valuemax")).toBe("2"); expect(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')?.textContent).toContain("30 May");
