@@ -196,15 +196,13 @@ describe("gantt per-group add-task editor (#679)", () => {
     expect(cls).toContain("pointer-coarse:min-w-[44px]");
     expect(cls).toContain("max-[721px]:min-h-[44px]");
     expect(cls).toContain("max-[721px]:min-w-[44px]");
-    // #692 round 2: phone rows are 44px, so the + fills its row (no -my-1, full-height backing) and pins to the column's right edge
-    expect(cls).toContain("max-[721px]:my-0");
-    expect(cls).not.toContain("max-[721px]:-my-1");
-    expect(cls).toContain("max-[721px]:bg-size-[100%_100%]");
-    expect(cls).not.toContain("max-[721px]:bg-size-[100%_calc(100%-6px)]");
+    // #692 round 2: phone rows are 44px, so the + fills its row (no -my-1, full-height backing) and pins to the column's right edge.
+    // A touch phone matches pointer-coarse too, and pointer-coarse rules come later in the built CSS, so the 40px-row geometry
+    // must be scoped to desktop widths or it beats the phone layout.
+    const tokens = cls.split(/\s+/);
+    expect(tokens.filter((t) => t.endsWith(":-my-1"))).toEqual(["min-[721px]:pointer-coarse:-my-1"]);
+    expect(tokens.filter((t) => t.includes("bg-size-"))).toEqual(["min-[721px]:pointer-coarse:bg-size-[100%_calc(100%-6px)]"]);
     expect(cls).toContain("max-[721px]:ms-auto");
-    // coarse tablets keep the 40px-row geometry
-    expect(cls).toContain("pointer-coarse:-my-1");
-    expect(cls).toContain("pointer-coarse:bg-size-[100%_calc(100%-6px)]");
   });
 
   it("canCreateTask gates each group; a refused group has no + and stays a leaf", async () => {
