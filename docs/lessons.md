@@ -5904,3 +5904,20 @@ Three defects in the 390px time list (`TimeColumn` in a stacked `PopupFrame`), o
 
 Guards: `TimeColumn.scroll.dom.test.tsx` (nested-viewport geometry), `lib/date-time-field.test.ts`. Layout-dependent, so
 only a browser at 390px proves it (jsdom has no geometry): see the map's measured check.
+
+## Focus scrolls a mid-form field flush and clips its ring; an inactive window hides the ring in screenshots (#673)
+Tags: focus-overlays, css-tokens · #673
+
+- **Shoot date ring clipped at the sheet body's bottom.** When focus lands on a mid-form field, the browser scrolls it
+  flush with the bottom of the scroller, and the ring's 4px outset falls outside the scroll box. Bottom padding cannot fix
+  a field in the middle of the form. Rule: give the **scroller** `scroll-padding` (`scroll-py-[var(--space-2)]` on
+  `project-sheet-body`), so every focusable control in it gets clearance; keep `preventScroll: true` in `reui/popover.tsx`.
+- **Ring radius must match the visible shape.** A trigger that wraps a pill rings as a rounded rect unless the trigger
+  itself takes the pill radius; do it per value-bearing trigger, not on the shared `META_TRIGGER`. The `⋯` comment action
+  rings past the column edge by the ring outset (2px offset + 2px), so it takes `me-[var(--space-1)]`.
+- **A ring missing from a screenshot is not a defect until `document.hasFocus()` is true.** Chrome drops
+  `:focus-visible` when the window is inactive; the #669 harness captured P4-390 without checking, and a re-run that kept
+  focus showed the ring held. Record `hasFocus` on every focus row (Subagent-Orchestration §2a).
+
+Guards: `ProjectSheet.dom.test.tsx`, `SubtaskScheduleControl.dom.test.tsx`, `ProjectDiscussionThread.dom.test.tsx`. The
+geometry itself only a browser proves.
