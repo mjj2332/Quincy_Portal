@@ -97,6 +97,18 @@ describe("TimeColumn after a pick (#666 item 5)", () => {
     expect(centred).toEqual([]);
   });
 
+  it("does not re-centre after a click pick when a browser ResizeObserver reports on observe (#662 P5)", () => {
+    // A real ResizeObserver delivers one callback for every observe(); re-observing on each selection change re-centred the
+    // column a frame after the pick had skipped it.
+    vi.stubGlobal("ResizeObserver", class { cb: () => void; constructor(cb: () => void) { this.cb = cb; } observe() { this.cb(); } disconnect() {} });
+    const onPick = vi.fn();
+    render("17:00", onPick);
+    const centred = recordCentre();
+    act(() => { slot("18:00").click(); });
+    render("18:00", onPick);
+    expect(centred).toEqual([]);
+  });
+
   it("still centres when the time changes from outside, even after a pick", () => {
     render("17:00");
     const centred = recordCentre();
