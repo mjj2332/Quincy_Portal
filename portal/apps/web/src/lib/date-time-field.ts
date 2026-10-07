@@ -344,6 +344,16 @@ function openSheetInsets(): { top: number; right: number; bottom: number; left: 
 }
 
 /**
+ * #678: `collisionPadding` for a picker opened from the phone add-task bottom sheet. `shellAwarePopupPadding` insets the popup to the
+ * open sheet's rect (right for the Project sheet, which covers the viewport's top); the bottom sheet is SHORT, so that would cap the popup
+ * at the sheet's height and leave its footer off-screen. This one measures the viewport itself (shell header on top, the edge gap elsewhere).
+ */
+export function viewportPopupPadding(): { top: number; right: number; bottom: number; left: number } {
+  const gap = DATE_TIME_POPUP_EDGE_GAP;
+  return { top: shellChromeBottom() + gap, right: gap, bottom: gap, left: gap };
+}
+
+/**
  * `collisionPadding` kept inside whatever bounds the viewport: the open Project sheet's rect on all four edges when there
  * is one (#597, #629), else the shell header on top and the viewport gap elsewhere. Read at open time: a cold load has no header yet, and an impersonation banner lowers it.
  */

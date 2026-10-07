@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { shellAwarePopupPadding } from "./date-time-field";
+import { shellAwarePopupPadding, viewportPopupPadding } from "./date-time-field";
 
 /** #597: the popup's top padding is sheet-relative while a Project sheet is open, shell-relative otherwise. */
 function shellHeader(bottom: number) {
@@ -49,5 +49,14 @@ describe("shellAwarePopupPadding with a Project sheet (#597)", () => {
     shellHeader(50);
     sheet(24, "data-closed");
     expect(shellAwarePopupPadding().top).toBe(66);
+  });
+});
+
+describe("viewportPopupPadding for the phone add-task bottom sheet (#678)", () => {
+  it("measures the viewport, never the short sheet the picker portals into", () => {
+    shellHeader(50);
+    sheet(486, "data-open", { left: 0, right: 0, bottom: 0 });
+    expect(shellAwarePopupPadding().top).toBe(502);
+    expect(viewportPopupPadding()).toEqual({ top: 66, right: 16, bottom: 16, left: 16 });
   });
 });

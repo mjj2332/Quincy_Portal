@@ -17,7 +17,7 @@ import type { ProjectDefaultRangeDto, Role } from "@quincy/shared";
 import { createSchedulePreview, type CreateDraft } from "../lib/production-gantt-create";
 import { formatCivilSchedule, formatDueCivil } from "../lib/date-format";
 import { cn } from "@/lib/utils";
-import { SHELL_AWARE_SHIFT_AVOIDANCE, shellAwarePopupPadding } from "../lib/date-time-field";
+import { SHELL_AWARE_SHIFT_AVOIDANCE, shellAwarePopupPadding, viewportPopupPadding } from "../lib/date-time-field";
 import { stopRowGesture } from "./ProductionGanttSubtaskCells";
 import { CELL_TRIGGER } from "./ProjectDeadlineCell";
 import { Button } from "./reui/button";
@@ -62,7 +62,7 @@ export function GanttCreateDraftDue({ draft, projectDefault, pending, onChange, 
         owner="gantt-create"
         label="Schedule for new task"
         popupCollisionAvoidance={SHELL_AWARE_SHIFT_AVOIDANCE}
-        popupCollisionPadding={shellAwarePopupPadding}
+        popupCollisionPadding={sheet ? viewportPopupPadding : shellAwarePopupPadding}
         value={draft.preview}
         // ONE trigger for default and chosen alike (only its text varies), so the popover's return-focus finds the same
         // node after a save. The Due column cell's own classes (`CELL_TRIGGER`, `size="xs" variant="ghost"`) so it matches the column.
@@ -80,8 +80,8 @@ export function GanttCreateDraftDue({ draft, projectDefault, pending, onChange, 
             <span className="truncate">{triggerText}</span>
           </Button>
         )}
-        // In the phone sheet the popup is sized to the viewport, not to the short sheet it portals into.
-        popupClassName={sheet ? "max-h-[calc(100dvh-2*var(--space-4))] [--available-height:calc(100dvh-2*var(--space-4))]" : undefined}
+        // In the phone sheet the popup is measured against the viewport (the `viewportPopupPadding` above and this boundary), not the
+        // short sheet it portals into: Base UI's `--available-height` is then the viewport's, it shifts up, and its footer stays tappable.
         popupCollisionBoundary={sheet ? (typeof document === "undefined" ? undefined : document.documentElement) : undefined}
         open={open}
         setOpen={setOpen}

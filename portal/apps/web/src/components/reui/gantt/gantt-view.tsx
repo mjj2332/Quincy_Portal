@@ -2557,7 +2557,7 @@ function GanttView({
       ) ?? []
     for (const trigger of triggers) {
       if (trigger.dataset.ganttCreateTrigger === id) {
-        revealRowNearest(trigger.closest<HTMLElement>("[data-gantt-row-id]"))
+        revealRowNearest(trigger, FOCUS_RING_ROOM_PX)
         trigger.focus({ preventScroll: true })
         break
       }
@@ -3865,7 +3865,7 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
             )
             if (!plus) return true
             // the + can sit under the sticky header once the sheet is gone: bring its row in view first
-            revealRowNearest(plus.closest<HTMLElement>("[data-gantt-row-id]"))
+            revealRowNearest(plus, FOCUS_RING_ROOM_PX)
             plus.focus({ preventScroll: true })
             return false
           }}
@@ -3997,12 +3997,15 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
   )
 })
 
+/** The 4px focus ring (`--space-1`) paints outside the `+`'s own box; reveal that much more around it. */
+const FOCUS_RING_ROOM_PX = 4
+
 /**
  * #678: scroll both panes by the least vertical distance that puts the editor row fully in view
  * under the sticky header. Deliberately NOT `scrollIntoView` (it scrolls every ancestor, the page on
  * a phone: `docs/lessons.md`, "Gantt landing row"); `scrollLeft` is never touched.
  */
-function revealRowNearest(row: HTMLElement | null) {
+function revealRowNearest(row: HTMLElement | null, margin = 0) {
   const viewport = row?.closest<HTMLElement>('[data-slot="scroll-area-viewport"]')
   if (!row || !viewport || viewport.clientHeight === 0) return
   const pane = viewport.closest<HTMLElement>('[data-slot="gantt-tree-pane"],[data-slot="gantt-timeline-pane"]')
@@ -4010,8 +4013,9 @@ function revealRowNearest(row: HTMLElement | null) {
   const headerHeight = header?.getBoundingClientRect().height ?? 0
   const view = viewport.getBoundingClientRect()
   const rect = row.getBoundingClientRect()
-  const above = rect.top - view.top - headerHeight
-  const below = rect.bottom - view.bottom
+  // `margin`: room kept around the element, e.g. a focus ring that paints outside its box
+  const above = rect.top - margin - view.top - headerHeight
+  const below = rect.bottom + margin - view.bottom
   // the row is taller than the room: show its top, never push it above the header
   const delta = above < 0 ? above : below > 0 ? Math.min(below, above) : 0
   if (delta === 0) return

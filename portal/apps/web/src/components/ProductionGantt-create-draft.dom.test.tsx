@@ -312,7 +312,7 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
       }
     });
 
-    it("the Due trigger is an outlined, full-width field the Title's height; the popup is sized to the viewport, not the sheet", async () => {
+    it("the Due trigger is an outlined, full-width field the Title's height; its popup still portals inside the sheet", async () => {
       await mount();
       await click(plus(STREET_A)!);
       const trigger = draftDue()!;
@@ -320,7 +320,6 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
       await act(async () => { trigger.focus(); trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); trigger.click(); await Promise.resolve(); });
       await waitFor(() => expect(dateTimePopup("Schedule for new task")).not.toBeNull());
       const popup = dateTimePopup("Schedule for new task")!;
-      expect(popup.className).toContain("max-h-[calc(100dvh-2*var(--space-4))]");
       expect(sheet()!.querySelector('[data-testid="gantt-group-create-task-overlay-slot"]')!.contains(popup)).toBe(true);
     });
 
