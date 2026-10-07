@@ -330,6 +330,7 @@ import {
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/reui/button"
 import { Input } from "@/components/reui/input"
+import { FieldLabel } from "@/components/reui/field"
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from "@/components/reui/sheet"
 import { OverlayCollisionBoundaryContext, OverlayContainerContext } from "@/components/OverlayContainerContext"
 import { Checkbox } from "@/components/reui/checkbox"
@@ -2556,6 +2557,7 @@ function GanttView({
       ) ?? []
     for (const trigger of triggers) {
       if (trigger.dataset.ganttCreateTrigger === id) {
+        revealRowNearest(trigger.closest<HTMLElement>("[data-gantt-row-id]"))
         trigger.focus({ preventScroll: true })
         break
       }
@@ -3708,6 +3710,7 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
   const mountedRef = useRef(true)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const errorId = useId()
+  const titleId = `${errorId}-title`
   // The sheet's overlay slot: every popover / select the draft's controls open portals here.
   const [overlaySlot, setOverlaySlot] = useState<HTMLDivElement | null>(null)
   // ...and the sheet itself is their collision boundary, so a list shrinks inside it rather than opening above it.
@@ -3788,6 +3791,7 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
     <div className="min-w-0 flex-1">
       <Input
         ref={inputRef}
+        id={titleId}
         data-testid="gantt-group-create-task-input"
         value={title}
         maxLength={viewConfig.createTaskMaxLength}
@@ -3855,11 +3859,16 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
           data-testid="gantt-group-create-task-sheet"
           data-gantt-create-for={group.resource.id}
           initialFocus={() => inputRef.current ?? true}
-          finalFocus={() =>
-            document.querySelector<HTMLElement>(
+          finalFocus={() => {
+            const plus = document.querySelector<HTMLElement>(
               `[data-gantt-create-trigger="${CSS.escape(group.resource.id)}"]`
-            ) ?? true
-          }
+            )
+            if (!plus) return true
+            // the + can sit under the sticky header once the sheet is gone: bring its row in view first
+            revealRowNearest(plus.closest<HTMLElement>("[data-gantt-row-id]"))
+            plus.focus({ preventScroll: true })
+            return false
+          }}
           // `focus-visible:!outline-none`: the sheet itself can hold focus between controls (see ProjectSheet).
           className="z-[var(--z-dialog)] gap-[var(--space-3)] p-[var(--space-4)] pb-[max(var(--space-4),env(safe-area-inset-bottom))] focus-visible:!outline-none"
           overlayProps={{
@@ -3874,13 +3883,11 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
           <OverlayContainerContext.Provider value={overlaySlot}>
             <OverlayCollisionBoundaryContext.Provider value={sheetPopup}>
             <SheetHeader className="p-0">
-              <SheetTitle>{createTaskSheetTitle(groupTitle)}</SheetTitle>
+              <SheetTitle className="m-0 [font:var(--type-h3)] tracking-[var(--tracking-tight)] [overflow-wrap:anywhere]">{createTaskSheetTitle(groupTitle)}</SheetTitle>
             </SheetHeader>
             <div className="flex min-w-0 flex-col gap-[var(--space-3)]">
               <div className="flex min-w-0 flex-col gap-1">
-                <span className="text-muted-foreground text-xs">
-                  Title
-                </span>
+                <FieldLabel htmlFor={titleId}>Title</FieldLabel>
                 {titleField}
               </div>
               <div

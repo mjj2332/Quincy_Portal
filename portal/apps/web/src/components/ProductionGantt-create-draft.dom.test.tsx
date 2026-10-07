@@ -116,8 +116,8 @@ async function mount(q = "") {
 const plus = (street: string) => host.querySelector<HTMLButtonElement>(`button[aria-label="Add task in ${street}"]`);
 const input = () => document.querySelector<HTMLInputElement>('input[aria-label^="New task title in"]');
 const editorRow = () => host.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-row"]');
-const draftAssignees = () => document.querySelector<HTMLButtonElement>('[aria-label="Assignees for new subtask"]');
-const draftDue = () => document.querySelector<HTMLButtonElement>('[aria-label^="Schedule for new subtask"]');
+const draftAssignees = () => document.querySelector<HTMLButtonElement>('[aria-label="Assignees for new task"]');
+const draftDue = () => document.querySelector<HTMLButtonElement>('[aria-label^="Schedule for new task"]');
 const options = () => [...document.querySelectorAll<HTMLElement>('[role="option"]')];
 
 async function click(el: HTMLElement) {
@@ -243,10 +243,10 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
     await click(plus(STREET_A)!);
     const trigger = draftDue()!;
     await act(async () => { trigger.focus(); trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); trigger.click(); await Promise.resolve(); });
-    await waitFor(() => expect(dateTimePopup("Schedule for new subtask")).not.toBeNull());
-    await pickPopupDay(dateTimePopup("Schedule for new subtask")!, isoDate(40));
-    await applyPopup(dateTimePopup("Schedule for new subtask")!);
-    await waitFor(() => expect(dateTimePopup("Schedule for new subtask")).toBeNull());
+    await waitFor(() => expect(dateTimePopup("Schedule for new task")).not.toBeNull());
+    await pickPopupDay(dateTimePopup("Schedule for new task")!, isoDate(40));
+    await applyPopup(dateTimePopup("Schedule for new task")!);
+    await waitFor(() => expect(dateTimePopup("Schedule for new task")).toBeNull());
     await settle();
     expect(draftDue()).toBe(trigger);
     expect(trigger.isConnected).toBe(true);
@@ -262,10 +262,10 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
     await click(plus(STREET_A)!);
     const trigger = draftDue()!;
     await act(async () => { trigger.focus(); trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); trigger.click(); await Promise.resolve(); });
-    await waitFor(() => expect(dateTimePopup("Schedule for new subtask")).not.toBeNull());
-    await pickPopupDay(dateTimePopup("Schedule for new subtask")!, isoDate(40));
-    await applyPopup(dateTimePopup("Schedule for new subtask")!);
-    await waitFor(() => expect(dateTimePopup("Schedule for new subtask")).toBeNull());
+    await waitFor(() => expect(dateTimePopup("Schedule for new task")).not.toBeNull());
+    await pickPopupDay(dateTimePopup("Schedule for new task")!, isoDate(40));
+    await applyPopup(dateTimePopup("Schedule for new task")!);
+    await waitFor(() => expect(dateTimePopup("Schedule for new task")).toBeNull());
     await settle();
     expect(draftDue()!.textContent).toMatch(/^\w{3} \d{1,2} \w{3} · \d{2}:\d{2}$/);
     expect(draftDue()!.textContent).not.toContain("→");
@@ -297,6 +297,33 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
       const add = popup.querySelector<HTMLButtonElement>('[data-testid="gantt-group-create-task-add"]')!;
       expect(add.disabled).toBe(true);
       expect(popup.querySelector('[data-testid="gantt-group-create-task-cancel"]')).not.toBeNull();
+    });
+
+    it("every field has a real <label> above it: Title, Assignees and Due are each named by (and associated with) their control; the heading uses the type token", async () => {
+      await mount();
+      await click(plus(STREET_A)!);
+      const popup = sheet()!;
+      for (const [text, control] of [["Title", input()!], ["Assignees", draftAssignees()!], ["Due", draftDue()!]] as const) {
+        const label = [...popup.querySelectorAll<HTMLLabelElement>("label")].find((candidate) => candidate.textContent?.trim() === text)!;
+        expect(label, text).toBeDefined();
+        expect(label.htmlFor, text).toBe(control.id);
+        expect(control.id, text).not.toBe("");
+        expect(label.compareDocumentPosition(control) & Node.DOCUMENT_POSITION_FOLLOWING, text).toBeTruthy();
+      }
+      const heading = popup.querySelector<HTMLElement>('[data-slot="sheet-title"]') ?? [...popup.querySelectorAll<HTMLElement>("h1,h2,h3,[id]")].find((el) => el.textContent === `New task in ${STREET_A}`)!;
+      expect(heading.className).toContain("var(--type-h3)");
+    });
+
+    it("the Due trigger is an outlined, full-width field the Title's height; the popup is sized to the viewport, not the sheet", async () => {
+      await mount();
+      await click(plus(STREET_A)!);
+      const trigger = draftDue()!;
+      for (const token of ["flex-1", "justify-start", "border-input", "min-h-[38px]"]) expect(trigger.className, token).toContain(token);
+      await act(async () => { trigger.focus(); trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); trigger.click(); await Promise.resolve(); });
+      await waitFor(() => expect(dateTimePopup("Schedule for new task")).not.toBeNull());
+      const popup = dateTimePopup("Schedule for new task")!;
+      expect(popup.className).toContain("max-h-[calc(100dvh-2*var(--space-4))]");
+      expect(sheet()!.querySelector('[data-testid="gantt-group-create-task-overlay-slot"]')!.contains(popup)).toBe(true);
     });
 
     it("one POST carries title and assignees; success closes the sheet, returns focus to the + and pins the row", async () => {
@@ -375,7 +402,7 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
     expect(trigger.className).toContain("text-muted-foreground");
     expect(trigger.querySelector('[data-slot="status-pill"]')).toBeNull();
     expect(trigger.textContent).not.toContain("→");
-    expect(trigger.getAttribute("aria-label")).toBe(`Schedule for new subtask: ${trigger.textContent}`);
+    expect(trigger.getAttribute("aria-label")).toBe(`Schedule for new task: ${trigger.textContent}`);
   });
 });
 
@@ -453,7 +480,7 @@ describe("ProductionGantt — one create carries the draft", () => {
     await mount();
     await click(plus(STREET_A)!);
     const seen: string[] = [];
-    document.body.addEventListener("keydown", (event) => { if ((event.target as Element | null)?.closest?.('[aria-label="Assignees for new subtask"]')) seen.push(event.key); });
+    document.body.addEventListener("keydown", (event) => { if ((event.target as Element | null)?.closest?.('[aria-label="Assignees for new task"]')) seen.push(event.key); });
     const button = draftAssignees()!;
     await act(async () => { button.focus(); });
     await key(button, "ArrowDown");

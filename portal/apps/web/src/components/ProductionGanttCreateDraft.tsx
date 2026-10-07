@@ -12,7 +12,7 @@
  * (`owner="gantt-create"`, composer mode) behind one `reui/button` trigger carrying the Due column cell's `CELL_TRIGGER`; the wrapper that keeps a press or key off
  * the row — a plain `<span>` carrying `stopPropagation` (the People and Due cells' pattern, `stopRowGesture`).
  */
-import { useState } from "react";
+import { useId, useState } from "react";
 import type { ProjectDefaultRangeDto, Role } from "@quincy/shared";
 import { createSchedulePreview, type CreateDraft } from "../lib/production-gantt-create";
 import { formatCivilSchedule, formatDueCivil } from "../lib/date-format";
@@ -21,30 +21,35 @@ import { SHELL_AWARE_SHIFT_AVOIDANCE, shellAwarePopupPadding } from "../lib/date
 import { stopRowGesture } from "./ProductionGanttSubtaskCells";
 import { CELL_TRIGGER } from "./ProjectDeadlineCell";
 import { Button } from "./reui/button";
+import { FieldLabel } from "./reui/field";
 import { SubtaskAssigneePicker } from "./quincy/SubtaskAssigneePicker";
 import { SubtaskScheduleControl } from "./quincy/SubtaskScheduleControl";
 
 export type CreateDraftChange = (patch: Partial<CreateDraft>) => void;
 
+/** The phone sheet's Due trigger: an outlined field the Title input's height, filling its row, instead of the column cell's borderless text. */
+const SHEET_DUE_TRIGGER = "flex-1 justify-start border-input min-h-[38px] max-[721px]:min-h-[44px] px-[10px] -ml-0";
+
 const GESTURE_BOUNDARY = { onClick: stopRowGesture, onPointerDown: stopRowGesture, onMouseDown: stopRowGesture, onKeyDown: stopRowGesture } as const;
 
-export function GanttCreateDraftAssignees({ projectId, role, draft, pending, onChange }: { projectId: string; role: Role; draft: CreateDraft; pending: boolean; onChange: CreateDraftChange }) {
+export function GanttCreateDraftAssignees({ projectId, role, draft, pending, onChange, triggerId }: { projectId: string; role: Role; draft: CreateDraft; pending: boolean; onChange: CreateDraftChange; triggerId?: string }) {
   return (
     <span data-testid="gantt-create-draft-assignees" className="inline-flex min-w-0 items-center" {...GESTURE_BOUNDARY}>
       <SubtaskAssigneePicker
         projectId={projectId}
         role={role}
-        label="Assignees for new subtask"
+        label="Assignees for new task"
         selected={draft.assignees}
         disabled={pending}
         compact
+        triggerId={triggerId}
         onCommit={(_ids, people) => onChange({ assignees: people })}
       />
     </span>
   );
 }
 
-export function GanttCreateDraftDue({ draft, projectDefault, pending, onChange }: { draft: CreateDraft; projectDefault: ProjectDefaultRangeDto | null; pending: boolean; onChange: CreateDraftChange }) {
+export function GanttCreateDraftDue({ draft, projectDefault, pending, onChange, sheet = false, triggerId }: { draft: CreateDraft; projectDefault: ProjectDefaultRangeDto | null; pending: boolean; onChange: CreateDraftChange; sheet?: boolean; triggerId?: string }) {
   const [open, setOpen] = useState(false);
   const defaultText = projectDefault ? formatDueCivil(projectDefault.end.localCivil) : "Project default";
   // No chosen range: the server copies the Project's default (ADR 0011), so the trigger names its END, as the Due column prints it.
@@ -55,7 +60,7 @@ export function GanttCreateDraftDue({ draft, projectDefault, pending, onChange }
     <span data-testid="gantt-create-draft-due" className="inline-flex min-w-0 flex-1 items-center" {...GESTURE_BOUNDARY}>
       <SubtaskScheduleControl
         owner="gantt-create"
-        label="Schedule for new subtask"
+        label="Schedule for new task"
         popupCollisionAvoidance={SHELL_AWARE_SHIFT_AVOIDANCE}
         popupCollisionPadding={shellAwarePopupPadding}
         value={draft.preview}
@@ -64,16 +69,20 @@ export function GanttCreateDraftDue({ draft, projectDefault, pending, onChange }
         trigger={(props) => (
           <Button
             {...props}
-            variant="ghost"
+            id={triggerId}
+            variant={sheet ? "outline" : "ghost"}
             size="xs"
             type="button"
             data-testid="gantt-create-draft-due-trigger"
-            aria-label={`Schedule for new subtask: ${triggerName}`}
-            className={cn(CELL_TRIGGER, draft.preview ? "text-foreground" : "text-muted-foreground hover:text-foreground")}
+            aria-label={`Schedule for new task: ${triggerName}`}
+            className={cn(CELL_TRIGGER, draft.preview ? "text-foreground" : "text-muted-foreground hover:text-foreground", sheet && SHEET_DUE_TRIGGER)}
           >
             <span className="truncate">{triggerText}</span>
           </Button>
         )}
+        // In the phone sheet the popup is sized to the viewport, not to the short sheet it portals into.
+        popupClassName={sheet ? "max-h-[calc(100dvh-2*var(--space-4))] [--available-height:calc(100dvh-2*var(--space-4))]" : undefined}
+        popupCollisionBoundary={sheet ? (typeof document === "undefined" ? undefined : document.documentElement) : undefined}
         open={open}
         setOpen={setOpen}
         onSave={(request) => onChange({
@@ -92,19 +101,21 @@ export function GanttCreateDraftDue({ draft, projectDefault, pending, onChange }
 
 /**
  * A phone has no People/Due columns: the add-task bottom sheet's body (between the Title field and Cancel / Add) is one
- * captioned row each for Assignees and Due, 44px controls.
+ * field each for Assignees and Due, a real `<label>` above each (as the Title's), 44px controls, Due an outlined trigger.
  */
 export function GanttCreateDraftStack({ projectId, role, draft, projectDefault, pending, onChange }: { projectId: string; role: Role; draft: CreateDraft; projectDefault: ProjectDefaultRangeDto | null; pending: boolean; onChange: CreateDraftChange }) {
-  const caption = "w-[5rem] shrink-0 text-xs text-muted-foreground";
+  const id = useId();
+  const assigneesId = `${id}-assignees`;
+  const dueId = `${id}-due`;
   return (
     <div className="flex min-w-0 flex-col gap-[var(--space-3)] [&_button]:min-h-[44px] [&_button]:min-w-[44px]">
-      <div className="flex min-w-0 items-center gap-2">
-        <span className={caption}>Assignees</span>
-        <GanttCreateDraftAssignees projectId={projectId} role={role} draft={draft} pending={pending} onChange={onChange} />
+      <div className="flex min-w-0 flex-col gap-1">
+        <FieldLabel htmlFor={assigneesId}>Assignees</FieldLabel>
+        <div className="flex min-w-0"><GanttCreateDraftAssignees projectId={projectId} role={role} draft={draft} pending={pending} onChange={onChange} triggerId={assigneesId} /></div>
       </div>
-      <div className="flex min-w-0 items-center gap-2">
-        <span className={caption}>Due</span>
-        <GanttCreateDraftDue draft={draft} projectDefault={projectDefault} pending={pending} onChange={onChange} />
+      <div className="flex min-w-0 flex-col gap-1">
+        <FieldLabel htmlFor={dueId}>Due</FieldLabel>
+        <div className="flex min-w-0"><GanttCreateDraftDue draft={draft} projectDefault={projectDefault} pending={pending} onChange={onChange} sheet triggerId={dueId} /></div>
       </div>
     </div>
   );

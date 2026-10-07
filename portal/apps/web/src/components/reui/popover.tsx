@@ -157,6 +157,7 @@ function PopoverContent({
   sideOffset = 4,
   collisionAvoidance,
   collisionPadding,
+  collisionBoundary,
   anchor,
   positionMethod,
   positionerClassName,
@@ -171,6 +172,7 @@ function PopoverContent({
     | "sideOffset"
     | "collisionAvoidance"
     | "collisionPadding"
+    | "collisionBoundary"
     | "anchor"
     | "positionMethod"
   >) {
@@ -196,6 +198,7 @@ function PopoverContent({
         sideOffset={sideOffset}
         collisionAvoidance={collisionAvoidance}
         collisionPadding={collisionPadding}
+        collisionBoundary={collisionBoundary}
         anchor={anchor}
         positionMethod={positionMethod}
         className={cn("isolate z-[var(--z-popover)]", positionerClassName)}

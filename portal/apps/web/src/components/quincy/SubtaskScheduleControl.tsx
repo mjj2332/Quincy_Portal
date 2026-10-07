@@ -64,9 +64,12 @@ const storedRange = (value: ChecklistScheduleDto | null): ProjectDefaultRangeDto
   ? { start: { localCivil: value.start.localCivil, fold: value.start.fold }, end: { localCivil: value.end.localCivil, fold: value.end.fold } }
   : null;
 
-export function SubtaskScheduleControl<TItem extends LatestSubtaskSummary = Subtask>({ owner, label, value, open, setOpen, onSave, onUseLatest, onUseLatestItem, busy, compact = false, error, defaultLabel, retained: retainedProp, trigger, anchor, finalFocus, initialFocus = "first", projectDefault = null, reminders, readOnly = false, popupCollisionAvoidance, popupCollisionPadding, onDiscard }: { owner: string; label: string; value: ChecklistScheduleDto | null; defaultLabel?: string; open: boolean; setOpen: (open: boolean) => void; onSave: (value: RangeScheduleRequest) => void; onUseLatest?: (value: ChecklistScheduleDto, reminders?: SubtaskRemindersDto) => void; onUseLatestItem?: (value: TItem) => void; busy: boolean; compact?: boolean; error?: ScheduleError<TItem>; retained?: RetainedSchedule;
+export function SubtaskScheduleControl<TItem extends LatestSubtaskSummary = Subtask>({ owner, label, value, open, setOpen, onSave, onUseLatest, onUseLatestItem, busy, compact = false, error, defaultLabel, retained: retainedProp, trigger, anchor, finalFocus, initialFocus = "first", projectDefault = null, reminders, readOnly = false, popupCollisionAvoidance, popupCollisionPadding, popupClassName, popupCollisionBoundary, onDiscard }: { owner: string; label: string; value: ChecklistScheduleDto | null; defaultLabel?: string; open: boolean; setOpen: (open: boolean) => void; onSave: (value: RangeScheduleRequest) => void; onUseLatest?: (value: ChecklistScheduleDto, reminders?: SubtaskRemindersDto) => void; onUseLatestItem?: (value: TItem) => void; busy: boolean; compact?: boolean; error?: ScheduleError<TItem>; retained?: RetainedSchedule;
   /** Replaces the built-in trigger (the Gantt's Due cell). The popover keeps `aria-label={label}` either way. */
   trigger?: (props: SubtaskScheduleTriggerProps) => ReactNode;
+  /** Extra classes on the popup, and the boundary its collisions are measured against: a caller inside a short sheet sizes the popup to the viewport instead (#678). */
+  popupClassName?: string;
+  popupCollisionBoundary?: ComponentProps<typeof DateTimePopoverContent>["collisionBoundary"];
   /** External-anchor mode (#582): no trigger renders at all and the popup sits on this element or virtual element, read live by the positioner. Mutually exclusive with `trigger`. */
   anchor?: ComponentProps<typeof DateTimePopoverContent>["anchor"];
   /** Where focus goes when an external-anchor popup closes (there is no trigger to return it to). Needs `anchor`. */
@@ -150,7 +153,7 @@ export function SubtaskScheduleControl<TItem extends LatestSubtaskSummary = Subt
           {valueText ? <StatusPill tone="neutral" className="min-w-0"><span className="sr-only">Schedule </span><span className="block truncate min-w-0">{valueText}</span></StatusPill> : <span aria-hidden="true">◷</span>}
         </button>}
     />}
-    <DateTimePopoverContent label={label} id={id} anchor={anchor} finalFocus={finalFocus} popupCollisionAvoidance={popupCollisionAvoidance} popupCollisionPadding={openPadding}>
+    <DateTimePopoverContent label={label} id={id} anchor={anchor} finalFocus={finalFocus} className={popupClassName} collisionBoundary={popupCollisionBoundary} popupCollisionAvoidance={popupCollisionAvoidance} popupCollisionPadding={openPadding}>
       <DateTimeRangePopup
         label={label}
         value={stored}
