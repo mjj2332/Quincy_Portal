@@ -5,13 +5,14 @@ import { ButtonGroup } from "@/components/reui/button-group";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/reui/field";
 import { Input } from "@/components/reui/input";
 import { cn } from "@/lib/utils";
-import { civilToCell, joinCivilMinute, parseTypedTime, sameReminderOffsets, splitCivilMinute, sydneyToday, timeSlots, yearBounds } from "@/lib/date-time-field";
+import { civilToCell, joinCivilMinute, parseTypedTime, POPUP_SHORT_QUERY, POPUP_STACKED_QUERY, sameReminderOffsets, splitCivilMinute, sydneyToday, timeSlots, yearBounds } from "@/lib/date-time-field";
 import { applyRangeShortcut, buildRangeShortcuts, momentLabel, type DateTimeRangeValue, type RangeMoment, type RangeShortcut } from "@/lib/date-time-range";
+import { useMediaQuery } from "@/lib/use-media-query";
 import { CalendarPane } from "./CalendarPane";
 import { FoldChoice } from "./FoldChoice";
 import { NextReminder } from "./NextReminder";
-import { PopupAnchorContext, type DateTimeReminders, type Disambiguation } from "./DateTimePopup";
-import { PopupFrame } from "./PopupFrame";
+import { ordered, PopupAnchorContext, type DateTimeReminders, type Disambiguation } from "./DateTimePopup";
+import { PopupFrame, REVEAL_TODAY } from "./PopupFrame";
 import { RemindersStrip } from "./RemindersStrip";
 import { ShortcutList } from "./ShortcutList";
 import { TimeColumn } from "./TimeColumn";
@@ -154,6 +155,10 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
   const zoneId = anchor?.zoneId ?? ownId;
   const bodyRef = (anchor?.bodyRef ?? ownBodyRef) as React.RefObject<HTMLDivElement | null>;
   const timeId = useId();
+  // #686: a short viewport has no time-slot list (the typed time stays), the title scrolls with the body, and a stacked body shows the calendar first.
+  const short = useMediaQuery(POPUP_SHORT_QUERY);
+  const stacked = useMediaQuery(POPUP_STACKED_QUERY);
+  const calendarFirst = short && stacked;
 
   // Sydney's today, read once when the popup opens so it cannot change under the user.
   const [today] = useState(() => sydneyToday());
@@ -168,7 +173,7 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
   useLayoutEffect(() => {
     if (!focusOnMount) return;
     const body = bodyRef.current;
-    (body?.querySelector<HTMLElement>('[data-initial-focus="true"]') ?? body?.querySelector<HTMLElement>('[aria-selected="true"] button') ?? body?.querySelector<HTMLElement>("button"))?.focus({ preventScroll: true });
+    (body?.querySelector<HTMLElement>('[data-initial-focus="true"]') ?? body?.querySelector<HTMLElement>('[aria-selected="true"] button') ?? (short ? body?.querySelector<HTMLElement>(REVEAL_TODAY) : null) ?? body?.querySelector<HTMLElement>("button"))?.focus({ preventScroll: true });
     // Mount only: Base UI owns focus for the ordinary open, this covers a late mount.
   }, []);
 
@@ -318,6 +323,8 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
       bodyRef={bodyRef}
       applying={applying}
       applyDisabled={blocked}
+      scrollTitle={short}
+      revealFallback={short ? REVEAL_TODAY : undefined}
       reveal={`button[data-range-${active}="true"], button[data-selected-single="true"]`}
       onCancel={onCancel ?? onClose}
       onApply={() => { void apply(); }}
@@ -347,24 +354,29 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
     >
       <div className="flex flex-col gap-[var(--space-4)]">
         <div className="flex flex-col gap-[var(--space-4)] min-[721px]:flex-row">
-          <ShortcutList shortcuts={shortcuts} activeId={activeIds} onPick={pickShortcut} />
-          <CalendarPane
-            selection={{ mode: "range", start: draft.start.day, end: draft.end.day, activeEnd: active }}
-            today={today}
-            month={month}
-            onMonthChange={setMonth}
-            onPickDay={pickDay}
-            startYear={startYear}
-            endYear={endYear}
-          />
-          <div className="flex min-w-0 flex-col gap-[var(--space-2)] min-[721px]:w-28 min-[721px]:shrink-0">
-            <TimeColumn selected={current.time} skipped={skipped} onPick={pickSlot} />
-          </div>
+          {ordered(calendarFirst, [
+            <ShortcutList key="shortcuts" shortcuts={shortcuts} activeId={activeIds} onPick={pickShortcut} />,
+            <CalendarPane
+              key="calendar"
+              selection={{ mode: "range", start: draft.start.day, end: draft.end.day, activeEnd: active }}
+              today={today}
+              month={month}
+              onMonthChange={setMonth}
+              onPickDay={pickDay}
+              startYear={startYear}
+              endYear={endYear}
+            />,
+          ])}
+          {!short && (
+            <div className="flex min-w-0 flex-col gap-[var(--space-2)] min-[721px]:w-28 min-[721px]:shrink-0">
+              <TimeColumn selected={current.time} skipped={skipped} onPick={pickSlot} />
+            </div>
+          )}
         </div>
         <Field data-invalid={timeInvalid || undefined} data-time-boundary="">
           <FieldLabel htmlFor={timeId}>{TITLES[active]} time</FieldLabel>
           <Input id={timeId} inputMode="numeric" autoComplete="off" placeholder="HH:MM" value={current.timeText} aria-invalid={timeInvalid || undefined} aria-describedby={`${timeId}-help`} onChange={(event) => typeTime(event.target.value)} />
-          <FieldDescription id={`${timeId}-help`} className="text-[length:var(--text-xs)]">Any minute, for example 17:07, or pick a slot.</FieldDescription>
+          <FieldDescription id={`${timeId}-help`} className="text-[length:var(--text-xs)]">{short ? "Any minute, for example 17:07." : "Any minute, for example 17:07, or pick a slot."}</FieldDescription>
           {timeInvalid && <FieldError>{TIME_ERROR}</FieldError>}
           {(["start", "end"] as const).map((which) => resolved[which].gap && <FieldError key={which}>{TITLES[which]}: {resolved[which].gap}</FieldError>)}
           {hint && <FieldDescription className="text-[length:var(--text-xs)]">{hint}</FieldDescription>}

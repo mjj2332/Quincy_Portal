@@ -299,6 +299,13 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
       expect(popup.querySelector('[data-testid="gantt-group-create-task-cancel"]')).not.toBeNull();
     });
 
+    it("the name cell is capped at the pane (no 208px floor), so the + sits in flow at its end and the title truncates before it (#686)", async () => {
+      await mount();
+      const cell = host.querySelector<HTMLElement>('[data-testid="gantt-tree-name-cell"]')!;
+      expect(cell.style.width).toBe("0px");
+      expect(cell.style.flexGrow).toBe("1");
+    });
+
     it("every field has a real <label> above it: Title, Assignees and Due are each named by (and associated with) their control", async () => {
       await mount();
       await click(plus(STREET_A)!);
@@ -321,6 +328,14 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
       await waitFor(() => expect(dateTimePopup("Schedule for new task")).not.toBeNull());
       const popup = dateTimePopup("Schedule for new task")!;
       expect(sheet()!.querySelector('[data-testid="gantt-group-create-task-overlay-slot"]')!.contains(popup)).toBe(true);
+    });
+
+    it("the sheet's Due shows a real date in the Title's ink, not muted (#686); the desktop row keeps its muted default", async () => {
+      await mount();
+      await click(plus(STREET_A)!);
+      const cls = draftDue()!.className.split(/\s+/);
+      expect(cls).toContain("text-foreground");
+      expect(cls).not.toContain("text-muted-foreground");
     });
 
     it("the Project's name in the heading is its own body-type element; the Due trigger takes the Title input's radius, background and size; the footer is ruled off", async () => {
@@ -425,6 +440,18 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
       expect(document.activeElement).toBe(plus(STREET_A));
       expect(apiPostMock).not.toHaveBeenCalled();
     });
+  });
+
+  it("a group title beside the + can shrink and ends in an ellipsis: truncate and min-w-0 below 721px, the 96px floor only above (#686)", async () => {
+    await mount();
+    // The label span beside the + holds the title span first.
+    const title = plus(STREET_A)!.previousElementSibling!.firstElementChild as HTMLElement;
+    expect(title.textContent).toBe(STREET_A);
+    const tokens = title.className.split(/\s+/);
+    expect(tokens).toContain("truncate");
+    expect(tokens).toContain("min-w-0");
+    expect(tokens).toContain("min-[721px]:min-w-[var(--space-9)]");
+    expect(tokens).not.toContain("min-w-[var(--space-9)]");
   });
 
   it("the Due control shows the Project default until a range is applied", async () => {

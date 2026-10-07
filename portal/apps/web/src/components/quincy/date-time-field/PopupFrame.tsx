@@ -15,6 +15,8 @@ const SELECTED = `[aria-selected="true"] button, ${PRESSED_SLOT}`;
 
 /** The day the person is about to edit when nothing narrower is given: the picked day. The time slot is never revealed, only cleared of the fade. */
 export const REVEAL_SELECTED_DAY = '[aria-selected="true"] button';
+/** #686: where a short popup opens when no day is selected (an empty field): Sydney's today, which react-day-picker marks `data-today` on its cell. */
+export const REVEAL_TODAY = "[data-today] button";
 
 /**
  * #537 — the body opens at scroll 0 (#528) with its bottom edge faded, so a selected day or time slot
@@ -38,9 +40,11 @@ export const REVEAL_SELECTED_DAY = '[aria-selected="true"] button';
  * `reveal` selector (the range's Start/End toggle): it reveals the newly active end's day once, even after a
  * manual scroll, and leaves the latch as it was.
  */
-function useSelectedClearOfFade(contentRef: RefObject<HTMLDivElement | null>, reveal: string) {
+function useSelectedClearOfFade(contentRef: RefObject<HTMLDivElement | null>, reveal: string, revealFallback: string | undefined) {
   // Read live by the observers below, so the Start/End toggle changing `reveal` does not re-run the effect (which would reset its latch).
   const revealRef = useRef(reveal);
+  const fallbackRef = useRef(revealFallback);
+  fallbackRef.current = revealFallback;
   // Set by the effect below: reveals the current `reveal` day on demand, outside the manual-scroll latch.
   const revealNow = useRef<() => void>(() => {});
   const shown = useRef(reveal);
@@ -91,7 +95,9 @@ function useSelectedClearOfFade(contentRef: RefObject<HTMLDivElement | null>, re
       // "keep where it is" rule left a body that an early, smaller layout had scrolled down, and the later solve only picked among
       // positions near it). A focused control is still required below, so this never moves it out of view.
       if (fromTop) viewport.scrollTop = 0;
-      const required = new Set<Element>(withReveal ? viewport.querySelectorAll(revealRef.current) : []);
+      // #686: `revealFallback` (today) stands in only while the primary selector matches nothing (no picked day).
+      const revealed = withReveal ? viewport.querySelectorAll(revealRef.current) : [];
+      const required = new Set<Element>(revealed.length || !withReveal || !fallbackRef.current ? revealed : viewport.querySelectorAll(fallbackRef.current));
       const focus = focused();
       if (focus) required.add(focus);
       // #630: at open only the picked day (the `reveal` match, plus a focused control) is solved for. The pressed time slot and the range's other
@@ -136,7 +142,7 @@ function useSelectedClearOfFade(contentRef: RefObject<HTMLDivElement | null>, re
  * scrolling body and a footer pinned below it so Cancel / Apply are always visible (#421). The
  * body is the caller's; the footer's two actions are the same for every form.
  */
-export function PopupFrame({ label, zoneId, bodyRef, applying, applyDisabled = false, pinned, reveal = REVEAL_SELECTED_DAY, onCancel, onApply, children }: {
+export function PopupFrame({ label, zoneId, bodyRef, applying, applyDisabled = false, pinned, scrollTitle = false, reveal = REVEAL_SELECTED_DAY, revealFallback, onCancel, onApply, children }: {
   label: string;
   zoneId: string;
   bodyRef: Ref<HTMLDivElement>;
@@ -144,25 +150,32 @@ export function PopupFrame({ label, zoneId, bodyRef, applying, applyDisabled = f
   applyDisabled?: boolean;
   /** Controls drawn between the header and the scrolling body, so they stay visible while it scrolls. */
   pinned?: ReactNode;
+  /** #686: the title and zone scroll with the body (a short viewport) instead of being pinned above it, giving their height to the body. */
+  scrollTitle?: boolean;
   /** CSS selector, within the body, for the day that must be scrolled into view when the popup opens or resizes (#587). A range passes its active end's day. */
   reveal?: string;
+  /** #686: revealed instead when `reveal` matches nothing (a short popup of an empty field opens on today). */
+  revealFallback?: string;
   onCancel: () => void;
   onApply: () => void;
   children: ReactNode;
 }) {
   const contentRef = useRef<HTMLDivElement>(null);
-  useSelectedClearOfFade(contentRef, reveal);
+  useSelectedClearOfFade(contentRef, reveal, revealFallback);
+  const header = (
+    <FrameHeader>
+      <FrameTitle className="min-w-0 [contain:inline-size]"><Eyebrow className="line-clamp-2" title={label}>{label}</Eyebrow></FrameTitle>
+      <FrameDescription id={zoneId} className="text-[length:var(--text-xs)]">{SYDNEY_TIME_ZONE}</FrameDescription>
+    </FrameHeader>
+  );
   return (
     <Frame ref={bodyRef} spacing="sm" className="max-h-[var(--available-height)] min-h-0">
-      <FrameHeader>
-        <FrameTitle className="min-w-0 [contain:inline-size]"><Eyebrow className="line-clamp-2" title={label}>{label}</Eyebrow></FrameTitle>
-        <FrameDescription id={zoneId} className="text-[length:var(--text-xs)]">{SYDNEY_TIME_ZONE}</FrameDescription>
-      </FrameHeader>
+      {!scrollTitle && header}
       {pinned && <div className="shrink-0 px-(--frame-panel-header-px) pb-[var(--space-2)]">{pinned}</div>}
       {/* The body scrolls; the footer below stays pinned so Cancel / Apply are always visible. */}
       <FramePanel className="flex min-h-0 flex-col p-0">
         <ScrollArea className="flex min-h-0 grow flex-col [--fade-size:var(--space-5)] *:data-[slot=scroll-area-viewport]:mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] *:data-[slot=scroll-area-viewport]:mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))] *:data-[slot=scroll-area-viewport]:focus-visible:ring-0 *:data-[slot=scroll-area-viewport]:focus-visible:!outline-none rounded-[inherit] -outline-offset-2 has-[[data-slot=scroll-area-viewport]:focus-visible]:outline-solid has-[[data-slot=scroll-area-viewport]:focus-visible]:outline-[length:var(--border-width-bold)] has-[[data-slot=scroll-area-viewport]:focus-visible]:outline-[var(--focus-ring)] has-[[data-slot=scroll-area-viewport]:focus-visible]:-outline-offset-2">
-          <div ref={contentRef} className="px-(--frame-panel-px) py-(--frame-panel-py)">{children}</div>
+          <div ref={contentRef} className="px-(--frame-panel-px) py-(--frame-panel-py)">{scrollTitle && header}{children}</div>
         </ScrollArea>
       </FramePanel>
       <FrameFooter className="shrink-0 flex-row justify-end gap-[var(--space-2)]">

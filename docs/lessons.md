@@ -5985,3 +5985,17 @@ Tags: scheduling, focus-overlays · #683
   pressed; `ShortcutList` accepts a list. Project default needs both ends to match.
 
 Guards: `lib/date-time-range.test.ts`, `DateTimeField-range.dom.test.tsx`, `DateTimeField-range-reminders.dom.test.tsx`.
+
+## A nested scroller taller than its host's window traps the wheel (#686)
+Tags: focus-overlays, css-tokens · #686
+
+At a landscape phone's height the date popups' body was a ~68px window (header, Start/End toggle and footer took the rest), and the
+time-slot list inside it was its own scroller: it caught every wheel and swipe, so the calendar and TIME below it could not be reached.
+
+- **Rule: below `POPUP_SHORT_QUERY` (`(height < 520px)`, `lib/date-time-field.ts`) the slot list is not rendered.** Not CSS-hidden: `PopupFrame`
+  reads `PRESSED_SLOT` / `SELECTED` rects by selector. The typed TIME stays and takes any minute; day picks keep their 09:00 / 17:00 defaults.
+- **The title scrolls with the body** (`PopupFrame` `scrollTitle`); the Start/End toggle and Cancel / Apply stay pinned. A stacked short body shows the
+  calendar before the shortcuts (`ordered`, keyed so a live resize does not remount either).
+- Height only, not width: the wide layout has the same trap. Do not nest a scroller inside a body window that can shrink below it.
+
+Guards: `popup-breakpoint.contract.test.ts`, `DateTimePopup-short.dom.test.tsx`.

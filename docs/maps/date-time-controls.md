@@ -65,3 +65,6 @@ Last verified against 495766e9
 - **No re-centre after a pick.** `pickedRef` skips the next centre for the slot a pointer or Enter pick just chose (null if already pressed). Open, a complete typed time and a 721px crossing still centre.
 - Header Deadline close goes through `closePopover` in `ProjectHeaderDeadline.tsx`, which focuses the trigger first (see docs/lessons.md § "Adopting base-nova's sidebar", P3, #662).
 - Lessons: docs/lessons.md § "A pressed time slot under either fade reads as a grey bar, and focus before reveal jumps the body". Guards: `TimeColumn.scroll.dom.test.tsx`, `lib/date-time-field.test.ts`, `ProjectHeaderDeadline-sheet.dom.test.tsx`.
+
+## Short heights (#686)
+Below `POPUP_SHORT_QUERY` (`(height < 520px)`, `lib/date-time-field.ts`; both popups read it with `useMediaQuery`) the time-slot list is not rendered (the typed TIME stays and accepts any minute), `PopupFrame`'s `scrollTitle` moves the title and zone into the scrolling body, and a stacked body orders the calendar before the shortcuts (`ordered` in `DateTimePopup.tsx`). The Start/End toggle and Cancel / Apply stay pinned. Tests: `popup-breakpoint.contract.test.ts`, `DateTimePopup-short.dom.test.tsx`. Lesson: docs/lessons.md § "A nested scroller taller than its host's window traps the wheel (#686)".

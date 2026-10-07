@@ -2,11 +2,12 @@ import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, 
 import { DEADLINE_PRESET_TIME, resolveSydneyCivilMinute, type ProjectDeadlineSchedule } from "@quincy/shared";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/reui/field";
 import { Input } from "@/components/reui/input";
-import { buildShortcuts, civilToCell, joinCivilMinute, parseTypedTime, sameReminderOffsets, splitCivilMinute, sydneyToday, timeSlots, yearBounds, type DateShortcut } from "@/lib/date-time-field";
+import { buildShortcuts, civilToCell, joinCivilMinute, parseTypedTime, POPUP_SHORT_QUERY, POPUP_STACKED_QUERY, sameReminderOffsets, splitCivilMinute, sydneyToday, timeSlots, yearBounds, type DateShortcut } from "@/lib/date-time-field";
+import { useMediaQuery } from "@/lib/use-media-query";
 import { CalendarPane } from "./CalendarPane";
 import { FoldChoice } from "./FoldChoice";
 import { NextReminder } from "./NextReminder";
-import { PopupFrame } from "./PopupFrame";
+import { PopupFrame, REVEAL_TODAY } from "./PopupFrame";
 import { RemindersStrip } from "./RemindersStrip";
 import { ShortcutList } from "./ShortcutList";
 import { TimeColumn } from "./TimeColumn";
@@ -103,6 +104,11 @@ function initialDraft(value: DateTimeStored | null, reminders: DateTimeReminders
   };
 }
 
+/** #686: the shortcuts and the calendar, calendar first when asked. Keyed, so a live flip re-orders them without remounting either. */
+export function ordered(calendarFirst: boolean, [shortcuts, calendar]: [ReactNode, ReactNode]): ReactNode[] {
+  return calendarFirst ? [calendar, shortcuts] : [shortcuts, calendar];
+}
+
 const TIME_ERROR = "Enter a time as HH:MM, from 00:00 to 23:59.";
 const SLOTS = timeSlots();
 
@@ -113,6 +119,10 @@ function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedba
   const zoneId = anchor?.zoneId ?? ownId;
   const bodyRef = (anchor?.bodyRef ?? ownBodyRef) as React.RefObject<HTMLDivElement | null>;
   const timeId = useId();
+  // #686: a short viewport has no time-slot list (the typed time stays), the title scrolls with the body, and a stacked body shows the calendar first.
+  const short = useMediaQuery(POPUP_SHORT_QUERY);
+  const stacked = useMediaQuery(POPUP_STACKED_QUERY);
+  const calendarFirst = short && stacked;
 
   // Sydney's today, read once when the popup opens so it cannot change under the user.
   const [today] = useState(() => sydneyToday());
@@ -125,7 +135,7 @@ function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedba
   useLayoutEffect(() => {
     if (!focusOnMount) return;
     const body = bodyRef.current;
-    (body?.querySelector<HTMLElement>('[aria-selected="true"] button') ?? body?.querySelector<HTMLElement>("button"))?.focus({ preventScroll: true });
+    (body?.querySelector<HTMLElement>('[aria-selected="true"] button') ?? (short ? body?.querySelector<HTMLElement>(REVEAL_TODAY) : null) ?? body?.querySelector<HTMLElement>("button"))?.focus({ preventScroll: true });
     // Mount only: Base UI owns focus for the cached-detail case, this covers a late mount.
   }, []);
 
@@ -206,27 +216,32 @@ function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedba
   const hint = draft.touched && !draft.clear && civil === null && !timeInvalid ? "Pick a date and a time." : null;
 
   return (
-    <PopupFrame label={label} zoneId={zoneId} bodyRef={bodyRef} applying={applying} applyDisabled={blocked || busy} onCancel={onClose} onApply={() => { void apply(); }}>
+    <PopupFrame label={label} zoneId={zoneId} bodyRef={bodyRef} applying={applying} applyDisabled={blocked || busy} scrollTitle={short} revealFallback={short ? REVEAL_TODAY : undefined} onCancel={onClose} onApply={() => { void apply(); }}>
       <div className="flex flex-col gap-[var(--space-4)]">
         <div className="flex flex-col gap-[var(--space-4)] min-[721px]:flex-row">
-          <ShortcutList shortcuts={shortcuts} activeId={activeId} onPick={pickShortcut} />
-          <CalendarPane
-            selection={{ mode: "single", day: draft.day }}
-            today={today}
-            month={month}
-            onMonthChange={setMonth}
-            onPickDay={(day) => pickDay(day, "grid")}
-            startYear={bounds.startYear}
-            endYear={bounds.endYear}
-          />
-          <div className="flex min-w-0 flex-col gap-[var(--space-2)] min-[721px]:w-28 min-[721px]:shrink-0">
-            <TimeColumn selected={draft.time} skipped={skipped} onPick={pickSlot} />
-          </div>
+          {ordered(calendarFirst, [
+            <ShortcutList key="shortcuts" shortcuts={shortcuts} activeId={activeId} onPick={pickShortcut} />,
+            <CalendarPane
+              key="calendar"
+              selection={{ mode: "single", day: draft.day }}
+              today={today}
+              month={month}
+              onMonthChange={setMonth}
+              onPickDay={(day) => pickDay(day, "grid")}
+              startYear={bounds.startYear}
+              endYear={bounds.endYear}
+            />,
+          ])}
+          {!short && (
+            <div className="flex min-w-0 flex-col gap-[var(--space-2)] min-[721px]:w-28 min-[721px]:shrink-0">
+              <TimeColumn selected={draft.time} skipped={skipped} onPick={pickSlot} />
+            </div>
+          )}
         </div>
         <Field data-invalid={timeInvalid || undefined} data-time-boundary="">
           <FieldLabel htmlFor={timeId}>Time</FieldLabel>
           <Input id={timeId} inputMode="numeric" autoComplete="off" placeholder="HH:MM" value={draft.timeText} aria-invalid={timeInvalid || undefined} aria-describedby={`${timeId}-help`} onChange={(event) => typeTime(event.target.value)} />
-          <FieldDescription id={`${timeId}-help`} className="text-[length:var(--text-xs)]">Any minute, for example 17:07, or pick a slot.</FieldDescription>
+          <FieldDescription id={`${timeId}-help`} className="text-[length:var(--text-xs)]">{short ? "Any minute, for example 17:07." : "Any minute, for example 17:07, or pick a slot."}</FieldDescription>
           {timeInvalid && <FieldError>{TIME_ERROR}</FieldError>}
           {gap && resolution && !resolution.ok && <FieldError>{resolution.message}</FieldError>}
           {hint && <FieldDescription className="text-[length:var(--text-xs)]">{hint}</FieldDescription>}

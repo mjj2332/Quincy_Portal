@@ -217,7 +217,7 @@ function nearestClearScroll(window: { low: number; high: number }, slivered: (sc
  *
  * #677 — `boundaries` (the TIME input and its label, which start below the fold) and `chips` (the preset chips) only ever tighten the landing above: when it already
  * leaves each input clear of the bottom band and each label uncut by the body's edge it stands; otherwise the smallest whole scroll with every input wholly below the
- * body, no `noSliver` item slivered and no chip crossing the top band's inner edge wins (a label wholly inside the bottom band is fine); none valid keeps the landing.
+ * body or (#686, a short body that holds it from the start) clear of the bottom band, no `noSliver` item slivered and no chip crossing the top band's inner edge wins (a label wholly inside the bottom band is fine); none valid keeps the landing.
  */
 export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, items, snaps, noSliver, boundaries, chips }: { viewport: EdgeRect; scrollTop: number; maxScrollTop: number; fade: number; items: readonly FadeItem[]; snaps?: readonly number[]; noSliver?: readonly EdgeRect[]; boundaries?: readonly BottomBoundary[]; chips?: readonly EdgeRect[] }): number {
   const height = viewport.bottom - viewport.top;
@@ -301,13 +301,22 @@ export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, 
     const edge = Math.min(fade, s);
     return top < edge && bottom > edge;
   });
-  const lastBelow = Math.floor(Math.min(...boundaries.map(({ control }) => control.top - viewport.top + scrollTop)) - height + 1e-9);
-  for (let s = Math.ceil(safe.low - 1e-9); s <= Math.min(safe.high, lastBelow); s += 1) if (!slivered(s) && bottomOk(s) && !crossesInnerEdge(s)) return s;
+  // #686: not capped at "wholly below the body": a short body (844x390) holds the input from the start, and the only valid rests are those that scroll it up clear of
+  // the bottom band (which shrinks to nothing at the end of the scroll). Ascending, so a scroll that leaves it wholly below still wins when there is one.
+  for (let s = Math.ceil(safe.low - 1e-9); s <= safe.high; s += 1) if (!slivered(s) && bottomOk(s) && !crossesInnerEdge(s)) return s;
+  // #686: when no scroll meets every rule (a short, wide popup: the stacked chips cross the top fade's inner edge at nearly every scroll), the rules give way in a stated
+  // order: (1) the required day stays in view (`safe`, hard); (2) the TIME input is not slivered; (3) the `noSliver` items (the active chip) are not slivered;
+  // (4) a chip crossing the top fade's inner edge is dropped first. The smallest whole scroll meeting 1-3 wins; none keeps the landing.
+  const strict = sliveredWithin(0);
+  for (let s = Math.ceil(safe.low - 1e-9); s <= safe.high; s += 1) if (!strict(s) && bottomOk(s)) return s;
+  for (let s = Math.ceil(safe.low - 1e-9); s <= safe.high; s += 1) if (!slivered(s) && bottomOk(s)) return s;
   return legacy;
 }
 
 /** #602: below this width the popup stacks its columns, the calendar takes 44px cells and the popup may cover its trigger. Tailwind's `max-[721px]:` compiles to this same `(width < 721px)`. */
 export const POPUP_STACKED_QUERY = "(width < 721px)";
+/** #686: a short viewport (every landscape phone). The popups drop the time-slot list (its own scroller trapped the wheel in a ~68px body) and let the title scroll with the body. Height only: the wide layout has the same trap. */
+export const POPUP_SHORT_QUERY = "(height < 520px)";
 
 /**
  * How a date popup resolves its collision policy (#447, #528): below `sm` it shifts over its

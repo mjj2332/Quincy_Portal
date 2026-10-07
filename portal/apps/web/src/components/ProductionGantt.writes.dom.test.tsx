@@ -1681,4 +1681,12 @@ describe("ProductionGantt — Add task row (#344)", () => {
     expect(host.querySelector(`[data-gantt-resource="task:${CREATED_ID}"] [data-testid="gantt-resize-handle-end"]`)).not.toBeNull();
     expect(hiddenToasts()).toBe(0);
   });
+
+  it("9. the attention label can shrink and truncate on a phone, so the project name keeps priority; it stays fixed on desktop (#686)", async () => {
+    resetFixture({ canEditDeadline: false, noDeadline: true });
+    await render();
+    const tokens = host.querySelector<HTMLElement>(`[data-testid="gantt-row-attention-missing_deadline"]`)!.className.split(/\s+/);
+    for (const token of ["min-w-0", "truncate", "max-[720px]:max-w-[45%]", "min-[721px]:shrink-0"]) expect(tokens, token).toContain(token);
+    expect(tokens).not.toContain("shrink-0");
+  });
 });

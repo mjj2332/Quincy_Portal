@@ -248,6 +248,11 @@
  * or dependency offset (`createRowRem` is 0). Row mode: Escape stays on the input: popups portal out of the row but
  * their events bubble through it. New names: `labels`/`functions.cancelAddTaskIn` (i18n),
  * `GanttCreateTaskContext`. Covered by `gantt-create-task.dom.test.tsx`.
+ *
+ * 2026-10-07, #686 — CHANGED (class only): the `+` start margin is `ms-2` (was `ms-1`) so its outward
+ * focus ring clears the group title it follows. The title beside it (`GanttResourceLabel` in `ProductionGantt.tsx`, the
+ * consumer's `renderResourceLabel`) is `min-w-0 truncate` below 721px, the 96px floor only above, so it shrinks and
+ * ends in an ellipsis before the `+` instead of being clipped under it (this file's own default label is already `truncate`).
  */
 
 import {
@@ -4230,7 +4235,7 @@ const GanttTreeRow = memo(function GanttTreeRow({
                 data-gantt-create-trigger={row.resource.id}
                 aria-label={settings.i18n.functions.addTaskIn(row.resource.title)}
                 aria-expanded={createOpen}
-                className="text-muted-foreground hover:text-foreground! bg-background pointer-coarse:bg-transparent pointer-coarse:bg-[image:linear-gradient(var(--background),var(--background))] pointer-coarse:bg-no-repeat pointer-coarse:bg-center pointer-coarse:bg-size-[100%_calc(100%-6px)] max-[720px]:bg-transparent max-[720px]:bg-[image:linear-gradient(var(--background),var(--background))] max-[720px]:bg-no-repeat max-[720px]:bg-center max-[720px]:bg-size-[100%_calc(100%-6px)] aria-expanded:bg-none! sticky end-0 focus-visible:z-[2] max-[720px]:end-[var(--space-1)] ms-1 size-5! shrink-0 opacity-0 group-hover/gantt-row:opacity-100 group-data-hover/gantt-row:opacity-100 focus:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 max-[720px]:opacity-100 aria-expanded:opacity-100 aria-expanded:bg-transparent! pointer-coarse:-my-1 pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] max-[720px]:-my-1 max-[720px]:min-h-[44px] max-[720px]:min-w-[44px]"
+                className="text-muted-foreground hover:text-foreground! bg-background pointer-coarse:bg-transparent pointer-coarse:bg-[image:linear-gradient(var(--background),var(--background))] pointer-coarse:bg-no-repeat pointer-coarse:bg-center pointer-coarse:bg-size-[100%_calc(100%-6px)] max-[720px]:bg-transparent max-[720px]:bg-[image:linear-gradient(var(--background),var(--background))] max-[720px]:bg-no-repeat max-[720px]:bg-center max-[720px]:bg-size-[100%_calc(100%-6px)] aria-expanded:bg-none! sticky end-0 focus-visible:z-[2] max-[720px]:end-[var(--space-1)] ms-2 size-5! shrink-0 opacity-0 group-hover/gantt-row:opacity-100 group-data-hover/gantt-row:opacity-100 focus:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 max-[720px]:opacity-100 aria-expanded:opacity-100 aria-expanded:bg-transparent! pointer-coarse:-my-1 pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] max-[720px]:-my-1 max-[720px]:min-h-[44px] max-[720px]:min-w-[44px]"
                 onClick={() => onOpenCreate(row)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {

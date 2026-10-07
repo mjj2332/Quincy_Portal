@@ -517,4 +517,22 @@ describe("scrollTopClearOfFade TIME boundary below the fold (#677)", () => {
     const low = { ...table, items: [day(560, 606)], noSliver: undefined, chips: chips() };
     expect(scrollTopClearOfFade({ ...low, boundaries: [boundary()] })).toBe(scrollTopClearOfFade({ ...low }));
   });
+
+  it("844x390 Gantt inline Due, measured rects: no scroll meets every rule, so the chips' fade-edge rule gives way and the landing is the smallest that clears the day, TIME and the active chip (#686)", () => {
+    // Content offsets, body 194, fade 24, max 373. Day clear for s in [134,243]; TIME wholly below for s<=193 (clear of the band for s>=256);
+    // the active chip (Project default) unslivered for s<=103 or s>=180; the stacked chips cross the top inner edge except for s in [206,213].
+    const chipTops = [57.5, 117.5, 177.5, 237.5, 297.5];
+    const measured = {
+      viewport: { top: 0, bottom: 194 },
+      scrollTop: 0,
+      maxScrollTop: 373,
+      fade: 24,
+      snaps: [0, ...chipTops],
+      items: [{ top: 267.8, bottom: 303.8, required: true }],
+      noSliver: [{ top: 297.5, bottom: 349.5 }],
+      chips: chipTops.map((top) => ({ top, bottom: top + 52 })),
+      boundaries: [{ control: { top: 387.9, bottom: 425.9 } }],
+    };
+    expect(scrollTopClearOfFade(measured)).toBe(180);
+  });
 });

@@ -331,7 +331,8 @@ const ganttFormatEventTime = mergeGanttI18n(GANTT_I18N).functions.formatEventTim
  */
 const GANTT_NAME_COLUMN_WIDTH = 180;
 const GANTT_TREE_PANEL: GanttTreePanelConfig = { nameColumnFill: true, nameColumnWidth: GANTT_NAME_COLUMN_WIDTH, width: 396 };
-const GANTT_TREE_PANEL_NARROW: GanttTreePanelConfig = { nameColumnFill: true };
+// #686: no floor on a phone. The vendor default (208px) made the row wider than the tree pane, so the sticky `+` overlaid the title; with none, the name cell fills exactly the pane.
+const GANTT_TREE_PANEL_NARROW: GanttTreePanelConfig = { nameColumnFill: true, nameColumnWidth: 0 };
 /** Scroll distance (px) from the bottom of the panel at which the next project page is requested. */
 const NEAR_BOTTOM_THRESHOLD_PX = 240;
 
@@ -437,7 +438,8 @@ function GanttRowAttentionBadge({ reason }: { reason: ProductionGanttAttentionRe
   return (
     <span
       className={cn(
-        "shrink-0 truncate text-[10px] uppercase tracking-[0.04em]",
+        // #686: on a phone the label shrinks (at most 45% of the cell) and truncates after the project name; desktop keeps it whole.
+        "min-w-0 truncate text-[10px] uppercase tracking-[0.04em] max-[720px]:max-w-[45%] min-[721px]:shrink-0",
         critical ? "text-signal-critical" : "text-muted-foreground",
       )}
       data-testid={`gantt-row-attention-${reason}`}
@@ -558,7 +560,7 @@ function GanttResourceLabel({
     <span className="flex min-w-0 items-center gap-1.5">
       {/* The street keeps a `--space-9` (96px = the old 6rem) floor while taking every remaining
           pixel; the attention badge yields to it (see `hideAttentionBadgeFor`). */}
-      <span className="min-w-[var(--space-9)] flex-1 truncate">
+      <span className="min-w-0 min-[721px]:min-w-[var(--space-9)] flex-1 truncate">
         {projectHrefFor && resource.id.startsWith("project:") ? (
           <ProjectCalendarAnchor
             testId="gantt-project-link"
