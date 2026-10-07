@@ -61,11 +61,16 @@
  * guard pins it). Reuse ledger: menu — `reui/dropdown-menu` through `scheduling-item-menu.tsx`; `reui/context-menu` and the
  * `gantt-1`/`gantt-2` `renderEventMenu` blocks were searched and fail on the touch long-press and the per-bar root.
  *
- * ## #344 — "+ Add task"
- * Each expanded Project whose `permissions.canEditChildren` holds ends with a "+ Add task" row (the
- * vendored tree owns the row and input; `onCreateGroupTask` / `canCreateTask` here own the write and the
- * gate). Enter posts `{ title }` only to `POST /api/projects/:id/subtasks` (the server applies the default
- * range, the audit row and the activity — the same endpoint as the Project page). The created Subtask is
+ * ## #344 / #678 / #679 — "+" on the Project row
+ * Each Project whose `permissions.canEditChildren` holds carries a `+` on its row (no idle "+ Add task" rows); it opens
+ * ONE editor (a row on desktop, a bottom sheet at <= 720px; the vendored tree owns the row, the title and the open state; `onCreateGroupTask` / `canCreateTask` here
+ * own the write and the gate). The editor keeps the row's columns: the draft's Assignees and Due are
+ * `GanttColumn.renderCreate` cells under People and Due (`ProductionGanttCreateDraft.tsx`: `quincy/SubtaskAssigneePicker`
+ * and `quincy/SubtaskScheduleControl`, as the Checklist composer), or, at <= 720px, sit in the add-task bottom sheet
+ * (`renderCreateStack`). The draft lives here (`createDraft`), is reported dirty to the vendor (`createTaskDirty`) and dropped
+ * on `onCreateTaskClose` / a generation change. Enter posts ONE `POST /api/projects/:id/subtasks` with the Checklist
+ * composer's body: `{ title }`, plus `assigneeIds` / `schedule` / `reminderOffsetsMinutes` only when set (the server applies
+ * the default range, the audit row and the activity — the same endpoint as the Project page). The created Subtask is
  * pinned (`lib/production-gantt-create.ts`, display-only, generation-scoped, exempt from the draw
  * cap's row budget) until the refetch returns it; if an authoritative refetch omits it, the bar stays
  * for one more refetch and "Created — hidden by current filters" is toasted; if the real row arrives
@@ -179,7 +184,7 @@ import { hashKey, useQueryClient } from "@tanstack/react-query";
 import { ApiError, apiPatch, apiPost } from "../lib/api";
 import { invalidateProjectSurfaces, useProjectAccessTermination, type ProjectSubtask } from "../lib/project-data";
 import { pushToast } from "../lib/toast-store";
-import { buildPinnedGanttModel, GanttFullFetchLedger, pinFromCreated, reconcilePinnedCreatedRows, subscribeGanttFullFetchLedger, type PinnedCreatedRow } from "../lib/production-gantt-create";
+import { buildCreateSubtaskBody, buildPinnedGanttModel, createDraftIsDirty, EMPTY_CREATE_DRAFT, GanttFullFetchLedger, pinFromCreated, reconcilePinnedCreatedRows, subscribeGanttFullFetchLedger, type CreateDraft, type CreateSubtaskBody, type PinnedCreatedRow } from "../lib/production-gantt-create";
 import type { CalendarSettleState } from "../lib/production-calendar-interaction";
 import { type SchedulingCommittedInfo, type SchedulingDeadlineConfirmInput } from "../lib/use-scheduling-commands";
 import { useSchedulingControllerWithUndoToast } from "../lib/use-scheduling-undo-toast";
@@ -233,6 +238,7 @@ import { ProductionEventCalendarDialogs } from "./ProductionEventCalendarDialogs
 import { SchedulingItemSchedulePicker, scheduleErrorFromEditor, useScheduleConflictStash, type ScheduleItemSummary } from "./scheduling-item-schedule-picker";
 import { GanttDeadlineCell, GanttTeamCell } from "./ProductionGanttProjectCells";
 import { GanttSubtaskDueCell, isRowConfirmedRemoved, stopRowGesture } from "./ProductionGanttSubtaskCells";
+import { GanttCreateDraftAssignees, GanttCreateDraftDue, GanttCreateDraftStack } from "./ProductionGanttCreateDraft";
 import { ProjectCalendarAnchor } from "./ProjectCalendarAnchor";
 import { focusLanding } from "../lib/landing-focus";
 import { type ProductionGanttDeadlineConfirmState } from "./ProductionGanttDeadlineDialog";
@@ -1573,6 +1579,13 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // as the Deadline actions above) so a cell never reads a row the chart is not drawing. Triggers
   // are `disabled={!live}` like "Set deadline": a picker Deadline save that races a later bar drag
   // is caught by the server's `expectedVersion`, which the controller already handles.
+  // #678/#679: the add-task draft's Assignees and Due (the title lives in the vendor editor row). Held here, above the vendor
+  // tree's rows, so a refetch or a re-render never drops it; the vendor tells us when its editor closes (`onCreateTaskClose`).
+  const [createDraft, setCreateDraft] = useState<CreateDraft>(EMPTY_CREATE_DRAFT);
+  const createDraftRef = useRef(createDraft);
+  createDraftRef.current = createDraft;
+  const changeCreateDraft = useCallback((patch: Partial<CreateDraft>) => setCreateDraft((current) => ({ ...current, ...patch })), []);
+  const resetCreateDraft = useCallback(() => setCreateDraft(EMPTY_CREATE_DRAFT), []);
   const columns = useMemo<GanttColumn[]>(() => {
     const projectFor = (resource: GanttResource) => (resource.id.startsWith("project:") ? projectById.get(resource.id.slice("project:".length)) : undefined);
     // Phones (<= 720px): no People/Due columns at all; the row link opens the Project, where both
@@ -1589,6 +1602,8 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
           const project = projectFor(resource);
           return project ? <GestureAwareCell live={live}>{(disabled) => <GanttTeamCell projectId={project.id} street={project.street} team={project.team} canEdit={project.permissions.canEditTeam === true} disabled={disabled} role={identity.role} />}</GestureAwareCell> : null;
         },
+        // #678: the add-task editor row's People cell, aligned under this column.
+        renderCreate: ({ parentId, pending }) => <GanttCreateDraftAssignees projectId={parentId.slice("project:".length)} role={identity.role} draft={createDraft} pending={pending} onChange={changeCreateDraft} />,
       },
       {
         id: "due",
@@ -1627,9 +1642,17 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
           const action = deadlineAction ? { ...deadlineAction, reason: attention ? ATTENTION_TEXT[attention.reason] : undefined, resourceId: resource.id } : undefined;
           return <GestureAwareCell live={live}>{(disabled) => <GanttDeadlineCell projectId={project.id} street={project.street} deadline={project.deadline} canEdit={project.permissions.canEditDeadline} disabled={disabled} role={identity.role} action={action} />}</GestureAwareCell>;
         },
+        // #678: the add-task editor row's Due cell, aligned under this column.
+        renderCreate: ({ parentId, pending }) => <GanttCreateDraftDue draft={createDraft} projectDefault={projectDefaultById.get(parentId.slice("project:".length)) ?? null} pending={pending} onChange={changeCreateDraft} />,
       },
     ];
-  }, [projectById, live, identity.role, narrowTree, deadlineActionByProjectResourceId, attentionByResourceId, assigneeCellByChecklistResourceId, assigneeBusyIds, commitAssignees, dueEditor, dueEditorSubtaskId, retainedScheduleFor, openDueEditor, commands.submitScheduleEditor, commands.cancelScheduleEditor, dismissScheduleEditor, clearScheduleStash, stashErrorFor]);
+  }, [createDraft, changeCreateDraft, projectDefaultById, projectById, live, identity.role, narrowTree, deadlineActionByProjectResourceId, attentionByResourceId, assigneeCellByChecklistResourceId, assigneeBusyIds, commitAssignees, dueEditor, dueEditorSubtaskId, retainedScheduleFor, openDueEditor, commands.submitScheduleEditor, commands.cancelScheduleEditor, dismissScheduleEditor, clearScheduleStash, stashErrorFor]);
+
+  // #678: at <= 720px there are no People/Due columns to align the draft to, so the vendor stacks these under the title.
+  const renderCreateStack = useCallback(({ parentId, pending }: { parentId: string; pending: boolean }) => {
+    const projectId = parentId.slice("project:".length);
+    return <GanttCreateDraftStack projectId={projectId} role={identity.role} draft={createDraft} projectDefault={projectDefaultById.get(projectId) ?? null} pending={pending} onChange={changeCreateDraft} />;
+  }, [identity.role, createDraft, projectDefaultById, changeCreateDraft]);
 
   // Called directly, not mounted as `<renderGanttEventContent {...props} />` — see that function's
   // own header for why the distinction is load-bearing here.
@@ -2021,7 +2044,8 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     creatingRef.current = true;
     const generation = generationKeyRef.current;
     try {
-      const created = await apiPost<ProjectSubtask, { title: string }>(`/api/projects/${encodeURIComponent(projectId)}/subtasks`, { title: trimmed });
+      // One POST, the Checklist composer's body: Assignees / Due / reminders only when the draft set them (#678).
+      const created = await apiPost<ProjectSubtask, CreateSubtaskBody>(`/api/projects/${encodeURIComponent(projectId)}/subtasks`, buildCreateSubtaskBody(trimmed, createDraftRef.current));
       if (generationKeyRef.current === generation) {
         // The mark is taken NOW: a refetch already running cannot contain the new row.
         setPins((current) => [...current.filter((pin) => pin.row.id !== created.id), pinFromCreated(projectId, created, fetchLedger.currentStartSeq(), generation)]);
@@ -2181,6 +2205,10 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             canCreateTask={canCreateTask}
             onCreateGroupTask={handleCreateGroupTask}
             createTaskMaxLength={GANTT_CREATE_TITLE_MAX}
+            createTaskDirty={createDraftIsDirty(createDraft)}
+            createTaskResetKey={generationKey}
+            onCreateTaskClose={resetCreateDraft}
+            renderCreateStack={narrowTree ? renderCreateStack : undefined}
             renderResourceLabel={renderResourceLabel}
             renderEvent={renderEvent}
             className="min-h-0 flex-1"

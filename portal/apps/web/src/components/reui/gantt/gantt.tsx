@@ -267,10 +267,11 @@ interface GanttCallbacks<TData = unknown> {
    */
   canCreateTask?: (ctx: { parentId: string | null }) => boolean
   /**
-   * Quincy #344: presence opts in to a per-group "+ Add task" row after each EXPANDED group's
-   * last descendant, where `canCreateTask({ parentId })` allows it. A resource that declares a
-   * `children` array (even an empty one) counts as a group so its first child can be added. The
-   * row turns into a title input; Enter submits the trimmed title through this callback and
+   * Quincy #344/#679: presence opts in to a `+` on each group's row, where
+   * `canCreateTask({ parentId })` allows it (no idle "+ Add task" rows). A resource that declares
+   * a `children` array (even an empty one) can take a first child; an empty one stays a leaf.
+   * Pressing the `+` opens ONE editor row after the group's last visible descendant, a title input
+   * (with `GanttColumn.renderCreate` cells, #678); Enter submits the trimmed title through this callback and
    * resolves `{ ok: true }` (the row closes) or `{ ok: false, message }` (the typed title stays and
    * the message is announced politely from the row; the consumer makes it visible — the row never
    * grows or overlays, see `gantt-view.tsx`'s #344 entry). The consumer owns the write; the vendor
@@ -2164,8 +2165,23 @@ interface GanttColumn {
   align?: "start" | "center" | "end"
   /** Cell content per row; omit or return null for an empty cell. */
   render?: (ctx: GanttColumnContext) => ReactNode
+  /**
+   * Quincy #678: this column's cell in the add-task editor row (`onCreateGroupTask`). The editor
+   * keeps the tree row's cell structure, so every column gets a cell there (empty when this is
+   * omitted) and the title input shares the name cell instead of covering the row.
+   */
+  renderCreate?: (ctx: GanttCreateTaskContext) => ReactNode
   /** Extra classes on every cell of this column (header included). */
   className?: string
+}
+
+/** Quincy #678: what the add-task editor row hands a column's `renderCreate` / `renderCreateStack`. */
+interface GanttCreateTaskContext {
+  /** The group's resource id (the same `parentId` `onCreateGroupTask` receives). */
+  parentId: string
+  parentTitle: string
+  /** A create is in flight: the draft's controls should not take input. */
+  pending: boolean
 }
 
 /** Pointer-activation thresholds; unset keys keep the dnd-kit parity defaults. */
@@ -2372,6 +2388,25 @@ interface GanttViewConfig<TData = unknown> {
   displayCreateTaskHint: boolean
   /** Quincy #344: maxLength of the per-group create-task title input. Unset = unlimited. */
   createTaskMaxLength?: number
+  /**
+   * Quincy #679: the consumer's half of the open draft (its Assignees / Due) has content. With a
+   * typed title it decides whether pressing another group's `+` may MOVE the one open editor
+   * (empty draft) or must keep it and focus it (anything typed or chosen: nothing is lost silently).
+   */
+  createTaskDirty?: boolean
+  /** Quincy #679: a change closes the open editor (a filter or identity change drops the draft). */
+  createTaskResetKey?: string
+  /**
+   * Quincy #679: the editor closed (cancel, a successful create, its group left the data, a reset
+   * key change) - the consumer drops its half of the draft. Not called when the editor MOVES.
+   */
+  onCreateTaskClose?: (ctx: { parentId: string }) => void
+  /**
+   * Quincy #678: the draft's controls for a tree with no column to align to (phones render
+   * `columns: []`). Used only when no column has a `renderCreate`; then the editor is a bottom
+   * sheet and these controls sit in its body between the title and Cancel / Add.
+   */
+  renderCreateStack?: (ctx: GanttCreateTaskContext) => ReactNode
   /** Floating zoom in/out control over the track. Default on. */
   zoomControl: boolean
   /**
@@ -2608,6 +2643,10 @@ const VIEW_CONFIG_KEYS: Array<keyof GanttViewConfig> = [
   "initialCenter",
   "displayCreateTaskHint",
   "createTaskMaxLength",
+  "createTaskDirty",
+  "createTaskResetKey",
+  "onCreateTaskClose",
+  "renderCreateStack",
   "dragCreate",
   "zoomControl",
   "wheelZoom",
@@ -2945,6 +2984,7 @@ export type {
   GanttClassNames,
   GanttColumn,
   GanttColumnContext,
+  GanttCreateTaskContext,
   GanttDragIndicatorProps,
   GanttGridLine,
   GanttInstance,

@@ -146,7 +146,7 @@ export function SubtaskScheduleControl<TItem extends LatestSubtaskSummary = Subt
       aria-controls={open ? id : undefined}
       render={(props) => trigger
         ? trigger({ ...props, disabled: busy } as SubtaskScheduleTriggerProps) as React.ReactElement
-        : <button {...props} type="button" className={triggerClass} aria-label={compact && defaultLabel ? `${label}: ${valueText}` : label} disabled={busy}>
+        : <button {...props} type="button" className={triggerClass} aria-label={compact && valueText ? `${label}: ${valueText}` : label} disabled={busy}>
           {valueText ? <StatusPill tone="neutral" className="min-w-0"><span className="sr-only">Schedule </span><span className="block truncate min-w-0">{valueText}</span></StatusPill> : <span aria-hidden="true">◷</span>}
         </button>}
     />}

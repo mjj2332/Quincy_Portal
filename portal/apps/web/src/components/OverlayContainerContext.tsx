@@ -8,3 +8,10 @@ import { createContext } from "react";
  * which is every call site outside a dialog today; those compile to today's behavior exactly.
  */
 export const OverlayContainerContext = createContext<HTMLElement | null>(null);
+
+/**
+ * An opt-in collision boundary for popups portalled into an overlay container (#678): a short bottom
+ * sheet provides its own popup here so a combobox list stays inside it instead of flipping above its top
+ * edge. `null` (every other call site) leaves Base UI's default clipping-ancestors boundary alone.
+ */
+export const OverlayCollisionBoundaryContext = createContext<HTMLElement | null>(null);
