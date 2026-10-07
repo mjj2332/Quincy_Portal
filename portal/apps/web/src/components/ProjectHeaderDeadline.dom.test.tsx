@@ -508,7 +508,8 @@ describe("ProjectHeaderDeadline", () => {
     const rootClass = scroller!.parentElement!.className;
     expect(rootClass).toContain("*:data-[slot=scroll-area-viewport]:mask-t-from-");
     expect(rootClass).toContain("*:data-[slot=scroll-area-viewport]:mask-b-from-");
-    expect(rootClass).toContain("[--fade-size:var(--space-6)]");
+    // #674: the owner's decision supersedes #597's 32px phone fade; one size (--space-5) at every width.
+    expect(rootClass).toContain("[--fade-size:var(--space-5)]");
     // The footer is outside it, beside it under the same bounded frame.
     expect(scroller!.contains(footer)).toBe(false);
     expect(footer.contains(scroller!)).toBe(false);

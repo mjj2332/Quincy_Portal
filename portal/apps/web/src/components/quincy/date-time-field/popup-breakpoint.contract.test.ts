@@ -13,12 +13,17 @@ import { POPUP_STACKED_QUERY } from "@/lib/date-time-field";
 const here = dirname(fileURLToPath(import.meta.url));
 const read = (file: string) => readFileSync(join(here, file), "utf8");
 
-const STACKING_FILES = ["DateTimeRangePopup.tsx", "DateTimePopup.tsx", "ShortcutList.tsx", "TimeColumn.tsx", "PopupFrame.tsx"] as const;
+const STACKING_FILES = ["DateTimeRangePopup.tsx", "DateTimePopup.tsx", "ShortcutList.tsx", "TimeColumn.tsx"] as const;
+// #674: PopupFrame.tsx is no longer listed: its only 721 breakpoint was the phone/desktop fade size, and the owner made the fade one size (--space-5) at every width, so it has no stacking classes left to pin. The `sm:` ban still applies to it below.
 const CELL_BREAKPOINT = /max-\[(\d+)px\]:\[--cell-size:/.exec(read("CalendarPane.tsx"))?.[1];
 
 describe("date popup stacking breakpoint (#602)", () => {
   it("reads the calendar's cell breakpoint", () => {
     expect(CELL_BREAKPOINT).toBe("721");
+  });
+
+  it("PopupFrame.tsx uses no `sm:` utilities (#602)", () => {
+    expect(read("PopupFrame.tsx").match(/(?:^|[\s"'`])(?:max-)?sm:[\w[\]*-]/gm) ?? []).toEqual([]);
   });
 
   for (const file of STACKING_FILES) {
