@@ -90,6 +90,11 @@ they are different agents, and the second is blind to the first's verdicts until
    marks every row *agree*/*disagree* and lists what the table missed. It returns Ship / Fix first,
    ranked defects, disagreements with evidence, and suggestions kept apart from defects.
 
+**A focus-state screenshot is evidence only if `document.hasFocus()` was true at capture**, and the
+row records that value. Chrome drops `:focus-visible` while the window is inactive, so a ring missing
+from an unfocused capture is the harness, not the product (#673: the #669 P4-390 Deadline row). A row
+captured with `hasFocus` false is re-measured, not reported as a FAIL.
+
 **Serving and the report header.** QA serves only through `scripts/agents/serve-branch.sh <ref>`,
 from the dedicated worktree `~/quincy-wt/serve` — never from the main checkout, whose branch other
 sessions switch (a pass once ran against a checkout that changed under it). Every browser-pass

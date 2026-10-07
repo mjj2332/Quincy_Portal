@@ -222,6 +222,33 @@ describe("SubtaskScheduleControl (#372, #423)", () => {
   });
 });
 
+describe("SubtaskScheduleControl trigger focus ring radius (#673)", () => {
+  const PILL = "rounded-[var(--radius-pill)]";
+  const trigger = () => host.querySelector<HTMLButtonElement>('[aria-label^="Schedule for Row"]')!;
+
+  it("a value-bearing row trigger carries the pill radius so its ring matches the pill", async () => {
+    await mount();
+    expect(trigger().className).toContain(PILL);
+  });
+
+  it("a value-bearing composer trigger carries the pill radius", async () => {
+    await mount({ compact: true });
+    expect(trigger().className).toContain(PILL);
+  });
+
+  it("the empty trigger keeps its own radius", async () => {
+    await mount({ value: null, compact: false });
+    expect(trigger().className).not.toContain(PILL);
+    await mount({ value: null, compact: true });
+    expect(trigger().className).not.toContain(PILL);
+  });
+
+  it("a caller-supplied trigger is left alone", async () => {
+    await mount({ trigger: customTrigger });
+    expect(host.querySelector('[data-testid="custom-trigger"]')!.className).not.toContain(PILL);
+  });
+});
+
 describe("SubtaskScheduleControl collision padding (#587)", () => {
   it("calls a padding function once per open, never while closed, and again on a reopen", async () => {
     const padding = vi.fn(() => ({ top: 66, right: 16, bottom: 16, left: 16 }));
