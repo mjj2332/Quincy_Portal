@@ -462,7 +462,7 @@ function GanttChildLoadErrorBadge({ onRetry }: { onRetry: () => void }) {
     <button
       type="button"
       data-testid="gantt-children-retry"
-      className="shrink-0 truncate text-[10px] uppercase tracking-[0.04em] text-signal-critical underline max-[720px]:min-w-0 max-[720px]:max-w-full"
+      className="shrink-0 truncate text-[10px] uppercase tracking-[0.04em] text-signal-critical underline max-[721px]:min-w-0 max-[721px]:max-w-full max-[721px]:-outline-offset-2 max-[721px]:focus-visible:!-outline-offset-2"
       onClick={(event) => {
         // The row label sits inside the tree panel's own row-select affordance — stop this click
         // from also being read as "select this row".
@@ -559,10 +559,10 @@ function GanttResourceLabel({
   const retryChildren = childLoadRetryByProjectResourceId.get(resource.id);
   const showAttention = !!attention && !hideAttentionBadgeFor.has(resource.id);
   return (
-    <span className="flex min-w-0 items-center gap-1.5 max-[720px]:flex-col max-[720px]:items-stretch max-[720px]:justify-center max-[720px]:gap-0.5">
+    <span className="flex min-w-0 items-center gap-1.5 max-[721px]:flex-col max-[721px]:items-stretch max-[721px]:justify-center max-[721px]:gap-0.5">
       {/* The street keeps a `--space-9` (96px = the old 6rem) floor while taking every remaining
           pixel; the attention badge yields to it (see `hideAttentionBadgeFor`). */}
-      <span className="min-w-0 min-[721px]:min-w-[var(--space-9)] flex-1 truncate max-[720px]:flex-none">
+      <span className="min-w-0 min-[721px]:min-w-[var(--space-9)] flex-1 truncate max-[721px]:flex-none">
         {projectHrefFor && resource.id.startsWith("project:") ? (
           <ProjectCalendarAnchor
             testId="gantt-project-link"
@@ -574,7 +574,7 @@ function GanttResourceLabel({
       </span>
       {(showAttention || retryChildren) && (
         // #689: a plain layout wrapper. Desktop: `contents` (children stay inline beside the name). Phone: line 2.
-        <span data-testid="gantt-row-label-meta" className="min-w-0 min-[721px]:contents max-[720px]:flex max-[720px]:items-center max-[720px]:gap-1.5 max-[720px]:overflow-hidden">
+        <span data-testid="gantt-row-label-meta" className="min-w-0 min-[721px]:contents max-[721px]:flex max-[721px]:items-center max-[721px]:gap-1.5 max-[721px]:overflow-hidden">
           {showAttention && <GanttRowAttentionBadge reason={attention.reason} />}
           {retryChildren && <GanttChildLoadErrorBadge onRetry={retryChildren} />}
         </span>

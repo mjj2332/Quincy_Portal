@@ -1689,22 +1689,25 @@ describe("ProductionGantt — Add task row (#344)", () => {
     const tokens = badge.className.split(/\s+/);
     for (const token of ["min-w-0", "truncate", "min-[721px]:shrink-0"]) expect(tokens, token).toContain(token);
     expect(tokens).not.toContain("shrink-0");
-    expect(tokens).not.toContain("max-[720px]:max-w-[45%]");
+    expect(tokens).not.toContain("max-[721px]:max-w-[45%]");
     expect(badge.getAttribute("title")).toBe(badge.textContent);
 
     const meta = badge.closest<HTMLElement>(`[data-testid="gantt-row-label-meta"]`)!;
     expect(meta).not.toBeNull();
     const metaTokens = meta.className.split(/\s+/);
-    for (const token of ["min-[721px]:contents", "max-[720px]:flex", "min-w-0", "max-[720px]:overflow-hidden"]) expect(metaTokens, token).toContain(token);
+    for (const token of ["min-[721px]:contents", "max-[721px]:flex", "min-w-0", "max-[721px]:overflow-hidden"]) expect(metaTokens, token).toContain(token);
 
     const outer = meta.parentElement!;
     const outerTokens = outer.className.split(/\s+/);
-    for (const token of ["max-[720px]:flex-col", "max-[720px]:items-stretch", "max-[720px]:justify-center"]) expect(outerTokens, token).toContain(token);
-    expect(outerTokens).not.toContain("max-[720px]:items-start");
+    for (const token of ["max-[721px]:flex-col", "max-[721px]:items-stretch", "max-[721px]:justify-center"]) expect(outerTokens, token).toContain(token);
+    expect(outerTokens).not.toContain("max-[721px]:items-start");
 
     const title = meta.previousElementSibling as HTMLElement;
-    expect(title.className.split(/\s+/)).toContain("max-[720px]:flex-none");
+    expect(title.className.split(/\s+/)).toContain("max-[721px]:flex-none");
     expect(title.className.split(/\s+/)).toContain("truncate");
+
+    // narrowTree is `(max-width: 720px)` (width <= 720); `max-[720px]:` compiles to width < 720, leaving 720 in neither variant.
+    expect([badge, meta, outer, title].map((el) => el.className).join(" ")).not.toContain("max-[720px]");
   });
 
   it("9b. a row with no badge renders no meta wrapper (#689)", async () => {
