@@ -28,6 +28,8 @@ describe("GanttRowAttentionBadge short phone labels (#693)", () => {
       expect(shortSpan.getAttribute("aria-hidden")).toBe("true");
       expect(shortSpan.className).toContain("min-[721px]:hidden");
       expect(el.className).toContain("truncate");
+      expect(el.className).toContain("tracking-[0.04em]");
+      expect(el.className).toContain("max-[721px]:tracking-[var(--tracking-normal)]");
       expect(el.className.includes("text-signal-critical")).toBe(critical);
     });
   }

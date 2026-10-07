@@ -449,7 +449,7 @@ export function GanttRowAttentionBadge({ reason }: { reason: ProductionGanttAtte
     <span
       className={cn(
         // #689: on a phone the label is line 2 under the project name and truncates there; desktop keeps it whole beside the name.
-        "min-w-0 truncate text-[10px] uppercase tracking-[0.04em] min-[721px]:shrink-0",
+        "min-w-0 truncate text-[10px] uppercase tracking-[0.04em] max-[721px]:tracking-[var(--tracking-normal)] min-[721px]:shrink-0",
         critical ? "text-signal-critical" : "text-muted-foreground",
       )}
       data-testid={`gantt-row-attention-${reason}`}

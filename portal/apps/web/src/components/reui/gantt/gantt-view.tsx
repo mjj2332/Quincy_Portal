@@ -261,6 +261,9 @@
 
  * 2026-10-07, #692 — CHANGED, class tokens only (ADR 0009 addendum). The create row's Cancel x and the sticky `+` opener spell the phone variant
  * `max-[721px]:` (was `max-[720px]:`, which compiles to width < 720 and left width 720 outside both variants).
+ *
+ * 2026-10-07, #692 round 2 — CHANGED, class tokens only (ADR 0009 addendum). The sticky `+` opener's phone tokens follow the 44px phone rows (#693):
+ * `max-[721px]:my-0` (was `-my-1`), `max-[721px]:bg-size-[100%_100%]` (was `calc(100%-6px)`), and `max-[721px]:ms-auto` pins it to the column's right edge. `pointer-coarse:` tokens unchanged (coarse tablets keep 40px rows).
  */
 
 import {
@@ -4255,7 +4258,7 @@ const GanttTreeRow = memo(function GanttTreeRow({
                 data-gantt-create-trigger={row.resource.id}
                 aria-label={settings.i18n.functions.addTaskIn(row.resource.title)}
                 aria-expanded={createOpen}
-                className="text-muted-foreground hover:text-foreground! bg-background pointer-coarse:bg-transparent pointer-coarse:bg-[image:linear-gradient(var(--background),var(--background))] pointer-coarse:bg-no-repeat pointer-coarse:bg-center pointer-coarse:bg-size-[100%_calc(100%-6px)] max-[721px]:bg-transparent max-[721px]:bg-[image:linear-gradient(var(--background),var(--background))] max-[721px]:bg-no-repeat max-[721px]:bg-center max-[721px]:bg-size-[100%_calc(100%-6px)] aria-expanded:bg-none! sticky end-0 focus-visible:z-[2] max-[721px]:end-[var(--space-1)] ms-2 size-5! shrink-0 opacity-0 group-hover/gantt-row:opacity-100 group-data-hover/gantt-row:opacity-100 focus:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 max-[721px]:opacity-100 aria-expanded:opacity-100 aria-expanded:bg-transparent! pointer-coarse:-my-1 pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] max-[721px]:-my-1 max-[721px]:min-h-[44px] max-[721px]:min-w-[44px]"
+                className="text-muted-foreground hover:text-foreground! bg-background pointer-coarse:bg-transparent pointer-coarse:bg-[image:linear-gradient(var(--background),var(--background))] pointer-coarse:bg-no-repeat pointer-coarse:bg-center pointer-coarse:bg-size-[100%_calc(100%-6px)] max-[721px]:bg-transparent max-[721px]:bg-[image:linear-gradient(var(--background),var(--background))] max-[721px]:bg-no-repeat max-[721px]:bg-center max-[721px]:bg-size-[100%_100%] aria-expanded:bg-none! sticky end-0 focus-visible:z-[2] max-[721px]:end-[var(--space-1)] ms-2 max-[721px]:ms-auto size-5! shrink-0 opacity-0 group-hover/gantt-row:opacity-100 group-data-hover/gantt-row:opacity-100 focus:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 max-[721px]:opacity-100 aria-expanded:opacity-100 aria-expanded:bg-transparent! pointer-coarse:-my-1 pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] max-[721px]:my-0 max-[721px]:min-h-[44px] max-[721px]:min-w-[44px]"
                 onClick={() => onOpenCreate(row)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
