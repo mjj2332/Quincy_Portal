@@ -100,12 +100,14 @@ export function TimeColumn({ selected, skipped, onPick }: {
 
   const centre = useCallback(() => {
     const list = listRef.current;
-    const pressed = list?.querySelector<HTMLElement>('button[aria-pressed="true"]') ?? list?.querySelector<HTMLElement>('button[tabindex="0"]');
+    // An off-grid time (17:07) presses nothing, so centre its tab stop (17:15). No time at all (a cleared field, or a
+    // typed prefix that does not parse yet) leaves the column where it is rather than jumping to 00:00 and back.
+    const pressed = list?.querySelector<HTMLElement>('button[aria-pressed="true"]') ?? (selected === null ? null : list?.querySelector<HTMLElement>('button[tabindex="0"]'));
     const viewport = list?.parentElement;
     if (!pressed || !viewport) return;
     const offset = pressed.getBoundingClientRect().top - viewport.getBoundingClientRect().top + viewport.scrollTop;
     viewport.scrollTop = Math.max(0, offset - viewport.clientHeight / 2 + pressed.offsetHeight / 2);
-  }, []);
+  }, [selected]);
 
   useLayoutEffect(centre, [centre, selected]);
 
