@@ -14,7 +14,8 @@ const source = readFileSync(join(fileURLToPath(new URL(".", import.meta.url)), "
 const VIEWPORT = "[data-slot=scroll-area-viewport]:focus-visible";
 
 describe("PopupFrame body's keyboard focus ring is inset, not an outside ring", () => {
-  const tag = openingTag(source, "ScrollArea", "[--fade-size:var(--space-6)]");
+  // #674: the owner lowered the phone fade from --space-6 (32px, #597) to --space-5, the same as desktop; the marker is the one fade token.
+  const tag = openingTag(source, "ScrollArea", "[--fade-size:var(--space-5)]");
 
   it("finds the body ScrollArea", () => {
     expect(tag).not.toBeNull();

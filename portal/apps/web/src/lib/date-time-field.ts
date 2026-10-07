@@ -201,13 +201,14 @@ function nearestClearScroll(window: { low: number; high: number }, slivered: (sc
  * element, must come into view. A required item is never skipped, and when the items cannot all be
  * cleared together the optional ones give way: the solve retries with the required items alone, and if those conflict too, with the `priority` item (the focused control) alone.
  *
- * #630 — `snaps` are scroll positions (body offsets) the caller would rather land on: the top of each preset row, so
- * the popup never opens with the Today/Tomorrow row cut in half. When one lies inside the valid window, the SMALLEST
+ * #630 — `snaps` are body offsets of the tops of the preset rows (and 0), which the caller would rather land on, so
+ * the popup never opens with the Today/Tomorrow row cut in half. #674: a row cannot rest flush under the top band, so each snap r > 0 is
+ * resolved to `floor(max(r - fade, r / 2))`, the scroll at which that row sits clear of the band; 0 stays 0. When one lies inside the valid window, the SMALLEST
  * wins, never the nearest to `scrollTop` (0 when it is valid, so a day that fits under the presets opens at the top, and a
  * body a resize left further down comes back); when none does, the fade
  * guarantee still wins and the plain nearest-valid position is returned.
  *
- * #636, #662 — `noSliver` items (the pressed time slot) are not required to be clear, but the chosen scroll must not leave one partly
+ * #636, #662, #674 — `noSliver` items (the pressed time slot, and the active shortcut chip) are not required to be clear, but the chosen scroll must not leave one partly
  * inside the top or the bottom fade: the smallest valid snap where each is fully clear of both bands (or outside the body) wins; failing
  * that, the valid whole scroll that does with the least movement (the smallest when `snaps` were given); failing that, the #630 choice
  * stands, so required and `priority` items stay authoritative.
@@ -251,7 +252,11 @@ export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, 
     return inTopBand || inBottomBand;
   });
   const slivered = sliveredWithin(SLIVER_TOLERANCE);
-  const landing = (snaps ?? []).filter((snap) => snap >= safe.low && snap <= safe.high);
+  // #674: a snap is a row's TOP; landing on it raw puts that row flush under the top band (min(fade, s)). Rest where the row clears the band
+  // instead: the same `max(r - fade, r / 2)` bound `solve` uses for the top fade, floored to a whole pixel (the safe side for a top band).
+  // Snap 0 stays 0.
+  const fadeAware = (snaps ?? []).map((snap) => (snap > 0 ? Math.floor(Math.max(snap - fade, snap / 2) + 1e-9) : snap));
+  const landing = fadeAware.filter((snap) => snap >= safe.low && snap <= safe.high);
   const clearLanding = landing.filter((snap) => !slivered(snap));
   if (clearLanding.length > 0) return Math.min(...clearLanding);
   if (noSliver?.length) {

@@ -5905,6 +5905,15 @@ Three defects in the 390px time list (`TimeColumn` in a stacked `PopupFrame`), o
 Guards: `TimeColumn.scroll.dom.test.tsx` (nested-viewport geometry), `lib/date-time-field.test.ts`. Layout-dependent, so
 only a browser at 390px proves it (jsdom has no geometry): see the map's measured check.
 
+- **#674: snaps must be fade-aware, and a 32px phone fade made the rules unsatisfiable.** `PopupFrame.presetSnaps` returns
+  raw preset-row tops, so landing on row r put that row flush under the top band and its chip read cut (Table-view Deadline
+  at 390: scroll 74, the Next week row under a 32px fade). With a 32px fade the row-clear rule (scroll <= 42) and the
+  pressed-slot rule (scroll >= 47) had no common scroll; at 24px, scroll 50 satisfies both. `scrollTopClearOfFade` now
+  resolves each snap r > 0 to `floor(max(r - fade, r / 2))` (snap 0 stays 0), the phone popup body fade is `--space-5` at
+  every width (the owner's decision, superseding #597's 32px), and the active shortcut chip (`aria-pressed`) joins `noSliver`
+  next to the pressed slot. Row 1 may still straddle the top edge (scrolled off, not fade-slivered); only the active chip is
+  protected.
+
 ## Focus scrolls a mid-form field flush and clips its ring; an inactive window hides the ring in screenshots (#673)
 Tags: focus-overlays, css-tokens · #673
 

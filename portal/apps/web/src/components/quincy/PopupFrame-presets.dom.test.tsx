@@ -67,16 +67,35 @@ describe("PopupFrame opens on a whole preset row (#630)", () => {
     expect(body.scrollTop).toBe(0);
   });
 
-  it("never rests mid-row: a day needing ~31px of scroll opens on the next row boundary (64 = 8 + 56)", async () => {
+  it("never rests mid-row: a day needing ~31px of scroll opens where the next row clears the top fade (40 = (8 + 56) - 24, #674)", async () => {
     // Day bottom 100+ (dayTop+36) must be <= 476 - band; dayTop 372 needs about 31px of scroll at a 24px fade.
     layout(372);
     const body = await open("2026-10-14");
-    expect([0, 8, 64, 120, 136]).toContain(body.scrollTop);
+    // Row tops are 8, 64, 120 and the presets end at 136; each rests at top - FADE (or half of it), #674.
+    expect([0, 4, 40, 96, 112]).toContain(body.scrollTop);
     expect(body.scrollTop).not.toBe(31);
     expect(body.scrollTop).toBeGreaterThan(0);
     // Selected day is still clear of the bottom fade.
     const bottom = BODY.top + 372 + TILE - body.scrollTop;
     expect(bottom).toBeLessThanOrEqual(BODY.top + BODY.height - Math.min(FADE, BODY.scrollHeight - BODY.height - body.scrollTop));
+  });
+
+  it("never leaves the active shortcut chip partly under the top fade (#674)", async () => {
+    // Today (2026-10-01 in Sydney) is active in row 1 (rect 108..160 at 0). The day needs ~31px; resting at 40 would leave the chip at 68..120, half under the 24px band. It rests past it.
+    layout(372);
+    const none = await open("2026-10-14");
+    expect(none.scrollTop).toBe(40);
+    await act(async () => { root.unmount(); await Promise.resolve(); });
+    document.body.replaceChildren();
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    const body = await open("2026-10-01");
+    const chip = host.ownerDocument.querySelector<HTMLElement>('[role="list"][aria-label="Date shortcuts"] button[aria-pressed="true"]');
+    expect(chip, "Today is the active chip").not.toBeNull();
+    const top = BODY.top + 8 - body.scrollTop;
+    const bottom = top + 52;
+    expect(bottom <= BODY.top + 2 || top >= BODY.top + Math.min(FADE, body.scrollTop) - 2).toBe(true);
   });
 
   it("does not scroll past the presets to reveal the pressed time slot: a slot fully clear at 0 opens at 0 (#630)", async () => {

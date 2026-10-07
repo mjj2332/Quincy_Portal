@@ -206,19 +206,19 @@ describe("scrollTopClearOfFade snaps (#630)", () => {
     expect(scrollTopClearOfFade({ ...base, snaps, items: [{ top: 200, bottom: 236 }] })).toBe(0);
   });
   it("lands on a whole preset row instead of the least scroll when one is valid", () => {
-    // Needs >= 22 (item ends at 490, band 468): least scroll is 22, which would cut a row; 56 is valid and is a row top.
-    expect(scrollTopClearOfFade({ ...base, snaps, items: [{ top: 454, bottom: 490 }] })).toBe(56);
+    // Needs >= 22 (item ends at 490, band 468): least scroll is 22, which would cut a row; the row at 56 is valid, and since #674 it rests at 28 (56 - 32 < 28, so r / 2), where it sits clear of the top band.
+    expect(scrollTopClearOfFade({ ...base, snaps, items: [{ top: 454, bottom: 490 }] })).toBe(28);
   });
   it("takes the smallest valid snap, not the one nearest where the body already is", () => {
-    // Window 22..max: 56 and 112 are both valid; a body left at 112 by an earlier solve must come back to 56.
-    expect(scrollTopClearOfFade({ ...base, scrollTop: 112, snaps, items: [{ top: 342, bottom: 378 }] })).toBe(56);
+    // Window 22..max: the rows at 56 and 112 (resting at 28 and 80, #674) are both valid; a body left at 112 by an earlier solve must come back to 28.
+    expect(scrollTopClearOfFade({ ...base, scrollTop: 112, snaps, items: [{ top: 342, bottom: 378 }] })).toBe(28);
   });
   it("opens at 0 when the item fits there, wherever the body was left", () => {
     expect(scrollTopClearOfFade({ ...base, scrollTop: 112, snaps, items: [{ top: 88, bottom: 124 }] })).toBe(0);
   });
   it("falls back to the least scroll when no snap keeps the items clear of the fade", () => {
-    // Together the two items allow 22..38 only; neither 0 nor 56 is inside it.
-    expect(scrollTopClearOfFade({ ...base, snaps: [0, 56], items: [{ top: 454, bottom: 490 }, { top: 170, bottom: 206 }] })).toBe(22);
+    // Together the two items allow 22..38 only; neither 0 nor the row at 112 (resting at 80, #674) is inside it.
+    expect(scrollTopClearOfFade({ ...base, snaps: [0, 112], items: [{ top: 454, bottom: 490 }, { top: 170, bottom: 206 }] })).toBe(22);
   });
 });
 
@@ -226,8 +226,8 @@ describe("scrollTopClearOfFade noSliver (#636)", () => {
   const base = { viewport: { top: 100, bottom: 500 }, scrollTop: 0, maxScrollTop: 300, fade: 32, snaps: [0, 56, 112] };
   const day = { top: 200, bottom: 236 };
   it("skips a snap that leaves the slot partly in the bottom fade", () => {
-    // Slot 454..490 against the band 468..500 at 0: a sliver. At 56 it is 398..434, clear.
-    expect(scrollTopClearOfFade({ ...base, items: [day], noSliver: [{ top: 454, bottom: 490 }] })).toBe(56);
+    // Slot 454..490 against the band 468..500 at 0: a sliver. The row at 56 rests at 28 (#674), where the slot is 426..462, clear.
+    expect(scrollTopClearOfFade({ ...base, items: [day], noSliver: [{ top: 454, bottom: 490 }] })).toBe(28);
   });
   it("stays at 0 when the slot is clear there", () => {
     expect(scrollTopClearOfFade({ ...base, items: [day], noSliver: [{ top: 380, bottom: 416 }] })).toBe(0);
@@ -427,5 +427,38 @@ describe("shell-aware placement (#528, #587)", () => {
   });
   it("puts the top below the shell header (0 when there is none) and keeps the 16px edge gap elsewhere", () => {
     expect(shellAwarePopupPadding()).toEqual({ top: 16, right: 16, bottom: 16, left: 16 });
+  });
+});
+
+describe("scrollTopClearOfFade fade-aware snaps and the active chip (#674)", () => {
+  // The measured Table-view Deadline cell at 390 (#673 item 4): body 119..763, 24px fade, preset rows at 14/74/134 (52px tall, two to a row),
+  // the pressed 17:00 slot at 736..780 when the body is at 0, the picked day at 420..464.
+  const base = { viewport: { top: 119, bottom: 763 }, scrollTop: 0, maxScrollTop: 400, fade: 24, snaps: [0, 14, 74, 134, 194], items: [{ top: 420, bottom: 464, required: true }] };
+  const slot = { top: 736, bottom: 780 };
+  const band = (s: number) => Math.min(base.fade, s);
+  it("rests a preset row clear of the top band, not flush under it (a raw snap of 74 put the Next week row under the fade)", () => {
+    const landed = scrollTopClearOfFade({ ...base, noSliver: [slot] });
+    expect(landed).toBe(50);
+    // Every row whose top is on screen sits below the top fade; the pressed slot is clear of the bottom fade (body 644 tall, band starts at 620).
+    for (const top of [14, 74, 134]) if (top - landed >= 0) expect(top - landed).toBeGreaterThanOrEqual(band(landed));
+    expect(780 - 119 - landed).toBeLessThanOrEqual(644 - base.fade);
+  });
+  it("never lands a row's top inside the band at any snap", () => {
+    for (const snap of [14, 74, 134, 194]) {
+      const landed = scrollTopClearOfFade({ ...base, snaps: [0, snap], items: [] });
+      if (snap - landed >= 0) expect(snap - landed).toBeGreaterThanOrEqual(band(landed));
+    }
+  });
+  it("keeps snap 0 at 0", () => {
+    expect(scrollTopClearOfFade({ ...base, noSliver: [{ top: 300, bottom: 344 }] })).toBe(0);
+  });
+  it("(b) does not leave the active chip in the top fade: Today active in row 1 lifts the body past it", () => {
+    const chip = { top: 119 + 14, bottom: 119 + 14 + 52 };
+    const landed = scrollTopClearOfFade({ ...base, noSliver: [slot, chip] });
+    const top = chip.top - 119 - landed;
+    const bottom = chip.bottom - 119 - landed;
+    // Fully above the body or fully below the top band: never a sliver in it.
+    expect(bottom <= 2 || top >= band(landed) - 2).toBe(true);
+    expect(landed).toBe(110);
   });
 });

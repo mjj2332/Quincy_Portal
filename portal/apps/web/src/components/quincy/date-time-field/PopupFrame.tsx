@@ -9,6 +9,8 @@ import { Eyebrow } from "../Eyebrow";
 
 /** The picked day and the pressed time slot: what must read as solid ink, never under the body's fade. */
 const PRESSED_SLOT = '[role="group"][aria-label="Time slots"] button[aria-pressed="true"]';
+/** #674: the active shortcut chip (Today, Next week, ...), kept like the pressed slot: fully clear of a fade or wholly out of view. */
+const ACTIVE_CHIP = `[role="list"][aria-label="${SHORTCUTS_LABEL}"] button[aria-pressed="true"]`;
 const SELECTED = `[aria-selected="true"] button, ${PRESSED_SLOT}`;
 
 /** The day the person is about to edit when nothing narrower is given: the picked day. The time slot is never revealed, only cleared of the fade. */
@@ -62,7 +64,7 @@ function useSelectedClearOfFade(contentRef: RefObject<HTMLDivElement | null>, re
     let selected = signature();
     const focused = () => { const active = document.activeElement; return active instanceof HTMLElement && active !== viewport && viewport.contains(active) ? active : null; };
     const write = (top: number) => { viewport.scrollTop = top; applied = viewport.scrollTop; /* the browser may round it */ };
-    // #630: where the body may rest so no preset row is cut in half: the top, each preset row's top, and where the presets end.
+    // #630: where the body may rest so no preset row is cut in half: the top, each preset row's top, and where the presets end. Raw row tops: the solver resolves each to the scroll that clears the top fade (#674).
     const presetSnaps = () => {
       const box = viewport.getBoundingClientRect();
       const at = (el: Element) => Math.round(el.getBoundingClientRect().top - box.top + viewport.scrollTop);
@@ -87,8 +89,8 @@ function useSelectedClearOfFade(contentRef: RefObject<HTMLDivElement | null>, re
       const selected = fromTop ? [] : [...viewport.querySelectorAll(SELECTED)];
       const elements = new Set<Element>([...selected, ...required]);
       // Only the open/resize solve snaps: a selection change or focus keeps its least-scroll move.
-      // #636: the pressed slot is not solved for at open, but must not be left partly under the bottom fade.
-      const slots = fromTop ? [...viewport.querySelectorAll(PRESSED_SLOT)].filter((slot) => !elements.has(slot)).map((slot) => { const { top, bottom } = slot.getBoundingClientRect(); return { top, bottom }; }) : [];
+      // #636, #674: the pressed slot and the active shortcut chip are not solved for at open, but must not be left partly under a fade.
+      const slots = fromTop ? [...viewport.querySelectorAll(`${PRESSED_SLOT}, ${ACTIVE_CHIP}`)].filter((slot) => !elements.has(slot)).map((slot) => { const { top, bottom } = slot.getBoundingClientRect(); return { top, bottom }; }) : [];
       write(solve([...elements].map((item) => { const { top, bottom } = item.getBoundingClientRect(); return { top, bottom, required: required.has(item), priority: item === focus }; }), fade, fromTop ? presetSnaps() : undefined, slots.length ? slots : undefined));
     };
     revealNow.current = () => { noticeScroll(); nudge(false, true); };
@@ -149,7 +151,7 @@ export function PopupFrame({ label, zoneId, bodyRef, applying, applyDisabled = f
       {pinned && <div className="shrink-0 px-(--frame-panel-header-px) pb-[var(--space-2)]">{pinned}</div>}
       {/* The body scrolls; the footer below stays pinned so Cancel / Apply are always visible. */}
       <FramePanel className="flex min-h-0 flex-col p-0">
-        <ScrollArea className="flex min-h-0 grow flex-col [--fade-size:var(--space-6)] min-[721px]:[--fade-size:var(--space-5)] *:data-[slot=scroll-area-viewport]:mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] *:data-[slot=scroll-area-viewport]:mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))] *:data-[slot=scroll-area-viewport]:focus-visible:ring-0 *:data-[slot=scroll-area-viewport]:focus-visible:!outline-none rounded-[inherit] -outline-offset-2 has-[[data-slot=scroll-area-viewport]:focus-visible]:outline-solid has-[[data-slot=scroll-area-viewport]:focus-visible]:outline-[length:var(--border-width-bold)] has-[[data-slot=scroll-area-viewport]:focus-visible]:outline-[var(--focus-ring)] has-[[data-slot=scroll-area-viewport]:focus-visible]:-outline-offset-2">
+        <ScrollArea className="flex min-h-0 grow flex-col [--fade-size:var(--space-5)] *:data-[slot=scroll-area-viewport]:mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] *:data-[slot=scroll-area-viewport]:mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))] *:data-[slot=scroll-area-viewport]:focus-visible:ring-0 *:data-[slot=scroll-area-viewport]:focus-visible:!outline-none rounded-[inherit] -outline-offset-2 has-[[data-slot=scroll-area-viewport]:focus-visible]:outline-solid has-[[data-slot=scroll-area-viewport]:focus-visible]:outline-[length:var(--border-width-bold)] has-[[data-slot=scroll-area-viewport]:focus-visible]:outline-[var(--focus-ring)] has-[[data-slot=scroll-area-viewport]:focus-visible]:-outline-offset-2">
           <div ref={contentRef} className="px-(--frame-panel-px) py-(--frame-panel-py)">{children}</div>
         </ScrollArea>
       </FramePanel>
