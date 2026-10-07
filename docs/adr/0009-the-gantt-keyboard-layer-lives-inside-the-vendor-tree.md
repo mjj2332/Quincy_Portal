@@ -216,9 +216,12 @@ paired with a timeline spacer):
   (a typed title, or the consumer's `createTaskDirty`) and focuses it, so nothing typed is lost.
 - **The editor keeps the row's cells.** `GanttGroupCreateRow` mirrors `GanttTreeRow`: a name cell
   (the cancel x in the toggle gutter, then the title input) and one cell per column rendering the
-  new `GanttColumn.renderCreate(ctx)`. With no column carrying one (a phone's `columns: []`) the new
-  `renderCreateStack` renders under the title in a row `CREATE_STACK_EXTRA_REM` taller; the same
-  `createRowRem` reaches the spacer and the dependency offset.
+  new `GanttColumn.renderCreate(ctx)`. With no column carrying one (<= 720px, a phone's `columns: []`)
+  the editor is a **bottom sheet** instead of a row (owner decision, #678 round 2): the same component on
+  `reui/sheet.tsx` (`side="bottom"`), headed "New task in <Project>", holding the title input, the
+  new `renderCreateStack` controls (Assignees, Due) and Cancel / Add. It has no row, spacer or dependency
+  offset (`createRowRem` is 0), and it provides an `OverlayContainerContext` slot like `ProjectSheet` so the
+  controls' popovers portal inside its focus trap; `finalFocus` returns focus to the opener `+`.
 - **Draft lifecycle contract.** The vendor owns the open state and the title; the consumer owns the
   rest of the draft and is told when the editor closes: `onCreateTaskClose({ parentId })` (cancel,
   success, collapse, the group leaving the data, the whole view unmounting, a changed

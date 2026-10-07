@@ -63,10 +63,10 @@
  *
  * ## #344 / #678 / #679 — "+" on the Project row
  * Each Project whose `permissions.canEditChildren` holds carries a `+` on its row (no idle "+ Add task" rows); it opens
- * ONE editor row (the vendored tree owns the row, the title and the open state; `onCreateGroupTask` / `canCreateTask` here
+ * ONE editor (a row on desktop, a bottom sheet at <= 720px; the vendored tree owns the row, the title and the open state; `onCreateGroupTask` / `canCreateTask` here
  * own the write and the gate). The editor keeps the row's columns: the draft's Assignees and Due are
  * `GanttColumn.renderCreate` cells under People and Due (`ProductionGanttCreateDraft.tsx`: `quincy/SubtaskAssigneePicker`
- * and `quincy/SubtaskScheduleControl`, as the Checklist composer), or stack under the title at <= 720px
+ * and `quincy/SubtaskScheduleControl`, as the Checklist composer), or, at <= 720px, sit in the add-task bottom sheet
  * (`renderCreateStack`). The draft lives here (`createDraft`), is reported dirty to the vendor (`createTaskDirty`) and dropped
  * on `onCreateTaskClose` / a generation change. Enter posts ONE `POST /api/projects/:id/subtasks` with the Checklist
  * composer's body: `{ title }`, plus `assigneeIds` / `schedule` / `reminderOffsetsMinutes` only when set (the server applies

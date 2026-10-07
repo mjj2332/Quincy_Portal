@@ -86,7 +86,7 @@
  * `gantt-i18n.test.ts`.
  *
  * 2026-10-07, #678/#679 — ADDED, additive: `functions.cancelAddTaskIn` (the add-task editor row's
- * cancel button). `functions.addTaskIn` now names the `+` on a Project row.
+ * cancel button). `functions.createTaskSheetTitle` (the phone bottom sheet's heading). `functions.addTaskIn` now names the `+` on a Project row.
  */
 
 import type {
@@ -225,6 +225,8 @@ interface GanttI18nConfig {
     createTaskTitleIn: (groupTitle: string) => string
     /** #678 — accessible name of the add-task editor row's cancel (x) button. */
     cancelAddTaskIn: (groupTitle: string) => string
+    /** #678 — the heading of the phone add-task bottom sheet. */
+    createTaskSheetTitle: (groupTitle: string) => string
   }
 }
 
@@ -394,6 +396,7 @@ function makeDefaultGanttFunctions(
     addTaskIn: (groupTitle) => `${cfg.labels.addTask} in ${groupTitle}`,
     createTaskTitleIn: (groupTitle) => `New task title in ${groupTitle}`,
     cancelAddTaskIn: (groupTitle) => `Cancel adding task in ${groupTitle}`,
+    createTaskSheetTitle: (groupTitle) => `New task in ${groupTitle}`,
   }
 }
 

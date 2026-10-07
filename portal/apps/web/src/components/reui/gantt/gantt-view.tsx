@@ -242,9 +242,10 @@
  * (`onCreateTaskClose` tells the consumer). An empty creatable group is now a leaf (it used to be
  * an expandable group). #678: `GanttGroupCreateRow` mirrors `GanttTreeRow`'s cells (name cell with
  * the cancel x in the toggle gutter and the title input, then one cell per column rendering
- * `GanttColumn.renderCreate`); with no column carrying one, `renderCreateStack` stacks beneath the
- * title in a row `CREATE_STACK_EXTRA_REM` taller, and the same `createRowRem` reaches the
- * spacer and the dependency offset. Escape stays on the input: popups portal out of the row but
+ * `GanttColumn.renderCreate`); with no column carrying one (<= 720px) the editor is a bottom
+ * `Sheet` (`reui/sheet.tsx`, base-nova) carrying the title, `renderCreateStack`'s controls and
+ * Cancel / Add, with an `OverlayContainerContext` slot like `ProjectSheet`; it has no row, spacer
+ * or dependency offset (`createRowRem` is 0). Row mode: Escape stays on the input: popups portal out of the row but
  * their events bubble through it. New names: `labels`/`functions.cancelAddTaskIn` (i18n),
  * `GanttCreateTaskContext`. Covered by `gantt-create-task.dom.test.tsx`.
  */
@@ -329,6 +330,8 @@ import {
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/reui/button"
 import { Input } from "@/components/reui/input"
+import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from "@/components/reui/sheet"
+import { OverlayContainerContext } from "@/components/OverlayContainerContext"
 import { Checkbox } from "@/components/reui/checkbox"
 import {
   ContextMenu,
@@ -523,12 +526,6 @@ interface TimelineRow {
   /** #679: the consumer lets a task be added under this resource (its row carries a `+`). */
   creatable: boolean
 }
-
-/**
- * #678: a stacked editor row (phones: no column to align the draft's controls to) is the title
- * row plus a strip of two 44px controls and its padding.
- */
-const CREATE_STACK_EXTRA_REM = 3.5
 
 /** One planned window resolved against the visible range, ready to position. */
 interface RowBaseline {
@@ -1439,13 +1436,12 @@ function GanttView({
   const configuredTreeWidth = clampTree(treeWidth)
   const columns = viewConfig.columns ?? []
   // #678: the editor row keeps the tree row's columns; with no column carrying a create cell (a
-  // phone's `columns: []`) the draft's controls stack under the title in a taller row instead.
-  const createStacked =
+  // phone's `columns: []`) the editor is a bottom sheet instead of a row: no row, no spacer and no
+  // dependency offset (`createRowRem` is 0), because nothing in the panes makes room for it.
+  const createSheet =
     !!viewConfig.renderCreateStack &&
     !columns.some((column) => column.renderCreate)
-  const createRowRem = createStacked
-    ? minRowRem + CREATE_STACK_EXTRA_REM
-    : minRowRem
+  const createRowRem = createSheet ? 0 : minRowRem
 
   // "Add task" hint at the foot of the tree, gated by validation
   /**
@@ -2731,33 +2727,20 @@ function GanttView({
             createOpen={createOpenFor === row.resource.id}
             onOpenCreate={onOpenCreate}
           />,
-          ...(createAfter.get(row.resource.id) ?? []).map((group) =>
-            createStacked ? (
-              // #678 phone: the editor is drawn across the Timeline pane (the tree pane is too
-              // narrow to hold it); this side keeps only the matching-height gap.
-              <div
-                key={`create:${group.resource.id}`}
-                aria-hidden
-                data-testid="gantt-group-create-task-tree-spacer"
-                className="border-border w-full shrink-0 border-b"
-                style={{ height: `${createRowRem}rem` }}
-              />
-            ) : (
-              <GanttGroupCreateRow
-                key={`create:${group.resource.id}`}
-                group={group}
-                heightRem={createRowRem}
-                titleRowRem={minRowRem}
-                reorderEnabled={reorderEnabled}
-                columns={columns}
-                nameWidth={treeConfig.nameColumnWidth}
-                nameFill={treeConfig.nameColumnFill}
-                stacked={false}
-                dirtyRef={createDirtyRef}
-                onClose={closeCreate}
-              />
-            )
-          ),
+          ...(createAfter.get(row.resource.id) ?? []).map((group) => (
+            <GanttGroupCreateRow
+              key={`create:${group.resource.id}`}
+              group={group}
+              heightRem={createRowRem}
+              reorderEnabled={reorderEnabled}
+              columns={columns}
+              nameWidth={treeConfig.nameColumnWidth}
+              nameFill={treeConfig.nameColumnFill}
+              sheet={createSheet}
+              dirtyRef={createDirtyRef}
+              onClose={closeCreate}
+            />
+          )),
         ])}
         {showCreateTask && (
           <button
@@ -3027,37 +3010,17 @@ function GanttView({
             ghostHeightRem={ghostHeightRem}
             dependencySourceIds={dependencySourceIds}
           />,
-          ...(createAfter.get(row.resource.id) ?? []).map((group) =>
-            createStacked ? (
-              <div
-                key={`create:${group.resource.id}`}
-                data-testid="gantt-group-create-task-spacer"
-                className="border-border border-b"
-                style={{ height: `${createRowRem}rem`, minWidth: trackWidth }}
-              >
-                <GanttGroupCreateRow
-                  group={group}
-                  heightRem={createRowRem}
-                  titleRowRem={minRowRem}
-                  reorderEnabled={reorderEnabled}
-                  columns={columns}
-                  nameWidth={treeConfig.nameColumnWidth}
-                  nameFill={treeConfig.nameColumnFill}
-                  stacked
-                  dirtyRef={createDirtyRef}
-                  onClose={closeCreate}
+          ...(createSheet
+            ? []
+            : (createAfter.get(row.resource.id) ?? []).map((group) => (
+                <div
+                  key={`create:${group.resource.id}`}
+                  aria-hidden
+                  data-testid="gantt-group-create-task-spacer"
+                  className="border-border border-b"
+                  style={{ height: `${createRowRem}rem`, minWidth: trackWidth }}
                 />
-              </div>
-            ) : (
-              <div
-                key={`create:${group.resource.id}`}
-                aria-hidden
-                data-testid="gantt-group-create-task-spacer"
-                className="border-border border-b"
-                style={{ height: `${createRowRem}rem`, minWidth: trackWidth }}
-              />
-            )
-          ),
+              ))),
         ])}
         {rows.length === 0 && viewConfig.renderNoResources && (
           <div
@@ -3679,43 +3642,50 @@ const GanttDependencyLayer = memo(function GanttDependencyLayer({
 })
 
 /**
- * #344 / #678 / #679: the ONE add-task editor row, rendered in the tree pane after the open
- * group's last visible descendant (the group's own row when it has none). It is opened by the `+`
- * on the group's row (`GanttTreeRow`) and only exists while open. It mirrors `GanttTreeRow`'s cell
- * structure: a name cell (the cancel x in the toggle gutter, then the title input) and one cell per
- * column carrying `GanttColumn.renderCreate`, so the draft's Assignees and Due stay visible beside
- * the title (#678). With no column to align to (a phone's `columns: []`) `renderCreateStack` renders
- * under the title instead, in a taller row. Enter submits the trimmed title through
- * `settings.onCreateGroupTask`; Esc and the x cancel and return focus to the group's `+`.
+ * #344 / #678 / #679: the ONE add-task editor, opened by the `+` on a group's row
+ * (`GanttTreeRow`); it only exists while open. Two shapes:
  *
- * Escape is handled on the INPUT only: the draft's popups (assignees, due) portal out of this row,
- * yet React still bubbles their events through it, so a row-level handler would let a popup's Escape
- * cancel the draft. It has no `data-slot="gantt-row-group"`, so row reorder and the timeline's row
- * geometry never see it; the timeline pane carries a matching-height spacer. Local state is keyed
- * per group (React key `create:<id>`), so a data refetch keeps a typed title.
+ * - **Row** (desktop): rendered in the tree pane after the open group's last visible descendant
+ *   (the group's own row when it has none). It mirrors `GanttTreeRow`'s cell structure: a name
+ *   cell (the cancel x in the toggle gutter, then the title input) and one cell per column
+ *   carrying `GanttColumn.renderCreate`, so the draft's Assignees and Due stay visible beside the
+ *   title (#678). The timeline pane carries a matching-height spacer; it has no
+ *   `data-slot="gantt-row-group"`, so row reorder and the timeline's row geometry never see it.
+ * - **Bottom sheet** (`sheet`, <= 720px: no column to align to): the same draft state in a
+ *   base-nova `Sheet` (`reui/sheet.tsx`, `side="bottom"`), headed "New task in <group>", with the
+ *   title input, `renderCreateStack`'s Assignees / Due controls and Cancel + Add. No row and no
+ *   spacer: nothing in the panes makes room for it. The popup carries an
+ *   `OverlayContainerContext` slot the way `ProjectSheet` does, so the controls' popovers portal
+ *   INSIDE the modal's focus trap, and `finalFocus` returns focus to the group's `+`.
+ *
+ * Enter submits the trimmed title through `settings.onCreateGroupTask`; Esc, the x / Cancel, the
+ * scrim and the sheet's own dismissals cancel and return focus to the group's `+`.
+ *
+ * Escape is handled on the INPUT only (row mode): the draft's popups (assignees, due) portal out
+ * of this row, yet React still bubbles their events through it, so a row-level handler would let a
+ * popup's Escape cancel the draft. Local state is keyed per group (React key `create:<id>`), so a
+ * data refetch keeps a typed title.
  */
 const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
   group,
   heightRem,
-  titleRowRem,
   reorderEnabled,
   columns,
   nameWidth,
   nameFill,
-  stacked,
+  sheet,
   dirtyRef,
   onClose,
 }: {
   group: TimelineRow
-  /** The whole row: the title line, plus the stacked strip when `stacked`. */
+  /** The row's height (`minRowRem`); unused by the sheet. */
   heightRem: number
-  /** The title line (`minRowRem`). */
-  titleRowRem: number
   reorderEnabled: boolean
   columns: GanttColumn[]
   nameWidth: number
   nameFill: boolean
-  stacked: boolean
+  /** <= 720px: a bottom sheet instead of a row. */
+  sheet: boolean
   /** Written with whether the typed title has content, so a `+` on another group can read it. */
   dirtyRef: RefObject<boolean>
   /** The editor is done (cancel or a successful create); `true` returns focus to the group's `+`. */
@@ -3723,17 +3693,23 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
 }) {
   const settings = useGanttSettings()
   const viewConfig = useGanttViewConfig()
-  const { createTaskTitleIn, cancelAddTaskIn } = settings.i18n.functions
+  const { createTaskTitleIn, cancelAddTaskIn, createTaskSheetTitle } =
+    settings.i18n.functions
   const groupTitle = group.resource.title
   const [title, setTitle] = useState("")
   const [pending, setPending] = useState(false)
   // `empty`: the vendor's own refusal (shown as the empty input's placeholder); `write`: the
   // consumer's `{ ok: false, message }`, which the consumer also surfaces visibly.
-  const [error, setError] = useState<{ kind: "empty" | "write"; message: string } | null>(null)
+  const [error, setError] = useState<{
+    kind: "empty" | "write"
+    message: string
+  } | null>(null)
   const pendingRef = useRef(false)
   const mountedRef = useRef(true)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const errorId = useId()
+  // The sheet's overlay slot: every popover / select the draft's controls open portals here.
+  const [overlaySlot, setOverlaySlot] = useState<HTMLDivElement | null>(null)
 
   useEffect(() => {
     mountedRef.current = true
@@ -3748,29 +3724,16 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
   }, [dirtyRef, title])
 
   const rowRef = useRef<HTMLDivElement | null>(null)
-  const [stackWidth, setStackWidth] = useState<number | undefined>(undefined)
 
   useLayoutEffect(() => {
+    // The sheet focuses its input through its own `initialFocus`.
+    if (sheet) return
     // preventScroll: the tree pane scrolls sideways on a phone, and a plain focus() would scroll
     // the chevrons and the header out of view to bring the input's start edge in
     inputRef.current?.focus({ preventScroll: true })
     // then bring the row into view with the least vertical scroll (never `scrollIntoView`)
     revealRowNearest(rowRef.current)
-  }, [])
-
-  // Stacked (phone): the row spans the Timeline pane's visible width and stays at its start edge
-  // while the track scrolls sideways.
-  useLayoutEffect(() => {
-    if (!stacked) return
-    const viewport = rowRef.current?.closest<HTMLElement>('[data-slot="scroll-area-viewport"]')
-    if (!viewport) return
-    const update = () => setStackWidth(viewport.clientWidth || undefined)
-    update()
-    if (typeof ResizeObserver === "undefined") return
-    const observer = new ResizeObserver(update)
-    observer.observe(viewport)
-    return () => observer.disconnect()
-  }, [stacked])
+  }, [sheet])
 
   const close = () => {
     if (pendingRef.current) return
@@ -3833,7 +3796,10 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
         aria-label={createTaskTitleIn(groupTitle)}
         aria-invalid={error ? true : undefined}
         aria-describedby={errorId}
-        className="h-7 min-h-0 py-1 max-[721px]:min-h-0 aria-invalid:placeholder:text-destructive"
+        className={cn(
+          "aria-invalid:placeholder:text-destructive",
+          !sheet && "h-7 min-h-0 py-1 max-[721px]:min-h-0"
+        )}
         onChange={(e) => {
           setTitle(e.target.value)
           if (error) setError(null)
@@ -3866,6 +3832,91 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
     </div>
   )
 
+  if (sheet) {
+    return (
+      <Sheet
+        open
+        onOpenChange={(next, details) => {
+          if (next) return
+          // a write in flight keeps the sheet (and its draft) until it settles
+          if (pendingRef.current) {
+            details.cancel()
+            return
+          }
+          onClose(true)
+        }}
+      >
+        <SheetContent
+          side="bottom"
+          showCloseButton={false}
+          data-testid="gantt-group-create-task-sheet"
+          data-gantt-create-for={group.resource.id}
+          initialFocus={() => inputRef.current ?? true}
+          finalFocus={() =>
+            document.querySelector<HTMLElement>(
+              `[data-gantt-create-trigger="${CSS.escape(group.resource.id)}"]`
+            ) ?? true
+          }
+          // `focus-visible:!outline-none`: the sheet itself can hold focus between controls (see ProjectSheet).
+          className="z-[var(--z-dialog)] gap-[var(--space-3)] p-[var(--space-4)] pb-[max(var(--space-4),env(safe-area-inset-bottom))] focus-visible:!outline-none"
+          overlayProps={{
+            "data-testid": "gantt-group-create-task-scrim",
+            className:
+              "z-[var(--z-dialog)] bg-[var(--scrim-overlay)] backdrop-blur-[3px]",
+          }}
+        >
+          <OverlayContainerContext.Provider value={overlaySlot}>
+            <SheetHeader className="p-0">
+              <SheetTitle>{createTaskSheetTitle(groupTitle)}</SheetTitle>
+            </SheetHeader>
+            <div className="flex min-w-0 flex-col gap-[var(--space-3)]">
+              <div className="flex min-w-0 flex-col gap-1">
+                <span className="text-muted-foreground text-xs">
+                  Title
+                </span>
+                {titleField}
+              </div>
+              <div
+                data-testid="gantt-group-create-task-stack"
+                className="flex min-w-0 flex-col gap-[var(--space-3)]"
+              >
+                {viewConfig.renderCreateStack?.(ctx)}
+              </div>
+            </div>
+            <SheetFooter className="flex-row justify-end gap-2 p-0">
+              <Button
+                variant="ghost"
+                type="button"
+                data-testid="gantt-group-create-task-cancel"
+                aria-label={cancelAddTaskIn(groupTitle)}
+                disabled={pending}
+                className="min-h-[44px]"
+                onClick={close}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                data-testid="gantt-group-create-task-add"
+                disabled={pending || title.trim().length === 0}
+                aria-busy={pending || undefined}
+                className="min-h-[44px]"
+                onClick={() => void submit()}
+              >
+                Add
+              </Button>
+            </SheetFooter>
+          </OverlayContainerContext.Provider>
+          {/* every popover / select the controls open portals here: inside the modal's focus trap */}
+          <div
+            ref={setOverlaySlot}
+            data-testid="gantt-group-create-task-overlay-slot"
+          />
+        </SheetContent>
+      </Sheet>
+    )
+  }
+
   const cancelButton = (
     <Button
       variant="ghost"
@@ -3879,26 +3930,6 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
     </Button>
   )
 
-  if (stacked) {
-    return (
-      <div
-        ref={rowRef}
-        data-testid="gantt-group-create-task-row"
-        data-gantt-create-for={group.resource.id}
-        className="bg-background sticky start-0 flex flex-col justify-center gap-1 px-[var(--space-4)]"
-        style={{ height: `${heightRem}rem`, width: stackWidth ?? "100%" }}
-      >
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="flex shrink-0 items-center justify-center">{cancelButton}</span>
-          {titleField}
-        </div>
-        <div data-testid="gantt-group-create-task-stack" className="flex min-w-0 items-center gap-2">
-          {viewConfig.renderCreateStack?.(ctx)}
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div
       ref={rowRef}
@@ -3907,7 +3938,7 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
       className="border-border relative flex w-full shrink-0 flex-col border-b"
       style={{ height: `${heightRem}rem` }}
     >
-      <div className="flex w-full min-w-0" style={{ height: `${titleRowRem}rem` }}>
+      <div className="flex w-full min-w-0" style={{ height: `${heightRem}rem` }}>
         <div
           data-slot="gantt-tree-cell"
           data-testid="gantt-group-create-task-name-cell"
@@ -4163,7 +4194,7 @@ const GanttTreeRow = memo(function GanttTreeRow({
                 data-gantt-create-trigger={row.resource.id}
                 aria-label={settings.i18n.functions.addTaskIn(row.resource.title)}
                 aria-expanded={createOpen}
-                className="text-muted-foreground hover:text-foreground! bg-background sticky end-0 ms-1 size-5! shrink-0 opacity-0 group-hover/gantt-row:opacity-100 group-data-hover/gantt-row:opacity-100 focus:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 max-[720px]:opacity-100 aria-expanded:opacity-100 aria-expanded:bg-transparent! pointer-coarse:-my-1 pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] max-[720px]:-my-1 max-[720px]:min-h-[44px] max-[720px]:min-w-[44px]"
+                className="text-muted-foreground hover:text-foreground! bg-background sticky end-0 max-[720px]:end-[var(--space-1)] ms-1 size-5! shrink-0 opacity-0 group-hover/gantt-row:opacity-100 group-data-hover/gantt-row:opacity-100 focus:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 max-[720px]:opacity-100 aria-expanded:opacity-100 aria-expanded:bg-transparent! pointer-coarse:-my-1 pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] max-[720px]:-my-1 max-[720px]:min-h-[44px] max-[720px]:min-w-[44px]"
                 onClick={() => onOpenCreate(row)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {

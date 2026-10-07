@@ -4,7 +4,7 @@
  * group's name cell carries a `+` button that opens ONE editor row after the group's last visible
  * descendant (the group's own row when it has none). #678: the editor row keeps the tree row's cell
  * structure (name cell, then one cell per column carrying `GanttColumn.renderCreate`), and at phone
- * width (no column renders a create cell) `renderCreateStack` stacks beneath the title.
+ * width (no column renders a create cell) the editor is a bottom sheet carrying `renderCreateStack`.
  * Also pinned: the tree/timeline spacer pairing, empty `children: []` groups (leaves with a `+`),
  * collapse and permission gating, off-by-default, Up/Down focus movement, and the input's Enter /
  * Esc / empty / failure / double-submit behaviour.
@@ -15,9 +15,10 @@
 if (!Element.prototype.getAnimations) {
   Element.prototype.getAnimations = () => [];
 }
-import { act, type ReactNode } from "react";
+import { act, useContext, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { OverlayContainerContext } from "@/components/OverlayContainerContext";
 import { Gantt } from "@/components/reui/gantt/gantt";
 import { GanttView } from "@/components/reui/gantt/gantt-view";
 import type { GanttColumn } from "@/components/reui/gantt/gantt";
@@ -80,6 +81,12 @@ const ok = async (): Promise<Result> => ({ ok: true });
 
 function errorRegion(): HTMLElement {
   const el = host.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-error"]');
+  if (!el) throw new Error("no error region");
+  return el;
+}
+
+function errorRegionIn(scope: HTMLElement): HTMLElement {
+  const el = scope.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-error"]');
   if (!el) throw new Error("no error region");
   return el;
 }
@@ -536,26 +543,123 @@ describe("gantt add-task editor keeps the row's columns (#678)", () => {
     expect(document.activeElement).toBe(dueButton);
   });
 
-  it("with no column to align to, the editor is a Timeline-pane row over its spacer: x + title, then the stack; the tree pane keeps a gap of the same height", async () => {
-    const stack = vi.fn((ctx: CreateCtx) => <span data-testid="draft-stack" data-parent={ctx.parentId} />);
-    await render(view({ onCreateGroupTask: ok, renderCreateStack: stack }));
-    await click(createButton("Alpha")!);
-    const row = createRows()[0]!;
-    expect(row.closest('[data-slot="gantt-timeline-pane"]')).not.toBeNull();
-    expect(row.closest('[data-slot="gantt-tree-pane"]')).toBeNull();
-    expect(row.className).toContain("sticky");
-    expect(row.className).toContain("px-[var(--space-4)]");
-    expect(row.contains(input())).toBe(true);
-    expect(row.querySelector('[data-testid="gantt-group-create-task-cancel"]')).not.toBeNull();
-    const slot = row.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-stack"]')!;
-    expect(slot.querySelector('[data-testid="draft-stack"]')).not.toBeNull();
-    expect(slot.contains(input())).toBe(false);
-    expect(Number.parseFloat(row.style.height)).toBeGreaterThan(2.5);
-    expect(spacers()[0]!.style.height).toBe(row.style.height);
-    const gap = host.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-tree-spacer"]')!;
-    expect(gap.closest('[data-slot="gantt-tree-pane"]')).not.toBeNull();
-    expect(gap.style.height).toBe(row.style.height);
-    expect(stack).toHaveBeenCalled();
+  describe("with no column to align to (<= 720px) the editor is a bottom sheet", () => {
+    const sheet = () => document.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-sheet"]');
+    const addButton = () => document.querySelector<HTMLButtonElement>('[data-testid="gantt-group-create-task-add"]')!;
+    const sheetCancel = () => document.querySelector<HTMLButtonElement>('[data-testid="gantt-group-create-task-cancel"]')!;
+    const sheetInput = () => document.querySelector<HTMLInputElement>('[data-testid="gantt-group-create-task-input"]')!;
+    const stackView = (stack: (ctx: CreateCtx) => ReactNode = vi.fn((ctx: CreateCtx) => <span data-testid="draft-stack" data-parent={ctx.parentId} />), props: Partial<React.ComponentProps<typeof Gantt>> = {}) =>
+      view({ onCreateGroupTask: ok, renderCreateStack: stack, ...props });
+
+    it("opens a modal bottom sheet headed with the Project, instead of a row: no row, no spacer, no tree gap", async () => {
+      await render(stackView());
+      await click(createButton("Alpha")!);
+      const popup = sheet()!;
+      expect(popup).not.toBeNull();
+      expect(popup.getAttribute("data-side")).toBe("bottom");
+      expect(popup.textContent).toContain("New task in Alpha");
+      expect(createRows()).toHaveLength(0);
+      expect(spacers()).toHaveLength(0);
+      expect(host.querySelector('[data-testid="gantt-group-create-task-tree-spacer"]')).toBeNull();
+      expect(host.contains(popup)).toBe(false);
+      expect(treeOrder()).toEqual(["Alpha", "A one", "A two", "Bravo", "Charlie", "C one"]);
+      expect(popup.querySelector('[data-testid="gantt-group-create-task-stack"] [data-testid="draft-stack"]')).not.toBeNull();
+      expect(createButton("Alpha")!.getAttribute("aria-expanded")).toBe("true");
+    });
+
+    it("focuses the title; Add is disabled while the title is empty and posts the trimmed title once", async () => {
+      let release!: () => void;
+      const create = vi.fn(() => new Promise<Result>((resolve) => { release = () => resolve({ ok: true }); }));
+      await render(stackView(undefined, { onCreateGroupTask: create }));
+      await click(createButton("Alpha")!);
+      expect(document.activeElement).toBe(sheetInput());
+      expect(sheetInput().placeholder).toBe("New task");
+      expect(addButton().disabled).toBe(true);
+      await setValue(sheetInput(), "  Hello  ");
+      expect(addButton().disabled).toBe(false);
+      await click(addButton());
+      expect(addButton().disabled).toBe(true);
+      await click(addButton());
+      await act(async () => { release(); await Promise.resolve(); });
+      await settle();
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(create).toHaveBeenCalledWith({ parentId: "a", index: 2, title: "Hello" });
+    });
+
+    it("success closes the sheet and returns focus to the + that opened it", async () => {
+      await render(stackView());
+      await click(createButton("Alpha")!);
+      await setValue(sheetInput(), "Done");
+      await click(addButton());
+      await settle();
+      expect(sheet()).toBeNull();
+      expect(document.activeElement).toBe(createButton("Alpha"));
+    });
+
+    it("a failed write keeps the sheet and the typed title", async () => {
+      const create = vi.fn(async (): Promise<Result> => ({ ok: false, message: "No" }));
+      await render(stackView(undefined, { onCreateGroupTask: create }));
+      await click(createButton("Alpha")!);
+      await setValue(sheetInput(), "Keep me");
+      await click(addButton());
+      await settle();
+      expect(sheet()).not.toBeNull();
+      expect(sheetInput().value).toBe("Keep me");
+      expect(errorRegionIn(sheet()!).textContent).toBe("No");
+      expect(addButton().disabled).toBe(false);
+    });
+
+    it("Cancel and Escape close it without a write and return focus to the +", async () => {
+      const create = vi.fn(ok);
+      await render(stackView(undefined, { onCreateGroupTask: create }));
+      await click(createButton("Alpha")!);
+      await setValue(sheetInput(), "Nope");
+      await click(sheetCancel());
+      await settle();
+      expect(sheet()).toBeNull();
+      expect(document.activeElement).toBe(createButton("Alpha"));
+      await click(createButton("Alpha")!);
+      expect(sheetInput().value).toBe("");
+      await key(sheetInput(), "Escape");
+      await settle();
+      expect(sheet()).toBeNull();
+      expect(document.activeElement).toBe(createButton("Alpha"));
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it("a press on the scrim closes it and returns focus to the +", async () => {
+      await render(stackView());
+      await click(createButton("Alpha")!);
+      const scrim = document.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-scrim"]')!;
+      await act(async () => {
+        for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) scrim.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0 }));
+        await Promise.resolve();
+      });
+      await settle();
+      expect(sheet()).toBeNull();
+      expect(document.activeElement).toBe(createButton("Alpha"));
+    });
+
+    it("provides an overlay slot: the draft's controls get it through OverlayContainerContext", async () => {
+      let seen: HTMLElement | null | undefined;
+      function Probe() {
+        seen = useContext(OverlayContainerContext);
+        return <span data-testid="draft-stack" />;
+      }
+      await render(stackView(() => <Probe />));
+      await click(createButton("Alpha")!);
+      const slot = document.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-overlay-slot"]')!;
+      expect(slot).not.toBeNull();
+      expect(sheet()!.contains(slot)).toBe(true);
+      expect(seen).toBe(slot);
+    });
+
+    it("keeps the sticky + clear of its focus ring at <= 720px (inset by --space-1, not an inward ring)", async () => {
+      await render(stackView());
+      const cls = createButton("Alpha")!.className;
+      expect(cls).toContain("max-[720px]:end-[var(--space-1)]");
+      expect(cls).not.toContain("ring-inset");
+    });
   });
 
   it("the title says New task; the x has the 44px coarse and phone targets; the + is sticky at the pane's right edge on a backing and shows when focused (#678)", async () => {
@@ -571,7 +675,7 @@ describe("gantt add-task editor keeps the row's columns (#678)", () => {
   it("renderCreateStack is ignored when a column carries a create cell", async () => {
     await render(view({ onCreateGroupTask: ok, columns: [people], renderCreateStack: () => <span data-testid="draft-stack" /> }));
     await click(createButton("Alpha")!);
-    expect(host.querySelector('[data-testid="draft-stack"]')).toBeNull();
+    expect(document.querySelector('[data-testid="draft-stack"]')).toBeNull();
     expect(createRows()[0]!.style.height).toBe("2.5rem");
   });
 });

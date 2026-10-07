@@ -18,6 +18,8 @@ import { DEFAULT_GANTT_FACET_FILTERS } from "../lib/production-gantt-filters";
 import { clearToasts } from "../lib/toast-store";
 import { ToastViewport } from "./quincy/ToastViewport";
 import { ProductionGantt } from "./ProductionGantt";
+import { CELL_TRIGGER } from "./ProjectDeadlineCell";
+import { applyPopup, dateTimePopup, pickPopupDay } from "@/testing/date-time-popup";
 import { startMoment, endMoment, subtaskReminders } from "@/testing/subtask-schedule";
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
@@ -112,10 +114,10 @@ async function mount(q = "") {
 }
 
 const plus = (street: string) => host.querySelector<HTMLButtonElement>(`button[aria-label="Add task in ${street}"]`);
-const input = () => host.querySelector<HTMLInputElement>('input[aria-label^="New task title in"]');
+const input = () => document.querySelector<HTMLInputElement>('input[aria-label^="New task title in"]');
 const editorRow = () => host.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-row"]');
-const draftAssignees = () => host.querySelector<HTMLButtonElement>('[aria-label="Assignees for new subtask"]');
-const draftDue = () => host.querySelector<HTMLButtonElement>('[aria-label^="Schedule for new subtask"]');
+const draftAssignees = () => document.querySelector<HTMLButtonElement>('[aria-label="Assignees for new subtask"]');
+const draftDue = () => document.querySelector<HTMLButtonElement>('[aria-label^="Schedule for new subtask"]');
 const options = () => [...document.querySelectorAll<HTMLElement>('[role="option"]')];
 
 async function click(el: HTMLElement) {
@@ -222,20 +224,127 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
     expect(nameCell.contains(draftDue())).toBe(false);
   });
 
-  it("on a phone there are no People/Due columns: the draft's controls stack under the title inside the editor row", async () => {
-    const original = window.matchMedia;
-    window.matchMedia = ((query: string) => ({ matches: query === "(max-width: 720px)", media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false })) as typeof window.matchMedia;
-    try {
+  it("the Due trigger is the Due column's own trigger: the same CELL_TRIGGER classes, no uppercase or letter-spacing treatment", async () => {
+    await mount();
+    await click(plus(STREET_A)!);
+    const trigger = draftDue()!;
+    const columnTrigger = [...host.querySelectorAll<HTMLElement>('[data-column="due"] button')].find((button) => !editorRow()!.contains(button))!;
+    expect(columnTrigger).toBeDefined();
+    for (const token of CELL_TRIGGER.split(" ")) {
+      expect(trigger.className, token).toContain(token);
+      expect(columnTrigger.className, token).toContain(token);
+    }
+    expect(trigger.className).not.toContain("uppercase");
+    expect(trigger.className).toContain("normal-case");
+  });
+
+  it("choosing a Due date keeps ONE trigger node and focus returns to it (not to Assignees)", async () => {
+    await mount();
+    await click(plus(STREET_A)!);
+    const trigger = draftDue()!;
+    await act(async () => { trigger.focus(); trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); trigger.click(); await Promise.resolve(); });
+    await waitFor(() => expect(dateTimePopup("Schedule for new subtask")).not.toBeNull());
+    await pickPopupDay(dateTimePopup("Schedule for new subtask")!, isoDate(40));
+    await applyPopup(dateTimePopup("Schedule for new subtask")!);
+    await waitFor(() => expect(dateTimePopup("Schedule for new subtask")).toBeNull());
+    await settle();
+    expect(draftDue()).toBe(trigger);
+    expect(trigger.isConnected).toBe(true);
+    expect(document.activeElement).toBe(trigger);
+    // the chosen range really is the draft: it rides along in the one POST
+    await submit("Dated");
+    expect(apiPostMock).toHaveBeenCalledTimes(1);
+    expect((apiPostMock.mock.calls[0]![1] as { schedule?: unknown }).schedule).toBeDefined();
+  });
+
+  describe("on a phone (<= 720px) the editor is a bottom sheet", () => {
+    let original: typeof window.matchMedia;
+    beforeEach(() => {
+      original = window.matchMedia;
+      window.matchMedia = ((query: string) => ({ matches: query === "(max-width: 720px)", media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false })) as typeof window.matchMedia;
+    });
+    afterEach(() => { window.matchMedia = original; });
+    const sheet = () => document.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-sheet"]');
+
+    it("tapping + opens the sheet (no editor row, no spacer): heading names the Project; Title, Assignees, Due, Cancel and Add are in it", async () => {
       await mount();
       await click(plus(STREET_A)!);
-      const row = editorRow()!;
-      expect(row.querySelector('[data-column="people"]')).toBeNull();
-      const stack = row.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-stack"]')!;
-      expect(stack.contains(draftAssignees())).toBe(true);
-      expect(stack.contains(draftDue())).toBe(true);
-      expect(row.closest('[data-slot="gantt-timeline-pane"]')).not.toBeNull();
-      expect(row.querySelector('[data-testid="gantt-group-create-task-name-cell"]')).toBeNull();
-    } finally { window.matchMedia = original; }
+      const popup = sheet()!;
+      expect(popup).not.toBeNull();
+      expect(popup.textContent).toContain(`New task in ${STREET_A}`);
+      expect(editorRow()).toBeNull();
+      expect(host.querySelector('[data-testid="gantt-group-create-task-spacer"]')).toBeNull();
+      expect(host.querySelector('[data-testid="gantt-group-create-task-tree-spacer"]')).toBeNull();
+      expect(popup.contains(input())).toBe(true);
+      expect(popup.contains(draftAssignees())).toBe(true);
+      expect(popup.contains(draftDue())).toBe(true);
+      expect(document.activeElement).toBe(input());
+      const add = popup.querySelector<HTMLButtonElement>('[data-testid="gantt-group-create-task-add"]')!;
+      expect(add.disabled).toBe(true);
+      expect(popup.querySelector('[data-testid="gantt-group-create-task-cancel"]')).not.toBeNull();
+    });
+
+    it("one POST carries title and assignees; success closes the sheet, returns focus to the + and pins the row", async () => {
+      await mount();
+      await click(plus(STREET_A)!);
+      await choose("Ada Smith");
+      await type(input()!, "Phone task");
+      const add = sheet()!.querySelector<HTMLButtonElement>('[data-testid="gantt-group-create-task-add"]')!;
+      expect(add.disabled).toBe(false);
+      await click(add);
+      await settle();
+      expect(apiPostMock).toHaveBeenCalledTimes(1);
+      expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${PROJECT_A}/subtasks`, { title: "Phone task", assigneeIds: [ada.id] });
+      expect(sheet()).toBeNull();
+      expect(document.activeElement).toBe(plus(STREET_A));
+    });
+
+    it("a failed create keeps the sheet, the title and the assignees", async () => {
+      apiPostMock.mockRejectedValueOnce(new ApiError("Nope from the server", 500));
+      await mount();
+      await click(plus(STREET_A)!);
+      await choose("Ada Smith");
+      await type(input()!, "Keep me");
+      await click(sheet()!.querySelector<HTMLButtonElement>('[data-testid="gantt-group-create-task-add"]')!);
+      await settle();
+      expect(sheet()).not.toBeNull();
+      expect(input()!.value).toBe("Keep me");
+      expect(draftAssignees()!.getAttribute("title")).toContain("Ada Smith");
+    });
+
+    it("the assignee popover portals INSIDE the sheet, and its Escape closes only the popover", async () => {
+      await mount();
+      await click(plus(STREET_A)!);
+      await type(input()!, "Half typed");
+      await openPicker();
+      const slot = sheet()!.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-overlay-slot"]')!;
+      expect(slot.contains(document.querySelector('[role="listbox"]'))).toBe(true);
+      await pick("Ada Smith");
+      await closePickerWithEscape();
+      expect(sheet()).not.toBeNull();
+      expect(input()!.value).toBe("Half typed");
+      expect(draftAssignees()!.getAttribute("title")).toContain("Ada Smith");
+    });
+
+    it("the Due popover closes on Escape without closing the sheet, and Cancel returns focus to the +", async () => {
+      await mount();
+      await click(plus(STREET_A)!);
+      const trigger = draftDue()!;
+      await act(async () => { trigger.focus(); trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); trigger.click(); await Promise.resolve(); });
+      await waitFor(() => expect(document.querySelector('[role="dialog"][data-testid]') ?? document.querySelectorAll('[role="dialog"]').length > 1).toBeTruthy());
+      const dialogs = () => [...document.querySelectorAll('[role="dialog"]')].filter((dialog) => dialog !== sheet());
+      expect(dialogs().length).toBeGreaterThan(0);
+      const slot = sheet()!.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-overlay-slot"]')!;
+      expect(slot.contains(dialogs()[0]!)).toBe(true);
+      await act(async () => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
+      await waitFor(() => expect(dialogs()).toHaveLength(0));
+      expect(sheet()).not.toBeNull();
+      await click(sheet()!.querySelector<HTMLButtonElement>('[data-testid="gantt-group-create-task-cancel"]')!);
+      await settle();
+      expect(sheet()).toBeNull();
+      expect(document.activeElement).toBe(plus(STREET_A));
+      expect(apiPostMock).not.toHaveBeenCalled();
+    });
   });
 
   it("the Due control shows the Project default until a range is applied", async () => {

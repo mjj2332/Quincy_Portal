@@ -2403,8 +2403,8 @@ interface GanttViewConfig<TData = unknown> {
   onCreateTaskClose?: (ctx: { parentId: string }) => void
   /**
    * Quincy #678: the draft's controls for a tree with no column to align to (phones render
-   * `columns: []`). Used only when no column has a `renderCreate`; stacked under the title in a
-   * taller editor row.
+   * `columns: []`). Used only when no column has a `renderCreate`; then the editor is a bottom
+   * sheet and these controls sit in its body between the title and Cancel / Add.
    */
   renderCreateStack?: (ctx: GanttCreateTaskContext) => ReactNode
   /** Floating zoom in/out control over the track. Default on. */
