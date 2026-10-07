@@ -6,7 +6,7 @@ import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/re
 import { Input } from "@/components/reui/input";
 import { cn } from "@/lib/utils";
 import { civilToCell, joinCivilMinute, parseTypedTime, sameReminderOffsets, splitCivilMinute, sydneyToday, timeSlots, yearBounds } from "@/lib/date-time-field";
-import { buildRangeShortcuts, dayLabel, type DateTimeRangeValue } from "@/lib/date-time-range";
+import { applyRangeShortcut, buildRangeShortcuts, momentLabel, type DateTimeRangeValue, type RangeMoment, type RangeShortcut } from "@/lib/date-time-range";
 import { CalendarPane } from "./CalendarPane";
 import { FoldChoice } from "./FoldChoice";
 import { NextReminder } from "./NextReminder";
@@ -20,7 +20,7 @@ import { TimeColumn } from "./TimeColumn";
  * #423 — the range form of the date/time popup (ADR 0016): a start and an end, each a Sydney civil
  * minute, on one calendar. A Start | End toggle picks which end the calendar, the time column, the
  * typed time and the Earlier / Later choice edit; the shortcuts (Today, Tomorrow, This week, Next
- * week and, when the caller has one, Project default) set both ends at once. There is no "No date":
+ * week) set the active end only (#683); Project default, when the caller has one, sets both ends. There is no "No date":
  * a Subtask always has a range. The draft lives here and nothing is committed until Apply.
  *
  * #425: when `reminders` is given the popup also edits the Subtask's reminder set with the Deadline's own strip (`RemindersStrip`):
@@ -29,7 +29,8 @@ import { TimeColumn } from "./TimeColumn";
  * composer) leaves `reminders.next` undefined, which hides the line.
  *
  * Rules the form owns:
- * - A shortcut applies the presets (09:00 start, 17:00 end) or the Project default. A day picked on
+ * - A shortcut applies the presets (09:00 start, 17:00 end) to the active end, or the Project default to both; the collision rules
+ *   (a new start past the end, a new end before the start) live in `applyRangeShortcut`. A day picked on
  *   the calendar keeps the time already on that end and only takes its preset (09:00 start, 17:00
  *   end) when it has none.
  * - Picking a day while Start is active sets the start, moves the end onto that day when it would
@@ -192,12 +193,11 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
     }));
   }, [current.day]);
 
-  const shortcuts = buildRangeShortcuts({ today, projectDefault });
+  const shortcuts = buildRangeShortcuts({ today, projectDefault, active });
   const foldOf = (which: End): 0 | 1 => (resolved[which].chosen === "later" ? 1 : 0);
-  const activeId = shortcuts.find((shortcut) => {
-    const range = shortcut.resolve();
-    return resolved.start.civil === range.start.localCivil && resolved.end.civil === range.end.localCivil && foldOf("start") === range.start.fold && foldOf("end") === range.end.fold;
-  })?.id ?? null;
+  const endMatches = (which: End, pair: DateTimeRangeValue) => resolved[which].civil === pair[which].localCivil && foldOf(which) === pair[which].fold;
+  // #683: a shortcut sets the active end, so it reads pressed when that end matches (several can); Project default sets both, so it needs both.
+  const activeIds = shortcuts.filter((shortcut) => (shortcut.scope === "range" ? endMatches("start", shortcut.pair) && endMatches("end", shortcut.pair) : endMatches(active, shortcut.pair))).map((shortcut) => shortcut.id);
 
   const bounds = yearBounds(today, draft.start.day ?? draft.end.day ?? value?.start.localCivil.slice(0, 10) ?? null);
   const endBounds = yearBounds(today, draft.end.day);
@@ -235,21 +235,25 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
     setMonth(civilToCell(day));
   };
 
-  const pickShortcut = (shortcut: ReturnType<typeof buildRangeShortcuts>[number], button: HTMLElement) => {
+  const pickShortcut = (shortcut: RangeShortcut, button: HTMLElement) => {
     // #598: moving the grid to another month removes the focused day; keep focus on the preset instead of letting it fall to the popup.
     button.focus({ preventScroll: true });
-    const range = shortcut.resolve();
-    const startParts = splitCivilMinute(range.start.localCivil);
-    const endParts = splitCivilMinute(range.end.localCivil);
+    // #683: only the active end moves (Project default sets both); an end the shortcut leaves keeps its draft whole, typed text and fold choice included.
+    const result = applyRangeShortcut(shortcut, draft.active, { start: resolved.start.civil, end: resolved.end.civil });
+    const moved = (moment: RangeMoment): EndDraft => {
+      const parts = splitCivilMinute(moment.localCivil);
+      return { day: parts.day, time: parts.time, timeText: parts.time ?? "", fold: { minute: moment.localCivil, choice: foldChoice(moment.fold) } };
+    };
     setDraft((state) => ({
       touched: true,
       active: state.active,
       offsets: state.offsets,
-      start: { day: startParts.day, time: startParts.time, timeText: startParts.time ?? "", fold: { minute: range.start.localCivil, choice: foldChoice(range.start.fold) } },
-      end: { day: endParts.day, time: endParts.time, timeText: endParts.time ?? "", fold: { minute: range.end.localCivil, choice: foldChoice(range.end.fold) } },
+      start: result.start === "keep" ? state.start : moved(result.start),
+      end: result.end === "keep" ? state.end : moved(result.end),
     }));
     // #598: the grid follows the end being edited (as setActive does), not always the start.
-    const shownDay = draft.active === "end" ? (endParts.day ?? startParts.day) : startParts.day;
+    const shown = result[draft.active];
+    const shownDay = shown === "keep" ? draft[draft.active].day : splitCivilMinute(shown.localCivil).day;
     if (shownDay) setMonth(civilToCell(shownDay));
   };
 
@@ -304,7 +308,7 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
     const { civil } = resolved[which];
     if (!civil) return "Not set";
     const parts = splitCivilMinute(civil);
-    return parts.day && parts.time ? `${dayLabel(civil)} · ${parts.time}` : civil;
+    return parts.day && parts.time ? momentLabel(civil) : civil;
   };
 
   return (
@@ -343,7 +347,7 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
     >
       <div className="flex flex-col gap-[var(--space-4)]">
         <div className="flex flex-col gap-[var(--space-4)] min-[721px]:flex-row">
-          <ShortcutList shortcuts={shortcuts} activeId={activeId} onPick={pickShortcut} />
+          <ShortcutList shortcuts={shortcuts} activeId={activeIds} onPick={pickShortcut} />
           <CalendarPane
             selection={{ mode: "range", start: draft.start.day, end: draft.end.day, activeEnd: active }}
             today={today}

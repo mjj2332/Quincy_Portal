@@ -27,8 +27,8 @@ export type ShortcutRow = { id: string; label: string; sublabel: string };
 
 export function ShortcutList<TRow extends ShortcutRow>({ shortcuts, activeId, onPick }: {
   shortcuts: readonly TRow[];
-  /** The shortcut whose resolved value equals the draft, if any. */
-  activeId: TRow["id"] | null;
+  /** The shortcut whose resolved value equals the draft, if any; the range form can have several (two chips that set the same moment both read pressed). */
+  activeId: TRow["id"] | null | readonly TRow["id"][];
   /** The pressed button is handed over so a caller that re-renders the grid can keep focus on it. */
   onPick: (shortcut: TRow, button: HTMLElement) => void;
 }) {
@@ -41,7 +41,7 @@ export function ShortcutList<TRow extends ShortcutRow>({ shortcuts, activeId, on
             key={shortcut.id}
             size="xs"
             render={<button type="button" />}
-            aria-pressed={activeId === shortcut.id}
+            aria-pressed={Array.isArray(activeId) ? activeId.includes(shortcut.id) : activeId === shortcut.id}
             className={cn(
               // One fixed height so a row without a sublabel ("No date") matches the rest, and one
               // inward ring (RING_IN): Item's own ring would double the global focus outline. RING_IN's
