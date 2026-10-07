@@ -323,6 +323,14 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
       expect(sheet()!.querySelector('[data-testid="gantt-group-create-task-overlay-slot"]')!.contains(popup)).toBe(true);
     });
 
+    it("the sheet's Due shows a real date in the Title's ink, not muted (#686); the desktop row keeps its muted default", async () => {
+      await mount();
+      await click(plus(STREET_A)!);
+      const cls = draftDue()!.className.split(/\s+/);
+      expect(cls).toContain("text-foreground");
+      expect(cls).not.toContain("text-muted-foreground");
+    });
+
     it("the Project's name in the heading is its own body-type element; the Due trigger takes the Title input's radius, background and size; the footer is ruled off", async () => {
       await mount();
       await click(plus(STREET_A)!);

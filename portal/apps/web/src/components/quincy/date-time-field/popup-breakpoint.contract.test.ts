@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { POPUP_STACKED_QUERY } from "@/lib/date-time-field";
+import { POPUP_SHORT_QUERY, POPUP_STACKED_QUERY } from "@/lib/date-time-field";
 
 /**
  * #602: the date/time popups stack their three columns at the SAME width the calendar swaps to its
@@ -78,4 +78,19 @@ describe("calendar cells fit the stacked popup (#636)", () => {
     for (const width of [360, 375, 390]) expect(cell(width)).toBeGreaterThanOrEqual(40);
     expect(cell(390)).toBe(44);
   });
+});
+
+/**
+ * #686: a short viewport (landscape phone) drops the time-slot list, whose own scroller trapped the wheel in a ~68px body. Height only: the
+ * wide layout has the same trap. Both popups read the one query.
+ */
+describe("popup short-height mode (#686)", () => {
+  it("is a height-only query", () => {
+    expect(POPUP_SHORT_QUERY).toBe("(height < 520px)");
+  });
+  for (const file of ["DateTimePopup.tsx", "DateTimeRangePopup.tsx"] as const) {
+    it(`${file} reads it`, () => {
+      expect(read(file)).toContain("useMediaQuery(POPUP_SHORT_QUERY)");
+    });
+  }
 });

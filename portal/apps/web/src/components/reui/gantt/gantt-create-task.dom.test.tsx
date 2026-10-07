@@ -174,6 +174,13 @@ describe("gantt per-group add-task editor (#679)", () => {
     expect(createButton("Bravo")).not.toBeNull();
   });
 
+  it("the + keeps a 8px start margin so its outward focus ring clears the group title (#686)", async () => {
+    await render(view({ onCreateGroupTask: ok }));
+    const tokens = createButton("Alpha")!.className.split(/\s+/);
+    expect(tokens).toContain("ms-2");
+    expect(tokens).not.toContain("ms-1");
+  });
+
   it("the + is revealed on hover and focus, and stays visible on touch, on phones and while its editor is open", async () => {
     await render(view({ onCreateGroupTask: ok }));
     const cls = createButton("Alpha")!.className;
