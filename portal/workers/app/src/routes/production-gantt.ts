@@ -61,7 +61,7 @@ import {
 import { requireCapability } from "../middleware/capability";
 import { terminalRoute } from "../lib/terminal-route";
 import { normalizeProjectSearch, projectSearchSql } from "../lib/project-search";
-import { assigneeContext, baseProjectColumns, compileDashboardFilterSql, dashboardFilterBindValues, editorsContext } from "../lib/dashboard-filter-sql";
+import { baseProjectColumns, compileDashboardFilterSql, dashboardFilterBindValues, editorsContext, timelineSubtaskContext } from "../lib/dashboard-filter-sql";
 import { validPeopleIds } from "../lib/project-relation-filter";
 import { archivedModeSql, authorizedProjectsBaseCte, dashboardPeopleCte, parseReminderOffsets, productionRoleSql } from "../lib/production-scope-sql";
 import { serializeSubtaskSchedule } from "../lib/subtask-schedule";
@@ -414,8 +414,8 @@ const NO_IDS: ReadonlySet<string> = new Set();
 const hasPeopleOrMine = (tree: DashboardFilterTree) => dashboardFilterLeaves(tree).some((leaf) => leaf.field === "people" || leaf.field === "mine");
 
 /**
- * A Subtask's own filter: People / My tasks are THAT Subtask's assignees (an External Editor sees only team
- * assignees), every other rule reads its Project. With no People / My tasks rule the Subtask context is the Project's
+ * A Subtask's own filter: People is THAT Subtask's assignees (an External Editor sees only team
+ * assignees) and My tasks is its assignee OR an Editor of its Project (#680), every other rule reads its Project. With no People / My tasks rule the Subtask context is the Project's
  * deadline context (the parent already passed the tree), so the predicate is the constant `1`, never a per-row cost.
  * `values` is the column that holds the tree's JSON values (the People ids in it are already resolved to the viewer's universe).
  */
@@ -424,7 +424,7 @@ function childFilterSql(role: GanttRole, tree: DashboardFilterTree, subtask: str
   // People / My tasks rule narrows nothing per row. A STANDALONE child request (`childrenOf=`) never ran that check:
   // the tree is evaluated on the Project itself (no rule reads a Subtask), so an excluded parent returns no rows.
   if (!standalone && !hasPeopleOrMine(tree)) return "1";
-  return compileDashboardFilterSql(tree, { jsonRef: "r.filter_tree", context: assigneeContext(role, baseProjectColumns(projectColumnsAlias), `${subtask}.project_id`, `${subtask}.id`, "r.now", "r.me"), validIds: NO_IDS }).sql;
+  return compileDashboardFilterSql(tree, { jsonRef: "r.filter_tree", context: timelineSubtaskContext(role, baseProjectColumns(projectColumnsAlias), `${subtask}.project_id`, `${subtask}.id`, "r.now", "r.me"), validIds: NO_IDS }).sql;
 }
 
 /** The Project columns a child statement's `scoped_project` exposes so a tree's non-People rules read the Project. */
