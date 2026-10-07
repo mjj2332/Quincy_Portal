@@ -5865,7 +5865,7 @@ a `data-focus-pending` marker (state for a ring that is never useful).
 
 A fourth sighting (#662): the Subtask Actions popover (`AnchoredPopover`, `SubtaskChecklist` `initialFocus={0}`). Its
 `FloatingFocusManager` ordered focus `["reference", "floating", "content"]`, so index 0 was the trigger and the panel
-itself became a Tab stop with a square ring. Fix: drop the `order` prop so the default (`content`) applies; a keyboard open
+itself became a Tab stop with a square ring. Fix: set `order={["content"]}` explicitly; a keyboard open
 now focuses Delete, and Escape returns to the trigger. Check `initialFocus` against the order list, not just against the
 container class.
 

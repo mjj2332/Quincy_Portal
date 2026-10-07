@@ -13,7 +13,8 @@ import { pickPopupDateTime, applyPopup } from "@/testing/date-time-popup";
  * `restoreFocus: "popup"` reclaims focus a frame after the popover closes (lesson "Adopting
  * base-nova's sidebar…", P3; the same fix as `quincy/menu.tsx`). happy-dom does not reproduce the
  * sheet's own refocus, so this pins the mechanism: focus is on the trigger the moment the popover
- * closes and still there a frame later.
+ * closes and still there a frame later. The sheet's refocus is EMULATED below (`emulateSheetRestoreFocus`), so a pass here is
+ * not proof against the real sheet: the browser pass is (docs/lessons.md, "A focus test can pass because something else restored focus").
  */
 
 const apiPutMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
@@ -94,11 +95,7 @@ describe("header Deadline inside the Project sheet — focus on close (#664)", (
   it("Escape puts focus on the trigger immediately and after a frame, writing nothing", async () => {
     await mountInSheet();
     await open();
-    const log: string[] = [];
-    const d = (e: Event) => log.push(e.type + ":" + ((e.target as HTMLElement).getAttribute?.("data-testid") ?? (e.target as HTMLElement).tagName) + " rel=" + ((e as FocusEvent).relatedTarget ? "y" : "n"));
-    document.addEventListener("focusout", d, true); document.addEventListener("focusin", d, true);
     await act(async () => { document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
-    console.log("LOG", log.join(" | "), "active", document.activeElement?.tagName);
     expect(popup()).toBeNull();
     expect(document.activeElement).toBe(trigger());
     await frame();

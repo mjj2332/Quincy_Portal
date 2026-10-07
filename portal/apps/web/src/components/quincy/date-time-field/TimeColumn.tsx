@@ -57,14 +57,25 @@ export function TimeColumn({ selected, skipped, onPick }: {
 
   // Keep the focused slot inside the column viewport and clear of the stacked fade. The popup body's own `focusin`
   // handler (PopupFrame) brings the column into view in the body.
+  const pressedRect = () => {
+    const rect = listRef.current?.querySelector<HTMLElement>('button[aria-pressed="true"]')?.getBoundingClientRect();
+    return rect ? { top: rect.top, bottom: rect.bottom } : undefined;
+  };
   const reveal = useCallback((slotEl: HTMLElement) => {
     const viewport = listRef.current?.parentElement;
     if (!viewport) return;
     const fade = stacked ? measureFade(viewport) : 0;
     const { top, bottom } = slotEl.getBoundingClientRect();
     // The pressed slot is not required to be clear, but must not end up partly under a fade (#662): `noSliver`, no `snaps`.
-    const pressed = listRef.current?.querySelector<HTMLElement>('button[aria-pressed="true"]')?.getBoundingClientRect();
-    viewport.scrollTop = scrollTopClearOfFade({ viewport: viewport.getBoundingClientRect(), scrollTop: viewport.scrollTop, maxScrollTop: viewport.scrollHeight - viewport.clientHeight, fade, items: [{ top, bottom, required: true, priority: true }], noSliver: pressed ? [{ top: pressed.top, bottom: pressed.bottom }] : undefined });
+    const pressed = pressedRect();
+    viewport.scrollTop = scrollTopClearOfFade({
+      viewport: viewport.getBoundingClientRect(),
+      scrollTop: viewport.scrollTop,
+      maxScrollTop: viewport.scrollHeight - viewport.clientHeight,
+      fade,
+      items: [{ top, bottom, required: true, priority: true }],
+      noSliver: pressed ? [pressed] : undefined,
+    });
   }, [stacked]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -121,6 +132,9 @@ export function TimeColumn({ selected, skipped, onPick }: {
     pickedRef.current = null;
     if (!skip) centre();
   }, [centre, selected]);
+  // A pick the parent ignores leaves `selected` unchanged, so `pickedRef` would outlive its commit and swallow a later outside
+  // change to that same slot. It applies only to the commit the pick caused: clear it after every commit.
+  useEffect(() => { pickedRef.current = null; });
 
   // Crossing 721px swaps the four-column h-36 grid for the single h-72 column; the selection has not
   // changed, so re-centre when the viewport's size does.
