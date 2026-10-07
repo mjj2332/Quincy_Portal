@@ -1682,11 +1682,34 @@ describe("ProductionGantt — Add task row (#344)", () => {
     expect(hiddenToasts()).toBe(0);
   });
 
-  it("9. the attention label can shrink and truncate on a phone, so the project name keeps priority; it stays fixed on desktop (#686)", async () => {
+  it("9. at <=720px the warning sits on a second line under the project name; desktop layout is unchanged (#689)", async () => {
     resetFixture({ canEditDeadline: false, noDeadline: true });
     await render();
-    const tokens = host.querySelector<HTMLElement>(`[data-testid="gantt-row-attention-missing_deadline"]`)!.className.split(/\s+/);
-    for (const token of ["min-w-0", "truncate", "max-[720px]:max-w-[45%]", "min-[721px]:shrink-0"]) expect(tokens, token).toContain(token);
+    const badge = host.querySelector<HTMLElement>(`[data-testid="gantt-row-attention-missing_deadline"]`)!;
+    const tokens = badge.className.split(/\s+/);
+    for (const token of ["min-w-0", "truncate", "min-[721px]:shrink-0"]) expect(tokens, token).toContain(token);
     expect(tokens).not.toContain("shrink-0");
+    expect(tokens).not.toContain("max-[720px]:max-w-[45%]");
+    expect(badge.getAttribute("title")).toBe(badge.textContent);
+
+    const meta = badge.closest<HTMLElement>(`[data-testid="gantt-row-label-meta"]`)!;
+    expect(meta).not.toBeNull();
+    const metaTokens = meta.className.split(/\s+/);
+    for (const token of ["min-[721px]:contents", "max-[720px]:flex", "min-w-0", "max-[720px]:overflow-hidden"]) expect(metaTokens, token).toContain(token);
+
+    const outer = meta.parentElement!;
+    const outerTokens = outer.className.split(/\s+/);
+    for (const token of ["max-[720px]:flex-col", "max-[720px]:items-stretch", "max-[720px]:justify-center"]) expect(outerTokens, token).toContain(token);
+    expect(outerTokens).not.toContain("max-[720px]:items-start");
+
+    const title = meta.previousElementSibling as HTMLElement;
+    expect(title.className.split(/\s+/)).toContain("max-[720px]:flex-none");
+    expect(title.className.split(/\s+/)).toContain("truncate");
+  });
+
+  it("9b. a row with no badge renders no meta wrapper (#689)", async () => {
+    resetFixture({ canEditDeadline: false });
+    await render();
+    expect(host.querySelector(`[data-testid="gantt-row-label-meta"]`)).toBeNull();
   });
 });

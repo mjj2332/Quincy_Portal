@@ -219,6 +219,8 @@ describe("ProductionGantt — child-page pagination (fix-220-sol1 #1, #2, #3)", 
     expect(findByText(host, "Recovered page two task")).toBeUndefined();
     const retryButton = host.querySelector('[data-testid="gantt-children-retry"]');
     expect(retryButton).not.toBeNull();
+    // #689: on a phone the retry shares the second line with the warning, inside the meta wrapper.
+    expect(retryButton!.closest('[data-testid="gantt-row-label-meta"]')).not.toBeNull();
 
     await act(async () => {
       retryButton!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
