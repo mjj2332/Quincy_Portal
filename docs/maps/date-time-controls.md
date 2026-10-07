@@ -54,3 +54,11 @@ Last verified against 495766e9
 
 ## Time list keyboard (#660)
 `TimeColumn` portal/apps/web/src/components/quincy/date-time-field/TimeColumn.tsx is one roving Tab stop (pressed slot, else next enabled slot, else first), not 96. Arrows move focus only; Up/Down step by the column count from `POPUP_STACKED_QUERY` (4 stacked, else 1), Left/Right by 1, Home/End jump, ends clamp, disabled slots are skipped; Enter/Space picks. Slots ring inward (`RING_IN`, which carries its own `!outline-solid`) and the column viewport is `tabIndex -1` via `viewportProps`. `PopupFrame`'s `PRESSED_SLOT` still reads `aria-pressed`. Guards: `TimeColumn.focus.guard.test.ts`, `TimeColumn.dom.test.tsx`.
+
+## Time column scroll and the pressed slot (#662)
+- **No sliver, either fade.** `scrollTopClearOfFade` portal/apps/web/src/lib/date-time-field.ts takes `noSliver` rects (the pressed slot): never required clear, but never left partly inside the top band `min(fade, s)` or the bottom band `min(fade, max - s)`. Chosen: smallest clear snap; else, with `snaps`, the smallest clear whole scroll, without them the clear whole scroll nearest the current `scrollTop`; else the #630 choice (required and `priority` items win).
+- **Reveal, then focus.** `TimeColumn`'s arrow-key handler (`onKeyDown`) calls `reveal(el)` before `el.focus({ preventScroll: true })`, because `PopupFrame`'s `focusin` solve measures the slot where focus lands. `reveal` passes the pressed slot as `noSliver`.
+- **Phone fade is `--space-5` (24px)** on the column's `ScrollArea`: 24 + 44 + 4 + 44 + 24 = 140 <= 144 (`h-36`), so a pressed slot and its adjacent row both fit clear of the fades.
+- **No re-centre after a pick.** `pickedRef` skips the next centre for the slot a pointer or Enter pick just chose (null if already pressed). Open, a complete typed time and a 721px crossing still centre.
+- Header Deadline close goes through `closePopover` in `ProjectHeaderDeadline.tsx`, which focuses the trigger first (see docs/lessons.md § "Adopting base-nova's sidebar", P3, #662).
+- Lessons: docs/lessons.md § "A pressed time slot under either fade reads as a grey bar, and focus before reveal jumps the body". Guards: `TimeColumn.scroll.dom.test.tsx`, `lib/date-time-field.test.ts`, `ProjectHeaderDeadline-sheet.dom.test.tsx`.
