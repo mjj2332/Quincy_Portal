@@ -15,6 +15,7 @@
 if (!Element.prototype.getAnimations) {
   Element.prototype.getAnimations = () => [];
 }
+import { createPortal } from "react-dom";
 import { act, useContext, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -538,17 +539,80 @@ describe("gantt add-task editor keeps the row's columns (#678)", () => {
     expect(createRows()[0]!.style.height).toBe(spacers()[0]!.style.height);
   });
 
-  it("a press, a key or an Escape inside a draft cell does not cancel the draft or move tree focus", async () => {
-    await render(view({ onCreateGroupTask: ok, columns: [people, due], rowCheckboxes: false }));
-    await click(createButton("Alpha")!);
-    await setValue(input(), "Keep");
-    const dueButton = host.querySelector<HTMLElement>('[data-testid="draft-due"]')!;
-    await act(async () => dueButton.focus());
-    await key(dueButton, "Escape");
-    await key(dueButton, "ArrowDown");
-    expect(createRows()).toHaveLength(1);
-    expect(input().value).toBe("Keep");
-    expect(document.activeElement).toBe(dueButton);
+  describe("Escape on the desktop row (#688)", () => {
+    const dueButton = () => host.querySelector<HTMLElement>('[data-testid="draft-due"]')!;
+    const focusEl = async (el: HTMLElement) => act(async () => el.focus());
+
+    it("Escape on a closed draft control closes the row, drops the draft and returns focus to the +", async () => {
+      const create = vi.fn(ok);
+      await render(view({ onCreateGroupTask: create, columns: [people, due], rowCheckboxes: false }));
+      await click(createButton("Alpha")!);
+      await setValue(input(), "Keep");
+      await focusEl(dueButton());
+      await key(dueButton(), "Escape");
+      expect(createRows()).toHaveLength(0);
+      expect(create).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(createButton("Alpha"));
+      await click(createButton("Alpha")!);
+      expect(input().value).toBe("");
+    });
+
+    it("Escape on the x closes the row", async () => {
+      await render(view({ onCreateGroupTask: ok, columns: [people, due] }));
+      await click(createButton("Alpha")!);
+      await key(cancelButton()!, "Escape");
+      expect(createRows()).toHaveLength(0);
+      expect(document.activeElement).toBe(createButton("Alpha"));
+    });
+
+    it("Escape on a control reporting aria-expanded=true leaves the row open", async () => {
+      const open: GanttColumn = { id: "due", width: 128, render: () => null, renderCreate: () => <button type="button" data-testid="draft-due" aria-expanded="true">Due</button> };
+      await render(view({ onCreateGroupTask: ok, columns: [open] }));
+      await click(createButton("Alpha")!);
+      await key(dueButton(), "Escape");
+      expect(createRows()).toHaveLength(1);
+    });
+
+    it("Escape from a portaled node (React bubbles it through the row) leaves the row open", async () => {
+      const portaled: GanttColumn = { id: "due", width: 128, render: () => null, renderCreate: () => createPortal(<div tabIndex={-1} data-testid="draft-portal">popup</div>, document.body) };
+      await render(view({ onCreateGroupTask: ok, columns: [portaled] }));
+      await click(createButton("Alpha")!);
+      await key(document.querySelector('[data-testid="draft-portal"]')!, "Escape");
+      expect(createRows()).toHaveLength(1);
+    });
+
+    it("Escape while a save is pending leaves the row open", async () => {
+      let release!: (value: Result) => void;
+      const create = vi.fn<Create>(() => new Promise<Result>((resolve) => { release = resolve; }));
+      await render(view({ onCreateGroupTask: create, columns: [people, due] }));
+      await click(createButton("Alpha")!);
+      await setValue(input(), "Go");
+      await key(input(), "Enter");
+      await key(dueButton(), "Escape");
+      expect(createRows()).toHaveLength(1);
+      await act(async () => release({ ok: false, message: "No" }));
+      await settle();
+    });
+
+    it("ArrowDown on a draft control stays contained: the row and the tree focus do not move", async () => {
+      await render(view({ onCreateGroupTask: ok, columns: [people, due], rowCheckboxes: false }));
+      await click(createButton("Alpha")!);
+      await focusEl(dueButton());
+      await key(dueButton(), "ArrowDown");
+      expect(createRows()).toHaveLength(1);
+      expect(document.activeElement).toBe(dueButton());
+    });
+
+    it("inside an outer Sheet, Escape on a draft control closes only the row", async () => {
+      const onOpenChange = vi.fn();
+      await render(<Sheet open onOpenChange={onOpenChange}><SheetContent side="right">{view({ onCreateGroupTask: ok, columns: [people, due] })}</SheetContent></Sheet>);
+      await click(document.querySelector<HTMLButtonElement>('[aria-label="Add task in Alpha"]')!);
+      const d = document.querySelector<HTMLElement>('[data-testid="draft-due"]')!;
+      await act(async () => d.focus());
+      await key(d, "Escape");
+      expect(document.querySelectorAll('[data-testid="gantt-group-create-task-row"]')).toHaveLength(0);
+      expect(onOpenChange).not.toHaveBeenCalled();
+    });
   });
 
   describe("with no column to align to (<= 720px) the editor is a bottom sheet", () => {
