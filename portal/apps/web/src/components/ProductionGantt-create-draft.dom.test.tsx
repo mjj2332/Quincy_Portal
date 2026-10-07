@@ -233,7 +233,8 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
       const stack = row.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-stack"]')!;
       expect(stack.contains(draftAssignees())).toBe(true);
       expect(stack.contains(draftDue())).toBe(true);
-      expect(row.querySelector('[data-testid="gantt-group-create-task-name-cell"]')!.contains(draftAssignees())).toBe(false);
+      expect(row.closest('[data-slot="gantt-timeline-pane"]')).not.toBeNull();
+      expect(row.querySelector('[data-testid="gantt-group-create-task-name-cell"]')).toBeNull();
     } finally { window.matchMedia = original; }
   });
 
@@ -241,6 +242,16 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
     await mount();
     await click(plus(STREET_A)!);
     expect(draftDue()!.textContent).toMatch(/\S/);
+  });
+
+  it("the Due default is muted text naming the default's end like the Due column, not a pill; its name keeps the text", async () => {
+    await mount();
+    await click(plus(STREET_A)!);
+    const trigger = draftDue()!;
+    expect(trigger.className).toContain("text-muted-foreground");
+    expect(trigger.querySelector('[data-slot="status-pill"]')).toBeNull();
+    expect(trigger.textContent).not.toContain("→");
+    expect(trigger.getAttribute("aria-label")).toBe(`Schedule for new subtask: ${trigger.textContent}`);
   });
 });
 

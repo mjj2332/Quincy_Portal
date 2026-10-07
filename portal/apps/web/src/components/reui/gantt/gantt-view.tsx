@@ -2731,21 +2731,33 @@ function GanttView({
             createOpen={createOpenFor === row.resource.id}
             onOpenCreate={onOpenCreate}
           />,
-          ...(createAfter.get(row.resource.id) ?? []).map((group) => (
-            <GanttGroupCreateRow
-              key={`create:${group.resource.id}`}
-              group={group}
-              heightRem={createRowRem}
-              titleRowRem={minRowRem}
-              reorderEnabled={reorderEnabled}
-              columns={columns}
-              nameWidth={treeConfig.nameColumnWidth}
-              nameFill={treeConfig.nameColumnFill}
-              stacked={createStacked}
-              dirtyRef={createDirtyRef}
-              onClose={closeCreate}
-            />
-          )),
+          ...(createAfter.get(row.resource.id) ?? []).map((group) =>
+            createStacked ? (
+              // #678 phone: the editor is drawn across the Timeline pane (the tree pane is too
+              // narrow to hold it); this side keeps only the matching-height gap.
+              <div
+                key={`create:${group.resource.id}`}
+                aria-hidden
+                data-testid="gantt-group-create-task-tree-spacer"
+                className="border-border w-full shrink-0 border-b"
+                style={{ height: `${createRowRem}rem` }}
+              />
+            ) : (
+              <GanttGroupCreateRow
+                key={`create:${group.resource.id}`}
+                group={group}
+                heightRem={createRowRem}
+                titleRowRem={minRowRem}
+                reorderEnabled={reorderEnabled}
+                columns={columns}
+                nameWidth={treeConfig.nameColumnWidth}
+                nameFill={treeConfig.nameColumnFill}
+                stacked={false}
+                dirtyRef={createDirtyRef}
+                onClose={closeCreate}
+              />
+            )
+          ),
         ])}
         {showCreateTask && (
           <button
@@ -3015,15 +3027,37 @@ function GanttView({
             ghostHeightRem={ghostHeightRem}
             dependencySourceIds={dependencySourceIds}
           />,
-          ...(createAfter.get(row.resource.id) ?? []).map((group) => (
-            <div
-              key={`create:${group.resource.id}`}
-              aria-hidden
-              data-testid="gantt-group-create-task-spacer"
-              className="border-border border-b"
-              style={{ height: `${createRowRem}rem`, minWidth: trackWidth }}
-            />
-          )),
+          ...(createAfter.get(row.resource.id) ?? []).map((group) =>
+            createStacked ? (
+              <div
+                key={`create:${group.resource.id}`}
+                data-testid="gantt-group-create-task-spacer"
+                className="border-border border-b"
+                style={{ height: `${createRowRem}rem`, minWidth: trackWidth }}
+              >
+                <GanttGroupCreateRow
+                  group={group}
+                  heightRem={createRowRem}
+                  titleRowRem={minRowRem}
+                  reorderEnabled={reorderEnabled}
+                  columns={columns}
+                  nameWidth={treeConfig.nameColumnWidth}
+                  nameFill={treeConfig.nameColumnFill}
+                  stacked
+                  dirtyRef={createDirtyRef}
+                  onClose={closeCreate}
+                />
+              </div>
+            ) : (
+              <div
+                key={`create:${group.resource.id}`}
+                aria-hidden
+                data-testid="gantt-group-create-task-spacer"
+                className="border-border border-b"
+                style={{ height: `${createRowRem}rem`, minWidth: trackWidth }}
+              />
+            )
+          ),
         ])}
         {rows.length === 0 && viewConfig.renderNoResources && (
           <div
@@ -3713,11 +3747,30 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
     dirtyRef.current = title.trim().length > 0
   }, [dirtyRef, title])
 
+  const rowRef = useRef<HTMLDivElement | null>(null)
+  const [stackWidth, setStackWidth] = useState<number | undefined>(undefined)
+
   useLayoutEffect(() => {
     // preventScroll: the tree pane scrolls sideways on a phone, and a plain focus() would scroll
     // the chevrons and the header out of view to bring the input's start edge in
     inputRef.current?.focus({ preventScroll: true })
+    // then bring the row into view with the least vertical scroll (never `scrollIntoView`)
+    revealRowNearest(rowRef.current)
   }, [])
+
+  // Stacked (phone): the row spans the Timeline pane's visible width and stays at its start edge
+  // while the track scrolls sideways.
+  useLayoutEffect(() => {
+    if (!stacked) return
+    const viewport = rowRef.current?.closest<HTMLElement>('[data-slot="scroll-area-viewport"]')
+    if (!viewport) return
+    const update = () => setStackWidth(viewport.clientWidth || undefined)
+    update()
+    if (typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(update)
+    observer.observe(viewport)
+    return () => observer.disconnect()
+  }, [stacked])
 
   const close = () => {
     if (pendingRef.current) return
@@ -3765,10 +3818,90 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
     parentTitle: groupTitle,
     pending,
   }
-  const stackIndent = `calc(0.75rem + ${reorderEnabled ? 0.875 : 0}rem + ${(group.depth + 1) * 0.875}rem + 1.5rem)`
+
+  const titleField = (
+    <div className="min-w-0 flex-1">
+      <Input
+        ref={inputRef}
+        data-testid="gantt-group-create-task-input"
+        value={title}
+        maxLength={viewConfig.createTaskMaxLength}
+        readOnly={pending}
+        // the vendor's own empty-title refusal is shown in the (empty) input itself
+        placeholder={error?.kind === "empty" ? error.message : "New task"}
+        aria-busy={pending || undefined}
+        aria-label={createTaskTitleIn(groupTitle)}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={errorId}
+        className="h-7 min-h-0 py-1 max-[721px]:min-h-0 aria-invalid:placeholder:text-destructive"
+        onChange={(e) => {
+          setTitle(e.target.value)
+          if (error) setError(null)
+        }}
+        onKeyDown={(e) => {
+          // this row owns its keys while typing; nothing above should also react
+          e.stopPropagation()
+          if (e.key === "Enter") {
+            if (e.nativeEvent.isComposing) return
+            e.preventDefault()
+            void submit()
+          } else if (e.key === "Escape" && !pending) {
+            e.preventDefault()
+            close()
+          }
+        }}
+      />
+      {/* Always mounted so the polite announcement is heard; in flow and visually hidden,
+          so the tree's scroll edge can never clip it. The visible surfaces are the
+          placeholder above (empty title) and the consumer's own notice (a failed write). */}
+      <span
+        id={errorId}
+        role="status"
+        aria-live="polite"
+        data-testid="gantt-group-create-task-error"
+        className="sr-only"
+      >
+        {error?.message ?? ""}
+      </span>
+    </div>
+  )
+
+  const cancelButton = (
+    <Button
+      variant="ghost"
+      size="icon-xs"
+      data-testid="gantt-group-create-task-cancel"
+      aria-label={cancelAddTaskIn(groupTitle)}
+      className="text-muted-foreground hover:text-foreground! size-5! pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] max-[720px]:min-h-[44px] max-[720px]:min-w-[44px]"
+      onClick={close}
+    >
+      <XIcon className="size-3.5" aria-hidden="true" />
+    </Button>
+  )
+
+  if (stacked) {
+    return (
+      <div
+        ref={rowRef}
+        data-testid="gantt-group-create-task-row"
+        data-gantt-create-for={group.resource.id}
+        className="bg-background sticky start-0 flex flex-col justify-center gap-1 px-[var(--space-4)]"
+        style={{ height: `${heightRem}rem`, width: stackWidth ?? "100%" }}
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="flex shrink-0 items-center justify-center">{cancelButton}</span>
+          {titleField}
+        </div>
+        <div data-testid="gantt-group-create-task-stack" className="flex min-w-0 items-center gap-2">
+          {viewConfig.renderCreateStack?.(ctx)}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div
+      ref={rowRef}
       data-testid="gantt-group-create-task-row"
       data-gantt-create-for={group.resource.id}
       className="border-border relative flex w-full shrink-0 flex-col border-b"
@@ -3789,61 +3922,9 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
             style={{ width: `${(group.depth + 1) * 0.875}rem` }}
           />
           <span className="me-1 flex w-5 shrink-0 items-center justify-center">
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              data-testid="gantt-group-create-task-cancel"
-              aria-label={cancelAddTaskIn(groupTitle)}
-              className="text-muted-foreground hover:text-foreground! size-5!"
-              onClick={close}
-            >
-              <XIcon className="size-3.5" aria-hidden="true" />
-            </Button>
+            {cancelButton}
           </span>
-          <div className="min-w-0 flex-1">
-            <Input
-              ref={inputRef}
-              data-testid="gantt-group-create-task-input"
-              value={title}
-              maxLength={viewConfig.createTaskMaxLength}
-              readOnly={pending}
-              // the vendor's own empty-title refusal is shown in the (empty) input itself
-              placeholder={error?.kind === "empty" ? error.message : undefined}
-              aria-busy={pending || undefined}
-              aria-label={createTaskTitleIn(groupTitle)}
-              aria-invalid={error ? true : undefined}
-              aria-describedby={errorId}
-              className="h-7 min-h-0 py-1 max-[721px]:min-h-0 aria-invalid:placeholder:text-destructive"
-              onChange={(e) => {
-                setTitle(e.target.value)
-                if (error) setError(null)
-              }}
-              onKeyDown={(e) => {
-                // this row owns its keys while typing; nothing above should also react
-                e.stopPropagation()
-                if (e.key === "Enter") {
-                  if (e.nativeEvent.isComposing) return
-                  e.preventDefault()
-                  void submit()
-                } else if (e.key === "Escape" && !pending) {
-                  e.preventDefault()
-                  close()
-                }
-              }}
-            />
-            {/* Always mounted so the polite announcement is heard; in flow and visually hidden,
-                so the tree's scroll edge can never clip it. The visible surfaces are the
-                placeholder above (empty title) and the consumer's own notice (a failed write). */}
-            <span
-              id={errorId}
-              role="status"
-              aria-live="polite"
-              data-testid="gantt-group-create-task-error"
-              className="sr-only"
-            >
-              {error?.message ?? ""}
-            </span>
-          </div>
+          {titleField}
         </div>
         {columns.map((column) => (
           <div
@@ -3866,18 +3947,36 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
         ))}
         {!nameFill && <div className="min-w-0 flex-1" />}
       </div>
-      {stacked && (
-        <div
-          data-testid="gantt-group-create-task-stack"
-          className="flex min-h-0 flex-1 flex-wrap items-center gap-2 pe-3"
-          style={{ paddingInlineStart: stackIndent }}
-        >
-          {viewConfig.renderCreateStack?.(ctx)}
-        </div>
-      )}
     </div>
   )
 })
+
+/**
+ * #678: scroll both panes by the least vertical distance that puts the editor row fully in view
+ * under the sticky header. Deliberately NOT `scrollIntoView` (it scrolls every ancestor, the page on
+ * a phone: `docs/lessons.md`, "Gantt landing row"); `scrollLeft` is never touched.
+ */
+function revealRowNearest(row: HTMLElement | null) {
+  const viewport = row?.closest<HTMLElement>('[data-slot="scroll-area-viewport"]')
+  if (!row || !viewport || viewport.clientHeight === 0) return
+  const pane = viewport.closest<HTMLElement>('[data-slot="gantt-tree-pane"],[data-slot="gantt-timeline-pane"]')
+  const header = pane?.querySelector<HTMLElement>('[data-slot="gantt-tree-header"],[data-slot="gantt-timeline-header"]')
+  const headerHeight = header?.getBoundingClientRect().height ?? 0
+  const view = viewport.getBoundingClientRect()
+  const rect = row.getBoundingClientRect()
+  const above = rect.top - view.top - headerHeight
+  const below = rect.bottom - view.bottom
+  // the row is taller than the room: show its top, never push it above the header
+  const delta = above < 0 ? above : below > 0 ? Math.min(below, above) : 0
+  if (delta === 0) return
+  const next = Math.max(0, viewport.scrollTop + delta)
+  const root = pane?.parentElement
+  const viewports = root?.querySelectorAll<HTMLElement>(
+    '[data-slot="gantt-tree-pane"] [data-slot="scroll-area-viewport"],[data-slot="gantt-timeline-pane"] [data-slot="scroll-area-viewport"]'
+  )
+  viewport.scrollTop = next
+  for (const other of viewports ?? []) other.scrollTop = next
+}
 
 /** Memoized: only rows whose props actually changed re-render. */
 const GanttTreeRow = memo(function GanttTreeRow({
@@ -4064,7 +4163,7 @@ const GanttTreeRow = memo(function GanttTreeRow({
                 data-gantt-create-trigger={row.resource.id}
                 aria-label={settings.i18n.functions.addTaskIn(row.resource.title)}
                 aria-expanded={createOpen}
-                className="text-muted-foreground hover:text-foreground! ms-1 size-5! shrink-0 opacity-0 group-hover/gantt-row:opacity-100 group-data-hover/gantt-row:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 max-[720px]:opacity-100 aria-expanded:opacity-100 aria-expanded:bg-transparent! pointer-coarse:-my-1 pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] max-[720px]:-my-1 max-[720px]:min-h-[44px] max-[720px]:min-w-[44px]"
+                className="text-muted-foreground hover:text-foreground! bg-background sticky end-0 ms-1 size-5! shrink-0 opacity-0 group-hover/gantt-row:opacity-100 group-data-hover/gantt-row:opacity-100 focus:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 max-[720px]:opacity-100 aria-expanded:opacity-100 aria-expanded:bg-transparent! pointer-coarse:-my-1 pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] max-[720px]:-my-1 max-[720px]:min-h-[44px] max-[720px]:min-w-[44px]"
                 onClick={() => onOpenCreate(row)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {

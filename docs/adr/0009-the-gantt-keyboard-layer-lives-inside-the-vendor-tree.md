@@ -207,8 +207,9 @@ inside this tree, for the same reason as #344 (the editor sits between the tree'
 paired with a timeline spacer):
 
 - **No idle rows.** A creatable group's own row carries a `+` (`reui/button` ghost `icon-xs`, still
-  `data-testid="gantt-group-create-task"`, a `data-gantt-tree-focus` stop between the chevron and
-  the next row). It opens ONE editor row under the group's last visible descendant (the group's own
+  `data-testid="gantt-group-create-task"`, a `data-gantt-tree-focus` stop after the chevron and the row's
+  link, in visual order, before the next row; `sticky end-0` on a `bg-background` backing so a
+  phone's narrow tree pane never clips it). It opens ONE editor row under the group's last visible descendant (the group's own
   row when it has none); a collapsed group expands first. `createAfter` holds only the open group,
   so the tree row, the timeline spacer and the dependency offset still read one source. An empty
   creatable group is now a leaf. Another group's `+` moves an EMPTY editor, and keeps a dirty one

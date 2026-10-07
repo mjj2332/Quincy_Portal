@@ -536,19 +536,36 @@ describe("gantt add-task editor keeps the row's columns (#678)", () => {
     expect(document.activeElement).toBe(dueButton);
   });
 
-  it("with no column to align to, renderCreateStack stacks under the title in a taller row, and the spacer matches", async () => {
+  it("with no column to align to, the editor is a Timeline-pane row over its spacer: x + title, then the stack; the tree pane keeps a gap of the same height", async () => {
     const stack = vi.fn((ctx: CreateCtx) => <span data-testid="draft-stack" data-parent={ctx.parentId} />);
     await render(view({ onCreateGroupTask: ok, renderCreateStack: stack }));
     await click(createButton("Alpha")!);
     const row = createRows()[0]!;
-    const nameCell = row.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-name-cell"]')!;
-    expect(nameCell.contains(input())).toBe(true);
+    expect(row.closest('[data-slot="gantt-timeline-pane"]')).not.toBeNull();
+    expect(row.closest('[data-slot="gantt-tree-pane"]')).toBeNull();
+    expect(row.className).toContain("sticky");
+    expect(row.className).toContain("px-[var(--space-4)]");
+    expect(row.contains(input())).toBe(true);
+    expect(row.querySelector('[data-testid="gantt-group-create-task-cancel"]')).not.toBeNull();
     const slot = row.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-stack"]')!;
     expect(slot.querySelector('[data-testid="draft-stack"]')).not.toBeNull();
-    expect(nameCell.contains(slot)).toBe(false);
+    expect(slot.contains(input())).toBe(false);
     expect(Number.parseFloat(row.style.height)).toBeGreaterThan(2.5);
     expect(spacers()[0]!.style.height).toBe(row.style.height);
+    const gap = host.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-tree-spacer"]')!;
+    expect(gap.closest('[data-slot="gantt-tree-pane"]')).not.toBeNull();
+    expect(gap.style.height).toBe(row.style.height);
     expect(stack).toHaveBeenCalled();
+  });
+
+  it("the title says New task; the x has the 44px coarse and phone targets; the + is sticky at the pane's right edge on a backing and shows when focused (#678)", async () => {
+    await render(view({ onCreateGroupTask: ok, columns: [people, due] }));
+    const plusButton = createButton("Alpha")!;
+    for (const cls of ["sticky", "end-0", "bg-background", "focus:opacity-100", "focus-visible:opacity-100"]) expect(plusButton.className).toContain(cls);
+    await click(plusButton);
+    expect(input().placeholder).toBe("New task");
+    const cancel = host.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-cancel"]')!;
+    for (const cls of ["pointer-coarse:min-h-[44px]", "pointer-coarse:min-w-[44px]", "max-[720px]:min-h-[44px]", "max-[720px]:min-w-[44px]"]) expect(cancel.className).toContain(cls);
   });
 
   it("renderCreateStack is ignored when a column carries a create cell", async () => {

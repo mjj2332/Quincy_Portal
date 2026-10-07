@@ -15,9 +15,10 @@
 import { useState } from "react";
 import type { ProjectDefaultRangeDto, Role } from "@quincy/shared";
 import { createSchedulePreview, type CreateDraft } from "../lib/production-gantt-create";
-import { formatCivilRange } from "../lib/date-format";
+import { formatDueCivil } from "../lib/date-format";
 import { SHELL_AWARE_SHIFT_AVOIDANCE, shellAwarePopupPadding } from "../lib/date-time-field";
 import { stopRowGesture } from "./ProductionGanttSubtaskCells";
+import { Button } from "./reui/button";
 import { SubtaskAssigneePicker } from "./quincy/SubtaskAssigneePicker";
 import { SubtaskScheduleControl } from "./quincy/SubtaskScheduleControl";
 
@@ -43,8 +44,9 @@ export function GanttCreateDraftAssignees({ projectId, role, draft, pending, onC
 
 export function GanttCreateDraftDue({ draft, projectDefault, pending, onChange }: { draft: CreateDraft; projectDefault: ProjectDefaultRangeDto | null; pending: boolean; onChange: CreateDraftChange }) {
   const [open, setOpen] = useState(false);
+  const defaultText = projectDefault ? formatDueCivil(projectDefault.end.localCivil) : "Project default";
   return (
-    <span data-testid="gantt-create-draft-due" className="inline-flex min-w-0 items-center" {...GESTURE_BOUNDARY}>
+    <span data-testid="gantt-create-draft-due" className="inline-flex min-w-0 flex-1 items-center" {...GESTURE_BOUNDARY}>
       <SubtaskScheduleControl
         owner="gantt-create"
         label="Schedule for new subtask"
@@ -52,7 +54,20 @@ export function GanttCreateDraftDue({ draft, projectDefault, pending, onChange }
         popupCollisionPadding={shellAwarePopupPadding}
         value={draft.preview}
         // No chosen range: the server copies the Project's default (ADR 0011), so the trigger names it.
-        defaultLabel={draft.schedule ? undefined : (projectDefault ? formatCivilRange(projectDefault) : "Project default")}
+        // No chosen range: a plain muted trigger naming the default's END, as the Due column prints it (not a pill).
+        trigger={draft.schedule ? undefined : (props) => (
+          <Button
+            {...props}
+            variant="ghost"
+            size="xs"
+            type="button"
+            data-testid="gantt-create-draft-due-default"
+            aria-label={`Schedule for new subtask: ${defaultText}`}
+            className="text-muted-foreground hover:text-foreground! min-w-0 justify-start truncate px-2"
+          >
+            <span className="truncate">{defaultText}</span>
+          </Button>
+        )}
         open={open}
         setOpen={setOpen}
         onSave={(request) => onChange({
@@ -69,10 +84,10 @@ export function GanttCreateDraftDue({ draft, projectDefault, pending, onChange }
   );
 }
 
-/** A phone has no People/Due columns: both controls stack under the title, wrapped, at a 44px target. */
+/** A phone has no People/Due columns: the editor's second row holds Assignees (44px) and Due (the rest of the row). */
 export function GanttCreateDraftStack({ projectId, role, draft, projectDefault, pending, onChange }: { projectId: string; role: Role; draft: CreateDraft; projectDefault: ProjectDefaultRangeDto | null; pending: boolean; onChange: CreateDraftChange }) {
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-2 [&_button]:min-h-[44px] [&_button]:min-w-[44px]">
+    <div className="flex min-w-0 flex-1 items-center gap-2 [&_button]:min-h-[44px] [&_button]:min-w-[44px]">
       <GanttCreateDraftAssignees projectId={projectId} role={role} draft={draft} pending={pending} onChange={onChange} />
       <GanttCreateDraftDue draft={draft} projectDefault={projectDefault} pending={pending} onChange={onChange} />
     </div>
