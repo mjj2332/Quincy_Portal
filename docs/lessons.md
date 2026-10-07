@@ -2122,6 +2122,13 @@ or was in the cell when a save began, via `focusAtRequest`), then closes; every 
 `quincy/menu.tsx` has. Test it nested in the real `ProjectSheet` and assert focus immediately and after a frame
 (`ProjectHeaderDeadline-sheet.dom.test.tsx`); a standalone test passes without the fix.
 
+**P3 a third time (#669):** the Dropbox, Checklist-schedule and Shoot-date popovers had the same defect, because the fix lived in
+one consumer. Two copies of the predicate (`menu.tsx` and `closePopover`) collapsed into one helper,
+`lib/return-focus-before-close.ts` (`parkedFocusReturnTarget`), and `reui/popover.tsx` (QUINCY ADAPTATION 10) now returns focus
+to the trigger on the controlled open true to false edge, inside an `OverlayContainerContext` only, and never when the caller
+passes `finalFocus`. Consumers carry no trigger-refocus of their own (`popover-in-sheet.dom.test.tsx`). Known gap: a trigger
+that is `disabled` while closing (Checklist Apply, `disabled={busy}`) is refused by the helper.
+
 ## Tonomo's created webhook carries a display date, and null-fill never upgrades it (2026-09-14)
 Tags: scheduling
 

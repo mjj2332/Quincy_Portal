@@ -112,4 +112,25 @@ describe("header Deadline inside the Project sheet — focus on close (#664)", (
     await frame();
     expect(document.activeElement).toBe(trigger());
   });
+
+  it("a save whose pending window lets the sheet reclaim focus still ends on the trigger (#669)", async () => {
+    let resolvePut!: (value: unknown) => void;
+    apiPutMock.mockReturnValue(new Promise((resolve) => { resolvePut = resolve; }));
+    await mountInSheet();
+    await open();
+    await pickPopupDateTime(popup()!, "2027-01-15T09:00");
+    await applyPopup(popup()!);
+    expect(apiPutMock).toHaveBeenCalledTimes(1);
+    // While the PUT is pending the sheet takes focus back (the cell's Apply button is busy).
+    await act(async () => { document.querySelector<HTMLElement>('[role="dialog"][aria-labelledby]')!.focus(); });
+    expect(popup()!.contains(document.activeElement)).toBe(false);
+    await act(async () => {
+      resolvePut({ changed: true, current: { ...emptySchedule, version: 1, source: "manual", state: "scheduled", deadline: { localCivil: "2027-01-15T09:00", zone: "Australia/Sydney", utcOffsetMinutes: 660, fold: 0, instant: "2027-01-14T22:00:00.000Z" }, reminderOffsetsMinutes: [1440] }, eventIntent: null, publicationIds: [] });
+      await new Promise<void>((r) => setTimeout(r, 0));
+    });
+    expect(popup()).toBeNull();
+    expect(document.activeElement).toBe(trigger());
+    await frame();
+    expect(document.activeElement).toBe(trigger());
+  });
 });
