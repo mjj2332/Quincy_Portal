@@ -9,35 +9,11 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
+import { constInitialiser, functionBody, openingTag } from "@/testing/source-extract";
 
 const webSrc = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 const read = (rel: string) => readFileSync(join(webSrc, rel), "utf8");
 const RING_OFF = "focus-visible:!outline-none";
-
-/** Drops block comments and whole-line `//` comments, so a comment that names the class can't satisfy the guard (Sol). */
-const stripComments = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-
-/** The `<tag ...>` opening element that carries `marker`, from `<tag` to the first `>` outside braces. */
-export function openingTag(source: string, tag: string, marker: string): string | null {
-  const at = source.indexOf(marker);
-  if (at < 0) return null;
-  const start = source.lastIndexOf(`<${tag}`, at);
-  if (start < 0) return null;
-  let depth = 0;
-  for (let i = start; i < source.length; i++) {
-    const c = source[i];
-    if (c === "{") depth++;
-    else if (c === "}") depth--;
-    else if (c === ">" && depth === 0 && source[i - 1] !== "=") return stripComments(source.slice(start, i + 1));
-  }
-  return null;
-}
-
-/** The `POPOVER_CONTENT` initialiser, `const` through the terminating semicolon. */
-export function constInitialiser(source: string, name: string): string | null {
-  const init = new RegExp(`const ${name}\\s*=[\\s\\S]*?;`).exec(source)?.[0];
-  return init === undefined ? null : stripComments(init);
-}
 
 describe("programmatically focused containers carry focus-visible:!outline-none", () => {
   it("DateTimePopoverContent", () => {
@@ -59,6 +35,40 @@ describe("programmatically focused containers carry focus-visible:!outline-none"
     const tag = openingTag(read("components/quincy/NotificationBell.tsx"), "PopoverContent", 'data-testid="rail-notifications-panel"');
     expect(tag, "NotificationBell's PopoverContent not found").not.toBeNull();
     expect(tag).toContain(RING_OFF);
+  });
+  it("RailSheet's SheetContent", () => {
+    const tag = openingTag(read("components/quincy/RailSheet.tsx"), "SheetContent", 'data-testid="rail-sheet"');
+    expect(tag, "RailSheet's SheetContent not found").not.toBeNull();
+    expect(tag).toContain(RING_OFF);
+  });
+  it("Modal's panelClasses", () => {
+    const body = functionBody(read("components/Modal.tsx"), "panelClasses");
+    expect(body, "panelClasses not found").not.toBeNull();
+    expect(body).toContain(RING_OFF);
+    expect(body, "dead `focus:outline-none` loses to the unlayered ring").not.toMatch(/(?<![-\w])focus:outline-none/);
+  });
+
+  describe("function-body extractor fixtures", () => {
+    const BROKEN = 'function panelClasses(a: X | undefined, b: boolean): string {\n  return cn("w-full", "focus:outline-none");\n}\nfunction other() { return "focus-visible:!outline-none"; }';
+    const FIXED = 'function panelClasses(a: X | undefined, b: boolean): string {\n  return cn("w-full", "focus-visible:!outline-none");\n}';
+    it("fails on a body without the class, and does not read the next function", () => {
+      expect(functionBody(BROKEN, "panelClasses")).not.toContain(RING_OFF);
+    });
+    it("passes with the class", () => {
+      expect(functionBody(FIXED, "panelClasses")).toContain(RING_OFF);
+    });
+    it("ignores the class when it is only in a comment", () => {
+      const inComment = 'function panelClasses(a: X): string {\n  // focus-visible:!outline-none\n  /* focus-visible:!outline-none */\n  return cn("focus:outline-none");\n}';
+      expect(functionBody(inComment, "panelClasses")).not.toContain(RING_OFF);
+    });
+    it("does not match a function whose name merely starts with the target", () => {
+      const prefixed = 'function panelClassesX(a: X): string {\n  return cn("focus:outline-none");\n}\nfunction panelClasses(a: X): string {\n  return cn("focus-visible:!outline-none");\n}';
+      expect(functionBody(prefixed, "panelClasses")).toContain(RING_OFF);
+      expect(functionBody('function panelClassesX() { return 1; }', "panelClasses")).toBeNull();
+    });
+    it("returns null when the function is gone", () => {
+      expect(functionBody("const x = 1;", "panelClasses")).toBeNull();
+    });
   });
 
   describe("extractor fixtures", () => {

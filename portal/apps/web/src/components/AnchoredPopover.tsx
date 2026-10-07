@@ -80,9 +80,14 @@ const POPOVER_ACTIONS = "flex items-center gap-[var(--space-2)] min-w-0 max-[601
  * `outline-offset`, and unlayered author CSS beats `@layer utilities` regardless of specificity.
  * Writing only the offset utility silently loses on both counts (TB8-07 §4.3; `docs/lessons.md`,
  * "A shorthand always resets its longhands").
+ *
+ * The style is the explicit `focus-visible:!outline-solid`, never a bare `focus-visible:!outline`: inside
+ * `cn()` twMerge drops the bare form, leaving a width and a colour with no style, which paints nothing
+ * wherever a control's resting `outline-none` sets the style to none (reui `Item`, `Button`). The solid
+ * form survives the merge, so callers add nothing of their own.
  */
 const RING_IN =
-  "outline-offset-[-2px] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] " +
+  "outline-offset-[-2px] focus-visible:!outline-solid focus-visible:!outline-[length:var(--border-width-bold)] " +
   "focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]";
 
 /** Small checklist-facing positioning and close-boundary helper, not an app-wide menu system. */

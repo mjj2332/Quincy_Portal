@@ -5848,6 +5848,13 @@ any pointer input on the page, Chrome treats that as `:focus-visible`, and the u
 the Project sheet on a fresh load, and the Gantt Due/bar picker. Fix: `focus-visible:!outline-none` on the container
 only (the `!` is needed against the unlayered rule), as `NotificationBell`'s panel already did. Rings on controls inside
 are untouched, and focus still lands on the named dialog, so screen readers are unaffected.
-`components/quincy/container-focus.guard.test.ts` pins the container list. Not covered yet: the Calendar rail sheet,
-`RailSheet`, `Modal.tsx`. Rejected: `focus({ focusVisible: false })` (cannot apply when `initialFocus` returns `true`) and
+`components/quincy/container-focus.guard.test.ts` pins the container list, now including `RailSheet` and `Modal.tsx`'s
+`panelClasses` (#659; `Modal` had a dead `focus:outline-none` that loses to the unlayered rule). Not covered yet: the
+Calendar rail sheet, deliberately (`initialFocus` resolves to the first tabbable, so the container is unreachable; its
+focus-motion guard bans `!outline-none`). Rejected: `focus({ focusVisible: false })` (cannot apply when `initialFocus` returns `true`) and
 a `data-focus-pending` marker (state for a ring that is never useful).
+
+## A masked scroll viewport's outline never paints
+Tags: focus-overlays, css-tokens · #660
+
+The time list's 96 slot buttons were each a Tab stop, and the ring on a focused slot was drawn outward. Their scroll viewport carries a `mask`, and a mask clips everything painted outside the element's box, so an outline never showed (a box-shadow would clip the same way). Fix: an inward ring, `RING_IN` from `AnchoredPopover`. Its old bare `focus-visible:!outline` was dropped by twMerge inside `cn()`, and a width plus colour with no style draws nothing, so callers had to patch `!outline-solid` on themselves (`TimeColumn`, `ShortcutList`); `RING_IN` now carries `focus-visible:!outline-solid` itself, which survives `cn()`, and `AnchoredPopover.ring.test.ts` proves it for each caller pattern. The list is also one roving Tab stop (as `PriorityStars`; a click re-seats the stop on the clicked slot, via `onFocus`), and the column's own viewport is `tabIndex -1` through `reui/scroll-area`'s `viewportProps`, so Base UI's overflow stop does not double it. `TimeColumn.focus.guard.test.ts` pins the classes; ring painting itself is only visible in a browser.

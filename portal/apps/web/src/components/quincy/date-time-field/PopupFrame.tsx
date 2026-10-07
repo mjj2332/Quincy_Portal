@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, type ReactNode, type Ref, type RefObject } from "react";
-import { scrollTopClearOfFade, type FadeItem } from "@/lib/date-time-field";
+import { measureFade, scrollTopClearOfFade, type FadeItem } from "@/lib/date-time-field";
 import { SHORTCUTS_LABEL } from "./ShortcutList";
 import { Button } from "@/components/reui/button";
 import { ScrollArea } from "@/components/reui/scroll-area";
@@ -57,14 +57,7 @@ function useSelectedClearOfFade(contentRef: RefObject<HTMLDivElement | null>, re
     // Set the first time the body is found somewhere this hook did not put it, and never cleared: from then on resize leaves it alone.
     let userScrolled = false;
     const noticeScroll = () => { if (viewport.scrollTop !== applied) userScrolled = true; };
-    const measure = () => {
-      const probe = document.createElement("div");
-      probe.style.cssText = "position:absolute;visibility:hidden;width:0;height:var(--fade-size)";
-      viewport.append(probe);
-      const fade = probe.getBoundingClientRect().height;
-      probe.remove();
-      return fade;
-    };
+    const measure = () => measureFade(viewport);
     const signature = () => [...viewport.querySelectorAll<HTMLElement>(SELECTED)].map((item) => item.closest("[data-day]")?.getAttribute("data-day") ?? item.textContent).join("|");
     let selected = signature();
     const focused = () => { const active = document.activeElement; return active instanceof HTMLElement && active !== viewport && viewport.contains(active) ? active : null; };
@@ -156,7 +149,7 @@ export function PopupFrame({ label, zoneId, bodyRef, applying, applyDisabled = f
       {pinned && <div className="shrink-0 px-(--frame-panel-header-px) pb-[var(--space-2)]">{pinned}</div>}
       {/* The body scrolls; the footer below stays pinned so Cancel / Apply are always visible. */}
       <FramePanel className="flex min-h-0 flex-col p-0">
-        <ScrollArea className="flex min-h-0 grow flex-col [--fade-size:var(--space-6)] min-[721px]:[--fade-size:var(--space-5)] *:data-[slot=scroll-area-viewport]:mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] *:data-[slot=scroll-area-viewport]:mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))] *:data-[slot=scroll-area-viewport]:focus-visible:ring-0 has-[[data-slot=scroll-area-viewport]:focus-visible]:ring-[3px] has-[[data-slot=scroll-area-viewport]:focus-visible]:ring-ring/50">
+        <ScrollArea className="flex min-h-0 grow flex-col [--fade-size:var(--space-6)] min-[721px]:[--fade-size:var(--space-5)] *:data-[slot=scroll-area-viewport]:mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] *:data-[slot=scroll-area-viewport]:mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))] *:data-[slot=scroll-area-viewport]:focus-visible:ring-0 *:data-[slot=scroll-area-viewport]:focus-visible:!outline-none rounded-[inherit] -outline-offset-2 has-[[data-slot=scroll-area-viewport]:focus-visible]:outline-solid has-[[data-slot=scroll-area-viewport]:focus-visible]:outline-[length:var(--border-width-bold)] has-[[data-slot=scroll-area-viewport]:focus-visible]:outline-[var(--focus-ring)] has-[[data-slot=scroll-area-viewport]:focus-visible]:-outline-offset-2">
           <div ref={contentRef} className="px-(--frame-panel-px) py-(--frame-panel-py)">{children}</div>
         </ScrollArea>
       </FramePanel>

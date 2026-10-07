@@ -20,12 +20,20 @@ import { cn } from "@/lib/utils"
  * because of it (`gantt/gantt-view.tsx`'s header, same date). Vertical: the bar was 2px of padding
  * with a 0-wide thumb, i.e. invisible; it is now the registry's intended `w-2.5`, so every
  * ScrollArea (event calendar, cascader, Gantt) shows its vertical thumb again.
+ *
+ * 2026-10-07 — Quincy edit (#656 T1, #657): `viewportProps` (`Omit<Viewport.Props, "className" |
+ * "children">`) is spread onto the viewport AFTER Base UI's defaults, so a caller can set
+ * `tabIndex={-1}` (Base UI gives every overflowing viewport `tabIndex 0`) or other viewport
+ * attributes. `className`/`children` stay owned by this component.
  */
 function ScrollArea({
   className,
   children,
+  viewportProps,
   ...props
-}: ScrollAreaPrimitive.Root.Props) {
+}: ScrollAreaPrimitive.Root.Props & {
+  viewportProps?: Omit<ScrollAreaPrimitive.Viewport.Props, "className" | "children">
+}) {
   return (
     <ScrollAreaPrimitive.Root
       data-slot="scroll-area"
@@ -35,6 +43,7 @@ function ScrollArea({
       <ScrollAreaPrimitive.Viewport
         data-slot="scroll-area-viewport"
         className="size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1"
+        {...viewportProps}
       >
         {children}
       </ScrollAreaPrimitive.Viewport>

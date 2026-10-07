@@ -354,7 +354,7 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
             endYear={endYear}
           />
           <div className="flex min-w-0 flex-col gap-[var(--space-2)] min-[721px]:w-28 min-[721px]:shrink-0">
-            <TimeColumn selected={current.time && SLOTS.includes(current.time) ? current.time : null} skipped={skipped} onPick={pickSlot} />
+            <TimeColumn selected={current.time} skipped={skipped} onPick={pickSlot} />
           </div>
         </div>
         <Field data-invalid={timeInvalid || undefined}>

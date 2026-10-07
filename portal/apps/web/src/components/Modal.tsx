@@ -66,7 +66,7 @@ function panelClasses(size: ModalSize | undefined, wide: boolean): string {
     // paper. See §6.3: writing bg-card here would visibly lift the dialog off the canvas.
     "bg-background border-solid border-[length:var(--border-width-hair)] border-border",
     "rounded-none shadow-[var(--shadow-lg)]",
-    "focus:outline-none",
+    "focus-visible:!outline-none",
     // Named overlay-motion tokens (§4.3) — see the note on `SCRIM` above.
     "motion-safe:[transition:opacity_var(--overlay-exit),translate_var(--overlay-exit)]",
     "data-open:motion-safe:[transition:opacity_var(--overlay-enter),translate_var(--overlay-enter)]",
