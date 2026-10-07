@@ -171,6 +171,20 @@ describe("TimeColumn edge cases", () => {
   });
 });
 
+describe("TimeColumn scroll while a time is being typed", () => {
+  // The draft time is null for every prefix that does not parse yet ("1", "17:", "17:0"); the column must hold still
+  // rather than jump to the 00:00 stop and back (#656 design review r2, defect 1).
+  it("does not move the column when the selection clears", () => {
+    render({ selected: "17:00" });
+    const viewport = host.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
+    // Happy-dom never overflows, so record the writes centre() makes instead of reading a clamped scrollTop.
+    const writes: number[] = [];
+    Object.defineProperty(viewport, "scrollTop", { configurable: true, get: () => 0, set: (v: number) => { writes.push(v); } });
+    render({ selected: null });
+    expect(writes).toEqual([]);
+  });
+});
+
 describe("TimeColumn viewport Tab stop inside an overflowing popup body (item 8)", () => {
   const originals: Array<[string, PropertyDescriptor | undefined]> = [];
   beforeEach(() => {
