@@ -438,11 +438,12 @@ function GanttRowAttentionBadge({ reason }: { reason: ProductionGanttAttentionRe
   return (
     <span
       className={cn(
-        // #686: on a phone the label shrinks (at most 45% of the cell) and truncates after the project name; desktop keeps it whole.
-        "min-w-0 truncate text-[10px] uppercase tracking-[0.04em] max-[720px]:max-w-[45%] min-[721px]:shrink-0",
+        // #689: on a phone the label is line 2 under the project name and truncates there; desktop keeps it whole beside the name.
+        "min-w-0 truncate text-[10px] uppercase tracking-[0.04em] min-[721px]:shrink-0",
         critical ? "text-signal-critical" : "text-muted-foreground",
       )}
       data-testid={`gantt-row-attention-${reason}`}
+      title={ATTENTION_TEXT[reason]}
     >
       {ATTENTION_TEXT[reason]}
     </span>
@@ -461,7 +462,7 @@ function GanttChildLoadErrorBadge({ onRetry }: { onRetry: () => void }) {
     <button
       type="button"
       data-testid="gantt-children-retry"
-      className="shrink-0 truncate text-[10px] uppercase tracking-[0.04em] text-signal-critical underline"
+      className="shrink-0 truncate text-[10px] uppercase tracking-[0.04em] text-signal-critical underline max-[721px]:min-w-0 max-[721px]:max-w-full max-[721px]:-outline-offset-2 max-[721px]:focus-visible:!-outline-offset-2"
       onClick={(event) => {
         // The row label sits inside the tree panel's own row-select affordance — stop this click
         // from also being read as "select this row".
@@ -556,11 +557,12 @@ function GanttResourceLabel({
 }) {
   const attention = attentionByResourceId.get(resource.id);
   const retryChildren = childLoadRetryByProjectResourceId.get(resource.id);
+  const showAttention = !!attention && !hideAttentionBadgeFor.has(resource.id);
   return (
-    <span className="flex min-w-0 items-center gap-1.5">
+    <span className="flex min-w-0 items-center gap-1.5 max-[721px]:flex-col max-[721px]:items-stretch max-[721px]:justify-center max-[721px]:gap-0.5">
       {/* The street keeps a `--space-9` (96px = the old 6rem) floor while taking every remaining
           pixel; the attention badge yields to it (see `hideAttentionBadgeFor`). */}
-      <span className="min-w-0 min-[721px]:min-w-[var(--space-9)] flex-1 truncate">
+      <span className="min-w-0 min-[721px]:min-w-[var(--space-9)] flex-1 truncate max-[721px]:flex-none">
         {projectHrefFor && resource.id.startsWith("project:") ? (
           <ProjectCalendarAnchor
             testId="gantt-project-link"
@@ -570,8 +572,13 @@ function GanttResourceLabel({
           >{resource.title}</ProjectCalendarAnchor>
         ) : resource.title}
       </span>
-      {attention && !hideAttentionBadgeFor.has(resource.id) && <GanttRowAttentionBadge reason={attention.reason} />}
-      {retryChildren && <GanttChildLoadErrorBadge onRetry={retryChildren} />}
+      {(showAttention || retryChildren) && (
+        // #689: a plain layout wrapper. Desktop: `contents` (children stay inline beside the name). Phone: line 2.
+        <span data-testid="gantt-row-label-meta" className="min-w-0 min-[721px]:contents max-[721px]:flex max-[721px]:items-center max-[721px]:gap-1.5 max-[721px]:overflow-hidden">
+          {showAttention && <GanttRowAttentionBadge reason={attention.reason} />}
+          {retryChildren && <GanttChildLoadErrorBadge onRetry={retryChildren} />}
+        </span>
+      )}
     </span>
   );
 }

@@ -219,6 +219,12 @@ describe("ProductionGantt — child-page pagination (fix-220-sol1 #1, #2, #3)", 
     expect(findByText(host, "Recovered page two task")).toBeUndefined();
     const retryButton = host.querySelector('[data-testid="gantt-children-retry"]');
     expect(retryButton).not.toBeNull();
+    // #689: on a phone the retry shares the second line with the warning, inside the meta wrapper.
+    expect(retryButton!.closest('[data-testid="gantt-row-label-meta"]')).not.toBeNull();
+    // The meta wrapper clips overflow on a phone, so Retry's focus ring is drawn inset (base.css's unlayered :focus-visible needs the `!` form).
+    const retryTokens = retryButton!.className.split(/\s+/);
+    expect(retryTokens).toContain("max-[721px]:focus-visible:!-outline-offset-2");
+    expect(retryButton!.className).not.toContain("max-[720px]");
 
     await act(async () => {
       retryButton!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
