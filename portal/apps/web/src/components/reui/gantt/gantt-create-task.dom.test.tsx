@@ -20,7 +20,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Gantt } from "@/components/reui/gantt/gantt";
 import { GanttView } from "@/components/reui/gantt/gantt-view";
-import type { GanttColumn, GanttResource } from "@/components/reui/gantt/gantt-types";
+import type { GanttColumn } from "@/components/reui/gantt/gantt";
+import type { GanttResource } from "@/components/reui/gantt/gantt-types";
 
 let root: Root | null = null;
 let host: HTMLElement;
