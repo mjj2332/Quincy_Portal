@@ -266,6 +266,11 @@
  * the coarse-pointer negative block margin and the 6px-short backing size are now scoped to widths above 720 (a touch phone matches pointer-coarse,
  * whose rules come later in the built CSS, so unscoped they beat the phone layout), so the phone `+` has no negative margin and a full-height
  * backing; `max-[721px]:ms-auto` pins it to the column's right edge. Coarse tablets above 720 keep the 40px-row geometry.
+ *
+ * 2026-10-08, #695 — CHANGED, class tokens only (ADR 0009 addendum). Coarse-pointer rows are now 44px at every width (`ProductionGantt` passes the
+ * 44px `metrics` on `(pointer: coarse)` as well as on phones), so the sticky `+` opener's width-scoped coarse negative block margin and 6px-short
+ * backing size are removed: it fills its own row everywhere. This supersedes the round-2 sentence above about coarse tablets keeping the 40px-row
+ * geometry. The removed classes are described in words, not spelled, because Tailwind scans comments and would keep their rules in the built CSS.
  */
 
 import {
