@@ -164,6 +164,22 @@ export function measureFade(viewport: HTMLElement): number {
   return fade;
 }
 
+/** The smallest whole scroll within `window` at which `slivered` is false (#636), or undefined when there is none. */
+function smallestClearScroll(window: { low: number; high: number }, slivered: (scroll: number) => boolean): number | undefined {
+  for (let s = Math.ceil(window.low - 1e-9); s <= window.high; s += 1) if (!slivered(s)) return s;
+  return undefined;
+}
+
+/** The whole scroll within `window` nearest to `from` at which `slivered` is false (#662), the smaller on a tie; undefined when there is none. */
+function nearestClearScroll(window: { low: number; high: number }, slivered: (scroll: number) => boolean, from: number): number | undefined {
+  let best: number | undefined;
+  for (let s = Math.ceil(window.low - 1e-9); s <= window.high; s += 1) {
+    if (slivered(s)) continue;
+    if (best === undefined || Math.abs(s - from) < Math.abs(best - from)) best = s;
+  }
+  return best;
+}
+
 /**
  * #537 — the popup body fades each edge by `min(fade, overflow past that edge)`: the top band is
  * `min(fade, s)` and the bottom band `min(fade, max - s)` at scroll `s`, so a move changes the bands it
@@ -238,14 +254,9 @@ export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, 
   const clearLanding = landing.filter((snap) => !slivered(snap));
   if (clearLanding.length > 0) return Math.min(...clearLanding);
   if (noSliver?.length) {
-    // With snaps the smallest clear whole scroll (#636); otherwise the clear whole scroll nearest to where the body is now (#662), the smaller on a tie.
-    let best: number | undefined;
-    for (let s = Math.ceil(safe.low - 1e-9); s <= safe.high; s += 1) {
-      if (slivered(s)) continue;
-      if (snaps?.length) return s;
-      if (best === undefined || Math.abs(s - scrollTop) < Math.abs(best - scrollTop)) best = s;
-    }
-    if (best !== undefined) return best;
+    // With snaps the smallest clear whole scroll (#636); otherwise the clear whole scroll nearest to where the body is now (#662).
+    const clear = snaps?.length ? smallestClearScroll(safe, slivered) : nearestClearScroll(safe, slivered, scrollTop);
+    if (clear !== undefined) return clear;
   }
   if (landing.length > 0) return Math.min(...landing);
   return Math.min(Math.max(scrollTop, safe.low), safe.high);

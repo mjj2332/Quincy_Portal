@@ -183,8 +183,11 @@ export function AnchoredPopover({
   // `document.body` (floating-ui.react.mjs's `useFloatingPortalNode`) — only `undefined` does
   // that — so the page-level `null` from the context must be normalised to `undefined` here.
   const container = useContext(OverlayContainerContext) ?? undefined;
+  // `order={["content"]}` is explicit, not the library default: the popup's first control takes initial focus, and the floating
+  // panel itself never becomes a Tab stop with a square ring (docs/lessons.md, the Actions menu fix). Leaving it to the default
+  // would let a library change silently put the panel back in the Tab order.
   return <FloatingPortal root={container}>
-    <FloatingFocusManager context={context} modal={modal} returnFocus={false} initialFocus={initialFocus}>
+    <FloatingFocusManager context={context} modal={modal} returnFocus={false} initialFocus={initialFocus} order={["content"]}>
       <div
         ref={context.refs.setFloating}
         className={cn(className, PANEL)}

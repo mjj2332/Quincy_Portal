@@ -106,6 +106,15 @@ describe("TimeColumn after a pick (#666 item 5)", () => {
     expect(centred).toHaveLength(1);
   });
 
+  it("still centres when the time then changes from outside to a slot the parent had ignored", () => {
+    render("17:00");
+    const centred = recordCentre();
+    act(() => { slot("18:00").click(); }); // the parent rejects it: `selected` stays 17:00
+    render("17:00");
+    render("18:00"); // an outside change to that same slot is not the pick's commit
+    expect(centred).toHaveLength(1);
+  });
+
   it("still centres on a resize after a pick of the already pressed slot", () => {
     render("17:00");
     const centred = recordCentre();
