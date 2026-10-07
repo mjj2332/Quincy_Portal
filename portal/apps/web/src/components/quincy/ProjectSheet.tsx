@@ -168,7 +168,7 @@ export function ProjectSheet({ open, kind, sheetKey, backdropHref, onRequestClos
         <SheetClose
           data-testid="project-sheet-close"
           aria-label="Close project"
-          render={<Button variant="ghost" size="icon" className="absolute top-[var(--space-4)] right-[var(--space-4)] max-[721px]:top-[var(--space-3)] z-[30] min-h-[44px] min-w-[44px]" />}
+          render={<Button variant="ghost" size="icon" className="absolute top-[var(--space-4)] right-[var(--space-4)] max-[721px]:top-[var(--space-3)] z-[30] min-h-[44px] min-w-[44px] max-[721px]:not-hover:not-aria-expanded:bg-[color-mix(in_srgb,var(--paper-050)_90%,transparent)] max-[721px]:backdrop-blur-[8px]" />}
         >
           <XIcon aria-hidden />
         </SheetClose>
