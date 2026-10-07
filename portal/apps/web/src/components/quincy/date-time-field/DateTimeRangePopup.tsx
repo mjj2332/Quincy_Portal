@@ -308,7 +308,7 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
     const { civil } = resolved[which];
     if (!civil) return "Not set";
     const parts = splitCivilMinute(civil);
-    return parts.day && parts.time ? momentLabel(civil) : civil;
+    return parts.day && parts.time ? momentLabel(civil, today) : civil;
   };
 
   return (
@@ -329,7 +329,7 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
                 key={which}
                 type="button"
                 variant="outline"
-                className="flex-1 flex-col items-start gap-0 aria-pressed:border-primary aria-pressed:bg-primary aria-pressed:text-primary-foreground aria-pressed:hover:bg-primary"
+                className="flex-1 flex-col items-start gap-0 aria-pressed:border-primary aria-pressed:bg-primary aria-pressed:text-primary-foreground aria-pressed:hover:bg-primary aria-pressed:hover:!text-primary-foreground"
                 aria-pressed={active === which}
                 data-initial-focus={openOn === which && openOn === "end" ? "true" : undefined}
                 onClick={() => setActive(which)}

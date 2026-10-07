@@ -1,5 +1,5 @@
 import { SUBTASK_END_PRESET_TIME, SUBTASK_START_PRESET_TIME, defaultSubtaskRangeDto, resolveSydneyCivilMinute, type ProjectDefaultRangeDto } from "@quincy/shared";
-import { addCivilDays, civilWeekday } from "@/lib/date-time-field";
+import { addCivilDays, civilWeekday, sydneyToday } from "@/lib/date-time-field";
 
 /**
  * #423 — the pure rules behind the range form of `quincy/DateTimeField` (ADR 0016): the shortcut
@@ -48,10 +48,11 @@ function presetDay(start: string, end: string = start): DateTimeRangeValue {
   return { start: { localCivil: `${start}T${SUBTASK_START_PRESET_TIME}`, fold: 0 }, end: { localCivil: `${end}T${SUBTASK_END_PRESET_TIME}`, fold: 0 } };
 }
 
-/** `Wed 7 Oct · 09:00`: what an end holds, on the Start | End toggle and on the shortcut that would set it. */
-export function momentLabel(civil: string): string {
+/** `Wed 7 Oct · 09:00`: what an end holds, on the Start | End toggle and on the shortcut that would set it. The year is added (`Sun 3 Oct 2027 · 09:00`) only outside `today`'s Sydney year. */
+export function momentLabel(civil: string, today: string = sydneyToday()): string {
   const time = civil.slice(11, 16);
-  return time ? `${dayLabel(civil)} · ${time}` : dayLabel(civil);
+  const day = civil.slice(0, 4) === today.slice(0, 4) ? dayLabel(civil) : `${dayLabel(civil)} ${civil.slice(0, 4)}`;
+  return time ? `${day} · ${time}` : day;
 }
 
 /**
@@ -67,7 +68,7 @@ export function buildRangeShortcuts({ today, projectDefault, active }: { today: 
   const thisSunday = addCivilDays(today, 7 - iso);
   const nextMonday = addCivilDays(today, 8 - iso);
   const nextSunday = addCivilDays(nextMonday, 6);
-  const row = (id: RangeShortcutId, label: string, pair: DateTimeRangeValue): RangeShortcut => ({ id, label, sublabel: momentLabel(pair[active].localCivil), pair, scope: "end" });
+  const row = (id: RangeShortcutId, label: string, pair: DateTimeRangeValue): RangeShortcut => ({ id, label, sublabel: momentLabel(pair[active].localCivil, today), pair, scope: "end" });
   const rows: RangeShortcut[] = [
     row("today", "Today", presetDay(today)),
     row("tomorrow", "Tomorrow", presetDay(tomorrow)),
