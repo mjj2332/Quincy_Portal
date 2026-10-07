@@ -99,7 +99,8 @@ _Avoid_: Query, expression, advanced filter
 What People and My tasks mean for a rule, per surface. Projects list: a Project's Editor or the assignee of one of its
 open Subtasks. Calendar Deadline events: the Project's Editors; Subtask events: that Subtask's assignees. Timeline: a
 Project matches through its own Deadline context OR a visible Subtask matching in the Subtask context. Every other rule
-reads the Project.
+reads the Project. On the Timeline, My tasks in the Subtask context means an Editor of the Subtask's Project OR its
+assignee (#680), so a Project I edit lists all its Subtasks, while People stays per-assignee.
 
 **Board**:
 The Dashboard view that groups Projects into columns by Stage. One column per Stage. It was

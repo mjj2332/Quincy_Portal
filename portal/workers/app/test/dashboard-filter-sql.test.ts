@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { evaluateDashboardFilterTree, parseDashboardFilterTree, type DashboardFilterLeaf, type DashboardFilterTree } from "@quincy/shared";
 import { describe, expect, it } from "vitest";
-import { assigneeContext, baseProjectColumns, compileDashboardFilterSql, editorsContext, projectsListContext, projectsTableColumns, type DashboardFilterLeafContext } from "../src/lib/dashboard-filter-sql";
+import { assigneeContext, baseProjectColumns, compileDashboardFilterSql, editorsContext, projectsListContext, projectsTableColumns, timelineSubtaskContext, type DashboardFilterLeafContext } from "../src/lib/dashboard-filter-sql";
 
 /**
  * #461: the compiler follows the shared evaluator spec. A candidate row is a one-row subquery, so every
@@ -113,6 +113,7 @@ describe("compileDashboardFilterSql (#461)", () => {
       projectsListContext("external_editor", "p", "r.now", "r.me"),
       editorsContext(baseProjectColumns("ap"), "ap.project_id", "r.now", "r.me"),
       assigneeContext("external_editor", baseProjectColumns("c"), "c.project_id", "c.subtask_id", "r.now", "r.me"),
+      timelineSubtaskContext("external_editor", baseProjectColumns("c"), "c.project_id", "c.subtask_id", "r.now", "r.me"),
     ];
     for (const ctx of contexts) {
       const bytes = new TextEncoder().encode(compileDashboardFilterSql(worst, { jsonRef: "r.ftree", context: ctx, validIds: new Set() }).sql).byteLength;
