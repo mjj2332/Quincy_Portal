@@ -250,6 +250,38 @@ describe("scrollTopClearOfFade noSliver (#636)", () => {
   });
 });
 
+describe("scrollTopClearOfFade noSliver top fade (#662)", () => {
+  // The 390 time column: a 144px body, rows 44px on a 48px pitch, four slots per row. Rects are body-relative + viewport.top.
+  const viewport = { top: 100, bottom: 244 };
+  const rect = (rel: number, size = 44) => ({ top: viewport.top + rel, bottom: viewport.top + rel + size });
+  const column = { viewport, maxScrollTop: 1004 };
+  it("down8: lifts the pressed slot out from under the top fade, moving the least (r2-B3-390-02)", () => {
+    // Focused 19:00 at 68..112 (scroll 796), pressed 17:00 two rows up at -28..16. Focused is clear for 796..832; the slot clears at >= 810.
+    const focused = { ...rect(68), required: true, priority: true };
+    expect(scrollTopClearOfFade({ ...column, scrollTop: 796, fade: 32, items: [focused], noSliver: [rect(-28)] })).toBe(810);
+  });
+  it("up8 at a 32px fade: no position clears both, so the focused control wins and the body stays (r2-B3-390-06)", () => {
+    const focused = { ...rect(32), required: true, priority: true };
+    expect(scrollTopClearOfFade({ ...column, scrollTop: 880, fade: 32, items: [focused], noSliver: [rect(-16)] })).toBe(880);
+  });
+  it("up8 at a 24px fade: the adjacent-row case fits a 144px column, nearest feasible scroll", () => {
+    const focused = { ...rect(32), required: true, priority: true };
+    expect(scrollTopClearOfFade({ ...column, scrollTop: 880, fade: 24, items: [focused], noSliver: [rect(-16)] })).toBe(842);
+  });
+  it("tolerates a 2px overlap with the top band edge but not 3px", () => {
+    const base = { ...column, scrollTop: 500, fade: 32, items: [] as never[] };
+    expect(scrollTopClearOfFade({ ...base, noSliver: [rect(30)] })).toBe(500);
+    expect(scrollTopClearOfFade({ ...base, noSliver: [rect(29)] })).not.toBe(500);
+  });
+  it("tolerates a 2px sliver above the body's top edge", () => {
+    expect(scrollTopClearOfFade({ ...column, scrollTop: 500, fade: 32, items: [], noSliver: [rect(-42)] })).toBe(500);
+  });
+  it("takes the nearest feasible scroll, not the smallest (no snaps)", () => {
+    // Slot at -10..26 under the 32px band at scroll 200: clear at >= 224 (24 away) or <= 160 (40 away).
+    expect(scrollTopClearOfFade({ ...column, scrollTop: 200, fade: 32, items: [], noSliver: [rect(-10, 36)] })).toBe(224);
+  });
+});
+
 describe("scrollTopClearOfFade (#537)", () => {
   const viewport = { top: 100, bottom: 500 };
   const base = { viewport, scrollTop: 0, maxScrollTop: 300, fade: 32 };
