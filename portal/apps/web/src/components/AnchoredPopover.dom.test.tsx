@@ -113,3 +113,22 @@ describe("AnchoredPopover — initial focus (#663)", () => {
     expect(panel.getAttribute("tabindex")).not.toBe("0");
   });
 });
+
+describe("AnchoredPopover — Escape", () => {
+  it("returns focus to the trigger and closes the popover", async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => { root!.render(<Harness />); await Promise.resolve(); });
+    await act(async () => { await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())); });
+    await flush();
+    const deleteButton = [...document.querySelectorAll("button")].find((button) => button.textContent === "Delete (raises confirm)")!;
+    expect(document.activeElement).toBe(deleteButton);
+
+    await act(async () => { deleteButton.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
+    await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 300)); });
+    const trigger = [...document.querySelectorAll("button")].find((button) => button.textContent === "Trigger")!;
+    expect(document.activeElement).toBe(trigger);
+    expect([...document.querySelectorAll("button")].some((button) => button.textContent === "Delete (raises confirm)")).toBe(false);
+  });
+});
