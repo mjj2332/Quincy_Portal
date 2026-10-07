@@ -264,14 +264,18 @@ describe("scrollTopClearOfFade noSliver top fade (#662)", () => {
     const focused = { ...rect(32), required: true, priority: true };
     expect(scrollTopClearOfFade({ ...column, scrollTop: 880, fade: 32, items: [focused], noSliver: [rect(-16)] })).toBe(880);
   });
-  it("up8 at a 24px fade: the adjacent-row case fits a 144px column, nearest feasible scroll", () => {
+  it("up8 at a 24px fade: the adjacent-row case fits a 144px column with no overlap at all (#662 P3)", () => {
     const focused = { ...rect(32), required: true, priority: true };
-    expect(scrollTopClearOfFade({ ...column, scrollTop: 880, fade: 24, items: [focused], noSliver: [rect(-16)] })).toBe(842);
+    expect(scrollTopClearOfFade({ ...column, scrollTop: 880, fade: 24, items: [focused], noSliver: [rect(-16)] })).toBe(840);
   });
-  it("tolerates a 2px overlap with the top band edge but not 3px", () => {
+  it("prefers a scroll with no overlap over one inside the 2px tolerance when one is reachable (#662 P3)", () => {
     const base = { ...column, scrollTop: 500, fade: 32, items: [] as never[] };
-    expect(scrollTopClearOfFade({ ...base, noSliver: [rect(30)] })).toBe(500);
-    expect(scrollTopClearOfFade({ ...base, noSliver: [rect(29)] })).not.toBe(500);
+    expect(scrollTopClearOfFade({ ...base, noSliver: [rect(30)] })).toBe(498);
+  });
+  it("still accepts a 2px overlap when no overlap-free scroll is reachable", () => {
+    // The focused 80px control is clear only at exactly 500, so the pressed slot's 2px overlap is the best there is.
+    const pinned = { ...column, scrollTop: 500, fade: 32, items: [{ ...rect(32, 80), required: true, priority: true }] };
+    expect(scrollTopClearOfFade({ ...pinned, noSliver: [rect(30)] })).toBe(500);
   });
   it("tolerates a 2px sliver above the body's top edge", () => {
     expect(scrollTopClearOfFade({ ...column, scrollTop: 500, fade: 32, items: [], noSliver: [rect(-42)] })).toBe(500);
