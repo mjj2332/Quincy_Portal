@@ -50,7 +50,9 @@ the range reschedules them.
   Timeline Subtask cell and the Calendar's schedule editor. A Start | End toggle chooses which end the
   calendar, the time column and the typed time edit. Today, Tomorrow, This week (today 09:00 to Sunday
   17:00), Next week (Monday 09:00 to Sunday 17:00) and, when the Project has one, Project default set
-  both ends at once. A repeated daylight-saving time asks Earlier or Later per end, and Apply stays
+  both ends at once. *(Amended by #683: only Project default sets both ends. The other four set the end being
+  edited and leave the other alone, moving it only when the result would be inverted. See
+  `docs/maps/date-time-controls.md`.)* A repeated daylight-saving time asks Earlier or Later per end, and Apply stays
   disabled until the start is before the end by instant. The Date/Timed select, the native endpoint
   inputs and the fold radios are gone.
 - **Presets are constants.** `SUBTASK_START_PRESET_TIME` (09:00) and `SUBTASK_END_PRESET_TIME`
