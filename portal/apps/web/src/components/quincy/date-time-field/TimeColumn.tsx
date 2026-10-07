@@ -62,7 +62,9 @@ export function TimeColumn({ selected, skipped, onPick }: {
     if (!viewport) return;
     const fade = stacked ? measureFade(viewport) : 0;
     const { top, bottom } = slotEl.getBoundingClientRect();
-    viewport.scrollTop = scrollTopClearOfFade({ viewport: viewport.getBoundingClientRect(), scrollTop: viewport.scrollTop, maxScrollTop: viewport.scrollHeight - viewport.clientHeight, fade, items: [{ top, bottom, required: true, priority: true }] });
+    // The pressed slot is not required to be clear, but must not end up partly under a fade (#662): `noSliver`, no `snaps`.
+    const pressed = listRef.current?.querySelector<HTMLElement>('button[aria-pressed="true"]')?.getBoundingClientRect();
+    viewport.scrollTop = scrollTopClearOfFade({ viewport: viewport.getBoundingClientRect(), scrollTop: viewport.scrollTop, maxScrollTop: viewport.scrollHeight - viewport.clientHeight, fade, items: [{ top, bottom, required: true, priority: true }], noSliver: pressed ? [{ top: pressed.top, bottom: pressed.bottom }] : undefined });
   }, [stacked]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -83,9 +85,10 @@ export function TimeColumn({ selected, skipped, onPick }: {
     const el = listRef.current?.querySelectorAll<HTMLElement>("button")[target];
     if (!el) return;
     setRoving(target);
-    // preventScroll: the popup body scrolls itself on focusin; the column is scrolled by writing scrollTop (never scrollIntoView).
-    el.focus({ preventScroll: true });
+    // Reveal first, then focus: PopupFrame's `focusin` handler solves against the slot's position when focus lands, so the
+    // column must already be at its final scroll (#662). preventScroll: the column is scrolled by writing scrollTop (never scrollIntoView).
     reveal(el);
+    el.focus({ preventScroll: true });
   };
 
   // A click (or any other focus) moves the stop to the slot that took focus, so Shift+Tab leaves the list from there.
@@ -98,6 +101,10 @@ export function TimeColumn({ selected, skipped, onPick }: {
     if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setRoving(null);
   };
 
+  // The slot a pick (pointer or Enter) just chose; the next centre for exactly that selection is skipped, because the slot
+  // is already where the user put it (#662). Null when the picked slot was already pressed (no selection change follows).
+  const pickedRef = useRef<string | null>(null);
+
   const centre = useCallback(() => {
     const list = listRef.current;
     // An off-grid time (17:07) presses nothing, so centre its tab stop (17:15). No time at all (a cleared field, or a
@@ -109,7 +116,11 @@ export function TimeColumn({ selected, skipped, onPick }: {
     viewport.scrollTop = Math.max(0, offset - viewport.clientHeight / 2 + pressed.offsetHeight / 2);
   }, [selected]);
 
-  useLayoutEffect(centre, [centre, selected]);
+  useLayoutEffect(() => {
+    const skip = pickedRef.current !== null && pickedRef.current === selected;
+    pickedRef.current = null;
+    if (!skip) centre();
+  }, [centre, selected]);
 
   // Crossing 721px swaps the four-column h-36 grid for the single h-72 column; the selection has not
   // changed, so re-centre when the viewport's size does.
@@ -122,7 +133,7 @@ export function TimeColumn({ selected, skipped, onPick }: {
   }, [centre]);
 
   return (
-    <ScrollArea className="h-36 w-full [--fade-size:var(--space-6)] min-[721px]:h-72 min-[721px]:w-28 min-[721px]:shrink-0 max-[721px]:*:data-[slot=scroll-area-scrollbar]:hidden max-[721px]:*:data-[slot=scroll-area-viewport]:mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] max-[721px]:*:data-[slot=scroll-area-viewport]:mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))]" viewportProps={{ tabIndex: -1 }}>
+    <ScrollArea className="h-36 w-full [--fade-size:var(--space-5)] min-[721px]:h-72 min-[721px]:w-28 min-[721px]:shrink-0 max-[721px]:*:data-[slot=scroll-area-scrollbar]:hidden max-[721px]:*:data-[slot=scroll-area-viewport]:mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] max-[721px]:*:data-[slot=scroll-area-viewport]:mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))]" viewportProps={{ tabIndex: -1 }}>
       <div ref={listRef} role="group" aria-label="Time slots" onKeyDown={onKeyDown} onFocus={onFocus} onBlur={onBlur} className="grid grid-cols-4 gap-[var(--space-1)] min-[721px]:flex min-[721px]:flex-col pr-[var(--space-3)]">
         {SLOTS.map((slot, index) => {
           const isSkipped = skipped.has(slot);
@@ -138,7 +149,7 @@ export function TimeColumn({ selected, skipped, onPick }: {
               className={cn("w-full justify-center pointer-coarse:min-h-[44px] max-[721px]:min-h-[44px]", RING_IN, "aria-pressed:outline-offset-[-4px] aria-pressed:focus-visible:!outline-[var(--primary-foreground)] aria-pressed:focus-visible:!outline-offset-[-4px]")}
               aria-pressed={isSelected}
               disabled={isSkipped}
-              onClick={() => onPick(slot)}
+              onClick={() => { pickedRef.current = isSelected ? null : slot; onPick(slot); }}
             >
               {slot}
               {isSkipped && <span className="sr-only"> (skipped, the clocks go forward)</span>}
