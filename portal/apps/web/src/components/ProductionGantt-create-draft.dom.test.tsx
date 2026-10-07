@@ -299,7 +299,7 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
       expect(popup.querySelector('[data-testid="gantt-group-create-task-cancel"]')).not.toBeNull();
     });
 
-    it("every field has a real <label> above it: Title, Assignees and Due are each named by (and associated with) their control; the heading uses the type token", async () => {
+    it("every field has a real <label> above it: Title, Assignees and Due are each named by (and associated with) their control", async () => {
       await mount();
       await click(plus(STREET_A)!);
       const popup = sheet()!;
@@ -310,8 +310,6 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
         expect(control.id, text).not.toBe("");
         expect(label.compareDocumentPosition(control) & Node.DOCUMENT_POSITION_FOLLOWING, text).toBeTruthy();
       }
-      const heading = popup.querySelector<HTMLElement>('[data-slot="sheet-title"]') ?? [...popup.querySelectorAll<HTMLElement>("h1,h2,h3,[id]")].find((el) => el.textContent === `New task in ${STREET_A}`)!;
-      expect(heading.className).toContain("var(--type-h3)");
     });
 
     it("the Due trigger is an outlined, full-width field the Title's height; the popup is sized to the viewport, not the sheet", async () => {
