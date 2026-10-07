@@ -184,7 +184,7 @@ export function AnchoredPopover({
   // that — so the page-level `null` from the context must be normalised to `undefined` here.
   const container = useContext(OverlayContainerContext) ?? undefined;
   return <FloatingPortal root={container}>
-    <FloatingFocusManager context={context} modal={modal} returnFocus={false} order={["reference", "floating", "content"]} initialFocus={initialFocus}>
+    <FloatingFocusManager context={context} modal={modal} returnFocus={false} initialFocus={initialFocus}>
       <div
         ref={context.refs.setFloating}
         className={cn(className, PANEL)}
