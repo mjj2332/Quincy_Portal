@@ -6,7 +6,7 @@ import { CELL_TRIGGER } from "./ProjectDeadlineCell";
 /** #693: on a phone the badge is line 2 under the project name and only ~27px wide at 360, so it shows a short label; the accessible name stays the full text. */
 const CASES = [
   { reason: "missing_deadline", full: "Deadline not set", short: "Not set", critical: false },
-  { reason: "deadline_before_start", full: "Deadline before shoot", short: "Too early", critical: false },
+  { reason: "deadline_before_start", full: "Deadline before shoot", short: "Conflict", critical: false },
   { reason: "resolution_failed", full: "Schedule could not be resolved", short: "Error", critical: true },
 ] as const;
 

@@ -433,10 +433,10 @@ const CRITICAL_ATTENTION_REASONS = new Set<ProductionGanttAttentionReason>([
   "resolution_failed",
 ]);
 
-/** #693: phone labels, sized for the ~27px line 2 holds at 360. Distinct first words survive truncation. */
+/** #693: phone labels. Each fits line 2 at 375 (50px, measured: NOT SET 39, CONFLICT 46, ERROR 31 at 10px uppercase); at 360 (35px) they truncate but their first letters still differ. */
 const ATTENTION_SHORT_TEXT: Record<ProductionGanttAttentionReason, string> = {
   missing_deadline: "Not set",
-  deadline_before_start: "Too early",
+  deadline_before_start: "Conflict",
   resolution_failed: "Error",
 };
 
