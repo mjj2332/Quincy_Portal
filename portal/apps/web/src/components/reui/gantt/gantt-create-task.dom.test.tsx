@@ -488,7 +488,7 @@ describe("gantt add-task editor keeps the row's columns (#678)", () => {
     expect(nameCell).not.toBeNull();
     expect(nameCell.contains(input())).toBe(true);
     // same cell structure as GanttTreeRow: name cell, then one cell per column
-    const cells = [...row.querySelectorAll<HTMLElement>('[data-slot="gantt-tree-column-cell"]')];
+    const cells = [...row.querySelectorAll<HTMLElement>("[data-column]")];
     expect(cells.map((cell) => cell.dataset.column)).toEqual(["people", "due", "extra"]);
     expect(cells.map((cell) => cell.style.width)).toEqual(["88px", "128px", "60px"]);
     expect(cells[0]!.querySelector('[data-testid="draft-people"]')).not.toBeNull();
