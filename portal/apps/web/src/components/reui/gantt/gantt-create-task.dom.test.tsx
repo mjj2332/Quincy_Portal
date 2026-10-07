@@ -18,7 +18,8 @@ if (!Element.prototype.getAnimations) {
 import { act, useContext, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { OverlayContainerContext } from "@/components/OverlayContainerContext";
+import { OverlayCollisionBoundaryContext, OverlayContainerContext } from "@/components/OverlayContainerContext";
+import { Sheet, SheetContent } from "@/components/reui/sheet";
 import { Gantt } from "@/components/reui/gantt/gantt";
 import { GanttView } from "@/components/reui/gantt/gantt-view";
 import type { GanttColumn } from "@/components/reui/gantt/gantt";
@@ -638,6 +639,29 @@ describe("gantt add-task editor keeps the row's columns (#678)", () => {
       await settle();
       expect(sheet()).toBeNull();
       expect(document.activeElement).toBe(createButton("Alpha"));
+    });
+
+    it("the scrim mounts even when the Gantt itself sits inside another Sheet (a nested dialog gets no backdrop by default)", async () => {
+      await render(
+        <Sheet open>
+          <SheetContent showCloseButton={false}>{stackView()}</SheetContent>
+        </Sheet>
+      );
+      const plus = [...document.querySelectorAll<HTMLButtonElement>('[data-testid="gantt-group-create-task"]')].find((el) => el.getAttribute("aria-label") === "Add task in Alpha")!;
+      await click(plus);
+      expect(sheet()).not.toBeNull();
+      expect(document.querySelector('[data-testid="gantt-group-create-task-scrim"]')).not.toBeNull();
+    });
+
+    it("provides the sheet itself as the popups' collision boundary", async () => {
+      let seen: HTMLElement | null | undefined;
+      function Probe() {
+        seen = useContext(OverlayCollisionBoundaryContext);
+        return <span data-testid="draft-stack" />;
+      }
+      await render(stackView(() => <Probe />));
+      await click(createButton("Alpha")!);
+      expect(seen).toBe(sheet());
     });
 
     it("provides an overlay slot: the draft's controls get it through OverlayContainerContext", async () => {

@@ -48,7 +48,9 @@ export function GanttCreateDraftDue({ draft, projectDefault, pending, onChange }
   const [open, setOpen] = useState(false);
   const defaultText = projectDefault ? formatDueCivil(projectDefault.end.localCivil) : "Project default";
   // No chosen range: the server copies the Project's default (ADR 0011), so the trigger names its END, as the Due column prints it.
-  const triggerText = draft.preview ? formatCivilSchedule(draft.preview) : defaultText;
+  // A chosen range reads the way the Due column cell shows a value (its end); the accessible name keeps the whole range.
+  const triggerText = draft.preview ? formatDueCivil(draft.preview.end.localCivil) : defaultText;
+  const triggerName = draft.preview ? formatCivilSchedule(draft.preview) : defaultText;
   return (
     <span data-testid="gantt-create-draft-due" className="inline-flex min-w-0 flex-1 items-center" {...GESTURE_BOUNDARY}>
       <SubtaskScheduleControl
@@ -66,7 +68,7 @@ export function GanttCreateDraftDue({ draft, projectDefault, pending, onChange }
             size="xs"
             type="button"
             data-testid="gantt-create-draft-due-trigger"
-            aria-label={`Schedule for new subtask: ${triggerText}`}
+            aria-label={`Schedule for new subtask: ${triggerName}`}
             className={cn(CELL_TRIGGER, draft.preview ? "text-foreground" : "text-muted-foreground hover:text-foreground")}
           >
             <span className="truncate">{triggerText}</span>

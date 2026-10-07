@@ -3,7 +3,7 @@ import { Combobox as ComboboxPrimitive } from "@base-ui/react"
 import { ChevronDownIcon, XIcon, CheckIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import { OverlayContainerContext } from "@/components/OverlayContainerContext"
+import { OverlayCollisionBoundaryContext, OverlayContainerContext } from "@/components/OverlayContainerContext"
 import { InsideAlertDialogContext, keepOpenBehindAlertDialog } from "@/lib/alert-dialog-press"
 import { Button } from "@/components/reui/button"
 import {
@@ -160,9 +160,11 @@ function ComboboxContent({
     "side" | "align" | "sideOffset" | "alignOffset" | "anchor"
   >) {
   const container = React.useContext(OverlayContainerContext) ?? undefined
+  const collisionBoundary = React.useContext(OverlayCollisionBoundaryContext) ?? undefined
   return (
     <ComboboxPrimitive.Portal container={container}>
       <ComboboxPrimitive.Positioner
+        collisionBoundary={collisionBoundary}
         side={side}
         sideOffset={sideOffset}
         align={align}

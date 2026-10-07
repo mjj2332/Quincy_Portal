@@ -257,6 +257,21 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
     expect((apiPostMock.mock.calls[0]![1] as { schedule?: unknown }).schedule).toBeDefined();
   });
 
+  it("a chosen range shows its END the way the Due column does; the accessible name keeps the whole range", async () => {
+    await mount();
+    await click(plus(STREET_A)!);
+    const trigger = draftDue()!;
+    await act(async () => { trigger.focus(); trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); trigger.click(); await Promise.resolve(); });
+    await waitFor(() => expect(dateTimePopup("Schedule for new subtask")).not.toBeNull());
+    await pickPopupDay(dateTimePopup("Schedule for new subtask")!, isoDate(40));
+    await applyPopup(dateTimePopup("Schedule for new subtask")!);
+    await waitFor(() => expect(dateTimePopup("Schedule for new subtask")).toBeNull());
+    await settle();
+    expect(draftDue()!.textContent).toMatch(/^\w{3} \d{1,2} \w{3} · \d{2}:\d{2}$/);
+    expect(draftDue()!.textContent).not.toContain("→");
+    expect(draftDue()!.getAttribute("aria-label")).toContain("→");
+  });
+
   describe("on a phone (<= 720px) the editor is a bottom sheet", () => {
     let original: typeof window.matchMedia;
     beforeEach(() => {

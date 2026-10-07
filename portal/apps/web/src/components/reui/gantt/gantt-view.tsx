@@ -331,7 +331,7 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/reui/button"
 import { Input } from "@/components/reui/input"
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from "@/components/reui/sheet"
-import { OverlayContainerContext } from "@/components/OverlayContainerContext"
+import { OverlayCollisionBoundaryContext, OverlayContainerContext } from "@/components/OverlayContainerContext"
 import { Checkbox } from "@/components/reui/checkbox"
 import {
   ContextMenu,
@@ -3710,6 +3710,8 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
   const errorId = useId()
   // The sheet's overlay slot: every popover / select the draft's controls open portals here.
   const [overlaySlot, setOverlaySlot] = useState<HTMLDivElement | null>(null)
+  // ...and the sheet itself is their collision boundary, so a list shrinks inside it rather than opening above it.
+  const [sheetPopup, setSheetPopup] = useState<HTMLDivElement | null>(null)
 
   useEffect(() => {
     mountedRef.current = true
@@ -3847,6 +3849,7 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
         }}
       >
         <SheetContent
+          ref={setSheetPopup}
           side="bottom"
           showCloseButton={false}
           data-testid="gantt-group-create-task-sheet"
@@ -3860,12 +3863,16 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
           // `focus-visible:!outline-none`: the sheet itself can hold focus between controls (see ProjectSheet).
           className="z-[var(--z-dialog)] gap-[var(--space-3)] p-[var(--space-4)] pb-[max(var(--space-4),env(safe-area-inset-bottom))] focus-visible:!outline-none"
           overlayProps={{
+            // Mandatory: the Gantt can itself sit inside another Sheet's Root (the Project sheet, the rail), and Base UI
+            // renders no backdrop for a NESTED dialog unless forced - without a scrim a phone tap outside would do nothing.
+            forceRender: true,
             "data-testid": "gantt-group-create-task-scrim",
             className:
               "z-[var(--z-dialog)] bg-[var(--scrim-overlay)] backdrop-blur-[3px]",
           }}
         >
           <OverlayContainerContext.Provider value={overlaySlot}>
+            <OverlayCollisionBoundaryContext.Provider value={sheetPopup}>
             <SheetHeader className="p-0">
               <SheetTitle>{createTaskSheetTitle(groupTitle)}</SheetTitle>
             </SheetHeader>
@@ -3906,6 +3913,7 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
                 Add
               </Button>
             </SheetFooter>
+            </OverlayCollisionBoundaryContext.Provider>
           </OverlayContainerContext.Provider>
           {/* every popover / select the controls open portals here: inside the modal's focus trap */}
           <div
