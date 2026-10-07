@@ -243,19 +243,24 @@ export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, 
   // #636, #662: an item in `noSliver` (the pressed time slot) is never asked to be clear, but it must not end up PARTLY inside either fade,
   // where a solid chip reads as a grey sliver. At `s` it is fine when fully past a band (above the top one, below the bottom one) or outside
   // the body. The top band is `min(fade, s)`, the bottom `min(fade, max - s)`.
-  const slivered = (s: number) => (noSliver ?? []).some((item) => {
+  const sliveredWithin = (tolerance: number) => (s: number) => (noSliver ?? []).some((item) => {
     const top = item.top - viewport.top + scrollTop - s;
     const bottom = item.bottom - viewport.top + scrollTop - s;
-    const inTopBand = top + SLIVER_TOLERANCE < Math.min(fade, s) && bottom - SLIVER_TOLERANCE > 0;
-    const inBottomBand = bottom - SLIVER_TOLERANCE > height - Math.min(fade, max - s) && top + SLIVER_TOLERANCE < height;
+    const inTopBand = top + tolerance < Math.min(fade, s) && bottom - tolerance > 0;
+    const inBottomBand = bottom - tolerance > height - Math.min(fade, max - s) && top + tolerance < height;
     return inTopBand || inBottomBand;
   });
+  const slivered = sliveredWithin(SLIVER_TOLERANCE);
   const landing = (snaps ?? []).filter((snap) => snap >= safe.low && snap <= safe.high);
   const clearLanding = landing.filter((snap) => !slivered(snap));
   if (clearLanding.length > 0) return Math.min(...clearLanding);
   if (noSliver?.length) {
     // With snaps the smallest clear whole scroll (#636); otherwise the clear whole scroll nearest to where the body is now (#662).
-    const clear = snaps?.length ? smallestClearScroll(safe, slivered) : nearestClearScroll(safe, slivered, scrollTop);
+    // #662: without snaps, look for a scroll with no overlap at all first; the 2px tolerance absorbs sub-pixel rounding in what is
+    // acceptable, it is not a reason to choose a 2px sliver when a clean scroll is just as reachable.
+    const clear = snaps?.length
+      ? smallestClearScroll(safe, slivered)
+      : nearestClearScroll(safe, sliveredWithin(0), scrollTop) ?? nearestClearScroll(safe, slivered, scrollTop);
     if (clear !== undefined) return clear;
   }
   if (landing.length > 0) return Math.min(...landing);
