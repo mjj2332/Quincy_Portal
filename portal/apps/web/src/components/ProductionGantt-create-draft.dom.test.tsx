@@ -276,7 +276,7 @@ describe("ProductionGantt — one create carries the draft", () => {
   });
 
   it("a failed create keeps the title and the chosen assignees, then a retry sends them", async () => {
-    apiPostMock.mockRejectedValueOnce(new ApiError(500, "Nope from the server"));
+    apiPostMock.mockRejectedValueOnce(new ApiError("Nope from the server", 500));
     await mount();
     await click(plus(STREET_A)!);
     await choose("Ada Smith");

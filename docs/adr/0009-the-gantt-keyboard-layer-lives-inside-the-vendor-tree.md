@@ -198,3 +198,34 @@ the server applies the default range), the permission (`permissions.canEditChild
 copy, the hidden-by-filters pin and its toast. The vendor renders the row and its input and reports
 what was typed. `gantt-create-task.dom.test.tsx` covers the seam; `ProductionGantt.writes.dom.test.tsx`
 covers the consumer.
+
+## Addendum (2026-10-07, #678 + #679): the "+" on the Project row, and an editor that keeps the row's columns
+
+The idle "+ Add task" row under every Project was visual noise (#679), and the open editor's title
+input covered the whole row, hiding Assignees and Due (#678). Both changes are additive and stay
+inside this tree, for the same reason as #344 (the editor sits between the tree's own rows and is
+paired with a timeline spacer):
+
+- **No idle rows.** A creatable group's own row carries a `+` (`reui/button` ghost `icon-xs`, still
+  `data-testid="gantt-group-create-task"`, a `data-gantt-tree-focus` stop between the chevron and
+  the next row). It opens ONE editor row under the group's last visible descendant (the group's own
+  row when it has none); a collapsed group expands first. `createAfter` holds only the open group,
+  so the tree row, the timeline spacer and the dependency offset still read one source. An empty
+  creatable group is now a leaf. Another group's `+` moves an EMPTY editor, and keeps a dirty one
+  (a typed title, or the consumer's `createTaskDirty`) and focuses it, so nothing typed is lost.
+- **The editor keeps the row's cells.** `GanttGroupCreateRow` mirrors `GanttTreeRow`: a name cell
+  (the cancel x in the toggle gutter, then the title input) and one cell per column rendering the
+  new `GanttColumn.renderCreate(ctx)`. With no column carrying one (a phone's `columns: []`) the new
+  `renderCreateStack` renders under the title in a row `CREATE_STACK_EXTRA_REM` taller; the same
+  `createRowRem` reaches the spacer and the dependency offset.
+- **Draft lifecycle contract.** The vendor owns the open state and the title; the consumer owns the
+  rest of the draft and is told when the editor closes: `onCreateTaskClose({ parentId })` (cancel,
+  success, collapse, the group leaving the data, the whole view unmounting, a changed
+  `createTaskResetKey`). The editor row handles Escape on the input only: the draft's popups portal
+  out of the row but their events bubble through it (#585, #670).
+
+What stays out: the write (one `POST /api/projects/:id/subtasks` carrying `assigneeIds` / `schedule`
+/ reminders only when set, the Checklist composer's body), the permission, the pickers
+(`quincy/SubtaskAssigneePicker`, `quincy/SubtaskScheduleControl`) and the draft's state.
+`gantt-create-task.dom.test.tsx` covers the seam; `ProductionGantt-create-draft.dom.test.tsx` and
+`ProductionGantt.writes.dom.test.tsx` cover the consumer.

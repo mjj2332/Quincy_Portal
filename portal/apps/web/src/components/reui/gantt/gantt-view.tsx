@@ -2574,6 +2574,17 @@ function GanttView({
     }
     closeCreate(false)
   }, [createAfter, createOpenFor, closeCreate])
+  // The whole view unmounting (the consumer swapped the chart for a loading or empty state) ends the
+  // editor too: the consumer's half of the draft must not outlive it.
+  useEffect(
+    () => () => {
+      const parentId = createOpenForRef.current
+      if (parentId !== null) {
+        viewConfigRef.current.onCreateTaskClose?.({ parentId })
+      }
+    },
+    []
+  )
   // A filter or identity change (the consumer's key) drops the draft.
   const createResetKey = viewConfig.createTaskResetKey
   const priorCreateResetKey = useRef(createResetKey)

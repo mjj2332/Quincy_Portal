@@ -1316,19 +1316,21 @@ describe("ProductionGantt — Add task row (#344)", () => {
     expect(host.querySelector(`button[aria-label="${SECOND_PROJECT_STREET}"]`)).toBeNull();
   });
 
-  it("gives a Project with no Subtasks a row and makes it expandable, when its children are editable", async () => {
+  it("gives a Project with no Subtasks a + and keeps it a leaf (no chevron promising hidden children), when its children are editable", async () => {
     resetFixture({ secondNoDeadlineProject: true });
     await render();
     expect(addTaskButton(SECOND_PROJECT_STREET)).not.toBeNull();
-    expect(host.querySelector(`button[aria-label="${SECOND_PROJECT_STREET}"][aria-expanded="true"]`)).not.toBeNull();
+    expect(host.querySelector(`button[aria-label="${SECOND_PROJECT_STREET}"]`)).toBeNull();
   });
 
-  it("removes the row when the Project is collapsed", async () => {
+  it("keeps the + on a collapsed Project; pressing it expands the Project and opens the editor under its last Subtask", async () => {
     await render();
     await click(host.querySelector<HTMLElement>(`button[aria-label="${PROJECT_STREET}"]`)!);
-    expect(addTaskButton(PROJECT_STREET)).toBeNull();
-    await click(host.querySelector<HTMLElement>(`button[aria-label="${PROJECT_STREET}"]`)!);
+    expect(host.querySelector(`button[aria-label="${PROJECT_STREET}"]`)!.getAttribute("aria-expanded")).toBe("false");
     expect(addTaskButton(PROJECT_STREET)).not.toBeNull();
+    await click(addTaskButton(PROJECT_STREET)!);
+    expect(host.querySelector(`button[aria-label="${PROJECT_STREET}"]`)!.getAttribute("aria-expanded")).toBe("true");
+    expect(document.activeElement).toBe(createInput());
   });
 
   it("clicking the row and pressing Enter posts exactly { title } (trimmed) to the selected Project, and the Subtask appears as a real, editable bar", async () => {
