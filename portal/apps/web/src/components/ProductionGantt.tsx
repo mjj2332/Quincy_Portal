@@ -438,7 +438,8 @@ function GanttRowAttentionBadge({ reason }: { reason: ProductionGanttAttentionRe
   return (
     <span
       className={cn(
-        "shrink-0 truncate text-[10px] uppercase tracking-[0.04em]",
+        // #686: on a phone the label shrinks (at most 45% of the cell) and truncates after the project name; desktop keeps it whole.
+        "min-w-0 truncate text-[10px] uppercase tracking-[0.04em] max-[720px]:max-w-[45%] min-[721px]:shrink-0",
         critical ? "text-signal-critical" : "text-muted-foreground",
       )}
       data-testid={`gantt-row-attention-${reason}`}
