@@ -220,7 +220,7 @@ function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedba
             endYear={bounds.endYear}
           />
           <div className="flex min-w-0 flex-col gap-[var(--space-2)] min-[721px]:w-28 min-[721px]:shrink-0">
-            <TimeColumn selected={draft.time && SLOTS.includes(draft.time) ? draft.time : null} skipped={skipped} onPick={pickSlot} />
+            <TimeColumn selected={draft.time} skipped={skipped} onPick={pickSlot} />
           </div>
         </div>
         <Field data-invalid={timeInvalid || undefined}>
