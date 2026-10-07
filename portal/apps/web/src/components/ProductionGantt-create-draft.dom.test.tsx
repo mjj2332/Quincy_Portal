@@ -614,3 +614,81 @@ describe("ProductionGantt — one editor at a time", () => {
     expect(apiPostMock).toHaveBeenLastCalledWith(`/api/projects/${PROJECT_A}/subtasks`, { title: "After" });
   });
 });
+
+describe("ProductionGantt — a coarse-pointer tablet (>720px) gets 44px rows and keeps the inline create row (#695)", () => {
+  let matches: Map<string, boolean>;
+  let listeners: Map<string, Set<() => void>>;
+  beforeEach(() => {
+    matches = new Map([["(pointer: coarse)", true]]);
+    listeners = new Map();
+    vi.stubGlobal("matchMedia", (query: string) => {
+      const set = listeners.get(query) ?? new Set<() => void>();
+      listeners.set(query, set);
+      return {
+        media: query,
+        get matches() { return matches.get(query) ?? false; },
+        addEventListener: (_type: string, listener: () => void) => set.add(listener),
+        removeEventListener: (_type: string, listener: () => void) => set.delete(listener),
+        addListener: (listener: () => void) => set.add(listener),
+        removeListener: (listener: () => void) => set.delete(listener),
+        onchange: null,
+        dispatchEvent: () => false,
+      } as unknown as MediaQueryList;
+    });
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+  const setCoarse = async (value: boolean) => {
+    matches.set("(pointer: coarse)", value);
+    await act(async () => { listeners.get("(pointer: coarse)")?.forEach((listener) => listener()); await Promise.resolve(); });
+    await settle();
+  };
+  const rowHeights = () => Array.from(host.querySelectorAll<HTMLElement>("[data-gantt-row-id]")).map((el) => el.style.height).filter(Boolean);
+  const rowHeightsById = () => {
+    const byId = new Map<string, Set<string>>();
+    for (const el of host.querySelectorAll<HTMLElement>("[data-gantt-row-id]")) {
+      if (!el.style.height) continue;
+      const id = el.getAttribute("data-gantt-row-id")!;
+      byId.set(id, (byId.get(id) ?? new Set()).add(el.style.height));
+    }
+    return byId;
+  };
+
+  it("Project and Subtask rows are 2.75rem in both panes, paired by row id", async () => {
+    await mount();
+    const byId = rowHeightsById();
+    expect(byId.size).toBeGreaterThan(1);
+    for (const [id, set] of byId) expect([...set], id).toEqual(["2.75rem"]);
+    // both panes render each Project row
+    const projectEls = Array.from(host.querySelectorAll<HTMLElement>("[data-gantt-row-id]")).filter((el) => el.getAttribute("data-gantt-row-id") === `project:${PROJECT_A}`);
+    expect(projectEls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("tapping + opens the inline row, not a sheet; the tree row and the chart-pane spacer are 2.75rem", async () => {
+    await mount();
+    await click(plus(STREET_A)!);
+    expect(document.querySelector('[data-testid="gantt-group-create-task-sheet"]')).toBeNull();
+    expect(editorRow()).not.toBeNull();
+    expect(editorRow()!.style.height).toBe("2.75rem");
+    const spacer = host.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-spacer"]');
+    expect(spacer).not.toBeNull();
+    expect(spacer!.style.height).toBe("2.75rem");
+  });
+
+  it("a fine pointer above 720px stays at 2.5rem", async () => {
+    matches.set("(pointer: coarse)", false);
+    await mount();
+    expect(new Set(rowHeights())).toEqual(new Set(["2.5rem"]));
+  });
+
+  it("switching coarse -> fine -> coarse updates the heights and keeps an open draft", async () => {
+    await mount();
+    await click(plus(STREET_A)!);
+    await type(input()!, "Keep me");
+    await setCoarse(false);
+    expect(new Set(rowHeights())).toEqual(new Set(["2.5rem"]));
+    expect(input()!.value).toBe("Keep me");
+    await setCoarse(true);
+    expect(new Set(rowHeights())).toEqual(new Set(["2.75rem"]));
+    expect(input()!.value).toBe("Keep me");
+  });
+});

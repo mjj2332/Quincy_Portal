@@ -440,8 +440,8 @@ const ATTENTION_SHORT_TEXT: Record<ProductionGanttAttentionReason, string> = {
   resolution_failed: "Error",
 };
 
-/** #693.2: a phone row is 44px so each row's 44px + fills it and adjacent targets never intersect. Module-level so the prop is stable. */
-const GANTT_METRICS_PHONE: GanttMetrics = { minRowHeight: 2.75 };
+/** #693.2, #695: a phone or coarse-pointer row is 44px so each row's 44px + fills it and adjacent targets never intersect. Module-level so the prop is stable. */
+const GANTT_METRICS_TOUCH: GanttMetrics = { minRowHeight: 2.75 };
 
 export function GanttRowAttentionBadge({ reason }: { reason: ProductionGanttAttentionReason }) {
   const critical = CRITICAL_ATTENTION_REASONS.has(reason);
@@ -1344,6 +1344,8 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // -------------------------------------------------------------------------------------------
   // The Subtask whose inline editor session the controller holds, if any.
   const narrowTree = useMediaQuery("(max-width: 720px)");
+  // Same media feature Tailwind's `pointer-coarse:` compiles to, so the JS row metric and the CSS variant agree (#695).
+  const coarsePointer = useMediaQuery("(pointer: coarse)");
   // #582: an inline session is drawn by the Due cell ("due-cell", the default) or by the item menu's bar picker ("item").
   const dueEditor = commands.scheduleEditor?.inline && (commands.scheduleEditor.inlineTarget ?? "due-cell") === "due-cell" ? commands.scheduleEditor : null;
   const itemEditor = commands.scheduleEditor?.inline && commands.scheduleEditor.inlineTarget === "item" ? commands.scheduleEditor : null;
@@ -2200,7 +2202,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             i18n={GANTT_I18N}
             // #256: the name column fills the tree panel (see GANTT_NAME_COLUMN_WIDTH).
             treePanel={narrowTree ? GANTT_TREE_PANEL_NARROW : GANTT_TREE_PANEL}
-            metrics={narrowTree ? GANTT_METRICS_PHONE : undefined}
+            metrics={narrowTree || coarsePointer ? GANTT_METRICS_TOUCH : undefined}
             columns={columns}
             interactions={interactions}
             onEventUpdate={handleEventUpdate}
