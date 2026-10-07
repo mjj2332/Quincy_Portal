@@ -126,6 +126,14 @@ describe("DateTimeField range trigger and popup", () => {
     expect(rangeToggles(popup())).toMatchObject({ start: "Thu 1 Oct · 09:00", end: "Sat 7 Nov · 17:00" });
   });
 
+  it("the pressed Start/End toggle keeps its label colour on hover, and a 2027 end names its year (#683 review)", async () => {
+    await mount({ value: range("2026-10-02T09:00", "2027-10-03T17:00") });
+    await open();
+    const toggle = [...popup().querySelectorAll<HTMLButtonElement>('[aria-label="Edit which end"] button')][0]!;
+    expect(toggle.className).toContain("aria-pressed:hover:!text-primary-foreground");
+    expect(rangeToggles(popup())).toMatchObject({ start: "Fri 2 Oct · 09:00", end: "Sun 3 Oct 2027 · 17:00" });
+  });
+
   it("sublabels follow the active tab and the pressed chip follows the active end only (#683)", async () => {
     await mount({ value: range("2026-10-01T09:00", "2026-10-01T17:00"), projectDefault: range("2026-12-01T09:00", "2026-12-04T17:00") });
     await open();

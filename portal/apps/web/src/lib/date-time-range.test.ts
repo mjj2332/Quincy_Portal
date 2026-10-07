@@ -36,7 +36,13 @@ describe("buildRangeShortcuts", () => {
   });
 
   it("momentLabel is the weekday, day, month and time", () => {
-    expect(momentLabel("2026-10-07T09:00")).toBe("Wed 7 Oct · 09:00");
+    expect(momentLabel("2026-10-07T09:00", TODAY)).toBe("Wed 7 Oct · 09:00");
+  });
+
+  it("momentLabel adds the year only outside the current Sydney year (#683 review)", () => {
+    expect(momentLabel("2027-10-03T09:00", TODAY)).toBe("Sun 3 Oct 2027 · 09:00");
+    expect(momentLabel("2025-12-31T09:00", TODAY)).toBe("Wed 31 Dec 2025 · 09:00");
+    expect(momentLabel("2026-12-31T09:00", TODAY)).toBe("Thu 31 Dec · 09:00");
   });
 
   it("resolves the week shortcuts from a Sunday and a Monday", () => {
