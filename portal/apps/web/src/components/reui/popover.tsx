@@ -4,6 +4,7 @@ import { Popover as PopoverPrimitive } from "@base-ui/react/popover"
 import { cn } from "@/lib/utils"
 import { OverlayContainerContext } from "@/components/OverlayContainerContext"
 import { InsideAlertDialogContext, keepOpenBehindAlertDialog } from "@/lib/alert-dialog-press"
+import { parkedFocusReturnTarget } from "@/lib/return-focus-before-close"
 
 /**
  * Popover primitive — base-nova's `popover` (`docs/adr/0005-…` addendum), the first consumer
@@ -62,6 +63,19 @@ import { InsideAlertDialogContext, keepOpenBehindAlertDialog } from "@/lib/alert
  *    discarded its draft. A plain `shadcn add popover` would silently revert this;
  *    `popover-adaptation.guard.test.ts` pins it.
  *
+ * 10. **QUINCY ADAPTATION (#669): inside a modal surface, a controlled popover puts focus on its
+ *    trigger itself when it closes.** The Project sheet's `restoreFocus: "popup"` refocuses the sheet
+ *    a frame after focus goes homeless, ahead of Base UI's own return to the trigger, so a popover
+ *    closed by Escape or by its own Apply/Cancel (which call `setOpen(false)` and never reach
+ *    `onOpenChange`) lost focus to the sheet. `Popover` watches the controlled `open` true to false
+ *    edge in a layout effect (inside React's commit, before the sheet's restore-focus microtask) and
+ *    focuses the trigger when `parkedFocusReturnTarget` (`lib/return-focus-before-close.ts`, shared
+ *    with `quincy/menu.tsx`) says focus is parked: inside the popup, on <body>, or on the sheet
+ *    popup. It applies only inside an `OverlayContainerContext` (a modal surface), never when the
+ *    caller passes `finalFocus` to `PopoverContent`, and never to an uncontrolled Popover, which
+ *    keeps Base UI's default. Consumers carry no trigger-refocus of their own.
+ *    `popover-adaptation.guard.test.ts` pins it.
+ *
  * `bg-popover`, `text-popover-foreground` and `ring-foreground/10` are kept: the panel portals to
  * `document.body`, outside any `[data-surface]` subtree, and all three roles are bridged
  * (`tokens/tailwind.css:24,27-28`) — `styles/sidebar-token-bridge.guard.test.ts`'s rail-surface
@@ -72,23 +86,67 @@ import { InsideAlertDialogContext, keepOpenBehindAlertDialog } from "@/lib/alert
  * no-ops today, same as P1's sidebar/tooltip vendoring.
  */
 
+type PopoverFocusRefs = {
+  trigger: React.MutableRefObject<HTMLElement | null>
+  popup: React.MutableRefObject<HTMLElement | null>
+  explicitFinalFocus: React.MutableRefObject<boolean>
+}
+const PopoverFocusContext = React.createContext<PopoverFocusRefs | null>(null)
+
+/** Assign a node to a caller's ref (callback or object) alongside our own. */
+function assignRef<T>(ref: React.Ref<T> | undefined, node: T | null) {
+  if (typeof ref === "function") ref(node)
+  else if (ref) (ref as React.MutableRefObject<T | null>).current = node
+}
+
 function Popover({ onOpenChange, ...props }: PopoverPrimitive.Root.Props) {
   // A popover opened from inside an alert dialog sits above it and keeps ordinary dismissal.
   const insideAlertDialog = React.useContext(InsideAlertDialogContext)
+  const container = React.useContext(OverlayContainerContext)
+  const refs = React.useRef<PopoverFocusRefs>({
+    trigger: { current: null },
+    popup: { current: null },
+    explicitFinalFocus: { current: false },
+  }).current
+  // #669: on the controlled open true -> false edge, return focus to the trigger ourselves.
+  const open = props.open
+  const wasOpen = React.useRef(false)
+  React.useLayoutEffect(() => {
+    const closing = wasOpen.current && open === false
+    wasOpen.current = open === true
+    if (!closing || refs.explicitFinalFocus.current) return
+    const target = parkedFocusReturnTarget({
+      active: document.activeElement,
+      trigger: refs.trigger.current,
+      popup: refs.popup.current,
+      container,
+    })
+    target?.focus({ preventScroll: true })
+  }, [open, container, refs])
   return (
-    <PopoverPrimitive.Root
-      data-slot="popover"
-      onOpenChange={(open, details) => {
-        if (keepOpenBehindAlertDialog(open, details, insideAlertDialog)) return
-        onOpenChange?.(open, details)
-      }}
-      {...props}
-    />
+    <PopoverFocusContext.Provider value={refs}>
+      <PopoverPrimitive.Root
+        data-slot="popover"
+        onOpenChange={(open, details) => {
+          if (keepOpenBehindAlertDialog(open, details, insideAlertDialog)) return
+          onOpenChange?.(open, details)
+        }}
+        {...props}
+      />
+    </PopoverFocusContext.Provider>
   )
 }
 
-function PopoverTrigger({ ...props }: PopoverPrimitive.Trigger.Props) {
-  return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props} />
+function PopoverTrigger({ ref, ...props }: PopoverPrimitive.Trigger.Props) {
+  const refs = React.useContext(PopoverFocusContext)
+  const setRef = React.useCallback(
+    (node: HTMLButtonElement | null) => {
+      if (refs) refs.trigger.current = node
+      assignRef(ref as React.Ref<HTMLButtonElement> | undefined, node)
+    },
+    [refs, ref]
+  )
+  return <PopoverPrimitive.Trigger data-slot="popover-trigger" ref={setRef} {...props} />
 }
 
 function PopoverContent({
@@ -102,6 +160,7 @@ function PopoverContent({
   anchor,
   positionMethod,
   positionerClassName,
+  ref,
   ...props
 }: PopoverPrimitive.Popup.Props & { positionerClassName?: string } &
   Pick<
@@ -116,6 +175,18 @@ function PopoverContent({
     | "positionMethod"
   >) {
   const container = React.useContext(OverlayContainerContext) ?? undefined
+  const refs = React.useContext(PopoverFocusContext)
+  const explicitFinalFocus = props.finalFocus !== undefined
+  React.useLayoutEffect(() => {
+    if (refs) refs.explicitFinalFocus.current = explicitFinalFocus
+  }, [refs, explicitFinalFocus])
+  const setRef = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      if (refs) refs.popup.current = node
+      assignRef(ref as React.Ref<HTMLDivElement> | undefined, node)
+    },
+    [refs, ref]
+  )
   return (
     <PopoverPrimitive.Portal container={container}>
       <PopoverPrimitive.Positioner
@@ -131,6 +202,7 @@ function PopoverContent({
       >
         <PopoverPrimitive.Popup
           data-slot="popover-content"
+          ref={setRef}
           className={cn(
             "z-[var(--z-popover)] flex w-72 origin-(--transform-origin) flex-col gap-2.5 rounded-lg bg-popover p-2.5 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 data-[side=bottom]:slide-in-from-top-2 data-[side=inline-end]:slide-in-from-left-2 data-[side=inline-start]:slide-in-from-right-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
             className

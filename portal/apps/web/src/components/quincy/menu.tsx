@@ -3,6 +3,7 @@ import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 
 import { cn } from "@/lib/utils";
 import { OverlayContainerContext } from "@/components/OverlayContainerContext";
+import { parkedFocusReturnTarget } from "@/lib/return-focus-before-close";
 
 // Built on @base-ui/react's Menu primitives — not @floating-ui/react. See TB8-02 plan §2.1 for
 // why the two shared overlay primitives (`Modal`, `AnchoredPopover`) stay on floating-ui while
@@ -157,8 +158,10 @@ export function Menu({
   // homeless, and its NEXT frame refocuses the Sheet itself, after this Menu's own return-focus.
   // Moving focus to the trigger first means that never happens; page-level menus are unaffected.
   function handleOpenChange(nextOpen: boolean) {
-    if (!nextOpen && container && internalPopupRef.current?.contains(document.activeElement)) {
-      triggerRef.current?.focus();
+    // #669: the shared predicate (`lib/return-focus-before-close.ts`, also used by `reui/popover.tsx`). A caller's `finalFocus`
+    // returning `false` is a pending hand-off to a dialog that now owns focus (#463): leave focus alone.
+    if (!nextOpen && finalFocus?.() !== false) {
+      parkedFocusReturnTarget({ active: document.activeElement, trigger: triggerRef.current, popup: internalPopupRef.current, container })?.focus();
     }
     onOpenChange?.(nextOpen);
   }

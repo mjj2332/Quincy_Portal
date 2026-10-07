@@ -7,13 +7,14 @@ import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project
 import { ProjectSheet } from "./quincy/ProjectSheet";
 import { ProjectHeaderDeadline } from "./ProjectHeaderDeadline";
 import { pickPopupDateTime, applyPopup } from "@/testing/date-time-popup";
+import { emulateSheetRestoreFocus } from "@/testing/sheet-restore-focus";
 
 /**
  * #664 (#662 item 2) — the header Deadline's popover renders inside the modal Project sheet, whose
  * `restoreFocus: "popup"` reclaims focus a frame after the popover closes (lesson "Adopting
  * base-nova's sidebar…", P3; the same fix as `quincy/menu.tsx`). happy-dom does not reproduce the
  * sheet's own refocus, so this pins the mechanism: focus is on the trigger the moment the popover
- * closes and still there a frame later. The sheet's refocus is EMULATED below (`emulateSheetRestoreFocus`), so a pass here is
+ * closes and still there a frame later. The sheet's refocus is EMULATED below (`testing/sheet-restore-focus.ts`), so a pass here is
  * not proof against the real sheet: the browser pass is (docs/lessons.md, "A focus test can pass because something else restored focus").
  */
 
@@ -65,28 +66,11 @@ async function open() {
   expect(popup()!.contains(document.activeElement)).toBe(true);
 }
 
-/**
- * happy-dom has no `FloatingFocusManager`, so stand in for the sheet's `restoreFocus: "popup"`: when
- * the Deadline popup leaves the DOM and focus is homeless (on <body>), the sheet takes it back one
- * frame later. A trigger that already holds focus is left alone, as the real manager leaves it.
- */
-let reclaim: MutationObserver | null = null;
-function emulateSheetRestoreFocus() {
-  let had = false;
-  reclaim = new MutationObserver(() => {
-    const present = popup() !== null;
-    if (had && !present) {
-      const active = document.activeElement;
-      if (!active || active === document.body) requestAnimationFrame(() => document.querySelector<HTMLElement>('[role="dialog"][aria-labelledby]')?.focus());
-    }
-    had = present;
-  });
-  reclaim.observe(document.body, { childList: true, subtree: true });
-}
+let stopReclaim: (() => void) | null = null;
 
-beforeEach(() => { (HTMLElement.prototype as unknown as { getAnimations: () => unknown[] }).getAnimations = () => []; emulateSheetRestoreFocus(); host = document.createElement("div"); document.body.appendChild(host); apiPutMock.mockReset(); });
+beforeEach(() => { (HTMLElement.prototype as unknown as { getAnimations: () => unknown[] }).getAnimations = () => []; stopReclaim = emulateSheetRestoreFocus(popup); host = document.createElement("div"); document.body.appendChild(host); apiPutMock.mockReset(); });
 afterEach(async () => {
-  reclaim?.disconnect();
+  stopReclaim?.();
   if (root) await act(async () => { root!.unmount(); await Promise.resolve(); });
   runtime?.dispose(); queryClient?.clear(); root = null; host.remove(); document.body.replaceChildren();
 });
@@ -123,6 +107,27 @@ describe("header Deadline inside the Project sheet — focus on close (#664)", (
     await applyPopup(popup()!);
     await act(async () => { await new Promise<void>((r) => setTimeout(r, 0)); });
     expect(apiPutMock).toHaveBeenCalledTimes(1);
+    expect(popup()).toBeNull();
+    expect(document.activeElement).toBe(trigger());
+    await frame();
+    expect(document.activeElement).toBe(trigger());
+  });
+
+  it("a save whose pending window lets the sheet reclaim focus still ends on the trigger (#669)", async () => {
+    let resolvePut!: (value: unknown) => void;
+    apiPutMock.mockReturnValue(new Promise((resolve) => { resolvePut = resolve; }));
+    await mountInSheet();
+    await open();
+    await pickPopupDateTime(popup()!, "2027-01-15T09:00");
+    await applyPopup(popup()!);
+    expect(apiPutMock).toHaveBeenCalledTimes(1);
+    // While the PUT is pending the sheet takes focus back (the cell's Apply button is busy).
+    await act(async () => { document.querySelector<HTMLElement>('[role="dialog"][aria-labelledby]')!.focus(); });
+    expect(popup()!.contains(document.activeElement)).toBe(false);
+    await act(async () => {
+      resolvePut({ changed: true, current: { ...emptySchedule, version: 1, source: "manual", state: "scheduled", deadline: { localCivil: "2027-01-15T09:00", zone: "Australia/Sydney", utcOffsetMinutes: 660, fold: 0, instant: "2027-01-14T22:00:00.000Z" }, reminderOffsetsMinutes: [1440] }, eventIntent: null, publicationIds: [] });
+      await new Promise<void>((r) => setTimeout(r, 0));
+    });
     expect(popup()).toBeNull();
     expect(document.activeElement).toBe(trigger());
     await frame();
