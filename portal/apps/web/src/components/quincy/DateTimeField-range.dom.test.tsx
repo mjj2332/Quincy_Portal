@@ -118,6 +118,14 @@ describe("DateTimeField range trigger and popup", () => {
     expect(rangeToggles(popup())).toMatchObject({ start: "Fri 2 Oct · 09:00", end: "Sat 3 Oct · 17:00" });
   });
 
+  it("a cleared start time does not make Today discard a valid end (#683 review)", async () => {
+    await mount({ value: range("2026-10-02T09:00", "2026-11-07T17:00") });
+    await open();
+    await typePopupTime(popup(), "");
+    await pressInPopup(popup(), "Today");
+    expect(rangeToggles(popup())).toMatchObject({ start: "Thu 1 Oct · 09:00", end: "Sat 7 Nov · 17:00" });
+  });
+
   it("sublabels follow the active tab and the pressed chip follows the active end only (#683)", async () => {
     await mount({ value: range("2026-10-01T09:00", "2026-10-01T17:00"), projectDefault: range("2026-12-01T09:00", "2026-12-04T17:00") });
     await open();

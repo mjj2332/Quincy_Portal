@@ -99,30 +99,43 @@ function civilFromMinutes(minutes: number): string {
   return new Date(minutes * 60_000).toISOString().slice(0, 16);
 }
 
+/** An end of the draft as the popup holds it: its civil minute (null when empty) and its instant (null when empty, invalid, in a daylight-saving gap or an unchosen repeat). */
+export type RangeEndState = { civil: string | null; epochMs: number | null };
+
+function epochOf(moment: RangeMoment): number | null {
+  const result = resolveSydneyCivilMinute(moment.localCivil, moment.fold === 1 ? "later" : "earlier");
+  return result.ok ? result.value.epochMs : null;
+}
+
 /**
- * Applies a shortcut to the draft's two civil minutes (`null` when an end is empty), judged in wall-clock minutes. All the
- * collision rules live here (#683):
+ * Applies a shortcut to the draft's two ends. Each end is judged on its own and order is by instant, the rule the server
+ * enforces (ADR 0016); only the duration a START collision keeps is civil (wall-clock) minutes. All the collision rules live
+ * here (#683):
  * - A Project default sets both ends from either tab, no collision handling.
  * - Otherwise only the active end takes the shortcut's moment and the other is `"keep"`, unless
- *   - the other end is empty, invalid, or the draft was already inverted: it is filled from `pair`; or
- *   - START: the new start is on or after the end, so the end moves to keep the old duration; or
- *   - END: the new end is on or before the start, so the start becomes the shortcut's own start (never the past).
+ *   - the other end has no instant (empty, invalid, in a gap): it is filled from `pair`, whatever the active end holds; or
+ *   - START: the new start is at or after the end, so the end moves to keep the old civil duration (the pair's end when
+ *     that duration is unknown or not positive); or
+ *   - END: the new end is at or before the start, so the start becomes the shortcut's own start (never the past).
  */
-export function applyRangeShortcut(row: RangeShortcut, active: RangeEnd, current: { start: string | null; end: string | null }): RangeShortcutResult {
-  if (row.scope === "range") return { start: row.pair.start, end: row.pair.end };
-  const oldStart = civilMinutes(current.start);
-  const oldEnd = civilMinutes(current.end);
-  const usable = oldStart !== null && oldEnd !== null && oldStart < oldEnd;
-  if (!usable) return { start: row.pair.start, end: row.pair.end };
+export function applyRangeShortcut(row: RangeShortcut, active: RangeEnd, current: { start: RangeEndState; end: RangeEndState }): RangeShortcutResult {
+  const { pair } = row;
+  if (row.scope === "range") return { start: pair.start, end: pair.end };
+  const fromPair: RangeShortcutResult = { start: pair.start, end: pair.end };
+  const other = current[active === "start" ? "end" : "start"];
+  const moment = pair[active];
+  const newEpoch = epochOf(moment);
+  if (other.epochMs === null || newEpoch === null) return fromPair;
   if (active === "start") {
-    const start = row.pair.start;
-    const newStart = civilMinutes(start.localCivil)!;
-    if (newStart < oldEnd) return { start, end: "keep" };
-    return { start, end: { localCivil: civilFromMinutes(newStart + (oldEnd - oldStart)), fold: 0 } };
+    if (newEpoch < other.epochMs) return { start: moment, end: "keep" };
+    const oldStart = civilMinutes(current.start.civil);
+    const oldEnd = civilMinutes(current.end.civil);
+    const newStart = civilMinutes(moment.localCivil);
+    if (oldStart === null || oldEnd === null || newStart === null || oldEnd <= oldStart) return fromPair;
+    return { start: moment, end: { localCivil: civilFromMinutes(newStart + (oldEnd - oldStart)), fold: 0 } };
   }
-  const end = row.pair.end;
-  if (civilMinutes(end.localCivil)! > oldStart) return { start: "keep", end };
-  return { start: row.pair.start, end };
+  if (newEpoch > other.epochMs) return { start: "keep", end: moment };
+  return fromPair;
 }
 
 /**

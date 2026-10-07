@@ -239,7 +239,7 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
     // #598: moving the grid to another month removes the focused day; keep focus on the preset instead of letting it fall to the popup.
     button.focus({ preventScroll: true });
     // #683: only the active end moves (Project default sets both); an end the shortcut leaves keeps its draft whole, typed text and fold choice included.
-    const result = applyRangeShortcut(shortcut, draft.active, { start: resolved.start.civil, end: resolved.end.civil });
+    const result = applyRangeShortcut(shortcut, draft.active, { start: { civil: resolved.start.civil, epochMs: resolved.start.epochMs }, end: { civil: resolved.end.civil, epochMs: resolved.end.epochMs } });
     const moved = (moment: RangeMoment): EndDraft => {
       const parts = splitCivilMinute(moment.localCivil);
       return { day: parts.day, time: parts.time, timeText: parts.time ?? "", fold: { minute: moment.localCivil, choice: foldChoice(moment.fold) } };
