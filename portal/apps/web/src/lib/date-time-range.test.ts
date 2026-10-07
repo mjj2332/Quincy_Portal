@@ -1,0 +1,195 @@
+import { describe, expect, it } from "vitest";
+import { resolveSydneyCivilMinute } from "@quincy/shared";
+import { applyRangeShortcut, buildRangeShortcuts, momentLabel, type DateTimeRangeValue, type RangeShortcut } from "./date-time-range";
+
+/** #683: a shortcut sets the ACTIVE end only; Project default is the one that sets both. Wed 7 Oct 2026 unless stated. */
+const TODAY = "2026-10-07";
+const moment = (localCivil: string, fold: 0 | 1 = 0) => ({ localCivil, fold });
+const range = (start: string, end: string): DateTimeRangeValue => ({ start: moment(start), end: moment(end) });
+const rows = (active: "start" | "end", projectDefault: DateTimeRangeValue | null = null, today = TODAY) => Object.fromEntries(buildRangeShortcuts({ today, projectDefault, active }).map((row) => [row.id, row])) as Record<string, RangeShortcut>;
+type Draft = { start: string | null; end: string | null; startFold?: 0 | 1; endFold?: 0 | 1 };
+/** An end as the popup hands it over: its civil minute and its instant, null when the minute is empty, invalid, in a gap or an unchosen repeat. */
+const endOf = (civil: string | null, fold: 0 | 1 = 0) => {
+  const result = civil && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(civil) ? resolveSydneyCivilMinute(civil, fold === 1 ? "later" : "earlier") : null;
+  return { civil, epochMs: result && result.ok ? result.value.epochMs : null };
+};
+const apply = (id: string, active: "start" | "end", current: Draft, today = TODAY, projectDefault: DateTimeRangeValue | null = null) =>
+  applyRangeShortcut(rows(active, projectDefault, today)[id]!, active, { start: endOf(current.start, current.startFold), end: endOf(current.end, current.endFold) });
+
+describe("buildRangeShortcuts", () => {
+  it("carries the full pair each shortcut used to set, and a scope", () => {
+    const all = rows("start", range("2026-12-01T09:00", "2026-12-04T17:00"));
+    expect(Object.keys(all)).toEqual(["today", "tomorrow", "this-week", "next-week", "project-default"]);
+    expect(all.today!.pair).toEqual(range("2026-10-07T09:00", "2026-10-07T17:00"));
+    expect(all.tomorrow!.pair).toEqual(range("2026-10-08T09:00", "2026-10-08T17:00"));
+    expect(all["this-week"]!.pair).toEqual(range("2026-10-07T09:00", "2026-10-11T17:00"));
+    expect(all["next-week"]!.pair).toEqual(range("2026-10-12T09:00", "2026-10-18T17:00"));
+    expect(all["project-default"]!.pair).toEqual(range("2026-12-01T09:00", "2026-12-04T17:00"));
+    expect(Object.values(all).map((row) => row.scope)).toEqual(["end", "end", "end", "end", "range"]);
+  });
+
+  it("labels each sublabel with what the shortcut sets on the active tab", () => {
+    const start = rows("start", range("2026-12-01T09:00", "2026-12-04T17:00"));
+    expect(Object.values(start).map((row) => row.sublabel)).toEqual(["Wed 7 Oct · 09:00", "Thu 8 Oct · 09:00", "Wed 7 Oct · 09:00", "Mon 12 Oct · 09:00", "1 Dec – 4 Dec"]);
+    const end = rows("end", range("2026-12-01T09:00", "2026-12-04T17:00"));
+    expect(Object.values(end).map((row) => row.sublabel)).toEqual(["Wed 7 Oct · 17:00", "Thu 8 Oct · 17:00", "Sun 11 Oct · 17:00", "Sun 18 Oct · 17:00", "1 Dec – 4 Dec"]);
+  });
+
+  it("momentLabel is the weekday, day, month and time", () => {
+    expect(momentLabel("2026-10-07T09:00", TODAY)).toBe("Wed 7 Oct · 09:00");
+  });
+
+  it("momentLabel adds the year only outside the current Sydney year (#683 review)", () => {
+    expect(momentLabel("2027-10-03T09:00", TODAY)).toBe("Sun 3 Oct 2027 · 09:00");
+    expect(momentLabel("2025-12-31T09:00", TODAY)).toBe("Wed 31 Dec 2025 · 09:00");
+    expect(momentLabel("2026-12-31T09:00", TODAY)).toBe("Thu 31 Dec · 09:00");
+  });
+
+  it("resolves the week shortcuts from a Sunday and a Monday", () => {
+    expect(rows("end", null, "2026-10-11")["this-week"]!.pair.end.localCivil).toBe("2026-10-11T17:00");
+    expect(rows("start", null, "2026-10-11")["next-week"]!.pair.start.localCivil).toBe("2026-10-12T09:00");
+    expect(rows("end", null, "2026-10-12")["this-week"]!.pair.end.localCivil).toBe("2026-10-18T17:00");
+    expect(rows("start", null, "2026-10-12")["next-week"]!.pair.start.localCivil).toBe("2026-10-19T09:00");
+  });
+
+  it("crosses a month boundary", () => {
+    expect(rows("end", null, "2026-10-29")["next-week"]!.pair).toEqual(range("2026-11-02T09:00", "2026-11-08T17:00"));
+  });
+
+  it("has no Project default row without one", () => {
+    expect(rows("start")["project-default"]).toBeUndefined();
+  });
+});
+
+describe("applyRangeShortcut: a shortcut that does not collide", () => {
+  it("START: sets the start and keeps the end untouched", () => {
+    expect(apply("today", "start", { start: "2026-10-05T10:00", end: "2026-10-09T15:30" })).toEqual({ start: moment("2026-10-07T09:00"), end: "keep" });
+  });
+
+  it("END: sets the end and keeps the start untouched", () => {
+    expect(apply("this-week", "end", { start: "2026-10-05T10:00", end: "2026-10-09T15:30" })).toEqual({ start: "keep", end: moment("2026-10-11T17:00") });
+  });
+
+  it("the owner's case: START Today on 7 Oct 18:00 to 8 Oct 17:00 gives 09:00 to the same end", () => {
+    expect(apply("today", "start", { start: "2026-10-07T18:00", end: "2026-10-08T17:00" })).toEqual({ start: moment("2026-10-07T09:00"), end: "keep" });
+  });
+});
+
+describe("applyRangeShortcut: START collisions", () => {
+  it("moves the end to keep the old duration when the new start lands on or after it", () => {
+    // 2 days 6 h old range; Tomorrow START = Thu 8 Oct 09:00, which is after the end (Tue 6 Oct 15:00).
+    expect(apply("tomorrow", "start", { start: "2026-10-04T09:00", end: "2026-10-06T15:00" })).toEqual({ start: moment("2026-10-08T09:00"), end: moment("2026-10-10T15:00") });
+  });
+
+  it("treats equality as a collision", () => {
+    expect(apply("today", "start", { start: "2026-10-07T01:00", end: "2026-10-07T09:00" })).toEqual({ start: moment("2026-10-07T09:00"), end: moment("2026-10-07T17:00") });
+  });
+
+  it("does not collide one minute before the end", () => {
+    expect(apply("today", "start", { start: "2026-10-07T01:00", end: "2026-10-07T09:01" }).end).toBe("keep");
+  });
+
+  it("measures the duration in wall-clock minutes, so 09:00 survives a daylight-saving change", () => {
+    // Sat 3 Oct 09:00 to Sun 4 Oct 09:00 is 24 civil hours (23 real: Sydney springs forward on 4 Oct). Today START = Sun 4 Oct 09:00 equals the end.
+    expect(apply("today", "start", { start: "2026-10-03T09:00", end: "2026-10-04T09:00" }, "2026-10-04")).toEqual({ start: moment("2026-10-04T09:00"), end: moment("2026-10-05T09:00") });
+  });
+});
+
+describe("applyRangeShortcut: END collisions", () => {
+  it("sets the start to the shortcut's own start when the new end is not after it", () => {
+    // Mon 5 Oct to Fri 9 Oct; END Today = Wed 7 Oct 17:00 is after the start, so no collision...
+    expect(apply("today", "end", { start: "2026-10-05T09:00", end: "2026-10-09T17:00" })).toEqual({ start: "keep", end: moment("2026-10-07T17:00") });
+    // ...but a start on Thu 8 Oct 18:00 collides, and takes Today's own 09:00 (never the past, never the kept duration).
+    expect(apply("today", "end", { start: "2026-10-08T18:00", end: "2026-10-09T17:00" })).toEqual({ start: moment("2026-10-07T09:00"), end: moment("2026-10-07T17:00") });
+  });
+
+  it("treats equality as a collision", () => {
+    expect(apply("today", "end", { start: "2026-10-07T17:00", end: "2026-10-08T17:00" })).toEqual({ start: moment("2026-10-07T09:00"), end: moment("2026-10-07T17:00") });
+  });
+
+  it("does not collide one minute after the start", () => {
+    expect(apply("today", "end", { start: "2026-10-07T16:59", end: "2026-10-09T17:00" }).start).toBe("keep");
+  });
+});
+
+describe("applyRangeShortcut: an unusable other end", () => {
+  it.each([
+    ["empty", null],
+    ["not a civil minute", "garbage"],
+  ])("START with an %s end fills it from the pair", (_name, end) => {
+    expect(apply("tomorrow", "start", { start: "2026-10-05T09:00", end })).toEqual({ start: moment("2026-10-08T09:00"), end: moment("2026-10-08T17:00") });
+  });
+
+  it("END with an empty start fills it from the pair", () => {
+    expect(apply("next-week", "end", { start: null, end: "2026-10-09T17:00" })).toEqual({ start: moment("2026-10-12T09:00"), end: moment("2026-10-18T17:00") });
+  });
+
+  it("an already inverted draft is judged by the new value against the other end, not refilled", () => {
+    const inverted = { start: "2026-10-20T09:00", end: "2026-10-10T17:00" };
+    expect(apply("this-week", "start", inverted)).toEqual({ start: moment("2026-10-07T09:00"), end: "keep" });
+    expect(apply("this-week", "end", inverted)).toEqual({ start: moment("2026-10-07T09:00"), end: moment("2026-10-11T17:00") });
+  });
+
+  it("a non-positive old duration falls back to the pair on a START collision", () => {
+    expect(apply("tomorrow", "start", { start: "2026-10-06T17:00", end: "2026-10-06T09:00" })).toEqual({ start: moment("2026-10-08T09:00"), end: moment("2026-10-08T17:00") });
+  });
+
+  it("an empty draft on START fills both ends", () => {
+    expect(apply("today", "start", { start: null, end: null })).toEqual({ start: moment("2026-10-07T09:00"), end: moment("2026-10-07T17:00") });
+  });
+});
+
+describe("applyRangeShortcut: Project default", () => {
+  const projectDefault: DateTimeRangeValue = { start: moment("2026-12-01T01:30", 1), end: moment("2026-12-04T17:00") };
+
+  it.each(["start", "end"] as const)("sets both ends, folds included, from the %s tab, with no collision handling", (active) => {
+    expect(apply("project-default", active, { start: "2026-12-10T09:00", end: "2026-12-11T09:00" }, TODAY, projectDefault)).toEqual({ start: projectDefault.start, end: projectDefault.end });
+  });
+});
+
+describe("applyRangeShortcut: an invalid active end does not discard a valid other end (#683 review)", () => {
+  it("START with a cleared start time keeps a valid end the new start does not reach", () => {
+    expect(apply("today", "start", { start: null, end: "2026-11-07T17:00" })).toEqual({ start: moment("2026-10-07T09:00"), end: "keep" });
+  });
+
+  it("END with a cleared end time keeps a valid start the new end is after", () => {
+    expect(apply("today", "end", { start: "2026-10-05T09:00", end: null })).toEqual({ start: "keep", end: moment("2026-10-07T17:00") });
+  });
+
+  it("START with an invalid start and a colliding end falls back to the pair", () => {
+    expect(apply("tomorrow", "start", { start: "garbage", end: "2026-10-06T17:00" })).toEqual({ start: moment("2026-10-08T09:00"), end: moment("2026-10-08T17:00") });
+  });
+
+  it("END with an invalid end and a colliding start takes the shortcut's own start", () => {
+    expect(apply("today", "end", { start: "2026-10-08T18:00", end: "garbage" })).toEqual({ start: moment("2026-10-07T09:00"), end: moment("2026-10-07T17:00") });
+  });
+});
+
+describe("applyRangeShortcut: order is by instant (#683 review)", () => {
+  // Sydney's clocks fall back at 03:00 on Sun 5 Apr 2026: 02:45 earlier (+11) is before 02:15 later (+10), a valid 30 minutes.
+  const fold = { start: "2026-04-05T02:45", end: "2026-04-05T02:15", startFold: 0 as const, endFold: 1 as const };
+
+  it("a valid fold range is not inverted: START keeps the end and its fold", () => {
+    expect(apply("today", "start", fold, "2026-04-01")).toEqual({ start: moment("2026-04-01T09:00"), end: "keep" });
+  });
+
+  it("a valid fold range is not inverted: END keeps the start and its fold", () => {
+    expect(apply("tomorrow", "end", fold, "2026-04-05")).toEqual({ start: "keep", end: moment("2026-04-06T17:00") });
+  });
+});
+
+describe("applyRangeShortcut: a gapped other end is filled from the pair (#683 review)", () => {
+  // Sydney springs forward at 02:00 on Sun 4 Oct 2026: 02:30 does not exist.
+  it("START: a gapped end is refilled", () => {
+    expect(apply("today", "start", { start: "2026-10-03T09:00", end: "2026-10-04T02:30" })).toEqual({ start: moment("2026-10-07T09:00"), end: moment("2026-10-07T17:00") });
+  });
+
+  it("END: a gapped start is refilled", () => {
+    expect(apply("today", "end", { start: "2026-10-04T02:30", end: "2026-10-09T17:00" })).toEqual({ start: moment("2026-10-07T09:00"), end: moment("2026-10-07T17:00") });
+  });
+
+  it("START: a shifted end that lands in the gap falls back to the pair's end", () => {
+    // 1 Oct 09:00 to 2 Oct 02:30 is 17.5 civil hours; Today START on Sat 3 Oct (09:00) plus that is 4 Oct 02:30, which does not exist.
+    expect(apply("today", "start", { start: "2026-10-01T09:00", end: "2026-10-02T02:30" }, "2026-10-03")).toEqual({ start: moment("2026-10-03T09:00"), end: moment("2026-10-03T17:00") });
+  });
+});

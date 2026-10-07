@@ -5969,3 +5969,19 @@ Calendar uses it). An External Editor can only see Projects they edit, so for th
 `mine` only narrows rows already inside the authorized scope; nothing new is exposed. Guards:
 `production-gantt-people.test.ts`, `production-gantt-tree.test.ts`, `production-gantt-mine-subtasks.test.ts`,
 `dashboard-filter-sql.test.ts`.
+
+## A range shortcut that sets both ends silently rewrites the one you were not editing (#683)
+Tags: scheduling, focus-overlays · #683
+
+- **Today on the Start tab replaced the End too.** The range popup's shortcuts set a whole range, so pressing Today while
+  editing Start discarded an end the user had already chosen (and its typed time and Earlier / Later). Rule: a shortcut
+  sets the **active end only**; the untouched end is `"keep"`, never re-derived. Project default is the one deliberate
+  exception.
+- **Collisions are decided once, in a pure function.** `applyRangeShortcut` moves the end by the old duration when a new
+  start lands on or after it (measured in civil minutes, not instants, so a DST change does not shift 17:00), and on END
+  takes the shortcut's own start when the new end is not after the start, because keeping the duration would reach the
+  past. Do not re-implement either rule in the popup.
+- **Pressed is per active end, and it can be several.** Today and This week are the same START moment, so both read
+  pressed; `ShortcutList` accepts a list. Project default needs both ends to match.
+
+Guards: `lib/date-time-range.test.ts`, `DateTimeField-range.dom.test.tsx`, `DateTimeField-range-reminders.dom.test.tsx`.
