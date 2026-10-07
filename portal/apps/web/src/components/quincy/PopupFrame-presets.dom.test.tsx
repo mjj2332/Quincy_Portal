@@ -31,7 +31,7 @@ const FADE = 24;
 const TILE = 36;
 const BODY = { top: 100, height: 400, scrollHeight: 900 };
 
-function layout(dayTop: number, slotTop?: number, dayTops: Record<string, number> = {}) {
+function layout(dayTop: number, slotTop?: number, dayTops: Record<string, number> = {}, field?: { label: number; input: number }) {
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
     let box = { top: 0, height: 0 };
     const viewport = this.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
@@ -43,6 +43,7 @@ function layout(dayTop: number, slotTop?: number, dayTops: Record<string, number
     else if (this.getAttribute("aria-label") === "Date shortcuts") box = { top: BODY.top + 8 - scroll, height: 112 };
     else if (this.previousElementSibling?.getAttribute("aria-label") === "Date shortcuts") box = { top: BODY.top + 8 + 112 + 16 - scroll, height: 300 };
     else if (viewport && slotTop !== undefined && this.closest('[role="group"][aria-label="Time slots"]') && this.tagName === "BUTTON" && this.getAttribute("aria-pressed") === "true") box = { top: BODY.top + slotTop - (viewport!.parentElement!.closest<HTMLElement>('[data-slot="scroll-area-viewport"]')?.scrollTop ?? 0), height: 36 };
+    else if (field && viewport && this.closest("[data-time-boundary]") && (this.tagName === "INPUT" || this.tagName === "LABEL")) box = { top: BODY.top + (this.tagName === "INPUT" ? field.input : field.label) - scroll, height: this.tagName === "INPUT" ? 44 : 14 };
     else if (viewport && this.closest('[role="gridcell"]')) box = { top: BODY.top + (dayTops[this.closest('[role="gridcell"]')!.getAttribute("data-day")!] ?? dayTop) - scroll, height: TILE };
     return { ...box, bottom: box.top + box.height, left: 0, right: 0, width: 0, x: 0, y: box.top, toJSON() {} } as DOMRect;
   });
@@ -129,5 +130,35 @@ describe("PopupFrame opens on a whole preset row (#630)", () => {
     layout(300, undefined, { "2026-10-20": 365 });
     const body = await open(null, "range");
     expect(body.scrollTop).toBe(0);
+  });
+});
+
+describe("PopupFrame keeps the TIME field below the fold clear of the bottom fade (#677)", () => {
+  // Body 100..500 (400 tall, max scroll 500), 24px fade; Today active (row 1, 8..60); the 1st fits anywhere. Without the TIME field the body opens at 112
+  // (the presets' end, #674), which leaves a TIME input at content 500..544 straddling the bottom band (376..400 in body coordinates).
+  const FIELD = { label: 478, input: 500 };
+  const openToday = async (variant: "date-time" | "range" = "date-time") => {
+    layout(372, 60, {}, FIELD);
+    return open("2026-10-01", variant);
+  };
+
+  it("lands where the input is wholly below the body, the label inside the band, and no preset chip crosses the top fade's inner edge", async () => {
+    const body = await openToday();
+    const top = FIELD.input - body.scrollTop;
+    expect(top, "input starts at or below the body's bottom edge").toBeGreaterThanOrEqual(BODY.height);
+    expect(FIELD.label + 14 - body.scrollTop, "label never straddles the body's bottom edge").toBeLessThanOrEqual(BODY.height);
+    const edge = Math.min(FADE, body.scrollTop);
+    for (const rowTop of [8, 64, 120]) expect(rowTop - body.scrollTop >= edge || rowTop + 52 - body.scrollTop <= edge, `row at ${rowTop}`).toBe(true);
+    expect(body.scrollTop).toBe(94);
+  });
+
+  it("without a marked TIME field the landing is the #674 one (112)", async () => {
+    layout(372, 60);
+    expect((await open("2026-10-01", "date-time")).scrollTop).toBe(112);
+  });
+
+  it("marks the range popup's TIME field too", async () => {
+    await openToday("range");
+    expect(dateTimePopup("Picker")!.querySelectorAll("[data-time-boundary]")).toHaveLength(1);
   });
 });

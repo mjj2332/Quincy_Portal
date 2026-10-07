@@ -357,7 +357,7 @@ export function DateTimeRangeDraft({ label, value, projectDefault, openOn = "sta
             <TimeColumn selected={current.time} skipped={skipped} onPick={pickSlot} />
           </div>
         </div>
-        <Field data-invalid={timeInvalid || undefined}>
+        <Field data-invalid={timeInvalid || undefined} data-time-boundary="">
           <FieldLabel htmlFor={timeId}>{TITLES[active]} time</FieldLabel>
           <Input id={timeId} inputMode="numeric" autoComplete="off" placeholder="HH:MM" value={current.timeText} aria-invalid={timeInvalid || undefined} aria-describedby={`${timeId}-help`} onChange={(event) => typeTime(event.target.value)} />
           <FieldDescription id={`${timeId}-help`} className="text-[length:var(--text-xs)]">Any minute, for example 17:07, or pick a slot.</FieldDescription>
