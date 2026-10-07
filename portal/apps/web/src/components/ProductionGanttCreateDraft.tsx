@@ -28,7 +28,7 @@ import { SubtaskScheduleControl } from "./quincy/SubtaskScheduleControl";
 export type CreateDraftChange = (patch: Partial<CreateDraft>) => void;
 
 /** The phone sheet's Due trigger: an outlined field the Title input's height, filling its row, instead of the column cell's borderless text. */
-const SHEET_DUE_TRIGGER = "flex-1 justify-start border-input min-h-[38px] max-[721px]:min-h-[44px] px-[10px] -ml-0";
+const SHEET_DUE_TRIGGER = "flex-1 justify-start border-input rounded-[var(--radius-sm)] bg-[var(--field-bg)] text-base min-h-[38px] max-[721px]:min-h-[44px] px-[10px] -ml-0";
 
 /**
  * Keeps a press or key off the row and the tree's key handling. In the phone sheet, Escape on a picker's CLOSED trigger is let

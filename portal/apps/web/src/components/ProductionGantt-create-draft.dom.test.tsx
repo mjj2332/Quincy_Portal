@@ -323,6 +323,17 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
       expect(sheet()!.querySelector('[data-testid="gantt-group-create-task-overlay-slot"]')!.contains(popup)).toBe(true);
     });
 
+    it("the Project's name in the heading is its own body-type element; the Due trigger takes the Title input's radius, background and size; the footer is ruled off", async () => {
+      await mount();
+      await click(plus(STREET_A)!);
+      const popup = sheet()!;
+      const name = popup.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-sheet-project"]')!;
+      expect(name.textContent).toBe(STREET_A);
+      expect(name.className).toContain("font-[family-name:var(--font-sans)]");
+      for (const token of ["rounded-[var(--radius-sm)]", "bg-[var(--field-bg)]", "text-base"]) expect(draftDue()!.className, token).toContain(token);
+      expect(popup.querySelector('[data-testid="gantt-group-create-task-add"]')!.parentElement!.className).toContain("border-t-[length:var(--border-width-hair)]");
+    });
+
     it("the sheet is capped at the viewport with a scrolling body; heading and the Cancel/Add footer sit outside the scroller", async () => {
       await mount();
       await click(plus(STREET_A)!);

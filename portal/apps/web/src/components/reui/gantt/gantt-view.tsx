@@ -3711,6 +3711,10 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
   const inputRef = useRef<HTMLInputElement | null>(null)
   const errorId = useId()
   const titleId = `${errorId}-title`
+  const sheetTitle = createTaskSheetTitle(groupTitle)
+  const nameAt = sheetTitle.lastIndexOf(groupTitle)
+  const sheetTitleParts: [string, string] =
+    nameAt < 0 ? [sheetTitle, ""] : [sheetTitle.slice(0, nameAt), sheetTitle.slice(nameAt)]
   // The sheet's overlay slot: every popover / select the draft's controls open portals here.
   const [overlaySlot, setOverlaySlot] = useState<HTMLDivElement | null>(null)
   // ...and the sheet itself is their collision boundary, so a list shrinks inside it rather than opening above it.
@@ -3883,7 +3887,11 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
           <OverlayContainerContext.Provider value={overlaySlot}>
             <OverlayCollisionBoundaryContext.Provider value={sheetPopup}>
             <SheetHeader className="shrink-0 p-0">
-              <SheetTitle className="m-0 [font:var(--type-h3)] tracking-[var(--tracking-tight)] [overflow-wrap:anywhere]">{createTaskSheetTitle(groupTitle)}</SheetTitle>
+              <SheetTitle className="m-0 [font:var(--type-h3)] tracking-[var(--tracking-tight)] [overflow-wrap:anywhere]">
+                {sheetTitleParts[0]}
+                {/* the Project's name is data, not display copy: body type, so glyphs such as "·" the serif lacks still draw */}
+                <span data-testid="gantt-group-create-task-sheet-project" className="font-[family-name:var(--font-sans)]">{sheetTitleParts[1]}</span>
+              </SheetTitle>
             </SheetHeader>
             {/* the fields scroll when the sheet is capped at the viewport (a landscape phone); heading and footer stay put.
                 The small padding / negative margin keeps a focus ring from clipping at the scroller's edge. */}
@@ -3902,7 +3910,7 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
                 {viewConfig.renderCreateStack?.(ctx)}
               </div>
             </div>
-            <SheetFooter className="mt-0 shrink-0 flex-row justify-end gap-2 p-0">
+            <SheetFooter className="-mx-[var(--space-4)] mt-0 shrink-0 flex-row justify-end gap-2 px-[var(--space-4)] pt-[var(--space-3)] pb-0 [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border">
               <Button
                 variant="ghost"
                 type="button"
@@ -4218,7 +4226,7 @@ const GanttTreeRow = memo(function GanttTreeRow({
                 data-gantt-create-trigger={row.resource.id}
                 aria-label={settings.i18n.functions.addTaskIn(row.resource.title)}
                 aria-expanded={createOpen}
-                className="text-muted-foreground hover:text-foreground! bg-background sticky end-0 max-[720px]:end-[var(--space-1)] ms-1 size-5! shrink-0 opacity-0 group-hover/gantt-row:opacity-100 group-data-hover/gantt-row:opacity-100 focus:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 max-[720px]:opacity-100 aria-expanded:opacity-100 aria-expanded:bg-transparent! pointer-coarse:-my-1 pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] max-[720px]:-my-1 max-[720px]:min-h-[44px] max-[720px]:min-w-[44px]"
+                className="text-muted-foreground hover:text-foreground! bg-background pointer-coarse:bg-transparent pointer-coarse:bg-[image:linear-gradient(var(--background),var(--background))] pointer-coarse:bg-no-repeat pointer-coarse:bg-center pointer-coarse:bg-size-[100%_calc(100%-6px)] max-[720px]:bg-transparent max-[720px]:bg-[image:linear-gradient(var(--background),var(--background))] max-[720px]:bg-no-repeat max-[720px]:bg-center max-[720px]:bg-size-[100%_calc(100%-6px)] aria-expanded:bg-none! sticky end-0 max-[720px]:end-[var(--space-1)] ms-1 size-5! shrink-0 opacity-0 group-hover/gantt-row:opacity-100 group-data-hover/gantt-row:opacity-100 focus:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 max-[720px]:opacity-100 aria-expanded:opacity-100 aria-expanded:bg-transparent! pointer-coarse:-my-1 pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] max-[720px]:-my-1 max-[720px]:min-h-[44px] max-[720px]:min-w-[44px]"
                 onClick={() => onOpenCreate(row)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
