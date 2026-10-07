@@ -1322,5 +1322,12 @@ describe("ProjectCollaborationPanel checklist rail (#377)", () => {
     expect(cell.className).toContain("group-data-[checklist-layout=rail]/collab:overflow-y-auto");
     expect(cell.className).not.toContain("min-[1100px]");
   });
+
+  it("the rail cell pads its inline end by the rows' -space-2 bleed so its x-clip never cuts the focus ring (#670)", async () => {
+    emptyChecklistApi();
+    const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
+    const cell = host.querySelector<HTMLElement>('[data-testid="project-collaboration-rail"]')!;
+    expect(cell.className).toContain("group-data-[checklist-layout=rail]/collab:pe-[var(--space-2)]");
+  });
 });
 function article_text(article: HTMLElement) { return article.textContent ?? ""; }
