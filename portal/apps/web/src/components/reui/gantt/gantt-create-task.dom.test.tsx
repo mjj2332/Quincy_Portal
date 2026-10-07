@@ -189,13 +189,13 @@ describe("gantt per-group add-task editor (#679)", () => {
     expect(cls).toContain("group-hover/gantt-row:opacity-100");
     expect(cls).toContain("focus-visible:opacity-100");
     expect(cls).toContain("pointer-coarse:opacity-100");
-    expect(cls).toContain("max-[720px]:opacity-100");
+    expect(cls).toContain("max-[721px]:opacity-100");
     expect(cls).toContain("aria-expanded:opacity-100");
     // a real 44px hit area on touch and phones
     expect(cls).toContain("pointer-coarse:min-h-[44px]");
     expect(cls).toContain("pointer-coarse:min-w-[44px]");
-    expect(cls).toContain("max-[720px]:min-h-[44px]");
-    expect(cls).toContain("max-[720px]:min-w-[44px]");
+    expect(cls).toContain("max-[721px]:min-h-[44px]");
+    expect(cls).toContain("max-[721px]:min-w-[44px]");
   });
 
   it("canCreateTask gates each group; a refused group has no + and stays a leaf", async () => {
@@ -752,7 +752,7 @@ describe("gantt add-task editor keeps the row's columns (#678)", () => {
     it("keeps the sticky + clear of its focus ring at <= 720px (inset by --space-1, not an inward ring)", async () => {
       await render(stackView());
       const cls = createButton("Alpha")!.className;
-      expect(cls).toContain("max-[720px]:end-[var(--space-1)]");
+      expect(cls).toContain("max-[721px]:end-[var(--space-1)]");
       expect(cls).not.toContain("ring-inset");
       // a focused opener (and its ring) paints above the next Project row's sticky opener backing
       expect(cls).toContain("focus-visible:z-[2]");
@@ -766,7 +766,7 @@ describe("gantt add-task editor keeps the row's columns (#678)", () => {
     await click(plusButton);
     expect(input().placeholder).toBe("New task");
     const cancel = host.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-cancel"]')!;
-    for (const cls of ["pointer-coarse:min-h-[44px]", "pointer-coarse:min-w-[44px]", "max-[720px]:min-h-[44px]", "max-[720px]:min-w-[44px]"]) expect(cancel.className).toContain(cls);
+    for (const cls of ["pointer-coarse:min-h-[44px]", "pointer-coarse:min-w-[44px]", "max-[721px]:min-h-[44px]", "max-[721px]:min-w-[44px]"]) expect(cancel.className).toContain(cls);
   });
 
   it("renderCreateStack is ignored when a column carries a create cell", async () => {

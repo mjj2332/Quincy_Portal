@@ -281,6 +281,13 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
     afterEach(() => { window.matchMedia = original; });
     const sheet = () => document.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-sheet"]');
 
+    it("project rows are 2.75rem (44px) so each 44px + fits its own row, and both panes agree (#693)", async () => {
+      await mount();
+      const heights = Array.from(host.querySelectorAll<HTMLElement>("[data-gantt-resource]")).map((el) => el.style.height).filter(Boolean);
+      expect(heights.length).toBeGreaterThan(0);
+      expect(new Set(heights)).toEqual(new Set(["2.75rem"]));
+    });
+
     it("tapping + opens the sheet (no editor row, no spacer): heading names the Project; Title, Assignees, Due, Cancel and Add are in it", async () => {
       await mount();
       await click(plus(STREET_A)!);

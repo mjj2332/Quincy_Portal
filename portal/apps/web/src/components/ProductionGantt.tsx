@@ -171,7 +171,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CheckIcon } from "lucide-react";
 import { roleHasCapability, subtaskIdFromCalendarEntityId, type ChecklistScheduleDto, type GanttChecklistRowDto, type GanttProjectRowDto, type ProjectDefaultRangeDto, type Role } from "@quincy/shared";
-import { Gantt, useGanttNavigation, useGanttSelector, type GanttColumn, type GanttRenderEventProps, type GanttTreePanelConfig } from "@/components/reui/gantt/gantt";
+import { Gantt, useGanttNavigation, useGanttSelector, type GanttColumn, type GanttMetrics, type GanttRenderEventProps, type GanttTreePanelConfig } from "@/components/reui/gantt/gantt";
 import { mergeGanttI18n, type GanttI18nOverrides } from "@/components/reui/gantt/gantt-i18n";
 import { toZoned } from "@/components/reui/gantt/gantt-lib";
 import { GanttNav, GanttNavNext, GanttNavPrev, GanttNavToday, GanttScaleSwitcher, GanttTitle, GanttToolbar } from "@/components/reui/gantt/gantt-nav";
@@ -337,7 +337,7 @@ const GANTT_TREE_PANEL_NARROW: GanttTreePanelConfig = { nameColumnFill: true, na
 const NEAR_BOTTOM_THRESHOLD_PX = 240;
 
 /** A real 44px hit area on coarse pointers and phones, compact on desktop. */
-const COARSE_TAP_TARGET = "pointer-coarse:min-w-[44px] pointer-coarse:min-h-[44px] max-[720px]:min-w-[44px]";
+export const COARSE_TAP_TARGET = "pointer-coarse:min-w-[44px] pointer-coarse:min-h-[44px] max-[721px]:min-w-[44px]";
 
 /** #464: the street cell's \`truncate\` (overflow:hidden) clips an outset ring, so the row link's focus ring is drawn inset. */
 const GANTT_ROW_LINK = "truncate focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring -outline-offset-2 focus-visible:!-outline-offset-2";
@@ -433,7 +433,17 @@ const CRITICAL_ATTENTION_REASONS = new Set<ProductionGanttAttentionReason>([
   "resolution_failed",
 ]);
 
-function GanttRowAttentionBadge({ reason }: { reason: ProductionGanttAttentionReason }) {
+/** #693: phone labels, sized for the ~27px line 2 holds at 360. Distinct first words survive truncation. */
+const ATTENTION_SHORT_TEXT: Record<ProductionGanttAttentionReason, string> = {
+  missing_deadline: "Not set",
+  deadline_before_start: "Too early",
+  resolution_failed: "Error",
+};
+
+/** #693.2: a phone row is 44px so each row's 44px + fills it and adjacent targets never intersect. Module-level so the prop is stable. */
+const GANTT_METRICS_PHONE: GanttMetrics = { minRowHeight: 2.75 };
+
+export function GanttRowAttentionBadge({ reason }: { reason: ProductionGanttAttentionReason }) {
   const critical = CRITICAL_ATTENTION_REASONS.has(reason);
   return (
     <span
@@ -445,7 +455,8 @@ function GanttRowAttentionBadge({ reason }: { reason: ProductionGanttAttentionRe
       data-testid={`gantt-row-attention-${reason}`}
       title={ATTENTION_TEXT[reason]}
     >
-      {ATTENTION_TEXT[reason]}
+      <span className="max-[721px]:sr-only">{ATTENTION_TEXT[reason]}</span>
+      <span aria-hidden className="min-[721px]:hidden">{ATTENTION_SHORT_TEXT[reason]}</span>
     </span>
   );
 }
@@ -2189,6 +2200,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             i18n={GANTT_I18N}
             // #256: the name column fills the tree panel (see GANTT_NAME_COLUMN_WIDTH).
             treePanel={narrowTree ? GANTT_TREE_PANEL_NARROW : GANTT_TREE_PANEL}
+            metrics={narrowTree ? GANTT_METRICS_PHONE : undefined}
             columns={columns}
             interactions={interactions}
             onEventUpdate={handleEventUpdate}
