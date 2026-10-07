@@ -258,6 +258,14 @@
  * Escape on any control inside the row (a closed draft picker, the x) calls `close()`, so the desktop row closes from every
  * control, not only the title. Guarded by a DOM-containment check (a portaled popup's key bubbles through the row in React) and
  * by `aria-expanded="true"`; `close()` already refuses while a save is pending and returns focus to the `+`.
+
+ * 2026-10-07, #692 — CHANGED, class tokens only (ADR 0009 addendum). The create row's Cancel x and the sticky `+` opener spell the phone variant
+ * `max-[721px]:` (was `max-[720px]:`, which compiles to width < 720 and left width 720 outside both variants).
+ *
+ * 2026-10-07, #692 round 2 — CHANGED, class tokens only (ADR 0009 addendum). The sticky `+` opener's phone tokens follow the 44px phone rows (#693):
+ * `pointer-coarse:-my-1` and `pointer-coarse:bg-size-[100%_calc(100%-6px)]` are now `min-[721px]:pointer-coarse:` (a touch phone matches pointer-coarse,
+ * whose rules come later in the built CSS, so unscoped they beat the phone layout), so the phone `+` has no negative margin and a full-height
+ * backing; `max-[721px]:ms-auto` pins it to the column's right edge. Coarse tablets above 720 keep the 40px-row geometry.
  */
 
 import {
@@ -3965,7 +3973,7 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
       size="icon-xs"
       data-testid="gantt-group-create-task-cancel"
       aria-label={cancelAddTaskIn(groupTitle)}
-      className="text-muted-foreground hover:text-foreground! size-5! pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] max-[720px]:min-h-[44px] max-[720px]:min-w-[44px]"
+      className="text-muted-foreground hover:text-foreground! size-5! pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] max-[721px]:min-h-[44px] max-[721px]:min-w-[44px]"
       onClick={close}
     >
       <XIcon className="size-3.5" aria-hidden="true" />
@@ -4252,7 +4260,7 @@ const GanttTreeRow = memo(function GanttTreeRow({
                 data-gantt-create-trigger={row.resource.id}
                 aria-label={settings.i18n.functions.addTaskIn(row.resource.title)}
                 aria-expanded={createOpen}
-                className="text-muted-foreground hover:text-foreground! bg-background pointer-coarse:bg-transparent pointer-coarse:bg-[image:linear-gradient(var(--background),var(--background))] pointer-coarse:bg-no-repeat pointer-coarse:bg-center pointer-coarse:bg-size-[100%_calc(100%-6px)] max-[720px]:bg-transparent max-[720px]:bg-[image:linear-gradient(var(--background),var(--background))] max-[720px]:bg-no-repeat max-[720px]:bg-center max-[720px]:bg-size-[100%_calc(100%-6px)] aria-expanded:bg-none! sticky end-0 focus-visible:z-[2] max-[720px]:end-[var(--space-1)] ms-2 size-5! shrink-0 opacity-0 group-hover/gantt-row:opacity-100 group-data-hover/gantt-row:opacity-100 focus:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 max-[720px]:opacity-100 aria-expanded:opacity-100 aria-expanded:bg-transparent! pointer-coarse:-my-1 pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] max-[720px]:-my-1 max-[720px]:min-h-[44px] max-[720px]:min-w-[44px]"
+                className="text-muted-foreground hover:text-foreground! bg-background pointer-coarse:bg-transparent pointer-coarse:bg-[image:linear-gradient(var(--background),var(--background))] pointer-coarse:bg-no-repeat pointer-coarse:bg-center min-[721px]:pointer-coarse:bg-size-[100%_calc(100%-6px)] max-[721px]:bg-transparent max-[721px]:bg-[image:linear-gradient(var(--background),var(--background))] max-[721px]:bg-no-repeat max-[721px]:bg-center aria-expanded:bg-none! sticky end-0 focus-visible:z-[2] max-[721px]:end-[var(--space-1)] ms-2 max-[721px]:ms-auto size-5! shrink-0 opacity-0 group-hover/gantt-row:opacity-100 group-data-hover/gantt-row:opacity-100 focus:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 max-[721px]:opacity-100 aria-expanded:opacity-100 aria-expanded:bg-transparent! min-[721px]:pointer-coarse:-my-1 pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] max-[721px]:min-h-[44px] max-[721px]:min-w-[44px]"
                 onClick={() => onOpenCreate(row)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {

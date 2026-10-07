@@ -84,7 +84,7 @@ const EDITOR_CONTENT_UTILITIES =
 
 /** Room for the outline rail's dashes at the right edge (the rail is hidden on a phone). */
 // scroll-mt: an outline-rail jump (`scrollToRichTextHeading`) must land the heading clear of the shell header AND the stuck toolbar (#594).
-const DOCUMENT_CONTENT_UTILITIES = "min-[722px]:pe-12 [&_h2]:scroll-mt-[calc(var(--shell-header-height)+var(--impersonation-banner-height,0px)+var(--rich-text-toolbar-block,3rem))] [&_h3]:scroll-mt-[calc(var(--shell-header-height)+var(--impersonation-banner-height,0px)+var(--rich-text-toolbar-block,3rem))] ";
+const DOCUMENT_CONTENT_UTILITIES = "min-[721px]:pe-12 [&_h2]:scroll-mt-[calc(var(--shell-header-height)+var(--impersonation-banner-height,0px)+var(--rich-text-toolbar-block,3rem))] [&_h3]:scroll-mt-[calc(var(--shell-header-height)+var(--impersonation-banner-height,0px)+var(--rich-text-toolbar-block,3rem))] ";
 
 // The group wrapper's call-site divergences from `InputGroup` (#376): `has-disabled:bg-card` because
 // the base's deep `:has(:disabled)` would paint the whole field sunken as soon as Undo/Redo are

@@ -1690,7 +1690,7 @@ describe("ProductionGantt — Add task row (#344)", () => {
     for (const token of ["min-w-0", "truncate", "min-[721px]:shrink-0"]) expect(tokens, token).toContain(token);
     expect(tokens).not.toContain("shrink-0");
     expect(tokens).not.toContain("max-[721px]:max-w-[45%]");
-    expect(badge.getAttribute("title")).toBe(badge.textContent);
+    expect(badge.getAttribute("title")).toBe("Deadline not set");
 
     const meta = badge.closest<HTMLElement>(`[data-testid="gantt-row-label-meta"]`)!;
     expect(meta).not.toBeNull();
@@ -1706,7 +1706,7 @@ describe("ProductionGantt — Add task row (#344)", () => {
     expect(title.className.split(/\s+/)).toContain("max-[721px]:flex-none");
     expect(title.className.split(/\s+/)).toContain("truncate");
 
-    // narrowTree is `(max-width: 720px)` (width <= 720); `max-[720px]:` compiles to width < 720, leaving 720 in neither variant.
+    // narrowTree is `(max-width: 720px)` (width <= 720); `max-[720px]:` compiles to width < 720, leaving 720 in neither variant (#692).
     expect([badge, meta, outer, title].map((el) => el.className).join(" ")).not.toContain("max-[720px]");
   });
 

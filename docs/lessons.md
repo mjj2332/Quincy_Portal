@@ -6008,3 +6008,22 @@ Tags: gantt-calendar, focus-overlays · #688
 - When a bug report says "Escape does nothing", find which element had focus first.
 
 Guards: `gantt-create-task.dom.test.tsx` ("Escape on the desktop row"), `ProductionGantt-create-draft.dom.test.tsx`.
+
+## A touch phone matches `pointer-coarse:` too, and that variant wins the cascade (#692, #693)
+Tags: css-tokens, gantt-calendar · #692, #693
+
+- **The breakpoint spelling.** The phone breakpoint is `max-[721px]:` / `min-[721px]:`.
+  - `max-[720px]:` compiles to `width < 720`, so at exactly 720 neither the phone nor the desktop variant applied.
+  - `min-[722px]:` left 721 in neither variant (the rich-text rail padding, the `alert-dialog` footer).
+  - `config/phone-breakpoint.guard.test.ts` now fails on `(max|min)-[719|720|722px]`.
+- **The cascade trap.** A phone with a touchscreen matches **both** `pointer-coarse:` and `max-[721px]:`.
+  - In the built CSS the `pointer-coarse:` rules come after the `max-[…]` ones, so where both set the same property, the coarse-pointer value wins.
+  - The sticky `+` kept its 40px-row geometry (`-my-1`, a 6px-short backing) on 44px phone rows, and showed bands inside the button.
+  - A narrow desktop window does not match `pointer-coarse`, so it looked fixed there.
+  - Fix: scope the coarse value to the widths it is for (`min-[721px]:pointer-coarse:-my-1`) rather than adding a competing `max-[721px]:` override or `!`.
+  - Confirm the result in the built CSS: grep `dist/assets/index-*.css` for the rule order.
+- **Measuring truncation.** `scrollWidth`/`clientWidth` round to whole pixels, so a label 0.2px too wide (50.2 in 50) read as 50/50 "fits" while the screen showed an ellipsis.
+  - Measure a fit with fractional `getBoundingClientRect()` widths, and look at the crop.
+  - Measure candidate wording in the real font, with canvas or an offscreen span, before choosing it.
+
+Guards: `config/phone-breakpoint.guard.test.ts`, `reui/gantt/gantt-create-task.dom.test.tsx` (the `+` token pins), `ProductionGantt-attention-badge.dom.test.tsx`.

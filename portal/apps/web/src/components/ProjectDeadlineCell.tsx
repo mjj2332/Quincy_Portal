@@ -26,7 +26,7 @@ import { cn } from "../lib/utils";
 
 /** A real 44px hit area on coarse pointers and phones, compact on desktop. */
 // `-ml-1` cancels the ghost button's `px-1` so the cell's text starts where its column header's does.
-export const CELL_TRIGGER = "h-auto min-h-6 max-w-full justify-start -ml-1 px-1 normal-case tracking-[var(--tracking-normal)] pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] max-[720px]:min-h-[44px] max-[720px]:min-w-[44px]";
+export const CELL_TRIGGER = "h-auto min-h-6 max-w-full justify-start -ml-1 px-1 normal-case tracking-[var(--tracking-normal)] pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] max-[721px]:min-h-[44px] max-[721px]:min-w-[44px]";
 
 /** The Deadline as a surface sees it: the instant, the studio wall-clock civil string, and overdue. */
 export type ProjectDeadlineView = Pick<NonNullable<GanttProjectRowDto["deadline"]>, "at" | "localCivil" | "overdue">;

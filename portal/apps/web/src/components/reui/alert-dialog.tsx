@@ -37,6 +37,8 @@ import { Button } from "@/components/reui/button"
  *   content carries the padding, the footer pulls itself out by `--space-6` so the rule runs
  *   edge to edge like Modal's.
  *
+ * #692: the footer's `size="sm"` grid switches at `min-[721px]:` (was `min-[722px]:`), the exact complement of the sheet's `max-[721px]:`; 722 left width 721 in neither variant.
+ *
  * #625: `AlertDialogContent` provides `InsideAlertDialogContext` around its children, so a
  * `reui/popover` opened from inside the dialog (above it) is told apart from a popover beneath it,
  * which `popover.tsx`'s alert-dialog adaptation exempts from dismissal by presses on the dialog.
@@ -151,7 +153,7 @@ function AlertDialogFooter({
     <div
       data-slot="alert-dialog-footer"
       className={cn(
-        "-mx-[var(--space-6)] -mb-[var(--space-6)] flex flex-wrap justify-end gap-[var(--space-3)] px-[var(--space-6)] py-[var(--space-5)] [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border min-[722px]:group-data-[size=sm]/alert-dialog-content:grid min-[722px]:group-data-[size=sm]/alert-dialog-content:grid-cols-2 max-[721px]:flex-col-reverse max-[721px]:[&>*]:w-full max-[721px]:[&>*]:min-h-[44px]",
+        "-mx-[var(--space-6)] -mb-[var(--space-6)] flex flex-wrap justify-end gap-[var(--space-3)] px-[var(--space-6)] py-[var(--space-5)] [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border min-[721px]:group-data-[size=sm]/alert-dialog-content:grid min-[721px]:group-data-[size=sm]/alert-dialog-content:grid-cols-2 max-[721px]:flex-col-reverse max-[721px]:[&>*]:w-full max-[721px]:[&>*]:min-h-[44px]",
         className
       )}
       {...props}
