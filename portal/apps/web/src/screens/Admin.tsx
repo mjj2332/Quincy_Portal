@@ -681,7 +681,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
         {!isLoadingIntegrations && !integrationsError && canAdminBackend && <div className="mt-[var(--space-8)]">
           <SectionHead
             eyebrow="Operator queue"
-            actions={<StatusPill tone={poisonTotal > 0 ? "critical" : "neutral"}>{poisonTotal > 0 ? `${poisonTotal} events` : "No events"}</StatusPill>}
+            actions={<StatusPill tone={poisonTotal > 0 ? "critical" : "neutral"}>{poisonTotal > 0 ? `${poisonTotal} ${poisonTotal === 1 ? "event" : "events"}` : "No events"}</StatusPill>}
           >
             Failed Tonomo events
           </SectionHead>

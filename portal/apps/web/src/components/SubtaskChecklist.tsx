@@ -70,10 +70,11 @@ export function scheduleReorderFocus(grips: Map<string, HTMLButtonElement>, id: 
 
 function ActionsControl({ owner, title, open, setOpen, busy, onDelete }: { owner: string; title: string; open: boolean; setOpen: (open: boolean) => void; busy: boolean; onDelete: () => void }) {
   const close = useCallback(() => setOpen(false), [setOpen]); const floating = useAnchoredPopover({ open, onClose: close }); const id = subtaskPopoverId(owner, "actions");
-  return <>
+  // One wrapper is the meta row's last child: while open, a non-modal FloatingPortal renders focus guards and an aria-owns span in place, after the trigger, and as bare siblings they would take over `[&>:last-child]:ms-auto` (#670).
+  return <span className="inline-flex shrink-0">
     <IconButton ref={floating.refs.setReference} aria-label={`Actions for ${title}`} aria-expanded={open} aria-controls={open ? id : undefined} onKeyDown={floating.onKeyDown} onClick={() => setOpen(!open)}>⋯</IconButton>
     {floating.mounted && <AnchoredPopover context={floating.context} floatingStyles={floating.floatingStyles} initialFocus={0} onKeyDown={floating.onKeyDown} status={floating.status}><div id={id} className={POPOVER_CONTENT} role="group" aria-label={`Actions for ${title}`}><button type="button" className={buttonClasses("danger", { className: RING_IN })} disabled={busy} onClick={() => { void (async () => { if (!await confirm({ title: "Delete subtask?", message: "Delete this subtask?", confirmLabel: "Delete", danger: true })) return; close(); onDelete(); })(); }}>Delete</button></div></AnchoredPopover>}
-  </>;
+  </span>;
 }
 
 function SortableSubtaskRow({ item, projectId, role, busy, editing, draftTitle, popover, setPopover, scheduleError, retainedSchedule, onUpdate, onCommitAssignees, onUseLatest, onUseLatestItem, onRemove, onBeginEditing, onEndEditing, titleInputRef, itemRef, gripRef, sortable, twoLine, readOnly }: { readOnly: boolean; twoLine: boolean; sortable: boolean; item: Subtask; projectId: string; role: Role; busy: boolean; editing: boolean; draftTitle: string; popover: ActivePopover; setPopover: (value: ActivePopover) => void; scheduleError?: ScheduleError; retainedSchedule: RetainedSchedule; onUpdate: (body: Record<string, unknown>, action: string) => void; onCommitAssignees: (ids: string[], baseline: { ids: string[]; version: number | undefined }) => Promise<void>; onUseLatest: (schedule: ChecklistScheduleDto, reminders?: SubtaskRemindersDto) => void; onUseLatestItem: (item: Subtask) => void; onRemove: () => void; onBeginEditing: () => void; onEndEditing: () => void; titleInputRef: (element: HTMLInputElement | null) => void; itemRef: (element: HTMLElement | null) => void; gripRef: (element: HTMLButtonElement | null) => void }) {

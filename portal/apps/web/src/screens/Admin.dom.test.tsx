@@ -498,6 +498,17 @@ describe("Admin notification delivery operations", () => {
     }
   });
 
+  it.each([[0, "No events"], [1, "1 event"], [2, "2 events"]])("the failed-events badge reads the right count for %i (#670)", async (total, label) => {
+    const events = Array.from({ length: total }, (_, index) => ({ id: `e${index}`, eventId: `ev${index}`, status: "poison", error: "boom", receivedAt: null, processedAt: null, summary: null }));
+    const base = apiGetMock.getMockImplementation()!;
+    apiGetMock.mockImplementation((path) => path.startsWith("/api/admin/webhook-events") ? Promise.resolve({ events, total }) : base(path));
+    await act(async () => { root!.render(<Admin currentUserId="self" />); await Promise.resolve(); });
+    await flush(); await openIntegrations(); await flush();
+    const head = [...host.querySelectorAll("*")].find((element) => element.children.length === 0 && element.textContent === label);
+    expect(head, `badge text ${label}`).toBeDefined();
+    expect(host.textContent).not.toContain("1 events");
+  });
+
   it("renders the notification error state and disables concurrent operations while warning on unknown email", async () => {
     const item = {
       outboxId: "tb4-ui-outbox",

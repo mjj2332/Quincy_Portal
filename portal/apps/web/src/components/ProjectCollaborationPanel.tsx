@@ -116,6 +116,8 @@ export function ProjectCollaborationPanel({ projectId, presented = true, view, o
       // overflow keeps a checklist taller than the sheet reachable.
       "group-data-[checklist-layout=rail]/collab:[grid-area:rail] group-data-[checklist-layout=rail]/collab:sticky group-data-[checklist-layout=rail]/collab:self-start group-data-[checklist-layout=rail]/collab:top-[var(--collab-rail-top,var(--space-5))]",
       "group-data-[checklist-layout=rail]/collab:max-h-[calc(100dvh_-_var(--space-5)*2_-_var(--collab-rail-top,var(--space-5))_-_var(--space-5))] group-data-[checklist-layout=rail]/collab:overflow-y-auto group-data-[checklist-layout=rail]/collab:overscroll-contain",
+      // `overflow-y-auto` makes x clip too, and the rows bleed -space-2 past the rail's edge: pad the inline end to match so a focus ring is not cut (#670).
+      "group-data-[checklist-layout=rail]/collab:pe-[var(--space-2)]",
     )}><SubtaskChecklist projectId={projectId} layout={layout} archived={archived} onAccessFailure={(error) => onAccessFailure?.(error, "comments")} /></div>;
     return <section className={cn("group/collab grid content-start gap-[var(--space-4)] p-[var(--space-5)] bg-[var(--paper-050)]",
       "grid-cols-[minmax(0,var(--container-md))]",

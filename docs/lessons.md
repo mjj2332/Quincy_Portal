@@ -5904,3 +5904,15 @@ Three defects in the 390px time list (`TimeColumn` in a stacked `PopupFrame`), o
 
 Guards: `TimeColumn.scroll.dom.test.tsx` (nested-viewport geometry), `lib/date-time-field.test.ts`. Layout-dependent, so
 only a browser at 390px proves it (jsdom has no geometry): see the map's measured check.
+
+## A FloatingPortal renders inline siblings while open, so structural selectors near its trigger change (#670)
+Tags: focus-overlays, css-tokens · #670
+
+The checklist meta row pushes its last child right with `[&>:last-child]:ms-auto`. `ActionsControl` returned the trigger and
+its `AnchoredPopover` as bare siblings. While the popover is open, a non-modal `FloatingPortal` renders focus guards and an
+`aria-owns` span in place, after the trigger (`@floating-ui/react`), so the last child became an out-of-flow guard and the
+trigger lost `ms-auto` and jumped left on open. Rule: **a trigger and its floating popover share one wrapper element**
+(here `<span className="inline-flex shrink-0">`), so the guards render inside a stable last child. Any `:last-child`, `+` or
+`:nth-child` selector near a trigger that owns a FloatingPortal changes when it opens. A wrapper, not an explicit `ms-auto`
+on the trigger, keeps the read-only row (no Actions) right-aligning its assignee picker. Guard:
+`SubtaskChecklist.dom.test.tsx` ("keeps the Actions trigger inside the meta row's last child while its popover is open").

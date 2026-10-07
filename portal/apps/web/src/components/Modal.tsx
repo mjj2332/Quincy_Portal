@@ -43,7 +43,8 @@ export type ModalProps = {
 // declaration) rather than split across separate `duration-*`/`ease-*` utilities, so the token
 // is the actual, single owner of both overlay motion phases — not just a comment.
 const SCRIM = cn(
-  "fixed inset-0 z-[var(--z-dialog)] grid place-items-center",
+  // `grid-cols-[minmax(0,1fr)]`: the implicit `auto` track is as wide as its widest content, so a long `<pre>` pushed the panel past a phone viewport (#670).
+  "fixed inset-0 z-[var(--z-dialog)] grid grid-cols-[minmax(0,1fr)] place-items-center",
   "p-[var(--space-6)] max-[721px]:p-0 max-[721px]:items-end",
   "bg-[var(--scrim-overlay)] backdrop-blur-[3px]",
   "motion-safe:[transition:opacity_var(--overlay-exit)]",
@@ -56,7 +57,7 @@ function panelClasses(size: ModalSize | undefined, wide: boolean): string {
   // keeps its exact historical meaning (560px) when no `size` is given.
   const maxWidth = size === "prose" ? "max-w-[820px]" : size === "wide" || wide ? "max-w-[560px]" : "max-w-[460px]";
   return cn(
-    "w-full",
+    "w-full min-w-0",
     maxWidth,
     // The panel no longer scrolls — `.modal__scroll` does, so the §4.2a nested-overlay slot can
     // sit inside the panel (for stacking and focus) while staying outside any scroll box.
@@ -71,7 +72,7 @@ function panelClasses(size: ModalSize | undefined, wide: boolean): string {
     "motion-safe:[transition:opacity_var(--overlay-exit),translate_var(--overlay-exit)]",
     "data-open:motion-safe:[transition:opacity_var(--overlay-enter),translate_var(--overlay-enter)]",
     "opacity-0 translate-y-[var(--space-3)] data-open:opacity-100 data-open:translate-y-0",
-    "max-[721px]:max-w-none max-[721px]:max-h-[85dvh]",
+    "max-[721px]:max-w-full max-[721px]:max-h-[85dvh]",
   );
 }
 
