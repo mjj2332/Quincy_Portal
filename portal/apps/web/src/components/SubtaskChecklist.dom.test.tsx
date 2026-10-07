@@ -118,6 +118,17 @@ describe("SubtaskChecklist", () => {
     expect(first.querySelector("[data-floating-ui-focus-guard], [aria-owns]")).not.toBeNull();
     expect(meta.lastElementChild!.contains(trigger())).toBe(true);
   });
+  it("read-only (no Actions trigger): the assignee picker is the meta row's last child, which is why `[&>:last-child]:ms-auto` stays (#670)", async () => {
+    const host = mount(); await act(async () => { root!.render(<SubtaskChecklist projectId={projectId} archived />); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    for (let attempt = 0; attempt < 50 && document.body.textContent?.includes("Loading checklist…"); attempt += 1) await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 5)); });
+    const first = item(host, "Call client"); const meta = first.querySelector<HTMLElement>('[data-testid="subtask-checklist-meta"]')!;
+    expect(first.querySelector('[aria-label="Actions for Call client"]')).toBeNull();
+    const schedule = first.querySelector('[aria-label="Schedule for Call client"]');
+    expect(meta.children.length).toBeGreaterThan(1);
+    expect(meta.lastElementChild!.contains(schedule)).toBe(false);
+    expect(meta.lastElementChild!.textContent).toContain("NJ");
+    expect(meta.className).toContain("[&>:last-child]:ms-auto");
+  });
   it("in the stacked layout also keeps the Actions trigger in the meta row's last child while open (#670)", async () => {
     const host = mount(); await act(async () => { root!.render(<SubtaskChecklist projectId={projectId} layout="stacked" />); await Promise.resolve(); });
     await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="Expand checklist"]')?.click(); await Promise.resolve(); });
