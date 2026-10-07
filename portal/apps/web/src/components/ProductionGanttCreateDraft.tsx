@@ -91,7 +91,7 @@ export function GanttCreateDraftDue({ draft, projectDefault, pending, onChange, 
             type="button"
             data-testid="gantt-create-draft-due-trigger"
             aria-label={`Schedule for new task: ${triggerName}`}
-            className={cn(CELL_TRIGGER, draft.preview ? "text-foreground" : "text-muted-foreground hover:text-foreground", sheet && SHEET_DUE_TRIGGER)}
+            className={cn(CELL_TRIGGER, draft.preview || (sheet && projectDefault) ? "text-foreground" : "text-muted-foreground hover:text-foreground", sheet && SHEET_DUE_TRIGGER)}
           >
             <span className="truncate">{triggerText}</span>
           </Button>

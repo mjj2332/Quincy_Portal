@@ -136,7 +136,7 @@ function useSelectedClearOfFade(contentRef: RefObject<HTMLDivElement | null>, re
  * scrolling body and a footer pinned below it so Cancel / Apply are always visible (#421). The
  * body is the caller's; the footer's two actions are the same for every form.
  */
-export function PopupFrame({ label, zoneId, bodyRef, applying, applyDisabled = false, pinned, reveal = REVEAL_SELECTED_DAY, onCancel, onApply, children }: {
+export function PopupFrame({ label, zoneId, bodyRef, applying, applyDisabled = false, pinned, scrollTitle = false, reveal = REVEAL_SELECTED_DAY, onCancel, onApply, children }: {
   label: string;
   zoneId: string;
   bodyRef: Ref<HTMLDivElement>;
@@ -144,6 +144,8 @@ export function PopupFrame({ label, zoneId, bodyRef, applying, applyDisabled = f
   applyDisabled?: boolean;
   /** Controls drawn between the header and the scrolling body, so they stay visible while it scrolls. */
   pinned?: ReactNode;
+  /** #686: the title and zone scroll with the body (a short viewport) instead of being pinned above it, giving their height to the body. */
+  scrollTitle?: boolean;
   /** CSS selector, within the body, for the day that must be scrolled into view when the popup opens or resizes (#587). A range passes its active end's day. */
   reveal?: string;
   onCancel: () => void;
@@ -152,17 +154,20 @@ export function PopupFrame({ label, zoneId, bodyRef, applying, applyDisabled = f
 }) {
   const contentRef = useRef<HTMLDivElement>(null);
   useSelectedClearOfFade(contentRef, reveal);
+  const header = (
+    <FrameHeader>
+      <FrameTitle className="min-w-0 [contain:inline-size]"><Eyebrow className="line-clamp-2" title={label}>{label}</Eyebrow></FrameTitle>
+      <FrameDescription id={zoneId} className="text-[length:var(--text-xs)]">{SYDNEY_TIME_ZONE}</FrameDescription>
+    </FrameHeader>
+  );
   return (
     <Frame ref={bodyRef} spacing="sm" className="max-h-[var(--available-height)] min-h-0">
-      <FrameHeader>
-        <FrameTitle className="min-w-0 [contain:inline-size]"><Eyebrow className="line-clamp-2" title={label}>{label}</Eyebrow></FrameTitle>
-        <FrameDescription id={zoneId} className="text-[length:var(--text-xs)]">{SYDNEY_TIME_ZONE}</FrameDescription>
-      </FrameHeader>
+      {!scrollTitle && header}
       {pinned && <div className="shrink-0 px-(--frame-panel-header-px) pb-[var(--space-2)]">{pinned}</div>}
       {/* The body scrolls; the footer below stays pinned so Cancel / Apply are always visible. */}
       <FramePanel className="flex min-h-0 flex-col p-0">
         <ScrollArea className="flex min-h-0 grow flex-col [--fade-size:var(--space-5)] *:data-[slot=scroll-area-viewport]:mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] *:data-[slot=scroll-area-viewport]:mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))] *:data-[slot=scroll-area-viewport]:focus-visible:ring-0 *:data-[slot=scroll-area-viewport]:focus-visible:!outline-none rounded-[inherit] -outline-offset-2 has-[[data-slot=scroll-area-viewport]:focus-visible]:outline-solid has-[[data-slot=scroll-area-viewport]:focus-visible]:outline-[length:var(--border-width-bold)] has-[[data-slot=scroll-area-viewport]:focus-visible]:outline-[var(--focus-ring)] has-[[data-slot=scroll-area-viewport]:focus-visible]:-outline-offset-2">
-          <div ref={contentRef} className="px-(--frame-panel-px) py-(--frame-panel-py)">{children}</div>
+          <div ref={contentRef} className="px-(--frame-panel-px) py-(--frame-panel-py)">{scrollTitle && header}{children}</div>
         </ScrollArea>
       </FramePanel>
       <FrameFooter className="shrink-0 flex-row justify-end gap-[var(--space-2)]">

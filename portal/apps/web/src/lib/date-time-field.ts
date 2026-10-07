@@ -308,6 +308,8 @@ export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, 
 
 /** #602: below this width the popup stacks its columns, the calendar takes 44px cells and the popup may cover its trigger. Tailwind's `max-[721px]:` compiles to this same `(width < 721px)`. */
 export const POPUP_STACKED_QUERY = "(width < 721px)";
+/** #686: a short viewport (every landscape phone). The popups drop the time-slot list (its own scroller trapped the wheel in a ~68px body) and let the title scroll with the body. Height only: the wide layout has the same trap. */
+export const POPUP_SHORT_QUERY = "(height < 520px)";
 
 /**
  * How a date popup resolves its collision policy (#447, #528): below `sm` it shifts over its
