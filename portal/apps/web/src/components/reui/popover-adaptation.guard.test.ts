@@ -1,4 +1,5 @@
 /**
+ * #669 — `reui/popover.tsx` also returns focus to its trigger inside a modal surface (`parkedFocusReturnTarget`).
  * #625 — `reui/popover.tsx` and `reui/combobox.tsx` carry a declared Quincy adaptation: a popup
  * beneath an alert dialog stays open behind it (`keepOpenBehindAlertDialog`). A plain
  * `shadcn add popover` / `add combobox` overwrites vendored files; this fails until it is restored.
@@ -21,5 +22,12 @@ describe("guard: vendored popups keep their alert-dialog adaptation", () => {
   it("the helper cancels outside-press, escape-key and focus-out dismissals", () => {
     const helper = readFileSync(fileURLToPath(new URL("../../lib/alert-dialog-press.ts", import.meta.url)), "utf8");
     for (const token of ["outside-press", "escape-key", "focus-out", "details.cancel()"]) expect(helper).toContain(token);
+  });
+
+  it("popover.tsx declares the #669 return-focus adaptation and uses the shared helper", () => {
+    const source = read("popover.tsx");
+    expect(source).toMatch(/QUINCY ADAPTATION[^\n]*#669/);
+    expect(source).toContain('from "@/lib/return-focus-before-close"');
+    expect(source).toContain("parkedFocusReturnTarget(");
   });
 });

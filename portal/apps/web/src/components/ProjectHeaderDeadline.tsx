@@ -76,22 +76,11 @@ export function ProjectHeaderDeadline({ projectId, schedule, canEdit, archived =
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popupRef = useRef<HTMLDivElement>(null);
   const focusAtRequest = useRef(false);
-  // #664: inside the modal Project sheet, `restoreFocus: "popup"` refocuses the sheet a frame after
-  // focus goes homeless, ahead of the popover's own return (the same defect `quincy/menu.tsx` guards).
-  // So every close path puts focus on the trigger first: when it is in the popup, or homeless on
-  // <body> (Apply disables its own button), or was in this cell when a save began (the sheet can
-  // reclaim it while the save runs).
-  const closePopover = () => {
-    const active = document.activeElement;
-    const homeless = !active || active === document.body || Boolean(popupRef.current?.contains(active));
-    const trigger = triggerRef.current;
-    if ((homeless || focusAtRequest.current) && trigger?.isConnected) trigger.focus({ preventScroll: true });
-    focusAtRequest.current = false;
-    setOpen(false);
-  };
+  // #669: `reui/popover.tsx` returns focus to the trigger on every close path inside the modal Project sheet
+  // (including a sheet reclaim while a save runs), so no close handler here moves focus.
   const onOpenChange = (next: boolean) => {
-    if (next) { setOpenPadding(shellAwarePopupPadding()); setOpen(true); return; }
-    closePopover();
+    if (next) setOpenPadding(shellAwarePopupPadding());
+    setOpen(next);
   };
   useReresolveOnResize(open, shellAwarePopupPadding, setOpenPadding);
   // The popup is portalled, so the trigger's own subtree misses focus inside it.
@@ -150,7 +139,7 @@ export function ProjectHeaderDeadline({ projectId, schedule, canEdit, archived =
     {/* #422: the popup is the date-time form of the shared date/time field (`quincy/DateTimeField`);
         its own footer is pinned (#325), so the content needs no scroll padding of its own. */}
     <DateTimePopoverContent label="Deadline" ref={popupRef} popupCollisionPadding={openPadding}>
-      <ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} onClose={closePopover}
+      <ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} onClose={() => setOpen(false)}
         onRequestStart={() => { focusAtRequest.current = focusInCell(); }}
         onArchivedRefusal={() => onArchivedRefusal?.(focusAtRequest.current)} />
     </DateTimePopoverContent>
