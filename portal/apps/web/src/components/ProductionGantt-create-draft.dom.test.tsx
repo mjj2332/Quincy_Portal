@@ -330,7 +330,7 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
       const name = popup.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-sheet-project"]')!;
       expect(name.textContent).toBe(STREET_A);
       expect(name.className).toContain("font-[family-name:var(--font-sans)]");
-      for (const token of ["rounded-[var(--radius-sm)]", "bg-[var(--field-bg)]", "text-base"]) expect(draftDue()!.className, token).toContain(token);
+      for (const token of ["rounded-[var(--radius-sm)]", "bg-[var(--field-bg)]", "text-base!"]) expect(draftDue()!.className, token).toContain(token);
       expect(popup.querySelector('[data-testid="gantt-group-create-task-add"]')!.parentElement!.className).toContain("border-t-[length:var(--border-width-hair)]");
     });
 

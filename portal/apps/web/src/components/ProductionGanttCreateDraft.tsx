@@ -29,7 +29,7 @@ import { SubtaskScheduleControl } from "./quincy/SubtaskScheduleControl";
 export type CreateDraftChange = (patch: Partial<CreateDraft>) => void;
 
 /** The phone sheet's Due trigger: an outlined field the Title input's height, filling its row, instead of the column cell's borderless text. */
-const SHEET_DUE_TRIGGER = "flex-1 justify-start border-input rounded-[var(--radius-sm)] bg-[var(--field-bg)] text-base min-h-[38px] max-[721px]:min-h-[44px] px-[10px] -ml-0";
+const SHEET_DUE_TRIGGER = "flex-1 justify-start border-input rounded-[var(--radius-sm)] bg-[var(--field-bg)] text-base! min-h-[38px] max-[721px]:min-h-[44px] px-[10px] -ml-0";
 
 /**
  * Keeps a press or key off the row and the tree's key handling. In the phone sheet, Escape on a picker's CLOSED trigger is let
@@ -96,9 +96,9 @@ export function GanttCreateDraftDue({ draft, projectDefault, pending, onChange, 
             <span className="truncate">{triggerText}</span>
           </Button>
         )}
-        // In the phone sheet the popup is measured against the viewport (the `viewportPopupPadding` above and this boundary), not the
-        // short sheet it portals into: Base UI's `--available-height` is then the viewport's, it shifts up, and its footer stays tappable.
-        popupCollisionBoundary={sheet ? (typeof document === "undefined" ? undefined : document.documentElement) : undefined}
+        // In the phone sheet the popup is measured against the viewport (the `viewportPopupPadding` above), not the short sheet it
+        // portals into. NO explicit boundary: `document.documentElement` is the whole document tall, which made `--available-height`
+        // huge; the default clipping-ancestors boundary is the viewport, so PopupFrame's own scroller caps at it and Cancel/Apply stay in view.
         open={open}
         setOpen={setOpen}
         onSave={(request) => onChange({

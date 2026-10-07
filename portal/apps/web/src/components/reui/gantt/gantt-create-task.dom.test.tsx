@@ -683,6 +683,8 @@ describe("gantt add-task editor keeps the row's columns (#678)", () => {
       const cls = createButton("Alpha")!.className;
       expect(cls).toContain("max-[720px]:end-[var(--space-1)]");
       expect(cls).not.toContain("ring-inset");
+      // a focused opener (and its ring) paints above the next Project row's sticky opener backing
+      expect(cls).toContain("focus-visible:z-[2]");
     });
   });
 
