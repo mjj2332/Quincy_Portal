@@ -45,8 +45,11 @@ describe("ProjectSheet close button backing (#670)", () => {
   it("carries the .worktools frosted backing so a scrolled section rule never runs through the ×", async () => {
     await render(false);
     const close = document.querySelector<HTMLElement>('[data-testid="project-sheet-close"]')!;
-    expect(close.className).toContain("bg-[color-mix(in_srgb,var(--paper-050)_90%,transparent)]");
-    expect(close.className).toContain("backdrop-blur-[8px]");
+    // Phone widths only: on desktop the × sits on the sheet header beside bare icons, and a tile reads as a stray square.
+    // `not-hover:not-aria-expanded:` so the ghost button's own hover and expanded fills still win.
+    expect(close.className).toContain("max-[721px]:not-hover:not-aria-expanded:bg-[color-mix(in_srgb,var(--paper-050)_90%,transparent)]");
+    expect(close.className).toContain("max-[721px]:backdrop-blur-[8px]");
+    expect(close.className.split(/\s+/)).not.toContain("bg-[color-mix(in_srgb,var(--paper-050)_90%,transparent)]");
   });
 });
 
