@@ -541,6 +541,30 @@ describe("ProductionGantt — one create carries the draft", () => {
     expect(draftAssignees()!.getAttribute("title")).toContain("Ada Smith");
   });
 
+  for (const [name, get, open] of [
+    ["Assignees", () => draftAssignees()!, async () => { await openPicker(); }],
+    ["Due", () => draftDue()!, async () => { const t = draftDue()!; await act(async () => { t.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); t.click(); await Promise.resolve(); }); await waitFor(() => expect(draftDue()!.getAttribute("aria-expanded")).toBe("true")); }],
+  ] as const) {
+    it(`${name}: the first Escape closes only the popup, the second on the closed trigger closes the row (#688)`, async () => {
+      await mount();
+      await click(plus(STREET_A)!);
+      await type(input()!, "Half typed");
+      await open();
+      await closePickerWithEscape();
+      expect(editorRow()).not.toBeNull();
+      const trigger = get();
+      await act(async () => { trigger.focus(); });
+      expect(trigger.getAttribute("aria-expanded")).toBe("false");
+      await key(trigger, "Escape");
+      await settle();
+      expect(editorRow()).toBeNull();
+      expect(apiPostMock).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(plus(STREET_A));
+      await click(plus(STREET_A)!);
+      expect(input()!.value).toBe("");
+    });
+  }
+
   it("the draft's controls never move tree focus or collapse the Project: a key in them stays out of the row", async () => {
     await mount();
     await click(plus(STREET_A)!);
