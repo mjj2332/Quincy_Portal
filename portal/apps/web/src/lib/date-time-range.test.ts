@@ -187,4 +187,9 @@ describe("applyRangeShortcut: a gapped other end is filled from the pair (#683 r
   it("END: a gapped start is refilled", () => {
     expect(apply("today", "end", { start: "2026-10-04T02:30", end: "2026-10-09T17:00" })).toEqual({ start: moment("2026-10-07T09:00"), end: moment("2026-10-07T17:00") });
   });
+
+  it("START: a shifted end that lands in the gap falls back to the pair's end", () => {
+    // 1 Oct 09:00 to 2 Oct 02:30 is 17.5 civil hours; Today START on Sat 3 Oct (09:00) plus that is 4 Oct 02:30, which does not exist.
+    expect(apply("today", "start", { start: "2026-10-01T09:00", end: "2026-10-02T02:30" }, "2026-10-03")).toEqual({ start: moment("2026-10-03T09:00"), end: moment("2026-10-03T17:00") });
+  });
 });
