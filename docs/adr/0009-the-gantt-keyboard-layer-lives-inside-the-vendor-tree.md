@@ -228,6 +228,8 @@ paired with a timeline spacer):
   `createTaskResetKey`). The editor row handles Escape on the input only: the draft's popups portal
   out of the row but their events bubble through it (#585, #670).
 
+Reuse ledger for the phone sheet: the sheet itself `reui/sheet` (base-nova); Title input `reui/input`; Cancel / Add `reui/button`; the Title, Assignees and Due labels `reui/field` `FieldLabel` (a real `<label htmlFor>` above each control).
+
 What stays out: the write (one `POST /api/projects/:id/subtasks` carrying `assigneeIds` / `schedule`
 / reminders only when set, the Checklist composer's body), the permission, the pickers
 (`quincy/SubtaskAssigneePicker`, `quincy/SubtaskScheduleControl`) and the draft's state.

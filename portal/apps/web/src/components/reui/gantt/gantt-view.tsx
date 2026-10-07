@@ -2510,9 +2510,13 @@ function GanttView({
   // The group whose `+` takes focus once the editor has closed (cancel, success).
   const createRestoreFocusRef = useRef<string | null>(null)
   const focusCreateInput = useCallback(() => {
-    treeRowsRef.current
-      ?.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-input"]')
-      ?.focus({ preventScroll: true })
+    const input = treeRowsRef.current?.querySelector<HTMLElement>(
+      '[data-testid="gantt-group-create-task-input"]'
+    )
+    if (!input) return
+    // the open editor may be scrolled away: bring its row in view (never scrollIntoView) before focusing
+    revealRowNearest(input.closest<HTMLElement>("[data-gantt-create-for]"))
+    input.focus({ preventScroll: true })
   }, [])
   const closeCreate = useCallback((restoreFocus: boolean) => {
     const parentId = createOpenForRef.current

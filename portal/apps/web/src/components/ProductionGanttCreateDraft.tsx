@@ -10,7 +10,8 @@
  *
  * Reuse ledger: assignees — `quincy/SubtaskAssigneePicker` (`compact`); due — `quincy/SubtaskScheduleControl`
  * (`owner="gantt-create"`, composer mode) behind one `reui/button` trigger carrying the Due column cell's `CELL_TRIGGER`; the wrapper that keeps a press or key off
- * the row — a plain `<span>` carrying `stopPropagation` (the People and Due cells' pattern, `stopRowGesture`).
+ * the row — a plain `<span>` carrying `stopPropagation` (the People and Due cells' pattern, `stopRowGesture`); the phone sheet's Title / Assignees / Due
+ * labels — `reui/field` `FieldLabel` (a real `<label htmlFor>` above each control).
  */
 import { useId, useState, type KeyboardEvent } from "react";
 import type { ProjectDefaultRangeDto, Role } from "@quincy/shared";
