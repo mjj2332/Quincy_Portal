@@ -26,6 +26,13 @@ afterEach(async () => {
   root = null; host.remove(); document.body.replaceChildren();
 });
 
+describe("ProjectSheet body focus clearance (#673)", () => {
+  it("gives the scroller scroll padding so a focused mid-form control's ring is not clipped", async () => {
+    await render(false);
+    expect(document.querySelector('[data-testid="project-sheet-body"]')!.className).toContain("scroll-py-[var(--space-2)]");
+  });
+});
+
 describe("ProjectSheet scrim under impersonation (#531)", () => {
   it("starts the scrim below the banner and shields the strip while impersonating", async () => {
     await render(true);

@@ -396,6 +396,16 @@ describe("ProjectDiscussionThread", () => {
   });
 });
 
+describe("ProjectDiscussionThread comment actions focus ring (#673)", () => {
+  it("insets the ⋯ trigger by the ring outset so the ring stays inside the comment column, and keeps the 28/44 target", async () => {
+    render(); await flush();
+    const cls = host.querySelector<HTMLElement>('[data-testid="comment-actions"]')!.className;
+    expect(cls).toContain("me-[var(--space-1)]");
+    expect(cls).toContain("w-[28px]");
+    expect(cls).toContain("max-[721px]:w-[44px]");
+  });
+});
+
 describe("ProjectDiscussionThread comment Delete confirmation (#568)", () => {
   const mine = (id: string, text: string) => ({ ...ownComment, id, body: text, content: doc(text) });
   const trigger = (id: string) => host.querySelector<HTMLElement>(`[data-comment-id="${id}"] [data-testid="comment-actions"]`);
