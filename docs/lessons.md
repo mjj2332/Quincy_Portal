@@ -4951,7 +4951,9 @@ Tags: search-filters · #429
 - **`mine=1` changed meaning.** It is "People = me" in every view: Table/Board = I am an Editor or assigned an OPEN
   Subtask; Calendar/Timeline Deadline items = I am an Editor, Subtask items = assigned to me. It used to mean Subtasks
   only on the Calendar, so a pre-#429 `mine=1` link now also keeps Deadlines of Projects the viewer edits. The session
-  user is always the server's, never a client-supplied id.
+  user is always the server's, never a client-supplied id. **Amended by #680 (Timeline only):** a Timeline
+  Subtask item matches when I am an Editor of its Project OR assigned to it, so a Project I edit lists all its Subtasks.
+  See "My tasks on the Timeline lists every Subtask of a Project I edit (#680)".
 - **Unassigned alone used to narrow nothing on the Calendar.** The old `selected.requested = 0 OR selected.valid = 0`
   gate read "no valid person" as "no filter", so `unassigned=1` with no editors returned everything. The gate is now
   "a person filter is active when a valid person is picked OR Unassigned is on". Do not reintroduce a
@@ -5913,6 +5915,17 @@ only a browser at 390px proves it (jsdom has no geometry): see the map's measure
   every width (the owner's decision, superseding #597's 32px), and the active shortcut chip (`aria-pressed`) joins `noSliver`
   next to the pressed slot. Row 1 may still straddle the top edge (scrolled off, not fade-slivered); only the active chip is
   protected.
+- **#677: the TIME field starts below the fold at 390, and the 110 landing sliced it.** The Table Today/Tomorrow landing (110)
+  left 4.31px of the TIME input in the bottom fade; the Checklist range picker left 6.3px of the START TIME label cut by the
+  body's edge. The fix is a constraint on that landing, not a new snap: `PopupFrame` (open only) passes the `data-time-boundary`
+  Field's input and label as `boundaries`, and the preset chips as `chips`. A landing that already clears them stays (no-shortcut
+  50, Next week 50). Otherwise the smallest whole scroll at which the input is wholly below the body wins (Table Today/Tomorrow
+  and Checklist 102), provided no `noSliver` item is slivered and no preset chip crosses the top fade's inner edge. **A label
+  wholly inside the bottom band is allowed** (the "more below" cue, the mirror of #674's accepted top tail); only a label or
+  input cut by the body's bottom edge is rejected. Trap: putting the Field in `noSliver` without the bottom candidates scrolls
+  the presets away (~170-198). Nothing valid keeps the previous landing. The whole Field (label + input) as the boundary has no
+  valid Table landing, since it needs scroll <= 83 while the row-2 chips need >= 102. Guards: `lib/date-time-field.test.ts`
+  ("#677"), `PopupFrame-presets.dom.test.tsx`.
 
 ## Focus scrolls a mid-form field flush and clips its ring; an inactive window hides the ring in screenshots (#673)
 Tags: focus-overlays, css-tokens · #673
@@ -5941,3 +5954,18 @@ trigger lost `ms-auto` and jumped left on open. Rule: **a trigger and its floati
 `:nth-child` selector near a trigger that owns a FloatingPortal changes when it opens. A wrapper, not an explicit `ms-auto`
 on the trigger, keeps the read-only row (no Actions) right-aligning its assignee picker. Guard:
 `SubtaskChecklist.dom.test.tsx` ("keeps the Actions trigger inside the meta row's last child while its popover is open").
+
+## My tasks on the Timeline lists every Subtask of a Project I edit (#680)
+Tags: search-filters, gantt-calendar · #680
+
+On the Timeline, `mine` in the Subtask (child) context is `timelineSubtaskContext` (`lib/dashboard-filter-sql.ts`): Editor of
+the Subtask's Project OR assignee of the Subtask. Before, `childFilterSql` used `assigneeContext`, so a Project I edit listed
+only my own Subtasks. One seam (`childFilterSql` in `routes/production-gantt.ts`) feeds `child_matches`, the density count,
+embedded children and standalone `childrenOf` pages and totals. `!mine` is the strict complement, so a Project I edit drops
+out. A Project I do not edit but hold a Subtask in is unchanged: a context row with only my Subtasks. **Deliberate, do not
+"fix" for consistency:** People = me on the Timeline stays per-assignee, so #429's "My tasks = People = me" no longer holds
+there. The Calendar, Board and Table keep `assigneeContext` / their own contexts (do not edit `assigneeContext` in place; the
+Calendar uses it). An External Editor can only see Projects they edit, so for them My tasks shows the same rows as no filter.
+`mine` only narrows rows already inside the authorized scope; nothing new is exposed. Guards:
+`production-gantt-people.test.ts`, `production-gantt-tree.test.ts`, `production-gantt-mine-subtasks.test.ts`,
+`dashboard-filter-sql.test.ts`.

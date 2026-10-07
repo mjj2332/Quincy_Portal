@@ -462,3 +462,59 @@ describe("scrollTopClearOfFade fade-aware snaps and the active chip (#674)", () 
     expect(landed).toBe(110);
   });
 });
+
+describe("scrollTopClearOfFade TIME boundary below the fold (#677)", () => {
+  // Measured at 390 (qa-evidence/677-time-sliver): Table body 118.53..763 (H 644.47, max 437), 24px fade; preset rows at content 14/74/134 (52px tall); the pressed
+  // slot at 618..662; the TIME label at 727.83..742.2 and its input at 750.16..794.16. The solver is called at scroll 0, as PopupFrame does at open.
+  const table = { viewport: { top: 118.53, bottom: 763 }, scrollTop: 0, maxScrollTop: 437, fade: 24, snaps: [0, 14, 74, 134, 194] };
+  const at = (top: number, bottom: number, top0 = 118.53) => ({ top: top0 + top, bottom: top0 + bottom });
+  const row = (top: number, top0 = 118.53) => at(top, top + 52, top0);
+  const chips = (top0 = 118.53) => [row(14, top0), row(74, top0), row(134, top0)];
+  const slot = at(618, 662);
+  const day = (top: number, bottom: number) => ({ ...at(top, bottom), required: true });
+  const boundary = (top0 = 118.53, labelTop = 727.83) => ({ control: at(750.16, 794.16, top0), label: at(labelTop, labelTop + 14.4, top0) });
+  const today = { ...table, items: [day(342.6, 388.9)], noSliver: [slot, row(14)], chips: chips() };
+
+  it("Today and Tomorrow active: the TIME input leaves the bottom fade and the Next week row keeps only a tail in the top one (was 110, 4.31px of input sliced)", () => {
+    expect(scrollTopClearOfFade({ ...today })).toBe(110);
+    const landed = scrollTopClearOfFade({ ...today, boundaries: [boundary()] });
+    expect(landed).toBe(102);
+    // The input starts at or below the body's bottom edge; the label lies wholly inside the bottom band or below it.
+    expect(750.16 - landed).toBeGreaterThanOrEqual(644.47);
+    expect(727.83 + 14.4 - landed).toBeGreaterThan(644.47 - 24);
+    // The row-2 chips end at 126 - 102 = 24: wholly in the top fade, none crossing its inner edge.
+    for (const chip of [14, 74, 134]) expect(chip - landed >= 24 || chip + 52 - landed <= 24).toBe(true);
+  });
+
+  it("without the chip list, the smallest scroll clearing the active chip would cut a row across the fade's inner edge (64)", () => {
+    expect(scrollTopClearOfFade({ ...today, chips: undefined, boundaries: [boundary()] })).toBe(64);
+  });
+
+  it("no active chip (no shortcut): the clear snap 50 stays", () => {
+    const none = { ...table, items: [day(396.9, 443.2)], noSliver: [slot], chips: chips() };
+    expect(scrollTopClearOfFade({ ...none })).toBe(50);
+    expect(scrollTopClearOfFade({ ...none, boundaries: [boundary()] })).toBe(50);
+  });
+
+  it("Next week active (row 2): the clear snap 50 stays", () => {
+    const next = { ...table, items: [day(342.6, 388.9)], noSliver: [slot, row(74)], chips: chips() };
+    expect(scrollTopClearOfFade({ ...next })).toBe(50);
+    expect(scrollTopClearOfFade({ ...next, boundaries: [boundary()] })).toBe(50);
+  });
+
+  it("Checklist range: an orphaned START TIME label cut by the body's edge is cleared (was 110, 6.3px of label)", () => {
+    // Body 138.92..763 (H 624.08, max 418), label 727.77..742.17, input 750.16..794.16.
+    const list = { viewport: { top: 138.92, bottom: 763 }, scrollTop: 0, maxScrollTop: 418, fade: 24, snaps: [0, 14, 74, 134, 194], items: [{ ...at(396.9, 443.2, 138.92), required: true }], noSliver: [at(618, 662, 138.92)], chips: chips(138.92) };
+    expect(scrollTopClearOfFade({ ...list })).toBe(110);
+    expect(scrollTopClearOfFade({ ...list, boundaries: [boundary(138.92, 727.77)] })).toBe(102);
+  });
+
+  it("a body that does not scroll (1280: the columns sit side by side) stays at 0", () => {
+    expect(scrollTopClearOfFade({ viewport: { top: 100, bottom: 700 }, scrollTop: 0, maxScrollTop: 0, fade: 32, snaps: [0, 8], items: [], boundaries: [{ control: { top: 650, bottom: 694 }, label: { top: 628, bottom: 642 } }] })).toBe(0);
+  });
+
+  it("keeps the landing when no scroll is valid (a required day too low to leave the input below the body)", () => {
+    const low = { ...table, items: [day(560, 606)], noSliver: undefined, chips: chips() };
+    expect(scrollTopClearOfFade({ ...low, boundaries: [boundary()] })).toBe(scrollTopClearOfFade({ ...low }));
+  });
+});

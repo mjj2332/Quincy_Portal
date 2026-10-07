@@ -119,6 +119,18 @@ export function assigneeContext(role: Role, columns: ReturnType<typeof projectsT
   };
 }
 
+/**
+ * #680, the Timeline's Subtask (child) context: My tasks is true for a Subtask when I am an Editor of its Project OR an
+ * assignee of it, so a Project I edit lists every one of its Subtasks. People stays per-assignee (it knowingly no longer
+ * equals My tasks = me here). Not `assigneeContext` edited in place: the Calendar uses that one.
+ */
+export function timelineSubtaskContext(role: Role, columns: ReturnType<typeof projectsTableColumns>, projectIdRef: string, subtaskRef: string, now: string, me: string): DashboardFilterLeafContext {
+  return {
+    ...assigneeContext(role, columns, projectIdRef, subtaskRef, now, me),
+    mine: () => `(${editorExists(projectIdRef, `fpe.user_id = ${me}`)} OR ${assigneeExists(role, projectIdRef, subtaskRef, `fsa.user_id = ${me}`)})`,
+  };
+}
+
 /** The Projects-list context: People / My tasks mean a Project's Editor or the assignee of one of its OPEN Subtasks. */
 export function projectsListContext(role: Role, alias: string, now: string, me: string): DashboardFilterLeafContext {
   const projectIdRef = `${alias}.id`;

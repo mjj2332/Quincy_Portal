@@ -160,3 +160,31 @@ describe("/api/production-gantt filter tree (#461), over the #429 People seed", 
     expect((await get<Body>(F("1:or(archived=only;mine)"), tokens.alex)).status).toBe(403);
   });
 });
+
+describe("/api/production-gantt My tasks in a tree (#680)", () => {
+  it("an OR tree whose other rule matches nothing equals flat mine=1: every Subtask of a Project I edit, my own elsewhere", async () => {
+    const flat = await get<Body>(`${base}&mine=1&dm=1`, tokens.alex);
+    const tree = await get<Body>(F("1:or(mine;shoot=2000-01-01..2000-01-02)", "&dm=1"), tokens.alex);
+    expect(tree.status).toBe(200);
+    expect(mine(tree.body)).toEqual(mine(flat.body));
+    for (const projectId of [g1, g3, g6]) expect(titles(rowOf(tree.body, projectId))).toEqual(titles(rowOf(flat.body, projectId)));
+    expect(titles(rowOf(tree.body, g1))).toEqual(["A1", "B1"]);
+  });
+
+  it("!mine is the strict complement: a Project I edit drops out completely", async () => {
+    const { body } = await get<Body>(F("1:and(!mine)"), tokens.alex);
+    expect(mine(body)).not.toContain(g1);
+    expect(mine(body)).not.toContain(g6);
+    // g3 is not mine as a Project, but A3 is: !mine keeps only its other Subtask.
+    expect(titles(rowOf(body, g3))).toEqual(["U3"]);
+    expect(mine(body)).toEqual([g2, g3, g4, g5].sort());
+  });
+
+  it("mine inside an OR with a date rule", async () => {
+    const { body } = await get<Body>(F("1:or(mine;shoot=2026-08-13..2026-08-14)", "&dm=1"), tokens.alex);
+    expect(mine(body)).toEqual([g1, g3, g4, g5, g6].sort());
+    expect(titles(rowOf(body, g1))).toEqual(["A1", "B1"]);
+    expect(titles(rowOf(body, g3))).toEqual(["A3"]);
+  });
+});
+

@@ -148,6 +148,8 @@ export function popupPaddingWithTopAtLeast(padding: PopupCollisionPadding, top: 
 }
 
 type EdgeRect = { top: number; bottom: number };
+/** #677: a control that opens below the fold (the TIME input) and its label. The input must not rest in the bottom fade; the label may lie wholly inside the band (the "more below" cue) but never straddle the body's edge. */
+export type BottomBoundary = { control: EdgeRect; label?: EdgeRect };
 /** An item to keep clear of the fade; `required` ones are never skipped for lying outside the body (#587). */
 export type FadeItem = EdgeRect & { required?: boolean; /** Wins over the other required items when they cannot all be cleared (the focused control, WCAG 2.4.11). Implies `required`. */ priority?: boolean };
 
@@ -212,8 +214,12 @@ function nearestClearScroll(window: { low: number; high: number }, slivered: (sc
  * inside the top or the bottom fade: the smallest valid snap where each is fully clear of both bands (or outside the body) wins; failing
  * that, the valid whole scroll that does with the least movement (the smallest when `snaps` were given); failing that, the #630 choice
  * stands, so required and `priority` items stay authoritative.
+ *
+ * #677 — `boundaries` (the TIME input and its label, which start below the fold) and `chips` (the preset chips) only ever tighten the landing above: when it already
+ * leaves each input clear of the bottom band and each label uncut by the body's edge it stands; otherwise the smallest whole scroll with every input wholly below the
+ * body, no `noSliver` item slivered and no chip crossing the top band's inner edge wins (a label wholly inside the bottom band is fine); none valid keeps the landing.
  */
-export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, items, snaps, noSliver }: { viewport: EdgeRect; scrollTop: number; maxScrollTop: number; fade: number; items: readonly FadeItem[]; snaps?: readonly number[]; noSliver?: readonly EdgeRect[] }): number {
+export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, items, snaps, noSliver, boundaries, chips }: { viewport: EdgeRect; scrollTop: number; maxScrollTop: number; fade: number; items: readonly FadeItem[]; snaps?: readonly number[]; noSliver?: readonly EdgeRect[]; boundaries?: readonly BottomBoundary[]; chips?: readonly EdgeRect[] }): number {
   const height = viewport.bottom - viewport.top;
   const max = Math.max(0, maxScrollTop);
   const clamp = (value: number) => Math.min(Math.max(0, value), max);
@@ -258,18 +264,46 @@ export function scrollTopClearOfFade({ viewport, scrollTop, maxScrollTop, fade, 
   const fadeAware = (snaps ?? []).map((snap) => (snap > 0 ? Math.floor(Math.max(snap - fade, snap / 2) + 1e-9) : snap));
   const landing = fadeAware.filter((snap) => snap >= safe.low && snap <= safe.high);
   const clearLanding = landing.filter((snap) => !slivered(snap));
-  if (clearLanding.length > 0) return Math.min(...clearLanding);
-  if (noSliver?.length) {
-    // With snaps the smallest clear whole scroll (#636); otherwise the clear whole scroll nearest to where the body is now (#662).
-    // #662: without snaps, look for a scroll with no overlap at all first; the 2px tolerance absorbs sub-pixel rounding in what is
-    // acceptable, it is not a reason to choose a 2px sliver when a clean scroll is just as reachable.
-    const clear = snaps?.length
-      ? smallestClearScroll(safe, slivered)
-      : nearestClearScroll(safe, sliveredWithin(0), scrollTop) ?? nearestClearScroll(safe, slivered, scrollTop);
-    if (clear !== undefined) return clear;
-  }
-  if (landing.length > 0) return Math.min(...landing);
-  return Math.min(Math.max(scrollTop, safe.low), safe.high);
+  const legacy = (() => {
+    if (clearLanding.length > 0) return Math.min(...clearLanding);
+    if (noSliver?.length) {
+      // With snaps the smallest clear whole scroll (#636); otherwise the clear whole scroll nearest to where the body is now (#662).
+      // #662: without snaps, look for a scroll with no overlap at all first; the 2px tolerance absorbs sub-pixel rounding in what is
+      // acceptable, it is not a reason to choose a 2px sliver when a clean scroll is just as reachable.
+      const clear = snaps?.length
+        ? smallestClearScroll(safe, slivered)
+        : nearestClearScroll(safe, sliveredWithin(0), scrollTop) ?? nearestClearScroll(safe, slivered, scrollTop);
+      if (clear !== undefined) return clear;
+    }
+    if (landing.length > 0) return Math.min(...landing);
+    return Math.min(Math.max(scrollTop, safe.low), safe.high);
+  })();
+  if (!boundaries?.length) return legacy;
+  // #677: the landing above may leave the TIME input in the bottom fade or its label cut by the body's edge (Today/Tomorrow at 390 landed at 110 with 4px of the
+  // input in the band). A landing that already clears them stays. Otherwise the smallest whole scroll at which every input is wholly below the body (so
+  // nothing is cut), no required/noSliver item is slivered, and no preset chip crosses the top fade's inner edge (a row tail wholly inside the fade is fine, #674).
+  // Nothing valid: the landing above stands, so this only ever adds a constraint.
+  const bottomOk = (s: number) => boundaries.every(({ control, label }) => {
+    const rel = (rect: EdgeRect) => ({ top: rect.top - viewport.top + scrollTop - s, bottom: rect.bottom - viewport.top + scrollTop - s });
+    const c = rel(control);
+    const band = Math.min(fade, max - s);
+    if (c.bottom - SLIVER_TOLERANCE > height - band && c.top + SLIVER_TOLERANCE < height) return false;
+    if (label) {
+      const l = rel(label);
+      if (l.top + SLIVER_TOLERANCE < height && l.bottom - SLIVER_TOLERANCE > height) return false;
+    }
+    return true;
+  });
+  if (bottomOk(legacy)) return legacy;
+  const crossesInnerEdge = (s: number) => (chips ?? []).some((chip) => {
+    const top = chip.top - viewport.top + scrollTop - s;
+    const bottom = chip.bottom - viewport.top + scrollTop - s;
+    const edge = Math.min(fade, s);
+    return top < edge && bottom > edge;
+  });
+  const lastBelow = Math.floor(Math.min(...boundaries.map(({ control }) => control.top - viewport.top + scrollTop)) - height + 1e-9);
+  for (let s = Math.ceil(safe.low - 1e-9); s <= Math.min(safe.high, lastBelow); s += 1) if (!slivered(s) && bottomOk(s) && !crossesInnerEdge(s)) return s;
+  return legacy;
 }
 
 /** #602: below this width the popup stacks its columns, the calendar takes 44px cells and the popup may cover its trigger. Tailwind's `max-[721px]:` compiles to this same `(width < 721px)`. */

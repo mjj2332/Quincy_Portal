@@ -28,6 +28,8 @@ import {
  *   Table/Board a Project's Editor or the assignee of one of its open Subtasks, on the Calendar/Timeline
  *   a Deadline's Editor or a Subtask's assignee.
  * - `myTasks`: "People = me", the session user (never a client-supplied id).
+ *   Exception (#680, Timeline Subtask items only): an Editor of the Subtask's Project OR its assignee, so People = me and
+ *   My tasks differ there.
  * - `shootRange`, `deadlineRange`: inclusive Sydney civil-day ranges, both ends required.
  * - `overdueOnly`: the Deadline is past, the Project not Delivered and not archived. Exclusive with
  *   `deadlineRange` (one Deadline rule): `normalizeDashboardFilter` keeps the range and drops it.

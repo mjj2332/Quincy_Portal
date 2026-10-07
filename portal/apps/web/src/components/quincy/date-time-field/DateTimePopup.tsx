@@ -223,7 +223,7 @@ function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedba
             <TimeColumn selected={draft.time} skipped={skipped} onPick={pickSlot} />
           </div>
         </div>
-        <Field data-invalid={timeInvalid || undefined}>
+        <Field data-invalid={timeInvalid || undefined} data-time-boundary="">
           <FieldLabel htmlFor={timeId}>Time</FieldLabel>
           <Input id={timeId} inputMode="numeric" autoComplete="off" placeholder="HH:MM" value={draft.timeText} aria-invalid={timeInvalid || undefined} aria-describedby={`${timeId}-help`} onChange={(event) => typeTime(event.target.value)} />
           <FieldDescription id={`${timeId}-help`} className="text-[length:var(--text-xs)]">Any minute, for example 17:07, or pick a slot.</FieldDescription>
