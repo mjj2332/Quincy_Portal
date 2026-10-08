@@ -6076,10 +6076,10 @@ Tags: gantt-calendar, focus-overlays · #697, #698
 
 - **#697.** The create row's Cancel x got a 44px minimum box on coarse pointers, centred in a 20px gutter with 4px before the title input. It spilled 12px, 8px of it into the input, which paints later and won the tap.
   - Fix the box, not the neighbour: a start margin and equal start padding (`-ms-6` / `ps-6`) grow it toward the empty indent while the glyph and the input stay put. Moving the input would break its alignment with child-row titles.
+  - The inline create row only renders at 1024px and wider since #734, so the fix matters on coarse pointers at >=1024px (tablets, touch laptops); the `max-[721px]` twin is kept for parity only.
   - Check with real coarse-pointer emulation: `elementFromPoint` on a grid over the box must return the button.
 - **#698.** On 44px touch rows the `+` fills its row, so the outset focus ring (2px, offset 2px) reaches 4px above it. At scrollTop 0 the sticky tree header (z-30) paints over that.
   - Scroll padding cannot help at scrollTop 0, and a spacer breaks the flush landing. Draw the ring inside the box on coarse pointers and phones (`-outline-offset-2` plus the important focus-visible twin and the at-rest twin that `insetOffsetProblems` requires). Fine-pointer desktop keeps the outset ring.
   - Check with the page focused (`document.hasFocus()`), Tab to the first row, and read the computed outline offset.
 
 Guards: `reui/gantt/gantt-create-task.dom.test.tsx` (the x and `+` token pins), `design-system-guards.test.ts`, `config/phone-breakpoint.guard.test.ts`.
-

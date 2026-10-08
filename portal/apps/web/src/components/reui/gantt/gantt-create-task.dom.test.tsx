@@ -784,7 +784,15 @@ describe("gantt add-task editor keeps the row's columns (#678)", () => {
     for (const cls of ["pointer-coarse:-ms-6", "pointer-coarse:ps-6", "max-[721px]:-ms-6", "max-[721px]:ps-6"]) expect(cancel.className).toContain(cls);
     // the title wrapper and the gutter span are unchanged, so the input keeps its alignment with child rows
     const gutter = cancel.parentElement as HTMLElement;
-    expect(gutter.className).toBe("me-1 flex w-5 shrink-0 items-center justify-center");
+    expect(gutter.classList.contains("w-5")).toBe(true);
+    expect(gutter.classList.contains("me-1")).toBe(true);
+    // the -ms-6 / ps-6 growth assumes 24px of empty start space before the gutter at depth 0: the name
+    // cell's ps-3 (12px) plus the one-level-deeper spacer ((depth + 1) * 0.875rem = 14px at 16px/rem)
+    const nameCell = host.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-name-cell"]')!;
+    expect(nameCell.classList.contains("ps-3")).toBe(true);
+    const spacer = gutter.previousElementSibling as HTMLElement;
+    expect(spacer.style.width).toBe("0.875rem");
+    expect(12 + parseFloat(spacer.style.width) * 16).toBeGreaterThanOrEqual(24);
     const titleWrapper = input().parentElement as HTMLElement;
     expect(titleWrapper.className).toContain("min-w-0");
     expect(titleWrapper.className).toContain("flex-1");
@@ -803,6 +811,9 @@ describe("gantt add-task editor keeps the row's columns (#678)", () => {
     ]) expect(cls).toContain(token);
     // fine-pointer desktop keeps the outset ring: no unprefixed inset offset
     expect(cls).not.toMatch(/(^|\s)(focus-visible:)?!?-outline-offset-2/);
+    // and its ring configuration is the one main had: no inset ring, the focus-visible lift above the next opener's backing
+    expect(cls).not.toContain("ring-inset");
+    expect(cls).toContain("focus-visible:z-[2]");
   });
 
   it("renderCreateStack is ignored when a column carries a create cell", async () => {

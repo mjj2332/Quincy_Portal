@@ -4177,7 +4177,11 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
   )
 })
 
-/** The fine-pointer `+` keeps an outset 4px focus ring (`--space-1`) outside its own box; reveal that much more around it. Coarse pointers and phones draw the ring inside the box (#698), so this room is only for the desktop ring. */
+/**
+ * The fine-pointer `+` keeps an outset focus ring (2px wide with a 2px offset, so it reaches 4px outside its own box,
+ * `--space-1`); reveal that much more around it. Coarse pointers and phones draw the ring inside the box (#698), so
+ * this room is only for the desktop ring.
+ */
 const FOCUS_RING_ROOM_PX = 4
 
 /**
