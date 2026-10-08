@@ -310,6 +310,12 @@
  * 2026-10-08, #734 follow-up - CHANGED, behaviour (ADR 0009 addendum). `treeWidth` re-seeds from `treePanel.width` when the config's
  * `width` or `minWidth` changes (a consumer swapping tree configs across a breakpoint); a splitter drag is otherwise kept. The add-task
  * bottom sheet is capped at the 560px dialog rung and centred from 721px up, with `--radius-lg` top corners (owner choice); a phone stays full-bleed and square.
+ *
+ * 2026-10-08, #738 - CHANGED, behaviour (ADR 0009 addendum). `GanttView` takes `zoomControlTarget?: HTMLElement | null`. An element
+ * portals the zoom buttons into it as a labelled `role="group"` row of nav-config buttons (as `GanttNavPrev`/`Next`) (size-4 glyphs, tooltip below), same
+ * handlers, step, bounds and focusable `aria-disabled` at the limits; `undefined` keeps the floating box (vendor consumers, harness);
+ * `null` renders neither. The handlers moved to `zoomInStep`/`zoomOutStep`. Zoom state and wheel/pinch anchoring are unchanged,
+ * and the `--gantt-zoom-shift` chip dodge still serves the floating box only.
  */
 
 import {
@@ -325,6 +331,7 @@ import {
   type CSSProperties,
   type RefObject,
 } from "react"
+import { createPortal } from "react-dom"
 import {
   DEFAULT_ROW_ALIGN,
   resolveScheduleMode,
@@ -700,6 +707,14 @@ interface DependencyEdge {
 interface GanttViewProps extends useRender.ComponentProps<"div"> {
   /** Day-scale unit interval in minutes; defaults to the interval view config. */
   interval?: number
+  /**
+   * #738: where the zoom buttons render. `undefined` keeps the floating box in the lane overlay
+   * (vendor consumers, the harness). An element portals the buttons into it as a toolbar
+   * group composed like the nav arrows. `null` renders nothing - the consumer's target has not mounted yet, and the
+   * floating box must not flash first. Zoom state stays in `GanttView`, so wheel/pinch anchoring is
+   * untouched. Only read when `zoomControl` is on.
+   */
+  zoomControlTarget?: HTMLElement | null
 }
 
 /**
@@ -727,6 +742,7 @@ function GanttView({
   className,
   render,
   interval: intervalProp,
+  zoomControlTarget,
   ...props
 }: GanttViewProps) {
   const instance = useGantt()
@@ -2219,6 +2235,21 @@ function GanttView({
     }
   }
 
+  // #738: the zoom buttons' handlers, shared by the floating box and the toolbar portal.
+  // aria-disabled (not disabled) keeps them focusable at the limits, so the click is a no-op.
+  const zoomInStep = () => {
+    if (!canZoomIn) return
+    // controlled zoom anchors via fineCenterRef when the parent adopts; a pre-set anchor would
+    // leak stale if the parent ignores the proposal
+    if (viewConfig.zoom === undefined) anchorZoomCenter()
+    setZoomValue(+(zoom + (zoomRange.step ?? 0.25)).toFixed(2))
+  }
+  const zoomOutStep = () => {
+    if (!canZoomOut) return
+    if (viewConfig.zoom === undefined) anchorZoomCenter()
+    setZoomValue(+(zoom - (zoomRange.step ?? 0.25)).toFixed(2))
+  }
+
   /**
    * Keep the instant under the POINTER pinned across a zoom step. The buttons
    * anchor the viewport center, but a wheel or pinch gesture points at
@@ -3315,7 +3346,7 @@ function GanttView({
           className="pointer-events-none absolute inset-y-0 end-0 z-30"
           style={{ insetInlineStart: "var(--gantt-tree-inset)" }}
         >
-          {viewConfig.zoomControl && (
+          {viewConfig.zoomControl && zoomControlTarget === undefined && (
             <div
               data-slot="gantt-zoom"
               // #219 PR A fix (dr-219a LOW #7, part 3): additive, same reasoning as the resize
@@ -3357,16 +3388,7 @@ function GanttView({
                         // now too (see that element's own comment), so there is no outer corner
                         // left for this button to inherit and partially cancel.
                         className="text-foreground-secondary hover:text-foreground size-11! rounded-none aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent"
-                        onClick={() => {
-                          if (!canZoomIn) return
-                          // controlled zoom anchors via fineCenterRef when
-                          // the parent adopts; a pre-set anchor would leak
-                          // stale if the parent ignores the proposal
-                          if (viewConfig.zoom === undefined) anchorZoomCenter()
-                          setZoomValue(
-                            +(zoom + (zoomRange.step ?? 0.25)).toFixed(2)
-                          )
-                        }}
+                        onClick={zoomInStep}
                       />
                     }
                   >
@@ -3391,13 +3413,7 @@ function GanttView({
                         // 3): `size-5!` -> `size-11!` (44px target) and `rounded-t-none` ->
                         // `rounded-none` - see the sibling zoom-in button's own comment above.
                         className="text-foreground-secondary hover:text-foreground border-t-border size-11! rounded-none border-t aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent"
-                        onClick={() => {
-                          if (!canZoomOut) return
-                          if (viewConfig.zoom === undefined) anchorZoomCenter()
-                          setZoomValue(
-                            +(zoom - (zoomRange.step ?? 0.25)).toFixed(2)
-                          )
-                        }}
+                        onClick={zoomOutStep}
                       />
                     }
                   >
@@ -3418,6 +3434,61 @@ function GanttView({
               </TooltipProvider>
             </div>
           )}
+          {viewConfig.zoomControl &&
+            zoomControlTarget &&
+            createPortal(
+              // #738: composed like GanttNavPrev/Next (a plain flex row of nav-config buttons), not a ButtonGroup,
+              // whose seam radii fought `rounded-none!` and left the two buttons unlike the arrows on hover/focus
+              <div
+                role="group"
+                data-slot="gantt-zoom-toolbar"
+                data-testid="gantt-zoom"
+                aria-label={settings.i18n.labels.zoomOut + " / " + settings.i18n.labels.zoomIn}
+                className="flex items-center"
+              >
+                <TooltipProvider delay={600} closeDelay={0} timeout={300}>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          variant={viewConfig.navButtonVariant}
+                          size={viewConfig.navButtonSize === "sm" ? "icon-sm" : "icon"}
+                          aria-label={settings.i18n.labels.zoomOut}
+                          aria-disabled={!canZoomOut || undefined}
+                          className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent"
+                          onClick={zoomOutStep}
+                        />
+                      }
+                    >
+                      <MinusIcon className="size-4" aria-hidden="true" />
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      {settings.i18n.labels.zoomOut}
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          variant={viewConfig.navButtonVariant}
+                          size={viewConfig.navButtonSize === "sm" ? "icon-sm" : "icon"}
+                          aria-label={settings.i18n.labels.zoomIn}
+                          aria-disabled={!canZoomIn || undefined}
+                          className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent"
+                          onClick={zoomInStep}
+                        />
+                      }
+                    >
+                      <PlusIcon className="size-4" aria-hidden="true" />
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      {settings.i18n.labels.zoomIn}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>,
+              zoomControlTarget
+            )}
           {customScrollbars && (
             <div
               aria-hidden

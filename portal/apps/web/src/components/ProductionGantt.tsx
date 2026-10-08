@@ -375,7 +375,7 @@ export function scrollGanttRowToTop(root: HTMLElement, rowId: string): "done" | 
  * landing. `GanttNavToday` spreads its props after its own `onClick={today}`, so a consumer
  * `onClick` would REPLACE the horizontal re-centre; this wrapper therefore calls `today()` itself.
  */
-function ProductionGanttNav({ onToday }: { onToday: () => void }) {
+function ProductionGanttNav({ onToday, zoomTargetRef }: { onToday: () => void; zoomTargetRef: (el: HTMLDivElement | null) => void }) {
   const { today } = useGanttNavigation();
   return (
     <GanttNav>
@@ -393,6 +393,8 @@ function ProductionGanttNav({ onToday }: { onToday: () => void }) {
         </div>
         <GanttTitle />
         <div className="grow" />
+        {/* #738: GanttView portals its zoom buttons here (hidden below 1024px with `zoomControl`). */}
+        <div ref={zoomTargetRef} data-testid="gantt-nav-zoom" className="flex items-center" />
       </TooltipProvider>
     </GanttNav>
   );
@@ -1351,6 +1353,8 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // it only chooses the 44px row metric, and the `max-[721px]:` classes stay phone-only. Row height follows the pointer, not the
   // width (#695), so `coarsePointer` joins `phone` there.
   const namesOnly = useMediaQuery("(max-width: 1023px)");
+  // #738: the nav row's zoom slot; null until it mounts, so GanttView never flashes the floating box.
+  const [zoomTarget, setZoomTarget] = useState<HTMLDivElement | null>(null);
   const phone = useMediaQuery("(max-width: 720px)");
   // Same media feature Tailwind's `pointer-coarse:` compiles to, so the JS row metric and the CSS variant agree (#695).
   const coarsePointer = useMediaQuery("(pointer: coarse)");
@@ -2246,9 +2250,9 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             renderEvent={renderEvent}
             className="min-h-0 flex-1"
           >
-            <ProductionGanttNav onToday={armLanding} />
+            <ProductionGanttNav onToday={armLanding} zoomTargetRef={setZoomTarget} />
             <GanttToolbar />
-            <GanttView />
+            <GanttView zoomControlTarget={zoomTarget} />
           </Gantt>
         )}
       </div>

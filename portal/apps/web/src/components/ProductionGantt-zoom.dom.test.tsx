@@ -1,9 +1,8 @@
 /**
- * #734 - the Production Gantt's breakpoints, at the four widths that matter: 720 / 721 / 1023 / 1024.
- * `namesOnly` (< 1024px) is the names-only task list: no People/Due columns, no zoom buttons (Ctrl/Cmd-wheel
- * and pinch still zoom), the attention badge on the name cell, the add-task bottom sheet. `phone` (<= 720px) only
- * picks the 44px row metric; a coarse pointer picks it at every width (#695). happy-dom has no layout, so
- * this pins which branch renders; how it paints is the browser pass.
+ * #738 - the Timeline's zoom buttons render into the nav row (a portal into `gantt-nav-zoom`), not as a floating
+ * box over the lane that covers bar labels. Zoom state stays inside GanttView; this pins placement, the one-step
+ * click, and the focusable aria-disabled no-op at the limits (0.5 .. 3, step 0.25). happy-dom has no layout, so the
+ * track width (the timeline column's rem min-width) stands in for the zoom level.
  *
  * Guard F (`test-seam.guard.test.ts`): everything is found by `data-testid`, accessible name or text.
  */
@@ -100,82 +99,64 @@ afterEach(async () => {
   viewport = null;
 });
 
-const has = (testId: string) => host.querySelector(`[data-testid="${testId}"]`) !== null;
-const columnsShown = () => host.textContent!.includes("People") && host.textContent!.includes("Due");
-// #738: the buttons render into the nav row's zoom slot, no longer a floating box in the lane.
-const zoomShown = () => host.querySelector('[data-testid="gantt-nav-zoom"] [data-testid="gantt-zoom"]') !== null;
-const rowHeights = () => new Set(Array.from(host.querySelectorAll<HTMLElement>("[data-gantt-row-id]")).map((el) => el.style.height).filter(Boolean));
-const plus = () => host.querySelector<HTMLButtonElement>(`button[aria-label="Add task in ${STREET}"]`)!;
-const sheet = () => document.querySelector('[data-testid="gantt-group-create-task-sheet"]');
-const editorRow = () => host.querySelector('[data-testid="gantt-group-create-task-row"]');
+const navZoom = () => host.querySelector<HTMLElement>('[data-testid="gantt-nav-zoom"]')!;
+const zoomButton = (name: "Zoom in" | "Zoom out") => navZoom().querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`)!;
+/** The timeline column's min-width, which scales with zoom. */
+const trackRem = () => parseFloat(host.querySelector<HTMLElement>('[data-testid="gantt-timeline-column"]')!.style.minWidth);
+const click = async (el: HTMLElement) => { await act(async () => { el.click(); await Promise.resolve(); }); await settle(); };
 
-describe("ProductionGantt breakpoints (#734)", () => {
-  describe.each([
-    { width: 720, narrow: true, rows: "2.75rem" },
-    { width: 721, narrow: true, rows: "2.5rem" },
-    { width: 1023, narrow: true, rows: "2.5rem" },
-    { width: 1024, narrow: false, rows: "2.5rem" },
-  ])("at $width px (fine pointer)", ({ width, narrow, rows }) => {
-    it(`columns, zoom control and row height: ${narrow ? "names only, no zoom buttons" : "full layout"}, ${rows} rows`, async () => {
-      await mountAt(width);
-      expect(columnsShown()).toBe(!narrow);
-      expect(zoomShown()).toBe(!narrow);
-      expect([...rowHeights()]).toEqual([rows]);
-      // the Project link is how a names-only layout reaches People and Due
-      expect(has("gantt-project-link")).toBe(true);
-    });
-
-    it(`attention badge ${narrow ? "stays on the name cell (the Due cell is gone)" : "moves to the Due cell"}`, async () => {
-      await mountAt(width);
-      expect(has("gantt-row-attention-missing_deadline")).toBe(narrow);
-      if (narrow) {
-        const cls = document.querySelector<HTMLElement>('[data-testid="gantt-row-attention-missing_deadline"]')!.className;
-        expect(cls).toContain("min-[1024px]:shrink-0"); // shrinkable in the 288px names-only cell
-        expect(cls).not.toContain("min-[721px]:shrink-0");
-      }
-    });
-
-    it(`the add-task editor is ${narrow ? "a bottom sheet" : "an inline row"}`, async () => {
-      await mountAt(width);
-      await act(async () => { plus().click(); await Promise.resolve(); });
-      await settle();
-      expect(sheet() !== null).toBe(narrow);
-      // #734: on the dialog ladder from 721px (560px, centred); a phone stays full-bleed.
-      if (narrow) expect(sheet()!.className).toContain("min-[721px]:max-w-[560px]");
-      if (narrow) expect(sheet()!.className).toContain("min-[721px]:rounded-t-[var(--radius-lg)]");
-      expect(editorRow() !== null).toBe(!narrow);
-    });
-  });
-
-  it("a coarse pointer gets 44px rows at 800px too, and still the sheet (the metric follows the pointer, not the width)", async () => {
-    await mountAt(800, true);
-    expect([...rowHeights()]).toEqual(["2.75rem"]);
-    expect(columnsShown()).toBe(false);
-    expect(zoomShown()).toBe(false);
-  });
-
-  it("crossing 1024 swaps the layout in place, in both directions, and keeps an open draft title", async () => {
+describe("ProductionGantt zoom buttons (#738)", () => {
+  it("render inside the nav row, with no floating box in the lane", async () => {
     await mountAt(1280);
-    expect(columnsShown()).toBe(true);
-    await act(async () => { plus().click(); await Promise.resolve(); });
-    await settle();
-    const title = () => document.querySelector<HTMLInputElement>('input[aria-label^="New task title in"]')!;
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(title(), "Keep me");
-      title().dispatchEvent(new Event("input", { bubbles: true }));
-      await Promise.resolve();
-    });
-    await viewport!.set({ width: 900 });
-    await settle();
-    expect(columnsShown()).toBe(false);
-    expect(zoomShown()).toBe(false);
-    expect(sheet()).not.toBeNull();
-    expect(title().value).toBe("Keep me");
-    await viewport!.set({ width: 1100 });
-    await settle();
-    expect(columnsShown()).toBe(true);
-    expect(zoomShown()).toBe(true);
-    expect(editorRow()).not.toBeNull();
-    expect(title().value).toBe("Keep me");
+    expect(navZoom().querySelector('[data-testid="gantt-zoom"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="gantt-lane-overlay"] [data-testid="gantt-zoom"]')).toBeNull();
+    expect(zoomButton("Zoom in")).not.toBeNull();
+    expect(zoomButton("Zoom out")).not.toBeNull();
+  });
+
+  it("are composed like the prev/next arrows, so corners match on hover and focus (design review)", async () => {
+    await mountAt(1280);
+    const group = navZoom().querySelector<HTMLElement>('[data-testid="gantt-zoom"]')!;
+    expect(group.getAttribute("role")).toBe("group");
+    expect(group.getAttribute("aria-label")).toBe("Zoom out / Zoom in");
+    // the arrows' own radius classes, with no ButtonGroup seam radii and no `rounded-none!` override
+    const radii = (el: Element) => el.className.split(/\s+/).filter((c) => c.includes("rounded")).sort();
+    const nav = host.querySelector<HTMLElement>('[data-testid="gantt-nav-zoom"]')!.parentElement!;
+    const arrow = [...nav.querySelectorAll<HTMLButtonElement>("button")].find((b) => /prev/i.test(b.getAttribute("aria-label") ?? ""))!;
+    expect(arrow).toBeDefined();
+    for (const name of ["Zoom out", "Zoom in"] as const) {
+      expect(radii(zoomButton(name))).toEqual(radii(arrow));
+    }
+  });
+
+  it("a click moves the zoom by one step (0.25)", async () => {
+    await mountAt(1280);
+    const base = trackRem();
+    await click(zoomButton("Zoom in"));
+    expect(trackRem() / base).toBeCloseTo(1.25, 2);
+    await click(zoomButton("Zoom out"));
+    expect(trackRem() / base).toBeCloseTo(1, 2);
+  });
+
+  it("stay focusable and become a no-op at the maximum and the minimum", async () => {
+    await mountAt(1280);
+    const base = trackRem();
+    for (let i = 0; i < 8; i++) await click(zoomButton("Zoom in")); // 1 -> 3
+    expect(trackRem() / base).toBeCloseTo(3, 2);
+    expect(zoomButton("Zoom in").getAttribute("aria-disabled")).toBe("true");
+    expect(zoomButton("Zoom in").hasAttribute("disabled")).toBe(false);
+    await click(zoomButton("Zoom in"));
+    expect(trackRem() / base).toBeCloseTo(3, 2);
+    for (let i = 0; i < 10; i++) await click(zoomButton("Zoom out")); // 3 -> 0.5
+    expect(trackRem() / base).toBeCloseTo(0.5, 2);
+    expect(zoomButton("Zoom out").getAttribute("aria-disabled")).toBe("true");
+    await click(zoomButton("Zoom out"));
+    expect(trackRem() / base).toBeCloseTo(0.5, 2);
+    expect(zoomButton("Zoom in").hasAttribute("aria-disabled")).toBe(false);
+  });
+
+  it("are absent below 1024px", async () => {
+    await mountAt(900);
+    expect(host.querySelector('[data-testid="gantt-zoom"]')).toBeNull();
   });
 });
