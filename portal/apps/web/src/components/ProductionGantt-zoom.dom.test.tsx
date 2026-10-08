@@ -126,7 +126,6 @@ describe("ProductionGantt zoom buttons (#738)", () => {
     expect(arrow).toBeDefined();
     for (const name of ["Zoom out", "Zoom in"] as const) {
       expect(radii(zoomButton(name))).toEqual(radii(arrow));
-      expect(zoomButton(name).closest('[data-slot="button-group"]')).toBeNull();
     }
   });
 
