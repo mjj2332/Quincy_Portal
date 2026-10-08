@@ -32,3 +32,24 @@ export function rateLimitedResult(kind: McpRateKind) {
     : `Rate limit: ${MCP_WRITES_PER_MINUTE} writes/min for this Connected app; retry in about ${RETRY_AFTER_SECONDS} s`;
   return { content: [{ type: "text" as const, text }], isError: true, _meta: { retryAfterSeconds: RETRY_AFTER_SECONDS } };
 }
+
+export const MCP_MAX_BODY_BYTES = 1024 * 1024;
+
+/** Reads a request body as text, refusing more than `maxBytes` (by Content-Length first, then by counting the stream). */
+export async function readBoundedBody(request: Request, maxBytes = MCP_MAX_BODY_BYTES): Promise<{ text: string } | { tooLarge: true }> {
+  const declared = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) return { tooLarge: true };
+  if (!request.body) return { text: "" };
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = []; let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) { await reader.cancel().catch(() => undefined); return { tooLarge: true }; }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total); let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  return { text: new TextDecoder().decode(bytes) };
+}

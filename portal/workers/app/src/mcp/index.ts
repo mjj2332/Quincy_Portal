@@ -7,7 +7,7 @@ import { isMcpAccessEnabled } from "../lib/mcp-access";
 import { loadMcpAuthority, parseGrantProps, MCP_SCOPES, type McpScope } from "./authority";
 import { getAuthorizationServer, mcpResource } from "./oauth-server";
 import { toolsFor, strictInput } from "./tools/registry";
-import { checkMcpRateLimit, rateLimitedResult } from "./rate-limit";
+import { checkMcpRateLimit, rateLimitedResult, readBoundedBody } from "./rate-limit";
 import { CONSENT_PATH_PREFIX, storeConsentDescription } from "./consent";
 import type { McpFetchApp } from "./dispatch";
 import type { McpTool } from "./tools/registry";
@@ -42,29 +42,27 @@ function withCors(response: Response): Response {
 }
 
 type JsonRpcMessage = { jsonrpc?: string; id?: string | number | null; method?: string; params?: { name?: unknown } };
+const rpcError = (c: Context<AppEnv>, status: 400 | 413, code: number, message: string) => c.json({ jsonrpc: "2.0", id: null, error: { code, message } }, status);
 
-/** A JSON-RPC response for a body that holds a rate-limited `tools/call`, or null when every call is within its limits. */
-async function rateLimitDenials(c: Context<AppEnv>, connectionId: string, tools: readonly McpTool[]): Promise<Response | null> {
-  if (c.req.method !== "POST") return null;
+/**
+ * Reads the POST body once, bounded to 1 MiB, and parses it once. Returns the parsed body for the transport to reuse,
+ * or the Response to send: 413 when too large, -32700 when not JSON, -32600 for a batch (removed in protocol 2025-06-18),
+ * or the rate-limit result when the single `tools/call` is over its limit.
+ */
+async function admitBody(c: Context<AppEnv>, connectionId: string, tools: readonly McpTool[]): Promise<{ parsedBody?: unknown } | { response: Response }> {
+  if (c.req.method !== "POST") return {};
+  const read = await readBoundedBody(c.req.raw);
+  if ("tooLarge" in read) return { response: rpcError(c, 413, -32600, "Request body is too large") };
   let body: unknown;
-  try { body = await c.req.raw.clone().json(); } catch { return null; }
-  const messages = (Array.isArray(body) ? body : [body]) as JsonRpcMessage[];
-  const verdicts = new Map<JsonRpcMessage, ReturnType<typeof rateLimitedResult>>();
-  for (const message of messages) {
-    if (!message || typeof message !== "object" || message.method !== "tools/call" || message.id === undefined || message.id === null) continue;
+  try { body = JSON.parse(read.text); } catch { return { response: rpcError(c, 400, -32700, "Parse error") }; }
+  if (Array.isArray(body)) return { response: rpcError(c, 400, -32600, "Batching is not supported") };
+  const message = body as JsonRpcMessage | null;
+  if (message && typeof message === "object" && message.method === "tools/call" && message.id !== undefined && message.id !== null) {
     const tool = tools.find((candidate) => candidate.name === message.params?.name);
     const kind = await checkMcpRateLimit(c.env, connectionId, tool !== undefined && tool.annotations.readOnlyHint !== true);
-    if (kind) verdicts.set(message, rateLimitedResult(kind));
+    if (kind) return { response: c.json({ jsonrpc: "2.0", id: message.id, result: rateLimitedResult(kind) }, 200) };
   }
-  if (verdicts.size === 0) return null;
-  const reply = (message: JsonRpcMessage) => {
-    const verdict = verdicts.get(message);
-    return verdict
-      ? { jsonrpc: "2.0", id: message.id, result: verdict }
-      : { jsonrpc: "2.0", id: message.id ?? null, error: { code: -32000, message: "Not processed: this batch contained a rate-limited call" } };
-  };
-  const replies = messages.filter((message) => message && typeof message === "object" && message.id !== undefined && message.id !== null).map(reply);
-  return c.json(Array.isArray(body) ? replies : replies[0]!, 200);
+  return { parsedBody: body };
 }
 
 export function mountMcp(app: Hono<AppEnv>, fetchApp: McpFetchApp) {
@@ -114,8 +112,8 @@ export function mountMcp(app: Hono<AppEnv>, fetchApp: McpFetchApp) {
     const tools = toolsFor(authority.user.role, scopes);
 
     // Rate limit per Connected app: every tools/call is counted, and a call to a tool without readOnlyHint also counts as a write.
-    const denied = await rateLimitDenials(c, props.connectionId, tools);
-    if (denied) return withCors(denied);
+    const admitted = await admitBody(c, props.connectionId, tools);
+    if ("response" in admitted) return withCors(admitted.response);
 
     const server = new McpServer({ name: "quincy-portal", version: "1.0.0" });
     for (const tool of tools) {
@@ -124,7 +122,7 @@ export function mountMcp(app: Hono<AppEnv>, fetchApp: McpFetchApp) {
     }
     const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     await server.connect(transport);
-    return withCors(await transport.handleRequest(c.req.raw));
+    return withCors(await transport.handleRequest(c.req.raw, admitted.parsedBody === undefined ? undefined : { parsedBody: admitted.parsedBody }));
   });
   app.all("/mcp", mcpHandler("/mcp"));
   app.all("/mcp/", mcpHandler("/mcp/"));
