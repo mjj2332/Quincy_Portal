@@ -45,6 +45,9 @@ const GET_TEMPLATES = [
   "/api/admin/stages",
   "/api/admin/attention",
   "/api/projects/:projectId/jobs",
+  // Whiteboard (#708)
+  "/api/projects/:projectId/whiteboard",
+  "/api/projects/:projectId/whiteboard/versions",
   // Admin reads of the Dropbox integration (#709): the inputs the admin Dropbox writes need
   "/api/integrations/dropbox/editor-folders",
   "/api/integrations/dropbox/monitors/:scope",
@@ -93,6 +96,8 @@ const WRITE_ROUTES = [
   ["DELETE", "/api/assets/:assetId/select"],
   ["POST", "/api/projects/:projectId/link-previews"],
   ["POST", "/api/notice-board/link-previews"],
+  // Whiteboard (#708): the one edit tool. There is no restore route here, on purpose.
+  ["POST", "/api/projects/:projectId/whiteboard/server-edits"],
   // Signed downloads (#707): get_selection_download_url creates the zip ticket. It is a read-scope tool; the ticket is the only thing written.
   ["POST", "/api/projects/:projectId/download-selection"],
 ] as const;
