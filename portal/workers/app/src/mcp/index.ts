@@ -12,6 +12,7 @@ import type { McpFetchApp } from "./dispatch";
 
 const CORS = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, POST, DELETE, OPTIONS", "access-control-allow-headers": "authorization, content-type, mcp-protocol-version, mcp-session-id, accept", "access-control-expose-headers": "www-authenticate, mcp-session-id", "access-control-max-age": "86400" } as const;
 const LAST_USED_GRANULARITY_MS = 60_000;
+const FRAMING = { "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY" } as const;
 const notFound = (c: Context<AppEnv>) => c.json({ error: "Not found" }, 404);
 
 /** The library writes `props`/`auth` onto the context it is given: hand it a fresh object, never `c.executionCtx`. */
@@ -21,7 +22,7 @@ function freshContext(c: Context<AppEnv>): ExecutionContext {
 
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]!);
 function errorPage(message: string) {
-  return new Response(`<!doctype html><meta charset="utf-8"><title>Cannot connect</title><body style="font-family:system-ui;max-width:32rem;margin:4rem auto;padding:0 1rem"><h1>Cannot connect this app</h1><p>${escapeHtml(message)}</p></body>`, { status: 400, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+  return new Response(`<!doctype html><meta charset="utf-8"><title>Cannot connect</title><body style="font-family:system-ui;max-width:32rem;margin:4rem auto;padding:0 1rem"><h1>Cannot connect this app</h1><p>${escapeHtml(message)}</p></body>`, { status: 400, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", ...FRAMING } });
 }
 
 function setCookies(from: Headers, to: Headers) {
@@ -63,7 +64,7 @@ export function mountMcp(app: Hono<AppEnv>, fetchApp: McpFetchApp) {
       // Invalid requests never redirect: the redirect_uri is not yet trusted.
       return errorPage(error instanceof Error && error.message ? error.message : "The authorization request is not valid.");
     }
-    const out = new Headers({ location: `${c.env.APP_ORIGIN}${CONSENT_PATH_PREFIX}${handle}`, "cache-control": "no-store" });
+    const out = new Headers({ location: `${c.env.APP_ORIGIN}${CONSENT_PATH_PREFIX}${handle}`, "cache-control": "no-store", ...FRAMING });
     setCookies(headers, out);
     return new Response(null, { status: 302, headers: out });
   }));

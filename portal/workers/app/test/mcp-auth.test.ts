@@ -94,6 +94,8 @@ describe("discovery and /mcp challenge", () => {
     expect(res.status).toBe(400);
     expect(res.headers.get("location")).toBeNull();
     expect(res.headers.get("content-type")).toContain("text/html");
+    expect(res.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
   });
 });
 
@@ -105,6 +107,8 @@ describe("full flow", () => {
     expect(a.handle).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(a.res.headers.get("location")).toBe(`${ORIGIN}/settings/connected-apps/consent/${a.handle}`);
     expect(a.res.headers.get("set-cookie")).toContain("__Host-oauth-consent-");
+    expect(a.res.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    expect(a.res.headers.get("x-frame-options")).toBe("DENY");
     const desc = await (await consentFetch(a.handle, "admin", "")).json() as Record<string, unknown>;
     expect(desc).toEqual({ clientName: "Test Client", redirectHost: "client.test", isLocalhost: false, scopes: ["read", "write"], warning: "This app will see Portal data you can see" });
     const approved = await consentFetch(a.handle, "admin", a.binding, { decision: "approve", scopes: ["read", "write"] });
@@ -193,6 +197,29 @@ describe("revocation", () => {
     expect(rows.results[0]).toMatchObject({ revoke_reason: "superseded" });
     expect(rows.results[0]!.revoked_at).not.toBeNull();
     expect(rows.results[1]!.revoked_at).toBeNull();
+  });
+});
+
+describe("concurrent consent", () => {
+  it("concurrent re-consent: the surviving row's grant always works and the superseded one is refused", async () => {
+    const client_id = await register();
+    const exchange = async (res: Response, x: Awaited<ReturnType<typeof authorize>>) => {
+      const code = new URL(((await res.json()) as { redirectTo: string }).redirectTo).searchParams.get("code")!;
+      return tokenReq({ grant_type: "authorization_code", code, client_id, redirect_uri: REDIRECT, code_verifier: x.verifier, resource: RESOURCE });
+    };
+    for (let round = 0; round < 6; round++) {
+      const first = await authorize(client_id, "read"); const second = await authorize(client_id, "read");
+      // Both consents run at once, so their D1 batches and library completions interleave freely.
+      const [r1, r2] = await Promise.all([first, second].map((x) => consentFetch(x.handle, "editor", x.binding, { decision: "approve", scopes: ["read"] })));
+      expect([r1!.status, r2!.status]).toEqual([200, 200]);
+      const t1 = await exchange(r1!, first); const t2 = await exchange(r2!, second);
+      const live = await DB.prepare("SELECT oauth_grant_id FROM mcp_connections WHERE client_id = ? AND revoked_at IS NULL").bind(client_id).all<{ oauth_grant_id: string }>();
+      expect(live.results).toHaveLength(1);
+      const results = await Promise.all([t1, t2].map(async (t) => t.status === 200 ? { grant: ((t.json as unknown as Tokens).access_token.split(":")[1]), status: (await rpc((t.json as unknown as Tokens).access_token, "tools/list")).status } : { grant: "", status: t.status }));
+      const survivor = results.find((r) => r.grant === live.results[0]!.oauth_grant_id);
+      expect(survivor?.status, `round ${round}: the live row's grant must work`).toBe(200);
+      expect(results.filter((r) => r.status === 200)).toHaveLength(1);
+    }
   });
 });
 
