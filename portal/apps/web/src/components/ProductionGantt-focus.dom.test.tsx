@@ -104,9 +104,12 @@ function slotOf(el: Element): string | undefined {
   return (el as HTMLElement).dataset?.slot;
 }
 
-/** Both pane viewports, found by a property read over the subtree. */
+/** The scroll viewports, found by a property read over the subtree. #727: there is exactly ONE (tree and bars share it). */
 function viewports(host: HTMLElement): HTMLElement[] {
-  return [...host.querySelectorAll<HTMLElement>("*")].filter((el) => slotOf(el) === "scroll-area-viewport");
+  const found = [...host.querySelectorAll<HTMLElement>("*")].filter((el) => slotOf(el) === "scroll-area-viewport");
+  // #727: exactly one. An "all viewports equal" assertion over zero or two would pass vacuously or by drift.
+  expect(found).toHaveLength(1);
+  return found;
 }
 
 function scrollTops(host: HTMLElement): number[] {
@@ -205,7 +208,7 @@ describe("ProductionGantt — landing on a named Project (#464)", () => {
 
   it("1. a focus request on a loaded page scrolls its row under the header, highlights it, focuses its link and reports found once", async () => {
     await mount({ projectId: pid(5), token: 1 });
-    expect(scrollTops(host)).toEqual([offsetOfIndex(4), offsetOfIndex(4)]);
+    expect(scrollTops(host)).toEqual([offsetOfIndex(4)]);
     expect(rowOf(host, 5).length).toBeGreaterThan(0);
     expect(rowOf(host, 5).every((el) => el.getAttribute("data-selected") === "true")).toBe(true);
     expect(rowOf(host, 3).some((el) => el.hasAttribute("data-selected"))).toBe(false);
@@ -214,7 +217,7 @@ describe("ProductionGantt — landing on a named Project (#464)", () => {
     // A rerender with the same request does not land (or report) again.
     setScrollTops(host, 777);
     await rerender({ projectId: pid(5), token: 1 });
-    expect(scrollTops(host)).toEqual([777, 777]);
+    expect(scrollTops(host)).toEqual([777]);
     expect(settled).toHaveLength(1);
   });
 
@@ -234,7 +237,7 @@ describe("ProductionGantt — landing on a named Project (#464)", () => {
 
   it("2. without a focus request nothing is highlighted and the #415 landing is unchanged", async () => {
     await mount(null);
-    expect(scrollTops(host)).toEqual([offsetOfIndex(2), offsetOfIndex(2)]);
+    expect(scrollTops(host)).toEqual([offsetOfIndex(2)]);
     expect(host.querySelectorAll("[data-selected]")).toHaveLength(0);
     expect(settled).toEqual([]);
   });
@@ -247,7 +250,7 @@ describe("ProductionGantt — landing on a named Project (#464)", () => {
     await mount({ projectId: pid(5), token: 1 });
     await flush();
     expect(apiGetMock.mock.calls.filter(([path]) => String(path).includes("cursor=")).length).toBe(1);
-    expect(scrollTops(host)).toEqual([offsetOfIndex(4), offsetOfIndex(4)]);
+    expect(scrollTops(host)).toEqual([offsetOfIndex(4)]);
     expect(settled).toEqual([{ token: 1, outcome: { kind: "found", street: streetOf(5) } }]);
   });
 
@@ -256,7 +259,7 @@ describe("ProductionGantt — landing on a named Project (#464)", () => {
     const filters: ProductionGanttFacetFilters = { ...DEFAULT_GANTT_FACET_FILTERS, delivered: true };
     await rerender({ projectId: pid(6), token: 2 }, filters);
     await flush();
-    expect(scrollTops(host)).toEqual([offsetOfIndex(5), offsetOfIndex(5)]);
+    expect(scrollTops(host)).toEqual([offsetOfIndex(5)]);
     expect(settled).toEqual([{ token: 2, outcome: { kind: "found", street: streetOf(6) } }]);
   });
 

@@ -174,6 +174,7 @@ import { roleHasCapability, subtaskIdFromCalendarEntityId, type ChecklistSchedul
 import { Gantt, useGanttNavigation, useGanttSelector, type GanttColumn, type GanttMetrics, type GanttRenderEventProps, type GanttTreePanelConfig } from "@/components/reui/gantt/gantt";
 import { mergeGanttI18n, type GanttI18nOverrides } from "@/components/reui/gantt/gantt-i18n";
 import { toZoned } from "@/components/reui/gantt/gantt-lib";
+import { GANTT_SCROLLER_SELECTOR } from "@/components/reui/gantt/gantt-track-geometry";
 import { GanttNav, GanttNavNext, GanttNavPrev, GanttNavToday, GanttScaleSwitcher, GanttTitle, GanttToolbar } from "@/components/reui/gantt/gantt-nav";
 import { TooltipProvider } from "@/components/reui/tooltip";
 import { GanttView } from "@/components/reui/gantt/gantt-view";
@@ -330,7 +331,8 @@ const ganttFormatEventTime = mergeGanttI18n(GANTT_I18N).functions.formatEventTim
  * so a breakpoint crossed mid-session does not re-seed it.
  */
 const GANTT_NAME_COLUMN_WIDTH = 180;
-const GANTT_TREE_PANEL: GanttTreePanelConfig = { nameColumnFill: true, nameColumnWidth: GANTT_NAME_COLUMN_WIDTH, width: 396 };
+// #727: minWidth 396 = Name 180 + People 88 + Due 128. The tree column is sticky inside the one scroller and clips (never scrolls sideways), so on desktop the splitter must never narrow past the columns. Phones (GANTT_TREE_PANEL_NARROW) have no columns and keep the vendor floor.
+const GANTT_TREE_PANEL: GanttTreePanelConfig = { nameColumnFill: true, nameColumnWidth: GANTT_NAME_COLUMN_WIDTH, width: 396, minWidth: 396, minWidthHard: true };
 // #686: no floor on a phone. The vendor default (208px) made the row wider than the tree pane, so the sticky `+` overlaid the title; with none, the name cell fills exactly the pane.
 const GANTT_TREE_PANEL_NARROW: GanttTreePanelConfig = { nameColumnFill: true, nameColumnWidth: 0 };
 /** Scroll distance (px) from the bottom of the panel at which the next project page is requested. */
@@ -347,15 +349,15 @@ const NO_SELECTED_ROWS: string[] = [];
 
 /**
  * #415: scroll the Gantt so the given Project row sits directly under the sticky timeline header.
- * Both panes' viewports get the same `scrollTop` (the vendor wheel handler mirrors them the same
- * way); `scrollLeft` is never touched, so the horizontal centre-on-now survives. Deliberately NOT
+ * Tree rows and bars share ONE scroller (#727), so a single `scrollTop` write moves both;
+ * `scrollLeft` is never touched, so the horizontal centre-on-now survives. Deliberately NOT
  * `scrollIntoView`: that scrolls every ancestor (the page on a phone — `docs/lessons.md`) and its
  * `block: "start"` would park the row under the sticky header. The row's position is read from
  * rects, not `offsetTop`, so variable row heights and create rows are accounted for. No clamping
  * against `scrollHeight`: the browser clamps a `scrollTop` write natively.
  */
 export function scrollGanttRowToTop(root: HTMLElement, rowId: string): "done" | "unmeasured" | "missing" {
-  const timeline = root.querySelector<HTMLElement>('[data-slot="gantt-timeline-pane"] [data-slot="scroll-area-viewport"]');
+  const timeline = root.querySelector<HTMLElement>(GANTT_SCROLLER_SELECTOR);
   if (!timeline) return "missing";
   const row = Array.from(timeline.querySelectorAll<HTMLElement>("[data-gantt-row-id]")).find((el) => el.getAttribute("data-gantt-row-id") === rowId);
   if (!row) return "missing";
@@ -364,8 +366,6 @@ export function scrollGanttRowToTop(root: HTMLElement, rowId: string): "done" | 
   const headerHeight = header?.getBoundingClientRect().height ?? 0;
   const next = Math.max(0, timeline.scrollTop + row.getBoundingClientRect().top - timeline.getBoundingClientRect().top - headerHeight);
   timeline.scrollTop = next;
-  const tree = root.querySelector<HTMLElement>('[data-slot="gantt-tree-pane"] [data-slot="scroll-area-viewport"]');
-  if (tree) tree.scrollTop = next;
   return "done";
 }
 
@@ -1828,7 +1828,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
         return;
       }
       if (result === "unmeasured") {
-        const timeline = container.querySelector<HTMLElement>('[data-slot="gantt-timeline-pane"] [data-slot="scroll-area-viewport"]');
+        const timeline = container.querySelector<HTMLElement>(GANTT_SCROLLER_SELECTOR);
         if (timeline && typeof ResizeObserver !== "undefined") {
           const observer = new ResizeObserver(() => {
             if (timeline.clientHeight <= 0) return;
@@ -1851,7 +1851,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
       loadNextPage();
       return;
     }
-    const timeline = container.querySelector<HTMLElement>('[data-slot="gantt-timeline-pane"] [data-slot="scroll-area-viewport"]');
+    const timeline = container.querySelector<HTMLElement>(GANTT_SCROLLER_SELECTOR);
     // Someone already scrolled while pages were loading: leave their position alone.
     if (request === "open" && timeline && timeline.scrollTop > 0) {
       landingRequestRef.current = null;

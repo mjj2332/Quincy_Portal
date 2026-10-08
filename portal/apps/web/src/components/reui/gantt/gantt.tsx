@@ -124,6 +124,12 @@
  * allow-lists (`SETTINGS_KEYS`-style `OPTION_KEYS`, `VIEW_CONFIG_KEYS`) — a key declared on the
  * interface and missing there is silently dropped. The bar side is `gantt-bar.tsx`'s #463 entry;
  * covered by `gantt-item-popup.dom.test.tsx`.
+ *
+ * 2026-10-08, #727 — ADDED, additive (default false changes nothing): `GanttTreePanelConfig.minWidthHard`. The tree's
+ * columns are sticky and clip now (the tree no longer scrolls sideways), so a consumer whose columns must stay
+ * visible can make `minWidth` a hard floor: the timeline lane takes what remains, capped only by the container.
+ * Used by `gantt-view.tsx`'s `clampContainer`; covered by `gantt-single-scroller.dom.test.tsx`. See ADR 0009's
+ * #722 addendum.
  */
 
 import {
@@ -2321,6 +2327,11 @@ interface GanttTreePanelConfig {
   width?: number
   /** Splitter lower bound in px. Default 180. */
   minWidth?: number
+  /**
+   * When true, `minWidth` holds even when the container cannot spare it (the timeline lane takes
+   * what remains). Default false: the floor yields so the timeline keeps its minimum. Quincy, #727.
+   */
+  minWidthHard?: boolean
   /** Splitter upper bound in px. Default 640. */
   maxWidth?: number
   /** Drag/keyboard splitter between the panels. Default true. */

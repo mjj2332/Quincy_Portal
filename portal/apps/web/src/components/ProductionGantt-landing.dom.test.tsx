@@ -99,7 +99,7 @@ function slotOf(el: Element): string | undefined {
   return (el as HTMLElement).dataset?.slot;
 }
 
-/** Both pane viewports, found by a property read over the subtree. */
+/** The scroll viewports, found by a property read over the subtree. #727: there is exactly ONE (tree and bars share it). */
 function viewports(host: HTMLElement): HTMLElement[] {
   return [...host.querySelectorAll<HTMLElement>("*")].filter((el) => slotOf(el) === "scroll-area-viewport");
 }
@@ -203,10 +203,10 @@ describe("ProductionGantt — landing on the current Project (#415)", () => {
     await flush();
   }
 
-  it("1. on open, both viewports land on the covering Project row, under the sticky header", async () => {
+  it("1. on open, the one viewport lands on the covering Project row, under the sticky header", async () => {
     await mount();
-    expect(viewports(host)).toHaveLength(2);
-    expect(scrollTops(host)).toEqual([offsetOfIndex(2), offsetOfIndex(2)]);
+    expect(viewports(host)).toHaveLength(1);
+    expect(scrollTops(host)).toEqual([offsetOfIndex(2)]);
   });
 
   it("2. an all-past first page with a next cursor walks to page 2 and lands on its row", async () => {
@@ -223,7 +223,7 @@ describe("ProductionGantt — landing on the current Project (#415)", () => {
     await flush();
     expect(apiGetMock.mock.calls.filter(([path]) => String(path).includes("cursor=")).length).toBe(1);
     // Page 2's covering Project is the third drawn row.
-    expect(scrollTops(host)).toEqual([offsetOfIndex(2), offsetOfIndex(2)]);
+    expect(scrollTops(host)).toEqual([offsetOfIndex(2)]);
   });
 
   it("3. Today after a manual scroll returns to the landing offset", async () => {
@@ -234,7 +234,7 @@ describe("ProductionGantt — landing on the current Project (#415)", () => {
       await Promise.resolve();
     });
     await flush(2);
-    expect(scrollTops(host)).toEqual([offsetOfIndex(2), offsetOfIndex(2)]);
+    expect(scrollTops(host)).toEqual([offsetOfIndex(2)]);
   });
 
   it("4. Today still drives the date: Previous changes the period, Today restores it", async () => {
@@ -264,7 +264,7 @@ describe("ProductionGantt — landing on the current Project (#415)", () => {
       await client.invalidateQueries();
     });
     await flush();
-    expect(scrollTops(host)).toEqual([777, 777]);
+    expect(scrollTops(host)).toEqual([777]);
   });
 
   it("6. a pagination append leaves the scroll alone", async () => {
@@ -273,7 +273,7 @@ describe("ProductionGantt — landing on the current Project (#415)", () => {
       return Promise.resolve(path.includes("cursor=") ? response([{ n: 7, shoot: "2026-11-01", deadline: "2026-11-02" }]) : response(SIX, "cursor-2"));
     });
     await mount();
-    expect(scrollTops(host)).toEqual([offsetOfIndex(2), offsetOfIndex(2)]);
+    expect(scrollTops(host)).toEqual([offsetOfIndex(2)]);
     setScrollTops(host, 777);
     const caller = viewports(host)[0]!;
     // Nearing the bottom fetches the next page; the landing must not re-fire when it lands.
@@ -285,7 +285,7 @@ describe("ProductionGantt — landing on the current Project (#415)", () => {
     });
     await flush();
     expect(apiGetMock.mock.calls.filter(([path]) => String(path).includes("cursor=")).length).toBeGreaterThanOrEqual(1);
-    expect(scrollTops(host)).toEqual([777, 777]);
+    expect(scrollTops(host)).toEqual([777]);
   });
 
   it("7. a rerender with the same props (the sheet-close stand-in) leaves the scroll alone", async () => {
@@ -296,7 +296,7 @@ describe("ProductionGantt — landing on the current Project (#415)", () => {
       await Promise.resolve();
     });
     await flush(2);
-    expect(scrollTops(host)).toEqual([777, 777]);
+    expect(scrollTops(host)).toEqual([777]);
   });
 
   it("8. unmounting and mounting again lands again (the view switch)", async () => {
@@ -308,7 +308,7 @@ describe("ProductionGantt — landing on the current Project (#415)", () => {
     });
     root = createRoot(host);
     await mount();
-    expect(scrollTops(host)).toEqual([offsetOfIndex(2), offsetOfIndex(2)]);
+    expect(scrollTops(host)).toEqual([offsetOfIndex(2)]);
   });
 
   it("9. zero Projects scroll nothing and do not throw; rows that arrive later do NOT land (a complete empty result consumes the request)", async () => {
@@ -320,8 +320,8 @@ describe("ProductionGantt — landing on the current Project (#415)", () => {
       await client.invalidateQueries();
     });
     await flush();
-    expect(viewports(host)).toHaveLength(2);
-    expect(scrollTops(host)).toEqual([0, 0]);
+    expect(viewports(host)).toHaveLength(1);
+    expect(scrollTops(host)).toEqual([0]);
   });
 
   it("10. a filter change cancels a request still armed while undecided: rows landing after it do not scroll", async () => {
@@ -333,7 +333,7 @@ describe("ProductionGantt — landing on the current Project (#415)", () => {
       return Promise.resolve(path.includes("q=zzz") ? response(SIX) : response(pastPage, "cursor-2"));
     });
     await mount();
-    expect(scrollTops(host)).toEqual([0, 0]);
+    expect(scrollTops(host)).toEqual([0]);
     await act(async () => {
       todayButton(host).click();
       await Promise.resolve();
@@ -344,18 +344,14 @@ describe("ProductionGantt — landing on the current Project (#415)", () => {
       await Promise.resolve();
     });
     await flush();
-    expect(viewports(host)).toHaveLength(2);
-    expect(scrollTops(host)).toEqual([0, 0]);
+    expect(viewports(host)).toHaveLength(1);
+    expect(scrollTops(host)).toEqual([0]);
   });
 
   describe("ResizeObserver while the viewport is unmeasured", () => {
     let observers: Array<{ cb: () => void; disconnect: ReturnType<typeof vi.fn>; target: Element | null }>;
-    // The vendored chart keeps its own observers; the landing's is the one on the timeline pane's viewport.
-    const inTimelinePane = (el: Element | null) => {
-      for (let node = el?.parentElement ?? null; node; node = node.parentElement) if (slotOf(node) === "gantt-timeline-pane") return true;
-      return false;
-    };
-    const landingObservers = () => observers.filter((o) => o.target && slotOf(o.target) === "scroll-area-viewport" && inTimelinePane(o.target));
+    // The vendored chart keeps its own observers; the landing's is the one on the single scroller.
+    const landingObservers = () => observers.filter((o) => o.target && slotOf(o.target) === "scroll-area-viewport");
     let height: number;
 
     beforeEach(() => {
@@ -403,11 +399,11 @@ describe("ProductionGantt — landing on the current Project (#415)", () => {
       await notify();
       // No retry, no fresh observer, nothing disconnected, nothing scrolled.
       expect(observers.length).toBe(created);
-      expect(scrollTops(host)).toEqual([0, 0]);
+      expect(scrollTops(host)).toEqual([0]);
 
       height = VIEWPORT_PX;
       await notify();
-      expect(scrollTops(host)).toEqual([offsetOfIndex(2), offsetOfIndex(2)]);
+      expect(scrollTops(host)).toEqual([offsetOfIndex(2)]);
 
       const all = [...observers];
       await act(async () => {

@@ -69,6 +69,20 @@ describe("gantt-view is clipped, not a scroll container (2026-09-28)", () => {
     expect(classes).toContain("overflow-clip");
     expect(classes.filter((c) => /^overflow(-[xy])?-(hidden|auto|scroll)$/.test(c))).toEqual([]);
   });
+
+  it("the tree column is sticky and clipped on x (clip, never hidden/auto/scroll)", async () => {
+    await render(
+      <Gantt resources={[{ id: "r1", title: "Row 1" }]} events={[]} date={START} scale="day" timeZone="UTC">
+        <GanttView />
+      </Gantt>,
+    );
+    const tree = host.querySelector<HTMLElement>('[data-testid="gantt-tree-column"]');
+    expect(tree).not.toBeNull();
+    const classes = tree!.className.split(/\s+/);
+    expect(classes).toContain("sticky");
+    expect(classes).toContain("overflow-x-clip");
+    expect(classes.filter((c) => /^overflow(-[xy])?-(hidden|auto|scroll)$/.test(c))).toEqual([]);
+  });
 });
 
 describe("ScrollBar orientation variants match the attribute Base UI emits (2026-09-28)", () => {

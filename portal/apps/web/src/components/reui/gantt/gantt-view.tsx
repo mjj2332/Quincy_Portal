@@ -271,6 +271,32 @@
  * 44px `metrics` on `(pointer: coarse)` as well as on phones), so the sticky `+` opener's width-scoped coarse negative block margin and 6px-short
  * backing size are removed: it fills its own row everywhere. This supersedes the round-2 sentence above about coarse tablets keeping the 40px-row
  * geometry. The removed classes are described in words, not spelled, because Tailwind scans comments and would keep their rules in the built CSS.
+ *
+ * 2026-10-08, #726 — CHANGED, internal refactor, no behaviour change (ADR 0009 addendum). The timeline viewport carries
+ * `data-gantt-scroller`; a live `scrollerRef` getter finds it. Every track-offset read (auto-centre, infinite edge growth, centre
+ * report, re-seat, zoom anchors, header pan, offscreen chips) goes through `trackGeometry` in `gantt-track-geometry.ts`, called
+ * with inset 0, so the values equal the old `scrollWidth`/`clientWidth`/`|scrollLeft|` reads exactly. `getScrollStart` is removed.
+ * Groundwork for the single-scroller layout (#727).
+ *
+ * 2026-10-08, #727 - CHANGED, structural (ADR 0009 addendum): ONE native scroller. `bodyRef` no longer scrolls; it holds the scroller
+ * (`data-gantt-scroller`, a Base UI ScrollArea viewport or, with `scrollbars: "native"`, a plain overflow div) whose content is two
+ * columns: the tree column (`gantt-tree-pane`, sticky inline-start 0, clipped on x, width `var(--gantt-tree-inset)`) and the timeline
+ * column (`gantt-timeline-pane`, isolated). Each column keeps its own sticky-top header (the tree header is the corner), so tree rows and
+ * bars share one scrollTop and cannot drift; the browser scrolls them on its scrolling thread. The splitter, the lane overlay (zoom
+ * control, offscreen chips, scrollbar rail) and the tree overlay (reorder indicator, rail) are overlays OUTSIDE the scroller, so
+ * `laneOverlayRef`/`treeOverlayRef` (the lane/tree overlays, formerly the pane refs) still mean "the visible pane". `--gantt-tree-inset` lives on `bodyRef`
+ * and is written by the splitter drag (one write). Geometry reads use `scrollerGeometry` (the measured tree inset); the two "not laid
+ * out" checks are `<= 0`. Scroll-padding (the header height at the top, the inset at the inline start), the axis-group label offset and the horizontal
+ * scrollbar start follow the inset. DELETED: the bidirectional scroll-sync and the wheel-driver effect (and `getPaneViewport`);
+ * `revealRowNearest` does one `scrollTop` write. CHANGED behaviour: the tree no longer scrolls sideways on its own (it clips), and a
+ * horizontal wheel over it pans the timeline. Wheel-zoom gating is untouched here (#728).
+ *
+ * 2026-10-08, #728 - CHANGED, behaviour (ADR 0009 addendum): the ctrl/meta wheel-zoom listener is no longer attached to the scroller
+ * for good. `bindGatedWheelZoom` (`gantt-wheel-zoom.ts`) attaches the cancellable wheel listener only while Control or Meta is held (window
+ * keydown attaches; keyup, blur and visibilitychange detach; disable and unmount detach), and a WebKit pinch uses gesturestart/gesturechange
+ * (`GestureEvent` present). Engines without `GestureEvent` keep the listener attached, since their pinch is ctrl+wheel with no keydown.
+ * Targets inside the tree column are skipped so browser page zoom works there (the scroller now spans the tree). Pointer anchoring,
+ * exponential zoom and the hand-back to browser zoom at the limits are unchanged. This is the only non-passive wheel listener in the Gantt.
  */
 
 import {
@@ -282,6 +308,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentProps,
   type CSSProperties,
   type RefObject,
 } from "react"
@@ -369,6 +396,14 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/reui/tooltip"
+import {
+  GANTT_HEADER_PX,
+  GANTT_SCROLLER_SELECTOR,
+  GANTT_TREE_COLUMN_SELECTOR,
+  findScroller,
+  scrollerGeometry,
+} from "./gantt-track-geometry"
+import { bindGatedWheelZoom } from "./gantt-wheel-zoom"
 import { PlusIcon, MinusIcon, GripVerticalIcon, ChevronRightIcon, ChevronLeftIcon, XIcon } from "lucide-react"
 
 /** Current time, refreshed on an interval and on tab focus. */
@@ -653,17 +688,20 @@ interface GanttViewProps extends useRender.ComponentProps<"div"> {
   interval?: number
 }
 
-/** The pane's scrollable viewport (custom ScrollArea or native host). */
-function getPaneViewport(pane: HTMLElement | null): HTMLElement | null {
-  return (
-    pane?.querySelector<HTMLElement>("[data-slot=scroll-area-viewport]") ?? null
-  )
+/**
+ * #727: scroll-padding on the one scroller, so focus, `scrollIntoView` and a row reveal never park
+ * a target under the sticky parts: the top is the two-row header (`GANTT_HEADER_PX`, 64px + its rule), and the inline
+ * start is the sticky tree column's width.
+ */
+const SCROLLER_PADDING: CSSProperties = {
+  scrollPaddingTop: `${GANTT_HEADER_PX}px`,
+  scrollPaddingInlineStart: "var(--gantt-tree-inset)",
 }
 
-/** Distance scrolled from the inline-start edge (RTL reports negative). */
-function getScrollStart(viewport: HTMLElement): number {
-  return Math.abs(viewport.scrollLeft)
-}
+const GANTT_SCROLLER_PROPS = {
+  "data-gantt-scroller": "",
+  style: SCROLLER_PADDING,
+} as ComponentProps<typeof ScrollArea>["viewportProps"]
 
 /** Write a distance-from-inline-start back as a signed scrollLeft. */
 function setScrollStart(viewport: HTMLElement, value: number) {
@@ -1624,11 +1662,15 @@ function GanttView({
   const clampContainer = (width: number, container: number) => {
     if (container <= 0) return width
     const ceiling = container - minTimelineWidth - 1
-    // The tree's own minWidth is a PREFERENCE, not a licence to squeeze the
-    // timeline out of existence: cap it by what the container can actually
-    // spare. Without this cap a consumer minWidth wider than the container
-    // wins outright and the timeline collapses below minTimelineWidth with
-    // the splitter already pinned, so the space cannot be dragged back.
+    // `minWidthHard` (#727): the tree's columns are sticky and clip (they never
+    // scroll sideways), so a consumer whose columns must stay visible makes
+    // minWidth a hard floor and the timeline lane takes what remains, capped
+    // only by the container so the splitter never leaves the box. Otherwise
+    // minWidth is a PREFERENCE capped by what the container can spare, so the
+    // timeline is never squeezed out of existence.
+    if (treeConfig.minWidthHard) {
+      return Math.max(Math.min(width, ceiling), Math.min(treeConfig.minWidth, container - 1))
+    }
     const floor = Math.min(treeConfig.minWidth, Math.max(ceiling, 0))
     return Math.max(Math.min(width, ceiling), Math.min(floor, container - 1))
   }
@@ -1670,8 +1712,18 @@ function GanttView({
   }, [])
 
   const bodyRef = useRef<HTMLDivElement | null>(null)
-  const treePaneRef = useRef<HTMLDivElement | null>(null)
-  const timelinePaneRef = useRef<HTMLDivElement | null>(null)
+  // #726: the timeline's scroll viewport, resolved live by its `data-gantt-scroller` marker (the
+  // ScrollArea remounts on a scale change, so a stored node would go stale).
+  const scrollerRef = useMemo(
+    () => ({
+      get current(): HTMLElement | null {
+        return findScroller(bodyRef.current)
+      },
+    }),
+    []
+  )
+  const treeOverlayRef = useRef<HTMLDivElement | null>(null)
+  const laneOverlayRef = useRef<HTMLDivElement | null>(null)
   const treeRowsRef = useRef<HTMLDivElement | null>(null)
 
   // Track the body width so the tree pane can yield on narrow containers.
@@ -1712,9 +1764,8 @@ function GanttView({
         bodyRef.current?.clientWidth ?? 0
       )
       liveTreeWidthRef.current = liveWidth
-      if (treePaneRef.current) {
-        treePaneRef.current.style.width = `${liveWidth}px`
-      }
+      // one write: the tree column, splitter, overlays and scroll-padding all read this variable
+      bodyRef.current?.style.setProperty("--gantt-tree-inset", `${liveWidth}px`)
     }
     const finish = (ev?: PointerEvent) => {
       if (ev && ev.pointerId !== pointerId) return
@@ -1735,92 +1786,8 @@ function GanttView({
     window.addEventListener("pointercancel", finish)
   }
 
-  // Both panes scroll vertically; whichever moves drives the other.
-  useEffect(() => {
-    const treeViewport = getPaneViewport(treePaneRef.current)
-    const timelineViewport = getPaneViewport(timelinePaneRef.current)
-    if (!treeViewport || !timelineViewport) return
-    const link = (source: HTMLElement, target: HTMLElement) => {
-      // Mirror only when the source's own vertical position changed -
-      // horizontal-only scroll events must not replay a stale scrollTop over
-      // the other pane. Assign only on drift: the mirrored handler then
-      // no-ops, so no loop.
-      let lastTop = source.scrollTop
-      const onScroll = () => {
-        if (source.scrollTop === lastTop) return
-        lastTop = source.scrollTop
-        if (target.scrollTop !== source.scrollTop) {
-          target.scrollTop = source.scrollTop
-        }
-      }
-      source.addEventListener("scroll", onScroll)
-      return () => source.removeEventListener("scroll", onScroll)
-    }
-    const unlinkTree = link(treeViewport, timelineViewport)
-    const unlinkTimeline = link(timelineViewport, treeViewport)
-    let unforward: (() => void) | null = null
-    if (treeViewport.hasAttribute("data-gantt-native-scroll")) {
-      // Native mode: the tree's vertical axis is overflow-hidden (its bar
-      // would duplicate the timeline's), so vertical wheel intent forwards to
-      // the timeline, which mirrors back through the link above. Horizontal
-      // wheel intent stays native for the tree's own columns.
-      const onWheel = (e: WheelEvent) => {
-        // ctrl/cmd (and trackpad pinch, which sets ctrlKey) is the zoom
-        // gesture; scrolling as well would move the rows out from under it
-        if (e.ctrlKey || e.metaKey) return
-        if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return
-        const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY
-        timelineViewport.scrollTop += dy
-        e.preventDefault()
-      }
-      treeViewport.addEventListener("wheel", onWheel, { passive: false })
-      unforward = () => treeViewport.removeEventListener("wheel", onWheel)
-    } else {
-      // Custom scrollbars: both panes are real vertical scrollers. The links
-      // above mirror on the scroll event, which fires only AFTER the source
-      // has already painted - so with compositor momentum (wheel/trackpad) the
-      // active pane runs a frame ahead of the mirror and the two visibly drift
-      // (the flicker). Fix: drive BOTH viewports from one wheel handler so they
-      // move in the same frame, perfectly locked. Horizontal intent stays
-      // native for each pane's own axis; the links still cover scrollbar drags,
-      // keyboard, touch and programmatic scrolls; touch has no wheel events,
-      // so flick-scrolling syncs through the (frame-lagged) link - accepted,
-      // pointer drags are the gantt's primary touch interaction.
-      const onWheel = (e: WheelEvent) => {
-        // ctrl/cmd (and trackpad pinch, which sets ctrlKey) is the zoom
-        // gesture; scrolling as well would move the rows out from under it
-        if (e.ctrlKey || e.metaKey) return
-        if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return
-        const max =
-          timelineViewport.scrollHeight - timelineViewport.clientHeight
-        if (max <= 0) return
-        const unit =
-          e.deltaMode === 1
-            ? 16
-            : e.deltaMode === 2
-              ? timelineViewport.clientHeight
-              : 1
-        const next = Math.max(
-          0,
-          Math.min(max, timelineViewport.scrollTop + e.deltaY * unit)
-        )
-        e.preventDefault()
-        timelineViewport.scrollTop = next
-        treeViewport.scrollTop = next
-      }
-      treeViewport.addEventListener("wheel", onWheel, { passive: false })
-      timelineViewport.addEventListener("wheel", onWheel, { passive: false })
-      unforward = () => {
-        treeViewport.removeEventListener("wheel", onWheel)
-        timelineViewport.removeEventListener("wheel", onWheel)
-      }
-    }
-    return () => {
-      unlinkTree()
-      unlinkTimeline()
-      unforward?.()
-    }
-  }, [scale, viewConfig.scrollbars])
+  // #727: no scroll-sync or wheel-driver effect. The tree and the timeline are one scroller, so
+  // there is a single scrollTop to drift from and the browser scrolls it on its own thread.
 
   // Linked row hover: mirror data-hover onto the row's twin in the other pane
   useEffect(() => {
@@ -1892,12 +1859,14 @@ function GanttView({
     const run = () => {
       waiter?.disconnect()
       waiter = null
-      const viewport = getPaneViewport(timelinePaneRef.current)
+      const viewport = scrollerRef.current
       const axis = viewport?.querySelector<HTMLElement>("[data-gantt-axis]")
       if (!viewport || !axis) return
-      if (viewport.clientWidth === 0) {
+      // #727: <= 0, not === 0. The visible track is the client width MINUS the tree inset, so an
+      // unlaid-out scroller (clientWidth 0) reads negative once the tree column has a width.
+      if (scrollerGeometry(viewport).visibleWidth <= 0) {
         waiter = new ResizeObserver(() => {
-          if (viewport.clientWidth > 0) run()
+          if (scrollerGeometry(viewport).visibleWidth > 0) run()
         })
         waiter.observe(viewport)
         return
@@ -1911,7 +1880,8 @@ function GanttView({
         return
       }
       extendLockRef.current = false
-      if (viewport.scrollWidth <= viewport.clientWidth) return
+      const geometry = scrollerGeometry(viewport)
+      if (geometry.trackWidth <= geometry.visibleWidth) return
       // read the clock at run time - the effect must not depend on a
       // reactive now that re-runs it (and the whole grid) every 30s.
       // Target now ONLY when the anchor period itself contains it: keying
@@ -1936,7 +1906,7 @@ function GanttView({
       )
       setScrollStart(
         viewport,
-        Math.max(0, fraction * viewport.scrollWidth - viewport.clientWidth / 2)
+        Math.max(0, fraction * geometry.trackWidth - geometry.visibleWidth / 2)
       )
     }
     run()
@@ -1977,10 +1947,20 @@ function GanttView({
   // Only user gestures may extend the range - programmatic scrolls (chip
   // jumps, auto-center, zoom clamping) must never grow it.
   useEffect(() => {
-    const pane = timelinePaneRef.current
+    // #727: the body, not the lane overlay: the overlay is pointer-events-none and the scroller
+    // is its sibling, so gestures bubble through the body
+    const pane = bodyRef.current
     if (!pane) return
     const markIntent = () => {
       lastUserScrollRef.current = performance.now()
+    }
+    // the tree column sits inside the scroller now: pressing a key or the pointer there edits the
+    // tree and scrolls nothing, so it is not scroll intent (wheel and touch there DO scroll the timeline)
+    const inTree = (target: EventTarget | null) =>
+      target instanceof Element && target.closest(GANTT_TREE_COLUMN_SELECTOR) !== null
+    const markKeyIntent = (e: KeyboardEvent) => {
+      if (inTree(e.target)) return
+      markIntent()
     }
     // zooming is not scroll intent - the re-seat it triggers must not be
     // mistaken for the user reaching an edge and asking to grow the range
@@ -1991,6 +1971,7 @@ function GanttView({
     // pointerdown counts only where pressing can scroll: the scrollbars,
     // the pan header, or a native-scroll host - NOT bars, chips, or zoom
     const onPointerDown = (e: PointerEvent) => {
+      if (inTree(e.target)) return
       const target = e.target as HTMLElement | null
       if (
         target?.closest(
@@ -2003,18 +1984,18 @@ function GanttView({
     pane.addEventListener("wheel", markWheelIntent, { passive: true })
     pane.addEventListener("pointerdown", onPointerDown)
     pane.addEventListener("touchstart", markIntent, { passive: true })
-    pane.addEventListener("keydown", markIntent)
+    pane.addEventListener("keydown", markKeyIntent)
     return () => {
       pane.removeEventListener("wheel", markWheelIntent)
       pane.removeEventListener("pointerdown", onPointerDown)
       pane.removeEventListener("touchstart", markIntent)
-      pane.removeEventListener("keydown", markIntent)
+      pane.removeEventListener("keydown", markKeyIntent)
     }
   }, [])
 
   useEffect(() => {
     if (!viewConfig.infiniteScroll) return
-    const viewport = getPaneViewport(timelinePaneRef.current)
+    const viewport = scrollerRef.current
     if (!viewport) return
     const tryExtend = (direction: "before" | "after") => {
       // anchor the left edge as an instant, from the LIVE axis range
@@ -2025,10 +2006,10 @@ function GanttView({
       extendLockRef.current = true
       manageRef.current.userTook = true
       pendingRestoreRef.current = {
-        ms:
-          liveStart +
-          (getScrollStart(viewport) / viewport.scrollWidth) *
-            (liveEnd - liveStart),
+        ms: (() => {
+          const geometry = scrollerGeometry(viewport)
+          return liveStart + (geometry.start / geometry.trackWidth) * (liveEnd - liveStart)
+        })(),
         align: "start",
       }
       if (!instance.internals.extendRange(direction)) {
@@ -2043,9 +2024,10 @@ function GanttView({
       if (extendLockRef.current) return
       if (performance.now() - lastUserScrollRef.current > 1200) return
       // a track that fits the pane has no scroll gesture to extend from
-      if (viewport.scrollWidth <= viewport.clientWidth + 8) return
-      const fromStart = getScrollStart(viewport)
-      const fromEnd = viewport.scrollWidth - fromStart - viewport.clientWidth
+      const geometry = scrollerGeometry(viewport)
+      if (geometry.trackWidth <= geometry.visibleWidth + 8) return
+      const fromStart = geometry.start
+      const fromEnd = geometry.trackWidth - fromStart - geometry.visibleWidth
       const direction =
         fromStart < infiniteEdgePx
           ? ("before" as const)
@@ -2062,14 +2044,14 @@ function GanttView({
       // under the pointer, so an edge reading mid-gesture is meaningless
       if (e.ctrlKey || e.metaKey) return
       if (extendLockRef.current || e.deltaX === 0) return
-      if (viewport.scrollWidth <= viewport.clientWidth + 8) return
+      const geometry = scrollerGeometry(viewport)
+      if (geometry.trackWidth <= geometry.visibleWidth + 8) return
       const towardStart = isRtl ? e.deltaX > 0 : e.deltaX < 0
-      if (towardStart && getScrollStart(viewport) <= 0) {
+      if (towardStart && geometry.start <= 0) {
         tryExtend("before")
       } else if (
         !towardStart &&
-        getScrollStart(viewport) + viewport.clientWidth >=
-          viewport.scrollWidth - 1
+        geometry.start + geometry.visibleWidth >= geometry.trackWidth - 1
       ) {
         tryExtend("after")
       }
@@ -2092,7 +2074,7 @@ function GanttView({
   // looking at. Throttled to period boundaries (a coarse key) so scrolling
   // within a period never re-renders the grid.
   useEffect(() => {
-    const viewport = getPaneViewport(timelinePaneRef.current)
+    const viewport = scrollerRef.current
     if (!viewport) return
     const keyFmt =
       scale === "day"
@@ -2112,9 +2094,9 @@ function GanttView({
       const liveStart = Number(axis?.dataset.ganttRangeStart)
       const liveEnd = Number(axis?.dataset.ganttRangeEnd)
       if (!axis || Number.isNaN(liveStart) || Number.isNaN(liveEnd)) return
+      const geometry = scrollerGeometry(viewport)
       const fraction =
-        (getScrollStart(viewport) + viewport.clientWidth / 2) /
-        Math.max(1, viewport.scrollWidth)
+        (geometry.start + geometry.visibleWidth / 2) / Math.max(1, geometry.trackWidth)
       const centerMs = liveStart + fraction * (liveEnd - liveStart)
       // fine center first (controlled-zoom anchor), then the coarse-keyed
       // store report that drives the nav title
@@ -2156,12 +2138,12 @@ function GanttView({
     let attempts = 0
     const seat = () => {
       raf = null
-      const viewport = getPaneViewport(timelinePaneRef.current)
+      const viewport = scrollerRef.current
       if (viewport && pendingRestoreRef.current) {
         // Not laid out yet (0-width on first mount): centering with a 0 offset
         // parks the view a half-pane off. Defer until the pane is measured so
         // "center" lands the anchored instant in the middle on initial load.
-        if (viewport.clientWidth === 0 && attempts++ < 20) {
+        if (scrollerGeometry(viewport).visibleWidth <= 0 && attempts++ < 20) {
           raf = requestAnimationFrame(seat)
           return
         }
@@ -2173,11 +2155,12 @@ function GanttView({
           Math.max((ms - rangeStartMs) / (rangeEndMs - rangeStartMs), 0),
           1
         )
+        const geometry = scrollerGeometry(viewport)
         const offset =
-          offsetPx ?? (align === "center" ? viewport.clientWidth / 2 : 0)
+          offsetPx ?? (align === "center" ? geometry.visibleWidth / 2 : 0)
         setScrollStart(
           viewport,
-          Math.max(0, fraction * viewport.scrollWidth - offset)
+          Math.max(0, fraction * geometry.trackWidth - offset)
         )
       }
       extendLockRef.current = false
@@ -2198,17 +2181,17 @@ function GanttView({
 
   /** Keep the view centered on the same instant across a zoom step. */
   const anchorZoomCenter = () => {
-    const viewport = getPaneViewport(timelinePaneRef.current)
+    const viewport = scrollerRef.current
     const axis = viewport?.querySelector<HTMLElement>("[data-gantt-axis]")
     if (!viewport || !axis) return
     const liveStart = Number(axis.dataset.ganttRangeStart)
     const liveEnd = Number(axis.dataset.ganttRangeEnd)
     if (Number.isNaN(liveStart) || Number.isNaN(liveEnd)) return
+    const geometry = scrollerGeometry(viewport)
     pendingRestoreRef.current = {
       ms:
         liveStart +
-        ((getScrollStart(viewport) + viewport.clientWidth / 2) /
-          viewport.scrollWidth) *
+        ((geometry.start + geometry.visibleWidth / 2) / geometry.trackWidth) *
           (liveEnd - liveStart),
       align: "center",
     }
@@ -2221,18 +2204,21 @@ function GanttView({
    * under the cursor.
    */
   const anchorZoomPointer = (clientX: number) => {
-    const viewport = getPaneViewport(timelinePaneRef.current)
+    const viewport = scrollerRef.current
     const axis = viewport?.querySelector<HTMLElement>("[data-gantt-axis]")
     if (!viewport || !axis) return
     const liveStart = Number(axis.dataset.ganttRangeStart)
     const liveEnd = Number(axis.dataset.ganttRangeEnd)
     if (Number.isNaN(liveStart) || Number.isNaN(liveEnd)) return
-    // trackPoint mirrors in RTL, where the range start is the right edge
-    const offsetPx = trackPoint(viewport, clientX).offset
+    // trackPoint mirrors in RTL, where the range start is the right edge. #727: measured from the
+    // lane overlay (the visible lane, past the sticky tree column), not the scroller, whose left
+    // edge sits under the tree.
+    const offsetPx = trackPoint(laneOverlayRef.current ?? viewport, clientX).offset
+    const geometry = scrollerGeometry(viewport)
     pendingRestoreRef.current = {
       ms:
         liveStart +
-        ((getScrollStart(viewport) + offsetPx) / viewport.scrollWidth) *
+        ((geometry.start + offsetPx) / geometry.trackWidth) *
           (liveEnd - liveStart),
       align: "start",
       offsetPx,
@@ -2240,43 +2226,60 @@ function GanttView({
   }
 
   // ----- ctrl/cmd + wheel (and trackpad pinch) zooms the time range -----
-  // The listener is manual and non-passive because it must preventDefault:
-  // React's synthetic wheel handler cannot. It attaches once and reads the
-  // live logic through a ref, so a zoom step never re-binds mid-gesture.
-  const wheelZoomRef = useRef<((e: WheelEvent) => void) | null>(null)
+  // #728: the cancellable listener is not on the scroller in the steady state. `bindGatedWheelZoom`
+  // attaches it only while Control or Meta is held (WebKit pinch uses gesture events instead; engines
+  // without GestureEvent keep it attached because their pinch arrives as ctrl+wheel with no keydown).
+  // Both handlers read the live logic through a ref, so a zoom step never re-binds mid-gesture.
+  const wheelZoomRef = useRef<{
+    wheel: (e: WheelEvent) => void
+    gesture: (ratio: number, clientX: number) => boolean
+  } | null>(null)
   useEffect(() => {
-    wheelZoomRef.current = (e: WheelEvent) => {
-      if (!viewConfig.wheelZoom) return
-      // Browsers deliver a trackpad pinch as wheel + ctrlKey on every
-      // platform; metaKey is the Mac keyboard idiom the same gesture implies.
-      if (!e.ctrlKey && !e.metaKey) return
-      const lines = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1
-      // Continuous, not stepped: a pinch emits dozens of small deltas per
-      // second, so the button's 0.25 step would slam to a limit instantly.
-      // Exponential keeps each notch proportional at any zoom level.
-      const next = clampZoom(zoom * Math.exp(-e.deltaY * lines * 0.002))
-      // Already clamped: hand the gesture back so the browser's own page
-      // zoom still works for anyone who relies on it.
-      if (Math.abs(next - zoom) < 1e-4) return
-      e.preventDefault()
+    const applyZoom = (next: number, clientX: number) => {
       // Controlled zoom anchors via fineCenterRef when the parent adopts;
       // pre-setting an anchor would leak stale if the parent ignores it.
-      if (viewConfig.zoom === undefined) anchorZoomPointer(e.clientX)
+      if (viewConfig.zoom === undefined) anchorZoomPointer(clientX)
       setZoomValue(+next.toFixed(4))
+    }
+    wheelZoomRef.current = {
+      wheel: (e: WheelEvent) => {
+        if (!viewConfig.wheelZoom) return
+        // Browsers deliver a trackpad pinch as wheel + ctrlKey on every
+        // platform; metaKey is the Mac keyboard idiom the same gesture implies.
+        if (!e.ctrlKey && !e.metaKey) return
+        const lines = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1
+        // Continuous, not stepped: a pinch emits dozens of small deltas per
+        // second, so the button's 0.25 step would slam to a limit instantly.
+        // Exponential keeps each notch proportional at any zoom level.
+        const next = clampZoom(zoom * Math.exp(-e.deltaY * lines * 0.002))
+        // Already clamped: hand the gesture back so the browser's own page
+        // zoom still works for anyone who relies on it.
+        if (Math.abs(next - zoom) < 1e-4) return
+        e.preventDefault()
+        applyZoom(next, e.clientX)
+      },
+      gesture: (ratio, clientX) => {
+        if (!viewConfig.wheelZoom) return false
+        const next = clampZoom(zoom * ratio)
+        if (Math.abs(next - zoom) < 1e-4) return false
+        applyZoom(next, clientX)
+        return true
+      },
     }
   })
   useEffect(() => {
-    const viewport = getPaneViewport(timelinePaneRef.current)
-    if (!viewport) return
-    const onWheel = (e: WheelEvent) => wheelZoomRef.current?.(e)
-    viewport.addEventListener("wheel", onWheel, { passive: false })
-    return () => viewport.removeEventListener("wheel", onWheel)
-  }, [viewConfig.scrollbars, scale])
+    const viewport = scrollerRef.current
+    if (!viewport || !viewConfig.wheelZoom) return
+    return bindGatedWheelZoom(viewport, {
+      onWheel: (e) => wheelZoomRef.current?.wheel(e),
+      onGesture: (ratio, clientX) => wheelZoomRef.current?.gesture(ratio, clientX) ?? false,
+    })
+  }, [viewConfig.scrollbars, viewConfig.wheelZoom, scale])
 
   // Drag-to-pan from the header (intent-based: activates after 4px)
   const beginHeaderPan = (e: React.PointerEvent) => {
     if (e.button !== 0) return
-    const viewport = getPaneViewport(timelinePaneRef.current)
+    const viewport = scrollerRef.current
     if (!viewport) return
     const pointerId = e.pointerId
     const startX = e.clientX
@@ -2331,7 +2334,7 @@ function GanttView({
       e.preventDefault()
       e.stopPropagation()
       const container = treeRowsRef.current
-      const pane = treePaneRef.current
+      const pane = treeOverlayRef.current
       if (!container || !pane) return
       const rowEls = Array.from(
         container.querySelectorAll<HTMLElement>("[data-slot=gantt-row-group]")
@@ -2812,7 +2815,7 @@ function GanttView({
         // grow (not just min-h-full) so the body reaches the bottom of the
         // pane: the columns then run the full height and the empty space
         // below the last row becomes pannable canvas instead of dead area
-        "flex min-h-full w-max min-w-full grow flex-col",
+        "flex min-h-full grow flex-col",
         customScrollbars && "pb-2.5"
       )}
     >
@@ -2841,11 +2844,13 @@ function GanttView({
                   long as its own band is on screen, then the next band pushes
                   it out - so the day you are looking at always names itself.
                   The browser composites this; a scroll listener would run JS
-                  on every frame to do worse. start-3 matches the cell's ps-3
-                  so the gutter is identical parked or pinned. */}
+                  on every frame to do worse. #727: the sticky tree column
+                  covers the first --gantt-tree-inset px of the scrollport, so
+                  the label parks past it, the cell's ps-3 (0.75rem) further
+                  in, so the gutter is identical parked or pinned. */}
                 <span
                   data-slot="gantt-axis-group-label"
-                  className="sticky start-3 max-w-full truncate"
+                  className="sticky start-[calc(var(--gantt-tree-inset)+0.75rem)] max-w-full truncate"
                 >
                   {group.label}
                 </span>
@@ -3073,6 +3078,34 @@ function GanttView({
     </div>
   )
 
+  // ----- #727: the one scroller's content: tree column + timeline column -----
+  const scrollerContent = (
+    <div className="flex min-h-full w-max min-w-full grow">
+      <div
+        data-slot="gantt-tree-pane"
+        data-testid="gantt-tree-column"
+        data-gantt-tree-column=""
+        // sticky start-0 pins the tree while the timeline scrolls under it. overflow-x-clip, not
+        // hidden: hidden is still a scroll container and would trap the sticky header (lessons.md,
+        // "overflow: hidden is still a scroll container"). z-20 puts the whole column over the
+        // isolated timeline column, so bars, ghosts and the now line never paint over the tree.
+        className="bg-background border-border sticky start-0 z-20 flex shrink-0 flex-col overflow-x-clip border-e"
+        style={{ width: "var(--gantt-tree-inset)" }}
+      >
+        {treeContent}
+      </div>
+      <div
+        data-slot="gantt-timeline-pane"
+        data-testid="gantt-timeline-column"
+        // isolate: ghosts, the now line, dependencies and bar z-indices stay inside this column
+        className="relative isolate flex shrink-0 grow flex-col"
+        style={{ minWidth: trackWidth }}
+      >
+        {timelineContent}
+      </div>
+    </div>
+  )
+
   const horizontalScrollbar = (
     <ScrollBar
       orientation="horizontal"
@@ -3080,7 +3113,8 @@ function GanttView({
       // end-0 runs the strip (bg + top border) to the pane's right edge instead
       // of stopping short by the corner width - the vertical scrollbar is inset
       // to end above this strip, so nothing collides in the bottom-right corner.
-      className="bg-background border-t-border! end-0! z-40 h-4! rounded-none py-1"
+      // #727: starts past the sticky tree column (its inset), so the thumb tracks the timeline only
+      className="bg-background border-t-border! start-(--gantt-tree-inset)! end-0! z-40 h-4! rounded-none py-1"
     />
   )
 
@@ -3102,79 +3136,52 @@ function GanttView({
       className
     ),
     children: (
-      <div ref={bodyRef} className="relative flex min-h-0 flex-1">
-        {/* Tree pane */}
-        <div
-          ref={treePaneRef}
-          data-slot="gantt-tree-pane"
-          className="relative h-full shrink-0"
-          style={{ width: liveTreeWidthRef.current ?? clampedTreeWidth }}
-        >
-          {customScrollbars ? (
-            // keyed by scale: Base UI measures overflow once per mount, and a
-            // scale switch changes content without resizing the viewport
-            <ScrollArea
-              key={scale}
-              className="h-full [&>[data-orientation=vertical]]:hidden"
-            >
-              <ScrollAreaPrimitive.Content>
-                {treeContent}
-              </ScrollAreaPrimitive.Content>
-              {horizontalScrollbar}
-            </ScrollArea>
-          ) : (
-            <div
-              data-slot="scroll-area-viewport"
-              data-gantt-native-scroll=""
-              // vertical axis is DISPLAY-ONLY: the position is always
-              // mirrored from the timeline, so no vertical scrollbar can
-              // ever appear (overlay platforms included). Wheel deltas
-              // forward to the timeline (see the sync effect); horizontal
-              // column scrolling stays fully native.
-              className="h-full overflow-x-auto overflow-y-hidden overscroll-contain"
-            >
-              {treeContent}
-            </div>
-          )}
-          {/* Reserved horizontal-scrollbar rail: the tree usually has no
-              horizontal overflow, so its real scrollbar never mounts and its
-              bottom edge would sit higher than the timeline's pinned strip.
-              This static rail fills that gutter (same 1rem height + top border)
-              so the bottom strip reads as one continuous band across both
-              panes; a real tree scrollbar (with columns) draws over it. */}
-          {customScrollbars && (
-            <div
-              aria-hidden
-              data-slot="gantt-tree-scrollbar-rail"
-              className="bg-background border-t-border pointer-events-none absolute inset-x-0 bottom-0 h-4 border-t"
-            />
-          )}
-          {/* Reorder insertion indicator, pinned to the visible pane */}
-          {reorder && (
-            <div
-              data-slot="gantt-reorder-indicator"
-              data-invalid={!reorder.valid || undefined}
-              className="pointer-events-none absolute inset-x-0 flex items-center"
-              style={{ top: reorder.top - 4, zIndex: 110 }}
-            >
-              {/* caret head pointing along the insertion line; the whole
-                  indicator sits above the row carry overlay (z 100) */}
-              <span
-                className={cn(
-                  "ms-0.5 size-0 shrink-0 border-y-4 border-s-8 border-y-transparent",
-                  reorder.valid ? "border-s-primary" : "border-s-destructive"
-                )}
-              />
-              <span
-                className={cn(
-                  "h-px min-w-0 flex-1",
-                  reorder.valid ? "bg-primary" : "bg-destructive"
-                )}
-              />
-            </div>
-          )}
-        </div>
-        {/* Splitter */}
+      <div
+        ref={bodyRef}
+        data-testid="gantt-body"
+        className="relative flex min-h-0 flex-1"
+        // #727: the one source of the tree column's width. The splitter drag writes it straight
+        // to this element; the tree column, splitter, overlays, scroll-padding and the sticky axis
+        // label all read it, so nothing re-renders per pointermove.
+        style={
+          {
+            "--gantt-tree-inset": `${liveTreeWidthRef.current ?? clampedTreeWidth}px`,
+          } as CSSProperties
+        }
+      >
+        {/* #727: ONE scroller for both axes. The tree is a sticky start-0 column inside it and
+            the timeline header is sticky top-0, so tree rows and bars share a single scrollTop and
+            the browser scrolls them on its own thread, like Table and Board. */}
+        {customScrollbars ? (
+          // keyed by scale: Base UI measures overflow once per mount, and a
+          // scale switch changes content without resizing the viewport
+          <ScrollArea
+            key={scale}
+            viewportProps={GANTT_SCROLLER_PROPS}
+            className="h-full min-w-0 flex-1 [&>[data-orientation=vertical]]:top-[65px]! [&>[data-orientation=vertical]]:bottom-4! [&>[data-orientation=vertical]]:h-auto!"
+          >
+            {/* A FLEX column, not a percentage: the content's own
+              min-h-full would resolve against this box's auto height and
+              collapse to nothing, which is why the columns used to stop at
+              the last row and leave the rest of the pane dead space. As a
+              flex parent it can hand the leftover height down instead. */}
+            <ScrollAreaPrimitive.Content className="flex min-h-full flex-col">
+              {scrollerContent}
+            </ScrollAreaPrimitive.Content>
+            {horizontalScrollbar}
+          </ScrollArea>
+        ) : (
+          <div
+            data-slot="scroll-area-viewport"
+            data-gantt-scroller=""
+            data-gantt-native-scroll=""
+            className="h-full min-w-0 flex-1 overflow-auto overscroll-contain"
+            style={SCROLLER_PADDING}
+          >
+            {scrollerContent}
+          </div>
+        )}
+        {/* Splitter: an overlay, so it never scrolls with the content */}
         {treeConfig.resizable ? (
           <div
             role="separator"
@@ -3192,6 +3199,9 @@ function GanttView({
             )}
             tabIndex={0}
             data-slot="gantt-splitter"
+            data-testid="gantt-splitter"
+            // #727: an overlay outside the scroller, parked on the tree column's inline-end hairline
+            style={{ insetInlineStart: "calc(var(--gantt-tree-inset) - 1px)" }}
             className={cn(
               // #219 PR A fix (dr-219a HIGH #2): dropped `outline-none` and `focus-visible:ring-2
               // focus-visible:ring-ring/50` - `styles/tokens/base.css:25`'s unlayered
@@ -3199,7 +3209,7 @@ function GanttView({
               // focus indicator instead of replacing the global one (the two classes lived in
               // separate `cn()` string args, but `cn()` concatenates them into one class list at
               // runtime, so the pairing was real). The global outline now stands alone.
-              "group/gantt-splitter bg-border hover:bg-primary/60 data-resizing:bg-primary relative z-30 w-px shrink-0 cursor-col-resize touch-none",
+              "group/gantt-splitter bg-border hover:bg-primary/60 data-resizing:bg-primary absolute inset-y-0 z-30 w-px cursor-col-resize touch-none",
               "after:absolute after:inset-y-0 after:-start-1 after:-end-1"
             )}
             onPointerDown={beginSplit}
@@ -3226,14 +3236,62 @@ function GanttView({
               className="bg-primary/60 group-data-resizing/gantt-splitter:bg-primary absolute top-1/2 left-1/2 h-6 w-0.75 -translate-x-1/2 -translate-y-1/2 rounded-full opacity-0 transition-opacity duration-150 group-hover/gantt-splitter:opacity-100 group-focus-visible/gantt-splitter:opacity-100 group-data-resizing/gantt-splitter:opacity-100"
             />
           </div>
-        ) : (
-          <div aria-hidden className="bg-border w-px shrink-0" />
-        )}
-        {/* Timeline pane */}
+        ) : null}
+        {/* Tree overlay: the visible tree area, outside the scroller. Pane-rect reads (row reorder) and the
+            reorder indicator live here, so they keep meaning "the visible tree". */}
         <div
-          ref={timelinePaneRef}
-          data-slot="gantt-timeline-pane"
-          className="relative h-full min-w-0 flex-1"
+          ref={treeOverlayRef}
+          data-slot="gantt-tree-overlay"
+          data-testid="gantt-tree-overlay"
+          className="pointer-events-none absolute inset-y-0 start-0"
+          style={{ width: "var(--gantt-tree-inset)" }}
+        >
+          {/* Reserved horizontal-scrollbar rail: the bottom strip reads as one continuous band
+              (same 1rem height + top border as the pinned scrollbar) even when the real
+              scrollbar is not mounted. */}
+          {customScrollbars && (
+            <div
+              aria-hidden
+              data-slot="gantt-tree-scrollbar-rail"
+              data-testid="gantt-tree-scrollbar-rail"
+              className="bg-background border-t-border pointer-events-none absolute inset-x-0 bottom-0 z-30 h-4 border-t"
+            />
+          )}
+          {/* Reorder insertion indicator, pinned to the visible pane */}
+          {reorder && (
+            <div
+              data-slot="gantt-reorder-indicator"
+              data-invalid={!reorder.valid || undefined}
+              className="pointer-events-none absolute inset-x-0 flex items-center"
+              style={{ top: reorder.top - 4, zIndex: 110 }}
+            >
+              {/* caret head pointing along the insertion line; the whole
+                  indicator sits above the row carry overlay (z 100). The tree overlay
+                  deliberately creates no stacking context, or this z would be trapped. */}
+              <span
+                className={cn(
+                  "ms-0.5 size-0 shrink-0 border-y-4 border-s-8 border-y-transparent",
+                  reorder.valid ? "border-s-primary" : "border-s-destructive"
+                )}
+              />
+              <span
+                className={cn(
+                  "h-px min-w-0 flex-1",
+                  reorder.valid ? "bg-primary" : "bg-destructive"
+                )}
+              />
+            </div>
+          )}
+        </div>
+        {/* Lane overlay: the visible timeline lane (everything right of the tree), outside the
+            scroller. The zoom control and the offscreen chips ride it; every "visible pane rect"
+            read (chips, zoom anchor, drag clamping) measures this box. */}
+        <div
+          ref={laneOverlayRef}
+          data-slot="gantt-lane-overlay"
+          data-testid="gantt-lane-overlay"
+          className="pointer-events-none absolute inset-y-0 end-0 z-30"
+          style={{ insetInlineStart: "var(--gantt-tree-inset)" }}
         >
           {viewConfig.zoomControl && (
             <div
@@ -3255,7 +3313,7 @@ function GanttView({
               // `--radius-card` exactly rather than picking a smaller-but-still-rounded rung
               // (`rounded-xs`/`rounded-sm`) - the grid it floats over has no rounding at all, so
               // neither does the control that sits on it.
-              className="bg-background border-border absolute end-[calc(0.75rem+var(--gantt-zoom-shift,0px))] bottom-5 z-40 flex flex-col rounded-none border transition-[inset-inline-end] duration-200"
+              className="bg-background border-border pointer-events-auto absolute end-[calc(0.75rem+var(--gantt-zoom-shift,0px))] bottom-5 z-40 flex flex-col rounded-none border transition-[inset-inline-end] duration-200"
             >
               {/* aria-disabled instead of disabled: the not-allowed cursor
                   must still show at the zoom limits */}
@@ -3338,51 +3396,16 @@ function GanttView({
               </TooltipProvider>
             </div>
           )}
-          {customScrollbars ? (
-            // The vertical scrollbar is inset into the body lane: it starts
-            // below the sticky 65px two-row header (otherwise its top slides
-            // behind the header and the thumb is clipped) and stops above the
-            // pinned 16px horizontal strip. `!` overrides Base UI's inline
-            // top/bottom; h-auto lets top+bottom define the track height so
-            // the thumb is measured against the visible lane, not the full pane.
-            <ScrollArea
-              key={scale}
-              className="h-full [&>[data-orientation=vertical]]:top-[65px]! [&>[data-orientation=vertical]]:bottom-4! [&>[data-orientation=vertical]]:h-auto!"
-            >
-              {/* A FLEX column, not a percentage: the content's own
-                min-h-full would resolve against this box's auto height and
-                collapse to nothing, which is why the columns used to stop at
-                the last row and leave the rest of the pane dead space. As a
-                flex parent it can hand the leftover height down instead. */}
-              <ScrollAreaPrimitive.Content className="flex min-h-full flex-col">
-                {timelineContent}
-              </ScrollAreaPrimitive.Content>
-              {horizontalScrollbar}
-            </ScrollArea>
-          ) : (
-            <div
-              data-slot="scroll-area-viewport"
-              data-gantt-native-scroll=""
-              className="h-full overflow-auto overscroll-contain"
-            >
-              {timelineContent}
-            </div>
-          )}
-          {/* Reserved scrollbar rail - the twin of the tree rail. Keeps the
-              bottom gutter present even when the real horizontal scrollbar is
-              hidden (e.g. hover-reveal scrollbars at rest), so the strip reads
-              as one continuous reserved band across both panes; the real
-              scrollbar (z-40) draws over it when active. */}
           {customScrollbars && (
             <div
               aria-hidden
               data-slot="gantt-timeline-scrollbar-rail"
-              className="bg-background border-t-border pointer-events-none absolute inset-x-0 bottom-0 h-4 border-t"
+              className="bg-background border-t-border pointer-events-none absolute inset-x-0 bottom-0 z-30 h-4 border-t"
             />
           )}
           {viewConfig.offscreenIndicators && (
             <GanttOffscreenChips
-              paneRef={timelinePaneRef}
+              paneRef={laneOverlayRef}
               occurrences={occurrences}
               locale={settings.locale}
               refreshKey={`${scale}:${rangeKey}:${zoom}:${rows.length}:${clampedTreeWidth}:${viewConfig.scrollbars}`}
@@ -4053,15 +4076,15 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
 const FOCUS_RING_ROOM_PX = 4
 
 /**
- * #678: scroll both panes by the least vertical distance that puts the editor row fully in view
+ * #678: scroll the Gantt by the least vertical distance that puts the editor row fully in view
  * under the sticky header. Deliberately NOT `scrollIntoView` (it scrolls every ancestor, the page on
  * a phone: `docs/lessons.md`, "Gantt landing row"); `scrollLeft` is never touched.
+ * #727: tree rows and bars share the one scroller, so this is one `scrollTop` write.
  */
 function revealRowNearest(row: HTMLElement | null, margin = 0) {
-  const viewport = row?.closest<HTMLElement>('[data-slot="scroll-area-viewport"]')
+  const viewport = row?.closest<HTMLElement>(GANTT_SCROLLER_SELECTOR)
   if (!row || !viewport || viewport.clientHeight === 0) return
-  const pane = viewport.closest<HTMLElement>('[data-slot="gantt-tree-pane"],[data-slot="gantt-timeline-pane"]')
-  const header = pane?.querySelector<HTMLElement>('[data-slot="gantt-tree-header"],[data-slot="gantt-timeline-header"]')
+  const header = viewport.querySelector<HTMLElement>('[data-slot="gantt-tree-header"],[data-slot="gantt-timeline-header"]')
   const headerHeight = header?.getBoundingClientRect().height ?? 0
   const view = viewport.getBoundingClientRect()
   const rect = row.getBoundingClientRect()
@@ -4071,13 +4094,7 @@ function revealRowNearest(row: HTMLElement | null, margin = 0) {
   // the row is taller than the room: show its top, never push it above the header
   const delta = above < 0 ? above : below > 0 ? Math.min(below, above) : 0
   if (delta === 0) return
-  const next = Math.max(0, viewport.scrollTop + delta)
-  const root = pane?.parentElement
-  const viewports = root?.querySelectorAll<HTMLElement>(
-    '[data-slot="gantt-tree-pane"] [data-slot="scroll-area-viewport"],[data-slot="gantt-timeline-pane"] [data-slot="scroll-area-viewport"]'
-  )
-  viewport.scrollTop = next
-  for (const other of viewports ?? []) other.scrollTop = next
+  viewport.scrollTop = Math.max(0, viewport.scrollTop + delta)
 }
 
 /** Memoized: only rows whose props actually changed re-render. */
@@ -5445,7 +5462,8 @@ function GanttOffscreenChips({
 
   useEffect(() => {
     const pane = paneRef.current
-    const viewport = getPaneViewport(pane)
+    // #727: the pane is the lane overlay, a sibling of the scroller, not its ancestor
+    const viewport = findScroller(pane?.parentElement)
     if (!pane || !viewport) return
     let raf = 0
     const measure = () => {
@@ -5457,9 +5475,10 @@ function GanttOffscreenChips({
       const headerBottom = header
         ? header.getBoundingClientRect().bottom - paneRect.top
         : 0
-      const trackW = viewport.scrollWidth
-      const visibleStart = getScrollStart(viewport)
-      const visibleEnd = visibleStart + viewport.clientWidth
+      const geometry = scrollerGeometry(viewport)
+      const trackW = geometry.trackWidth
+      const visibleStart = geometry.start
+      const visibleEnd = visibleStart + geometry.visibleWidth
       // The floating zoom control shares the right edge. The chips stay in
       // their column - a shifted chip reads as misaligned, and its position
       // IS its meaning - so it is the ZOOM CONTROL that glides inward while
@@ -5508,7 +5527,7 @@ function GanttOffscreenChips({
           next.push({
             ...base,
             side: "end",
-            target: endPx - viewport.clientWidth + 24,
+            target: endPx - geometry.visibleWidth + 24,
           })
         }
       }
@@ -5525,6 +5544,8 @@ function GanttOffscreenChips({
     viewport.addEventListener("scroll", schedule)
     const observer = new ResizeObserver(schedule)
     observer.observe(viewport)
+    // the lane overlay resizes with the tree inset (a splitter drag), which the scroller does not
+    observer.observe(pane)
     schedule()
     return () => {
       viewport.removeEventListener("scroll", schedule)
@@ -5540,7 +5561,7 @@ function GanttOffscreenChips({
   if (chips.length === 0) return null
 
   const scrollTo = (chip: OffscreenChip) => {
-    const viewport = getPaneViewport(paneRef.current)
+    const viewport = findScroller(paneRef.current?.parentElement)
     if (!viewport) return
     const target = Math.max(0, chip.target)
     viewport.scrollTo({
