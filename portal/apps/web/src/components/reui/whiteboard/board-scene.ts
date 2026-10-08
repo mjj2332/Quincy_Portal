@@ -9,21 +9,16 @@
  * This file: Static scene content. DROPPED: the registry's demo board (`BOARD_FRAMES`, `BOARD_SKELETON`, `boardSkeleton`, the wireframe file). KEPT: the note/node/arrow/frame builders, `LIBRARY_ITEMS` (static starter shapes) and `TEMPLATE_SKELETONS`; none needs storage.
  */
 import type { ExcalidrawElementSkeleton } from "@excalidraw/excalidraw/data/transform"
+import { WHITEBOARD_NOTE_INK, WHITEBOARD_PAPER } from "@quincy/shared"
 
 import type { WhiteboardLibraryItem } from "./whiteboard"
 
 type Skeleton = ExcalidrawElementSkeleton
 
-/** Tailwind 200 shades, as sRGB hex like the editor's own colours. */
-const PAPER = {
-  yellow: "#fff085", // yellow-200
-  green: "#b9f8cf", // green-200
-  blue: "#bedbff", // blue-200
-  red: "#ffc9c9", // red-200
-  violet: "#ddd6ff", // violet-200
-} as const
+/** Tailwind 200 shades and neutral-900 ink, shared with the server's MCP sticky (#708) so the two notes match. */
+const PAPER = WHITEBOARD_PAPER
 
-const INK = "#171717" // neutral-900
+const INK = WHITEBOARD_NOTE_INK
 const WHITE = "#ffffff"
 const RULE = "#d4d4d4" // neutral-300
 

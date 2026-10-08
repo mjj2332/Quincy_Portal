@@ -6,8 +6,13 @@ import {
   WHITEBOARD_MAX_ELEMENTS_PER_MESSAGE,
   WHITEBOARD_MAX_MESSAGE_BYTES,
   WHITEBOARD_MAX_PRESENCE_BYTES,
+  WHITEBOARD_MAX_SELECTED_IDS,
   type WhiteboardRejectionReason,
+  expandServerEdits,
   whiteboardElementSchema,
+  type StoredElement,
+  type WhiteboardMediaInfo,
+  type WhiteboardServerEdit,
   whiteboardModeSchema,
   whiteboardPresenceMessageSchema,
   type WhiteboardMode,
@@ -15,8 +20,9 @@ import {
 } from "@quincy/shared";
 import type { Env, SessionUser } from "../env";
 import { hasProjectCollaborationAccessForUser } from "../middleware/capability";
-import { PresenceBook, decodeName, type Attachment } from "./presence";
+import { MAX_NAME_LENGTH, PresenceBook, decodeName, type Attachment } from "./presence";
 import { clearElements, ensureSchema, normaliseIndices, readElements, reconcile } from "./scene-store";
+import { auditMeta } from "../lib/audit";
 import { Snapshots, type SceneRow } from "./snapshot";
 
 /** Trusted headers the app worker's route sets after it has authenticated and authorised the
@@ -47,6 +53,23 @@ export type RestoreInput = { projectId: string; versionId: string; expectedGener
 export type RestoreResult =
   | { ok: true; generation: number; versionId: string; backupVersionId: string }
   | { ok: false; status: 403 | 404 | 409 | 422 | 500 | 502 | 503; code: string; message: string; generation?: number };
+/**
+ * #708: what the route hands the object to apply an MCP client's edits. The route has authorised the caller and resolved the media
+ * a `place_media` edit names (scoped to this Project); the object authorises again, applies the fences and expands the edits.
+ */
+export type ServerEditsInput = {
+  projectId: string; expectedGeneration: number; requestId: string; edits: WhiteboardServerEdit[];
+  actor: { id: string; name: string; impersonatedBy: string | null; via: { clientName: string; connectionId: string } | null };
+  media: Record<string, WhiteboardMediaInfo>;
+};
+export type ServerEditsResult =
+  | { ok: true; generation: number; results: Array<{ op: WhiteboardServerEdit["op"]; id: string }> }
+  | { ok: false; status: 403 | 404 | 409 | 422 | 500 | 503; code: string; message: string; generation?: number };
+const editsFailure = (status: Extract<ServerEditsResult, { ok: false }>["status"], code: string, message: string, generation?: number): ServerEditsResult => ({ ok: false, status, code, message, ...(generation === undefined ? {} : { generation }) });
+const STALE_BOARD = "The board changed since you read it. Read it again with get_project_whiteboard, then retry.";
+/** How long an MCP edit's presence peer stays on people's boards. */
+const SERVER_PEER_MS = 4000;
+
 const failure = (status: Extract<RestoreResult, { ok: false }>["status"], code: string, message: string, generation?: number): RestoreResult => ({ ok: false, status, code, message, ...(generation === undefined ? {} : { generation }) });
 
 /**
@@ -257,6 +280,13 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
     return this.snapshots.generation();
   }
 
+  /** #708: the generation and the live rows together, in one call (two calls could straddle a restore). */
+  // The rows travel as JSON text: an RPC return type must be Serializable, which an open-ended element record is not.
+  async currentScene(): Promise<{ generation: number; elementsJson: string }> {
+    this.snapshots.ensureSchema();
+    return { generation: this.snapshots.generation(), elementsJson: JSON.stringify(readElements(this.ctx.storage)) };
+  }
+
   /** #559: the live scene's snapshot hash, for the versions listing to mark the version the board still equals. */
   async currentSceneSha256(): Promise<string> {
     return this.snapshots.liveSha256();
@@ -317,6 +347,83 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
       this.restoring = false;
       console.error("whiteboard restore failed", { event: "project_whiteboard_restore_failed", projectId: input.projectId, message: error instanceof Error ? error.message : String(error) });
       return failure(500, "restore_failed", "The restore failed and the board was not changed.");
+    }
+  }
+
+  /**
+   * #708: applies an MCP client's edits as if one more participant had saved them, through the same fences as a socket batch:
+   * `authorize()` (the epoch rule), the restore fence, the board generation, the archive state and the purge fence, then
+   * `reconcile()` with the dirty mark in its transaction, `rearm()`, and a `broadcast()` from a synthetic session id so EVERY
+   * connected tab receives it. Like `webSocketMessage`, nothing awaits between the last fence and the broadcast. Never throws:
+   * every failure is a returned result, and nothing is stored unless every edit applies.
+   */
+  async applyServerEdits(input: ServerEditsInput): Promise<ServerEditsResult> {
+    // The purge fence is captured BEFORE any await: a purge that finishes while this call awaits would otherwise let it recreate the rows.
+    const purgeAtStart = this.purgeCount;
+    try {
+      const fingerprint = await fingerprintOf(input);
+      this.snapshots.ensureSchema();
+      this.snapshots.rememberProject(input.projectId);
+      if (this.purging || this.purgeCount !== purgeAtStart) return editsFailure(404, "project_not_found", "Project not found");
+      if (this.restoring) return editsFailure(503, "board_busy", "The board is being restored. Try again in a moment.");
+      const state = await this.authorize({ userId: input.actor.id, projectId: input.projectId });
+      // From here to the broadcast nothing awaits.
+      if (state === "stale") return editsFailure(503, "access_changing", "Access to this Project was changing. Try again.");
+      if (!state.exists || this.purging || this.purgeCount !== purgeAtStart) return editsFailure(404, "project_not_found", "Project not found");
+      if (!state.access) return editsFailure(403, "forbidden", "You do not have access to this Project.");
+      if (state.archived) return editsFailure(409, "archived", "An Archived Project's board is view-only.");
+      if (this.restoring) return editsFailure(503, "board_busy", "The board is being restored. Try again in a moment.");
+      // A retry (the same request id) is answered from the record, however far the board has moved since.
+      const prior = this.snapshots.findServerEdit(input.requestId);
+      if (prior) {
+        if (prior.actor_id !== input.actor.id || prior.fingerprint !== fingerprint) return editsFailure(409, "request_id_reused", "That requestId was already used for different edits. Use a new one.");
+        if (prior.result_json === "") return editsFailure(409, "request_expired", "That requestId was used more than a day ago and its result is no longer kept. Read the board with get_project_whiteboard to see whether the edits landed; nothing was applied now.");
+        const stored = JSON.parse(prior.result_json) as { generation: number; results: Array<{ op: WhiteboardServerEdit["op"]; id: string }> };
+        if (prior.audit_done === 0) await this.snapshots.deliverAudits();     // never reaches audit delivery for an id already delivered
+        return { ok: true, generation: stored.generation, results: stored.results };
+      }
+      const generation = this.snapshots.generation();
+      if (input.expectedGeneration !== generation) return editsFailure(409, "stale_generation", STALE_BOARD, generation);
+      const expanded = expandServerEdits(input.edits, readElements(this.ctx.storage), {
+        newId: () => crypto.randomUUID(),
+        random31: () => crypto.getRandomValues(new Uint32Array(1))[0]! >>> 1,
+        now: () => Date.now(),
+        media: new Map(Object.entries(input.media)),
+      });
+      if (!expanded.ok) return editsFailure(422, expanded.code, `Edit ${expanded.editIndex + 1}: ${expanded.message}`, generation);
+      const checked = z.array(whiteboardElementSchema).safeParse(expanded.elements);
+      if (!checked.success || checked.data.some((element) => encoder.encode(JSON.stringify(element)).byteLength > WHITEBOARD_MAX_ELEMENT_BYTES)) return editsFailure(422, "invalid_edit", "The edits produce an element the board cannot store.", generation);
+      const ops: Record<string, number> = {};
+      for (const edit of input.edits) ops[edit.op] = (ops[edit.op] ?? 0) + 1;
+      const meta = auditMeta(
+        { id: input.actor.id, impersonatedBy: input.actor.impersonatedBy, via: input.actor.via ? { kind: "mcp", clientName: input.actor.via.clientName, connectionId: input.actor.via.connectionId } : undefined },
+        { requestId: input.requestId, generation, editCount: input.edits.length, ops, elementIds: expanded.results.map((entry) => entry.id) },
+      )!;
+      // The change, its idempotency record and its pending audit commit in one transaction.
+      const { winners } = reconcile(this.ctx.storage, checked.data, (result) => {
+        if (result.winners.length > 0) this.snapshots.markDirty(input.actor.id);
+        this.snapshots.recordServerEdit({ requestId: input.requestId, actorId: input.actor.id, fingerprint, resultJson: JSON.stringify({ generation, results: expanded.results }), auditMetaJson: meta });
+      });
+      if (winners.length > 0) {
+        this.snapshots.rearm();
+        const sessionId = `mcp:${input.requestId}`;
+        const label = input.actor.via ? `${input.actor.name} via ${input.actor.via.clientName}` : input.actor.name;
+        const first = winners.find((row) => !row.isDeleted) ?? winners[0]!;
+        this.broadcast({
+          type: "presence", sessionId, userId: input.actor.id, name: Array.from(label).slice(0, MAX_NAME_LENGTH * 2).join(""),
+          pointer: { x: Number(first.x) || 0, y: Number(first.y) || 0 }, button: "up", selectedIds: winners.filter((row) => !row.isDeleted).slice(0, WHITEBOARD_MAX_SELECTED_IDS).map((row) => row.id),
+        }, "");
+        this.broadcast({ type: "elements", generation, elements: winners }, "");
+        // Presence is memory, not storage: the peer leaves after a few seconds. An eviction in between drops the timer and the label
+        // stays until each tab reloads; nobody who joins later sees it (a new tab's peers come from the open sockets).
+        setTimeout(() => this.broadcast({ type: "peer-left", sessionId }, ""), SERVER_PEER_MS);
+      }
+      // Delivered from the durable record; a failure leaves it pending and the alarm retries (see `Snapshots.deliverAuditsNow`).
+      await this.snapshots.deliverAudits();
+      return { ok: true, generation, results: expanded.results };
+    } catch (error) {
+      console.error("whiteboard server edits failed", { event: "project_whiteboard_server_edits_failed", projectId: input.projectId, message: error instanceof Error ? error.message : String(error) });
+      return editsFailure(500, "edit_failed", "The edit failed and the board was not changed.");
     }
   }
 
@@ -457,6 +564,14 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
   private send(ws: WebSocket, message: WhiteboardServerMessage): void {
     ws.send(JSON.stringify(message));
   }
+}
+
+/** SHA-256 of the call's content, keys sorted, so the same edits fingerprint the same however the client ordered their keys. */
+async function fingerprintOf(input: Pick<ServerEditsInput, "expectedGeneration" | "edits">): Promise<string> {
+  const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical)
+    : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : 1).map(([key, entry]) => [key, canonical(entry)])) : value;
+  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(JSON.stringify(canonical({ expectedGeneration: input.expectedGeneration, edits: input.edits }))));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function readAttachment(ws: WebSocket): Attachment | null {

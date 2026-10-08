@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { createDb, schema } from "@quincy/db";
 import { eq } from "drizzle-orm";
-import { isSupportedWhiteboardProtocol, WHITEBOARD_VERSIONS_RETAINED, whiteboardRestoreRequestSchema, type WhiteboardMode, type WhiteboardVersionsResponse } from "@quincy/shared";
+import { isSupportedWhiteboardProtocol, simplifyScene, WHITEBOARD_VERSIONS_RETAINED, whiteboardRestoreRequestSchema, whiteboardServerEditsRequestSchema, type StoredElement, type WhiteboardMediaInfo, type WhiteboardMode, type WhiteboardVersionsResponse } from "@quincy/shared";
 import type { AppEnv } from "../env";
 import { hasProjectCollaborationAccess } from "../middleware/capability";
 import { terminalRoute } from "../lib/terminal-route";
@@ -106,4 +106,60 @@ projectWhiteboardRoutes.post("/projects/:projectId/whiteboard/versions/:versionI
   const result = await stub.restoreVersion({ projectId: project.data, versionId: version.data, expectedGeneration: body.data.expectedGeneration, requestId: body.data.requestId, actor: { id: user.id, impersonatedBy: user.impersonatedBy } });
   if (result.ok) return c.json(result);
   return c.json({ error: result.message, code: result.code, ...(result.generation === undefined ? {} : { generation: result.generation }) }, result.status);
+}));
+
+/**
+ * #708: the board as a plain list for the MCP server (and any client that wants no Excalidraw): one entry per live element, with
+ * the board generation an edit must quote. Same access decision as the versions listing. The generation and the rows come from
+ * one Durable Object call, so they describe the same moment.
+ */
+projectWhiteboardRoutes.get("/projects/:projectId/whiteboard", terminalRoute("/projects/:projectId/whiteboard", async (c) => {
+  const parsed = projectIdSchema.safeParse(c.req.param("projectId"));
+  if (!parsed.success) return c.json({ error: "Invalid project id" }, 400);
+  const projectId = parsed.data;
+  const denied = await deniedWhiteboardAccess(c, projectId);
+  if (denied) return c.json(denied.body, denied.status);
+  const project = await createDb(c.env.DB).select({ archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
+  if (!project) return c.json({ error: "Project not found" }, 404);
+  const stub = c.env.PROJECT_WHITEBOARD.get(c.env.PROJECT_WHITEBOARD.idFromName(projectId));
+  const scene = await stub.currentScene();
+  return c.json({ generation: scene.generation, archived: project.archivedAt !== null, elements: simplifyScene(JSON.parse(scene.elementsJson) as StoredElement[]) });
+}));
+
+/**
+ * #708: an MCP client's edits to the board. The route authorises (collaboration access, as above), validates the strict command
+ * set, resolves the Embedded media a `place_media` edit names (this Project's whiteboard media only) and hands the Durable Object
+ * the typed `applyServerEdits`; the object re-authorises and applies every fence. The object also owns the audit record (written in the
+ * edit's transaction, delivered durably) and the idempotency record for the caller's `requestId`. No socket is faked: the object broadcasts from a synthetic session.
+ */
+projectWhiteboardRoutes.post("/projects/:projectId/whiteboard/server-edits", terminalRoute("/projects/:projectId/whiteboard/server-edits", async (c) => {
+  const parsed = projectIdSchema.safeParse(c.req.param("projectId"));
+  if (!parsed.success) return c.json({ error: "Invalid project id" }, 400);
+  const projectId = parsed.data;
+  const denied = await deniedWhiteboardAccess(c, projectId);
+  if (denied) return c.json(denied.body, denied.status);
+  let json: unknown;
+  try { json = await c.req.json(); } catch { return c.json({ error: "Invalid request body" }, 400); }
+  const body = whiteboardServerEditsRequestSchema.safeParse(json);
+  if (!body.success) return c.json({ error: "Invalid request body", issues: body.error.issues.slice(0, 5).map((issue) => `${issue.path.join(".")}: ${issue.message}`) }, 400);
+  const project = await createDb(c.env.DB).select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
+  if (!project) return c.json({ error: "Project not found" }, 404);
+  const mediaIds = [...new Set(body.data.edits.flatMap((edit) => edit.op === "place_media" ? [edit.embeddedMediaId] : []))];
+  const media: Record<string, WhiteboardMediaInfo> = {};
+  if (mediaIds.length > 0) {
+    const rows = (await c.env.DB.prepare(
+      `SELECT id, kind, COALESCE(width, display_width) AS width, COALESCE(height, display_height) AS height FROM embedded_media
+       WHERE project_id = ? AND owner_kind = 'whiteboard' AND kind IN ('image', 'video') AND state != 'uploading' AND id IN (SELECT value FROM json_each(?))`,
+    ).bind(projectId, JSON.stringify(mediaIds)).all<{ id: string; kind: "image" | "video"; width: number | null; height: number | null }>()).results;
+    for (const row of rows) media[row.id] = { kind: row.kind, width: row.width, height: row.height };
+  }
+  const user = c.get("user");
+  const requestId = body.data.requestId ?? crypto.randomUUID();
+  const stub = c.env.PROJECT_WHITEBOARD.get(c.env.PROJECT_WHITEBOARD.idFromName(projectId));
+  const result = await stub.applyServerEdits({
+    projectId, expectedGeneration: body.data.expectedGeneration, requestId, edits: body.data.edits, media,
+    actor: { id: user.id, name: user.name, impersonatedBy: user.impersonatedBy, via: user.via ? { clientName: user.via.clientName, connectionId: user.via.connectionId } : null },
+  });
+  if (!result.ok) return c.json({ error: result.message, code: result.code, ...(result.generation === undefined ? {} : { generation: result.generation }) }, result.status);
+  return c.json({ generation: result.generation, applied: result.results });
 }));

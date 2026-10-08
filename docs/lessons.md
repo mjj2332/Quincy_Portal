@@ -6032,3 +6032,14 @@ Tags: css-tokens, gantt-calendar · #692, #693, #695
   - Measure candidate wording in the real font, with canvas or an offscreen span, before choosing it.
 
 Guards: `config/phone-breakpoint.guard.test.ts`, `reui/gantt/gantt-create-task.dom.test.tsx` (the `+` token pins), `ProductionGantt-attention-badge.dom.test.tsx`.
+
+## A server cannot borrow Excalidraw's elbow router, so it refuses what it cannot route (#708)
+Tags: whiteboard, workers-runtime · #708
+
+- **The router is not reachable from a Worker.** `@excalidraw/excalidraw` 0.18.1 ships one entry point; importing it in workerd throws `window is not defined` at module load (`constants.ts`).
+  - `updateElbowArrowPoints` is not exported. The exported `mutateElement` reaches it only through `Scene.getScene(element)`, and with no Scene it routes against an empty element map, so bound shapes are invisible to it.
+  - Bundling it anyway took the `workers/app` dry-run bundle from 2.38 MB to 10.83 MB (0.61 to 3.16 MB gzip).
+- **A hand-written copy of an editor's normalisation never converges.** Four review rounds each found a case where the server's elbow re-route disagreed with the editor. The last: an end moved onto a pinned run's line makes two segments collinear, and the editor merges them and drops the pin (`fixedSegments: null`).
+- **Fix:** a move that would re-route an elbow arrow with a non-empty `fixedSegments` is refused (`pinned_elbow_arrow`, 422, nothing applied). Un-pinned elbow and curved arrows still re-route. A person moves the pinned case in the board editor.
+
+Guards: `apps/web/src/lib/whiteboard-server-edits.test.ts` ("refuses to move a shape whose bound elbow arrow has a pinned segment"), `workers/app/test/mcp-whiteboard.test.ts` ("elbow arrows").

@@ -54,4 +54,5 @@ export * from "./raw-media";
 export * from "./subtask-reminders";
 export * from "./whiteboard-index";
 export * from "./whiteboard-protocol";
+export * from "./whiteboard-server-edits";
 export * from "./email-digest";
