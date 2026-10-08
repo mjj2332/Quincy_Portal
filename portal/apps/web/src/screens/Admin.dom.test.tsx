@@ -232,6 +232,16 @@ describe("Admin Pipeline configuration boundary", () => {
     expect(userRow(host, "Other Admin").textContent).not.toContain("Act as");
     expect(userRow(host, "Inactive Editor").textContent).not.toContain("Act as");
 
+    // The whole row is the tap target (#721 design review): tapping the label text toggles too.
+    apiPatchMock.mockResolvedValueOnce({ enabled: false });
+    await click(toggle.closest("label")!.querySelector<HTMLElement>("span:not([role])")!);
+    await flush();
+    expect(apiPatchMock).toHaveBeenLastCalledWith("/api/users/impersonation-settings", { enabled: false });
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    apiPatchMock.mockResolvedValueOnce({ enabled: true });
+    await click(toggle);
+    await flush();
+
     confirmMock.mockResolvedValueOnce(false);
     await click([...userRow(host, "Active Editor").querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Deactivate")!);
     expect(confirmMock).toHaveBeenCalledWith({ title: "Deactivate user?", message: "Are you sure you want to deactivate Active Editor? This signs them out everywhere immediately.", confirmLabel: "Deactivate", danger: true });
