@@ -104,13 +104,14 @@ describe("tools/list follows the grant and the role", () => {
   it("external editor: no Notice board tools and no selection tools", async () => {
     expect(await names("external")).toEqual(COLLAB_NAMES.filter((name) => !NOTICE.includes(name) && name !== "request_notice_link_preview" && !["select_asset_for_editing", "unselect_asset_for_editing"].includes(name)).sort());
   });
-  it("annotates every tool: not read-only, destructive exactly for the removals, strict input, no admin capability", () => {
+  it("annotates every tool: not read-only, destructive exactly for the removals, open-world exactly for the link previews, strict input, no admin capability", () => {
     const tools = MCP_TOOLS.filter((tool) => COLLAB_NAMES.includes(tool.name));
     expect(tools.map((tool) => tool.name).sort()).toEqual([...COLLAB_NAMES].sort());
     for (const tool of tools) {
       expect(tool.scope, tool.name).toBe("write");
       expect(tool.annotations.readOnlyHint, tool.name).toBe(false);
       expect(tool.annotations.destructiveHint, tool.name).toBe(DESTRUCTIVE.includes(tool.name));
+      expect(tool.annotations.openWorldHint, tool.name).toBe(tool.name.endsWith("_link_preview"));
       expect(tool.capability, tool.name).not.toBe("adminBackend");
       expect(tool.anyCapability ?? [], tool.name).not.toContain("adminBackend");
       const sample = Object.fromEntries(Object.keys(tool.inputSchema).map((key) => [key, undefined]));

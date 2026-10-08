@@ -88,6 +88,8 @@ export function writeTool(def: {
   anyCapability?: readonly Capability[];
   destructive?: boolean;
   idempotent?: boolean;
+  /** The tool reaches outside the Portal (e.g. fetches an arbitrary public URL). */
+  openWorld?: boolean;
   run?: (send: WriteSend, input: Record<string, unknown>, read: (path: string, query?: Record<string, string>) => Promise<Response>) => Promise<McpToolResult>;
 }): McpTool {
   return {
@@ -97,7 +99,7 @@ export function writeTool(def: {
     ...(def.capability ? { capability: def.capability } : {}),
     ...(def.anyCapability ? { anyCapability: def.anyCapability } : {}),
     route: { method: def.method, template: def.template },
-    annotations: { readOnlyHint: false, destructiveHint: def.destructive === true, ...(def.idempotent ? { idempotentHint: true } : {}), openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: def.destructive === true, ...(def.idempotent ? { idempotentHint: true } : {}), openWorldHint: def.openWorld === true },
     inputSchema: def.inputSchema,
     call: async (ctx, input) => {
       const used = new Set<string>();

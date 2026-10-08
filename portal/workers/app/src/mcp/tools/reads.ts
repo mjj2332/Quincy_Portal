@@ -5,7 +5,9 @@ import { readTool, type McpTool } from "./define";
 const projectId = z.string().uuid().describe("The Project's id.");
 const cursor = (what: string) => z.string().min(1).optional().describe(`Opaque cursor from the previous page's nextCursor; omit for the first page. ${what}`);
 const limit = (max: number, what: string) => z.number().int().min(1).max(max).optional().describe(`How many ${what} to return (1 to ${max}).`);
-const collection = z.enum(COLLECTION_KINDS).describe("Which Collection: raw, edited, video, floorplan or copy.");
+const assetCollection = z.enum(COLLECTION_KINDS).describe("Which Collection: raw, edited, video, floorplan or copy.");
+/** The links route serves only these three Collections (collections.ts `collectionKinds`). */
+const linkCollection = z.enum(["video", "floorplan", "copy"]).describe("Which Collection: video, floorplan or copy.");
 
 const listProjectFilters = {
   q: z.string().max(200).optional().describe("Search text: matches a Project's address, client, Agency, contact and Subtask titles."),
@@ -73,8 +75,8 @@ const projectTools: McpTool[] = [
     name: "get_project_links",
     template: "/api/projects/:projectId/links",
     capability: "viewEdited",
-    description: "The links in one of a Project's Collections, in order. Use collection 'video' for the Video Collection links.",
-    inputSchema: { projectId, collection },
+    description: "The links in one of a Project's Collections (video, floorplan or copy), in order. Use collection 'video' for the Video Collection links.",
+    inputSchema: { projectId, collection: linkCollection },
   }),
   readTool({
     name: "list_people_for_filters",
@@ -111,7 +113,7 @@ const assetTools: McpTool[] = [
     template: "/api/projects/:projectId/assets",
     anyCapability: ["viewRaw", "viewEdited"],
     description: "Metadata for the Assets in one Collection of a Project: filename, size, dimensions, rating, Section, version, review state (stars, colour label, decision, recommended), whether it is selected for editing and whether previews are ready. Never returns image content; it is metadata only. Raw needs RAW access and the other Collections need Edited access.",
-    inputSchema: { projectId, collection },
+    inputSchema: { projectId, collection: assetCollection },
   }),
   readTool({
     name: "list_asset_annotations",
