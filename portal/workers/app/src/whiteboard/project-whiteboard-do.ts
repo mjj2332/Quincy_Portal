@@ -22,6 +22,7 @@ import type { Env, SessionUser } from "../env";
 import { hasProjectCollaborationAccessForUser } from "../middleware/capability";
 import { MAX_NAME_LENGTH, PresenceBook, decodeName, type Attachment } from "./presence";
 import { clearElements, ensureSchema, normaliseIndices, readElements, reconcile } from "./scene-store";
+import { auditMeta } from "../lib/audit";
 import { Snapshots, type SceneRow } from "./snapshot";
 
 /** Trusted headers the app worker's route sets after it has authenticated and authorised the
@@ -58,7 +59,7 @@ export type RestoreResult =
  */
 export type ServerEditsInput = {
   projectId: string; expectedGeneration: number; requestId: string; edits: WhiteboardServerEdit[];
-  actor: { id: string; name: string; impersonatedBy: string | null; via: { clientName: string } | null };
+  actor: { id: string; name: string; impersonatedBy: string | null; via: { clientName: string; connectionId: string } | null };
   media: Record<string, WhiteboardMediaInfo>;
 };
 export type ServerEditsResult =
@@ -357,19 +358,29 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
    * every failure is a returned result, and nothing is stored unless every edit applies.
    */
   async applyServerEdits(input: ServerEditsInput): Promise<ServerEditsResult> {
+    // The purge fence is captured BEFORE any await: a purge that finishes while this call awaits would otherwise let it recreate the rows.
+    const purgeAtStart = this.purgeCount;
     try {
+      const fingerprint = await fingerprintOf(input);
       this.snapshots.ensureSchema();
       this.snapshots.rememberProject(input.projectId);
-      if (this.purging) return editsFailure(404, "project_not_found", "Project not found");
+      if (this.purging || this.purgeCount !== purgeAtStart) return editsFailure(404, "project_not_found", "Project not found");
       if (this.restoring) return editsFailure(503, "board_busy", "The board is being restored. Try again in a moment.");
-      if (input.expectedGeneration !== this.snapshots.generation()) return editsFailure(409, "stale_generation", STALE_BOARD, this.snapshots.generation());
       const state = await this.authorize({ userId: input.actor.id, projectId: input.projectId });
       // From here to the broadcast nothing awaits.
       if (state === "stale") return editsFailure(503, "access_changing", "Access to this Project was changing. Try again.");
-      if (!state.exists || this.purging) return editsFailure(404, "project_not_found", "Project not found");
+      if (!state.exists || this.purging || this.purgeCount !== purgeAtStart) return editsFailure(404, "project_not_found", "Project not found");
       if (!state.access) return editsFailure(403, "forbidden", "You do not have access to this Project.");
       if (state.archived) return editsFailure(409, "archived", "An Archived Project's board is view-only.");
       if (this.restoring) return editsFailure(503, "board_busy", "The board is being restored. Try again in a moment.");
+      // A retry (the same request id) is answered from the record, however far the board has moved since.
+      const prior = this.snapshots.findServerEdit(input.requestId);
+      if (prior) {
+        if (prior.actor_id !== input.actor.id || prior.fingerprint !== fingerprint) return editsFailure(409, "request_id_reused", "That requestId was already used for different edits. Use a new one.");
+        const stored = JSON.parse(prior.result_json) as { generation: number; results: Array<{ op: WhiteboardServerEdit["op"]; id: string }> };
+        await this.snapshots.deliverAudits();
+        return { ok: true, generation: stored.generation, results: stored.results };
+      }
       const generation = this.snapshots.generation();
       if (input.expectedGeneration !== generation) return editsFailure(409, "stale_generation", STALE_BOARD, generation);
       const expanded = expandServerEdits(input.edits, readElements(this.ctx.storage), {
@@ -381,7 +392,17 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
       if (!expanded.ok) return editsFailure(422, expanded.code, `Edit ${expanded.editIndex + 1}: ${expanded.message}`, generation);
       const checked = z.array(whiteboardElementSchema).safeParse(expanded.elements);
       if (!checked.success || checked.data.some((element) => encoder.encode(JSON.stringify(element)).byteLength > WHITEBOARD_MAX_ELEMENT_BYTES)) return editsFailure(422, "invalid_edit", "The edits produce an element the board cannot store.", generation);
-      const { winners } = reconcile(this.ctx.storage, checked.data, (result) => { if (result.winners.length > 0) this.snapshots.markDirty(input.actor.id); });
+      const ops: Record<string, number> = {};
+      for (const edit of input.edits) ops[edit.op] = (ops[edit.op] ?? 0) + 1;
+      const meta = auditMeta(
+        { id: input.actor.id, impersonatedBy: input.actor.impersonatedBy, via: input.actor.via ? { kind: "mcp", clientName: input.actor.via.clientName, connectionId: input.actor.via.connectionId } : undefined },
+        { requestId: input.requestId, generation, editCount: input.edits.length, ops, elementIds: expanded.results.map((entry) => entry.id) },
+      )!;
+      // The change, its idempotency record and its pending audit commit in one transaction.
+      const { winners } = reconcile(this.ctx.storage, checked.data, (result) => {
+        if (result.winners.length > 0) this.snapshots.markDirty(input.actor.id);
+        this.snapshots.recordServerEdit({ requestId: input.requestId, actorId: input.actor.id, fingerprint, resultJson: JSON.stringify({ generation, results: expanded.results }), auditMetaJson: meta });
+      });
       if (winners.length > 0) {
         this.snapshots.rearm();
         const sessionId = `mcp:${input.requestId}`;
@@ -396,6 +417,8 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
         // stays until each tab reloads; nobody who joins later sees it (a new tab's peers come from the open sockets).
         setTimeout(() => this.broadcast({ type: "peer-left", sessionId }, ""), SERVER_PEER_MS);
       }
+      // Delivered from the durable record; a failure leaves it pending and the alarm retries (see `Snapshots.deliverAuditsNow`).
+      await this.snapshots.deliverAudits();
       return { ok: true, generation, results: expanded.results };
     } catch (error) {
       console.error("whiteboard server edits failed", { event: "project_whiteboard_server_edits_failed", projectId: input.projectId, message: error instanceof Error ? error.message : String(error) });
@@ -540,6 +563,14 @@ export class ProjectWhiteboardDO extends DurableObject<Env> {
   private send(ws: WebSocket, message: WhiteboardServerMessage): void {
     ws.send(JSON.stringify(message));
   }
+}
+
+/** SHA-256 of the call's content, keys sorted, so the same edits fingerprint the same however the client ordered their keys. */
+async function fingerprintOf(input: Pick<ServerEditsInput, "expectedGeneration" | "edits">): Promise<string> {
+  const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical)
+    : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : 1).map(([key, entry]) => [key, canonical(entry)])) : value;
+  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(JSON.stringify(canonical({ expectedGeneration: input.expectedGeneration, edits: input.edits }))));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function readAttachment(ws: WebSocket): Attachment | null {

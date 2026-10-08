@@ -45,6 +45,8 @@ export const whiteboardServerEditSchema = z.discriminatedUnion("op", [
 export type WhiteboardServerEdit = z.infer<typeof whiteboardServerEditSchema>;
 
 export const whiteboardServerEditsRequestSchema = z.object({
+  /** Caller-stable: a retry of the same call carries the same id and is answered from the stored result. */
+  requestId: z.string().uuid().optional(),
   expectedGeneration: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
   edits: z.array(whiteboardServerEditSchema).min(1).max(WHITEBOARD_SERVER_EDITS_MAX),
 }).strict();
@@ -72,6 +74,7 @@ const BOUND_PADDING = 5;
 const STICKY_W = 200;
 const STICKY_H = 160;
 const MEDIA_MAX_SIDE = 480;
+const ARROW_GAP = 1;
 const DEFAULT_IMAGE: [number, number] = [400, 300];
 const DEFAULT_VIDEO: [number, number] = [480, 270];
 const BINDABLE = new Set(["rectangle", "ellipse", "diamond", "text", "image"]);
@@ -238,20 +241,57 @@ export function expandServerEdits(edits: readonly WhiteboardServerEdit[], stored
     const dx = x === undefined ? 0 : x - num(row.x);
     const dy = y === undefined ? 0 : y - num(row.y);
     if (dx === 0 && dy === 0) return;
-    bump(row, { x: num(row.x) + dx, y: num(row.y) + dy });
+    if (row.type === "arrow") {
+      // Dragging a whole arrow detaches it, as the editor does.
+      for (const end of [row.startBinding, row.endBinding]) {
+        const target = end && typeof end === "object" ? live(String((end as { elementId?: unknown }).elementId)) : undefined;
+        if (target) bump(target, { boundElements: withoutBound(target, row.id) });
+      }
+      bump(row, { x: num(row.x) + dx, y: num(row.y) + dy, startBinding: null, endBinding: null });
+      return;
+    }
+    const moved = bump(row, { x: num(row.x) + dx, y: num(row.y) + dy });
     const inner = CONTAINERS.has(String(row.type)) ? innerText(row) : undefined;
     if (inner) bump(inner, { x: num(inner.x) + dx, y: num(inner.y) + dy });
+    for (const arrow of arrowsBoundTo(moved.id)) bump(arrow, routeArrow(arrow));
   };
 
-  /** Where a line from `from`'s centre toward `toward` leaves `box`'s bounding box. */
-  const edge = (box: Row, toward: { x: number; y: number }): { x: number; y: number } => {
-    const cx = num(box.x) + num(box.width) / 2; const cy = num(box.y) + num(box.height) / 2;
-    const dx = toward.x - cx; const dy = toward.y - cy;
-    if (dx === 0 && dy === 0) return { x: cx, y: cy };
-    const scale = Math.min(dx === 0 ? Infinity : (num(box.width) / 2) / Math.abs(dx), dy === 0 ? Infinity : (num(box.height) / 2) / Math.abs(dy), 1);
-    return { x: cx + dx * scale, y: cy + dy * scale };
-  };
   const centre = (box: Row) => ({ x: num(box.x) + num(box.width) / 2, y: num(box.y) + num(box.height) / 2 });
+  /**
+   * Where the ray from `box`'s centre toward `toward` leaves the element's real outline (a diamond's edges, an ellipse's curve, a
+   * rectangle's sides), in the element's own turned frame, then `ARROW_GAP` further out. The outline is the unit ball of a norm in
+   * the element's local axes: L1 for a diamond, L2 for an ellipse, max for a box.
+   */
+  const outline = (box: Row, toward: { x: number; y: number }): { x: number; y: number } => {
+    const c = centre(box);
+    const dx = toward.x - c.x; const dy = toward.y - c.y;
+    const length = Math.hypot(dx, dy);
+    if (length === 0) return c;
+    const angle = num(box.angle);
+    const lx = dx * Math.cos(-angle) - dy * Math.sin(-angle);
+    const ly = dx * Math.sin(-angle) + dy * Math.cos(-angle);
+    const nx = Math.abs(lx) / Math.max(num(box.width) / 2, 1e-9); const ny = Math.abs(ly) / Math.max(num(box.height) / 2, 1e-9);
+    const norm = box.type === "diamond" ? nx + ny : box.type === "ellipse" ? Math.hypot(nx, ny) : Math.max(nx, ny);
+    const t = norm === 0 ? 0 : 1 / norm;
+    return { x: c.x + dx * t + (dx / length) * ARROW_GAP, y: c.y + dy * t + (dy / length) * ARROW_GAP };
+  };
+
+  const pointsOf = (arrow: Row): Array<{ x: number; y: number }> =>
+    (Array.isArray(arrow.points) ? arrow.points as number[][] : [[0, 0], [0, 0]]).map((p) => ({ x: num(arrow.x) + num(p[0]), y: num(arrow.y) + num(p[1]) }));
+  /** The arrow's geometry with each bound end on its element's outline; an unbound end stays where it is. Interior points are kept. */
+  const routeArrow = (arrow: Row): Record<string, unknown> => {
+    const abs = pointsOf(arrow);
+    const binding = (end: unknown) => end && typeof end === "object" ? live(String((end as { elementId?: unknown }).elementId)) : undefined;
+    const first = binding(arrow.startBinding); const last = binding(arrow.endBinding);
+    const startTarget = first ? centre(first) : abs[0]!; const endTarget = last ? centre(last) : abs.at(-1)!;
+    if (first) abs[0] = outline(first, abs.length > 2 ? abs[1]! : endTarget);
+    if (last) abs[abs.length - 1] = outline(last, abs.length > 2 ? abs.at(-2)! : startTarget);
+    const xs = abs.map((p) => p.x); const ys = abs.map((p) => p.y);
+    return { x: abs[0]!.x, y: abs[0]!.y, width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys), points: abs.map((p) => [p.x - abs[0]!.x, p.y - abs[0]!.y]) };
+  };
+  const arrowsBoundTo = (id: string): Row[] => [...working.values()].filter((row) => row.type === "arrow" && !row.isDeleted
+    && [row.startBinding, row.endBinding].some((end) => end && typeof end === "object" && (end as { elementId?: unknown }).elementId === id));
+  const withoutBound = (row: Row, boundId: string) => (Array.isArray(row.boundElements) ? row.boundElements as Array<{ id?: unknown }> : []).filter((entry) => entry.id !== boundId);
 
   for (const [editIndex, edit] of edits.entries()) {
     bumped = new Set();
@@ -288,8 +328,8 @@ export function expandServerEdits(edits: readonly WhiteboardServerEdit[], stored
         if (typeof from === "string") return fail(editIndex, "unknown_element", from);
         if (typeof to === "string") return fail(editIndex, "unknown_element", to);
         if (from.box && to.box && from.box.id === to.box.id) return fail(editIndex, "invalid_edit", "An arrow cannot start and end on the same element.");
-        const start = from.box ? edge(from.box, to.point) : from.point;
-        const end = to.box ? edge(to.box, from.point) : to.point;
+        const start = from.box ? outline(from.box, to.point) : from.point;
+        const end = to.box ? outline(to.box, from.point) : to.point;
         if (start.x === end.x && start.y === end.y) return fail(editIndex, "invalid_edit", "An arrow needs two different end points.");
         const arrow = put(fresh("arrow", start.x, start.y, Math.abs(end.x - start.x), Math.abs(end.y - start.y), {
           points: [[0, 0], [end.x - start.x, end.y - start.y]], lastCommittedPoint: null, startArrowhead: null, endArrowhead: "arrow", elbowed: false, roundness: { type: 2 },
@@ -328,6 +368,18 @@ export function expandServerEdits(edits: readonly WhiteboardServerEdit[], stored
         const row = target(edit.id);
         if (!row) return fail(editIndex, "unknown_element", `The element "${edit.id}" is not on the board.`);
         const inner = CONTAINERS.has(String(row.type)) ? innerText(row) : undefined;
+        for (const arrow of arrowsBoundTo(row.id)) {
+          bump(arrow, {
+            ...(((arrow.startBinding as { elementId?: unknown } | null)?.elementId === row.id) ? { startBinding: null } : {}),
+            ...(((arrow.endBinding as { elementId?: unknown } | null)?.elementId === row.id) ? { endBinding: null } : {}),
+          });
+        }
+        if (row.type === "arrow") {
+          for (const end of [row.startBinding, row.endBinding]) {
+            const target = end && typeof end === "object" ? live(String((end as { elementId?: unknown }).elementId)) : undefined;
+            if (target) bump(target, { boundElements: withoutBound(target, row.id) });
+          }
+        }
         bump(row, { isDeleted: true });
         if (inner) bump(inner, { isDeleted: true });
         results.push({ op: edit.op, id: row.id });

@@ -1,11 +1,11 @@
-import { env, SELF } from "cloudflare:test";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { env, runInDurableObject, SELF } from "cloudflare:test";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { WHITEBOARD_SERVER_EDITS_MAX, whiteboardElementSchema, whiteboardMediaRef } from "@quincy/shared";
 import type { Env } from "../src/env";
 import { isAllowedMcpRoute } from "../src/mcp/route-allowlist";
 import { MCP_TOOLS, strictInput, toolsFor } from "../src/mcp/tools/registry";
 import { mcpHarness } from "./mcp-oauth-support";
-import { alarmAt, cookie, join, memberId, member2Id, newProject, outsiderId, externalId, seedWhiteboardWorld, storedRows, tokens } from "./whiteboard-support";
+import { alarmAt, cookie, fire, inject, failOnce, touchesAudit, farFuture, setClock, stubFor, join, memberId, member2Id, newProject, outsiderId, externalId, seedWhiteboardWorld, storedRows, tokens } from "./whiteboard-support";
 
 /**
  * #708: the whiteboard tools. Two reads (the simplified board and its versions) and one edit tool whose edits the server expands
@@ -44,7 +44,7 @@ async function refused(who: string, name: string, args: unknown, status: number)
   return JSON.parse(plain(outcome.result).replace(/^HTTP \d+: /, "")) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 const read = (who: string, projectId: string) => ok(who, "get_project_whiteboard", { projectId });
-const edit = (who: string, projectId: string, edits: unknown[], expectedGeneration = 1) => ok(who, "edit_project_whiteboard", { projectId, expectedGeneration, edits });
+const edit = (who: string, projectId: string, edits: unknown[], expectedGeneration = 1, requestId?: string) => ok(who, "edit_project_whiteboard", { projectId, expectedGeneration, edits, ...(requestId ? { requestId } : {}) });
 const byId = async (projectId: string) => Object.fromEntries((await storedRows(projectId)).map((row) => [row.id as string, row]));
 async function addMedia(projectId: string, extra: { ownerKind?: string; kind?: string; state?: string; width?: number | null; height?: number | null } = {}) {
   const id = crypto.randomUUID(); const now = Date.now(); const kind = extra.kind ?? "image";
@@ -306,5 +306,76 @@ describe("audit and the versions listing", () => {
   it("lists the versions through the existing route", async () => {
     const projectId = await newProject();
     expect(await ok("member", "list_whiteboard_versions", { projectId })).toMatchObject({ generation: 1, currentVersionId: null, versions: [] });
+  });
+});
+
+describe("review round 1 (Sol)", () => {
+  const text = (value: string) => ({ op: "add_text", x: 0, y: 0, text: value });
+  const auditRows = (projectId: string) => DB.prepare("SELECT id, actor_id, meta_json FROM audit_log WHERE action = 'project_whiteboard.server_edit' AND target_id = ?").bind(projectId).all<{ id: string; actor_id: string; meta_json: string }>().then((r) => r.results);
+
+  it("a purge that completes while the edit awaits its access read cannot be undone by the edit", async () => {
+    const projectId = await newProject();
+    await edit("member", projectId, [text("before purge")]);
+    let release!: () => void; let hit = false; const open = new Promise<void>((resolve) => { release = resolve; });
+    await inject(projectId, "DB", (real: any) => ({ // eslint-disable-line @typescript-eslint/no-explicit-any
+      prepare: (sql: string) => { const statement = real.prepare(sql); return { bind: (...args: unknown[]) => { const bound = statement.bind(...args); return new Proxy(bound, { get: (target, key) => key === "first" ? async (...a: unknown[]) => { if (!hit) { hit = true; await open; } return target.first(...a); } : Reflect.get(target, key).bind?.(target) ?? Reflect.get(target, key) }); } }; },
+      batch: (...a: unknown[]) => real.batch(...a),
+    }));
+    const pending = call("member", "edit_project_whiteboard", { projectId, expectedGeneration: 1, edits: [text("after purge")] });
+    await vi.waitFor(() => expect(hit).toBe(true), { timeout: 5000 });
+    await stubFor(projectId).purge();
+    release();
+    const outcome = await pending;
+    expect(outcome.result?.isError, JSON.stringify(outcome)).toBe(true);
+    expect(plain(outcome.result)).toMatch(/^HTTP 404:/);
+    // The purge dropped the storage; nothing may have recreated the table or any row (a missing table is the clean state).
+    const left = await runInDurableObject(stubFor(projectId), async (_i, state) => state.storage.sql.exec("SELECT name FROM sqlite_master WHERE name IN ('elements', 'wb_server_edits')").toArray().map((row) => row.name as string));
+    for (const table of left) expect(await runInDurableObject(stubFor(projectId), async (_i, state) => state.storage.sql.exec(`SELECT COUNT(*) AS n FROM ${table}`).one().n), table).toBe(0);
+  });
+
+  it("a retry with the same requestId returns the stored result and applies nothing again", async () => {
+    const projectId = await newProject(); const requestId = crypto.randomUUID();
+    const first = await edit("member", projectId, [text("once"), { op: "add_shape", shapeKind: "ellipse", x: 1, y: 1, w: 5, h: 5 }], 1, requestId);
+    const rowsAfter = await storedRows(projectId);
+    const retry = await edit("member", projectId, [text("once"), { op: "add_shape", shapeKind: "ellipse", x: 1, y: 1, w: 5, h: 5 }], 1, requestId);
+    expect(retry).toEqual(first);
+    expect(await storedRows(projectId)).toEqual(rowsAfter);
+    expect(await auditRows(projectId)).toHaveLength(1);
+  });
+  it("the same requestId with different edits, or from someone else, is refused", async () => {
+    const projectId = await newProject(); const requestId = crypto.randomUUID();
+    await edit("member", projectId, [text("original")], 1, requestId);
+    const rows = await storedRows(projectId);
+    expect(await refused("member", "edit_project_whiteboard", { projectId, expectedGeneration: 1, requestId, edits: [text("different")] }, 409)).toMatchObject({ code: "request_id_reused" });
+    expect(await refused("member2", "edit_project_whiteboard", { projectId, expectedGeneration: 1, requestId, edits: [text("original")] }, 409)).toMatchObject({ code: "request_id_reused" });
+    expect(await storedRows(projectId)).toEqual(rows);
+  });
+  it("a retry still answers after the board moved on, and the record is bounded to a day", async () => {
+    const projectId = await newProject(); const requestId = crypto.randomUUID();
+    const first = await edit("member", projectId, [text("a")], 1, requestId);
+    await edit("member", projectId, [text("b")]);
+    expect(await edit("member", projectId, [text("a")], 1, requestId)).toEqual(first);
+    await setClock(projectId, farFuture() + 48 * 3_600_000);
+    await fire(projectId);
+    expect(await runInDurableObject(stubFor(projectId), async (_i, state) => state.storage.sql.exec("SELECT COUNT(*) AS n FROM wb_server_edits").one().n)).toBe(0);
+  });
+
+  it("an audit write that fails stays pending and lands exactly once on the next alarm", async () => {
+    const projectId = await newProject(); const requestId = crypto.randomUUID();
+    await setClock(projectId, farFuture());
+    await inject(projectId, "DB", failOnce("prepare", touchesAudit));
+    const result = await edit("member", projectId, [text("audited later")], 1, requestId);
+    expect(result.applied).toHaveLength(1);
+    expect(await auditRows(projectId)).toEqual([]);
+    await setClock(projectId, farFuture() + 24 * 3_600_000);
+    await fire(projectId);
+    const rows = await auditRows(projectId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: `whiteboard-edit:${projectId}:${requestId}`, actor_id: memberId });
+    expect(JSON.parse(rows[0]!.meta_json)).toMatchObject({ via: "mcp", client: CLIENT, requestId });
+    await fire(projectId);
+    expect(await auditRows(projectId)).toHaveLength(1);
+    await edit("member", projectId, [text("audited later")], 1, requestId);     // a retry cannot double-insert
+    expect(await auditRows(projectId)).toHaveLength(1);
   });
 });

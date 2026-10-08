@@ -5,7 +5,6 @@ import { eq } from "drizzle-orm";
 import { isSupportedWhiteboardProtocol, simplifyScene, WHITEBOARD_VERSIONS_RETAINED, whiteboardRestoreRequestSchema, whiteboardServerEditsRequestSchema, type StoredElement, type WhiteboardMediaInfo, type WhiteboardMode, type WhiteboardVersionsResponse } from "@quincy/shared";
 import type { AppEnv } from "../env";
 import { hasProjectCollaborationAccess } from "../middleware/capability";
-import { audit } from "../lib/audit";
 import { terminalRoute } from "../lib/terminal-route";
 import { WHITEBOARD_MODE_HEADER, WHITEBOARD_NAME_HEADER, WHITEBOARD_PROJECT_HEADER, WHITEBOARD_USER_HEADER } from "../whiteboard/project-whiteboard-do";
 
@@ -130,8 +129,8 @@ projectWhiteboardRoutes.get("/projects/:projectId/whiteboard", terminalRoute("/p
 /**
  * #708: an MCP client's edits to the board. The route authorises (collaboration access, as above), validates the strict command
  * set, resolves the Embedded media a `place_media` edit names (this Project's whiteboard media only) and hands the Durable Object
- * the typed `applyServerEdits`; the object re-authorises and applies every fence. A successful edit is audited as the effective
- * user, with the MCP provenance `auditMeta` adds. No socket is faked: the object broadcasts from a synthetic session.
+ * the typed `applyServerEdits`; the object re-authorises and applies every fence. The object also owns the audit record (written in the
+ * edit's transaction, delivered durably) and the idempotency record for the caller's `requestId`. No socket is faked: the object broadcasts from a synthetic session.
  */
 projectWhiteboardRoutes.post("/projects/:projectId/whiteboard/server-edits", terminalRoute("/projects/:projectId/whiteboard/server-edits", async (c) => {
   const parsed = projectIdSchema.safeParse(c.req.param("projectId"));
@@ -155,20 +154,12 @@ projectWhiteboardRoutes.post("/projects/:projectId/whiteboard/server-edits", ter
     for (const row of rows) media[row.id] = { kind: row.kind, width: row.width, height: row.height };
   }
   const user = c.get("user");
-  const requestId = crypto.randomUUID();
+  const requestId = body.data.requestId ?? crypto.randomUUID();
   const stub = c.env.PROJECT_WHITEBOARD.get(c.env.PROJECT_WHITEBOARD.idFromName(projectId));
   const result = await stub.applyServerEdits({
     projectId, expectedGeneration: body.data.expectedGeneration, requestId, edits: body.data.edits, media,
-    actor: { id: user.id, name: user.name, impersonatedBy: user.impersonatedBy, via: user.via ? { clientName: user.via.clientName } : null },
+    actor: { id: user.id, name: user.name, impersonatedBy: user.impersonatedBy, via: user.via ? { clientName: user.via.clientName, connectionId: user.via.connectionId } : null },
   });
   if (!result.ok) return c.json({ error: result.message, code: result.code, ...(result.generation === undefined ? {} : { generation: result.generation }) }, result.status);
-  const ops: Record<string, number> = {};
-  for (const edit of body.data.edits) ops[edit.op] = (ops[edit.op] ?? 0) + 1;
-  try {
-    await audit(c.env, user, "project_whiteboard.server_edit", "project", projectId, { requestId, generation: result.generation, editCount: body.data.edits.length, ops, elementIds: result.results.map((entry) => entry.id) });
-  } catch (error) {
-    // The edit is on the board and cannot be taken back; a thrown audit would only make the client repeat it.
-    console.error("whiteboard server edit audit failed", { event: "project_whiteboard_server_edit_audit_failed", projectId, requestId, message: error instanceof Error ? error.message : String(error) });
-  }
   return c.json({ generation: result.generation, applied: result.results });
 }));

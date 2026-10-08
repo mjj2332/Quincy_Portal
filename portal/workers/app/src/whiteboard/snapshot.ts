@@ -74,6 +74,9 @@ export async function sceneSha256(rows: ReadonlyArray<{ id: unknown }>): Promise
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+/** How long an MCP edit's request id keeps answering retries. */
+export const SERVER_EDIT_RETENTION_MS = 24 * 60 * 60 * 1000;
+
 export const versionKey = (projectId: string, versionId: string) => `projects/${projectId}/whiteboard/versions/${versionId}.json`;
 
 const envelopeSchema = z.object({ schema: z.literal(1), projectId: z.string(), versionId: z.string(), elements: z.array(z.unknown()) }).passthrough();
@@ -122,6 +125,17 @@ export class Snapshots {
       backup_version_id TEXT NOT NULL,
       old_generation INTEGER NOT NULL,
       new_generation INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      audit_done INTEGER NOT NULL DEFAULT 0
+    )`);
+    // #708: one row per MCP edit call, for idempotency (a retry with the same request id is answered from `result_json`) and for the
+    // audit record that is delivered like a restore's. Delivered rows are dropped after a day (`pruneServerEdits`).
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS wb_server_edits (
+      request_id TEXT PRIMARY KEY,
+      actor_id TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      result_json TEXT NOT NULL,
+      audit_meta_json TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       audit_done INTEGER NOT NULL DEFAULT 0
     )`);
@@ -186,6 +200,7 @@ export class Snapshots {
     return this.enqueue(async () => {
       try {
         if (this.host.fence() < 0) return;
+        this.pruneServerEdits();
         const state = this.row();
         if (!state.project_id) {
           // Nothing says which Project this board belongs to, so there is nowhere to publish. Spend the deadlines (the revisions stay, so
@@ -461,6 +476,30 @@ export class Snapshots {
     return generation;
   }
 
+  // ---- MCP edits (#708) -----------------------------------------------------------------------------------------------
+
+  findServerEdit(requestId: string): { actor_id: string; fingerprint: string; result_json: string } | null {
+    this.ensureSchema();
+    return this.sql.exec<{ actor_id: string; fingerprint: string; result_json: string }>("SELECT actor_id, fingerprint, result_json FROM wb_server_edits WHERE request_id = ?", requestId).toArray()[0] ?? null;
+  }
+
+  /**
+   * Records an applied edit call. Called INSIDE the edit's transaction, so the change, its idempotency record and its pending audit
+   * commit together; it also makes the audit due now, so the alarm delivers it if this turn never does.
+   */
+  recordServerEdit(args: { requestId: string; actorId: string; fingerprint: string; resultJson: string; auditMetaJson: string }): void {
+    const now = this.host.clock();
+    this.sql.exec("INSERT INTO wb_server_edits (request_id, actor_id, fingerprint, result_json, audit_meta_json, created_at, audit_done) VALUES (?, ?, ?, ?, ?, ?, 0)", args.requestId, args.actorId, args.fingerprint, args.resultJson, args.auditMetaJson, now);
+    this.sql.exec("UPDATE wb_state SET audit_retry_at = MIN(COALESCE(audit_retry_at, ?), ?) WHERE id = 1", now, now);
+    this.pruneServerEdits();
+  }
+
+  /** Delivered records older than a day are no longer needed to answer a retry. A record whose audit is still pending is never dropped. */
+  pruneServerEdits(): void {
+    this.ensureSchema();
+    this.sql.exec("DELETE FROM wb_server_edits WHERE audit_done = 1 AND created_at < ?", this.host.clock() - SERVER_EDIT_RETENTION_MS);
+  }
+
   // ---- audit ----------------------------------------------------------------------------------------------------------
 
   /** Writes the audit row of every restore not yet delivered. A failure leaves them for the alarm; delivery is idempotent (a deterministic row id). */
@@ -472,7 +511,8 @@ export class Snapshots {
     this.ensureSchema();
     const projectId = this.row().project_id;
     const pending = this.sql.exec<RestoreRecord>("SELECT request_id, actor_id, impersonated_by, version_id, backup_version_id, old_generation, new_generation, created_at FROM wb_restores WHERE audit_done = 0 ORDER BY created_at").toArray();
-    if (!projectId || pending.length === 0) {
+    const pendingEdits = this.sql.exec<{ request_id: string; actor_id: string; audit_meta_json: string; created_at: number }>("SELECT request_id, actor_id, audit_meta_json, created_at FROM wb_server_edits WHERE audit_done = 0 ORDER BY created_at").toArray();
+    if (!projectId || (pending.length === 0 && pendingEdits.length === 0)) {
       this.sql.exec("UPDATE wb_state SET audit_retry_at = NULL, audit_attempts = 0 WHERE id = 1");
       return;
     }
@@ -483,6 +523,12 @@ export class Snapshots {
           `INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, (SELECT id FROM user WHERE id = ?), 'project_whiteboard.restore', 'project', ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
         ).bind(`whiteboard-restore:${projectId}:${record.request_id}`, record.actor_id, projectId, meta, record.created_at).run();
         this.sql.exec("UPDATE wb_restores SET audit_done = 1 WHERE request_id = ?", record.request_id);
+      }
+      for (const record of pendingEdits) {
+        await this.env.DB.prepare(
+          `INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, (SELECT id FROM user WHERE id = ?), 'project_whiteboard.server_edit', 'project', ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
+        ).bind(`whiteboard-edit:${projectId}:${record.request_id}`, record.actor_id, projectId, record.audit_meta_json, record.created_at).run();
+        this.sql.exec("UPDATE wb_server_edits SET audit_done = 1 WHERE request_id = ?", record.request_id);
       }
       this.sql.exec("UPDATE wb_state SET audit_retry_at = NULL, audit_attempts = 0 WHERE id = 1");
     } catch (error) {

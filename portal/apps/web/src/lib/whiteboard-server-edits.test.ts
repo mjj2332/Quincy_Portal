@@ -63,4 +63,79 @@ describe("server-made elements through the installed Excalidraw", () => {
     const restored = excalidraw.restoreElements(structuredClone(gone.elements.map((element, index) => ({ ...element, index: rows[index]?.index ?? "a1" }))) as never, null);
     expect(restored.every((element) => element.isDeleted === true)).toBe(true);
   });
+
+  const GAP = 1;
+  const idx = (rows: StoredElement[]) => stored(rows);
+  const rowsOf = (...batches: Array<StoredElement[]>) => {
+    const final = new Map<string, StoredElement>();
+    for (const batch of batches) for (const element of batch) final.set(element.id, { ...element, index: final.get(element.id)?.index ?? `a${final.size}` } as StoredElement);
+    return [...final.values()];
+  };
+  const restore = (rows: StoredElement[]) => excalidraw.restoreElements(structuredClone(rows) as never, null);
+  const must = (result: ReturnType<typeof expandServerEdits>) => { if (!result.ok) throw new Error(result.message); return result; };
+
+  it("starts an arrow on the real outline of a diamond: a 200x200 diamond toward (500,500) leaves at (150,150) plus the gap", () => {
+    const made = must(expandServerEdits([{ op: "add_shape", shapeKind: "diamond", x: 0, y: 0, w: 200, h: 200 }], [], deps()));
+    const arrow = must(expandServerEdits([{ op: "add_arrow", from: made.results[0]!.id, to: { x: 500, y: 500 } }], idx(made.elements), deps()));
+    const row = arrow.elements.find((element) => element.type === "arrow")!;
+    expect(row.x as number).toBeCloseTo(150 + GAP * Math.SQRT1_2, 3);
+    expect(row.y as number).toBeCloseTo(150 + GAP * Math.SQRT1_2, 3);
+  });
+
+  it("respects a rotated target's angle", () => {
+    const ellipse = { id: "rot", type: "ellipse", x: 0, y: 0, width: 200, height: 100, angle: Math.PI / 2, version: 1, versionNonce: 1, isDeleted: false, index: "a0", boundElements: null } as unknown as StoredElement;
+    // Turned a quarter turn, the 200-wide ellipse is 100 wide on screen: a ray along +x leaves 50 from the centre (100,50).
+    const arrow = must(expandServerEdits([{ op: "add_arrow", from: "rot", to: { x: 1100, y: 50 } }], [ellipse], deps()));
+    const row = arrow.elements.find((element) => element.type === "arrow")!;
+    expect(row.x as number).toBeCloseTo(100 + 50 + GAP, 3);
+    expect(row.y as number).toBeCloseTo(50, 3);
+  });
+
+  function boundPair() {
+    const shapes = must(expandServerEdits([{ op: "add_shape", shapeKind: "rectangle", x: 0, y: 0, w: 100, h: 100 }, { op: "add_shape", shapeKind: "rectangle", x: 500, y: 0, w: 100, h: 100 }], [], deps()));
+    const [a, b] = shapes.results.map((entry) => entry.id) as [string, string];
+    const arrow = must(expandServerEdits([{ op: "add_arrow", from: a, to: b }], idx(shapes.elements), deps()));
+    const arrowId = arrow.results[0]!.id;
+    return { a, b, arrowId, rows: rowsOf(shapes.elements, arrow.elements) };
+  }
+
+  it("moving a shape re-routes every arrow bound to it and bumps those arrows, checked through restoreElements", () => {
+    const { a, b, arrowId, rows } = boundPair();
+    const before = rows.find((row) => row.id === arrowId)!;
+    const moved = must(expandServerEdits([{ op: "edit", id: b, x: 500, y: 400 }], rows, deps()));
+    const arrow = moved.elements.find((row) => row.id === arrowId)!;
+    expect(arrow.version).toBe((before.version as number) + 1);
+    expect(moved.elements.map((row) => row.id).sort()).toEqual([arrowId, b].sort());
+    const after = restore(rowsOf(rows, moved.elements));
+    const back = after.find((row) => row.id === arrowId)!;
+    const points = back.points as number[][];
+    const end = { x: (back.x as number) + points.at(-1)![0]!, y: (back.y as number) + points.at(-1)![1]! };
+    expect(end.y).toBeGreaterThan(100);                                        // now lands on the lowered shape's top-left side, not at y 50
+    expect(end.x).toBeGreaterThan(400); expect(end.x).toBeLessThan(560);
+    expect(back.width).toBeCloseTo(Math.abs(end.x - (back.x as number)), 3);
+    expect(back.height).toBeCloseTo(Math.abs(end.y - (back.y as number)), 3);
+    expect(back.startBinding).toMatchObject({ elementId: a });
+    expect(back.endBinding).toMatchObject({ elementId: b });
+  });
+
+  it("deleting a shape clears the bindings that reference it; deleting an arrow leaves its targets' boundElements clean", () => {
+    const { a, b, arrowId, rows } = boundPair();
+    const cut = must(expandServerEdits([{ op: "delete", id: b }], rows, deps()));
+    const arrow = cut.elements.find((row) => row.id === arrowId)!;
+    expect(arrow).toMatchObject({ endBinding: null, isDeleted: false });
+    expect(arrow.startBinding).toMatchObject({ elementId: a });
+    expect(arrow.version).toBe((rows.find((row) => row.id === arrowId)!.version as number) + 1);
+    const back = restore(rowsOf(rows, cut.elements)).find((row) => row.id === arrowId)!;
+    expect(back.endBinding).toBeNull();
+
+    const gone = must(expandServerEdits([{ op: "delete", id: arrowId }], rows, deps()));
+    for (const id of [a, b]) {
+      const target = gone.elements.find((row) => row.id === id)!;
+      expect(target.boundElements).toEqual([]);
+      expect(target.version).toBe((rows.find((row) => row.id === id)!.version as number) + 1);
+    }
+    const restored = restore(rowsOf(rows, gone.elements));
+    expect(restored.find((row) => row.id === arrowId)!.isDeleted).toBe(true);
+    expect(((restored.find((row) => row.id === a)!.boundElements ?? []) as unknown[]).length).toBe(0);
+  });
 });
