@@ -73,6 +73,7 @@ async function mount(event: Pick<GanttEvent, "start" | "end">, overhang: number,
   const startPx = parseFloat(row.dataset.ganttBarMin!) * TRACK;
   const endPx = parseFloat(row.dataset.ganttBarMax!) * TRACK;
   scroller.style.setProperty("--gantt-tree-inset", "0px");
+  scroller.style.direction = dir; // happy-dom does not derive the computed direction from the dir attribute
   Object.defineProperty(scroller, "clientWidth", { configurable: true, value: VISIBLE });
   Object.defineProperty(scroller, "scrollWidth", { configurable: true, value: TRACK });
   let scrollLeft = 0;
@@ -81,15 +82,13 @@ async function mount(event: Pick<GanttEvent, "start" | "end">, overhang: number,
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
     if (this === pane) return rect(0, VISIBLE, 0, 600);
     if (this === row) return rect(0, TRACK, 100, 40);
-    // in RTL the axis mirrors: the inline-start edge is physically on the right
-    const wl = dir === "rtl" ? TRACK - endPx : startPx;
-    const wr = dir === "rtl" ? TRACK - startPx : endPx;
-    if (this === wrapper) return rect(wl, wr);
-    if (this === label) {
-      const leading = placement === "before";
-      const onLeft = dir === "rtl" ? !leading : leading;
-      return onLeft ? rect(wl - overhang, wl) : rect(wr, wr + overhang);
-    }
+    // rects live in viewport x: track inline offsets minus the scrolled distance, mirrored in RTL
+    const place = (x: number, y: number) => {
+      const from = Math.abs(scrollLeft);
+      return dir === "rtl" ? rect(VISIBLE - (y - from), VISIBLE - (x - from)) : rect(x - from, y - from);
+    };
+    if (this === wrapper) return place(startPx, endPx);
+    if (this === label) return placement === "before" ? place(startPx - overhang, startPx) : place(endPx, endPx + overhang);
     return rect(0, 0);
   });
   const setScroll = async (left: number) => {
@@ -134,4 +133,90 @@ describe("GanttOffscreenChips measure the external label (#734)", () => {
     await s.setScroll(s.endPx + 250);
     expect(chips().map((c) => c.dataset.side)).toEqual(["start"]);
   });
+});
+
+/**
+ * Painted extent (#734b): the chip decision uses where the row is PAINTED (segment wrapper and external label, in track
+ * coordinates), not the temporal bar bounds - a minimum-width bar or a centred milestone paints wider than it spans.
+ * `temporal` is what the row's data attributes say; `wrapper` and `label` are track-space rects (inline-start, inline-end).
+ */
+async function mountPainted(opts: {
+  track: number;
+  temporal: [number, number];
+  wrapper: [number, number];
+  label: [number, number];
+  dir?: "ltr" | "rtl";
+}) {
+  const dir = opts.dir ?? "ltr";
+  await act(async () => {
+    root!.render(
+      <div dir={dir}>
+        <Gantt resources={[{ id: "r1", title: "Row 1" }]} events={[{ id: "e1", title: "Task one", resourceId: "r1", start: new Date("2026-03-02T09:00:00Z"), end: new Date("2026-03-02T12:00:00Z") }]} date={START} scale="week" timeZone="UTC" barLabel="outside">
+          <GanttView />
+        </Gantt>
+      </div>,
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  const scroller = host.querySelector<HTMLElement>("[data-gantt-scroller]")!;
+  const row = host.querySelector<HTMLElement>("[data-gantt-row]")!;
+  const label = host.querySelector<HTMLElement>('[data-testid="gantt-bar-label"]')!;
+  const wrapper = label.parentElement!;
+  const pane = host.querySelector<HTMLElement>('[data-testid="gantt-lane-overlay"]')!;
+  row.dataset.ganttBarMin = String(opts.temporal[0] / opts.track);
+  row.dataset.ganttBarMax = String(opts.temporal[1] / opts.track);
+  scroller.style.setProperty("--gantt-tree-inset", "0px");
+  scroller.style.direction = dir; // happy-dom does not derive the computed direction from the dir attribute
+  Object.defineProperty(scroller, "clientWidth", { configurable: true, value: VISIBLE });
+  Object.defineProperty(scroller, "scrollWidth", { configurable: true, value: opts.track });
+  let scrollLeft = 0;
+  Object.defineProperty(scroller, "scrollLeft", { configurable: true, get: () => scrollLeft });
+  const rect = (left: number, right: number, top = 0, height = 20) => ({ left, right, top, bottom: top + height, width: right - left, height, x: left, y: top, toJSON() {} }) as DOMRect;
+  // track inline offsets -> viewport x. The lane shows track offsets [visibleStart, visibleStart + VISIBLE].
+  const place = ([a, b]: [number, number]) => {
+    const visibleStart = Math.abs(scrollLeft);
+    return dir === "rtl" ? rect(VISIBLE - (b - visibleStart), VISIBLE - (a - visibleStart)) : rect(a - visibleStart, b - visibleStart);
+  };
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    if (this === pane) return rect(0, VISIBLE, 0, 600);
+    if (this === row) return rect(0, VISIBLE, 100, 40);
+    if (this === wrapper) return place(opts.wrapper);
+    if (this === label) return place(opts.label);
+    return rect(0, 0);
+  });
+  const setScroll = async (left: number) => {
+    scrollLeft = dir === "rtl" ? -left : left;
+    await act(async () => { scroller.dispatchEvent(new Event("scroll")); await Promise.resolve(); });
+    await flushFrames();
+  };
+  return { setScroll };
+}
+
+describe("GanttOffscreenChips use the painted extent, not the temporal bounds (#734b)", () => {
+  for (const dir of ["ltr", "rtl"] as const) {
+    it(`${dir}: a minimum-width bar (temporal 300-301, wrapper to 320, after-label to 428) holds the chip until the label is gone`, async () => {
+      const s = await mountPainted({ track: 4000, temporal: [300, 301], wrapper: [300, 320], label: [320, 428], dir });
+      await s.setScroll(410);
+      expect(chips()).toHaveLength(0);
+      await s.setScroll(430);
+      expect(chips().map((c) => c.dataset.side)).toEqual(["start"]);
+    });
+
+    it(`${dir}: a centred milestone whose wrapper extends past its temporal point holds the start chip`, async () => {
+      const s = await mountPainted({ track: 4000, temporal: [500, 500], wrapper: [480, 520], label: [520, 520], dir });
+      await s.setScroll(515); // temporal end 500 is past, the painted wrapper (to 520) is still 5px in the lane
+      expect(chips()).toHaveLength(0);
+      await s.setScroll(530);
+      expect(chips().map((c) => c.dataset.side)).toEqual(["start"]);
+    });
+
+    it(`${dir}: a centred milestone holds the end chip while its wrapper still reaches into the lane`, async () => {
+      const s = await mountPainted({ track: 4000, temporal: [1500, 1500], wrapper: [1480, 1520], label: [1480, 1480], dir });
+      await s.setScroll(1000 - VISIBLE); // lane ends at 1000, far from 1480
+      expect(chips().map((c) => c.dataset.side)).toEqual(["end"]);
+      await s.setScroll(1485 - VISIBLE); // lane ends at 1485: wrapper start 1480 is inside the lane
+      expect(chips()).toHaveLength(0);
+    });
+  }
 });

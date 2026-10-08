@@ -299,10 +299,11 @@
  * exponential zoom and the hand-back to browser zoom at the limits are unchanged. This is the only non-passive wheel listener in the Gantt.
  *
  * 2026-10-08, #734 - CHANGED, behaviour (ADR 0009 addendum). `GanttOffscreenChips` no longer emits an edge chip the moment a bar leaves the
- * visible lane: it waits until the bar's EXTERNAL label has left too, so a chip stops covering label text that is still readable. `measure` reads the
- * label overhang from rects (`labelOverhang`: the `after` label past the segment wrapper's inline-end edge, the `before` label past its inline-start
- * edge, in either text direction; an inside label adds nothing) for rows that are already candidates, and `offscreenSide` (`gantt-track-geometry.ts`,
- * pure) decides start / end / none. The 2px sub-pixel allowance is kept. Not changed: chip targets, focus hand-off, the vertical filter, the zoom-band dodge.
+ * visible lane: it waits until everything the row PAINTS has left too, so a chip stops covering label text that is still readable. `measure` reads the
+ * painted extent from rects (`paintedExtent`: the union of the segment wrappers and external bar labels, converted from viewport x to track x through
+ * the lane overlay, mirrored in RTL) for rows that are already candidates, and `offscreenSide` (`gantt-track-geometry.ts`, pure) decides start / end /
+ * none from that extent. The painted extent can exceed the temporal bounds (a minimum-width bar, a centred milestone), which is why the temporal
+ * bounds alone are not used. The 2px sub-pixel allowance is kept. Not changed: chip targets, focus hand-off, the vertical filter, the zoom-band dodge.
  * Additive `data-testid`s on the external bar label and the chip (guard F: DOM tests select by testid, not the vendor slot). The label is not observed on its own, so a font-driven label resize waits for the next scroll, resize or data refresh. Consumer side, no edit here: the
  * names-only layout (< 1024px) passes `zoomControl={false}`; `wheelZoom` stays on, so Ctrl/Cmd-wheel and pinch still zoom.
  */
@@ -5452,26 +5453,35 @@ function sameChips(a: OffscreenChip[], b: OffscreenChip[]): boolean {
 }
 
 /**
- * #734: how far a row's external bar labels reach past their bars, measured from the rendered rects. The
- * `after` label overhangs the inline-end edge of its segment wrapper, the `before` label the inline-start
- * edge; `max(label.right - wrapper.right, wrapper.left - label.left)` is that distance in either text
- * direction (the label sits on the one side, so the other term is negative). Inside labels add nothing.
+ * #734: the extent a row PAINTS, in track pixels - the union of its segment wrappers and external bar labels, read
+ * from rendered rects (never an estimated text width). It can exceed the temporal bar bounds: a minimum-width bar
+ * and a centred milestone paint a wider wrapper than they span, and an `after` / `before` label hangs past it.
+ * Viewport x becomes track x through the lane overlay (`pane`, whose inline-start edge sits at `visibleStart` in
+ * the track): from its left edge in LTR, from its right edge in RTL where the axis mirrors.
  */
-function labelOverhang(rowEl: HTMLElement): { leadPx: number; trailPx: number } {
-  let leadPx = 0
-  let trailPx = 0
-  for (const label of rowEl.querySelectorAll<HTMLElement>(
-    "[data-slot=gantt-bar-label][data-placement]"
+function paintedExtent(
+  rowEl: HTMLElement,
+  paneRect: DOMRect,
+  visibleStart: number,
+  rtl: boolean,
+  temporal: { startPx: number; endPx: number }
+): { startPx: number; endPx: number } {
+  let startPx = temporal.startPx
+  let endPx = temporal.endPx
+  for (const el of rowEl.querySelectorAll<HTMLElement>(
+    "[data-lane], [data-slot=gantt-bar-label][data-placement]"
   )) {
-    const wrapper = label.parentElement
-    if (!wrapper) continue
-    const l = label.getBoundingClientRect()
-    const w = wrapper.getBoundingClientRect()
-    const overhang = Math.max(l.right - w.right, w.left - l.left, 0)
-    if (label.dataset.placement === "after") trailPx = Math.max(trailPx, overhang)
-    else if (label.dataset.placement === "before") leadPx = Math.max(leadPx, overhang)
+    const r = el.getBoundingClientRect()
+    const a = rtl
+      ? visibleStart + (paneRect.right - r.right)
+      : visibleStart + (r.left - paneRect.left)
+    const b = rtl
+      ? visibleStart + (paneRect.right - r.left)
+      : visibleStart + (r.right - paneRect.left)
+    startPx = Math.min(startPx, a)
+    endPx = Math.max(endPx, b)
   }
-  return { leadPx, trailPx }
+  return { startPx, endPx }
 }
 
 /**
@@ -5509,6 +5519,7 @@ function GanttOffscreenChips({
         ? header.getBoundingClientRect().bottom - paneRect.top
         : 0
       const geometry = scrollerGeometry(viewport)
+      const rtl = getComputedStyle(viewport).direction === "rtl"
       const trackW = geometry.trackWidth
       const visibleStart = geometry.start
       const visibleEnd = visibleStart + geometry.visibleWidth
@@ -5547,13 +5558,17 @@ function GanttOffscreenChips({
           label: rowEl.dataset.ganttBarLabel ?? "",
           startMs: Number.isNaN(startMs) ? null : startMs,
         }
-        // #734: a bar past an edge only earns its chip once its external label has left too, so measure the
-        // label overhang (rects, never an estimated text width) for the rows that are already candidates.
-        const bare = { startPx, endPx, leadPx: 0, trailPx: 0 }
+        // #734: a row past an edge only earns its chip once everything it paints (wrapper and external label) has left too,
+        // so measure the painted extent (rects, never an estimated text width) for the rows that are already candidates.
+        const bare = { startPx, endPx }
         let side = offscreenSide(bare, visibleStart, visibleEnd)
         if (side) {
-          const overhang = labelOverhang(rowEl)
-          side = offscreenSide({ ...bare, ...overhang }, visibleStart, visibleEnd)
+          // painted bounds are never narrower than the temporal ones, so only a candidate row needs the rect reads
+          side = offscreenSide(
+            paintedExtent(rowEl, paneRect, visibleStart, rtl, bare),
+            visibleStart,
+            visibleEnd
+          )
         }
         if (side === "start") {
           next.push({
