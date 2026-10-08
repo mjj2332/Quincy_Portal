@@ -113,9 +113,9 @@ describe("every op expands into a schema-valid element", () => {
     expect(text).toMatchObject({ type: "text", version: 1, text: "Hello board", originalText: "Hello board", x: 10, y: 20, containerId: null });
     expect(text.versionNonce).toBeGreaterThanOrEqual(0); expect(text.seed).toBeGreaterThan(0);
     const sticky = rows[applied[1]!.id]!;
-    expect(sticky).toMatchObject({ type: "rectangle", backgroundColor: "#ffec99", x: 100, y: 200 });
+    expect(sticky).toMatchObject({ type: "rectangle", backgroundColor: "#fff085", x: 100, y: 200, width: 240, height: 76, strokeColor: "transparent", roughness: 0 });
     const stickyText = Object.values(rows).find((row) => row.type === "text" && row.containerId === sticky.id)!;
-    expect(stickyText).toMatchObject({ version: 1, textAlign: "center", verticalAlign: "middle", originalText: "Check the twilight shots" });
+    expect(stickyText).toMatchObject({ version: 1, textAlign: "center", verticalAlign: "middle", originalText: "Check the twilight shots", fontSize: 20, strokeColor: "#171717" });
     expect(sticky.boundElements).toEqual([{ id: stickyText.id, type: "text" }]);
     expect(sticky.version).toBe(1);
     expect(rows[rectId]).toMatchObject({ type: "rectangle", width: 120, height: 80, version: 2 });
@@ -132,7 +132,7 @@ describe("every op expands into a schema-valid element", () => {
     const view = Object.fromEntries((board.elements as Array<Record<string, any>>).map((entry) => [entry.id, entry])); // eslint-disable-line @typescript-eslint/no-explicit-any
     expect(board.elements).toHaveLength(Object.values(rows).filter((row) => !(row.type === "text" && row.containerId)).length);
     expect(view[applied[0]!.id]).toMatchObject({ kind: "text", text: "Hello board", x: 10, y: 20 });
-    expect(view[sticky.id as string]).toMatchObject({ kind: "sticky", text: "Check the twilight shots", color: "#ffec99" });
+    expect(view[sticky.id as string]).toMatchObject({ kind: "sticky", text: "Check the twilight shots", color: "#fff085" });
     expect(view[stickyText.id as string]).toBeUndefined();
     expect(view[ellipseId]).toMatchObject({ kind: "shape", shapeKind: "ellipse", w: 120, h: 80 });
     expect(view[arrowIds[0]!]).toMatchObject({ kind: "arrow", from: rectId, to: ellipseId });
@@ -148,7 +148,7 @@ describe("every op expands into a schema-valid element", () => {
     expect(rows[result.applied[0].id]).toMatchObject({ width: 480, height: 270, customData: { quincyMedia: { kind: "video" } } });
     const sticky = rows[result.applied[1].id]!;
     expect(sticky).toMatchObject({ backgroundColor: "#12ab34" });
-    expect(sticky.height as number).toBeGreaterThan(160);                      // the sticky grows to hold long text
+    expect(sticky.height as number).toBeGreaterThan(76);                       // the sticky grows from 76 to hold long text
   });
 
   it("accepts no raw Excalidraw element and no unknown field", async () => {

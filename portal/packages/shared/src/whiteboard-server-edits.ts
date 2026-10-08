@@ -20,13 +20,30 @@ const extent = z.number().finite().min(1).max(10_000);
 const elementId = z.string().min(1).max(64);
 const text = z.string().min(1).max(WHITEBOARD_SERVER_TEXT_MAX);
 
+/**
+ * The Portal's Sticky Note paper (Tailwind 200 shades, as sRGB hex like the editor's own colours) and its ink. The browser's
+ * board (`components/reui/whiteboard/board-scene.ts`) and an MCP client's sticky both draw from these, so the two notes match.
+ */
+export const WHITEBOARD_PAPER = {
+  yellow: "#fff085", // yellow-200
+  green: "#b9f8cf", // green-200
+  blue: "#bedbff", // blue-200
+  red: "#ffc9c9", // red-200
+  violet: "#ddd6ff", // violet-200
+} as const;
+export const WHITEBOARD_NOTE_INK = "#171717"; // neutral-900
+
+/**
+ * The sticky colours an MCP client names. The names are the tool's published contract, so they stay as they are: `pink` is the
+ * Portal's `red` paper and `purple` its `violet`. The Portal has no orange paper; `orange` is orange-200, the same family.
+ */
 export const WHITEBOARD_STICKY_COLORS = {
-  yellow: "#ffec99",
-  green: "#b2f2bb",
-  blue: "#a5d8ff",
-  pink: "#ffc9c9",
-  orange: "#ffd8a8",
-  purple: "#d0bfff",
+  yellow: WHITEBOARD_PAPER.yellow,
+  green: WHITEBOARD_PAPER.green,
+  blue: WHITEBOARD_PAPER.blue,
+  pink: WHITEBOARD_PAPER.red,
+  orange: "#ffd6a7", // orange-200
+  purple: WHITEBOARD_PAPER.violet,
 } as const;
 const stickyColor = z.union([z.enum(Object.keys(WHITEBOARD_STICKY_COLORS) as [keyof typeof WHITEBOARD_STICKY_COLORS, ...Array<keyof typeof WHITEBOARD_STICKY_COLORS>]), z.string().regex(/^#[0-9a-fA-F]{6}$/)]);
 
@@ -67,12 +84,14 @@ export type ExpandResult =
 
 type Row = StoredElement & Record<string, unknown>;
 const FONT_SIZE = 20;
-const STICKY_FONT_SIZE = 16;
+/** The Portal note's one text size: 16 reads under 10px at the board's 60% opening zoom. */
+const STICKY_FONT_SIZE = 20;
 const LINE_HEIGHT = 1.25;
 const EXCALIFONT = 5;
 const BOUND_PADDING = 5;
-const STICKY_W = 200;
-const STICKY_H = 160;
+/** The Portal note's box: 240 wide, at least 76 tall, grown to fit its text (`layout`). */
+const STICKY_W = 240;
+const STICKY_H = 76;
 const MEDIA_MAX_SIDE = 480;
 const ARROW_GAP = 1;
 const DEFAULT_IMAGE: [number, number] = [400, 300];
@@ -215,7 +234,7 @@ export function expandServerEdits(edits: readonly WhiteboardServerEdit[], stored
   const textFields = (value: string, fontSize: number, wrapped: string, size: { width: number; height: number }) => ({ text: wrapped, originalText: value, fontSize, fontFamily: EXCALIFONT, lineHeight: LINE_HEIGHT, width: size.width, height: size.height });
 
   /** Gives `container` bound text `value`, creating the text element or updating the existing one. */
-  const setBoundText = (container: Row, value: string, fontSize: number): void => {
+  const setBoundText = (container: Row, value: string, fontSize: number, ink?: string): void => {
     const placed = layout(container, value, fontSize);
     let box = container;
     if (placed.height !== num(container.height)) box = bump(container, { height: placed.height });
@@ -226,6 +245,7 @@ export function expandServerEdits(edits: readonly WhiteboardServerEdit[], stored
     }
     const created = put(fresh("text", placed.x, placed.y, placed.size.width, placed.size.height, {
       ...textFields(value, fontSize, placed.wrapped, placed.size), textAlign: "center", verticalAlign: "middle", containerId: box.id, autoResize: true,
+      ...(ink ? { strokeColor: ink } : {}),
     }));
     bump(box, { boundElements: [...(Array.isArray(box.boundElements) ? box.boundElements : []), { id: created.id, type: "text" }] });
   };
@@ -253,7 +273,7 @@ export function expandServerEdits(edits: readonly WhiteboardServerEdit[], stored
     const moved = bump(row, { x: num(row.x) + dx, y: num(row.y) + dy });
     const inner = CONTAINERS.has(String(row.type)) ? innerText(row) : undefined;
     if (inner) bump(inner, { x: num(inner.x) + dx, y: num(inner.y) + dy });
-    for (const arrow of arrowsBoundTo(moved.id)) bump(arrow, routeArrow(arrow));
+    for (const arrow of arrowsBoundTo(moved.id)) bump(arrow, routeArrow(arrow, moved.id));
   };
 
   const centre = (box: Row) => ({ x: num(box.x) + num(box.width) / 2, y: num(box.y) + num(box.height) / 2 });
@@ -286,38 +306,47 @@ export function expandServerEdits(edits: readonly WhiteboardServerEdit[], stored
     return local.map((p) => ({ x: cx + (p.x - cx) * Math.cos(angle) - (p.y - cy) * Math.sin(angle), y: cy + (p.x - cx) * Math.sin(angle) + (p.y - cy) * Math.cos(angle) }));
   };
   const bindingTarget = (end: unknown) => end && typeof end === "object" ? live(String((end as { elementId?: unknown }).elementId)) : undefined;
-  /** Where on `box` a point sits, as fractions of its width and height (an elbow binding's `fixedPoint`). */
+  /** `p` as fractions of `box`'s width and height in the box's own (unturned) frame: an elbow binding's `fixedPoint`. */
   const fixedPointOf = (box: Row, p: { x: number; y: number }): [number, number] => {
-    const clamp = (value: number) => Math.min(1, Math.max(0, value));
-    return [clamp((p.x - num(box.x)) / Math.max(num(box.width), 1e-9)), clamp((p.y - num(box.y)) / Math.max(num(box.height), 1e-9))];
+    const c = centre(box); const angle = -num(box.angle);
+    const x = c.x + (p.x - c.x) * Math.cos(angle) - (p.y - c.y) * Math.sin(angle);
+    const y = c.y + (p.x - c.x) * Math.sin(angle) + (p.y - c.y) * Math.cos(angle);
+    return [(x - num(box.x)) / Math.max(num(box.width), 1e-9), (y - num(box.y)) / Math.max(num(box.height), 1e-9)];
   };
   /**
-   * The arrow's geometry with each bound end on its element's outline, always written UNROTATED (`angle: 0`, points in world
-   * space). An unbound end stays where it is. A plain multi-point arrow keeps its interior points, carried by the similarity that
-   * maps its old end-to-end segment onto the new one (so a bend stays where it was relative to the ends). An elbow arrow's old bends
-   * are dropped: it becomes a 3-segment orthogonal route, horizontal-vertical-horizontal when the ends are further apart across
-   * than down, else vertical-horizontal-vertical, leaving each bound element from the middle of its facing side.
+   * Excalidraw's `getGlobalFixedPointForBindableElement`: the ratio point on the unturned box, turned about the box's centre. Like
+   * the editor (`normalizeFixedPoint`, also applied by `restoreElements`), a ratio within 1e-4 of 0.5 reads as 0.5001.
    */
-  const routeArrow = (arrow: Row): Record<string, unknown> => {
+  const globalFixedPoint = (box: Row, ratio: [number, number]): { x: number; y: number } => {
+    const [fx, fy] = Math.abs(ratio[0] - 0.5) < 1e-4 || Math.abs(ratio[1] - 0.5) < 1e-4 ? ratio.map((r) => Math.abs(r - 0.5) < 1e-4 ? 0.5001 : r) as [number, number] : ratio;
+    const c = centre(box); const angle = num(box.angle);
+    const dx = num(box.x) + num(box.width) * fx - c.x; const dy = num(box.y) + num(box.height) * fy - c.y;
+    return { x: c.x + dx * Math.cos(angle) - dy * Math.sin(angle), y: c.y + dx * Math.sin(angle) + dy * Math.cos(angle) };
+  };
+  const storedFixedPoint = (binding: unknown): [number, number] | null => {
+    const value = binding && typeof binding === "object" ? (binding as { fixedPoint?: unknown }).fixedPoint : undefined;
+    return Array.isArray(value) && value.length === 2 && value.every((v) => typeof v === "number" && Number.isFinite(v)) ? [value[0], value[1]] : null;
+  };
+  const EPS = 1e-6;
+  const same = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.abs(a.x - b.x) < EPS && Math.abs(a.y - b.y) < EPS;
+  /**
+   * The arrow's geometry after the element `movedId` moved, always written UNROTATED (`angle: 0`, points in world space). Only an
+   * end bound to `movedId` moves; the other end keeps its point exactly. A plain multi-point arrow keeps its interior points,
+   * carried by the similarity that maps its old end-to-end segment onto the new one (so a bend stays where it was relative to the
+   * ends). An elbow arrow follows `routeElbow`.
+   */
+  const routeArrow = (arrow: Row, movedId: string): Record<string, unknown> => {
     const old = pointsOf(arrow);
     const first = bindingTarget(arrow.startBinding); const last = bindingTarget(arrow.endBinding);
+    const startMoves = first?.id === movedId; const endMoves = last?.id === movedId;
     const startTarget = first ? centre(first) : old[0]!; const endTarget = last ? centre(last) : old.at(-1)!;
     let route: Array<{ x: number; y: number }>;
     const extras: Record<string, unknown> = { angle: 0 };
     if (arrow.elbowed === true) {
-      const horizontal = Math.abs(endTarget.x - startTarget.x) >= Math.abs(endTarget.y - startTarget.y);
-      // Facing-side midpoints: aim along the dominant axis from the element's own centre line.
-      const facing = (box: Row, otherCentre: { x: number; y: number }) => outline(box, horizontal ? { x: otherCentre.x, y: centre(box).y } : { x: centre(box).x, y: otherCentre.y });
-      const start = first ? facing(first, endTarget) : old[0]!; const end = last ? facing(last, startTarget) : old.at(-1)!;
-      const mid = horizontal ? (start.x + end.x) / 2 : (start.y + end.y) / 2;
-      route = horizontal ? [start, { x: mid, y: start.y }, { x: mid, y: end.y }, end] : [start, { x: start.x, y: mid }, { x: end.x, y: mid }, end];
-      extras.fixedSegments = null; extras.startIsSpecial = null; extras.endIsSpecial = null;
-      for (const [key, binding, box, point] of [["startBinding", arrow.startBinding, first, start], ["endBinding", arrow.endBinding, last, end]] as const) {
-        if (box && binding && typeof binding === "object") extras[key] = { ...(binding as object), fixedPoint: fixedPointOf(box, point) };
-      }
+      route = routeElbow(arrow, old, first, last, startMoves, endMoves, startTarget, endTarget, extras);
     } else {
-      const start = first ? outline(first, old.length > 2 ? old[1]! : endTarget) : old[0]!;
-      const end = last ? outline(last, old.length > 2 ? old.at(-2)! : startTarget) : old.at(-1)!;
+      const start = first && startMoves ? outline(first, old.length > 2 ? old[1]! : endTarget) : old[0]!;
+      const end = last && endMoves ? outline(last, old.length > 2 ? old.at(-2)! : startTarget) : old.at(-1)!;
       const before = { x: old.at(-1)!.x - old[0]!.x, y: old.at(-1)!.y - old[0]!.y };
       const after = { x: end.x - start.x, y: end.y - start.y };
       const span = before.x * before.x + before.y * before.y;
@@ -330,6 +359,77 @@ export function expandServerEdits(edits: readonly WhiteboardServerEdit[], stored
     }
     const xs = route.map((p) => p.x); const ys = route.map((p) => p.y);
     return { ...extras, x: route[0]!.x, y: route[0]!.y, width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys), points: route.map((p) => [p.x - route[0]!.x, p.y - route[0]!.y]) };
+  };
+  /**
+   * An elbow arrow, in Excalidraw's own model: a binding's `fixedPoint` is a ratio of the bound element's unturned box, and a
+   * `fixedSegments` entry pins segment `index` (points[index-1] -> points[index]) in place on the board, start/end local to points[0].
+   *
+   * The moved end is placed at its binding's `fixedPoint` (the facing-side midpoint only when the binding has none, which then
+   * gets a fresh `fixedPoint`). With pinned segments, every point from the start of the first pinned segment to the end of the last
+   * is kept in world space; only the adjustable run between the moved end and its nearest pinned segment is replaced, by an L that
+   * leaves the pinned segment at a right angle and meets the end. Pinned `start`/`end`/`index` are then re-derived from the new
+   * points, as the editor's own endpoint drag does.
+   *
+   * IMPOSSIBLE PIN RULE: a pinned segment that touches the moved end itself (index 1 for the start, the last index for the end)
+   * can keep its line only if the new end lies on that line. When it does not -- or a stored pin is degenerate (outside the points,
+   * zero-length or not axis-aligned) -- `fixedSegments` is cleared and the arrow is re-routed as if it had none: a 3-segment route,
+   * horizontal-vertical-horizontal when the ends' elements are further apart across than down, else vertical-horizontal-vertical.
+   * (The editor instead adds a padded detour and `startIsSpecial`/`endIsSpecial`; this simpler rule is what a server can do.)
+   */
+  const routeElbow = (arrow: Row, old: Array<{ x: number; y: number }>, first: Row | undefined, last: Row | undefined, startMoves: boolean, endMoves: boolean,
+    startTarget: { x: number; y: number }, endTarget: { x: number; y: number }, extras: Record<string, unknown>): Array<{ x: number; y: number }> => {
+    const horizontal = Math.abs(endTarget.x - startTarget.x) >= Math.abs(endTarget.y - startTarget.y);
+    // Facing-side midpoint, the fallback for a binding with no fixedPoint: aim along the dominant axis from the element's centre line.
+    const facing = (box: Row, otherCentre: { x: number; y: number }) => outline(box, horizontal ? { x: otherCentre.x, y: centre(box).y } : { x: centre(box).x, y: otherCentre.y });
+    const place = (box: Row | undefined, moves: boolean, binding: unknown, otherCentre: { x: number; y: number }, current: { x: number; y: number }) => {
+      if (!box || !moves) return current;
+      const ratio = storedFixedPoint(binding);
+      return ratio ? globalFixedPoint(box, ratio) : facing(box, otherCentre);
+    };
+    const start = place(first, startMoves, arrow.startBinding, endTarget, old[0]!);
+    const end = place(last, endMoves, arrow.endBinding, startTarget, old.at(-1)!);
+    for (const [key, binding, box, point] of [["startBinding", arrow.startBinding, first, start], ["endBinding", arrow.endBinding, last, end]] as const) {
+      if (box && binding && typeof binding === "object" && !storedFixedPoint(binding)) extras[key] = { ...(binding as object), fixedPoint: fixedPointOf(box, point) };
+    }
+
+    const pins = (Array.isArray(arrow.fixedSegments) ? arrow.fixedSegments as Array<{ index?: unknown }> : []).map((pin) => num(pin.index, -1)).sort((a, b) => a - b);
+    const along = (index: number) => { const a = old[index - 1]!; const b = old[index]!; return Math.abs(a.y - b.y) < EPS ? "h" : "v"; };
+    const valid = pins.every((index) => Number.isInteger(index) && index >= 1 && index < old.length && !same(old[index - 1]!, old[index]!)
+      && (Math.abs(old[index - 1]!.x - old[index]!.x) < EPS || Math.abs(old[index - 1]!.y - old[index]!.y) < EPS));
+    const onLine = (index: number, p: { x: number; y: number }) => along(index) === "h" ? Math.abs(p.y - old[index]!.y) < EPS : Math.abs(p.x - old[index]!.x) < EPS;
+    const firstPin = pins[0]; const lastPin = pins.at(-1);
+    const keep = firstPin !== undefined && lastPin !== undefined && valid
+      && !(startMoves && firstPin === 1 && !onLine(1, start)) && !(endMoves && lastPin === old.length - 1 && !onLine(lastPin, end));
+    if (!keep) {
+      const mid = horizontal ? (start.x + end.x) / 2 : (start.y + end.y) / 2;
+      extras.fixedSegments = null; extras.startIsSpecial = null; extras.endIsSpecial = null;
+      return horizontal ? [start, { x: mid, y: start.y }, { x: mid, y: end.y }, end] : [start, { x: start.x, y: mid }, { x: end.x, y: mid }, end];
+    }
+    // An L from `from` to the pinned point `pinned`, whose leg at `pinned` is at a right angle to that pin; a zero-length leg is dropped.
+    const ell = (from: { x: number; y: number }, pinned: { x: number; y: number }, pin: "h" | "v") => {
+      const corner = pin === "h" ? { x: pinned.x, y: from.y } : { x: from.x, y: pinned.y };
+      return same(corner, from) || same(corner, pinned) ? [] : [corner];
+    };
+    const middle = old.slice(firstPin - 1, lastPin + 1);
+    let head = old.slice(0, firstPin - 1);
+    if (startMoves) {
+      if (firstPin === 1) middle[0] = start;
+      else head = [start, ...ell(start, middle[0]!, along(firstPin))];
+    }
+    let tail = old.slice(lastPin + 1);
+    if (endMoves) {
+      if (lastPin === old.length - 1) middle[middle.length - 1] = end;
+      else tail = [...ell(end, middle.at(-1)!, along(lastPin)).reverse(), end];
+    }
+    const route = [...head, ...middle, ...tail];
+    const shift = head.length - (firstPin - 1);
+    extras.fixedSegments = pins.map((index) => {
+      const at = index + shift;
+      return { index: at, start: [route[at - 1]!.x - route[0]!.x, route[at - 1]!.y - route[0]!.y], end: [route[at]!.x - route[0]!.x, route[at]!.y - route[0]!.y] };
+    });
+    if (startMoves) extras.startIsSpecial = false;
+    if (endMoves) extras.endIsSpecial = false;
+    return route;
   };
   const arrowsBoundTo = (id: string): Row[] => [...working.values()].filter((row) => row.type === "arrow" && !row.isDeleted
     && [row.startBinding, row.endBinding].some((end) => end && typeof end === "object" && (end as { elementId?: unknown }).elementId === id));
@@ -348,8 +448,9 @@ export function expandServerEdits(edits: readonly WhiteboardServerEdit[], stored
       }
       case "add_sticky": {
         const background = edit.color in WHITEBOARD_STICKY_COLORS ? WHITEBOARD_STICKY_COLORS[edit.color as keyof typeof WHITEBOARD_STICKY_COLORS] : edit.color;
-        const box = put(fresh("rectangle", edit.x, edit.y, STICKY_W, STICKY_H, { backgroundColor: background, roundness: { type: 3 } }));
-        setBoundText(box, edit.text, STICKY_FONT_SIZE);
+        // The Portal's Sticky Note (board-scene `note`): paper fill, no outline, smooth (roughness 0) edges, ink text.
+        const box = put(fresh("rectangle", edit.x, edit.y, STICKY_W, STICKY_H, { backgroundColor: background, strokeColor: "transparent", roughness: 0, roundness: { type: 3 } }));
+        setBoundText(box, edit.text, STICKY_FONT_SIZE, WHITEBOARD_NOTE_INK);
         results.push({ op: edit.op, id: box.id });
         break;
       }
