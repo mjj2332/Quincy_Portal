@@ -36,23 +36,54 @@ function functionBody(text: string, name: string): { start: number; end: number 
 }
 
 /**
- * Start offsets of every `addEventListener("wheel", ...)` call whose full (balanced-paren) argument
- * text contains `passive: false`, so inline callbacks with their own parens are still caught.
+ * End offset of the call whose opening paren is at `open`, skipping string and template literals
+ * so a paren inside a string (`console.log(")")`) cannot close the call early. Template
+ * substitutions are scanned as code, recursively.
+ */
+function callEnd(text: string, open: number): number {
+  let depth = 0;
+  let i = open;
+  const skipString = (q: string) => {
+    for (i++; i < text.length; i++) {
+      if (text[i] === "\\") i++;
+      else if (text[i] === q) return;
+    }
+  };
+  const skipTemplate = () => {
+    for (i++; i < text.length; i++) {
+      if (text[i] === "\\") i++;
+      else if (text[i] === "`") return;
+      else if (text[i] === "$" && text[i + 1] === "{") {
+        let d = 0;
+        for (i++; i < text.length; i++) {
+          const c = text[i];
+          if (c === '"' || c === "'") skipString(c);
+          else if (c === "`") skipTemplate();
+          else if (c === "{") d++;
+          else if (c === "}" && --d === 0) break;
+        }
+      }
+    }
+  };
+  for (; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"' || c === "'") skipString(c);
+    else if (c === "`") skipTemplate();
+    else if (c === "(") depth++;
+    else if (c === ")" && --depth === 0) return i;
+  }
+  return text.length;
+}
+
+/**
+ * Start offsets of every `addEventListener("wheel", ...)` call whose full argument text contains
+ * `passive: false`, so inline callbacks with their own parens (even inside strings) are caught.
  */
 function nonPassiveWheelCalls(text: string): number[] {
   const hits: number[] = [];
-  for (const m of text.matchAll(/addEventListener\(\s*["']wheel["']/g)) {
+  for (const m of text.matchAll(/addEventListener\(\s*["'`]wheel["'`]/g)) {
     const open = m.index! + "addEventListener".length;
-    let depth = 0;
-    let end = text.length;
-    for (let i = open; i < text.length; i++) {
-      if (text[i] === "(") depth++;
-      else if (text[i] === ")" && --depth === 0) {
-        end = i;
-        break;
-      }
-    }
-    if (/passive\s*:\s*false/.test(text.slice(open, end))) hits.push(m.index!);
+    if (/passive\s*:\s*false/.test(text.slice(open, callEnd(text, open)))) hits.push(m.index!);
   }
   return hits;
 }
@@ -89,6 +120,8 @@ describe("gantt-view.tsx single-scroller guard", () => {
     expect(nonPassiveWheelCalls('el.addEventListener("wheel", (e) => onWheel(e), { passive: false })')).toHaveLength(1);
     expect(nonPassiveWheelCalls("el.addEventListener('wheel', function (e) { f(g(e)) }, { passive: false, capture: true })")).toHaveLength(1);
     expect(nonPassiveWheelCalls('el.addEventListener("wheel", wheel, { passive: false })')).toHaveLength(1);
+    expect(nonPassiveWheelCalls('el.addEventListener("wheel", (e) => console.log(")"), { passive: false })')).toHaveLength(1);
+    expect(nonPassiveWheelCalls("el.addEventListener('wheel', (e) => f(`a)${g(')')}`), { passive: false })")).toHaveLength(1);
     expect(nonPassiveWheelCalls('el.addEventListener("wheel", wheel, { passive: true })')).toHaveLength(0);
     expect(nonPassiveWheelCalls('el.addEventListener("wheel", (e) => f(e))')).toHaveLength(0);
     expect(nonPassiveWheelCalls('el.addEventListener("keydown", (e) => f(e), { passive: false })')).toHaveLength(0);
