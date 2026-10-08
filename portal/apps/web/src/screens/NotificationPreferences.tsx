@@ -5,6 +5,7 @@ import { Checkbox } from "@/components/reui/checkbox";
 import { Notice } from "@/components/quincy/Notice";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/reui/select";
 import { DEFAULT_EMAIL_DIGEST_CADENCE, type EmailDigestCadence } from "@quincy/shared";
+import { InternalLink } from "@/components/InternalLink";
 import { cn } from "@/lib/utils";
 
 type NotificationPreferencesValue = { projectDeadlineReminderEmails: boolean; subtaskReminderEmails: boolean; emailDigestCadence: EmailDigestCadence; includeProjectActivity: boolean };
@@ -253,6 +254,8 @@ export function NotificationPreferences() {
         <p className={FOOT}>Sent for checklist items assigned to you, before and when they're due.</p>
         {error?.section === "subtask" && <Notice role="alert" className="mt-[var(--space-4)]">{error.message}</Notice>}
       </section>
+
+      <p className={cn(FOOT, "mt-[var(--space-6)]")}>AI apps you have connected to the Portal are managed under <InternalLink to="/settings/connected-apps" className="underline">Connected apps</InternalLink>.</p>
 
       <div aria-live="polite" className="sr-only">{anySaving ? "Saving notification preferences" : ""}</div>
     </main>

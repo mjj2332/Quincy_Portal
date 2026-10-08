@@ -6,6 +6,8 @@ export interface Env {
   DB: D1Database;
   MEDIA: R2Bucket;
   SESSIONS: KVNamespace;
+  /** workers-oauth-provider state (#702). The binding name is fixed by the library. */
+  OAUTH_KV: KVNamespace;
   INGEST_QUEUE: Queue;
   NOTIFICATION_QUEUE: Queue<NotificationOutboxMessage>;
   /** Bound only after the rendition queue has been provisioned and the red gate is green. */

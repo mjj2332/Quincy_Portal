@@ -41,6 +41,8 @@ function calendarUrl(query: string): string {
   return `/?${query}`;
 }
 
+const consentHandle = "Ab-_9".repeat(8) + "xyz";
+
 describe("shared staff route contract", () => {
   it("keeps every existing canonical staff route parsing and serializing", () => {
     const routes: Array<[string, StaffRoute]> = [
@@ -58,6 +60,8 @@ describe("shared staff route contract", () => {
       ["/notices", { kind: "notices" }],
       ["/settings/notifications", { kind: "notifications" }],
       ["/settings/notifications/preferences", { kind: "notification-preferences" }],
+      ["/settings/connected-apps", { kind: "connected-apps" }],
+      [`/settings/connected-apps/consent/${consentHandle}`, { kind: "connected-app-consent", handle: consentHandle }],
     ];
 
     for (const [location, route] of routes) {
@@ -83,6 +87,17 @@ describe("shared staff route contract", () => {
     expect(parseStaffPathname("/settings/notifications/preferences/extra")).toEqual({ kind: "not-found" });
     expect(parseStaffPathname("/settings/notifications/other")).toEqual({ kind: "not-found" });
     expect(parseStaffPathname("/settings/other")).toEqual({ kind: "not-found" });
+  });
+
+  it("parses Connected apps and the consent handle grammar (#702)", () => {
+    expect(parseStaffPathname("/settings/connected-apps")).toEqual({ kind: "connected-apps" });
+    expect(parseStaffPathname(`/settings/connected-apps/consent/${consentHandle}`)).toEqual({ kind: "connected-app-consent", handle: consentHandle });
+    for (const bad of ["/settings/connected-apps/", "/settings/connected-apps/consent", "/settings/connected-apps/consent/short", `/settings/connected-apps/consent/${consentHandle}x`, `/settings/connected-apps/consent/${"!".repeat(43)}`, `/settings/connected-apps/consent/${consentHandle}/extra`, "/settings/connected-apps/other"]) {
+      expect(parseStaffPathname(bad), bad).toEqual({ kind: "not-found" });
+      expect(safeStaffDestination(bad), bad).toBeNull();
+    }
+    // Sign-in returns to the consent page.
+    expect(safeStaffDestination(`/settings/connected-apps/consent/${consentHandle}`)).toBe(`/settings/connected-apps/consent/${consentHandle}`);
   });
 
   it("keeps the one-shot collaboration query strict", () => {

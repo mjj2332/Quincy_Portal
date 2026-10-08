@@ -46,7 +46,7 @@ export type SecurityRouteRegistration = {
   response: SecurityRouteResponse;
   externalSurface?: "ingest-status" | "collection-links" | "stage" | "stages" | "activity" | "calendar" | "gantt";
 };
-type LegacySecurityRouteClass = "scoped" | "constant-capability-denial" | "global-self" | "withheld" | "terminal-fallback";
+type LegacySecurityRouteClass = "bearer-protocol" | "scoped" | "constant-capability-denial" | "global-self" | "withheld" | "terminal-fallback";
 type LegacySecurityRouteRegistrationSeed = { method: string; path: string; class: LegacySecurityRouteClass; externalSurface?: SecurityRouteRegistration["externalSurface"] };
 
 function securityContractForClass(routeClass: SecurityRouteClass): Omit<SecurityRouteRegistration, "method" | "path" | "class"> {
@@ -243,6 +243,20 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "PATCH", path: "/api/users/embedded-heic-settings", class: "withheld" },
   { method: "GET", path: "/api/users", class: "withheld" },
   { method: "POST", path: "/api/users", class: "withheld" },
+  { method: "GET", path: "/api/connected-apps/consent/:handle", class: "global-self" },
+  { method: "POST", path: "/api/connected-apps/consent/:handle", class: "global-self" },
+  { method: "GET", path: "/api/connected-apps", class: "global-self" },
+  { method: "DELETE", path: "/api/connected-apps/:id", class: "global-self" },
+  { method: "POST", path: "/api/admin/connected-apps/revoke-all", class: "withheld" },
+  { method: "ALL", path: "/.well-known/oauth-authorization-server", class: "bearer-protocol" },
+  { method: "ALL", path: "/.well-known/oauth-authorization-server/*", class: "bearer-protocol" },
+  { method: "ALL", path: "/.well-known/oauth-protected-resource", class: "bearer-protocol" },
+  { method: "ALL", path: "/.well-known/oauth-protected-resource/*", class: "bearer-protocol" },
+  { method: "ALL", path: "/oauth/token", class: "bearer-protocol" },
+  { method: "ALL", path: "/oauth/register", class: "bearer-protocol" },
+  { method: "GET", path: "/oauth/authorize", class: "bearer-protocol" },
+  { method: "ALL", path: "/mcp", class: "bearer-protocol" },
+  { method: "ALL", path: "/mcp/", class: "bearer-protocol" },
   { method: "ALL", path: "/api", class: "terminal-fallback" },
   { method: "ALL", path: "/d/*", class: "terminal-fallback" },
   { method: "ALL", path: "/d", class: "terminal-fallback" },
@@ -279,6 +293,7 @@ function securityClassForSeed(route: LegacySecurityRouteRegistrationSeed): Secur
       ? "scoped-project"
       : "scoped-child-resource";
   }
+  if (route.class === "bearer-protocol") return "bearer-protocol";
   if (route.class === "global-self") return "principal-global";
   if (route.class === "terminal-fallback") return "terminal-fallback";
   return "withheld";

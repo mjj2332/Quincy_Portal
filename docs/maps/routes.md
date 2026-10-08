@@ -41,6 +41,14 @@ Answers: where an API route is registered, which guard gates it, how to list eve
 | `requireAppOrigin` portal/workers/app/src/middleware/origin.ts:10 | 403 on unsafe methods when `Origin` ≠ `APP_ORIGIN` portal/workers/app/src/middleware/origin.ts:12 |
 | `requireImpersonationEnabled` portal/workers/app/src/lib/impersonation.ts:53 | runtime toggle on the impersonate route |
 
+## MCP door and Connected apps (#702)
+Mounted by `mountMcp` portal/workers/app/src/mcp/index.ts, called from `index.ts` before the SPA fallback and outside `/api` (no router-wide middleware; every route is a `terminalRoute`, class `bearer-protocol`).
+- `ALL /.well-known/oauth-authorization-server[/*]`, `ALL /oauth/token`, `ALL /oauth/register` → `getAuthorizationServer(env).fetch` (portal/workers/app/src/mcp/oauth-server.ts); `ALL /.well-known/oauth-protected-resource[/*]` is built in `mountMcp`.
+- `GET /oauth/authorize` → flag off 404; invalid request is a plain 400 page; else 302 to `/settings/connected-apps/consent/<handle>`.
+- `ALL /mcp` and `ALL /mcp/` → flag off 404; `validateToken` + `loadMcpAuthority` (portal/workers/app/src/mcp/authority.ts) on every call; stateless Streamable HTTP; tools from `toolsFor` (portal/workers/app/src/mcp/tools/registry.ts).
+- `/api` (cookie session + Origin, never on the MCP allowlist; portal/workers/app/src/routes/connected-apps.ts): `GET|POST /api/connected-apps/consent/:handle`, `GET /api/connected-apps`, `DELETE /api/connected-apps/:id`, `POST /api/admin/connected-apps/revoke-all` (manageUsers, checked inline so no new middleware registration).
+- Web: `/settings/connected-apps` and `/settings/connected-apps/consent/:handle` (`connected-apps`, `connected-app-consent` kinds in portal/packages/shared/src/staff-routes.ts).
+
 ## External-role DTOs (web)
 - `externalApiGet` portal/apps/web/src/lib/external-api-response.ts:18 (not in dashboard-projects) → `decodeExternalResponse` portal/apps/web/src/lib/external-api-response.ts:14 → `EXTERNAL_API_RESPONSE_SCHEMAS[surface]` portal/apps/web/src/lib/external-api-response.ts:15.
 - Caller example: `externalApiGet("project-list"` portal/apps/web/src/lib/dashboard-projects.ts:133.
