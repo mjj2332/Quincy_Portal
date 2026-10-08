@@ -309,7 +309,7 @@
  *
  * 2026-10-08, #734 follow-up - CHANGED, behaviour (ADR 0009 addendum). `treeWidth` re-seeds from `treePanel.width` when the config's
  * `width` or `minWidth` changes (a consumer swapping tree configs across a breakpoint); a splitter drag is otherwise kept. The add-task
- * bottom sheet is capped at the 560px dialog rung and centred from 721px up (full-bleed on a phone).
+ * bottom sheet is capped at the 560px dialog rung and centred from 721px up, with `--radius-lg` top corners (owner choice); a phone stays full-bleed and square.
  */
 
 import {
@@ -3946,7 +3946,7 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
             return false
           }}
           // `focus-visible:!outline-none`: the sheet itself can hold focus between controls (see ProjectSheet).
-          className="z-[var(--z-dialog)] max-h-[calc(100dvh-var(--space-4))] min-[721px]:mx-auto min-[721px]:max-w-[560px] gap-[var(--space-3)] p-[var(--space-4)] pb-[max(var(--space-4),env(safe-area-inset-bottom))] focus-visible:!outline-none"
+          className="z-[var(--z-dialog)] max-h-[calc(100dvh-var(--space-4))] min-[721px]:mx-auto min-[721px]:max-w-[560px] min-[721px]:rounded-t-[var(--radius-lg)] gap-[var(--space-3)] p-[var(--space-4)] pb-[max(var(--space-4),env(safe-area-inset-bottom))] focus-visible:!outline-none"
           overlayProps={{
             // Mandatory: the Gantt can itself sit inside another Sheet's Root (the Project sheet, the rail), and Base UI
             // renders no backdrop for a NESTED dialog unless forced - without a scrim a phone tap outside would do nothing.

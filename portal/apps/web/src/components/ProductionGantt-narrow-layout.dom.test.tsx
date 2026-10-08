@@ -141,6 +141,7 @@ describe("ProductionGantt breakpoints (#734)", () => {
       expect(sheet() !== null).toBe(narrow);
       // #734: on the dialog ladder from 721px (560px, centred); a phone stays full-bleed.
       if (narrow) expect(sheet()!.className).toContain("min-[721px]:max-w-[560px]");
+      if (narrow) expect(sheet()!.className).toContain("min-[721px]:rounded-t-[var(--radius-lg)]");
       expect(editorRow() !== null).toBe(!narrow);
     });
   });
